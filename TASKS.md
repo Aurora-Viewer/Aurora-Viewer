@@ -175,6 +175,7 @@ Légende : ✅ fait (et vérifié sur Agni quand ça dépend de la grille) · �
 
 ## Interface
 
+- ⬜ **Correctif prioritaire** : cacher les messages du LSL Bridge de Firestorm dans le chat local comme Firestorm (FSLSLBridge) ; aujourd'hui la réponse du bridge s'affiche avec son URL de capability et sa clé `bridgeAuth`, visibles sur toute capture ou diffusion
 - ✅ Thème Aurora (skins, rechargement à chaud), icônes SVG Phosphor, logo loup SVG
 - ✅ Polices : Noto Sans par défaut, Inter, Roboto, polices système ; centrage optique du texte
 - ✅ Barre unique en haut : menu loup (Moi, Communiquer, Monde, Construire, Contenu, Avancé, Aide), cloche, historique de TP ◀ ▶, maison, lieu avec ⓘ terrain ; à droite En vol/Assis, solde, heure SLT, ping, média/musique/volumes, IPS
