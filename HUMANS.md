@@ -109,7 +109,9 @@ GitHub Actions compile alors le viewer, crée la release avec le zip Windows et
 Pour avoir à tout moment l'exe optimisé du dernier `main` de GitHub :
 
 ```powershell
-./scripts/build-release.ps1          # la première fois, depuis le dépôt
+# la première fois, depuis le dépôt à jour
+git switch main; git pull
+./scripts/build-release.ps1
 ```
 
 Ensuite, double-clic sur `C:\Aurora_Viewer_v2\RELEASE\build-release.bat`.
