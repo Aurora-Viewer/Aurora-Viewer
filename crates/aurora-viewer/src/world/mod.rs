@@ -852,6 +852,7 @@ impl World {
                 let now = Instant::now();
                 if avatar == self.agent_id {
                     log::info!("own animations: {} playing", anims.len());
+                    self.agent.ground_sit = anims.iter().any(|(id, _)| *id == body::ANIM_SIT_GROUND_CONSTRAINED);
                 }
                 let prev = self.animations.remove(&avatar).unwrap_or_default();
                 // ANIM_AGENT_TYPE starting: the typing sound at the avatar
@@ -1498,5 +1499,21 @@ mod motion_tests {
         let neighbor = handle + (256_u64 << 32);
         world.ensure_region(neighbor, (256, 256));
         assert_eq!(world.clip_to_visible_regions(start, end), end);
+    }
+
+    #[test]
+    fn own_ground_sit_animation_means_sitting() {
+        let (mut world, _, _) = fixture();
+        let me = world.agent_id;
+        let sit = |avatar, anim| NetEvent::AvatarAnimations {
+            avatar,
+            anims: vec![(anim, 1)],
+        };
+        world.apply(sit(crate::demo::DEMO_LOUP, body::ANIM_SIT_GROUND_CONSTRAINED));
+        assert!(!world.agent.is_sitting());
+        world.apply(sit(me, body::ANIM_SIT_GROUND_CONSTRAINED));
+        assert!(world.agent.is_sitting() && !world.agent.seated);
+        world.apply(sit(me, crate::demo::IDLE_ANIM));
+        assert!(!world.agent.is_sitting());
     }
 }

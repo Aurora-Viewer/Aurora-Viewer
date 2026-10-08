@@ -770,7 +770,7 @@ pub fn run_command(cmd: &str, panels: &mut Panels) -> BarAction {
     BarAction::None
 }
 
-fn command_active(cmd: &str, panels: &Panels, flying: bool, mouselook: bool) -> bool {
+fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mouselook: bool) -> bool {
     match cmd {
         "conversations" => panels.chat,
         "people" | "friends" => panels.people,
@@ -780,6 +780,7 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, mouselook: bool) -> 
         "performance" => panels.perf,
         "preferences" => panels.settings,
         "fly" => flying,
+        "sit" => seated,
         "mouselook" => mouselook,
         _ => false,
     }
@@ -952,6 +953,7 @@ pub fn bottom_bar(
     chat: &mut super::chat::ChatUi,
     unread: usize,
     flying: bool,
+    seated: bool,
     mouselook: bool,
     chat_width: &mut f32,
     mic: &mut MicButton,
@@ -1025,7 +1027,7 @@ pub fn bottom_bar(
                         mic_button(ui, p, icons, btn_w, mic);
                         continue;
                     }
-                    let active = command_active(&b.command, panels, flying, mouselook);
+                    let active = command_active(&b.command, panels, flying, seated, mouselook);
                     let badge = b.command == "conversations" && unread > 0 && !panels.chat;
                     let tip = if badge {
                         format!("{} ({unread} non lus)", b.tooltip)

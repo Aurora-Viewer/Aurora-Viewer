@@ -241,4 +241,5 @@ Légende : ✅ fait (et vérifié sur Agni quand ça dépend de la grille) · �
 - ⬜ Emojis composés (drapeaux, tons de peau, ZWJ)
 - 🟡 « Ignorés » : couleurs appliquées aux bloqués (étiquettes, mini-carte, chat) ; « Non-correspondances » : voir les noms d'affichage
 - ⬜ La fenêtre Performances recouvre la droite de la barre du bas quand elle est ouverte
-- ⬜ Bouton S'asseoir de la barre du bas : après s'être assis en cliquant dessus, un second clic ne relève pas l'avatar et le bouton ne passe pas à l'état actif (pas de bascule assis / debout)
+- ✅ Bouton S'asseoir de la barre du bas : bascule assis / debout comme Firestorm (FSSelfForceSit / Self.getForceSit) : « assis » compte aussi l'assise au sol (animation sit_ground_constrained jouée sur soi, LLVOAvatar::sitDown), bouton allumé tant qu'on est assis, badge « Assis » et menu clic droit alignés ; démo : AURORA_DEMO_SIT=n (validé en démo et sur Agni le 08/10)
+- ⬜ Caméra assis sur un objet : la caméra reste à l'endroit où l'avatar était debout (position relative au parent ignorée) ; à porter de Firestorm : position monde de l'avatar assis (transformée du parent), caméra replacée derrière lui à l'assise, décalages de caméra imposés par l'objet (llagentcamera.cpp)

@@ -38,6 +38,10 @@ pub struct AgentState {
     pub pitch: f32,
     pub flying: bool,
     pub seated: bool,
+    /// Sitting on the ground: ANIM_AGENT_SIT_GROUND_CONSTRAINED plays on us
+    /// (LLVOAvatar::processSingleAnimationStateChange -> sitDown). No
+    /// parent, so positions stay region-relative unlike `seated`.
+    pub ground_sit: bool,
     /// The drawn body is turning (+1 left, -1 right): TURN_LEFT / RIGHT.
     pub body_turn: i8,
     pub server_pos: Vec3,
@@ -60,6 +64,7 @@ impl Default for AgentState {
             pitch: 0.0,
             flying: false,
             seated: false,
+            ground_sit: false,
             body_turn: 0,
             server_pos: Vec3::new(128.0, 128.0, 25.0),
             server_vel: Vec3::ZERO,
@@ -92,6 +97,11 @@ fn yaw_rate(held: f32) -> f32 {
 }
 
 impl AgentState {
+    /// LLAgent::isSitting: on an object or on the ground.
+    pub fn is_sitting(&self) -> bool {
+        self.seated || self.ground_sit
+    }
+
     pub fn has_local_control(&self) -> bool {
         self.has_server && !self.seated
     }
