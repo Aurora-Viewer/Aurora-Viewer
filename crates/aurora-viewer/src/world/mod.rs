@@ -7,6 +7,7 @@ pub mod env;
 pub mod groups;
 pub mod inventory;
 pub mod lookat;
+pub mod lslbridge;
 pub mod mutes;
 pub mod names;
 pub mod notifications;
@@ -116,6 +117,8 @@ pub struct World {
     pub social: social::Social,
     /// Block list (LLMuteList).
     pub mutes: mutes::MuteList,
+    /// Firestorm LSL bridge messages kept out of nearby chat.
+    pub lsl_bridge: lslbridge::LslBridge,
     /// Our groups and the group / conference chat sessions.
     pub groups: groups::GroupChats,
     /// Online status (away, do not disturb...) and automatic responses.
@@ -184,6 +187,7 @@ impl World {
             balance: None,
             social: social::Social::default(),
             mutes: mutes::MuteList::default(),
+            lsl_bridge: lslbridge::LslBridge::default(),
             groups: groups::GroupChats::default(),
             status: status::Status::default(),
             inventory: inventory::Inventory::default(),
@@ -1038,7 +1042,7 @@ impl World {
     }
 
     fn on_chat(&mut self, c: ChatMessage) {
-        if c.message.is_empty() || self.chat_blocked(&c) {
+        if c.message.is_empty() || self.lsl_bridge.hides(&c) || self.chat_blocked(&c) {
             return;
         }
         let kind = match c.source_type {
