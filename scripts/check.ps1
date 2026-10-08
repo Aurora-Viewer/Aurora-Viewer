@@ -8,8 +8,8 @@
 Set-Location (git rev-parse --show-toplevel).Trim()
 $steps = @(
     @{ Name = 'Formatage (rustfmt)'; Run = { cargo fmt --all -- --check } },
-    @{ Name = 'Clippy'; Run = { cargo clippy --release --workspace --all-targets --locked -- -D warnings } },
-    @{ Name = 'Tests'; Run = { cargo test --release --workspace --locked } }
+    @{ Name = 'Clippy'; Run = { cargo clippy --workspace --all-targets --locked -- -D warnings } },
+    @{ Name = 'Tests'; Run = { cargo test --workspace --locked } }
 )
 foreach ($s in $steps) {
     Write-Host "==> $($s.Name)" -ForegroundColor Cyan

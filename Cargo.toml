@@ -9,20 +9,29 @@ license = "GPL-3.0-or-later"
 repository = "https://github.com/odessadraekavik/Aurora_Viewer"
 publish = false
 
+# The single local profile: check.ps1 (clippy, tests) and the demo runs share
+# it, so a worktree compiles everything once. It behaves like the shipped
+# build (no debug assertions or overflow checks, no console window) and only
+# skips the slow LTO of --release, kept for releases and performance work.
 # Debug info: line tables only (function names and line numbers in crash
 # stacks, without the gigabytes of full debug info in target/).
 [profile.dev]
 opt-level = 1
 debug = "line-tables-only"
+debug-assertions = false
+overflow-checks = false
 
 [profile.dev.package."*"]
 opt-level = 3
 
-# CI (clippy, tests): compiled fast rather than running fast.
+# CI (clippy, tests): compiled fast rather than running fast; keeps the
+# debug assertions and overflow checks as an extra net for the tests.
 [profile.ci]
 inherits = "dev"
 opt-level = 0
 debug = false
+debug-assertions = true
+overflow-checks = true
 incremental = false
 
 [profile.ci.package."*"]
