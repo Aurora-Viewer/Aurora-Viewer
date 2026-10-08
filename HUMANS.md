@@ -85,7 +85,7 @@ GitHub Actions compile alors le viewer, crée la release avec le zip Windows et
 
    ```bash
    mkdir C:\Aurora_Viewer_v2 && cd C:\Aurora_Viewer_v2
-   git clone https://github.com/odessadraekavik/Aurora_Viewer aurora-viewer
+   git clone https://github.com/Aurora-Viewer/Aurora-Viewer aurora-viewer
    git clone --depth 1 https://github.com/FirestormViewer/phoenix-firestorm
    ```
 

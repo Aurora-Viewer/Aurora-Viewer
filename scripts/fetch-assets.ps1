@@ -5,7 +5,7 @@
     sans couleur.
 #>
 param(
-    [string]$Repo = 'odessadraekavik/Aurora_Viewer',
+    [string]$Repo = 'Aurora-Viewer/Aurora-Viewer',
     [string]$Tag = 'assets-1'
 )
 . "$PSScriptRoot\common.ps1"

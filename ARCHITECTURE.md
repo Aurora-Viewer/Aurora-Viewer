@@ -18,7 +18,7 @@ plateformes autres que Windows pour les releases (le code reste portable).
 ## Arborescence
 
 ```
-aurora-viewer/                  dépôt git (GitHub : Aurora_Viewer)
+aurora-viewer/                  dépôt git (GitHub : Aurora-Viewer/Aurora-Viewer)
 ├─ Cargo.toml                   workspace : version, édition, licence, lints communs
 ├─ rust-toolchain.toml          Rust stable (toujours la dernière version)
 ├─ rustfmt.toml                 formatage (lignes de 140 caractères)
