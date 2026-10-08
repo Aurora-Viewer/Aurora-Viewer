@@ -12,8 +12,11 @@ s'enchaîne.
 | Codent dans leur propre dossier de travail (un par tâche) | Choisis les tâches à lancer |
 | Testent en **mode démo** (serveur simulé en local) | **Valides** chaque fonctionnalité avant la PR |
 | Te lancent le viewer pour que tu testes | **Te connectes et testes sur la grille AGNI** (eux ne le font jamais) |
-| Ouvrent la PR, la relisent, corrigent, commentent | **Fusionnes** la PR quand le verdict te convient |
-| Tiennent TASKS.md à jour | Crées les **releases** (tags de version) |
+| Ouvrent la PR, la relisent, corrigent, commentent, **la fusionnent** | Tranches quand l'agent te le demande (verdict ⚠️ ou ❌) |
+| Tiennent TASKS.md à jour, publient les releases | **Demandes** une release quand tu veux (« sors la 0.4.0 ») |
+
+Tu n'as **aucune action à faire sur GitHub** : ton seul travail est de tester
+ce que l'agent te montre, et de te connecter à la grille quand il le faut.
 
 ## Le cycle d'une tâche
 
@@ -23,34 +26,43 @@ s'enchaîne.
 3. Il code, teste en démo, puis **compile et te lance le viewer** avec une
    fenêtre nommée « Aurora Viewer — Test <tâche> ».
 4. **Tu testes** ce qu'il te demande (en démo ou sur la grille : c'est toi qui
-   te connectes) et tu lui dis si c'est bon.
+   te connectes) et tu lui dis si c'est bon. Pour une PR sans effet sur le
+   viewer (documentation, CI, scripts), il te dit juste ce qui va changer.
 5. L'agent ouvre la **pull request** : un résumé lisible (à quoi ça sert, si ça
    vient de Firestorm, ce qui change, captures).
 6. Dans la foulée, sans que tu aies à le demander, il attend la fin de la CI
-   puis **relit sa PR** : mise à jour avec `main`, CI, non-régression,
+   puis **relit sa PR** : conflits avec `main`, CI, non-régression,
    secrets… et poste un **commentaire de relecture** (onglet « Conversation »
    de la PR) avec un verdict :
    - ✅ prête à fusionner ;
    - ⚠️ un point à trancher (il te propose des solutions) ;
    - ❌ bloquée (il t'explique pourquoi).
-   Il ne te prévient qu'une fois ce commentaire posté.
-7. **Tu fusionnes** sur GitHub (bouton « Squash and merge »), **après** avoir
-   lu le verdict. Une PR sans commentaire « Relecture » n'est pas prête : si
-   une session s'est interrompue, l'agent de la session suivante la relit en
-   priorité.
-8. L'agent nettoie son dossier de travail.
+7. **Si le verdict est ✅, il la fusionne** : la PR entre dans la **file de
+   fusion**, où GitHub la teste avec le `main` le plus récent (tests
+   compris) et la fusionne si tout est vert. Si toi et un autre fusionnez en
+   même temps, les PR font simplement la queue : plus de « Update branch ».
+   Sinon (⚠️ ou ❌), il s'arrête et te demande de trancher.
+8. L'agent nettoie son dossier de travail et te prévient : lien de la PR, ce
+   qui a changé, et ce qu'il reste à tester sur la grille s'il y en a.
 
 Une PR n'est ouverte qu'à la **fin d'une tâche**, jamais pour des changements
-intermédiaires. Si l'agent n'a pas tout fini, il te le dit avant.
+intermédiaires. Si l'agent n'a pas tout fini, il te le dit avant. Si une
+session s'interrompt, l'agent de la session suivante reprend en priorité les
+PR sans relecture ou sorties de la file.
 
 ## GitHub en pratique
 
-- **`main` est protégée** : personne ne pousse directement dessus ; tout passe
-  par une PR dont la CI est verte.
-- **La CI** (GitHub Actions, sous Windows) vérifie chaque PR : formatage,
-  clippy, tests, recherche de secrets. Une PR qui ne touche que la
-  documentation ou les images passe en une minute (pas de compilation).
-  Une croix rouge = ne pas fusionner ; l'agent doit corriger.
+- **`main` est protégée**, pour tout le monde, admins compris : personne ne
+  pousse directement dessus ; tout passe par une PR, puis par la file de
+  fusion.
+- **La CI** (GitHub Actions, sous Windows) a deux étages :
+  - sur chaque PR, les vérifications rapides : formatage, clippy, recherche
+    de secrets (les tests, l'agent les a déjà passés sur sa machine) ;
+  - dans la file de fusion, tout, tests compris, sur la PR combinée avec le
+    dernier `main` : ce qui arrive sur `main` est exactement ce qui a été
+    testé.
+  Une PR qui ne touche que la documentation ou les images passe en une
+  minute (pas de compilation). Une croix rouge = l'agent corrige.
 - **Étiquettes** : chaque PR a un **type** (`nouveauté`, `correctif`,
   `performance`, `maintenance`, `docs`, et `rupture` si elle casse une
   compatibilité), qui la range dans les notes de version, et une **zone**
@@ -59,7 +71,9 @@ intermédiaires. Si l'agent n'a pas tout fini, il te le dit avant.
 - **Captures** : les images des PR sont rangées sur la branche `captures`
   (elle ne contient que ça).
 - **Dependabot** ouvre chaque semaine des PR de mise à jour des dépendances ;
-  un agent peut les vérifier pour toi.
+  un agent peut les vérifier pour toi, et les fusionne si tu es d'accord.
+- **Le dépôt** appartient à l'organisation `Aurora-Viewer` ; les
+  développeurs sont dans l'équipe `Devs`.
 
 ### Publier une version
 
@@ -67,14 +81,17 @@ On suit [SemVer](https://semver.org/lang/fr/) : `vMAJEUR.MINEUR.CORRECTIF`.
 Avant la 1.0, une nouveauté fait `v0.3.0 → v0.4.0`, un correctif
 `v0.4.0 → v0.4.1`.
 
+Demande-le à un agent : « sors la 0.4.0 » (ou « sors une version » : il te
+propose le numéro). Il vérifie que `main` est vert, crée le tag et te donne
+le lien de la release. GitHub Actions compile le viewer, crée la release avec
+le zip Windows et écrit les notes, classées par catégorie, à partir des PR
+fusionnées. À la main, c'est :
+
 ```bash
 git switch main && git pull
-git tag -a v0.2.0 -m "Aurora Viewer 0.2.0"
-git push origin v0.2.0
+git tag -a v0.4.0 -m "Aurora Viewer 0.4.0"
+git push origin v0.4.0
 ```
-
-GitHub Actions compile alors le viewer, crée la release avec le zip Windows et
-écrit les notes, classées par catégorie, à partir des PR fusionnées.
 
 ## Installer l'environnement
 
@@ -182,8 +199,8 @@ gardée en `aurora.previous.log`. Les sessions de démo ont leurs propres logs
 - Les agents ne se connectent jamais à la grille et ne manipulent jamais tes
   identifiants. Le mot de passe retenu est stocké par Windows (Gestionnaire
   d'identification), sous forme d'empreinte uniquement.
-- La CI cherche des secrets dans chaque PR, et la relecture de l'agent aussi.
-  Si tu vois passer un identifiant ou un jeton, ne fusionne pas et
-  signale-le.
-- Tu peux toujours demander à un agent de t'expliquer un changement avant de
-  fusionner.
+- La CI cherche des secrets dans chaque PR (et dans la file de fusion), et la
+  relecture de l'agent aussi. Si tu vois passer un identifiant ou un jeton,
+  dis à l'agent d'arrêter et signale-le.
+- Tu peux toujours demander à un agent de t'expliquer un changement, ou de
+  ne pas fusionner une PR avant que tu l'aies regardée.

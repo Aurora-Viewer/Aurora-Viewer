@@ -25,8 +25,13 @@ casse le travail des autres.
    dans ton propre worktree (section 3). Si le build échoue dans du code que tu
    n'as pas modifié, ne le « corrige » pas : signale-le.
 4. **Le test final d'une fonctionnalité ou d'un correctif est validé par un
-   humain**, avant toute PR (section 8).
-5. **Seul un humain fusionne** une PR. Tu ne merges jamais.
+   humain**, avant toute PR (section 8). Seule exception : une PR sans effet
+   sur le viewer (documentation, CI, scripts) n'en a pas besoin.
+5. **Tu fusionnes toi-même ta PR**, et seulement quand tout est réuni
+   (section 8, étape 9) : validation humaine (sauf l'exception ci-dessus), CI
+   verte, relecture ✅. Jamais `gh pr merge --admin` ni aucun contournement de
+   la protection de `main` ; jamais la PR de quelqu'un d'autre (ni celle de
+   Dependabot) sans l'accord explicite de ton humain.
 6. **Réponds à l'humain en français.** Code, commentaires et noms en anglais ;
    documentation et textes de l'interface en français.
 
@@ -85,7 +90,7 @@ worktree git, sa branche, son dossier `target` et ses logs.
   fusionnée ou qui n'ont rien compilé depuis 7 jours (le code reste).
 - Pour voir la place prise par les compilations et en libérer :
   `./scripts/clean.ps1` (n'efface rien sans `-Apply`).
-- Une fois la PR fusionnée par l'humain :
+- Une fois la PR fusionnée :
   `./scripts/end-task.ps1 -Name "regard-avatars"` supprime le worktree et la
   branche locale.
 - Fichiers temporaires (scripts, captures, notes) : dans le dossier
@@ -163,15 +168,15 @@ Interface plate, propre et moderne, palette Aurora, icônes Phosphor
 couleur en dur : utilise la `Palette`. Réutilise les widgets de
 `ui/widgets.rs`.
 
-## 8. Cycle d'une tâche, jusqu'à la PR
+## 8. Cycle d'une tâche, jusqu'à la fusion
 
 0. **Le suivi d'abord**, au début de chaque session, avant toute autre chose :
    - **ménage** : pour chaque dossier de `../work/` dont la PR a été fusionnée
      (`gh pr view <branche> --json state`), lance `end-task.ps1` ;
    - **PR en suspens** : liste les PR ouvertes de l'humain
      (`gh pr list --author "@me"`) ; toute PR sans commentaire « Relecture »
-     (ou dont la CI a échoué) passe avant le reste : termine sa relecture
-     (section 11).
+     (ou dont la CI a échoué, ou sortie de la file de fusion) passe avant le
+     reste : termine sa relecture (section 11) puis sa fusion (étape 9).
 1. **Lire** AGENTS.md, ARCHITECTURE.md, TASKS.md ; étudier Firestorm.
 2. **Créer le worktree** (`new-task.ps1`), passer la tâche en 🔧 dans TASKS.md.
 3. **Développer** par petits commits locaux (messages clairs, section 10).
@@ -183,23 +188,43 @@ couleur en dur : utilise la `Palette`. Réutilise les widgets de
    - dis-lui précisément quoi tester, où (démo ou grille AGNI) et ce qu'il
      doit voir ; s'il faut la grille, c'est lui qui se connecte ;
    - attends sa réponse. S'il signale un problème, corrige et recommence.
+
+   Une PR sans effet sur le viewer (documentation, CI, scripts) se passe de
+   cette étape : dis simplement à l'humain ce qui va changer.
 6. **Prévenir s'il reste des choses** : si une partie n'est pas finie, dis-le à
    l'humain et demande s'il veut une PR maintenant ou attendre.
 7. **Ouvrir la PR** (section 9) — une PR par tâche terminée et validée, jamais
    pour des changements intermédiaires.
 8. **Enchaîner aussitôt, sans rendre la main** : `gh pr checks <n> --watch`
-   (la commande attend la fin de la CI), puis la relecture complète
-   (section 11) et le commentaire de relecture. **Ne compte jamais sur une
-   notification** de fin de CI : si tu rends la main en « attendant la CI »,
-   la relecture n'arrive jamais. Si la CI échoue, corrige, pousse, et
-   recommence ce point.
-9. **Prévenir l'humain seulement après le commentaire** : lien de la PR,
-   verdict, et ce qu'il doit faire (fusionner, trancher un point…).
-10. Après la fusion par l'humain : `end-task.ps1`, lancé **depuis le dépôt
+   (la commande attend la fin de la CI de la PR : formatage, clippy,
+   secrets ; les tests, tu les as passés avec `check.ps1`), puis la relecture
+   complète (section 11) et le commentaire de relecture. **Ne compte jamais
+   sur une notification** de fin de CI : si tu rends la main en « attendant
+   la CI », la relecture n'arrive jamais. Si la CI échoue, corrige, pousse,
+   et recommence ce point.
+9. **Fusionner, si le verdict est ✅** (et seulement alors) :
+
+   ```powershell
+   ./scripts/merge-pr.ps1 -Pr <n>
+   ```
+
+   Le script met la PR dans la **file de fusion** (merge queue) : GitHub la
+   teste combinée avec le dernier `main`, tests compris, et la fusionne si
+   tout est vert. Le script attend l'issue, sans rendre la main.
+   - **Fusionnée** : passe à l'étape 10.
+   - **Sortie de la file** (tests rouges sur le code combiné, conflit…) :
+     `gh run view <id> --log-failed` montre l'erreur ; corrige, pousse, et
+     reprends à l'étape 8.
+   - Verdict ⚠️ ou ❌ : ne fusionne pas ; explique le point à l'humain et
+     propose des solutions (section 11).
+10. **Après la fusion** : `end-task.ps1`, lancé **depuis le dépôt
     principal** (un terminal ou un éditeur ouvert dans le dossier de la tâche
     l'empêche d'être supprimé ; le script le signale, il suffit de le
-    relancer une fois le dossier libéré). Si l'humain fusionne après que tu
-    as rendu la main, le ménage se fait à l'étape 0 de la session suivante.
+    relancer une fois le dossier libéré), puis **préviens l'humain** : lien
+    de la PR fusionnée, ce qui a changé, et ce qu'il reste à tester sur la
+    grille s'il y en a. Si la session s'arrête avant la fusion, la fusion se
+    fait quand même sur GitHub ; le ménage se fait à l'étape 0 de la session
+    suivante.
 
 ## 9. La pull request
 
@@ -248,9 +273,12 @@ Le corps suit le modèle `.github/pull_request_template.md` et doit être
 Avant de prévenir l'humain, relis ta propre PR comme le ferait un relecteur
 exigeant :
 
-1. **À jour avec `main`** : `git fetch origin && git rebase origin/main`.
-   Résous les conflits sans perdre le travail des autres, relance
-   `check.ps1`, puis `git push --force-with-lease`.
+1. **Sans conflit avec `main`** : `gh pr view <n> --json mergeable`. Ne
+   rebase **que** si c'est `CONFLICTING` : `git fetch origin && git rebase
+   origin/main`, résous les conflits sans perdre le travail des autres,
+   relance `check.ps1`, puis `git push --force-with-lease`. Sinon ne touche
+   à rien : la file de fusion teste de toute façon la PR avec le dernier
+   `main`, et chaque rebase inutile relance la CI.
 2. **CI verte** : `gh pr checks <n> --watch` attend la fin de la CI. En cas
    d'échec, `gh run view <id> --log-failed` montre l'erreur : corrige, pousse,
    et attends de nouveau.
@@ -281,7 +309,7 @@ commentaire de la PR, pas dans le dépôt. Structure :
 
 | Vérification | Résultat |
 |---|---|
-| À jour avec main, sans conflit | ✅ |
+| Sans conflit avec main | ✅ |
 | CI (fmt, clippy, tests, secrets) | ✅ |
 | Scénarios démo (avant / après) | ✅ captures ci-dessous |
 | Non-régression des fonctionnalités voisines | ✅ … |
@@ -313,17 +341,30 @@ commentaire de relecture.
 
 - **SemVer** : `vMAJEUR.MINEUR.CORRECTIF`. Avant la 1.0 : une nouveauté
   augmente MINEUR, un correctif augmente CORRECTIF.
-- Les tags et releases sont créés **par l'humain**. Les notes sont générées
-  depuis les étiquettes de type des PR (`.github/release.yml`), d'où
-  l'importance de bien étiqueter.
-- Les PR de Dependabot (mises à jour de dépendances) suivent le même chemin :
-  vérifie qu'elles compilent, passent les tests et la démo, puis préviens
-  l'humain.
+- Une release se fait **quand l'humain la demande** (« sors la 0.4.0 »),
+  jamais de ta propre initiative. S'il ne donne pas de numéro, propose-le
+  d'après les étiquettes des PR fusionnées depuis la dernière version et
+  attends son accord. Puis :
+
+  ```powershell
+  gh run list --workflow CI --branch main --limit 1   # main doit être vert
+  git fetch origin
+  git tag -a v0.4.0 origin/main -m "Aurora Viewer 0.4.0"
+  git push origin v0.4.0
+  gh run list --workflow Release --limit 1   # le run du tag (quelques secondes après le push)
+  gh run watch <id> --exit-status
+  ```
+
+  Le workflow Release compile le viewer et publie le zip ; donne le lien de
+  la release à l'humain. Les notes sont générées depuis les étiquettes de
+  type des PR (`.github/release.yml`), d'où l'importance de bien étiqueter.
+- Les PR de Dependabot (mises à jour de dépendances) : vérifie qu'elles
+  compilent, passent les tests et la démo, puis préviens l'humain ; ne les
+  fusionne (`merge-pr.ps1`) qu'avec son accord.
 
 ## 14. Communiquer avec l'humain
 
 - En français, clair et court. Dis ce qui est fait, ce qui reste, et **ce
-  qu'il doit faire lui** (tester quelque chose, se connecter, fusionner,
-  trancher).
+  qu'il doit faire lui** (tester quelque chose, se connecter, trancher).
 - Ne prétends jamais qu'une chose est testée si elle ne l'est pas.
 - Garde les logs et les captures pour appuyer ce que tu affirmes.
