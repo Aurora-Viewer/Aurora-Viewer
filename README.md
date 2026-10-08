@@ -79,6 +79,7 @@ settings and cache (`…\config\demo`, `…\cache\demo`).
 | `AURORA_DEMO_CAM="yaw,pitch,dist"` | Camera orbit around the avatar (radians, meters) |
 | `AURORA_DEMO_POS="x,y"` | Start position |
 | `AURORA_DEMO_TP=1` or `"x,y,z"` | Simulated teleport at frame 240 |
+| `AURORA_DEMO_SIT=n` | Click the toolbar sit button n times (frames 240, 300, 360…) |
 | `AURORA_DEMO_KEY=down\|up\|left\|right` | Hold an arrow key from frame 235 (movement, body orientation) |
 | `AURORA_DEMO_MMO="x,y[,1]"` | Left press on the avatar then right button held (mouse steering) |
 | `AURORA_DEMO_RCLICK="x,y"` | Right click (context menu) |

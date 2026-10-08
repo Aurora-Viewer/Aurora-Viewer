@@ -11,10 +11,13 @@
 use glam::{Mat3, Quat, Vec3};
 use uuid::Uuid;
 
+/// ANIM_AGENT_SIT_GROUND_CONSTRAINED: played while sitting on the ground.
+pub const ANIM_SIT_GROUND_CONSTRAINED: Uuid = Uuid::from_u128(0x1a2bd58e_87ff_0df8_0b4c_53e047b0bb6e);
+
 /// sit_ground, sit_ground_constrained, standup (AGENT_NO_ROTATE_ANIMS).
 pub const NO_ROTATE_ANIMS: [Uuid; 3] = [
     Uuid::from_u128(0x1c7600d6_661f_b87b_efe2_d7421eb93c86),
-    Uuid::from_u128(0x1a2bd58e_87ff_0df8_0b4c_53e047b0bb6e),
+    ANIM_SIT_GROUND_CONSTRAINED,
     Uuid::from_u128(0x3da1d753_028a_5446_24f3_9c9b856d9422),
 ];
 

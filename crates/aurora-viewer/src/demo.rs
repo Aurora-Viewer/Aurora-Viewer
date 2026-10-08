@@ -524,6 +524,19 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 items,
             }]
         }
+        // AGENT_CONTROL_SIT_ON_GROUND / STAND_UP: the simulator swaps our
+        // animations (sit_ground_constrained while sitting)
+        aurora_net::NetCommand::OneShotControl(f) if f & (aurora_net::control::SIT_ON_GROUND | aurora_net::control::STAND_UP) != 0 => {
+            let anim = if f & aurora_net::control::STAND_UP != 0 {
+                IDLE_ANIM
+            } else {
+                crate::world::body::ANIM_SIT_GROUND_CONSTRAINED
+            };
+            vec![NetEvent::AvatarAnimations {
+                avatar: DEMO_AGENT,
+                anims: vec![(anim, 1)],
+            }]
+        }
         _ => Vec::new(),
     }
 }

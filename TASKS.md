@@ -240,4 +240,4 @@ Légende : ✅ fait (et vérifié sur Agni quand ça dépend de la grille) · �
 - ⬜ Emojis composés (drapeaux, tons de peau, ZWJ)
 - 🟡 « Ignorés » : couleurs appliquées aux bloqués (étiquettes, mini-carte, chat) ; « Non-correspondances » : voir les noms d'affichage
 - ⬜ La fenêtre Performances recouvre la droite de la barre du bas quand elle est ouverte
-- ⬜ Bouton S'asseoir de la barre du bas : après s'être assis en cliquant dessus, un second clic ne relève pas l'avatar et le bouton ne passe pas à l'état actif (pas de bascule assis / debout)
+- 🔧 Bouton S'asseoir de la barre du bas : après s'être assis en cliquant dessus, un second clic ne relève pas l'avatar et le bouton ne passe pas à l'état actif (pas de bascule assis / debout)

@@ -1604,6 +1604,17 @@ impl App {
         }
     }
 
+    /// Toolbar sit button (FSSelfForceSit, llviewermenu.cpp): stands up when
+    /// sitting on an object or on the ground, sits on the ground otherwise.
+    fn toggle_ground_sit(&mut self) {
+        let f = if self.world.agent.is_sitting() {
+            control::STAND_UP
+        } else {
+            control::SIT_ON_GROUND
+        };
+        self.send(NetCommand::OneShotControl(f));
+    }
+
     fn toggle_fly(&mut self) {
         self.world.agent.flying = !self.world.agent.flying;
         if !self.world.agent.flying {
@@ -2600,6 +2611,17 @@ impl App {
             self.panels.nav_edit = Some(crate::slurl::make(&self.world.region_name(), self.world.agent.position));
             self.panels.nav_edit_new = true;
         }
+        // AURORA_DEMO_SIT=n: the toolbar sit button clicked n times, at
+        // frames 240, 300, 360…
+        if self.demo
+            && self.frame_count >= 240
+            && self.frame_count.is_multiple_of(60)
+            && let Some(n) = std::env::var("AURORA_DEMO_SIT").ok().and_then(|v| v.trim().parse::<u64>().ok())
+            && (self.frame_count - 240) / 60 < n
+        {
+            self.toggle_ground_sit();
+            log::info!("demo sit button: sitting {}", self.world.agent.is_sitting());
+        }
         // AURORA_DEMO_TP=1 (or "x,y,z"): pretend teleport (pasted SLURL) at frame 240
         if self.demo && self.frame_count == 240 {
             if let Ok(v) = std::env::var("AURORA_DEMO_TP") {
@@ -2907,15 +2929,8 @@ impl App {
             }
             BarAction::ToggleFly => self.toggle_fly(),
             BarAction::ToggleMouselook => self.toggle_mouselook(),
-            BarAction::SitGround => {
-                let f = if self.world.agent.seated {
-                    control::STAND_UP
-                } else {
-                    control::SIT_ON_GROUND
-                };
-                self.net.send(NetCommand::OneShotControl(f));
-            }
-            BarAction::StandUp => self.net.send(NetCommand::OneShotControl(control::STAND_UP)),
+            BarAction::SitGround => self.toggle_ground_sit(),
+            BarAction::StandUp => self.send(NetCommand::OneShotControl(control::STAND_UP)),
             BarAction::ResetCamera => self.camera.reset_orbit(),
             BarAction::BanLines(v) => self.settings.maps.ban_lines = v,
         }
@@ -3014,7 +3029,7 @@ impl App {
                     position: self.world.agent.position,
                     fps: self.perf.fps,
                     flying: self.world.agent.flying,
-                    seated: self.world.agent.seated,
+                    seated: self.world.agent.is_sitting(),
                     ping_ms: self.net.stats.ping_ms.load(std::sync::atomic::Ordering::Relaxed),
                     balance: self.world.balance,
                     voice: (self.voice.light, self.voice.status.clone()),
@@ -3062,6 +3077,7 @@ impl App {
                     &mut self.chat_ui,
                     self.world.chat_unread + self.world.social.total_unread(),
                     self.world.agent.flying,
+                    self.world.agent.is_sitting(),
                     self.camera.mouselook(),
                     &mut self.settings.chat_bar_width,
                     &mut mic,
@@ -3268,7 +3284,7 @@ impl App {
                     }
                 }
                 self.panels.inventory = open;
-                let (seated, flying) = (self.world.agent.seated, self.world.agent.flying);
+                let (seated, flying) = (self.world.agent.is_sitting(), self.world.agent.flying);
                 if let Some(act) = ui::context::show(&ctx, &p, &mut self.context_menu, seated, flying) {
                     a.ctx_action = Some(act);
                 }
@@ -3634,6 +3650,10 @@ impl ApplicationHandler for App {
                 self.panels.world_map = std::env::var("AURORA_DEMO_MAP").as_deref() != Ok("mini");
                 self.panels.perf = false;
                 self.world.map.track_location(256000.0 + 200.0, 256000.0 + 150.0, 25.0, false);
+            }
+            // captures: AURORA_DEMO_SIT keeps the toolbar sit button visible
+            if std::env::var_os("AURORA_DEMO_SIT").is_some() {
+                self.panels.perf = false;
             }
             // captures: AURORA_DEMO_NOTIF=1 opens the notification list
             if std::env::var_os("AURORA_DEMO_NOTIF").is_some() {
