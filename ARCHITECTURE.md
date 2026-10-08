@@ -79,7 +79,7 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
 | `main.rs`, `app.rs` | Démarrage, boucle d'événements, une image du viewer, actions de l'interface |
 | `cli.rs` | Arguments de ligne de commande (`--title`) |
 | `agent.rs`, `camera.rs` | Notre avatar (AgentUpdate, extrapolation depuis vitesse / accélération serveur, lissage comme LLDrawable), caméra |
-| `world/` | État du monde reçu du réseau : objets, régions, terrain, environnement (EEP), social, inventaire, groupes, blocages, orientation des corps, regard (LookAt), carte… |
+| `world/` | État du monde reçu du réseau : objets, régions, terrain, environnement (EEP), social, inventaire, groupes, blocages, messages du bridge LSL de Firestorm (cachés), orientation des corps, regard (LookAt), carte… |
 | `scene/` | Ce qu'on envoie au GPU : géométrie et LOD, textures (streaming), avatars (squelette, animations, silhouette), particules, eau, sondes de reflets, sons du monde, imposteurs |
 | `ui/` | Interface egui : barres, fenêtres, options, chat, inventaire, cartes, overlays de débogage |
 | `build/` | Outils de construction (édition d'objets, terrain) |

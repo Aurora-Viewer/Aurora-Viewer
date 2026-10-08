@@ -1024,6 +1024,32 @@ pub fn events() -> Vec<NetEvent> {
         position: Vec3::ZERO,
         message: "Bienvenue dans la démo d'Aurora Viewer ! 🐺✨❤️".into(),
     }));
+    // AURORA_DEMO_LSL_BRIDGE=1: a worn Firestorm bridge talking to the viewer
+    // (all hidden from chat) between two ordinary llOwnerSay lines (shown)
+    if std::env::var_os("AURORA_DEMO_LSL_BRIDGE").is_some() {
+        let bridge = Uuid::from_u128(0xB81D_6E00_0000_0000_0000_0000_0000_0001);
+        let (hud, bridge_name) = ("HUD de démo", "#Firestorm LSL Bridge v2.32");
+        for (from, name, text) in [
+            (u(200), hud, "Démo : la ligne suivante du bridge doit rester cachée."),
+            (
+                bridge,
+                bridge_name,
+                "<bridgeURL>https://sim.example.invalid:12043/cap/demo</bridgeURL><bridgeAuth>demo</bridgeAuth><bridgeVer>2.32</bridgeVer>",
+            ),
+            (bridge, bridge_name, "<bridgeMovelock state=0>"),
+            (u(200), hud, "Démo : fin du test du bridge."),
+        ] {
+            ev.push(NetEvent::Chat(aurora_net::ChatMessage {
+                from_name: name.into(),
+                source_id: from,
+                owner_id: agent,
+                source_type: aurora_net::ChatSourceType::Object,
+                chat_type: aurora_net::ChatType::OwnerSay,
+                position: Vec3::ZERO,
+                message: text.into(),
+            }));
+        }
+    }
     // notification center samples: an offer, an item, a script menu
     let im = |dialog: u8, message: &str, bucket: Vec<u8>| {
         NetEvent::InstantMessage(aurora_net::InstantMessage {
