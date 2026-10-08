@@ -554,7 +554,7 @@ mod tests {
         let mut password = String::new();
         let mut show_password = false;
         let mut draw = |hint: &str, events: Vec<egui::Event>| {
-            ctx.run_ui(
+            let mut output = ctx.run_ui(
                 egui::RawInput {
                     events,
                     ..Default::default()
@@ -572,7 +572,10 @@ mod tests {
                         Some(&mut show_password),
                     );
                 },
-            )
+            );
+            // This headless test has no renderer to consume texture updates.
+            output.textures_delta.clear();
+            output
         };
         let has_mask = |output: &egui::FullOutput| {
             output
