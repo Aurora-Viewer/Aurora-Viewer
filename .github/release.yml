@@ -1,0 +1,18 @@
+# Release notes generated from merged PRs, grouped by their type label
+# (see scripts/setup-labels.ps1).
+changelog:
+  categories:
+    - title: ⚠️ Changements cassants
+      labels: [rupture]
+    - title: ✨ Nouveautés
+      labels: [nouveauté]
+    - title: 🐛 Correctifs
+      labels: [correctif]
+    - title: ⚡ Performances
+      labels: [performance]
+    - title: 🔧 Maintenance
+      labels: [maintenance, dependencies]
+    - title: 📚 Documentation
+      labels: [docs]
+    - title: Autres changements
+      labels: ['*']

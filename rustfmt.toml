@@ -1,0 +1,2 @@
+# Wide lines: GPU setup and protocol code read better on one line.
+max_width = 140

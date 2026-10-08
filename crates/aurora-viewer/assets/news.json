@@ -1,0 +1,20 @@
+[
+  {
+    "date": "2026-10-08",
+    "title": "Bienvenue dans Aurora Viewer",
+    "summary": "Un client Second Life moderne en Rust et Vulkan : rendu PBR, ombres, eau et reflets, interface Aurora entièrement personnalisable.",
+    "url": ""
+  },
+  {
+    "date": "2026-10-08",
+    "title": "Voix WebRTC et audio",
+    "summary": "Chat vocal des régions, push-to-talk, point de voix animé dans les étiquettes, musique de parcelle et réglage fin des volumes.",
+    "url": ""
+  },
+  {
+    "date": "2026-10-08",
+    "title": "Une interface qui vous ressemble",
+    "summary": "Raccourcis clavier et souris modifiables, disposition des fenêtres retenue, notifications, SLURL dans la barre de navigation.",
+    "url": ""
+  }
+]

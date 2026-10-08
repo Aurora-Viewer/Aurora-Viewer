@@ -1,0 +1,45 @@
+name: Release
+
+# A version tag (SemVer: v0.2.0, v0.2.1…) pushed by a human builds the
+# viewer and publishes the release with notes grouped by PR label.
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+*']
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Rust stable
+        run: rustup update stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --release --locked -p aurora-viewer
+      - name: Emoji font
+        shell: pwsh
+        run: ./scripts/fetch-assets.ps1 -Repo "${{ github.repository }}"
+      - name: Package
+        shell: pwsh
+        run: |
+          $v = "${{ github.ref_name }}"
+          $dir = "Aurora-Viewer-$v-windows-x64"
+          New-Item -ItemType Directory "$dir/assets/emoji" | Out-Null
+          Copy-Item target/release/aurora-viewer.exe $dir
+          Copy-Item -Recurse crates/aurora-viewer/assets/character "$dir/assets/character"
+          Copy-Item assets/emoji/Noto-3D-128.ttf, assets/emoji/LICENSE-OFL.txt "$dir/assets/emoji"
+          Copy-Item LICENSE, NOTICE.md, README.md $dir
+          Compress-Archive -Path $dir -DestinationPath "$dir.zip"
+          "ZIP=$dir.zip" >> $env:GITHUB_ENV
+      - name: Publish
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $v = "${{ github.ref_name }}"
+          $ghArgs = @($v, $env:ZIP, '--title', "Aurora Viewer $v", '--generate-notes', '--verify-tag')
+          if ($v -match '-') { $ghArgs += '--prerelease' }   # v0.3.0-beta.1
+          gh release create @ghArgs

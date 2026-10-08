@@ -1,0 +1,31 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/odessadraekavik/Aurora_Viewer"
+publish = false
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+debug = 1
+lto = "thin"
+codegen-units = 16
+
+# Shared lints: every crate opts in with `[lints] workspace = true`.
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "warn"
+
+[workspace.lints.clippy]
+# Render passes and GPU setup legitimately take many parameters and
+# nested tuple types; splitting them would not make the code clearer.
+too_many_arguments = "allow"
+type_complexity = "allow"

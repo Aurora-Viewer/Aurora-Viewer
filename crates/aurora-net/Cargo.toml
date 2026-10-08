@@ -1,0 +1,27 @@
+[package]
+name = "aurora-net"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+aurora-llsd = { version = "0.1.0", path = "../aurora-llsd" }
+aurora-msg = { version = "0.1.0", path = "../aurora-msg" }
+aurora-prim = { version = "0.1.0", path = "../aurora-prim" }
+base64 = "0.23.1"
+bitflags = "2.13.2"
+crossbeam-channel = "0.5.17"
+glam = "0.34.1"
+log = "0.4.34"
+md5 = "0.8.1"
+parking_lot = "0.12.5"
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "gzip"] }
+thiserror = "2.0.21"
+tokio = { version = "1.53.2", features = ["full"] }
+uuid = "1.27.0"
+webpki-root-certs = "1.0.9"
+
+[lints]
+workspace = true

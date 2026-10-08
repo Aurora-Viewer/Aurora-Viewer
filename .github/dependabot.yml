@@ -1,0 +1,22 @@
+# Weekly update PRs for the Rust crates and the GitHub actions, so the
+# project never falls behind (an agent checks them, a human merges).
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    labels: [maintenance]
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      crates-mineures:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    labels: [maintenance]
+    commit-message:
+      prefix: "chore(ci)"

@@ -1,0 +1,150 @@
+<div align="center">
+
+<img src="assets/branding/logo-loup-couleur.svg" alt="Aurora Viewer" width="180">
+
+# Aurora Viewer
+
+**A modern Second Life viewer written in Rust.**
+
+[![CI](https://github.com/odessadraekavik/Aurora_Viewer/actions/workflows/ci.yml/badge.svg)](https://github.com/odessadraekavik/Aurora_Viewer/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/odessadraekavik/Aurora_Viewer?include_prereleases&color=8B5CF6)](https://github.com/odessadraekavik/Aurora_Viewer/releases)
+[![License: GPL v3+](https://img.shields.io/badge/license-GPL--3.0--or--later-4F46E5)](LICENSE)
+[![Rust](https://img.shields.io/badge/rust-stable-5EEAD4?logo=rust&logoColor=white)](https://www.rust-lang.org)
+[![Platform](https://img.shields.io/badge/platform-Windows-070B1F)](#build)
+
+[Français](#en-français) · [Build](#build) · [Test switches](#test-switches) · [Contributing](#contributing)
+
+</div>
+
+![Aurora Viewer — demo plaza](docs/screenshots/demo-plaza.png)
+
+Aurora Viewer is a Second Life client built from scratch in Rust, with a
+modern GPU renderer (wgpu on Vulkan) and a clean, flat interface. It follows
+the behaviour of [Firestorm](https://www.firestormviewer.org) — same protocol,
+same rules, same defaults — while rethinking the user interface.
+
+> **Status:** early development (0.x). Usable for exploring, chatting and
+> testing; many features are still in progress — see [TASKS.md](TASKS.md).
+
+## Highlights
+
+- **Rendering** — wgpu / Vulkan, bindless textures, multi-draw-indirect,
+  PBR and legacy materials, shadows, reflection probes, water, glow,
+  particles, GPU occlusion (experimental).
+- **Avatars** — skeleton and Bento animations blended like Firestorm,
+  server bakes, shape, rigged mesh, complexity limits, impostors, look-at.
+- **World** — prims, sculpts, mesh with LOD, terrain, EEP environment,
+  world sounds, parcel music, media on prims.
+- **Social** — local chat, IMs and groups, people list, blocking,
+  notifications, voice (WebRTC).
+- **Interface** — flat Aurora theme, Phosphor icons, mini-map and world map,
+  inventory, preferences, debug overlays.
+
+<img src="docs/screenshots/demo-options.png" alt="Preferences" width="100%">
+
+## Build
+
+Requirements: Windows 10/11, [Rust](https://rustup.rs) (stable, selected
+automatically by `rust-toolchain.toml`), a GPU with Vulkan support.
+
+```powershell
+git clone https://github.com/odessadraekavik/Aurora_Viewer aurora-viewer
+cd aurora-viewer
+./scripts/fetch-assets.ps1          # emoji font (too large for git)
+cargo build --release -p aurora-viewer
+./target/release/aurora-viewer.exe
+```
+
+Run the same checks as the CI with `./scripts/check.ps1` (rustfmt, clippy
+with warnings as errors, tests).
+
+### Command line
+
+| Argument | Effect |
+|---|---|
+| `--title <text>` | Window title "Aurora Viewer — <text>"; log file `aurora-<text>.log` (`aurora-demo-<text>.log` in demo mode) |
+| `-h`, `--help` | Show the help |
+
+### Test switches
+
+The offline **demo mode** simulates a server locally (a plaza, avatars,
+objects, chat, notifications…): no connection, no account. It keeps its own
+settings and cache (`…\config\demo`, `…\cache\demo`).
+
+| Variable | Effect |
+|---|---|
+| `AURORA_DEMO=1` | Offline demo mode |
+| `AURORA_CAPTURE=<file.png>` | Save a capture of the frame (`AURORA_CAPTURE_FRAMES`, default 240; ~620 to pass the loading fade) |
+| `AURORA_CAPTURE_EXIT=1` | Quit after the capture |
+| `AURORA_DEMO_CAM="yaw,pitch,dist"` | Camera orbit around the avatar (radians, meters) |
+| `AURORA_DEMO_POS="x,y"` | Start position |
+| `AURORA_DEMO_TP=1` or `"x,y,z"` | Simulated teleport at frame 240 |
+| `AURORA_DEMO_KEY=down\|up\|left\|right` | Hold an arrow key from frame 235 (movement, body orientation) |
+| `AURORA_DEMO_MMO="x,y[,1]"` | Left press on the avatar then right button held (mouse steering) |
+| `AURORA_DEMO_RCLICK="x,y"` | Right click (context menu) |
+| `AURORA_DEMO_LOOKAT=1` | Eye tracking on (in memory only) and a remote look-at |
+| `AURORA_DEMO_SOUND=1` | Audible world sounds (looped chime) |
+| `AURORA_DEMO_CLOUD=1` | Loading clouds for avatars |
+| `AURORA_DEMO_OCCLUSION=1` | Wall with hidden objects (occlusion test) |
+| `AURORA_DEMO_DEBUG="bounds,culling,lights,probes,skeletons,alpha,wire,complexity,glow,glow_view,freeze"` | Debug overlays |
+| `AURORA_DEMO_OPTIONS=<tab>` | Open the preferences on a tab |
+| `AURORA_DEMO_UI=<tab>` | Open people (tab), inventory and chat |
+| `AURORA_DEMO_MAP=1` or `mini` | World map and mini-map |
+| `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Notification list, status menu, location field |
+| `AURORA_DEMO_CONV=1`, `AURORA_DEMO_TALK=1` | Group conversation, microphone on |
+| `AURORA_DEMO_DISPLAYNAME="name"`, `AURORA_DEMO_DISPLAYNAME_ERROR=…` | Display name change (simulated) |
+| `AURORA_DEMO_MEDIA=<url>\|1`, `AURORA_DEMO_PARCEL_MEDIA=<url>\|1`, `AURORA_DEMO_MEDIA_CLICK=…` | Media on a prim, parcel media, media input |
+| `AURORA_DEMO_BUILD="mode,x,y[,part,dx,dy]"`, `AURORA_DEMO_BUILD_FRAME` | Build tools script |
+| `AURORA_DEMO_BAN=1` | Ban lines |
+| `AURORA_DEMO_TOD=0..4` | Time of day |
+| `AURORA_MAX_AVATARS`, `AURORA_MAX_COMPLEXITY`, `AURORA_AA`, `AURORA_SHADOWS` | Override these settings |
+| `AURORA_NO_OCCLUSION=1`, `AURORA_NOVSYNC=1` | Turn GPU occlusion / vsync off |
+| `AURORA_PROFILE=1` | CPU and per-pass GPU timings in the log |
+| `AURORA_GPU_VALIDATION=1` | wgpu validation layers |
+| `AURORA_DEBUG_GLOW=1`, `AURORA_GLOW_SKIP=<mask>`, `AURORA_MEDIA_DEBUG=1` | Renderer and media diagnostics |
+| `AURORA_EMOJI_FONT=<path>` | Use another emoji font |
+| `AURORA_LOG_NAME=<name>` | Log file name |
+
+Logs are in `%LOCALAPPDATA%\Aurora\AuroraViewer\data\logs\`.
+
+## Contributing
+
+This repository is worked on by humans together with AI agents, each agent on
+its own task in its own git worktree:
+
+- [AGENTS.md](AGENTS.md) — rules for AI agents (testing, safety, PRs, reviews)
+- [HUMANS.md](HUMANS.md) — how the repository works for humans
+- [ARCHITECTURE.md](ARCHITECTURE.md) — scope, crates and file layout
+- [TASKS.md](TASKS.md) — what is done, in progress and to do
+- [docs/BRANDING.md](docs/BRANDING.md) — palette, logos, icons and UI rules
+
+Behaviour follows Firestorm: its sources are expected next to the repository
+(`../phoenix-firestorm`, cloned from
+[FirestormViewer/phoenix-firestorm](https://github.com/FirestormViewer/phoenix-firestorm)).
+
+## License
+
+Aurora Viewer is free software under the
+[GNU General Public License v3.0 or later](LICENSE). Parts of it are ported
+from the Second Life viewer and Firestorm (originally LGPL 2.1); see
+[NOTICE.md](NOTICE.md) for details and third-party licenses.
+
+Aurora Viewer is not affiliated with Linden Lab or the Firestorm project.
+Second Life® is a trademark of Linden Research, Inc.
+
+---
+
+## En français
+
+**Aurora Viewer** est un viewer Second Life moderne écrit en Rust : rendu GPU
+récent (wgpu / Vulkan), interface plate et soignée, et un comportement fidèle
+à Firestorm (mêmes messages, mêmes règles, mêmes valeurs par défaut).
+
+- **Compiler :** voir [Build](#build) ci-dessus (Windows, Rust stable).
+- **Tester sans compte :** `AURORA_DEMO=1` lance un mode démo hors ligne ;
+  la liste des options est dans [Test switches](#test-switches).
+- **Contribuer :** le dépôt est pensé pour des humains travaillant avec des
+  agents IA ; lis [HUMANS.md](HUMANS.md) (humains) et
+  [AGENTS.md](AGENTS.md) (agents). Le suivi des tâches est dans
+  [TASKS.md](TASKS.md).
+- **Licence :** GPL-3.0-or-later, voir [NOTICE.md](NOTICE.md).

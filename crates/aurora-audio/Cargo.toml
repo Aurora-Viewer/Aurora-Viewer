@@ -1,0 +1,23 @@
+[package]
+name = "aurora-audio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "Audio output engine for Aurora Viewer: volume-channel mixer, parcel music streaming, PCM sinks."
+
+[dependencies]
+cpal = "0.18.2"
+crossbeam-channel = "0.5.17"
+log = "0.4.34"
+parking_lot = "0.12.5"
+rtrb = "0.4"
+rustls = "0.23.45"
+symphonia = { version = "0.5.5", default-features = false, features = ["mp3", "aac", "ogg", "vorbis", "wav", "pcm"] }
+thiserror = "2.0.21"
+url = "2"
+webpki-root-certs = "1.0.9"
+
+[lints]
+workspace = true

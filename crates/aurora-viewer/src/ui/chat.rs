@@ -1,0 +1,914 @@
+//! Local chat window (nearby chat + instant messages).
+
+use crate::theme::Palette;
+use crate::world::{ChatKind, World};
+use aurora_net::ChatType;
+use egui::{Color32, RichText};
+use std::collections::{HashMap, HashSet};
+
+#[derive(Default)]
+pub struct ChatUi {
+    pub input: String,
+    pub focus_request: bool,
+    pub has_focus: bool,
+    /// Conversation shown in the floater (None = local chat).
+    pub selected: Option<uuid::Uuid>,
+    pub conv_input: String,
+    /// Avatars whose profile picture the conversation wants (filled while drawing).
+    pub wanted_pics: HashSet<uuid::Uuid>,
+    /// Names to resolve (mentions) — taken by the app.
+    pub wanted_names: HashSet<uuid::Uuid>,
+    pub show_profile: bool,
+    /// Search filter (None = closed).
+    pub search: Option<String>,
+    pub emoji_open: bool,
+    /// Open this avatar's profile card when its conversation shows.
+    pub show_profile_for: Option<uuid::Uuid>,
+}
+
+pub struct OutgoingChat {
+    pub message: String,
+    pub channel: i32,
+    pub chat_type: ChatType,
+}
+
+/// Parse "/5 text" channel prefixes.
+pub fn parse_channel(text: &str) -> (i32, String) {
+    if let Some(rest) = text.strip_prefix('/') {
+        let digits: String = rest.chars().take_while(|c| c.is_ascii_digit() || *c == '-').collect();
+        if !digits.is_empty()
+            && let Ok(ch) = digits.parse::<i32>()
+        {
+            let msg = rest[digits.len()..].trim_start().to_owned();
+            return (ch, msg);
+        }
+    }
+    (0, text.to_owned())
+}
+
+fn color_for(kind: ChatKind, p: &Palette) -> Color32 {
+    match kind {
+        ChatKind::Own => p.violet_pale,
+        ChatKind::Local(_) => p.ink,
+        ChatKind::Object(_) | ChatKind::ObjectIm => p.teal.gamma_multiply(0.85),
+        ChatKind::System => p.muted,
+        ChatKind::Im => p.violet_light,
+    }
+}
+
+pub(crate) fn hhmm(t: std::time::SystemTime) -> String {
+    let secs = t.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    // Local time is not available without a tz database; show UTC.
+    format!("{:02}:{:02}", (secs / 3600) % 24, (secs / 60) % 60)
+}
+
+fn line_job(line: &crate::world::ChatLine, p: &Palette, width: f32, size: f32, times: bool) -> egui::text::LayoutJob {
+    let col = color_for(line.kind, p);
+    let mut job = egui::text::LayoutJob::default();
+    let small = egui::TextFormat {
+        color: p.muted_dim,
+        font_id: egui::FontId::proportional(size - 3.0),
+        ..Default::default()
+    };
+    if times {
+        job.append(&format!("[{}] ", hhmm(line.time)), 0.0, small);
+    }
+    let emote = line.text.starts_with("/me ") || line.text.starts_with("/me'");
+    let name_fmt = egui::TextFormat {
+        color: col,
+        font_id: egui::FontId::proportional(size),
+        ..Default::default()
+    };
+    let text_fmt = egui::TextFormat {
+        color: col,
+        font_id: egui::FontId::proportional(size),
+        italics: emote,
+        ..Default::default()
+    };
+    match line.kind {
+        ChatKind::System => job.append(&line.text, 0.0, text_fmt),
+        _ if emote => {
+            job.append(&line.from, 0.0, name_fmt);
+            job.append(&line.text[3..], 0.0, text_fmt);
+        }
+        _ => {
+            let prefix = match line.kind {
+                ChatKind::Im => format!("[IM] {}: ", line.from),
+                ChatKind::Local(ChatType::Shout) => format!("{} crie : ", line.from),
+                ChatKind::Local(ChatType::Whisper) => format!("{} murmure : ", line.from),
+                _ => format!("{}: ", line.from),
+            };
+            job.append(&prefix, 0.0, name_fmt);
+            job.append(&line.text, 0.0, text_fmt);
+        }
+    }
+    job.wrap.max_width = width;
+    job
+}
+
+pub enum ConvAction {
+    Local(OutgoingChat),
+    Im {
+        to: uuid::Uuid,
+        text: String,
+    },
+    OfferTeleport(uuid::Uuid),
+    /// Open the People floater (0 = nearby, 1 = friends).
+    OpenPeople(u8),
+    /// Block / unblock the avatar of a 1:1 conversation.
+    ToggleBlock(uuid::Uuid),
+    /// Leave a group / conference session.
+    LeaveSession(uuid::Uuid),
+    /// Stop receiving a group's chat (and leave its session).
+    BlockGroupChat(uuid::Uuid),
+}
+
+/// Messages from the same sender within this many seconds share one header.
+const GROUP_SECONDS: u64 = 300;
+
+fn initials(name: &str) -> String {
+    name.split_whitespace()
+        .filter_map(|w| w.chars().next())
+        .take(2)
+        .collect::<String>()
+        .to_uppercase()
+}
+
+/// Profile picture (or initials) of an avatar, `size` px square.
+fn avatar_pic(ui: &mut egui::Ui, p: &Palette, pic: Option<&egui::TextureHandle>, name: &str, size: f32) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::hover());
+    match pic {
+        Some(t) => {
+            ui.painter().image(
+                t.id(),
+                rect,
+                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                Color32::WHITE,
+            );
+        }
+        None => {
+            ui.painter().rect_filled(rect, 2.0, p.raised);
+            ui.painter().text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                initials(name),
+                egui::FontId::proportional(size * 0.45),
+                p.violet_pale,
+            );
+        }
+    }
+}
+
+/// Phosphor icon button of the conversation toolbar.
+fn tool(ui: &mut egui::Ui, p: &Palette, icons: &super::icons::Icons, icon: &str, tip: &str, enabled: bool, active: bool) -> bool {
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(26.0, 22.0), egui::Sense::click());
+    if active {
+        ui.painter().rect_filled(rect, 2.0, p.violet.gamma_multiply(0.3));
+    } else if enabled && resp.hovered() {
+        ui.painter().rect_filled(rect, 2.0, p.raised);
+    }
+    if let Some(t) = icons.get(icon) {
+        let tint = if !enabled {
+            p.muted_dim.gamma_multiply(0.6)
+        } else if resp.hovered() || active {
+            p.ink
+        } else {
+            p.muted
+        };
+        let r = egui::Rect::from_center_size(rect.center(), egui::vec2(16.0, 16.0));
+        ui.painter().image(
+            t.id(),
+            r,
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            tint,
+        );
+    }
+    resp.on_hover_text(tip).clicked() && enabled
+}
+
+/// Pieces of a chat message: plain text, web links, SL links and mentions.
+#[derive(Debug, PartialEq)]
+enum Seg<'a> {
+    Text(&'a str),
+    Url(&'a str),
+    Slurl(&'a str),
+    /// secondlife:///app/agent/<id>/mention
+    Mention(uuid::Uuid),
+}
+
+fn segments(text: &str) -> Vec<Seg<'_>> {
+    let mut out = Vec::new();
+    let mut rest = text;
+    while !rest.is_empty() {
+        let next = ["https://", "http://", "secondlife:///"].iter().filter_map(|p| rest.find(p)).min();
+        let Some(i) = next else {
+            out.push(Seg::Text(rest));
+            break;
+        };
+        if i > 0 {
+            out.push(Seg::Text(&rest[..i]));
+        }
+        let tail = &rest[i..];
+        let mut end = tail.find(char::is_whitespace).unwrap_or(tail.len());
+        // trailing punctuation belongs to the sentence
+        while end > 0 && tail[..end].ends_with(['.', ',', '!', '?', ')', ';', ':', '"', '\'']) {
+            end -= 1;
+        }
+        let link = &tail[..end.max(1)];
+        let seg = if let Some(rest) = link.strip_prefix("secondlife:///app/agent/") {
+            match rest.strip_suffix("/mention").and_then(|id| uuid::Uuid::parse_str(id).ok()) {
+                Some(id) => Seg::Mention(id),
+                None => Seg::Slurl(link),
+            }
+        } else if link.starts_with("secondlife:///") {
+            Seg::Slurl(link)
+        } else {
+            Seg::Url(link)
+        };
+        out.push(seg);
+        rest = &tail[link.len()..];
+    }
+    out
+}
+
+/// Message text with emoji, clickable links and highlighted mentions.
+fn chat_text(
+    ui: &mut egui::Ui,
+    emoji: &mut super::emoji::Emoji,
+    world: &World,
+    want_names: &mut HashSet<uuid::Uuid>,
+    text: &str,
+    size: f32,
+    color: Color32,
+    italics: bool,
+) {
+    let segs = segments(text);
+    if segs.iter().all(|s| matches!(s, Seg::Text(_))) {
+        emoji.rich_text(ui, text, size, color, italics);
+        return;
+    }
+    let k = super::colors::get();
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(0.0, 1.0);
+        for s in segs {
+            match s {
+                Seg::Text(t) => emoji.inline(ui, t, size, color, italics),
+                Seg::Url(u) => {
+                    ui.hyperlink_to(RichText::new(u).size(size).color(super::colors::c(k.chat_urls)), u);
+                }
+                Seg::Slurl(u) => {
+                    ui.add(egui::Label::new(RichText::new(u).size(size).color(super::colors::c(k.chat_slurl))))
+                        .on_hover_text(u);
+                }
+                Seg::Mention(id) => {
+                    want_names.insert(id);
+                    let me = id == world.agent_id;
+                    let bg = if me { k.mention_me } else { k.mention_residents };
+                    let label = format!(" @{} ", world.social.name_of(&id));
+                    ui.label(
+                        RichText::new(label)
+                            .size(size)
+                            .color(super::colors::c(k.mention_text))
+                            .background_color(super::colors::c(bg)),
+                    );
+                }
+            }
+        }
+    });
+}
+
+/// Icon button returning its response (emoji button next to the input).
+/// Width of the toolbar buttons with a response (emoji).
+const EMOJI_BTN_W: f32 = 28.0;
+
+fn tool_resp(ui: &mut egui::Ui, p: &Palette, icons: &super::icons::Icons, icon: &str, active: bool) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(EMOJI_BTN_W, 22.0), egui::Sense::click());
+    if active {
+        ui.painter().rect_filled(rect, 2.0, p.violet.gamma_multiply(0.3));
+    } else if resp.hovered() {
+        ui.painter().rect_filled(rect, 2.0, p.raised);
+    }
+    if let Some(t) = icons.get(icon) {
+        let tint = if resp.hovered() || active { p.ink } else { p.muted };
+        let r = egui::Rect::from_center_size(rect.center(), egui::vec2(18.0, 18.0));
+        ui.painter().image(
+            t.id(),
+            r,
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            tint,
+        );
+    }
+    resp
+}
+
+/// Messages grouped by sender: header strip (picture, name, time) then lines.
+#[allow(clippy::too_many_arguments)]
+fn conversation(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icons: &super::icons::Icons,
+    emoji: &mut super::emoji::Emoji,
+    pics: &HashMap<uuid::Uuid, egui::TextureHandle>,
+    world: &World,
+    want_names: &mut HashSet<uuid::Uuid>,
+    lines: &[&crate::world::ChatLine],
+    wanted: &mut HashSet<uuid::Uuid>,
+    own_name: &str,
+) {
+    ui.spacing_mut().item_spacing.y = 2.0;
+    let w = ui.available_width();
+    let mut prev: Option<(uuid::Uuid, std::time::SystemTime, bool)> = None;
+    for line in lines {
+        if line.kind == ChatKind::System {
+            chat_text(
+                ui,
+                emoji,
+                world,
+                want_names,
+                &line.text,
+                12.5,
+                super::colors::chat_color(line, world),
+                true,
+            );
+            prev = None;
+            continue;
+        }
+        let own = line.kind == ChatKind::Own;
+        let object = matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm);
+        let new_group = match prev {
+            Some((src, t, o)) => {
+                src != line.source || o != own || line.time.duration_since(t).map(|d| d.as_secs() > GROUP_SECONDS).unwrap_or(true)
+            }
+            None => true,
+        };
+        // FSChatHistoryHeader: the display name, then " - username" in small
+        let names = &world.social.avatar_names;
+        let cached = if object {
+            None
+        } else {
+            names.get(if own { &world.agent_id } else { &line.source })
+        };
+        let name = match cached {
+            Some(n) => n.display(&names.options),
+            None if own => own_name.to_owned(),
+            None => line.from.clone(),
+        };
+        if new_group {
+            ui.add_space(6.0);
+            let username = cached.and_then(|n| n.chat_username(&names.options));
+            egui::Frame::new()
+                .fill(p.raised.gamma_multiply(0.55))
+                .corner_radius(egui::CornerRadius::same(2))
+                .inner_margin(egui::Margin::symmetric(4, 3))
+                .show(ui, |ui| {
+                    ui.set_width(w - 8.0);
+                    ui.horizontal(|ui| {
+                        if object {
+                            let (rect, _) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::hover());
+                            if let Some(t) = icons.get("cube") {
+                                ui.painter().image(
+                                    t.id(),
+                                    rect.shrink(2.0),
+                                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                                    super::colors::sender_color(line),
+                                );
+                            }
+                        } else {
+                            if !line.source.is_nil() {
+                                wanted.insert(line.source);
+                            }
+                            avatar_pic(ui, p, pics.get(&line.source), &name, 20.0);
+                        }
+                        let col = super::colors::sender_color(line);
+                        ui.label(RichText::new(&name).size(13.0).strong().color(col));
+                        if let Some(u) = &username {
+                            ui.label(RichText::new(format!("- {u}")).size(11.5).color(p.indigo_light));
+                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(RichText::new(hhmm(line.time)).size(11.5).color(p.muted));
+                        });
+                    });
+                });
+            ui.add_space(2.0);
+        }
+        prev = Some((line.source, line.time, own));
+        let emote = line.text.starts_with("/me ") || line.text.starts_with("/me'");
+        let (text, italics) = if emote {
+            (format!("{}{}", name, &line.text[3..]), true)
+        } else {
+            let prefix = match line.kind {
+                ChatKind::Local(ChatType::Shout) => "(crie) ",
+                ChatKind::Local(ChatType::Whisper) => "(murmure) ",
+                _ => "",
+            };
+            (format!("{prefix}{}", line.text), false)
+        };
+        egui::Frame::new()
+            .inner_margin(egui::Margin {
+                left: 6,
+                right: 2,
+                top: 0,
+                bottom: 0,
+            })
+            .show(ui, |ui| {
+                chat_text(
+                    ui,
+                    emoji,
+                    world,
+                    want_names,
+                    &text,
+                    13.5,
+                    super::colors::chat_color(line, world),
+                    italics,
+                );
+            });
+    }
+}
+
+/// Conversations floater: contacts on the left; toolbar, grouped messages
+/// and input (with emoji picker) on the right.
+#[allow(clippy::too_many_arguments)]
+pub fn show(
+    ctx: &egui::Context,
+    p: &Palette,
+    icons: &super::icons::Icons,
+    emoji: &mut super::emoji::Emoji,
+    pics: &HashMap<uuid::Uuid, egui::TextureHandle>,
+    world: &mut World,
+    st: &mut ChatUi,
+    open: &mut bool,
+) -> Vec<ConvAction> {
+    let mut actions = Vec::new();
+    let screen = ctx.content_rect();
+    if let Some(f) = world.social.focus_im.take() {
+        st.selected = Some(f);
+        st.show_profile = false;
+    }
+    if let Some(id) = st.show_profile_for.take()
+        && st.selected == Some(id)
+    {
+        st.show_profile = true;
+        world.want_profile(id);
+    }
+    let title = match st.selected {
+        None => "Conversations - Chat local".to_owned(),
+        Some(id) => format!("Conversations - {}", world.session_title(&id)),
+    };
+    let own_name = world.own_name();
+    super::widgets::Floater::new(
+        "conversations",
+        title,
+        egui::pos2(screen.left() + 8.0, screen.bottom() - 400.0),
+        egui::vec2(600.0, 360.0),
+    )
+    .show(ctx, p, open, |ui| {
+        let h = (ui.available_height() - 6.0).max(140.0);
+        ui.horizontal_top(|ui| {
+            // ---- contacts column
+            ui.vertical(|ui| {
+                ui.set_width(140.0);
+                ui.spacing_mut().item_spacing.y = 2.0;
+                let entry =
+                    |ui: &mut egui::Ui, label: &str, pic: Option<(Option<&egui::TextureHandle>, &str)>, sel: bool, unread: usize| -> bool {
+                        let (rect, resp) = ui.allocate_exact_size(egui::vec2(136.0, 24.0), egui::Sense::click());
+                        let fill = if sel {
+                            p.raised
+                        } else if resp.hovered() {
+                            p.field.gamma_multiply(1.4)
+                        } else {
+                            p.field
+                        };
+                        ui.painter().rect_filled(rect, 1.0, fill);
+                        if sel {
+                            ui.painter()
+                                .rect_filled(egui::Rect::from_min_size(rect.min, egui::vec2(2.0, rect.height())), 0.0, p.violet);
+                        }
+                        let mut x = rect.left() + 8.0;
+                        if let Some((tex, name)) = pic {
+                            let r = egui::Rect::from_min_size(egui::pos2(x, rect.center().y - 8.0), egui::vec2(16.0, 16.0));
+                            match tex {
+                                Some(t) => {
+                                    ui.painter().image(
+                                        t.id(),
+                                        r,
+                                        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                                        Color32::WHITE,
+                                    );
+                                }
+                                None => {
+                                    ui.painter().rect_filled(r, 2.0, p.raised);
+                                    ui.painter().text(
+                                        r.center(),
+                                        egui::Align2::CENTER_CENTER,
+                                        initials(name),
+                                        egui::FontId::proportional(7.5),
+                                        p.violet_pale,
+                                    );
+                                }
+                            }
+                            x += 22.0;
+                        }
+                        ui.painter().text(
+                            egui::pos2(x, rect.center().y),
+                            egui::Align2::LEFT_CENTER,
+                            label,
+                            egui::FontId::proportional(12.0),
+                            if sel { p.ink } else { p.muted },
+                        );
+                        if unread > 0 {
+                            ui.painter()
+                                .circle_filled(rect.right_center() - egui::vec2(10.0, 0.0), 4.0, p.violet);
+                        }
+                        resp.clicked()
+                    };
+                if entry(ui, "Contacts", None, false, 0) {
+                    actions.push(ConvAction::OpenPeople(1));
+                }
+                if entry(
+                    ui,
+                    "Chat local",
+                    None,
+                    st.selected.is_none(),
+                    if st.selected.is_some() { world.chat_unread } else { 0 },
+                ) {
+                    st.selected = None;
+                    st.show_profile = false;
+                }
+                let sessions: Vec<(uuid::Uuid, usize)> = world.social.ims.iter().map(|s| (s.other, s.unread)).collect();
+                for (other, unread) in sessions {
+                    let name = world.session_title(&other);
+                    if !world.is_group_session(&other) {
+                        st.wanted_pics.insert(other);
+                    }
+                    if entry(ui, &name, Some((pics.get(&other), &name)), st.selected == Some(other), unread) {
+                        st.selected = Some(other);
+                        st.show_profile = false;
+                    }
+                }
+            });
+            // ---- conversation pane
+            ui.vertical(|ui| {
+                // toolbar
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 2.0;
+                    match st.selected {
+                        Some(other) if world.is_group_session(&other) => {
+                            // group / conference: participants, block the group's chat, leave
+                            let n = world.groups.sessions.get(&other).map(|s| s.participants.len()).unwrap_or(0);
+                            if tool(ui, p, icons, "users-three", &format!("Participants ({n})"), true, st.show_profile) {
+                                st.show_profile = !st.show_profile;
+                            }
+                            if world.groups.is_member(&other)
+                                && tool(
+                                    ui,
+                                    p,
+                                    icons,
+                                    "chat-teardrop-slash",
+                                    "Ne plus recevoir le chat de ce groupe",
+                                    true,
+                                    false,
+                                )
+                            {
+                                actions.push(ConvAction::BlockGroupChat(other));
+                            }
+                            if tool(ui, p, icons, "sign-out", "Quitter la session", true, false) {
+                                actions.push(ConvAction::LeaveSession(other));
+                            }
+                        }
+                        Some(other) => {
+                            if tool(ui, p, icons, "user-circle", "Profil", true, st.show_profile) {
+                                st.show_profile = !st.show_profile;
+                                world.want_profile(other);
+                            }
+                            tool(ui, p, icons, "user-plus", "Ajouter en ami (à venir)", false, false);
+                            if tool(ui, p, icons, "airplane-takeoff", "Proposer une téléportation", true, false) {
+                                actions.push(ConvAction::OfferTeleport(other));
+                            }
+                            tool(ui, p, icons, "gift", "Donner un objet (à venir)", false, false);
+                            tool(ui, p, icons, "currency-circle-dollar", "Payer (à venir)", false, false);
+                            tool(ui, p, icons, "phone", "Appel vocal (à venir)", false, false);
+                            let blocked = world.is_avatar_blocked(&other);
+                            let tip = if blocked { "Débloquer" } else { "Bloquer" };
+                            if tool(ui, p, icons, "prohibit", tip, true, blocked) {
+                                actions.push(ConvAction::ToggleBlock(other));
+                            }
+                        }
+                        None => {
+                            if tool(ui, p, icons, "users", "Personnes à proximité", true, false) {
+                                actions.push(ConvAction::OpenPeople(0));
+                            }
+                        }
+                    }
+                    let searching = st.search.is_some();
+                    if tool(ui, p, icons, "magnifying-glass", "Rechercher dans la conversation", true, searching) {
+                        st.search = if searching { None } else { Some(String::new()) };
+                    }
+                    if let Some(q) = st.search.as_mut() {
+                        ui.add(egui::TextEdit::singleline(q).hint_text("Rechercher…").desired_width(160.0));
+                    }
+                });
+                ui.add_space(2.0);
+                // profile card
+                if let (true, Some(Some(info))) = (st.show_profile, st.selected.map(|s| world.groups.sessions.get(&s))) {
+                    // participants of a group / conference session
+                    egui::Frame::new()
+                        .fill(p.field)
+                        .corner_radius(egui::CornerRadius::same(2))
+                        .inner_margin(egui::Margin::same(6))
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            let mut names: Vec<(String, bool)> = info
+                                .participants
+                                .iter()
+                                .map(|id| {
+                                    st.wanted_names.insert(*id);
+                                    (world.social.name_of(id), info.moderators.contains(id))
+                                })
+                                .collect();
+                            names.sort_by_key(|(n, _)| n.to_lowercase());
+                            if names.is_empty() {
+                                ui.label(RichText::new("Participants en cours de chargement…").size(11.5).color(p.muted));
+                            }
+                            egui::ScrollArea::vertical().max_height(90.0).show(ui, |ui| {
+                                ui.horizontal_wrapped(|ui| {
+                                    for (n, moderator) in names {
+                                        let t = RichText::new(n).size(12.0).color(if moderator { p.violet_light } else { p.ink });
+                                        let r = ui.label(t);
+                                        if moderator {
+                                            r.on_hover_text("Modérateur");
+                                        }
+                                        ui.add_space(8.0);
+                                    }
+                                });
+                            });
+                        });
+                    ui.add_space(4.0);
+                } else if let (true, Some(other)) = (st.show_profile, st.selected) {
+                    let name = world.social.name_of(&other);
+                    egui::Frame::new()
+                        .fill(p.field)
+                        .corner_radius(egui::CornerRadius::same(2))
+                        .inner_margin(egui::Margin::same(6))
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.horizontal_top(|ui| {
+                                avatar_pic(ui, p, pics.get(&other), &name, 64.0);
+                                ui.vertical(|ui| {
+                                    ui.label(RichText::new(&name).size(14.0).strong().color(p.violet_light));
+                                    match world.profiles.get(&other) {
+                                        Some(pr) => {
+                                            if !pr.born_on.is_empty() {
+                                                ui.label(RichText::new(format!("Né(e) le {}", pr.born_on)).size(11.5).color(p.muted));
+                                            }
+                                            if !pr.about.is_empty() {
+                                                emoji.rich_text(ui, &pr.about, 12.5, p.ink, false);
+                                            }
+                                        }
+                                        None => {
+                                            ui.label(RichText::new("Chargement du profil…").size(11.5).color(p.muted));
+                                        }
+                                    }
+                                });
+                            });
+                        });
+                    ui.add_space(4.0);
+                }
+                let input_h = 30.0;
+                let lines_h = (ui.available_height() - input_h - 8.0).clamp(60.0, h);
+                let query = st.search.as_ref().map(|q| q.to_lowercase()).filter(|q| !q.is_empty());
+                let keep = |l: &&crate::world::ChatLine| {
+                    query
+                        .as_ref()
+                        .is_none_or(|q| l.text.to_lowercase().contains(q) || l.from.to_lowercase().contains(q))
+                };
+                egui::Frame::new()
+                    .fill(p.field)
+                    .corner_radius(egui::CornerRadius::same(1))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        egui::ScrollArea::vertical()
+                            .id_salt(("conv", st.selected))
+                            .stick_to_bottom(true)
+                            .auto_shrink([false, false])
+                            .max_height(lines_h)
+                            .min_scrolled_height(lines_h)
+                            .show(ui, |ui| match st.selected {
+                                None => {
+                                    world.chat_unread = 0;
+                                    let w: &World = world;
+                                    let lines: Vec<&crate::world::ChatLine> = w.chat.iter().filter(keep).collect();
+                                    conversation(
+                                        ui,
+                                        p,
+                                        icons,
+                                        emoji,
+                                        pics,
+                                        w,
+                                        &mut st.wanted_names,
+                                        &lines,
+                                        &mut st.wanted_pics,
+                                        &own_name,
+                                    );
+                                }
+                                Some(id) => {
+                                    if let Some(s) = world.social.ims.iter_mut().find(|s| s.other == id) {
+                                        s.unread = 0;
+                                    }
+                                    let w: &World = world;
+                                    if let Some(s) = w.social.ims.iter().find(|s| s.other == id) {
+                                        let lines: Vec<&crate::world::ChatLine> = s.lines.iter().filter(keep).collect();
+                                        conversation(
+                                            ui,
+                                            p,
+                                            icons,
+                                            emoji,
+                                            pics,
+                                            w,
+                                            &mut st.wanted_names,
+                                            &lines,
+                                            &mut st.wanted_pics,
+                                            &own_name,
+                                        );
+                                    }
+                                }
+                            });
+                    });
+                ui.add_space(4.0);
+                // input + emoji
+                let hint = match st.selected {
+                    None => "Au chat local".to_owned(),
+                    Some(id) => format!("À {}", world.session_title(&id)),
+                };
+                let mut emoji_btn = None;
+                let resp = ui
+                    .horizontal(|ui| {
+                        // leave exactly the emoji button + spacing (else the row overflows
+                        // and the resizable window grows every frame)
+                        let field_w = (ui.available_width() - EMOJI_BTN_W - ui.spacing().item_spacing.x - 2.0).max(40.0);
+                        let r = ui.add(
+                            egui::TextEdit::singleline(&mut st.conv_input)
+                                .id(egui::Id::new("conv_input"))
+                                .hint_text(hint)
+                                .desired_width(field_w),
+                        );
+                        let b = tool_resp(ui, p, icons, "smiley", st.emoji_open);
+                        emoji_btn = Some(b.rect);
+                        if b.on_hover_text("Emoji").clicked() {
+                            st.emoji_open = !st.emoji_open;
+                        }
+                        r
+                    })
+                    .inner;
+                if st.emoji_open {
+                    let anchor = emoji_btn.unwrap_or(resp.rect).right_top();
+                    let mut close = false;
+                    egui::Area::new(egui::Id::new("emoji_picker"))
+                        .fade_in(false)
+                        .order(egui::Order::Foreground)
+                        .pivot(egui::Align2::RIGHT_BOTTOM)
+                        .fixed_pos(anchor - egui::vec2(0.0, 4.0))
+                        .show(ui.ctx(), |ui| {
+                            egui::Frame::new()
+                                .fill(p.panel)
+                                .stroke(egui::Stroke::new(1.0, p.raised))
+                                .corner_radius(egui::CornerRadius::same(3))
+                                .inner_margin(egui::Margin::same(6))
+                                .show(ui, |ui| {
+                                    ui.set_width(300.0);
+                                    if let Some(c) = emoji.picker(ui, p, icons) {
+                                        st.conv_input.push(c);
+                                        close = !ui.input(|i| i.modifiers.shift);
+                                    }
+                                });
+                        });
+                    if close {
+                        st.emoji_open = false;
+                        ui.ctx().memory_mut(|m| m.request_focus(egui::Id::new("conv_input")));
+                    }
+                }
+                if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    let text = st.conv_input.trim().to_owned();
+                    if !text.is_empty() {
+                        match st.selected {
+                            None => {
+                                let (channel, message) = parse_channel(&text);
+                                actions.push(ConvAction::Local(OutgoingChat {
+                                    message,
+                                    channel,
+                                    // Ctrl+Entrée crie, Maj+Entrée murmure (comme la barre de chat)
+                                    chat_type: ui.input(|i| {
+                                        if i.modifiers.ctrl {
+                                            ChatType::Shout
+                                        } else if i.modifiers.shift {
+                                            ChatType::Whisper
+                                        } else {
+                                            ChatType::Normal
+                                        }
+                                    }),
+                                }));
+                            }
+                            Some(to) => actions.push(ConvAction::Im { to, text }),
+                        }
+                    }
+                    st.conv_input.clear();
+                    resp.request_focus();
+                }
+            });
+        });
+    });
+    actions
+}
+
+/// Recent chat lines floating above the chat bar (fade out after 20 s).
+pub fn toasts(ctx: &egui::Context, p: &Palette, world: &World, bottom: f32, seconds: f32, times: bool) {
+    let now = std::time::SystemTime::now();
+    let recent: Vec<_> = world
+        .chat
+        .iter()
+        .rev()
+        .take(6)
+        .filter(|l| now.duration_since(l.time).map(|d| d.as_secs_f32() < seconds).unwrap_or(false))
+        .collect();
+    if recent.is_empty() {
+        return;
+    }
+    egui::Area::new(egui::Id::new("chat_toasts"))
+        .anchor(
+            egui::Align2::LEFT_BOTTOM,
+            egui::vec2(8.0, -(ctx.content_rect().bottom() - bottom) - 6.0),
+        )
+        .interactable(false)
+        .order(egui::Order::Background)
+        .show(ctx, |ui| {
+            ui.set_max_width(560.0);
+            for line in recent.into_iter().rev() {
+                let age = now.duration_since(line.time).map(|d| d.as_secs_f32()).unwrap_or(0.0);
+                let alpha = ((seconds - age) / 3.0).clamp(0.0, 1.0);
+                egui::Frame::new()
+                    .fill(Color32::from_rgba_unmultiplied(
+                        p.bar.r(),
+                        p.bar.g(),
+                        p.bar.b(),
+                        (190.0 * alpha) as u8,
+                    ))
+                    .corner_radius(egui::CornerRadius::same(3))
+                    .inner_margin(egui::Margin::symmetric(6, 2))
+                    .show(ui, |ui| {
+                        let mut job = line_job(line, p, 540.0, 13.0, times);
+                        for s in job.sections.iter_mut() {
+                            s.format.color = s.format.color.gamma_multiply(alpha);
+                        }
+                        ui.label(job);
+                    });
+                ui.add_space(2.0);
+            }
+        });
+}
+
+/// The "Chat local" input bar; returns a message to send.
+pub fn bar(ui: &mut egui::Ui, p: &Palette, st: &mut ChatUi, width: f32) -> Option<OutgoingChat> {
+    let mut out = None;
+    ui.label(RichText::new("Chat local").size(12.0).color(p.muted));
+    let resp = ui.add(
+        egui::TextEdit::singleline(&mut st.input)
+            .hint_text("Entrée pour parler · Ctrl+Entrée crier · Maj+Entrée murmurer · /5 canal")
+            .desired_width(width),
+    );
+    if st.focus_request {
+        resp.request_focus();
+        st.focus_request = false;
+    }
+    st.has_focus = resp.has_focus();
+    let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+    if enter && !st.input.trim().is_empty() {
+        let (shout, whisper) = ui.input(|i| (i.modifiers.ctrl, i.modifiers.shift));
+        let (channel, message) = parse_channel(st.input.trim());
+        out = Some(OutgoingChat {
+            message,
+            channel,
+            chat_type: if shout {
+                ChatType::Shout
+            } else if whisper {
+                ChatType::Whisper
+            } else {
+                ChatType::Normal
+            },
+        });
+        st.input.clear();
+    }
+    // Enter on an empty bar returns to movement (like Firestorm).
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn channels() {
+        assert_eq!(parse_channel("/5 hello"), (5, "hello".into()));
+        assert_eq!(parse_channel("hello"), (0, "hello".into()));
+        assert_eq!(parse_channel("/me waves"), (0, "/me waves".into()));
+        assert_eq!(parse_channel("/-1 x"), (-1, "x".into()));
+    }
+}

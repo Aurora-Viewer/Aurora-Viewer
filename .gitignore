@@ -1,0 +1,30 @@
+# Build output (one target per worktree, never committed)
+/target/
+**/target/
+
+# Agent worktrees and scratch space (they live outside the repository,
+# this is a safety net)
+/work/
+
+# Large or local-only assets (fetched by scripts/fetch-assets.ps1)
+/assets/emoji/*.ttf
+
+# Firestorm sources: cloned next to the repository, never inside it
+/phoenix-firestorm/
+
+# Logs, captures, local settings
+*.log
+*.png.tmp
+/captures/
+.env
+.env.*
+
+# Editors and OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Per-task scratch files (agents)
+/.scratch/

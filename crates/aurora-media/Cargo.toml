@@ -1,0 +1,22 @@
+[package]
+name = "aurora-media"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "Media plugin host for Aurora Viewer: drives SLPlugin media plugins (CEF web, LibVLC video) like LLPluginProcessParent / LLPluginClassMedia."
+
+[dependencies]
+aurora-llsd = { version = "0.1.0", path = "../aurora-llsd" }
+log = "0.4.34"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Memory", "Win32_System_Threading", "Win32_Security"] }
+
+[dev-dependencies]
+image = { version = "0.25.10", default-features = false, features = ["png"] }
+env_logger = "0.11.11"
+
+[lints]
+workspace = true
