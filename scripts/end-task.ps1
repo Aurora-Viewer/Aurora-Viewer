@@ -23,7 +23,11 @@ $p = Get-AuroraPaths
 $slug = Get-TaskSlug $Name
 $dir = Join-Path $p.Work $slug
 if (-not (Test-Path -LiteralPath $dir)) { throw "Pas de dossier de travail $dir." }
+# Leave the task folder, PowerShell location and process working folder
+# alike: Set-Location alone keeps the process inside it, and Windows then
+# refuses to delete the folder (run from the task, as agents often are).
 Set-Location $p.Main
+[Environment]::CurrentDirectory = $p.Main
 
 $isWorktree = Test-Path -LiteralPath (Join-Path $dir '.git')
 if ($isWorktree) {
