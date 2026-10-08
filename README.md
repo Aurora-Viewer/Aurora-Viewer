@@ -16,7 +16,7 @@
 
 </div>
 
-![Aurora Viewer — demo plaza](docs/screenshots/demo-plaza.png)
+![Aurora Viewer in Second Life](docs/screenshots/scene.jpg)
 
 Aurora Viewer is a Second Life client built from scratch in Rust, with a
 modern GPU renderer (wgpu on Vulkan) and a clean, flat interface. It follows
@@ -40,7 +40,7 @@ same rules, same defaults — while rethinking the user interface.
 - **Interface** — flat Aurora theme, Phosphor icons, mini-map and world map,
   inventory, preferences, debug overlays.
 
-<img src="docs/screenshots/demo-options.png" alt="Preferences" width="100%">
+![Login screen](docs/screenshots/login.jpg)
 
 ## Build
 
