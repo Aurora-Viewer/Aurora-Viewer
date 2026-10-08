@@ -845,7 +845,12 @@ impl Scene {
     fn object_transform_raw(world: &World, idx: usize, now: Instant, depth: u32) -> Option<(Vec3, Quat, bool)> {
         let o = world.objects.get(idx)?;
         let (p, mut r) = if o.full_id == world.agent_id && world.agent.has_local_control() {
-            (world.agent.position, world.agent.body_rotation())
+            // The agent is already in main-region coordinates. Its object
+            // can still belong to the previous/next region during an arrival.
+            (
+                world.agent.position - world.region_offset(o.key.region)?,
+                world.agent.body_rotation(),
+            )
         } else {
             o.predicted(now)
         };
