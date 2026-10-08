@@ -1,6 +1,8 @@
 //! Preferences floater: categories on the left, grouped settings on the
 //! right (label column + control column), flat Aurora style.
 
+mod camera;
+
 use super::fonts::{self, SystemFont};
 use super::icons::Icons;
 use super::widgets::Floater;
@@ -49,7 +51,7 @@ pub struct OptionsResult {
 }
 
 /// Category tabs (index = `OptionsUi::tab`).
-const CATEGORIES: [(&str, &str); 10] = [
+const CATEGORIES: [(&str, &str); 11] = [
     ("Graphismes", "Command_Environments_Icon"),
     ("Interface", "Command_Appearance_Icon"),
     ("Polices", "Command_Chat_Icon"),
@@ -60,13 +62,15 @@ const CATEGORIES: [(&str, &str); 10] = [
     ("Son et voix", "speaker-high"),
     ("Raccourcis", "keyboard"),
     ("Debug", "code"),
+    ("Caméra", "camera"),
 ];
 
 /// Order of the tabs in the sidebar.
-const ORDER: [usize; 10] = [0, 1, 2, 3, 7, 4, 8, 5, 6, 9];
+const ORDER: [usize; 11] = [0, 1, 2, 3, 7, 4, TAB_CAMERA, 8, 5, 6, 9];
 
 pub const TAB_AUDIO: usize = 7;
 pub const TAB_CHAT: usize = 3;
+pub const TAB_CAMERA: usize = 10;
 
 const LABEL_W: f32 = 180.0;
 
@@ -131,7 +135,11 @@ fn group_icon(title: &str) -> Option<&'static str> {
         "Voix" => "waveform",
         "Push-to-talk" => "microphone",
         "Déplacements" => "person-simple-walk",
-        "Caméra" => "camera",
+        "Caméra" | "Point de vue" => "camera",
+        "Mouvements de la caméra" => "sliders",
+        "Comportement" => "arrows-clockwise",
+        "Limites" => "prohibit",
+        "Vue subjective" => "crosshair",
         "Regard" => "eye",
         "Communication" => "chats-circle",
         "Groupes et blocage" => "prohibit",
@@ -394,6 +402,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
                             TAB_AUDIO => audio_page(ui, p, s, st, &mut r.audio_changed, &mut r.refresh_devices),
                             8 => keys_page(ui, p, s, st),
                             9 => debug_page(ui, p, s),
+                            TAB_CAMERA => camera::page(ui, p, s),
                             _ => content(ui, p, s, st, &mut r.font_changed, &mut r.clear_cache),
                         };
                     });

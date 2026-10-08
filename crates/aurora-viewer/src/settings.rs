@@ -54,6 +54,8 @@ pub struct Settings {
     pub debug: DebugView,
     /// Build tools (grid, snap, create, land brush).
     pub build: crate::build::BuildSettings,
+    /// Camera (Firestorm « Déplacements et vue › Vue »).
+    pub camera: crate::camera::CameraSettings,
     pub username: String,
     pub remember_username: bool,
     /// Remember the password (its login hash, in the system credential
@@ -376,6 +378,7 @@ impl Default for Settings {
         Settings {
             debug: DebugView::default(),
             build: Default::default(),
+            camera: Default::default(),
             username: String::new(),
             remember_username: true,
             remember_password: false,
@@ -553,6 +556,7 @@ impl Settings {
             self.force_midday = false;
         }
         self.keybinds = std::mem::take(&mut self.keybinds).sanitized();
+        self.camera = std::mem::take(&mut self.camera).sanitized();
         if self.settings_version < 5 {
             // new defaults: no vsync, no frame cap (the old "0 = screen rate,
             // 1 = unlimited" setting becomes a switch + value)

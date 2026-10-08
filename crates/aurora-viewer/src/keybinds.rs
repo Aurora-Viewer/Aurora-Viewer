@@ -198,6 +198,18 @@ pub enum Action {
     AlwaysRun,
     Mouselook,
     ResetCamera,
+    /// Firestorm camera keys (spin_around_cw / ccw, spin_over / under,
+    /// move_forward / backward, pan_*).
+    CamOrbitCw,
+    CamOrbitCcw,
+    CamOrbitOver,
+    CamOrbitUnder,
+    CamZoomIn,
+    CamZoomOut,
+    CamPanLeft,
+    CamPanRight,
+    CamPanUp,
+    CamPanDown,
     Chat,
     PushToTalk,
     ToggleMic,
@@ -225,6 +237,16 @@ pub fn is_held(a: Action) -> bool {
             | Action::Up
             | Action::Down
             | Action::PushToTalk
+            | Action::CamOrbitCw
+            | Action::CamOrbitCcw
+            | Action::CamOrbitOver
+            | Action::CamOrbitUnder
+            | Action::CamZoomIn
+            | Action::CamZoomOut
+            | Action::CamPanLeft
+            | Action::CamPanRight
+            | Action::CamPanUp
+            | Action::CamPanDown
     )
 }
 
@@ -247,7 +269,20 @@ pub const SECTIONS: &[(&str, &[(Action, &str)])] = &[
     ),
     (
         "Caméra",
-        &[(Action::Mouselook, "Vue subjective"), (Action::ResetCamera, "Revenir à l'avatar")],
+        &[
+            (Action::Mouselook, "Vue subjective"),
+            (Action::ResetCamera, "Revenir à l'avatar"),
+            (Action::CamOrbitCw, "Tourner autour (sens horaire)"),
+            (Action::CamOrbitCcw, "Tourner autour (sens inverse)"),
+            (Action::CamOrbitOver, "Passer au-dessus"),
+            (Action::CamOrbitUnder, "Passer en dessous"),
+            (Action::CamZoomIn, "Rapprocher la caméra"),
+            (Action::CamZoomOut, "Éloigner la caméra"),
+            (Action::CamPanLeft, "Décaler la vue à gauche"),
+            (Action::CamPanRight, "Décaler la vue à droite"),
+            (Action::CamPanUp, "Décaler la vue en haut"),
+            (Action::CamPanDown, "Décaler la vue en bas"),
+        ],
     ),
     (
         "Communication",
@@ -307,6 +342,16 @@ fn kmod(code: KeyCode, ctrl: bool, shift: bool) -> Option<Binding> {
     })
 }
 
+/// Alt (+ Ctrl, + Shift) binding: Firestorm's third-person camera keys.
+fn kalt(code: KeyCode, ctrl: bool, shift: bool) -> Option<Binding> {
+    Some(Binding {
+        input: Input::key(code),
+        ctrl,
+        shift,
+        alt: true,
+    })
+}
+
 impl Default for KeyBindings {
     fn default() -> Self {
         use KeyCode as K;
@@ -323,6 +368,19 @@ impl Default for KeyBindings {
             (Action::AlwaysRun, [kmod(K::KeyR, true, false), None]),
             (Action::Mouselook, [k(K::KeyM), None]),
             (Action::ResetCamera, [k(K::Escape), None]),
+            (Action::CamOrbitCw, [kalt(K::ArrowLeft, false, false), None]),
+            (Action::CamOrbitCcw, [kalt(K::ArrowRight, false, false), None]),
+            (Action::CamOrbitOver, [kalt(K::PageUp, false, false), kalt(K::ArrowUp, true, false)]),
+            (
+                Action::CamOrbitUnder,
+                [kalt(K::PageDown, false, false), kalt(K::ArrowDown, true, false)],
+            ),
+            (Action::CamZoomIn, [kalt(K::ArrowUp, false, false), None]),
+            (Action::CamZoomOut, [kalt(K::ArrowDown, false, false), None]),
+            (Action::CamPanLeft, [kalt(K::ArrowLeft, true, true), None]),
+            (Action::CamPanRight, [kalt(K::ArrowRight, true, true), None]),
+            (Action::CamPanUp, [kalt(K::ArrowUp, true, true), None]),
+            (Action::CamPanDown, [kalt(K::ArrowDown, true, true), None]),
             (Action::Chat, [k(K::Enter), k(K::NumpadEnter)]),
             // SL default push-to-talk: middle mouse button
             (Action::PushToTalk, [Some(Binding::plain(Input::Mouse("Middle".into()))), None]),
@@ -425,13 +483,20 @@ impl KeyBindings {
             .collect()
     }
 
-    /// Is a held action active? Movement ignores the modifiers (Shift makes
-    /// arrows strafe in SL); a binding with modifiers needs them.
+    /// Is a held action active? A binding needs its modifiers and accepts
+    /// more (Shift makes arrows strafe in SL), but the held binding of the
+    /// same key with the most matching modifiers wins (LLViewerInput::scanKey:
+    /// Alt+← turns the camera, not the avatar).
     pub fn held(&self, a: Action, down: &HashSet<Input>, m: Mods) -> bool {
-        self.get(a)
-            .iter()
-            .flatten()
-            .any(|b| down.contains(&b.input) && (!b.ctrl || m.ctrl) && (!b.shift || m.shift) && (!b.alt || m.alt))
+        let fits = |b: &Binding| (!b.ctrl || m.ctrl) && (!b.shift || m.shift) && (!b.alt || m.alt);
+        let weight = |b: &Binding| b.ctrl as u8 + b.shift as u8 + b.alt as u8;
+        self.get(a).iter().flatten().any(|b| {
+            down.contains(&b.input)
+                && fits(b)
+                && !self.map.iter().any(|(x, bs)| {
+                    *x != a && is_held(*x) && bs.iter().flatten().any(|o| o.input == b.input && fits(o) && weight(o) > weight(b))
+                })
+        })
     }
 
     /// Action triggered by a press: an exact modifier match wins, then a
@@ -476,6 +541,21 @@ mod tests {
         for a in all_actions() {
             assert!(kb.map.iter().any(|(x, _)| *x == a), "{a:?}");
         }
+    }
+
+    #[test]
+    fn the_most_specific_held_binding_wins() {
+        let kb = KeyBindings::default();
+        let down: HashSet<Input> = [Input::key(KeyCode::ArrowUp)].into_iter().collect();
+        let mods = |ctrl, shift, alt| Mods { ctrl, shift, alt };
+        assert!(kb.held(Action::Forward, &down, mods(false, false, false)));
+        assert!(kb.held(Action::Forward, &down, mods(true, false, false)));
+        assert!(!kb.held(Action::Forward, &down, mods(false, false, true)));
+        assert!(kb.held(Action::CamZoomIn, &down, mods(false, false, true)));
+        assert!(kb.held(Action::CamOrbitOver, &down, mods(true, false, true)));
+        assert!(!kb.held(Action::CamZoomIn, &down, mods(true, false, true)));
+        assert!(kb.held(Action::CamPanUp, &down, mods(true, true, true)));
+        assert!(!kb.held(Action::CamOrbitOver, &down, mods(true, true, true)));
     }
 
     #[test]

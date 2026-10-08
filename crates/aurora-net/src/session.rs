@@ -1708,11 +1708,27 @@ impl Session<'_> {
             // the simulator sits us itself unless it asks for the autopilot walk
             // (process_avatar_sit_response); we skip the walk and sit at once
             let m: AvatarSitResponse = pkt.decode()?;
+            let st = &m.sit_transform;
+            emit(
+                self.sh,
+                NetEvent::SitResponse {
+                    object: m.sit_object.id,
+                    camera_eye: st.camera_eye_offset,
+                    camera_at: st.camera_at_offset,
+                    force_mouselook: st.force_mouselook,
+                },
+            );
             if m.sit_transform.auto_pilot {
                 let mut s = AgentSit::default();
                 s.agent_data.agent_id = self.agent_id();
                 s.agent_data.session_id = self.session_id();
                 self.send(from, &s, true);
+            }
+        } else if id == CameraConstraint::ID {
+            // the plane the simulator keeps our camera in front of (process_camera_constraint)
+            if self.main == Some(from) {
+                let m: CameraConstraint = pkt.decode()?;
+                emit(self.sh, NetEvent::CameraConstraint(m.camera_collide_plane.plane));
             }
         } else if id == AvatarPropertiesReply::ID {
             let m: AvatarPropertiesReply = pkt.decode()?;
