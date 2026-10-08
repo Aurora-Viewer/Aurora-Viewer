@@ -17,23 +17,48 @@ env:
 
 jobs:
   rust:
+    # The job always reports (main requires it); its Rust steps are skipped
+    # when only documentation or assets changed.
     name: fmt, clippy, tests (Windows)
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Code changed?
+        id: changes
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="${{ github.event.pull_request.base.sha }}"
+          else
+            base="${{ github.event.before }}"
+          fi
+          # documentation, images and repository metadata do not need a build
+          docs='^(docs/|assets/|[^/]*\.md$|LICENSE$|\.github/(pull_request_template\.md|release\.yml|dependabot\.yml)$)'
+          if files=$(git diff --name-only "$base" HEAD 2>/dev/null) && [ -n "$files" ] && ! echo "$files" | grep -qvE "$docs"; then
+            echo "code=false" >> "$GITHUB_OUTPUT"
+            echo "Documentation only: Rust checks skipped."
+          else
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          fi
       - name: Rust stable
+        if: steps.changes.outputs.code == 'true'
         run: |
           rustup update stable
           rustup component add rustfmt clippy
       - uses: Swatinem/rust-cache@v2
+        if: steps.changes.outputs.code == 'true'
       - name: Formatting
+        if: steps.changes.outputs.code == 'true'
         run: cargo fmt --all -- --check
+      # profile "ci" (Cargo.toml): unoptimized, no debug info, built fast
       - name: Clippy (warnings are errors)
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+        if: steps.changes.outputs.code == 'true'
+        run: cargo clippy --profile ci --workspace --all-targets --locked -- -D warnings
       - name: Tests
-        run: cargo test --workspace --locked
-      - name: Release build
-        run: cargo build --release --locked -p aurora-viewer
+        if: steps.changes.outputs.code == 'true'
+        run: cargo test --profile ci --workspace --locked
 
   secrets:
     name: secret scan

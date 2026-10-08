@@ -248,7 +248,7 @@ avec cette structure :
 | Vérification | Résultat |
 |---|---|
 | À jour avec main, sans conflit | ✅ |
-| CI (fmt, clippy, tests, build, secrets) | ✅ |
+| CI (fmt, clippy, tests, secrets) | ✅ |
 | Scénarios démo (avant / après) | ✅ captures ci-dessous |
 | Non-régression des fonctionnalités voisines | ✅ … |
 | Fidélité Firestorm | ✅ fichiers vérifiés : … |

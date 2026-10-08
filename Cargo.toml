@@ -15,6 +15,16 @@ opt-level = 1
 [profile.dev.package."*"]
 opt-level = 3
 
+# CI (clippy, tests): compiled fast rather than running fast.
+[profile.ci]
+inherits = "dev"
+opt-level = 0
+debug = false
+incremental = false
+
+[profile.ci.package."*"]
+opt-level = 0
+
 [profile.release]
 debug = 1
 lto = "thin"
