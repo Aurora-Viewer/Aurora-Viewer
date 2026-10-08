@@ -458,6 +458,17 @@ pub enum NetEvent {
         owner_name: String,
         questions: i32,
     },
+    /// AvatarSitResponse: the seat's camera (llSetCameraEyeOffset /
+    /// llSetCameraAtOffset, seat-relative) and llForceMouselook.
+    SitResponse {
+        object: Uuid,
+        camera_eye: Vec3,
+        camera_at: Vec3,
+        force_mouselook: bool,
+    },
+    /// CameraConstraint: plane (normal, distance) between our head and
+    /// the camera, region coordinates.
+    CameraConstraint(glam::Vec4),
     /// llLoadURL.
     LoadUrl {
         object_name: String,

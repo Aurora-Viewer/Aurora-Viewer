@@ -1369,3 +1369,59 @@ pub fn legacy_materials() -> Vec<(Uuid, crate::scene::legacy_mat::LegacyMaterial
         ),
     ]
 }
+
+/// AURORA_DEMO_CAMERA="sit": a seat with a sit camera (llSetCameraEyeOffset
+/// / llSetCameraAtOffset); it appears at frame 250, we sit on it at 300, it
+/// turns like a vehicle from 400 and we stand up at 700.
+pub fn sit_events(frame: u64) -> Vec<NetEvent> {
+    const SEAT: u32 = 950;
+    let boxp = shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE, 100, 0, 0);
+    let (x, y) = (128.0, 121.0);
+    let z = floor_at(x, y) + 0.2;
+    let seat = |f: u64| {
+        let turn = f.saturating_sub(400) as f32 * 0.01;
+        prim(
+            SEAT,
+            Vec3::new(x, y, z),
+            Quat::from_rotation_z(turn),
+            Vec3::new(1.0, 1.0, 0.4),
+            boxp,
+            te([0.48, 0.3, 0.75, 1.0], 0, false, 0.0),
+            ExtraParams::default(),
+            "Siège (caméra de siège)",
+        )
+    };
+    let me = |parent: u32, pos: Vec3| {
+        let mut o = prim(
+            9000,
+            pos,
+            Quat::from_rotation_z(0.3),
+            Vec3::new(0.45, 0.6, 1.9),
+            boxp,
+            te([0.91, 0.93, 0.98, 1.0], 0, false, 0.0),
+            ExtraParams::default(),
+            "",
+        );
+        o.pcode = LL_PCODE_LEGACY_AVATAR;
+        o.full_id = DEMO_AGENT;
+        o.parent_id = parent;
+        o.name_values = "FirstName STRING RW SV Aurora\nLastName STRING RW SV Demo\nTitle STRING RW SV Aurora".into();
+        o
+    };
+    let update = |objects: Vec<ObjectUpdate>| NetEvent::ObjectUpdates { handle: HANDLE, objects };
+    match frame {
+        250 => vec![update(vec![seat(frame)])],
+        300 => vec![
+            NetEvent::SitResponse {
+                object: seat(frame).full_id,
+                camera_eye: Vec3::new(-3.0, 1.5, 1.5),
+                camera_at: Vec3::new(0.0, 0.0, 0.8),
+                force_mouselook: false,
+            },
+            update(vec![me(SEAT, Vec3::new(0.0, 0.0, 0.9))]),
+        ],
+        f if f > 400 && f < 700 && f.is_multiple_of(5) => vec![update(vec![seat(f)])],
+        700 => vec![update(vec![me(0, Vec3::new(x + 1.2, y, floor_at(x + 1.2, y) + 0.84))])],
+        _ => Vec::new(),
+    }
+}

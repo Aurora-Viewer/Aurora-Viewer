@@ -66,7 +66,7 @@ enum MouseMode {
     None,
     /// Left button held on the own avatar: turn it with the mouse.
     Steer,
-    /// Ctrl+Alt+left held: orbit the camera focus point.
+    /// Alt+left held: alt-camera drag (zoom; Ctrl orbit; Ctrl+Shift pan).
     FocusOrbit,
 }
 
@@ -139,6 +139,8 @@ pub struct App {
     fb_since: Option<Instant>,
     /// Turn key held since (yaw rate ramp).
     turn_since: Option<Instant>,
+    /// Since when each camera key is held (CameraKeys rate ramp).
+    cam_key_since: [Option<Instant>; 10],
     /// Look-at: setting last frame, camera focus, cursor and body heading
     /// (LLAgentCamera::updateLookAt).
     look_at_was_on: bool,
@@ -367,6 +369,7 @@ impl App {
             voice_level: 0.0,
             fb_since: None,
             turn_since: None,
+            cam_key_since: [None; 10],
             look_at_was_on: false,
             demo_look_at: false,
             look_focus: None,
@@ -606,9 +609,16 @@ impl App {
             NetEvent::AgentMovementComplete { .. } => {
                 self.move_complete_at = Some(Instant::now());
                 self.tp_checks = vec![10.0, 3.0];
-                self.camera.snap();
+                self.camera.on_teleport_arrival(&self.settings.camera);
                 self.loading_stage = "Chargement de la scène…".into();
             }
+            NetEvent::SitResponse {
+                object,
+                camera_eye,
+                camera_at,
+                force_mouselook,
+            } => self.camera.on_sit_response(object, camera_eye, camera_at, force_mouselook),
+            NetEvent::CameraConstraint(plane) => self.camera.set_collide_plane(plane, &self.settings.camera),
             NetEvent::Disconnected { reason } => {
                 self.back_to_login(Some(format!("Déconnecté : {reason}")));
             }
@@ -710,9 +720,89 @@ impl App {
     }
 
     fn toggle_mouselook(&mut self) {
-        self.camera.toggle_mouselook(&mut self.world.agent);
+        self.camera.toggle_mouselook(&mut self.world.agent, &self.settings.camera);
         let ml = self.camera.mouselook();
         self.set_mouselook_grab(ml);
+    }
+
+    /// Mouse motion: mouselook, camera drags (steering, Alt), right drag orbit.
+    fn camera_mouse_delta(&mut self, dx: f32, dy: f32) {
+        let s = self.settings.mouse_sensitivity;
+        if self.camera.mouselook() {
+            self.camera.look(dx, dy, s, &mut self.world.agent);
+        } else if self.mouse_mode != MouseMode::None {
+            // LLToolCamera: steering is the zoom tool on our avatar
+            let mode = match self.mouse_mode {
+                MouseMode::Steer => crate::camera::ToolMode::Zoom,
+                _ => crate::camera::ToolMode::from_mods(self.ctrl, self.shift),
+            };
+            let width = self.gfx.as_ref().map(|g| g.renderer.size().0 as f32).unwrap_or(1280.0);
+            self.camera.drag(mode, dx, dy, width, &mut self.world.agent);
+        } else if self.right_drag {
+            self.right_moved += dx.abs() + dy.abs();
+            if self.right_moved < 4.0 {
+                return; // maybe a click: do not move the camera yet
+            }
+            self.camera.orbit_drag(dx, dy, s, &mut self.world.agent);
+        }
+    }
+
+    /// AURORA_DEMO_CAMERA: scripted camera input (camera/demo.rs).
+    fn demo_camera_steps(&mut self, spec: &str) {
+        use crate::camera::demo::Step;
+        for step in crate::camera::demo::steps(spec, self.frame_count) {
+            match step {
+                Step::Cursor(x, y) => self.cursor_pos = (x, y),
+                Step::Mods { ctrl, shift, alt } => {
+                    self.ctrl = ctrl;
+                    self.shift = shift;
+                    self.alt = alt;
+                }
+                Step::Press => self.on_left_press(),
+                Step::Release => self.on_left_release(),
+                Step::Drag(dx, dy) => self.camera_mouse_delta(dx, dy),
+                Step::Walk(on) => {
+                    if on {
+                        self.down.insert(Input::key(KeyCode::ArrowUp));
+                    } else {
+                        self.down.remove(&Input::key(KeyCode::ArrowUp));
+                    }
+                }
+                Step::ToggleMouselook => self.toggle_mouselook(),
+                Step::Wheel(clicks) => {
+                    let was = self.camera.mouselook();
+                    self.camera
+                        .scroll(clicks, false, false, &mut self.world.agent, &mut self.settings.camera);
+                    if was != self.camera.mouselook() {
+                        self.set_mouselook_grab(!was);
+                    }
+                }
+                Step::Fly => self.world.agent.flying = true,
+                Step::SitEvents => {
+                    for ev in crate::demo::sit_events(self.frame_count) {
+                        if let Some(e) = self.world.apply(ev) {
+                            self.on_app_event(e);
+                        }
+                    }
+                }
+                Step::Log => log::info!(
+                    "demo camera f{}: {} (mouse {:?}, agent yaw {:.2})",
+                    self.frame_count,
+                    self.camera.describe(),
+                    self.mouse_mode,
+                    self.world.agent.yaw
+                ),
+            }
+        }
+    }
+
+    /// Escape / « Réinitialiser la caméra » (handle_reset_view).
+    fn reset_camera_view(&mut self) {
+        let was = self.camera.mouselook();
+        self.camera.handle_reset_view(&mut self.world.agent, &self.settings.camera);
+        if was && !self.camera.mouselook() {
+            self.set_mouselook_grab(false);
+        }
     }
 
     fn mods(&self) -> Mods {
@@ -801,15 +891,7 @@ impl App {
                 });
             }
             Action::Mouselook => self.toggle_mouselook(),
-            Action::ResetCamera => {
-                if self.camera.mouselook() {
-                    self.toggle_mouselook();
-                } else {
-                    // back to the avatar (SL: Esc resets the camera)
-                    self.camera.clear_focus();
-                    self.camera.reset_orbit();
-                }
-            }
+            Action::ResetCamera => self.reset_camera_view(),
             Action::Chat => self.chat_ui.focus_request = true,
             Action::ToggleMic => self.mic_on = !self.mic_on,
             Action::Conversations => self.panels.chat = !self.panels.chat,
@@ -905,7 +987,7 @@ impl App {
         });
         let on_avatar = avatar_hit.is_some();
         // a media face takes the click (LLToolPie::handleMediaClick)
-        if !(self.ctrl && self.alt) && !on_avatar {
+        if !self.alt && !on_avatar {
             if let Some(ray) = ray {
                 let depth_t = hit.map(|p| (p - ray.0).dot(ray.1));
                 let mods = aurora_media::Modifiers {
@@ -923,19 +1005,34 @@ impl App {
         } else {
             self.media.unfocus();
         }
-        if self.ctrl && self.alt {
-            // Ctrl+Alt+click: aim the camera at the point (our avatar too, to
-            // look at a part of it closely), keep holding to orbit it
-            if let Some(p) = avatar_hit.or(hit) {
-                self.camera.set_focus(p);
-            }
-            if self.camera.focus.is_some() {
+        let now = Instant::now();
+        let own_idx = self.world.objects.index_of_uuid(&self.world.agent_id);
+        if self.alt {
+            // Alt+click (LLToolCamera): lock the camera on the clicked point
+            // (our avatar too, to look at a part of it closely); keep holding
+            // to zoom, Ctrl to orbit, Ctrl+Shift to pan
+            if let (Some(p), Some(ray)) = (avatar_hit.or(hit), ray) {
+                let idx = if on_avatar {
+                    own_idx
+                } else {
+                    self.scene.pick_at(&self.world, p, now)
+                };
+                let object = idx.and_then(|i| crate::camera::pick_focus_object(&self.world, i, now));
+                self.camera.alt_focus(p, object, ray, &mut self.world.agent, &self.settings.camera);
+                self.camera.begin_drag(false);
                 self.mouse_mode = MouseMode::FocusOrbit;
                 self.set_mouselook_grab(true);
             }
-        } else if on_avatar {
-            // click on the avatar: camera back to it; hold and drag to turn it
-            self.camera.clear_focus();
+        } else if let (Some(p), Some(ray)) = (avatar_hit, ray) {
+            // click on our avatar (LLToolPie -> LLToolCamera): the camera goes
+            // back to it unless ClickOnAvatarKeepsCamera; hold and drag to steer
+            let object = own_idx.and_then(|i| crate::camera::pick_focus_object(&self.world, i, now));
+            let s = &self.settings.camera;
+            self.camera.alt_focus(p, object, ray, &mut self.world.agent, s);
+            if !s.click_avatar_keeps_camera {
+                self.camera.set_focus_on_avatar(true, true, true, &mut self.world.agent, s);
+            }
+            self.camera.begin_drag(true);
             self.mouse_mode = MouseMode::Steer;
             self.set_mouselook_grab(true);
         }
@@ -1009,9 +1106,9 @@ impl App {
         }
         self.look_at_was_on = on;
         // the camera aims at a point (Ctrl+Alt+click, zoom): FOCUS, then CLEAR
-        if self.camera.focus != self.look_focus {
-            self.look_focus = self.camera.focus;
-            match (self.camera.focus, self.world.main_origin()) {
+        if self.camera.focus_point() != self.look_focus {
+            self.look_focus = self.camera.focus_point();
+            match (self.look_focus, self.world.main_origin()) {
                 (Some(p), Some((mx, my))) => {
                     let g = glam::DVec3::new(mx as f64, my as f64, 0.0) + p.as_dvec3();
                     self.set_look_at(lookat::FOCUS, None, g);
@@ -1448,16 +1545,13 @@ impl App {
         match act {
             CtxAction::Touch(local_id) => self.send(NetCommand::Touch { local_id }),
             CtxAction::Sit { target, offset } => self.send(NetCommand::RequestSit { target, offset }),
-            CtxAction::Zoom(p) => self.camera.zoom_to(p, 3.0),
+            CtxAction::Zoom(p) => self.camera.zoom_to(p, &mut self.world.agent, &self.settings.camera),
             CtxAction::AboutLand => self.panels.about_land = true,
             CtxAction::DisplayName => self.display_name_ui.open(),
             CtxAction::StandUp => self.send(NetCommand::OneShotControl(control::STAND_UP)),
             CtxAction::SitGround => self.send(NetCommand::OneShotControl(control::SIT_ON_GROUND)),
             CtxAction::ToggleFly => self.toggle_fly(),
-            CtxAction::ResetCamera => {
-                self.camera.clear_focus();
-                self.camera.reset_orbit();
-            }
+            CtxAction::ResetCamera => self.reset_camera_view(),
             CtxAction::Im(id) | CtxAction::Profile(id) => {
                 // UISndStartIM (LLAvatarActions::startIM)
                 if matches!(act, CtxAction::Im(_)) && self.settings.audio.ui_sounds {
@@ -1531,7 +1625,7 @@ impl App {
 
     /// Left press while building: handles, selection, create, terraform.
     fn build_mouse_down(&mut self) -> bool {
-        if !self.build.open || (self.ctrl && self.alt) {
+        if !self.build.open || self.alt {
             return false;
         }
         let Some(g) = self.gfx.as_mut() else {
@@ -1566,6 +1660,7 @@ impl App {
         });
         if self.mouse_mode != MouseMode::None {
             self.mouse_mode = MouseMode::None;
+            self.camera.end_drag();
             if !self.camera.mouselook() {
                 self.set_mouselook_grab(false);
             }
@@ -1698,21 +1793,52 @@ impl App {
             self.turn_since = None;
             0.0
         };
-        // moving brings the camera back to the avatar
-        if i.forward || i.back || i.turn_left || i.turn_right || i.strafe_left || i.strafe_right || i.up || i.down {
-            if self.camera.focus.is_some() && self.mouse_mode != MouseMode::FocusOrbit {
-                self.camera.clear_focus();
-            }
-            // FSResetCameraOnMovement (on): after orbiting the camera, a
-            // movement key turns the agent to where the camera looks
-            // (LLAgentCamera::resetView -> setFocusOnAvatar, resetAxes); the
-            // camera stays put and the body turns around to walk away from it
-            if self.mouse_mode != MouseMode::Steer && !self.camera.mouselook() && self.camera.orbit_yaw != 0.0 {
-                self.world.agent.yaw += self.camera.orbit_yaw;
-                self.camera.orbit_yaw = 0.0;
-            }
+        // moving brings the camera back to the avatar (LLAgent::moveAt & co ->
+        // resetView, FSResetCameraOnMovement): after an orbit the agent turns
+        // to where the camera looks, the camera stays put
+        let moving = i.forward || i.back || i.turn_left || i.turn_right || i.strafe_left || i.strafe_right || i.up || i.down;
+        if moving && self.mouse_mode != MouseMode::FocusOrbit {
+            let steering = self.mouse_mode == MouseMode::Steer;
+            self.camera
+                .reset_view(&mut self.world.agent, &self.settings.camera, true, false, true, steering);
         }
         self.input = i;
+        // camera keys (Alt + arrows...), ramping up like get_orbit_rate
+        use crate::keybinds::Action as A;
+        const CAMERA_KEYS: [A; 10] = [
+            A::CamOrbitCw,
+            A::CamOrbitCcw,
+            A::CamOrbitOver,
+            A::CamOrbitUnder,
+            A::CamZoomIn,
+            A::CamZoomOut,
+            A::CamPanLeft,
+            A::CamPanRight,
+            A::CamPanUp,
+            A::CamPanDown,
+        ];
+        let mut rate = [0.0f32; 10];
+        for (n, a) in CAMERA_KEYS.into_iter().enumerate() {
+            if !typing && self.in_world() && self.settings.keybinds.held(a, &self.down, m) {
+                let held = self.cam_key_since[n].get_or_insert(now).elapsed().as_secs_f32();
+                rate[n] = if held < NUDGE_TIME { 0.05 + held * 0.95 / NUDGE_TIME } else { 1.0 };
+            } else {
+                self.cam_key_since[n] = None;
+            }
+        }
+        let keys = crate::camera::CameraKeys {
+            orbit_right: rate[0],
+            orbit_left: rate[1],
+            orbit_up: rate[2],
+            orbit_down: rate[3],
+            zoom_in: rate[4],
+            zoom_out: rate[5],
+            pan_left: rate[6],
+            pan_right: rate[7],
+            pan_up: rate[8],
+            pan_down: rate[9],
+        };
+        self.camera.apply_keys(keys, &mut self.world.agent, &self.settings.camera, dt);
     }
 
     // ------------------------------------------------------------------ frame
@@ -2022,8 +2148,14 @@ impl App {
             }
             let camera_distance = self.camera.position.distance(self.world.agent.position);
             self.world.agent.update(&self.input, ml, dt, camera_distance);
-            let ground = self.world.ground_height(self.camera.position);
-            self.camera.update(&self.world.agent, ground, dt);
+            let frame = crate::camera::FrameInput {
+                dt,
+                now: Instant::now(),
+                steering: self.mouse_mode == MouseMode::Steer,
+                build_mode: self.build.open,
+                draw_distance: self.settings.draw_distance,
+            };
+            self.camera.update(&mut self.world, &self.settings.camera, &frame);
             let at = self.camera.forward();
             self.world.agent.body_turn = self.world.update_bodies(Instant::now(), dt, at, ml);
             self.update_look_at(w as f32, h as f32);
@@ -2765,6 +2897,12 @@ impl App {
                     .on_key(code, 0x1E, k.is_multiple_of(2), false, k.is_multiple_of(2).then_some(ch), mods);
             }
         }
+        // AURORA_DEMO_CAMERA="alt,x,y" (pan, zoom, ml, wheel, fly): camera/demo.rs
+        if self.demo
+            && let Ok(v) = std::env::var("AURORA_DEMO_CAMERA")
+        {
+            self.demo_camera_steps(&v);
+        }
         // AURORA_DEMO_MMO="x,y": left press on the avatar at frame 225, right
         // button held from 235 to 330 (MMO walking test), positions logged
         if self.demo
@@ -2935,7 +3073,7 @@ impl App {
             BarAction::ToggleMouselook => self.toggle_mouselook(),
             BarAction::SitGround => self.toggle_ground_sit(),
             BarAction::StandUp => self.send(NetCommand::OneShotControl(control::STAND_UP)),
-            BarAction::ResetCamera => self.camera.reset_orbit(),
+            BarAction::ResetCamera => self.reset_camera_view(),
             BarAction::BanLines(v) => self.settings.maps.ban_lines = v,
         }
     }
@@ -3642,11 +3780,7 @@ impl ApplicationHandler for App {
             if let Ok(v) = std::env::var("AURORA_DEMO_CAM") {
                 let p: Vec<f32> = v.split(',').filter_map(|s| s.trim().parse().ok()).collect();
                 if p.len() >= 2 {
-                    self.camera.orbit_yaw = p[0];
-                    self.camera.orbit_pitch = p[1];
-                }
-                if let Some(d) = p.get(2) {
-                    self.camera.distance = *d;
+                    self.camera.demo_orbit(p[0], p[1], p.get(2).copied(), &self.settings.camera);
                 }
             }
             if std::env::var_os("AURORA_DEMO_UI").is_some() {
@@ -3883,7 +4017,13 @@ impl ApplicationHandler for App {
                     None => false,
                 };
                 if !on_media {
-                    self.camera.zoom(steps);
+                    // SL wheel clicks: positive zooms out
+                    let was = self.camera.mouselook();
+                    self.camera
+                        .scroll(-steps, self.ctrl, self.shift, &mut self.world.agent, &mut self.settings.camera);
+                    if was != self.camera.mouselook() {
+                        self.set_mouselook_grab(!was);
+                    }
                 }
             }
             _ => {}
@@ -3895,22 +4035,8 @@ impl ApplicationHandler for App {
             if !self.in_world() {
                 return;
             }
-            let s = self.settings.mouse_sensitivity;
             let dy = if self.settings.invert_mouse { -delta.1 } else { delta.1 };
-            let (dx, dy) = (delta.0 as f32, dy as f32);
-            if self.camera.mouselook() {
-                self.camera.on_mouse_delta(dx, dy, s, &mut self.world.agent);
-            } else if self.mouse_mode == MouseMode::Steer {
-                self.camera.steer(dx, dy, s, &mut self.world.agent);
-            } else if self.mouse_mode == MouseMode::FocusOrbit || self.right_drag {
-                if self.right_drag {
-                    self.right_moved += dx.abs() + dy.abs();
-                    if self.right_moved < 4.0 {
-                        return; // maybe a click: do not move the camera yet
-                    }
-                }
-                self.camera.on_mouse_delta(dx, dy, s, &mut self.world.agent);
-            }
+            self.camera_mouse_delta(delta.0 as f32, dy as f32);
         }
     }
 
