@@ -475,6 +475,10 @@ impl App {
     // ------------------------------------------------------------------ login
 
     fn start_login(&mut self) {
+        if self.demo {
+            self.login_form.error = Some("Mode démo : aucune connexion à une grille.".into());
+            return;
+        }
         let start = match self.settings.start_location.as_str() {
             "home" => StartLocation::Home,
             "region" if !self.settings.start_region.trim().is_empty() => StartLocation::Region {
@@ -2926,6 +2930,13 @@ impl App {
     /// switched off.
     fn sync_remembered_password(&mut self) {
         let key = (self.settings.login_uri(), self.settings.username.trim().to_lowercase());
+        if self.demo {
+            // The login demo uses a synthetic marker and never accesses the OS store.
+            if !self.settings.remember_password || self.login_form.stored_for.as_ref() != Some(&key) {
+                self.login_form.stored = None;
+            }
+            return;
+        }
         if !self.settings.remember_password {
             if self.login_form.stored.take().is_some() {
                 crate::credentials::forget(&key.0, &key.1);
@@ -3567,6 +3578,15 @@ impl ApplicationHandler for App {
         });
         if std::env::var_os("AURORA_DEMO").is_some() {
             self.demo = true;
+            if let Ok(mode) = std::env::var("AURORA_DEMO_LOGIN") {
+                self.settings.username = "Demo Resident".into();
+                self.settings.remember_username = true;
+                self.settings.remember_password = mode == "remembered";
+                self.login_form.stored = self.settings.remember_password.then(|| "demo-login-marker".into());
+                self.login_form.stored_for = Some((self.settings.login_uri(), self.settings.username.to_lowercase()));
+                // Stay on the login screen without a grid or a credential store.
+                return;
+            }
             log::info!("demo mode: injecting synthetic region");
             let rig = self.scene.avatar_lib.rig.clone();
             self.scene.anims.insert(
