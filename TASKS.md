@@ -145,6 +145,8 @@ Légende : ✅ fait (et vérifié sur Agni quand ça dépend de la grille) · �
 - ✅ Cache disque roulant (LRU) : textures, mesh, matériaux, animations (partagés entre régions), objets par région, inventaire ; au-delà de la limite, les fichiers les moins récemment utilisés partent jusqu'à 85 %
 - ✅ 20 Go par défaut (réglable jusqu'à 64 Go) + bouton « Vider le cache » ; taille suivie au fil des écritures, le dossier n'est parcouru qu'au démarrage, au dépassement et toutes les 30 min
 - ✅ Cache d'inventaire (dossiers dont la version n'a pas changé restaurés sans requête)
+- ✅ Format du cache comme Firestorm : un fichier brut par asset, sans chiffrement (Firestorm écrit `sl_cache_<uuid>_0.asset` et garde les sons décodés en WAV `.dsf`, `lldiskcache.cpp`, `llaudiodecodemgr.cpp`) ; chiffrer ne protégerait rien (viewer open source, un copybot capte les données sur le réseau, pas dans le cache) ; on garde nos extensions (`.ogg`, `.mesh`…), une extension neutre comme `.asset` ne protégerait rien non plus : la protection du contenu passe par les exports
+- ⬜ Exports réservés au créateur, comme Firestorm et la politique des viewers tiers de Linden Lab : toute fonction d'export (objet, mesh, DAE, texture, son, animation, sauvegarde d'inventaire) n'est permise sur Second Life que si l'utilisateur possède l'objet **et** en est le créateur, ainsi que de chaque mesh (créateur lu dans l'en-tête du mesh) et de chaque texture ; reprendre `FSExportPermsCheck::canExportNode` / `canExportAsset` (`indra/newview/fsexportperms.cpp`) au portage de la première fonction d'export
 
 ## Contrôles
 
