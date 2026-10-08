@@ -45,6 +45,7 @@ struct Sim {
     caps: Arc<HashMap<String, String>>,
     eq_task: Option<JoinHandle<()>>,
     last_ping: Instant,
+    time_dilation: f32,
     /// UseCircuitCode sequence; CompleteAgentMovement waits for its ack.
     ucc_seq: Option<u32>,
     pending_cam: bool,
@@ -63,6 +64,7 @@ impl Sim {
             caps: Arc::new(HashMap::new()),
             eq_task: None,
             last_ping: Instant::now(),
+            time_dilation: 1.0,
             ucc_seq: None,
             pending_cam: false,
             ucc_sent_at: Instant::now(),
@@ -244,6 +246,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         log::debug!("closed circuit {addr}");
     }
     sh.stats.sim_count.store(0, Ordering::Relaxed);
+    *sh.stats.simulator_motion.lock() = Default::default();
 }
 
 impl Session<'_> {
@@ -302,6 +305,7 @@ impl Session<'_> {
             }
             handle = sim.handle;
         }
+        self.publish_motion();
         self.request_caps(addr);
         emit(self.sh, NetEvent::MainRegionChanged { handle });
     }
@@ -587,10 +591,31 @@ impl Session<'_> {
         self.sh.stats.sim_count.store(self.sims.len() as u32, Ordering::Relaxed);
     }
 
+    fn publish_motion(&self) {
+        *self.sh.stats.simulator_motion.lock() = self
+            .main
+            .and_then(|addr| self.sims.get(&addr))
+            .map_or_else(Default::default, |sim| crate::stats::SimulatorMotion {
+                handle: Some(sim.handle),
+                time_dilation: sim.time_dilation,
+                last_packet: Some(sim.circuit.last_recv),
+            });
+    }
+
+    // LLViewerObject::processUpdateMessage: U16 region time dilation is
+    // scaled by 65535, and belongs to the sending simulator, not every circuit.
+    fn set_time_dilation(&mut self, from: SocketAddr, value: u16) {
+        if let Some(sim) = self.sims.get_mut(&from) {
+            sim.time_dilation = value as f32 / 65535.0;
+        }
+        self.publish_motion();
+    }
+
     // ----------------------------------------------------------------- tick
 
     fn tick(&mut self) {
         let now = Instant::now();
+        self.publish_motion();
         if self.last_cache_save.elapsed() > Duration::from_secs(120) {
             self.last_cache_save = Instant::now();
             for c in self.obj_caches.values_mut() {
@@ -1526,6 +1551,7 @@ impl Session<'_> {
             }
         } else if id == ObjectUpdate::ID {
             let m: ObjectUpdate = pkt.decode()?;
+            self.set_time_dilation(from, m.region_data.time_dilation);
             let objects: Vec<_> = m.object_data.iter().filter_map(objects::parse_full).collect();
             if !objects.is_empty() {
                 emit(
@@ -1538,6 +1564,7 @@ impl Session<'_> {
             }
         } else if id == ObjectUpdateCompressed::ID {
             let m: ObjectUpdateCompressed = pkt.decode()?;
+            self.set_time_dilation(from, m.region_data.time_dilation);
             let mut cache = self.obj_caches.get_mut(&from);
             let objects: Vec<_> = m
                 .object_data
@@ -1561,6 +1588,7 @@ impl Session<'_> {
             }
         } else if id == ImprovedTerseObjectUpdate::ID {
             let m: ImprovedTerseObjectUpdate = pkt.decode()?;
+            self.set_time_dilation(from, m.region_data.time_dilation);
             let updates: Vec<_> = m.object_data.iter().filter_map(objects::parse_terse).collect();
             if !updates.is_empty() {
                 emit(
@@ -1573,6 +1601,7 @@ impl Session<'_> {
             }
         } else if id == ObjectUpdateCached::ID {
             let m: ObjectUpdateCached = pkt.decode()?;
+            self.set_time_dilation(from, m.region_data.time_dilation);
             // cache hits (same CRC) are applied locally, misses requested
             let mut hits = Vec::new();
             let mut misses = Vec::new();

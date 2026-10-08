@@ -1999,8 +1999,14 @@ impl App {
                 let p = self.world.agent.position;
                 let floor = crate::demo::floor_at(p.x, p.y);
                 self.world.agent.simulate_locally(&self.input, ml, Some(floor), dt);
+            } else {
+                let motion = *self.net.stats.simulator_motion.lock();
+                if motion.handle == self.world.main_region {
+                    self.world.predict_agent(motion.time_dilation, motion.packet_age());
+                }
             }
-            self.world.agent.update(&self.input, ml, dt);
+            let camera_distance = self.camera.position.distance(self.world.agent.position);
+            self.world.agent.update(&self.input, ml, dt, camera_distance);
             let ground = self.world.ground_height(self.camera.position);
             self.camera.update(&self.world.agent, ground, dt);
             let at = self.camera.forward();

@@ -1,9 +1,37 @@
 //! Lock-free network counters shared with the UI.
 
+use parking_lot::Mutex;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::time::Instant;
+
+/// Main simulator clock used by LLViewerObject-style motion extrapolation.
+#[derive(Debug, Clone, Copy)]
+pub struct SimulatorMotion {
+    pub handle: Option<crate::RegionHandle>,
+    pub time_dilation: f32,
+    pub last_packet: Option<Instant>,
+}
+
+impl Default for SimulatorMotion {
+    fn default() -> Self {
+        Self {
+            handle: None,
+            time_dilation: 1.0,
+            last_packet: None,
+        }
+    }
+}
+
+impl SimulatorMotion {
+    pub fn packet_age(&self) -> f32 {
+        self.last_packet.map_or(f32::INFINITY, |last| last.elapsed().as_secs_f32())
+    }
+}
 
 #[derive(Default, Debug)]
 pub struct NetStats {
+    /// One coherent snapshot: neighbor packets must not keep the main circuit alive.
+    pub simulator_motion: Mutex<SimulatorMotion>,
     pub packets_in: AtomicU64,
     pub packets_out: AtomicU64,
     pub bytes_in: AtomicU64,

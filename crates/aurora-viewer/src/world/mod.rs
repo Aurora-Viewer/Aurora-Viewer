@@ -264,6 +264,77 @@ impl World {
         None
     }
 
+    /// LLViewerObject::interpolateLinearMotion terrain and visible-region
+    /// constraints. The default Firestorm crossing fix is disabled, so known
+    /// neighboring regions do not impose a separate prediction time limit.
+    pub fn predict_agent(&mut self, time_dilation: f32, packet_age: f32) {
+        if !self.agent.has_local_control() || !self.movement_complete {
+            return;
+        }
+        let start = self.agent.predicted_position();
+        self.agent.predict(time_dilation, packet_age);
+        let mut end = self.agent.predicted_position();
+        if end == start {
+            return;
+        }
+        let half_height = self
+            .objects
+            .index_of_uuid(&self.agent_id)
+            .and_then(|idx| self.objects.get(idx))
+            .map_or(0.84, |o| 0.5 * o.scale.z);
+        if let Some(ground) = self.ground_height(end) {
+            end.z = end.z.max(ground + half_height);
+        }
+        let clipped = self.clip_to_visible_regions(start, end);
+        self.agent.constrain_prediction(clipped, clipped != end);
+    }
+
+    /// Port of LLWorld::clipToVisibleRegions (indra/newview/llworld.cpp,
+    /// originally LGPL 2.1). Coordinates here are relative to our main region.
+    fn clip_to_visible_regions(&self, start: Vec3, end: Vec3) -> Vec3 {
+        let region_at = |p: Vec3| {
+            self.regions.values().find_map(|r| {
+                let origin = self.region_offset(r.handle)?;
+                let size = Vec3::new(r.heightmap.size_x as f32, r.heightmap.size_y as f32, 0.0);
+                let local = p - origin;
+                (local.x >= 0.0 && local.y >= 0.0 && local.x < size.x && local.y < size.y).then_some((origin, size))
+            })
+        };
+        if region_at(end).is_some() {
+            return end;
+        }
+        let Some((origin, size)) = region_at(start) else {
+            return start;
+        };
+        let delta = end - start;
+        let abs_delta = delta.abs();
+        let local = end - origin;
+        let factor = if local.x < 0.0 {
+            if local.y < local.x {
+                -local.y / abs_delta.y
+            } else {
+                -local.x / abs_delta.x
+            }
+        } else if local.x > size.x {
+            if local.y > local.x {
+                (local.y - size.y) / abs_delta.y
+            } else {
+                (local.x - size.x) / abs_delta.x
+            }
+        } else if local.y < 0.0 {
+            -local.y / abs_delta.y
+        } else if local.y > size.y {
+            (local.y - size.y) / abs_delta.y
+        } else {
+            1.0
+        };
+        let mut clipped = local - delta * factor;
+        clipped.x = clipped.x.clamp(0.0, size.x - 1e-5);
+        clipped.y = clipped.y.clamp(0.0, size.y - 1e-5);
+        clipped.z = clipped.z.clamp(0.0, 4096.0 - 1e-5);
+        origin + clipped
+    }
+
     fn push_chat(&mut self, line: ChatLine) {
         self.chat.push_back(line);
         self.chat_unread += 1;
@@ -499,11 +570,13 @@ impl World {
                     }
                     let is_me = u.full_id == me;
                     let pos = u.position;
+                    let velocity = u.velocity;
+                    let acceleration = u.acceleration;
                     let parent = u.parent_id;
                     self.objects.upsert(handle, u);
                     if is_me {
                         self.agent
-                            .on_server_update(pos, Vec3::ZERO, parent != 0, Some(handle) == self.main_region);
+                            .on_server_update(pos, velocity, acceleration, parent != 0, Some(handle) == self.main_region);
                     }
                 }
                 None
@@ -525,7 +598,7 @@ impl World {
                         }
                         if mine {
                             self.agent
-                                .on_server_update(t.position, t.velocity, seated, Some(handle) == self.main_region);
+                                .on_server_update(t.position, t.velocity, t.acceleration, seated, Some(handle) == self.main_region);
                         }
                     }
                 }
@@ -1296,5 +1369,120 @@ impl World {
 
     pub fn animations_of(&self, owner: &Uuid) -> &[(Uuid, i32, Instant)] {
         self.animations.get(owner).map(|v| v.as_slice()).unwrap_or(&[])
+    }
+}
+
+#[cfg(test)]
+mod motion_tests {
+    use super::*;
+    use aurora_net::objects::TerseUpdate;
+
+    fn fixture() -> (World, aurora_net::objects::ObjectUpdate, RegionHandle) {
+        let mut world = World::new(Arc::new(AvatarLibrary::load()));
+        let me = Uuid::from_u128(0xA0E0_A6E1_0000_0000_0000_0000_0000_0001);
+        world.agent_id = me;
+        let (handle, update) = crate::demo::events()
+            .into_iter()
+            .find_map(|ev| {
+                if let NetEvent::ObjectUpdates { handle, objects } = ev {
+                    objects.into_iter().find(|o| o.full_id == me).map(|o| (handle, o))
+                } else {
+                    None
+                }
+            })
+            .expect("demo contains our avatar");
+        world.main_region = Some(handle);
+        world.ensure_region(handle, (256, 256));
+        (world, update, handle)
+    }
+
+    #[test]
+    fn full_and_terse_updates_keep_server_velocity_and_acceleration() {
+        let (mut world, mut update, handle) = fixture();
+        update.position = Vec3::new(40.0, 50.0, 1000.0);
+        update.velocity = Vec3::new(3.2, 0.0, -1.0);
+        update.acceleration = Vec3::new(0.0, 0.0, -9.8);
+        world.apply(NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![update.clone()],
+        });
+        assert_eq!(world.agent.velocity, update.velocity);
+        assert_eq!(world.agent.predicted_position(), update.position);
+        let idx = world.objects.index_of_uuid(&world.agent_id).expect("avatar exists");
+        assert_eq!(world.objects.get(idx).expect("avatar exists").acceleration, update.acceleration);
+        let terse = TerseUpdate {
+            local_id: update.local_id,
+            state: 0,
+            is_avatar: true,
+            foot_plane: None,
+            position: update.position + Vec3::X,
+            velocity: Vec3::Y * 5.0,
+            acceleration: Vec3::Z,
+            rotation: glam::Quat::IDENTITY,
+            angular_velocity: Vec3::ZERO,
+            texture_entry: None,
+        };
+        world.apply(NetEvent::TerseUpdates {
+            handle,
+            updates: vec![terse.clone()],
+        });
+        assert_eq!(world.agent.velocity, terse.velocity);
+        assert_eq!(world.agent.predicted_position(), terse.position);
+        world.apply(NetEvent::AgentMovementComplete {
+            handle,
+            position: Vec3::splat(100.0),
+            look_at: Vec3::X,
+        });
+        assert_eq!(world.agent.velocity, Vec3::ZERO);
+        assert_eq!(world.agent.predicted_position(), Vec3::splat(100.0));
+    }
+
+    #[test]
+    fn arrival_draws_in_main_region_coordinates_even_with_an_old_avatar_object() {
+        let (mut world, update, handle) = fixture();
+        world.apply(NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![update],
+        });
+        let neighbor = handle + (256_u64 << 32);
+        let arrival = Vec3::new(4.0, 100.0, 30.0);
+        world.apply(NetEvent::AgentMovementComplete {
+            handle: neighbor,
+            position: arrival,
+            look_at: Vec3::X,
+        });
+        let idx = world.objects.index_of_uuid(&world.agent_id).expect("avatar exists");
+        let (position, _, _) = crate::scene::Scene::object_transform(&world, idx, Instant::now(), 0).expect("avatar transform");
+        assert_eq!(position, arrival);
+    }
+
+    #[test]
+    fn prediction_clamps_to_terrain_plus_half_avatar_height() {
+        let (mut world, mut update, handle) = fixture();
+        update.scale.z = 2.0;
+        update.position = Vec3::new(40.0, 50.0, 10.0);
+        update.velocity = -Vec3::Z;
+        world.apply(NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![update],
+        });
+        world.movement_complete = true;
+        world.regions.get_mut(&handle).expect("main region").heightmap.heights.fill(20.0);
+        world.predict_agent(1.0, 0.0);
+        assert_eq!(world.agent.predicted_position().z, 21.0);
+    }
+
+    #[test]
+    fn prediction_stops_at_unknown_region_but_can_enter_known_neighbor() {
+        let (mut world, _, handle) = fixture();
+        let start = Vec3::new(255.0, 100.0, 30.0);
+        let end = Vec3::new(258.0, 100.0, 30.0);
+        let clipped = world.clip_to_visible_regions(start, end);
+        assert!(clipped.x < 256.0 && clipped.x > 255.9);
+        assert_eq!(clipped.y, end.y);
+        assert_eq!(clipped.z, end.z);
+        let neighbor = handle + (256_u64 << 32);
+        world.ensure_region(neighbor, (256, 256));
+        assert_eq!(world.clip_to_visible_regions(start, end), end);
     }
 }
