@@ -157,6 +157,10 @@ couleur en dur : utilise la `Palette`. Réutilise les widgets de
 
 ## 8. Cycle d'une tâche, jusqu'à la PR
 
+0. **PR en suspens d'abord** : au début de chaque session, liste les PR
+   ouvertes de l'humain (`gh pr list --author "@me"`). Toute PR sans
+   commentaire « Relecture » (ou dont la CI a échoué) passe avant le reste :
+   termine sa relecture (section 11).
 1. **Lire** AGENTS.md, ARCHITECTURE.md, TASKS.md ; étudier Firestorm.
 2. **Créer le worktree** (`new-task.ps1`), passer la tâche en 🔧 dans TASKS.md.
 3. **Développer** par petits commits locaux (messages clairs, section 10).
@@ -172,9 +176,14 @@ couleur en dur : utilise la `Palette`. Réutilise les widgets de
    l'humain et demande s'il veut une PR maintenant ou attendre.
 7. **Ouvrir la PR** (section 9) — une PR par tâche terminée et validée, jamais
    pour des changements intermédiaires.
-8. **Relire ta PR** (section 11) et poster le commentaire de relecture.
-9. **Prévenir l'humain** : lien de la PR, verdict, et ce qu'il doit faire
-   (fusionner, trancher un point…).
+8. **Enchaîner aussitôt, sans rendre la main** : `gh pr checks <n> --watch`
+   (la commande attend la fin de la CI), puis la relecture complète
+   (section 11) et le commentaire de relecture. **Ne compte jamais sur une
+   notification** de fin de CI : si tu rends la main en « attendant la CI »,
+   la relecture n'arrive jamais. Si la CI échoue, corrige, pousse, et
+   recommence ce point.
+9. **Prévenir l'humain seulement après le commentaire** : lien de la PR,
+   verdict, et ce qu'il doit faire (fusionner, trancher un point…).
 10. Après la fusion par l'humain : `end-task.ps1`.
 
 ## 9. La pull request
@@ -227,7 +236,9 @@ exigeant :
 1. **À jour avec `main`** : `git fetch origin && git rebase origin/main`.
    Résous les conflits sans perdre le travail des autres, relance
    `check.ps1`, puis `git push --force-with-lease`.
-2. **CI verte** : `gh pr checks --watch`.
+2. **CI verte** : `gh pr checks <n> --watch` attend la fin de la CI. En cas
+   d'échec, `gh run view <id> --log-failed` montre l'erreur : corrige, pousse,
+   et attends de nouveau.
 3. **Non-régression** : relance les scénarios de démo touchés par ta PR **et**
    ceux des fonctionnalités voisines (le travail fusionné des autres agents
    entre-temps ne doit pas être cassé). Compare avant / après en captures.
@@ -243,8 +254,10 @@ recommence la relecture. Si un problème te dépasse (conflit de conception avec
 une autre tâche, choix produit, régression que tu ne sais pas résoudre),
 **n'improvise pas** : explique-le à l'humain et propose 2–3 solutions.
 
-Poste ensuite la relecture en commentaire (`gh pr comment <n> --body-file …`),
-avec cette structure :
+Poste ensuite la relecture en commentaire (`gh pr comment <n> --body-file …`).
+Le fichier passé à `--body-file` (comme celui de la description de la PR) est
+un brouillon dans `.scratch/`, jamais commité : la relecture vit dans le
+commentaire de la PR, pas dans le dépôt. Structure :
 
 ```markdown
 ## Relecture

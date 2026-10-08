@@ -26,12 +26,18 @@ s'enchaîne.
    te connectes) et tu lui dis si c'est bon.
 5. L'agent ouvre la **pull request** : un résumé lisible (à quoi ça sert, si ça
    vient de Firestorm, ce qui change, captures).
-6. Il **relit sa PR** : mise à jour avec `main`, CI, non-régression,
-   secrets… et poste un **commentaire de relecture** avec un verdict :
+6. Dans la foulée, sans que tu aies à le demander, il attend la fin de la CI
+   puis **relit sa PR** : mise à jour avec `main`, CI, non-régression,
+   secrets… et poste un **commentaire de relecture** (onglet « Conversation »
+   de la PR) avec un verdict :
    - ✅ prête à fusionner ;
    - ⚠️ un point à trancher (il te propose des solutions) ;
    - ❌ bloquée (il t'explique pourquoi).
-7. **Tu fusionnes** sur GitHub (bouton « Squash and merge »).
+   Il ne te prévient qu'une fois ce commentaire posté.
+7. **Tu fusionnes** sur GitHub (bouton « Squash and merge »), **après** avoir
+   lu le verdict. Une PR sans commentaire « Relecture » n'est pas prête : si
+   une session s'est interrompue, l'agent de la session suivante la relit en
+   priorité.
 8. L'agent nettoie son dossier de travail.
 
 Une PR n'est ouverte qu'à la **fin d'une tâche**, jamais pour des changements
