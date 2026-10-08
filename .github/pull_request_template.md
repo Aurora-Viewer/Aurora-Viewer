@@ -22,7 +22,7 @@
 
 - [ ] `scripts/check.ps1` au vert (fmt, clippy, tests)
 - [ ] Scénarios démo : <!-- variables AURORA_DEMO_* utilisées -->
-- [ ] Validé par l'humain avant la PR : <!-- date, ce qui a été testé, démo ou grille -->
+- [ ] Validé par l'humain avant la PR : <!-- date, ce qui a été testé, démo ou grille ; « sans objet » pour une PR sans effet sur le viewer (docs, CI, scripts) -->
 
 ## Limites et suite
 

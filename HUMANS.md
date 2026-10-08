@@ -5,6 +5,9 @@ plusieurs agents IA (Claude Code, Codex…) en parallèle. Les agents suivent
 [AGENTS.md](AGENTS.md) ; ce guide explique **ton** rôle et comment tout
 s'enchaîne.
 
+**Pour commencer :** [installe l'environnement](#installer-lenvironnement)
+en une ligne.
+
 ## Ce que font les agents, ce que tu fais
 
 | Les agents | Toi |
@@ -95,31 +98,36 @@ git push origin v0.4.0
 
 ## Installer l'environnement
 
-1. **Rust** (stable) : <https://rustup.rs>. La version est gérée par
-   `rust-toolchain.toml`, rien d'autre à faire.
-2. **Git** et **GitHub CLI** (`gh auth login`).
-3. Cloner le dépôt et les sources de Firestorm **côte à côte** :
+Crée un dossier pour le projet (par exemple `C:\Aurora-Viewer`), ouvre une
+invite de commandes dedans (dans l'Explorateur : tape `cmd` dans la barre
+d'adresse, puis Entrée) et colle :
 
-   ```bash
-   mkdir C:\Aurora_Viewer_v2 && cd C:\Aurora_Viewer_v2
-   git clone https://github.com/Aurora-Viewer/Aurora-Viewer aurora-viewer
-   git clone --depth 1 https://github.com/FirestormViewer/phoenix-firestorm
-   ```
+```bat
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$f = Join-Path $env:TEMP 'aurora-setup.ps1'; irm https://raw.githubusercontent.com/Aurora-Viewer/Aurora-Viewer/main/scripts/setup.ps1 -OutFile $f; & $f"
+```
 
-4. Ton identité git, avec ton adresse « noreply » GitHub pour ne pas exposer
-   ton e-mail (Settings → Emails sur GitHub) :
+Le script montre d'abord un tableau : ce qu'il a trouvé sur ta machine et ce
+qu'il va faire. Il propose le dossier courant ; si tu réponds non, il te
+demande le chemin exact du dossier du projet (créé s'il n'existe pas). Puis :
 
-   ```bash
-   cd aurora-viewer
-   git config user.name "Ton pseudo"
-   git config user.email "12345+tonpseudo@users.noreply.github.com"
-   ```
+1. il installe ce qui manque avec winget : Git et GitHub CLI (pour toute la
+   machine), les outils C++ de Visual Studio dont Rust a besoin pour
+   compiler (plusieurs Go), et Rust (rustup, pour ton compte, comme le veut
+   Rust sous Windows) ; des fenêtres d'autorisation Windows peuvent s'ouvrir ;
+2. il clone le dépôt dans `aurora-viewer\` et les sources de Firestorm dans
+   `phoenix-firestorm\`, côte à côte ;
+3. il télécharge la police emoji, la toolchain Rust et toutes les crates ;
+4. il te connecte à GitHub (`gh auth login`, dans le navigateur) si besoin,
+   et règle ton identité git dans le dépôt : ton pseudo GitHub et ton
+   adresse « noreply » (ton e-mail reste privé).
 
-5. Télécharger la police emoji (trop lourde pour git) :
+On peut le relancer à tout moment, depuis le dépôt :
+`./scripts/setup.ps1`. Ce qui est déjà là est mis à jour, rien n'est
+réinstallé.
 
-   ```powershell
-   ./scripts/fetch-assets.ps1
-   ```
+Dans la suite, **le dossier du projet** est celui de l'installation : il
+contient `aurora-viewer\`, `phoenix-firestorm\`, et plus tard `work\` (les
+tâches des agents) et `RELEASE\`.
 
 ## Le viewer à jour de `main`, en `--release`
 
@@ -131,7 +139,8 @@ git switch main; git pull
 ./scripts/build-release.ps1
 ```
 
-Ensuite, double-clic sur `C:\Aurora_Viewer_v2\RELEASE\build-release.bat`.
+Ensuite, double-clic sur `RELEASE\build-release.bat`, dans le dossier du
+projet.
 L'exe prêt à lancer est dans `RELEASE\Aurora-Viewer\` (avec ses assets, comme
 le zip des releases), et `version.txt` dit quel commit a été compilé.
 
@@ -182,12 +191,12 @@ travailler pendant une compilation ou quand un viewer est ouvert.
 |---|---|
 | Code du viewer | `crates/` (voir [ARCHITECTURE.md](ARCHITECTURE.md)) |
 | Suivi des tâches | [TASKS.md](TASKS.md) |
-| Dossiers de travail des agents | `C:\Aurora_Viewer_v2\work\` |
-| Sources Firestorm (référence) | `C:\Aurora_Viewer_v2\phoenix-firestorm\` |
+| Dossiers de travail des agents | `work\`, dans le dossier du projet |
+| Sources Firestorm (référence) | `phoenix-firestorm\`, dans le dossier du projet |
 | Réglages, skins, disposition | `%APPDATA%\Aurora\AuroraViewer\config\` |
 | Cache (textures, mesh…) — peut être supprimé sans risque | `%LOCALAPPDATA%\Aurora\AuroraViewer\cache\` |
 | Logs (à envoyer à un agent après un test) | `%LOCALAPPDATA%\Aurora\AuroraViewer\data\logs\` |
-| Viewer `--release` du dernier `main` | `C:\Aurora_Viewer_v2\RELEASE\Aurora-Viewer\aurora-viewer.exe` |
+| Viewer `--release` du dernier `main` | `RELEASE\Aurora-Viewer\aurora-viewer.exe`, dans le dossier du projet |
 | Programme compilé à la main | `target\debug\aurora-viewer.exe` (ou `work\<tâche>\target\debug\`) |
 
 `aurora.log` est le log de ta dernière session réelle ; la session d'avant est

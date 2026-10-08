@@ -39,10 +39,11 @@ aurora-viewer/                  dépôt git (GitHub : Aurora-Viewer/Aurora-Viewe
 └─ .github/                     CI (workflows/, actions/), release, modèle de PR, Dependabot
 ```
 
-À côté du dépôt (hors git) :
+À côté du dépôt (hors git), dans le dossier du projet installé par
+`scripts/setup.ps1` :
 
 ```
-C:\Aurora_Viewer_v2\            (ou tout autre dossier parent)
+<dossier du projet>\            par exemple C:\Aurora-Viewer
 ├─ aurora-viewer\               le dépôt
 ├─ phoenix-firestorm\           sources officielles de Firestorm (lecture seule)
 ├─ RELEASE\                     build --release du dernier main (scripts/build-release.ps1)
