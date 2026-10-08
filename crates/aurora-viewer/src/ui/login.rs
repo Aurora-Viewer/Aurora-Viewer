@@ -8,6 +8,8 @@ use crate::settings::{GridChoice, Settings};
 use crate::theme::Palette;
 use egui::{Color32, CornerRadius, Frame, Margin, RichText, Sense, Stroke, TextEdit, Vec2};
 
+const REMEMBERED_PASSWORD_MASK: &str = "••••••••••••••••";
+
 #[derive(Default)]
 pub struct LoginForm {
     pub password: String,
@@ -90,7 +92,12 @@ fn field(
                 img(ui, icons, icon, r, if focused { p.violet_light } else { p.muted });
                 let eye_w = if password.is_some() { 26.0 } else { 0.0 };
                 let w = ui.available_width() - eye_w;
-                let hidden = password.as_deref().is_some_and(|show| !*show);
+                let remembered = password.is_some() && text.is_empty() && !hint.is_empty();
+                if remembered {
+                    // The saved-password marker should look filled, not like a placeholder.
+                    ui.visuals_mut().weak_text_color = Some(p.ink);
+                }
+                let hidden = remembered || password.as_deref().is_some_and(|show| !*show);
                 let resp = ui.add(
                     TextEdit::singleline(text)
                         .id(id)
@@ -103,10 +110,17 @@ fn field(
                         .desired_width(w),
                 );
                 if let Some(show) = password {
-                    let (r, eye) = ui.allocate_exact_size(Vec2::splat(18.0), Sense::click());
-                    let col = if eye.hovered() { p.ink } else { p.muted };
-                    img(ui, icons, if *show { "eye-slash" } else { "eye" }, r, col);
-                    if eye.on_hover_text(if *show { "Masquer" } else { "Afficher" }).clicked() {
+                    let (r, eye) = ui.allocate_exact_size(Vec2::splat(18.0), if remembered { Sense::hover() } else { Sense::click() });
+                    let col = if !remembered && eye.hovered() { p.ink } else { p.muted };
+                    img(ui, icons, if *show && !remembered { "eye-slash" } else { "eye" }, r, col);
+                    let tip = if remembered {
+                        "Mot de passe retenu. Saisissez-en un nouveau pour le remplacer."
+                    } else if *show {
+                        "Masquer"
+                    } else {
+                        "Afficher"
+                    };
+                    if eye.on_hover_text(tip).clicked() && !remembered {
                         *show = !*show;
                     }
                 }
@@ -326,9 +340,11 @@ pub fn show(
                     let user = field(ui, p, icons, "login_user", "user", "prenom.nom ou nom d'utilisateur", &mut settings.username, None);
                     ui.add_space(4.0);
                     caption(ui, p, "Mot de passe");
-                    // a remembered password is never shown: the field stays
-                    // empty with a hint, typing replaces it
-                    let hint = if form.stored.is_some() { "Mot de passe retenu" } else { "" };
+                    // LLPanelLogin::setFields (indra/newview/llpanellogin.cpp,
+                    // originally LGPL 2.1): show 16 masked filler characters.
+                    // Keep the marker out of the input so login still uses the
+                    // saved hash, and typing replaces it without editing filler.
+                    let hint = if form.stored.is_some() { REMEMBERED_PASSWORD_MASK } else { "" };
                     let pass = field(ui, p, icons, "login_pass", "lock-key", hint, &mut form.password, Some(&mut form.show_password));
                     let mut mfa = None;
                     if form.show_mfa {
@@ -521,4 +537,55 @@ pub fn show(
             });
         });
     action
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn saved_password_marker_survives_focus_without_becoming_input() {
+        let ctx = egui::Context::default();
+        let p = crate::theme::Theme::default().palette();
+        let icons = Icons::default();
+        let mut password = String::new();
+        let mut show_password = false;
+        let mut draw = |hint: &str, events: Vec<egui::Event>| {
+            ctx.run_ui(
+                egui::RawInput {
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    ui.set_width(300.0);
+                    field(
+                        ui,
+                        &p,
+                        &icons,
+                        "test_pass",
+                        "lock-key",
+                        hint,
+                        &mut password,
+                        Some(&mut show_password),
+                    );
+                },
+            )
+        };
+        let has_mask = |output: &egui::FullOutput| {
+            output
+                .shapes
+                .iter()
+                .any(|s| matches!(&s.shape, egui::Shape::Text(t) if t.galley.job.text == REMEMBERED_PASSWORD_MASK))
+        };
+        assert!(!has_mask(&draw("", vec![])));
+        ctx.memory_mut(|m| m.request_focus(egui::Id::new("test_pass")));
+        assert!(has_mask(&draw(REMEMBERED_PASSWORD_MASK, vec![])));
+        assert!(ctx.memory(|m| m.has_focus(egui::Id::new("test_pass"))));
+        draw(REMEMBERED_PASSWORD_MASK, vec![egui::Event::Text("replacement".into())]);
+        // egui paints the empty-field hint for the entry frame; the next frame
+        // must show the newly typed value rather than the remembered marker.
+        assert!(!has_mask(&draw(REMEMBERED_PASSWORD_MASK, vec![])));
+        assert_eq!(password, "replacement");
+        assert!(!show_password);
+    }
 }
