@@ -217,10 +217,12 @@ couleur en dur : utilise la `Palette`. Réutilise les widgets de
      reprends à l'étape 8.
    - Verdict ⚠️ ou ❌ : ne fusionne pas ; explique le point à l'humain et
      propose des solutions (section 11).
-10. **Après la fusion** : `end-task.ps1` (il sort lui-même du dossier de la
-    tâche ; un autre programme ouvert dedans, éditeur ou viewer, l'empêche
-    d'être supprimé : le script le signale, il suffit de le relancer une
-    fois le dossier libéré), puis **préviens l'humain** : lien
+10. **Après la fusion** : place-toi d'abord dans le dépôt principal, **dans
+    une commande à part** (`Set-Location <dépôt principal>`), puis lance
+    `end-task.ps1`. Ton outil surveille son dossier courant : tant qu'il est
+    dans celui de la tâche, Windows refuse de le supprimer (de même avec un
+    éditeur ou un viewer ouvert dedans ; le script le signale, il suffit de
+    le relancer une fois le dossier libéré). Puis **préviens l'humain** : lien
     de la PR fusionnée, ce qui a changé, et ce qu'il reste à tester sur la
     grille s'il y en a. Si la session s'arrête avant la fusion, la fusion se
     fait quand même sur GitHub ; le ménage se fait à l'étape 0 de la session
