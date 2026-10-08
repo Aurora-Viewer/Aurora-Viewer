@@ -41,9 +41,10 @@ intermédiaires. Si l'agent n'a pas tout fini, il te le dit avant.
 
 - **`main` est protégée** : personne ne pousse directement dessus ; tout passe
   par une PR dont la CI est verte.
-- **La CI** (GitHub Actions) vérifie chaque PR : formatage, clippy, tests,
-  compilation Windows, recherche de secrets. Une croix rouge = ne pas
-  fusionner ; l'agent doit corriger.
+- **La CI** (GitHub Actions, sous Windows) vérifie chaque PR : formatage,
+  clippy, tests, recherche de secrets. Une PR qui ne touche que la
+  documentation ou les images passe en une minute (pas de compilation).
+  Une croix rouge = ne pas fusionner ; l'agent doit corriger.
 - **Étiquettes** : chaque PR a un **type** (`nouveauté`, `correctif`,
   `performance`, `maintenance`, `docs`, et `rupture` si elle casse une
   compatibilité), qui la range dans les notes de version, et une **zone**
