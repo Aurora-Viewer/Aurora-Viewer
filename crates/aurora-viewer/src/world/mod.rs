@@ -42,6 +42,8 @@ pub struct Region {
     pub caps: Arc<HashMap<String, String>>,
     /// Voice server of the region (SimulatorFeatures): "webrtc", "vivox" or empty.
     pub voice_server: String,
+    /// RenderMaterials limits of the region (SimulatorFeatures).
+    pub materials_limits: crate::scene::legacy_mat::RegionLimits,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -380,6 +382,7 @@ impl World {
             dirty_chunks: HashSet::new(),
             caps: Arc::new(HashMap::new()),
             voice_server: String::new(),
+            materials_limits: Default::default(),
         })
     }
 
@@ -510,8 +513,15 @@ impl World {
                 self.ensure_region(handle, (256, 256)).caps = caps;
                 None
             }
-            NetEvent::SimulatorFeatures { handle, voice_server_type } => {
-                self.ensure_region(handle, (256, 256)).voice_server = voice_server_type;
+            NetEvent::SimulatorFeatures {
+                handle,
+                voice_server_type,
+                materials_rate,
+                materials_max,
+            } => {
+                let r = self.ensure_region(handle, (256, 256));
+                r.voice_server = voice_server_type;
+                r.materials_limits = crate::scene::legacy_mat::RegionLimits::from_features(materials_rate, materials_max);
                 None
             }
             NetEvent::AgentMovementComplete { handle, position, look_at } => {
