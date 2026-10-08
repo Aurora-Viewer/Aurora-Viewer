@@ -27,11 +27,7 @@ jobs:
         run: |
           $v = "${{ github.ref_name }}"
           $dir = "Aurora-Viewer-$v-windows-x64"
-          New-Item -ItemType Directory "$dir/assets/emoji" | Out-Null
-          Copy-Item target/release/aurora-viewer.exe $dir
-          Copy-Item -Recurse crates/aurora-viewer/assets/character "$dir/assets/character"
-          Copy-Item assets/emoji/Noto-3D-128.ttf, assets/emoji/LICENSE-OFL.txt "$dir/assets/emoji"
-          Copy-Item LICENSE, NOTICE.md, README.md $dir
+          ./scripts/package.ps1 -Exe target/release/aurora-viewer.exe -Out $dir
           Compress-Archive -Path $dir -DestinationPath "$dir.zip"
           "ZIP=$dir.zip" >> $env:GITHUB_ENV
       - name: Publish

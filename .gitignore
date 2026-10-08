@@ -2,9 +2,10 @@
 /target/
 **/target/
 
-# Agent worktrees and scratch space (they live outside the repository,
-# this is a safety net)
+# Agent worktrees, scratch space and release builds (they live outside the
+# repository, this is a safety net)
 /work/
+/RELEASE/
 
 # Large or local-only assets (fetched by scripts/fetch-assets.ps1)
 /assets/emoji/*.ttf
