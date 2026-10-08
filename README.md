@@ -56,7 +56,10 @@ cargo build --release -p aurora-viewer
 ```
 
 Run the same checks as the CI with `./scripts/check.ps1` (rustfmt, clippy
-with warnings as errors, tests).
+with warnings as errors, tests). Day-to-day development uses the default
+profile (`cargo run -p aurora-viewer`): it behaves like the release build
+without its slow link-time optimization. `./scripts/build-release.ps1`
+builds GitHub's latest `main` with `--release` into `..\RELEASE\`.
 
 ### Command line
 

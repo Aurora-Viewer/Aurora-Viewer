@@ -104,24 +104,51 @@ GitHub Actions compile alors le viewer, crée la release avec le zip Windows et
    ./scripts/fetch-assets.ps1
    ```
 
+## Le viewer à jour de `main`, en `--release`
+
+Pour avoir à tout moment l'exe optimisé du dernier `main` de GitHub :
+
+```powershell
+# la première fois, depuis le dépôt à jour
+git switch main; git pull
+./scripts/build-release.ps1
+```
+
+Ensuite, double-clic sur `C:\Aurora_Viewer_v2\RELEASE\build-release.bat`.
+L'exe prêt à lancer est dans `RELEASE\Aurora-Viewer\` (avec ses assets, comme
+le zip des releases), et `version.txt` dit quel commit a été compilé.
+
+- Le code vient **toujours de GitHub** : tes changements locaux et tes
+  commits non poussés n'y entrent pas.
+- Le premier build prend quelques minutes ; les suivants ne recompilent que
+  ce qui a changé.
+- `build-release.bat 42` compile la PR n°42 (pour tester ses performances
+  avant de la fusionner).
+- Ferme le viewer de ce dossier avant de recompiler (le script le signale).
+
 ## Compiler et lancer à la main
 
 ```bash
-cargo build --release -p aurora-viewer
-./target/release/aurora-viewer.exe
+cargo run -p aurora-viewer
 ```
 
+- Le profil par défaut (sans `--release`) est celui des agents : il se
+  comporte comme la version publiée, sans l'optimisation lente de
+  `--release`. `cargo build --release` reste possible pour mesurer des
+  performances (il recompile tout une deuxième fois).
 - Mode démo (aucune connexion) : `$env:AURORA_DEMO="1"` avant de lancer.
-- Nommer la fenêtre : `aurora-viewer.exe --title "Mon test"`.
+- Nommer la fenêtre : `cargo run -p aurora-viewer -- --title "Mon test"`.
 - Tout vérifier comme la CI : `./scripts/check.ps1`.
-- Si un agent a son viewer ouvert, le `.exe` de `target/release` est verrouillé :
-  les agents compilent dans leur propre dossier `..\work\<tâche>\target`.
+- Les agents compilent dans leur propre dossier `..\work\<tâche>\target` :
+  leurs viewers ouverts ne bloquent pas les tiens.
 
 ### Place sur le disque
 
-Les compilations prennent beaucoup de place : comptez 4 à 8 Go par dossier
-`target` (le dépôt et chaque tâche en cours). Ce n'est que du cache, qu'on peut
-toujours supprimer : il sera recompilé au besoin.
+Les compilations prennent de la place : comptez 3 à 4 Go par dossier
+`target` (le dépôt, chaque tâche en cours, `RELEASE`). Ce n'est que du
+cache, qu'on peut toujours supprimer : il sera recompilé au besoin. Une
+nouvelle tâche libère d'elle-même le `target` des tâches fusionnées ou
+inactives depuis 7 jours.
 
 ```powershell
 ./scripts/clean.ps1                 # montre la place prise, n'efface rien
@@ -143,7 +170,8 @@ travailler pendant une compilation ou quand un viewer est ouvert.
 | Réglages, skins, disposition | `%APPDATA%\Aurora\AuroraViewer\config\` |
 | Cache (textures, mesh…) — peut être supprimé sans risque | `%LOCALAPPDATA%\Aurora\AuroraViewer\cache\` |
 | Logs (à envoyer à un agent après un test) | `%LOCALAPPDATA%\Aurora\AuroraViewer\data\logs\` |
-| Programme compilé | `target\release\aurora-viewer.exe` (ou `work\<tâche>\target\release\`) |
+| Viewer `--release` du dernier `main` | `C:\Aurora_Viewer_v2\RELEASE\Aurora-Viewer\aurora-viewer.exe` |
+| Programme compilé à la main | `target\debug\aurora-viewer.exe` (ou `work\<tâche>\target\debug\`) |
 
 `aurora.log` est le log de ta dernière session réelle ; la session d'avant est
 gardée en `aurora.previous.log`. Les sessions de démo ont leurs propres logs

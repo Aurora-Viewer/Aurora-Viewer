@@ -9,7 +9,9 @@
       - dépôt principal : target\<profil> (debug, ci…), jamais target\release
         sauf avec -IncludeRelease ;
       - dossiers de tâche : work\<tâche>\target, seulement avec -Tasks (la
-        tâche devra tout recompiler).
+        tâche devra tout recompiler) ;
+      - RELEASE\src\target (build-release.ps1), seulement avec
+        -IncludeRelease (le prochain build release repartira de zéro).
     Refuse de travailler pendant une compilation ou si un viewer tourne.
 
 .EXAMPLE
@@ -56,6 +58,11 @@ if (Test-Path -LiteralPath $p.Work) {
             $items += @{ Path = $tt; What = "tâche : $($t.Name)\target"; Delete = [bool]$Tasks; Root = $t.FullName; Tag = $tt }
         }
     }
+}
+$relSrc = Join-Path $p.Root 'RELEASE\src'
+$relTarget = Join-Path $relSrc 'target'
+if (Test-Path -LiteralPath $relTarget) {
+    $items += @{ Path = $relTarget; What = 'RELEASE\src\target'; Delete = [bool]$IncludeRelease; Root = $relSrc; Tag = $relTarget }
 }
 if (-not $items) { Write-Host "Aucun dossier de compilation."; exit 0 }
 

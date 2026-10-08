@@ -75,6 +75,14 @@ worktree git, sa branche, son dossier `target` et ses logs.
   pas de `CARGO_TARGET_DIR` maison ni de dossier de compilation ailleurs
   (chaque dossier de compilation pèse plusieurs Go et finit oublié).
   `end-task.ps1` le supprime avec le worktree.
+- **Un seul profil : celui par défaut** (`dev`, sans `--release`) pour
+  `check.ps1`, les tests, la démo et les captures. Il se comporte comme la
+  version publiée et évite seulement l'optimisation lente de `--release`.
+  N'utilise `--release` que pour mesurer des performances : il recompile
+  tout une deuxième fois (environ 3 Go de plus). Pour un exe `--release` de
+  `main`, l'humain a `scripts/build-release.ps1`.
+- `new-task.ps1` libère au passage le `target/` des tâches dont la PR est
+  fusionnée ou qui n'ont rien compilé depuis 7 jours (le code reste).
 - Pour voir la place prise par les compilations et en libérer :
   `./scripts/clean.ps1` (n'efface rien sans `-Apply`).
 - Une fois la PR fusionnée par l'humain :
@@ -92,7 +100,7 @@ que nécessaire.
 
 ```powershell
 $env:AURORA_DEMO = "1"
-cargo run --release -p aurora-viewer -- --title "Test regard-avatars"
+cargo run -p aurora-viewer -- --title "Test regard-avatars"
 ```
 
 - **Toujours `--title "Test <tâche>"`** : la fenêtre s'appelle
@@ -170,7 +178,7 @@ couleur en dur : utilise la `Palette`. Réutilise les widgets de
 4. **Tester en démo**, `check.ps1` au vert.
 5. **Validation humaine (obligatoire, avant la PR)** :
    - compile le viewer dans ton worktree et lance-le pour l'humain
-     (`cargo run --release -p aurora-viewer -- --title "Test <tâche>"`, en
+     (`cargo run -p aurora-viewer -- --title "Test <tâche>"`, en
      mode démo ou normal selon ce qu'il faut tester) ;
    - dis-lui précisément quoi tester, où (démo ou grille AGNI) et ce qu'il
      doit voir ; s'il faut la grille, c'est lui qui se connecte ;
