@@ -157,10 +157,13 @@ couleur en dur : utilise la `Palette`. Réutilise les widgets de
 
 ## 8. Cycle d'une tâche, jusqu'à la PR
 
-0. **PR en suspens d'abord** : au début de chaque session, liste les PR
-   ouvertes de l'humain (`gh pr list --author "@me"`). Toute PR sans
-   commentaire « Relecture » (ou dont la CI a échoué) passe avant le reste :
-   termine sa relecture (section 11).
+0. **Le suivi d'abord**, au début de chaque session, avant toute autre chose :
+   - **ménage** : pour chaque dossier de `../work/` dont la PR a été fusionnée
+     (`gh pr view <branche> --json state`), lance `end-task.ps1` ;
+   - **PR en suspens** : liste les PR ouvertes de l'humain
+     (`gh pr list --author "@me"`) ; toute PR sans commentaire « Relecture »
+     (ou dont la CI a échoué) passe avant le reste : termine sa relecture
+     (section 11).
 1. **Lire** AGENTS.md, ARCHITECTURE.md, TASKS.md ; étudier Firestorm.
 2. **Créer le worktree** (`new-task.ps1`), passer la tâche en 🔧 dans TASKS.md.
 3. **Développer** par petits commits locaux (messages clairs, section 10).
@@ -184,7 +187,11 @@ couleur en dur : utilise la `Palette`. Réutilise les widgets de
    recommence ce point.
 9. **Prévenir l'humain seulement après le commentaire** : lien de la PR,
    verdict, et ce qu'il doit faire (fusionner, trancher un point…).
-10. Après la fusion par l'humain : `end-task.ps1`.
+10. Après la fusion par l'humain : `end-task.ps1`, lancé **depuis le dépôt
+    principal** (un terminal ou un éditeur ouvert dans le dossier de la tâche
+    l'empêche d'être supprimé ; le script le signale, il suffit de le
+    relancer une fois le dossier libéré). Si l'humain fusionne après que tu
+    as rendu la main, le ménage se fait à l'étape 0 de la session suivante.
 
 ## 9. La pull request
 
