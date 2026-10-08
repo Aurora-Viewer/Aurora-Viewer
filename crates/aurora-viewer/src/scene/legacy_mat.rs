@@ -1,8 +1,13 @@
 //! Legacy (pre-PBR) materials: normal and specular maps, alpha mode and
 //! mask cutoff of a texture entry (`TextureFace::material_id`), fetched
 //! from the region's `RenderMaterials` capability like LLMaterialMgr:
-//! POST `{"Zipped": zlib(binary LLSD [material id binaries])}`, answer
+//! a GET of the cap answers every material of the region, then POST
+//! `{"Zipped": zlib(binary LLSD [material id binaries])}` asks for the ones
+//! still missing; both answer
 //! `{"Zipped": zlib(binary LLSD [{"ID": binary, "Material": map}])}`.
+//! Requests are throttled per region like LLMaterialMgr::processGetQueue
+//! (the SimulatorFeatures rate, 1 per second by default), else the
+//! simulator answers 503.
 //!
 //! Field names and scaling ported from Firestorm's llmaterial.cpp and
 //! llmaterialmgr.cpp (Copyright (C) Linden Research, Inc., GNU originally LGPL 2.1).
@@ -24,8 +29,6 @@ pub mod alpha_mode {
 
 /// Fixed-point scale of offsets, repeats and rotations.
 const MATERIALS_MULTIPLIER: f32 = 10000.0;
-/// LLMaterialMgr: at most 50 ids per request.
-const MAX_PER_REQUEST: usize = 50;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LegacyMaterial {
@@ -113,11 +116,67 @@ pub fn request_body(ids: &[Uuid]) -> Llsd {
     Llsd::Map(m)
 }
 
+/// LLAppCoreHttp AP_MATERIALS: 2 connections shared by all regions.
+const MAX_IN_FLIGHT: usize = 2;
+/// LLMaterialMgr MATERIALS_POST_TIMEOUT: an id the region did not answer is
+/// asked again after 5 minutes.
+const UNKNOWN_RETRY: Duration = Duration::from_secs(300);
+/// After an HTTP error (503 when the simulator is busy) the region gets no
+/// request for ERROR_BACKOFF and the ids are asked again after FAILED_RETRY.
+/// Deviation: LLMaterialMgr keeps failed ids pending 5 minutes and a failed
+/// GET-all blocks the region's batches for 20 minutes (MATERIALS_GET_TIMEOUT);
+/// here a failed GET-all falls back to the batches.
+const ERROR_BACKOFF: Duration = Duration::from_secs(10);
+const FAILED_RETRY: Duration = Duration::from_secs(30);
+
+/// RenderMaterials limits of a region, from its SimulatorFeatures.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RegionLimits {
+    /// Requests per second ("RenderMaterialsCapability",
+    /// LLViewerRegion::resetMaterialsCapThrottle).
+    pub rate: f32,
+    /// Material ids per request ("MaxMaterialsPerTransaction",
+    /// LLViewerRegion::getMaxMaterialsPerTransaction).
+    pub max_per_request: usize,
+}
+
+impl Default for RegionLimits {
+    /// LL's hard-coded defaults: 1 request per second, 50 ids.
+    fn default() -> Self {
+        RegionLimits {
+            rate: 1.0,
+            max_per_request: 50,
+        }
+    }
+}
+
+impl RegionLimits {
+    /// Limits from the SimulatorFeatures values (`None` = not given). A zero
+    /// rate falls back to 1 per second like resetMaterialsCapThrottle.
+    pub fn from_features(rate: Option<f32>, max: Option<u32>) -> Self {
+        let d = RegionLimits::default();
+        RegionLimits {
+            rate: rate.filter(|r| r.is_finite() && *r > 0.0).unwrap_or(d.rate),
+            max_per_request: max.filter(|m| *m > 0).map_or(d.max_per_request, |m| m as usize),
+        }
+    }
+
+    fn interval(&self) -> Duration {
+        Duration::from_secs_f32(1.0 / self.rate)
+    }
+}
+
+/// The region a material is asked from.
+#[derive(Debug, Clone, Copy)]
+pub struct RegionCap<'a> {
+    /// `RenderMaterials` capability URL.
+    pub url: &'a str,
+    pub limits: RegionLimits,
+}
+
 enum State {
-    Wanted {
-        cap: String,
-        since: Instant,
-    },
+    /// Queued on its region.
+    Wanted,
     Fetching,
     Ready(Arc<LegacyMaterial>),
     /// Forgotten at `retry_at` (the next `get` asks again).
@@ -126,10 +185,38 @@ enum State {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum GetAll {
+    NotAsked,
+    Pending,
+    Done,
+}
+
+/// Queue and throttle of one region (keyed by its cap URL), like
+/// LLMaterialMgr::mGetQueue / mGetAllRequested and the region's
+/// mMaterialsCapThrottleTimer.
+struct RegionQueue {
+    limits: RegionLimits,
+    get_all: GetAll,
+    /// No request to the region before this.
+    next_request: Instant,
+    queue: Vec<Uuid>,
+}
+
+/// One HTTP request: `ids: None` is the region's GET-all.
+#[derive(Debug, Clone, PartialEq)]
+struct Request {
+    cap: String,
+    ids: Option<Vec<Uuid>>,
+}
+
+type Answer = (Request, Result<Vec<(Uuid, LegacyMaterial)>, String>);
+
 pub struct LegacyMaterials {
     entries: HashMap<Uuid, State>,
-    tx: crossbeam_channel::Sender<(Vec<Uuid>, Result<Vec<(Uuid, LegacyMaterial)>, String>)>,
-    rx: crossbeam_channel::Receiver<(Vec<Uuid>, Result<Vec<(Uuid, LegacyMaterial)>, String>)>,
+    regions: HashMap<String, RegionQueue>,
+    tx: crossbeam_channel::Sender<Answer>,
+    rx: crossbeam_channel::Receiver<Answer>,
     in_flight: usize,
     /// Request errors written to the log (the first ones).
     errors_logged: u32,
@@ -140,6 +227,7 @@ impl Default for LegacyMaterials {
         let (tx, rx) = crossbeam_channel::unbounded();
         LegacyMaterials {
             entries: HashMap::new(),
+            regions: HashMap::new(),
             tx,
             rx,
             in_flight: 0,
@@ -155,7 +243,7 @@ impl LegacyMaterials {
         for s in self.entries.values() {
             match s {
                 State::Ready(_) => c.0 += 1,
-                State::Wanted { .. } | State::Fetching => c.1 += 1,
+                State::Wanted | State::Fetching => c.1 += 1,
                 State::Failed { .. } => c.2 += 1,
             }
         }
@@ -176,112 +264,167 @@ impl LegacyMaterials {
     }
 
     /// The material if known; otherwise queue it on the region's cap.
-    pub fn get(&mut self, id: &Uuid, cap: Option<&str>) -> Option<Arc<LegacyMaterial>> {
+    pub fn get(&mut self, id: &Uuid, region: Option<RegionCap>) -> Option<Arc<LegacyMaterial>> {
         match self.entries.get(id) {
             Some(State::Ready(m)) => return Some(m.clone()),
             Some(_) => return None,
             None => {}
         }
-        if let Some(cap) = cap {
-            self.entries.insert(
-                *id,
-                State::Wanted {
-                    cap: cap.to_owned(),
-                    since: Instant::now(),
-                },
-            );
+        if let Some(region) = region {
+            self.entries.insert(*id, State::Wanted);
+            if !self.regions.contains_key(region.url) {
+                self.regions.insert(
+                    region.url.to_owned(),
+                    RegionQueue {
+                        limits: region.limits,
+                        get_all: GetAll::NotAsked,
+                        next_request: Instant::now(),
+                        queue: Vec::new(),
+                    },
+                );
+            }
+            if let Some(q) = self.regions.get_mut(region.url) {
+                // the SimulatorFeatures may arrive after the first materials
+                q.limits = region.limits;
+                q.queue.push(*id);
+            }
         }
         None
     }
 
-    /// Send queued requests (batches per cap, a few at a time) and collect
-    /// answers. Returns true when materials arrived.
+    /// Send the requests whose region throttle expired and collect answers.
+    /// Returns true when materials arrived.
     pub fn update(&mut self, rt: &tokio::runtime::Handle, http: &reqwest::Client) -> bool {
         let mut arrived = false;
-        while let Ok((asked, result)) = self.rx.try_recv() {
-            self.in_flight = self.in_flight.saturating_sub(1);
-            match result {
-                Ok(list) => {
-                    for (id, m) in list {
-                        self.entries.insert(id, State::Ready(Arc::new(m)));
-                        arrived = true;
-                    }
-                    // asked but not in the answer: unknown to this region
-                    for id in asked {
-                        if matches!(self.entries.get(&id), Some(State::Fetching)) {
-                            self.entries.insert(
-                                id,
-                                State::Failed {
-                                    retry_at: Instant::now() + Duration::from_secs(600),
-                                },
-                            );
-                        }
+        while let Ok(answer) = self.rx.try_recv() {
+            arrived |= self.receive(answer, Instant::now());
+        }
+        for req in self.plan(Instant::now()) {
+            let (tx, http) = (self.tx.clone(), http.clone());
+            rt.spawn(async move {
+                let result = fetch(&http, &req).await;
+                let _ = tx.send((req, result));
+            });
+        }
+        arrived
+    }
+
+    /// Apply one answer. Returns true when materials arrived.
+    fn receive(&mut self, (req, result): Answer, now: Instant) -> bool {
+        self.in_flight = self.in_flight.saturating_sub(1);
+        let mut arrived = false;
+        let get_all = req.ids.is_none();
+        let asked = req.ids.unwrap_or_default();
+        let q = self.regions.get_mut(&req.cap);
+        match result {
+            Ok(list) => {
+                if get_all {
+                    log::info!("RenderMaterials: {} materials from the region (GET all)", list.len());
+                }
+                for (id, m) in list {
+                    self.entries.insert(id, State::Ready(Arc::new(m)));
+                    arrived = true;
+                }
+                // asked but not in the answer: unknown to this region
+                for id in asked {
+                    if matches!(self.entries.get(&id), Some(State::Fetching)) {
+                        self.entries.insert(
+                            id,
+                            State::Failed {
+                                retry_at: now + UNKNOWN_RETRY,
+                            },
+                        );
                     }
                 }
-                Err(e) => {
-                    self.errors_logged += 1;
-                    if self.errors_logged <= 10 {
-                        log::warn!("RenderMaterials request failed: {e}");
-                    }
-                    for id in asked {
-                        if let Some(State::Fetching) = self.entries.get(&id) {
-                            self.entries.insert(
-                                id,
-                                State::Failed {
-                                    retry_at: Instant::now() + Duration::from_secs(10),
-                                },
-                            );
-                        }
-                    }
+                if let Some(q) = q
+                    && get_all
+                {
+                    // onGetAllResponse: batches only after the GET-all,
+                    // and the throttle restarts once it is answered
+                    q.get_all = GetAll::Done;
+                    q.next_request = now + q.limits.interval();
                 }
             }
-        }
-        // failed entries expire: the next `get` queues them again
-        let now = Instant::now();
-        self.entries
-            .retain(|_, s| !matches!(s, State::Failed { retry_at } if now >= *retry_at));
-        if self.in_flight >= 4 {
-            return arrived;
-        }
-        // group the wanted ids by cap (waiting a little to fill batches)
-        let mut by_cap: HashMap<String, Vec<Uuid>> = HashMap::new();
-        for (id, s) in self.entries.iter() {
-            if let State::Wanted { cap, since } = s
-                && since.elapsed() > Duration::from_millis(50)
-            {
-                by_cap.entry(cap.clone()).or_default().push(*id);
-            }
-        }
-        for (cap, ids) in by_cap {
-            for chunk in ids.chunks(MAX_PER_REQUEST) {
-                if self.in_flight >= 4 {
-                    return arrived;
+            Err(e) => {
+                self.errors_logged += 1;
+                if self.errors_logged <= 10 {
+                    log::warn!(
+                        "RenderMaterials {} failed: {e} (region paused {} s)",
+                        if get_all { "GET all" } else { "request" },
+                        ERROR_BACKOFF.as_secs()
+                    );
                 }
-                for id in chunk {
-                    self.entries.insert(*id, State::Fetching);
+                for id in asked {
+                    if matches!(self.entries.get(&id), Some(State::Fetching)) {
+                        self.entries.insert(
+                            id,
+                            State::Failed {
+                                retry_at: now + FAILED_RETRY,
+                            },
+                        );
+                    }
                 }
-                self.in_flight += 1;
-                let (tx, http, cap, chunk) = (self.tx.clone(), http.clone(), cap.clone(), chunk.to_vec());
-                rt.spawn(async move {
-                    let body = request_body(&chunk);
-                    let r = match post(&http, &cap, &body).await {
-                        Ok(resp) => Ok(parse_response(&resp)),
-                        Err(e) => Err(e),
-                    };
-                    let _ = tx.send((chunk, r));
-                });
+                if let Some(q) = q {
+                    if get_all {
+                        q.get_all = GetAll::Done;
+                    }
+                    q.next_request = q.next_request.max(now + ERROR_BACKOFF);
+                }
             }
         }
         arrived
     }
+
+    /// LLMaterialMgr::processGetQueue: at most one request per region whose
+    /// throttle expired, the GET-all first, then batches of the queued ids;
+    /// MAX_IN_FLIGHT requests at once for all regions.
+    fn plan(&mut self, now: Instant) -> Vec<Request> {
+        // failed entries expire: the next `get` queues them again
+        self.entries
+            .retain(|_, s| !matches!(s, State::Failed { retry_at } if now >= *retry_at));
+        let mut out = Vec::new();
+        for (cap, q) in self.regions.iter_mut() {
+            if self.in_flight >= MAX_IN_FLIGHT {
+                break;
+            }
+            if now < q.next_request || q.get_all == GetAll::Pending {
+                continue;
+            }
+            // drop the ids answered by the GET-all
+            q.queue.retain(|id| matches!(self.entries.get(id), Some(State::Wanted)));
+            if q.queue.is_empty() {
+                continue;
+            }
+            let ids = if q.get_all == GetAll::NotAsked {
+                q.get_all = GetAll::Pending;
+                None
+            } else {
+                let n = q.queue.len().min(q.limits.max_per_request);
+                let ids: Vec<Uuid> = q.queue.drain(..n).collect();
+                for id in &ids {
+                    self.entries.insert(*id, State::Fetching);
+                }
+                q.next_request = now + q.limits.interval();
+                Some(ids)
+            };
+            self.in_flight += 1;
+            out.push(Request { cap: cap.clone(), ids });
+        }
+        out
+    }
 }
 
-async fn post(http: &reqwest::Client, url: &str, body: &Llsd) -> Result<Llsd, String> {
-    let resp = http
-        .post(url)
-        .header("Content-Type", "application/llsd+xml")
+/// GET-all (`ids: None`) or POST of a batch of ids.
+async fn fetch(http: &reqwest::Client, req: &Request) -> Result<Vec<(Uuid, LegacyMaterial)>, String> {
+    let builder = match &req.ids {
+        None => http.get(&req.cap),
+        Some(ids) => http
+            .post(&req.cap)
+            .header("Content-Type", "application/llsd+xml")
+            .body(aurora_llsd::to_xml(&request_body(ids))),
+    };
+    let resp = builder
         .header("Accept", "application/llsd+xml")
-        .body(aurora_llsd::to_xml(body))
         .timeout(Duration::from_secs(60))
         .send()
         .await
@@ -290,7 +433,8 @@ async fn post(http: &reqwest::Client, url: &str, body: &Llsd) -> Result<Llsd, St
         return Err(format!("HTTP {}", resp.status()));
     }
     let bytes = resp.bytes().await.map_err(|e| e.to_string())?;
-    aurora_llsd::from_xml(&bytes).map_err(|e| e.to_string())
+    let llsd = aurora_llsd::from_xml(&bytes).map_err(|e| e.to_string())?;
+    Ok(parse_response(&llsd))
 }
 
 #[cfg(test)]
@@ -328,5 +472,91 @@ mod tests {
         let body = request_body(&[id]);
         let ids = unzip_llsd(body.get("Zipped").as_binary()).expect("unzip");
         assert_eq!(ids.as_array()[0].as_binary(), id.as_bytes());
+    }
+
+    #[test]
+    fn region_limits_from_features() {
+        assert_eq!(RegionLimits::from_features(None, None), RegionLimits::default());
+        let l = RegionLimits::from_features(Some(0.0), Some(0));
+        assert_eq!((l.rate, l.max_per_request), (1.0, 50));
+        let l = RegionLimits::from_features(Some(4.0), Some(20));
+        assert_eq!((l.rate, l.max_per_request), (4.0, 20));
+        assert_eq!(l.interval(), Duration::from_millis(250));
+    }
+
+    fn region(url: &str) -> RegionCap<'_> {
+        RegionCap {
+            url,
+            limits: RegionLimits::default(),
+        }
+    }
+
+    #[test]
+    fn get_all_first_then_throttled_batches() {
+        let mut mats = LegacyMaterials::default();
+        let ids: Vec<Uuid> = (1..=120u128).map(Uuid::from_u128).collect();
+        for id in &ids {
+            assert!(mats.get(id, Some(region("a"))).is_none());
+        }
+        let t0 = Instant::now();
+        // the GET-all goes alone, nothing else to the region while it runs
+        let reqs = mats.plan(t0);
+        assert_eq!(
+            reqs,
+            vec![Request {
+                cap: "a".into(),
+                ids: None
+            }]
+        );
+        assert!(mats.plan(t0 + Duration::from_secs(5)).is_empty());
+        // it answers 10 materials; the other 110 go in batches of 50, 1 per second
+        let known = ids[..10].iter().map(|id| (*id, LegacyMaterial::from_llsd(&Llsd::Undef))).collect();
+        assert!(mats.receive((reqs[0].clone(), Ok(known)), t0));
+        assert!(mats.plan(t0).is_empty());
+        let mut t = t0;
+        let mut sizes = Vec::new();
+        for _ in 0..3 {
+            t += Duration::from_secs(1);
+            let reqs = mats.plan(t);
+            assert_eq!(reqs.len(), 1);
+            assert!(mats.plan(t).is_empty(), "throttled");
+            let asked = reqs[0].ids.clone().expect("batch");
+            sizes.push(asked.len());
+            mats.receive((reqs[0].clone(), Ok(Vec::new())), t);
+        }
+        assert_eq!(sizes, vec![50, 50, 10]);
+        assert_eq!(mats.counts(), (10, 0, 110));
+    }
+
+    #[test]
+    fn in_flight_limit_and_error_backoff() {
+        let mut mats = LegacyMaterials::default();
+        let id_of = |cap: &str| Uuid::from_u128(cap.as_bytes()[0] as u128);
+        for cap in ["a", "b", "c"] {
+            mats.get(&id_of(cap), Some(region(cap)));
+        }
+        let t0 = Instant::now();
+        let reqs = mats.plan(t0);
+        assert_eq!(reqs.len(), MAX_IN_FLIGHT);
+        // a 503 pauses its region and frees a slot for the third one
+        mats.receive((reqs[0].clone(), Err("HTTP 503 Service Unavailable".into())), t0);
+        let third = mats.plan(t0);
+        assert_eq!(third.len(), 1);
+        assert!(third[0].cap != reqs[0].cap && third[0].cap != reqs[1].cap);
+        for r in [&reqs[1], &third[0]] {
+            let found = vec![(id_of(&r.cap), LegacyMaterial::from_llsd(&Llsd::Undef))];
+            mats.receive((r.clone(), Ok(found)), t0);
+        }
+        // the failed GET-all falls back to a batch after the pause
+        assert!(mats.plan(t0 + Duration::from_secs(5)).is_empty());
+        let failed = &reqs[0].cap;
+        let later = mats.plan(t0 + ERROR_BACKOFF);
+        assert_eq!(
+            later,
+            vec![Request {
+                cap: failed.clone(),
+                ids: Some(vec![id_of(failed)])
+            }]
+        );
     }
 }

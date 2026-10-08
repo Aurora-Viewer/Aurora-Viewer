@@ -351,10 +351,16 @@ pub enum NetEvent {
         handle: RegionHandle,
         caps: Arc<HashMap<String, String>>,
     },
-    /// SimulatorFeatures of a region (voice server type: "webrtc" / "vivox").
+    /// SimulatorFeatures of a region (voice server type: "webrtc" / "vivox",
+    /// RenderMaterials limits read by LLViewerRegion::resetMaterialsCapThrottle
+    /// and getMaxMaterialsPerTransaction; `None` = not given by the region).
     SimulatorFeatures {
         handle: RegionHandle,
         voice_server_type: String,
+        /// "RenderMaterialsCapability": requests per second.
+        materials_rate: Option<f32>,
+        /// "MaxMaterialsPerTransaction": material ids per request.
+        materials_max: Option<u32>,
     },
     ObjectUpdates {
         handle: RegionHandle,
