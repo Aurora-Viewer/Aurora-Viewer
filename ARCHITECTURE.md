@@ -36,7 +36,7 @@ aurora-viewer/                  dépôt git (GitHub : Aurora-Viewer/Aurora-Viewe
 ├─ crates/                      le code (voir ci-dessous)
 ├─ docs/                        BRANDING.md et autres documents
 ├─ scripts/                     outils des agents et des humains (PowerShell)
-└─ .github/                     CI, release, modèle de PR, Dependabot
+└─ .github/                     CI (workflows/, actions/), release, modèle de PR, Dependabot
 ```
 
 À côté du dépôt (hors git) :
@@ -45,6 +45,7 @@ aurora-viewer/                  dépôt git (GitHub : Aurora-Viewer/Aurora-Viewe
 C:\Aurora_Viewer_v2\            (ou tout autre dossier parent)
 ├─ aurora-viewer\               le dépôt
 ├─ phoenix-firestorm\           sources officielles de Firestorm (lecture seule)
+├─ RELEASE\                     build --release du dernier main (scripts/build-release.ps1)
 └─ work\                        un worktree git par tâche d'agent
 ```
 
