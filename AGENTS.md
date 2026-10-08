@@ -217,10 +217,10 @@ couleur en dur : utilise la `Palette`. Réutilise les widgets de
      reprends à l'étape 8.
    - Verdict ⚠️ ou ❌ : ne fusionne pas ; explique le point à l'humain et
      propose des solutions (section 11).
-10. **Après la fusion** : `end-task.ps1`, lancé **depuis le dépôt
-    principal** (un terminal ou un éditeur ouvert dans le dossier de la tâche
-    l'empêche d'être supprimé ; le script le signale, il suffit de le
-    relancer une fois le dossier libéré), puis **préviens l'humain** : lien
+10. **Après la fusion** : `end-task.ps1` (il sort lui-même du dossier de la
+    tâche ; un autre programme ouvert dedans, éditeur ou viewer, l'empêche
+    d'être supprimé : le script le signale, il suffit de le relancer une
+    fois le dossier libéré), puis **préviens l'humain** : lien
     de la PR fusionnée, ce qui a changé, et ce qu'il reste à tester sur la
     grille s'il y en a. Si la session s'arrête avant la fusion, la fusion se
     fait quand même sur GitHub ; le ménage se fait à l'étape 0 de la session

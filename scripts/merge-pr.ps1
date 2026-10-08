@@ -14,18 +14,22 @@ param(
 )
 . "$PSScriptRoot\common.ps1"
 
-Set-Location $PSScriptRoot
-$repo = gh repo view --json owner,name | ConvertFrom-Json
+# The GitHub repository, from this repository's origin: every gh call names
+# it, so the script never moves the caller's terminal (a terminal left in a
+# task folder keeps it from being deleted).
+$origin = (git -C $PSScriptRoot remote get-url origin).Trim()
+if ($origin -notmatch 'github\.com[:/](?<owner>[^/]+)/(?<name>[^/]+?)(\.git)?$') { throw "Remote origin inattendu : $origin" }
+$owner = $Matches.owner; $name = $Matches.name
 # queue entry and auto-merge request: once both are gone while the PR is
 # still open, the queue has let it go
 $query = 'query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){state mergeQueueEntry{state} autoMergeRequest{enabledAt}}}}'
 function Get-PrState {
-    $j = gh api graphql -f query=$query -F o=$($repo.owner.login) -F r=$($repo.name) -F n=$Pr | ConvertFrom-Json
+    $j = gh api graphql -f query=$query -F o=$owner -F r=$name -F n=$Pr | ConvertFrom-Json
     $j.data.repository.pullRequest
 }
 
 # never --admin: the protection of main applies to everyone
-Invoke-Checked 'gh pr merge' { gh pr merge $Pr --squash --auto }
+Invoke-Checked 'gh pr merge' { gh pr merge $Pr --squash --auto -R "$owner/$name" }
 Write-Host "PR #$Pr en attente de fusion (CI de la PR, puis file de fusion)…"
 
 $deadline = (Get-Date).AddMinutes($TimeoutMinutes)
@@ -45,7 +49,7 @@ while ((Get-Date) -lt $deadline) {
     }
     if (-not $s.mergeQueueEntry -and -not $s.autoMergeRequest) {
         Write-Host "PR #$Pr sortie de la file sans être fusionnée. Dernière CI de la file :" -ForegroundColor Red
-        gh run list --workflow CI --event merge_group --limit 3
+        gh run list --workflow CI --event merge_group --limit 3 -R "$owner/$name"
         exit 1
     }
 }
