@@ -352,16 +352,7 @@ pub fn show(
                         ui.label(RichText::new("Code d'authentification (2FA)").size(11.5).color(p.amber));
                         mfa = Some(field(ui, p, icons, "login_mfa", "lock-key", "000000", &mut form.mfa_token, None));
                     }
-                    // ready to type: the user name, or the password when the
-                    // name is remembered (the 2FA code when asked for)
-                    if !form.focused && enabled {
-                        form.focused = true;
-                        match mfa {
-                            Some(m) if form.mfa_token.is_empty() => m.request_focus(),
-                            _ if settings.username.trim().is_empty() => user.request_focus(),
-                            _ => pass.request_focus(),
-                        }
-                    }
+
                     ui.add_space(6.0);
                     // grid and start location side by side
                     ui.columns(2, |cols| {
@@ -413,6 +404,18 @@ pub fn show(
                     ui.add_space(10.0);
                     let can = !settings.username.trim().is_empty() && (!form.password.is_empty() || form.stored.is_some());
                     let (r, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 42.0), Sense::click());
+                    // Requested UX: focus the first missing field, or Connect
+                    // when credentials are ready. Firestorm giveFocus otherwise
+                    // returns to the user-name field when both are present.
+                    if !form.focused && enabled {
+                        form.focused = true;
+                        match mfa {
+                            Some(m) if form.mfa_token.is_empty() => m.request_focus(),
+                            _ if settings.username.trim().is_empty() => user.request_focus(),
+                            _ if can => resp.request_focus(),
+                            _ => pass.request_focus(),
+                        }
+                    }
                     let hot = can && resp.hovered();
                     let fill = if !can {
                         p.violet.gamma_multiply(0.35)
@@ -434,7 +437,7 @@ pub fn show(
                     if hot {
                         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                     }
-                    let enter = (user.lost_focus() || pass.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    let enter = (user.lost_focus() || pass.lost_focus() || resp.has_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter));
                     if (resp.clicked() || enter) && can && !form.busy {
                         action = LoginAction::Login;
                     }
