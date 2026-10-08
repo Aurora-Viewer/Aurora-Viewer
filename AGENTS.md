@@ -71,6 +71,12 @@ worktree git, sa branche, son dossier `target` et ses logs.
   Son `target/` est à lui : tes compilations ne gênent pas les autres agents
   et les leurs ne te gênent pas.
 - Le premier build d'un worktree prend quelques minutes ; c'est normal.
+- **Compile uniquement dans ton worktree**, avec son `target/` par défaut :
+  pas de `CARGO_TARGET_DIR` maison ni de dossier de compilation ailleurs
+  (chaque dossier de compilation pèse plusieurs Go et finit oublié).
+  `end-task.ps1` le supprime avec le worktree.
+- Pour voir la place prise par les compilations et en libérer :
+  `./scripts/clean.ps1` (n'efface rien sans `-Apply`).
 - Une fois la PR fusionnée par l'humain :
   `./scripts/end-task.ps1 -Name "regard-avatars"` supprime le worktree et la
   branche locale.

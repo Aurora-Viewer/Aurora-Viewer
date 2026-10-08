@@ -111,6 +111,21 @@ cargo build --release -p aurora-viewer
 - Si un agent a son viewer ouvert, le `.exe` de `target/release` est verrouillé :
   les agents compilent dans leur propre dossier `..\work\<tâche>\target`.
 
+### Place sur le disque
+
+Les compilations prennent beaucoup de place : comptez 4 à 8 Go par dossier
+`target` (le dépôt et chaque tâche en cours). Ce n'est que du cache, qu'on peut
+toujours supprimer : il sera recompilé au besoin.
+
+```powershell
+./scripts/clean.ps1                 # montre la place prise, n'efface rien
+./scripts/clean.ps1 -Apply          # libère les compilations du dépôt (garde target\release)
+./scripts/clean.ps1 -Tasks -Apply   # libère aussi celles des tâches en cours
+```
+
+Le script ne supprime que des dossiers de compilation Cargo, et refuse de
+travailler pendant une compilation ou quand un viewer est ouvert.
+
 ## Où sont les fichiers
 
 | Quoi | Où |

@@ -9,8 +9,11 @@ license = "GPL-3.0-or-later"
 repository = "https://github.com/odessadraekavik/Aurora_Viewer"
 publish = false
 
+# Debug info: line tables only (function names and line numbers in crash
+# stacks, without the gigabytes of full debug info in target/).
 [profile.dev]
 opt-level = 1
+debug = "line-tables-only"
 
 [profile.dev.package."*"]
 opt-level = 3
@@ -26,7 +29,7 @@ incremental = false
 opt-level = 0
 
 [profile.release]
-debug = 1
+debug = "line-tables-only"
 lto = "thin"
 codegen-units = 16
 
