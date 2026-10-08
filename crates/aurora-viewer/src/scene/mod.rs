@@ -1275,11 +1275,12 @@ impl Scene {
             let mut legacy_alpha = None;
             if mat_id.is_none() && !tf.material_id.is_nil() {
                 g.material_ids.push(tf.material_id);
-                let cap = world
-                    .regions
-                    .get(&o.key.region)
-                    .and_then(|r| r.caps.get("RenderMaterials"))
-                    .map(|s| s.as_str());
+                let cap = world.regions.get(&o.key.region).and_then(|r| {
+                    r.caps.get("RenderMaterials").map(|url| legacy_mat::RegionCap {
+                        url,
+                        limits: r.materials_limits,
+                    })
+                });
                 if let Some(lm) = self.legacy_mats.get(&tf.material_id, cap) {
                     rec.flags[0] |= flags::LEGACY_MAT;
                     aux_tex[0] = lm.normal_map;

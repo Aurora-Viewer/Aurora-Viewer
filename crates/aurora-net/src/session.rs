@@ -411,8 +411,8 @@ impl Session<'_> {
         }
     }
 
-    /// SimulatorFeatures (LLViewerRegion::requestSimulatorFeatures): only the
-    /// voice server type is used for now.
+    /// SimulatorFeatures (LLViewerRegion::requestSimulatorFeatures): the voice
+    /// server type and the RenderMaterials limits are used for now.
     fn request_features(&self, handle: RegionHandle, url: String) {
         let http = self.sh.caps_http.clone();
         let events = self.sh.events.clone();
@@ -423,7 +423,16 @@ impl Session<'_> {
                         && let Ok(v) = aurora_llsd::from_xml(&bytes)
                     {
                         let voice_server_type = v["VoiceServerType"].to_string_value();
-                        let _ = events.send(NetEvent::SimulatorFeatures { handle, voice_server_type });
+                        let rate = &v["RenderMaterialsCapability"];
+                        let materials_rate = (!rate.is_undef()).then(|| rate.as_f32());
+                        let max = &v["MaxMaterialsPerTransaction"];
+                        let materials_max = (!max.is_undef()).then(|| max.as_u32());
+                        let _ = events.send(NetEvent::SimulatorFeatures {
+                            handle,
+                            voice_server_type,
+                            materials_rate,
+                            materials_max,
+                        });
                     }
                 }
                 Ok(resp) => log::info!("SimulatorFeatures: HTTP {}", resp.status()),
