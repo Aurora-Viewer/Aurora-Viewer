@@ -6,8 +6,8 @@
 
 **A modern Second Life viewer written in Rust.**
 
-[![CI](https://github.com/odessadraekavik/Aurora_Viewer/actions/workflows/ci.yml/badge.svg)](https://github.com/odessadraekavik/Aurora_Viewer/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/odessadraekavik/Aurora_Viewer?include_prereleases&color=8B5CF6)](https://github.com/odessadraekavik/Aurora_Viewer/releases)
+[![CI](https://github.com/Aurora-Viewer/Aurora-Viewer/actions/workflows/ci.yml/badge.svg)](https://github.com/Aurora-Viewer/Aurora-Viewer/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Aurora-Viewer/Aurora-Viewer?include_prereleases&color=8B5CF6)](https://github.com/Aurora-Viewer/Aurora-Viewer/releases)
 [![License: GPL v3+](https://img.shields.io/badge/license-GPL--3.0--or--later-4F46E5)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-stable-5EEAD4?logo=rust&logoColor=white)](https://www.rust-lang.org)
 [![Platform](https://img.shields.io/badge/platform-Windows-070B1F)](#build)
@@ -48,7 +48,7 @@ Requirements: Windows 10/11, [Rust](https://rustup.rs) (stable, selected
 automatically by `rust-toolchain.toml`), a GPU with Vulkan support.
 
 ```powershell
-git clone https://github.com/odessadraekavik/Aurora_Viewer aurora-viewer
+git clone https://github.com/Aurora-Viewer/Aurora-Viewer aurora-viewer
 cd aurora-viewer
 ./scripts/fetch-assets.ps1          # emoji font (too large for git)
 cargo build --release -p aurora-viewer

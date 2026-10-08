@@ -1,7 +1,12 @@
 name: CI
 
+# Two stages. A pull request gets the quick checks (formatting, clippy,
+# secrets) while its author reviews it. The full run (tests too) happens in
+# the merge queue, on the PR combined with the latest main: what lands on
+# main is exactly what was tested, and nobody has to update a branch.
 on:
   pull_request:
+  merge_group:
   push:
     branches: [main]
 
@@ -16,10 +21,10 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  rust:
-    # The job always reports (main requires it); its Rust steps are skipped
-    # when only documentation or assets changed.
-    name: fmt, clippy, tests (Windows)
+  lint:
+    # Every job always reports (main requires them); their Rust steps are
+    # skipped when only documentation or assets changed.
+    name: fmt, clippy (Windows)
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
@@ -27,28 +32,18 @@ jobs:
           fetch-depth: 0
       - name: Code changed?
         id: changes
-        shell: bash
-        run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            base="${{ github.event.pull_request.base.sha }}"
-          else
-            base="${{ github.event.before }}"
-          fi
-          # documentation, images and repository metadata do not need a build
-          docs='^(docs/|assets/|[^/]*\.md$|LICENSE$|\.github/(pull_request_template\.md|release\.yml|dependabot\.yml)$)'
-          if files=$(git diff --name-only "$base" HEAD 2>/dev/null) && [ -n "$files" ] && ! echo "$files" | grep -qvE "$docs"; then
-            echo "code=false" >> "$GITHUB_OUTPUT"
-            echo "Documentation only: Rust checks skipped."
-          else
-            echo "code=true" >> "$GITHUB_OUTPUT"
-          fi
+        uses: ./.github/actions/code-changed
       - name: Rust stable
         if: steps.changes.outputs.code == 'true'
         run: |
           rustup update stable
           rustup component add rustfmt clippy
+      # caches are written from main only, and read by every PR and queue
+      # run: PR caches would otherwise evict main's from the 10 GB quota
       - uses: Swatinem/rust-cache@v2
         if: steps.changes.outputs.code == 'true'
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Formatting
         if: steps.changes.outputs.code == 'true'
         run: cargo fmt --all -- --check
@@ -56,6 +51,28 @@ jobs:
       - name: Clippy (warnings are errors)
         if: steps.changes.outputs.code == 'true'
         run: cargo clippy --profile ci --workspace --all-targets --locked -- -D warnings
+
+  tests:
+    # Not on pull requests: the agent ran them locally (check.ps1) and the
+    # merge queue runs them on the combined code before anything lands.
+    # A skipped job counts as passed for the required checks.
+    name: tests (Windows)
+    if: github.event_name != 'pull_request'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Code changed?
+        id: changes
+        uses: ./.github/actions/code-changed
+      - name: Rust stable
+        if: steps.changes.outputs.code == 'true'
+        run: rustup update stable
+      - uses: Swatinem/rust-cache@v2
+        if: steps.changes.outputs.code == 'true'
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Tests
         if: steps.changes.outputs.code == 'true'
         run: cargo test --profile ci --workspace --locked

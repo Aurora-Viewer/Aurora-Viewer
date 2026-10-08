@@ -1,0 +1,27 @@
+name: Code changed?
+description: >
+  code=false when the change only touches documentation, images or
+  repository metadata, which need no build. Needs a full checkout
+  (fetch-depth 0).
+outputs:
+  code:
+    description: "'true' when Rust code (or anything not listed as documentation) changed"
+    value: ${{ steps.diff.outputs.code }}
+runs:
+  using: composite
+  steps:
+    - id: diff
+      shell: bash
+      run: |
+        case "${{ github.event_name }}" in
+          pull_request) base="${{ github.event.pull_request.base.sha }}" ;;
+          merge_group)  base="${{ github.event.merge_group.base_sha }}" ;;
+          *)            base="${{ github.event.before }}" ;;
+        esac
+        docs='^(docs/|assets/|[^/]*\.md$|LICENSE$|\.github/(pull_request_template\.md|release\.yml|dependabot\.yml)$)'
+        if files=$(git diff --name-only "$base" HEAD 2>/dev/null) && [ -n "$files" ] && ! echo "$files" | grep -qvE "$docs"; then
+          echo "code=false" >> "$GITHUB_OUTPUT"
+          echo "Documentation only: Rust checks skipped."
+        else
+          echo "code=true" >> "$GITHUB_OUTPUT"
+        fi

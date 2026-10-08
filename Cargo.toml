@@ -6,7 +6,7 @@ members = ["crates/*"]
 version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
-repository = "https://github.com/odessadraekavik/Aurora_Viewer"
+repository = "https://github.com/Aurora-Viewer/Aurora-Viewer"
 publish = false
 
 # The single local profile: check.ps1 (clippy, tests) and the demo runs share
