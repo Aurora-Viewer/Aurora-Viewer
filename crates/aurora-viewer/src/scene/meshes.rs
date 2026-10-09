@@ -629,6 +629,7 @@ mod tests {
             key,
             status,
             complete: true,
+            offset: 0,
             data: Err(format!("HTTP {status}")),
         }
     }
