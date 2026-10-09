@@ -21,7 +21,9 @@ const GRAPH_EASE_S: f32 = 1.5;
 const REFRESH_S: f32 = 0.5;
 const COMPACT_W: f32 = 236.0;
 const FULL_W: f32 = 300.0;
-const GRAPH_H: f32 = 58.0;
+const GRAPH_H: f32 = 64.0;
+/// Lowest top of the graph scale (images/s).
+const GRAPH_MIN_TOP: f32 = 72.0;
 
 /// CPU parts of a frame, in [`cpu_parts`] order.
 const CPU_PARTS: usize = 7;
@@ -51,7 +53,41 @@ fn frame_stats(frames: &VecDeque<f32>) -> FrameStats {
     }
 }
 
-/// CPU parts of a frame (ms): network → world, scene sync, culling and
+fn fps_of(ms: f32) -> f32 {
+    1000.0 / ms.max(0.1)
+}
+
+/// Top of the graph scale (images/s) for these frames: above the fast
+/// ones, ignoring the 2 % fastest (a lone very short frame after a long
+/// one would squash the whole graph).
+fn graph_top(frames: &VecDeque<f32>) -> f32 {
+    let mut fps: Vec<f32> = frames.iter().map(|&ms| fps_of(ms)).collect();
+    if fps.is_empty() {
+        return GRAPH_MIN_TOP;
+    }
+    fps.sort_by(f32::total_cmp);
+    let fast = fps[(fps.len() - 1) * 98 / 100];
+    (fast * 1.15).max(GRAPH_MIN_TOP)
+}
+
+/// Step between the graph marks (images/s): the round value (1, 2 or 5
+/// times a power of ten) giving two or three marks under `top`, far enough
+/// apart for their labels.
+fn grid_step(top: f32) -> f32 {
+    let raw = (top / 2.5).max(1.0);
+    let pow = 10f32.powf(raw.log10().floor());
+    let unit = raw / pow;
+    let nice = if unit >= 5.0 {
+        5.0
+    } else if unit >= 2.0 {
+        2.0
+    } else {
+        1.0
+    };
+    nice * pow
+}
+
+/// CPU parts of a frame (ms): network â†’ world, scene sync, culling and
 /// lists, the rest of the update, interface, GPU encoding, and the time
 /// left (vsync, frame limiter, present). Sync and culling run inside the
 /// update.
@@ -95,7 +131,7 @@ pub struct PerfData {
     gpu_shown: Option<[f32; GpuElement::ALL.len()]>,
     cpu: [f32; CPU_PARTS],
     cpu_shown: [f32; CPU_PARTS],
-    /// Top of the graph scale (ms): follows the slowest frame, eases down.
+    /// Top of the graph scale (images/s): follows the fast frames, eases down.
     graph_top: f32,
 }
 
@@ -118,7 +154,7 @@ impl Default for PerfData {
             gpu_shown: None,
             cpu: [0.0; CPU_PARTS],
             cpu_shown: [0.0; CPU_PARTS],
-            graph_top: 20.0,
+            graph_top: GRAPH_MIN_TOP,
         }
     }
 }
@@ -147,8 +183,7 @@ impl PerfData {
             }
             (now, _) => now,
         };
-        let slowest = self.frame_ms.iter().copied().fold(0.0f32, f32::max);
-        let target = (slowest * 1.25).max(20.0);
+        let target = graph_top(&self.frame_ms);
         self.graph_top = if target > self.graph_top {
             target
         } else {
@@ -213,7 +248,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, v: &PerfView, open: &mut bool) {
     let (icon, tip) = if full {
         ("corners-in", "Version compacte")
     } else {
-        ("corners-out", "Afficher le détail")
+        ("corners-out", "Afficher le dÃ©tail")
     };
     let width = if full { FULL_W } else { COMPACT_W };
     let screen = ctx.content_rect();
@@ -225,9 +260,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, v: &PerfView, open: &mut bool) {
         vec2(width, 0.0),
     )
     .fixed()
-    .help(
-        "Le graphe montre le temps de chaque image : plus la courbe est basse, plus c'est fluide.          Au-dessus de la ligne 16.7 ms, on passe sous 60 images/s ; au-dessus de 33.3 ms, sous 30.",
-    )
+    .help("Le graphe montre les images/s des derniÃ¨res secondes : un creux est un Ã -coup. Survolez-le pour lire une image.")
     .action(icon, tip, &mut toggle)
     .show(ctx, p, open, |ui| {
         ui.set_width(width);
@@ -272,7 +305,7 @@ fn headline(ui: &mut egui::Ui, p: &Palette, d: &PerfData) {
             ui.add_space(3.0);
             ui.label(RichText::new(format!("{:.1} ms", d.frames.avg)).size(15.0).color(p.ink));
             ui.label(
-                RichText::new(format!("min {:.1} · max {:.1}", d.frames.min, d.frames.max))
+                RichText::new(format!("min {:.1} Â· max {:.1}", d.frames.min, d.frames.max))
                     .size(11.0)
                     .color(p.muted),
             );
@@ -280,25 +313,26 @@ fn headline(ui: &mut egui::Ui, p: &Palette, d: &PerfData) {
     });
 }
 
-/// Frame times of the last seconds: a line over a light area, the 60 and
-/// 30 images/s marks, and the time of the frame under the pointer.
+/// Images/s of the last seconds, frame by frame (a dip is a hitch): a line
+/// over a light area, the 60 and 30 images/s marks, and the frame under
+/// the pointer.
 fn graph(ui: &mut egui::Ui, p: &Palette, d: &PerfData) {
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), GRAPH_H), Sense::hover());
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 3.0, p.field);
     let top = d.graph_top.max(1.0);
     let plot = rect.shrink2(vec2(0.0, 4.0));
-    let y = |ms: f32| plot.bottom() - (ms / top).min(1.0) * plot.height();
+    let y = |fps: f32| plot.bottom() - (fps / top).min(1.0) * plot.height();
 
+    // marks at round values that follow the scale (50 / 100 / 150 at
+    // 160 images/s, 20 / 40 / 60 at 60)
     let mark_font = egui::FontId::proportional(9.0);
-    // marks in the unit of the graph: the frame times of 60 and 30 images/s
-    for (ms, label) in [(1000.0 / 60.0, "16.7 ms"), (1000.0 / 30.0, "33.3 ms")] {
-        if ms >= top {
-            continue;
-        }
-        let ly = y(ms).round() + 0.5;
+    let grid = grid_step(top);
+    let mut fps = grid;
+    while fps < top * 0.95 {
+        let ly = y(fps).round() + 0.5;
         painter.extend(egui::Shape::dashed_line(
-            &[pos2(rect.left() + 4.0, ly), pos2(rect.right() - 44.0, ly)],
+            &[pos2(rect.left() + 4.0, ly), pos2(rect.right() - 42.0, ly)],
             Stroke::new(1.0, p.raised),
             3.0,
             3.0,
@@ -306,10 +340,11 @@ fn graph(ui: &mut egui::Ui, p: &Palette, d: &PerfData) {
         painter.text(
             pos2(rect.right() - 4.0, ly),
             egui::Align2::RIGHT_CENTER,
-            label,
+            format!("{fps:.0} i/s"),
             mark_font.clone(),
             p.muted_dim,
         );
+        fps += grid;
     }
 
     let n = d.frame_ms.len();
@@ -322,7 +357,7 @@ fn graph(ui: &mut egui::Ui, p: &Palette, d: &PerfData) {
         .frame_ms
         .iter()
         .enumerate()
-        .map(|(i, &ms)| pos2(x0 + i as f32 * step, y(ms)))
+        .map(|(i, &ms)| pos2(x0 + i as f32 * step, y(fps_of(ms))))
         .collect();
     // area under the line: a strip of quads down to the bottom
     let fill = p.violet.gamma_multiply(0.14);
@@ -345,7 +380,7 @@ fn graph(ui: &mut egui::Ui, p: &Palette, d: &PerfData) {
         let ms = d.frame_ms[i];
         painter.line_segment([pos2(pt.x, rect.top()), pos2(pt.x, rect.bottom())], Stroke::new(1.0, p.muted_dim));
         painter.circle(pt, 3.5, p.violet_light, Stroke::new(2.0, p.field));
-        let text = format!("{ms:.1} ms · {:.0} i/s", 1000.0 / ms.max(0.1));
+        let text = format!("{:.0} i/s Â· {ms:.1} ms", fps_of(ms));
         let galley = painter.layout_no_wrap(text, egui::FontId::proportional(11.0), p.ink);
         let size = galley.size() + vec2(10.0, 4.0);
         // beside the line, on the side with room
@@ -367,7 +402,7 @@ struct Part {
 }
 
 /// Colors of the breakdown parts, in a fixed order: neighbours stay apart
-/// for colour-blind readers; the last one (neutral) is the « rest ».
+/// for colour-blind readers; the last one (neutral) is the Â« rest Â».
 fn part_colors(p: &Palette) -> [Color32; 7] {
     [p.indigo_light, p.rose, p.amber, p.violet, p.teal, p.violet_pale, p.muted_dim]
 }
@@ -379,13 +414,13 @@ fn gpu_parts(p: &Palette, live: &[f32; 7], shown: &[f32; 7]) -> Vec<Part> {
         .enumerate()
         .map(|(i, el)| {
             let (name, help) = match el {
-                GpuElement::ShadowsDepth => ("Ombres et profondeur", "Ombres du soleil, prépasse de profondeur, occlusion"),
-                GpuElement::Effects => ("Effets", "Occlusion ambiante, reflets (eau, miroirs, sondes), reflets écran"),
-                GpuElement::TerrainSky => ("Terrain et ciel", "Sol des régions et ciel"),
-                GpuElement::Objects => ("Objets et avatars", "Prims, meshes et avatars opaques ou masqués, imposteurs"),
-                GpuElement::Water => ("Eau", "Surface de l'eau (réfraction, vagues)"),
+                GpuElement::ShadowsDepth => ("Ombres et profondeur", "Ombres du soleil, prÃ©passe de profondeur, occlusion"),
+                GpuElement::Effects => ("Effets", "Occlusion ambiante, reflets (eau, miroirs, sondes), reflets Ã©cran"),
+                GpuElement::TerrainSky => ("Terrain et ciel", "Sol des rÃ©gions et ciel"),
+                GpuElement::Objects => ("Objets et avatars", "Prims, meshes et avatars opaques ou masquÃ©s, imposteurs"),
+                GpuElement::Water => ("Eau", "Surface de l'eau (rÃ©fraction, vagues)"),
                 GpuElement::Transparent => ("Transparents et particules", "Faces semi-transparentes et particules"),
-                GpuElement::Post => ("Post-traitement", "Lueur, anticrénelage (TAA, SMAA), tonalité"),
+                GpuElement::Post => ("Post-traitement", "Lueur, anticrÃ©nelage (TAA, SMAA), tonalitÃ©"),
             };
             Part {
                 name,
@@ -400,13 +435,13 @@ fn gpu_parts(p: &Palette, live: &[f32; 7], shown: &[f32; 7]) -> Vec<Part> {
 
 fn cpu_parts_view(p: &Palette, live: &[f32; CPU_PARTS], shown: &[f32; CPU_PARTS]) -> Vec<Part> {
     const NAMES: [(&str, &str); CPU_PARTS] = [
-        ("Réseau vers monde", "Messages du simulateur appliqués au monde"),
-        ("Scène", "Géométrie, textures et objets envoyés au GPU"),
+        ("RÃ©seau vers monde", "Messages du simulateur appliquÃ©s au monde"),
+        ("ScÃ¨ne", "GÃ©omÃ©trie, textures et objets envoyÃ©s au GPU"),
         ("Culling et listes", "Choix de ce qui est visible, listes de dessin"),
-        ("Avatars et caméra", "Animations, agent, caméra, flux des textures"),
-        ("Interface", "Fenêtres et barres"),
-        ("Encodage GPU", "Préparation des commandes de rendu"),
-        ("Attente", "Synchronisation verticale, limite d'images/s, présentation"),
+        ("Avatars et camÃ©ra", "Animations, agent, camÃ©ra, flux des textures"),
+        ("Interface", "FenÃªtres et barres"),
+        ("Encodage GPU", "PrÃ©paration des commandes de rendu"),
+        ("Attente", "Synchronisation verticale, limite d'images/s, prÃ©sentation"),
     ];
     let colors = part_colors(p);
     NAMES
@@ -474,9 +509,12 @@ fn breakdown(ui: &mut egui::Ui, p: &Palette, id: &str, title: &str, parts: Vec<P
     }
     ui.add_space(4.0);
 
-    // legend
+    // legend: rows touch each other (no gap without a hovered part)
+    let spacing = std::mem::replace(&mut ui.spacing_mut().item_spacing.y, 0.0);
+    let mut bottom = rect.bottom();
     for part in &parts {
-        let (row, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 17.0), Sense::hover());
+        let (row, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 18.0), Sense::hover());
+        bottom = row.bottom();
         let resp = resp.on_hover_text(part.help);
         if resp.hovered() {
             hover_now = Some(part.name);
@@ -511,6 +549,12 @@ fn breakdown(ui: &mut egui::Ui, p: &Palette, id: &str, title: &str, parts: Vec<P
             font,
             p.ink,
         );
+    }
+    ui.spacing_mut().item_spacing.y = spacing;
+    // between the bar and the legend, or a row edge: keep the part shown
+    let block = Rect::from_min_max(rect.min, pos2(rect.right(), bottom));
+    if hover_now.is_none() && ui.rect_contains_pointer(block) {
+        hover_now = hovered;
     }
     ui.data_mut(|d| d.insert_temp(hover_id, hover_now));
 }
@@ -556,7 +600,7 @@ fn details(ui: &mut egui::Ui, p: &Palette, v: &PerfView) {
                 v.render.gpu_ms.map(|g| format!("{g:.1} ms")).unwrap_or_else(|| "n/d".into()),
             );
             ui.label(
-                RichText::new("Détail par élément indisponible avec cette carte graphique")
+                RichText::new("DÃ©tail par Ã©lÃ©ment indisponible avec cette carte graphique")
                     .size(11.0)
                     .color(p.muted_dim),
             );
@@ -574,7 +618,7 @@ fn details(ui: &mut egui::Ui, p: &Palette, v: &PerfView) {
             format!("{} (+{} ombres)", v.render.draws, v.render.shadow_draws),
         );
         if let Some(n) = v.render.occluded {
-            row(ui, p, "Cachés (occlusion)", format!("{n}"));
+            row(ui, p, "CachÃ©s (occlusion)", format!("{n}"));
         }
         row(ui, p, "Triangles", format!("{:.2} M", v.render.triangles as f64 / 1e6));
         row(
@@ -586,13 +630,13 @@ fn details(ui: &mut egui::Ui, p: &Palette, v: &PerfView) {
         row(
             ui,
             p,
-            "Géométries",
+            "GÃ©omÃ©tries",
             format!("{} ({} en cours)", v.scene.geometries, v.scene.geom_pending),
         );
         row(ui, p, "Distance", format!("{:.0} m", v.draw_distance));
         row(ui, p, "Particules", format!("{}", v.render.particles));
         if let Some(c) = v.complexity.0 {
-            row(ui, p, "Votre complexité", format!("{c}"));
+            row(ui, p, "Votre complexitÃ©", format!("{c}"));
         }
         if v.complexity.1 > 0 {
             row(ui, p, "Avatars en silhouette", format!("{}", v.complexity.1));
@@ -607,48 +651,68 @@ fn details(ui: &mut egui::Ui, p: &Palette, v: &PerfView) {
             _ => "aucun",
         };
         row(ui, p, "Reflets plans", refl.to_owned());
-        row(ui, p, "Sondes de réflexion", format!("{} prêtes / {}", v.probes.1, v.probes.0 + 1));
+        row(
+            ui,
+            p,
+            "Sondes de rÃ©flexion",
+            format!("{} prÃªtes / {}", v.probes.1, v.probes.0 + 1),
+        );
         row(ui, p, "Sons en cours", format!("{}", v.sounds));
     });
-    group(ui, p, "Mémoire et flux", false, |ui| {
-        row(ui, p, "Géométrie", format!("{:.0} Mo", v.render.geometry_bytes as f64 / 1048576.0));
+    group(ui, p, "MÃ©moire et flux", false, |ui| {
+        row(
+            ui,
+            p,
+            "GÃ©omÃ©trie",
+            format!("{:.0} Mo", v.render.geometry_bytes as f64 / 1048576.0),
+        );
         row(
             ui,
             p,
             "Textures",
             format!(
-                "{} / {} · {:.0} Mo",
+                "{} / {} Â· {:.0} Mo",
                 v.tex.loaded,
                 v.tex.total,
                 v.render.texture_bytes as f64 / 1048576.0
             ),
         );
-        row(ui, p, "Réseau textures", format!("{}", v.tex.fetching));
-        row(ui, p, "Décodage", format!("{} · upload {}", v.tex.decoding, v.tex.pending_upload));
-        row(ui, p, "Tâches en fond", format!("{}", v.scene.jobs));
-        row(ui, p, "Meshes réseau", format!("{}", v.meshes_fetching));
+        row(ui, p, "RÃ©seau textures", format!("{}", v.tex.fetching));
+        row(ui, p, "DÃ©codage", format!("{} Â· upload {}", v.tex.decoding, v.tex.pending_upload));
+        row(ui, p, "TÃ¢ches en fond", format!("{}", v.scene.jobs));
+        row(ui, p, "Meshes rÃ©seau", format!("{}", v.meshes_fetching));
         row(ui, p, "Records GPU", format!("{}", v.render.records));
     });
-    group(ui, p, "Réseau", false, |ui| {
+    group(ui, p, "RÃ©seau", false, |ui| {
         row(ui, p, "Ping", format!("{} ms", v.net.ping_ms));
-        row(ui, p, "Paquets", format!("in {:.0}/s · out {:.0}/s", d.net_rate.0, d.net_rate.1));
-        row(ui, p, "Débit UDP", format!("in {:.0} · out {:.0} kb/s", d.net_rate.2, d.net_rate.3));
-        row(ui, p, "Renvoyés / perdus", format!("{} / {}", v.net.resent, v.net.dropped_reliable));
-        row(ui, p, "Non acquittés", format!("{}", v.net.unacked));
+        row(ui, p, "Paquets", format!("in {:.0}/s Â· out {:.0}/s", d.net_rate.0, d.net_rate.1));
+        row(
+            ui,
+            p,
+            "DÃ©bit UDP",
+            format!("in {:.0} Â· out {:.0} kb/s", d.net_rate.2, d.net_rate.3),
+        );
+        row(
+            ui,
+            p,
+            "RenvoyÃ©s / perdus",
+            format!("{} / {}", v.net.resent, v.net.dropped_reliable),
+        );
+        row(ui, p, "Non acquittÃ©s", format!("{}", v.net.unacked));
         row(
             ui,
             p,
             "HTTP",
-            format!("{} actifs · {} en file", v.net.http_in_flight, v.net.http_queued),
+            format!("{} actifs Â· {} en file", v.net.http_in_flight, v.net.http_queued),
         );
-        row(ui, p, "Débit HTTP", format!("{:.0} kb/s", d.http_rate_kbps));
+        row(ui, p, "DÃ©bit HTTP", format!("{:.0} kb/s", d.http_rate_kbps));
         row(
             ui,
             p,
-            "Téléchargé",
-            format!("{:.1} Mo ({} échecs)", v.net.http_bytes as f64 / 1048576.0, v.net.http_failed),
+            "TÃ©lÃ©chargÃ©",
+            format!("{:.1} Mo ({} Ã©checs)", v.net.http_bytes as f64 / 1048576.0, v.net.http_failed),
         );
-        row(ui, p, "Régions", format!("{}", v.regions));
+        row(ui, p, "RÃ©gions", format!("{}", v.regions));
     });
     group(ui, p, "Carte graphique", false, |ui| {
         row(ui, p, "Carte", v.gpu.name.clone());
@@ -693,6 +757,25 @@ mod tests {
         assert!((one[0] - two[0]).abs() < 1e-6);
         // after one time constant: 63 % of the way
         assert!((ease(SMOOTHING_S * 1000.0, SMOOTHING_S) - 0.632).abs() < 1e-3);
+    }
+
+    #[test]
+    fn graph_top_ignores_a_lone_fast_frame() {
+        // 160 images/s, one 1 ms frame: the scale stays near 160
+        let mut frames: VecDeque<f32> = std::iter::repeat_n(6.25, 239).collect();
+        frames.push_back(1.0);
+        assert!((graph_top(&frames) - 160.0 * 1.15).abs() < 0.5);
+        // slow frames: the 60 mark stays in view
+        let slow: VecDeque<f32> = std::iter::repeat_n(50.0, 240).collect();
+        assert_eq!(graph_top(&slow), GRAPH_MIN_TOP);
+    }
+
+    #[test]
+    fn graph_marks_follow_the_scale() {
+        assert_eq!(grid_step(160.0 * 1.15), 50.0); // 50, 100, 150
+        assert_eq!(grid_step(GRAPH_MIN_TOP), 20.0); // 20, 40, 60
+        assert_eq!(grid_step(400.0), 100.0);
+        assert_eq!(grid_step(1200.0), 200.0);
     }
 
     #[test]

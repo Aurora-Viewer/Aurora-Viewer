@@ -666,8 +666,14 @@ pub fn top_bars(
                     } else {
                         p.danger
                     };
-                    ui.label(small(format!("{:.1}", st.fps), fps_col))
-                        .on_hover_text("Images par seconde");
+                    // a click opens (or closes) the performance window
+                    let fps = ui
+                        .add(egui::Label::new(small(format!("{:.1}", st.fps), fps_col)).sense(egui::Sense::click()))
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .on_hover_text("Images par seconde : cliquez pour les performances");
+                    if fps.clicked() {
+                        panels.perf = !panels.perf;
+                    }
                     audio_action = super::audio::top_controls(ui, p, icons, audio, audio_ui, media);
                     if voice_light(ui, p, icons, st.voice.0, &st.voice.1) {
                         action = BarAction::VoicePrefs;
