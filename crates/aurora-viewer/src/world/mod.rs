@@ -127,6 +127,9 @@ pub struct World {
     /// Where avatars look (ours and the ones others send).
     pub look_at: lookat::LookAts,
     pub teleporting: bool,
+    /// Only a teleport to another region needs a loading screen. Unknown
+    /// destinations wait for TeleportFinish to identify the destination.
+    pub tp_show_progress: bool,
     /// Teleport progress (0..0.6 until arrival) and its step, failure flag.
     pub tp_progress: f32,
     pub tp_status: String,
@@ -220,6 +223,7 @@ impl World {
             movement_complete: false,
             avatar_lib,
             teleporting: false,
+            tp_show_progress: false,
             tp_progress: 0.0,
             tp_status: String::new(),
             tp_failed: false,
@@ -264,6 +268,20 @@ impl World {
 
     pub fn main_origin(&self) -> Option<(u32, u32)> {
         self.main_region.map(aurora_net::handle_to_origin)
+    }
+
+    /// Behaviour of LLAgent::teleportCore(is_local), indra/newview/llagent.cpp:
+    /// track local teleports without showing progress. Intentional difference
+    /// requested for Aurora: local teleports are also silent.
+    pub fn begin_teleport(&mut self, show_progress: bool) {
+        self.teleporting = true;
+        self.tp_show_progress = show_progress;
+        self.tp_failed = false;
+        self.tp_progress = 0.05;
+        self.tp_status = "Demande de téléportation…".into();
+        if show_progress {
+            self.ui_sounds.push(UiSound::TeleportOut);
+        }
     }
 
     /// Offset of a region's origin relative to the render origin (main region).
@@ -818,6 +836,9 @@ impl World {
                 None
             }
             NetEvent::TeleportProgress { message } => {
+                if !self.teleporting {
+                    self.tp_show_progress = false;
+                }
                 // LL teleport_strings.xml "progress" keys
                 let text = match message.as_str() {
                     "sending_dest" | "sending_home" | "sending_landmark" => "Envoi vers la destination…",
@@ -835,21 +856,34 @@ impl World {
                 self.tp_status = text.into();
                 None
             }
-            NetEvent::TeleportFinished => {
+            NetEvent::TeleportFinished { handle } => {
+                self.teleporting = true;
+                let remote = Some(handle) != self.main_region;
+                // TeleportStart has no destination. Unlike Firestorm's
+                // process_teleport_start, defer its sound until a region change
+                // is confirmed, preserving silence for local script/lure TPs.
+                // A known remote request already played it in begin_teleport.
+                if remote && !self.tp_show_progress {
+                    self.ui_sounds.push(UiSound::TeleportOut);
+                }
+                self.tp_show_progress = remote;
                 self.tp_progress = self.tp_progress.max(0.5);
                 self.tp_status = "Connexion à la région…".into();
-                None
+                Some(NetEvent::TeleportFinished { handle })
             }
             NetEvent::TeleportLocal { flying } => {
+                // process_teleport_local, indra/newview/llviewermessage.cpp.
+                // This also covers server-initiated teleports: the following
+                // AgentMovementComplete must record the arrival in history.
+                self.teleporting = true;
+                self.tp_show_progress = false;
                 self.agent.flying = flying;
                 None
             }
             NetEvent::TeleportStarted => {
                 if !self.teleporting {
+                    self.tp_show_progress = false;
                     log::info!("TeleportStart (arrived {})", self.arrived_once);
-                    // a teleport we did not ask for (lure, llTeleportAgent):
-                    // process_teleport_start plays it too
-                    self.ui_sounds.push(UiSound::TeleportOut);
                 }
                 self.teleporting = true;
                 self.tp_failed = false;
@@ -1719,6 +1753,123 @@ mod motion_tests {
         world.main_region = Some(handle);
         world.ensure_region(handle, (256, 256));
         (world, update, handle)
+    }
+
+    fn teleport_fixture() -> (World, RegionHandle) {
+        let (mut world, _, handle) = fixture();
+        world.apply(NetEvent::AgentMovementComplete {
+            handle,
+            position: Vec3::new(40.0, 50.0, 30.0),
+            look_at: Vec3::X,
+        });
+        world.parcel_name = "Parcelle de démo".into();
+        (world, handle)
+    }
+
+    #[test]
+    fn local_teleport_is_silent_without_progress_and_preserves_arrival_state() {
+        let (mut world, handle) = teleport_fixture();
+        let previous = world.agent.position;
+        world.begin_teleport(false);
+        assert!(world.teleporting && !world.tp_show_progress);
+        assert!(!world.ui_sounds.contains(&UiSound::TeleportOut));
+        world.apply(NetEvent::TeleportStarted);
+        world.apply(NetEvent::TeleportProgress {
+            message: "requesting".into(),
+        });
+        assert!(world.teleporting && !world.tp_show_progress);
+        assert!(!world.ui_sounds.contains(&UiSound::TeleportOut));
+        world.apply(NetEvent::TeleportLocal { flying: true });
+        let position = Vec3::new(128.0, 128.0, 1010.0);
+        world.apply(NetEvent::AgentMovementComplete {
+            handle,
+            position,
+            look_at: Vec3::Y,
+        });
+        assert!(!world.teleporting && !world.tp_show_progress);
+        assert_eq!(world.agent.position, position);
+        assert!(world.agent.flying);
+        assert_eq!(world.parcel_name, "Parcelle de démo");
+        assert_eq!(world.tp_history.previous().expect("previous arrival").position, previous);
+        // Late progress packets must never bring back a local loading screen.
+        world.apply(NetEvent::TeleportStarted);
+        world.apply(NetEvent::TeleportProgress {
+            message: "arriving".into(),
+        });
+        assert!(!world.tp_show_progress);
+        assert!(!world.ui_sounds.contains(&UiSound::TeleportOut));
+    }
+
+    #[test]
+    fn unsolicited_local_teleport_hides_previous_progress_and_records_history() {
+        let (mut world, handle) = teleport_fixture();
+        let previous = world.agent.position;
+        // A preceding remote arrival may still have its screen fading out.
+        world.tp_show_progress = true;
+        world.apply(NetEvent::TeleportStarted);
+        assert!(!world.tp_show_progress);
+        world.apply(NetEvent::TeleportLocal { flying: false });
+        world.apply(NetEvent::AgentMovementComplete {
+            handle,
+            position: Vec3::new(60.0, 70.0, 30.0),
+            look_at: Vec3::X,
+        });
+        assert!(!world.teleporting && !world.tp_show_progress);
+        assert_eq!(world.tp_history.previous().expect("previous arrival").position, previous);
+        assert!(!world.ui_sounds.contains(&UiSound::TeleportOut));
+    }
+
+    #[test]
+    fn unknown_destination_only_shows_progress_when_another_region_is_confirmed() {
+        let (mut world, handle) = teleport_fixture();
+        world.begin_teleport(false);
+        world.apply(NetEvent::TeleportStarted);
+        assert!(!world.tp_show_progress);
+        assert!(!world.ui_sounds.contains(&UiSound::TeleportOut));
+        let destination = handle + (256_u64 << 32);
+        world.apply(NetEvent::TeleportFinished { handle: destination });
+        assert!(world.teleporting && world.tp_show_progress);
+        world.apply(NetEvent::TeleportFinished { handle: destination });
+        assert_eq!(world.ui_sounds.iter().filter(|s| **s == UiSound::TeleportOut).count(), 1);
+        world.apply(NetEvent::AgentMovementComplete {
+            handle: destination,
+            position: Vec3::new(60.0, 70.0, 30.0),
+            look_at: Vec3::X,
+        });
+        assert!(!world.teleporting && world.tp_show_progress);
+        assert_eq!(world.main_region, Some(destination));
+        assert!(world.parcel_name.is_empty());
+    }
+
+    #[test]
+    fn known_remote_destination_shows_progress_and_failure_ends_the_teleport() {
+        let (mut world, handle) = teleport_fixture();
+        world.begin_teleport(true);
+        world.apply(NetEvent::TeleportStarted);
+        assert!(world.teleporting && world.tp_show_progress);
+        world.apply(NetEvent::TeleportFinished {
+            handle: handle + (256_u64 << 32),
+        });
+        assert_eq!(world.ui_sounds.iter().filter(|s| **s == UiSound::TeleportOut).count(), 1);
+        world.apply(NetEvent::TeleportFailed {
+            reason: "Destination indisponible".into(),
+        });
+        assert!(!world.teleporting && world.tp_failed);
+        // The screen remains eligible for its failure fade-out.
+        assert!(world.tp_show_progress);
+        world.ui_sounds.clear();
+        world.begin_teleport(false);
+        assert!(!world.tp_failed && !world.tp_show_progress);
+        assert!(!world.ui_sounds.contains(&UiSound::TeleportOut));
+    }
+
+    #[test]
+    fn finish_in_the_current_region_does_not_show_progress() {
+        let (mut world, handle) = teleport_fixture();
+        world.begin_teleport(false);
+        world.apply(NetEvent::TeleportFinished { handle });
+        assert!(world.teleporting && !world.tp_show_progress);
+        assert!(!world.ui_sounds.contains(&UiSound::TeleportOut));
     }
 
     #[test]

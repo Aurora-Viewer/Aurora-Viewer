@@ -210,6 +210,7 @@ pub struct App {
     was_teleporting: bool,
     /// Offline demo teleport: started at.
     demo_tp_start: Option<Instant>,
+    demo_tp_triggered: bool,
     /// Where the offline demo teleport lands (the asked position).
     demo_tp_dest: Option<Vec3>,
     /// Destination of the teleport being started (teleport screen).
@@ -454,6 +455,7 @@ impl App {
             tp_overlay: None,
             was_teleporting: false,
             demo_tp_start: None,
+            demo_tp_triggered: false,
             demo_tp_dest: None,
             tp_dest: None,
             geom_changed: None,
@@ -522,6 +524,23 @@ impl App {
     fn send(&mut self, cmd: NetCommand) {
         if self.demo {
             match &cmd {
+                NetCommand::TeleportTo { handle, position, look_at } => {
+                    if Some(*handle) == self.world.main_region {
+                        self.world.apply(NetEvent::TeleportLocal {
+                            flying: self.world.agent.flying,
+                        });
+                        if let Some(ev) = self.world.apply(NetEvent::AgentMovementComplete {
+                            handle: *handle,
+                            position: *position,
+                            look_at: *look_at,
+                        }) {
+                            self.on_app_event(ev);
+                        }
+                    } else {
+                        self.demo_tp_start = Some(Instant::now());
+                        self.demo_tp_dest = Some(*position);
+                    }
+                }
                 NetCommand::ObjectGrab { local_id, surface, .. } => {
                     log::info!("demo touch_start: prim={local_id}, face={}, uv={:?}", surface.face, surface.uv);
                     self.world.system_message("Démo : touch_start simulé.");
@@ -749,6 +768,14 @@ impl App {
                     self.world.system_message(l.message.trim().to_owned());
                 }
                 self.world.system_message(format!("Bienvenue, {} {}.", l.first_name, l.last_name));
+            }
+            NetEvent::TeleportFinished { .. } => {
+                if self.world.tp_show_progress && matches!(self.screen, Screen::World) && !self.was_teleporting {
+                    // Finish and arrival can be drained in the same frame.
+                    // Start the screen here so a fast remote teleport still
+                    // gets its region-loading phase and arrival fade.
+                    self.show_teleport_progress();
+                }
             }
             NetEvent::AgentMovementComplete { .. } => {
                 self.move_complete_at = Some(Instant::now());
@@ -1665,15 +1692,9 @@ impl App {
     /// directly, others through a map lookup by name.
     fn teleport_to_location(&mut self, region: String, pos: Vec3) {
         let here = self.world.region_name();
-        self.begin_teleport(format!("{} ({:.0}, {:.0}, {:.0})", region, pos.x, pos.y, pos.z));
-        if self.demo {
-            // offline: a pretend teleport through the real steps, landing at the
-            // asked position (TeleportLocal)
-            self.demo_tp_start = Some(Instant::now());
-            self.demo_tp_dest = Some(pos);
-            return;
-        }
-        if region.eq_ignore_ascii_case(&here) {
+        let local = region.eq_ignore_ascii_case(&here);
+        self.begin_teleport(format!("{} ({:.0}, {:.0}, {:.0})", region, pos.x, pos.y, pos.z), !local);
+        if local {
             if let Some(handle) = self.world.main_region {
                 self.send(NetCommand::TeleportTo {
                     handle,
@@ -1681,6 +1702,10 @@ impl App {
                     look_at: Vec3::X,
                 });
             }
+        } else if self.demo {
+            // Only inter-region demo teleports simulate a connection delay.
+            self.demo_tp_start = Some(Instant::now());
+            self.demo_tp_dest = Some(pos);
         } else {
             self.send(NetCommand::TeleportToRegion {
                 name: region,
@@ -1955,20 +1980,24 @@ impl App {
         }
     }
 
-    /// Navigation bar arrows: teleport to the previous / next history entry.
-    /// A teleport asked by the user: the screen shows at once (fade in) and
-    /// follows the steps from here.
-    fn begin_teleport(&mut self, dest: String) {
+    /// Show progress only for a known destination outside the current region.
+    /// Unlike Firestorm's fallback for an unresolved landmark, wait for the
+    /// server's destination before showing a screen for an unknown destination,
+    /// so even these local teleports remain direct.
+    fn begin_teleport(&mut self, dest: String, show_progress: bool) {
         self.release_object_hold();
-        // LLAgent::teleportCore
-        self.world.ui_sounds.push(UiSound::TeleportOut);
         self.tp_dest = Some(dest);
         self.media.on_teleport();
-        let w = &mut self.world;
-        w.teleporting = true;
-        w.tp_failed = false;
-        w.tp_progress = 0.05;
-        w.tp_status = "Demande de téléportation…".into();
+        self.world.begin_teleport(show_progress);
+    }
+
+    fn show_teleport_progress(&mut self) {
+        if self.settings.loading_backdrop {
+            self.want_scene_capture = true;
+        }
+        let dest = self.tp_dest.take().unwrap_or_default();
+        self.tp_overlay = Some(TpOverlay::new(dest, false));
+        self.was_teleporting = true;
     }
 
     fn teleport_history(&mut self, back: bool) {
@@ -1979,7 +2008,7 @@ impl App {
         };
         if let Some(e) = dest {
             self.world.system_message(format!("Téléportation vers {}…", e.region));
-            self.begin_teleport(e.region.clone());
+            self.begin_teleport(e.region.clone(), Some(e.handle) != self.world.main_region);
             self.send(NetCommand::TeleportTo {
                 handle: e.handle,
                 position: e.position,
@@ -2376,9 +2405,9 @@ impl App {
             self.send(c);
         }
         for c in self.world.map.take_commands() {
-            if matches!(c, NetCommand::TeleportTo { .. }) {
+            if let NetCommand::TeleportTo { handle, .. } = &c {
                 let dest = self.world.map.track.as_ref().map(|t| t.label.clone()).unwrap_or_default();
-                self.begin_teleport(dest);
+                self.begin_teleport(dest, Some(*handle) != self.world.main_region);
             }
             self.send(c);
         }
@@ -2832,14 +2861,21 @@ impl App {
                 w.tp_status = "Téléportation acceptée…".into();
             }
         }
-        let tp = self.world.teleporting && matches!(self.screen, Screen::World);
+        // TeleportLocal can also resolve an initially unknown destination.
+        // Drop a previous teleport's fade immediately, keeping only login's.
+        if !self.world.tp_show_progress {
+            if self.tp_overlay.as_ref().is_some_and(|o| !o.loading_end) {
+                self.tp_overlay = None;
+                self.was_teleporting = false;
+            }
+            if !self.world.teleporting {
+                self.tp_dest = None;
+            }
+        }
+        let tp = self.world.teleporting && self.world.tp_show_progress && matches!(self.screen, Screen::World);
         if tp && !self.was_teleporting {
             // keep the view we are leaving for the teleport screen
-            if self.settings.loading_backdrop {
-                self.want_scene_capture = true;
-            }
-            let dest = self.tp_dest.take().unwrap_or_default();
-            self.tp_overlay = Some(TpOverlay::new(dest, false));
+            self.show_teleport_progress();
         } else if !tp
             && self.was_teleporting
             && let Some(o) = self.tp_overlay.as_mut()
@@ -3305,13 +3341,29 @@ impl App {
             self.toggle_ground_sit();
             log::info!("demo sit button: sitting {}", self.world.agent.is_sitting());
         }
-        // AURORA_DEMO_TP=1 (or "x,y,z"): pretend teleport (pasted SLURL) at frame 240
-        if self.demo && self.frame_count == 240 {
+        // Wait until login's loading fade is over, so the demo exercises a
+        // teleport from the visible world even on a very fast machine.
+        if self.demo
+            && self.frame_count >= 240
+            && !self.demo_tp_triggered
+            && matches!(self.screen, Screen::World)
+            && self.tp_overlay.is_none()
+        {
+            self.demo_tp_triggered = true;
             if let Ok(v) = std::env::var("AURORA_DEMO_TP") {
                 let c: Vec<f32> = v.split(',').filter_map(|s| s.trim().parse().ok()).collect();
                 let (x, y, z) = if c.len() == 3 { (c[0], c[1], c[2]) } else { (128.0, 128.0, 30.0) };
-                self.teleport_to_text(&format!("http://maps.secondlife.com/secondlife/Aurora%20D%C3%A9mo/{x}/{y}/{z}"));
+                let region = if v == "remote" { "Aurora Ailleurs" } else { "Aurora Démo" };
+                self.teleport_to_location(region.into(), Vec3::new(x, y, z));
+                log::info!(
+                    "demo teleport: frame {}, showing progress {}, position {:.1?}",
+                    self.frame_count,
+                    self.world.tp_show_progress,
+                    self.world.agent.position
+                );
             }
+        }
+        if self.demo && self.frame_count == 240 {
             // AURORA_DEMO_CHATCMD="calc 2+2;rolld 2 20": lines typed in the
             // chat bar, one after the other (chat bar commands)
             if let Ok(lines) = std::env::var("AURORA_DEMO_CHATCMD") {
@@ -3595,7 +3647,7 @@ impl App {
             self.world.system_message("Offre de téléportation envoyée.");
         }
         if let Some(asset) = a.landmark {
-            self.begin_teleport("Repère".into());
+            self.begin_teleport("Repère".into(), false);
             self.net.send(NetCommand::TeleportLandmark(asset));
         }
         if a.cancel_loading {
@@ -3650,7 +3702,7 @@ impl App {
                 self.quit_at = Some(Instant::now() + Duration::from_millis(400));
             }
             BarAction::TeleportHome => {
-                self.begin_teleport("Domicile".into());
+                self.begin_teleport("Domicile".into(), false);
                 self.net.send(NetCommand::TeleportHome);
             }
             BarAction::TeleportBack => self.teleport_history(true),
@@ -4115,7 +4167,7 @@ impl App {
                 for (id, r) in ui::notifications::show(&ctx, &p, &self.skin.icons, &mut self.world.notifications, &mut self.notif_ui) {
                     let (cmds, url) = self.world.respond_notification(id, r);
                     if cmds.iter().any(|c| matches!(c, NetCommand::AcceptLure { .. })) {
-                        self.begin_teleport(String::new());
+                        self.begin_teleport(String::new(), false);
                     }
                     for c in cmds {
                         self.net.send(c);

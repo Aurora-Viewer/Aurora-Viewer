@@ -1609,8 +1609,13 @@ impl Session<'_> {
                 }
             }
             "TeleportFinish" => {
-                emit(self.sh, NetEvent::TeleportFinished);
                 let info = &b["Info"][0];
+                emit(
+                    self.sh,
+                    NetEvent::TeleportFinished {
+                        handle: info["RegionHandle"].as_u64(),
+                    },
+                );
                 log::info!(
                     "TeleportFinish: region {:x}, flags {:#x}",
                     info["RegionHandle"].as_u64(),
