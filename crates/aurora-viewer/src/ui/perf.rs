@@ -13,8 +13,10 @@ use std::time::Instant;
 
 /// Frames kept for the graph and the min / max (4 s at 60 images/s).
 const HISTORY: usize = 240;
-/// Smoothing of the breakdown bars, per frame (exponential moving average).
-const SMOOTHING: f32 = 0.08;
+/// Time constant of the breakdown smoothing (s): calm bars at any frame rate.
+const SMOOTHING_S: f32 = 0.6;
+/// Time constant of the graph scale easing down (s).
+const GRAPH_EASE_S: f32 = 1.5;
 /// How often the numbers are refreshed (s): slow enough to be read.
 const REFRESH_S: f32 = 0.5;
 const COMPACT_W: f32 = 236.0;
@@ -59,9 +61,15 @@ fn cpu_parts(frame: f32, events: f32, update: f32, sync: f32, cull: f32, ui: f32
     [events, sync, cull, other, ui, encode, (frame - busy).max(0.0)]
 }
 
-fn smooth<const N: usize>(avg: &mut [f32; N], now: &[f32; N]) {
+/// Weight of a new sample in an exponential moving average with time
+/// constant `tau_s`, after `dt_ms` (independent of the frame rate).
+fn ease(dt_ms: f32, tau_s: f32) -> f32 {
+    1.0 - (-dt_ms / 1000.0 / tau_s).exp()
+}
+
+fn smooth<const N: usize>(avg: &mut [f32; N], now: &[f32; N], k: f32) {
     for (a, n) in avg.iter_mut().zip(now) {
-        *a += (n - *a) * SMOOTHING;
+        *a += (n - *a) * k;
     }
 }
 
@@ -130,10 +138,11 @@ impl PerfData {
             self.ui_ms,
             render.cpu_encode_ms,
         );
-        smooth(&mut self.cpu, &cpu);
+        let k = ease(dt_ms, SMOOTHING_S);
+        smooth(&mut self.cpu, &cpu, k);
         self.gpu = match (render.gpu_elements, self.gpu) {
             (Some(now), Some(mut avg)) => {
-                smooth(&mut avg, &now);
+                smooth(&mut avg, &now, k);
                 Some(avg)
             }
             (now, _) => now,
@@ -143,7 +152,7 @@ impl PerfData {
         self.graph_top = if target > self.graph_top {
             target
         } else {
-            self.graph_top + (target - self.graph_top) * 0.03
+            self.graph_top + (target - self.graph_top) * ease(dt_ms, GRAPH_EASE_S)
         };
 
         self.frames_since += 1;
@@ -216,6 +225,9 @@ pub fn show(ctx: &egui::Context, p: &Palette, v: &PerfView, open: &mut bool) {
         vec2(width, 0.0),
     )
     .fixed()
+    .help(
+        "Le graphe montre le temps de chaque image : plus la courbe est basse, plus c'est fluide.          Au-dessus de la ligne 16.7 ms, on passe sous 60 images/s ; au-dessus de 33.3 ms, sous 30.",
+    )
     .action(icon, tip, &mut toggle)
     .show(ctx, p, open, |ui| {
         ui.set_width(width);
@@ -279,13 +291,14 @@ fn graph(ui: &mut egui::Ui, p: &Palette, d: &PerfData) {
     let y = |ms: f32| plot.bottom() - (ms / top).min(1.0) * plot.height();
 
     let mark_font = egui::FontId::proportional(9.0);
-    for (ms, label) in [(1000.0 / 60.0, "60"), (1000.0 / 30.0, "30")] {
+    // marks in the unit of the graph: the frame times of 60 and 30 images/s
+    for (ms, label) in [(1000.0 / 60.0, "16.7 ms"), (1000.0 / 30.0, "33.3 ms")] {
         if ms >= top {
             continue;
         }
         let ly = y(ms).round() + 0.5;
         painter.extend(egui::Shape::dashed_line(
-            &[pos2(rect.left() + 4.0, ly), pos2(rect.right() - 18.0, ly)],
+            &[pos2(rect.left() + 4.0, ly), pos2(rect.right() - 44.0, ly)],
             Stroke::new(1.0, p.raised),
             3.0,
             3.0,
@@ -409,14 +422,13 @@ fn cpu_parts_view(p: &Palette, live: &[f32; CPU_PARTS], shown: &[f32; CPU_PARTS]
         .collect()
 }
 
-/// A titled segmented bar (largest part first) and its legend; hovering a
-/// segment or a legend row highlights that part.
-fn breakdown(ui: &mut egui::Ui, p: &Palette, id: &str, title: &str, mut parts: Vec<Part>) {
+/// A titled segmented bar and its legend, both in the fixed order of the
+/// parts (nothing jumps around); hovering a segment or a legend row
+/// highlights that part.
+fn breakdown(ui: &mut egui::Ui, p: &Palette, id: &str, title: &str, parts: Vec<Part>) {
     let total_shown: f32 = parts.iter().map(|x| x.shown).sum();
     let total_live: f32 = parts.iter().map(|x| x.live).sum::<f32>().max(1e-3);
-    parts.sort_by(|a, b| b.shown.total_cmp(&a.shown));
     let hover_id = ui.id().with(("breakdown_hover", id));
-    // by name: the order can change between frames
     let hovered: Option<&'static str> = ui.data(|d| d.get_temp(hover_id)).flatten();
     let mut hover_now = None;
 
@@ -428,29 +440,37 @@ fn breakdown(ui: &mut egui::Ui, p: &Palette, id: &str, title: &str, mut parts: V
     });
     ui.add_space(2.0);
 
-    // the bar: 2 px gaps between segments
+    // the bar: segments laid over the whole width, then inset by 1 px on
+    // their inner sides for the 2 px gaps, so a part growing from nothing
+    // never shifts the others; rounded at the two ends only
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 10.0), Sense::hover());
     let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, 3.0, p.field);
-    let gap = 2.0;
-    let visible: Vec<usize> = (0..parts.len())
-        .filter(|&i| parts[i].live / total_live * rect.width() >= 1.0)
-        .collect();
-    let usable = rect.width() - gap * visible.len().saturating_sub(1) as f32;
+    // the ends are the first and last parts with some width
+    let wide = |x: &Part| x.live / total_live * rect.width() >= 0.5;
+    let first = parts.iter().position(wide).unwrap_or(0);
+    let last = parts.iter().rposition(wide).unwrap_or(parts.len() - 1);
     let mut x = rect.left();
-    for &i in &visible {
-        let w = parts[i].live / total_live * usable;
-        let seg = Rect::from_min_max(pos2(x, rect.top()), pos2(x + w, rect.bottom()));
-        if resp
-            .hover_pos()
-            .is_some_and(|pos| pos.x >= seg.left() - gap / 2.0 && pos.x < seg.right() + gap / 2.0)
-        {
-            hover_now = Some(parts[i].name);
+    for (i, part) in parts.iter().enumerate() {
+        let w = part.live / total_live * rect.width();
+        let slot = Rect::from_min_max(pos2(x, rect.top()), pos2(x + w, rect.bottom()));
+        x += w;
+        if resp.hover_pos().is_some_and(|pos| slot.x_range().contains(pos.x)) {
+            hover_now = Some(part.name);
         }
-        let dim = hovered.is_some_and(|h| h != parts[i].name);
-        let col = if dim { parts[i].color.gamma_multiply(0.3) } else { parts[i].color };
-        painter.rect_filled(seg, 2.0, col);
-        x += w + gap;
+        let left = if i <= first { slot.left() } else { slot.left() + 1.0 };
+        let right = if i >= last { slot.right() } else { slot.right() - 1.0 };
+        if right - left < 0.5 {
+            continue;
+        }
+        let corners = egui::CornerRadius {
+            nw: if i == first { 3 } else { 0 },
+            sw: if i == first { 3 } else { 0 },
+            ne: if i == last { 3 } else { 0 },
+            se: if i == last { 3 } else { 0 },
+        };
+        let dim = hovered.is_some_and(|h| h != part.name);
+        let col = if dim { part.color.gamma_multiply(0.3) } else { part.color };
+        painter.rect_filled(Rect::from_min_max(pos2(left, slot.top()), pos2(right, slot.bottom())), corners, col);
     }
     ui.add_space(4.0);
 
@@ -660,6 +680,19 @@ mod tests {
         let parts = cpu_parts(16.0, 1.0, 6.0, 2.0, 1.0, 2.0, 3.0);
         assert_eq!(parts, [1.0, 2.0, 1.0, 3.0, 2.0, 3.0, 4.0]);
         assert_eq!(parts.iter().sum::<f32>(), 16.0);
+    }
+
+    #[test]
+    fn smoothing_follows_time_not_frames() {
+        // one 16 ms frame or two 8 ms frames move the average the same way
+        let mut one = [0.0];
+        smooth(&mut one, &[1.0], ease(16.0, SMOOTHING_S));
+        let mut two = [0.0];
+        smooth(&mut two, &[1.0], ease(8.0, SMOOTHING_S));
+        smooth(&mut two, &[1.0], ease(8.0, SMOOTHING_S));
+        assert!((one[0] - two[0]).abs() < 1e-6);
+        // after one time constant: 63 % of the way
+        assert!((ease(SMOOTHING_S * 1000.0, SMOOTHING_S) - 0.632).abs() < 1e-3);
     }
 
     #[test]
