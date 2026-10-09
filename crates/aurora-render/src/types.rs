@@ -609,6 +609,9 @@ pub struct RenderStats {
     pub triangles: u64,
     pub textures: u32,
     pub texture_bytes: u64,
+    /// Texture pages (textures.rs) and their allocated memory.
+    pub texture_pages: u32,
+    pub texture_page_bytes: u64,
     pub geometry_bytes: u64,
     pub vertex_used: u64,
     pub index_used: u64,

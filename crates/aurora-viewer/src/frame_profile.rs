@@ -153,6 +153,9 @@ struct Period {
     textures: u32,
     /// GPU memory of the textures and the geometry at the end (bytes).
     texture_bytes: u64,
+    /// Texture pages and their allocated memory (free layers included).
+    texture_pages: u32,
+    texture_page_bytes: u64,
     geometry_bytes: u64,
     scene: [u64; 10],
 }
@@ -243,6 +246,8 @@ impl FrameProfile {
         p.palette_bytes += render.palettes_uploaded;
         p.textures = render.textures;
         p.texture_bytes = render.texture_bytes;
+        p.texture_pages = render.texture_pages;
+        p.texture_page_bytes = render.texture_page_bytes;
         p.geometry_bytes = render.geometry_bytes;
         let s = scene;
         for (sum, v) in p.scene.iter_mut().zip([
@@ -315,7 +320,7 @@ fn summary(p: &Period, elapsed: Duration) -> String {
         out,
         " | draws={:.0} calls={:.0} tris_k={:.0} shadow_draws={:.0} particles={:.0} occluded={:.0} \
          blend={:.0} blend_glow={:.0} glow_alpha={:.0} | objects={:.0} visible={:.0} synced={:.0} rebuilt={:.1} posed={:.1} \
-         records_kb={:.1} palettes_kb={:.1} | textures={} texture_mb={} geometry_mb={} jobs={:.0} geom_pending={:.0}",
+         records_kb={:.1} palettes_kb={:.1} | textures={} texture_mb={} texture_pages={} pages_mb={} geometry_mb={} jobs={:.0} geom_pending={:.0}",
         count(p.draws),
         count(p.calls),
         count(p.triangles) / 1000.0,
@@ -334,6 +339,8 @@ fn summary(p: &Period, elapsed: Duration) -> String {
         count(p.palette_bytes) / 1024.0,
         p.textures,
         p.texture_bytes >> 20,
+        p.texture_pages,
+        p.texture_page_bytes >> 20,
         p.geometry_bytes >> 20,
         count(s[8]),
         count(s[9]),
@@ -375,6 +382,8 @@ mod tests {
             draw_calls: 40,
             records_uploaded: 2048,
             texture_bytes: 3 << 20,
+            texture_pages: 12,
+            texture_page_bytes: 5 << 20,
             ..Default::default()
         };
         let scene = SceneCounts {
@@ -397,7 +406,7 @@ mod tests {
         assert!(l.contains(" synced=30 "), "{l}");
         assert!(l.contains(" posed=2.0 "), "{l}");
         assert!(l.contains(" records_kb=2.0 "), "{l}");
-        assert!(l.contains(" texture_mb=3 "), "{l}");
+        assert!(l.contains(" texture_mb=3 texture_pages=12 pages_mb=5 "), "{l}");
     }
 
     #[test]
