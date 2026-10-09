@@ -37,6 +37,19 @@ incremental = false
 [profile.ci.package."*"]
 opt-level = 0
 
+# "Debug viewer" of aurora-tools.cmd (target\debugging): a console window,
+# debug assertions and overflow checks, full debug info for Aurora's own
+# crates (line tables only for the dependencies, to keep it to a few GB).
+[profile.debugging]
+inherits = "dev"
+debug = "full"
+debug-assertions = true
+overflow-checks = true
+
+[profile.debugging.package."*"]
+opt-level = 3
+debug = "line-tables-only"
+
 [profile.release]
 debug = "line-tables-only"
 lto = "thin"
