@@ -310,12 +310,7 @@ pub(super) fn show(
                 st.dialog = Some(EditDialog::Rename(id, rules::name(inv, id)));
             }
             if menu::item_if(ui, p, "image", "Image…", ready && single && writable && !linked) {
-                let image = folder
-                    .map(|f| f.info.thumbnail)
-                    .or_else(|| item.map(|it| it.thumbnail))
-                    .unwrap_or_default();
-                st.thumbnail_target = Some(id);
-                st.texture_picker.open_with_defaults("Image de l’élément", image, None, true);
+                st.thumbnail.open(id);
             }
             if let Some(f) = folder {
                 if matches!(f.info.type_default, -1 | 47) && !f.library {
@@ -394,10 +389,16 @@ pub(super) fn show(
         if menu::item_if(ui, p, "copy", "Copier", ready && copyable) {
             st.clipboard = ids.clone();
             st.cut = false;
+            if let Some(id) = ids.first() {
+                ui.ctx().copy_text(id.to_string());
+            }
         }
         if menu::item_if(ui, p, "arrow-u-up-left", "Couper", ready && movable) {
             st.clipboard = ids.clone();
             st.cut = true;
+            if let Some(id) = ids.first() {
+                ui.ctx().copy_text(id.to_string());
+            }
         }
         let to = folder.map(|_| id).or_else(|| rules::parent(inv, id));
         let paste = ready
@@ -672,6 +673,7 @@ mod tests {
                                 worn: HashSet::new(),
                                 points: Vec::new(),
                                 appearance_busy: false,
+                                names: Default::default(),
                             },
                             &mut Vec::new(),
                         )

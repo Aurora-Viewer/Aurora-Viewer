@@ -4,6 +4,26 @@ use super::*;
 
 pub fn seed(inv: &mut Inventory, agent: Uuid) {
     super::super::appearance::seed_demo(inv, agent);
+    if inv.lib_root.is_nil() {
+        inv.lib_root = Uuid::from_u128(8003);
+        inv.lib_owner = Uuid::from_u128(8004);
+        inv.folders.insert(
+            inv.lib_root,
+            Folder {
+                info: InvFolder {
+                    id: inv.lib_root,
+                    name: "Library".into(),
+                    type_default: 8,
+                    version: 1,
+                    ..Default::default()
+                },
+                children: Vec::new(),
+                items: Vec::new(),
+                state: FetchState::Fetched,
+                library: true,
+            },
+        );
+    }
     let personal = Uuid::from_u128(8000);
     for (number, parent, name, kind) in [
         (8000, inv.root, "Essais du clic droit", -1),
@@ -62,7 +82,11 @@ pub fn seed(inv: &mut Inventory, agent: Uuid) {
         .map(|(id, name, asset_type, inv_type, flags)| InvItem {
             id: Uuid::from_u128(id),
             parent: personal,
-            asset_id: Uuid::from_u128(9000 + id),
+            asset_id: if asset_type == 20 {
+                crate::demo::IDLE_ANIM
+            } else {
+                Uuid::from_u128(9000 + id)
+            },
             name: name.into(),
             asset_type,
             inv_type,
@@ -103,7 +127,7 @@ pub fn target(view: &str) -> Option<Uuid> {
     Some(Uuid::from_u128(match view {
         "folder" | "clothes" | "body" | "settings" | "uploads" => 8000,
         "object" | "properties" => 8100,
-        "animation" => 8101,
+        "animation" | "animation-open" | "animation-properties" | "image" | "image-photo" | "image-picker" | "image-photo-save" => 8101,
         "script" => 8102,
         "note" => 8103,
         "nocopy" => 8109,

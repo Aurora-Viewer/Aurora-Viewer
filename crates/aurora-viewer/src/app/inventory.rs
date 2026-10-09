@@ -173,6 +173,11 @@ impl App {
                 }
             }
             InvAction::Profile(id) => self.profile_ui.open(&mut self.world, id),
+            InvAction::ThumbnailCopied(asset) => {
+                self.inventory_ui.clipboard = vec![asset];
+                self.inventory_ui.cut = false;
+            }
+            InvAction::Thumbnail { request, item, input } => self.inventory_image_action(request, item, input),
             InvAction::TeleportLandmark(_) => {}
         }
     }
@@ -182,6 +187,7 @@ impl App {
             return;
         }
         self.inventory_ui.pending = None;
+        self.finish_inventory_image(request, result.as_ref().err().cloned());
         match result {
             Ok(reply) => {
                 self.world.inventory.remove(&reply.removed);

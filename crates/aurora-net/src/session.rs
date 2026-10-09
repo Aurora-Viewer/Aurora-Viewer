@@ -1289,6 +1289,56 @@ impl Session<'_> {
                     let _ = events.send(NetEvent::InventoryEdited { request, result });
                 });
             }
+            NetCommand::UploadInventoryThumbnail {
+                request,
+                item,
+                folder,
+                parent,
+                data,
+            } => {
+                let caps = self
+                    .main_cap("InventoryThumbnailUpload")
+                    .zip(self.main_cap("InventoryAPIv3"))
+                    .zip(self.main_cap("FetchInventoryDescendents2"));
+                let http = self.sh.caps_http.clone();
+                let events = self.sh.events.clone();
+                let owner = self.agent_id();
+                tokio::spawn(async move {
+                    let result = async {
+                        let ((upload, ais), fetch) =
+                            caps.ok_or_else(|| "Le serveur ne permet pas le chargement des images d’inventaire.".to_owned())?;
+                        let asset = crate::inventory::thumbnail::upload(&http, &upload, item, folder, data).await?;
+                        crate::inventory::operations::mutate(
+                            &http,
+                            &ais,
+                            &fetch,
+                            owner,
+                            crate::inventory::thumbnail::patch(item, folder, parent, asset),
+                        )
+                        .await
+                    }
+                    .await;
+                    let _ = events.send(NetEvent::InventoryEdited { request, result });
+                });
+            }
+            NetCommand::FetchInventoryThumbnail { request, asset, resize } => {
+                let cap = self.main_cap("ViewerAsset");
+                let http = self.sh.caps_http.clone();
+                let events = self.sh.events.clone();
+                tokio::spawn(async move {
+                    let result = if let Some(cap) = cap {
+                        crate::inventory::operations::preview(&http, &cap, "texture_id", asset).await
+                    } else {
+                        Err("La région ne permet pas de charger cette image.".into())
+                    };
+                    let _ = events.send(NetEvent::InventoryThumbnailSource {
+                        request,
+                        asset,
+                        resize,
+                        result,
+                    });
+                });
+            }
             NetCommand::RequestInventoryMerchant => {
                 if self.main.and_then(|a| self.sims.get(&a)).is_none_or(|s| s.caps.is_empty()) {
                     self.inventory_merchant_pending = true;

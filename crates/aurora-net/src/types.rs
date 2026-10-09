@@ -676,6 +676,12 @@ pub enum NetEvent {
         item: Uuid,
         result: Result<Vec<u8>, String>,
     },
+    InventoryThumbnailSource {
+        request: Uuid,
+        asset: Uuid,
+        resize: bool,
+        result: Result<Vec<u8>, String>,
+    },
     InventoryOperationFailed(String),
     InventoryMerchant(Result<bool, String>),
     InventoryContentSaved {
@@ -1091,6 +1097,18 @@ pub enum NetCommand {
         name: String,
     },
     PreviewInventoryItem(crate::inventory::InvItem),
+    FetchInventoryThumbnail {
+        request: Uuid,
+        asset: Uuid,
+        resize: bool,
+    },
+    UploadInventoryThumbnail {
+        request: Uuid,
+        item: Uuid,
+        folder: bool,
+        parent: Uuid,
+        data: Vec<u8>,
+    },
     RequestInventoryMerchant,
     CreateInventoryWearable {
         parent: Uuid,

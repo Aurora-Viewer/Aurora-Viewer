@@ -26,6 +26,7 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "GetObjectPhysicsData",
     "GetTexture",
     "InventoryAPIv3",
+    "InventoryThumbnailUpload",
     "DirectDelivery",
     "ModifyMaterialParams",
     // LLViewerRegionImpl::buildCapabilityNames (indra/newview/llviewerregion.cpp,

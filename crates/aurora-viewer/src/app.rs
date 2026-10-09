@@ -27,6 +27,7 @@ use winit::window::{CursorGrabMode, Window, WindowId};
 mod chat_commands;
 mod context_menu;
 mod inventory;
+mod inventory_thumbnail;
 mod object_actions;
 
 enum Screen {
@@ -298,6 +299,7 @@ pub struct App {
     lighting_was_open: bool,
     demo: bool,
     inventory_ui: ui::inventory::InventoryUi,
+    inventory_images: inventory_thumbnail::ImageJobs,
     appearance_ui: ui::appearance::AppearanceUi,
     last_social_poll: Instant,
     /// Last keyboard / mouse button input (automatic away, AFKTimeout), and
@@ -548,6 +550,7 @@ impl App {
             lighting_was_open: false,
             demo: false,
             inventory_ui: Default::default(),
+            inventory_images: Default::default(),
             appearance_ui: Default::default(),
             last_social_poll: Instant::now(),
             last_input: Instant::now(),
@@ -628,6 +631,28 @@ impl App {
             }
             if let NetCommand::EditInventory { request, change } = &cmd {
                 let result = crate::world::inventory::actions::demo_mutate(&mut self.world.inventory, self.world.agent_id, change.clone());
+                self.on_app_event(NetEvent::InventoryEdited { request: *request, result });
+                return;
+            }
+            if let NetCommand::UploadInventoryThumbnail {
+                request,
+                item,
+                folder,
+                parent,
+                data,
+            } = &cmd
+            {
+                let asset = uuid::Uuid::new_v4();
+                if let Ok(decoded) = aurora_assets::decode_j2k(data, 0) {
+                    let texture = self.egui_ctx.load_texture(
+                        format!("demo_thumbnail_{asset}"),
+                        egui::ColorImage::from_rgba_unmultiplied([decoded.width as usize, decoded.height as usize], &decoded.data),
+                        egui::TextureOptions::LINEAR,
+                    );
+                    self.ui_images.insert(asset, texture);
+                }
+                let change = aurora_net::inventory::thumbnail::patch(*item, *folder, *parent, asset);
+                let result = crate::world::inventory::actions::demo_mutate(&mut self.world.inventory, self.world.agent_id, change);
                 self.on_app_event(NetEvent::InventoryEdited { request: *request, result });
                 return;
             }
@@ -898,6 +923,16 @@ impl App {
         }
         if let NetEvent::InventoryPreview { item, result } = ev {
             self.inventory_preview(item, result);
+            return;
+        }
+        if let NetEvent::InventoryThumbnailSource {
+            request,
+            asset,
+            resize,
+            result,
+        } = ev
+        {
+            self.inventory_image_source(request, asset, resize, result);
             return;
         }
         if let NetEvent::InventoryFavoriteUpdated { item, result } = ev {
@@ -2917,6 +2952,7 @@ impl App {
     }
 
     fn frame(&mut self, event_loop: &ActiveEventLoop) {
+        self.poll_inventory_images();
         self.frame_profile.lap(Lap::Between);
         let now = Instant::now();
         let dt = now.duration_since(self.last_frame).as_secs_f32().min(0.1);
@@ -3725,7 +3761,15 @@ impl App {
         self.update_maps();
         self.poll_key_to_name();
 
-        if self.want_scene_capture {
+        if let Some(request) = self.inventory_images.capture.take() {
+            if self.scene_capture_pending || self.inventory_images.capturing.is_some() || self.inventory_images.auto_capture_pending {
+                self.inventory_images.capture = Some(request);
+            } else {
+                gfx.renderer.capture_scene = true;
+                self.inventory_images.capturing = Some(request);
+            }
+        }
+        if self.want_scene_capture && self.inventory_images.capturing.is_none() && !self.inventory_images.auto_capture_pending {
             self.want_scene_capture = false;
             gfx.renderer.capture_scene = true;
             self.scene_capture_pending = true;
@@ -3773,6 +3817,24 @@ impl App {
         self.frame_profile.lap(Lap::Limiter);
         self.frame_start = Instant::now();
         self.frame_count += 1;
+        if self.demo
+            && self.frame_count == 1500
+            && std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|v| matches!(v.as_str(), "image-photo" | "image-photo-save"))
+        {
+            let request = uuid::Uuid::new_v4();
+            let item = uuid::Uuid::from_u128(8101);
+            self.inventory_ui.thumbnail.pending = Some(request);
+            self.inventory_image_action(request, item, ui::inventory::thumbnail::Input::Capture);
+        }
+        if self.demo
+            && self.frame_count == 2100
+            && std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|v| v == "image-photo-save")
+            && let Some(pixels) = self.inventory_ui.thumbnail.pixels.clone()
+        {
+            let request = uuid::Uuid::new_v4();
+            self.inventory_ui.thumbnail.pending = Some(request);
+            self.inventory_image_action(request, uuid::Uuid::from_u128(8101), ui::inventory::thumbnail::Input::Photo(pixels));
+        }
         if self.demo && std::env::var_os("AURORA_DEMO_ANIM_LOOP").is_some() {
             for event in crate::demo::loop_animation_events(self.frame_count) {
                 self.world.apply(event);
@@ -3787,6 +3849,12 @@ impl App {
             }
         }
         // last view for the loading screens (blurred in a thread, or now when quitting)
+        if self.inventory_images.capturing.is_some()
+            && let Some((w, h, pixels)) = gfx.renderer.captured.take()
+            && let Some(request) = self.inventory_images.capturing.take()
+        {
+            self.prepare_inventory_photo(request, w, h, pixels);
+        }
         if self.scene_capture_pending
             && let Some((w, h, px)) = gfx.renderer.captured.take()
         {
@@ -3795,13 +3863,19 @@ impl App {
             self.backdrop.set_capture(w, h, px, wait);
         }
         if let Some((files, exit)) = &mut self.capture {
-            if files.iter().any(|(at, _)| *at == self.frame_count) {
+            if !self.inventory_images.auto_capture_pending
+                && files.iter().any(|(at, _)| *at <= self.frame_count)
+                && self.inventory_images.capturing.is_none()
+                && !self.scene_capture_pending
+            {
                 gfx.renderer.capture_request = true;
+                self.inventory_images.auto_capture_pending = true;
             }
             // the picture of the earliest pending capture
             if let Some((w, h, px)) = gfx.renderer.captured.take()
                 && !files.is_empty()
             {
+                self.inventory_images.auto_capture_pending = false;
                 let (at, file) = files.remove(0);
                 match image::save_buffer(&file, &px, w, h, image::ExtendedColorType::Rgba8) {
                     Ok(()) => log::info!("frame {at} captured to {}", file.display()),
@@ -4706,6 +4780,7 @@ impl App {
                         }
                     }
                 }
+                self.poll_inventory_animation_stats();
                 let mut open = self.panels.inventory;
                 if !self.inventory_ui.merchant_requested {
                     self.inventory_ui.merchant_requested = true;
@@ -5462,13 +5537,19 @@ impl ApplicationHandler for App {
                 self.world.notifications = Default::default();
                 if let Some(id) = crate::world::inventory::demo::target(&view) {
                     self.inventory_ui.show_original(&self.world.inventory, id);
-                    if view == "properties" {
+                    if matches!(view.as_str(), "properties" | "animation-properties") {
                         self.inventory_ui.dialog = Some(ui::inventory::EditDialog::Properties(id));
+                    } else if view == "animation-open" {
+                        self.inventory_ui.preview = Some(id);
+                    } else if view.starts_with("image") {
+                        self.inventory_ui.thumbnail.open(id);
+                        self.inventory_ui.thumbnail.picker_open = view == "image-picker";
+                        self.inventory_ui.thumbnail.photo_open = matches!(view.as_str(), "image-photo" | "image-photo-save");
                     } else {
                         self.inventory_ui.demo_menu = Some(id);
                     }
                 } else {
-                    self.inventory_ui.show_original(&self.world.inventory, uuid::Uuid::from_u128(8100));
+                    self.inventory_ui.show_original(&self.world.inventory, self.world.inventory.root);
                 }
                 for cmd in
                     crate::world::appearance::sync_commands(&self.world.inventory, self.world.agent_id, &self.world.worn_attachment_items())

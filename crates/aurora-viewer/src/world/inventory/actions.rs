@@ -11,6 +11,7 @@ use uuid::Uuid;
 pub const COPY: u32 = 0x8000;
 pub const MODIFY: u32 = 0x4000;
 pub const TRANSFER: u32 = 0x2000;
+pub const MOVE: u32 = 0x80000;
 
 pub fn parent(inv: &Inventory, id: Uuid) -> Option<Uuid> {
     inv.folders

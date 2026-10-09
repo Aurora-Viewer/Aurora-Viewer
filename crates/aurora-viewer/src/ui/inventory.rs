@@ -10,6 +10,8 @@ use std::collections::HashSet;
 use uuid::Uuid;
 mod context;
 mod dialogs;
+mod properties;
+pub mod thumbnail;
 
 pub enum InvAction {
     TeleportLandmark(Uuid),
@@ -17,16 +19,36 @@ pub enum InvAction {
     /// item and asset.
     AboutLandmark(Uuid, Uuid),
     Edit(Mutation),
-    Create { parent: Uuid, kind: NewItem, name: String },
+    Create {
+        parent: Uuid,
+        kind: NewItem,
+        name: String,
+    },
     Appearance(crate::world::appearance::Action),
-    Animation { asset: Uuid, local: bool, start: bool },
+    Animation {
+        asset: Uuid,
+        local: bool,
+        start: bool,
+    },
     Sound(Uuid),
     Restore(Uuid),
-    Share { items: Vec<Uuid>, resident: Uuid },
+    Share {
+        items: Vec<Uuid>,
+        resident: Uuid,
+    },
     Preview(Uuid),
-    SaveContent { item: Uuid, text: String },
+    SaveContent {
+        item: Uuid,
+        text: String,
+    },
     Environment(Uuid, u32),
     Profile(Uuid),
+    ThumbnailCopied(Uuid),
+    Thumbnail {
+        request: Uuid,
+        item: Uuid,
+        input: thumbnail::Input,
+    },
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -40,6 +62,7 @@ pub struct Facts {
     pub worn: HashSet<Uuid>,
     pub points: Vec<(u8, bool, String)>,
     pub appearance_busy: bool,
+    pub names: std::collections::HashMap<Uuid, String>,
 }
 
 impl Facts {
@@ -67,6 +90,7 @@ impl Facts {
             worn,
             points,
             appearance_busy,
+            names: Default::default(),
         }
     }
 }
@@ -129,6 +153,7 @@ pub struct InventoryUi {
     pub selected: Option<Uuid>,
     reveal: Option<Uuid>,
     reveal_path: HashSet<Uuid>,
+    roots_seen: HashSet<Uuid>,
     pub selection: HashSet<Uuid>,
     anchor: Option<Uuid>,
     visible: Vec<Uuid>,
@@ -145,8 +170,7 @@ pub struct InventoryUi {
     pub dialog: Option<EditDialog>,
     pub links_filter: Option<Uuid>,
     pub windows: Vec<InventoryWindow>,
-    pub texture_picker: super::texture_picker::TexturePicker,
-    pub thumbnail_target: Option<Uuid>,
+    pub thumbnail: thumbnail::ThumbnailUi,
     pub share_picker: super::avatar_picker::AvatarPicker,
     pub share_items: Vec<Uuid>,
     pub property_edit: Option<(Uuid, PropertyEdit)>,
@@ -157,6 +181,19 @@ pub struct InventoryUi {
     pub save_pending: bool,
     pub wanted_images: HashSet<Uuid>,
     pub playing: Option<(Uuid, bool)>,
+    pub animation_stats: Option<(Uuid, AnimationStats)>,
+    pub animation_description: Option<(Uuid, String)>,
+    pub animation_details: bool,
+}
+
+#[derive(Clone)]
+pub struct AnimationStats {
+    pub priority: i32,
+    pub duration: f32,
+    pub looping: bool,
+    pub entry: f32,
+    pub exit: f32,
+    pub joints: usize,
 }
 
 impl InventoryUi {
@@ -180,7 +217,7 @@ impl InventoryUi {
                 break;
             };
             if folder.library {
-                self.tab = 1;
+                self.reveal_path.insert(inv.root);
             }
             parent = (!folder.info.parent.is_nil()).then_some(folder.info.parent);
         }
@@ -231,7 +268,6 @@ impl InventoryUi {
 fn folder_icon(type_default: i32, open: bool) -> &'static str {
     match type_default {
         14 => "Inv_TrashClosed",
-        8 | 9 => "Inv_FolderOpen",
         _ if open => "Inv_FolderOpen",
         _ => "Inv_FolderClosed",
     }
@@ -280,6 +316,7 @@ fn item_row(
     facts: &Facts,
     actions: &mut Vec<InvAction>,
 ) {
+    tree_spacing(ui);
     let Some(it) = inv.items.get(id) else {
         return;
     };
@@ -293,7 +330,8 @@ fn item_row(
             .push_id(("inv_item", it.id), |ui| {
                 ui.add_sized(
                     [ui.available_width(), 20.0],
-                    egui::Button::selectable(st.selection.contains(id), RichText::new(text).size(13.0).color(p.ink))
+                    egui::Button::selectable(st.selection.contains(id), "")
+                        .left_text(RichText::new(text).size(13.0).color(p.ink))
                         .sense(egui::Sense::click_and_drag()),
                 )
             })
@@ -330,19 +368,46 @@ fn folder_tree(
     facts: &Facts,
     actions: &mut Vec<InvAction>,
 ) {
+    tree_spacing(ui);
     if depth > 24 {
         return;
     }
     let Some(f) = inv.folders.get(&id) else {
         return;
     };
-    let name = f.info.name.clone();
+    let name = if id == inv.root {
+        "Mon inventaire".to_owned()
+    } else if id == inv.lib_root {
+        "Bibliothèque".to_owned()
+    } else {
+        f.info.name.clone()
+    };
     let tdef = f.info.type_default;
     let fetch_state = f.state;
-    let children = f.children.clone();
+    let mut children = f.children.clone();
+    // Present the read-only library among folders without changing its server parent.
+    if id == inv.root
+        && !inv.lib_root.is_nil()
+        && inv.lib_root != id
+        && inv.folders.contains_key(&inv.lib_root)
+        && !children.contains(&inv.lib_root)
+    {
+        children.push(inv.lib_root);
+        children.sort_by_cached_key(|id| {
+            if *id == inv.lib_root {
+                "bibliothèque".to_owned()
+            } else {
+                rules::name(inv, *id).to_lowercase()
+            }
+        });
+    }
     let items = f.items.clone();
     let id_salt = ui.make_persistent_id(("inv", id));
     let mut st = egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id_salt, depth == 0);
+    let first_open = depth == 0 && state.roots_seen.insert(id);
+    if first_open {
+        st.set_open(true);
+    }
     if state.reveal_path.contains(&id) {
         st.set_open(true);
     }
@@ -375,8 +440,11 @@ fn folder_tree(
         state.visible.push(id);
         let r = ui.add_sized(
             [ui.available_width(), 20.0],
-            egui::Button::selectable(state.selection.contains(&id), RichText::new(label).size(13.0).color(p.ink)),
+            egui::Button::selectable(state.selection.contains(&id), "").left_text(RichText::new(label).size(13.0).color(p.ink)),
         );
+        if first_open {
+            r.scroll_to_me(Some(egui::Align::Min));
+        }
         if r.clicked() || r.secondary_clicked() {
             state.select(ui, id, r.secondary_clicked());
         }
@@ -410,6 +478,12 @@ fn folder_tree(
     }
 }
 
+fn tree_spacing(ui: &mut egui::Ui) {
+    ui.spacing_mut().item_spacing.y = 1.0;
+    ui.spacing_mut().button_padding = egui::vec2(2.0, 1.0);
+    ui.spacing_mut().interact_size.y = 20.0;
+}
+
 pub fn show(
     ctx: &egui::Context,
     p: &Palette,
@@ -422,7 +496,27 @@ pub fn show(
     images: &std::collections::HashMap<Uuid, egui::TextureHandle>,
 ) -> Vec<InvAction> {
     let mut actions = Vec::new();
-    let facts = Facts::from_world(world, appearance_busy);
+    let mut facts = Facts::from_world(world, appearance_busy);
+    fn property_names(st: &InventoryUi, world: &World, names: &mut std::collections::HashMap<Uuid, String>) {
+        if let Some(EditDialog::Properties(id)) = st.dialog
+            && let Some(it) = world.inventory.items.get(&id)
+        {
+            for resident in [it.owner, it.creator].into_iter().filter(|id| !id.is_nil()) {
+                names.insert(
+                    resident,
+                    world
+                        .social
+                        .avatar_names
+                        .complete(&resident)
+                        .unwrap_or_else(|| "Chargement…".into()),
+                );
+            }
+        }
+        for window in &st.windows {
+            property_names(&window.state, world, names);
+        }
+    }
+    property_names(st, world, &mut facts.names);
     let inv = &mut world.inventory;
     st.previous_visible = std::mem::take(&mut st.visible);
     if st.fetch_all {
@@ -453,18 +547,19 @@ pub fn show(
             }
         });
         ui.add_space(3.0);
+        let mut visible_tab = match st.tab {
+            2 => 1,
+            3 => 2,
+            4 => 3,
+            _ => 0,
+        };
         super::widgets::tabs(
             ui,
             p,
-            &mut st.tab,
-            &[
-                ("Inventaire", true),
-                ("Bibliothèque", true),
-                ("Récent", true),
-                ("Porté", true),
-                ("Favoris", true),
-            ],
+            &mut visible_tab,
+            &[("Inventaire", true), ("Récent", true), ("Porté", true), ("Favoris", true)],
         );
+        st.tab = [0, 2, 3, 4][visible_tab];
         ui.add_space(3.0);
         let list_h = (ui.available_height() - 48.0).max(80.0);
         egui::Frame::new().fill(p.field).show(ui, |ui| {
@@ -486,7 +581,6 @@ pub fn show(
                                     .is_none_or(|target| matches!(i.asset_type, 24 | 25) && i.asset_id == target)
                             })
                             .filter(|i| match st.tab {
-                                1 => rules::library(inv, i.id),
                                 2 => {
                                     i.created_at
                                         >= std::time::SystemTime::now()
@@ -496,7 +590,7 @@ pub fn show(
                                 }
                                 3 => rules::original(inv, i.id).is_some_and(|id| facts.worn.contains(&id)),
                                 4 => i.favorite,
-                                _ => !rules::library(inv, i.id),
+                                _ => true,
                             })
                             .map(|i| i.id)
                             .collect();
@@ -507,10 +601,9 @@ pub fn show(
                             .filter(|f| f.info.id != inv.root && f.info.id != inv.lib_root && !rules::in_type(inv, f.info.id, 14))
                             .filter(|f| f.info.name.to_lowercase().contains(&q) && st.links_filter.is_none())
                             .filter(|f| match st.tab {
-                                1 => f.library,
                                 2 | 3 => false,
                                 4 => f.info.favorite,
-                                _ => !f.library,
+                                _ => true,
                             })
                             .map(|f| f.info.id)
                             .collect();
@@ -534,7 +627,7 @@ pub fn show(
                         }
                         return;
                     }
-                    let root = if st.tab == 1 { inv.lib_root } else { inv.root };
+                    let root = inv.root;
                     if root.is_nil() {
                         ui.label(RichText::new("Inventaire non disponible.").color(p.muted));
                     } else {
@@ -559,17 +652,20 @@ pub fn show(
             ui.label(RichText::new(format!("{} objets", inv.item_count())).size(12.0).color(p.muted));
         });
     });
-    dialogs::show(ctx, p, inv, st, prefs, &facts, &mut actions);
-    dialogs::preview(ctx, p, inv, st, images, &mut actions);
-    if let Some(image) = st.texture_picker.show(ctx, p, world, images)
-        && let Some(id) = st.thumbnail_target.take()
-    {
-        match rules::patch(&world.inventory, id, aurora_net::inventory::operations::metadata_thumbnail(image)) {
-            Ok(change) => actions.push(InvAction::Edit(change)),
-            Err(reason) => st.message = reason,
-        }
-    }
-    st.wanted_images.extend(st.texture_picker.wanted_images.drain());
+    dialogs::show(ctx, p, icons, inv, st, prefs, &facts, images, &mut actions);
+    dialogs::preview(ctx, p, inv, st, images, prefs, &mut actions);
+    st.thumbnail.show(
+        ctx,
+        p,
+        icons,
+        world,
+        prefs,
+        st.ui_id,
+        images,
+        &mut st.wanted_images,
+        st.pending.is_some(),
+        &mut actions,
+    );
     if let Some(residents) = st.share_picker.show(ctx, p, world)
         && let Some(resident) = residents.first()
     {
@@ -619,21 +715,26 @@ pub fn show(
                 ui.label(RichText::new(&w.state.message).color(p.warn));
             }
         });
-        dialogs::show(ctx, p, &world.inventory, &mut w.state, prefs, &facts, &mut actions);
-        dialogs::preview(ctx, p, &world.inventory, &mut w.state, images, &mut actions);
-        if let Some(image) = w.state.texture_picker.show(ctx, p, world, images)
-            && let Some(id) = w.state.thumbnail_target.take()
-            && let Ok(change) = rules::patch(&world.inventory, id, aurora_net::inventory::operations::metadata_thumbnail(image))
-        {
-            actions.push(InvAction::Edit(change));
-        }
+        dialogs::show(ctx, p, icons, &world.inventory, &mut w.state, prefs, &facts, images, &mut actions);
+        dialogs::preview(ctx, p, &world.inventory, &mut w.state, images, prefs, &mut actions);
+        w.state.thumbnail.show(
+            ctx,
+            p,
+            icons,
+            world,
+            prefs,
+            w.id,
+            images,
+            &mut w.state.wanted_images,
+            st.pending.is_some(),
+            &mut actions,
+        );
         if let Some(residents) = w.state.share_picker.show(ctx, p, world)
             && let Some(resident) = residents.first()
         {
             w.state.dialog = Some(EditDialog::Share(std::mem::take(&mut w.state.share_items), *resident));
         }
         st.wanted_images.extend(w.state.wanted_images.drain());
-        st.wanted_images.extend(w.state.texture_picker.wanted_images.drain());
         if before != (w.state.clipboard.clone(), w.state.cut) {
             st.clipboard.clone_from(&w.state.clipboard);
             st.cut = w.state.cut;
@@ -644,7 +745,7 @@ pub fn show(
     }
     // Documents and confirmations outlive the inventory window which opened
     // them, just like the main inventory's auxiliary floaters.
-    windows.retain(|w| w.open || w.state.preview.is_some() || w.state.dialog.is_some());
+    windows.retain(|w| w.open || w.state.preview.is_some() || w.state.dialog.is_some() || w.state.thumbnail.item.is_some());
     windows.append(&mut spawned);
     st.windows = windows;
     if let Some(id) = st.demo_menu {
@@ -688,11 +789,95 @@ mod tests {
                         worn: HashSet::new(),
                         points: Vec::new(),
                         appearance_busy: false,
+                        names: Default::default(),
                     },
                     &mut Vec::new(),
                 );
             },
         )
+    }
+
+    #[test]
+    fn root_opens_once_and_library_is_a_left_aligned_virtual_child() {
+        let ctx = egui::Context::default();
+        let p = crate::theme::Theme::default().palette();
+        let root = Uuid::from_u128(1);
+        let lib = Uuid::from_u128(2);
+        let mut inv = Inventory {
+            root,
+            lib_root: lib,
+            ..Default::default()
+        };
+        for (id, name, library) in [(root, "Mon inventaire", false), (lib, "Library", true)] {
+            inv.folders.insert(
+                id,
+                crate::world::inventory::Folder {
+                    info: aurora_net::inventory::InvFolder {
+                        id,
+                        name: name.into(),
+                        ..Default::default()
+                    },
+                    children: Vec::new(),
+                    items: Vec::new(),
+                    state: FetchState::Fetched,
+                    library,
+                },
+            );
+        }
+        let mut st = InventoryUi::default();
+        let mut output = None;
+        for frame in 0..4 {
+            output = Some(ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    if frame == 0 {
+                        let mut old = egui::collapsing_header::CollapsingState::load_with_default_open(
+                            &ctx,
+                            ui.make_persistent_id(("inv", root)),
+                            false,
+                        );
+                        old.set_open(false);
+                        old.store(&ctx);
+                    }
+                    folder_tree(
+                        ui,
+                        &p,
+                        &Icons::default(),
+                        &mut inv,
+                        root,
+                        0,
+                        None,
+                        &mut st,
+                        &mut InventoryPreferences::default(),
+                        &Facts {
+                            worn: HashSet::new(),
+                            points: Vec::new(),
+                            appearance_busy: false,
+                            names: Default::default(),
+                        },
+                        &mut Vec::new(),
+                    );
+                },
+            ));
+        }
+        let output = output.expect("frame");
+        for label in ["Mon inventaire", "Bibliothèque"] {
+            let text = output
+                .shapes
+                .iter()
+                .find_map(|s| match &s.shape {
+                    egui::epaint::Shape::Text(t) if t.galley.text() == label => Some(t),
+                    _ => None,
+                })
+                .expect("tree label");
+            assert!(text.pos.x < 100.0, "{label} must remain next to its icon");
+        }
+        assert!(st.visible.contains(&lib));
+        assert_eq!(inv.folders[&lib].info.parent, Uuid::nil());
+        assert!(inv.folders[&lib].library);
     }
 
     #[test]

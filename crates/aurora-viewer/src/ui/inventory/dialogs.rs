@@ -9,10 +9,12 @@ use aurora_net::inventory::operations::Operation;
 pub(super) fn show(
     ctx: &egui::Context,
     p: &Palette,
+    icons: &Icons,
     inv: &Inventory,
     st: &mut InventoryUi,
     prefs: &InventoryPreferences,
     facts: &Facts,
+    images: &std::collections::HashMap<Uuid, egui::TextureHandle>,
     actions: &mut Vec<InvAction>,
 ) {
     let Some(mut dialog) = st.dialog.take() else {
@@ -23,7 +25,7 @@ pub(super) fn show(
     let title = match &dialog {
         EditDialog::Rename(..) => "Renommer",
         EditDialog::Folder(..) => "Nouveau dossier",
-        EditDialog::Properties(..) => "Propriétés",
+        EditDialog::Properties(..) => "Propriétés de l’objet",
         EditDialog::Delete(_, true) => "Purger la sélection",
         EditDialog::Delete(_, false) => "Supprimer la sélection",
         EditDialog::Empty(_) => "Vider la corbeille",
@@ -32,11 +34,22 @@ pub(super) fn show(
         EditDialog::Discard(..) => "Enregistrer les modifications ?",
         EditDialog::Share(..) => "Partager la sélection",
     };
+    let properties = matches!(dialog, EditDialog::Properties(_));
+    let window_id = format!("inventory_{}_{}", if properties { "properties" } else { "dialog" }, st.ui_id);
     Floater::new(
-        &format!("inventory_dialog_{}", st.ui_id),
+        &window_id,
         title,
-        ctx.content_rect().center() - egui::vec2(210.0, 130.0),
-        Vec2::new(420.0, 260.0),
+        ctx.content_rect().center()
+            - if properties {
+                egui::vec2(175.0, 305.0)
+            } else {
+                egui::vec2(210.0, 130.0)
+            },
+        if properties {
+            Vec2::new(350.0, 610.0)
+        } else {
+            Vec2::new(420.0, 260.0)
+        },
     )
     .show(ctx, p, &mut open, |ui| {
         match &mut dialog {
@@ -69,52 +82,7 @@ pub(super) fn show(
                 }
             }
             EditDialog::Properties(id) => {
-                if let Some(it) = inv.items.get(id) {
-                    if st.property_edit.as_ref().is_none_or(|(item, _)| item != id) { st.property_edit = Some((*id, PropertyEdit::from(it))); }
-                    let Some((_, edit)) = &mut st.property_edit else { return; };
-                    let can_edit = rules::mutable(inv, *id, &prefs.protected) && !matches!(it.asset_type, 2 | 24 | 25) && st.pending.is_none();
-                    egui::ScrollArea::vertical().max_height(400.0).show(ui, |ui| {
-                        ui.label("Nom :"); ui.add_enabled(can_edit && it.owner_mask & rules::MODIFY != 0, egui::TextEdit::singleline(&mut edit.name).char_limit(63));
-                        ui.label("Description :"); ui.add_enabled(can_edit && it.owner_mask & rules::MODIFY != 0, egui::TextEdit::multiline(&mut edit.desc).char_limit(127).desired_rows(2));
-                        ui.add(egui::Label::new(it.id.to_string()).selectable(true));
-                        ui.label(format!("Créateur : {}", it.creator)); ui.label(format!("Propriétaire : {}", it.owner));
-                        ui.label(format!("Créé le {}", aurora_net::inventory::created_date(it.created_at)));
-                        ui.label("Vos droits :");
-                        for (mask, label) in [(rules::MODIFY, "Modifier"), (rules::COPY, "Copier"), (rules::TRANSFER, "Transférer")] {
-                            let mut on = it.owner_mask & mask != 0; ui.add_enabled(false, egui::Checkbox::new(&mut on, label));
-                        }
-                        ui.separator(); ui.label("Droits du prochain propriétaire :");
-                        for (mask, label) in [(rules::MODIFY, "Modifier"), (rules::COPY, "Copier"), (rules::TRANSFER, "Transférer")] {
-                            let mut on = edit.next & mask != 0;
-                            if ui.add_enabled(can_edit && it.base_mask & mask != 0 && (mask != rules::TRANSFER || edit.next & rules::COPY != 0), egui::Checkbox::new(&mut on, label)).changed() {
-                                if on { edit.next |= mask; } else { edit.next &= !mask; }
-                                if edit.next & rules::COPY == 0 { edit.next |= rules::TRANSFER; }
-                            }
-                        }
-                        for (mask, label, value) in [(rules::MODIFY, "Partager avec le groupe", &mut edit.group), (rules::COPY, "Autoriser tout le monde à copier", &mut edit.everyone)] {
-                            let mut on = *value & mask != 0;
-                            if ui.add_enabled(can_edit && it.owner_mask & (rules::COPY | rules::TRANSFER) == rules::COPY | rules::TRANSFER, egui::Checkbox::new(&mut on, label)).changed() {
-                                if on { *value |= mask; } else { *value &= !mask; }
-                            }
-                        }
-                        ui.separator(); ui.label("Vente :");
-                        ui.add_enabled_ui(can_edit && it.owner_mask & rules::TRANSFER != 0, |ui| {
-                            egui::ComboBox::from_id_salt("sale_type").selected_text(["Pas à vendre", "Original", "Copie", "Contenu"].get(edit.sale_type as usize).copied().unwrap_or("Pas à vendre")).show_ui(ui, |ui| {
-                                for (value, label) in [(0, "Pas à vendre"), (1, "Original"), (2, "Copie"), (3, "Contenu")] {
-                                    if ui.add_enabled(value != 2 || it.owner_mask & rules::COPY != 0, egui::Button::selectable(edit.sale_type == value, label)).clicked() { edit.sale_type = value; }
-                                }
-                            });
-                            ui.add(egui::DragValue::new(&mut edit.price).range(0..=i32::MAX).suffix(" L$"));
-                        });
-                        let modified = edit.name != it.name || edit.desc != it.desc || edit.next != it.next_owner_mask || edit.group != it.group_mask || edit.everyone != it.everyone_mask || edit.sale_type != it.sale_type || edit.price != it.sale_price;
-                        if ui.add_enabled(can_edit && modified && rules::clean_name(&edit.name).is_ok(), egui::Button::new("Enregistrer")).clicked() {
-                            let body = llsd_map! { "name" => rules::clean_name(&edit.name).unwrap_or_else(|_| it.name.clone()), "desc" => edit.desc.clone(),
-                                "permissions" => llsd_map! { "next_owner_mask" => edit.next as i32, "group_mask" => edit.group as i32, "everyone_mask" => edit.everyone as i32 },
-                                "sale_info" => llsd_map! { "sale_type" => i32::from(edit.sale_type), "sale_price" => edit.price } };
-                            match rules::patch(inv, *id, body) { Ok(change) => { actions.push(InvAction::Edit(change)); done = true; }, Err(reason) => st.message = reason }
-                        }
-                    });
-                } else { ui.label("L’élément n’existe plus."); }
+                done = super::properties::show(ui, p, icons, inv, st, prefs, facts, images, *id, actions);
             }
             EditDialog::Discard(id) => {
                 ui.label("Ce document contient des modifications non enregistrées.");
@@ -135,10 +103,9 @@ pub(super) fn show(
             }
             EditDialog::Share(ids, resident) => {
                 ui.label(format!("Envoyer {} élément(s) au résident {} ?", ids.len(), resident));
-                if ids
-                    .iter()
-                    .any(|id| rules::offer(inv, *id, &prefs.protected, &facts.worn).is_ok_and(|bucket| rules::offer_has_no_copy(inv, &bucket)))
-                {
+                if ids.iter().any(|id| {
+                    rules::offer(inv, *id, &prefs.protected, &facts.worn).is_ok_and(|bucket| rules::offer_has_no_copy(inv, &bucket))
+                }) {
                     ui.label(RichText::new("Les éléments non copiables quitteront votre inventaire.").color(p.warn));
                 }
                 if flat_button(ui, p, "Partager").clicked() {
@@ -150,7 +117,9 @@ pub(super) fn show(
                 }
             }
             EditDialog::ReplaceLinks(old, selected) => {
-                if st.fetch_all { ui.label("Chargement de tous les dossiers avant le remplacement…"); }
+                if st.fetch_all {
+                    ui.label("Chargement de tous les dossiers avant le remplacement…");
+                }
                 ui.label(format!("Remplacer les liens vers « {} » par :", rules::name(inv, *old)));
                 let old_type = inv.items.get(old).map(|it| (it.asset_type, it.flags & 0xff));
                 let mut candidates: Vec<_> = inv
@@ -173,32 +142,55 @@ pub(super) fn show(
                     }
                 });
                 if ui
-                    .add_enabled(selected.is_some() && st.pending.is_none() && !st.fetch_all && !facts.appearance_busy, egui::Button::new("Remplacer"))
+                    .add_enabled(
+                        selected.is_some() && st.pending.is_none() && !st.fetch_all && !facts.appearance_busy,
+                        egui::Button::new("Remplacer"),
+                    )
                     .clicked()
-                    && let Some(new) = *selected {
-                        let mut change = Mutation::default();
-                        for link in inv
-                            .items
-                            .values()
-                            .filter(|it| it.asset_type == 24 && it.asset_id == *old && !rules::in_type(inv, it.id, 14) && (rules::mutable(inv, it.id, &prefs.protected) || rules::in_type(inv, it.id, 46)))
-                        {
-                            let replacement = &inv.items[&new];
-                            let outfit = rules::in_type(inv, link.id, 47) || rules::in_type(inv, link.id, 46);
-                            let desc = if outfit { if replacement.asset_type == 5 { link.desc.clone() } else { String::new() } } else { replacement.desc.clone() };
-                            change.operations.push(Operation::Links { parent: link.parent, links: vec![aurora_net::outfits::OutfitLink {
-                                target: new, name: replacement.name.clone(), desc, folder: false, inv_type: replacement.inv_type,
-                            }] });
-                            change.operations.push(Operation::Delete { id: link.id, folder: false });
-                            change.removed.push(link.id);
-                            change.refresh.push(link.parent);
-                        }
-                        if change.operations.is_empty() {
-                            st.message = "Aucun lien modifiable dans les dossiers chargés.".into();
+                    && let Some(new) = *selected
+                {
+                    let mut change = Mutation::default();
+                    for link in inv.items.values().filter(|it| {
+                        it.asset_type == 24
+                            && it.asset_id == *old
+                            && !rules::in_type(inv, it.id, 14)
+                            && (rules::mutable(inv, it.id, &prefs.protected) || rules::in_type(inv, it.id, 46))
+                    }) {
+                        let replacement = &inv.items[&new];
+                        let outfit = rules::in_type(inv, link.id, 47) || rules::in_type(inv, link.id, 46);
+                        let desc = if outfit {
+                            if replacement.asset_type == 5 {
+                                link.desc.clone()
+                            } else {
+                                String::new()
+                            }
                         } else {
-                            actions.push(InvAction::Edit(change));
-                        }
-                        done = true;
+                            replacement.desc.clone()
+                        };
+                        change.operations.push(Operation::Links {
+                            parent: link.parent,
+                            links: vec![aurora_net::outfits::OutfitLink {
+                                target: new,
+                                name: replacement.name.clone(),
+                                desc,
+                                folder: false,
+                                inv_type: replacement.inv_type,
+                            }],
+                        });
+                        change.operations.push(Operation::Delete {
+                            id: link.id,
+                            folder: false,
+                        });
+                        change.removed.push(link.id);
+                        change.refresh.push(link.parent);
                     }
+                    if change.operations.is_empty() {
+                        st.message = "Aucun lien modifiable dans les dossiers chargés.".into();
+                    } else {
+                        actions.push(InvAction::Edit(change));
+                    }
+                    done = true;
+                }
             }
             EditDialog::Delete(ids, purge) => {
                 ui.label(format!("{} élément(s) sélectionné(s).", ids.len()));
@@ -256,22 +248,22 @@ pub(super) fn show(
                     .add_enabled(st.pending.is_none(), egui::Button::new("Vider la corbeille"))
                     .clicked()
                     && let Some(f) = inv.folders.get(id)
-                        && f.info.type_default == 14
-                        && f.state == FetchState::Fetched
-                    {
-                        let removed: Vec<_> = f.items.iter().chain(&f.children).copied().collect();
-                        if !facts.worn.iter().any(|w| rules::under(inv, *w, *id)) {
-                            actions.push(InvAction::Edit(Mutation {
-                                operations: vec![Operation::Purge(*id)],
-                                refresh: vec![*id],
-                                removed,
-                                ..Default::default()
-                            }));
-                            done = true;
-                        } else {
-                            st.message = "La corbeille contient un élément porté.".into();
-                        }
+                    && f.info.type_default == 14
+                    && f.state == FetchState::Fetched
+                {
+                    let removed: Vec<_> = f.items.iter().chain(&f.children).copied().collect();
+                    if !facts.worn.iter().any(|w| rules::under(inv, *w, *id)) {
+                        actions.push(InvAction::Edit(Mutation {
+                            operations: vec![Operation::Purge(*id)],
+                            refresh: vec![*id],
+                            removed,
+                            ..Default::default()
+                        }));
+                        done = true;
+                    } else {
+                        st.message = "La corbeille contient un élément porté.".into();
                     }
+                }
             }
             EditDialog::Ungroup(id) => {
                 ui.label("Déplacer le contenu dans le dossier parent et mettre le dossier vide dans la corbeille ?");
@@ -286,7 +278,9 @@ pub(super) fn show(
                 }
             }
         }
-        if !st.message.is_empty() { ui.label(RichText::new(&st.message).color(p.warn)); }
+        if !st.message.is_empty() {
+            ui.label(RichText::new(&st.message).color(p.warn));
+        }
         if flat_button(ui, p, "Fermer / Annuler").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
             done = true;
         }
@@ -302,6 +296,7 @@ pub(super) fn preview(
     inv: &Inventory,
     st: &mut InventoryUi,
     images: &std::collections::HashMap<Uuid, egui::TextureHandle>,
+    prefs: &InventoryPreferences,
     actions: &mut Vec<InvAction>,
 ) {
     let Some(id) = st.preview else {
@@ -311,6 +306,10 @@ pub(super) fn preview(
         st.preview = None;
         return;
     };
+    if it.asset_type == 20 {
+        animation(ctx, p, inv, st, it, prefs, actions);
+        return;
+    }
     let mut open = true;
     Floater::new(
         &format!("inventory_preview_{}_{}", st.ui_id, id),
@@ -406,6 +405,105 @@ pub(super) fn preview(
         }
         st.preview = None;
         if let Some((asset, local)) = st.playing {
+            actions.push(InvAction::Animation {
+                asset,
+                local,
+                start: false,
+            });
+        }
+    }
+}
+
+fn animation(
+    ctx: &egui::Context,
+    p: &Palette,
+    inv: &Inventory,
+    st: &mut InventoryUi,
+    it: &aurora_net::inventory::InvItem,
+    prefs: &InventoryPreferences,
+    actions: &mut Vec<InvAction>,
+) {
+    if st.animation_description.as_ref().is_none_or(|(id, _)| *id != it.id) {
+        st.animation_description = Some((it.id, it.desc.clone()));
+        st.animation_details = true;
+    }
+    let mut open = true;
+    Floater::new(
+        &format!("inventory_preview_{}_{}", st.ui_id, it.id),
+        format!("Animation : {}", it.name),
+        ctx.content_rect().center() - egui::vec2(215.0, 85.0),
+        Vec2::new(430.0, 170.0),
+    )
+    .fixed()
+    .show(ctx, p, &mut open, |ui| {
+        ui.horizontal(|ui| {
+            ui.label("Description :");
+            if let Some((_, description)) = &mut st.animation_description {
+                let can_edit = rules::mutable(inv, it.id, &prefs.protected) && it.owner_mask & rules::MODIFY != 0 && st.pending.is_none();
+                let response = ui.add_enabled(
+                    can_edit,
+                    egui::TextEdit::singleline(description)
+                        .char_limit(127)
+                        .desired_width(ui.available_width()),
+                );
+                if can_edit
+                    && description != &it.desc
+                    && response.lost_focus()
+                    && let Ok(change) = rules::patch(inv, it.id, llsd_map! { "desc" => description.clone() })
+                {
+                    actions.push(InvAction::Edit(change));
+                }
+            }
+        });
+        ui.horizontal(|ui| {
+            let playing = st.playing.filter(|(asset, _)| *asset == it.asset_id);
+            for (local, label) in [(false, "Jouer devant tout le monde"), (true, "Jouer localement")] {
+                let same = playing.is_some_and(|(_, mode)| mode == local);
+                if ui
+                    .add_enabled(playing.is_none() || same, egui::Button::new(if same { "Arrêter" } else { label }))
+                    .clicked()
+                {
+                    actions.push(InvAction::Animation {
+                        asset: it.asset_id,
+                        local,
+                        start: !same,
+                    });
+                }
+            }
+            if crate::ui::widgets::icon_button(
+                ui,
+                p,
+                if st.animation_details { "caret-up" } else { "caret-down" },
+                "Afficher les statistiques",
+                true,
+            ) {
+                st.animation_details = !st.animation_details;
+            }
+        });
+        if st.animation_details {
+            if let Some((_, stats)) = st.animation_stats.as_ref().filter(|(id, _)| *id == it.id) {
+                egui::Grid::new("animation_stats")
+                    .num_columns(2)
+                    .spacing(egui::vec2(64.0, 2.0))
+                    .show(ui, |ui| {
+                        ui.label(format!("Priorité : {}", stats.priority));
+                        ui.label(format!("Entrée : {:.2}s", stats.entry));
+                        ui.end_row();
+                        ui.label(format!("Durée : {:.2}s", stats.duration));
+                        ui.label(format!("Sortie : {:.2}s", stats.exit));
+                        ui.end_row();
+                        ui.label(format!("En boucle : {}", if stats.looping { "Oui" } else { "Non" }));
+                        ui.label(format!("Joints : {}", stats.joints));
+                        ui.end_row();
+                    });
+            } else {
+                ui.label(RichText::new("Chargement des statistiques de l’animation…").color(p.muted));
+            }
+        }
+    });
+    if !open {
+        st.preview = None;
+        if let Some((asset, local)) = st.playing.filter(|(asset, _)| *asset == it.asset_id) {
             actions.push(InvAction::Animation {
                 asset,
                 local,
