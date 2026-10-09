@@ -917,7 +917,7 @@ pub fn external_link_confirm(ctx: &egui::Context, p: &Palette, url: &str, dont_w
         ui.add_space(6.0);
         ui.label(
             RichText::new(
-                "Ce lien mène à un site qui n'est pas un site officiel de Second Life ou d'Aurora. \
+                "Ce lien mène à un site qui n'est pas dans la liste des sites de confiance d'Aurora. \
                  Méfiez-vous des fausses pages de connexion et des offres trop belles : ne donnez \
                  jamais votre mot de passe ni vos informations de paiement.",
             )

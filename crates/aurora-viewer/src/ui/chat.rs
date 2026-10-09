@@ -91,9 +91,11 @@ fn pieces(text: &str, mut name_of: impl FnMut(uuid::Uuid) -> String) -> Vec<(Str
 }
 
 /// Domains whose web links get a green check: Firestorm's trusted Second
-/// Life domains (LLUrlEntrySecondlifeURL, indra/llui/llurlentry.cpp), plus
-/// Aurora's site and GitHub. Other web links get an amber warning triangle,
-/// and a warning before they open.
+/// Life domains (LLUrlEntrySecondlifeURL) and its own sites
+/// (LLUrlEntryFirestormURL, indra/llui/llurlentry.cpp), plus Aurora's site,
+/// GitHub and a few well-known sites. Hosts of content anyone can publish
+/// (github.io, githubusercontent.com...) stay out. Other web links get an
+/// amber warning triangle, and a warning before they open.
 const TRUSTED_DOMAINS: &[&str] = &[
     "secondlife.com",
     "lindenlab.com",
@@ -101,8 +103,13 @@ const TRUSTED_DOMAINS: &[&str] = &[
     "secondlifegrid.net",
     "secondlife.io",
     "secondlife-status.statuspage.io",
+    "firestormviewer.org",
+    "phoenixviewer.com",
     "auroraviewer.com",
     "github.com",
+    "youtube.com",
+    "youtu.be",
+    "wikipedia.org",
 ];
 
 /// A web link to one of the trusted domains (or a subdomain), judged on the
@@ -126,7 +133,7 @@ pub(crate) fn trusted_url(url: &str) -> bool {
 /// Check or warning triangle before a web link, with its explanation.
 fn link_badge_look(p: &Palette, url: &str) -> (&'static str, Color32, &'static str) {
     if trusted_url(url) {
-        ("check-circle-fill", p.success, "Site officiel")
+        ("check-circle-fill", p.success, "Site de confiance")
     } else {
         ("warning-fill", p.amber, "Lien externe : vérifiez l'adresse avant de l'ouvrir")
     }
@@ -1392,6 +1399,10 @@ mod tests {
             "https://github.com/Aurora-Viewer/Aurora-Viewer/pulls",
             "https://gist.github.com/x",
             "https://secondlife.com./x",
+            "https://www.youtube.com/watch?v=x",
+            "https://youtu.be/x",
+            "https://fr.wikipedia.org/wiki/Second_Life",
+            "https://www.firestormviewer.org/downloads",
         ] {
             assert!(trusted_url(ok), "{ok}");
         }
