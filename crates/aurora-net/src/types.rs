@@ -515,9 +515,12 @@ pub enum NetEvent {
     },
     Balance(i32),
     /// `result["environment"]` from the ExtEnvironment capability (region
-    /// or parcel; `environment["parcel_id"]` tells which).
+    /// or parcel; `environment["parcel_id"]` tells which). `handle` and
+    /// `parcel_id` are what was requested (-1: the region), so the viewer
+    /// can drop answers for a region or parcel the agent has left.
     Environment {
         handle: RegionHandle,
+        parcel_id: i32,
         environment: aurora_llsd::Llsd,
     },
     /// llDialog / llTextBox menu from a script.

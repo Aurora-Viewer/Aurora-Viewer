@@ -11,8 +11,7 @@ use crate::theme::Palette;
 use crate::ui::{self, Panels, bars::BarAction, chat::ChatUi, login::LoginAction, login::LoginForm, perf::PerfData, skin::Skin};
 use crate::ui_sound::UiSound;
 use crate::world::World;
-use crate::world::eep::{SkyFrame, WaterFrame};
-use crate::world::env::{Environment, midday_sun};
+use crate::world::env::Environment;
 use aurora_net::{LoginRequest, NetClient, NetCommand, NetEvent, StartLocation, control};
 use aurora_render::{DrawLists, EguiFrame, FrameParams, PointLight, RenderStats, Renderer};
 use glam::{Vec3, Vec4};
@@ -2869,31 +2868,9 @@ impl App {
             }
         }
 
-        // ---- environment
-        let sun_dir = if self.panels.time_of_day != 0 {
-            crate::world::env::time_of_day_sun(self.panels.time_of_day)
-        } else {
-            self.world.sun.map(|(s, _)| s.sun_direction).unwrap_or_else(midday_sun)
-        };
-        // EEP of the region / parcel; the sky track follows the agent's altitude
-        let agent_z = self.world.agent.position.z;
-        let eep = if self.panels.time_of_day != 0 {
-            None
-        } else {
-            self.world
-                .day_cycle
-                .as_ref()
-                .filter(|(h, _)| Some(*h) == self.world.main_region)
-                .map(|(_, d)| {
-                    let now = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_secs_f64())
-                        .unwrap_or(0.0);
-                    let pos = d.position(now);
-                    (d.sky_at(pos, agent_z), d.water_at(pos))
-                })
-        };
-        let (sky_frame, water_frame) = eep.unwrap_or_else(|| (SkyFrame::with_sun(sun_dir), WaterFrame::default()));
+        // ---- environment: local preset > parcel > region (or default day),
+        // with crossfades; the simulator sun only for regions without EEP
+        let (sky_frame, water_frame) = self.world.environment_frames(self.panels.time_of_day);
         // cloud scroll (LLEnvironment::updateCloudScroll: rate / 100 per second)
         self.world.cloud_scroll += sky_frame.cloud_scroll_rate * dt / 100.0;
         self.world.cloud_scroll = glam::Vec2::new(
@@ -3210,6 +3187,11 @@ impl App {
         self.frame_count += 1;
         if self.demo && std::env::var_os("AURORA_DEMO_ANIM_LOOP").is_some() {
             for event in crate::demo::loop_animation_events(self.frame_count) {
+                self.world.apply(event);
+            }
+        }
+        if self.demo {
+            for event in crate::demo::eep::events(self.frame_count) {
                 self.world.apply(event);
             }
         }
