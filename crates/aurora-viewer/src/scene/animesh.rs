@@ -30,19 +30,39 @@ pub fn owner(objects: &ObjectStore, mut idx: usize) -> Option<(Uuid, usize)> {
 }
 
 /// Includes an animesh's root mesh, excludes other skeletons and their children.
+///
+/// Same members as keeping the descendants whose `owner` is `root`, without
+/// walking up from each one: below a member, a child belongs to another
+/// skeleton only when it is an avatar, or an animated linkset root worn by
+/// the avatar `root`; `owner` gives up beyond 16 levels.
 pub fn members(objects: &ObjectStore, root: usize) -> Vec<usize> {
     let mut result = Vec::new();
-    let mut stack = vec![root];
-    while let Some(i) = stack.pop() {
+    let Some(r) = objects.get(root) else {
+        return result;
+    };
+    // not a skeleton owner (a child prim, an unflagged attachment): its
+    // descendants belong to another skeleton
+    if owner(objects, root).is_none_or(|(_, p)| p != root) {
+        result.push(root);
+        return result;
+    }
+    let mut stack = vec![(root, r, 0u32)];
+    while let Some((i, o, depth)) = stack.pop() {
         if result.len() >= 20_000 {
             break;
         }
-        let Some(o) = objects.get(i) else { continue };
-        if i != root && owner(objects, i).is_none_or(|(_, p)| p != root) {
+        result.push(i);
+        if depth >= 15 {
             continue;
         }
-        result.push(i);
-        stack.extend_from_slice(objects.children_of(&o.key));
+        for &c in objects.children_of(&o.key) {
+            let Some(child) = objects.get(c) else { continue };
+            let animated = child.extra.extended_mesh_flags.unwrap_or(0) & aurora_prim::extra::EXTENDED_MESH_ANIMATED != 0;
+            if child.is_avatar() || (o.is_avatar() && animated) {
+                continue;
+            }
+            stack.push((c, child, depth + 1));
+        }
     }
     result
 }
@@ -297,6 +317,51 @@ mod tests {
         assert!(!human.contains(&index(&w, 9203)));
         assert!(members(&w.objects, index(&w, 9200)).contains(&index(&w, 9200)));
         assert_eq!(members(&w.objects, index(&w, 9201)).len(), 2);
+    }
+
+    /// `members` by its definition: the descendants whose `owner` is `root`.
+    fn members_by_owner(objects: &ObjectStore, root: usize) -> Vec<usize> {
+        let mut result = Vec::new();
+        let mut stack = vec![root];
+        while let Some(i) = stack.pop() {
+            let Some(o) = objects.get(i) else { continue };
+            if i != root && owner(objects, i).is_none_or(|(_, p)| p != root) {
+                continue;
+            }
+            result.push(i);
+            stack.extend_from_slice(objects.children_of(&o.key));
+        }
+        result.sort_unstable();
+        result
+    }
+
+    #[test]
+    fn members_match_their_owner_definition() {
+        let mut w = fixture();
+        for e in crate::demo::crowd_events(3, true) {
+            w.apply(e);
+        }
+        // an animated attachment with a child, and a prim linked below a child
+        let worn = index(&w, 9203);
+        let region = w.objects.get(worn).expect("worn").key.region;
+        let mut u = crate::demo::action_avatar(false);
+        u.pcode = aurora_prim::params::LL_PCODE_VOLUME;
+        u.local_id = 9250;
+        u.full_id = Uuid::from_u128(9250);
+        u.parent_id = 9203;
+        w.objects.upsert(region, u.clone());
+        u.local_id = 9251;
+        u.full_id = Uuid::from_u128(9251);
+        u.parent_id = 9202;
+        w.objects.upsert(region, u);
+        let mut checked = 0;
+        for (idx, _) in w.objects.iter() {
+            let mut fast = members(&w.objects, idx);
+            fast.sort_unstable();
+            assert_eq!(fast, members_by_owner(&w.objects, idx), "members of {idx}");
+            checked += 1;
+        }
+        assert!(checked > 100);
     }
 
     #[test]

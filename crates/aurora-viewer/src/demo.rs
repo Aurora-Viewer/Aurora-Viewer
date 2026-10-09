@@ -2274,6 +2274,115 @@ fn stress_cubes(n: u32, keep: impl Fn(u32) -> bool, texture_offset: u32) -> Vec<
     vec![NetEvent::ObjectUpdates { handle: HANDLE, objects }]
 }
 
+/// AURORA_DEMO_CROWD=<n>: `n` extra avatars (40 for any value that is not a
+/// number), as in a busy shop or club. Returns the avatar count.
+pub fn crowd_count() -> Option<u32> {
+    let v = std::env::var("AURORA_DEMO_CROWD").ok()?;
+    Some(v.trim().parse().unwrap_or(40).min(400))
+}
+
+/// The crowd: avatars on a grid north-east of the start, each playing the
+/// demo idle animation and wearing eight attachment linksets (a root and six
+/// child prims) on bones all over the body, so every worn prim follows its
+/// animated bone each frame. With `rigged` (AURORA_DEMO_ANIMESH, whose mesh
+/// and skin are installed), each also wears the rigged demo mesh.
+pub fn crowd_events(n: u32, rigged: bool) -> Vec<NetEvent> {
+    let boxp = shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE, 100, 0, 0);
+    let sphere = shape(LL_PCODE_PATH_CIRCLE, LL_PCODE_PROFILE_CIRCLE_HALF, 100, 0, 0);
+    // chest, skull, shoulders, hands, feet (attachment points 1-8)
+    const POINTS: [u8; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
+    let mut objects = Vec::new();
+    let mut anims = Vec::new();
+    for k in 0..n {
+        let (x, y) = (138.0 + (k % 10) as f32 * 1.6, 132.0 + (k / 10) as f32 * 1.6);
+        let avatar_id = 100_000 + k * 64;
+        let mut a = prim(
+            avatar_id,
+            Vec3::new(x, y, floor_at(x, y) + 0.84),
+            Quat::from_rotation_z(k as f32 * 0.7),
+            Vec3::new(0.45, 0.6, 1.9),
+            boxp,
+            te([1.0; 4], 0, false, 0.0),
+            ExtraParams::default(),
+            "",
+        );
+        a.pcode = LL_PCODE_LEGACY_AVATAR;
+        a.full_id = Uuid::from_u128(0xA0E0_C0D0_0000_0000_0000_0000_0000_0000 | k as u128);
+        a.name_values = format!("FirstName STRING RW SV Foule{k}\nLastName STRING RW SV Resident");
+        anims.push(NetEvent::AvatarAnimations {
+            avatar: a.full_id,
+            anims: vec![(IDLE_ANIM, 1)],
+            sources: Vec::new(),
+        });
+        objects.push(a);
+        let hue = k as f32 / n.max(1) as f32;
+        for (s, &point) in POINTS.iter().enumerate() {
+            let root_id = avatar_id + 1 + s as u32 * 7;
+            let color = [0.3 + 0.6 * hue, 0.8 - 0.5 * hue, 0.3 + 0.08 * s as f32, 1.0];
+            let mut root = prim(
+                root_id,
+                Vec3::new(0.0, 0.0, 0.04),
+                Quat::IDENTITY,
+                Vec3::splat(0.08),
+                sphere,
+                te(color, 1, false, 0.0),
+                ExtraParams::default(),
+                "",
+            );
+            root.parent_id = avatar_id;
+            root.state = ((point & 0x0F) << 4) | ((point & 0xF0) >> 4);
+            objects.push(root);
+            for c in 0..6u32 {
+                let angle = c as f32 * std::f32::consts::TAU / 6.0;
+                let mut child = prim(
+                    root_id + 1 + c,
+                    Vec3::new(angle.cos() * 0.07, angle.sin() * 0.07, 0.0),
+                    Quat::from_rotation_z(angle),
+                    Vec3::new(0.05, 0.02, 0.02),
+                    boxp,
+                    te(color, 0, false, 0.0),
+                    ExtraParams::default(),
+                    "",
+                );
+                child.parent_id = root_id;
+                objects.push(child);
+            }
+        }
+        if rigged {
+            let mesh = SculptParams {
+                texture: ANIMESH_MESH,
+                sculpt_type: LL_SCULPT_TYPE_MESH,
+            };
+            let mut t = (*te([0.85, 0.85, 0.9, 1.0], 0, false, 0.0)).clone();
+            for f in &mut t.faces {
+                f.texture = ANIMESH_TEXTURE;
+            }
+            let mut worn = prim(
+                avatar_id + 60,
+                Vec3::ZERO,
+                Quat::IDENTITY,
+                Vec3::splat(0.1),
+                aurora_prim::VolumeParams {
+                    sculpt: Some(mesh),
+                    ..Default::default()
+                },
+                Arc::new(t),
+                ExtraParams {
+                    sculpt: Some(mesh),
+                    ..Default::default()
+                },
+                "",
+            );
+            worn.parent_id = avatar_id;
+            worn.state = 0x10; // chest
+            objects.push(worn);
+        }
+    }
+    let mut events = vec![NetEvent::ObjectUpdates { handle: HANDLE, objects }];
+    events.extend(anims);
+    events
+}
+
 pub fn animesh_animation() -> aurora_assets::Animation {
     use aurora_assets::anim::{JointMotion, RotKey};
     let mut a = idle_animation();

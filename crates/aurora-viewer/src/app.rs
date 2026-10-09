@@ -4968,6 +4968,14 @@ impl ApplicationHandler for App {
                     self.world.apply(ev);
                 }
             }
+            // AURORA_DEMO_CROWD=<n>: avatars wearing attachments that follow
+            // their animated bones (scene sync stress test)
+            if let Some(n) = crate::demo::crowd_count() {
+                let rigged = std::env::var_os("AURORA_DEMO_ANIMESH").is_some();
+                for ev in crate::demo::crowd_events(n, rigged) {
+                    self.world.apply(ev);
+                }
+            }
             // AURORA_DEMO_SOUND=1: a looped chime on the fountain and the
             // interface sounds (audible: off by default for the captures)
             if std::env::var_os("AURORA_DEMO_SOUND").is_some() {

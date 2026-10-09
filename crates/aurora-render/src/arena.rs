@@ -334,6 +334,17 @@ impl RecordStore {
         }
     }
 
+    /// Replace a record's model matrix only when it differs (moving objects:
+    /// no copy of the whole record, and an unchanged one is not uploaded).
+    pub fn set_model(&mut self, id: u32, model: [[f32; 4]; 4]) {
+        if let Some(slot) = self.mirror.get_mut(id as usize)
+            && slot.model != model
+        {
+            slot.model = model;
+            self.mark(id as usize);
+        }
+    }
+
     pub fn get(&self, id: u32) -> Option<&DrawRecord> {
         self.mirror.get(id as usize)
     }
