@@ -4,6 +4,7 @@ use super::icons::Icons;
 use crate::theme::Palette;
 use crate::world::inventory::{FetchState, Inventory};
 use egui::{RichText, Vec2};
+use std::collections::HashSet;
 use uuid::Uuid;
 
 pub enum InvAction {
@@ -20,6 +21,34 @@ pub struct InventoryUi {
     pub search: String,
     pub tab: usize,
     pub expand_all: Option<bool>,
+    pub selected: Option<Uuid>,
+    reveal: Option<Uuid>,
+    reveal_path: HashSet<Uuid>,
+}
+
+impl InventoryUi {
+    /// show_item_original: clear filters, expand ancestors, select and scroll to the original.
+    pub fn show_original(&mut self, inv: &Inventory, id: Uuid) {
+        self.search.clear();
+        self.tab = 0;
+        self.expand_all = None;
+        self.selected = Some(id);
+        self.reveal = Some(id);
+        self.reveal_path.clear();
+        let mut parent = inv.items.get(&id).map(|it| it.parent);
+        while let Some(id) = parent {
+            if !self.reveal_path.insert(id) {
+                break;
+            }
+            let Some(folder) = inv.folders.get(&id) else {
+                break;
+            };
+            if folder.library {
+                self.tab = 1;
+            }
+            parent = (!folder.info.parent.is_nil()).then_some(folder.info.parent);
+        }
+    }
 }
 
 fn folder_icon(type_default: i32, open: bool) -> &'static str {
@@ -63,7 +92,7 @@ fn icon(ui: &mut egui::Ui, icons: &Icons, name: &str, p: &Palette) {
     }
 }
 
-fn item_row(ui: &mut egui::Ui, p: &Palette, icons: &Icons, inv: &Inventory, id: &Uuid, actions: &mut Vec<InvAction>) {
+fn item_row(ui: &mut egui::Ui, p: &Palette, icons: &Icons, inv: &Inventory, id: &Uuid, st: &mut InventoryUi, actions: &mut Vec<InvAction>) {
     let Some(it) = inv.items.get(id) else {
         return;
     };
@@ -72,10 +101,18 @@ fn item_row(ui: &mut egui::Ui, p: &Palette, icons: &Icons, inv: &Inventory, id: 
         icon(ui, icons, item_icon(it.asset_type, it.inv_type), p);
         let r = ui
             .dnd_drag_source(egui::Id::new(("inv_drag", it.id)), InvDrag(it.id), |ui| {
-                ui.add(egui::Label::new(RichText::new(&it.name).size(13.0).color(p.ink)).sense(egui::Sense::click()))
+                ui.selectable_label(st.selected == Some(it.id), RichText::new(&it.name).size(13.0).color(p.ink))
             })
             .inner;
         let r = if it.desc.is_empty() { r } else { r.on_hover_text(&it.desc) };
+        if r.clicked() {
+            st.selected = Some(it.id);
+        }
+        if st.reveal == Some(it.id) {
+            r.scroll_to_me(Some(egui::Align::Center));
+            st.reveal = None;
+            st.reveal_path.clear();
+        }
         if it.asset_type == 3 && !it.asset_id.is_nil() {
             if r.double_clicked() {
                 actions.push(InvAction::TeleportLandmark(it.asset_id));
@@ -104,6 +141,7 @@ fn folder_tree(
     id: Uuid,
     depth: usize,
     expand: Option<bool>,
+    state: &mut InventoryUi,
     actions: &mut Vec<InvAction>,
 ) {
     if depth > 24 {
@@ -114,14 +152,17 @@ fn folder_tree(
     };
     let name = f.info.name.clone();
     let tdef = f.info.type_default;
-    let state = f.state;
+    let fetch_state = f.state;
     let children = f.children.clone();
     let items = f.items.clone();
     let id_salt = egui::Id::new(("inv", id));
     let mut st = egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id_salt, depth == 0);
+    if state.reveal_path.contains(&id) {
+        st.set_open(true);
+    }
     if let Some(e) = expand {
         // "Développer" only opens folders already fetched, to avoid fetching everything.
-        if !e || state == FetchState::Fetched || depth == 0 {
+        if !e || fetch_state == FetchState::Fetched || depth == 0 {
             st.set_open(e || depth == 0);
         }
     }
@@ -140,7 +181,7 @@ fn folder_tree(
             st.toggle(ui);
         }
         icon(ui, icons, folder_icon(tdef, open), p);
-        let label = match state {
+        let label = match fetch_state {
             FetchState::Fetching => format!("{name}  (chargement…)"),
             FetchState::Failed => format!("{name}  (échec)"),
             _ => name.clone(),
@@ -153,19 +194,19 @@ fn folder_tree(
         }
     });
     let _ = header;
-    if st.is_open() && matches!(state, FetchState::Unknown | FetchState::Failed) {
+    if st.is_open() && matches!(fetch_state, FetchState::Unknown | FetchState::Failed) {
         inv.request(id);
     }
     st.store(ui.ctx());
     if st.is_open() {
         ui.indent(id_salt, |ui| {
             for c in children {
-                folder_tree(ui, p, icons, inv, c, depth + 1, expand, actions);
+                folder_tree(ui, p, icons, inv, c, depth + 1, expand, state, actions);
             }
             for i in &items {
-                item_row(ui, p, icons, inv, i, actions);
+                item_row(ui, p, icons, inv, i, state, actions);
             }
-            if items.is_empty() && state == FetchState::Fetched && inv.folders.get(&id).is_some_and(|f| f.children.is_empty()) {
+            if items.is_empty() && fetch_state == FetchState::Fetched && inv.folders.get(&id).is_some_and(|f| f.children.is_empty()) {
                 ui.label(RichText::new("(vide)").size(12.0).color(p.muted_dim));
             }
         });
@@ -220,7 +261,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, inv: &mut Inventory
                         hits.sort_by_key(|i| inv.items.get(i).map(|x| x.name.to_lowercase()));
                         let total = hits.len();
                         for id in hits.iter().take(500) {
-                            item_row(ui, p, icons, inv, id, &mut actions);
+                            item_row(ui, p, icons, inv, id, st, &mut actions);
                         }
                         if total > 500 {
                             ui.label(RichText::new(format!("… {} autres", total - 500)).color(p.muted));
@@ -239,7 +280,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, inv: &mut Inventory
                         ui.label(RichText::new("Inventaire non disponible.").color(p.muted));
                     } else {
                         let expand = st.expand_all.take();
-                        folder_tree(ui, p, icons, inv, root, 0, expand, &mut actions);
+                        folder_tree(ui, p, icons, inv, root, 0, expand, st, &mut actions);
                     }
                 });
         });
@@ -248,4 +289,34 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, inv: &mut Inventory
         });
     });
     actions
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn showing_an_original_clears_filters_and_expands_its_ancestors() {
+        let mut inv = Inventory::default();
+        crate::world::appearance::seed_demo(&mut inv, Uuid::from_u128(1));
+        let original = Uuid::from_u128(715);
+        let mut parent = inv.folders[&Uuid::from_u128(704)].clone();
+        parent.info.parent = inv.root;
+        inv.items.get_mut(&original).expect("original").parent = parent.info.id;
+        let parent_id = parent.info.id;
+        inv.folders.insert(parent_id, parent);
+        let mut st = InventoryUi {
+            search: "ancien filtre".into(),
+            tab: 1,
+            expand_all: Some(false),
+            ..Default::default()
+        };
+        st.show_original(&inv, original);
+        assert!(st.search.is_empty());
+        assert_eq!(st.tab, 0);
+        assert_eq!(st.selected, Some(original));
+        assert_eq!(st.reveal, Some(original));
+        assert!(st.reveal_path.contains(&parent_id));
+        assert!(st.expand_all.is_none());
+    }
 }

@@ -241,7 +241,12 @@ pub fn outfit_attachment(item: &aurora_net::AttachRequest) -> ObjectUpdate {
     );
     o.full_id = item.item_id;
     o.parent_id = 9000;
-    o.state = 0x10;
+    let point = if item.point == 0 {
+        ((item.flags & 0xff) as u8).max(1)
+    } else {
+        item.point
+    };
+    o.state = point.rotate_right(4);
     o.name_values = format!("AttachItemID STRING RW SV {}", item.item_id);
     o
 }
@@ -515,6 +520,7 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                         inv_type: [6, 3, 7, 0, 10][i as usize],
                         asset_id: Uuid::nil(),
                         flags: 0,
+                        favorite: false,
                         creator: Uuid::nil(),
                         created_at: 0,
                         owner: *owner,

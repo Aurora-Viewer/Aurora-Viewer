@@ -24,6 +24,7 @@ pub struct InvItem {
     pub inv_type: i32,
     pub asset_id: Uuid,
     pub flags: u32,
+    pub favorite: bool,
     pub creator: Uuid,
     pub created_at: i64,
     /// Owner and permission masks (needed to attach an object).
@@ -147,6 +148,7 @@ pub fn item_from_llsd(v: &Llsd) -> Option<InvItem> {
         inv_type: int_or_name(&v["inv_type"], inv_type_from_name),
         asset_id,
         flags: v["flags"].as_u32(),
+        favorite: v["favorite"]["toggled"].as_bool(),
         creator: v["permissions"]["creator_id"].as_uuid(),
         created_at: v["created_at"].as_i32() as i64,
         owner: v["permissions"]["owner_id"].as_uuid(),

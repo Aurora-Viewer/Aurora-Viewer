@@ -6,7 +6,7 @@ use super::inventory::{FetchState, Inventory};
 use aurora_net::inventory::{InvFolder, InvItem};
 use aurora_net::outfits::{OutfitLink, OutfitMutation};
 use aurora_net::{AttachRequest, NetCommand};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 pub const FT_OUTFIT: i32 = 47;
@@ -37,6 +37,10 @@ pub enum Action {
     Save(Option<String>),
     Remove(Uuid),
     Add(Uuid),
+    WearItem { item: Uuid, replace: bool, point: u8 },
+    DeleteFromOutfit { folder: Uuid, item: Uuid },
+    ShowOriginal(Uuid),
+    Favorite(Uuid),
     MoveLayer(Uuid, bool),
     Revert,
 }
@@ -167,12 +171,35 @@ fn base_link(inv: &Inventory, id: Uuid) -> OutfitLink {
 }
 
 /// Produces one acknowledged AIS operation. No optimistic inventory mutation.
-pub fn plan(inv: &Inventory, action: Action, worn: &HashSet<Uuid>) -> Result<(OutfitMutation, bool), String> {
+pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result<(OutfitMutation, bool), String> {
+    // DeleteFromOutfit removes the saved link, never the original or the worn item.
+    if let Action::DeleteFromOutfit { folder, item } = action {
+        if !inv
+            .folders
+            .get(&folder)
+            .is_some_and(|f| f.info.type_default == FT_OUTFIT && !f.library)
+            || !loaded(inv, folder)
+        {
+            return Err("Le dossier de tenue n’est pas disponible.".into());
+        }
+        return Ok((
+            OutfitMutation {
+                folder,
+                create: None,
+                links: folder_links(inv, folder).into_iter().filter(|l| l.target != item).collect(),
+                cof: None,
+            },
+            false,
+        ));
+    }
     let cof = cof(inv).ok_or("Le dossier Tenue actuelle n’est pas disponible.")?;
     require_complete(inv, cof)?;
     let mut current = folder_links(inv, cof);
-    if matches!(action, Action::Add(_) | Action::Remove(_) | Action::MoveLayer(..)) {
-        for id in worn {
+    if matches!(
+        action,
+        Action::Add(_) | Action::WearItem { .. } | Action::Remove(_) | Action::MoveLayer(..)
+    ) {
+        for id in worn.keys() {
             if !current.iter().any(|l| l.target == *id) {
                 let it = inv.items.get(id).ok_or("Un objet porté est encore en cours de chargement.")?;
                 current.push(item_link(it));
@@ -190,7 +217,7 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashSet<Uuid>) -> Result<(Ou
     match action {
         Action::Save(name) => {
             // Include attachments that arrived before their COF link, as Firestorm does.
-            for id in worn {
+            for id in worn.keys() {
                 if !current.iter().any(|l| l.target == *id) {
                     let it = inv
                         .items
@@ -294,19 +321,36 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashSet<Uuid>) -> Result<(Ou
             current.retain(|l| l.target != id);
             change.links = current;
         }
-        Action::Add(id) => {
+        Action::Add(id) | Action::WearItem { item: id, .. } => {
             let it = inv.items.get(&id).ok_or("Cet élément n’est pas encore chargé.")?;
             if !matches!(it.asset_type, 5 | 6 | 13) {
                 return Err("Cet élément ne peut pas être porté.".into());
             }
-            if it.asset_type == 13 {
+            let (replace, point) = match action {
+                Action::WearItem { replace, point, .. } => (replace, point),
+                _ => (false, 0),
+            };
+            if it.asset_type == 13 || (replace && it.asset_type == 5) {
                 current.retain(|l| {
                     l.folder
                         || inv
                             .items
                             .get(&l.target)
-                            .is_none_or(|old| old.asset_type != 13 || old.flags & 0xff != it.flags & 0xff)
+                            .is_none_or(|old| old.asset_type != it.asset_type || old.flags & 0xff != it.flags & 0xff)
                 });
+            }
+            if replace && it.asset_type == 6 {
+                // Point zero uses the last saved point (LLObjectBridge::mAttachPt).
+                let point = if point == 0 { (it.flags & 0xff) as u8 } else { point };
+                if point != 0 {
+                    current.retain(|l| {
+                        l.folder
+                            || l.target == id
+                            || inv.items.get(&l.target).is_none_or(|old| {
+                                old.asset_type != 6 || worn.get(&l.target).copied().unwrap_or((old.flags & 0xff) as u8) != point
+                            })
+                    });
+                }
             }
             if !current.iter().any(|l| l.target == id) {
                 current.push(item_link(it));
@@ -343,6 +387,9 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashSet<Uuid>) -> Result<(Ou
                 }
             }
             change.links = current;
+        }
+        Action::ShowOriginal(_) | Action::Favorite(_) | Action::DeleteFromOutfit { .. } => {
+            return Err("Cette action ne modifie pas la tenue actuelle.".into());
         }
     }
     normalize_layers(inv, &mut change.links);
@@ -458,6 +505,46 @@ pub fn sync_commands(inv: &Inventory, agent: Uuid, worn: &HashSet<Uuid>) -> Vec<
     commands
 }
 
+/// Explicit attachment requests retain the chosen point and replace/add mode.
+/// They are sent only after the COF update has been acknowledged.
+pub fn attachment_for_action(inv: &Inventory, agent: Uuid, action: &Action) -> Option<AttachRequest> {
+    let Action::WearItem { item, point, replace } = action else {
+        return None;
+    };
+    let it = inv.items.get(item).filter(|it| it.asset_type == 6)?;
+    Some(AttachRequest {
+        item_id: it.id,
+        owner_id: if it.owner.is_nil() { agent } else { it.owner },
+        point: *point,
+        add: !replace,
+        flags: it.flags,
+        group_mask: it.group_mask,
+        everyone_mask: it.everyone_mask,
+        next_owner_mask: it.next_owner_mask,
+        name: it.name.clone(),
+        desc: it.desc.clone(),
+    })
+}
+
+pub fn apply_attachment_override(commands: &mut Vec<NetCommand>, attachment: AttachRequest) {
+    let mut attachment = Some(attachment);
+    for cmd in commands.iter_mut() {
+        if let NetCommand::RezAttachments(items) = cmd
+            && let Some(attachment) = attachment.take()
+        {
+            items.retain(|it| it.item_id != attachment.item_id);
+            items.push(attachment);
+        }
+    }
+    if let Some(attachment) = attachment {
+        let pos = commands
+            .iter()
+            .position(|cmd| matches!(cmd, NetCommand::RequestServerAppearance { .. }))
+            .unwrap_or(commands.len());
+        commands.insert(pos, NetCommand::RezAttachments(vec![attachment]));
+    }
+}
+
 /// Offline fixture; no grid, assets or real inventory are read.
 pub fn seed_demo(inv: &mut Inventory, agent: Uuid) {
     use super::inventory::Folder;
@@ -500,6 +587,7 @@ pub fn seed_demo(inv: &mut Inventory, agent: Uuid) {
         ("Bottes", 6, 0),
         ("HUD de démo", 6, 0),
         ("Chemise de rechange", 5, 4),
+        ("Accessoire de rechange", 6, 5),
     ]
     .into_iter()
     .enumerate()
@@ -514,6 +602,7 @@ pub fn seed_demo(inv: &mut Inventory, agent: Uuid) {
             inv_type: if kind == 6 { 6 } else { 18 },
             asset_id: Uuid::nil(),
             flags,
+            favorite: false,
             creator: agent,
             created_at: 0,
             owner: agent,
@@ -525,12 +614,17 @@ pub fn seed_demo(inv: &mut Inventory, agent: Uuid) {
     inv.add_items(items.clone());
     let all: Vec<_> = items.iter().take(12).map(item_link).collect();
     for (i, id) in outfits.iter().enumerate() {
-        let selected = match i {
+        let mut selected = match i {
             0 => Vec::new(),
             1 => all.iter().take(7).cloned().collect(),
             2 => all.iter().take(9).cloned().collect(),
             _ => all.iter().take(11).cloned().collect(),
         };
+        if i == 2
+            && let Some(item) = items.last()
+        {
+            selected.push(item_link(item));
+        }
         demo_replace(inv, agent, *id, &selected);
     }
     let mut current = all;
@@ -556,6 +650,7 @@ fn demo_replace(inv: &mut Inventory, agent: Uuid, id: Uuid, links: &[OutfitLink]
             inv_type: l.inv_type,
             asset_id: l.target,
             flags: 0,
+            favorite: false,
             creator: agent,
             created_at: 0,
             owner: agent,
@@ -611,7 +706,7 @@ mod tests {
     #[test]
     fn replace_empty_outfit_preserves_required_body_parts() {
         let inv = fixture();
-        let (change, sync) = plan(&inv, Action::Wear(Uuid::from_u128(702), false), &HashSet::new()).expect("plan");
+        let (change, sync) = plan(&inv, Action::Wear(Uuid::from_u128(702), false), &HashMap::new()).expect("plan");
         assert!(sync);
         assert_eq!(change.links.iter().filter(|l| !l.folder).count(), 4);
         assert!(
@@ -626,7 +721,7 @@ mod tests {
     #[test]
     fn save_as_uses_links_and_replaces_the_base_outfit() {
         let mut inv = fixture();
-        let (change, _) = plan(&inv, Action::Save(Some("  Nouvelle tenue  ".into())), &HashSet::new()).expect("save");
+        let (change, _) = plan(&inv, Action::Save(Some("  Nouvelle tenue  ".into())), &HashMap::new()).expect("save");
         assert_eq!(change.create.as_ref().expect("category").name, "Nouvelle tenue");
         assert!(change.links.iter().all(|l| !l.folder));
         demo_mutate(&mut inv, Uuid::from_u128(1), &change).expect("mutation");
@@ -636,9 +731,9 @@ mod tests {
     #[test]
     fn body_parts_cannot_be_removed_and_unloaded_outfits_cannot_be_worn() {
         let mut inv = fixture();
-        assert!(plan(&inv, Action::Remove(Uuid::from_u128(710)), &HashSet::new()).is_err());
+        assert!(plan(&inv, Action::Remove(Uuid::from_u128(710)), &HashMap::new()).is_err());
         inv.folders.get_mut(&Uuid::from_u128(702)).expect("outfit").state = FetchState::Unknown;
-        assert!(plan(&inv, Action::Wear(Uuid::from_u128(702), false), &HashSet::new()).is_err());
+        assert!(plan(&inv, Action::Wear(Uuid::from_u128(702), false), &HashMap::new()).is_err());
     }
     #[test]
     fn adding_a_body_part_replaces_the_existing_type() {
@@ -646,7 +741,7 @@ mod tests {
         let mut shape = inv.items[&Uuid::from_u128(710)].clone();
         shape.id = Uuid::from_u128(999);
         inv.items.insert(shape.id, shape);
-        let (change, _) = plan(&inv, Action::Add(Uuid::from_u128(999)), &HashSet::new()).expect("add");
+        let (change, _) = plan(&inv, Action::Add(Uuid::from_u128(999)), &HashMap::new()).expect("add");
         assert!(change.links.iter().any(|l| l.target == Uuid::from_u128(999)));
         assert!(!change.links.iter().any(|l| l.target == Uuid::from_u128(710)));
     }
@@ -654,7 +749,7 @@ mod tests {
     #[test]
     fn saving_updates_clothing_order_in_both_cof_and_base() {
         let mut inv = fixture();
-        let (change, sync) = plan(&inv, Action::Save(None), &HashSet::new()).expect("save");
+        let (change, sync) = plan(&inv, Action::Save(None), &HashMap::new()).expect("save");
         assert!(sync, "normalizing COF layer order requires a new bake");
         demo_mutate(&mut inv, Uuid::from_u128(1), &change).expect("mutation");
         assert!(!dirty(&inv), "Save must clear the unsaved-changes indicator");
@@ -671,8 +766,98 @@ mod tests {
         let mut extra = inv.items[&Uuid::from_u128(717)].clone();
         extra.id = Uuid::from_u128(1000);
         inv.items.insert(extra.id, extra);
-        let (change, _) = plan(&inv, Action::Remove(Uuid::from_u128(715)), &HashSet::from([Uuid::from_u128(1000)])).expect("remove");
+        let (change, _) = plan(
+            &inv,
+            Action::Remove(Uuid::from_u128(715)),
+            &HashMap::from([(Uuid::from_u128(1000), 5)]),
+        )
+        .expect("remove");
         assert!(change.links.iter().any(|l| l.target == Uuid::from_u128(1000)));
         assert!(!change.links.iter().any(|l| l.target == Uuid::from_u128(715)));
+    }
+
+    #[test]
+    fn wear_replaces_same_clothing_type_while_add_preserves_layers() {
+        let mut inv = fixture();
+        let mut jacket = inv.items[&Uuid::from_u128(715)].clone();
+        jacket.id = Uuid::from_u128(999);
+        inv.items.insert(jacket.id, jacket);
+        for replace in [false, true] {
+            let (change, _) = plan(
+                &inv,
+                Action::WearItem {
+                    item: Uuid::from_u128(999),
+                    replace,
+                    point: 0,
+                },
+                &HashMap::new(),
+            )
+            .expect("wear");
+            assert_eq!(change.links.iter().any(|l| l.target == Uuid::from_u128(715)), !replace);
+            assert!(change.links.iter().any(|l| l.target == Uuid::from_u128(999)));
+            assert!(change.links.iter().any(|l| l.target == Uuid::from_u128(710)), "body preserved");
+        }
+    }
+
+    #[test]
+    fn deleting_saved_link_preserves_original_and_current_outfit() {
+        let mut inv = fixture();
+        let current = folder_links(&inv, cof(&inv).expect("COF"));
+        let item = Uuid::from_u128(717);
+        let folder = Uuid::from_u128(704);
+        let (change, sync) = plan(&inv, Action::DeleteFromOutfit { folder, item }, &HashMap::new()).expect("delete link");
+        assert!(!sync, "saved-outfit removal must not detach worn objects");
+        demo_mutate(&mut inv, Uuid::from_u128(1), &change).expect("mutation");
+        assert!(!folder_links(&inv, folder).iter().any(|l| l.target == item));
+        assert!(inv.items.contains_key(&item), "original retained");
+        assert_eq!(folder_links(&inv, cof(&inv).expect("COF")), current);
+    }
+
+    #[test]
+    fn attach_to_hud_keeps_other_objects_and_passes_the_chosen_point() {
+        let inv = fixture();
+        let agent = Uuid::from_u128(1);
+        let item = Uuid::from_u128(723);
+        let action = Action::WearItem {
+            item,
+            replace: false,
+            point: 35,
+        };
+        let (change, _) = plan(&inv, action.clone(), &HashMap::new()).expect("add to HUD");
+        assert!(change.links.iter().any(|l| l.target == Uuid::from_u128(717)));
+        let attachment = attachment_for_action(&inv, agent, &action).expect("attachment");
+        assert_eq!(attachment.point, 35);
+        assert!(attachment.add);
+        let duplicate = attachment.clone();
+        let mut commands = vec![
+            NetCommand::DetachAttachments(vec![Uuid::from_u128(999)]),
+            NetCommand::RezAttachments(vec![duplicate]),
+            NetCommand::RequestServerAppearance { cof_version: 1 },
+        ];
+        apply_attachment_override(&mut commands, attachment);
+        assert!(matches!(&commands[0], NetCommand::DetachAttachments(_)));
+        assert!(
+            matches!(&commands[1], NetCommand::RezAttachments(items) if items.len() == 1 && items[0].item_id == item && items[0].point == 35)
+        );
+        assert!(matches!(commands.last(), Some(NetCommand::RequestServerAppearance { .. })));
+    }
+
+    #[test]
+    fn replace_attachment_uses_actual_point_when_inventory_flags_are_stale() {
+        let inv = fixture();
+        let worn = HashMap::from([(Uuid::from_u128(717), 5), (Uuid::from_u128(718), 6)]);
+        let (change, _) = plan(
+            &inv,
+            Action::WearItem {
+                item: Uuid::from_u128(723),
+                replace: true,
+                point: 0,
+            },
+            &worn,
+        )
+        .expect("replace point 5");
+        assert!(!change.links.iter().any(|l| l.target == Uuid::from_u128(717)));
+        assert!(change.links.iter().any(|l| l.target == Uuid::from_u128(718)));
+        assert!(change.links.iter().any(|l| l.target == Uuid::from_u128(723)));
     }
 }

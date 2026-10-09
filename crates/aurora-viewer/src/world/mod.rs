@@ -545,6 +545,25 @@ impl World {
             .collect()
     }
 
+    pub fn worn_attachment_points(&self) -> HashMap<Uuid, u8> {
+        self.objects
+            .index_of_uuid(&self.agent_id)
+            .and_then(|idx| self.objects.get(idx))
+            .map(|me| {
+                self.objects
+                    .children_of(&me.key)
+                    .iter()
+                    .filter_map(|idx| self.objects.get(*idx))
+                    .filter_map(|o| {
+                        o.attachment_item_id()
+                            .filter(|id| !id.is_nil())
+                            .map(|id| (id, o.attachment_point()))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     /// Run the outfit restore; its network commands are left in
     /// `self.outfit.commands`.
     pub fn update_outfit(&mut self, second_life: bool, now: Instant) {

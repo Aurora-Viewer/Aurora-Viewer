@@ -95,6 +95,37 @@ pub async fn mutate(
 
 async fn request(http: &reqwest::Client, url: &str, body: &Llsd, put: bool) -> Result<Llsd, String> {
     let req = if put { http.put(url) } else { http.post(url) };
+    send(req, body).await
+}
+
+/// AISAPI::UpdateItem and favorite_send (llinventoryfunctions.cpp).
+/// The favorite belongs to the original item, and is stored by the server.
+pub async fn set_favorite(
+    http: &reqwest::Client,
+    cap: &str,
+    fetch_cap: &str,
+    owner: Uuid,
+    item: Uuid,
+    favorite: bool,
+) -> Result<crate::inventory::InvItem, String> {
+    let value = if favorite {
+        llsd_map! { "toggled" => true }
+    } else {
+        Llsd::default()
+    };
+    let body = llsd_map! { "favorite" => value };
+    let url = format!("{}/item/{item}", cap.trim_end_matches('/'));
+    send(http.patch(url), &body).await?;
+    let response = crate::caps::post_llsd(http, fetch_cap, &crate::inventory::fetch_items_body(&[item], owner))
+        .await
+        .map_err(|_| "La relecture du favori a échoué. Actualisez avant de réessayer.".to_owned())?;
+    crate::inventory::parse_items_response(&response)
+        .into_iter()
+        .find(|it| it.id == item && it.favorite == favorite)
+        .ok_or_else(|| "Le serveur n’a pas confirmé le changement du favori.".into())
+}
+
+async fn send(req: reqwest::RequestBuilder, body: &Llsd) -> Result<Llsd, String> {
     let response = req
         .header("Content-Type", "application/llsd+xml")
         .header("Accept", "application/llsd+xml")
@@ -263,5 +294,35 @@ mod tests {
         assert_eq!(body.at(0)["desc"].as_str(), "@1201");
         assert_eq!(body.at(0)["type"].as_i32(), 24);
         assert_eq!(body.at(1)["type"].as_i32(), 25);
+    }
+
+    #[tokio::test]
+    async fn favorites_patch_the_original_and_are_confirmed_by_refetch() {
+        let id = Uuid::from_u128(42);
+        for favorite in [true, false] {
+            let value = if favorite {
+                llsd_map! { "toggled" => true }
+            } else {
+                Llsd::Undef
+            };
+            let (url, task) = server(vec![
+                (200, Llsd::new_map()),
+                (
+                    200,
+                    llsd_map! { "items" => Llsd::Array(vec![
+                        llsd_map! { "item_id" => id, "type" => 6, "inv_type" => 6, "favorite" => value.clone() }
+                    ]) },
+                ),
+            ])
+            .await;
+            let it = set_favorite(&reqwest::Client::new(), &url, &format!("{url}/fetch"), Uuid::nil(), id, favorite)
+                .await
+                .expect("favorite");
+            assert_eq!(it.favorite, favorite);
+            let requests = task.await.expect("server");
+            assert!(requests[0].0.starts_with(&format!("PATCH /item/{id} ")));
+            assert_eq!(requests[0].1["favorite"], value);
+            assert_eq!(requests[1].1["items"].at(0)["item_id"].as_uuid(), id);
+        }
     }
 }

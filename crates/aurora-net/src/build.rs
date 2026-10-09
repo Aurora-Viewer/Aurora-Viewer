@@ -495,6 +495,7 @@ impl TaskItem {
             inv_type: self.inv_type as i32,
             asset_id: self.asset_id,
             flags: self.flags,
+            favorite: false,
             creator: self.creator_id,
             created_at: self.creation_date as i64,
             owner: self.owner_id,

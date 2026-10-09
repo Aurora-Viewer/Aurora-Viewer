@@ -324,6 +324,7 @@ mod tests {
             inv_type,
             asset_id: Uuid::from_u128(target),
             flags: 0,
+            favorite: false,
             creator: Uuid::nil(),
             created_at: 0,
             owner: Uuid::nil(),

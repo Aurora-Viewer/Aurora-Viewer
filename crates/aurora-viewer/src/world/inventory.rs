@@ -191,21 +191,22 @@ impl Inventory {
             for id in &f.items {
                 if let Some(it) = self.items.get(id) {
                     items.push(llsd_map! {
-                        "id" => it.id,
-                        "parent" => it.parent,
-                        "name" => it.name.clone(),
-                        "desc" => it.desc.clone(),
-                        "asset_type" => it.asset_type,
-                        "inv_type" => it.inv_type,
-                        "asset_id" => it.asset_id,
-                        "flags" => it.flags as i32,
-                        "creator" => it.creator,
-                        "created_at" => it.created_at as i32,
-                        "owner" => it.owner,
-                        "group_mask" => it.group_mask as i32,
-                        "everyone_mask" => it.everyone_mask as i32,
-                        "next_owner_mask" => it.next_owner_mask as i32,
-                    });
+                            "id" => it.id,
+                            "parent" => it.parent,
+                            "name" => it.name.clone(),
+                            "desc" => it.desc.clone(),
+                            "asset_type" => it.asset_type,
+                            "inv_type" => it.inv_type,
+                            "asset_id" => it.asset_id,
+                            "flags" => it.flags as i32,
+                    "favorite" => it.favorite,
+                            "creator" => it.creator,
+                            "created_at" => it.created_at as i32,
+                            "owner" => it.owner,
+                            "group_mask" => it.group_mask as i32,
+                            "everyone_mask" => it.everyone_mask as i32,
+                            "next_owner_mask" => it.next_owner_mask as i32,
+                        });
                 }
             }
         }
@@ -261,6 +262,7 @@ impl Inventory {
                 inv_type: v["inv_type"].as_i32(),
                 asset_id: v["asset_id"].as_uuid(),
                 flags: v["flags"].as_i32() as u32,
+                favorite: v["favorite"].as_bool(),
                 creator: v["creator"].as_uuid(),
                 created_at: v["created_at"].as_i32() as i64,
                 owner: v["owner"].as_uuid(),

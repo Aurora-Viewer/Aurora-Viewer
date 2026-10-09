@@ -661,6 +661,10 @@ pub enum NetEvent {
         request: Uuid,
         result: Result<Vec<crate::inventory::FolderContents>, String>,
     },
+    InventoryFavoriteUpdated {
+        item: Uuid,
+        result: Result<crate::inventory::InvItem, String>,
+    },
     InventoryFetchFailed {
         folders: Vec<Uuid>,
     },
@@ -1042,6 +1046,10 @@ pub enum NetCommand {
         change: crate::outfits::OutfitMutation,
     },
     DetachAttachments(Vec<Uuid>),
+    SetInventoryFavorite {
+        item: Uuid,
+        favorite: bool,
+    },
     /// Ask the server to rebuild our appearance from the Current Outfit
     /// folder (UpdateAvatarAppearance capability).
     RequestServerAppearance {

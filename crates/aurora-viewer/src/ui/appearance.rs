@@ -11,6 +11,7 @@ use egui::{RichText, Vec2};
 use model::Action;
 use std::collections::HashSet;
 use uuid::Uuid;
+mod items;
 
 #[derive(Default)]
 pub struct AppearanceUi {
@@ -27,11 +28,18 @@ pub struct AppearanceUi {
     reverse_sort: bool,
     pub pending: Option<(Uuid, bool)>,
     pub saved_new: bool,
+    pub attachment: Option<aurora_net::AttachRequest>,
+    pub favorite_pending: HashSet<Uuid>,
+    profile_item: Option<Uuid>,
     pub message: String,
     requested_items: HashSet<Uuid>,
 }
 
 impl AppearanceUi {
+    pub fn open_outfit(&mut self, id: Uuid) {
+        self.open(1, false);
+        self.selected_outfit = Some(id);
+    }
     pub fn open(&mut self, tab: usize, editing: bool) {
         self.tab = tab.min(2);
         self.editing = editing;
@@ -221,6 +229,7 @@ fn outfit_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut Appearanc
         };
         egui::CollapsingHeader::new(RichText::new(label).color(p.ink))
             .id_salt(("outfit", id))
+            .default_open(st.selected_outfit == Some(*id))
             .show(ui, |ui| {
                 if ui
                     .selectable_label(st.selected_outfit == Some(*id), "Sélectionner cette tenue")
@@ -232,7 +241,14 @@ fn outfit_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut Appearanc
                 links.sort_by_key(|l| l.name.to_lowercase());
                 for link in links.iter().filter(|l| !l.folder) {
                     if let Some(it) = world.inventory.items.get(&link.target) {
-                        row(ui, p, it, "", false);
+                        ui.push_id(("outfit_item", id, it.id), |ui| {
+                            let response = row(ui, p, it, "", st.selected_item == Some(it.id) && st.selected_outfit == Some(*id));
+                            if response.clicked() || response.secondary_clicked() {
+                                st.selected_outfit = Some(*id);
+                                st.selected_item = Some(it.id);
+                            }
+                            items::context_menu(&response, p, world, st, *id, it, actions);
+                        });
                     } else {
                         ui.label(RichText::new(&link.name).size(12.0).color(p.muted));
                     }
@@ -748,6 +764,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut Appear
         });
         st.save_as = if close || response.should_close() { None } else { Some(name) };
     }
+    items::profile(ctx, p, world, st, &mut actions);
     actions
 }
 
@@ -769,6 +786,10 @@ mod tests {
                 modifiers: Default::default(),
             });
         }
+        draw_input(ctx, world, st, input)
+    }
+
+    fn draw_input(ctx: &egui::Context, world: &mut World, st: &mut AppearanceUi, input: egui::RawInput) -> Vec<Action> {
         let mut actions = Vec::new();
         let _ = ctx.run_ui(input, |ui| {
             actions = show(ui.ctx(), &crate::theme::Theme::default().palette(), world, st, &mut true, 41_748);
@@ -797,5 +818,42 @@ mod tests {
         let actions = draw(&ctx, &mut world, &mut st, Some(egui::Key::Enter));
         assert!(matches!(&actions[..],[Action::Save(Some(name))] if name=="Tenue de test"));
         assert!(st.save_as.is_none());
+    }
+
+    #[test]
+    fn right_click_outfit_item_opens_a_persistent_menu() {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let _icons = icons::Icons::load(&ctx, None);
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        model::seed_demo(&mut world.inventory, Uuid::from_u128(1));
+        let mut st = AppearanceUi::default();
+        st.open_outfit(Uuid::from_u128(704));
+        for _ in 0..4 {
+            draw(&ctx, &mut world, &mut st, None);
+        }
+        let pos = egui::pos2(180.0, 378.0);
+        for pressed in [true, false] {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 900.0))),
+                events: vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Secondary,
+                        pressed,
+                        modifiers: Default::default(),
+                    },
+                ],
+                ..Default::default()
+            };
+            draw_input(&ctx, &mut world, &mut st, input);
+        }
+        assert_eq!(st.selected_item, Some(Uuid::from_u128(723)), "clicked outfit item");
+        assert!(egui::Popup::is_any_open(&ctx), "right-click menu");
+        for _ in 0..4 {
+            draw(&ctx, &mut world, &mut st, None);
+        }
+        assert!(egui::Popup::is_any_open(&ctx), "menu must remain open");
     }
 }

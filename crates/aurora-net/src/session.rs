@@ -1190,6 +1190,26 @@ impl Session<'_> {
                     self.send_main(&m, true);
                 }
             }
+            NetCommand::SetInventoryFavorite { item, favorite } => {
+                let caps = self.main_cap("InventoryAPIv3").zip(self.main_cap("FetchInventory2"));
+                let Some((cap, fetch_cap)) = caps else {
+                    emit(
+                        self.sh,
+                        NetEvent::InventoryFavoriteUpdated {
+                            item,
+                            result: Err("Le serveur d’inventaire n’est pas encore disponible.".into()),
+                        },
+                    );
+                    return;
+                };
+                let http = self.sh.caps_http.clone();
+                let events = self.sh.events.clone();
+                let owner = self.agent_id();
+                tokio::spawn(async move {
+                    let result = crate::outfits::set_favorite(&http, &cap, &fetch_cap, owner, item, favorite).await;
+                    let _ = events.send(NetEvent::InventoryFavoriteUpdated { item, result });
+                });
+            }
             NetCommand::UpdateOutfit { request, change } => {
                 let caps = self.main_cap("InventoryAPIv3").zip(self.main_cap("FetchInventoryDescendents2"));
                 let Some((cap, fetch_cap)) = caps else {

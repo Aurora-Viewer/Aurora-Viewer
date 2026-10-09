@@ -64,6 +64,7 @@ pub struct AvatarLibrary {
     pub rig: std::sync::Arc<super::anim::Rig>,
     pub pelvis: Vec3,
     pub attach_points: HashMap<u8, AttachPoint>,
+    pub attach_names: HashMap<u8, String>,
     /// Visual parameters (avatar shape) of avatar_lad.xml.
     pub shape_params: super::shape::ShapeParams,
     pub parts: Vec<AvatarPart>,
@@ -186,6 +187,7 @@ impl AvatarLibrary {
 
         // Attachment points from avatar_lad.xml
         let mut attach_points = HashMap::new();
+        let mut attach_names = HashMap::new();
         let mut joint_names: Vec<(u8, String)> = Vec::new();
         if let Ok(d) = std::fs::read(dir.join("avatar_lad.xml"))
             && let Ok(root) = xml::parse(&d)
@@ -200,6 +202,7 @@ impl AvatarLibrary {
                         let rot = parse_vec3(c.attr("rotation").unwrap_or("0 0 0"));
                         let hud = c.attr("hud").is_some_and(|v| v == "true");
                         if let Some(id) = id {
+                            attach_names.insert(id, c.attr("name").unwrap_or("Attachment").to_owned());
                             let jp = joint_pos(joint).unwrap_or(pelvis);
                             joint_names.push((id, joint.to_owned()));
                             attach_points.insert(
@@ -279,6 +282,7 @@ impl AvatarLibrary {
             rig,
             pelvis,
             attach_points,
+            attach_names,
             shape_params,
             parts,
         }
