@@ -61,11 +61,13 @@ pub enum Kind {
     Url,
 }
 
+/// What an answer needs (a friendship offer's `from` becomes a friend when
+/// accepted, formFriendship).
 #[derive(Debug, Clone)]
 pub enum Data {
     None,
     Lure { from: Uuid, lure: Uuid },
-    Friend { tx: Uuid },
+    Friend { from: Uuid, tx: Uuid },
     Inventory { from: Uuid, tx: Uuid, asset_type: i8, task: bool },
     Group { group: Uuid, tx: Uuid },
     Dialog { object: Uuid, channel: i32, buttons: Vec<String> },
@@ -175,7 +177,7 @@ impl Notifications {
                 // closing an offer declines it, like Firestorm's toasts
                 match &n.data {
                     Data::Lure { from, lure } => out.push(decline_lure(*from, *lure)),
-                    Data::Friend { tx } => out.push(NetCommand::DeclineFriendship { transaction: *tx }),
+                    Data::Friend { tx, .. } => out.push(NetCommand::DeclineFriendship { transaction: *tx }),
                     Data::Inventory { from, tx, task, .. } => out.push(inventory_answer(*from, *tx, *task, false, Uuid::nil())),
                     Data::Group { group, tx } => out.push(group_answer(*group, *tx, false)),
                     Data::Dialog { .. } | Data::TextBox { .. } => {} // ignore = no reply
@@ -189,7 +191,7 @@ impl Notifications {
                     out.push(decline_lure(*from, *lure));
                 }
             }
-            (Data::Friend { tx }, _) => {
+            (Data::Friend { tx, .. }, _) => {
                 out.push(if accept {
                     NetCommand::AcceptFriendship {
                         transaction: *tx,

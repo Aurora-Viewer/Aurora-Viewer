@@ -56,6 +56,8 @@ pub struct Settings {
     pub build: crate::build::BuildSettings,
     /// Camera (Firestorm « Déplacements et vue › Vue »).
     pub camera: crate::camera::CameraSettings,
+    /// Contacts window (Amis / Groupes / Cercles).
+    pub contacts: crate::ui::contacts::ContactsSettings,
     pub username: String,
     pub remember_username: bool,
     /// Remember the password (its login hash, in the system credential
@@ -389,6 +391,7 @@ impl Default for Settings {
             debug: DebugView::default(),
             build: Default::default(),
             camera: Default::default(),
+            contacts: Default::default(),
             username: String::new(),
             remember_username: true,
             remember_password: false,
@@ -506,6 +509,12 @@ pub fn config_dir() -> PathBuf {
             .map(|d| d.config_dir().to_path_buf())
             .unwrap_or_else(|| PathBuf::from(".")),
     )
+}
+
+/// Files of one account (LL_PATH_PER_SL_ACCOUNT): contact sets, pinned
+/// groups.
+pub fn account_dir(agent: &uuid::Uuid) -> PathBuf {
+    config_dir().join("accounts").join(agent.to_string())
 }
 
 pub fn cache_dir() -> PathBuf {

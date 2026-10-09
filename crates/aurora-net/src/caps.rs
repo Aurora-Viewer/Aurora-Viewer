@@ -8,6 +8,7 @@ use tokio::sync::mpsc;
 pub const REQUESTED_CAPS: &[&str] = &[
     "AgentPreferences",
     "AgentProfile",
+    "AvatarPickerSearch",
     "AvatarRenderInfo",
     "ChatSessionRequest",
     "EnvironmentSettings",

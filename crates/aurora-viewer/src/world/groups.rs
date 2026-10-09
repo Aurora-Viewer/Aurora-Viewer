@@ -17,8 +17,13 @@ use super::social::ImSession;
 use super::{ChatKind, ChatLine, MAX_CHAT, World};
 use aurora_net::{GroupMembership, NetCommand, NetEvent, SessionAgent, SessionMethod};
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 use uuid::Uuid;
+
+/// Pinned groups of the account (FSFavoriteGroups, a per-account setting in
+/// Firestorm).
+pub const FAVORITE_GROUPS_FILE: &str = "favorite_groups.xml";
 
 /// IM dialogs of chat sessions (llinstantmessage.h).
 pub mod dialog {
@@ -62,6 +67,12 @@ pub struct GroupChats {
     pub report_blocks: bool,
     /// Group list asked (AgentDataUpdateRequest).
     requested: bool,
+    /// Our active group (AgentDataUpdate; nil = none) and its title.
+    pub active: Uuid,
+    pub active_title: String,
+    /// Pinned groups, listed first (FSFavoriteGroups).
+    pub favorites: HashSet<Uuid>,
+    favorites_path: Option<PathBuf>,
     pub out: Vec<NetCommand>,
 }
 
@@ -74,11 +85,41 @@ impl GroupChats {
         self.group(id).is_some()
     }
 
-    /// Groups sorted by name.
+    /// Groups sorted like LLGroupComparator: pinned ones first, then by
+    /// name.
     pub fn sorted(&self) -> Vec<GroupMembership> {
         let mut v = self.groups.clone();
-        v.sort_by_key(|g| g.name.to_lowercase());
+        v.sort_by_cached_key(|g| (!self.favorites.contains(&g.id), g.name.to_uppercase()));
         v
+    }
+
+    /// FSFavoriteGroups::loadFavorites (an LLSD array of group ids).
+    pub fn load_favorites(&mut self, path: PathBuf) {
+        self.favorites = std::fs::read(&path)
+            .ok()
+            .and_then(|b| aurora_llsd::from_xml(&b).ok())
+            .map(|v| v.as_array().iter().map(|g| g.as_uuid()).filter(|g| !g.is_nil()).collect())
+            .unwrap_or_default();
+        self.favorites_path = Some(path);
+    }
+
+    /// Pin / unpin a group (FSFavoriteGroups::toggleFavorite), saved at once.
+    pub fn toggle_favorite(&mut self, group: Uuid) {
+        if !self.favorites.remove(&group) {
+            self.favorites.insert(group);
+        }
+        let Some(path) = &self.favorites_path else {
+            return;
+        };
+        let mut ids: Vec<Uuid> = self.favorites.iter().copied().collect();
+        ids.sort();
+        let list = aurora_llsd::Llsd::from(ids.into_iter().map(aurora_llsd::Llsd::from).collect::<Vec<_>>());
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if let Err(e) = std::fs::write(path, aurora_llsd::to_xml(&list)) {
+            log::warn!("pinned groups not saved ({e}): {}", path.display());
+        }
     }
 
     pub fn take_commands(&mut self) -> Vec<NetCommand> {
@@ -330,6 +371,11 @@ impl World {
                     }
                 }
                 log::info!("groups: {}", self.groups.groups.len());
+            }
+            NetEvent::ActiveGroup { id, name, title } => {
+                log::info!("active group: {}", if id.is_nil() { "none" } else { &name });
+                self.groups.active = id;
+                self.groups.active_title = title;
             }
             NetEvent::GroupDropped(id) => {
                 self.groups.groups.retain(|g| g.id != id);

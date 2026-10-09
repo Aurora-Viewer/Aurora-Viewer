@@ -11,6 +11,9 @@ use uuid::Uuid;
 
 /// NearMeRange (settings.xml).
 const NEAR_ME_RANGE: f32 = 162.0;
+/// Height of the result list (the window is 400 px high, like
+/// floater_avatar_picker.xml).
+const LIST_H: f32 = 250.0;
 
 // tab 0: search by name
 const TAB_FRIENDS: usize = 1;
@@ -119,7 +122,9 @@ impl AvatarPicker {
                     }
                 };
                 ui.add_space(4.0);
-                let list_h = ui.available_height() - 34.0;
+                // fixed like the window: the available height of a window
+                // sized from its content is the whole screen
+                let list_h = LIST_H;
                 egui::Frame::new().fill(p.field).show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.set_min_height(list_h);

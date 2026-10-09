@@ -1188,6 +1188,9 @@ impl Session<'_> {
             | NetCommand::UpdateMute { .. }
             | NetCommand::RemoveMute { .. }
             | NetCommand::RequestGroups
+            | NetCommand::ActivateGroup(_)
+            | NetCommand::LeaveGroup(_)
+            | NetCommand::TerminateFriendship(_)
             | NetCommand::AgentAnimation { .. }
             | NetCommand::ObjectGrab { .. }
             | NetCommand::ObjectGrabUpdate { .. }

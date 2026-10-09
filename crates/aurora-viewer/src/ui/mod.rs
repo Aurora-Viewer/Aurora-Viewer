@@ -7,6 +7,7 @@ pub mod backdrop;
 pub mod bars;
 pub mod chat;
 pub mod colors;
+pub mod contacts;
 pub mod context;
 pub mod debug_overlay;
 pub mod display_name;
@@ -52,6 +53,8 @@ pub struct Panels {
     pub time_of_day: u8,
     pub inventory: bool,
     pub people_tab: u8,
+    /// The torn-off Contacts window (ContactsTornOff).
+    pub contacts: bool,
     /// "À propos du terrain" (navigation bar info icon).
     pub about_land: bool,
     /// Navigation bar location being edited (text) and "just opened" (select all).

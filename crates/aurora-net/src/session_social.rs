@@ -75,6 +75,30 @@ impl Session<'_> {
                 m.agent_data.session_id = self.session_id();
                 self.send_main(&m, true);
             }
+            NetCommand::ActivateGroup(group) => {
+                // LLGroupActions::activate
+                let mut m = ActivateGroup::default();
+                m.agent_data.agent_id = self.agent_id();
+                m.agent_data.session_id = self.session_id();
+                m.agent_data.group_id = *group;
+                self.send_main(&m, true);
+            }
+            NetCommand::LeaveGroup(group) => {
+                // LLGroupActions::onLeaveGroup
+                let mut m = LeaveGroupRequest::default();
+                m.agent_data.agent_id = self.agent_id();
+                m.agent_data.session_id = self.session_id();
+                m.group_data.group_id = *group;
+                self.send_main(&m, true);
+            }
+            NetCommand::TerminateFriendship(other) => {
+                // LLAvatarTracker::terminateBuddy
+                let mut m = TerminateFriendship::default();
+                m.agent_data.agent_id = self.agent_id();
+                m.agent_data.session_id = self.session_id();
+                m.ex_block.other_id = *other;
+                self.send_main(&m, true);
+            }
             NetCommand::ChatSession { method, session } => self.chat_session_request(*method, *session),
             NetCommand::AgentAnimation { anim, start } => {
                 // LLAgent::sendAnimationRequest
@@ -183,6 +207,24 @@ impl Session<'_> {
         } else if id == AgentDropGroup::ID {
             let m: AgentDropGroup = pkt.decode()?;
             emit(self.sh, NetEvent::GroupDropped(m.agent_data.group_id));
+        } else if id == AgentDataUpdate::ID {
+            // LLAgent::processAgentDataUpdate
+            let m: AgentDataUpdate = pkt.decode()?;
+            if m.agent_data.agent_id != self.agent_id() {
+                return Ok(true);
+            }
+            emit(
+                self.sh,
+                NetEvent::ActiveGroup {
+                    id: m.agent_data.active_group_id,
+                    name: field_str(&m.agent_data.group_name),
+                    title: field_str(&m.agent_data.group_title),
+                },
+            );
+        } else if id == TerminateFriendship::ID {
+            // LLAvatarTracker::processTerminateFriendship
+            let m: TerminateFriendship = pkt.decode()?;
+            emit(self.sh, NetEvent::FriendshipTerminated(m.ex_block.other_id));
         } else {
             return Ok(false);
         }

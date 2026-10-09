@@ -13,6 +13,9 @@ pub struct ChatUi {
     pub has_focus: bool,
     /// Conversation shown in the floater (None = local chat).
     pub selected: Option<uuid::Uuid>,
+    /// The « Contacts » tab is shown instead (FSFloaterContacts docked as
+    /// the first tab of FSFloaterIMContainer).
+    pub contacts: bool,
     pub conv_input: String,
     /// Avatars whose profile picture the conversation wants (filled while drawing).
     pub wanted_pics: HashSet<uuid::Uuid>,
@@ -114,6 +117,10 @@ pub enum ConvAction {
     OfferTeleport(uuid::Uuid),
     /// Open the People floater (0 = nearby, 1 = friends).
     OpenPeople(u8),
+    /// From the « Contacts » tab.
+    Contacts(super::contacts::ContactsAction),
+    /// Show the torn-off Contacts window (its entry in the list).
+    OpenContacts,
     /// Block / unblock the avatar of a 1:1 conversation.
     ToggleBlock(uuid::Uuid),
     /// Leave a group / conference session.
@@ -466,8 +473,9 @@ fn conversation(
     }
 }
 
-/// Conversations floater: contacts on the left; toolbar, grouped messages
-/// and input (with emoji picker) on the right.
+/// Conversations floater (FSFloaterIMContainer): the tabs on the left
+/// (Contacts, nearby chat, sessions); on the right the contacts, or the
+/// toolbar, grouped messages and input (with emoji picker).
 #[allow(clippy::too_many_arguments)]
 pub fn show(
     ctx: &egui::Context,
@@ -475,8 +483,11 @@ pub fn show(
     icons: &super::icons::Icons,
     emoji: &mut super::emoji::Emoji,
     pics: &HashMap<uuid::Uuid, egui::TextureHandle>,
+    images: &HashMap<uuid::Uuid, egui::TextureHandle>,
     world: &mut World,
     st: &mut ChatUi,
+    contacts: &mut super::contacts::ContactsUi,
+    contacts_settings: &mut super::contacts::ContactsSettings,
     open: &mut bool,
 ) -> Vec<ConvAction> {
     let mut actions = Vec::new();
@@ -484,19 +495,30 @@ pub fn show(
     if let Some(f) = world.social.focus_im.take() {
         st.selected = Some(f);
         st.show_profile = false;
+        st.contacts = false;
+    }
+    let docked = !contacts_settings.torn_off;
+    if !docked {
+        st.contacts = false;
     }
     let title = match st.selected {
+        _ if st.contacts => "Conversations - Contacts".to_owned(),
         None => "Conversations - Chat local".to_owned(),
         Some(id) => format!("Conversations - {}", world.session_title(&id)),
     };
     let own_name = world.own_name();
-    super::widgets::Floater::new(
+    let mut tear_off = false;
+    let mut floater = super::widgets::Floater::new(
         "conversations",
         title,
         egui::pos2(screen.left() + 8.0, screen.bottom() - 400.0),
         egui::vec2(600.0, 360.0),
-    )
-    .show(ctx, p, open, |ui| {
+    );
+    if st.contacts {
+        // the tear-off button of the multi-floater, for the Contacts tab
+        floater = floater.action("arrow-square-out", "Détacher", &mut tear_off);
+    }
+    floater.show(ctx, p, open, |ui| {
         let h = (ui.available_height() - 6.0).max(140.0);
         ui.horizontal_top(|ui| {
             // ---- contacts column
@@ -556,18 +578,21 @@ pub fn show(
                         }
                         resp.clicked()
                     };
-                if entry(ui, "Contacts", None, false, 0) {
-                    actions.push(ConvAction::OpenPeople(1));
+                // Contacts first (addFloater at START); once torn off the
+                // entry brings its own window up (Firestorm has the toolbar
+                // button for that)
+                if entry(ui, "Contacts", None, st.contacts, 0) {
+                    if docked {
+                        st.contacts = true;
+                    } else {
+                        actions.push(ConvAction::OpenContacts);
+                    }
                 }
-                if entry(
-                    ui,
-                    "Chat local",
-                    None,
-                    st.selected.is_none(),
-                    if st.selected.is_some() { world.chat_unread } else { 0 },
-                ) {
+                let local_shown = st.selected.is_none() && !st.contacts;
+                if entry(ui, "Chat local", None, local_shown, if local_shown { 0 } else { world.chat_unread }) {
                     st.selected = None;
                     st.show_profile = false;
+                    st.contacts = false;
                 }
                 let sessions: Vec<(uuid::Uuid, usize)> = world.social.ims.iter().map(|s| (s.other, s.unread)).collect();
                 for (other, unread) in sessions {
@@ -575,12 +600,29 @@ pub fn show(
                     if !world.is_group_session(&other) {
                         st.wanted_pics.insert(other);
                     }
-                    if entry(ui, &name, Some((pics.get(&other), &name)), st.selected == Some(other), unread) {
+                    if entry(
+                        ui,
+                        &name,
+                        Some((pics.get(&other), &name)),
+                        st.selected == Some(other) && !st.contacts,
+                        unread,
+                    ) {
                         st.selected = Some(other);
                         st.show_profile = false;
+                        st.contacts = false;
                     }
                 }
             });
+            if st.contacts {
+                ui.vertical(|ui| {
+                    ui.set_min_height(h);
+                    let pics = super::contacts::Pics { avatars: pics, images };
+                    for a in super::contacts::panel(ui, p, world, contacts, contacts_settings, &pics) {
+                        actions.push(ConvAction::Contacts(a));
+                    }
+                });
+                return;
+            }
             // ---- conversation pane
             ui.vertical(|ui| {
                 // toolbar
@@ -826,6 +868,9 @@ pub fn show(
             });
         });
     });
+    if tear_off {
+        actions.push(ConvAction::Contacts(super::contacts::ContactsAction::ToggleTornOff));
+    }
     actions
 }
 

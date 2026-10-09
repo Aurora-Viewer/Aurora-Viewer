@@ -311,6 +311,14 @@ pub enum NetEvent {
     Groups(Vec<crate::social::GroupMembership>),
     /// The agent left / was removed from a group (AgentDropGroup).
     GroupDropped(Uuid),
+    /// Our active group and its title (AgentDataUpdate; nil = none).
+    ActiveGroup {
+        id: Uuid,
+        name: String,
+        title: String,
+    },
+    /// A friend ended the friendship (TerminateFriendship from the simulator).
+    FriendshipTerminated(Uuid),
     /// First message of a group / conference chat session (ChatterBoxInvitation).
     SessionInvite(crate::social::SessionInvite),
     /// Reply to a session we started (ChatterBoxSessionStartReply).
@@ -768,6 +776,12 @@ pub enum NetCommand {
     },
     /// Ask for our groups (AgentDataUpdateRequest).
     RequestGroups,
+    /// Make a group active, nil for none (ActivateGroup).
+    ActivateGroup(Uuid),
+    /// Leave a group (LeaveGroupRequest; AgentDropGroup follows).
+    LeaveGroup(Uuid),
+    /// End a friendship (TerminateFriendship).
+    TerminateFriendship(Uuid),
     /// Start / stop an animation on our avatar (AgentAnimation: away, busy...).
     AgentAnimation {
         anim: Uuid,
