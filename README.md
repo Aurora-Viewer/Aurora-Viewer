@@ -146,7 +146,7 @@ settings and cache (`…\config\demo`, `…\cache\demo`).
 | `AURORA_DEMO_TOD=0..4` | Time of day |
 | `AURORA_MAX_AVATARS`, `AURORA_MAX_COMPLEXITY`, `AURORA_AA`, `AURORA_SHADOWS` | Override these settings |
 | `AURORA_NO_OCCLUSION=1`, `AURORA_NOVSYNC=1` | Turn GPU occlusion / vsync off |
-| `AURORA_PROFILE=1` | Profiling in the log: renderer steps and GPU time by element every frame (`render profile`, `gpu profile`), and once a second a `perf summary` line (frame rate, frame time avg / p95 / max, CPU time by step of the frame and of the renderer (`r_*`), GPU time by element (`g_*`), draws and draw commands, synced / rebuilt objects, posed avatars, bytes of records and palettes sent to the GPU) plus a `perf settings` line when the settings change |
+| `AURORA_PROFILE=1` | Profiling in the log: renderer steps and GPU time by element every frame (`render profile`, `gpu profile`), and once a second a `perf summary` line (frame rate, frame time avg / p95 / max, CPU time by step of the frame and of the renderer (`r_*`), GPU time by element (`g_*`), draws and draw commands, synced / rebuilt objects, posed avatars, bytes of records and palettes sent to the GPU, texture and geometry memory) plus a `perf settings` line when the settings change |
 | `AURORA_GPU_VALIDATION=1` | wgpu validation layers |
 | `AURORA_DEBUG_GLOW=1`, `AURORA_GLOW_SKIP=<mask>`, `AURORA_MEDIA_DEBUG=1` | Renderer and media diagnostics |
 | `AURORA_EMOJI_FONT=<path>` | Use another emoji font |
