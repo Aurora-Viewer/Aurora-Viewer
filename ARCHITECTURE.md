@@ -80,8 +80,9 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
 
 | Dossier / fichier | Contenu |
 |---|---|
-| `main.rs`, `app.rs` | Démarrage, boucle d'événements, une image du viewer, actions de l'interface |
+| `main.rs`, `app.rs`, `app/` | Démarrage, boucle d'événements, une image du viewer, actions de l'interface ; commandes de la barre de chat (`app/chat_commands.rs`) |
 | `cli.rs` | Arguments de ligne de commande (`--title`) |
+| `cmdline/` | Barre de chat comme ligne de commande (FSCmdLine) : analyse des commandes, calculatrice (LLCalc), dés ; exécutées par `app/chat_commands.rs` |
 | `agent.rs` | Notre avatar (AgentUpdate, extrapolation depuis vitesse / accélération serveur, lissage comme LLDrawable) |
 | `camera/` | La caméra comme LLAgentCamera : vue derrière l'avatar, caméra Alt sur un point ou un objet (`focus.rs`), caméra de siège, vue subjective, transitions, lissage, recul en vol, collision envoyée par le simulateur ; réglages Firestorm (`settings.rs`), scénarios de démo (`demo.rs`) |
 | `world/` | État du monde reçu du réseau : objets, régions, terrain, environnement (EEP), social, profils des avatars, inventaire, groupes, blocages, messages du bridge LSL de Firestorm (cachés), orientation des corps, regard (LookAt), carte… |

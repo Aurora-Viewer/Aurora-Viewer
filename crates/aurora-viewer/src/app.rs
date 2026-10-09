@@ -24,6 +24,7 @@ use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{CursorGrabMode, Window, WindowId};
 
+mod chat_commands;
 mod object_actions;
 
 enum Screen {
@@ -230,6 +231,11 @@ pub struct App {
     applied_audio: Option<crate::settings::AudioSettings>,
     stream_url: String,
     music_parcel_url: String,
+    /// `/music` chat command: a stream played instead of the parcel's until
+    /// the parcel stream changes.
+    music_override: Option<String>,
+    /// `key2name` chat commands waiting for a name.
+    key_to_name: Vec<(uuid::Uuid, Instant)>,
     /// Voice chat (WebRTC) and the HTTP client it provisions with.
     voice: crate::voice::Voice,
     voice_http: reqwest::Client,
@@ -459,6 +465,8 @@ impl App {
             applied_audio: None,
             stream_url: String::new(),
             music_parcel_url: String::new(),
+            music_override: None,
+            key_to_name: Vec::new(),
             media: Default::default(),
             media_ui: Default::default(),
             media_cursor: None,
@@ -1476,12 +1484,18 @@ impl App {
             String::new()
         };
         if url != self.music_parcel_url {
-            // new parcel stream: autoplay, or keep playing if the music was on
+            // new parcel stream: autoplay, or keep playing if the music was on;
+            // it replaces a stream started by `/music`
+            self.music_override = None;
             self.music_playing = !url.is_empty() && (self.settings.audio.music_autoplay || self.music_playing);
             self.music_parcel_url = url.clone();
         }
         let Some(engine) = &self.audio_engine else {
             return;
+        };
+        let url = match &self.music_override {
+            Some(u) if u.starts_with("http://") || u.starts_with("https://") => u.clone(),
+            _ => url,
         };
         let want = if self.music_playing { url } else { String::new() };
         if want != self.stream_url {
@@ -1583,27 +1597,33 @@ impl App {
             "Téléportation vers {} ({:.0}, {:.0}, {:.0})…",
             l.region, l.pos.x, l.pos.y, l.pos.z
         ));
+        self.teleport_to_location(l.region, l.pos);
+    }
+
+    /// Teleport to a position of a region given by name: the current region
+    /// directly, others through a map lookup by name.
+    fn teleport_to_location(&mut self, region: String, pos: Vec3) {
         let here = self.world.region_name();
-        self.begin_teleport(format!("{} ({:.0}, {:.0}, {:.0})", l.region, l.pos.x, l.pos.y, l.pos.z));
+        self.begin_teleport(format!("{} ({:.0}, {:.0}, {:.0})", region, pos.x, pos.y, pos.z));
         if self.demo {
             // offline: a pretend teleport through the real steps, landing at the
             // asked position (TeleportLocal)
             self.demo_tp_start = Some(Instant::now());
-            self.demo_tp_dest = Some(l.pos);
+            self.demo_tp_dest = Some(pos);
             return;
         }
-        if l.region.eq_ignore_ascii_case(&here) {
+        if region.eq_ignore_ascii_case(&here) {
             if let Some(handle) = self.world.main_region {
                 self.send(NetCommand::TeleportTo {
                     handle,
-                    position: l.pos,
+                    position: pos,
                     look_at: Vec3::X,
                 });
             }
         } else {
             self.send(NetCommand::TeleportToRegion {
-                name: l.region,
-                position: l.pos,
+                name: region,
+                position: pos,
             });
         }
     }
@@ -3038,6 +3058,7 @@ impl App {
         self.handle_actions(actions, event_loop);
         self.update_avatar_pics(&mut gfx.renderer);
         self.update_maps();
+        self.poll_key_to_name();
 
         if self.want_scene_capture {
             self.want_scene_capture = false;
@@ -3169,6 +3190,18 @@ impl App {
                 let c: Vec<f32> = v.split(',').filter_map(|s| s.trim().parse().ok()).collect();
                 let (x, y, z) = if c.len() == 3 { (c[0], c[1], c[2]) } else { (128.0, 128.0, 30.0) };
                 self.teleport_to_text(&format!("http://maps.secondlife.com/secondlife/Aurora%20D%C3%A9mo/{x}/{y}/{z}"));
+            }
+            // AURORA_DEMO_CHATCMD="calc 2+2;rolld 2 20": lines typed in the
+            // chat bar, one after the other (chat bar commands)
+            if let Ok(lines) = std::env::var("AURORA_DEMO_CHATCMD") {
+                for line in lines.split(';').map(str::trim).filter(|l| !l.is_empty()) {
+                    let (channel, message) = ui::chat::parse_channel(line);
+                    self.send_local_chat(ui::chat::OutgoingChat {
+                        message,
+                        channel,
+                        chat_type: aurora_net::ChatType::Normal,
+                    });
+                }
             }
             // AURORA_DEMO_DISPLAYNAME="name": display name change (simulated
             // reply, never sent in demo mode), then the window, now locked
@@ -3341,21 +3374,28 @@ impl App {
         }
     }
 
+    /// Local chat from the chat bar or the conversations window: a chat bar
+    /// command (FSCmdLine) or a line sent on its channel.
+    fn send_local_chat(&mut self, c: ui::chat::OutgoingChat) {
+        if c.message.is_empty() || (c.channel == 0 && self.chat_command(&c.message)) {
+            return;
+        }
+        // :shortcode: emoji
+        self.send(NetCommand::Chat {
+            message: ui::emoji::expand_shortcodes(&c.message),
+            channel: c.channel,
+            chat_type: c.chat_type,
+        });
+    }
+
     fn handle_actions(&mut self, a: UiActions, event_loop: &ActiveEventLoop) {
         match a.login {
             LoginAction::Login => self.start_login(),
             LoginAction::Quit => event_loop.exit(),
             LoginAction::None => {}
         }
-        if let Some(c) = a.chat
-            && !c.message.is_empty()
-        {
-            // :shortcode: emoji
-            self.send(NetCommand::Chat {
-                message: ui::emoji::expand_shortcodes(&c.message),
-                channel: c.channel,
-                chat_type: c.chat_type,
-            });
+        if let Some(c) = a.chat {
+            self.send_local_chat(c);
         }
         for (to, text) in a.ims {
             let text = ui::emoji::expand_shortcodes(&text);

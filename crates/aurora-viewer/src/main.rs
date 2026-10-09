@@ -8,6 +8,7 @@ mod build;
 mod cache;
 mod camera;
 mod cli;
+mod cmdline;
 mod credentials;
 mod cursors;
 mod demo;

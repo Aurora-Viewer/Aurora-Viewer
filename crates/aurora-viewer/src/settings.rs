@@ -120,6 +120,9 @@ pub struct Settings {
     pub report_blocks: bool,
     /// Automatic responses and the kept online status modes.
     pub autoresponse: crate::world::status::AutoResponse,
+    /// The chat bar as a command line (FSCmdLine*, Préférences › Chat ›
+    /// Commandes).
+    pub chat_commands: crate::cmdline::ChatCommandSettings,
     pub name_tag_distance: f32,
     pub invert_mouse: bool,
     pub arrows_strafe: bool,
@@ -426,6 +429,7 @@ impl Default for Settings {
             mute_groups_without_notices: false,
             report_blocks: false,
             autoresponse: Default::default(),
+            chat_commands: Default::default(),
             name_tag_distance: 64.0,
             invert_mouse: false,
             arrows_strafe: false,
@@ -614,6 +618,7 @@ impl Settings {
             self.chat_bar_width = 0.0;
         }
         self.draw_distance = self.draw_distance.clamp(32.0, 512.0);
+        self.chat_commands.sanitize();
         self.exposure = self.exposure.clamp(0.25, 4.0);
         self.sharpen = if self.sharpen.is_finite() {
             self.sharpen.clamp(0.0, 1.0)
