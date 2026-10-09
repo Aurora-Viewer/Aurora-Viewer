@@ -127,16 +127,31 @@ function Write-Footer([string]$Hints) {
 
 # --- Keyboard ---------------------------------------------------------------
 
+# The window size, as text that compares with -eq ('120x30').
+function Get-WindowSize {
+    $s = $Host.UI.RawUI.WindowSize
+    "$($s.Width)x$($s.Height)"
+}
+
 # Next key, redrawing the footer every second while waiting; $TickHook (a
 # script block) also runs every second (GitHub notifications…). $KeySource (a
 # script block returning ConsoleKeyInfo) replaces the keyboard in tests.
+# With -Size (the Get-WindowSize the caller drew for): once the window has
+# another size and keeps it 200 ms, returns a key 'Resize' (to redraw all:
+# the console has reflowed the text, nothing is where it was).
 $KeySource = $null
 $TickHook = $null
-function Read-Key([string]$Hints) {
+function Read-Key([string]$Hints, [string]$Size) {
     if ($KeySource) { return & $KeySource }
     $last = [DateTime]::MinValue
+    $seen = Get-WindowSize
+    $seenAt = [DateTime]::MinValue
     while (-not [Console]::KeyAvailable) {
-        if (((Get-Date) - $last).TotalMilliseconds -ge 1000) {
+        $now = Get-WindowSize
+        if ($now -ne $seen) { $seen = $now; $seenAt = Get-Date }
+        $settled = ((Get-Date) - $seenAt).TotalMilliseconds -ge 200
+        if ($Size -and $now -ne $Size -and $settled) { return [pscustomobject]@{ Key = 'Resize'; KeyChar = [char]0 } }
+        if ($settled -and ((Get-Date) - $last).TotalMilliseconds -ge 1000) {
             if ($TickHook) { & $TickHook }
             Write-Footer $Hints
             $last = Get-Date
@@ -180,7 +195,8 @@ function Read-Text([string]$Prompt) {
 # --- Menu -------------------------------------------------------------------
 # Items: @{ Key = '1'; Label = '…'; Hint = '…' }. Arrows move, Enter or the
 # item's key chooses, Esc or Backspace goes back ($null). $Header draws what
-# sits above the menu (redrawn with it).
+# sits above the menu: everything is redrawn from it when the window is
+# resized, so a menu with something above it gives it as $Header.
 function Show-Menu([string]$Title, [object[]]$Items, [scriptblock]$Header, [int]$Selected = 0) {
     $hints = '↑↓ choisir · Entrée valider · Échap retour'
     if (-not $Interactive -and -not $KeySource) {
@@ -191,33 +207,48 @@ function Show-Menu([string]$Title, [object[]]$Items, [scriptblock]$Header, [int]
         return $Items | Where-Object { $_.Key -eq $a } | Select-Object -First 1
     }
     $sel = [Math]::Max(0, [Math]::Min($Selected, $Items.Count - 1))
-    $width = [Math]::Max(60, ($Items | ForEach-Object { $_.Label.Length + $_.Hint.Length + 12 } | Measure-Object -Maximum).Maximum)
+    # hints start in one column, after the longest label
+    $column = [Math]::Max(40, ($Items | ForEach-Object { "  $($_.Key)  $($_.Label)".Length + 2 } | Measure-Object -Maximum).Maximum)
+    $natural = [Math]::Max(60, ($Items | ForEach-Object { $column + $_.Hint.Length } | Measure-Object -Maximum).Maximum)
+    # Every line has the same width, the selected one or not: a shorter line
+    # would leave the end of the violet bar on screen when the selection moves.
     $draw = {
         for ($i = 0; $i -lt $Items.Count; $i++) {
             $it = $Items[$i]
-            $text = ("  $($it.Key)  $($it.Label)").PadRight(40) + $it.Hint
+            $label = "  $($it.Key)  $($it.Label)".PadRight($column)
+            $text = $label + $it.Hint
+            if ($text.Length -gt $width) { $text = $text.Substring(0, $width - 1) + '…' }
             $text = $text.PadRight($width)
+            Write-Color '  ' -NoNewline
             if ($i -eq $sel) {
-                Write-Color '  ' -NoNewline
                 Write-Color $text ink -Background violet
             } else {
-                Write-Color '  ' -NoNewline
-                Write-Color ("  $($it.Key)  ").PadRight(5) violet_light -NoNewline
-                Write-Color $it.Label.PadRight(35) ink -NoNewline
-                Write-Color $it.Hint muted_dim
+                $keyEnd = [Math]::Min(5, $text.Length)
+                $labelEnd = [Math]::Min($label.Length, $text.Length)
+                Write-Color $text.Substring(0, $keyEnd) violet_light -NoNewline
+                Write-Color $text.Substring($keyEnd, $labelEnd - $keyEnd) ink -NoNewline
+                Write-Color $text.Substring($labelEnd) muted_dim
             }
         }
     }
-    if ($Header) { & $Header }
-    Write-Title $Title
-    Write-Host ''
-    $top = if ($KeySource) { 0 } else { $Host.UI.RawUI.CursorPosition.Y }
-    & $draw
+    # all of it (dot-sourced: sets $top, $width and $size here)
+    $full = {
+        if ($Header) { & $Header }
+        Write-Title $Title
+        Write-Host ''
+        $size = if ($KeySource) { '' } else { Get-WindowSize }
+        # no line wider than the window: a wrapped line shifts all the others
+        $width = if ($KeySource) { $natural } else { [Math]::Max(20, [Math]::Min($natural, $Host.UI.RawUI.WindowSize.Width - 3)) }
+        $top = if ($KeySource) { 0 } else { $Host.UI.RawUI.CursorPosition.Y }
+        & $draw
+    }
+    . $full
     while ($true) {
         Write-Footer $hints
-        $k = Read-Key $hints
+        $k = Read-Key $hints $size
         $choice = $null
         switch ($k.Key) {
+            'Resize' { Clear-Screen; . $full }
             'UpArrow' { $sel = ($sel - 1 + $Items.Count) % $Items.Count }
             'DownArrow' { $sel = ($sel + 1) % $Items.Count }
             'Home' { $sel = 0 }
@@ -232,7 +263,7 @@ function Show-Menu([string]$Title, [object[]]$Items, [scriptblock]$Header, [int]
                 if ($choice) { return $choice }
             }
         }
-        if (-not $KeySource) {
+        if ($k.Key -ne 'Resize' -and -not $KeySource) {
             $Host.UI.RawUI.CursorPosition = New-Object Management.Automation.Host.Coordinates 0, $top
             & $draw
         }

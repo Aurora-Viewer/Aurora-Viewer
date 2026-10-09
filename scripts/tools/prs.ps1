@@ -243,8 +243,12 @@ function Update-PrNotifications {
 }
 
 # --- Panel ------------------------------------------------------------------------
-# Redrawn in place every second (timers move), adapted to the window width so
-# it can stay open in a corner of the screen.
+# Redrawn in place every second (timers move), adapted to the window size so
+# it can stay open in a corner of the screen. A frame never has more lines
+# than the window and its last line ends without a newline: otherwise the
+# console scrolls at each frame and the bottom lines come out twice.
+$PanelRow = 0                  # lines of the current frame written so far
+$PanelMax = [int]::MaxValue    # lines the window can show
 
 # Text cut to fit a column of $Width characters (with one space after).
 function Format-Cell([string]$Text, [int]$Width) {
@@ -253,6 +257,10 @@ function Format-Cell([string]$Text, [int]$Width) {
 }
 
 function Write-PanelLine([object[]]$Segments, [int]$Width, [switch]$Selected) {
+    if ($script:PanelRow -ge $script:PanelMax) { return }
+    # the newline before the line, not after: none after the last one
+    if ($script:PanelRow -gt 0) { Write-Host '' }
+    $script:PanelRow++
     # @(@('text', 'color')) is unrolled by PowerShell into a single segment
     if ($Segments.Count -gt 0 -and $Segments[0] -isnot [array]) { $Segments = @(, $Segments) }
     # selected: a violet bar in the first column and a dark grey background,
@@ -274,13 +282,25 @@ function Write-PanelLine([object[]]$Segments, [int]$Width, [switch]$Selected) {
         $used += $text.Length
     }
     $pad = ' ' * [Math]::Max(0, $Width - $used)
-    if ($Selected) { Write-Color $pad ink -Background raised } else { Write-Host $pad }
+    if ($Selected) { Write-Color $pad ink -Background raised -NoNewline } else { Write-Host $pad -NoNewline }
+}
+
+# The PRs in the panel's order: the merge queue (by position, auto-merge
+# requests after), then the others as GitHub sorts them (last updated first).
+function Get-PanelRows {
+    $rows = @(Get-PrRows)
+    foreach ($r in $rows) { $r | Add-Member -NotePropertyName InQueue -NotePropertyValue ($r.Queue -like 'file*' -or $r.Queue -eq 'fusion demandée') -Force }
+    $position = { if ($_.Queue -match 'n°(\d+)') { [int]$Matches[1] } elseif ($_.Queue -like 'file*') { 0 } else { 1000 } }
+    @($rows | Where-Object InQueue | Sort-Object $position) + @($rows | Where-Object { -not $_.InQueue })
 }
 
 function Show-PrPanel {
     $sel = 0
+    $first = 0                 # first body line shown when they do not all fit
     $lastDraw = [DateTime]::MinValue
     $lastHeight = 0
+    $size = if ($Interactive) { Get-WindowSize }
+    $sizeAt = [DateTime]::MinValue
     $GitHub.Force = $true
     if ($Interactive) { Clear-Host; [Console]::CursorVisible = $false }
     else {
@@ -292,7 +312,7 @@ function Show-PrPanel {
         while ($true) {
             if ($Interactive -and [Console]::KeyAvailable) {
                 $k = [Console]::ReadKey($true)
-                $rows = @(Get-PrRows)
+                $rows = @(Get-PanelRows)
                 switch ($k.Key) {
                     'UpArrow' { if ($rows) { $sel = ($sel - 1 + $rows.Count) % $rows.Count } }
                     'DownArrow' { if ($rows) { $sel = ($sel + 1) % $rows.Count } }
@@ -302,28 +322,44 @@ function Show-PrPanel {
                 }
                 $lastDraw = [DateTime]::MinValue
             }
+            # resized: the console has reflowed the old frame, start from a
+            # clear screen once the size holds still
+            if ($Interactive) {
+                $now = Get-WindowSize
+                if ($now -ne $size) { $size = $now; $sizeAt = Get-Date; $resized = $true }
+                if ($resized) {
+                    if (((Get-Date) - $sizeAt).TotalMilliseconds -lt 200) { Start-Sleep -Milliseconds 50; continue }
+                    Clear-Host; [Console]::CursorVisible = $false
+                    $resized = $false; $lastHeight = 0; $lastDraw = [DateTime]::MinValue
+                }
+            }
             if (((Get-Date) - $lastDraw).TotalMilliseconds -lt 1000) { Start-Sleep -Milliseconds 50; continue }
             $lastDraw = Get-Date
             Update-PrNotifications
 
             $w = if ($Interactive) { $Host.UI.RawUI.WindowSize.Width - 1 } else { 110 }
+            $h = if ($Interactive) { $Host.UI.RawUI.WindowSize.Height } else { [int]::MaxValue }
             $compact = $w -lt 96
-            $rows = @(Get-PrRows)
+            $rows = @(Get-PanelRows)
             if ($sel -ge $rows.Count) { $sel = [Math]::Max(0, $rows.Count - 1) }
             if ($Interactive) { [Console]::SetCursorPosition(0, 0) }
-            $lines = 0
+            $script:PanelRow = 0
+            $script:PanelMax = $h
 
             $mainState = if ($GitHub.Data) { $GitHub.Data.data.repository.defaultBranchRef.target.statusCheckRollup.state }
             # switch skips a null value entirely, default included: test it first
             $main = if (-not $mainState) { '…', 'muted' } else { switch ($mainState) { 'SUCCESS' { 'verte', 'success' } { $_ -in 'FAILURE', 'ERROR' } { 'rouge', 'danger' } { $_ -in 'PENDING', 'EXPECTED' } { 'en cours', 'violet_light' } default { '?', 'muted' } } }
             $fresh = if ($GitHub.Updated) { Format-Ago $GitHub.Updated } else { 'chargement…' }
-            Write-PanelLine @(@(' Aurora · PR', 'violet_light'), @('   main : ', 'muted'), @($main[0], $main[1]), @("   à jour $fresh", 'muted_dim'), @("   $(Get-Date -Format 'HH:mm:ss')", 'muted_dim')) $w; $lines++
-            if ($GitHub.Error) { Write-PanelLine @(@(" GitHub : $($GitHub.Error)", 'warn')) $w; $lines++ }
-            Write-PanelLine @(, @((' ' + ('─' * ($w - 2))), 'muted_dim')) $w; $lines++
+            Write-PanelLine @(@(' Aurora · PR', 'violet_light'), @('   main : ', 'muted'), @($main[0], $main[1]), @("   à jour $fresh", 'muted_dim'), @("   $(Get-Date -Format 'HH:mm:ss')", 'muted_dim')) $w
+            if ($GitHub.Error) { Write-PanelLine @(@(" GitHub : $($GitHub.Error)", 'warn')) $w }
+            Write-PanelLine @(, @((' ' + ('─' * ($w - 2))), 'muted_dim')) $w
 
-            if (-not $rows) {
-                Write-PanelLine @(@($(if ($GitHub.Data) { ' Aucune PR ouverte.' } else { ' Chargement…' }), 'muted')) $w; $lines++
-            }
+            # The body, as lines to write (S: segments, Pr: index of the PR in
+            # $rows on its first line, -1 elsewhere), in three sections one
+            # above the other: the titles keep the whole width.
+            $body = [Collections.Generic.List[object]]::new()
+            $line = { param($Segments, $Pr = -1) $body.Add([pscustomobject]@{ S = $Segments; Pr = $Pr }) }
+            $heading = { param($Text, $Count) & $line @(@(" $Text", 'violet_light'), @($(if ($null -ne $Count) { " ($Count)" } else { '' }), 'muted_dim')) }
             # the texts of this frame (durations move), then column widths fitted
             # to them: the title gets all the room the other columns leave
             $cells = foreach ($r in $rows) {
@@ -331,54 +367,102 @@ function Show-PrPanel {
                 if ($r.CiRunning -and $r.CiSince) { $ci = "en cours $(Format-Duration ((Get-Date) - $r.CiSince.ToLocalTime()))" }
                 $queue = $r.Queue
                 if ($r.QueueSince) { $queue = "$queue $(Format-Duration ((Get-Date) - $r.QueueSince.ToLocalTime()))" }
-                [pscustomobject]@{ Row = $r; Ci = "CI $ci"; Queue = $queue; Author = $r.Author }
+                [pscustomobject]@{ Row = $r; Ci = "CI $ci"; Queue = $queue; Author = "$($r.Author)$(if ($r.Draft) { ', brouillon' })" }
             }
+            $merged = if ($GitHub.Data) { @($GitHub.Data.data.repository.merged.nodes | Select-Object -First $(if ($compact) { 3 } else { 5 })) } else { @() }
+            $whens = @($merged | ForEach-Object { Format-Ago ([datetime]$_.mergedAt).ToLocalTime() })
             $fit = { param($texts, $min, $max) [Math]::Min($max, [Math]::Max($min, (@($texts | ForEach-Object { ([string]$_).Length }) + 0 | Measure-Object -Maximum).Maximum + 2)) }
             $ciW = & $fit ($cells | ForEach-Object Ci) 8 26
-            $queueW = if ($cells | Where-Object Queue) { & $fit ($cells | ForEach-Object Queue) 8 24 } else { 0 }
-            $authorW = & $fit ($cells | ForEach-Object Author) 6 18
+            $queueW = & $fit ($cells | Where-Object { $_.Row.InQueue } | ForEach-Object Queue) 8 26
+            $authorW = & $fit ($cells | ForEach-Object Author) 6 22
             $verdictW = & $fit ($rows | ForEach-Object Verdict) 6 13
-            for ($i = 0; $i -lt $rows.Count; $i++) {
-                $c = $cells[$i]; $r = $c.Row
-                $num = ("#$($r.Number)").PadRight(6)
-                if ($compact) {
-                    $titleW = [Math]::Max(10, $w - 9 - $ciW)
-                    Write-PanelLine @(@(" $StatusMark ", $r.Status), @($num, 'violet_light'), @((Format-Cell $r.Title $titleW), 'ink'), @($c.Ci, $r.CiColor)) $w -Selected:($i -eq $sel); $lines++
-                    $second = @(, @('         ', 'muted'))
-                    if ($c.Queue) { $second += , @("$($c.Queue)  ", $r.QueueColor) }
-                    $second += , @($r.Verdict, $r.VerdictColor)
-                    $second += , @("  $($r.Author)$(if ($r.Draft) { ', brouillon' })", 'muted_dim')
-                    Write-PanelLine $second $w; $lines++
-                } else {
-                    $titleW = [Math]::Max(20, $w - 9 - $authorW - $ciW - $queueW - $verdictW)
-                    $segments = @(@(" $StatusMark ", $r.Status), @($num, 'violet_light'), @((Format-Cell $r.Title $titleW), 'ink'),
-                        @((Format-Cell $r.Author $authorW), 'muted_dim'), @((Format-Cell $c.Ci $ciW), $r.CiColor))
-                    if ($queueW) { $segments += , @((Format-Cell $c.Queue $queueW), $r.QueueColor) }
-                    $segments += , @($r.Verdict, $r.VerdictColor)
-                    Write-PanelLine $segments $w -Selected:($i -eq $sel)
-                    $lines++
+            $whenW = & $fit $whens 6 16
+            $mergedAuthorW = & $fit ($merged | ForEach-Object { $_.author.login }) 6 18
+            $queued = @(for ($i = 0; $i -lt $rows.Count; $i++) { if ($rows[$i].InQueue) { $i } })
+            $open = @(for ($i = 0; $i -lt $rows.Count; $i++) { if (-not $rows[$i].InQueue) { $i } })
+
+            if (-not $rows) {
+                & $line @(, @($(if ($GitHub.Data) { ' Aucune PR ouverte.' } else { ' Chargement…' }), 'muted'))
+            }
+            if ($queued) {
+                & $heading 'FILE DE FUSION' $queued.Count
+                foreach ($i in $queued) {
+                    $c = $cells[$i]; $r = $c.Row
+                    $start = @(@(" $StatusMark ", $r.Status), @(("#$($r.Number)").PadRight(6), 'violet_light'))
+                    if ($compact) {
+                        & $line ($start + @(, @((Format-Cell $r.Title ($w - 9)), 'ink'))) $i
+                        & $line @(@('         ', 'muted'), @("$($c.Queue)  ", $r.QueueColor), @($c.Author, 'muted_dim'))
+                    } else {
+                        $titleW = [Math]::Max(20, $w - 9 - $authorW - $queueW)
+                        & $line ($start + @(@((Format-Cell $r.Title $titleW), 'ink'), @((Format-Cell $c.Author $authorW), 'muted_dim'), @($c.Queue, $r.QueueColor))) $i
+                    }
+                }
+            }
+            if ($open) {
+                if ($queued) { & $line @(, @('', 'muted')) }
+                & $heading 'PR OUVERTES' $open.Count
+                foreach ($i in $open) {
+                    $c = $cells[$i]; $r = $c.Row
+                    $start = @(@(" $StatusMark ", $r.Status), @(("#$($r.Number)").PadRight(6), 'violet_light'))
+                    if ($compact) {
+                        $titleW = [Math]::Max(10, $w - 9 - $ciW)
+                        & $line ($start + @(@((Format-Cell $r.Title $titleW), 'ink'), @($c.Ci, $r.CiColor))) $i
+                        & $line @(@('         ', 'muted'), @($r.Verdict, $r.VerdictColor), @("  $($c.Author)", 'muted_dim'))
+                    } else {
+                        $titleW = [Math]::Max(20, $w - 9 - $authorW - $ciW - $verdictW)
+                        & $line ($start + @(@((Format-Cell $r.Title $titleW), 'ink'), @((Format-Cell $c.Author $authorW), 'muted_dim'),
+                                @((Format-Cell $c.Ci $ciW), $r.CiColor), @($r.Verdict, $r.VerdictColor))) $i
+                    }
+                }
+            }
+            $prLines = $body.Count
+            if ($merged) {
+                & $line @(, @('', 'muted'))
+                & $heading 'FUSIONNÉES RÉCEMMENT'
+                for ($j = 0; $j -lt $merged.Count; $j++) {
+                    $m = $merged[$j]
+                    $titleW = [Math]::Max(10, $w - 9 - $mergedAuthorW - $whenW)
+                    & $line @(@(" $StatusMark ", 'teal'), @(("#$($m.number)").PadRight(6), 'teal'), @((Format-Cell $m.title $titleW), 'muted'),
+                        @((Format-Cell $m.author.login $mergedAuthorW), 'muted_dim'), @($whens[$j].PadLeft($whenW - 1), 'muted_dim'))
                 }
             }
 
-            $merged = if ($GitHub.Data) { @($GitHub.Data.data.repository.merged.nodes | Select-Object -First $(if ($compact) { 3 } else { 5 })) } else { @() }
-            if ($merged) {
-                Write-PanelLine @(@('', 'muted')) $w; $lines++
-                Write-PanelLine @(@(' Fusionnées récemment', 'muted')) $w; $lines++
-                foreach ($m in $merged) {
-                    $when = Format-Ago ([datetime]$m.mergedAt).ToLocalTime()
-                    $titleW = [Math]::Max(10, $w - 9 - $when.Length - 3)
-                    $title = if ($m.title.Length -gt $titleW) { $m.title.Substring(0, $titleW - 1) + '…' } else { $m.title }
-                    Write-PanelLine @(@(" $StatusMark ", 'teal'), @(("#$($m.number)").PadRight(6), 'teal'), @($title.PadRight($titleW + 1), 'muted'), @($when, 'muted_dim')) $w; $lines++
-                }
+            # a window too short for everything: first without the merged
+            # ones, then the lines around the selected PR, scrolled with it
+            $room = $h - $script:PanelRow - 3
+            if ($body.Count -gt $room) { $body.RemoveRange($prLines, $body.Count - $prLines) }
+            $from = 0; $count = $body.Count
+            if ($body.Count -gt $room) {
+                $count = [Math]::Max(1, $room - 1)
+                $at = 0
+                for ($j = 0; $j -lt $body.Count; $j++) { if ($body[$j].Pr -eq $sel) { $at = $j; break } }
+                # the selected PR, its second line (compact), and the heading
+                # of its section when it comes first
+                $firstOfSection = $sel -eq $(if ($rows[$sel].InQueue) { $queued[0] } else { $open[0] })
+                $top = if ($firstOfSection -and $at -gt 0) { $at - 1 } else { $at }
+                $bottom = if ($compact) { $at + 1 } else { $at }
+                if ($top -lt $first) { $first = $top }
+                if ($bottom -ge $first + $count) { $first = $bottom - $count + 1 }
+                $first = [Math]::Max(0, [Math]::Min($first, $body.Count - $count))
+                # not a blank line (between two sections) at the top
+                if ($first -lt $top -and -not $body[$first].S[0][0]) { $first++ }
+                $from = $first
+                $count = [Math]::Min($count, $body.Count - $from)
             }
-            Write-PanelLine @(, @((' ' + ('─' * ($w - 2))), 'muted_dim')) $w; $lines++
+            for ($j = $from; $j -lt $from + $count; $j++) { Write-PanelLine $body[$j].S $w -Selected:($rows -and $body[$j].Pr -eq $sel) }
+            if ($count -lt $body.Count) {
+                $hidden = $rows.Count - @($body.GetRange($from, $count) | Where-Object { $_.Pr -ge 0 }).Count
+                Write-PanelLine @(, @(" ↕ $hidden autre(s) PR, ↑↓ pour les voir", 'muted_dim')) $w
+            }
+            Write-PanelLine @(, @((' ' + ('─' * ($w - 2))), 'muted_dim')) $w
             Write-PanelLine @(@(" $StatusMark", 'danger'), @(' rouge  ', 'muted_dim'), @($StatusMark, 'amber'), @(' CI en cours  ', 'muted_dim'), @($StatusMark, 'teal'), @(' en file  ', 'muted_dim'),
-                @($StatusMark, 'warn'), @(' à trancher  ', 'muted_dim'), @($StatusMark, 'success'), @(' prête  ', 'muted_dim'), @($StatusMark, 'violet_light'), @(' à relire  ', 'muted_dim'), @($StatusMark, 'muted_dim'), @(' brouillon', 'muted_dim')) $w; $lines++
-            Write-PanelLine @(@(' ↑↓ choisir · Entrée ouvrir · R rafraîchir · Échap retour', 'muted_dim')) $w; $lines++
+                @($StatusMark, 'warn'), @(' à trancher  ', 'muted_dim'), @($StatusMark, 'success'), @(' prête  ', 'muted_dim'), @($StatusMark, 'violet_light'), @(' à relire  ', 'muted_dim'), @($StatusMark, 'muted_dim'), @(' brouillon', 'muted_dim')) $w
+            Write-PanelLine @(, @(' ↑↓ choisir · Entrée ouvrir · R rafraîchir · Échap retour', 'muted_dim')) $w
             # erase what a longer previous frame left below
-            for ($i = $lines; $i -lt $lastHeight; $i++) { Write-Host (' ' * $w) }
-            $lastHeight = $lines
-            if (-not $Interactive) { return }
+            if ($Interactive -and $Vt) { Write-Host "$Esc[J" -NoNewline }
+            else { for ($i = $script:PanelRow; $i -lt $lastHeight; $i++) { Write-PanelLine @(@('', 'muted')) $w } }
+            $lastHeight = $script:PanelRow
+            if (-not $Interactive) { Write-Host ''; return }
         }
     } finally {
         if ($Interactive) { [Console]::CursorVisible = $true }

@@ -178,7 +178,9 @@ une PR sortie de la file de fusion, une nouvelle PR, ou `main` qui casse. Le
 panneau **Suivi des PR** (ou le raccourci « Aurora PR ») montre chaque PR :
 sa CI avec la durée qui défile, sa place dans la file de fusion, le verdict
 de la relecture de l'agent, et les dernières fusions. Il s'adapte à la
-largeur de la fenêtre : réduis-la et garde-la dans un coin de l'écran.
+taille de la fenêtre : réduis-la et garde-la dans un coin de l'écran (trop
+basse, elle cache d'abord les dernières fusions, puis fait défiler les PR
+avec la sélection).
 **↑ ↓** choisir, **Entrée** ouvrir la PR dans le navigateur, **R**
 rafraîchir. GitHub est interrogé toutes les 10 à 20 secondes, pas plus :
 le quota de GitHub (5 000 requêtes par heure) est partagé avec tes agents.
