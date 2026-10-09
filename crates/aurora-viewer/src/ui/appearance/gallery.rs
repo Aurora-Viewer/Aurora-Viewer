@@ -237,7 +237,7 @@ mod tests {
         events: Vec<Event>,
     ) -> (Vec<Action>, Vec<egui::epaint::ClippedShape>) {
         let mut actions = Vec::new();
-        let output = ctx.run_ui(
+        let mut output = ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(1600.0, 900.0))),
                 events,
@@ -255,6 +255,8 @@ mod tests {
                 );
             },
         );
+        // Headless tests do not submit texture uploads to a renderer.
+        output.textures_delta.clear();
         (actions, output.shapes)
     }
 

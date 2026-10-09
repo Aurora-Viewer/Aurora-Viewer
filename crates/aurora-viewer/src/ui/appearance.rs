@@ -847,7 +847,7 @@ mod tests {
 
     fn draw_input(ctx: &egui::Context, world: &mut World, st: &mut AppearanceUi, input: egui::RawInput) -> Vec<Action> {
         let mut actions = Vec::new();
-        let _ = ctx.run_ui(input, |ui| {
+        let mut output = ctx.run_ui(input, |ui| {
             actions = show(
                 ui.ctx(),
                 &crate::theme::Theme::default().palette(),
@@ -858,6 +858,8 @@ mod tests {
                 &HashMap::new(),
             );
         });
+        // Headless tests do not submit texture uploads to a renderer.
+        output.textures_delta.clear();
         actions
     }
 
