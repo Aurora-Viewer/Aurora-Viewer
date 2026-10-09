@@ -14,6 +14,7 @@ pub mod meshes;
 pub mod particles;
 pub mod picking;
 pub mod probes;
+pub mod settings;
 pub mod shape;
 pub mod sounds;
 pub mod textures;
@@ -236,6 +237,8 @@ pub struct Scene {
     object_signals: HashMap<Uuid, animesh::Signals>,
     /// World and interface sounds.
     pub sounds: sounds::SoundManager,
+    /// Environment settings assets (the EEP default day).
+    pub settings: settings::SettingsStreamer,
     palette_slots: HashMap<Uuid, u32>,
     palette_free: Vec<u32>,
     palette_count: u32,
@@ -426,6 +429,7 @@ impl Scene {
             last_origin: None,
             blend_tmp: Vec::new(),
             sounds: sounds::SoundManager::new(cache_dir_anim.clone()),
+            settings: settings::SettingsStreamer::new(cache_dir_anim.clone()),
             anims: anim::AnimStreamer::new(cache_dir_anim),
             object_signals: HashMap::new(),
             palette_slots: HashMap::new(),
@@ -647,6 +651,8 @@ impl Scene {
                 self.anims.on_fetch(r, &self.jobs, &rig);
             } else if kind == sounds::FETCH_KIND_SOUND {
                 self.sounds.on_fetch(r, &self.jobs);
+            } else if kind == settings::FETCH_KIND_SETTINGS {
+                self.settings.on_fetch(r, &self.jobs);
             }
         }
         while t0.elapsed() < budget {
@@ -1029,6 +1035,14 @@ impl Scene {
         self.frame = self.frame.wrapping_add(1);
         self.ensure_avatar_parts(renderer);
         self.collect_garbage(renderer, &mut world.objects);
+        // settings assets the environment waits for (the default day)
+        if let Some(id) = world.eep.wanted_settings() {
+            match self.settings.get(id) {
+                settings::SettingsState::Ready(s) => world.eep.on_settings(id, Some(s)),
+                settings::SettingsState::Failed => world.eep.on_settings(id, None),
+                settings::SettingsState::Pending => {}
+            }
+        }
 
         // Render origin changed: every transform is stale.
         let origin = world.main_origin();
@@ -2181,6 +2195,7 @@ impl Scene {
         self.anims.update(&self.jobs, &net.fetcher, va, &rig);
         self.sounds.fetch(&self.jobs, &net.fetcher, va);
         self.materials.update(&self.jobs, &net.fetcher, va);
+        self.settings.update(&self.jobs, &net.fetcher, va);
         if self.legacy_mats.update(net.runtime(), &net.caps_http()) {
             // objects using materials are rebuilt on a new generation
             self.materials.generation += 1;

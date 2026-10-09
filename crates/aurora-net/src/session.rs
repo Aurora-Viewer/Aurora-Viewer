@@ -418,7 +418,7 @@ impl Session<'_> {
         }
         if self.main == Some(addr) {
             // LLEnvironment::onRegionChange -> requestRegion once caps arrive
-            self.request_environment(self.agent_parcel.map(|p| p.0));
+            self.request_environment(None);
         }
     }
 
@@ -467,15 +467,26 @@ impl Session<'_> {
         let http = self.sh.caps_http.clone();
         let events = self.sh.events.clone();
         let handle = sim.handle;
+        // the answer carries what was asked: requests are independent tasks
+        // whose answers may arrive out of order (the viewer drops stale ones,
+        // as LLEnvironment::recordEnvironment does)
+        let parcel_id = parcel.unwrap_or(-1);
         tokio::spawn(async move {
             match http.get(&url).header("Accept", "application/llsd+xml").send().await {
                 Ok(resp) if resp.status().is_success() => {
                     if let Ok(bytes) = resp.bytes().await
                         && let Ok(v) = aurora_llsd::from_xml(&bytes)
                     {
+                        // coroRequestEnvironment: an answer without "environment" is ignored
+                        let environment = &v["environment"];
+                        if environment.is_undef() {
+                            log::info!("ExtEnvironment (parcel {parcel_id}): no environment in the answer");
+                            return;
+                        }
                         let _ = events.send(NetEvent::Environment {
                             handle,
-                            environment: v["environment"].clone(),
+                            parcel_id,
+                            environment: environment.clone(),
                         });
                     }
                 }
@@ -2055,7 +2066,8 @@ impl Session<'_> {
             };
             emit(self.sh, NetEvent::AvatarProfile(Box::new(p)));
         } else if id == msgs::RegionInfo::ID {
-            // estate changes: water height, and the region environment may have changed
+            // estate changes: water height, and the region environment may
+            // have changed (LLRegionInfoModel update -> LLEnvironment::requestRegion)
             let m: msgs::RegionInfo = pkt.decode()?;
             if let Some(handle) = self.sims.get(&from).map(|s| s.handle) {
                 let height = m.region_info.water_height;
@@ -2063,7 +2075,7 @@ impl Session<'_> {
                     emit(self.sh, NetEvent::WaterHeight { handle, height });
                 }
                 if self.main == Some(from) {
-                    self.request_environment(self.agent_parcel.map(|p| p.0));
+                    self.request_environment(None);
                 }
             }
         } else if id == SimStats::ID {

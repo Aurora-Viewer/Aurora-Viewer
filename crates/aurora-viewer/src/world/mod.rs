@@ -4,6 +4,7 @@ pub mod blocking;
 pub mod body;
 pub mod contact_sets;
 pub mod eep;
+pub mod eep_env;
 pub mod env;
 pub mod groups;
 pub mod inventory;
@@ -162,8 +163,10 @@ pub struct World {
     pub inventory: inventory::Inventory,
     /// Playing animations per avatar / animesh.
     pub animations: HashMap<Uuid, Vec<PlayingAnimation>>,
-    /// EEP day cycle of the main region (if the region provides one).
-    pub day_cycle: Option<(RegionHandle, eep::DayCycle)>,
+    /// EEP environments (region, parcel, local) and their crossfades.
+    pub eep: eep_env::EnvSelector,
+    /// Monotonic clock of the environment crossfades.
+    env_clock: Instant,
     /// Accumulated cloud scroll (LLEnvironment::mCloudScrollDelta).
     pub cloud_scroll: glam::Vec2,
     /// Name of the parcel the agent stands on.
@@ -234,7 +237,8 @@ impl World {
             status: status::Status::default(),
             inventory: inventory::Inventory::default(),
             animations: HashMap::new(),
-            day_cycle: None,
+            eep: eep_env::EnvSelector::default(),
+            env_clock: Instant::now(),
             cloud_scroll: glam::Vec2::ZERO,
             parcel_name: String::new(),
             parcel: None,
@@ -1001,12 +1005,17 @@ impl World {
                 self.animations.insert(avatar, list);
                 None
             }
-            NetEvent::Environment { handle, environment } => {
-                match eep::DayCycle::from_llsd(&environment) {
+            NetEvent::Environment {
+                handle,
+                parcel_id: requested,
+                environment,
+            } => {
+                let answer = eep::EnvAnswer::from_llsd(&environment);
+                let parcel_id = answer.parcel_id;
+                match answer.day.as_ref().filter(|d| d.is_valid()) {
                     Some(d) => {
                         log::info!(
-                            "EEP day cycle (parcel {}): {} sky keys, {} water keys, day {} s",
-                            d.parcel_id,
+                            "EEP day cycle (parcel {parcel_id}): {} sky keys, {} water keys, day {} s",
                             d.sky_tracks[0].len(),
                             d.water.len(),
                             d.length
@@ -1025,13 +1034,23 @@ impl World {
                                 s.haze_density
                             );
                         }
-                        self.day_cycle = Some((handle, d));
                     }
-                    None => {
-                        log::info!("environment has no sky track; using the default sky");
-                        self.day_cycle = None;
-                    }
+                    None => log::info!(
+                        "environment of parcel {parcel_id} (requested {requested}) has no valid day cycle ({})",
+                        if answer.day.is_some() {
+                            "empty water or ground sky track"
+                        } else {
+                            "none"
+                        }
+                    ),
                 }
+                let ctx = eep_env::AnswerContext {
+                    main_region: self.main_region,
+                    agent_parcel: self.parcel.as_ref().map(|p| p.local_id),
+                    teleporting: self.teleporting,
+                };
+                let outcome = self.eep.on_answer(handle, requested, answer, ctx);
+                log::info!("EEP answer for parcel {parcel_id}: {outcome:?}");
                 None
             }
             NetEvent::WaterHeight { handle, height } => {

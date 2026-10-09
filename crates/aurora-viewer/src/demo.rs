@@ -14,6 +14,9 @@ use uuid::Uuid;
 
 const HANDLE: u64 = (256000u64 << 32) | 256000;
 
+/// EEP environment answers (AURORA_DEMO_EEP_PARCEL).
+#[path = "demo_eep.rs"]
+pub mod eep;
 /// About Land answers (AURORA_DEMO_LAND).
 #[path = "demo_land.rs"]
 pub mod land;
