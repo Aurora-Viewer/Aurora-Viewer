@@ -5,9 +5,9 @@ plusieurs agents IA (Claude Code, Codex…) en parallèle. Les agents suivent
 [AGENTS.md](AGENTS.md) ; ce guide explique **ton** rôle et comment tout
 s'enchaîne.
 
-**Pour commencer :** [installe l'environnement](#installer-lenvironnement)
-en une ligne. Ensuite, tout se fait avec
-[les outils Aurora](#les-outils-aurora--aurora-toolscmd) (`aurora-tools.cmd`).
+**Pour commencer :** [clone le dépôt et double-clique sur
+`aurora-tools.cmd`](#installer-lenvironnement) ; ensuite, tout se fait avec
+[les outils Aurora](#les-outils-aurora--aurora-toolscmd).
 
 ## Ce que font les agents, ce que tu fais
 
@@ -99,30 +99,35 @@ git push origin v0.4.0
 
 ## Installer l'environnement
 
-Crée un dossier pour le projet (par exemple `C:\Aurora-Viewer`), ouvre une
-invite de commandes dedans (dans l'Explorateur : tape `cmd` dans la barre
-d'adresse, puis Entrée) et colle :
+1. Crée un dossier pour le projet (par exemple `C:\Aurora-Viewer`), ouvre une
+   invite de commandes dedans (dans l'Explorateur : tape `cmd` dans la barre
+   d'adresse, puis Entrée) et clone le dépôt :
+
+   ```bat
+   git clone https://github.com/Aurora-Viewer/Aurora-Viewer aurora-viewer
+   ```
+
+2. Double-clic sur **`aurora-viewer\aurora-tools.cmd`** (les outils Aurora,
+   section suivante). Ils vérifient ce qui manque et proposent **Réparer** :
+   - ils installent ce qui manque avec winget : GitHub CLI (pour toute la
+     machine), les outils C++ de Visual Studio dont Rust a besoin pour
+     compiler (plusieurs Go), et Rust (rustup, pour ton compte, comme le veut
+     Rust sous Windows) ; des fenêtres d'autorisation Windows peuvent
+     s'ouvrir ;
+   - ils clonent les sources de Firestorm dans `phoenix-firestorm\`, à côté
+     du dépôt ;
+   - ils téléchargent la police emoji, la toolchain Rust et toutes les crates ;
+   - ils te connectent à GitHub (`gh auth login`, dans le navigateur) si
+     besoin, et règlent ton identité git dans le dépôt : ton pseudo GitHub et
+     ton adresse « noreply » (ton e-mail reste privé).
+
+**Pas encore de Git ?** Dans une invite de commandes ouverte dans le dossier
+du projet, cette commande installe tout, Git compris, puis ouvre les outils
+(elle montre d'abord ce qu'elle va faire et demande où installer) :
 
 ```bat
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$f = Join-Path $env:TEMP 'aurora-setup.ps1'; irm https://raw.githubusercontent.com/Aurora-Viewer/Aurora-Viewer/main/scripts/setup.ps1 -OutFile $f; & $f"
 ```
-
-Le script montre d'abord un tableau : ce qu'il a trouvé sur ta machine et ce
-qu'il va faire. Il propose le dossier courant ; si tu réponds non, il te
-demande le chemin exact du dossier du projet (créé s'il n'existe pas). Puis :
-
-1. il installe ce qui manque avec winget : Git et GitHub CLI (pour toute la
-   machine), les outils C++ de Visual Studio dont Rust a besoin pour
-   compiler (plusieurs Go), et Rust (rustup, pour ton compte, comme le veut
-   Rust sous Windows) ; des fenêtres d'autorisation Windows peuvent s'ouvrir ;
-2. il clone le dépôt dans `aurora-viewer\` et les sources de Firestorm dans
-   `phoenix-firestorm\`, côte à côte ;
-3. il télécharge la police emoji, la toolchain Rust et toutes les crates ;
-4. il te connecte à GitHub (`gh auth login`, dans le navigateur) si besoin,
-   et règle ton identité git dans le dépôt : ton pseudo GitHub et ton
-   adresse « noreply » (ton e-mail reste privé).
-
-À la fin, il propose d'ouvrir les outils Aurora (section suivante).
 
 Dans la suite, **le dossier du projet** est celui de l'installation : il
 contient `aurora-viewer\`, `phoenix-firestorm\`, `work\` (les tâches des
