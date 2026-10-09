@@ -3,7 +3,8 @@
     Les outils de développement d'Aurora Viewer, en menu au clavier
     (flèches, Entrée, Échap) : diagnostic et réparation de l'environnement,
     viewers release / dev / debug, démo, tâches des agents, disque, logs,
-    raccourci. Se lance par aurora-tools.cmd, à la racine du dépôt.
+    suivi des PR en direct (bandeau du bas, notifications), gestion des
+    releases, raccourcis. Se lance par aurora-tools.cmd, à la racine du dépôt.
 
 .DESCRIPTION
     Sans dépôt (première installation : la commande en une ligne lance
@@ -15,12 +16,14 @@
     ./scripts/tools/aurora-tools.ps1 -Action diagnose    # une action, sans menu
 #>
 param(
-    [ValidateSet('menu', 'install', 'diagnose', 'repair', 'release', 'dev', 'debug', 'demo', 'tasks', 'disk', 'logs', 'shortcut')]
+    [ValidateSet('menu', 'install', 'diagnose', 'repair', 'release', 'dev', 'debug', 'demo', 'tasks', 'disk', 'logs', 'shortcut', 'prs', 'releases')]
     [string]$Action = 'menu',
     # project folder for -Action install (asked for when not given)
     [string]$Path,
     # -Action install without questions
-    [switch]$Yes
+    [switch]$Yes,
+    # releases: show the GitHub writes (tag, deletion) instead of doing them
+    [switch]$DryRun
 )
 $ErrorActionPreference = 'Continue'
 # every module of this folder: ui.ps1 first, the others use it
@@ -28,6 +31,9 @@ foreach ($m in @('ui.ps1') + @(Get-ChildItem -LiteralPath $PSScriptRoot -Filter 
     . (Join-Path $PSScriptRoot $m)
 }
 if ($Interactive) { $Host.UI.RawUI.WindowTitle = 'Aurora Tools' }
+# gh, git and cargo write UTF-8; the console decodes their output with its
+# OEM code page by default (accents of PR titles came out garbled)
+try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
 
 # The project folder of the repository these tools belong to (also from an
 # agent's worktree: the main repository is the one in git's common folder).
@@ -124,7 +130,9 @@ function Show-Main {
             @{ Key = '5'; Label = 'Tâches des agents'; Hint = 'dossiers de work\, PR, ménage' }
             @{ Key = '6'; Label = 'Disque'; Hint = 'place des compilations, nettoyage' }
             @{ Key = '7'; Label = 'Logs du viewer'; Hint = 'ouvrir, lire la fin, copier le chemin' }
-            @{ Key = '8'; Label = 'Raccourci'; Hint = 'Bureau et menu Démarrer' }
+            @{ Key = 'p'; Label = 'Suivi des PR'; Hint = 'en direct, à garder dans un coin de l''écran' }
+            @{ Key = 'g'; Label = 'Gérer les releases'; Hint = 'créer ou supprimer une version' }
+            @{ Key = '8'; Label = 'Raccourcis'; Hint = 'Bureau et menu Démarrer' }
             @{ Key = 'v'; Label = 'Vérifier à nouveau'; Hint = 'le tableau complet de l''environnement' }
             @{ Key = '0'; Label = 'Quitter'; Hint = '' }
         )
@@ -142,6 +150,8 @@ function Show-Main {
                 '5' { Invoke-Tasks }
                 '6' { Invoke-Disk }
                 '7' { Invoke-Logs }
+                'p' { Show-PrPanel }
+                'g' { Invoke-Releases }
                 '8' { Invoke-Shortcut }
                 'v' { $checks = Get-Checks $Paths; Show-Checks $checks "Environnement : $($Paths.Root)"; Wait-Back }
             }
@@ -156,8 +166,16 @@ function Show-Main {
 
 $Paths = Find-Project
 if ($Action -eq 'install' -or -not $Paths) { Start-Install; exit }
+# GitHub followed in the background: PR summary in the footer, notifications
+if ($Action -in 'menu', 'prs') {
+    Start-GitHubWatch
+    $FooterStatus = { Get-PrSummary }
+    $TickHook = { Update-PrNotifications }
+}
 switch ($Action) {
     'menu' { Show-Main }
+    'prs' { Show-PrPanel }
+    'releases' { Invoke-Releases }
     'diagnose' { Show-Checks (Get-Checks $Paths) "Environnement : $($Paths.Root)" }
     'repair' { try { Invoke-Repair $Paths } catch { Show-Failure $_; exit 1 } }
     'release' { Invoke-ReleaseViewer }
@@ -169,3 +187,4 @@ switch ($Action) {
     'logs' { Invoke-Logs }
     'shortcut' { Invoke-Shortcut }
 }
+Stop-GitHubWatch

@@ -85,11 +85,18 @@ On suit [SemVer](https://semver.org/lang/fr/) : `vMAJEUR.MINEUR.CORRECTIF`.
 Avant la 1.0, une nouveauté fait `v0.3.0 → v0.4.0`, un correctif
 `v0.4.0 → v0.4.1`.
 
-Demande-le à un agent : « sors la 0.4.0 » (ou « sors une version » : il te
-propose le numéro). Il vérifie que `main` est vert, crée le tag et te donne
-le lien de la release. GitHub Actions compile le viewer, crée la release avec
-le zip Windows et écrit les notes, classées par catégorie, à partir des PR
-fusionnées. À la main, c'est :
+Le plus simple : choix **Gérer les releases** des outils Aurora (section
+plus bas). Ils vérifient que `main` est vert, proposent le numéro d'après les
+étiquettes des PR fusionnées depuis la dernière version, montrent ces PR,
+créent le tag et suivent la publication jusqu'au lien de la release. Ils
+servent aussi à **supprimer** une release (il faut taper son tag pour
+confirmer ; `assets-1`, qui contient la police emoji, est protégée). Il faut
+le droit d'écriture sur le dépôt.
+
+Tu peux aussi le demander à un agent : « sors la 0.4.0 » (ou « sors une
+version » : il te propose le numéro). Dans les deux cas, GitHub Actions
+compile le viewer, crée la release avec le zip Windows et écrit les notes,
+classées par catégorie, à partir des PR fusionnées. À la main, c'est :
 
 ```bash
 git switch main && git pull
@@ -156,12 +163,28 @@ ligne : ce qui est là est mis à jour, rien n'est réinstallé).
 | Tâches des agents | Les dossiers de `work\` : PR, changements en cours, dernière compilation, taille ; ménage de celles dont la PR est fusionnée |
 | Disque | La place prise par les compilations, et le nettoyage (`clean.ps1`) |
 | Logs du viewer | Ouvrir le dossier, lire la fin du dernier log, copier son chemin pour un agent |
-| Raccourci | « Aurora Tools » sur le Bureau et dans le menu Démarrer, avec le logo |
+| Suivi des PR | Le panneau en direct (voir ci-dessous) |
+| Gérer les releases | Créer ou supprimer une version (voir [Publier une version](#publier-une-version)) |
+| Raccourcis | « Aurora Tools » et « Aurora PR » (le panneau des PR directement) sur le Bureau et dans le menu Démarrer, avec le logo |
 | Vérifier à nouveau | Le tableau complet de l'environnement |
+
+**Les PR en direct.** Tant que les outils sont ouverts, le bandeau du bas
+résume les PR (« PR : 3 ouvertes · 1 CI · 1 en file · 1 rouge »), et une
+**notification Windows** signale une PR fusionnée, une CI qui passe au rouge,
+une PR sortie de la file de fusion, une nouvelle PR, ou `main` qui casse. Le
+panneau **Suivi des PR** (ou le raccourci « Aurora PR ») montre chaque PR :
+sa CI avec la durée qui défile, sa place dans la file de fusion, le verdict
+de la relecture de l'agent, et les dernières fusions. Il s'adapte à la
+largeur de la fenêtre : réduis-la et garde-la dans un coin de l'écran.
+**↑ ↓** choisir, **Entrée** ouvrir la PR dans le navigateur, **R**
+rafraîchir. GitHub est interrogé toutes les 10 à 20 secondes, pas plus :
+le quota de GitHub (5 000 requêtes par heure) est partagé avec tes agents.
 
 Chaque choix existe aussi sans menu, pour un script :
 `./scripts/tools/aurora-tools.ps1 -Action diagnose` (`repair`, `release`,
-`dev`, `debug`, `demo`, `tasks`, `disk`, `logs`, `shortcut`).
+`dev`, `debug`, `demo`, `tasks`, `disk`, `logs`, `prs`, `releases`,
+`shortcut`) ; `-DryRun` montre ce que `releases` ferait sur GitHub sans le
+faire.
 
 ## Le viewer à jour de `main`, en `--release`
 

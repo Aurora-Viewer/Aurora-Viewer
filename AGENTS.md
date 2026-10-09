@@ -349,6 +349,9 @@ commentaire de relecture.
 
 - **SemVer** : `vMAJEUR.MINEUR.CORRECTIF`. Avant la 1.0 : une nouveauté
   augmente MINEUR, un correctif augmente CORRECTIF.
+- L'humain peut publier ou supprimer une release lui-même, avec le choix
+  « Gérer les releases » de `aurora-tools.cmd` ; il peut aussi te le
+  demander.
 - Une release se fait **quand l'humain la demande** (« sors la 0.4.0 »),
   jamais de ta propre initiative. S'il ne donne pas de numéro, propose-le
   d'après les étiquettes des PR fusionnées depuis la dernière version et

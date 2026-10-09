@@ -58,7 +58,8 @@ The tools check the environment and offer to **repair** it: they install
 whatever is missing (GitHub CLI, the Visual Studio C++ tools, Rust), clone
 the Firestorm sources next to the repository, and download the emoji font,
 the Rust toolchain and the crates. Then, driven by the keyboard: release /
-dev / debug viewers, demo, agents' tasks, disk, logs (see
+dev / debug viewers, demo, agents' tasks, disk, logs, live pull requests with
+Windows notifications, releases (see
 [HUMANS.md](HUMANS.md)).
 
 Without Git yet, this command (in a command prompt, in the project folder)

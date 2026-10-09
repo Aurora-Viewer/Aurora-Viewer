@@ -183,16 +183,24 @@ function Invoke-Shortcut {
         @{ Name = 'Bureau'; Dir = [Environment]::GetFolderPath('Desktop') }
         @{ Name = 'menu Démarrer'; Dir = [Environment]::GetFolderPath('Programs') }
     )
-    if (-not (Read-YesNo 'Créer « Aurora Tools » sur le Bureau et dans le menu Démarrer ?')) { return }
+    # "Aurora PR" opens the PR panel straight away (to keep in a corner)
+    $links = @(
+        @{ Name = 'Aurora Tools'; Arguments = ''; Description = 'Outils de développement d''Aurora Viewer' }
+        @{ Name = 'Aurora PR'; Arguments = '-Action prs'; Description = 'Suivi des PR d''Aurora Viewer, en direct' }
+    )
+    if (-not (Read-YesNo 'Créer « Aurora Tools » et « Aurora PR » sur le Bureau et dans le menu Démarrer ?')) { return }
     $shell = New-Object -ComObject WScript.Shell
     foreach ($pl in $places) {
-        $lnk = $shell.CreateShortcut((Join-Path $pl.Dir 'Aurora Tools.lnk'))
-        $lnk.TargetPath = $target
-        $lnk.WorkingDirectory = $Paths.Repo
-        $lnk.Description = 'Outils de développement d''Aurora Viewer'
-        if (Test-Path $icon) { $lnk.IconLocation = "$icon,0" }
-        $lnk.Save()
-        Write-Color "  Créé : $($pl.Name)" success
+        foreach ($l in $links) {
+            $lnk = $shell.CreateShortcut((Join-Path $pl.Dir "$($l.Name).lnk"))
+            $lnk.TargetPath = $target
+            $lnk.Arguments = $l.Arguments
+            $lnk.WorkingDirectory = $Paths.Repo
+            $lnk.Description = $l.Description
+            if (Test-Path $icon) { $lnk.IconLocation = "$icon,0" }
+            $lnk.Save()
+        }
+        Write-Color "  Créés : $($pl.Name)" success
     }
     Wait-Back
 }

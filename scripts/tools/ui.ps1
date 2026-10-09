@@ -10,13 +10,13 @@ $Esc = [char]27
 # Aurora palette (docs/BRANDING.md).
 $Palette = @{
     violet = '8B5CF6'; indigo = '4F46E5'; teal = '5EEAD4'; violet_light = 'A78BFA'
-    ink = 'E8EDFB'; muted = '9AA6C6'; muted_dim = '6F7BA0'; bar = '1C1C1C'
-    success = '4ADE80'; warn = 'FB923C'; danger = 'F87171'
+    ink = 'E8EDFB'; muted = '9AA6C6'; muted_dim = '6F7BA0'; bar = '1C1C1C'; raised = '3A3A3A'
+    success = '4ADE80'; warn = 'FB923C'; danger = 'F87171'; amber = 'FCD34D'
 }
 $BasicColors = @{
     violet = 'Magenta'; indigo = 'Blue'; teal = 'Cyan'; violet_light = 'Magenta'
-    ink = 'White'; muted = 'Gray'; muted_dim = 'DarkGray'; bar = 'Black'
-    success = 'Green'; warn = 'Yellow'; danger = 'Red'
+    ink = 'White'; muted = 'Gray'; muted_dim = 'DarkGray'; bar = 'Black'; raised = 'DarkGray'
+    success = 'Green'; warn = 'Yellow'; danger = 'Red'; amber = 'Yellow'
 }
 
 function Get-Ansi([string]$Color, [switch]$Background) {
@@ -30,7 +30,7 @@ function Write-Color([string]$Text, [string]$Color = 'ink', [switch]$NoNewline, 
         $bg = if ($Background) { Get-Ansi $Background -Background } else { '' }
         Write-Host "$bg$(Get-Ansi $Color)$Text$Esc[0m" -NoNewline:$NoNewline
     } elseif ($Background) {
-        Write-Host $Text -ForegroundColor $BasicColors[$Color] -BackgroundColor $(if ($Background -eq 'bar') { 'Black' } else { 'DarkMagenta' }) -NoNewline:$NoNewline
+        Write-Host $Text -ForegroundColor $BasicColors[$Color] -BackgroundColor $(switch ($Background) { 'bar' { 'Black' } 'raised' { 'DarkGray' } default { 'DarkMagenta' } }) -NoNewline:$NoNewline
     } else {
         Write-Host $Text -ForegroundColor $BasicColors[$Color] -NoNewline:$NoNewline
     }
@@ -98,7 +98,8 @@ function Show-Checks($Checks, [string]$Title, [switch]$Summary) {
 
 # --- Footer -----------------------------------------------------------------
 # The last line of the window: key hints on the left, clock on the right, and
-# whatever $FooterStatus (a script block returning text) adds in between.
+# whatever $FooterStatus adds in between: a script block returning text, or
+# coloured segments @(@('text', 'color'), …).
 $FooterStatus = $null
 
 function Write-Footer([string]$Hints) {
@@ -107,28 +108,39 @@ function Write-Footer([string]$Hints) {
     $w = $raw.WindowSize.Width - 1
     $y = $raw.WindowPosition.Y + $raw.WindowSize.Height - 1
     if ($w -lt 20 -or $y -lt $raw.CursorPosition.Y) { return }
-    $status = if ($FooterStatus) { & $FooterStatus } else { '' }
-    $clock = Get-Date -Format 'HH:mm:ss'
+    $status = @(if ($FooterStatus) { & $FooterStatus })
+    # one segment comes unrolled: ('text', 'color'); plain text: one muted segment
+    if ($status.Count -and $status[0] -isnot [array]) {
+        $status = if ($status.Count -eq 2 -and $Palette.ContainsKey([string]$status[1])) { @(, $status) } else { @(, @(($status -join ' '), 'muted')) }
+    }
+    $segments = @($status) + @(, @("  $(Get-Date -Format 'HH:mm:ss') ", 'muted'))
     $left = " $Hints"
-    $right = "$status  $clock "
-    $line = $left + (' ' * [Math]::Max(1, $w - $left.Length - $right.Length)) + $right
-    if ($line.Length -gt $w) { $line = $line.Substring(0, $w) }
+    $rightLength = ($segments | ForEach-Object { ([string]$_[0]).Length } | Measure-Object -Sum).Sum
+    $gap = $w - $left.Length - $rightLength
+    if ($gap -lt 1) { $left = $left.Substring(0, [Math]::Max(0, $left.Length + $gap - 1)); $gap = 1 }
     $saved = $raw.CursorPosition
     $raw.CursorPosition = New-Object Management.Automation.Host.Coordinates 0, $y
-    Write-Color $line muted -Background bar -NoNewline
+    Write-Color ($left + (' ' * $gap)) muted -Background bar -NoNewline
+    foreach ($s in $segments) { Write-Color ([string]$s[0]) $s[1] -Background bar -NoNewline }
     $raw.CursorPosition = $saved
 }
 
 # --- Keyboard ---------------------------------------------------------------
 
-# Next key, redrawing the footer every second while waiting. $KeySource (a
+# Next key, redrawing the footer every second while waiting; $TickHook (a
+# script block) also runs every second (GitHub notifications…). $KeySource (a
 # script block returning ConsoleKeyInfo) replaces the keyboard in tests.
 $KeySource = $null
+$TickHook = $null
 function Read-Key([string]$Hints) {
     if ($KeySource) { return & $KeySource }
     $last = [DateTime]::MinValue
     while (-not [Console]::KeyAvailable) {
-        if (((Get-Date) - $last).TotalMilliseconds -ge 1000) { Write-Footer $Hints; $last = Get-Date }
+        if (((Get-Date) - $last).TotalMilliseconds -ge 1000) {
+            if ($TickHook) { & $TickHook }
+            Write-Footer $Hints
+            $last = Get-Date
+        }
         Start-Sleep -Milliseconds 50
     }
     [Console]::ReadKey($true)
