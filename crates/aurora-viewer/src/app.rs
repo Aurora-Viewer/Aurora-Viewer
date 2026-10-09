@@ -1984,8 +1984,6 @@ impl App {
     /// so even these local teleports remain direct.
     fn begin_teleport(&mut self, dest: String, show_progress: bool) {
         self.release_object_hold();
-        // LLAgent::teleportCore
-        self.world.ui_sounds.push(UiSound::TeleportOut);
         self.tp_dest = Some(dest);
         self.media.on_teleport();
         self.world.begin_teleport(show_progress);
