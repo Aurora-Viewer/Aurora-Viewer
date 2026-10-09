@@ -65,26 +65,32 @@ pub(crate) fn hhmm(t: std::time::SystemTime) -> String {
     format!("{:02}:{:02}", (secs / 3600) % 24, (secs / 60) % 60)
 }
 
-/// A line's text with its links replaced by their labels, as Firestorm's
-/// chat console does (LLConsole::Paragraph with parse_urls,
-/// indra/llui/llconsole.cpp): places read "Region (x,y,z)", agent links the
-/// avatar's name, mentions "@name" like the conversation window.
-fn labeled(text: &str, mut name_of: impl FnMut(uuid::Uuid) -> String) -> String {
-    let mut out = String::with_capacity(text.len());
-    for s in segments(text) {
-        match s {
-            Seg::Text(t) | Seg::Url(t) | Seg::Slurl(t) => out.push_str(t),
-            Seg::Place(_, place) => out.push_str(&place.label),
-            Seg::Agent(id) => out.push_str(&name_of(id)),
-            Seg::Mention(id) => {
-                out.push('@');
-                out.push_str(&name_of(id));
-            }
-        }
-    }
-    out
+/// A link of a chat bubble, clickable like in the conversation window.
+#[derive(Debug, Clone, PartialEq)]
+enum Link {
+    Url(String),
+    Place(String, crate::slurl::PlaceLink),
+    Agent(uuid::Uuid),
 }
 
+/// A line's text cut into pieces, links replaced by their labels as
+/// Firestorm's chat console does (LLConsole::Paragraph with parse_urls,
+/// indra/llui/llconsole.cpp): places read "Region (x,y,z)", agent links the
+/// avatar's name, mentions "@name" like the conversation window.
+fn pieces(text: &str, mut name_of: impl FnMut(uuid::Uuid) -> String) -> Vec<(String, Option<Link>)> {
+    segments(text)
+        .into_iter()
+        .map(|s| match s {
+            Seg::Text(t) | Seg::Slurl(t) => (t.to_owned(), None),
+            Seg::Url(u) => (u.to_owned(), Some(Link::Url(u.to_owned()))),
+            Seg::Place(u, place) => (place.label.clone(), Some(Link::Place(u.to_owned(), place))),
+            Seg::Agent(id) => (name_of(id), Some(Link::Agent(id))),
+            Seg::Mention(id) => (format!("@{}", name_of(id)), Some(Link::Agent(id))),
+        })
+        .collect()
+}
+
+/// A chat bubble's text, with the char range of each link in it.
 fn line_job(
     line: &crate::world::ChatLine,
     p: &Palette,
@@ -93,11 +99,7 @@ fn line_job(
     width: f32,
     size: f32,
     times: bool,
-) -> egui::text::LayoutJob {
-    let text = labeled(&line.text, |id| {
-        want_names.insert(id);
-        world.social.name_of(&id)
-    });
+) -> (egui::text::LayoutJob, Vec<(std::ops::Range<usize>, Link)>) {
     let col = color_for(line.kind, p);
     let mut job = egui::text::LayoutJob::default();
     let small = egui::TextFormat {
@@ -108,7 +110,7 @@ fn line_job(
     if times {
         job.append(&format!("[{}] ", hhmm(line.time)), 0.0, small);
     }
-    let emote = text.starts_with("/me ") || text.starts_with("/me'");
+    let emote = line.text.starts_with("/me ") || line.text.starts_with("/me'");
     let name_fmt = egui::TextFormat {
         color: col,
         font_id: egui::FontId::proportional(size),
@@ -120,11 +122,11 @@ fn line_job(
         italics: emote,
         ..Default::default()
     };
-    match line.kind {
-        ChatKind::System => job.append(&text, 0.0, text_fmt),
+    let body = match line.kind {
+        ChatKind::System => &line.text[..],
         _ if emote => {
             job.append(&line.from, 0.0, name_fmt);
-            job.append(&text[3..], 0.0, text_fmt);
+            &line.text[3..]
         }
         _ => {
             let prefix = match line.kind {
@@ -134,11 +136,25 @@ fn line_job(
                 _ => format!("{}: ", line.from),
             };
             job.append(&prefix, 0.0, name_fmt);
-            job.append(&text, 0.0, text_fmt);
+            &line.text[..]
         }
+    };
+    let mut links = Vec::new();
+    let mut at = job.text.chars().count();
+    let name_of = |id| {
+        want_names.insert(id);
+        world.social.name_of(&id)
+    };
+    for (piece, link) in pieces(body, name_of) {
+        let n = piece.chars().count();
+        job.append(&piece, 0.0, text_fmt.clone());
+        if let Some(link) = link {
+            links.push((at..at + n, link));
+        }
+        at += n;
     }
     job.wrap.max_width = width;
-    job
+    (job, links)
 }
 
 pub enum ConvAction {
@@ -990,6 +1006,7 @@ pub fn toasts(
     if recent.is_empty() {
         return;
     }
+    let mut links: Vec<(egui::Rect, Link, Color32)> = Vec::new();
     egui::Area::new(egui::Id::new("chat_toasts"))
         .anchor(
             egui::Align2::LEFT_BOTTOM,
@@ -1012,13 +1029,94 @@ pub fn toasts(
                     .corner_radius(egui::CornerRadius::same(3))
                     .inner_margin(egui::Margin::symmetric(6, 2))
                     .show(ui, |ui| {
-                        let mut job = line_job(line, p, world, want_names, 540.0, 13.0, times);
+                        let (mut job, line_links) = line_job(line, p, world, want_names, 540.0, 13.0, times);
                         for s in job.sections.iter_mut() {
                             s.format.color = s.format.color.gamma_multiply(alpha);
                         }
-                        ui.label(job);
+                        let galley = ui.ctx().fonts_mut(|f| f.layout_job(job));
+                        let (rect, _) = ui.allocate_exact_size(galley.size(), egui::Sense::hover());
+                        ui.painter().galley(rect.min, galley.clone(), p.ink);
+                        let col = color_for(line.kind, p).gamma_multiply(alpha);
+                        for (range, link) in line_links {
+                            for r in range_rects(&galley, rect.min, range) {
+                                links.push((r, link.clone(), col));
+                            }
+                        }
                     });
                 ui.add_space(2.0);
+            }
+        });
+    for (k, (rect, link, col)) in links.iter().enumerate() {
+        bubble_link(ctx, p, world, k, *rect, link, *col);
+    }
+}
+
+/// Screen rects of a char range of a laid-out text, one per row.
+fn range_rects(galley: &egui::Galley, origin: egui::Pos2, range: std::ops::Range<usize>) -> Vec<egui::Rect> {
+    use egui::text::CCursor;
+    let mut out: Vec<egui::Rect> = Vec::new();
+    for i in range {
+        let a = galley.pos_from_cursor(CCursor::new(i));
+        let b = galley.pos_from_cursor(CCursor::new(i + 1));
+        // the last char of a wrapped row: its end is on the next row
+        if (a.min.y - b.min.y).abs() > 0.5 {
+            continue;
+        }
+        let r = egui::Rect::from_min_max(a.min, egui::pos2(b.min.x, a.max.y)).translate(origin.to_vec2());
+        match out.last_mut() {
+            Some(last) if (last.min.y - r.min.y).abs() < 0.5 => *last = last.union(r),
+            _ => out.push(r),
+        }
+    }
+    out
+}
+
+/// A link of a chat bubble. The bubbles let clicks through to the world
+/// (Firestorm's console is read-only), so each link gets its own small
+/// clickable area, as the links of Firestorm's chat toasts are
+/// (LLFloaterIMNearbyChatToastPanel::handleMouseUp): same actions and
+/// right-click menus as in the conversation window.
+fn bubble_link(ctx: &egui::Context, p: &Palette, world: &World, k: usize, rect: egui::Rect, link: &Link, col: Color32) {
+    egui::Area::new(egui::Id::new(("chat_toast_link", k)))
+        .fixed_pos(rect.min)
+        .order(egui::Order::Background)
+        .show(ctx, |ui| {
+            let (r, resp) = ui.allocate_exact_size(rect.size(), egui::Sense::click());
+            if resp.hovered() {
+                ui.painter().hline(r.x_range(), r.bottom() - 1.0, egui::Stroke::new(1.0, col));
+            }
+            let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+            match link {
+                Link::Url(u) => {
+                    if resp.on_hover_text(u).clicked() {
+                        ui.ctx().open_url(egui::OpenUrl::same_tab(u));
+                    }
+                }
+                Link::Place(u, place) => {
+                    place_menu(&resp, p, u, place);
+                    let tip = if place.teleport {
+                        "Cliquez pour vous téléporter à cet endroit"
+                    } else {
+                        "Cliquez pour voir cet endroit sur la carte"
+                    };
+                    if resp.on_hover_text(format!("{tip}\n{u}")).clicked() {
+                        let l = &place.location;
+                        super::context::request(
+                            ui.ctx(),
+                            if place.teleport {
+                                CtxAction::TeleportToPlace(l.region.clone(), l.pos)
+                            } else {
+                                CtxAction::ShowPlace(l.region.clone(), l.pos)
+                            },
+                        );
+                    }
+                }
+                Link::Agent(id) => {
+                    name_menu(&resp, p, world, *id);
+                    if resp.on_hover_text("Voir le profil").clicked() {
+                        super::profile::request_open(ui.ctx(), *id);
+                    }
+                }
             }
         });
 }
@@ -1079,11 +1177,18 @@ mod tests {
         let t = format!(
             "Viens secondlife:///app/agent/{id}/about à http://maps.secondlife.com/secondlife/Ahern/1/2/3, merci secondlife:///app/agent/{id}/mention ! https://example.com/x"
         );
+        let ps = pieces(&t, |_| "Loup Violet".into());
+        let text: String = ps.iter().map(|(s, _)| s.as_str()).collect();
         assert_eq!(
-            labeled(&t, |_| "Loup Violet".into()),
+            text,
             "Viens Loup Violet à Ahern (1,2,3), merci @Loup Violet ! https://example.com/x"
         );
-        assert_eq!(labeled("/me salue", |_| String::new()), "/me salue");
+        let links: Vec<_> = ps.iter().filter_map(|(s, l)| l.as_ref().map(|l| (s.as_str(), l))).collect();
+        assert_eq!(links.len(), 4);
+        assert_eq!(links[0], ("Loup Violet", &Link::Agent(id)));
+        assert!(matches!(links[1], ("Ahern (1,2,3)", Link::Place(..))));
+        assert_eq!(links[2], ("@Loup Violet", &Link::Agent(id)));
+        assert_eq!(links[3].1, &Link::Url("https://example.com/x".into()));
     }
 
     #[test]
