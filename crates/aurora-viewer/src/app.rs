@@ -4332,6 +4332,7 @@ impl App {
                         &ctx,
                         &p,
                         &self.world,
+                        &mut self.chat_ui.wanted_names,
                         bottom_top,
                         self.settings.chat_toast_seconds,
                         self.settings.chat_timestamps,

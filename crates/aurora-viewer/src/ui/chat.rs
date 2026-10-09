@@ -65,7 +65,39 @@ pub(crate) fn hhmm(t: std::time::SystemTime) -> String {
     format!("{:02}:{:02}", (secs / 3600) % 24, (secs / 60) % 60)
 }
 
-fn line_job(line: &crate::world::ChatLine, p: &Palette, width: f32, size: f32, times: bool) -> egui::text::LayoutJob {
+/// A line's text with its links replaced by their labels, as Firestorm's
+/// chat console does (LLConsole::Paragraph with parse_urls,
+/// indra/llui/llconsole.cpp): places read "Region (x,y,z)", agent links the
+/// avatar's name, mentions "@name" like the conversation window.
+fn labeled(text: &str, mut name_of: impl FnMut(uuid::Uuid) -> String) -> String {
+    let mut out = String::with_capacity(text.len());
+    for s in segments(text) {
+        match s {
+            Seg::Text(t) | Seg::Url(t) | Seg::Slurl(t) => out.push_str(t),
+            Seg::Place(_, place) => out.push_str(&place.label),
+            Seg::Agent(id) => out.push_str(&name_of(id)),
+            Seg::Mention(id) => {
+                out.push('@');
+                out.push_str(&name_of(id));
+            }
+        }
+    }
+    out
+}
+
+fn line_job(
+    line: &crate::world::ChatLine,
+    p: &Palette,
+    world: &World,
+    want_names: &mut HashSet<uuid::Uuid>,
+    width: f32,
+    size: f32,
+    times: bool,
+) -> egui::text::LayoutJob {
+    let text = labeled(&line.text, |id| {
+        want_names.insert(id);
+        world.social.name_of(&id)
+    });
     let col = color_for(line.kind, p);
     let mut job = egui::text::LayoutJob::default();
     let small = egui::TextFormat {
@@ -76,7 +108,7 @@ fn line_job(line: &crate::world::ChatLine, p: &Palette, width: f32, size: f32, t
     if times {
         job.append(&format!("[{}] ", hhmm(line.time)), 0.0, small);
     }
-    let emote = line.text.starts_with("/me ") || line.text.starts_with("/me'");
+    let emote = text.starts_with("/me ") || text.starts_with("/me'");
     let name_fmt = egui::TextFormat {
         color: col,
         font_id: egui::FontId::proportional(size),
@@ -89,10 +121,10 @@ fn line_job(line: &crate::world::ChatLine, p: &Palette, width: f32, size: f32, t
         ..Default::default()
     };
     match line.kind {
-        ChatKind::System => job.append(&line.text, 0.0, text_fmt),
+        ChatKind::System => job.append(&text, 0.0, text_fmt),
         _ if emote => {
             job.append(&line.from, 0.0, name_fmt);
-            job.append(&line.text[3..], 0.0, text_fmt);
+            job.append(&text[3..], 0.0, text_fmt);
         }
         _ => {
             let prefix = match line.kind {
@@ -102,7 +134,7 @@ fn line_job(line: &crate::world::ChatLine, p: &Palette, width: f32, size: f32, t
                 _ => format!("{}: ", line.from),
             };
             job.append(&prefix, 0.0, name_fmt);
-            job.append(&line.text, 0.0, text_fmt);
+            job.append(&text, 0.0, text_fmt);
         }
     }
     job.wrap.max_width = width;
@@ -936,8 +968,17 @@ pub fn show(
     actions
 }
 
-/// Recent chat lines floating above the chat bar (fade out after 20 s).
-pub fn toasts(ctx: &egui::Context, p: &Palette, world: &World, bottom: f32, seconds: f32, times: bool) {
+/// Recent chat lines floating above the chat bar (fade out after 20 s);
+/// names of linked avatars are asked through `want_names`.
+pub fn toasts(
+    ctx: &egui::Context,
+    p: &Palette,
+    world: &World,
+    want_names: &mut HashSet<uuid::Uuid>,
+    bottom: f32,
+    seconds: f32,
+    times: bool,
+) {
     let now = std::time::SystemTime::now();
     let recent: Vec<_> = world
         .chat
@@ -971,7 +1012,7 @@ pub fn toasts(ctx: &egui::Context, p: &Palette, world: &World, bottom: f32, seco
                     .corner_radius(egui::CornerRadius::same(3))
                     .inner_margin(egui::Margin::symmetric(6, 2))
                     .show(ui, |ui| {
-                        let mut job = line_job(line, p, 540.0, 13.0, times);
+                        let mut job = line_job(line, p, world, want_names, 540.0, 13.0, times);
                         for s in job.sections.iter_mut() {
                             s.format.color = s.format.color.gamma_multiply(alpha);
                         }
@@ -1030,6 +1071,19 @@ mod tests {
         assert_eq!(segs[3], Seg::Mention(id));
         let bad = segments("secondlife:///app/agent/nope/about");
         assert!(matches!(bad[0], Seg::Slurl(_)));
+    }
+
+    #[test]
+    fn toast_text_shows_link_labels() {
+        let id = uuid::Uuid::from_u128(5);
+        let t = format!(
+            "Viens secondlife:///app/agent/{id}/about à http://maps.secondlife.com/secondlife/Ahern/1/2/3, merci secondlife:///app/agent/{id}/mention ! https://example.com/x"
+        );
+        assert_eq!(
+            labeled(&t, |_| "Loup Violet".into()),
+            "Viens Loup Violet à Ahern (1,2,3), merci @Loup Violet ! https://example.com/x"
+        );
+        assert_eq!(labeled("/me salue", |_| String::new()), "/me salue");
     }
 
     #[test]
