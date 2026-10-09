@@ -180,8 +180,11 @@ la **file de fusion** (place et durée), les **PR ouvertes** (CI avec la
 durée qui défile, verdict de la relecture de l'agent) et les **fusionnées
 récemment** (depuis combien de temps : « 04 min »), avec pour chaque PR son
 auteur et ses lignes ajoutées et supprimées (**+120** en vert, **-8** en
-rouge). Il s'adapte à la
-taille de la fenêtre : réduis-la et garde-la dans un coin de l'écran (trop
+rouge). Chaque état est une étiquette précédée d'un carré de sa couleur :
+`■ CI OK` (vert), `■ CI FAIL clippy` (rouge), `■ CI RUN 4:00` (ambre),
+`■ QUEUE #1 TESTS`, `■ AUTO-MERGE`, `■ REVIEW OK`, `■ REVIEW WARN` (à
+trancher), `■ REVIEW FAIL`, `■ REVIEW PENDING` (pas encore relue). Il
+s'adapte à la taille de la fenêtre : réduis-la et garde-la dans un coin de l'écran (trop
 basse, elle cache d'abord les dernières fusions, puis fait défiler les PR
 avec la sélection).
 **↑ ↓** choisir, **Entrée** ouvrir la PR dans le navigateur, **R**
