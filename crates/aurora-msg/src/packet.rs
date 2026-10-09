@@ -227,6 +227,44 @@ mod tests {
         assert_eq!(back, o);
     }
 
+    /// RegionHandshake gates the whole region (the simulator sends terrain
+    /// and objects only after our reply): it must decode as framed by a
+    /// simulator, zerocoded with appended acks, with or without the
+    /// trailing RegionInfo4 block that older simulators omit.
+    #[test]
+    fn region_handshake_from_a_simulator_decodes() {
+        let mut m = RegionHandshake::default();
+        m.region_info.region_flags = 0x0400_0000;
+        m.region_info.sim_access = 13;
+        m.region_info.sim_name = crate::str_field("Yikes");
+        m.region_info.water_height = 20.0;
+        m.region_info.terrain_detail2 = Uuid::from_u128(0xabc);
+        m.region_info.terrain_height_range11 = 60.0;
+        m.region_info2.region_id = Uuid::from_u128(0x1234_5678);
+        m.region_info3.product_name = crate::str_field("Estate / Full Region");
+        m.region_info4.push(region_handshake::RegionInfo4 {
+            region_flags_extended: 0x0400_0000,
+            region_protocols: 1,
+        });
+        let mut buf = Vec::new();
+        build_packet(&m, 3, true, false, &[1, 2], &mut buf);
+        assert_ne!(buf[0] & PacketFlags::ZEROCODED, 0);
+        let p = parse_packet(&buf).unwrap();
+        assert_eq!((p.id, p.acks.as_slice()), (RegionHandshake::ID, &[1, 2][..]));
+        assert_eq!(p.decode::<RegionHandshake>().unwrap(), m);
+
+        // an older simulator: no RegionInfo4 block count at all
+        m.region_info4.clear();
+        let mut body = Writer::new();
+        RegionHandshake::ID.encode(&mut body.buf);
+        m.encode_body(&mut body);
+        assert_eq!(body.buf.pop(), Some(0));
+        build_raw(&body.buf, true, 4, true, true, &[], &mut buf);
+        let p = parse_packet(&buf).unwrap();
+        assert!(p.resent());
+        assert_eq!(p.decode::<RegionHandshake>().unwrap(), m);
+    }
+
     #[test]
     fn garbage_does_not_panic() {
         for len in 0..64usize {

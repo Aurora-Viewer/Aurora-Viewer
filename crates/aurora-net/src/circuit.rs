@@ -14,11 +14,34 @@ const MAX_RESENDS: u8 = 4;
 const DEDUPE_WINDOW: usize = 2048;
 const ACK_FLUSH_INTERVAL: Duration = Duration::from_millis(100);
 
+/// Resend policy of a reliable packet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Resend {
+    /// Fixed resend timeout; `None` derives it from the ping time.
+    pub timeout: Option<Duration>,
+    /// Resends before the packet is given up on.
+    pub max_retries: u8,
+}
+
+impl Resend {
+    pub const DEFAULT: Resend = Resend {
+        timeout: None,
+        max_retries: MAX_RESENDS,
+    };
+    /// The login UseCircuitCode (llstartup.cpp STATE_WORLD_INIT: sendReliable
+    /// with UseCircuitCodeMaxRetries = 3 and UseCircuitCodeTimeout = 5 s).
+    pub const LOGIN_USE_CIRCUIT_CODE: Resend = Resend {
+        timeout: Some(Duration::from_secs(5)),
+        max_retries: 3,
+    };
+}
+
 struct Unacked {
     payload: Vec<u8>,
     zerocoded: bool,
     sent: Instant,
     retries: u8,
+    policy: Resend,
 }
 
 pub struct Circuit {
@@ -34,8 +57,8 @@ pub struct Circuit {
     ping_id: u8,
     ping_sent: Option<(u8, Instant)>,
     buf: Vec<u8>,
-    /// Reliable packets given up on since the last check.
-    pub dropped: Vec<u32>,
+    /// Reliable packets given up on since the last `take_dropped`.
+    dropped: Vec<u32>,
 }
 
 impl Circuit {
@@ -72,6 +95,15 @@ impl Circuit {
 
     /// Encode and send a message, piggybacking pending acks. Returns the sequence number.
     pub fn send<M: Msg>(&mut self, sock: &UdpSocket, stats: &NetStats, msg: &M, reliable: bool) -> u32 {
+        self.send_with(sock, stats, msg, reliable.then_some(Resend::DEFAULT))
+    }
+
+    /// Send a reliable message with its own resend policy.
+    pub fn send_reliable_with<M: Msg>(&mut self, sock: &UdpSocket, stats: &NetStats, msg: &M, policy: Resend) -> u32 {
+        self.send_with(sock, stats, msg, Some(policy))
+    }
+
+    fn send_with<M: Msg>(&mut self, sock: &UdpSocket, stats: &NetStats, msg: &M, reliable: Option<Resend>) -> u32 {
         let mut w = Writer::new();
         M::ID.encode(&mut w.buf);
         msg.encode_body(&mut w);
@@ -85,15 +117,15 @@ impl Circuit {
         self.unacked.contains_key(&seq)
     }
 
-    fn send_payload(&mut self, sock: &UdpSocket, stats: &NetStats, payload: Vec<u8>, zerocoded: bool, reliable: bool) {
+    fn send_payload(&mut self, sock: &UdpSocket, stats: &NetStats, payload: Vec<u8>, zerocoded: bool, reliable: Option<Resend>) {
         let seq = self.next_seq;
         self.next_seq = self.next_seq.wrapping_add(1);
         let mut buf = std::mem::take(&mut self.buf);
-        let n = build_raw(&payload, zerocoded, seq, reliable, false, &self.pending_acks, &mut buf);
+        let n = build_raw(&payload, zerocoded, seq, reliable.is_some(), false, &self.pending_acks, &mut buf);
         self.pending_acks.drain(..n);
         self.buf = buf;
         self.raw_send(sock, stats);
-        if reliable {
+        if let Some(policy) = reliable {
             self.unacked.insert(
                 seq,
                 Unacked {
@@ -101,25 +133,42 @@ impl Circuit {
                     zerocoded,
                     sent: Instant::now(),
                     retries: 0,
+                    policy,
                 },
             );
         }
     }
 
-    /// Process the header of an incoming packet. Returns `false` if it is a
-    /// duplicate that must not be processed again.
+    /// Process the header of an incoming packet (the acks it carries).
+    /// Returns `false` for a resend of a packet already processed: it is
+    /// acked again to stop further resends and must not be processed.
+    /// A new packet is acked only once processed, see [`Circuit::accept`].
     pub fn on_receive(&mut self, flags: u8, seq: u32, acks: &[u32]) -> bool {
         self.last_recv = Instant::now();
         for a in acks {
             self.unacked.remove(a);
         }
-        if flags & PacketFlags::RELIABLE != 0 {
-            self.pending_acks.push(seq);
-        }
         // Like LL (message.cpp), only packets flagged RESENT can be duplicates;
         // this also survives a simulator resetting its sequence numbers.
         if flags & PacketFlags::RESENT != 0 && self.recent_set.contains(&seq) {
+            if flags & PacketFlags::RELIABLE != 0 {
+                self.pending_acks.push(seq);
+            }
             return false;
+        }
+        true
+    }
+
+    /// A packet was decoded and handled: ack it if reliable and remember it
+    /// for duplicate suppression. Like LLMessageSystem::checkMessages, a
+    /// packet that fails to decode is neither acked nor remembered, so the
+    /// simulator resends it instead of it being lost for good.
+    pub fn accept(&mut self, flags: u8, seq: u32) {
+        if flags & PacketFlags::RELIABLE != 0 {
+            self.pending_acks.push(seq);
+        }
+        if self.recent_set.contains(&seq) {
+            return;
         }
         if self.recent.len() >= DEDUPE_WINDOW
             && let Some(old) = self.recent.pop_front()
@@ -128,7 +177,11 @@ impl Circuit {
         }
         self.recent.push_back(seq);
         self.recent_set.insert(seq);
-        true
+    }
+
+    /// Reliable packets given up on since the last call.
+    pub fn take_dropped(&mut self) -> Vec<u32> {
+        std::mem::take(&mut self.dropped)
     }
 
     pub fn ack_received(&mut self, ids: impl IntoIterator<Item = u32>) {
@@ -144,12 +197,12 @@ impl Circuit {
     /// Resend timed-out reliable packets and flush standalone acks.
     pub fn tick(&mut self, sock: &UdpSocket, stats: &NetStats) {
         let now = Instant::now();
-        let timeout = (self.rtt * 3).clamp(Duration::from_millis(500), Duration::from_secs(3));
+        let ping_timeout = (self.rtt * 3).clamp(Duration::from_millis(500), Duration::from_secs(3));
         let mut to_resend = Vec::new();
         let mut to_drop = Vec::new();
         for (seq, u) in &self.unacked {
-            if now.duration_since(u.sent) > timeout {
-                if u.retries >= MAX_RESENDS {
+            if now.duration_since(u.sent) > u.policy.timeout.unwrap_or(ping_timeout) {
+                if u.retries >= u.policy.max_retries {
                     to_drop.push(*seq);
                 } else {
                     to_resend.push(*seq);
@@ -217,5 +270,74 @@ impl Circuit {
             return Some(rtt);
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const RELIABLE: u8 = PacketFlags::RELIABLE;
+    const RESENT: u8 = PacketFlags::RELIABLE | PacketFlags::RESENT;
+
+    fn circuit() -> Circuit {
+        Circuit::new("127.0.0.1:9".parse().expect("address"))
+    }
+
+    #[test]
+    fn undecodable_packet_is_not_acked_and_its_resend_is_processed() {
+        let mut c = circuit();
+        // first copy: received but its decode failed, so never accepted
+        assert!(c.on_receive(RELIABLE, 7, &[]));
+        assert!(c.pending_acks.is_empty(), "acked before being processed");
+        // the simulator resends it: not a duplicate, processed this time
+        assert!(c.on_receive(RESENT, 7, &[]));
+        c.accept(RESENT, 7);
+        assert_eq!(c.pending_acks, vec![7]);
+    }
+
+    #[test]
+    fn duplicate_resend_is_acked_but_not_processed_again() {
+        let mut c = circuit();
+        assert!(c.on_receive(RELIABLE, 3, &[]));
+        c.accept(RELIABLE, 3);
+        // our ack was lost: the resend is acked again, not reprocessed
+        assert!(!c.on_receive(RESENT, 3, &[]));
+        assert_eq!(c.pending_acks, vec![3, 3]);
+        // without RESENT a reused sequence number is a new packet
+        assert!(c.on_receive(RELIABLE, 3, &[]));
+    }
+
+    #[test]
+    fn unreliable_packets_are_never_acked() {
+        let mut c = circuit();
+        assert!(c.on_receive(0, 1, &[]));
+        c.accept(0, 1);
+        assert!(c.pending_acks.is_empty());
+    }
+
+    #[tokio::test]
+    async fn login_use_circuit_code_keeps_its_own_resend_policy() {
+        let sock = UdpSocket::bind("127.0.0.1:0").await.expect("bind");
+        let stats = NetStats::default();
+        let mut c = circuit();
+        let m = aurora_msg::msgs::UseCircuitCode::default();
+        let login = c.send_reliable_with(&sock, &stats, &m, Resend::LOGIN_USE_CIRCUIT_CODE);
+        let other = c.send(&sock, &stats, &m, true);
+        // 4 s later: past the ping-based timeout, not yet the 5 s one
+        for u in c.unacked.values_mut() {
+            u.sent -= Duration::from_secs(4);
+        }
+        c.tick(&sock, &stats);
+        assert_eq!(c.unacked[&login].retries, 0);
+        assert_eq!(c.unacked[&other].retries, 1);
+        // 3 resends 5 s apart, then given up on and reported
+        for _ in 0..4 {
+            c.unacked.get_mut(&login).expect("unacked").sent -= Duration::from_secs(6);
+            c.tick(&sock, &stats);
+        }
+        assert!(!c.is_unacked(login));
+        assert_eq!(c.take_dropped(), vec![login]);
+        assert!(c.take_dropped().is_empty());
     }
 }
