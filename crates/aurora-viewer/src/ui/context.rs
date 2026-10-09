@@ -949,23 +949,18 @@ pub fn external_link_confirm(ctx: &egui::Context, p: &Palette, url: &str, dont_w
             ui.checkbox(dont_warn, RichText::new("Ne plus me prévenir").size(12.5).color(p.muted));
             ui.add_space(8.0);
         }
-        ui.horizontal(|ui| match danger {
-            // the safe choice first
-            Some(_) => {
-                if super::widgets::flat_button(ui, p, "Annuler").clicked() {
-                    answer = Some(false);
-                }
-                if super::widgets::flat_button(ui, p, "Visiter quand même").clicked() {
-                    answer = Some(true);
-                }
+        // the action, then « Annuler », like the other confirmations
+        ui.horizontal(|ui| {
+            let visit = if danger.is_some() {
+                "Visiter quand même"
+            } else {
+                "Visiter le lien"
+            };
+            if super::widgets::flat_button(ui, p, visit).clicked() {
+                answer = Some(true);
             }
-            None => {
-                if super::widgets::flat_button(ui, p, "Visiter le lien").clicked() {
-                    answer = Some(true);
-                }
-                if super::widgets::flat_button(ui, p, "Annuler").clicked() {
-                    answer = Some(false);
-                }
+            if super::widgets::flat_button(ui, p, "Annuler").clicked() {
+                answer = Some(false);
             }
         });
     });
