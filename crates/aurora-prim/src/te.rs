@@ -375,6 +375,30 @@ mod tests {
         assert!((te.faces[0].glow - 1.0).abs() < 1e-6);
     }
 
+    /// Hand-written bytes in LLPrimitive::packTEMessage's layout (not from
+    /// our packer): a multi-byte bitfield (face 8 = 0x82 0x00, big-endian
+    /// 7-bit groups) and a texture shared by faces 0 and 9 (0x84 0x01).
+    #[test]
+    fn parses_multibyte_bitfields_like_unpack_te_field() {
+        let mut v = build([1; 16], [2; 16]);
+        // replace the image field: default [1], face 8 -> [3], faces 0 + 9 -> [4]
+        let rest = v.split_off(16 + 1 + 16 + 1);
+        v.truncate(16);
+        v.extend_from_slice(&[0x82, 0x00]);
+        v.extend_from_slice(&[3; 16]);
+        v.extend_from_slice(&[0x84, 0x01]);
+        v.extend_from_slice(&[4; 16]);
+        v.push(0);
+        v.extend_from_slice(&rest);
+        let te = parse_texture_entry(&v).expect("parses");
+        assert_eq!(te.faces[8].texture, Uuid::from_bytes([3; 16]));
+        assert_eq!(te.faces[0].texture, Uuid::from_bytes([4; 16]));
+        assert_eq!(te.faces[9].texture, Uuid::from_bytes([4; 16]));
+        assert_eq!(te.faces[2].texture, Uuid::from_bytes([1; 16]), "the default for the others");
+        assert_eq!(te.faces[44].texture, Uuid::from_bytes([1; 16]));
+        assert_eq!(te.faces[5].scale_t, 2.0, "the following fields are read in step");
+    }
+
     #[test]
     fn garbage_is_safe() {
         for n in 0..80 {
