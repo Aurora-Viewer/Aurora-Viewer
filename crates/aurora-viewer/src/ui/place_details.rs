@@ -559,7 +559,9 @@ fn landmark_info(ui: &mut egui::Ui, c: &mut Ctx, place: &Place, item: Uuid, data
     });
     // "parcel_owner": the parcel's owner, a group with flag 0x4 (DRTSIM-453)
     ui.horizontal(|ui| {
-        label(ui, p, "Propriétaire :");
+        // "Owner:" in Firestorm; named apart from the landmark's owner below,
+        // on one line (wider than the label column)
+        ui.add(egui::Label::new(RichText::new("Propriétaire du terrain :").size(12.0).color(p.ink)).extend());
         match data {
             Shown::Parcel(d) => who(ui, c, d.owner, d.flags & 0x4 != 0),
             Shown::Loading => {
