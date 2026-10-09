@@ -175,10 +175,13 @@ ligne : ce qui est là est mis à jour, rien n'est réinstallé).
 résume les PR (« PR : 3 ouvertes · 1 CI · 1 en file · 1 rouge »), et une
 **notification Windows** signale une PR fusionnée, une CI qui passe au rouge,
 une PR sortie de la file de fusion, une nouvelle PR, ou `main` qui casse. Le
-panneau **Suivi des PR** (ou le raccourci « Aurora PR ») montre chaque PR :
-sa CI avec la durée qui défile, sa place dans la file de fusion, le verdict
-de la relecture de l'agent, et les dernières fusions. Il s'adapte à la
-largeur de la fenêtre : réduis-la et garde-la dans un coin de l'écran.
+panneau **Suivi des PR** (ou le raccourci « Aurora PR ») a trois sections :
+la **file de fusion** (place et durée), les **PR ouvertes** (CI avec la
+durée qui défile, verdict de la relecture de l'agent) et les **fusionnées
+récemment**, avec leur auteur. Il s'adapte à la
+taille de la fenêtre : réduis-la et garde-la dans un coin de l'écran (trop
+basse, elle cache d'abord les dernières fusions, puis fait défiler les PR
+avec la sélection).
 **↑ ↓** choisir, **Entrée** ouvrir la PR dans le navigateur, **R**
 rafraîchir. GitHub est interrogé toutes les 10 à 20 secondes, pas plus :
 le quota de GitHub (5 000 requêtes par heure) est partagé avec tes agents.
