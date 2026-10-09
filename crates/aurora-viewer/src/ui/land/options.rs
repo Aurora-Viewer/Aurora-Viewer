@@ -126,14 +126,14 @@ pub(super) fn show(
     let line = |ui: &mut egui::Ui, label: &str, body: &mut dyn FnMut(&mut egui::Ui)| {
         ui.horizontal(|ui| {
             ui.add_space(10.0);
-            ui.allocate_ui_with_layout(Vec2::new(150.0, 18.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+            super::fixed(ui, 150.0, |ui| {
                 ui.label(RichText::new(label).size(12.0).color(p.muted));
             });
             body(ui);
         });
     };
     let col = |ui: &mut egui::Ui, w: f32, body: &mut dyn FnMut(&mut egui::Ui)| {
-        ui.allocate_ui_with_layout(Vec2::new(w, 18.0), egui::Layout::left_to_right(egui::Align::Center), body);
+        super::fixed(ui, w, body);
     };
     line(ui, "Modifier le terrain :", &mut |ui| {
         col(ui, 130.0, &mut |ui| {

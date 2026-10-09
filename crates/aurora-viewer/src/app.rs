@@ -4324,6 +4324,12 @@ impl ApplicationHandler for App {
                 self.profile_ui.set_tab(id, tab.parse().unwrap_or(0));
                 self.panels.perf = false;
             }
+            // AURORA_DEMO_LAND=<onglet>[:owner]: About Land on that tab
+            if let Some((tab, _)) = crate::demo::land::scenario() {
+                self.land_ui.set_tab(&tab);
+                self.panels.about_land = true;
+                self.panels.perf = false;
+            }
             // AURORA_DEMO_CONV=1: the demo group chat with its participants
             if std::env::var_os("AURORA_DEMO_CONV").is_some() {
                 self.panels.chat = true;

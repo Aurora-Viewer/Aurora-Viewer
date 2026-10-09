@@ -57,7 +57,7 @@ commande en une ligne (`scripts/setup.ps1`, puis les outils) :
 | Crate | Rôle |
 |---|---|
 | `aurora-viewer` | L'application : boucle de fenêtre (winit), état du monde, scène, interface egui, agent, caméra, démo hors ligne |
-| `aurora-net` | Connexion (XML-RPC), circuits UDP, capabilities, file d'événements, téléchargement HTTP des assets ; tourne sur son propre runtime tokio. `session/object_actions.rs` : toucher / saisir / relâcher et inventaire d'objet (capability ou transfert UDP borné en mémoire) ; `task_inventory.rs` : parsing LLSD et fichier historique |
+| `aurora-net` | Connexion (XML-RPC), circuits UDP, capabilities, file d'événements, téléchargement HTTP des assets ; tourne sur son propre runtime tokio. `session/object_actions.rs` : toucher / saisir / relâcher et inventaire d'objet (capability ou transfert UDP borné en mémoire) ; `task_inventory.rs` : parsing LLSD et fichier historique ; `land.rs`, `session_land.rs` : messages des parcelles (« À propos du terrain ») |
 | `aurora-msg` | Système de messages UDP de SL : trames, zerocoding, messages typés générés depuis `message_template.msg` (build.rs) |
 | `aurora-llsd` | Type LLSD et ses formats XML / binaire / notation |
 | `aurora-prim` | Modèle des prims : paramètres de volume, faces, paramètres étendus, génération de la géométrie (port de `llvolume`) |
@@ -84,15 +84,15 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
 | `cli.rs` | Arguments de ligne de commande (`--title`) |
 | `agent.rs` | Notre avatar (AgentUpdate, extrapolation depuis vitesse / accélération serveur, lissage comme LLDrawable) |
 | `camera/` | La caméra comme LLAgentCamera : vue derrière l'avatar, caméra Alt sur un point ou un objet (`focus.rs`), caméra de siège, vue subjective, transitions, lissage, recul en vol, collision envoyée par le simulateur ; réglages Firestorm (`settings.rs`), scénarios de démo (`demo.rs`) |
-| `world/` | État du monde reçu du réseau : objets, régions, terrain, environnement (EEP), social, profils des avatars, inventaire, groupes, blocages, messages du bridge LSL de Firestorm (cachés), orientation des corps, regard (LookAt), carte… |
+| `world/` | État du monde reçu du réseau : objets, régions, terrain, environnement (EEP), parcelle sélectionnée d'« À propos du terrain » et ses droits (`land.rs`), social, profils des avatars, inventaire, groupes, blocages, messages du bridge LSL de Firestorm (cachés), orientation des corps, regard (LookAt), carte… |
 | `scene/` | Ce qu'on envoie au GPU : géométrie et LOD, textures (streaming), avatars (squelette, animations, silhouette), particules, eau, sondes de reflets, sons du monde, imposteurs |
-| `ui/` | Interface egui : barres, fenêtres, options, chat, profils des avatars, page web dans une fenêtre (`web_view.rs`), choix d'une texture, inventaire, cartes, overlays de débogage ; sons causés par les widgets (`sound_cues.rs` : clics, touches refusées, fenêtres) |
+| `ui/` | Interface egui : barres, fenêtres, options, chat, profils des avatars, « À propos du terrain » (`land/`, un fichier par onglet, dialogues), choix d'un résident (`avatar_picker.rs`), page web dans une fenêtre (`web_view.rs`), choix d'une texture, inventaire, cartes, overlays de débogage ; sons causés par les widgets (`sound_cues.rs` : clics, touches refusées, fenêtres) |
 | `build/` | Outils de construction (édition d'objets, terrain) |
 | `interaction.rs`, `cursors.rs`, `ui/object_actions.rs` | Règles des actions de clic 0–9, héritage, permissions, curseurs natifs Firestorm, fenêtres d'achat / paiement et liste du contenu ; transaction après confirmation |
 | `app/object_actions.rs` | Déclenchement des actions, toucher maintenu, déplacement physique, lecture de parcelle, ouverture de média et cadrage de caméra |
 | `scene/picking.rs` | Rayons contre les triangles partagés avec la géométrie affichée (prims, sculpts, meshes) ; IGNORE traverse la géométrie hors construction, informations de surface pour les scripts de toucher |
 | `media/` | Médias des prims et des parcelles, cookie OpenID des pages web de la grille (`openid.rs`) |
-| `demo.rs` | Le mode démo : une scène locale qui simule un serveur |
+| `demo.rs`, `demo_land.rs` | Le mode démo : une scène locale qui simule un serveur (et ses réponses à « À propos du terrain ») |
 | `settings.rs`, `keybinds.rs`, `keybinds/layout.rs`, `theme.rs` | Réglages enregistrés, raccourcis, disposition Windows et touches de déplacement par défaut, palette |
 | `ui_sound.rs` | Catalogue des sons de l'interface (UISnd* de Firestorm), réglages par son |
 | `logging.rs`, `cache.rs`, `credentials.rs` | Logs, cache disque, mot de passe retenu (coffre de l'OS) |

@@ -28,7 +28,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
     let wide = 210.0;
     let line = |ui: &mut egui::Ui, label: &str, value: String| {
         ui.horizontal(|ui| {
-            ui.allocate_ui_with_layout(Vec2::new(wide, 20.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+            super::fixed(ui, wide, |ui| {
                 ui.label(RichText::new(label).size(12.0).color(p.muted));
             });
             text(ui, p, value);
@@ -57,10 +57,10 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
     ] {
         ui.horizontal(|ui| {
             ui.add_space(18.0);
-            ui.allocate_ui_with_layout(Vec2::new(wide - 26.0, 20.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+            super::fixed(ui, wide - 26.0, |ui| {
                 ui.label(RichText::new(label).size(12.0).color(p.muted));
             });
-            ui.allocate_ui_with_layout(Vec2::new(60.0, 20.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+            super::fixed(ui, 60.0, |ui| {
                 text(ui, p, count.to_string());
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -78,7 +78,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
     }
     ui.horizontal(|ui| {
         ui.add_space(18.0);
-        ui.allocate_ui_with_layout(Vec2::new(wide - 26.0, 20.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+        super::fixed(ui, wide - 26.0, |ui| {
             ui.label(RichText::new("Sélectionnées/où quelqu'un est assis :").size(12.0).color(p.muted));
         });
         text(ui, p, parcel.selected_prims.to_string());
@@ -146,18 +146,20 @@ fn owners_list(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, world: &mut World
             let (rect, r) = ui.allocate_exact_size(Vec2::new(w, 20.0), egui::Sense::click());
             ui.painter().rect_filled(rect, 0.0, p.field);
             let (sort_col, sort_asc) = s.owner_sort.unwrap_or(DEFAULT_SORT);
-            let arrow = if sort_col == i {
-                if sort_asc { " ▲" } else { " ▼" }
-            } else {
-                ""
-            };
-            ui.painter().text(
+            let g = ui.painter().text(
                 rect.left_center() + Vec2::new(6.0, 0.0),
                 egui::Align2::LEFT_CENTER,
-                format!("{label}{arrow}"),
+                *label,
                 egui::FontId::proportional(12.0),
                 p.muted,
             );
+            if sort_col == i {
+                // sort arrow, drawn (the fonts have no triangles)
+                let c = egui::pos2(g.right() + 8.0, rect.center().y);
+                let (a, b) = if sort_asc { (-3.0, 2.0) } else { (3.0, -2.0) };
+                let pts = vec![c + Vec2::new(0.0, a), c + Vec2::new(-3.5, b), c + Vec2::new(3.5, b)];
+                ui.painter().add(egui::Shape::convex_polygon(pts, p.muted, egui::Stroke::NONE));
+            }
             if r.clicked() {
                 s.owner_sort = Some(if sort_col == i { (i, !sort_asc) } else { (i, true) });
             }

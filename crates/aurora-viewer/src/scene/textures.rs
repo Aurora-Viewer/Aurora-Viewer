@@ -283,6 +283,11 @@ impl TextureStreamer {
             return;
         }
         if self.ui_wanted.insert(id) {
+            // procedural textures of the offline demo are never streamed
+            if let Some((px, w, h)) = crate::demo::local_texture(&id) {
+                self.ui_ready.insert(id, (w, h, px));
+                return;
+            }
             let _ = self.acquire(renderer, id, TexSource::Asset);
         }
         self.note_usage(&id, 256.0);

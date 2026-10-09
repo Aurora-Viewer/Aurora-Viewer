@@ -8,7 +8,6 @@ use crate::theme::Palette;
 use crate::world::World;
 use crate::world::land::powers;
 use aurora_net::{parcel_flags as pf, region_flags as rf};
-use egui::Vec2;
 
 /// The music URL as onCommitAny sends it: trimmed, "http://" added when
 /// there is no scheme.
@@ -48,14 +47,21 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
         s.music_url.sync(&parcel.music_url);
         let r = ui.add_enabled(
             can_media,
-            egui::TextEdit::singleline(&mut s.music_url.text).desired_width(ui.available_width() - 4.0 * 26.0),
+            egui::TextEdit::singleline(&mut s.music_url.text).desired_width(ui.available_width() - 4.0 * 32.0),
         );
         if let Some(u) = s.music_url.after(&r) {
             commit = Some(u);
         }
         // the combo's drop-down: the parcel's URL, then the saved streams
         ui.add_enabled_ui(can_media, |ui| {
-            ui.menu_button("▾", |ui| {
+            let img = super::super::icons::global("caret-down").map(|t| {
+                egui::Image::from_texture(egui::load::SizedTexture::new(t.id(), egui::Vec2::splat(14.0))).tint(p.muted)
+            });
+            let button = match img {
+                Some(img) => egui::Button::image(img),
+                None => egui::Button::new("v"),
+            };
+            egui::containers::menu::MenuButton::from_button(button).ui(ui, |ui| {
                 ui.set_min_width(320.0);
                 if ui.button(parcel.music_url.as_str()).clicked() {
                     ui.close();
@@ -115,7 +121,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
     });
     super::row(ui, p, "Sons d'avatar :", |ui| {
         let can_av = v.can(powers::LAND_OPTIONS) && parcel.have_new_parcel_limit_data;
-        ui.allocate_ui_with_layout(Vec2::new(130.0, 18.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+        super::fixed(ui, 130.0, |ui| {
             let (_, on) = check(ui, can_av, any_av, "Tout le monde");
             any_av = on;
         });

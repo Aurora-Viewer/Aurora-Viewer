@@ -24,8 +24,12 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
     row(ui, p, "Nom :", |ui| {
         s.name.sync(&parcel.name);
         let r = ui.add_enabled(can_identity, egui::TextEdit::singleline(&mut s.name.text).desired_width(f32::INFINITY));
-        // validateASCIIPrintableNoPipe
-        s.name.text.retain(|c| (' '..='~').contains(&c) && c != '|');
+        // validateASCIIPrintableNoPipe, on what is typed (a name set
+        // elsewhere keeps its other characters)
+        if r.changed() {
+            let base = s.name.base.clone();
+            s.name.text.retain(|c| ((' '..='~').contains(&c) && c != '|') || base.contains(c));
+        }
         if let Some(name) = s.name.after(&r) {
             world.land.update(|u| u.name = name);
         }
@@ -210,15 +214,13 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
     let release = v.owns(powers::LAND_RELEASE) || (estate_manager && v.region.as_ref().is_some_and(|r| parcel.owner_id != r.owner));
     // a pass: someone else's land selling passes (not while banned)
     let use_pass = parcel.owner_id != agent && parcel.flags & pf::USE_PASS_LIST != 0;
-    ui.columns(2, |cols| {
-        cols[0].horizontal(|ui| {
-            button(ui, p, "Acheter le terrain", false).on_disabled_hover_text(if buy {
-                NOT_YET
-            } else {
-                "Ce terrain n'est pas à vendre pour vous."
-            });
+    ui.horizontal(|ui| {
+        button(ui, p, "Acheter le terrain", false).on_disabled_hover_text(if buy {
+            NOT_YET
+        } else {
+            "Ce terrain n'est pas à vendre pour vous."
         });
-        cols[1].with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if region_owner {
                 // reclaimParcel: the region owner takes back someone's parcel
                 if button(ui, p, "Récupérer le terrain", !is_public && parcel.owner_id != agent).clicked() {
@@ -229,19 +231,17 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
             }
         });
     });
-    ui.columns(2, |cols| {
-        cols[0].horizontal(|ui| {
-            if v.region.as_ref().is_some_and(|r| r.has_land_resources) {
-                button(ui, p, "Infos sur les scripts", false).on_disabled_hover_text(NOT_YET);
-            }
-            if button(ui, p, "Acheter un pass", use_pass)
-                .on_hover_text("Un pass vous donne un accès temporaire à ce terrain.")
-                .clicked()
-            {
-                s.dialog = Some(Dialog::Confirm(Confirm::BuyPass));
-            }
-        });
-        cols[1].with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+    ui.horizontal(|ui| {
+        if v.region.as_ref().is_some_and(|r| r.has_land_resources) {
+            button(ui, p, "Infos sur les scripts", false).on_disabled_hover_text(NOT_YET);
+        }
+        if button(ui, p, "Acheter un pass", use_pass)
+            .on_hover_text("Un pass vous donne un accès temporaire à ce terrain.")
+            .clicked()
+        {
+            s.dialog = Some(Dialog::Confirm(Confirm::BuyPass));
+        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             button(ui, p, "Acheter pour le groupe", buy_group).on_disabled_hover_text(NOT_YET);
         });
     });

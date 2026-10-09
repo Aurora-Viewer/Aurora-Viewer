@@ -63,24 +63,45 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
                         let list_h = half_h - 30.0;
                         egui::Frame::new().fill(p.field).show(ui, |ui| {
                             ui.set_width(list_w);
+                            ui.set_max_width(list_w);
                             ui.set_min_height(list_h);
                             egui::ScrollArea::vertical()
                                 .id_salt(("land_xp", kind))
                                 .max_height(list_h)
                                 .auto_shrink([false, false])
                                 .show(ui, |ui| {
-                                    if list.is_empty() {
-                                        ui.label(RichText::new("(vide)").size(12.0).color(p.muted));
-                                    }
-                                    for id in list {
-                                        let name = world.land.experience_name(id).unwrap_or_else(|| "Chargement...".into());
-                                        if ui.selectable_label(*selected == Some(*id), RichText::new(name).size(12.0)).clicked() {
-                                            *selected = Some(*id);
+                                    ui.vertical(|ui| {
+                                        ui.set_width(list_w - 12.0);
+                                        if list.is_empty() {
+                                            ui.label(RichText::new("(vide)").size(12.0).color(p.muted));
                                         }
-                                    }
+                                        for id in list {
+                                            let name = world.land.experience_name(id).unwrap_or_else(|| "Chargement...".into());
+                                            let (rect, r) = ui.allocate_exact_size(Vec2::new(list_w - 12.0, 20.0), egui::Sense::click());
+                                            let fill = if *selected == Some(*id) {
+                                                p.violet.gamma_multiply(0.6)
+                                            } else if r.hovered() {
+                                                p.raised
+                                            } else {
+                                                p.field
+                                            };
+                                            ui.painter().rect_filled(rect, 0.0, fill);
+                                            ui.painter().text(
+                                                rect.left_center() + Vec2::new(6.0, 0.0),
+                                                egui::Align2::LEFT_CENTER,
+                                                name,
+                                                egui::FontId::proportional(12.0),
+                                                p.ink,
+                                            );
+                                            if r.clicked() {
+                                                *selected = Some(*id);
+                                            }
+                                        }
+                                    });
                                 });
                         });
                         ui.vertical(|ui| {
+                            ui.set_min_width(90.0);
                             // the experience picker and profile are not ported yet
                             super::button(ui, p, "Ajouter...", false).on_disabled_hover_text(NOT_YET);
                             if super::button(ui, p, "Supprimer", editable && selected.is_some()).clicked() {

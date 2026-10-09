@@ -39,7 +39,8 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, v: &View, world: &mut World) 
         });
     // covenant_timestamp_text, right-aligned
     if let Some(c) = &covenant {
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        let w = ui.available_width();
+        ui.allocate_ui_with_layout(egui::vec2(w, 18.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let when = if c.timestamp == 0 {
                 " (jamais)".to_owned()
             } else {

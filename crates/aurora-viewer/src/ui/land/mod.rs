@@ -62,7 +62,7 @@ impl Tab {
 }
 
 /// Width of the left column of labels (left="10" width="100" in the XML).
-const KEY_W: f32 = 112.0;
+const KEY_W: f32 = 140.0;
 
 /// A text field being edited against the server's value: it follows the
 /// parcel until it has the focus, and commits when it loses it (or on
@@ -217,6 +217,29 @@ impl LandUi {
         }
     }
 
+    /// Show a tab by its French name or its index (demo captures).
+    pub fn set_tab(&mut self, name: &str) {
+        let all = [
+            Tab::General,
+            Tab::Covenant,
+            Tab::Objects,
+            Tab::Options,
+            Tab::Media,
+            Tab::Sound,
+            Tab::Access,
+            Tab::Experiences,
+            Tab::Environment,
+        ];
+        let key = name.trim().to_lowercase();
+        let by_name = |t: &&Tab| {
+            let l = t.label().to_lowercase();
+            l == key || l.replace(['é', 'è'], "e") == key
+        };
+        if let Some(t) = all.iter().find(by_name).or_else(|| key.parse::<usize>().ok().and_then(|i| all.get(i))) {
+            self.tab = *t;
+        }
+    }
+
     /// LLFloaterLand::onOpen: no selection, the agent's parcel.
     fn select_agent_parcel(world: &mut World) {
         if let Some(h) = world.main_region {
@@ -262,7 +285,7 @@ impl LandUi {
         }
         let view = self.view(world);
         let screen = ctx.content_rect();
-        let size = Vec2::new(600.0, 470.0);
+        let size = Vec2::new(620.0, 560.0);
         let mut floater = Floater::new(
             "about_land",
             "À propos du terrain",
@@ -270,7 +293,7 @@ impl LandUi {
             size,
         )
         .help("Informations et réglages de la parcelle sélectionnée");
-        floater.min_size = Vec2::new(560.0, 440.0);
+        floater.min_size = Vec2::new(580.0, 500.0);
         floater.show(ctx, p, open, |ui| {
             // FIRE-17280: no experiences tab where the region has none
             let has_xp = demo
@@ -302,13 +325,24 @@ impl LandUi {
             let mut child = ui.new_child(egui::UiBuilder::new().max_rect(body).layout(egui::Layout::top_down(egui::Align::Min)));
             child.set_clip_rect(body.intersect(ui.clip_rect()));
             let ui = &mut child;
-            ui.spacing_mut().item_spacing.y = 5.0;
+            ui.spacing_mut().item_spacing.y = 4.0;
+            // the tabs made of rows scroll when the window is small; the
+            // others size their lists to the height left
+            let scroll = |ui: &mut egui::Ui, body: &mut dyn FnMut(&mut egui::Ui)| {
+                egui::ScrollArea::vertical()
+                    .id_salt("about_land_body")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width() - 6.0);
+                        body(ui)
+                    });
+            };
             match self.tab {
-                Tab::General => general::show(ui, p, self, &view, world),
+                Tab::General => scroll(ui, &mut |ui| general::show(ui, p, self, &view, world)),
                 Tab::Covenant => covenant::show(ui, p, &view, world),
                 Tab::Objects => objects::show(ui, p, self, &view, world),
-                Tab::Options => options::show(ui, p, self, &view, world, images),
-                Tab::Media => media::show(ui, p, self, &view, world, images),
+                Tab::Options => scroll(ui, &mut |ui| options::show(ui, p, self, &view, world, images)),
+                Tab::Media => scroll(ui, &mut |ui| media::show(ui, p, self, &view, world, images)),
                 Tab::Sound => streams_changed = sound::show(ui, p, self, &view, world, streams),
                 Tab::Access => access::show(ui, p, self, &view, world),
                 Tab::Experiences => experiences::show(ui, p, self, &view, world),
@@ -391,9 +425,19 @@ fn no_selection(ui: &mut egui::Ui, p: &Palette) {
 
 /// The label of a row, in the left column.
 fn key(ui: &mut egui::Ui, p: &Palette, text: &str) {
-    ui.allocate_ui_with_layout(Vec2::new(KEY_W, 20.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+    fixed(ui, KEY_W, |ui| {
         ui.add(egui::Label::new(RichText::new(text).size(12.0).color(p.muted)).truncate());
     });
+}
+
+/// A cell of a fixed width in a row (allocate_ui_with_layout alone
+/// shrinks to its content).
+fn fixed<R>(ui: &mut egui::Ui, width: f32, body: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    ui.allocate_ui_with_layout(Vec2::new(width, 18.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+        ui.set_min_width(width);
+        body(ui)
+    })
+    .inner
 }
 
 /// A row: label then content.
