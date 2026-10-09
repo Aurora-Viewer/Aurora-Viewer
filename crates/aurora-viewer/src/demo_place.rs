@@ -181,14 +181,50 @@ pub fn parcel_info(id: Uuid) -> Option<NetEvent> {
 
 /// The demo landmarks: (folder, name, region grid, position, created at).
 const LANDMARKS: &[(u128, &str, (u32, u32), [f32; 3], i64)] = &[
-    (LANDMARKS_FOLDER, "Plage d'Aurora", (1000, 1000), [140.0, 120.0, 25.0], 1_712_068_948),
-    (LANDMARKS_FOLDER, "Lagune des aurores", (1001, 1000), [60.0, 200.0, 22.0], 1_740_000_000),
-    (LANDMARKS_FOLDER, "Halle de Nordheim", (1000, 1001), [128.0, 64.0, 40.0], 1_759_900_000),
+    (
+        LANDMARKS_FOLDER,
+        "Plage d'Aurora",
+        (1000, 1000),
+        [140.0, 120.0, 25.0],
+        1_712_068_948,
+    ),
+    (
+        LANDMARKS_FOLDER,
+        "Lagune des aurores",
+        (1001, 1000),
+        [60.0, 200.0, 22.0],
+        1_740_000_000,
+    ),
+    (
+        LANDMARKS_FOLDER,
+        "Halle de Nordheim",
+        (1000, 1001),
+        [128.0, 64.0, 40.0],
+        1_759_900_000,
+    ),
     (LANDMARKS_FOLDER, "Pinède", (999, 1000), [200.0, 30.0, 24.0], 1_700_000_000),
     (SHOPS_FOLDER, "Atelier du Loup", (1000, 1000), [60.0, 200.0, 22.0], 1_750_000_000),
-    (SHOPS_FOLDER, "Marché de la Place", (1000, 1000), [128.0, 128.0, 25.0], 1_745_000_000),
-    (FAVORITES_FOLDER, "Place d'Aurora", (1000, 1000), [128.0, 128.0, 25.0], 1_712_068_948),
-    (FAVORITES_FOLDER, "Lagune des aurores", (1001, 1000), [60.0, 200.0, 22.0], 1_740_000_000),
+    (
+        SHOPS_FOLDER,
+        "Marché de la Place",
+        (1000, 1000),
+        [128.0, 128.0, 25.0],
+        1_745_000_000,
+    ),
+    (
+        FAVORITES_FOLDER,
+        "Place d'Aurora",
+        (1000, 1000),
+        [128.0, 128.0, 25.0],
+        1_712_068_948,
+    ),
+    (
+        FAVORITES_FOLDER,
+        "Lagune des aurores",
+        (1001, 1000),
+        [60.0, 200.0, 22.0],
+        1_740_000_000,
+    ),
 ];
 
 /// Item and asset ids of the n-th demo landmark.
@@ -210,7 +246,9 @@ pub fn landmark_asset(asset: Uuid) -> Option<String> {
 
 /// FetchInventoryDescendents2 answer for the landmark folders.
 pub fn folder_contents(folder_id: Uuid, owner: Uuid) -> Option<FolderContents> {
-    let n = [LANDMARKS_FOLDER, FAVORITES_FOLDER, SHOPS_FOLDER].into_iter().find(|n| u(*n) == folder_id)?;
+    let n = [LANDMARKS_FOLDER, FAVORITES_FOLDER, SHOPS_FOLDER]
+        .into_iter()
+        .find(|n| u(*n) == folder_id)?;
     let folders = if n == LANDMARKS_FOLDER {
         vec![InvFolder {
             id: u(SHOPS_FOLDER),
@@ -280,6 +318,10 @@ pub fn history() -> Vec<HistoryItem> {
         item("Atelier du Loup, Aurora Démo", at((1000, 1000), 60.0, 200.0, 22.0), 12.0 * DAY),
         item("Pinède", at((999, 1000), 200.0, 30.0, 24.0), 3.2 * DAY),
         item("Halle de Nordheim, Nordheim", at((1000, 1001), 128.0, 64.0, 40.0), 1.1 * DAY),
-        item("Lagune des aurores, Lagune Boréale", at((1001, 1000), 60.0, 200.0, 22.0), 3.0 * 3600.0),
+        item(
+            "Lagune des aurores, Lagune Boréale",
+            at((1001, 1000), 60.0, 200.0, 22.0),
+            3.0 * 3600.0,
+        ),
     ]
 }

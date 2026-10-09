@@ -360,7 +360,10 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
     });
     ui.menu_button(small("Monde", p.ink), |ui| {
         // menu_viewer.xml: Historique de téléportation (Alt+H), Lieux
-        if ui.add(egui::Button::new("Historique de téléportation").shortcut_text("Alt+H")).clicked() {
+        if ui
+            .add(egui::Button::new("Historique de téléportation").shortcut_text("Alt+H"))
+            .clicked()
+        {
             *action = BarAction::TeleportHistory;
             ui.close();
         }

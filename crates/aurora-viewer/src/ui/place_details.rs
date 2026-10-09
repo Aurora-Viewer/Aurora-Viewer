@@ -38,7 +38,10 @@ pub enum PlaceAction {
     Teleport(DVec3),
     /// A landmark: TeleportFromLandmark confirmation, then
     /// teleport_via_landmark.
-    TeleportLandmark { asset: Uuid, name: String },
+    TeleportLandmark {
+        asset: Uuid,
+        name: String,
+    },
     /// onShowOnMapButtonClicked: trackLocation, world map centered on it.
     ShowOnMap(DVec3),
     Close(u64),
@@ -288,13 +291,25 @@ fn window_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, place: &Place, 
     let global = place.global;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 3.0;
-        if button(ui, p, "Téléporter", "Se téléporter à l'emplacement indiqué", global.is_some(), 108.0)
-            && let Some(a) = teleport_action(place, world)
+        if button(
+            ui,
+            p,
+            "Téléporter",
+            "Se téléporter à l'emplacement indiqué",
+            global.is_some(),
+            108.0,
+        ) && let Some(a) = teleport_action(place, world)
         {
             actions.push(a);
         }
-        if button(ui, p, "Carte", "Voir l'emplacement correspondant sur la carte", global.is_some(), 85.0)
-            && let Some(g) = global
+        if button(
+            ui,
+            p,
+            "Carte",
+            "Voir l'emplacement correspondant sur la carte",
+            global.is_some(),
+            85.0,
+        ) && let Some(g) = global
         {
             actions.push(PlaceAction::ShowOnMap(g));
         }
@@ -358,8 +373,12 @@ fn snapshot(ui: &mut egui::Ui, c: &mut Ctx, data: &Shown) {
 fn small_icon(ui: &mut egui::Ui, name: &str, size: f32, tint: egui::Color32) {
     if let Some(t) = super::icons::global(name) {
         let (r, _) = ui.allocate_exact_size(Vec2::splat(size), egui::Sense::hover());
-        ui.painter()
-            .image(t.id(), r, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), tint);
+        ui.painter().image(
+            t.id(),
+            r,
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            tint,
+        );
     }
 }
 
@@ -379,20 +398,29 @@ fn titles(data: &Shown, place: &Place) -> (String, Option<String>) {
     }
 }
 
-/// "maturity_icon" / "maturity_value".
+/// "maturity_icon" / "maturity_value", icon first in reading order (a
+/// right-to-left layout draws its first widget at the right).
 fn maturity_row(ui: &mut egui::Ui, p: &Palette, data: &Shown) {
-    match data {
-        Shown::Parcel(d) => {
-            let m = maturity(d.flags);
-            widgets::maturity_badge(ui, p, m, 16.0);
-            ui.label(RichText::new(m).size(12.5).color(p.ink));
+    let (icon, text, known): (Option<&str>, &str, bool) = match data {
+        Shown::Parcel(d) => (None, maturity(d.flags), true),
+        Shown::Loading => (Some("question"), LOADING, false),
+        Shown::Failed(_) => (Some("question"), NOT_AVAILABLE, false),
+    };
+    let rtl = ui.layout().prefer_right_to_left();
+    let draw_icon = |ui: &mut egui::Ui| match icon {
+        // Unknown_Icon
+        Some(i) => small_icon(ui, i, 16.0, p.muted),
+        None => {
+            widgets::maturity_badge(ui, p, text, 16.0);
         }
-        other => {
-            // Unknown_Icon
-            small_icon(ui, "question", 16.0, p.muted);
-            let text = if matches!(other, Shown::Loading) { LOADING } else { NOT_AVAILABLE };
-            ui.label(RichText::new(text).size(12.5).color(p.muted));
-        }
+    };
+    let label = RichText::new(text).size(12.5).color(if known { p.ink } else { p.muted });
+    if rtl {
+        ui.label(label);
+        draw_icon(ui);
+    } else {
+        draw_icon(ui);
+        ui.label(label);
     }
 }
 
@@ -497,9 +525,11 @@ fn who(ui: &mut egui::Ui, c: &mut Ctx, id: Uuid, group: bool) {
         c.want_names.insert(id);
         c.world.social.name_of(&id)
     };
-    let link = ui.add(
-        egui::Link::new(RichText::new(name).size(12.0).color(super::colors::c(super::colors::get().chat_slurl))),
-    );
+    let link = ui.add(egui::Link::new(
+        RichText::new(name)
+            .size(12.0)
+            .color(super::colors::c(super::colors::get().chat_slurl)),
+    ));
     if !group && link.clicked() {
         super::profile::request_open(ui.ctx(), id);
     }
@@ -508,6 +538,9 @@ fn who(ui: &mut egui::Ui, c: &mut Ctx, id: Uuid, group: bool) {
 /// panel_landmark_info.xml in LANDMARK mode, top to bottom.
 fn landmark_info(ui: &mut egui::Ui, c: &mut Ctx, place: &Place, item: Uuid, data: &Shown) {
     let p = c.p;
+    // the 15 px lines of panel_landmark_info.xml
+    ui.spacing_mut().item_spacing.y = 3.0;
+    ui.spacing_mut().interact_size.y = 16.0;
     let width = ui.available_width();
     let (parcel_name, region) = titles(data, place);
     ui.add(egui::Label::new(RichText::new(parcel_name).size(15.0).strong().color(p.ink)).truncate());
@@ -516,7 +549,7 @@ fn landmark_info(ui: &mut egui::Ui, c: &mut Ctx, place: &Place, item: Uuid, data
     ui.allocate_ui_with_layout(Vec2::new(width, 18.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
-            ui.horizontal(|ui| maturity_row(ui, p, data));
+            maturity_row(ui, p, data);
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 if let Some(r) = region {
                     ui.add(egui::Label::new(RichText::new(r).size(12.0).color(p.muted)).truncate());
@@ -595,9 +628,11 @@ fn landmark_info(ui: &mut egui::Ui, c: &mut Ctx, place: &Place, item: Uuid, data
     );
     ui.add_space(4.0);
     // setCanEdit: an item of our inventory we may modify
-    ui.add_enabled_ui(false, |ui| button(ui, p, "Modifier", "Modifier les informations relatives au repère", true, 100.0))
-        .response
-        .on_disabled_hover_text(super::menu::NOT_YET);
+    ui.add_enabled_ui(false, |ui| {
+        button(ui, p, "Modifier", "Modifier les informations relatives au repère", true, 100.0)
+    })
+    .response
+    .on_disabled_hover_text(super::menu::NOT_YET);
 }
 
 #[cfg(test)]

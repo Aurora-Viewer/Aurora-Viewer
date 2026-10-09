@@ -64,11 +64,16 @@ pub enum PlaceError {
 pub enum Stage {
     /// A place link waiting for its region's grid position (MapNameRequest
     /// sent then).
-    Region { since: Instant },
+    Region {
+        since: Instant,
+    },
     /// A landmark waiting for its asset or its region's handle.
     Landmark,
     /// RemoteParcelRequest sent for (slot handle, position in the region).
-    ParcelId { handle: RegionHandle, position: Vec3 },
+    ParcelId {
+        handle: RegionHandle,
+        position: Vec3,
+    },
     /// ParcelInfoRequest sent; the answer is `World::profiles.parcels[id]`.
     Info(Uuid),
     Failed(PlaceError),
@@ -124,7 +129,11 @@ fn slot_handle(gx: f64, gy: f64) -> RegionHandle {
 /// LLPanelPlaceInfo::displayParcelInfo(region_id, pos_global): the position
 /// in the region is the global one modulo the region width.
 fn region_pos_of(global: DVec3) -> Vec3 {
-    Vec3::new(global.x.rem_euclid(256.0) as f32, global.y.rem_euclid(256.0) as f32, global.z as f32)
+    Vec3::new(
+        global.x.rem_euclid(256.0) as f32,
+        global.y.rem_euclid(256.0) as f32,
+        global.z as f32,
+    )
 }
 
 #[derive(Debug, Default)]
@@ -217,7 +226,11 @@ impl PlaceDetails {
         place.global = Some(global);
         place.region_pos = position;
         place.stage = Stage::ParcelId { handle, position };
-        out.push(NetCommand::RemoteParcelRequest { handle, position, region_id });
+        out.push(NetCommand::RemoteParcelRequest {
+            handle,
+            position,
+            region_id,
+        });
     }
 
     /// The region of a waiting place link is known: send RemoteParcelRequest.
@@ -346,7 +359,12 @@ mod tests {
         let now = Instant::now();
         let mut lm = Landmarks::default();
         let mut d = PlaceDetails::default();
-        let s = d.open_window(link("Aurora Démo", Vec3::new(140.0, 120.0, 25.0)), &WorldMap::default(), &mut lm, now);
+        let s = d.open_window(
+            link("Aurora Démo", Vec3::new(140.0, 120.0, 25.0)),
+            &WorldMap::default(),
+            &mut lm,
+            now,
+        );
         assert!(matches!(&d.take_commands()[..], [NetCommand::MapNameRequest { name }] if name == "aurora démo"));
         assert!(d.windows[0].global.is_none());
         let map = map_with("Aurora Démo", 1000, 1000);
@@ -356,9 +374,7 @@ mod tests {
         assert_eq!(place.global, Some(DVec3::new(256_140.0, 256_120.0, 25.0)));
         let handle = aurora_net::origin_to_handle(256_000, 256_000);
         let cmds = d.take_commands();
-        assert!(
-            matches!(&cmds[..], [NetCommand::RemoteParcelRequest { handle: h, region_id, .. }] if *h == handle && region_id.is_nil())
-        );
+        assert!(matches!(&cmds[..], [NetCommand::RemoteParcelRequest { handle: h, region_id, .. }] if *h == handle && region_id.is_nil()));
         let parcel = Uuid::from_u128(0x9A2C);
         d.apply_remote_parcel(handle, Vec3::new(140.0, 120.0, 25.0), Ok(parcel));
         assert_eq!(d.windows[0].parcel(), Some(parcel));
@@ -393,7 +409,10 @@ mod tests {
         d.update(&WorldMap::default(), &mut lm, now + Duration::from_secs(2));
         assert!(matches!(d.panel.as_ref().map(|p| &p.stage), Some(Stage::Region { .. })));
         d.update(&WorldMap::default(), &mut lm, now + REGION_TIMEOUT);
-        assert_eq!(d.panel.as_ref().map(|p| p.stage.clone()), Some(Stage::Failed(PlaceError::UnknownRegion)));
+        assert_eq!(
+            d.panel.as_ref().map(|p| p.stage.clone()),
+            Some(Stage::Failed(PlaceError::UnknownRegion))
+        );
 
         let map = map_with("Faille", 1001, 1001);
         let mut d = PlaceDetails::default();
@@ -405,7 +424,10 @@ mod tests {
         d.apply_remote_parcel(handle, Vec3::ZERO, Err(RemoteParcelError::Status(404)));
         assert!(matches!(d.windows[0].stage, Stage::ParcelId { .. }));
         d.apply_remote_parcel(handle, position, Err(RemoteParcelError::Status(404)));
-        assert_eq!(d.windows[0].stage, Stage::Failed(PlaceError::Remote(RemoteParcelError::Status(404))));
+        assert_eq!(
+            d.windows[0].stage,
+            Stage::Failed(PlaceError::Remote(RemoteParcelError::Status(404)))
+        );
         assert!(d.take_commands().is_empty());
     }
 
@@ -435,17 +457,31 @@ mod tests {
         let mut d = PlaceDetails::default();
         let map = WorldMap::default();
         let now = Instant::now();
-        d.open_panel(Source::Landmark { item: Uuid::from_u128(1), asset }, &map, &mut lm, now);
+        d.open_panel(
+            Source::Landmark {
+                item: Uuid::from_u128(1),
+                asset,
+            },
+            &map,
+            &mut lm,
+            now,
+        );
         assert!(d.take_commands().is_empty());
         assert_eq!(lm.take_wanted().len(), 1);
-        lm.on_data(asset, Some(format!("Landmark version 2\nregion_id {region}\nlocal_pos 148 195 24\n").as_bytes()));
+        lm.on_data(
+            asset,
+            Some(format!("Landmark version 2\nregion_id {region}\nlocal_pos 148 195 24\n").as_bytes()),
+        );
         d.update(&map, &mut lm, now);
         assert!(matches!(&lm.take_commands()[..], [NetCommand::RegionHandleRequest(r)] if *r == region));
         lm.on_region_handle(region, aurora_net::origin_to_handle(256_512, 256_000));
         d.update(&map, &mut lm, now);
         let cmds = d.take_commands();
         assert!(matches!(&cmds[..], [NetCommand::RemoteParcelRequest { region_id, .. }] if *region_id == region));
-        assert_eq!(d.panel.as_ref().and_then(|p| p.global), Some(DVec3::new(256_660.0, 256_195.0, 24.0)));
+        assert_eq!(
+            d.panel.as_ref().and_then(|p| p.global),
+            Some(DVec3::new(256_660.0, 256_195.0, 24.0))
+        );
 
         let broken = Uuid::from_u128(0xBAD);
         d.open_panel(
@@ -459,6 +495,9 @@ mod tests {
         );
         lm.on_data(broken, None);
         d.update(&map, &mut lm, now);
-        assert_eq!(d.panel.as_ref().map(|p| p.stage.clone()), Some(Stage::Failed(PlaceError::LandmarkUnavailable)));
+        assert_eq!(
+            d.panel.as_ref().map(|p| p.stage.clone()),
+            Some(Stage::Failed(PlaceError::LandmarkUnavailable))
+        );
     }
 }

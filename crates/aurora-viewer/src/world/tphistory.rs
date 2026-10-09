@@ -131,7 +131,11 @@ impl HistoryItem {
         m.insert("title", self.title.clone());
         m.insert(
             "global_pos",
-            Llsd::Array(vec![Llsd::Real(self.global.x), Llsd::Real(self.global.y), Llsd::Real(self.global.z)]),
+            Llsd::Array(vec![
+                Llsd::Real(self.global.x),
+                Llsd::Real(self.global.y),
+                Llsd::Real(self.global.z),
+            ]),
         );
         m.insert("date", Llsd::Date(self.date));
         m.insert("slurl", self.slurl.clone());

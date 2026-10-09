@@ -2653,7 +2653,29 @@ impl App {
         if self.world.movement_complete
             && let Some(source) = self.demo_place.take()
         {
-            self.show_place_profile(source);
+            // a landmark's profile shows its item: fetch the landmarks first
+            let missing = match &source {
+                crate::world::place_details::Source::Landmark { item, .. } => !self.world.inventory.items.contains_key(item),
+                _ => false,
+            };
+            if missing {
+                let inv = &self.world.inventory;
+                let root = ui::places::system_folder(inv, ui::places::FOLDER_LANDMARKS);
+                let folders: Vec<uuid::Uuid> = root
+                    .into_iter()
+                    .chain(
+                        root.and_then(|r| inv.folders.get(&r))
+                            .map(|f| f.children.clone())
+                            .unwrap_or_default(),
+                    )
+                    .collect();
+                for f in folders {
+                    self.world.inventory.request(f);
+                }
+                self.demo_place = Some(source);
+            } else {
+                self.show_place_profile(source);
+            }
         }
         self.world.flush_arrival(now);
         // LLLandmark::setRegionHandle: the agent's region needs no request

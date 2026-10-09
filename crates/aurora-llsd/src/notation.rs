@@ -386,7 +386,10 @@ mod tests {
         // a teleport history line (LLTeleportHistoryPersistentItem::toLLSD)
         let mut m = Map::new();
         m.insert("title".into(), Llsd::String("Place d'Aurora, Aurora \\ Démo\n".into()));
-        m.insert("global_pos".into(), Llsd::Array(vec![Llsd::Real(256140.5), Llsd::Real(256120.0), Llsd::Real(25.0)]));
+        m.insert(
+            "global_pos".into(),
+            Llsd::Array(vec![Llsd::Real(256140.5), Llsd::Real(256120.0), Llsd::Real(25.0)]),
+        );
         m.insert("date".into(), Llsd::Date(1_760_000_000.25));
         m.insert("slurl".into(), Llsd::String(String::new()));
         m.insert("n".into(), Llsd::Array(vec![Llsd::Undef, Llsd::Boolean(true), Llsd::Integer(-3)]));

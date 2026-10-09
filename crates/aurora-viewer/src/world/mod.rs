@@ -296,7 +296,11 @@ impl World {
         let Some((global, _)) = self.tp_record.take() else {
             return;
         };
-        let region = self.main_region.and_then(|h| self.regions.get(&h)).map(|r| r.name.clone()).unwrap_or_default();
+        let region = self
+            .main_region
+            .and_then(|h| self.regions.get(&h))
+            .map(|r| r.name.clone())
+            .unwrap_or_default();
         let title = tphistory::location_title(&self.parcel_name, &region);
         if title.is_empty() {
             return;

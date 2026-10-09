@@ -173,10 +173,8 @@ impl Landmarks {
         match self.assets.get(&asset).copied() {
             None => self.want(asset),
             // the asset is read, its region's handle is not known yet
-            Some(State::Ready(LandmarkAsset::Region { region_id, .. })) => {
-                if self.asked.insert(region_id) {
-                    self.out.push(NetCommand::RegionHandleRequest(region_id));
-                }
+            Some(State::Ready(LandmarkAsset::Region { region_id, .. })) if self.asked.insert(region_id) => {
+                self.out.push(NetCommand::RegionHandleRequest(region_id));
             }
             _ => {}
         }
@@ -207,7 +205,10 @@ mod tests {
         let v1 = b"Landmark version 1\nposition 256148 256195 24\n";
         assert_eq!(parse(v1), Some(LandmarkAsset::Global(DVec3::new(256148.0, 256195.0, 24.0))));
         assert_eq!(parse(b"Landmark version 3\n"), None);
-        assert_eq!(parse(b"Landmark version 2\nregion_id 00000000-0000-0000-0000-000000000000\nlocal_pos 1 2 3\n"), None);
+        assert_eq!(
+            parse(b"Landmark version 2\nregion_id 00000000-0000-0000-0000-000000000000\nlocal_pos 1 2 3\n"),
+            None
+        );
         assert_eq!(parse(b"Landmark version 2\nregion_id oops\nlocal_pos 1 2 3\n"), None);
         assert_eq!(parse(b"garbage"), None);
     }
@@ -247,7 +248,10 @@ mod tests {
         let asset = Uuid::from_u128(44);
         let mut l = Landmarks::default();
         l.set_local_region(REGION, aurora_net::origin_to_handle(256_000, 256_000));
-        l.on_data(asset, Some(format!("Landmark version 2\nregion_id {REGION}\nlocal_pos 1 2 3\n").as_bytes()));
+        l.on_data(
+            asset,
+            Some(format!("Landmark version 2\nregion_id {REGION}\nlocal_pos 1 2 3\n").as_bytes()),
+        );
         assert!(matches!(l.resolve(asset), Resolved::Ready { .. }));
         assert!(l.take_commands().is_empty());
     }

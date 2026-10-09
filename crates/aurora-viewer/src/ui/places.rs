@@ -32,7 +32,7 @@ pub const TAB_HISTORY: usize = 2;
 
 /// FT_FAVORITE / FT_LANDMARK folder types.
 const FOLDER_FAVORITES: i32 = 23;
-const FOLDER_LANDMARKS: i32 = 3;
+pub(crate) const FOLDER_LANDMARKS: i32 = 3;
 /// AT_LANDMARK.
 const ASSET_LANDMARK: i32 = 3;
 
@@ -93,7 +93,7 @@ pub struct Row {
 }
 
 /// The Favorites or Landmarks folder of our inventory.
-fn system_folder(inv: &Inventory, kind: i32) -> Option<Uuid> {
+pub(crate) fn system_folder(inv: &Inventory, kind: i32) -> Option<Uuid> {
     inv.folders
         .values()
         .find(|f| !f.library && f.info.type_default == kind)
@@ -111,7 +111,11 @@ fn has_match(inv: &Inventory, folder: Uuid, filter: &str, depth: usize) -> bool 
         return false;
     };
     depth < 32
-        && (f.items.iter().filter_map(|i| inv.items.get(i)).any(|i| i.asset_type == ASSET_LANDMARK && matches(&i.name, filter))
+        && (f
+            .items
+            .iter()
+            .filter_map(|i| inv.items.get(i))
+            .any(|i| i.asset_type == ASSET_LANDMARK && matches(&i.name, filter))
             || f.children.iter().any(|c| has_match(inv, *c, filter, depth + 1)))
 }
 
@@ -127,7 +131,16 @@ pub fn landmark_rows(inv: &Inventory, root: Uuid, filter: &str, by_date: bool, o
 }
 
 #[allow(clippy::too_many_arguments)]
-fn add_rows(inv: &Inventory, folder: Uuid, filter: &str, by_date: bool, open: &HashSet<Uuid>, all: bool, depth: usize, rows: &mut Vec<Row>) {
+fn add_rows(
+    inv: &Inventory,
+    folder: Uuid,
+    filter: &str,
+    by_date: bool,
+    open: &HashSet<Uuid>,
+    all: bool,
+    depth: usize,
+    rows: &mut Vec<Row>,
+) {
     let Some(f) = inv.folders.get(&folder) else {
         return;
     };
@@ -163,7 +176,11 @@ fn add_rows(inv: &Inventory, folder: Uuid, filter: &str, by_date: bool, open: &H
         .filter(|i| i.asset_type == ASSET_LANDMARK && matches(&i.name, filter))
         .collect();
     if by_date {
-        items.sort_by(|a, b| b.created_at.cmp(&a.created_at).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())));
+        items.sort_by(|a, b| {
+            b.created_at
+                .cmp(&a.created_at)
+                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+        });
     } else {
         items.sort_by_key(|i| i.name.to_lowercase());
     }
@@ -201,7 +218,11 @@ fn slurl_at(world: &World, global: DVec3, title: &str) -> Option<String> {
         .map(|(_, s)| s.name.clone())
         .or_else(|| title.rsplit(", ").next().map(str::to_owned))
         .filter(|r| !r.is_empty())?;
-    let pos = glam::Vec3::new(global.x.rem_euclid(256.0) as f32, global.y.rem_euclid(256.0) as f32, global.z as f32);
+    let pos = glam::Vec3::new(
+        global.x.rem_euclid(256.0) as f32,
+        global.y.rem_euclid(256.0) as f32,
+        global.z as f32,
+    );
     Some(crate::slurl::make(&region, pos))
 }
 
@@ -258,7 +279,7 @@ impl PlacesUi {
         let screen = ctx.content_rect();
         // floater_places.xml: 333 x 588 (200 x 200 at least)
         let size = Vec2::new(333.0, 588.0);
-        let pos = egui::pos2(screen.right() - size.x - 60.0, screen.top() + 70.0);
+        let pos = screen.center() - size * 0.5 + Vec2::new(120.0, 0.0);
         let mut floater = Floater::new("places", "Lieux", pos, size);
         floater.min_size = Vec2::new(260.0, 300.0);
         floater.show(ctx, c.p, open, |ui| {
@@ -339,7 +360,11 @@ impl PlacesUi {
             ui.spacing_mut().item_spacing.x = 3.0;
             let buttons = if history { 2.0 } else { 4.0 };
             let w = (ui.available_width() - buttons * 25.0).max(60.0);
-            ui.add(egui::TextEdit::singleline(&mut self.filter).hint_text("Filtrer les lieux").desired_width(w));
+            ui.add(
+                egui::TextEdit::singleline(&mut self.filter)
+                    .hint_text("Filtrer les lieux")
+                    .desired_width(w),
+            );
             widgets::icon_menu(ui, p, "gear-six", "Afficher les options", |ui| {
                 if history {
                     self.history_item_menu(ui, p, world, actions);
@@ -453,7 +478,9 @@ impl PlacesUi {
                     self.want_landmarks.insert(it.asset_id);
                 }
             }
-            if r.toggle && let Some(open) = row.folder {
+            if r.toggle
+                && let Some(open) = row.folder
+            {
                 if open {
                     self.open_folders.remove(&row.id);
                 } else {
@@ -811,7 +838,13 @@ impl PlacesUi {
 
     // -------------------------------------------------------------- profile
 
-    fn profile_view(&mut self, ui: &mut egui::Ui, c: &mut Ctx, place: &crate::world::place_details::Place, actions: &mut Vec<PlacesAction>) {
+    fn profile_view(
+        &mut self,
+        ui: &mut egui::Ui,
+        c: &mut Ctx,
+        place: &crate::world::place_details::Place,
+        actions: &mut Vec<PlacesAction>,
+    ) {
         let p = c.p;
         let world = c.world;
         // header_container: back arrow and title
@@ -896,7 +929,16 @@ struct RowResponse {
 /// One line of a list: indentation, caret for a folder, icon, name; the
 /// history lines show an "i" button while hovered.
 #[allow(clippy::too_many_arguments)]
-fn list_row(ui: &mut egui::Ui, p: &Palette, depth: usize, folder: Option<bool>, icon: &str, name: &str, selected: bool, info_button: bool) -> RowResponse {
+fn list_row(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    depth: usize,
+    folder: Option<bool>,
+    icon: &str,
+    name: &str,
+    selected: bool,
+    info_button: bool,
+) -> RowResponse {
     let w = ui.available_width();
     let (rect, response) = ui.allocate_exact_size(Vec2::new(w, 20.0), Sense::click());
     let painter = ui.painter();

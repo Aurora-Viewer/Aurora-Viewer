@@ -1139,7 +1139,11 @@ impl Session<'_> {
                 m.data.parcel_id = id;
                 self.send_main(&m, true);
             }
-            NetCommand::RemoteParcelRequest { handle, position, region_id } => self.remote_parcel_request(handle, position, region_id),
+            NetCommand::RemoteParcelRequest {
+                handle,
+                position,
+                region_id,
+            } => self.remote_parcel_request(handle, position, region_id),
             NetCommand::RegionHandleRequest(region_id) => {
                 let mut m = RegionHandleRequest::default();
                 m.request_block.region_id = region_id;
