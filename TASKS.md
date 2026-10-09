@@ -109,6 +109,7 @@ Légende : ✅ fait (et vérifié sur Agni quand ça dépend de la grille) · �
 - ✅ Miroirs (sondes miroir SL), résolution réglable
 - ✅ Ciel EEP complet (atmosphère SL, nuages, soleil/lune, étoiles), pistes d'altitude, jour/nuit
 - ✅ Particules (portage LLPartSysData / LLViewerPartSim)
+- 🟡 Particules de vent absentes autour de la moto (09/10) : format étendu des mises à jour compressées décodé après les textures et leur animation comme LLVOVolume::processUpdateMessage (avant : source ignorée, y compris avec un glow de 0,01) ; FOLLOW_VELOCITY orienté dans le plan de vue comme LLVOPartGroup::getGeometry, sans raccourcir les traits lorsque leur vitesse pointe vers la caméra. Démo : AURORA_DEMO_PARTICLES=wind|smoke|both|legacy (paramètres des scripts, texture douce locale). Tests de décodage, données tronquées et simulation ; 510 tests réussis, 7 ignorés, formatage et clippy verts ; captures avant / après et validation GPU sans erreur. À confirmer sur Agni : traits blancs rapides autour de la moto, fumée, vue de côté et dans le sens du défilement.
 - ✅ Lumières ponctuelles, filtrage anisotrope, distance d'affichage, nombre d'avatars max
 - ✅ Hover text (llSetText) comme LLHUDText
 - 🟡 Média de parcelle et média sur prim (web, vidéo), comme Firestorm — vérifié en démo, pas encore sur la grille :

@@ -730,6 +730,7 @@ fn fs_shadow(in: ShadowOut) {
 const PART_EMISSIVE: u32 = 1u;
 const PART_ADDITIVE: u32 = 2u;
 const PART_AXIS: u32 = 4u;
+const PART_FOLLOW_VELOCITY: u32 = 8u;
 
 struct PartIn {
     @location(0) pos: vec3<f32>,
@@ -760,8 +761,27 @@ fn vs_particle(in: PartIn) -> PartOut {
     var right = frame.cam_right.xyz;
     var up = frame.cam_up.xyz;
     var offset: vec3<f32>;
-    if ((in.flags & PART_AXIS) != 0u && dot(in.axis, in.axis) > 1e-8) {
-        // stretched along the axis (ribbon segment / velocity), facing the camera
+    if ((in.flags & PART_FOLLOW_VELOCITY) != 0u) {
+        // LLVOPartGroup::getGeometry projects velocity into the billboard
+        // plane, then rotates it without shortening the requested scale.
+        // A world-space velocity axis can otherwise turn a long, thin
+        // particle edge-on to the camera and make it disappear.
+        let to_cam = normalize(frame.camera_pos.xyz - in.pos);
+        let view_right = cross(vec3<f32>(0.0, 0.0, 1.0), to_cam);
+        if (dot(view_right, view_right) > 1e-8) {
+            right = normalize(view_right);
+            up = normalize(cross(to_cam, right));
+        }
+        let projected = vec2<f32>(dot(in.axis, right), dot(in.axis, up));
+        if (dot(projected, projected) > 1e-8) {
+            let direction = normalize(projected);
+            let old_right = right;
+            right = right * direction.y - up * direction.x;
+            up = old_right * direction.x + up * direction.y;
+        }
+        offset = right * c.x * in.size.x * 0.5 + up * c.y * in.size.y * 0.5;
+    } else if ((in.flags & PART_AXIS) != 0u && dot(in.axis, in.axis) > 1e-8) {
+        // Ribbon segments retain their world-space endpoints.
         let to_cam = normalize(frame.camera_pos.xyz - in.pos);
         up = in.axis * 0.5;
         let side = cross(to_cam, normalize(in.axis));

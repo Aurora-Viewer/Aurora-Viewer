@@ -227,9 +227,6 @@ impl<'a> Dp<'a> {
         let n = self.u32()? as usize;
         self.take(n)
     }
-    fn rest(&self) -> &'a [u8] {
-        self.d.get(self.p..).unwrap_or(&[])
-    }
 }
 
 fn sanitize_quat(q: Quat) -> Quat {
@@ -381,10 +378,9 @@ pub fn parse_compressed(data: &[u8], update_flags: u32) -> Option<ObjectUpdate> 
     if flags & 0x200 != 0 {
         media_url = dp.cstr()?;
     }
-    // Particle system (llviewerobject.cpp, compressed path): 0x8 carries a
-    // legacy fixed 86-byte block; 0x400 means new-format particles are
-    // present but not sent here, so keep the current source; otherwise the
-    // object has no particle system.
+    // LLViewerObject::processUpdateMessage reads the legacy block here.
+    // LLVOVolume::processUpdateMessage reads the extended block (0x400)
+    // after the texture entry and animation below, not at this position.
     let particles = if flags & 0x8 != 0 {
         ParticleUpdate::Set(dp.take(86)?.to_vec())
     } else if flags & 0x400 != 0 {
@@ -448,7 +444,19 @@ pub fn parse_compressed(data: &[u8], update_flags: u32) -> Option<ObjectUpdate> 
     {
         texture_anim = TextureAnim::parse(ta);
     }
-    let _ = dp.rest();
+    let particles = if flags & 0x400 != 0 {
+        let start = dp.p;
+        // Two S32-sized blocks: LLPartSysData followed by LLPartData.
+        // A malformed system deletes its source without dropping the object
+        // (LLViewerObject::unpackParticleSource / LLPartSysData::unpack).
+        if dp.binary().is_some() && dp.binary().is_some() {
+            ParticleUpdate::Set(data[start..dp.p].to_vec())
+        } else {
+            ParticleUpdate::Clear
+        }
+    } else {
+        particles
+    };
 
     Some(ObjectUpdate {
         local_id,
@@ -573,6 +581,89 @@ pub fn parse_gltf_override(payload: &[u8]) -> Option<(u32, Vec<(u8, aurora_llsd:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn compressed_particle_object(flags: u32, legacy: &[u8], extended: &[u8]) -> Vec<u8> {
+        let mut d = vec![0; 84];
+        d[16..20].copy_from_slice(&7u32.to_le_bytes());
+        d[20] = 47;
+        d[64..68].copy_from_slice(&flags.to_le_bytes());
+        d.extend_from_slice(legacy);
+        d.push(0); // extra parameters
+        d.extend_from_slice(&[0; 23]); // volume parameters
+        d.extend_from_slice(&0u32.to_le_bytes()); // texture entry
+        if flags & 0x40 != 0 {
+            d.extend_from_slice(&16u32.to_le_bytes());
+            d.extend_from_slice(&[3, 255, 1, 1]);
+            for v in [0.0f32, 1.0, 2.0] {
+                d.extend_from_slice(&v.to_le_bytes());
+            }
+        }
+        d.extend_from_slice(extended);
+        d
+    }
+
+    #[test]
+    fn compressed_extended_particles_follow_texture_animation() {
+        use aurora_prim::particles::*;
+        let mut legacy = [0; PS_LEGACY_DATA_BLOCK_SIZE];
+        legacy[..4].copy_from_slice(&123u32.to_le_bytes());
+        legacy[8] = LL_PART_SRC_PATTERN_ANGLE;
+        legacy[36..52].copy_from_slice(Uuid::from_u128(456).as_bytes());
+        legacy[68..72].copy_from_slice(&(LL_PART_EMISSIVE_MASK | LL_PART_FOLLOW_VELOCITY_MASK | LL_PART_DATA_GLOW).to_le_bytes());
+        legacy[72..74].copy_from_slice(&512u16.to_le_bytes()); // 2 s
+        legacy[74..78].copy_from_slice(&[255, 255, 255, 51]);
+        legacy[78..82].copy_from_slice(&[255, 255, 255, 0]);
+        legacy[82..86].copy_from_slice(&[4, 128, 2, 80]); // thin 4 m streak
+        let mut extended = (PS_SYS_DATA_BLOCK_SIZE as u32).to_le_bytes().to_vec();
+        extended.extend_from_slice(&legacy[..68]);
+        extended.extend_from_slice(&20u32.to_le_bytes());
+        extended.extend_from_slice(&legacy[68..]);
+        extended.extend_from_slice(&[3, 0]); // glow
+        for flags in [0x400, 0x440] {
+            let d = compressed_particle_object(flags, &[], &extended);
+            let o = parse_compressed(&d, 0).expect("extended particle object");
+            assert_eq!(o.texture_anim.is_some(), flags & 0x40 != 0);
+            assert_eq!(o.particles, ParticleUpdate::Set(extended.clone()));
+            let ParticleUpdate::Set(bytes) = o.particles else {
+                panic!("missing particles")
+            };
+            let ps = parse(&bytes).expect("decoded extended system");
+            assert_eq!(ps.part_image_id, Uuid::from_u128(456));
+            assert_eq!(ps.part.start_scale, glam::Vec2::new(0.125, 4.0));
+            assert_eq!(ps.part.start_color[3], 0.2);
+            assert_eq!(ps.part.start_glow, 3.0 / 255.0);
+        }
+    }
+
+    #[test]
+    fn compressed_legacy_and_removed_particles() {
+        let legacy = vec![0; 86];
+        let d = compressed_particle_object(0x8, &legacy, &[]);
+        assert_eq!(
+            parse_compressed(&d, 0).expect("legacy object").particles,
+            ParticleUpdate::Set(legacy)
+        );
+        let d = compressed_particle_object(0, &[], &[]);
+        assert_eq!(parse_compressed(&d, 0).expect("no particles").particles, ParticleUpdate::Clear);
+    }
+
+    #[test]
+    fn compressed_truncated_particles_preserve_object() {
+        let mut extended = 68u32.to_le_bytes().to_vec();
+        extended.extend_from_slice(&[0; 68]);
+        extended.extend_from_slice(&20u32.to_le_bytes());
+        extended.extend_from_slice(&[0; 20]);
+        for n in 0..extended.len() {
+            let d = compressed_particle_object(0x400, &[], &extended[..n]);
+            let o = parse_compressed(&d, 0).expect("object retained despite truncated particle data");
+            assert_eq!(o.particles, ParticleUpdate::Clear);
+        }
+        let d = compressed_particle_object(0x400, &[], &u32::MAX.to_le_bytes());
+        assert_eq!(
+            parse_compressed(&d, 0).expect("invalid block size").particles,
+            ParticleUpdate::Clear
+        );
+    }
 
     #[test]
     fn gltf_override_message() {

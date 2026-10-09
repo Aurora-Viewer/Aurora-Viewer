@@ -149,6 +149,73 @@ fn fountain_particles() -> Vec<u8> {
     out
 }
 
+/// Motorcycle wind / smoke script, using a default soft dot offline. The
+/// simulator clamps the wind's requested 5 m height to MAX_PART_SCALE (4 m).
+/// Layout follows LLPartSysData::unpack / LLPartData::unpack (llpartdata.cpp).
+fn scripted_particles(wind: bool, legacy: bool) -> Vec<u8> {
+    use aurora_prim::particles::*;
+    let ufix16 = |v: f32| ((v * 256.0) as u16).to_le_bytes();
+    let sfix16 = |v: f32| (((v + 256.0) * 128.0) as u16).to_le_bytes();
+    let mut out = Vec::new();
+    if !legacy {
+        out.extend_from_slice(&(PS_SYS_DATA_BLOCK_SIZE as u32).to_le_bytes());
+    }
+    out.extend_from_slice(&123u32.to_le_bytes());
+    out.extend_from_slice(&LL_PART_USE_NEW_ANGLE.to_le_bytes());
+    out.push(LL_PART_SRC_PATTERN_ANGLE);
+    out.extend_from_slice(&[0; 4]); // source max / start age
+    out.extend_from_slice(&[0, (std::f32::consts::PI * 32.0) as u8]); // quantized angle 3.14
+    for v in [0.1, 0.9, 0.0, 0.0] {
+        // rate, radius, min / max speed
+        out.extend_from_slice(&ufix16(v));
+    }
+    out.push(3);
+    for v in [0.0, 0.0, 0.0, 0.0, if wind { -80.0 } else { 0.0 }, if wind { 0.0 } else { 0.2 }] {
+        out.extend_from_slice(&sfix16(v));
+    }
+    out.extend_from_slice(Uuid::nil().as_bytes()); // default dot, no asset fetch
+    out.extend_from_slice(Uuid::nil().as_bytes()); // target unused by these flags
+    if !legacy {
+        out.extend_from_slice(&20u32.to_le_bytes()); // 18 legacy bytes + glow
+    }
+    let flags = LL_PART_EMISSIVE_MASK | LL_PART_FOLLOW_VELOCITY_MASK | LL_PART_INTERP_COLOR_MASK | LL_PART_INTERP_SCALE_MASK;
+    out.extend_from_slice(&(flags | if legacy { 0 } else { LL_PART_DATA_GLOW }).to_le_bytes());
+    out.extend_from_slice(&ufix16(2.0));
+    out.extend_from_slice(if wind { &[255, 255, 255, 51] } else { &[141, 15, 142, 77] });
+    out.extend_from_slice(if wind { &[255, 255, 255, 0] } else { &[200, 106, 134, 0] });
+    let scales = if wind {
+        [0.125, MAX_PART_SCALE, 0.05, 2.5]
+    } else {
+        [0.5, 0.5, 0.125, 0.125]
+    };
+    for v in scales {
+        out.push((v * 32.0) as u8);
+    }
+    if !legacy {
+        out.extend_from_slice(&[3, 0]); // start glow 0.01, end glow 0
+    }
+    out
+}
+
+/// Feed the extended block through the compressed-object decoder, including
+/// its position after texture data, as LLVOVolume::processUpdateMessage does.
+fn compressed_scripted_particles(wind: bool, legacy: bool) -> Option<aurora_net::objects::ParticleUpdate> {
+    let block = scripted_particles(wind, legacy);
+    let mut data = vec![0; 84];
+    data[20] = LL_PCODE_VOLUME;
+    data[64..68].copy_from_slice(&(if legacy { 0x8u32 } else { 0x400u32 }).to_le_bytes());
+    if legacy {
+        data.extend_from_slice(&block);
+    }
+    data.push(0); // extra params
+    data.extend_from_slice(&[0; 23]); // shape (demo object supplies its geometry)
+    data.extend_from_slice(&0u32.to_le_bytes()); // texture entry
+    if !legacy {
+        data.extend_from_slice(&block);
+    }
+    aurora_net::objects::parse_compressed(&data, 0).map(|o| o.particles)
+}
+
 /// First friend of the demo buddy list (AURORA_DEMO_PROFILE=friend).
 pub const DEMO_FRIEND: Uuid = Uuid::from_u128(0xD0D0_0000_0000_0000_0000_0000_0000_0000 | 100);
 
@@ -1496,6 +1563,41 @@ pub fn events() -> Vec<NetEvent> {
             id += 1;
         }
     }
+    // Scripted wind / smoke in front of a dark panel for a visible comparison.
+    if let Ok(mode) = std::env::var("AURORA_DEMO_PARTICLES") {
+        let ground = floor_at(136.0, 127.0);
+        add(prim(
+            id,
+            Vec3::new(139.0, 125.0, ground + 3.0),
+            Quat::IDENTITY,
+            Vec3::new(0.1, 24.0, 6.0),
+            boxp,
+            te([0.01, 0.01, 0.015, 1.0], 0, true, 0.0),
+            ExtraParams::default(),
+            "",
+        ));
+        id += 1;
+        for (wind, y, label) in [(true, 126.0, "Vent"), (false, 130.0, "Fumée")] {
+            if (mode == "wind" && !wind) || (mode == "smoke" && wind) || (mode == "legacy" && !wind) {
+                continue;
+            }
+            let mut o = prim(
+                id,
+                Vec3::new(137.0, y, ground + 2.5),
+                Quat::IDENTITY,
+                Vec3::splat(0.2),
+                boxp,
+                te(teal, 0, true, 0.0),
+                ExtraParams::default(),
+                label,
+            );
+            if let Some(particles) = compressed_scripted_particles(wind, mode == "legacy") {
+                o.particles = particles;
+            }
+            add(o);
+            id += 1;
+        }
+    }
     // particle fountain at the plaza center (legacy 86-byte particle block)
     {
         let mut o = prim(
@@ -2495,5 +2597,44 @@ fn demo_sky(sun: Vec3, gamma: f64) -> Llsd {
             "frames" => Llsd::Map(frames),
             "tracks" => Llsd::Array(vec![key("water"), key("sky")]),
         },
+    }
+}
+
+#[cfg(test)]
+mod particle_tests {
+    use super::*;
+
+    #[test]
+    fn motorcycle_script_survives_compressed_update_and_simulation() {
+        use aurora_net::objects::ParticleUpdate;
+        use aurora_prim::particles::{self as ps, ParticleSource, SourceContext};
+        for (wind, legacy) in [(true, false), (false, false), (true, true)] {
+            let ParticleUpdate::Set(bytes) = compressed_scripted_particles(wind, legacy).expect("compressed update") else {
+                panic!("scripted particle source missing");
+            };
+            let data = ps::parse(&bytes).expect("scripted particle block");
+            assert_eq!(data.part.max_age, 2.0);
+            assert_eq!(data.burst_part_count, 3);
+            assert_eq!(data.part_accel.y, if wind { -80.0 } else { 0.0 });
+            assert_eq!(data.part.start_scale.y, if wind { 4.0 } else { 0.5 });
+            assert_eq!(data.part.start_glow > 0.0, !legacy);
+            let mut source = ParticleSource::new(data, 1);
+            let ctx = SourceContext {
+                pos: Vec3::new(10.0, 10.0, 10.0),
+                ..Default::default()
+            };
+            let mut budget = 100;
+            for _ in 0..10 {
+                source.update(0.1, &ctx, &mut budget);
+            }
+            let parts = source.particles();
+            assert!(!parts.is_empty());
+            assert!(parts.iter().all(|p| p.flags & ps::LL_PART_FOLLOW_VELOCITY_MASK != 0));
+            if wind {
+                assert!(parts.iter().any(|p| p.vel.y < -50.0 && p.size.y > 2.5));
+            } else {
+                assert!(parts.iter().any(|p| p.vel.z > 0.1));
+            }
+        }
     }
 }

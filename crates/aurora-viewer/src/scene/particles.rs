@@ -246,7 +246,7 @@ impl ParticleManager {
                     }
                 } else if p.flags & ps::LL_PART_FOLLOW_VELOCITY_MASK != 0 && p.vel.length_squared() > 1e-8 {
                     axis = p.vel.normalize() * p.size.y;
-                    flags |= particle_flags::AXIS;
+                    flags |= particle_flags::FOLLOW_VELOCITY;
                 }
                 let inst = ParticleInstance {
                     pos: pos.to_array(),
