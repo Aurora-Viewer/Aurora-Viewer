@@ -2219,6 +2219,10 @@ impl Scene {
                 t.fetching,
                 if va.is_some() { "ok" } else { "MISSING" }
             );
+            // textures in use that never loaded (they show the placeholder)
+            for (id, state) in self.textures.stuck(8) {
+                log::info!("  texture {id} not loaded: {state}");
+            }
         }
     }
 }
@@ -2613,8 +2617,10 @@ impl Scene {
 
 impl Scene {
     /// Diagnostic: one log line per attachment of an avatar (inventory name,
-    /// mesh / rigged, faces drawn, position relative to the avatar).
-    pub fn log_attachments(&self, world: &World, avatar: Uuid) {
+    /// mesh / rigged, faces drawn, position relative to the avatar), then
+    /// the faces whose base texture does not show (not loaded, slot not the
+    /// streamer's, or the renderer still holding the placeholder).
+    pub fn log_attachments(&self, world: &World, avatar: Uuid, table: &aurora_render::textures::TextureTable) {
         let Some(aidx) = world.objects.index_of_uuid(&avatar) else {
             return;
         };
@@ -2656,6 +2662,7 @@ impl Scene {
                     .is_some_and(|t| t.faces.iter().any(|f| f.texture == avatar::BAKES[0].2))
             });
             let (mut meshes, mut rigged, mut faces, mut shown, mut pending) = (0, 0, 0, 0, 0);
+            let mut suspects: Vec<String> = Vec::new();
             let mut far = 0.0f32;
             for &i in &prims {
                 let Some(o) = world.objects.get(i) else {
@@ -2677,11 +2684,22 @@ impl Scene {
                 if g.geom.is_none() {
                     pending += 1;
                 }
-                for f in &g.faces {
+                for (fi, f) in g.faces.iter().enumerate() {
                     faces += 1;
                     let a = alpha.get(f.base_slot as usize).copied().unwrap_or(AlphaKind::Opaque);
                     if classify(f, a) != Pass::Hidden {
                         shown += 1;
+                    }
+                    if let Some(why) = self.textures.face_problem(&f.tex_id, f.base_slot, table) {
+                        suspects.push(format!(
+                            "  face {} #{fi}: {why} — tex {} ({}), slot {} = {}, maps {:?}",
+                            o.full_id,
+                            f.tex_id,
+                            self.textures.describe(&f.tex_id),
+                            f.base_slot,
+                            table.describe(f.base_slot),
+                            f.aux_tex
+                        ));
                     }
                 }
                 if !g.faces.is_empty() {
@@ -2754,6 +2772,13 @@ impl Scene {
                 prims.len(),
                 root.position
             );
+            let more = suspects.len().saturating_sub(24);
+            for line in suspects.iter().take(24) {
+                log::info!("{line}");
+            }
+            if more > 0 {
+                log::info!("  … {more} more faces with a texture problem");
+            }
         }
     }
 

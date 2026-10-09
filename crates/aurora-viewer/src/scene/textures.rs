@@ -100,6 +100,9 @@ pub struct TextureStreamer {
     ui_ready: HashMap<Uuid, (u32, u32, Vec<u8>)>,
     pub stats: TextureStats,
     last_maintenance: Instant,
+    /// Unused textures are evicted after this long (shortened by the
+    /// AURORA_DEMO_TEXTURES_CHURN test).
+    pub evict_after: Duration,
 }
 
 impl TextureStreamer {
@@ -127,6 +130,7 @@ impl TextureStreamer {
             ui_ready: HashMap::new(),
             stats: TextureStats::default(),
             last_maintenance: Instant::now(),
+            evict_after: UNUSED_EVICT,
         }
     }
 
@@ -156,7 +160,7 @@ impl TextureStreamer {
         match self.entries.get(id) {
             None => "not requested".into(),
             Some(e) => format!(
-                "{} bytes{}, decoded {:?}, want {}, alpha {:?}, failures {}{}{}",
+                "{} bytes{}, decoded {:?}, want {}, alpha {:?}, failures {}{}{}{}{}",
                 e.data.len(),
                 if e.complete { " (complete)" } else { "" },
                 e.decoded,
@@ -164,11 +168,53 @@ impl TextureStreamer {
                 e.alpha,
                 e.failures,
                 if e.fetching { ", fetching" } else { "" },
+                if e.decoding { ", decoding" } else { "" },
+                e.retry_at
+                    .and_then(|t| t.checked_duration_since(Instant::now()))
+                    .map(|d| format!(", retry in {} s", d.as_secs()))
+                    .unwrap_or_default(),
                 match &e.source {
                     TexSource::Bake { .. } => ", bake service",
                     TexSource::Asset => "",
                 }
             ),
+        }
+    }
+
+    /// Diagnostic: up to `max` textures in use that are still not decoded.
+    pub fn stuck(&self, max: usize) -> Vec<(Uuid, String)> {
+        self.entries
+            .iter()
+            .filter(|(_, e)| e.refs > 0 && e.decoded.is_none())
+            .take(max)
+            .map(|(id, _)| (*id, self.describe(id)))
+            .collect()
+    }
+
+    /// Diagnostic: why a face drawn with `slot` for texture `id` would not
+    /// show that texture (None when it should).
+    pub fn face_problem(&self, id: &Uuid, slot: u32, table: &aurora_render::textures::TextureTable) -> Option<&'static str> {
+        if id.is_nil()
+            || *id == aurora_prim::te::BLANK_TEXTURE
+            || *id == aurora_prim::te::TRANSPARENT_TEXTURE
+            || self.local_slots.contains_key(id)
+        {
+            return None;
+        }
+        let Some(e) = self.entries.get(id) else {
+            return Some("texture not requested");
+        };
+        if e.slot != slot {
+            return Some("drawn with another slot than the streamer's (stale record)");
+        }
+        let Some(discard) = e.decoded else {
+            return Some("not loaded yet");
+        };
+        let expected = e.info.map(|i| ((i.width >> discard).max(1), (i.height >> discard).max(1)));
+        match table.size_of(slot) {
+            None => Some("slot free in the renderer"),
+            Some((1, 1)) if expected.is_some_and(|s| s != (1, 1)) => Some("renderer still holds the 1×1 placeholder"),
+            _ => None,
         }
     }
 
@@ -584,6 +630,26 @@ impl TextureStreamer {
         }
     }
 
+    /// AURORA_DEMO_TEXTURES: the stress textures arrive as decoded jobs, a
+    /// low-resolution level first then the full one, so they take the
+    /// streaming path of grid textures (placeholder, then upgrades).
+    pub fn install_demo_stress(&mut self, renderer: &mut Renderer, textures: impl Iterator<Item = u32>) {
+        for i in textures {
+            let id = crate::demo::stress_texture(i);
+            let _ = self.acquire(renderer, id, TexSource::Asset);
+            for discard in [2, 0] {
+                self.on_job(JobResult::Texture {
+                    id,
+                    discard: discard as u8,
+                    mips: crate::demo::stress_texture_mips(i, discard),
+                    alpha: AlphaKind::Opaque,
+                    alpha_channel: false,
+                    sculpt: None,
+                });
+            }
+        }
+    }
+
     /// Upload decoded textures within a byte budget.
     pub fn upload(&mut self, renderer: &mut Renderer, budget_bytes: u64) {
         let mut spent = 0u64;
@@ -606,7 +672,21 @@ impl TextureStreamer {
                     data: d,
                 })
                 .collect();
-            if renderer.replace_texture(e.slot, &levels) {
+            let accepted = renderer.replace_texture(e.slot, &levels);
+            if !accepted {
+                // keep the current texels, and do not decode it again in a loop
+                log::warn!(
+                    "texture {}: upload refused by the renderer (slot {}, {} levels, level 0 {:?}, {} bytes)",
+                    u.id,
+                    e.slot,
+                    levels.len(),
+                    levels.first().map(|l| (l.width, l.height)),
+                    levels.first().map_or(0, |l| l.data.len())
+                );
+                e.decoded = Some(u.discard);
+                e.failures += 1;
+            }
+            if accepted {
                 spent += u.mips.iter().map(|m| m.2.len() as u64).sum::<u64>();
                 if self.ui_wanted.contains(&u.id) {
                     // largest level that fits 256 px for the UI copy
@@ -668,7 +748,7 @@ impl TextureStreamer {
                     JobResult::TextureCache { id, data: None, complete }
                 });
             }
-            if e.refs == 0 && e.unused_since.is_some_and(|t| now.duration_since(t) > UNUSED_EVICT) && !e.fetching && !e.decoding {
+            if e.refs == 0 && e.unused_since.is_some_and(|t| now.duration_since(t) > self.evict_after) && !e.fetching && !e.decoding {
                 evict.push(*id);
             }
         }

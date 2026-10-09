@@ -122,8 +122,11 @@ struct SkinBind {
 };
 @group(1) @binding(2) var<storage, read> skin_binds: array<SkinBind>;
 
-@group(2) @binding(0) var textures: binding_array<texture_2d<f32>>;
+// Bindless textures pooled in pages (textures.rs): a slot's location packs
+// the page (high 16 bits) and its layer (low 16 bits).
+@group(2) @binding(0) var tex_pages: binding_array<texture_2d_array<f32>>;
 @group(2) @binding(1) var tex_sampler: sampler;
+@group(2) @binding(2) var<storage, read> tex_loc: array<u32>;
 
 fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
     let lo = c / 12.92;
@@ -132,11 +135,13 @@ fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
 }
 
 fn sample_tex(idx: u32, uv: vec2<f32>) -> vec4<f32> {
-    return textureSample(textures[idx], tex_sampler, uv);
+    let loc = tex_loc[idx];
+    return textureSample(tex_pages[loc >> 16u], tex_sampler, uv, loc & 0xffffu);
 }
 
 fn sample_tex_level(idx: u32, uv: vec2<f32>, lod: f32) -> vec4<f32> {
-    return textureSampleLevel(textures[idx], tex_sampler, uv, lod);
+    let loc = tex_loc[idx];
+    return textureSampleLevel(tex_pages[loc >> 16u], tex_sampler, uv, loc & 0xffffu, lod);
 }
 
 fn in_reflection_pass() -> bool {
@@ -399,7 +404,7 @@ fn sky_color(dir: vec3<f32>) -> vec3<f32> {
 }
 
 fn cloud_noise(uv: vec2<f32>) -> f32 {
-    return textureSampleLevel(textures[frame.tex_slots.x], tex_sampler, uv, 0.0).x;
+    return sample_tex_level(frame.tex_slots.x, uv, 0.0).x;
 }
 
 /// Cloud layer over the sky (cloudsV/F.glsl), in the sky's sRGB-like space.

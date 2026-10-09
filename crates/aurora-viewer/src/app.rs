@@ -2731,7 +2731,7 @@ impl App {
             let since_arrival = self.move_complete_at.map(|t| t.elapsed().as_secs()).unwrap_or(0);
             if (self.attachments_logged == 0 && since_arrival >= 40) || (self.attachments_logged == 1 && since_arrival >= 120) {
                 self.attachments_logged += 1;
-                self.scene.log_attachments(&self.world, self.world.agent_id);
+                self.scene.log_attachments(&self.world, self.world.agent_id, &gfx.renderer.textures);
                 // and the avatars within 10 m
                 let me = self.world.agent.position;
                 let near: Vec<uuid::Uuid> = self
@@ -2742,7 +2742,7 @@ impl App {
                     .map(|(_, o)| o.full_id)
                     .collect();
                 for id in near {
-                    self.scene.log_attachments(&self.world, id);
+                    self.scene.log_attachments(&self.world, id, &gfx.renderer.textures);
                 }
             }
             if std::mem::take(&mut self.options_ui.describe_nearby) {
@@ -3340,6 +3340,31 @@ impl App {
         {
             self.toggle_ground_sit();
             log::info!("demo sit button: sitting {}", self.world.agent.is_sitting());
+        }
+        // AURORA_DEMO_TEXTURES_CHURN=1: stress cubes removed at frame 300
+        // (textures released, evicted after 2 s), back with new textures at 700
+        if self.demo
+            && crate::demo::texture_churn()
+            && let Some(n) = crate::demo::texture_stress_count()
+        {
+            if self.frame_count == 300 {
+                self.scene.textures.evict_after = Duration::from_secs(2);
+                for i in (0..n).filter(|&i| crate::demo::stress_churned(i)) {
+                    self.scene.textures.release(&crate::demo::stress_texture(i));
+                }
+                for ev in crate::demo::texture_churn_kill(n) {
+                    self.world.apply(ev);
+                }
+            }
+            if self.frame_count == 700 {
+                if let Some(g) = &mut self.gfx {
+                    let ids = (0..n).filter(|&i| crate::demo::stress_churned(i)).map(|i| n + i);
+                    self.scene.textures.install_demo_stress(&mut g.renderer, ids);
+                }
+                for ev in crate::demo::texture_churn_respawn(n) {
+                    self.world.apply(ev);
+                }
+            }
         }
         // Wait until login's loading fade is over, so the demo exercises a
         // teleport from the visible world even on a very fast machine.
@@ -4682,6 +4707,14 @@ impl ApplicationHandler for App {
                     self.scene.install_demo_animesh(&mut g.renderer);
                 }
                 for ev in crate::demo::animesh_events() {
+                    self.world.apply(ev);
+                }
+            }
+            if let Some(n) = crate::demo::texture_stress_count() {
+                if let Some(g) = &mut self.gfx {
+                    self.scene.textures.install_demo_stress(&mut g.renderer, 0..n);
+                }
+                for ev in crate::demo::texture_stress_events(n) {
                     self.world.apply(ev);
                 }
             }

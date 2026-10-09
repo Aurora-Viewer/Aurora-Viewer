@@ -796,6 +796,16 @@ fn details(ui: &mut egui::Ui, p: &Palette, v: &PerfView) {
                 v.render.texture_bytes as f64 / 1048576.0
             ),
         );
+        row(
+            ui,
+            p,
+            "Pages de textures",
+            format!(
+                "{} · {:.0} Mo",
+                v.render.texture_pages,
+                v.render.texture_page_bytes as f64 / 1048576.0
+            ),
+        );
         row(ui, p, "Réseau textures", format!("{}", v.tex.fetching));
         row(ui, p, "Décodage", format!("{} · upload {}", v.tex.decoding, v.tex.pending_upload));
         row(ui, p, "Tâches en fond", format!("{}", v.scene.jobs));

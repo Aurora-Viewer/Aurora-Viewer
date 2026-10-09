@@ -3436,7 +3436,7 @@ impl Renderer {
             );
             self.records_generation = self.records.generation;
         }
-        self.textures.maintain(&self.device, false);
+        self.textures.maintain(&self.device, &self.queue, false);
         prof.push(("resources", Instant::now()));
 
         let (cascades, splits) = self.cascade_matrices(f);
@@ -4512,6 +4512,8 @@ impl Renderer {
 
         stats.textures = self.textures.live();
         stats.texture_bytes = self.textures.bytes();
+        stats.texture_pages = self.textures.pages();
+        stats.texture_page_bytes = self.textures.page_bytes();
         stats.geometry_bytes = self.geometry.bytes();
         let (vu, iu) = self.geometry.used();
         stats.vertex_used = vu;
