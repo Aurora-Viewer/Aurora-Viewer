@@ -35,6 +35,8 @@ pub enum BarAction {
     SetStatus(crate::world::status::StatusModes),
     /// Open the chat preferences (automatic responses).
     ChatPrefs,
+    /// Moi > Profil.
+    MyProfile,
 }
 
 pub struct StatusInfo<'a> {
@@ -283,6 +285,11 @@ fn status_dot(ui: &mut egui::Ui, p: &Palette, status: crate::world::status::Stat
 /// of the navigation bar (without "Avancé").
 fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusInfo, action: &mut BarAction, advanced: bool) {
     ui.menu_button(small("Moi", p.ink), |ui| {
+        if ui.button("Profil…").clicked() {
+            *action = BarAction::MyProfile;
+            ui.close();
+        }
+        ui.separator();
         if ui.button("Rentrer chez moi").clicked() {
             *action = BarAction::TeleportHome;
             ui.close();

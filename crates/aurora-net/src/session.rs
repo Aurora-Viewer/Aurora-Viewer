@@ -929,12 +929,12 @@ impl Session<'_> {
                                         .map_err(|_| ())
                                         .and_then(|b| aurora_llsd::from_xml(&b).map_err(|_| ()))
                                     {
-                                        let _ = events.send(NetEvent::AvatarProfile {
-                                            id,
-                                            image_id: v["sl_image_id"].as_uuid(),
-                                            about: v["sl_about_text"].to_string_value(),
-                                            born_on: v["member_since"].to_string_value(),
-                                        });
+                                        match crate::profile::parse_agent_profile(id, &v) {
+                                            Some(p) => {
+                                                let _ = events.send(NetEvent::AvatarProfile(Box::new(p)));
+                                            }
+                                            None => log::debug!("AgentProfile {id}: reply about another avatar"),
+                                        }
                                     }
                                 }
                                 Ok(resp) => log::debug!("AgentProfile {id}: HTTP {}", resp.status()),
@@ -950,6 +950,69 @@ impl Session<'_> {
                         self.send_main(&m, true);
                     }
                 }
+            }
+            NetCommand::UpdateProfile { target, data } => self.update_profile(target, data),
+            NetCommand::PickInfoRequest { creator, pick } => {
+                // LLAvatarPropertiesProcessor::sendPickInfoRequest
+                self.send_generic("pickinforequest", &[creator.to_string(), pick.to_string()]);
+            }
+            NetCommand::PickUpdate(pick) => {
+                // LLPanelProfilePick::sendUpdate
+                let mut m = PickInfoUpdate::default();
+                m.agent_data.agent_id = self.agent_id();
+                m.agent_data.session_id = self.session_id();
+                let d = &mut m.data;
+                d.pick_id = pick.id;
+                d.creator_id = self.agent_id();
+                d.top_pick = false;
+                d.parcel_id = pick.parcel;
+                d.name = str_field(&pick.name);
+                d.desc = str_field(&pick.desc);
+                d.snapshot_id = pick.snapshot;
+                d.pos_global = pick.pos_global;
+                d.sort_order = 0;
+                d.enabled = true;
+                self.send_main(&m, true);
+            }
+            NetCommand::PickDelete(id) => {
+                let mut m = PickDelete::default();
+                m.agent_data.agent_id = self.agent_id();
+                m.agent_data.session_id = self.session_id();
+                m.data.pick_id = id;
+                self.send_main(&m, true);
+            }
+            NetCommand::ClassifiedsRequest(id) => self.send_generic("avatarclassifiedsrequest", &[id.to_string()]),
+            NetCommand::ClassifiedInfoRequest(id) => {
+                let mut m = ClassifiedInfoRequest::default();
+                m.agent_data.agent_id = self.agent_id();
+                m.agent_data.session_id = self.session_id();
+                m.data.classified_id = id;
+                self.send_main(&m, true);
+            }
+            NetCommand::ClassifiedDelete(id) => {
+                let mut m = ClassifiedDelete::default();
+                m.agent_data.agent_id = self.agent_id();
+                m.agent_data.session_id = self.session_id();
+                m.data.classified_id = id;
+                self.send_main(&m, true);
+            }
+            NetCommand::ParcelInfoRequest(id) => {
+                let mut m = ParcelInfoRequest::default();
+                m.agent_data.agent_id = self.agent_id();
+                m.agent_data.session_id = self.session_id();
+                m.data.parcel_id = id;
+                self.send_main(&m, true);
+            }
+            NetCommand::GrantUserRights { friend, rights } => {
+                // LLAvatarActions / LLAvatarTracker::sendRightsGrantedUpdate
+                let mut m = GrantUserRights::default();
+                m.agent_data.agent_id = self.agent_id();
+                m.agent_data.session_id = self.session_id();
+                m.rights.push(msgs::grant_user_rights::Rights {
+                    agent_related: friend,
+                    related_rights: rights,
+                });
+                self.send_main(&m, true);
             }
             NetCommand::LookAt {
                 effect,
@@ -1220,6 +1283,73 @@ impl Session<'_> {
                 });
             }
         });
+    }
+
+    /// LLPanelProfileTab saveAgentUserInfoCoro: PUT <AgentProfile>/<target>;
+    /// without the capability only the notes have a UDP message
+    /// (AvatarNotesUpdate).
+    fn update_profile(&mut self, target: uuid::Uuid, data: Llsd) {
+        let cap = self
+            .main
+            .and_then(|a| self.sims.get(&a))
+            .and_then(|s| s.caps.get("AgentProfile").cloned());
+        let Some(url) = cap else {
+            if data.has("notes") {
+                let mut m = AvatarNotesUpdate::default();
+                m.agent_data.agent_id = self.agent_id();
+                m.agent_data.session_id = self.session_id();
+                m.data.target_id = target;
+                m.data.notes = str_field(data["notes"].as_str());
+                self.send_main(&m, true);
+            } else {
+                emit(
+                    self.sh,
+                    NetEvent::ProfileSaveFailed {
+                        target,
+                        reason: "la région n'a pas la capability AgentProfile".into(),
+                    },
+                );
+            }
+            return;
+        };
+        let http = self.sh.caps_http.clone();
+        let events = self.sh.events.clone();
+        tokio::spawn(async move {
+            let url = format!("{}/{target}", url.trim_end_matches('/'));
+            let resp = http
+                .put(&url)
+                .header("Content-Type", "application/llsd+xml")
+                .header("Accept", "application/llsd+xml")
+                .body(aurora_llsd::to_xml(&data))
+                .send()
+                .await;
+            let reason = match resp {
+                Ok(r) if r.status().is_success() => return,
+                Ok(r) => format!("HTTP {}", r.status().as_u16()),
+                Err(e) => e.to_string(),
+            };
+            log::warn!("AgentProfile PUT {target}: {reason}");
+            let _ = events.send(NetEvent::ProfileSaveFailed { target, reason });
+        });
+    }
+
+    /// send_generic_message (llviewergenericmessage.cpp): one parameter
+    /// block per string, an empty one when there are none.
+    fn send_generic(&mut self, method: &str, params: &[String]) {
+        let mut m = GenericMessage::default();
+        m.agent_data.agent_id = self.agent_id();
+        m.agent_data.session_id = self.session_id();
+        m.method_data.method = str_field(method);
+        let blocks: Vec<&str> = if params.is_empty() {
+            vec![""]
+        } else {
+            params.iter().map(String::as_str).collect()
+        };
+        m.param_list = blocks
+            .into_iter()
+            .map(|p| msgs::generic_message::ParamList { parameter: str_field(p) })
+            .collect();
+        self.send_main(&m, true);
     }
 
     fn send_im(&mut self, to: uuid::Uuid, text: &str, dialog: u8) {
@@ -1730,18 +1860,92 @@ impl Session<'_> {
                 let m: CameraConstraint = pkt.decode()?;
                 emit(self.sh, NetEvent::CameraConstraint(m.camera_collide_plane.plane));
             }
+        } else if id == PickInfoReply::ID {
+            let m: PickInfoReply = pkt.decode()?;
+            let d = &m.data;
+            let pick = crate::PickInfo {
+                id: d.pick_id,
+                creator: d.creator_id,
+                parcel: d.parcel_id,
+                name: field_str(&d.name),
+                desc: field_str(&d.desc),
+                snapshot: d.snapshot_id,
+                sim_name: field_str(&d.sim_name),
+                pos_global: d.pos_global,
+                sort_order: d.sort_order,
+                enabled: d.enabled,
+            };
+            emit(self.sh, NetEvent::PickInfo(Box::new(pick)));
+        } else if id == AvatarClassifiedReply::ID {
+            let m: AvatarClassifiedReply = pkt.decode()?;
+            emit(
+                self.sh,
+                NetEvent::AvatarClassifieds {
+                    target: m.agent_data.target_id,
+                    list: m.data.iter().map(|d| (d.classified_id, field_str(&d.name))).collect(),
+                },
+            );
+        } else if id == ClassifiedInfoReply::ID {
+            let m: ClassifiedInfoReply = pkt.decode()?;
+            let d = &m.data;
+            let c = crate::ClassifiedInfo {
+                id: d.classified_id,
+                creator: d.creator_id,
+                creation_date: d.creation_date,
+                expiration_date: d.expiration_date,
+                category: d.category,
+                name: field_str(&d.name),
+                desc: field_str(&d.desc),
+                parcel: d.parcel_id,
+                snapshot: d.snapshot_id,
+                sim_name: field_str(&d.sim_name),
+                pos_global: d.pos_global,
+                parcel_name: field_str(&d.parcel_name),
+                flags: d.classified_flags,
+                price: d.price_for_listing,
+            };
+            emit(self.sh, NetEvent::ClassifiedInfo(Box::new(c)));
+        } else if id == ParcelInfoReply::ID {
+            let m: ParcelInfoReply = pkt.decode()?;
+            let d = &m.data;
+            let p = crate::ParcelSummary {
+                id: d.parcel_id,
+                name: field_str(&d.name),
+                sim_name: field_str(&d.sim_name),
+                global: glam::DVec3::new(d.global_x as f64, d.global_y as f64, d.global_z as f64),
+                snapshot: d.snapshot_id,
+            };
+            emit(self.sh, NetEvent::ParcelInfo(Box::new(p)));
+        } else if id == ChangeUserRights::ID {
+            let m: ChangeUserRights = pkt.decode()?;
+            emit(
+                self.sh,
+                NetEvent::UserRights {
+                    agent: m.agent_data.agent_id,
+                    rights: m.rights.iter().map(|r| (r.agent_related, r.related_rights)).collect(),
+                },
+            );
         } else if id == AvatarPropertiesReply::ID {
             let m: AvatarPropertiesReply = pkt.decode()?;
             let pd = &m.properties_data;
-            emit(
-                self.sh,
-                NetEvent::AvatarProfile {
-                    id: m.agent_data.avatar_id,
-                    image_id: pd.image_id,
-                    about: field_str(&pd.about_text),
-                    born_on: field_str(&pd.born_on),
-                },
-            );
+            // processAvatarPropertiesReply: no groups, picks nor notes here
+            let (caption_index, caption_text) = crate::profile::parse_charter_member(&pd.charter_member);
+            let p = crate::AvatarProfile {
+                id: m.agent_data.avatar_id,
+                sl_image: pd.image_id,
+                fl_image: pd.fl_image_id,
+                partner: pd.partner_id,
+                sl_about: field_str(&pd.about_text),
+                fl_about: field_str(&pd.fl_about_text),
+                born: crate::profile::parse_pdt_date(&field_str(&pd.born_on)),
+                online: Some(pd.flags & crate::profile::flags::ONLINE != 0),
+                flags: pd.flags,
+                caption_index,
+                caption_text,
+                legacy: true,
+                ..Default::default()
+            };
+            emit(self.sh, NetEvent::AvatarProfile(Box::new(p)));
         } else if id == msgs::RegionInfo::ID {
             // estate changes: water height, and the region environment may have changed
             let m: msgs::RegionInfo = pkt.decode()?;

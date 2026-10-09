@@ -26,6 +26,7 @@
 pub mod entry;
 mod interact;
 pub mod keys;
+pub mod openid;
 pub mod pick;
 mod update;
 
@@ -403,6 +404,8 @@ pub struct MediaManager {
     pick_cache: HashMap<Uuid, (u64, std::sync::Arc<Vec<Option<interact::CpuFace>>>)>,
     /// Last media pixel under the cursor (focused media).
     last_pixel: Option<(i32, i32)>,
+    /// OpenID cookie of the web profiles (login token).
+    pub openid: openid::OpenId,
 }
 
 impl Default for MediaManager {
@@ -433,7 +436,23 @@ impl Default for MediaManager {
             last_diag: Instant::now() - Duration::from_secs(15),
             pick_cache: HashMap::new(),
             last_pixel: None,
+            openid: openid::OpenId::default(),
         }
+    }
+}
+
+/// Settings of our CEF browsers (newSourceFromMediaType): cache, log,
+/// language and the viewer's user agent.
+pub fn browser_settings(cache_dir: &std::path::Path, language: &str) -> BrowserSettings {
+    BrowserSettings {
+        cache_path: format!("{}\\", cache_dir.join("cef").display()),
+        username: "aurora".into(),
+        cef_log_file: cache_dir.join("cef.log").display().to_string(),
+        language: language.to_string(),
+        user_agent: concat!("SecondLife (Aurora Viewer ", env!("CARGO_PKG_VERSION"), ")").to_string(),
+        cookies_enabled: true,
+        javascript_enabled: true,
+        zoom_factor: 1.0,
     }
 }
 

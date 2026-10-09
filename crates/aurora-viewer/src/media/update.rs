@@ -337,16 +337,7 @@ impl MediaManager {
         let mut navs = Vec::new();
         let mut messages = Vec::new();
         let paths = self.paths.clone();
-        let browser = BrowserSettings {
-            cache_path: format!("{}\\", f.cache_dir.join("cef").display()),
-            username: "aurora".into(),
-            cef_log_file: f.cache_dir.join("cef.log").display().to_string(),
-            language: f.language.to_string(),
-            user_agent: concat!("SecondLife (Aurora Viewer ", env!("CARGO_PKG_VERSION"), ")").to_string(),
-            cookies_enabled: true,
-            javascript_enabled: true,
-            zoom_factor: 1.0,
-        };
+        let browser = browser_settings(f.cache_dir, f.language);
         for m in &mut self.impls {
             if m.priority == Priority::Unloaded {
                 if m.plugin.take().is_some() {

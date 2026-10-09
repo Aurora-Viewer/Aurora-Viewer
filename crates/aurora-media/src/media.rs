@@ -165,6 +165,19 @@ pub fn next_power_of_2(v: i32) -> i32 {
     (v as u32).next_power_of_two() as i32
 }
 
+/// A cookie given to the browser (`set_cookie`).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Cookie {
+    /// Page the cookie is set for ("https://id.secondlife.com").
+    pub uri: String,
+    pub name: String,
+    pub value: String,
+    pub domain: String,
+    pub path: String,
+    pub httponly: bool,
+    pub secure: bool,
+}
+
 /// Browser settings sent before `init` (newSourceFromMediaType).
 #[derive(Debug, Clone)]
 pub struct BrowserSettings {
@@ -637,6 +650,21 @@ impl MediaPlugin {
     }
 
     // ------------------------------------------------------------ navigation
+
+    /// LLPluginClassMedia::setCookie: a cookie in the browser's store (the
+    /// OpenID cookie of the web profiles).
+    pub fn set_cookie(&mut self, c: &Cookie) {
+        self.send(
+            PluginMessage::new(CLASS_MEDIA, "set_cookie")
+                .with("uri", c.uri.as_str())
+                .with("name", c.name.as_str())
+                .with("value", c.value.as_str())
+                .with("domain", c.domain.as_str())
+                .with("path", c.path.as_str())
+                .with("httponly", c.httponly)
+                .with("secure", c.secure),
+        );
+    }
 
     pub fn load_uri(&mut self, uri: &str) {
         self.send(PluginMessage::new(CLASS_MEDIA, "load_uri").with("uri", uri));

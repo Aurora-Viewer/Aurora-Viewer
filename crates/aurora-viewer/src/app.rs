@@ -245,6 +245,11 @@ pub struct App {
     emoji: ui::emoji::Emoji,
     /// Profile pictures by avatar id (egui textures).
     avatar_pics: std::collections::HashMap<uuid::Uuid, egui::TextureHandle>,
+    /// Other interface images by asset id (profiles: 1st life picture,
+    /// group insignias).
+    ui_images: std::collections::HashMap<uuid::Uuid, egui::TextureHandle>,
+    /// Avatar profile windows.
+    profile_ui: ui::profile::ProfileUi,
     demo: bool,
     inventory_ui: ui::inventory::InventoryUi,
     last_social_poll: Instant,
@@ -460,6 +465,8 @@ impl App {
             devices_listed: false,
             emoji: ui::emoji::Emoji::load(),
             avatar_pics: Default::default(),
+            ui_images: Default::default(),
+            profile_ui: Default::default(),
             demo: false,
             inventory_ui: Default::default(),
             last_social_poll: Instant::now(),
@@ -539,6 +546,7 @@ impl App {
 
     fn back_to_login(&mut self, error: Option<String>) {
         self.media.clear();
+        self.media.openid.clear();
         self.world.save_inventory_cache();
         self.world.save_mute_cache();
         if let Some(path) = self.name_cache_path() {
@@ -589,6 +597,16 @@ impl App {
                 }
             }
             NetEvent::LoggedIn(l) => {
+                // web profiles know who we are (LLStartup: LLViewerMedia::openIDSetup)
+                let (openid_url, openid_token) = (l.raw["openid_url"].as_str(), l.raw["openid_token"].as_str());
+                if !openid_url.is_empty() && !openid_token.is_empty() {
+                    self.media.openid.start(
+                        self.net.runtime(),
+                        self.net.caps_http(),
+                        openid_url.to_owned(),
+                        openid_token.to_owned(),
+                    );
+                }
                 // interface sounds ready when needed (init_audio preloads)
                 for id in self.settings.audio.ui.preload() {
                     self.scene.sounds.want(id);
@@ -1636,18 +1654,14 @@ impl App {
             CtxAction::SitGround => self.send(NetCommand::OneShotControl(control::SIT_ON_GROUND)),
             CtxAction::ToggleFly => self.toggle_fly(),
             CtxAction::ResetCamera => self.reset_camera_view(),
-            CtxAction::Im(id) | CtxAction::Profile(id) => {
+            CtxAction::Im(id) => {
                 // UISndStartIM (LLAvatarActions::startIM)
-                if matches!(act, CtxAction::Im(_)) {
-                    self.world.ui_sounds.push(UiSound::StartIm);
-                }
+                self.world.ui_sounds.push(UiSound::StartIm);
                 self.world.social.session_mut(id);
                 self.world.social.focus_im = Some(id);
                 self.panels.chat = true;
-                if matches!(act, CtxAction::Profile(_)) {
-                    self.chat_ui.show_profile_for = Some(id);
-                }
             }
+            CtxAction::Profile(id) => self.profile_ui.open(&mut self.world, id),
             CtxAction::ToggleBlock(id) => {
                 let name = self.world.legacy_name(&id).unwrap_or_else(|| self.world.social.name_of(&id));
                 if let Err(e) = self.world.toggle_block_avatar(id, &name) {
@@ -2030,13 +2044,14 @@ impl App {
         for id in self.chat_ui.wanted_names.drain() {
             self.world.social.want_name(id);
         }
-        let wanted: Vec<uuid::Uuid> = self.chat_ui.wanted_pics.drain().collect();
+        let mut wanted: Vec<uuid::Uuid> = self.chat_ui.wanted_pics.drain().collect();
+        wanted.extend(self.profile_ui.wanted_pics.drain());
         for agent in wanted {
             if self.avatar_pics.contains_key(&agent) {
                 continue;
             }
             self.world.want_profile(agent);
-            let Some(image) = self.world.profiles.get(&agent).map(|p| p.image_id).filter(|i| !i.is_nil()) else {
+            let Some(image) = self.world.profiles.get(&agent).map(|p| p.sl_image).filter(|i| !i.is_nil()) else {
                 continue;
             };
             self.scene.textures.want_ui_image(renderer, image);
@@ -2046,6 +2061,20 @@ impl App {
                 let ci = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba);
                 let t = self.egui_ctx.load_texture(format!("pic-{agent}"), ci, egui::TextureOptions::LINEAR);
                 self.avatar_pics.insert(agent, t);
+            }
+        }
+        let images: Vec<uuid::Uuid> = self.profile_ui.wanted_images.drain().collect();
+        for image in images {
+            if self.ui_images.contains_key(&image) {
+                continue;
+            }
+            self.scene.textures.want_ui_image(renderer, image);
+            if let Some((w, h, rgba)) = self.scene.textures.take_ui_image(&image)
+                && rgba.len() == (w * h * 4) as usize
+            {
+                let ci = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba);
+                let t = self.egui_ctx.load_texture(format!("img-{image}"), ci, egui::TextureOptions::LINEAR);
+                self.ui_images.insert(image, t);
             }
         }
     }
@@ -3159,6 +3188,10 @@ impl App {
                 self.world.status.cfg = a.clone();
                 self.settings.save();
             }
+            BarAction::MyProfile => {
+                let me = self.world.agent_id;
+                self.profile_ui.open(&mut self.world, me);
+            }
             BarAction::ChatPrefs => {
                 self.panels.settings = true;
                 self.options_ui.tab = ui::options::TAB_CHAT;
@@ -3456,6 +3489,7 @@ impl App {
                             self.panels.people = true;
                             self.panels.people_tab = tab;
                         }
+                        ui::chat::ConvAction::Profile(id) => self.profile_ui.open(&mut self.world, id),
                     }
                 }
                 self.panels.chat = open;
@@ -3475,6 +3509,7 @@ impl App {
                             self.panels.chat = true;
                         }
                         ui::people::PeopleAction::OfferTeleport(id) => a.offer_tp.push(id),
+                        ui::people::PeopleAction::Profile(id) => self.profile_ui.open(&mut self.world, id),
                         ui::people::PeopleAction::GroupChat(id) => {
                             self.world.ui_sounds.push(UiSound::StartIm);
                             self.world.start_group_chat(id);
@@ -3555,6 +3590,67 @@ impl App {
                 ui::land::show(&ctx, &p, &self.world, &mut open);
                 self.panels.about_land = open;
                 a.set_display_name = self.display_name_ui.show(&ctx, &p, &self.world);
+                // links and names clicked anywhere (LLAgentHandler)
+                if let Some(id) = ui::profile::take_open_request(&ctx) {
+                    self.profile_ui.open(&mut self.world, id);
+                }
+                // the "Flux" tab: a browser on the grid's web profiles
+                let paths = self.media.plugins(&self.settings.media).cloned();
+                let browser = crate::media::browser_settings(&crate::settings::cache_dir(), "fr");
+                let cookie = self.media.openid.cookie();
+                let profile_base = match self.settings.grid {
+                    // AURORA_DEMO_FEED=<page>: the feed browser on a local page
+                    _ if self.demo => std::env::var("AURORA_DEMO_FEED").ok(),
+                    crate::settings::GridChoice::SecondLife => Some("https://my.secondlife.com/".to_owned()),
+                    crate::settings::GridChoice::SecondLifeBeta => Some("https://my.secondlife-beta.com/".to_owned()),
+                    crate::settings::GridChoice::Custom => self
+                        .world
+                        .login
+                        .as_ref()
+                        .map(|l| l.raw["web_profile_url"].to_string_value())
+                        .filter(|u| !u.trim().is_empty()),
+                };
+                let web = ui::profile::WebContext {
+                    paths: paths.as_ref(),
+                    browser: &browser,
+                    cookie: cookie.as_ref(),
+                    profile_base: profile_base.as_deref(),
+                };
+                let acts = self.profile_ui.show(
+                    &ctx,
+                    &p,
+                    &mut self.emoji,
+                    &self.avatar_pics,
+                    &self.ui_images,
+                    &self.world,
+                    &mut self.chat_ui.wanted_names,
+                    &web,
+                );
+                for pa in acts {
+                    match pa {
+                        ui::profile::ProfileAction::Im(id) => a.ctx_action = Some(ui::context::CtxAction::Im(id)),
+                        ui::profile::ProfileAction::OfferTeleport(id) => a.offer_tp.push(id),
+                        ui::profile::ProfileAction::ToggleBlock(id) => a.ctx_action = Some(ui::context::CtxAction::ToggleBlock(id)),
+                        ui::profile::ProfileAction::DisplayName => self.display_name_ui.open(),
+                        ui::profile::ProfileAction::GroupChat(id) => {
+                            self.world.start_group_chat(id);
+                            self.panels.chat = true;
+                        }
+                        ui::profile::ProfileAction::Save { target, data } => {
+                            let cmd = self.world.save_profile(target, data);
+                            self.send(cmd);
+                        }
+                        ui::profile::ProfileAction::Net(cmd) => {
+                            self.world.profile_command(&cmd);
+                            self.send(cmd);
+                        }
+                        ui::profile::ProfileAction::ShowOnMap(g) => {
+                            self.world.map.track_location(g.x, g.y, g.z as f32, false);
+                            self.panels.world_map = true;
+                        }
+                        ui::profile::ProfileAction::Teleport(g) => self.world.map.track_location(g.x, g.y, g.z as f32, true),
+                    }
+                }
                 let mut open = self.panels.minimap;
                 mini.extend(self.minimap_ui.window(
                     &ctx,
@@ -3578,6 +3674,7 @@ impl App {
                             self.panels.chat = true;
                         }
                         ui::minimap::MiniMapAction::OfferTeleport(id) => a.offer_tp.push(id),
+                        ui::minimap::MiniMapAction::Profile(id) => self.profile_ui.open(&mut self.world, id),
                         ui::minimap::MiniMapAction::AboutLand => self.panels.about_land = true,
                         ui::minimap::MiniMapAction::Colors(k) => self.settings.colors = k,
                         ui::minimap::MiniMapAction::Close => self.panels.minimap = false,
@@ -3891,6 +3988,19 @@ impl ApplicationHandler for App {
                 self.panels.perf = false;
                 self.panels.minimap = false;
             }
+            // AURORA_DEMO_PROFILE=loup|nova|friend|self[:tab]: a profile window
+            if let Ok(v) = std::env::var("AURORA_DEMO_PROFILE") {
+                let (who, tab) = v.split_once(':').unwrap_or((v.as_str(), "0"));
+                let id = match who {
+                    "self" => crate::demo::DEMO_AGENT,
+                    "nova" => crate::demo::DEMO_NOVA,
+                    "friend" => crate::demo::DEMO_FRIEND,
+                    _ => crate::demo::DEMO_LOUP,
+                };
+                self.profile_ui.open(&mut self.world, id);
+                self.profile_ui.set_tab(id, tab.parse().unwrap_or(0));
+                self.panels.perf = false;
+            }
             // AURORA_DEMO_CONV=1: the demo group chat with its participants
             if std::env::var_os("AURORA_DEMO_CONV").is_some() {
                 self.panels.chat = true;
@@ -4039,6 +4149,19 @@ impl ApplicationHandler for App {
                     }
                     // Releases always go through so keys never get stuck.
                     let typing = self.egui_ctx.egui_wants_keyboard_input();
+                    // a profile's web page that was clicked gets the keyboard
+                    if !typing && let Some(p) = self.profile_ui.focused_web() {
+                        use winit::platform::scancode::PhysicalKeyExtScancode;
+                        let scancode = ke.physical_key.to_scancode().unwrap_or(0);
+                        let mods = aurora_media::Modifiers {
+                            control: self.ctrl,
+                            alt: self.alt,
+                            shift: self.shift,
+                        };
+                        if crate::media::keys::forward(p, code, scancode, pressed, ke.repeat, ke.text.as_deref(), mods) || pressed {
+                            return;
+                        }
+                    }
                     // a focused media page gets the keyboard (LLViewerMediaFocus)
                     if self.media.focus.is_some() && !typing && (!resp.consumed || !pressed) {
                         use winit::platform::scancode::PhysicalKeyExtScancode;

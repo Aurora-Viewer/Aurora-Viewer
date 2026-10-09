@@ -477,11 +477,28 @@ pub enum NetEvent {
         url: String,
     },
     /// Avatar profile data (AgentProfile / AvatarPropertiesReply).
-    AvatarProfile {
-        id: Uuid,
-        image_id: Uuid,
-        about: String,
-        born_on: String,
+    AvatarProfile(Box<crate::profile::AvatarProfile>),
+    /// PickInfoReply.
+    PickInfo(Box<crate::PickInfo>),
+    /// AvatarClassifiedReply: an avatar's classifieds (id, name).
+    AvatarClassifieds {
+        target: Uuid,
+        list: Vec<(Uuid, String)>,
+    },
+    /// ClassifiedInfoReply.
+    ClassifiedInfo(Box<crate::ClassifiedInfo>),
+    /// ParcelInfoReply (LLRemoteParcelInfoProcessor).
+    ParcelInfo(Box<crate::ParcelSummary>),
+    /// ChangeUserRights: `agent` changed the rights it grants to each
+    /// (related avatar, rights); `agent` = us when we changed ours.
+    UserRights {
+        agent: Uuid,
+        rights: Vec<(Uuid, i32)>,
+    },
+    /// Saving a profile field failed (AgentProfile PUT).
+    ProfileSaveFailed {
+        target: Uuid,
+        reason: String,
     },
     /// A region's water height changed (RegionInfo).
     WaterHeight {
@@ -718,6 +735,33 @@ pub enum NetCommand {
     },
     /// Profile of an avatar (picture, about text): AgentProfile cap or AvatarPropertiesRequest.
     RequestProfile(Uuid),
+    /// Details of a pick (generic "pickinforequest": creator, pick).
+    PickInfoRequest {
+        creator: Uuid,
+        pick: Uuid,
+    },
+    /// Create or save one of our picks (PickInfoUpdate; the simulator sets
+    /// the parcel).
+    PickUpdate(Box<crate::PickInfo>),
+    PickDelete(Uuid),
+    /// An avatar's classifieds (generic "avatarclassifiedsrequest").
+    ClassifiedsRequest(Uuid),
+    ClassifiedInfoRequest(Uuid),
+    ClassifiedDelete(Uuid),
+    /// ParcelInfoRequest (name and region of a pick's parcel).
+    ParcelInfoRequest(Uuid),
+    /// GrantUserRights: rights we give a friend (1 online, 2 map, 4 modify).
+    GrantUserRights {
+        friend: Uuid,
+        rights: i32,
+    },
+    /// Save profile fields (saveAgentUserInfoCoro): PUT <AgentProfile>/<target>
+    /// with a map of keys (`sl_about_text`, `fl_about_text`, `allow_publish`,
+    /// `hide_age`: target = us; `notes`: target = the avatar noted).
+    UpdateProfile {
+        target: Uuid,
+        data: aurora_llsd::Llsd,
+    },
     /// Stand up, sit on ground, etc. are expressed as one-shot control flags.
     OneShotControl(u32),
     RequestNames(Vec<Uuid>),

@@ -18,12 +18,11 @@ pub struct ChatUi {
     pub wanted_pics: HashSet<uuid::Uuid>,
     /// Names to resolve (mentions) — taken by the app.
     pub wanted_names: HashSet<uuid::Uuid>,
+    /// Participants of the group / conference session shown.
     pub show_profile: bool,
     /// Search filter (None = closed).
     pub search: Option<String>,
     pub emoji_open: bool,
-    /// Open this avatar's profile card when its conversation shows.
-    pub show_profile_for: Option<uuid::Uuid>,
 }
 
 pub struct OutgoingChat {
@@ -121,6 +120,8 @@ pub enum ConvAction {
     LeaveSession(uuid::Uuid),
     /// Stop receiving a group's chat (and leave its session).
     BlockGroupChat(uuid::Uuid),
+    /// Open an avatar's profile window.
+    Profile(uuid::Uuid),
 }
 
 /// Messages from the same sender within this many seconds share one header.
@@ -194,6 +195,9 @@ enum Seg<'a> {
     Slurl(&'a str),
     /// secondlife:///app/agent/<id>/mention
     Mention(uuid::Uuid),
+    /// secondlife:///app/agent/<id>/about (inspect, completename...): shown
+    /// as the avatar's name, opens the profile (LLUrlEntryAgent).
+    Agent(uuid::Uuid),
 }
 
 fn segments(text: &str) -> Vec<Seg<'_>> {
@@ -216,9 +220,11 @@ fn segments(text: &str) -> Vec<Seg<'_>> {
         }
         let link = &tail[..end.max(1)];
         let seg = if let Some(rest) = link.strip_prefix("secondlife:///app/agent/") {
-            match rest.strip_suffix("/mention").and_then(|id| uuid::Uuid::parse_str(id).ok()) {
-                Some(id) => Seg::Mention(id),
-                None => Seg::Slurl(link),
+            let (id, action) = rest.split_once('/').unwrap_or((rest, ""));
+            match (uuid::Uuid::parse_str(id).ok(), action) {
+                (Some(id), "mention") => Seg::Mention(id),
+                (Some(id), "about" | "inspect" | "completename" | "displayname" | "username") => Seg::Agent(id),
+                _ => Seg::Slurl(link),
             }
         } else if link.starts_with("secondlife:///") {
             Seg::Slurl(link)
@@ -231,8 +237,10 @@ fn segments(text: &str) -> Vec<Seg<'_>> {
     out
 }
 
-/// Message text with emoji, clickable links and highlighted mentions.
-fn chat_text(
+/// Message text with emoji, clickable links and highlighted mentions
+/// (agent links and mentions open the profile).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn chat_text(
     ui: &mut egui::Ui,
     emoji: &mut super::emoji::Emoji,
     world: &World,
@@ -265,12 +273,35 @@ fn chat_text(
                     let me = id == world.agent_id;
                     let bg = if me { k.mention_me } else { k.mention_residents };
                     let label = format!(" @{} ", world.social.name_of(&id));
-                    ui.label(
-                        RichText::new(label)
-                            .size(size)
-                            .color(super::colors::c(k.mention_text))
-                            .background_color(super::colors::c(bg)),
+                    let r = ui.add(
+                        egui::Label::new(
+                            RichText::new(label)
+                                .size(size)
+                                .color(super::colors::c(k.mention_text))
+                                .background_color(super::colors::c(bg)),
+                        )
+                        .sense(egui::Sense::click()),
                     );
+                    if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                        super::profile::request_open(ui.ctx(), id);
+                    }
+                }
+                Seg::Agent(id) => {
+                    want_names.insert(id);
+                    let r = ui.add(
+                        egui::Label::new(
+                            RichText::new(world.social.name_of(&id))
+                                .size(size)
+                                .color(super::colors::c(k.chat_slurl)),
+                        )
+                        .sense(egui::Sense::click()),
+                    );
+                    if r.on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .on_hover_text("Voir le profil")
+                        .clicked()
+                    {
+                        super::profile::request_open(ui.ctx(), id);
+                    }
                 }
             }
         }
@@ -380,7 +411,17 @@ fn conversation(
                             avatar_pic(ui, p, pics.get(&line.source), &name, 20.0);
                         }
                         let col = super::colors::sender_color(line);
-                        ui.label(RichText::new(&name).size(13.0).strong().color(col));
+                        let r = ui.add(egui::Label::new(RichText::new(&name).size(13.0).strong().color(col)).sense(egui::Sense::click()));
+                        // the inspector in Firestorm; Aurora opens the profile
+                        let avatar = if own { world.agent_id } else { line.source };
+                        if !object
+                            && !avatar.is_nil()
+                            && r.on_hover_cursor(egui::CursorIcon::PointingHand)
+                                .on_hover_text("Voir le profil")
+                                .clicked()
+                        {
+                            super::profile::request_open(ui.ctx(), avatar);
+                        }
                         if let Some(u) = &username {
                             ui.label(RichText::new(format!("- {u}")).size(11.5).color(p.indigo_light));
                         }
@@ -443,12 +484,6 @@ pub fn show(
     if let Some(f) = world.social.focus_im.take() {
         st.selected = Some(f);
         st.show_profile = false;
-    }
-    if let Some(id) = st.show_profile_for.take()
-        && st.selected == Some(id)
-    {
-        st.show_profile = true;
-        world.want_profile(id);
     }
     let title = match st.selected {
         None => "Conversations - Chat local".to_owned(),
@@ -576,9 +611,8 @@ pub fn show(
                             }
                         }
                         Some(other) => {
-                            if tool(ui, p, icons, "user-circle", "Profil", true, st.show_profile) {
-                                st.show_profile = !st.show_profile;
-                                world.want_profile(other);
+                            if tool(ui, p, icons, "user-circle", "Profil", true, false) {
+                                actions.push(ConvAction::Profile(other));
                             }
                             tool(ui, p, icons, "user-plus", "Ajouter en ami (à venir)", false, false);
                             if tool(ui, p, icons, "airplane-takeoff", "Proposer une téléportation", true, false) {
@@ -617,56 +651,32 @@ pub fn show(
                         .inner_margin(egui::Margin::same(6))
                         .show(ui, |ui| {
                             ui.set_width(ui.available_width());
-                            let mut names: Vec<(String, bool)> = info
+                            let mut names: Vec<(uuid::Uuid, String, bool)> = info
                                 .participants
                                 .iter()
                                 .map(|id| {
                                     st.wanted_names.insert(*id);
-                                    (world.social.name_of(id), info.moderators.contains(id))
+                                    (*id, world.social.name_of(id), info.moderators.contains(id))
                                 })
                                 .collect();
-                            names.sort_by_key(|(n, _)| n.to_lowercase());
+                            names.sort_by_key(|(_, n, _)| n.to_lowercase());
                             if names.is_empty() {
                                 ui.label(RichText::new("Participants en cours de chargement…").size(11.5).color(p.muted));
                             }
                             egui::ScrollArea::vertical().max_height(90.0).show(ui, |ui| {
                                 ui.horizontal_wrapped(|ui| {
-                                    for (n, moderator) in names {
+                                    for (id, n, moderator) in names {
                                         let t = RichText::new(n).size(12.0).color(if moderator { p.violet_light } else { p.ink });
-                                        let r = ui.label(t);
-                                        if moderator {
-                                            r.on_hover_text("Modérateur");
+                                        let r = ui.add(egui::Label::new(t).sense(egui::Sense::click()));
+                                        let tip = if moderator {
+                                            "Modérateur · clic : profil"
+                                        } else {
+                                            "Clic : profil"
+                                        };
+                                        if r.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(tip).clicked() {
+                                            actions.push(ConvAction::Profile(id));
                                         }
                                         ui.add_space(8.0);
-                                    }
-                                });
-                            });
-                        });
-                    ui.add_space(4.0);
-                } else if let (true, Some(other)) = (st.show_profile, st.selected) {
-                    let name = world.social.name_of(&other);
-                    egui::Frame::new()
-                        .fill(p.field)
-                        .corner_radius(egui::CornerRadius::same(2))
-                        .inner_margin(egui::Margin::same(6))
-                        .show(ui, |ui| {
-                            ui.set_width(ui.available_width());
-                            ui.horizontal_top(|ui| {
-                                avatar_pic(ui, p, pics.get(&other), &name, 64.0);
-                                ui.vertical(|ui| {
-                                    ui.label(RichText::new(&name).size(14.0).strong().color(p.violet_light));
-                                    match world.profiles.get(&other) {
-                                        Some(pr) => {
-                                            if !pr.born_on.is_empty() {
-                                                ui.label(RichText::new(format!("Né(e) le {}", pr.born_on)).size(11.5).color(p.muted));
-                                            }
-                                            if !pr.about.is_empty() {
-                                                emoji.rich_text(ui, &pr.about, 12.5, p.ink, false);
-                                            }
-                                        }
-                                        None => {
-                                            ui.label(RichText::new("Chargement du profil…").size(11.5).color(p.muted));
-                                        }
                                     }
                                 });
                             });
@@ -903,6 +913,17 @@ pub fn bar(ui: &mut egui::Ui, p: &Palette, st: &mut ChatUi, width: f32) -> Optio
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agent_links() {
+        let id = uuid::Uuid::from_u128(5);
+        let t = format!("voir secondlife:///app/agent/{id}/about, @ secondlife:///app/agent/{id}/mention");
+        let segs = segments(&t);
+        assert_eq!(segs[1], Seg::Agent(id));
+        assert_eq!(segs[3], Seg::Mention(id));
+        let bad = segments("secondlife:///app/agent/nope/about");
+        assert!(matches!(bad[0], Seg::Slurl(_)));
+    }
 
     #[test]
     fn channels() {

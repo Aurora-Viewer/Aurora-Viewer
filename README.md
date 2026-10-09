@@ -125,6 +125,8 @@ settings and cache (`…\config\demo`, `…\cache\demo`).
 | `AURORA_DEMO_MAP=1` or `mini` | World map and mini-map |
 | `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Notification list, status menu, location field |
 | `AURORA_DEMO_CONV=1`, `AURORA_DEMO_TALK=1` | Group conversation, microphone on |
+| `AURORA_DEMO_PROFILE=loup\|nova\|friend\|self[:tab]` | A profile window (tab 0 2nd life, 1 feed, 2 picks, 3 classifieds, 4 1st life, 5 notes) |
+| `AURORA_DEMO_FEED=<url>` | Profile "Flux" tab on this page (the username and `/?feed_only=true` are appended, a `data:` URL can comment them out) |
 | `AURORA_DEMO_DISPLAYNAME="name"`, `AURORA_DEMO_DISPLAYNAME_ERROR=…` | Display name change (simulated) |
 | `AURORA_DEMO_MEDIA=<url>\|1`, `AURORA_DEMO_PARCEL_MEDIA=<url>\|1`, `AURORA_DEMO_MEDIA_CLICK=…` | Media on a prim, parcel media, media input |
 | `AURORA_DEMO_BUILD="mode,x,y[,part,dx,dy]"`, `AURORA_DEMO_BUILD_FRAME` | Build tools script |

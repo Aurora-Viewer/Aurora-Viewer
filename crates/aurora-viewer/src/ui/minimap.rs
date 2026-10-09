@@ -105,6 +105,8 @@ pub enum MiniMapAction {
     OpenWorldMap,
     OpenIm(Uuid),
     OfferTeleport(Uuid),
+    /// "Voir le profil" (LLNetMap::handleShowProfile).
+    Profile(Uuid),
     AboutLand,
     /// Chat ring options changed (saved with the color settings).
     Colors(crate::settings::ColorSettings),
@@ -753,6 +755,10 @@ impl MiniMap {
                 for id in &avs {
                     let n = avatar_name(world, id);
                     let pre = if avs.len() > 1 { format!("{n} : ") } else { String::new() };
+                    if ui.button(format!("{pre}Voir le profil")).clicked() {
+                        actions.push(MiniMapAction::Profile(*id));
+                        ui.close();
+                    }
                     if ui.button(format!("{pre}Envoyer un IM")).clicked() {
                         actions.push(MiniMapAction::OpenIm(*id));
                         ui.close();
