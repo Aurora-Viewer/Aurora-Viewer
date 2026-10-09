@@ -142,6 +142,9 @@ fn fountain_particles() -> Vec<u8> {
     out
 }
 
+/// First friend of the demo buddy list (AURORA_DEMO_PROFILE=friend).
+pub const DEMO_FRIEND: Uuid = Uuid::from_u128(0xD0D0_0000_0000_0000_0000_0000_0000_0000 | 100);
+
 fn u(n: u128) -> Uuid {
     Uuid::from_u128(0xD0D0_0000_0000_0000_0000_0000_0000_0000 | n)
 }
@@ -177,6 +180,12 @@ fn demo_raw() -> Llsd {
         "inventory-root" => Llsd::Array(vec![llsd_map!{"folder_id" => u(1)}]),
         "inventory-skeleton" => Llsd::Array(skel),
         "buddy-list" => Llsd::Array(buddies),
+        "classified_categories" => Llsd::Array(
+            [(1, "Shopping"), (2, "Land Rental"), (3, "Property Rental"), (4, "Special Attraction")]
+                .into_iter()
+                .map(|(id, name)| llsd_map! {"category_id" => id, "category_name" => name})
+                .collect(),
+        ),
     }
 }
 
@@ -188,6 +197,69 @@ pub const DEMO_NOVA: Uuid = Uuid::from_u128(0xA0E0_A6E1_0000_0000_0000_0000_0000
 pub const DEMO_TESS: Uuid = Uuid::from_u128(0xA0E0_A6E1_0000_0000_0000_0000_0000_0004);
 pub const DEMO_GROUP1: Uuid = Uuid::from_u128(0x6E00_0000_0000_0000_0000_0000_0000_0001);
 pub const DEMO_GROUP2: Uuid = Uuid::from_u128(0x6E00_0000_0000_0000_0000_0000_0000_0002);
+
+/// AgentProfile reply of the demo residents (AURORA_DEMO_PROFILE).
+fn demo_profile(id: Uuid) -> aurora_net::AvatarProfile {
+    use aurora_net::profile::{days_from_civil, flags};
+    let date = |y, m, d| Some((days_from_civil(y, m, d) * 86_400) as f64);
+    let groups = vec![
+        aurora_net::ProfileGroup {
+            id: DEMO_GROUP1,
+            name: "Aurora Builders".into(),
+            insignia: Uuid::nil(),
+        },
+        aurora_net::ProfileGroup {
+            id: DEMO_GROUP2,
+            name: "Loups du Nord".into(),
+            insignia: Uuid::nil(),
+        },
+    ];
+    let mut p = aurora_net::AvatarProfile {
+        id,
+        sl_about: "Résident de la démo hors-ligne d'Aurora Viewer 🐺✨".into(),
+        born: date(2019, 4, 2),
+        hide_age: Some(false),
+        online: Some(true),
+        flags: flags::IDENTIFIED,
+        notes: Some(String::new()),
+        ..Default::default()
+    };
+    if id == DEMO_AGENT {
+        p.sl_about = "Mon profil de démonstration.
+Il se modifie ici, l'enregistrement reste local."
+            .into();
+        p.fl_about = "Développeur d'Aurora Viewer.".into();
+        p.born = date(2012, 3, 14);
+        p.flags = flags::TRANSACTED | flags::ALLOW_PUBLISH;
+        p.customer_type = "Premium".into();
+        p.groups = groups;
+        p.picks = vec![(Uuid::from_u128(0x91C0_0001), "La plage d'Aurora".into())];
+    } else if id == DEMO_LOUP {
+        p.sl_about = format!(
+            "Loup solitaire, bâtisseur du dimanche.
+
+Ma partenaire : secondlife:///app/agent/{DEMO_NOVA}/about
+Mon site : https://example.com/loup 🐺"
+        );
+        p.fl_about = "Passionné de montagne.".into();
+        p.partner = DEMO_NOVA;
+        p.born = date(2007, 5, 12);
+        p.flags = flags::TRANSACTED;
+        p.customer_type = "Lifetime".into();
+        p.groups = groups;
+        p.picks = vec![
+            (Uuid::from_u128(0x91C0_0001), "La plage d'Aurora".into()),
+            (Uuid::from_u128(0x91C0_0002), "Mon atelier".into()),
+        ];
+        p.notes = Some("Rencontré à la plage, très sympa.".into());
+    } else if id == DEMO_NOVA {
+        p.partner = DEMO_LOUP;
+        p.hide_age = Some(true);
+        p.online = None;
+        p.groups = groups.into_iter().take(1).collect();
+    }
+    p
+}
 
 pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
     use aurora_net::inventory::{FolderContents, InvItem};
@@ -462,12 +534,46 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
             position: Vec3::new(132.0, 126.0, 30.0),
             message: message.clone(),
         })],
-        aurora_net::NetCommand::RequestProfile(id) => vec![NetEvent::AvatarProfile {
+        aurora_net::NetCommand::RequestProfile(id) => vec![NetEvent::AvatarProfile(Box::new(demo_profile(*id)))],
+        aurora_net::NetCommand::PickInfoRequest { creator, pick } => {
+            let names = ["La plage d'Aurora", "Mon atelier"];
+            let n = ((pick.as_u128() & 0xF) as usize + 1) % names.len();
+            vec![NetEvent::PickInfo(Box::new(aurora_net::PickInfo {
+                id: *pick,
+                creator: *creator,
+                parcel: Uuid::from_u128(0x9A2C_E100 + n as u128),
+                name: names[n].into(),
+                desc: "Un coin tranquille au bord de l'eau, idéal pour regarder le coucher du soleil 🌅".into(),
+                sim_name: "Aurora Démo".into(),
+                pos_global: glam::DVec3::new(256_000.0 + 140.0, 256_000.0 + 120.0, 25.0),
+                enabled: true,
+                ..Default::default()
+            }))]
+        }
+        aurora_net::NetCommand::ParcelInfoRequest(id) => vec![NetEvent::ParcelInfo(Box::new(aurora_net::ParcelSummary {
             id: *id,
-            image_id: Uuid::nil(),
-            about: "Résident de la démo hors-ligne d'Aurora Viewer 🐺✨".into(),
-            born_on: "07/10/2026".into(),
+            name: "Place d'Aurora".into(),
+            sim_name: "Aurora Démo".into(),
+            ..Default::default()
+        }))],
+        aurora_net::NetCommand::ClassifiedsRequest(id) if *id == DEMO_LOUP => vec![NetEvent::AvatarClassifieds {
+            target: *id,
+            list: vec![(Uuid::from_u128(0xC1A5_0001), "Atelier du Loup : meubles en mesh".into())],
         }],
+        aurora_net::NetCommand::ClassifiedInfoRequest(id) => vec![NetEvent::ClassifiedInfo(Box::new(aurora_net::ClassifiedInfo {
+            id: *id,
+            creator: DEMO_LOUP,
+            creation_date: 1_759_000_000,
+            category: 2,
+            name: "Atelier du Loup : meubles en mesh".into(),
+            desc: "Meubles en mesh légers, copiables et modifiables. Venez visiter la boutique !".into(),
+            sim_name: "Aurora Démo".into(),
+            parcel_name: "Place d'Aurora".into(),
+            pos_global: glam::DVec3::new(256_000.0 + 128.0, 256_000.0 + 128.0, 30.0),
+            flags: aurora_net::profile::classified_flags::AUTO_RENEW,
+            price: 50,
+            ..Default::default()
+        }))],
         aurora_net::NetCommand::MapBlockRequest {
             min_x,
             min_y,

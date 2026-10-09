@@ -27,9 +27,12 @@ pub mod options;
 pub mod parcel_icons;
 pub mod people;
 pub mod perf;
+pub mod profile;
 pub mod skin;
 pub mod sound_cues;
+pub mod texture_picker;
 pub mod voice_dot;
+pub mod web_view;
 pub mod widgets;
 pub mod worldmap;
 

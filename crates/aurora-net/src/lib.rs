@@ -9,6 +9,7 @@ pub mod inventory;
 pub mod login;
 pub mod objcache;
 pub mod objects;
+pub mod profile;
 mod session;
 pub mod social;
 pub mod stats;
@@ -18,6 +19,7 @@ pub mod xmlrpc;
 
 pub use fetch::{FetchRequest, FetchResult, Fetcher};
 pub use login::{LoginRequest, LoginResponse, StartLocation};
+pub use profile::{AvatarProfile, ClassifiedInfo, ParcelSummary, PickInfo, ProfileGroup};
 pub use social::{GroupMembership, HistoryLine, MuteListSource, SessionAgent, SessionInvite, SessionMethod};
 pub use stats::{NetStats, NetStatsSnapshot};
 pub use types::*;

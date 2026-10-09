@@ -227,6 +227,11 @@ pub fn show(ctx: &egui::Context, p: &Palette, menu: &mut Option<ContextMenu>, se
                                 action = Some(CtxAction::ResetCamera);
                             }
                             separator(ui, p);
+                            if let Target::Avatar { id, .. } = &m.target
+                                && item(ui, p, "Mon profil", true)
+                            {
+                                action = Some(CtxAction::Profile(*id));
+                            }
                             item(ui, p, "Apparence", false);
                             if item(ui, p, "Nom d'affichage…", true) {
                                 action = Some(CtxAction::DisplayName);

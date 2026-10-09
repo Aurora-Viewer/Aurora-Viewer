@@ -10,7 +10,7 @@ use uuid::Uuid;
 pub struct Friend {
     pub id: Uuid,
     pub online: bool,
-    #[allow(dead_code)] // rights we granted (friend list), not shown yet
+    /// Rights we granted (1 online status, 2 map, 4 modify objects).
     pub rights_given: i32,
     pub rights_has: i32,
 }

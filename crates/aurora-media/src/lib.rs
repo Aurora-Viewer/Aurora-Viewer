@@ -24,8 +24,8 @@ pub mod process;
 mod shm;
 
 pub use media::{
-    BrowserSettings, Frame, KeyEvent, MediaEvent, MediaPlugin, MediaStatus, Modifiers, MouseEvent, Priority, Rect, mime_from_scheme,
-    next_power_of_2, plugin_for_mime,
+    BrowserSettings, Cookie, Frame, KeyEvent, MediaEvent, MediaPlugin, MediaStatus, Modifiers, MouseEvent, Priority, Rect,
+    mime_from_scheme, next_power_of_2, plugin_for_mime,
 };
 pub use message::PluginMessage;
 pub use process::{PluginPaths, PluginProcess, ProcState};

@@ -304,22 +304,7 @@ impl MediaManager {
         let Some(p) = self.focused_mut().and_then(|m| m.plugin.as_mut()) else {
             return pressed;
         };
-        let Some(vk) = keys::virtual_key(code) else {
-            return pressed;
-        };
-        let lparam = keys::key_lparam(scancode, !pressed, repeat);
-        let (ev, msg) = match (pressed, repeat) {
-            (false, _) => (aurora_media::KeyEvent::Up, keys::WM_KEYUP),
-            (true, true) => (aurora_media::KeyEvent::Repeat, keys::WM_KEYDOWN),
-            (true, false) => (aurora_media::KeyEvent::Down, keys::WM_KEYDOWN),
-        };
-        p.key_event(ev, vk as i32, mods, MediaPlugin::native_key_data(msg, vk, lparam));
-        if pressed && let Some(t) = text.filter(|t| !t.is_empty()) {
-            for unit in keys::char_units(t) {
-                p.text_input(t, mods, MediaPlugin::native_key_data(keys::WM_CHAR, unit, lparam));
-            }
-        }
-        true
+        keys::forward(p, code, scancode, pressed, repeat, text, mods) || pressed
     }
 
     /// Release the focus (LLViewerMediaFocus::clearFocus).

@@ -11,6 +11,8 @@ use uuid::Uuid;
 
 pub enum PeopleAction {
     OpenIm(Uuid),
+    /// "Voir le profil" (menu_people_nearby.xml / friends, Avatar.Profile).
+    Profile(Uuid),
     OfferTeleport(Uuid),
     /// Open the chat of one of our groups.
     GroupChat(Uuid),
@@ -129,6 +131,10 @@ pub fn people_window(
                             ui.set_min_height(18.0);
                             let r = ui.add(egui::Label::new(RichText::new(name).size(13.0).color(p.ink)).sense(egui::Sense::click()));
                             r.context_menu(|ui| {
+                                if ui.button("Voir le profil").clicked() {
+                                    actions.push(PeopleAction::Profile(*id));
+                                    ui.close();
+                                }
                                 if ui.button("Envoyer un IM").clicked() {
                                     actions.push(PeopleAction::OpenIm(*id));
                                     ui.close();
@@ -179,7 +185,7 @@ pub fn people_window(
                             let col = if f.online { p.indigo_light } else { p.muted };
                             // complete names can be long: cut before the rights
                             // and buttons (full name on hover)
-                            let w = (ui.available_width() - 120.0).max(60.0);
+                            let w = (ui.available_width() - 140.0).max(60.0);
                             let r = ui
                                 .allocate_ui_with_layout(egui::vec2(w, 20.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
                                     ui.add(
@@ -192,6 +198,20 @@ pub fn people_window(
                             if r.double_clicked() {
                                 actions.push(PeopleAction::OpenIm(f.id));
                             }
+                            r.context_menu(|ui| {
+                                if ui.button("Voir le profil").clicked() {
+                                    actions.push(PeopleAction::Profile(f.id));
+                                    ui.close();
+                                }
+                                if ui.button("Envoyer un IM").clicked() {
+                                    actions.push(PeopleAction::OpenIm(f.id));
+                                    ui.close();
+                                }
+                                if f.online && ui.button("Proposer une téléportation").clicked() {
+                                    actions.push(PeopleAction::OfferTeleport(f.id));
+                                    ui.close();
+                                }
+                            });
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 ui.spacing_mut().item_spacing.x = 4.0;
                                 if f.online
@@ -203,6 +223,9 @@ pub fn people_window(
                                 }
                                 if widgets::flat_button(ui, p, "IM").on_hover_text("Message instantané (IM)").clicked() {
                                     actions.push(PeopleAction::OpenIm(f.id));
+                                }
+                                if widgets::flat_button(ui, p, "i").on_hover_text("Voir le profil").clicked() {
+                                    actions.push(PeopleAction::Profile(f.id));
                                 }
                                 // Rights granted to me: 1 online status, 2 map location, 4 modify objects
                                 for (bit, ch, tip) in [
@@ -341,6 +364,10 @@ fn blocked_tab(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut PeopleUi,
                 };
                 if m.kind != MuteType::ByName {
                     r.context_menu(|ui| {
+                        if m.kind == MuteType::Agent && ui.button("Voir le profil").clicked() {
+                            actions.push(PeopleAction::Profile(m.id));
+                            ui.close();
+                        }
                         ui.label(RichText::new("Bloquer :").size(11.5).color(p.muted));
                         for (bit, label) in [
                             (flag::TEXT_CHAT, "Chat et IM"),

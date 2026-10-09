@@ -13,6 +13,7 @@ pub mod names;
 pub mod notifications;
 pub mod objects;
 pub mod outfit;
+pub mod profiles;
 pub mod social;
 pub mod status;
 pub mod terrain;
@@ -57,14 +58,6 @@ pub enum ChatKind {
     /// Instant message sent by an object (llInstantMessage).
     ObjectIm,
     Own,
-}
-
-/// Profile data of an avatar.
-#[derive(Debug, Clone, Default)]
-pub struct Profile {
-    pub image_id: Uuid,
-    pub about: String,
-    pub born_on: String,
 }
 
 #[derive(Debug, Clone)]
@@ -170,10 +163,8 @@ pub struct World {
     pub parcel: Option<Arc<aurora_net::ParcelInfo>>,
     /// Media texture overrides and parcel media messages (media module).
     pub media: crate::media::WorldMedia,
-    /// Avatar profiles (picture, about) and the ids still to request.
-    pub profiles: HashMap<Uuid, Profile>,
-    profile_pending: HashSet<Uuid>,
-    profile_requested: HashSet<Uuid>,
+    /// Avatar profiles and the ids still to request.
+    pub profiles: profiles::Profiles,
     /// Notification center (bell).
     pub notifications: notifications::Notifications,
     /// Teleport history (navigation bar back / forward).
@@ -238,9 +229,7 @@ impl World {
             tp_history: tphistory::TeleportHistory::default(),
             map: worldmap::WorldMap::default(),
             notifications: notifications::Notifications::default(),
-            profiles: HashMap::new(),
-            profile_pending: HashSet::new(),
-            profile_requested: HashSet::new(),
+            profiles: profiles::Profiles::default(),
             arrived_once: false,
             cache_dir: None,
         }
@@ -264,6 +253,27 @@ impl World {
         let (mx, my) = self.main_origin()?;
         let (x, y) = aurora_net::handle_to_origin(h);
         Some(Vec3::new(x as f32 - mx as f32, y as f32 - my as f32, 0.0))
+    }
+
+    /// Our global position (meters), for picks.
+    pub fn agent_global(&self) -> Option<glam::DVec3> {
+        let (x, y) = self.main_origin()?;
+        let p = self.agent.position;
+        Some(glam::DVec3::new(x as f64 + p.x as f64, y as f64 + p.y as f64, p.z as f64))
+    }
+
+    /// Classified categories of the grid (login "classified_categories").
+    pub fn classified_category(&self, id: u32) -> String {
+        self.login
+            .as_ref()
+            .and_then(|l| {
+                l.raw["classified_categories"]
+                    .as_array()
+                    .iter()
+                    .find(|c| c["category_id"].as_i32() == id as i32)
+                    .map(|c| c["category_name"].to_string_value())
+            })
+            .unwrap_or_default()
     }
 
     pub fn main(&self) -> Option<&Region> {
@@ -387,16 +397,36 @@ impl World {
 
     /// Ask for an avatar's profile (once).
     pub fn want_profile(&mut self, id: Uuid) {
-        if !id.is_nil() && !self.profiles.contains_key(&id) && !self.profile_requested.contains(&id) {
-            self.profile_pending.insert(id);
-        }
+        self.profiles.want(id);
     }
 
     /// Profiles to request now.
     pub fn take_profile_requests(&mut self) -> Vec<Uuid> {
-        let v: Vec<Uuid> = self.profile_pending.drain().collect();
-        self.profile_requested.extend(v.iter().copied());
-        v
+        self.profiles.take_requests()
+    }
+
+    /// Picks, classifieds and friend rights changed from a profile window:
+    /// the local copy follows before the command is sent.
+    pub fn profile_command(&mut self, cmd: &aurora_net::NetCommand) {
+        use aurora_net::NetCommand;
+        match cmd {
+            NetCommand::PickUpdate(p) => self.profiles.pick_saved(self.agent_id, (**p).clone()),
+            NetCommand::PickDelete(id) => self.profiles.pick_deleted(self.agent_id, *id),
+            NetCommand::ClassifiedDelete(id) => self.profiles.classified_deleted(self.agent_id, *id),
+            NetCommand::GrantUserRights { friend, rights } => {
+                if let Some(f) = self.social.friends.iter_mut().find(|f| f.id == *friend) {
+                    f.rights_given = *rights;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Save profile fields (the profile window): shown at once, sent with
+    /// the returned command.
+    pub fn save_profile(&mut self, target: Uuid, data: aurora_llsd::Llsd) -> aurora_net::NetCommand {
+        self.profiles.apply_local(target, &data);
+        aurora_net::NetCommand::UpdateProfile { target, data }
     }
 
     pub fn system_message(&mut self, text: impl Into<String>) {
@@ -1016,13 +1046,50 @@ impl World {
                 self.parcel = Some(info);
                 None
             }
-            NetEvent::AvatarProfile {
-                id,
-                image_id,
-                about,
-                born_on,
-            } => {
-                self.profiles.insert(id, Profile { image_id, about, born_on });
+            NetEvent::AvatarProfile(p) => {
+                self.profiles.insert(*p);
+                None
+            }
+            NetEvent::PickInfo(p) => {
+                self.profiles.picks.insert(p.id, *p);
+                None
+            }
+            NetEvent::AvatarClassifieds { target, list } => {
+                // replies come in several messages: merge
+                let l = self.profiles.classified_lists.entry(target).or_default();
+                for (id, name) in list {
+                    if !l.iter().any(|(c, _)| *c == id) {
+                        l.push((id, name));
+                    }
+                }
+                None
+            }
+            NetEvent::ClassifiedInfo(c) => {
+                self.profiles.classifieds.insert(c.id, *c);
+                None
+            }
+            NetEvent::ParcelInfo(p) => {
+                self.profiles.parcels.insert(p.id, *p);
+                None
+            }
+            NetEvent::UserRights { agent, rights } => {
+                // LLAvatarTracker::processChange
+                for (related, r) in rights {
+                    if agent == self.agent_id {
+                        if let Some(f) = self.social.friends.iter_mut().find(|f| f.id == related) {
+                            f.rights_given = r;
+                        }
+                    } else if let Some(f) = self.social.friends.iter_mut().find(|f| f.id == agent) {
+                        // the online right is not part of the change
+                        f.rights_has = r | (f.rights_has & 1);
+                    }
+                }
+                None
+            }
+            NetEvent::ProfileSaveFailed { target, reason } => {
+                self.system_message(format!("Le profil n'a pas pu être enregistré ({reason})."));
+                // show what the server really has
+                self.profiles.refresh(target);
                 None
             }
             NetEvent::Balance(b) => {

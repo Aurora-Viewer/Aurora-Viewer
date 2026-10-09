@@ -2,6 +2,7 @@
 //! reads the native message (Dullahan nativeKeyboardEventWin): we rebuild the
 //! WM_KEYDOWN / WM_KEYUP / WM_CHAR messages Windows would have sent.
 
+use aurora_media::{MediaPlugin, Modifiers};
 use winit::keyboard::KeyCode;
 
 pub const WM_KEYDOWN: u32 = 0x0100;
@@ -136,6 +137,35 @@ pub fn key_lparam(scancode: u32, up: bool, repeat: bool) -> u32 {
 /// UTF-16 code units of a text, one WM_CHAR each.
 pub fn char_units(text: &str) -> Vec<u32> {
     text.encode_utf16().map(|u| u as u32).collect()
+}
+
+/// Send a key (and the characters it types) to a plugin; false when the key
+/// has no virtual-key code.
+pub fn forward(
+    p: &mut MediaPlugin,
+    code: KeyCode,
+    scancode: u32,
+    pressed: bool,
+    repeat: bool,
+    text: Option<&str>,
+    mods: Modifiers,
+) -> bool {
+    let Some(vk) = virtual_key(code) else {
+        return false;
+    };
+    let lparam = key_lparam(scancode, !pressed, repeat);
+    let (ev, msg) = match (pressed, repeat) {
+        (false, _) => (aurora_media::KeyEvent::Up, WM_KEYUP),
+        (true, true) => (aurora_media::KeyEvent::Repeat, WM_KEYDOWN),
+        (true, false) => (aurora_media::KeyEvent::Down, WM_KEYDOWN),
+    };
+    p.key_event(ev, vk as i32, mods, MediaPlugin::native_key_data(msg, vk, lparam));
+    if pressed && let Some(t) = text.filter(|t| !t.is_empty()) {
+        for unit in char_units(t) {
+            p.text_input(t, mods, MediaPlugin::native_key_data(WM_CHAR, unit, lparam));
+        }
+    }
+    true
 }
 
 #[cfg(test)]
