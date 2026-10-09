@@ -1,6 +1,13 @@
 //! Bindless texture table: every texture lives in a slot of one big
 //! `binding_array<texture_2d<f32>>`; draw records reference slots by index.
+//!
+//! wgpu checks every element of the array each time a pass binds it (usage
+//! tracking, about ten passes a frame), so the bind group holds only the
+//! slots in use, up to the last one (partially bound array), and new
+//! textures take the lowest free slot to keep it short.
 
+use std::cmp::Reverse;
+use std::collections::BinaryHeap;
 use std::num::NonZeroU32;
 use std::time::{Duration, Instant};
 
@@ -10,6 +17,9 @@ pub const FLAT_NORMAL: u32 = 1;
 pub const BLACK: u32 = 2;
 pub const TRANSPARENT: u32 = 3;
 const RESERVED: u32 = 4;
+/// The bound length grows by steps of this many slots (fewer layout-length
+/// changes while textures stream in).
+const BIND_STEP: usize = 256;
 
 struct Slot {
     texture: wgpu::Texture,
@@ -22,8 +32,17 @@ pub struct TextureTable {
     pub bind_group: wgpu::BindGroup,
     sampler: wgpu::Sampler,
     slots: Vec<Option<Slot>>,
-    free: Vec<u32>,
+    /// Free slots, lowest first.
+    free: BinaryHeap<Reverse<u32>>,
     capacity: u32,
+    /// The device allows a bind group shorter than the layout's array
+    /// (PARTIALLY_BOUND_BINDING_ARRAY); else every slot up to `capacity` is bound.
+    partial: bool,
+    /// Array elements in the current bind group.
+    bound: u32,
+    /// A slot was created at or past `bound`: the bind group must be
+    /// rebuilt before the next draw, whatever the throttle.
+    grown: bool,
     dirty: bool,
     last_rebuild: Instant,
     bytes: u64,
@@ -77,6 +96,7 @@ fn solid(device: &wgpu::Device, queue: &wgpu::Queue, rgba: [u8; 4], label: &str)
 
 impl TextureTable {
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, capacity: u32, anisotropy: u16) -> Self {
+        let partial = device.features().contains(wgpu::Features::PARTIALLY_BOUND_BINDING_ARRAY);
         let capacity = capacity.max(RESERVED + 1);
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("textures"),
@@ -105,14 +125,18 @@ impl TextureTable {
         slots.push(Some(solid(device, queue, [128, 128, 255, 255], "flat normal")));
         slots.push(Some(solid(device, queue, [0, 0, 0, 255], "black")));
         slots.push(Some(solid(device, queue, [0, 0, 0, 0], "transparent")));
-        let bind_group = Self::build(device, &layout, &sampler, &slots, capacity);
+        let bound = bound_len(&slots, capacity, partial);
+        let bind_group = Self::build(device, &layout, &sampler, &slots, bound);
         Self {
             layout,
             bind_group,
             sampler,
             slots,
-            free: Vec::new(),
+            free: BinaryHeap::new(),
             capacity,
+            partial,
+            bound,
+            grown: false,
             dirty: false,
             last_rebuild: Instant::now(),
             bytes: 0,
@@ -149,13 +173,13 @@ impl TextureTable {
         layout: &wgpu::BindGroupLayout,
         sampler: &wgpu::Sampler,
         slots: &[Option<Slot>],
-        capacity: u32,
+        len: u32,
     ) -> wgpu::BindGroup {
         let white = match &slots[0] {
             Some(s) => &s.view,
             None => unreachable!("white slot always present"),
         };
-        let views: Vec<&wgpu::TextureView> = (0..capacity as usize)
+        let views: Vec<&wgpu::TextureView> = (0..len as usize)
             .map(|i| match slots.get(i) {
                 Some(Some(s)) => &s.view,
                 _ => white,
@@ -204,7 +228,7 @@ impl TextureTable {
             return None;
         }
         let slot = match self.free.pop() {
-            Some(s) => s,
+            Some(Reverse(s)) => s,
             None => {
                 if self.slots.len() as u32 >= self.capacity {
                     return None;
@@ -218,6 +242,7 @@ impl TextureTable {
         self.live += 1;
         self.slots[slot as usize] = Some(s);
         self.dirty = true;
+        self.grown |= slot >= self.bound;
         Some(slot)
     }
 
@@ -298,7 +323,7 @@ impl TextureTable {
             // Keep the texture alive until the bind group is rebuilt: the
             // old bind group holds a reference, so dropping is safe.
             drop(old);
-            self.free.push(slot);
+            self.free.push(Reverse(slot));
             self.dirty = true;
         }
     }
@@ -371,16 +396,32 @@ impl TextureTable {
         if !self.dirty {
             return;
         }
-        if !force && self.last_rebuild.elapsed() < Duration::from_millis(100) {
+        if !force && !self.grown && self.last_rebuild.elapsed() < Duration::from_millis(100) {
             return;
         }
-        self.bind_group = Self::build(device, &self.layout, &self.sampler, &self.slots, self.capacity);
+        self.bound = bound_len(&self.slots, self.capacity, self.partial);
+        self.bind_group = Self::build(device, &self.layout, &self.sampler, &self.slots, self.bound);
         self.dirty = false;
+        self.grown = false;
         self.last_rebuild = Instant::now();
     }
 }
 
 /// Generate a box-filtered mip chain from RGBA8 data (level 0 included).
+/// Array elements to bind: every slot up to the last one in use, rounded up
+/// to `BIND_STEP`; the whole capacity without partially bound arrays.
+fn bound_len(slots: &[Option<Slot>], capacity: u32, partial: bool) -> u32 {
+    let used = slots.iter().rposition(|s| s.is_some()).map_or(1, |i| i + 1);
+    bound_for(used, capacity, partial)
+}
+
+fn bound_for(used: usize, capacity: u32, partial: bool) -> u32 {
+    if !partial {
+        return capacity;
+    }
+    (used.div_ceil(BIND_STEP) * BIND_STEP).min(capacity as usize).max(1) as u32
+}
+
 pub fn build_mips(width: u32, height: u32, data: Vec<u8>, max_levels: u32) -> Vec<(u32, u32, Vec<u8>)> {
     let mut out = Vec::new();
     let (mut w, mut h) = (width, height);
@@ -431,6 +472,17 @@ pub fn build_mips(width: u32, height: u32, data: Vec<u8>, max_levels: u32) -> Ve
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bound_length_follows_the_last_slot_in_use() {
+        assert_eq!(bound_for(4, 16384, true), 256);
+        assert_eq!(bound_for(256, 16384, true), 256);
+        assert_eq!(bound_for(257, 16384, true), 512);
+        assert_eq!(bound_for(16300, 16384, true), 16384);
+        assert_eq!(bound_for(10, 100, true), 100);
+        // without partially bound arrays every slot is bound
+        assert_eq!(bound_for(4, 16384, false), 16384);
+    }
 
     #[test]
     fn mips_chain() {
