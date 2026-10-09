@@ -272,12 +272,14 @@ fn demo_raw() -> Llsd {
         ("Corbeille", 14),
         ("Mes tenues", 48),
         ("Materials", 57),
+        ("Favoris", 23),
     ]
     .iter()
     .enumerate()
     {
         skel.push(folder(10 + i as u128, 1, name, *t));
     }
+    skel.push(folder(place::SHOPS_FOLDER, place::LANDMARKS_FOLDER, "Boutiques", -1));
     if env::enabled() {
         skel.push(env::settings_folder(u(1)));
     }
@@ -509,7 +511,7 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
         aurora_net::NetCommand::FetchInventory { folders, owner, .. } => {
             let mut out = Vec::new();
             for f in folders {
-                if let Some(c) = env::folder_contents(*f, *owner) {
+                if let Some(c) = env::folder_contents(*f, *owner).or_else(|| place::folder_contents(*f, *owner)) {
                     out.push(c);
                     continue;
                 }
@@ -721,7 +723,8 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 ..Default::default()
             }))]
         }
-        aurora_net::NetCommand::RemoteParcelRequest { handle, position } => place::remote_parcel(*handle, *position),
+        aurora_net::NetCommand::RemoteParcelRequest { handle, position, .. } => place::remote_parcel(*handle, *position),
+        aurora_net::NetCommand::RegionHandleRequest(id) => place::region_handle(*id),
         aurora_net::NetCommand::ParcelInfoRequest(id) => match place::parcel_info(*id) {
             Some(ev) => vec![ev],
             // the parcels of the profile picks

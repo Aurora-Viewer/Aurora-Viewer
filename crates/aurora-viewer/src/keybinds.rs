@@ -214,6 +214,8 @@ pub enum Action {
     Inventory,
     Minimap,
     WorldMap,
+    /// Monde › Historique de téléportation (Firestorm Alt+H).
+    TeleportHistory,
     Performance,
     Preferences,
     /// « Afficher la transparence » (Firestorm Ctrl+Alt+T).
@@ -296,6 +298,7 @@ pub const SECTIONS: &[(&str, &[(Action, &str)])] = &[
             (Action::Inventory, "Inventaire"),
             (Action::Minimap, "Mini-carte"),
             (Action::WorldMap, "Carte du monde"),
+            (Action::TeleportHistory, "Historique de téléportation"),
             (Action::Performance, "Performances"),
             (Action::Preferences, "Préférences"),
         ],
@@ -393,6 +396,18 @@ impl KeyBindings {
             (Action::Inventory, [kmod(K::KeyI, true, false), None]),
             (Action::Minimap, [kmod(K::KeyM, true, true), None]),
             (Action::WorldMap, [kmod(K::KeyM, true, false), None]),
+            (
+                Action::TeleportHistory,
+                [
+                    Some(Binding {
+                        input: Input::key(K::KeyH),
+                        ctrl: false,
+                        shift: false,
+                        alt: true,
+                    }),
+                    None,
+                ],
+            ),
             (Action::Performance, [kmod(K::Digit1, true, true), None]),
             (Action::Preferences, [kmod(K::KeyP, true, false), None]),
             (

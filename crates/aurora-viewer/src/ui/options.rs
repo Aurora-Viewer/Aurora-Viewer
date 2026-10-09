@@ -854,6 +854,16 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                 c |= row(ui, p, "Performances au démarrage", "", |ui| toggle(ui, p, &mut s.show_perf));
                 c |= row(ui, p, "Mini-carte au démarrage", "", |ui| toggle(ui, p, &mut s.show_minimap));
             });
+            // panel_preferences_UI.xml « Utiliser des fenêtres distinctes pour : »
+            group(ui, p, "Fenêtres", |ui| {
+                c |= row(
+                    ui,
+                    p,
+                    "Repères et profils de lieux",
+                    "Fenêtres distinctes pour les repères, détails de l'historique de TP & profil du lieu (sinon dans la fenêtre Lieux)",
+                    |ui| toggle(ui, p, &mut s.standalone_place_details),
+                );
+            });
             group(ui, p, "Noms", |ui| {
                 c |= row(
                     ui,

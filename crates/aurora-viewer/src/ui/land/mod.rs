@@ -543,7 +543,7 @@ fn maturity(ui: &mut egui::Ui, p: &Palette, v: &View) {
 /// Seconds since the epoch in SLT (US Pacific, DST approximated by the
 /// day of the year like the top bar): (year, month, day, weekday 0 = Sunday,
 /// hour, minute, second).
-fn slt_parts(secs: i64) -> (i64, usize, i64, usize, i64, i64, i64) {
+pub(crate) fn slt_parts(secs: i64) -> (i64, usize, i64, usize, i64, i64, i64) {
     let year_day = (secs / 86400).rem_euclid(365);
     let off = if (68..=307).contains(&year_day) { -7 } else { -8 };
     let t = secs + off * 3600;
@@ -564,8 +564,8 @@ fn slt_parts(secs: i64) -> (i64, usize, i64, usize, i64, i64, i64) {
     (y, m as usize, d, wday, tod / 3600, (tod / 60) % 60, tod % 60)
 }
 
-const WEEKDAYS: [&str; 7] = ["dim.", "lun.", "mar.", "mer.", "jeu.", "ven.", "sam."];
-const MONTHS: [&str; 12] = [
+pub(crate) const WEEKDAYS: [&str; 7] = ["dim.", "lun.", "mar.", "mer.", "jeu.", "ven.", "sam."];
+pub(crate) const MONTHS: [&str; 12] = [
     "janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc.",
 ];
 

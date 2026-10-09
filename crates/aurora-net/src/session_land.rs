@@ -358,15 +358,16 @@ impl Session<'_> {
     /// LLPanelPlaceInfo::displayParcelInfo for a place of any region: the
     /// capability of the agent's region (gAgent.getRegion()), the point in
     /// its region's coordinates and the handle of its 256 m slot, no region
-    /// id (LLURLDispatcherImpl::regionHandleCallback → FSFloaterPlaceDetails).
-    pub(super) fn remote_parcel_request(&mut self, handle: RegionHandle, position: glam::Vec3) {
+    /// id for a place link (LLURLDispatcherImpl::regionHandleCallback), the
+    /// region id of a landmark (LLPanelPlaces::onLandmarkLoaded).
+    pub(super) fn remote_parcel_request(&mut self, handle: RegionHandle, position: glam::Vec3, region_id: Uuid) {
         let Some(url) = self.main_cap("RemoteParcelRequest") else {
             log::warn!("RemoteParcelRequest not available. Cannot request parcel ID");
             let result = Err(land::RemoteParcelError::NoCapability);
             emit(self.sh, NetEvent::RemoteParcel { handle, position, result });
             return;
         };
-        let body = land::remote_parcel_body(position, Uuid::nil(), Some(handle));
+        let body = land::remote_parcel_body(position, region_id, Some(handle));
         let http = self.sh.caps_http.clone();
         let events = self.sh.events.clone();
         tokio::spawn(async move {

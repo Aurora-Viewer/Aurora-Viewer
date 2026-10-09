@@ -573,6 +573,11 @@ pub enum NetEvent {
     ClassifiedInfo(Box<crate::ClassifiedInfo>),
     /// ParcelInfoReply (LLRemoteParcelInfoProcessor).
     ParcelInfo(Box<crate::ParcelSummary>),
+    /// RegionIDAndHandleReply (LLLandmark::processRegionIDAndHandle).
+    RegionIdHandle {
+        region_id: Uuid,
+        handle: RegionHandle,
+    },
     /// Answer to NetCommand::RemoteParcelRequest (same handle and position).
     RemoteParcel {
         handle: RegionHandle,
@@ -979,11 +984,16 @@ pub enum NetCommand {
     /// The parcel at a point of any region, by the RemoteParcelRequest
     /// capability of the agent's region (LLPanelPlaceInfo::displayParcelInfo
     /// for a place link): `handle` of the 256 m slot holding the point,
-    /// `position` in region coordinates. Answered by NetEvent::RemoteParcel.
+    /// `position` in region coordinates, `region_id` when known (a
+    /// landmark's). Answered by NetEvent::RemoteParcel.
     RemoteParcelRequest {
         handle: RegionHandle,
         position: Vec3,
+        region_id: Uuid,
     },
+    /// RegionHandleRequest: the handle of a region known by its id
+    /// (LLLandmark::requestRegionHandle). Answered by NetEvent::RegionIdHandle.
+    RegionHandleRequest(Uuid),
     /// About Land requests (land.rs).
     Land(crate::land::LandCommand),
     /// GrantUserRights: rights we give a friend (1 online, 2 map, 4 modify).

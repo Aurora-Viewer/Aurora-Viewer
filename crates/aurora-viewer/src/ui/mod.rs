@@ -34,6 +34,7 @@ pub mod parcel_icons;
 pub mod people;
 pub mod perf;
 pub mod place_details;
+pub mod places;
 pub mod profile;
 pub mod skin;
 pub mod sound_cues;
@@ -66,6 +67,8 @@ pub struct Panels {
     pub contacts: bool,
     /// "À propos du terrain" (navigation bar info icon).
     pub about_land: bool,
+    /// « Lieux » (favorites, landmarks, teleport history, place profiles).
+    pub places: bool,
     /// Navigation bar location being edited (text) and "just opened" (select all).
     pub nav_edit: Option<String>,
     pub nav_edit_new: bool,

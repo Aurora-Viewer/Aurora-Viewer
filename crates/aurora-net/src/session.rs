@@ -1139,7 +1139,12 @@ impl Session<'_> {
                 m.data.parcel_id = id;
                 self.send_main(&m, true);
             }
-            NetCommand::RemoteParcelRequest { handle, position } => self.remote_parcel_request(handle, position),
+            NetCommand::RemoteParcelRequest { handle, position, region_id } => self.remote_parcel_request(handle, position, region_id),
+            NetCommand::RegionHandleRequest(region_id) => {
+                let mut m = RegionHandleRequest::default();
+                m.request_block.region_id = region_id;
+                self.send_main(&m, true);
+            }
             NetCommand::GrantUserRights { friend, rights } => {
                 // LLAvatarActions / LLAvatarTracker::sendRightsGrantedUpdate
                 let mut m = GrantUserRights::default();
@@ -2206,6 +2211,16 @@ impl Session<'_> {
                 price: d.price_for_listing,
             };
             emit(self.sh, NetEvent::ClassifiedInfo(Box::new(c)));
+        } else if id == RegionIDAndHandleReply::ID {
+            let m: RegionIDAndHandleReply = pkt.decode()?;
+            let b = &m.reply_block;
+            emit(
+                self.sh,
+                NetEvent::RegionIdHandle {
+                    region_id: b.region_id,
+                    handle: b.region_handle,
+                },
+            );
         } else if id == ParcelInfoReply::ID {
             let m: ParcelInfoReply = pkt.decode()?;
             let d = &m.data;

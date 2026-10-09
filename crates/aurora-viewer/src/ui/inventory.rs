@@ -9,6 +9,9 @@ use uuid::Uuid;
 
 pub enum InvAction {
     TeleportLandmark(Uuid),
+    /// « À propos du repère » (LLLandmarkBridge "about"): its profile, as
+    /// item and asset.
+    AboutLandmark(Uuid, Uuid),
 }
 
 /// An inventory item being dragged (dropped on an object's contents in
@@ -122,7 +125,9 @@ fn item_row(ui: &mut egui::Ui, p: &Palette, icons: &Icons, inv: &Inventory, id: 
                 if super::menu::item(ui, p, "navigation-arrow", "Se téléporter") {
                     actions.push(InvAction::TeleportLandmark(it.asset_id));
                 }
-                super::menu::todo(ui, p, "info", "À propos du repère");
+                if super::menu::item(ui, p, "info", "À propos du repère") {
+                    actions.push(InvAction::AboutLandmark(it.id, it.asset_id));
+                }
                 super::menu::todo(ui, p, "map-trifold", "Afficher sur la carte");
                 super::menu::separator(ui, p);
                 super::menu::todo(ui, p, "copy", "Copier le SLurl");
