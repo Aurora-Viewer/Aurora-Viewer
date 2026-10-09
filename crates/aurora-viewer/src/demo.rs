@@ -1104,6 +1104,31 @@ pub fn chime() -> (Uuid, aurora_audio::SoundClip) {
     (u(0x50_0001), aurora_audio::SoundClip::from_pcm(&pcm, 1, rate))
 }
 
+/// AURORA_DEMO_SOUND: an interface sound for the offline demo, read (never
+/// written) from the real sound cache when a grid session already loaded it,
+/// else a short tick whose pitch depends on the asset (so that different
+/// sounds can be told apart).
+pub fn ui_sound(id: Uuid) -> aurora_audio::SoundClip {
+    let demo_cache = crate::settings::cache_dir();
+    if let Some(real) = demo_cache.parent()
+        && let Ok(data) = std::fs::read(real.join("sound").join(format!("{id}.ogg")))
+        && let Ok(clip) = aurora_audio::SoundClip::decode(&data)
+    {
+        return clip;
+    }
+    let rate = 48_000u32;
+    let f = 500.0 + (id.as_u128() % 13) as f32 * 120.0;
+    let n = rate as usize * 6 / 100;
+    let pcm: Vec<f32> = (0..n)
+        .map(|i| {
+            let t = i as f32 / rate as f32;
+            let env = (1.0 - i as f32 / n as f32).powi(3);
+            (t * f * std::f32::consts::TAU).sin() * env * 0.25
+        })
+        .collect();
+    aurora_audio::SoundClip::from_pcm(&pcm, 1, rate)
+}
+
 /// Default page of AURORA_DEMO_MEDIA: animated (frame updates), a button
 /// (clicks) and a text field (keyboard).
 pub const DEMO_MEDIA_PAGE: &str = "data:text/html;charset=utf-8,<html><body style='margin:0;height:100vh;background:linear-gradient(135deg,%232a1f4a,%230f6d6d);color:white;font:56px sans-serif;text-align:center'><h1 style='margin:40px 0 10px'>Aurora media</h1><p id='t' style='font-size:90px;margin:10px'>--</p><button onclick=\"document.body.style.background='%237a3b9c';this.textContent='Cliqu%C3%A9 !'\" style='font-size:48px;padding:10px 40px'>Cliquer</button><br><input placeholder='Taper ici' style='font-size:44px;margin-top:30px;width:70%'><script>setInterval(function(){document.getElementById('t').textContent=new Date().toLocaleTimeString()},250)</script></body></html>";

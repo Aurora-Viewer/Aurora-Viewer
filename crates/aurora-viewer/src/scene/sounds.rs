@@ -39,40 +39,6 @@ const UNDERWATER_ROLLOFF: f32 = 5.0;
 /// out of place).
 const ONE_SHOT_PATIENCE: Duration = Duration::from_secs(10);
 
-/// Interface sounds (Firestorm UISnd* defaults, played when PlayModeUISnd*
-/// is on by default).
-pub mod ui {
-    use uuid::Uuid;
-    const fn u(v: u128) -> Uuid {
-        Uuid::from_u128(v)
-    }
-    pub const ALERT: Uuid = u(0xed124764_705d_d497_167a_182cd9fa2e6c);
-    pub const NEW_IM_SESSION: Uuid = u(0x67cc2844_00f3_2b3c_b991_6418d01e1bb7);
-    pub const START_IM: Uuid = u(0xc825dfbc_9827_7e02_6507_3713d18916c1);
-    pub const MONEY_UP: Uuid = u(0x77a018af_098e_c037_51a6_178f05877c6f);
-    pub const MONEY_DOWN: Uuid = u(0x104974e3_dfda_428b_99ee_b0d4e748d3a3);
-    pub const TELEPORT_OUT: Uuid = u(0xd7a9a565_a013_2a69_797d_5332baa1a947);
-    pub const WINDOW_OPEN: Uuid = u(0xc80260ba_41fd_8a46_768a_6bf236360e3a);
-    pub const WINDOW_CLOSE: Uuid = u(0x2c346eda_b60c_ab33_1119_b8941916a499);
-    pub const PIE_MENU_APPEAR: Uuid = u(0x8eaed61f_92ff_6485_de83_4dcc938a478e);
-    pub const TYPING: Uuid = u(0x5e191c7b_8996_9ced_a177_b2ac32bfea06);
-    pub const RESTART: Uuid = u(0xb92a0f64_7709_8811_40c5_16afd624a45f);
-    /// Preloaded at login (LLViewerAudio: preloadSound of the UI sounds).
-    pub const ALL: [Uuid; 11] = [
-        ALERT,
-        NEW_IM_SESSION,
-        START_IM,
-        MONEY_UP,
-        MONEY_DOWN,
-        TELEPORT_OUT,
-        WINDOW_OPEN,
-        WINDOW_CLOSE,
-        PIE_MENU_APPEAR,
-        TYPING,
-        RESTART,
-    ];
-}
-
 /// Collision sounds (LLMaterialTable::isCollisionSound: SL and OpenSim
 /// material pairs, llmessage/sound_ids.cpp): EnableCollisionSounds.
 pub const COLLISION: [u128; 56] = [

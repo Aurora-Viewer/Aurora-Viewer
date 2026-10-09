@@ -548,6 +548,8 @@ impl BuildTool {
                 group_id: Uuid::nil(),
             });
         }
+        // LLSelectMgr::confirmDelete
+        world.ui_sounds.push(crate::ui_sound::UiSound::ObjectDelete);
         self.status = if not_owned > 0 {
             format!("Suppression demandée ({not_owned} objet(s) d'autres propriétaires : refus probable)")
         } else {
@@ -583,6 +585,8 @@ impl BuildTool {
                 group_id: Uuid::nil(),
             });
         }
+        // derez_objects
+        world.ui_sounds.push(crate::ui_sound::UiSound::ObjectRezOut);
         if !copy {
             self.deselect_all(world);
         }
@@ -934,6 +938,8 @@ impl BuildTool {
         self.deselect_all(world);
         self.expect_created(world);
         self.send(BuildCmd::Add(Box::new(p)));
+        // LLToolPlacer::addObject
+        world.ui_sounds.push(crate::ui_sound::UiSound::ObjectCreate);
         if !s.keep_tool {
             self.tool = Tool::Edit;
             self.edit_mode = EditMode::Move;

@@ -8,6 +8,7 @@ use crate::scene::{CullView, Scene};
 use crate::settings::Settings;
 use crate::theme::Palette;
 use crate::ui::{self, Panels, bars::BarAction, chat::ChatUi, login::LoginAction, login::LoginForm, perf::PerfData, skin::Skin};
+use crate::ui_sound::UiSound;
 use crate::world::World;
 use crate::world::eep::{SkyFrame, WaterFrame};
 use crate::world::env::{Environment, midday_sun};
@@ -163,8 +164,15 @@ pub struct App {
     tp_checks: Vec<f32>,
     /// Debug: culling view kept while « Figer le culling » is on.
     frozen_cull: Option<CullView>,
-    /// Windows open last frame (window sounds).
-    panels_were: Option<[bool; 8]>,
+    /// Interface sounds caused by the widgets (clicks, keys, windows).
+    sound_cues: ui::sound_cues::SoundCues,
+    /// Last frame: microphone on, context menu open, interactive script
+    /// dialogs (their sounds).
+    mic_was: bool,
+    context_menu_was: bool,
+    script_dialogs_were: usize,
+    /// Last tracker beacon sound (FIRE-16969).
+    beacon_sound_at: Option<Instant>,
     /// Movement keys held since, and the server position then (stuck agent).
     stuck_watch: Option<(Instant, Vec3)>,
     stuck_logged: Option<Instant>,
@@ -392,7 +400,11 @@ impl App {
             move_complete_at: None,
             tp_checks: Vec::new(),
             frozen_cull: None,
-            panels_were: None,
+            sound_cues: Default::default(),
+            mic_was: false,
+            context_menu_was: false,
+            script_dialogs_were: 0,
+            beacon_sound_at: None,
             stuck_watch: None,
             stuck_logged: None,
             attachments_logged: 0,
@@ -577,8 +589,8 @@ impl App {
                 }
             }
             NetEvent::LoggedIn(l) => {
-                // interface sounds ready when needed (LLViewerAudio preloads)
-                for id in crate::scene::sounds::ui::ALL {
+                // interface sounds ready when needed (init_audio preloads)
+                for id in self.settings.audio.ui.preload() {
                     self.scene.sounds.want(id);
                 }
                 // remembered password: the hash of the one typed (kept when
@@ -1237,57 +1249,103 @@ impl App {
         }
     }
 
+    /// Plays an interface sound when the settings allow it (make_ui_sound /
+    /// find_ui_sound: its play flag, its asset, the "Sons de l'interface"
+    /// switch).
+    fn play_ui_sound(&mut self, s: UiSound) {
+        if !self.settings.audio.ui_sounds {
+            return;
+        }
+        if let Some(id) = self.settings.audio.ui.resolve(s, false) {
+            // RUST_LOG=info,ui_sound=debug (Firestorm UISndDebugSpamToggle)
+            log::debug!(target: "ui_sound", "UISnd{} ({id})", s.entry().name);
+            self.scene.sounds.play_ui(self.audio_engine.as_ref(), id);
+        }
+    }
+
     fn update_sounds(&mut self) {
         self.flush_object_sounds();
-        let engine = self.audio_engine.as_ref();
-        let sounds = &mut self.scene.sounds;
-        let ui_on = self.settings.audio.ui_sounds;
-        let dnd = self.world.status.dnd;
-        for id in self.world.ui_sounds.drain(..) {
-            // do not disturb: new conversations arrive silently
-            if ui_on && !(dnd && id == crate::scene::sounds::ui::NEW_IM_SESSION) {
-                sounds.play_ui(engine, id);
+        let ui = &self.settings.audio.ui;
+        let w = &mut self.world;
+        // conversations by their IM mode (LLIMMgr::addMessage), never in
+        // do not disturb; "in front" = shown in the focused window
+        let dnd = w.status.dnd;
+        for m in std::mem::take(&mut w.im_messages) {
+            let front = self.focused && self.panels.chat && self.chat_ui.selected == Some(m.session);
+            if !dnd && let Some(s) = ui.im_sound(m, front) {
+                w.ui_sounds.push(s);
             }
         }
+        for (old, new) in std::mem::take(&mut w.balance_changes) {
+            if let Some(s) = ui.money_sound(old, new) {
+                w.ui_sounds.push(s);
+            }
+        }
+        // push to talk / microphone button (voice_follow_key, LLVoiceClient)
+        if self.mic_on != self.mic_was {
+            self.mic_was = self.mic_on;
+            w.ui_sounds.push(UiSound::MicToggle);
+        }
+        // context menu closed (PieMenu::hide)
+        let menu = self.context_menu.is_some();
+        if self.context_menu_was && !menu {
+            w.ui_sounds.push(UiSound::PieMenuHide);
+        }
+        self.context_menu_was = menu;
+        // script dialog answered or dismissed (closeFloater of script_floater)
+        let dialogs = w
+            .notifications
+            .list
+            .iter()
+            .filter(|n| n.kind == crate::world::notifications::Kind::Script && n.interactive())
+            .count();
+        if dialogs < self.script_dialogs_were {
+            w.ui_sounds.push(UiSound::ScriptFloaterClose);
+        }
+        self.script_dialogs_were = dialogs;
+        // tracker beacon: closer = more frequent (FIRE-16969)
+        let beacon = w.map.track.as_ref().zip(w.main_origin()).map(|(t, (ox, oy))| {
+            let base = Vec3::new((t.x - ox as f64) as f32, (t.y - oy as f64) as f32, t.z);
+            base.distance(w.agent.position)
+        });
+        match beacon {
+            Some(d) if ui.plays(UiSound::TrackerBeacon) && matches!(self.screen, Screen::World) => {
+                let now = Instant::now();
+                match self.beacon_sound_at {
+                    None => self.beacon_sound_at = Some(now),
+                    Some(t) if now.duration_since(t).as_secs_f32() > crate::ui_sound::beacon_interval(d) => {
+                        self.beacon_sound_at = Some(now);
+                        w.ui_sounds.push(UiSound::TrackerBeacon);
+                    }
+                    Some(_) => {}
+                }
+            }
+            _ => self.beacon_sound_at = None,
+        }
+        for s in std::mem::take(&mut self.world.ui_sounds) {
+            self.play_ui_sound(s);
+        }
+        // others starting to type: a sound at the avatar (LLVOAvatar, SFX)
         let typing: Vec<uuid::Uuid> = std::mem::take(&mut self.world.typing_started);
+        let typing_sound = self
+            .settings
+            .audio
+            .ui
+            .resolve(UiSound::Typing, false)
+            .filter(|_| self.settings.audio.ui_sounds);
         for av in typing {
-            if ui_on
+            if let Some(id) = typing_sound
                 && let Some(pos) = self
                     .world
                     .objects
                     .index_of_uuid(&av)
                     .and_then(|i| Scene::object_transform(&self.world, i, Instant::now(), 0))
             {
-                sounds.trigger(crate::scene::sounds::ui::TYPING, pos.0, Some(av), 1.0);
+                self.scene.sounds.trigger(id, pos.0, Some(av), 1.0);
             }
         }
-        // UISndWindowOpen / Close (LLFloater)
-        let p = &self.panels;
-        let open = [
-            p.chat,
-            p.perf,
-            p.people,
-            p.minimap,
-            p.settings,
-            p.inventory,
-            p.about_land,
-            p.world_map,
-        ];
-        if let Some(prev) = self.panels_were
-            && ui_on
-            && open != prev
-        {
-            let opened = open.iter().zip(prev).any(|(n, o)| *n && !o);
-            sounds.play_ui(
-                engine,
-                if opened {
-                    crate::scene::sounds::ui::WINDOW_OPEN
-                } else {
-                    crate::scene::sounds::ui::WINDOW_CLOSE
-                },
-            );
-        }
-        self.panels_were = Some(open);
+        let engine = self.audio_engine.as_ref();
+        let sounds = &mut self.scene.sounds;
         let fwd = (self.camera.target - self.camera.position).normalize_or(Vec3::X);
         let listener = crate::scene::sounds::Listener {
             pos: self.camera.position,
@@ -1558,11 +1616,7 @@ impl App {
             None => ui::context::Target::Ground,
         };
         let ppp = self.egui_ctx.pixels_per_point().max(0.1);
-        if self.settings.audio.ui_sounds {
-            self.scene
-                .sounds
-                .play_ui(self.audio_engine.as_ref(), crate::scene::sounds::ui::PIE_MENU_APPEAR);
-        }
+        self.world.ui_sounds.push(UiSound::PieMenuAppear);
         self.context_menu = Some(ui::context::ContextMenu {
             pos: egui::pos2(self.cursor_pos.0 / ppp, self.cursor_pos.1 / ppp),
             point,
@@ -1584,10 +1638,8 @@ impl App {
             CtxAction::ResetCamera => self.reset_camera_view(),
             CtxAction::Im(id) | CtxAction::Profile(id) => {
                 // UISndStartIM (LLAvatarActions::startIM)
-                if matches!(act, CtxAction::Im(_)) && self.settings.audio.ui_sounds {
-                    self.scene
-                        .sounds
-                        .play_ui(self.audio_engine.as_ref(), crate::scene::sounds::ui::START_IM);
+                if matches!(act, CtxAction::Im(_)) {
+                    self.world.ui_sounds.push(UiSound::StartIm);
                 }
                 self.world.social.session_mut(id);
                 self.world.social.focus_im = Some(id);
@@ -1701,12 +1753,8 @@ impl App {
     /// A teleport asked by the user: the screen shows at once (fade in) and
     /// follows the steps from here.
     fn begin_teleport(&mut self, dest: String) {
-        // UISndTeleportOut (LLAgent::teleportCore)
-        if self.settings.audio.ui_sounds {
-            self.scene
-                .sounds
-                .play_ui(self.audio_engine.as_ref(), crate::scene::sounds::ui::TELEPORT_OUT);
-        }
+        // LLAgent::teleportCore
+        self.world.ui_sounds.push(UiSound::TeleportOut);
         self.tp_dest = Some(dest);
         self.media.on_teleport();
         let w = &mut self.world;
@@ -2656,9 +2704,23 @@ impl App {
         }
         let mut actions = UiActions::default();
         let vsync = gfx.renderer.vsync();
+        self.sound_cues.before(&ctx, &raw);
         let mut full = ctx.run_ui(raw, |ui| {
+            self.sound_cues.pass_start(ui.ctx());
             actions = self.draw_ui(ui, &projector, &gfx.renderer);
         });
+        // interface sounds of the widgets; the sounds are SL assets, loaded
+        // once logged in
+        let in_world_view = matches!(self.screen, Screen::World);
+        let cues = self.sound_cues.after(&ctx, &full.platform_output.events, in_world_view);
+        let previews = ui::sound_cues::take_previews(&ctx);
+        if self.in_world() {
+            self.world.ui_sounds.extend(cues);
+            // preview buttons of the sound preferences (force_sound)
+            for id in previews {
+                self.scene.sounds.play_ui(self.audio_engine.as_ref(), id);
+            }
+        }
         gfx.egui_state.handle_platform_output(&gfx.window, full.platform_output);
         let ppp = full.pixels_per_point;
         let prims = ctx.tessellate(full.shapes, ppp);
@@ -3407,22 +3469,14 @@ impl App {
                 for pa in people {
                     match pa {
                         ui::people::PeopleAction::OpenIm(id) => {
-                            if self.settings.audio.ui_sounds {
-                                self.scene
-                                    .sounds
-                                    .play_ui(self.audio_engine.as_ref(), crate::scene::sounds::ui::START_IM);
-                            }
+                            self.world.ui_sounds.push(UiSound::StartIm);
                             self.world.social.session_mut(id);
                             self.world.social.focus_im = Some(id);
                             self.panels.chat = true;
                         }
                         ui::people::PeopleAction::OfferTeleport(id) => a.offer_tp.push(id),
                         ui::people::PeopleAction::GroupChat(id) => {
-                            if self.settings.audio.ui_sounds {
-                                self.scene
-                                    .sounds
-                                    .play_ui(self.audio_engine.as_ref(), crate::scene::sounds::ui::START_IM);
-                            }
+                            self.world.ui_sounds.push(UiSound::StartIm);
                             self.world.start_group_chat(id);
                             self.panels.chat = true;
                         }
@@ -3876,6 +3930,9 @@ impl ApplicationHandler for App {
             if std::env::var_os("AURORA_DEMO_SOUND").is_some() {
                 let (id, clip) = crate::demo::chime();
                 self.scene.sounds.insert(id, clip);
+                for id in self.settings.audio.ui.preload() {
+                    self.scene.sounds.insert(id, crate::demo::ui_sound(id));
+                }
                 for ev in crate::demo::sound_events(id) {
                     if let Some(e) = self.world.apply(ev) {
                         self.on_app_event(e);

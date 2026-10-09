@@ -113,7 +113,7 @@ settings and cache (`…\config\demo`, `…\cache\demo`).
 | `AURORA_DEMO_MMO="x,y[,1]"` | Left press on the avatar then right button held (mouse steering) |
 | `AURORA_DEMO_RCLICK="x,y"` | Right click (context menu) |
 | `AURORA_DEMO_LOOKAT=1` | Eye tracking on (in memory only) and a remote look-at |
-| `AURORA_DEMO_SOUND=1` | Audible world sounds (looped chime) |
+| `AURORA_DEMO_SOUND=1` | Audible world sounds (looped chime) and interface sounds (from the real sound cache when present, else a short tick per sound) |
 | `AURORA_DEMO_CLOUD=1` | Loading clouds for avatars |
 | `AURORA_DEMO_OCCLUSION=1` | Wall with hidden objects (occlusion test) |
 | `AURORA_DEMO_DEBUG="bounds,culling,lights,probes,skeletons,alpha,wire,complexity,glow,glow_view,freeze"` | Debug overlays |

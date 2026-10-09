@@ -22,6 +22,7 @@ pub mod worldmap;
 use crate::agent::AgentState;
 use crate::scene::avatar::AvatarLibrary;
 use crate::scene::textures::TexSource;
+use crate::ui_sound::{ImKind, ImMessage, UiSound};
 use aurora_net::{
     AvatarAppearance, ChatMessage, ChatSourceType, ChatType, InstantMessage, LoginResponse, NetEvent, RegionHandle, RegionInfo, SunInfo,
 };
@@ -134,7 +135,11 @@ pub struct World {
     pub events_this_frame: usize,
     pub balance: Option<i32>,
     /// Interface sounds to play (drained by the app).
-    pub ui_sounds: Vec<Uuid>,
+    pub ui_sounds: Vec<UiSound>,
+    /// Conversation messages received (their sound depends on the IM modes).
+    pub im_messages: Vec<ImMessage>,
+    /// L$ balance changes (previous, new), for the money sounds.
+    pub balance_changes: Vec<(Option<i32>, i32)>,
     /// Avatars that just started typing (typing sound, LLVOAvatar::startMotion).
     pub typing_started: Vec<Uuid>,
     pub social: social::Social,
@@ -180,6 +185,8 @@ impl World {
     pub fn new(avatar_lib: Arc<AvatarLibrary>) -> World {
         World {
             ui_sounds: Vec::new(),
+            im_messages: Vec::new(),
+            balance_changes: Vec::new(),
             typing_started: Vec::new(),
             login: None,
             agent_id: Uuid::nil(),
@@ -739,6 +746,9 @@ impl World {
             NetEvent::TeleportStarted => {
                 if !self.teleporting {
                     log::info!("TeleportStart (arrived {})", self.arrived_once);
+                    // a teleport we did not ask for (lure, llTeleportAgent):
+                    // process_teleport_start plays it too
+                    self.ui_sounds.push(UiSound::TeleportOut);
                 }
                 self.teleporting = true;
                 self.tp_failed = false;
@@ -757,11 +767,7 @@ impl World {
             NetEvent::Alert { message } => {
                 self.map.on_alert(&message);
                 let restart = message.to_lowercase().contains("restart");
-                self.ui_sounds.push(if restart {
-                    crate::scene::sounds::ui::RESTART
-                } else {
-                    crate::scene::sounds::ui::ALERT
-                });
+                self.ui_sounds.push(if restart { UiSound::Restart } else { UiSound::Alert });
                 self.system_message(message.clone());
                 self.notifications.push(
                     notifications::Kind::Alert,
@@ -803,6 +809,8 @@ impl World {
                 };
                 let title = format!("{object_name} ({owner_name})");
                 self.notifications.push(notifications::Kind::Script, title, message, data);
+                // LLScriptFloater ("script_floater") opening
+                self.ui_sounds.push(UiSound::ScriptFloaterOpen);
                 None
             }
             NetEvent::ScriptQuestion {
@@ -812,6 +820,8 @@ impl World {
                 owner_name,
                 questions,
             } => {
+                // process_script_question
+                self.ui_sounds.push(UiSound::ScriptFloaterOpen);
                 let lines = notifications::permission_lines(questions);
                 let body = format!(
                     "L'objet « {object_name} » de {owner_name} demande l'autorisation de :\n• {}",
@@ -974,16 +984,8 @@ impl World {
                 None
             }
             NetEvent::Balance(b) => {
-                // UISndMoneyChangeUp / Down past UISndMoneyChangeThreshold (50)
-                if let Some(old) = self.balance
-                    && (b - old).abs() >= 50
-                {
-                    self.ui_sounds.push(if b > old {
-                        crate::scene::sounds::ui::MONEY_UP
-                    } else {
-                        crate::scene::sounds::ui::MONEY_DOWN
-                    });
-                }
+                // the app compares with UISndMoneyChangeThreshold
+                self.balance_changes.push((self.balance, b));
                 self.balance = Some(b);
                 None
             }
@@ -1080,6 +1082,16 @@ impl World {
                     // LLAgent::heardChat (half the time, ll_rand(2))
                     let coin = Uuid::new_v4().as_bytes()[0] & 1 == 0;
                     self.look_at.heard_chat(c.source_id, coin);
+                    // FIRE-36367 (process_chat_from_simulator): said, whispered
+                    // or shouted by someone else (9 = CHAT_TYPE_DIRECT)
+                    if !c.source_id.is_nil()
+                        && matches!(
+                            c.chat_type,
+                            ChatType::Whisper | ChatType::Normal | ChatType::Shout | ChatType::Other(9)
+                        )
+                    {
+                        self.ui_sounds.push(UiSound::NearbyChat);
+                    }
                     ChatKind::Local(c.chat_type)
                 }
             }
@@ -1112,10 +1124,12 @@ impl World {
             if !im.from_name.is_empty() {
                 self.social.names.entry(im.from_agent_id).or_insert_with(|| im.from_name.clone());
             }
-            // UISndNewIncomingIMSession: a conversation someone else starts
-            if !self.social.has_session(&im.from_agent_id) {
-                self.ui_sounds.push(crate::scene::sounds::ui::NEW_IM_SESSION);
-            }
+            // UISndNewIncomingIMSession (by the IM mode)
+            self.im_messages.push(ImMessage {
+                kind: ImKind::Private,
+                session: im.from_agent_id,
+                new_session: !self.social.has_session(&im.from_agent_id),
+            });
             let from = self
                 .social
                 .avatar_names
@@ -1164,6 +1178,7 @@ impl World {
         let n = &mut self.notifications;
         match im.dialog {
             d::LURE_USER => {
+                self.ui_sounds.push(UiSound::TeleportOffer);
                 n.push(
                     Kind::Teleport,
                     format!("{from} vous propose une téléportation"),
@@ -1175,6 +1190,7 @@ impl World {
                 );
             }
             d::FRIENDSHIP_OFFERED => {
+                self.ui_sounds.push(UiSound::FriendshipOffer);
                 n.push(
                     Kind::Friendship,
                     format!("{from} vous propose son amitié"),
@@ -1183,6 +1199,7 @@ impl World {
                 );
             }
             d::INVENTORY_OFFERED | d::TASK_INVENTORY_OFFERED => {
+                self.ui_sounds.push(UiSound::InventoryOffer);
                 let asset_type = im.binary_bucket.first().map(|b| *b as i8).unwrap_or(-1);
                 let what = if im.message.is_empty() {
                     "un objet".to_owned()
@@ -1202,6 +1219,7 @@ impl World {
                 );
             }
             d::GROUP_INVITATION => {
+                self.ui_sounds.push(UiSound::GroupInvitation);
                 n.push(
                     Kind::Group,
                     "Invitation à rejoindre un groupe",
@@ -1213,6 +1231,7 @@ impl World {
                 );
             }
             d::GROUP_NOTICE => {
+                self.ui_sounds.push(UiSound::GroupNotice);
                 // "subject|message"
                 let (subject, body) = im.message.split_once('|').unwrap_or(("Avis de groupe", im.message.as_str()));
                 n.push(Kind::Group, format!("{from} : {subject}"), body.to_owned(), Data::None);
@@ -1295,7 +1314,10 @@ impl World {
     /// Friends' online / offline notices once their names are known
     /// (LLAvatarNameCache::get with a callback).
     pub fn flush_online_notices(&mut self) {
-        for n in self.social.take_online_notices() {
+        for (n, online) in self.social.take_online_notices() {
+            // FIRE-2731 (on_avatar_name_cache_notify)
+            self.ui_sounds
+                .push(if online { UiSound::FriendOnline } else { UiSound::FriendOffline });
             self.system_message(n);
         }
     }
