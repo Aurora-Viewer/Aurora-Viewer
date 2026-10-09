@@ -216,7 +216,7 @@ pub struct Settings {
     pub settings_version: u32,
 }
 
-const SETTINGS_VERSION: u32 = 6;
+const SETTINGS_VERSION: u32 = 7;
 
 /// RGBA color (sRGB, straight alpha).
 pub type Rgba = [u8; 4];
@@ -334,7 +334,8 @@ pub struct AudioSettings {
     pub muted: [bool; 7],
     /// Channel enabled (checkbox; the master has none).
     pub enabled: [bool; 7],
-    /// Play the parcel music automatically when entering a parcel.
+    /// Play the parcel music automatically when entering a parcel
+    /// (FSParcelMusicAutoPlay, off by default: the radio toggle starts it).
     pub music_autoplay: bool,
     /// Play parcel media automatically.
     pub media_autoplay: bool,
@@ -369,7 +370,7 @@ impl Default for AudioSettings {
             volume: [0.8, 0.5, 0.5, 0.5, 0.4, 0.5, 0.7],
             muted: [false; 7],
             enabled: [true; 7],
-            music_autoplay: true,
+            music_autoplay: false,
             media_autoplay: false,
             output_device: String::new(),
             input_device: String::new(),
@@ -594,6 +595,10 @@ impl Settings {
             if self.cache_size_mb == 4096 {
                 self.cache_size_mb = 20480;
             }
+        }
+        if self.settings_version < 7 {
+            // new default: parcel music waits for the radio toggle (Firestorm)
+            self.audio.music_autoplay = false;
         }
         if self.settings_version < 4 {
             // walking: arrow keys only (no more WASD / ZQSD by default)
@@ -881,5 +886,20 @@ mod tests {
         let bytes = serde_json::to_vec(&existing).expect("serialize synthetic settings");
         let saved: Settings = serde_json::from_slice(&bytes).expect("read synthetic settings");
         assert_eq!(saved.sanitized().keybinds, existing.keybinds);
+    }
+
+    #[test]
+    fn parcel_music_waits_for_the_radio_toggle() {
+        assert!(!Settings::default().sanitized().audio.music_autoplay);
+        let mut old = Settings {
+            settings_version: 6,
+            ..Settings::default()
+        };
+        old.audio.music_autoplay = true;
+        assert!(!old.sanitized().audio.music_autoplay);
+        // switched back on after the migration: kept
+        let mut on = Settings::default();
+        on.audio.music_autoplay = true;
+        assert!(on.sanitized().audio.music_autoplay);
     }
 }

@@ -137,6 +137,7 @@ settings and cache (`…\config\demo`, `…\cache\demo`).
 | `AURORA_DEMO_FEED=<url>` | Profile "Flux" tab on this page (the username and `/?feed_only=true` are appended, a `data:` URL can comment them out) |
 | `AURORA_DEMO_DISPLAYNAME="name"`, `AURORA_DEMO_DISPLAYNAME_ERROR=…` | Display name change (simulated) |
 | `AURORA_DEMO_MEDIA=<url>\|1`, `AURORA_DEMO_PARCEL_MEDIA=<url>\|1`, `AURORA_DEMO_MEDIA_CLICK=…` | Media on a prim, parcel media, media input |
+| `AURORA_DEMO_MUSIC=<url>\|1` | Parcel music on the demo parcel (`1`: an unreachable placeholder); it waits for the radio button |
 | `AURORA_DEMO_BUILD="mode,x,y[,part,dx,dy]"`, `AURORA_DEMO_BUILD_FRAME` | Build tools script (mode: move, rotate, stretch, face, align, grab, focus, create, land, select) |
 | `AURORA_DEMO_BUILD_TAB=general\|object\|features\|texture[:pbr\|bp\|media]\|contents` | Build floater tab shown by the build script; `+weights`, `+grid`, `+media` also open those floaters |
 | `AURORA_DEMO_BAN=1` | Ban lines |

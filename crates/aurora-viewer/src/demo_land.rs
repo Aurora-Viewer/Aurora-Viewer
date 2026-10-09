@@ -18,6 +18,8 @@ const PARCEL_UUID: Uuid = Uuid::from_u128(0x1214_B5B2_7C42_D6C4_8741_B182_4390_8
 const XP_AURORA: Uuid = Uuid::from_u128(0xE7E0_0000_0000_0000_0000_0000_0000_0001);
 const XP_SITTER: Uuid = Uuid::from_u128(0xE7E0_0000_0000_0000_0000_0000_0000_0002);
 const XP_INTERACT: Uuid = Uuid::from_u128(0xE7E0_0000_0000_0000_0000_0000_0000_0003);
+/// Placeholder parcel music (also `AURORA_DEMO_MUSIC=1`).
+pub const MUSIC_URL: &str = "http://flux.exemple.org:8000/";
 
 /// The demo parcel as the "simulator" keeps it (updates are applied).
 static PARCEL: Mutex<Option<ParcelInfo>> = Mutex::new(None);
@@ -75,7 +77,7 @@ fn initial(owner: bool) -> ParcelInfo {
         category: 9,
         pass_price: 88,
         pass_hours: 1.0,
-        music_url: "http://flux.exemple.org:8000/".into(),
+        music_url: MUSIC_URL.into(),
         snapshot_id: TEX_GRADIENT,
         user_location: Vec3::new(140.0, 130.0, 25.0),
         user_look_at: Vec3::new(1.0, 0.0, 0.0),

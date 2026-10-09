@@ -31,6 +31,10 @@ pub enum AudioAction {
     OpenPreferences,
 }
 
+/// Gap between the speaker, radio and media icons (their 20 px slots
+/// already pad the 15 px glyphs).
+const ICON_GAP: f32 = 2.0;
+
 fn icon_toggle(ui: &mut egui::Ui, p: &Palette, icons: &Icons, icon: &str, tip: &str, active: bool, enabled: bool) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(20.0, 18.0), egui::Sense::click());
     if enabled && resp.hovered() {
@@ -79,48 +83,56 @@ pub fn top_controls(
     media: MediaState,
 ) -> AudioAction {
     let mut action = AudioAction::None;
-    // speaker: master mute on click, volume panel on the caret / hover-click
-    let master = speaker_icon(audio.volume[0], audio.muted[0]);
-    let sp = icon_toggle(ui, p, icons, master, "Volumes (clic)", st.panel_open, true);
-    if sp.clicked() {
-        st.panel_open = !st.panel_open;
-    }
-    let music = icon_toggle(
-        ui,
-        p,
-        icons,
-        "radio",
-        if !media.music_available {
-            "Pas de musique sur cette parcelle"
-        } else if media.music_playing {
-            "Arrêter la musique de la parcelle"
-        } else {
-            "Écouter la musique de la parcelle"
-        },
-        media.music_playing,
-        media.music_available,
-    );
-    if music.clicked() && media.music_available {
-        action = AudioAction::ToggleMusic;
-    }
-    let med = icon_toggle(
-        ui,
-        p,
-        icons,
-        "monitor-play",
-        if !media.media_available {
-            "Pas de média sur cette parcelle"
-        } else if media.media_playing {
-            "Arrêter le média de la parcelle"
-        } else {
-            "Lire le média de la parcelle"
-        },
-        media.media_playing,
-        media.media_available,
-    );
-    if med.clicked() && media.media_available {
-        action = AudioAction::ToggleMedia;
-    }
+    // the three icons form one group: tight, even gaps inside it, the bar's
+    // spacing around it
+    let sp = ui
+        .scope(|ui| {
+            ui.spacing_mut().item_spacing.x = ICON_GAP;
+            // speaker: the volume panel on click
+            let master = speaker_icon(audio.volume[0], audio.muted[0]);
+            let sp = icon_toggle(ui, p, icons, master, "Volumes (clic)", st.panel_open, true);
+            if sp.clicked() {
+                st.panel_open = !st.panel_open;
+            }
+            let music = icon_toggle(
+                ui,
+                p,
+                icons,
+                "radio",
+                if !media.music_available {
+                    "Pas de musique sur cette parcelle"
+                } else if media.music_playing {
+                    "Arrêter la musique de la parcelle"
+                } else {
+                    "Écouter la musique de la parcelle"
+                },
+                media.music_playing,
+                media.music_available,
+            );
+            if music.clicked() && media.music_available {
+                action = AudioAction::ToggleMusic;
+            }
+            let med = icon_toggle(
+                ui,
+                p,
+                icons,
+                "monitor-play",
+                if !media.media_available {
+                    "Pas de média sur cette parcelle"
+                } else if media.media_playing {
+                    "Arrêter le média de la parcelle"
+                } else {
+                    "Lire le média de la parcelle"
+                },
+                media.media_playing,
+                media.media_available,
+            );
+            if med.clicked() && media.media_available {
+                action = AudioAction::ToggleMedia;
+            }
+            sp
+        })
+        .inner;
 
     if st.panel_open {
         let anchor = sp.rect.right_bottom() + Vec2::new(4.0, 6.0);
