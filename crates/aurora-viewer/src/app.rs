@@ -233,9 +233,9 @@ pub struct App {
     login_info: ui::news::LoginInfo,
     /// Voice dots above the avatars (wave animation state).
     voice_dots: ui::voice_dot::VoiceDots,
-    /// Our name tag on screen last frame (egui points): a left click on it
-    /// counts as one on our avatar.
-    own_tag_rect: Option<egui::Rect>,
+    /// Avatar name tags on screen last frame, far first: a click on one
+    /// counts as one on its avatar.
+    name_tags: Vec<ui::hud::NameTag>,
     /// Block list version applied to object sounds, and the objects whose
     /// sounds it silenced.
     sound_blocks: (u64, std::collections::HashSet<uuid::Uuid>),
@@ -460,7 +460,7 @@ impl App {
             voice_http,
             login_info,
             voice_dots: Default::default(),
-            own_tag_rect: None,
+            name_tags: Vec::new(),
             sound_blocks: Default::default(),
             devices_listed: false,
             emoji: ui::emoji::Emoji::load(),
@@ -793,8 +793,8 @@ impl App {
                 Step::Cursor(x, y) => self.cursor_pos = (x, y),
                 Step::CursorOnOwnTag => {
                     let ppp = self.egui_ctx.pixels_per_point();
-                    match self.own_tag_rect {
-                        Some(r) => self.cursor_pos = (r.center().x * ppp, r.center().y * ppp),
+                    match self.name_tags.iter().find(|t| t.id == self.world.agent_id) {
+                        Some(t) => self.cursor_pos = (t.rect.center().x * ppp, t.rect.center().y * ppp),
                         None => log::warn!("demo camera: our name tag is not on screen"),
                     }
                 }
@@ -1011,6 +1011,28 @@ impl App {
         Some((t0, t1, axis))
     }
 
+    /// The avatar whose name tag is under the cursor, and the point on the
+    /// cursor ray at its tag. LLPipeline::lineSegmentIntersectInWorld tests
+    /// the avatar tags after the world: a tag picks its avatar unless
+    /// something is in front of it, the nearest tag winning.
+    fn pick_name_tag(&self, hit: Option<Vec3>, ray: Option<(Vec3, Vec3)>) -> Option<(usize, Vec3)> {
+        let (o, d) = ray?;
+        let ppp = self.egui_ctx.pixels_per_point().max(0.1);
+        let cursor = egui::pos2(self.cursor_pos.0 / ppp, self.cursor_pos.1 / ppp);
+        let now = Instant::now();
+        let world_t = hit.map(|p| (p - o).dot(d));
+        // drawn far first: the last one under the cursor is on top
+        self.name_tags.iter().rev().filter(|t| t.rect.contains(cursor)).find_map(|tag| {
+            let idx = self.world.objects.index_of_uuid(&tag.id)?;
+            let (pos, _, _) = crate::scene::Scene::object_transform(&self.world, idx, now, 0)?;
+            let t = (pos + Vec3::Z * ui::hud::TAG_HEIGHT - o).dot(d);
+            match world_t {
+                Some(h) if h < t - 0.05 => None,
+                _ => Some((idx, o + d * t)),
+            }
+        })
+    }
+
     fn on_left_press(&mut self) {
         self.left_down = true;
         let Some(g) = self.gfx.as_mut() else {
@@ -1030,20 +1052,10 @@ impl App {
                 _ => axis.map(|t| o + d * t),
             }
         });
-        // or on our name tag: LLPipeline::lineSegmentIntersectInWorld tests
-        // the avatar tags after the world, a tag picking its avatar unless
-        // something is in front of it; the point is on the ray, at the tag
-        let ppp = self.egui_ctx.pixels_per_point().max(0.1);
-        let on_tag = self.own_tag_rect.is_some_and(|r| r.contains(egui::pos2(x / ppp, y / ppp)));
+        // or on our name tag
         let avatar_hit = avatar_hit.or_else(|| {
-            let (o, d) = ray.filter(|_| on_tag)?;
-            let idx = self.world.objects.index_of_uuid(&self.world.agent_id)?;
-            let (pos, _, _) = crate::scene::Scene::object_transform(&self.world, idx, Instant::now(), 0)?;
-            let t = (pos + Vec3::Z * ui::hud::TAG_HEIGHT - o).dot(d);
-            match hit.map(|p| (p - o).dot(d)) {
-                Some(h) if h < t - 0.05 => None,
-                _ => Some(o + d * t),
-            }
+            let (idx, p) = self.pick_name_tag(hit, ray)?;
+            (self.world.objects.get(idx)?.full_id == self.world.agent_id).then_some(p)
         });
         let on_avatar = avatar_hit.is_some();
         // a media face takes the click (LLToolPie::handleMediaClick)
@@ -1596,11 +1608,26 @@ impl App {
         let Some(g) = self.gfx.as_mut() else {
             return;
         };
-        let Some(point) = g.renderer.pick_world(self.cursor_pos.0, self.cursor_pos.1) else {
-            return;
-        };
+        let (x, y) = self.cursor_pos;
+        let hit = g.renderer.pick_world(x, y);
+        let ray = g.renderer.cursor_ray(x, y);
         let now = Instant::now();
-        let target = match self.scene.pick_at(&self.world, point, now) {
+        // an avatar name tag opens its avatar's menu, as a click on the
+        // avatar; its point is the avatar, not the air at the tag ("Zoomer"
+        // frames the avatar, like handle_look_at_selection)
+        let (picked, point) = match self.pick_name_tag(hit, ray) {
+            Some((idx, p)) => (
+                Some(idx),
+                Scene::object_transform(&self.world, idx, now, 0).map_or(p, |(pos, _, _)| pos),
+            ),
+            None => {
+                let Some(p) = hit else {
+                    return;
+                };
+                (self.scene.pick_at(&self.world, p, now), p)
+            }
+        };
+        let target = match picked {
             Some(idx) => match self.world.objects.get(idx) {
                 Some(o) if o.is_avatar() => {
                     let id = o.full_id;
@@ -2861,14 +2888,27 @@ impl App {
             self.shutdown(event_loop);
             return;
         }
-        // captures: AURORA_DEMO_RCLICK="x,y" simulates a right click (physical px)
+        // captures: AURORA_DEMO_RCLICK="x,y" simulates a right click (physical
+        // px) at frame 225; "tag" on the name tag of the nearest other avatar
+        // at frame 600, once the tags are shown
         if self.demo
-            && self.frame_count == 225
+            && (self.frame_count == 225 || self.frame_count == 600)
             && let Ok(v) = std::env::var("AURORA_DEMO_RCLICK")
         {
+            let ppp = self.egui_ctx.pixels_per_point();
             let c: Vec<f32> = v.split(',').filter_map(|s| s.trim().parse().ok()).collect();
-            if c.len() == 2 {
-                self.cursor_pos = (c[0], c[1]);
+            let at = if v.trim() == "tag" {
+                let tag = self.name_tags.iter().rev().find(|t| t.id != self.world.agent_id);
+                if tag.is_none() && self.frame_count == 600 {
+                    log::warn!("demo right click: no other avatar's name tag on screen");
+                }
+                tag.filter(|_| self.frame_count == 600)
+                    .map(|t| (t.rect.center().x * ppp, t.rect.center().y * ppp))
+            } else {
+                (self.frame_count == 225 && c.len() == 2).then(|| (c[0], c[1]))
+            };
+            if let Some(p) = at {
+                self.cursor_pos = p;
                 self.open_context_menu();
             }
         }
@@ -3398,7 +3438,7 @@ impl App {
                 } else {
                     self.voice.levels()
                 };
-                self.own_tag_rect = ui::hud::draw(
+                self.name_tags = ui::hud::draw(
                     &ctx,
                     &p,
                     &self.world,
