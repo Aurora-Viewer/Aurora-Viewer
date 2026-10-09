@@ -80,11 +80,17 @@ fn item_row(ui: &mut egui::Ui, p: &Palette, icons: &Icons, inv: &Inventory, id: 
             if r.double_clicked() {
                 actions.push(InvAction::TeleportLandmark(it.asset_id));
             }
-            r.context_menu(|ui| {
-                if ui.button("Se téléporter").clicked() {
+            // the landmark part of menu_inventory.xml
+            super::menu::context_menu(&r, p, |ui| {
+                if super::menu::item(ui, p, "navigation-arrow", "Se téléporter") {
                     actions.push(InvAction::TeleportLandmark(it.asset_id));
-                    ui.close();
                 }
+                super::menu::todo(ui, p, "info", "À propos du repère");
+                super::menu::todo(ui, p, "map-trifold", "Afficher sur la carte");
+                super::menu::separator(ui, p);
+                super::menu::todo(ui, p, "copy", "Copier le SLurl");
+                super::menu::todo(ui, p, "pencil-simple", "Renommer");
+                super::menu::todo(ui, p, "trash", "Supprimer");
             });
         }
     });

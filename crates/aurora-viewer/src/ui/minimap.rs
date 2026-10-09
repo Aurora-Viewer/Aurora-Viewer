@@ -8,7 +8,9 @@
 //! Ported from Firestorm's llnetmap.cpp, llfloatermap.cpp and
 //! LLViewerObjectList::renderObjectsForMap (originally LGPL 2.1, Linden Research, Inc.).
 
+use super::context::{self, AvatarList, CtxAction};
 use super::map_tiles::MapTiles;
+use super::menu;
 use crate::scene::Scene;
 use crate::settings::MapSettings;
 use crate::theme::Palette;
@@ -103,8 +105,6 @@ pub enum MiniMapAction {
     },
     StopTracking,
     OpenWorldMap,
-    OpenIm(Uuid),
-    OfferTeleport(Uuid),
     /// "Voir le profil" (LLNetMap::handleShowProfile).
     Profile(Uuid),
     /// "À propos du terrain" on the parcel under the click (popupShowAboutLand).
@@ -387,7 +387,6 @@ impl MiniMap {
         super::sound_cues::floater_shown(ctx, egui::Id::new("minimap"));
         // floater_map.xml: no header nor border, DkGray background at
         // FSMiniMapOpacity (0.66); dragged anywhere, resized by its corner
-        let _ = p;
         let screen = ctx.content_rect();
         let frame = egui::Frame::new()
             .fill(Color32::from_rgba_unmultiplied(32, 32, 32, 168))
@@ -406,7 +405,7 @@ impl MiniMap {
             .constrain(true)
             .show(ctx, |ui| {
                 let size = ui.available_size().max(vec2(60.0, 60.0));
-                actions = self.draw(ui, world, tiles, cam, opts, size, true);
+                actions = self.draw(ui, p, world, tiles, cam, opts, size, true);
             });
         if actions.iter().any(|a| matches!(a, MiniMapAction::Close)) {
             *open = false;
@@ -419,6 +418,7 @@ impl MiniMap {
     pub fn draw(
         &mut self,
         ui: &mut egui::Ui,
+        p: &Palette,
         world: &World,
         tiles: &mut MapTiles,
         cam: &MapCamera,
@@ -740,154 +740,160 @@ impl MiniMap {
         {
             self.popup = Some((view.to_global(m), under.clone()));
         }
-        resp.context_menu(|ui| {
-            ui.set_min_width(190.0);
+        menu::context_menu(&resp, p, |ui| {
             let Some(((px, py), avs)) = self.popup.clone() else {
                 ui.close();
                 return;
             };
-            if let Some(id) = avs.first().copied() {
-                let label = if avs.len() == 1 {
-                    avatar_name(world, &id)
+            if let Some(&first) = avs.first() {
+                if avs.len() == 1 {
+                    if menu::item(ui, p, "user-circle", "Voir le profil") {
+                        actions.push(MiniMapAction::Profile(first));
+                    }
                 } else {
-                    format!("{} avatars", avs.len())
-                };
-                ui.label(egui::RichText::new(label).strong());
-                for id in &avs {
-                    let n = avatar_name(world, id);
-                    let pre = if avs.len() > 1 { format!("{n} : ") } else { String::new() };
-                    if ui.button(format!("{pre}Voir le profil")).clicked() {
-                        actions.push(MiniMapAction::Profile(*id));
-                        ui.close();
-                    }
-                    if ui.button(format!("{pre}Envoyer un IM")).clicked() {
-                        actions.push(MiniMapAction::OpenIm(*id));
-                        ui.close();
-                    }
-                    if ui.button(format!("{pre}Proposer une téléportation")).clicked() {
-                        actions.push(MiniMapAction::OfferTeleport(*id));
-                        ui.close();
-                    }
+                    // « Voir le profil ▸ » lists the avatars under the pointer
+                    menu::submenu(ui, p, "user-circle", "Voir le profil", true, |ui| {
+                        for id in &avs {
+                            if menu::item(ui, p, "user", &avatar_name(world, id)) {
+                                actions.push(MiniMapAction::Profile(*id));
+                            }
+                        }
+                    });
                 }
-                ui.menu_button("Marquer", |ui| {
+                menu::todo(ui, p, "users-three", "Ajouter au cercle");
+                if menu::item(ui, p, "magnifying-glass-plus", "Zoomer") {
+                    context::request(ui.ctx(), CtxAction::ZoomAvatar(first));
+                }
+                menu::todo(ui, p, "eye", "Regard vers l'avatar");
+                menu::submenu(ui, p, "tag", "Marques", true, |ui| {
                     for (name, col) in [
                         ("Rouge", Color32::from_rgb(186, 0, 31)),
                         ("Vert", Color32::from_rgb(0, 255, 0)),
                         ("Bleu", Color32::from_rgb(0, 0, 255)),
-                        ("Violet", Color32::from_rgb(255, 0, 255)),
+                        ("Mauve", Color32::from_rgb(255, 0, 255)),
                         ("Jaune", Color32::from_rgb(255, 255, 201)),
                     ] {
-                        if ui.button(egui::RichText::new(format!("● {name}")).color(col)).clicked() {
+                        if menu::swatch(ui, p, col, name) {
                             for id in &avs {
                                 self.marks.insert(*id, col);
                             }
-                            ui.close();
                         }
                     }
-                    ui.separator();
-                    if ui.button("Effacer la marque").clicked() {
+                    menu::separator(ui, p);
+                    if menu::item(ui, p, "eraser", "Effacer la marque") {
                         for id in &avs {
                             self.marks.remove(id);
                         }
-                        ui.close();
                     }
-                    if ui.button("Effacer toutes les marques").clicked() {
+                    menu::separator(ui, p);
+                    if menu::item(ui, p, "eraser", "Effacer toutes les marques") {
                         self.marks.clear();
-                        ui.close();
                     }
                 });
-                ui.separator();
+                // « Plus… »: the radar menu of the nearest avatar
+                menu::submenu(ui, p, "list", "Plus…", true, |ui| {
+                    context::avatar_list_menu(ui, p, world, first, AvatarList::Nearby)
+                });
+                menu::separator(ui, p);
             }
-            if ui.button("Suivre cet endroit").clicked() {
+            if menu::item(ui, p, "target", "Suivre") {
                 actions.push(MiniMapAction::Track {
                     x: px,
                     y: py,
                     z: to_global_z(world, px, py),
                 });
-                ui.close();
             }
-            if world.map.track.is_some() && ui.button("Arrêter le suivi").clicked() {
+            if menu::item_if(ui, p, "x-circle", "Arrêter de suivre", world.map.track.is_some()) {
                 actions.push(MiniMapAction::StopTracking);
-                ui.close();
             }
-            ui.separator();
-            ui.menu_button("Zoom", |ui| {
+            menu::separator(ui, p);
+            menu::submenu(ui, p, "magnifying-glass", "Zoom", true, |ui| {
                 for (label, s) in [
                     ("Très proche", MAP_SCALE_VERY_CLOSE),
                     ("Proche", MAP_SCALE_CLOSE),
-                    ("Moyen (par défaut)", MAP_SCALE_MEDIUM),
-                    ("Loin", MAP_SCALE_FAR),
+                    ("Moyen", MAP_SCALE_MEDIUM),
+                    ("Distant", MAP_SCALE_FAR),
                 ] {
-                    if ui.radio(opts.mini_scale == s, label).clicked() {
+                    if menu::check(ui, p, "magnifying-glass", label, opts.mini_scale == s, true) {
                         self.pan *= s / opts.mini_scale;
                         opts.mini_scale = s;
-                        ui.close();
                     }
                 }
             });
-            ui.menu_button("Afficher", |ui| {
-                ui.checkbox(&mut opts.mini_objects, "Objets");
-                ui.checkbox(&mut opts.mini_physical, "Objets physiques");
-                ui.checkbox(&mut opts.mini_scripted, "Objets scriptés");
-                ui.checkbox(&mut opts.mini_temp_on_rez, "Objets temporaires");
-                ui.separator();
-                ui.checkbox(&mut opts.mini_property_lines, "Limites de parcelles");
-                ui.checkbox(&mut opts.mini_for_sale, "Parcelles à vendre");
-                ui.checkbox(&mut opts.mini_collision, "Parcelles interdites");
+            menu::submenu(ui, p, "eye", "Afficher", true, |ui| {
+                menu::toggle(ui, p, "cube", "Objets", &mut opts.mini_objects);
+                menu::toggle(ui, p, "cube", "Objets physiques", &mut opts.mini_physical);
+                menu::toggle(ui, p, "code", "Objets scriptés", &mut opts.mini_scripted);
+                menu::toggle(ui, p, "clock-counter-clockwise", "Objets temporaires", &mut opts.mini_temp_on_rez);
+                menu::separator(ui, p);
+                menu::toggle(ui, p, "squares-four", "Limites de terrain", &mut opts.mini_property_lines);
+                menu::toggle(ui, p, "tag", "Terrains à vendre", &mut opts.mini_for_sale);
+                menu::toggle(ui, p, "prohibit", "Parcelles interdites", &mut opts.mini_collision);
             });
-            if ui.radio(!opts.mini_rotate, "Nord en haut").clicked() {
+            if menu::check(ui, p, "compass", "Nord en haut", !opts.mini_rotate, true) {
                 opts.mini_rotate = false;
             }
-            if ui.radio(opts.mini_rotate, "Caméra en haut").clicked() {
+            if menu::check(ui, p, "camera", "Caméra en haut", opts.mini_rotate, true) {
                 opts.mini_rotate = true;
             }
-            ui.checkbox(&mut opts.mini_auto_center, "Centrage automatique");
-            if ui
-                .add_enabled(
-                    !opts.mini_auto_center && self.pan != Vec2::ZERO,
-                    egui::Button::new("Recentrer la carte"),
-                )
-                .clicked()
-            {
-                self.recenter = true;
-                ui.close();
+            if menu::check(ui, p, "crosshair-simple", "Centrage automatique", opts.mini_auto_center, true) {
+                opts.mini_auto_center = !opts.mini_auto_center;
             }
-            ui.menu_button("Anneaux de distance du chat", |ui| {
+            if menu::item_if(
+                ui,
+                p,
+                "arrows-in",
+                "Recentrer la carte",
+                !opts.mini_auto_center && self.pan != Vec2::ZERO,
+            ) {
+                self.recenter = true;
+            }
+            menu::submenu(ui, p, "chats-circle", "Portée des discussions", true, |ui| {
                 let mut k = super::colors::get();
                 let before = k;
-                ui.checkbox(&mut k.map_ranges, "Afficher les anneaux");
-                ui.separator();
-                ui.add_enabled_ui(k.map_ranges, |ui| {
-                    ui.checkbox(&mut k.map_whisper_on, "Chuchoter (10 m)");
-                    ui.checkbox(&mut k.map_say_on, "Parler (20 m)");
-                    ui.checkbox(&mut k.map_shout_on, "Crier (100 m)");
-                });
+                menu::toggle(ui, p, "chats-circle", "Montrer la portée des discussions", &mut k.map_ranges);
+                menu::separator(ui, p);
+                let ranges = k.map_ranges;
+                let rings = [
+                    ("Montrer la portée des murmures (10 m)", &mut k.map_whisper_on),
+                    ("Montrer la portée des discussions (20 m)", &mut k.map_say_on),
+                    ("Montrer la portée des cris (100 m)", &mut k.map_shout_on),
+                ];
+                for (label, on) in rings {
+                    if ranges {
+                        menu::toggle(ui, p, "chat-text", label, on);
+                    } else {
+                        menu::item_if(ui, p, "chat-text", label, false);
+                    }
+                }
                 if k != before {
                     super::colors::set(&k);
                     actions.push(MiniMapAction::Colors(k));
                 }
             });
-            ui.menu_button("Double-clic", |ui| {
-                for (v, label) in [(0u8, "Ne rien faire"), (1, "Ouvrir la carte du monde"), (2, "Se téléporter")] {
-                    if ui.radio(opts.mini_double_click == v, label).clicked() {
+            // Aurora: what a double click does
+            menu::submenu(ui, p, "mouse", "Double-clic", true, |ui| {
+                for (v, icon, label) in [
+                    (0u8, "x-circle", "Ne rien faire"),
+                    (1, "map-trifold", "Ouvrir la carte du monde"),
+                    (2, "navigation-arrow", "Se téléporter"),
+                ] {
+                    if menu::check(ui, p, icon, label, opts.mini_double_click == v, true) {
                         opts.mini_double_click = v;
-                        ui.close();
                     }
                 }
             });
-            ui.separator();
-            if ui.button("À propos du terrain").clicked() {
+            menu::separator(ui, p);
+            if menu::item(ui, p, "info", "À propos du terrain") {
                 actions.push(MiniMapAction::AboutLand(px, py));
-                ui.close();
             }
-            if ui.button("Carte du monde").clicked() {
+            menu::todo(ui, p, "map-pin", "Profil du lieu");
+            if menu::item(ui, p, "map-trifold", "Carte du monde") {
                 actions.push(MiniMapAction::OpenWorldMap);
-                ui.close();
             }
-            ui.separator();
-            if ui.button("Fermer la mini-carte").clicked() {
+            menu::separator(ui, p);
+            if menu::item(ui, p, "x", "Fermer la mini-carte") {
                 actions.push(MiniMapAction::Close);
-                ui.close();
             }
         });
         actions

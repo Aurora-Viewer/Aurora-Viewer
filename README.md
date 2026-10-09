@@ -115,6 +115,7 @@ settings and cache (`…\config\demo`, `…\cache\demo`).
 | `AURORA_DEMO_ANIMESH=1` | Animated root mesh, linked mesh signaled by a child, and worn animesh with independent custom skeletons and alpha shadows |
 | `AURORA_DEMO_MMO="x,y[,1]"` | Left press on the avatar then right button held (mouse steering) |
 | `AURORA_DEMO_RCLICK="x,y"\|tag` | Right click (context menu) at (x, y) at frame 225, or on the name tag of the nearest other avatar at frame 600 |
+| `AURORA_DEMO_POINTER="x,y[,r][;x,y…]"` | Move the interface pointer to these window pixels from frame 300, one point every 60 frames (hover states, sub-menus); `,r` right-clicks the interface there (menus of lists and names) |
 | `AURORA_DEMO_LOOKAT=1` | Eye tracking on (in memory only) and a remote look-at |
 | `AURORA_DEMO_SOUND=1` | Audible world sounds (looped chime) and interface sounds (from the real sound cache when present, else a short tick per sound) |
 | `AURORA_DEMO_CLOUD=1` | Loading clouds for avatars |
