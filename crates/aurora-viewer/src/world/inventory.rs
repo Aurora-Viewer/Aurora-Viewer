@@ -204,6 +204,8 @@ impl Inventory {
                 "name" => f.info.name.clone(),
                 "type" => f.info.type_default,
                 "version" => f.info.version,
+                "favorite" => f.info.favorite,
+                "thumbnail" => f.info.thumbnail,
             });
             for id in &f.items {
                 if let Some(it) = self.items.get(id) {
@@ -256,12 +258,14 @@ impl Inventory {
         let mut valid = std::collections::HashSet::new();
         for f in doc["folders"].as_array() {
             let id = f["id"].as_uuid();
-            if let Some(cur) = self.folders.get(&id)
+            if let Some(cur) = self.folders.get_mut(&id)
                 && cur.state == FetchState::Unknown
                 && cur.info.version == f["version"].as_i32()
                 && cur.info.version >= 0
             {
                 valid.insert(id);
+                cur.info.favorite = f["favorite"].as_bool();
+                cur.info.thumbnail = f["thumbnail"].as_uuid();
             }
         }
         let mut by_parent: HashMap<Uuid, Vec<Uuid>> = HashMap::new();
@@ -326,6 +330,7 @@ mod tests {
                     name: "Inventaire".into(),
                     type_default: 8,
                     version: 1,
+                    ..Default::default()
                 },
                 children: Vec::new(),
                 items: Vec::new(),
@@ -378,6 +383,9 @@ mod tests {
     fn old_caches_do_not_restore_duplicate_or_foreign_memberships() {
         let mut inv = fixture();
         let item = Uuid::from_u128(723);
+        let folder = inv.folders.get_mut(&Uuid::from_u128(704)).expect("outfit");
+        folder.info.favorite = true;
+        folder.info.thumbnail = Uuid::from_u128(999);
         inv.folders
             .get_mut(&Uuid::from_u128(704))
             .expect("outfit")
@@ -392,6 +400,8 @@ mod tests {
         }
         restored.items.clear();
         assert!(restored.load_cache(&path) > 0);
+        assert!(restored.folders[&Uuid::from_u128(704)].info.favorite);
+        assert_eq!(restored.folders[&Uuid::from_u128(704)].info.thumbnail, Uuid::from_u128(999));
         std::fs::remove_file(path).expect("synthetic cache cleanup");
         assert!(!restored.folders[&Uuid::from_u128(704)].items.contains(&item));
         assert_eq!(restored.folders[&restored.root].items.iter().filter(|id| **id == item).count(), 1);

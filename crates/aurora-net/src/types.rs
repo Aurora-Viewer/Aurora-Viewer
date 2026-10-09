@@ -1045,6 +1045,10 @@ pub enum NetCommand {
         request: Uuid,
         change: crate::outfits::OutfitMutation,
     },
+    UpdateOutfitCategory {
+        request: Uuid,
+        change: crate::outfits::categories::Mutation,
+    },
     DetachAttachments(Vec<Uuid>),
     SetInventoryFavorite {
         item: Uuid,

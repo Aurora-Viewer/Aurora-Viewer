@@ -4,6 +4,7 @@
 use crate::inventory::{FolderContents, InvFolder};
 use aurora_llsd::{Llsd, llsd_map};
 use uuid::Uuid;
+pub mod categories;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OutfitLink {
@@ -146,7 +147,7 @@ mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    async fn server(replies: Vec<(u16, Llsd)>) -> (String, tokio::task::JoinHandle<Vec<(String, Llsd)>>) {
+    pub(super) async fn server(replies: Vec<(u16, Llsd)>) -> (String, tokio::task::JoinHandle<Vec<(String, Llsd)>>) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("local test server");
         let url = format!("http://{}", listener.local_addr().expect("local address"));
         let task = tokio::spawn(async move {
@@ -225,6 +226,7 @@ mod tests {
                 name: "Tenue".into(),
                 type_default: 47,
                 version: 1,
+                ..Default::default()
             }),
             links: vec![link.clone()],
             cof: Some((

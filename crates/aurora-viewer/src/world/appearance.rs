@@ -41,6 +41,9 @@ pub enum Action {
     DeleteFromOutfit { folder: Uuid, item: Uuid },
     ShowOriginal(Uuid),
     Favorite(Uuid),
+    Category(Uuid, aurora_net::outfits::categories::Update),
+    SaveTo(Uuid),
+    RemoveOutfit(Uuid),
     MoveLayer(Uuid, bool),
     Revert,
 }
@@ -206,7 +209,7 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
     let mut current = folder_links(inv, cof);
     if matches!(
         action,
-        Action::Add(_) | Action::WearItem { .. } | Action::Remove(_) | Action::MoveLayer(..)
+        Action::Add(_) | Action::WearItem { .. } | Action::Remove(_) | Action::RemoveOutfit(_) | Action::MoveLayer(..)
     ) {
         for id in worn.keys() {
             if !current.iter().any(|l| l.target == *id) {
@@ -224,7 +227,15 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
     let original_current = current.clone();
     let mut sync = true;
     match action {
-        Action::Save(name) => {
+        Action::Save(_) | Action::SaveTo(_) => {
+            let (name, destination) = match action {
+                Action::Save(name) => (name, base(inv)),
+                Action::SaveTo(id) => {
+                    require_outfit(inv, id)?;
+                    (None, Some(id))
+                }
+                _ => unreachable!("save action"),
+            };
             // Include attachments that arrived before their COF link, as Firestorm does.
             for id in worn.keys() {
                 if !current.iter().any(|l| l.target == *id) {
@@ -250,6 +261,7 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
                     name: name.into(),
                     type_default: FT_OUTFIT,
                     version: 1,
+                    ..Default::default()
                 });
                 change.links = links.clone();
                 let mut cof_links = links;
@@ -262,7 +274,7 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
                 });
                 change.cof = Some((cof, cof_links));
             } else {
-                change.folder = base(inv).ok_or("Enregistrez d’abord la tenue avec « Enregistrer sous… ».")?;
+                change.folder = destination.ok_or("Enregistrez d’abord la tenue avec « Enregistrer sous… ».")?;
                 require_complete(inv, change.folder)?;
                 change.links = links;
                 change.links.extend(
@@ -270,6 +282,8 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
                         .into_iter()
                         .filter(|l| !l.folder && inv.items.get(&l.target).is_some_and(|it| it.asset_type == 0)),
                 );
+                current.retain(|l| !l.folder);
+                current.push(base_link(inv, change.folder));
                 change.cof = Some((cof, current.clone()));
                 sync = false;
             }
@@ -328,6 +342,18 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
                 return Err("Une partie du corps doit être remplacée, elle ne peut pas être enlevée.".into());
             }
             current.retain(|l| l.target != id);
+            change.links = current;
+        }
+        Action::RemoveOutfit(id) => {
+            require_outfit(inv, id)?;
+            require_complete(inv, id)?;
+            // takeOffOutfit never removes the four required body parts.
+            let removable: HashSet<_> = folder_links(inv, id)
+                .iter()
+                .filter(|l| !l.folder && inv.items.get(&l.target).is_some_and(|it| it.asset_type != 13))
+                .map(|l| l.target)
+                .collect();
+            current.retain(|l| l.folder || !removable.contains(&l.target));
             change.links = current;
         }
         Action::Add(id) | Action::WearItem { item: id, .. } => {
@@ -397,7 +423,7 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
             }
             change.links = current;
         }
-        Action::ShowOriginal(_) | Action::Favorite(_) | Action::DeleteFromOutfit { .. } => {
+        Action::ShowOriginal(_) | Action::Favorite(_) | Action::Category(..) | Action::DeleteFromOutfit { .. } => {
             return Err("Cette action ne modifie pas la tenue actuelle.".into());
         }
     }
@@ -442,6 +468,51 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
         }
     }
     Ok((change, sync))
+}
+
+fn require_outfit(inv: &Inventory, id: Uuid) -> Result<(), String> {
+    if inv
+        .folders
+        .get(&id)
+        .is_some_and(|f| f.info.type_default == FT_OUTFIT && !f.library && Some(f.info.parent) == system_folder(inv, FT_MY_OUTFITS))
+    {
+        Ok(())
+    } else {
+        Err("Ce dossier de tenue ne peut pas être modifié.".into())
+    }
+}
+
+pub fn category_plan(
+    inv: &Inventory,
+    id: Uuid,
+    mut update: aurora_net::outfits::categories::Update,
+) -> Result<aurora_net::outfits::categories::Mutation, String> {
+    use aurora_net::outfits::categories::Update;
+    require_outfit(inv, id)?;
+    match &mut update {
+        Update::Rename(name) => {
+            *name = name.trim().into();
+            if name.is_empty() || name.chars().count() > 63 || name.chars().any(char::is_control) {
+                return Err("Choisissez un nom de 1 à 63 caractères.".into());
+            }
+        }
+        Update::Trash(parent) => {
+            let cof = cof(inv).ok_or("Le dossier Tenue actuelle n’est pas disponible.")?;
+            require_complete(inv, cof)?;
+            if base(inv) == Some(id) {
+                return Err("La tenue actuelle ne peut pas être supprimée.".into());
+            }
+            if Some(*parent) != system_folder(inv, 14) {
+                return Err("Le dossier Corbeille n’est pas disponible.".into());
+            }
+        }
+        _ => {}
+    }
+    Ok(aurora_net::outfits::categories::Mutation {
+        folder: id,
+        parent: inv.folders.get(&id).map(|f| f.info.parent).unwrap_or_default(),
+        update,
+    })
 }
 
 fn normalize_layers(inv: &Inventory, links: &mut [OutfitLink]) {
@@ -567,6 +638,7 @@ pub fn seed_demo(inv: &mut Inventory, agent: Uuid) {
             name: name.into(),
             type_default: kind,
             version: 1,
+            ..Default::default()
         },
         children: Vec::new(),
         items: Vec::new(),
@@ -575,6 +647,8 @@ pub fn seed_demo(inv: &mut Inventory, agent: Uuid) {
     };
     inv.folders.insert(my, folder(my, inv.root, "Mes tenues", FT_MY_OUTFITS));
     inv.folders.insert(cof, folder(cof, inv.root, "Tenue actuelle", 46));
+    let trash = system_folder(inv, 14).unwrap_or_else(|| Uuid::from_u128(706));
+    inv.folders.insert(trash, folder(trash, inv.root, "Corbeille", 14));
     for (id, name) in outfits.iter().zip(["Empty", "Flic", "Neurolab", "Veste Cuir"]) {
         inv.folders.insert(*id, folder(*id, my, name, FT_OUTFIT));
     }
@@ -733,6 +807,34 @@ pub fn demo_mutate(
     Ok(Vec::new())
 }
 
+pub fn demo_category(
+    inv: &mut Inventory,
+    agent: Uuid,
+    change: &aurora_net::outfits::categories::Mutation,
+) -> Result<Vec<aurora_net::inventory::FolderContents>, String> {
+    let folder = inv.folders.get_mut(&change.folder).ok_or("Tenue introuvable.")?;
+    change.update.apply(&mut folder.info);
+    let mut parents = vec![change.parent];
+    if folder.info.parent != change.parent {
+        parents.push(folder.info.parent);
+    }
+    Ok(parents
+        .into_iter()
+        .map(|parent| aurora_net::inventory::FolderContents {
+            folder_id: parent,
+            owner_id: agent,
+            version: inv.folders.get(&parent).map_or(1, |f| f.info.version + 1),
+            folders: inv
+                .folders
+                .values()
+                .filter(|f| f.info.parent == parent)
+                .map(|f| f.info.clone())
+                .collect(),
+            items: inv.items.values().filter(|it| it.parent == parent).cloned().collect(),
+        })
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -740,6 +842,93 @@ mod tests {
         let mut inv = Inventory::default();
         seed_demo(&mut inv, Uuid::from_u128(1));
         inv
+    }
+
+    #[test]
+    fn remove_outfit_preserves_body_parts_and_other_outfit_items() {
+        let mut inv = fixture();
+        let outfit = Uuid::from_u128(704);
+        let extra = Uuid::from_u128(723);
+        let (add, _) = plan(&inv, Action::Add(extra), &HashMap::new()).expect("extra attachment");
+        demo_mutate(&mut inv, Uuid::from_u128(1), &add).expect("add");
+        // Removing only Flic keeps Neurolab's extra and all required body parts.
+        let selected = Uuid::from_u128(703);
+        let (change, sync) = plan(&inv, Action::RemoveOutfit(selected), &HashMap::new()).expect("take off");
+        assert!(sync);
+        assert!(change.links.iter().any(|l| l.target == extra), "other outfit attachment remains");
+        for id in 710..714 {
+            assert!(change.links.iter().any(|l| l.target == Uuid::from_u128(id)), "body part {id}");
+        }
+        let removable: HashSet<_> = folder_links(&inv, selected)
+            .iter()
+            .filter(|l| inv.items.get(&l.target).is_some_and(|it| it.asset_type != 13))
+            .map(|l| l.target)
+            .collect();
+        assert!(!removable.is_empty());
+        assert!(!change.links.iter().any(|l| !l.folder && removable.contains(&l.target)));
+        assert_eq!(base(&inv), Some(Uuid::from_u128(705)));
+        assert!(inv.folders.contains_key(&outfit), "saved outfits are retained");
+    }
+
+    #[test]
+    fn save_to_selected_outfit_updates_its_links_and_the_cof_base() {
+        let mut inv = fixture();
+        let selected = Uuid::from_u128(702);
+        let originals: HashSet<_> = inv
+            .items
+            .values()
+            .filter(|it| !matches!(it.asset_type, 24 | 25))
+            .map(|it| it.id)
+            .collect();
+        let previous = folder_links(&inv, Uuid::from_u128(705));
+        let current = folder_links(&inv, cof(&inv).expect("COF"));
+        let (change, sync) = plan(&inv, Action::SaveTo(selected), &HashMap::new()).expect("save to selected");
+        assert_eq!(change.folder, selected);
+        assert!(sync);
+        assert!(change.create.is_none());
+        assert_eq!(
+            change.links.iter().map(|l| l.target).collect::<HashSet<_>>(),
+            current.iter().filter(|l| !l.folder).map(|l| l.target).collect::<HashSet<_>>()
+        );
+        demo_mutate(&mut inv, Uuid::from_u128(1), &change).expect("save");
+        assert_eq!(base(&inv), Some(selected));
+        assert_eq!(
+            folder_links(&inv, Uuid::from_u128(705)),
+            previous,
+            "previous outfit is not overwritten"
+        );
+        assert!(originals.iter().all(|id| inv.items.contains_key(id)));
+    }
+
+    #[test]
+    fn category_changes_protect_current_outfit_and_preserve_originals_in_trash() {
+        use aurora_net::outfits::categories::Update;
+        let mut inv = fixture();
+        let trash = system_folder(&inv, 14).expect("Trash");
+        let current = base(&inv).expect("base");
+        assert!(category_plan(&inv, current, Update::Trash(trash)).is_err());
+        assert!(category_plan(&inv, cof(&inv).expect("COF"), Update::Rename("Nom".into())).is_err());
+        assert!(category_plan(&inv, Uuid::from_u128(704), Update::Rename("  ".into())).is_err());
+        let selected = Uuid::from_u128(704);
+        let links = folder_links(&inv, selected);
+        let change = category_plan(&inv, selected, Update::Trash(trash)).expect("trash selected");
+        let contents = demo_category(&mut inv, Uuid::from_u128(1), &change).expect("server response");
+        inv.apply(contents);
+        assert_eq!(inv.folders[&selected].info.parent, trash);
+        assert!(inv.folders[&trash].children.contains(&selected));
+        assert!(
+            !inv.folders[&system_folder(&inv, FT_MY_OUTFITS).expect("My Outfits")]
+                .children
+                .contains(&selected)
+        );
+        assert_eq!(folder_links(&inv, selected), links);
+        assert!(links.iter().all(|l| inv.items.contains_key(&l.target)));
+        assert_eq!(base(&inv), Some(current));
+        inv.folders.get_mut(&cof(&inv).expect("COF")).expect("COF").state = FetchState::Unknown;
+        assert!(
+            category_plan(&inv, Uuid::from_u128(703), Update::Trash(trash)).is_err(),
+            "wait for the current outfit before allowing deletion"
+        );
     }
 
     #[test]

@@ -616,6 +616,11 @@ impl App {
                 self.on_app_event(NetEvent::InventoryFavoriteUpdated { item: *item, result });
                 return;
             }
+            if let NetCommand::UpdateOutfitCategory { request, change } = &cmd {
+                let result = crate::world::appearance::demo_category(&mut self.world.inventory, self.world.agent_id, change);
+                self.on_app_event(NetEvent::OutfitUpdated { request: *request, result });
+                return;
+            }
             if let NetCommand::RezAttachments(items) = &cmd {
                 self.world.apply(NetEvent::ObjectUpdates {
                     handle: self.world.main_region.unwrap_or_default(),
@@ -2555,6 +2560,7 @@ impl App {
         images.extend(self.land_ui.wanted_images.drain());
         images.extend(self.contacts_ui.wanted_images.drain());
         images.extend(self.build.ui.wanted_images.drain());
+        images.extend(self.appearance_ui.wanted_images.drain());
         for image in images {
             if self.ui_images.contains_key(&image) {
                 continue;
@@ -4414,7 +4420,15 @@ impl App {
                 }
                 let complexity = self.scene.avatar_complexity.get(&self.world.agent_id).copied().unwrap_or_default();
                 let mut open = self.panels.appearance;
-                for action in ui::appearance::show(&ctx, &p, &mut self.world, &mut self.appearance_ui, &mut open, complexity) {
+                for action in ui::appearance::show(
+                    &ctx,
+                    &p,
+                    &mut self.world,
+                    &mut self.appearance_ui,
+                    &mut open,
+                    complexity,
+                    &self.ui_images,
+                ) {
                     if let crate::world::appearance::Action::ShowOriginal(id) = action {
                         self.panels.inventory = true;
                         self.inventory_ui.show_original(&self.world.inventory, id);
@@ -4433,6 +4447,19 @@ impl App {
                     }
                     if self.appearance_ui.pending.is_some() {
                         break;
+                    }
+                    if let crate::world::appearance::Action::Category(id, update) = action {
+                        self.appearance_ui.saved_new = false;
+                        match crate::world::appearance::category_plan(&self.world.inventory, id, update) {
+                            Ok(change) => {
+                                let request = uuid::Uuid::new_v4();
+                                self.appearance_ui.pending = Some((request, false));
+                                self.appearance_ui.message.clear();
+                                self.send(NetCommand::UpdateOutfitCategory { request, change });
+                            }
+                            Err(reason) => self.appearance_ui.message = reason,
+                        }
+                        continue;
                     }
                     self.appearance_ui.saved_new = matches!(&action, crate::world::appearance::Action::Save(Some(_)));
                     let attachment = crate::world::appearance::attachment_for_action(&self.world.inventory, self.world.agent_id, &action);

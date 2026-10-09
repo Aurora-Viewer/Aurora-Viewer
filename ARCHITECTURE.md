@@ -99,8 +99,8 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
 | `demo.rs`, `demo_land.rs`, `demo_eep.rs`, `demo_env.rs` | Le mode démo : une scène locale qui simule un serveur (et ses réponses à « À propos du terrain » et à ExtEnvironment, une bibliothèque d'environnements pour le sélecteur) |
 | `settings.rs`, `keybinds.rs`, `keybinds/layout.rs`, `theme.rs` | Réglages enregistrés, raccourcis, disposition Windows et touches de déplacement par défaut, palette |
 | `ui_sound.rs` | Catalogue des sons de l'interface (UISnd* de Firestorm), réglages par son |
-| `ui/appearance.rs`, `ui/appearance/items.rs`, `world/appearance.rs` | Fenêtre Apparence, galerie / tenues / portés, édition et dialogue Enregistrer sous ; menus des éléments, points d’attachement / HUD, profil et original ; règles de changement du COF, sauvegarde par liens, protection des parties du corps, scénario hors ligne |
-| `aurora-net/src/outfits.rs` | Écriture des liens de tenue et des favoris par AIS InventoryAPIv3, confirmation et relecture des dossiers / éléments |
+| `ui/appearance.rs`, `ui/appearance/items.rs`, `ui/appearance/gallery.rs`, `world/appearance.rs` | Fenêtre Apparence, galerie / tenues / portés, édition et dialogue Enregistrer sous ; menus des éléments et de la galerie, confirmation de sauvegarde / suppression, choix d’image, renommage ; points d’attachement / HUD, profil et original ; règles de changement du COF, sauvegarde par liens, protection des parties du corps, scénario hors ligne |
+| `aurora-net/src/outfits.rs`, `aurora-net/src/outfits/categories.rs` | Écriture des liens de tenue, favoris, noms et images par AIS InventoryAPIv3, déplacement dans la corbeille ; confirmation et relecture des dossiers / éléments |
 | `logging.rs`, `cache.rs`, `credentials.rs` | Logs, cache disque, mot de passe retenu (coffre de l'OS) |
 | `frame_profile.rs` | Profil des images (AURORA_PROFILE) : temps de chaque étape de l'image, ligne de synthèse par seconde dans le log |
 | `scene/animesh.rs` | Squelettes autonomes des objets animés, animations du linkset, limites des poses pour le culling et les ombres, scénario de démo |

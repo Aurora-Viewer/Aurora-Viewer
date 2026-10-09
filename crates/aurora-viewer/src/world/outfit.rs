@@ -352,6 +352,7 @@ mod tests {
                     name: "Current Outfit".into(),
                     type_default: FT_CURRENT_OUTFIT,
                     version: 5,
+                    ..Default::default()
                 },
                 children: Vec::new(),
                 items: Vec::new(),
@@ -430,6 +431,7 @@ mod tests {
                     name: "COF".into(),
                     type_default: FT_CURRENT_OUTFIT,
                     version: 1,
+                    ..Default::default()
                 },
                 children: Vec::new(),
                 items: Vec::new(),

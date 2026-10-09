@@ -9,8 +9,9 @@ use crate::{
 use aurora_net::inventory::InvItem;
 use egui::{RichText, Vec2};
 use model::Action;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
+mod gallery;
 mod items;
 
 #[derive(Default)]
@@ -34,6 +35,8 @@ pub struct AppearanceUi {
     profile_item: Option<Uuid>,
     pub message: String,
     requested_items: HashSet<Uuid>,
+    gallery: gallery::State,
+    pub wanted_images: HashSet<Uuid>,
 }
 
 impl AppearanceUi {
@@ -176,7 +179,15 @@ fn item_menu(response: &egui::Response, it: &InvItem, actions: &mut Vec<Action>)
     });
 }
 
-fn gallery(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceUi, outfits: &[Uuid], actions: &mut Vec<Action>) {
+fn gallery(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    world: &World,
+    st: &mut AppearanceUi,
+    outfits: &[Uuid],
+    actions: &mut Vec<Action>,
+    images: &HashMap<Uuid, egui::TextureHandle>,
+) {
     let width = ((ui.available_width() - 10.0) * 0.5).max(90.0);
     for pair in outfits.chunks(2) {
         ui.horizontal(|ui| {
@@ -196,7 +207,20 @@ fn gallery(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceUi,
                         egui::Stroke::new(1.0, if selected { p.violet } else { p.raised }),
                         egui::StrokeKind::Inside,
                     );
-                    if let Some(t) = icons::global("coat-hanger") {
+                    let image = folder.info.thumbnail;
+                    if !image.is_nil() {
+                        st.wanted_images.insert(image);
+                    }
+                    if let Some(t) = images.get(&image) {
+                        let size = t.size_vec2();
+                        let scale = ((rect.width() - 6.0) / size.x).min((rect.height() - 6.0) / size.y);
+                        ui.painter().image(
+                            t.id(),
+                            egui::Rect::from_center_size(rect.center(), size * scale),
+                            egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                            egui::Color32::WHITE,
+                        );
+                    } else if let Some(t) = icons::global("coat-hanger") {
                         ui.painter().image(
                             t.id(),
                             egui::Rect::from_center_size(rect.center(), Vec2::splat(width * 0.55)),
@@ -204,22 +228,13 @@ fn gallery(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceUi,
                             p.violet_light,
                         );
                     }
-                    if response.clicked() {
+                    if response.clicked() || response.secondary_clicked() {
                         st.selected_outfit = Some(*id);
                     }
                     if response.double_clicked() {
                         st.open_outfit(*id);
                     }
-                    response.context_menu(|ui| {
-                        if ui.button("Porter").clicked() {
-                            actions.push(Action::Wear(*id, false));
-                            ui.close();
-                        }
-                        if ui.button("Ajouter à la tenue").clicked() {
-                            actions.push(Action::Wear(*id, true));
-                            ui.close();
-                        }
-                    });
+                    gallery::context_menu(&response, p, world, st, *id, actions);
                     let current = model::base(&world.inventory) == Some(*id);
                     let text = if current {
                         format!("{} (portée)", folder.info.name)
@@ -534,7 +549,15 @@ fn add_folder(
         });
 }
 
-pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut AppearanceUi, open: &mut bool, complexity: u32) -> Vec<Action> {
+pub fn show(
+    ctx: &egui::Context,
+    p: &Palette,
+    world: &mut World,
+    st: &mut AppearanceUi,
+    open: &mut bool,
+    complexity: u32,
+    images: &HashMap<Uuid, egui::TextureHandle>,
+) -> Vec<Action> {
     let mut actions = Vec::new();
     let inv = &world.inventory;
     let base = model::base(inv);
@@ -643,7 +666,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut Appear
                             worn_list(ui, p, world, st, &mut actions, true);
                         } else {
                             match st.tab {
-                                0 => gallery(ui, p, world, st, &outfits, &mut actions),
+                                0 => gallery(ui, p, world, st, &outfits, &mut actions, images),
                                 1 => outfit_list(ui, p, world, st, &outfits, &mut actions),
                                 _ => {
                                     ui.label(RichText::new("Éléments à porter").color(p.muted));
@@ -797,6 +820,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut Appear
         st.save_as = if close || response.should_close() { None } else { Some(name) };
     }
     items::profile(ctx, p, world, st, &mut actions);
+    gallery::dialogs(ctx, p, world, st, images, &mut actions);
     actions
 }
 
@@ -824,7 +848,15 @@ mod tests {
     fn draw_input(ctx: &egui::Context, world: &mut World, st: &mut AppearanceUi, input: egui::RawInput) -> Vec<Action> {
         let mut actions = Vec::new();
         let _ = ctx.run_ui(input, |ui| {
-            actions = show(ui.ctx(), &crate::theme::Theme::default().palette(), world, st, &mut true, 41_748);
+            actions = show(
+                ui.ctx(),
+                &crate::theme::Theme::default().palette(),
+                world,
+                st,
+                &mut true,
+                41_748,
+                &HashMap::new(),
+            );
         });
         actions
     }

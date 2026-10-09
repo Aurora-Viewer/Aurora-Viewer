@@ -4,7 +4,7 @@
 use aurora_llsd::{Llsd, llsd_map};
 use uuid::Uuid;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct InvFolder {
     pub id: Uuid,
     pub parent: Uuid,
@@ -12,6 +12,8 @@ pub struct InvFolder {
     /// Preferred (system) folder type, -1 for normal folders.
     pub type_default: i32,
     pub version: i32,
+    pub favorite: bool,
+    pub thumbnail: Uuid,
 }
 
 #[derive(Debug, Clone)]
@@ -125,6 +127,8 @@ pub fn folder_from_llsd(v: &Llsd) -> Option<InvFolder> {
         name: v["name"].to_string_value(),
         type_default,
         version: v["version"].as_i32(),
+        favorite: v["favorite"]["toggled"].as_bool(),
+        thumbnail: v["thumbnail"]["asset_id"].as_uuid(),
     })
 }
 
