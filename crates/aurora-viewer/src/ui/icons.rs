@@ -132,6 +132,8 @@ const SVGS: &[(&str, &[u8])] = svg_list!(
     "prohibit",
     "sign-out",
     "chat-teardrop-slash",
+    "hand-palm",
+    "heart",
 );
 
 /// Brand SVGs (white wolf silhouette from Branding/), drawn untinted or tinted.

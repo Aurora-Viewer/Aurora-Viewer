@@ -620,7 +620,7 @@ pub fn events() -> Vec<NetEvent> {
             region_id: Uuid::nil(),
             water_height: 20.0,
             sim_access: 13,
-            region_flags: 0,
+            region_flags: aurora_net::region_flags::ALLOW_VOICE,
             terrain_base: [Uuid::nil(); 4],
             terrain_detail: [Uuid::nil(); 4],
             terrain_start_height: [20.0, 20.0, 20.0, 20.0],
@@ -994,6 +994,17 @@ pub fn events() -> Vec<NetEvent> {
     // the parcel the demo avatar stands on (About Land)
     {
         use aurora_net::parcel_flags as pf;
+        // AURORA_DEMO_RESTRICTED: a parcel that forbids everything (red icons
+        // in the navigation bar), with damage on and 72 % health
+        let restricted = std::env::var("AURORA_DEMO_RESTRICTED").is_ok_and(|v| v == "1");
+        let flags = if restricted {
+            pf::ALLOW_DAMAGE | pf::RESTRICT_PUSHOBJECT
+        } else {
+            pf::ALLOW_FLY | pf::CREATE_OBJECTS | pf::ALLOW_OTHER_SCRIPTS | pf::ALLOW_VOICE_CHAT | pf::RESTRICT_PUSHOBJECT
+        };
+        if restricted {
+            ev.push(NetEvent::Health(72.0));
+        }
         ev.push(NetEvent::AgentParcel(Arc::new(aurora_net::ParcelInfo {
             local_id: 1,
             name: "Place d'Aurora".into(),
@@ -1005,8 +1016,8 @@ pub fn events() -> Vec<NetEvent> {
             other_prims: 2,
             sim_max_prims: 15000,
             sim_total_prims: 49,
-            flags: pf::ALLOW_FLY | pf::CREATE_OBJECTS | pf::ALLOW_OTHER_SCRIPTS | pf::ALLOW_VOICE_CHAT | pf::RESTRICT_PUSHOBJECT,
-            see_avatars: true,
+            flags,
+            see_avatars: !restricted,
             any_av_sounds: true,
             region_allow_env_override: true,
             ..Default::default()
