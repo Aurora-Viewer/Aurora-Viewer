@@ -1485,6 +1485,13 @@ impl Impostors {
 
 /// Orthographic projection with reverse Z (1 at `near`, 0 at `far`), framing
 /// a square of half size `half` (impostor pictures).
+/// World point the shadow texel grid of a cascade is anchored on: its
+/// center rounded down to a lattice of the cascade radius (see
+/// `cascade_matrices`).
+fn shadow_anchor(center: Vec3, radius: f32) -> Vec3 {
+    (center / radius).floor() * radius
+}
+
 fn ortho_reverse_z(half: f32, near: f32, far: f32) -> Mat4 {
     let d = (far - near).max(1e-3);
     Mat4::from_cols(
@@ -3269,9 +3276,18 @@ impl Renderer {
             let up = if light_dir.z.abs() > 0.99 { Vec3::Y } else { Vec3::Z };
             let eye = center - light_dir * (radius + 400.0);
             let mut view = glam::camera::rh::view::look_at_mat4(eye, center, up);
-            // snap to texel grid to avoid shimmering
+            // snap to texel grid to avoid shimmering when the camera moves.
+            // The grid is anchored on a world point near the cascade (its
+            // center rounded to a lattice of the cascade's radius), not on
+            // the region origin: the grid turns with the sun around its
+            // anchor, and from ~200 m away it swept the shadows by up to
+            // ~12 texels a second near the camera (visible jumps as the EEP
+            // sun moves); from the cell it is 20-80 times slower, a slow
+            // glide like Firestorm (which does not snap). The anchor only
+            // changes when the camera crosses a cell.
             let texel = 2.0 * radius / self.shadow_size as f32;
-            let origin = view.transform_point3(Vec3::ZERO);
+            let anchor = shadow_anchor(center, radius);
+            let origin = view.transform_point3(anchor);
             let snapped = Vec3::new((origin.x / texel).round() * texel, (origin.y / texel).round() * texel, origin.z);
             view = Mat4::from_translation(snapped - origin) * view;
             let proj = glam::camera::rh::proj::directx::orthographic(-radius, radius, -radius, radius, 0.1, radius * 2.0 + 800.0);
@@ -4638,6 +4654,16 @@ fn detect_vram_mb(adapter: &wgpu::Adapter) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shadow_anchor_stays_near_and_still() {
+        let c = Vec3::new(149.3, 123.8, 23.5);
+        let a = shadow_anchor(c, 6.0);
+        assert!(a.distance(c) <= 6.0 * 3f32.sqrt());
+        // small camera moves inside the cell keep the same anchor
+        assert_eq!(shadow_anchor(c + Vec3::new(0.5, -0.4, 0.2), 6.0), a);
+        assert_eq!(shadow_anchor(Vec3::new(-0.1, 0.0, 0.0), 6.0), Vec3::new(-6.0, 0.0, 0.0));
+    }
 
     #[test]
     fn reflection_matrix_mirrors_about_plane() {
