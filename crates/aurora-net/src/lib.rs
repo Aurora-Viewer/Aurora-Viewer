@@ -78,7 +78,7 @@ impl NetClient {
             .user_agent(concat!("AuroraViewer/", env!("CARGO_PKG_VERSION")))
             .pool_max_idle_per_host(32)
             .connect_timeout(std::time::Duration::from_secs(15))
-            .tls_certs_only(roots)
+            .tls_certs_only(roots.clone())
             .tls_danger_accept_invalid_hostnames(true)
             .build()
             .map_err(|e| NetError::Http(e.to_string()))?;
@@ -87,7 +87,23 @@ impl NetClient {
         let controls = Arc::new(Mutex::new(AgentControls::default()));
         let stats = Arc::new(NetStats::default());
         let object_cache_dir = Arc::new(Mutex::new(None));
-        let (fetcher, fetch_results) = Fetcher::new(rt.handle(), caps_http.clone(), 24, stats.clone());
+        // Asset GETs (ViewerAsset, bake service): same trust as the caps,
+        // but like Firestorm's llcorehttp GET (curl without
+        // CURLOPT_ENCODING): no Accept-Encoding and no transparent
+        // decoding, a 30 s connect timeout and up to 10 redirects. Some
+        // assets are served with an odd Content-Encoding that must not
+        // make the fetch fail.
+        let asset_http = reqwest::Client::builder()
+            .user_agent(concat!("AuroraViewer/", env!("CARGO_PKG_VERSION")))
+            .pool_max_idle_per_host(32)
+            .connect_timeout(std::time::Duration::from_secs(30))
+            .gzip(false)
+            .redirect(reqwest::redirect::Policy::limited(10))
+            .tls_certs_only(roots)
+            .tls_danger_accept_invalid_hostnames(true)
+            .build()
+            .map_err(|e| NetError::Http(e.to_string()))?;
+        let (fetcher, fetch_results) = Fetcher::new(rt.handle(), asset_http, 24, stats.clone());
 
         let shared_caps_http = caps_http.clone();
         let shared = session::Shared {

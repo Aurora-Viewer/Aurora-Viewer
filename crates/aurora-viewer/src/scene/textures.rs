@@ -4,6 +4,7 @@
 
 use super::jobs::{AlphaKind, JobResult, Jobs, SculptMap, classify_alpha, to_rgba};
 use aurora_assets::J2kInfo;
+use aurora_net::fetch::ByteRange;
 use aurora_net::{FetchRequest, FetchResult, Fetcher};
 use aurora_render::{MipLevel, Renderer, build_mips};
 use std::collections::{HashMap, VecDeque};
@@ -26,6 +27,44 @@ pub fn asset_url(base: &str, kind: &str, id: &Uuid) -> String {
 }
 const INITIAL_BYTES: usize = 16 * 1024;
 const UNUSED_EVICT: Duration = Duration::from_secs(45);
+/// Firestorm asks for MAX_IMAGE_DATA_SIZE (indra/llimage/llimage.h) when it
+/// wants the whole file.
+const MAX_IMAGE_DATA_SIZE: u64 = 4096 * 4096 * 8;
+/// Past this end, LLTextureFetchWorker sends an open range (`bytes=a-`).
+const HTTP_REQUESTS_RANGE_END_MAX: u64 = 20_000_000;
+
+/// Byte range of the next request when we hold `have` bytes and want
+/// `needed` (port of LLTextureFetchWorker::doWork, SEND_HTTP_REQ, in
+/// indra/newview/lltexturefetch.cpp, originally LGPL 2.1): a resumed
+/// request starts one byte early so that it is always partially
+/// satisfiable (some caches answer an unsatisfiable range with a 200 and
+/// the whole asset), and a range ending past HTTP_REQUESTS_RANGE_END_MAX
+/// is left open.
+fn next_range(have: usize, needed: usize) -> ByteRange {
+    let have = have as u64;
+    let desired = (needed as u64).min(MAX_IMAGE_DATA_SIZE).max(have + 1);
+    let (mut start, mut size) = (have, desired - have);
+    if start > 0 {
+        start -= 1;
+        size += 1;
+    }
+    let end = (start + size <= HTTP_REQUESTS_RANGE_END_MAX).then(|| start + size - 1);
+    ByteRange { start, end }
+}
+
+/// Append a ranged reply starting at `offset` to `data`; it may overlap the
+/// end of what we have (the byte asked again). False, leaving `data`
+/// untouched, when the reply would leave a gap or ends before our data
+/// (Firestorm aborts that load).
+fn merge_reply(data: &mut Vec<u8>, offset: u64, body: &[u8]) -> bool {
+    let have = data.len() as u64;
+    if offset > have || have > offset + body.len() as u64 {
+        return false;
+    }
+    let skip = (have - offset) as usize;
+    data.extend_from_slice(&body[skip..]);
+    true
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TexSource {
@@ -57,6 +96,10 @@ struct Entry {
     unused_since: Option<Instant>,
     fetch_key: u64,
     dirty_cache: bool,
+    /// Why the last fetch failed (status, error kind, host; never the URL).
+    last_error: Option<String>,
+    /// The failure was already logged at info level.
+    error_logged: bool,
 }
 
 struct PendingUpload {
@@ -75,6 +118,8 @@ pub struct TextureStats {
     pub decoding: usize,
     pub pending_upload: usize,
     pub uploaded_bytes_frame: u64,
+    /// In use, never loaded, and the last fetch failed.
+    pub failing: usize,
 }
 
 pub struct TextureStreamer {
@@ -160,7 +205,7 @@ impl TextureStreamer {
         match self.entries.get(id) {
             None => "not requested".into(),
             Some(e) => format!(
-                "{} bytes{}, decoded {:?}, want {}, alpha {:?}, failures {}{}{}{}{}",
+                "{} bytes{}, decoded {:?}, want {}, alpha {:?}, failures {}{}{}{}{}{}",
                 e.data.len(),
                 if e.complete { " (complete)" } else { "" },
                 e.decoded,
@@ -176,7 +221,11 @@ impl TextureStreamer {
                 match &e.source {
                     TexSource::Bake { .. } => ", bake service",
                     TexSource::Asset => "",
-                }
+                },
+                e.last_error
+                    .as_deref()
+                    .map(|err| format!(", last error: {err}"))
+                    .unwrap_or_default()
             ),
         }
     }
@@ -289,6 +338,8 @@ impl TextureStreamer {
                 unused_since: None,
                 fetch_key: 0,
                 dirty_cache: false,
+                last_error: None,
+                error_logged: false,
             },
         );
         slot
@@ -416,6 +467,7 @@ impl TextureStreamer {
         let now = Instant::now();
         let mut fetching = 0;
         let mut loaded = 0;
+        let mut failing = 0;
         let TextureStreamer {
             entries,
             by_fetch_key,
@@ -434,6 +486,9 @@ impl TextureStreamer {
             }
             if e.refs == 0 {
                 continue;
+            }
+            if e.decoded.is_none() && e.last_error.is_some() {
+                failing += 1;
             }
             if e.retry_at.is_some_and(|t| now < t) {
                 continue;
@@ -470,7 +525,7 @@ impl TextureStreamer {
                 continue;
             }
             let needed = Self::bytes_needed(e);
-            let have_enough = e.complete || e.data.len() >= needed;
+            let have_enough = !e.data.is_empty() && (e.complete || e.data.len() >= needed);
             let better = match e.decoded {
                 None => true,
                 Some(d) => e.want < d,
@@ -509,9 +564,7 @@ impl TextureStreamer {
             }) else {
                 continue;
             };
-            let start = e.data.len();
-            // whole file: same open range as LL (MAX_IMAGE_DATA_SIZE)
-            let end = needed.min(start + 64 * 1024 * 1024).max(start + 1024) - 1;
+            let range = next_range(e.data.len(), needed);
             let key = FETCH_KIND_TEXTURE | *next_key;
             *next_key += 1;
             e.fetch_key = key;
@@ -521,7 +574,7 @@ impl TextureStreamer {
             fetcher.request(FetchRequest {
                 key,
                 url,
-                range: Some((start as u64, end as u64)),
+                range: Some(range),
                 priority,
                 accept: "image/x-j2c",
             });
@@ -529,6 +582,7 @@ impl TextureStreamer {
         self.stats.total = self.entries.len();
         self.stats.loaded = loaded;
         self.stats.fetching = fetching;
+        self.stats.failing = failing;
         self.stats.decoding = self.decodes;
         self.stats.pending_upload = self.uploads.len();
         let _ = Self::url_for;
@@ -542,23 +596,46 @@ impl TextureStreamer {
             return;
         };
         e.fetching = false;
-        match r.data {
-            Ok(bytes) => {
-                if r.status == 200 {
-                    // full body regardless of the requested range
-                    e.data = bytes;
+        // LLTextureFetchWorker::callbackHttpGet / WAIT_HTTP_REQ: a 200 is the
+        // whole asset, a 206 continues our data, a 416 completes it.
+        let outcome = match r.data {
+            Ok(bytes) if bytes.is_empty() => {
+                if r.complete && !e.data.is_empty() {
                     e.complete = true;
+                    Ok(())
                 } else {
-                    e.data.extend_from_slice(&bytes);
-                    if r.complete {
-                        e.complete = true;
-                    }
+                    Err(format!("status {} with no data", r.status))
                 }
+            }
+            Ok(bytes) if r.status != 206 => {
+                e.data = bytes;
+                e.complete = true;
+                Ok(())
+            }
+            Ok(bytes) => {
+                if merge_reply(&mut e.data, r.offset, &bytes) {
+                    e.complete |= r.complete;
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "status 206 at byte {} ({} bytes) does not continue our {} bytes",
+                        r.offset,
+                        bytes.len(),
+                        e.data.len()
+                    ))
+                }
+            }
+            Err(err) => Err(err),
+        };
+        match outcome {
+            Ok(()) => {
                 if e.info.is_none() {
                     e.info = aurora_assets::j2k_info(&e.data);
                 }
                 e.failures = 0;
                 e.dirty_cache = true;
+                e.last_error = None;
+                e.error_logged = false;
             }
             Err(err) => {
                 e.failures += 1;
@@ -567,7 +644,17 @@ impl TextureStreamer {
                 if r.status == 404 {
                     e.retry_at = Some(Instant::now() + Duration::from_secs(600));
                 }
-                log::debug!("texture {id} fetch failed ({}): {err}", r.status);
+                let source = match e.source {
+                    TexSource::Bake { .. } => " (bake service)",
+                    TexSource::Asset => "",
+                };
+                if e.error_logged {
+                    log::debug!("texture {id} fetch failed{source}: {err} (failure {})", e.failures);
+                } else {
+                    e.error_logged = true;
+                    log::info!("texture {id} fetch failed{source}: {err}");
+                }
+                e.last_error = Some(err);
             }
         }
     }
@@ -804,5 +891,85 @@ fn decode_job(id: Uuid, data: Vec<u8>, discard: u8, keep_pixels: bool) -> JobRes
             log::debug!("texture {id} decode failed at discard {discard}: {e}");
             JobResult::TextureFailed { id }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn first_request_starts_at_zero() {
+        assert_eq!(
+            next_range(0, INITIAL_BYTES),
+            ByteRange {
+                start: 0,
+                end: Some(16383)
+            }
+        );
+    }
+
+    #[test]
+    fn resumed_request_overlaps_one_byte() {
+        // 16 KB held, 40 KB wanted: bytes=16383-40959
+        assert_eq!(
+            next_range(16384, 40960),
+            ByteRange {
+                start: 16383,
+                end: Some(40959)
+            }
+        );
+    }
+
+    #[test]
+    fn whole_file_requests_are_open_ended() {
+        // usize::MAX = full resolution: MAX_IMAGE_DATA_SIZE, past the 20 MB end
+        assert_eq!(next_range(16384, usize::MAX), ByteRange { start: 16383, end: None });
+        assert_eq!(next_range(0, usize::MAX), ByteRange { start: 0, end: None });
+        // a large partial wish stays bounded below the limit
+        assert_eq!(
+            next_range(0, 20_000_000),
+            ByteRange {
+                start: 0,
+                end: Some(19_999_999)
+            }
+        );
+        assert_eq!(
+            next_range(1, 20_000_000),
+            ByteRange {
+                start: 0,
+                end: Some(19_999_999)
+            }
+        );
+        assert_eq!(next_range(0, 20_000_001), ByteRange { start: 0, end: None });
+    }
+
+    #[test]
+    fn request_always_asks_for_new_bytes() {
+        assert_eq!(next_range(100, 50), ByteRange { start: 99, end: Some(100) });
+    }
+
+    #[test]
+    fn replies_merge_over_the_overlapping_byte() {
+        let mut data = vec![1, 2, 3, 4];
+        assert!(merge_reply(&mut data, 3, &[4, 5, 6]));
+        assert_eq!(data, [1, 2, 3, 4, 5, 6]);
+        // contiguous reply (server ignored the overlap)
+        assert!(merge_reply(&mut data, 6, &[7]));
+        assert_eq!(data, [1, 2, 3, 4, 5, 6, 7]);
+        // from the start: only the new tail is kept
+        assert!(merge_reply(&mut data, 0, &[1, 2, 3, 4, 5, 6, 7, 8]));
+        assert_eq!(data, [1, 2, 3, 4, 5, 6, 7, 8]);
+    }
+
+    #[test]
+    fn replies_that_leave_a_gap_are_refused() {
+        let mut data = vec![1, 2, 3, 4];
+        assert!(!merge_reply(&mut data, 5, &[6]));
+        assert!(!merge_reply(&mut data, 0, &[1, 2]));
+        assert_eq!(data, [1, 2, 3, 4]);
+        let mut empty = Vec::new();
+        assert!(merge_reply(&mut empty, 0, &[9]));
+        assert_eq!(empty, [9]);
     }
 }

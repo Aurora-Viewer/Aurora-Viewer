@@ -2263,11 +2263,12 @@ impl Scene {
             let t = &self.textures.stats;
             let (lm_ready, lm_wait, lm_unknown) = self.legacy_mats.counts();
             log::info!(
-                "streaming: {} objects, meshes {ready} ready / {fetching} downloading / {failed} failed, textures {}/{} ({} downloading), legacy materials {lm_ready} ready / {lm_wait} pending / {lm_unknown} unknown, viewer asset cap {}",
+                "streaming: {} objects, meshes {ready} ready / {fetching} downloading / {failed} failed, textures {}/{} ({} downloading, {} failing), legacy materials {lm_ready} ready / {lm_wait} pending / {lm_unknown} unknown, viewer asset cap {}",
                 world.objects.len(),
                 t.loaded,
                 t.total,
                 t.fetching,
+                t.failing,
                 if va.is_some() { "ok" } else { "MISSING" }
             );
             // textures in use that never loaded (they show the placeholder)
