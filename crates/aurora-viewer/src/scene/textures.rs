@@ -130,8 +130,8 @@ impl TextureStreamer {
         }
     }
 
-    fn cache_path(&self, id: &Uuid, complete: bool) -> PathBuf {
-        self.cache_dir
+    fn cache_path(cache_dir: &std::path::Path, id: &Uuid, complete: bool) -> PathBuf {
+        cache_dir
             .join("tex")
             .join(format!("{id}.{}", if complete { "j2c" } else { "part" }))
     }
@@ -363,18 +363,23 @@ impl TextureStreamer {
         }
     }
 
-    /// Drive fetches and decodes.
+    /// Drive fetches and decodes. Runs every frame over every texture, so the
+    /// common case (nothing to do) must stay a few comparisons: no key copy,
+    /// no second lookup, cache paths only for the first disk read.
     pub fn update(&mut self, jobs: &Jobs, fetcher: &Fetcher, viewer_asset: Option<&str>) {
         let now = Instant::now();
-        let ids: Vec<Uuid> = self.entries.keys().copied().collect();
         let mut fetching = 0;
         let mut loaded = 0;
-        for id in ids {
-            let cache_complete_path = self.cache_path(&id, true);
-            let cache_part_path = self.cache_path(&id, false);
-            let Some(e) = self.entries.get_mut(&id) else {
-                continue;
-            };
+        let TextureStreamer {
+            entries,
+            by_fetch_key,
+            next_key,
+            cache_dir,
+            decodes,
+            max_decodes,
+            ..
+        } = self;
+        for (&id, e) in entries.iter_mut() {
             if e.decoded.is_some() {
                 loaded += 1;
             }
@@ -390,6 +395,8 @@ impl TextureStreamer {
             // 1. disk cache
             if e.cache_state == 0 {
                 e.cache_state = 1;
+                let cache_complete_path = Self::cache_path(cache_dir, &id, true);
+                let cache_part_path = Self::cache_path(cache_dir, &id, false);
                 jobs.spawn(move || {
                     if let Ok(d) = crate::cache::read_touch(&cache_complete_path) {
                         return JobResult::TextureCache {
@@ -426,7 +433,7 @@ impl TextureStreamer {
                 continue;
             }
             if have_enough || (e.info.is_some() && e.decoded.is_none() && !e.data.is_empty() && e.failures > 0) {
-                if self.decodes >= self.max_decodes {
+                if *decodes >= *max_decodes {
                     continue;
                 }
                 // Decode at the best level the data allows.
@@ -443,7 +450,7 @@ impl TextureStreamer {
                     continue;
                 }
                 e.decoding = true;
-                self.decodes += 1;
+                *decodes += 1;
                 let data = e.data.clone();
                 let keep = e.keep_pixels;
                 jobs.spawn(move || decode_job(id, data, discard, keep));
@@ -459,12 +466,12 @@ impl TextureStreamer {
             let start = e.data.len();
             // whole file: same open range as LL (MAX_IMAGE_DATA_SIZE)
             let end = needed.min(start + 64 * 1024 * 1024).max(start + 1024) - 1;
-            let key = FETCH_KIND_TEXTURE | self.next_key;
-            self.next_key += 1;
+            let key = FETCH_KIND_TEXTURE | *next_key;
+            *next_key += 1;
             e.fetch_key = key;
             e.fetching = true;
             let priority = e.need_px.max(1.0) + if e.decoded.is_none() { 1e5 } else { 0.0 };
-            self.by_fetch_key.insert(key, id);
+            by_fetch_key.insert(key, id);
             fetcher.request(FetchRequest {
                 key,
                 url,

@@ -143,7 +143,8 @@ impl MeshStreamer {
                     accept: "application/vnd.ll.mesh",
                 });
             }
-            if e.state == 3 {
+            // nothing new wanted: no clones (every ready mesh, every frame)
+            if e.state == 3 && !e.wanted_lods.is_empty() {
                 let (Some(data), Some(header)) = (e.data.clone(), e.header.clone()) else {
                     continue;
                 };
