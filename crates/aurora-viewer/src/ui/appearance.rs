@@ -20,6 +20,7 @@ pub struct AppearanceUi {
     edit_tab: usize,
     search: String,
     selected_outfit: Option<Uuid>,
+    reveal_outfit: Option<Uuid>,
     selected_item: Option<Uuid>,
     pub save_as: Option<String>,
     select_name: bool,
@@ -39,6 +40,9 @@ impl AppearanceUi {
     pub fn open_outfit(&mut self, id: Uuid) {
         self.open(1, false);
         self.selected_outfit = Some(id);
+        self.reveal_outfit = Some(id);
+        self.selected_item = None;
+        self.search.clear();
     }
     pub fn open(&mut self, tab: usize, editing: bool) {
         self.tab = tab.min(2);
@@ -109,7 +113,7 @@ fn icon_menu(ui: &mut egui::Ui, p: &Palette, name: &str, tip: &str, body: impl F
     egui::Popup::menu(&response).show(body);
 }
 
-fn row(ui: &mut egui::Ui, p: &Palette, it: &InvItem, desc: &str, selected: bool) -> egui::Response {
+fn row(ui: &mut egui::Ui, p: &Palette, it: &InvItem, desc: &str, selected: bool, worn: bool) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 25.0), egui::Sense::click());
     if selected || response.hovered() {
         ui.painter()
@@ -135,19 +139,32 @@ fn row(ui: &mut egui::Ui, p: &Palette, it: &InvItem, desc: &str, selected: bool)
     } else {
         format!("{} {desc}", it.name)
     };
-    let galley = ui.painter().layout(
-        text.clone(),
-        egui::FontId::proportional(12.0),
-        p.ink,
-        (rect.width() - 30.0).max(20.0),
+    let marker = worn.then(|| ui.painter().layout_no_wrap("Porté".into(), egui::FontId::proportional(12.0), p.ink));
+    let marker_width = marker.as_ref().map_or(0.0, |g| g.size().x + 10.0);
+    let galley = egui::WidgetText::from(RichText::new(&text).size(12.0).color(p.ink)).into_galley(
+        ui,
+        Some(egui::TextWrapMode::Truncate),
+        (rect.width() - 30.0 - marker_width).max(20.0),
+        egui::TextStyle::Body,
     );
     let text_rect = egui::Rect::from_min_max(egui::pos2(rect.left() + 25.0, rect.top()), rect.right_bottom());
-    ui.painter().with_clip_rect(text_rect).galley(
-        egui::pos2(rect.left() + 25.0, rect.center().y - galley.size().y.min(16.0) * 0.5),
-        galley,
-        p.ink,
-    );
-    response.on_hover_text(text)
+    let painter = ui.painter().with_clip_rect(text_rect);
+    let paint = |pos, galley: std::sync::Arc<egui::Galley>| {
+        // LLFontGL BOLD_OFFSET: egui's strong text changes color, not weight.
+        if worn {
+            let ppp = ui.ctx().pixels_per_point();
+            painter.galley(pos + Vec2::new(ppp.round().max(1.0) / ppp, 0.0), galley.clone(), p.ink);
+        }
+        painter.galley(pos, galley, p.ink);
+    };
+    paint(egui::pos2(rect.left() + 25.0, rect.center().y - galley.size().y * 0.5), galley);
+    if let Some(marker) = marker {
+        paint(
+            egui::pos2(rect.right() - marker.size().x - 3.0, rect.center().y - marker.size().y * 0.5),
+            marker,
+        );
+    }
+    response.on_hover_text(if worn { format!("{text} (Porté)") } else { text })
 }
 
 fn item_menu(response: &egui::Response, it: &InvItem, actions: &mut Vec<Action>) {
@@ -191,7 +208,7 @@ fn gallery(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceUi,
                         st.selected_outfit = Some(*id);
                     }
                     if response.double_clicked() {
-                        actions.push(Action::Wear(*id, false));
+                        st.open_outfit(*id);
                     }
                     response.context_menu(|ui| {
                         if ui.button("Porter").clicked() {
@@ -218,6 +235,7 @@ fn gallery(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceUi,
 }
 
 fn outfit_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceUi, outfits: &[Uuid], actions: &mut Vec<Action>) {
+    let worn = items::worn_items(world);
     for id in outfits {
         let Some(f) = world.inventory.folders.get(id) else {
             continue;
@@ -227,9 +245,11 @@ fn outfit_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut Appearanc
         } else {
             f.info.name.clone()
         };
-        egui::CollapsingHeader::new(RichText::new(label).color(p.ink))
+        let reveal = st.reveal_outfit == Some(*id);
+        let response = egui::CollapsingHeader::new(RichText::new(label).color(p.ink))
             .id_salt(("outfit", id))
             .default_open(st.selected_outfit == Some(*id))
+            .open(reveal.then_some(true))
             .show(ui, |ui| {
                 if ui
                     .selectable_label(st.selected_outfit == Some(*id), "Sélectionner cette tenue")
@@ -242,7 +262,14 @@ fn outfit_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut Appearanc
                 for link in links.iter().filter(|l| !l.folder) {
                     if let Some(it) = world.inventory.items.get(&link.target) {
                         ui.push_id(("outfit_item", id, it.id), |ui| {
-                            let response = row(ui, p, it, "", st.selected_item == Some(it.id) && st.selected_outfit == Some(*id));
+                            let response = row(
+                                ui,
+                                p,
+                                it,
+                                "",
+                                st.selected_item == Some(it.id) && st.selected_outfit == Some(*id),
+                                worn.contains(&it.id),
+                            );
                             if response.clicked() || response.secondary_clicked() {
                                 st.selected_outfit = Some(*id);
                                 st.selected_item = Some(it.id);
@@ -272,6 +299,10 @@ fn outfit_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut Appearanc
                     }
                 });
             });
+        if reveal && response.body_response.is_some() {
+            response.header_response.scroll_to_me(Some(egui::Align::Min));
+            st.reveal_outfit = None;
+        }
     }
 }
 
@@ -324,6 +355,7 @@ fn worn_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceU
                     ""
                 },
                 st.selected_item == Some(it.id),
+                false,
             );
             if resp.clicked() {
                 st.selected_item = Some(it.id);
@@ -436,7 +468,7 @@ fn add_list(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut Appearan
         .collect();
     items.sort_by_key(|it| it.name.to_lowercase());
     for it in items {
-        let response = row(ui, p, it, "", st.selected_item == Some(it.id));
+        let response = row(ui, p, it, "", st.selected_item == Some(it.id), false);
         if response.clicked() {
             st.selected_item = Some(it.id);
         }
@@ -490,7 +522,7 @@ fn add_folder(
                 if !matches!(it.asset_type, 5 | 6 | 13) || worn.contains(&it.id) {
                     continue;
                 }
-                let response = row(ui, p, it, "", st.selected_item == Some(it.id));
+                let response = row(ui, p, it, "", st.selected_item == Some(it.id), false);
                 if response.clicked() {
                     st.selected_item = Some(it.id);
                 }
@@ -829,6 +861,7 @@ mod tests {
         model::seed_demo(&mut world.inventory, Uuid::from_u128(1));
         let mut st = AppearanceUi::default();
         st.open_outfit(Uuid::from_u128(704));
+        st.reveal_outfit = None; // keep preceding headings visible for these item clicks
         for _ in 0..4 {
             draw(&ctx, &mut world, &mut st, None);
         }
@@ -878,6 +911,7 @@ mod tests {
             world.inventory.folders.get_mut(&folder).expect("outfit").items = vec![first, second];
             let mut st = AppearanceUi::default();
             st.open_outfit(folder);
+            st.reveal_outfit = None;
             for _ in 0..4 {
                 draw(&ctx, &mut world, &mut st, None);
             }
@@ -915,5 +949,58 @@ mod tests {
                 "{actions:?}"
             );
         }
+    }
+
+    #[test]
+    fn gallery_double_click_reopens_the_folder_without_wearing_it() {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let _icons = icons::Icons::load(&ctx, None);
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        model::seed_demo(&mut world.inventory, Uuid::from_u128(1));
+        let mut st = AppearanceUi::default();
+        st.open(1, false);
+        // Establish persisted closed headers before returning to the gallery.
+        for _ in 0..4 {
+            draw(&ctx, &mut world, &mut st, None);
+        }
+        st.open(0, false);
+        for _ in 0..4 {
+            draw(&ctx, &mut world, &mut st, None);
+        }
+        let pos = egui::pos2(295.0, 300.0); // Flic in the first gallery row
+        let mut actions = Vec::new();
+        for _ in 0..2 {
+            for pressed in [true, false] {
+                actions.extend(draw_input(
+                    &ctx,
+                    &mut world,
+                    &mut st,
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 900.0))),
+                        events: vec![
+                            egui::Event::PointerMoved(pos),
+                            egui::Event::PointerButton {
+                                pos,
+                                button: egui::PointerButton::Primary,
+                                pressed,
+                                modifiers: Default::default(),
+                            },
+                        ],
+                        ..Default::default()
+                    },
+                ));
+            }
+        }
+        assert!(actions.is_empty(), "double-click must not dispatch Wear: {actions:?}");
+        assert_eq!(st.tab, 1);
+        assert_eq!(st.selected_outfit, Some(Uuid::from_u128(703)));
+        for _ in 0..4 {
+            draw(&ctx, &mut world, &mut st, None);
+        }
+        assert!(
+            st.reveal_outfit.is_none(),
+            "the previously closed folder has opened and been scrolled to"
+        );
     }
 }

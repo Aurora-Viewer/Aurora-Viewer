@@ -9,7 +9,23 @@ use crate::{
 };
 use aurora_net::inventory::InvItem;
 use egui::{RichText, Vec2};
+use std::collections::HashSet;
 use uuid::Uuid;
+
+/// LLPanelWearableOutfitItem::updateItem: clothing follows the confirmed COF;
+/// objects are worn when the simulator reports them attached to our avatar.
+pub(super) fn worn_items(world: &World) -> HashSet<Uuid> {
+    let mut worn = world.worn_attachment_items();
+    if let Some(cof) = model::cof(&world.inventory) {
+        worn.extend(
+            model::folder_links(&world.inventory, cof)
+                .into_iter()
+                .filter(|link| !link.folder && world.inventory.items.get(&link.target).is_some_and(|it| it.asset_type != 6))
+                .map(|link| link.target),
+        );
+    }
+    worn
+}
 
 pub(super) fn context_menu(
     response: &egui::Response,
@@ -20,12 +36,8 @@ pub(super) fn context_menu(
     it: &InvItem,
     actions: &mut Vec<Action>,
 ) {
-    let worn = if it.asset_type == 6 {
-        world.worn_attachment_items().contains(&it.id)
-    } else {
-        model::cof(&world.inventory).is_some_and(|id| model::folder_links(&world.inventory, id).iter().any(|l| l.target == it.id))
-    };
     menu::context_menu(response, p, |ui| {
+        let worn = worn_items(world).contains(&it.id);
         let wearable = matches!(it.asset_type, 5 | 6 | 13);
         if !worn && wearable {
             if menu::item(ui, p, "t-shirt", "Porter") {
