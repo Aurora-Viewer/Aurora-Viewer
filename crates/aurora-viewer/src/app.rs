@@ -3925,6 +3925,8 @@ impl App {
                     ));
                     self.panels.contacts = open;
                 }
+                // their confirmations, also asked from the other menus
+                contact_actions.extend(ui::contacts::dialog_windows(&ctx, &p, &mut self.world, &mut self.contacts_ui));
                 for c in contact_actions {
                     self.on_contacts_action(c, &mut a);
                 }

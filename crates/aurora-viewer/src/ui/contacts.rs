@@ -12,7 +12,8 @@
 //! - « Cercles »: contact sets (LGGContactSets) and aliases.
 
 use super::avatar_picker::AvatarPicker;
-use super::widgets;
+use super::context::{self, CtxAction};
+use super::{menu, widgets};
 use crate::theme::Palette;
 use crate::world::World;
 use crate::world::contact_sets::{self, ContactSets};
@@ -165,6 +166,40 @@ impl ContactsUi {
         self.pick_for = Some(PickFor::Friend);
         self.picker.open(PICKER_ID, false);
     }
+
+    /// « Devenir amis » of any menu (AddFriendWithMessage).
+    pub fn ask_friendship(&mut self, to: Uuid) {
+        self.dialog = Some(Dialog::Friendship {
+            to,
+            message: String::new(),
+        });
+    }
+
+    /// « Supprimer cet ami » of any menu (RemoveFromFriends).
+    pub fn ask_remove_friend(&mut self, id: Uuid) {
+        self.dialog = Some(Dialog::RemoveFriends(vec![id]));
+    }
+
+    /// « Demander une téléportation » of any menu (TeleportRequest).
+    pub fn ask_teleport_request(&mut self, to: Uuid) {
+        self.dialog = Some(Dialog::TeleportRequest {
+            to,
+            message: String::new(),
+        });
+    }
+
+    /// « Quitter » of any group menu (GroupLeaveConfirmMember).
+    pub fn ask_leave_group(&mut self, id: Uuid) {
+        self.dialog = Some(Dialog::LeaveGroup(id));
+    }
+}
+
+/// The confirmations and prompts, shown whether the contact list is open
+/// or not (they are also asked from the other right-click menus).
+pub fn dialog_windows(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut ContactsUi) -> Vec<ContactsAction> {
+    let mut actions = Vec::new();
+    dialogs(ctx, p, world, st, &mut actions);
+    actions
 }
 
 /// Textures the lists draw.
@@ -403,7 +438,6 @@ pub fn panel(
     if let Some((set, ids)) = st.add_to_set.take() {
         picked(world, st, PickFor::Set(set), ids);
     }
-    dialogs(ui.ctx(), p, world, st, &mut actions);
     // the resident picker shared with About Land (LLFloaterAvatarPicker)
     if let Some(ids) = st.picker.show(ui.ctx(), p, world)
         && let Some(what) = st.pick_for.take()
@@ -739,7 +773,7 @@ fn friend_table(
                         st.friends_sel = vec![r.id];
                         st.friends_anchor = Some(r.id);
                     }
-                    resp.context_menu(|ui| friend_menu(ui, world, st, settings, r.id, actions));
+                    menu::context_menu(&resp, p, |ui| friend_menu(ui, p, world, st, settings, r.id, actions));
                 }
             });
     });
@@ -748,111 +782,129 @@ fn friend_table(
 /// Right-click menu of the friend list (menu_fs_contacts_friends.xml).
 fn friend_menu(
     ui: &mut egui::Ui,
+    p: &Palette,
     world: &World,
     st: &mut ContactsUi,
     settings: &mut ContactsSettings,
     id: Uuid,
     actions: &mut Vec<ContactsAction>,
 ) {
-    let online = world.social.friends.iter().any(|f| f.id == id && f.online);
-    let soon = "à venir dans Aurora";
-    if ui.button("Voir le profil").clicked() {
+    let friend = world.social.friends.iter().find(|f| f.id == id);
+    let online = friend.is_some_and(|f| f.online);
+    let here = context::avatar_position(world, &id).is_some();
+    // the selection when the clicked row is part of it
+    let ids = if st.friends_sel.contains(&id) {
+        st.friends_sel.clone()
+    } else {
+        vec![id]
+    };
+    if menu::item(ui, p, "user-circle", "Voir le profil") {
         actions.push(ContactsAction::Profile(id));
-        ui.close();
     }
-    if ui.button("Envoyer un IM...").clicked() {
+    if menu::item(ui, p, "chat-text", "Envoyer un IM...") {
         actions.push(ContactsAction::Im(id));
-        ui.close();
     }
-    ui.add_enabled(false, egui::Button::new("Voir l'historique de conversations"))
-        .on_disabled_hover_text(soon);
-    ui.menu_button("Ajouter au cercle", |ui| {
-        let sets = world.contact_sets.set_names();
+    menu::todo(ui, p, "clock-counter-clockwise", "Voir l'historique de conversations");
+    let sets = world.contact_sets.set_names();
+    menu::submenu(ui, p, "users-three", "Ajouter au cercle", true, |ui| {
         if sets.is_empty() {
-            ui.add_enabled(false, egui::Button::new("Aucun cercle"));
+            menu::item_if(ui, p, "users-three", "Aucun cercle", false);
         }
         for set in sets {
-            if ui.button(&set).clicked() {
-                let ids = if st.friends_sel.contains(&id) {
-                    st.friends_sel.clone()
-                } else {
-                    vec![id]
-                };
-                st.add_to_set = Some((set, ids));
-                ui.close();
+            if menu::item(ui, p, "users-three", &set) {
+                st.add_to_set = Some((set, ids.clone()));
             }
         }
     });
-    ui.add_enabled(false, egui::Button::new("Zoomer")).on_disabled_hover_text(soon);
-    ui.add_enabled(false, egui::Button::new("Se téléporter vers"))
-        .on_disabled_hover_text(soon);
-    if ui.add_enabled(online, egui::Button::new("Proposer une téléportation")).clicked() {
+    if menu::item_if(ui, p, "magnifying-glass-plus", "Zoomer", here) {
+        context::request(ui.ctx(), CtxAction::ZoomAvatar(id));
+    }
+    if menu::item_if(ui, p, "navigation-arrow", "Se téléporter vers", here) {
+        context::request(ui.ctx(), CtxAction::TeleportToAvatar(id));
+    }
+    if menu::item_if(ui, p, "paper-plane-tilt", "Proposer une téléportation", online) {
         actions.push(ContactsAction::OfferTeleport(id));
-        ui.close();
     }
-    if ui.button("Demander une téléportation").clicked() {
-        st.dialog = Some(Dialog::TeleportRequest {
-            to: id,
-            message: String::new(),
-        });
-        ui.close();
+    if menu::item(ui, p, "airplane-landing", "Demander une téléportation") {
+        st.ask_teleport_request(id);
     }
-    ui.add_enabled(false, egui::Button::new("Payer")).on_disabled_hover_text(soon);
-    ui.add_enabled(false, egui::Button::new("Suivre")).on_disabled_hover_text(soon);
-    if ui.button("Supprimer cet ami").clicked() {
-        let ids = if st.friends_sel.contains(&id) {
-            st.friends_sel.clone()
-        } else {
-            vec![id]
-        };
-        st.dialog = Some(Dialog::RemoveFriends(ids));
-        ui.close();
+    menu::todo(ui, p, "currency-circle-dollar", "Payer");
+    menu::todo(ui, p, "crosshair", "Suivre");
+    if menu::item(ui, p, "user-minus", "Supprimer cet ami") {
+        st.dialog = Some(Dialog::RemoveFriends(ids.clone()));
     }
-    ui.separator();
-    let name = world.social.name_of(&id);
-    if ui.button("Copier le nom").clicked() {
-        ui.ctx().copy_text(name);
-        ui.close();
+    menu::separator(ui, p);
+    if menu::item(ui, p, "copy", "Copier le nom") {
+        ui.ctx().copy_text(world.social.name_of(&id));
     }
-    if ui.button("Copier l'URL").clicked() {
+    if menu::item(ui, p, "link", "Copier l'URL") {
         ui.ctx().copy_text(format!("secondlife:///app/agent/{id}/about"));
-        ui.close();
     }
-    if ui.button("Copier l'URI de la mention").clicked() {
+    if menu::item(ui, p, "at", "Copier l'URI de la mention") {
         ui.ctx().copy_text(format!("secondlife:///app/agent/{id}/mention"));
-        ui.close();
     }
-    ui.separator();
-    ui.menu_button("Options...", |ui| options_menu(ui, settings));
+    menu::separator(ui, p);
+    menu::submenu(ui, p, "sliders", "Options...", true, |ui| options_menu(ui, p, settings));
+    if let Some(f) = friend {
+        menu::separator(ui, p);
+        // GlobalOnlineStatusToggle: the online status right we give
+        let on = f.rights_given & rights::ONLINE_STATUS != 0;
+        if menu::check(ui, p, "eye", "Statut connecté visible pour cet ami", on, true) {
+            actions.push(ContactsAction::Net(NetCommand::GrantUserRights {
+                friend: id,
+                rights: rights_after(f.rights_given, rights::ONLINE_STATUS, !on),
+            }));
+        }
+    }
 }
 
 /// « Options... » of the friend list menu: columns, sort, name format,
 /// search filter (onColumnDisplayModeChanged keeps one name column).
-fn options_menu(ui: &mut egui::Ui, s: &mut ContactsSettings) {
+fn options_menu(ui: &mut egui::Ui, p: &Palette, s: &mut ContactsSettings) {
     let before = (s.column_username, s.column_display_name, s.column_full_name);
-    ui.checkbox(&mut s.column_username, "Afficher la colonne Nom d'utilisateur");
-    ui.checkbox(&mut s.column_display_name, "Afficher la colonne Nom d'affichage");
-    ui.checkbox(&mut s.column_full_name, "Afficher la colonne Nom complet");
+    menu::toggle(ui, p, "user", "Afficher la colonne Nom d'utilisateur", &mut s.column_username);
+    menu::toggle(
+        ui,
+        p,
+        "identification-card",
+        "Afficher la colonne Nom d'affichage",
+        &mut s.column_display_name,
+    );
+    menu::toggle(ui, p, "text-aa", "Afficher la colonne Nom complet", &mut s.column_full_name);
     if !s.column_username && !s.column_display_name && !s.column_full_name {
         (s.column_username, s.column_display_name, s.column_full_name) = before;
     }
-    ui.checkbox(&mut s.column_permissions, "Afficher les colonnes de permissions");
-    ui.separator();
-    ui.radio_value(&mut s.sort_by_display_name, false, "Trier par nom d'utilisateur");
-    ui.radio_value(&mut s.sort_by_display_name, true, "Trier par nom d'affichage");
-    ui.separator();
-    ui.radio_value(
-        &mut s.full_name_display_first,
-        false,
+    menu::toggle(ui, p, "key", "Afficher les colonnes de permissions", &mut s.column_permissions);
+    menu::separator(ui, p);
+    if menu::check(ui, p, "list", "Trier par nom d'utilisateur", !s.sort_by_display_name, true) {
+        s.sort_by_display_name = false;
+    }
+    if menu::check(ui, p, "list", "Trier par nom d'affichage", s.sort_by_display_name, true) {
+        s.sort_by_display_name = true;
+    }
+    menu::separator(ui, p);
+    if menu::check(
+        ui,
+        p,
+        "text-t",
         "Format du nom complet : Nom d'utilisateur (Nom d'affichage)",
-    );
-    ui.radio_value(
-        &mut s.full_name_display_first,
+        !s.full_name_display_first,
         true,
+    ) {
+        s.full_name_display_first = false;
+    }
+    if menu::check(
+        ui,
+        p,
+        "text-t",
         "Format du nom complet : Nom d'affichage (Nom d'utilisateur)",
-    );
-    ui.separator();
-    ui.checkbox(&mut s.show_search, "Afficher la recherche");
+        s.full_name_display_first,
+        true,
+    ) {
+        s.full_name_display_first = true;
+    }
+    menu::separator(ui, p);
+    menu::toggle(ui, p, "magnifying-glass", "Afficher la recherche", &mut s.show_search);
 }
 
 /// Buttons of the friend list (refreshUI / refreshRightsChangeList).
@@ -1056,42 +1108,36 @@ fn group_row(
     if resp.double_clicked() && !id.is_nil() {
         actions.push(ContactsAction::GroupChat(id));
     }
-    resp.context_menu(|ui| group_menu(ui, world, st, id, actions));
+    menu::context_menu(&resp, p, |ui| group_menu(ui, p, world, st, id, actions));
 }
 
 /// Right-click menu of a group (menu_people_groups.xml).
-fn group_menu(ui: &mut egui::Ui, world: &mut World, st: &mut ContactsUi, id: Uuid, actions: &mut Vec<ContactsAction>) {
+fn group_menu(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut ContactsUi, id: Uuid, actions: &mut Vec<ContactsAction>) {
     let real = !id.is_nil();
-    let soon = "à venir dans Aurora";
-    if ui.add_enabled(world.groups.active != id, egui::Button::new("Activer")).clicked() {
+    if menu::item_if(ui, p, "check-circle", "Activer", world.groups.active != id) {
         actions.push(ContactsAction::Net(NetCommand::ActivateGroup(id)));
-        ui.close();
     }
-    ui.add_enabled(false, egui::Button::new("Voir les infos"))
-        .on_disabled_hover_text(soon);
-    if ui.add_enabled(real, egui::Button::new("Copier le SLurl")).clicked() {
+    menu::todo(ui, p, "info", "Voir les infos");
+    if menu::item_if(ui, p, "link", "Copier le SLurl", real) {
         ui.ctx().copy_text(format!("secondlife:///app/group/{id}/about"));
-        ui.close();
     }
-    if ui.add_enabled(real, egui::Button::new("Chat")).clicked() {
+    if menu::item_if(ui, p, "chat-text", "Chat", real) {
         actions.push(ContactsAction::GroupChat(id));
-        ui.close();
     }
-    ui.add_enabled(false, egui::Button::new("Appel vocal")).on_disabled_hover_text(soon);
+    menu::todo(ui, p, "phone", "Appel vocal");
     if real {
         let label = if world.groups.favorites.contains(&id) {
             "Désépingler le groupe"
         } else {
             "Épingler le groupe"
         };
-        if ui.button(label).clicked() {
+        if menu::item(ui, p, "push-pin", label) {
             world.groups.toggle_favorite(id);
-            ui.close();
         }
     }
-    if ui.add_enabled(real, egui::Button::new("Quitter")).clicked() {
-        st.dialog = Some(Dialog::LeaveGroup(id));
-        ui.close();
+    menu::separator(ui, p);
+    if menu::item_if(ui, p, "sign-out", "Quitter", real) {
+        st.ask_leave_group(id);
     }
 }
 
@@ -1296,18 +1342,16 @@ fn sets_tab(
                                 st.set_sel = vec![*id];
                                 st.set_anchor = Some(*id);
                             }
-                            resp.context_menu(|ui| {
-                                if ui.button("Voir le profil").clicked() {
+                            // the member part of menu_fs_contacts_friends.xml
+                            menu::context_menu(&resp, p, |ui| {
+                                if menu::item(ui, p, "user-circle", "Voir le profil") {
                                     actions.push(ContactsAction::Profile(*id));
-                                    ui.close();
                                 }
-                                if ui.button("Envoyer un IM...").clicked() {
+                                if menu::item(ui, p, "chat-text", "Envoyer un IM...") {
                                     actions.push(ContactsAction::Im(*id));
-                                    ui.close();
                                 }
-                                if ui.add_enabled(*on, egui::Button::new("Proposer une téléportation")).clicked() {
+                                if menu::item_if(ui, p, "paper-plane-tilt", "Proposer une téléportation", *on) {
                                     actions.push(ContactsAction::OfferTeleport(*id));
-                                    ui.close();
                                 }
                             });
                         }

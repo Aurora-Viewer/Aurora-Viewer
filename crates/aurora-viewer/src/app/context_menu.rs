@@ -308,6 +308,12 @@ impl App {
                 self.world.profile_command(&cmd);
                 self.send(cmd);
             }
+            CtxAction::AddFriend(id) => self.contacts_ui.ask_friendship(id),
+            CtxAction::RemoveFriend(id) => self.contacts_ui.ask_remove_friend(id),
+            CtxAction::RequestTeleport(id) => self.contacts_ui.ask_teleport_request(id),
+            CtxAction::ActivateGroup(id) => self.send(NetCommand::ActivateGroup(id)),
+            CtxAction::PinGroup(id) => self.world.groups.toggle_favorite(id),
+            CtxAction::LeaveGroup(id) => self.contacts_ui.ask_leave_group(id),
             CtxAction::GroupChat(id) => {
                 self.world.ui_sounds.push(UiSound::StartIm);
                 self.world.start_group_chat(id);

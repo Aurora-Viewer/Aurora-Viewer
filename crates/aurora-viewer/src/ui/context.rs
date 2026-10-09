@@ -192,7 +192,16 @@ pub enum CtxAction {
         friend: Uuid,
         rights: i32,
     },
+    /// Friendship: offer (with a message) / end, both confirmed first.
+    AddFriend(Uuid),
+    RemoveFriend(Uuid),
+    /// Ask an avatar to teleport us to them (TeleportRequest prompt).
+    RequestTeleport(Uuid),
     GroupChat(Uuid),
+    /// Make a group active (ActivateGroup), pin it in the lists, leave it.
+    ActivateGroup(Uuid),
+    PinGroup(Uuid),
+    LeaveGroup(Uuid),
     /// Block / unblock a group's chat (exoGroupMuteList).
     GroupChatBlocked(Uuid, bool),
 }
@@ -402,8 +411,8 @@ fn avatar_menu(ui: &mut egui::Ui, p: &Palette, f: &Facts, id: Uuid, attachment: 
     if menu::item(ui, p, "user-circle", "Voir le profil") {
         act(CtxAction::Profile(id));
     }
-    if !f.friend {
-        menu::todo(ui, p, "user-plus", "Devenir amis");
+    if menu::item_if(ui, p, "user-plus", "Devenir amis", !f.friend) {
+        act(CtxAction::AddFriend(id));
     }
     menu::todo(ui, p, "users-three", "Ajouter à un cercle");
     if menu::item(ui, p, "chat-text", "Envoyer un IM") {
@@ -645,11 +654,19 @@ pub fn avatar_list_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid,
             ui.ctx().copy_text(format!("secondlife:///app/agent/{id}/mention"));
         }
     };
-    let friendship = |ui: &mut egui::Ui| {
-        if friend.is_some() {
-            menu::todo(ui, p, "user-minus", "Supprimer cet ami");
-        } else {
-            menu::todo(ui, p, "user-plus", "Devenir amis");
+    let add_friend = |ui: &mut egui::Ui| {
+        if friend.is_none() && menu::item(ui, p, "user-plus", "Devenir amis") {
+            act(CtxAction::AddFriend(id));
+        }
+    };
+    let remove_friend = |ui: &mut egui::Ui| {
+        if friend.is_some() && menu::item(ui, p, "user-minus", "Supprimer cet ami") {
+            act(CtxAction::RemoveFriend(id));
+        }
+    };
+    let request_tp = |ui: &mut egui::Ui| {
+        if menu::item_if(ui, p, "airplane-landing", "Demander une téléportation", online) {
+            act(CtxAction::RequestTeleport(id));
         }
     };
     match kind {
@@ -657,13 +674,14 @@ pub fn avatar_list_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid,
             profile(ui);
             im(ui);
             offer_tp(ui);
-            menu::todo(ui, p, "airplane-landing", "Demander une téléportation");
+            request_tp(ui);
             tp_to(ui);
             menu::todo(ui, p, "phone", "Appel vocal");
             menu::separator(ui, p);
             menu::todo(ui, p, "clock-counter-clockwise", "Voir l'historique de conversations");
             menu::separator(ui, p);
-            friendship(ui);
+            add_friend(ui);
+            remove_friend(ui);
             menu::todo(ui, p, "users-three", "Ajouter à un cercle");
             menu::todo(ui, p, "user-circle-plus", "Inviter dans un groupe");
             menu::separator(ui, p);
@@ -683,10 +701,10 @@ pub fn avatar_list_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid,
             zoom(ui);
             tp_to(ui);
             offer_tp(ui);
-            menu::todo(ui, p, "airplane-landing", "Demander une téléportation");
+            request_tp(ui);
             menu::todo(ui, p, "currency-circle-dollar", "Payer");
             menu::todo(ui, p, "crosshair", "Suivre");
-            friendship(ui);
+            remove_friend(ui);
             menu::separator(ui, p);
             copy(ui);
             if let Some(f) = &friend {
@@ -705,18 +723,14 @@ pub fn avatar_list_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid,
             profile(ui);
             im(ui);
             menu::todo(ui, p, "clock-counter-clockwise", "Voir l'historique de conversations");
-            if friend.is_none() {
-                menu::todo(ui, p, "user-plus", "Devenir amis");
-            }
+            add_friend(ui);
             menu::todo(ui, p, "users-three", "Ajouter à un cercle");
             zoom(ui);
             tp_to(ui);
             offer_tp(ui);
-            menu::todo(ui, p, "airplane-landing", "Demander une téléportation");
+            request_tp(ui);
             menu::todo(ui, p, "crosshair", "Suivre le résident");
-            if friend.is_some() {
-                menu::todo(ui, p, "user-minus", "Supprimer cet ami");
-            }
+            remove_friend(ui);
             menu::separator(ui, p);
             menu::todo(ui, p, "flag", "Signaler une infraction");
             block(ui);
@@ -731,7 +745,9 @@ pub fn avatar_list_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid,
 pub fn group_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid) {
     let ctx = ui.ctx().clone();
     let act = |a: CtxAction| request(&ctx, a);
-    menu::todo(ui, p, "check-circle", "Activer");
+    if menu::item_if(ui, p, "check-circle", "Activer", world.groups.active != id) {
+        act(CtxAction::ActivateGroup(id));
+    }
     menu::todo(ui, p, "info", "Voir les infos");
     if menu::item(ui, p, "link", "Copier le SLurl") {
         ui.ctx().copy_text(format!("secondlife:///app/group/{id}/about"));
@@ -740,13 +756,22 @@ pub fn group_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid) {
         act(CtxAction::GroupChat(id));
     }
     menu::todo(ui, p, "phone", "Appel vocal");
-    menu::todo(ui, p, "star", "Épingler le groupe");
+    let pin = if world.groups.favorites.contains(&id) {
+        "Désépingler le groupe"
+    } else {
+        "Épingler le groupe"
+    };
+    if menu::item(ui, p, "push-pin", pin) {
+        act(CtxAction::PinGroup(id));
+    }
     let blocked = world.mutes.group_chat_muted(&id);
     if menu::check(ui, p, "chat-teardrop-slash", "Bloquer le chat du groupe", blocked, true) {
         act(CtxAction::GroupChatBlocked(id, !blocked));
     }
     menu::separator(ui, p);
-    menu::todo(ui, p, "sign-out", "Quitter");
+    if menu::item(ui, p, "sign-out", "Quitter") {
+        act(CtxAction::LeaveGroup(id));
+    }
 }
 
 /// The avatar wearing object `idx`, if it is an attachment.
