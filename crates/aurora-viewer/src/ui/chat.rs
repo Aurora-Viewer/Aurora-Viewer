@@ -1414,6 +1414,8 @@ mod tests {
             "https://secondlife.com@evil.example/x",
             "https://evil.example\\@secondlife.com",
             "https://github.io",
+            "https://youtube.com.evil.example/watch",
+            "https://raw.githubusercontent.com/x",
             "ftp://secondlife.com/x",
             "secondlife.com",
         ] {
