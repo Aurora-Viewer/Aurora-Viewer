@@ -2,7 +2,10 @@
 //! (Firestorm indra/newview/lltoolpie.cpp, originally LGPL 2.1).
 
 use crate::world::{World, objects::ObjKey};
-use aurora_net::{NetCommand, build::ObjectProps};
+use aurora_net::{
+    NetCommand,
+    build::{ObjectProps, TaskItem, perm},
+};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
@@ -185,6 +188,7 @@ pub struct Dialog {
     pub props: Option<ObjectProps>,
     pub amount: String,
     pub prices: Option<(i32, Vec<i32>)>,
+    pub inventory: Option<Result<Vec<TaskItem>, String>>,
     pub error: Option<String>,
     pub opened: Instant,
 }
@@ -216,6 +220,14 @@ pub struct Held {
 }
 
 impl Interactions {
+    pub fn on_purchase_inventory(&mut self, object: Uuid, result: &Result<Vec<TaskItem>, String>) {
+        if let Some(d) = &mut self.dialog
+            && d.target.action == Action::Buy
+            && d.target.root == object
+        {
+            d.inventory = Some(result.clone());
+        }
+    }
     pub fn on_contents(&mut self, object: Uuid, result: Result<Vec<aurora_net::inventory::InvItem>, String>) {
         if let Some(c) = &mut self.contents
             && c.target.object == object
@@ -252,6 +264,7 @@ impl Interactions {
                 String::new()
             },
             prices: None,
+            inventory: None,
             error: None,
             opened: Instant::now(),
         });
@@ -263,6 +276,12 @@ impl Interactions {
             out.push(NetCommand::RequestPayPrice {
                 handle: target.key.region,
                 object: target.object,
+            });
+        } else if target.action == Action::Buy {
+            out.push(NetCommand::RequestTaskInventory {
+                handle: target.key.region,
+                local_id: target.key.local_id,
+                object: target.root,
             });
         }
         out
@@ -330,13 +349,25 @@ impl Interactions {
             if !(1..=3).contains(&p.sale_type) {
                 return None;
             }
-            let folder = world
-                .inventory
-                .folders
-                .values()
-                .find(|f| !f.library && f.info.type_default == 6)
-                .map(|f| f.info.id)
-                .unwrap_or(world.inventory.root);
+            if p.sale_type == 3
+                && !d.inventory.as_ref().is_some_and(|r| {
+                    r.as_ref()
+                        .is_ok_and(|items| items.iter().any(|item| purchase_item(item, world.agent_id, 3)))
+                })
+            {
+                return None;
+            }
+            let folder = if p.sale_type == 3 {
+                world.inventory.root
+            } else {
+                world
+                    .inventory
+                    .folders
+                    .values()
+                    .find(|f| !f.library && f.info.type_default == 6)
+                    .map(|f| f.info.id)
+                    .unwrap_or(world.inventory.root)
+            };
             if folder.is_nil() {
                 d.error = Some("Le dossier Objets n'est pas encore disponible.".into());
                 return None;
@@ -364,6 +395,15 @@ impl Interactions {
         self.dialog = None;
         Some(out)
     }
+}
+
+/// LLFloaterBuy / LLFloaterBuyContents::inventoryChanged: only transferable
+/// items are delivered; a contents sale also requires the seller to copy them.
+pub fn purchase_item(item: &TaskItem, buyer: Uuid, sale_type: u8) -> bool {
+    !item.is_folder
+        && item.asset_type >= 0
+        && ((!item.group_owned && item.owner_id == buyer) || item.owner_mask & perm::TRANSFER != 0)
+        && (sale_type != 3 || item.owner_mask & perm::COPY != 0)
 }
 
 #[cfg(test)]
@@ -552,7 +592,7 @@ mod tests {
         assert!(state.confirm(&w, None).is_none());
     }
     #[test]
-    fn confirms_original_copy_and_contents_to_the_objects_folder() {
+    fn confirms_original_copy_to_objects_and_contents_to_inventory_root() {
         let w = world();
         let idx = w.objects.index_of_uuid(&crate::demo::action_id(974)).unwrap();
         for sale_type in 1..=3 {
@@ -565,10 +605,85 @@ mod tests {
                 sale_price: 10,
                 ..Default::default()
             }]);
+            if sale_type == 3 {
+                assert!(state.confirm(&w, None).is_none());
+                state.on_purchase_inventory(
+                    t.root,
+                    &Ok(vec![TaskItem {
+                        asset_type: 6,
+                        owner_mask: perm::COPY | perm::TRANSFER,
+                        ..Default::default()
+                    }]),
+                );
+            }
+            let expected_folder = if sale_type == 3 {
+                w.inventory.root
+            } else {
+                w.inventory
+                    .folders
+                    .values()
+                    .find(|f| !f.library && f.info.type_default == 6)
+                    .map(|f| f.info.id)
+                    .unwrap_or(w.inventory.root)
+            };
             assert!(
-                matches!(state.confirm(&w, None), Some(NetCommand::BuyObject { local_id: 971, price: 10, sale_type: ty, folder, .. }) if ty == sale_type && !folder.is_nil())
+                matches!(state.confirm(&w, None), Some(NetCommand::BuyObject { local_id: 971, price: 10, sale_type: ty, folder, .. }) if ty == sale_type && folder == expected_folder)
             );
         }
+    }
+
+    #[test]
+    fn purchase_preview_filters_items_by_delivery_permissions() {
+        let buyer = Uuid::from_u128(1);
+        let mut item = TaskItem {
+            asset_type: 7,
+            owner_id: Uuid::from_u128(2),
+            owner_mask: perm::TRANSFER,
+            ..Default::default()
+        };
+        assert!(purchase_item(&item, buyer, 1));
+        assert!(purchase_item(&item, buyer, 2));
+        assert!(!purchase_item(&item, buyer, 3));
+        item.owner_mask |= perm::COPY;
+        assert!(purchase_item(&item, buyer, 3));
+        item.owner_mask = perm::COPY;
+        assert!(!purchase_item(&item, buyer, 2));
+        item.owner_id = buyer;
+        assert!(purchase_item(&item, buyer, 3));
+        item.group_owned = true;
+        assert!(!purchase_item(&item, buyer, 3));
+        item.owner_mask |= perm::TRANSFER;
+        item.is_folder = true;
+        assert!(!purchase_item(&item, buyer, 3));
+        item.is_folder = false;
+        item.asset_type = -1;
+        assert!(!purchase_item(&item, buyer, 2));
+    }
+
+    #[test]
+    fn purchase_inventory_is_requested_on_the_root_and_empty_contents_cannot_be_bought() {
+        let w = world();
+        let mut state = Interactions::default();
+        let idx = w.objects.index_of_uuid(&crate::demo::action_id(974)).unwrap();
+        let t = target(&w, idx, &state.props).unwrap();
+        assert!(
+            state
+                .open(t)
+                .iter()
+                .any(|cmd| matches!(cmd, NetCommand::RequestTaskInventory {object, local_id: 971, ..} if *object == t.root))
+        );
+        state.on_purchase_inventory(t.clicked_id, &Ok(Vec::new()));
+        assert!(state.dialog.as_ref().unwrap().inventory.is_none());
+        state.on_properties(&[ObjectProps {
+            object_id: t.root,
+            sale_type: 3,
+            sale_price: 10,
+            ..Default::default()
+        }]);
+        state.on_purchase_inventory(t.root, &Ok(Vec::new()));
+        assert!(state.confirm(&w, None).is_none());
+        state.on_purchase_inventory(t.root, &Err("Indisponible".into()));
+        assert!(state.confirm(&w, None).is_none());
     }
     #[test]
     fn sit_disappears_while_seated_and_full_updates_keep_the_action() {

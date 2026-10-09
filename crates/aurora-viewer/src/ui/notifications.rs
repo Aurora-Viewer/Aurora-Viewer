@@ -1,6 +1,8 @@
 //! Notification center: bell of the navigation bar (unread badge), the
 //! list it opens and the toasts shown when something arrives — the
 //! Firestorm notification well / toasts, flattened to Aurora cards.
+//! Script grids follow LLToastNotifyPanel::updateButtonsLayout
+//! (indra/newview/lltoastnotifypanel.cpp, originally LGPL 2.1).
 
 use super::icons::Icons;
 use crate::theme::Palette;
@@ -73,6 +75,7 @@ fn card(ui: &mut egui::Ui, p: &Palette, icons: &Icons, n: &mut Notification, toa
     let mut out = None;
     let (icon, accent) = kind_style(p, n.kind);
     let fill = if toast || !n.read { p.panel } else { p.bar };
+    let script = matches!(n.data, Data::Dialog { .. });
     egui::Frame::new()
         .fill(fill)
         .stroke(egui::Stroke::new(1.0, if toast { accent.gamma_multiply(0.6) } else { p.raised }))
@@ -80,6 +83,9 @@ fn card(ui: &mut egui::Ui, p: &Palette, icons: &Icons, n: &mut Notification, toa
         .inner_margin(egui::Margin::same(8))
         .show(ui, |ui| {
             ui.set_width(WIDTH - 18.0);
+            if script {
+                ui.spacing_mut().interact_size.y = 24.0;
+            }
             ui.horizontal(|ui| {
                 let (r, _) = ui.allocate_exact_size(Vec2::splat(18.0), egui::Sense::hover());
                 if let Some(t) = icons.get(icon) {
@@ -109,7 +115,9 @@ fn card(ui: &mut egui::Ui, p: &Palette, icons: &Icons, n: &mut Notification, toa
                             if resp.hovered() { p.ink } else { p.muted },
                         );
                     }
-                    let tip = if toast {
+                    let tip = if script {
+                        "Ignorer ce menu"
+                    } else if toast {
                         "Masquer (reste dans la cloche)"
                     } else if n.interactive() && !matches!(n.data, Data::Url(_)) {
                         "Fermer (refuse l'offre)"
@@ -124,10 +132,16 @@ fn card(ui: &mut egui::Ui, p: &Palette, icons: &Icons, n: &mut Notification, toa
             });
             if !n.body.is_empty() {
                 ui.add_space(2.0);
-                ui.horizontal(|ui| {
-                    ui.add_space(22.0);
-                    ui.add(egui::Label::new(RichText::new(&n.body).size(12.0).color(p.muted)).wrap());
-                });
+                if script {
+                    egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
+                        ui.add(egui::Label::new(RichText::new(&n.body).size(12.0).color(p.ink)).wrap());
+                    });
+                } else {
+                    ui.horizontal(|ui| {
+                        ui.add_space(22.0);
+                        ui.add(egui::Label::new(RichText::new(&n.body).size(12.0).color(p.muted)).wrap());
+                    });
+                }
             }
             let mut buttons: Vec<(String, Response, bool)> = Vec::new();
             match &n.data {
@@ -149,10 +163,36 @@ fn card(ui: &mut egui::Ui, p: &Palette, icons: &Icons, n: &mut Notification, toa
                     buttons.push(("Refuser".into(), Response::Decline, false));
                 }
                 Data::Url(_) => buttons.push(("Ouvrir le lien".into(), Response::OpenUrl, true)),
-                Data::Dialog { buttons: b, .. } => {
-                    for (i, label) in b.iter().enumerate() {
-                        buttons.push((label.clone(), Response::Button(i), false));
+                Data::Dialog {
+                    buttons: b, own_object, ..
+                } => {
+                    ui.add_space(8.0);
+                    let width = (ui.available_width() - 12.0) / 3.0;
+                    // Reverse rows, never the labels or their wire indices.
+                    for row in script_rows(b.len()) {
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 6.0;
+                            for index in row.clone() {
+                                if super::widgets::flat_button_sized(ui, p, &b[index], Vec2::new(width, 24.0)).clicked() {
+                                    out = Some(Response::Button(index));
+                                }
+                            }
+                            for _ in row.len()..3 {
+                                ui.allocate_space(Vec2::new(width, 24.0));
+                            }
+                        });
                     }
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if super::widgets::flat_button_sized(ui, p, "Ignorer", Vec2::new(72.0, 22.0)).clicked() {
+                                out = Some(Response::Dismiss);
+                            }
+                            if !own_object && super::widgets::flat_button_sized(ui, p, "Bloquer", Vec2::new(72.0, 22.0)).clicked() {
+                                out = Some(Response::Block);
+                            }
+                        });
+                    });
                 }
                 Data::TextBox { .. } => {
                     ui.add_space(4.0);
@@ -211,8 +251,11 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, list: &mut Notifica
     if let Some(last) = list.list.iter().map(|n| n.id).max() {
         nui.last_seen = nui.last_seen.max(last);
     }
-    nui.toasts
-        .retain(|(id, until)| *until > now && list.list.iter().any(|n| n.id == *id));
+    nui.toasts.retain(|(id, until)| {
+        list.list
+            .iter()
+            .any(|n| n.id == *id && (*until > now || matches!(n.data, Data::Dialog { .. })))
+    });
     if nui.toasts.len() > MAX_TOASTS {
         let extra = nui.toasts.len() - MAX_TOASTS;
         nui.toasts.drain(..extra);
@@ -296,7 +339,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, list: &mut Notifica
                     if let Some(n) = list.list.iter_mut().find(|n| n.id == id) {
                         match card(ui, p, icons, n, true) {
                             // closing a toast only hides it: the offer waits in the list
-                            Some(Response::Dismiss) => nui.toasts.retain(|(t, _)| *t != id),
+                            Some(Response::Dismiss) if !matches!(n.data, Data::Dialog { .. }) => nui.toasts.retain(|(t, _)| *t != id),
                             Some(r) => answers.push((id, r)),
                             None => {}
                         }
@@ -307,4 +350,21 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, list: &mut Notifica
         ctx.request_repaint_after(std::time::Duration::from_millis(500));
     }
     answers
+}
+
+fn script_rows(count: usize) -> impl Iterator<Item = std::ops::Range<usize>> {
+    (0..count.div_ceil(3)).rev().map(move |row| row * 3..(row * 3 + 3).min(count))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn script_rows_keep_original_indices_in_bottom_up_groups_of_three() {
+        assert_eq!(script_rows(12).collect::<Vec<_>>(), vec![9..12, 6..9, 3..6, 0..3]);
+        assert_eq!(script_rows(4).collect::<Vec<_>>(), vec![3..4, 0..3]);
+        assert_eq!(script_rows(2).collect::<Vec<_>>(), vec![0..2]);
+        assert_eq!(script_rows(0).count(), 0);
+    }
 }

@@ -900,6 +900,12 @@ impl World {
                     let buttons = if buttons.is_empty() { vec!["OK".to_owned()] } else { buttons };
                     notifications::Data::Dialog {
                         object: object_id,
+                        object_name: object_name.clone(),
+                        own_object: self
+                            .objects
+                            .index_of_uuid(&object_id)
+                            .and_then(|idx| self.objects.get(idx))
+                            .is_some_and(|o| o.owner_id == self.agent_id),
                         channel,
                         buttons,
                     }
@@ -1465,6 +1471,19 @@ impl World {
 
     /// Answer a notification: messages to send and a URL to open.
     pub fn respond_notification(&mut self, id: u64, r: notifications::Response) -> (Vec<aurora_net::NetCommand>, Option<String>) {
+        if matches!(r, notifications::Response::Block) {
+            if let Some(notifications::Data::Dialog {
+                object,
+                object_name,
+                own_object: false,
+                ..
+            }) = self.notifications.list.iter().find(|n| n.id == id).map(|n| n.data.clone())
+                && let Err(error) = self.block(object, &object_name, mutes::MuteType::Object)
+            {
+                self.system_message(error);
+            }
+            return (Vec::new(), None);
+        }
         // friendship_offer_callback: formFriendship on accept
         if matches!(r, notifications::Response::Accept)
             && let Some(notifications::Data::Friend { from, .. }) =
@@ -1787,5 +1806,32 @@ mod motion_tests {
         assert!(world.agent.is_sitting() && !world.agent.seated);
         world.apply(sit(me, crate::demo::IDLE_ANIM));
         assert!(!world.agent.is_sitting());
+    }
+
+    #[test]
+    fn script_menu_ignore_sends_no_reply_and_block_suppresses_future_menus() {
+        let (mut world, _, _) = fixture();
+        let object_id = Uuid::from_u128(0x4321);
+        let menu = || NetEvent::ScriptDialog {
+            object_id,
+            object_name: "Menu de test".into(),
+            owner_name: "Vendeur de test".into(),
+            message: "Choisissez".into(),
+            channel: -42,
+            buttons: vec!["Oui".into(), "Non".into()],
+        };
+        world.apply(menu());
+        let id = world.notifications.list.last().unwrap().id;
+        assert!(world.respond_notification(id, notifications::Response::Dismiss).0.is_empty());
+        assert!(world.notifications.list.iter().all(|n| n.id != id));
+        assert!(!world.mutes.is_muted_id(&object_id));
+        world.apply(menu());
+        let id = world.notifications.list.last().unwrap().id;
+        assert!(world.respond_notification(id, notifications::Response::Block).0.is_empty());
+        assert!(world.mutes.is_muted_id(&object_id));
+        assert!(world.notifications.list.iter().all(|n| n.id != id));
+        let count = world.notifications.list.len();
+        world.apply(menu());
+        assert_eq!(world.notifications.list.len(), count);
     }
 }

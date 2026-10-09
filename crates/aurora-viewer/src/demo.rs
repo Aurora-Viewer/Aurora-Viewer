@@ -692,10 +692,20 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
             }]
         }
         aurora_net::NetCommand::RequestObjectProperties { object, .. } if (970..=982).any(|id| action_id(id) == *object) => {
+            let mode = std::env::var("AURORA_DEMO_ACTIONS").unwrap_or_default();
             vec![NetEvent::ObjectProperties(vec![aurora_net::build::ObjectProps {
                 object_id: *object,
                 owner_id: DEMO_NOVA,
-                sale_type: if *object == action_id(971) { 2 } else { 0 },
+                sale_type: if *object == action_id(971) {
+                    match mode.as_str() {
+                        "buy-original" => 1,
+                        "buy-contents" | "buy-empty" => 3,
+                        _ => 2,
+                    }
+                } else {
+                    0
+                },
+                next_owner_mask: aurora_net::build::perm::TRANSFER,
                 sale_price: 10,
                 name: if *object == action_id(971) {
                     "Cube à acheter"
@@ -708,10 +718,43 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
             }])]
         }
         aurora_net::NetCommand::RequestPayPrice { object, .. } if *object == action_id(972) => {
+            let (default, buttons) = match std::env::var("AURORA_DEMO_ACTIONS").unwrap_or_default().as_str() {
+                "pay-layout" => (1956, vec![1956, 3913, 5870, 7826]),
+                "pay-hidden" => (-1, vec![1956, -1, 5870, -1]),
+                "pay-large" => (i32::MAX, vec![i32::MAX, 3913, 5870, 7826]),
+                _ => (10, vec![1, 5, 10, 20]),
+            };
             vec![NetEvent::PayPrice {
                 object: *object,
-                default: 10,
-                buttons: vec![1, 5, 10, 20],
+                default,
+                buttons,
+            }]
+        }
+        aurora_net::NetCommand::RequestTaskInventory { object, .. } if *object == action_id(971) => {
+            use aurora_net::build::{TaskItem, perm};
+            let empty = std::env::var("AURORA_DEMO_ACTIONS").is_ok_and(|m| m == "buy-empty");
+            let items = [
+                (7, "Règles du jeu – Français", perm::COPY | perm::TRANSFER),
+                (6, "Jeu de cartes", perm::TRANSFER),
+            ]
+            .into_iter()
+            .enumerate()
+            .map(|(index, (ty, name, next))| TaskItem {
+                item_id: action_id(995 + index as u32),
+                parent_id: *object,
+                owner_id: DEMO_NOVA,
+                asset_type: ty,
+                inv_type: ty,
+                name: name.into(),
+                owner_mask: if empty { 0 } else { perm::COPY | perm::TRANSFER },
+                next_owner_mask: next,
+                ..Default::default()
+            })
+            .collect();
+            vec![NetEvent::TaskInventory {
+                object: *object,
+                serial: None,
+                result: Ok(items),
             }]
         }
         aurora_net::NetCommand::RequestTaskInventory { object, .. } if *object == action_id(976) => {
@@ -926,7 +969,12 @@ pub fn action_events() -> Vec<NetEvent> {
             o.position = Vec3::new(138.0, 126.0, floor_at(138.0, 126.0) + 0.6);
         }
     }
-    vec![NetEvent::ObjectUpdates { handle: HANDLE, objects }, NetEvent::Balance(250)]
+    let balance = if matches!(mode.as_str(), "pay-layout" | "pay-hidden" | "pay-large") {
+        i32::MAX
+    } else {
+        250
+    };
+    vec![NetEvent::ObjectUpdates { handle: HANDLE, objects }, NetEvent::Balance(balance)]
 }
 
 /// AURORA_DEMO_BAN: the south-east lot (x >= 192 m, y < 64 m) is banned.
@@ -1572,13 +1620,50 @@ pub fn events() -> Vec<NetEvent> {
     };
     ev.push(im(22, "Viens voir le lagon au coucher du soleil !", Vec::new()));
     ev.push(im(4, "Lanterne aurorale", vec![6]));
+    let menu = std::env::var("AURORA_DEMO_DIALOG").unwrap_or_default();
+    let (object_name, message, buttons) = if !menu.is_empty() {
+        let mut buttons = [
+            "× Close",
+            "« Back",
+            "▶▶",
+            "Threshold",
+            "Triplex*",
+            " ",
+            "Last One",
+            "NewCity 2",
+            "Skiplit 2",
+            "Bid & Block",
+            "Can't Stop",
+            "Hearts",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+        if menu == "4" {
+            buttons.truncate(4);
+        }
+        if menu == "long" {
+            buttons[9] = "Un libellé de bouton très long".into();
+        }
+        (
+            "Table de jeux",
+            "==== Table de jeux ====\n\nCurrent game category: \"8 Players\"\n\nSelect a game",
+            buttons,
+        )
+    } else {
+        (
+            "Fontaine",
+            "Choisis une couleur pour l'eau :",
+            vec!["Violet".into(), "Turquoise".into(), "Ambre".into()],
+        )
+    };
     ev.push(NetEvent::ScriptDialog {
         object_id: Uuid::from_u128(0xF0),
-        object_name: "Fontaine".into(),
+        object_name: object_name.into(),
         owner_name: "Loup Violet".into(),
-        message: "Choisis une couleur pour l'eau :".into(),
+        message: message.into(),
         channel: -4242,
-        buttons: vec!["Violet".into(), "Turquoise".into(), "Ambre".into()],
+        buttons,
     });
     ev
 }

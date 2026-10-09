@@ -648,6 +648,7 @@ impl App {
             }
             NetEvent::PayPrice { object, default, buttons } => self.interactions.on_prices(object, default, buttons),
             NetEvent::TaskInventory { object, serial, result } => {
+                self.interactions.on_purchase_inventory(object, &result);
                 let items = result
                     .as_ref()
                     .map(|v| v.iter().filter_map(|i| i.to_inv_item()).collect())
