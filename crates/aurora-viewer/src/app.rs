@@ -3110,7 +3110,7 @@ impl App {
                 .banlines
                 .update(&mut gfx.renderer, &self.world, self.settings.maps.ban_lines, self.camera.position);
             self.frame_profile.lap(Lap::Extras);
-            self.scene.build_lists(&cull, self.settings.shadows);
+            self.scene.build_lists(&mut gfx.renderer, &cull, self.settings.shadows);
             self.frame_profile.lap(Lap::Lists);
             if self.demo && std::env::var_os("AURORA_DEMO_ANIMESH").is_some() && self.frame_count.is_multiple_of(120) {
                 self.scene.log_demo_animesh(&self.world);

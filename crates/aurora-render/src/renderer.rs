@@ -10,6 +10,9 @@
 //! 8. TAA (optional), tonemapping, egui overlay
 
 use crate::arena::{GeometryArena, MeshAlloc, RecordStore};
+use crate::gpu_cull::{
+    BIN_PROBE, BIN_REFL_MIRROR, BIN_REFL_WATER, BIN_SHADOW, CullFrame, GpuCull, MAIN_BINS, REGION_PRE1, REGION_PRE2, frame_flags,
+};
 use crate::textures::{MipLevel, TextureTable};
 use crate::types::*;
 use bytemuck::{Pod, Zeroable};
@@ -867,6 +870,11 @@ pub struct Renderer {
     indirect: wgpu::Buffer,
     indirect_cpu: Vec<DrawIndexedIndirect>,
     occlusion: crate::occlusion::Occlusion,
+    /// GPU-driven draw lists: the scene's face and object tables, the
+    /// compute culling and its bins (gpu_cull.rs).
+    pub cull: GpuCull,
+    /// The device can draw the GPU lists (and AURORA_CPU_CULL is not set).
+    gpu_cull: bool,
     /// Depth under the cursor (hover without waiting, clicks).
     depth_pick: crate::pick::DepthPick,
     impostors: Impostors,
@@ -1047,19 +1055,21 @@ struct PipeDesc<'a> {
 /// Draws of `list` whose bounding sphere touches the view of `view_proj`
 /// (side and near planes; reverse-Z infinite projections have no far plane).
 fn cull_to_view(view_proj: Mat4, list: &[ShadowCaster]) -> Vec<DrawCmd> {
-    let m = view_proj.transpose();
-    let norm = |p: Vec4| p / p.truncate().length().max(1e-6);
-    let planes = [
-        norm(m.w_axis + m.x_axis),
-        norm(m.w_axis - m.x_axis),
-        norm(m.w_axis + m.y_axis),
-        norm(m.w_axis - m.y_axis),
-        // reverse-Z: z_clip <= w_clip in front of the near plane
-        norm(m.w_axis - m.z_axis),
-    ];
+    let planes = crate::gpu_cull::view_planes(view_proj).map(|p| p.to_array());
     list.iter()
-        .filter(|c| planes.iter().all(|p| p.truncate().dot(c.center) + p.w >= -c.radius))
+        .filter(|c| crate::gpu_cull::sphere_in(&planes, c.center, c.radius))
         .map(|c| c.cmd)
+        .collect()
+}
+
+/// Draws of `list` whose `bounds` touch the view (radius 0: always kept).
+fn cull_cmds_to_view(view_proj: Mat4, list: &[DrawCmd]) -> Vec<DrawCmd> {
+    let planes = crate::gpu_cull::view_planes(view_proj).map(|p| p.to_array());
+    list.iter()
+        .filter(|c| {
+            c.bounds[3] <= 0.0 || crate::gpu_cull::sphere_in(&planes, Vec3::new(c.bounds[0], c.bounds[1], c.bounds[2]), c.bounds[3])
+        })
+        .copied()
         .collect()
 }
 
@@ -1532,7 +1542,9 @@ struct Ranges {
     select_child: (u64, u32),
     refl_water: (u64, u32),
     refl_mirror: (u64, u32),
-    refl_terrain: (u64, u32),
+    refl_terrain_water: (u64, u32),
+    refl_terrain_mirror: (u64, u32),
+    refl_terrain_probe: (u64, u32),
     probe: (u64, u32),
     shadow: [(u64, u32); CASCADES],
 }
@@ -1610,6 +1622,10 @@ impl Renderer {
         }
         if afeat.contains(wgpu::Features::PARTIALLY_BOUND_BINDING_ARRAY) {
             features |= wgpu::Features::PARTIALLY_BOUND_BINDING_ARRAY;
+        }
+        // GPU draw lists (gpu_cull.rs): draw counts written by the GPU
+        if afeat.contains(wgpu::Features::MULTI_DRAW_INDIRECT_COUNT) {
+            features |= wgpu::Features::MULTI_DRAW_INDIRECT_COUNT;
         }
         let max_textures = alim
             .max_binding_array_elements_per_shader_stage
@@ -1962,6 +1978,16 @@ impl Renderer {
         });
         let depth_pick = crate::pick::DepthPick::new(&device);
         let occlusion = crate::occlusion::Occlusion::new(&device);
+        let cull = GpuCull::new(&device);
+        let gpu_cull = GpuCull::supported(&device);
+        log::info!(
+            "draw lists: {}",
+            if gpu_cull {
+                "culled on the GPU (multi_draw_indexed_indirect_count)"
+            } else {
+                "built on the CPU (no MULTI_DRAW_INDIRECT_COUNT, or AURORA_CPU_CULL)"
+            }
+        );
         let impostors = Impostors::new(
             &device,
             &frame_layout,
@@ -2034,6 +2060,8 @@ impl Renderer {
             indirect,
             indirect_cpu: Vec::new(),
             occlusion,
+            cull,
+            gpu_cull,
             depth_pick,
             impostors,
             cull_cpu: Vec::new(),
@@ -3005,6 +3033,11 @@ impl Renderer {
     }
 
     /// Supported MSAA sample counts (besides 1).
+    /// The draw lists can be culled on the GPU (`DrawLists::gpu`).
+    pub fn gpu_culling(&self) -> bool {
+        self.gpu_cull
+    }
+
     pub fn msaa_supported(&self) -> &[u32] {
         &self.msaa_supported
     }
@@ -3415,9 +3448,8 @@ impl Renderer {
         if let Some(t) = &mut self.timer {
             t.harvest();
         }
-        {
-            self.occlusion.harvest();
-        }
+        self.occlusion.harvest();
+        self.cull.harvest();
         self.depth_pick.harvest();
 
         // egui textures first, so they are never lost on a skipped frame
@@ -3447,6 +3479,7 @@ impl Renderer {
 
         // ---- resources
         self.records.flush(&self.device, &self.queue);
+        self.cull.objects.flush(&self.device, &self.queue);
         if self.records.generation != self.records_generation {
             self.records_bind_group = Self::make_records_bg(
                 &self.device,
@@ -3673,10 +3706,13 @@ impl Renderer {
             ..Default::default()
         };
         let main_count = cpu.len();
+        // GPU draw lists this frame (gpu_cull.rs)
+        let gpu = lists.gpu.filter(|_| self.gpu_cull);
         // GPU occlusion of the main draws (AURORA_NO_OCCLUSION turns it off)
         static NO_OCCLUSION: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        let occl =
-            self.settings.occlusion && main_count > 0 && !*NO_OCCLUSION.get_or_init(|| std::env::var_os("AURORA_NO_OCCLUSION").is_some());
+        let occl = self.settings.occlusion
+            && (main_count > 0 || gpu.is_some())
+            && !*NO_OCCLUSION.get_or_init(|| std::env::var_os("AURORA_NO_OCCLUSION").is_some());
         if occl {
             use crate::occlusion::{CullDraw, KIND_NONE, KIND_PREPASS, KIND_TESTED};
             let mut cull = std::mem::take(&mut self.cull_cpu);
@@ -3714,6 +3750,24 @@ impl Renderer {
             );
             self.cull_cpu = cull;
         }
+        if let Some(g) = &gpu {
+            let probe = capture.filter(|c| !c.sky_only);
+            let mut flags = 0;
+            for (on, bit) in [
+                (g.shadows && f.shadows, frame_flags::SHADOWS),
+                (g.reflections, frame_flags::REFLECTIONS),
+                (do_water_refl, frame_flags::WATER),
+                (mirror.is_some(), frame_flags::MIRROR),
+                (probe.is_some(), frame_flags::PROBE),
+                (occl, frame_flags::OCCLUSION),
+            ] {
+                if on {
+                    flags |= bit;
+                }
+            }
+            let frame = CullFrame::new(g, &cascades, [water_vp, mirror_vp, probe_vp], flags);
+            self.cull.prepare(&self.device, &self.queue, self.records.faces.len(), frame);
+        }
         let cpu = &mut self.indirect_cpu;
         rg.debug_red = push(cpu, &lists.debug_red);
         rg.debug_blue = push(cpu, &lists.debug_blue);
@@ -3730,8 +3784,15 @@ impl Renderer {
         if mirror.is_some() {
             rg.refl_mirror = push(cpu, &cull_to_view(mirror_vp, &lists.reflection));
         }
-        if do_water_refl || mirror.is_some() || capture.is_some() {
-            rg.refl_terrain = push(cpu, &lists.reflection_terrain);
+        // terrain of the reflection passes, each culled to its own frustum
+        if capture.is_some() {
+            rg.refl_terrain_probe = push(cpu, &cull_cmds_to_view(probe_vp, &lists.reflection_terrain));
+        }
+        if do_water_refl {
+            rg.refl_terrain_water = push(cpu, &cull_cmds_to_view(water_vp, &lists.reflection_terrain));
+        }
+        if mirror.is_some() {
+            rg.refl_terrain_mirror = push(cpu, &cull_cmds_to_view(mirror_vp, &lists.reflection_terrain));
         }
         for (i, sl) in shadow_lists.iter().enumerate() {
             rg.shadow[i] = push(cpu, sl);
@@ -3759,6 +3820,16 @@ impl Renderer {
         stats.shadow_draws = shadow_lists.iter().map(|l| l.len() as u32).sum();
         stats.particles = n_particles;
         stats.occluded = occl.then_some(self.occlusion.last_hidden);
+        if gpu.is_some() {
+            // the GPU bins, read back a frame or two late
+            let c = self.cull.last;
+            stats.draws += c.main_draws();
+            stats.shadow_draws += c.shadow_draws();
+            stats.triangles += c.triangles as u64;
+            stats.occluded = occl.then_some(self.occlusion.last_hidden + c.hidden);
+            stats.visible_objects = Some(c.visible_objects);
+            stats.gpu_cull = true;
+        }
 
         prof.push(("lists", Instant::now()));
         let mut encoder = self
@@ -3772,6 +3843,26 @@ impl Renderer {
             first_pass = false;
             first
         };
+        // ---- GPU draw lists: every face against every view of the frame
+        let gpu_on = gpu.is_some();
+        if gpu_on {
+            let ts = if take_first() {
+                self.timer.as_ref().map(|t| wgpu::ComputePassTimestampWrites {
+                    query_set: &t.query_set,
+                    beginning_of_pass_write_index: Some(0),
+                    end_of_pass_write_index: None,
+                })
+            } else {
+                None
+            };
+            self.cull.encode(
+                &self.device,
+                &mut encoder,
+                self.records.faces.buffer(),
+                self.occlusion.visibility(),
+                ts,
+            );
+        }
 
         let geo = &self.geometry;
         let bind_mesh = |pass: &mut wgpu::RenderPass, frame_bg: &wgpu::BindGroup| {
@@ -3796,6 +3887,23 @@ impl Renderer {
                 calls.set(calls.get() + 1);
                 pass.set_pipeline(pipe);
                 pass.multi_draw_indexed_indirect(buf, r.0, r.1);
+            }
+        };
+        // a GPU bin (argument `region`, count of `bin`); nothing on the CPU lists
+        let cull = &self.cull;
+        let draw_bin = |pass: &mut wgpu::RenderPass, pipe: Option<&wgpu::RenderPipeline>, region: usize, bin: usize| {
+            if gpu_on {
+                calls.set(calls.get() + 1);
+                if let Some(pipe) = pipe {
+                    pass.set_pipeline(pipe);
+                }
+                pass.multi_draw_indexed_indirect_count(
+                    cull.args(),
+                    cull.region_offset(region),
+                    cull.counts(),
+                    GpuCull::count_offset(bin),
+                    cull.cap(),
+                );
             }
         };
 
@@ -3835,7 +3943,7 @@ impl Renderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            if rg.shadow.iter().any(|r| r.1 > 0) {
+            if gpu_on || rg.shadow.iter().any(|r| r.1 > 0) {
                 pass.set_pipeline(&self.pipelines.shadow);
                 pass.set_bind_group(1, &self.records_bind_group, &[]);
                 pass.set_bind_group(2, &self.textures.bind_group, &[]);
@@ -3846,20 +3954,29 @@ impl Renderer {
             let size = self.shadow_size;
             for ci in 0..CASCADES {
                 let (off, count) = rg.shadow[ci];
-                if count == 0 {
+                if count == 0 && !gpu_on {
                     continue;
                 }
                 let (x, y) = ((ci as u32 % 2) * size, (ci as u32 / 2) * size);
                 pass.set_viewport(x as f32, y as f32, size as f32, size as f32, 0.0, 1.0);
                 pass.set_scissor_rect(x, y, size, size);
                 pass.set_bind_group(3, &self.shadow_bind_groups[ci], &[]);
-                pass.multi_draw_indexed_indirect(&self.indirect, off, count);
-                calls.set(calls.get() + 1);
+                if count > 0 {
+                    pass.multi_draw_indexed_indirect(&self.indirect, off, count);
+                    calls.set(calls.get() + 1);
+                }
+                draw_bin(&mut pass, None, BIN_SHADOW + ci, BIN_SHADOW + ci);
             }
         }
 
         prof.push(("shadows", Instant::now()));
         mark(&mut encoder, MARK_SHADOWS_END);
+        let pre_pipes: [&wgpu::RenderPipeline; MAIN_BINS] = [
+            &self.pipelines.pre_opaque,
+            &self.pipelines.pre_opaque_2s,
+            &self.pipelines.pre_mask,
+            &self.pipelines.pre_mask_2s,
+        ];
         // ---- depth prepass (single sample); with occlusion, phase 1 draws
         // what was visible last frame
         if occl {
@@ -3889,11 +4006,25 @@ impl Renderer {
             draw_from(&mut pass, &self.pipelines.pre_opaque_2s, pre, rg.opaque_2s);
             draw_from(&mut pass, &self.pipelines.pre_mask, pre, rg.mask);
             draw_from(&mut pass, &self.pipelines.pre_mask_2s, pre, rg.mask_2s);
+            let first = if occl { REGION_PRE1 } else { 0 };
+            for (b, pipe) in pre_pipes.iter().enumerate() {
+                draw_bin(&mut pass, Some(pipe), first + b, b);
+            }
         }
         // ---- occlusion: Hi-Z of phase 1, test of every draw, then phase 2
         // adds the draws visible now that phase 1 did not draw
         if occl {
             self.occlusion.encode_cull(&self.device, &mut encoder, &self.indirect);
+            if let (true, Some(hiz)) = (gpu_on, self.occlusion.hiz_view()) {
+                cull.encode_occlusion(
+                    &self.device,
+                    &mut encoder,
+                    self.records.faces.buffer(),
+                    self.occlusion.visibility(),
+                    self.occlusion.params(),
+                    hiz,
+                );
+            }
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("depth prepass 2"),
                 color_attachments: &[],
@@ -3915,6 +4046,12 @@ impl Renderer {
             draw_from(&mut pass, &self.pipelines.pre_opaque_2s, pre, rg.opaque_2s);
             draw_from(&mut pass, &self.pipelines.pre_mask, pre, rg.mask);
             draw_from(&mut pass, &self.pipelines.pre_mask_2s, pre, rg.mask_2s);
+            for (b, pipe) in pre_pipes.iter().enumerate() {
+                draw_bin(&mut pass, Some(pipe), REGION_PRE2 + b, b);
+            }
+        }
+        if gpu_on {
+            cull.copy_counts(&mut encoder);
         }
 
         prof.push(("prepass", Instant::now()));
@@ -3957,6 +4094,8 @@ impl Renderer {
                 &self.groups.refl[0],
                 "water reflection",
                 rg.refl_water,
+                rg.refl_terrain_water,
+                BIN_REFL_WATER,
             ),
             (
                 mirror.is_some(),
@@ -3964,9 +4103,11 @@ impl Renderer {
                 &self.groups.refl[1],
                 "mirror",
                 rg.refl_mirror,
+                rg.refl_terrain_mirror,
+                BIN_REFL_MIRROR,
             ),
         ];
-        for (enabled, target, bg, label, objects) in refl_passes {
+        for (enabled, target, bg, label, objects, terrain, bin) in refl_passes {
             let (true, Some(t)) = (enabled, target) else {
                 continue;
             };
@@ -3997,8 +4138,9 @@ impl Renderer {
             bind_mesh(&mut pass, bg);
             pass.set_pipeline(&self.pipelines.refl_sky);
             pass.draw(0..3, 0..1);
-            draw(&mut pass, &self.pipelines.refl_terrain, rg.refl_terrain);
+            draw(&mut pass, &self.pipelines.refl_terrain, terrain);
             draw(&mut pass, &self.pipelines.refl_obj, objects);
+            draw_bin(&mut pass, Some(&self.pipelines.refl_obj), bin, bin);
         }
 
         // ---- reflection probe: one cube face (LLReflectionMap::update ->
@@ -4032,9 +4174,10 @@ impl Renderer {
                 pass.set_pipeline(&self.pipelines.refl_sky);
                 pass.draw(0..3, 0..1);
                 // the default probe sees sky, terrain and water only
-                draw(&mut pass, &self.pipelines.refl_terrain, rg.refl_terrain);
+                draw(&mut pass, &self.pipelines.refl_terrain, rg.refl_terrain_probe);
                 if !c.sky_only {
                     draw(&mut pass, &self.pipelines.refl_obj, rg.probe);
+                    draw_bin(&mut pass, Some(&self.pipelines.refl_obj), BIN_PROBE, BIN_PROBE);
                 }
             }
             if c.finish {
@@ -4183,10 +4326,16 @@ impl Renderer {
             pass_mark(&mut pass, MARK_SKY_END);
             draw(&mut pass, &self.pipelines.terrain, rg.terrain);
             pass_mark(&mut pass, MARK_TERRAIN_END);
-            draw(&mut pass, &self.pipelines.opaque, rg.opaque);
-            draw(&mut pass, &self.pipelines.opaque_2s, rg.opaque_2s);
-            draw(&mut pass, &self.pipelines.mask, rg.mask);
-            draw(&mut pass, &self.pipelines.mask_2s, rg.mask_2s);
+            let scene_pipes = [
+                (&self.pipelines.opaque, rg.opaque),
+                (&self.pipelines.opaque_2s, rg.opaque_2s),
+                (&self.pipelines.mask, rg.mask),
+                (&self.pipelines.mask_2s, rg.mask_2s),
+            ];
+            for (b, (pipe, r)) in scene_pipes.into_iter().enumerate() {
+                draw(&mut pass, pipe, r);
+                draw_bin(&mut pass, Some(pipe), b, b);
+            }
             pass_mark(&mut pass, MARK_OBJECTS_END);
             // impostor cards (last: they rebind vertex buffer 0)
             if n_sprites > 0 {
@@ -4297,6 +4446,9 @@ impl Renderer {
             if let (true, Some(wire)) = (f.wireframe, &self.pipelines.debug_wire) {
                 for r in [rg.terrain, rg.opaque, rg.opaque_2s, rg.mask, rg.mask_2s, rg.blend] {
                     draw(&mut pass, wire, r);
+                }
+                for b in 0..MAIN_BINS {
+                    draw_bin(&mut pass, Some(wire), b, b);
                 }
             }
             pass_mark(&mut pass, MARK_BLEND_END);
@@ -4513,6 +4665,7 @@ impl Renderer {
             });
         }
         self.occlusion.after_submit();
+        self.cull.after_submit();
         self.depth_pick.after_submit();
         prof.push(("submit", Instant::now()));
         let encode_ms = t0.elapsed().as_secs_f32() * 1000.0;

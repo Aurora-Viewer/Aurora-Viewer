@@ -162,6 +162,26 @@ pub struct CullFrame {
     pub groups: [u32; 4],
 }
 
+impl CullFrame {
+    /// Frame parameters from the scene's view, the cascade matrices and the
+    /// water reflection, mirror and probe face view-projections (`flags`
+    /// says which are drawn); sizes are filled by `GpuCull::prepare`.
+    pub fn new(view: &GpuCullView, cascades: &[Mat4; 3], [water, mirror, probe]: [Mat4; 3], flags: u32) -> CullFrame {
+        let planes = |vp: Mat4| view_planes(vp).map(|p| p.to_array());
+        CullFrame {
+            planes: view.planes.map(|p| p.to_array()),
+            water: planes(water),
+            mirror: planes(mirror),
+            probe: planes(probe),
+            cascades: cascades.map(|m| m.to_cols_array_2d()),
+            eye: view.eye.extend(view.draw_distance).to_array(),
+            dist: [view.shadow_distance, view.reflection_distance, view.pixel_scale, 0.0],
+            sizes: [0, 0, 0, flags],
+            groups: [0; 4],
+        }
+    }
+}
+
 /// What the scene gives the renderer for the GPU culling of a frame (the
 /// renderer adds the views it computes itself: cascades, reflections).
 #[derive(Debug, Clone, Copy)]
@@ -533,7 +553,9 @@ pub struct GpuCull {
     faces: u32,
     groups: u32,
     readback: Vec<(wgpu::Buffer, Arc<AtomicBool>, bool)>,
-    copied: Option<usize>,
+    /// Readback slot of this frame's copy (set while the frame's draw
+    /// closures borrow the bins).
+    copied: std::cell::Cell<Option<usize>>,
     /// Last counts read back.
     pub last: CullCounts,
     max_groups: u32,
@@ -641,7 +663,7 @@ impl GpuCull {
             faces: 0,
             groups: 0,
             readback: Vec::new(),
-            copied: None,
+            copied: std::cell::Cell::new(None),
             last: CullCounts::default(),
             max_groups: device.limits().max_compute_workgroups_per_dimension,
         };
@@ -699,7 +721,14 @@ impl GpuCull {
     }
 
     /// Classify, scan and scatter: this frame's bins.
-    pub fn encode(&self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder, faces: &wgpu::Buffer, visibility: &wgpu::Buffer) {
+    pub fn encode(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        faces: &wgpu::Buffer,
+        visibility: &wgpu::Buffer,
+        timestamps: Option<wgpu::ComputePassTimestampWrites>,
+    ) {
         let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("cull lists"),
             layout: &self.lists_layout,
@@ -717,7 +746,7 @@ impl GpuCull {
         encoder.clear_buffer(&self.counts, 0, None);
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("gpu culling"),
-            timestamp_writes: None,
+            timestamp_writes: timestamps,
         });
         pass.set_bind_group(0, &bg, &[]);
         pass.set_pipeline(&self.classify);
@@ -767,10 +796,10 @@ impl GpuCull {
     }
 
     /// Copy this frame's counts for the statistics (mapped after the submit).
-    pub fn copy_counts(&mut self, encoder: &mut wgpu::CommandEncoder) {
+    pub fn copy_counts(&self, encoder: &mut wgpu::CommandEncoder) {
         if let Some(slot) = self.readback.iter().position(|r| !r.2) {
             encoder.copy_buffer_to_buffer(&self.counts, 0, &self.readback[slot].0, 0, (COUNTS * 4) as u64);
-            self.copied = Some(slot);
+            self.copied.set(Some(slot));
         }
     }
 
@@ -1132,7 +1161,7 @@ mod tests {
         f.sizes[0] = n_faces as u32;
         f.sizes[1] = n_obj;
         let mut encoder = device.create_command_encoder(&Default::default());
-        cull.encode(&device, &mut encoder, table.buffer(), &visibility);
+        cull.encode(&device, &mut encoder, table.buffer(), &visibility, None);
         let size = cull.args().size();
         let read = |label| {
             device.create_buffer(&wgpu::BufferDescriptor {
