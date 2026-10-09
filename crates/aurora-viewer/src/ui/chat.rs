@@ -1305,7 +1305,7 @@ fn bubble_link(ctx: &egui::Context, p: &Palette, world: &World, k: usize, rect: 
                     let tip = if place.teleport {
                         "Cliquez pour vous téléporter à cet endroit"
                     } else {
-                        "Cliquez pour voir cet endroit sur la carte"
+                        "Cliquez pour en savoir plus sur cet endroit"
                     };
                     if resp.on_hover_text(format!("{tip}\n{u}")).clicked() {
                         let l = &place.location;
@@ -1314,7 +1314,7 @@ fn bubble_link(ctx: &egui::Context, p: &Palette, world: &World, k: usize, rect: 
                             if place.teleport {
                                 CtxAction::TeleportToPlace(l.region.clone(), l.pos)
                             } else {
-                                CtxAction::ShowPlace(l.region.clone(), l.pos)
+                                CtxAction::ShowPlaceInfo(l.region.clone(), l.pos)
                             },
                         );
                     }
