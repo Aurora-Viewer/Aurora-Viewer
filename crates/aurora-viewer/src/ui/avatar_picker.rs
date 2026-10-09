@@ -136,18 +136,37 @@ impl AvatarPicker {
                             if rows.is_empty() && self.tab == TAB_NEAR {
                                 ui.label(RichText::new("Personne à proximité").size(12.0).color(p.muted));
                             }
+                            ui.spacing_mut().item_spacing.y = 0.0;
+                            let w = ui.available_width();
                             for (id, name, extra) in &rows {
                                 let sel = self.selected.contains(id);
-                                let r = ui.horizontal(|ui| {
-                                    let r = ui.selectable_label(sel, RichText::new(name).size(12.0));
-                                    if !extra.is_empty() {
-                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            ui.label(RichText::new(extra).size(11.0).color(p.muted));
-                                        });
-                                    }
-                                    r
-                                });
-                                let r = r.inner;
+                                // the whole row is selected, like LLScrollListCtrl
+                                let (rect, r) = ui.allocate_exact_size(Vec2::new(w, 20.0), egui::Sense::click());
+                                if sel {
+                                    ui.painter().rect_filled(rect, 0.0, p.violet.gamma_multiply(0.35));
+                                } else if r.hovered() {
+                                    ui.painter().rect_filled(rect, 0.0, p.raised.gamma_multiply(0.6));
+                                }
+                                // the extra column (username, distance) keeps its room
+                                let extra_w = if extra.is_empty() {
+                                    0.0
+                                } else {
+                                    let g = ui
+                                        .painter()
+                                        .layout_no_wrap(extra.clone(), egui::FontId::proportional(11.0), p.muted);
+                                    let x = rect.right() - 6.0 - g.size().x;
+                                    ui.painter()
+                                        .galley(egui::pos2(x, rect.center().y - g.size().y * 0.5), g.clone(), p.muted);
+                                    g.size().x + 12.0
+                                };
+                                let g = egui::WidgetText::from(RichText::new(name).size(12.0).color(p.ink)).into_galley(
+                                    ui,
+                                    Some(egui::TextWrapMode::Truncate),
+                                    (w - 12.0 - extra_w).max(20.0),
+                                    egui::TextStyle::Body,
+                                );
+                                ui.painter()
+                                    .galley(egui::pos2(rect.left() + 6.0, rect.center().y - g.size().y * 0.5), g, p.ink);
                                 if r.clicked() {
                                     let add = ui.input(|i| i.modifiers.ctrl || i.modifiers.command) && self.multiple;
                                     if !add {
