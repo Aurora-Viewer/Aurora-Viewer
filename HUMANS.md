@@ -28,7 +28,8 @@ ce que l'agent te montre, et de te connecter à la grille quand il le faut.
 2. L'agent crée son dossier de travail `..\work\<tâche>` sur une branche à lui :
    il ne voit pas le code en cours des autres agents, et réciproquement.
 3. Il code, teste en démo, puis **compile et te lance le viewer** avec une
-   fenêtre nommée « Aurora Viewer — Test <tâche> ».
+   fenêtre nommée « Aurora Viewer - Test <tâche> (Dev) » ; le titre se
+   termine par le profil de compilation : (Dev), (Release) ou (Debug).
 4. **Tu testes** ce qu'il te demande (en démo ou sur la grille : c'est toi qui
    te connectes) et tu lui dis si c'est bon. Pour une PR sans effet sur le
    viewer (documentation, CI, scripts), il te dit juste ce qui va changer.
