@@ -68,7 +68,7 @@ pub const BIN_REFL_WATER: usize = 7;
 pub const BIN_REFL_MIRROR: usize = 8;
 pub const BIN_PROBE: usize = 9;
 /// Argument regions: the bins, then the occlusion's phase 1 and phase 2
-/// prepass copies of the main bins.
+/// prepass lists of the main bins (depth only, in no particular order).
 pub const REGION_PRE1: usize = 10;
 pub const REGION_PRE2: usize = 14;
 const REGIONS: usize = 18;
@@ -76,7 +76,10 @@ const REGIONS: usize = 18;
 const COUNT_VISIBLE: usize = 10;
 const COUNT_TRIANGLES: usize = 11;
 const COUNT_HIDDEN: usize = 12;
-const COUNTS: usize = 16;
+/// Counts of the phase 1 and phase 2 prepass lists of each main bin.
+pub const COUNT_PRE1: usize = 16;
+pub const COUNT_PRE2: usize = 20;
+const COUNTS: usize = 32;
 
 /// `CullFrame::sizes.w`.
 pub mod frame_flags {
@@ -866,9 +869,9 @@ impl GpuCull {
         r as u64 * self.cap as u64 * std::mem::size_of::<DrawIndexedIndirect>() as u64
     }
 
-    /// Byte offset of the count of bin `b` (prepass copies use their bin's).
-    pub fn count_offset(b: usize) -> u64 {
-        b as u64 * 4
+    /// Byte offset of count `c`: a bin, or `COUNT_PRE1` / `COUNT_PRE2` + bin.
+    pub fn count_offset(c: usize) -> u64 {
+        c as u64 * 4
     }
 }
 
@@ -923,7 +926,7 @@ mod tests {
                 .trim_end_matches('u');
             v.parse().unwrap_or_else(|_| panic!("{name}: {v}"))
         };
-        let pairs: [(&str, u32); 26] = [
+        let pairs: [(&str, u32); 28] = [
             ("BINS", BINS as u32),
             ("MAIN_BINS", MAIN_BINS as u32),
             ("BIN_SHADOW", BIN_SHADOW as u32),
@@ -935,6 +938,8 @@ mod tests {
             ("COUNT_VISIBLE", COUNT_VISIBLE as u32),
             ("COUNT_TRIANGLES", COUNT_TRIANGLES as u32),
             ("COUNT_HIDDEN", COUNT_HIDDEN as u32),
+            ("COUNT_PRE1", COUNT_PRE1 as u32),
+            ("COUNT_PRE2", COUNT_PRE2 as u32),
             ("PASS_BITS", pass::BITS),
             ("PASS_HIDDEN", pass::HIDDEN),
             ("PASS_OPAQUE", pass::OPAQUE),
@@ -1154,14 +1159,17 @@ mod tests {
         }
         table.flush(&device, &queue);
         cull.objects.flush(&device, &queue);
+        // visible last frame (occlusion phase 1 list)
+        let was: Vec<u32> = (0..n_faces).map(|_| rand(2)).collect();
         let visibility = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
-            size: 4,
-            usage: wgpu::BufferUsages::STORAGE,
+            size: n_faces as u64 * 4,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        queue.write_buffer(&visibility, 0, bytemuck::cast_slice(&was));
         let mut frame = frame_for_tests();
-        frame.sizes[3] = frame_flags::SHADOWS | frame_flags::REFLECTIONS | frame_flags::WATER | frame_flags::PROBE;
+        frame.sizes[3] = frame_flags::SHADOWS | frame_flags::REFLECTIONS | frame_flags::WATER | frame_flags::PROBE | frame_flags::OCCLUSION;
         frame.probe = view_planes(
             glam::camera::rh::proj::directx::perspective_infinite_reverse(1.5, 1.0, 0.1)
                 * glam::camera::rh::view::look_at_mat4(Vec3::ZERO, Vec3::Y, Vec3::Z),
@@ -1222,6 +1230,15 @@ mod tests {
                     [fc.index_count, 1, fc.first_index, fc.base_vertex as u32, rec],
                     "bin {b} slot {j}"
                 );
+            }
+            if b < MAIN_BINS {
+                // phase 1 prepass list: the bin's draws visible last frame, any order
+                let mut want: Vec<u32> = e.iter().copied().filter(|&r| was[r as usize] != 0).collect();
+                let n = counts[COUNT_PRE1 + b] as usize;
+                let mut got: Vec<u32> = (0..n).map(|j| args[((REGION_PRE1 + b) * cap + j) * 5 + 4]).collect();
+                want.sort_unstable();
+                got.sort_unstable();
+                assert_eq!(got, want, "phase 1 list of bin {b}");
             }
         }
     }

@@ -11,7 +11,8 @@
 
 use crate::arena::{GeometryArena, MeshAlloc, RecordStore};
 use crate::gpu_cull::{
-    BIN_PROBE, BIN_REFL_MIRROR, BIN_REFL_WATER, BIN_SHADOW, CullFrame, GpuCull, MAIN_BINS, REGION_PRE1, REGION_PRE2, frame_flags,
+    BIN_PROBE, BIN_REFL_MIRROR, BIN_REFL_WATER, BIN_SHADOW, COUNT_PRE1, COUNT_PRE2, CullFrame, GpuCull, MAIN_BINS, REGION_PRE1,
+    REGION_PRE2, frame_flags,
 };
 use crate::textures::{MipLevel, TextureTable};
 use crate::types::*;
@@ -4006,9 +4007,12 @@ impl Renderer {
             draw_from(&mut pass, &self.pipelines.pre_opaque_2s, pre, rg.opaque_2s);
             draw_from(&mut pass, &self.pipelines.pre_mask, pre, rg.mask);
             draw_from(&mut pass, &self.pipelines.pre_mask_2s, pre, rg.mask_2s);
-            let first = if occl { REGION_PRE1 } else { 0 };
             for (b, pipe) in pre_pipes.iter().enumerate() {
-                draw_bin(&mut pass, Some(pipe), first + b, b);
+                if occl {
+                    draw_bin(&mut pass, Some(pipe), REGION_PRE1 + b, COUNT_PRE1 + b);
+                } else {
+                    draw_bin(&mut pass, Some(pipe), b, b);
+                }
             }
         }
         // ---- occlusion: Hi-Z of phase 1, test of every draw, then phase 2
@@ -4047,7 +4051,7 @@ impl Renderer {
             draw_from(&mut pass, &self.pipelines.pre_mask, pre, rg.mask);
             draw_from(&mut pass, &self.pipelines.pre_mask_2s, pre, rg.mask_2s);
             for (b, pipe) in pre_pipes.iter().enumerate() {
-                draw_bin(&mut pass, Some(pipe), REGION_PRE2 + b, b);
+                draw_bin(&mut pass, Some(pipe), REGION_PRE2 + b, COUNT_PRE2 + b);
             }
         }
         if gpu_on {

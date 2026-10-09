@@ -378,7 +378,7 @@ pub struct RenderSettings {
     /// Reflection probe cube slots, the default probe included
     /// (RenderReflectionProbeCount; 1..=probes::MAX_PROBES).
     pub probe_slots: u32,
-    /// GPU occlusion culling (UseOcclusion; off by default, WIP).
+    /// GPU occlusion culling (UseOcclusion).
     pub occlusion: bool,
 }
 
@@ -394,7 +394,7 @@ impl Default for RenderSettings {
             ssr: false,
             anisotropy: 8,
             probe_slots: 32,
-            occlusion: false,
+            occlusion: true,
         }
     }
 }

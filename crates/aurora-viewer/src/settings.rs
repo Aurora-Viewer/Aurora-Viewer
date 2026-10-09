@@ -85,9 +85,10 @@ pub struct Settings {
     /// Glow of faces with a glow value (Firestorm RenderGlow, on).
     pub glow: bool,
     /// GPU occlusion culling: objects hidden behind others are not drawn
-    /// (Firestorm UseOcclusion). Off while it costs more than it saves (WIP);
-    /// renamed from `occlusion` so earlier saved settings fall back to off.
-    pub gpu_occlusion: bool,
+    /// (Firestorm UseOcclusion, on by default). Renamed from `gpu_occlusion`
+    /// (off while it cost more than it saved) so that saved settings take
+    /// the new default.
+    pub occlusion_culling: bool,
     pub lod_factor: f32,
     /// Texture memory sized from the detected video memory (else `texture_budget_mb`).
     pub texture_budget_auto: bool,
@@ -427,7 +428,7 @@ impl Default for Settings {
             exposure: 1.0,
             sharpen: 0.4,
             glow: true,
-            gpu_occlusion: false,
+            occlusion_culling: true,
             lod_factor: 2.0,
             texture_budget_auto: true,
             texture_budget_mb: 1536,
@@ -786,7 +787,7 @@ impl Settings {
             probe_slots: self.probe_count.clamp(8, 64),
             ssr: self.ssr,
             anisotropy: self.anisotropy,
-            occlusion: self.gpu_occlusion,
+            occlusion: self.occlusion_culling,
         }
     }
 

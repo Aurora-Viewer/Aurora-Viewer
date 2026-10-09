@@ -329,7 +329,7 @@ impl App {
             settings.shadow_quality = v;
         }
         if let Ok(v) = std::env::var("AURORA_OCCLUSION") {
-            settings.gpu_occlusion = v != "0";
+            settings.occlusion_culling = v != "0";
         }
         let net = NetClient::new()?;
         let voice_http = net.caps_http();

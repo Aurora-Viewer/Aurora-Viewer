@@ -8,10 +8,12 @@
 // in the same pass keep the same winner from one frame to the next.
 //   cs_classify: bin mask of each face, face count of each bin per workgroup;
 //   cs_scan:     offset of each workgroup in each bin, bin sizes;
-//   cs_scatter:  indirect draw arguments at their slot (and the occlusion's
-//                phase-1 copy of the main bins);
+//   cs_scatter:  indirect draw arguments at their slot, and the occlusion's
+//                phase 1 prepass list (what was visible last frame);
 //   cs_occlude:  after the Hi-Z pyramid, the occlusion test of the main bins
-//                (instance_count 0 when hidden) and the phase-2 prepass args.
+//                (instance_count 0 when hidden) and the phase 2 prepass list.
+// The prepass lists are depth only: their order does not matter, they are
+// appended with atomics and hold only the draws to make.
 // The tests mirror Scene::build_lists (CPU path) and `gpu_cull::face_bins`.
 // The Hi-Z sphere test (hiz_test.wgsl) is prepended to this module.
 
@@ -22,7 +24,7 @@ const BIN_REFL_WATER: u32 = 7u;
 const BIN_REFL_MIRROR: u32 = 8u;
 const BIN_PROBE: u32 = 9u;
 // argument regions after the bins: occlusion phase 1 and phase 2 prepass
-// copies of the main bins (same slots, same counts)
+// lists of each main bin (own counts)
 const REGION_PRE1: u32 = 10u;
 const REGION_PRE2: u32 = 14u;
 
@@ -30,6 +32,8 @@ const REGION_PRE2: u32 = 14u;
 const COUNT_VISIBLE: u32 = 10u;
 const COUNT_TRIANGLES: u32 = 11u;
 const COUNT_HIDDEN: u32 = 12u;
+const COUNT_PRE1: u32 = 16u;
+const COUNT_PRE2: u32 = 20u;
 
 // CullFace.bits
 const PASS_BITS: u32 = 7u;
@@ -113,7 +117,7 @@ struct OcclParams {
 @group(0) @binding(4) var<storage, read_write> masks: array<u32>;
 // per workgroup and bin: face count, then (after cs_scan) offset
 @group(0) @binding(5) var<storage, read_write> group_data: array<u32>;
-@group(0) @binding(6) var<storage, read_write> counts: array<atomic<u32>, 16>;
+@group(0) @binding(6) var<storage, read_write> counts: array<atomic<u32>, 32>;
 // DrawIndexedIndirect: index_count, instance_count, first_index, base_vertex, first_instance
 @group(0) @binding(7) var<storage, read_write> args: array<u32>;
 @group(0) @binding(8) var<uniform> occl: OcclParams;
@@ -349,7 +353,10 @@ fn cs_scatter(
             if (i < arrayLength(&visibility)) {
                 was = visibility[i];
             }
-            write_args((REGION_PRE1 + b) * cap + pos, f, i, was);
+            if (was != 0u) {
+                let k = atomicAdd(&counts[COUNT_PRE1 + b], 1u);
+                write_args((REGION_PRE1 + b) * cap + k, f, i, 1u);
+            }
         }
     }
 }
@@ -372,15 +379,19 @@ fn cs_occlude(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(workgroup_
         vis = hiz_sphere_visible(hiz, objects[f.object].sphere, occl.view_proj, occl.screen, occl.levels);
     }
     args[a + 1u] = select(0u, 1u, vis);
-    let p1 = ((REGION_PRE1 + b) * cap + j) * 5u;
-    let p2 = ((REGION_PRE2 + b) * cap + j) * 5u;
-    for (var k = 0u; k < 5u; k++) {
-        args[p2 + k] = args[a + k];
+    // drawn by phase 1 = visible last frame (cs_scatter)
+    var was = 1u;
+    if (rec < arrayLength(&visibility)) {
+        was = visibility[rec];
+        visibility[rec] = select(0u, 1u, vis);
     }
     // phase 2 prepass: visible now, not drawn by phase 1
-    args[p2 + 1u] = select(0u, 1u, vis && args[p1 + 1u] == 0u);
-    if (rec < arrayLength(&visibility)) {
-        visibility[rec] = select(0u, 1u, vis);
+    if (vis && was == 0u) {
+        let k = atomicAdd(&counts[COUNT_PRE2 + b], 1u);
+        let p2 = ((REGION_PRE2 + b) * cap + k) * 5u;
+        for (var n = 0u; n < 5u; n++) {
+            args[p2 + n] = args[a + n];
+        }
     }
     if (!vis) {
         atomicAdd(&counts[COUNT_HIDDEN], 1u);
