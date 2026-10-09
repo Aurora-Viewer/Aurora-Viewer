@@ -7,6 +7,8 @@
 //!   the avatar, FSResetCameraOnMovement)
 //! - `pan,x,y` / `zoom,x,y`: the same with a Ctrl+Alt+Shift (pan) or an Alt
 //!   (zoom closer) drag
+//! - `tag`: left press on our own name tag at frame 600, drag (steer the
+//!   avatar, as when the avatar itself is held) until 660
 //! - `ml`: into mouselook at frame 600, out at 700
 //! - `wheel`: 3 wheel clicks out at 600, 12 in at 650 (into mouselook)
 //! - `fly`: flying forward from frame 300 (camera lag)
@@ -17,6 +19,8 @@
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Step {
     Cursor(f32, f32),
+    /// The cursor on the middle of our own name tag.
+    CursorOnOwnTag,
     Mods {
         ctrl: bool,
         shift: bool,
@@ -83,6 +87,26 @@ pub fn steps(spec: &str, frame: u64) -> Vec<Step> {
                 _ => {}
             }
         }
+        "tag" => match frame {
+            600 => out.extend([
+                Step::CursorOnOwnTag,
+                Step::Mods {
+                    ctrl: false,
+                    shift: false,
+                    alt: false,
+                },
+                Step::Press,
+                Step::Log,
+            ]),
+            601..=660 => {
+                out.push(Step::Drag(6.0, 0.0));
+                if frame == 630 {
+                    out.push(Step::Log);
+                }
+            }
+            661 => out.extend([Step::Release, Step::Log]),
+            _ => {}
+        },
         "ml" => match frame {
             600 | 700 => out.extend([Step::ToggleMouselook, Step::Log]),
             604 | 608 | 612 | 620 | 640 | 704 | 708 | 712 | 720 | 740 => out.push(Step::Log),
@@ -123,5 +147,14 @@ mod tests {
         assert!(steps("alt,400,300", 661).contains(&Step::Release));
         assert!(steps("alt,400,300", 700).contains(&Step::Walk(true)));
         assert!(steps("alt", 600).is_empty());
+    }
+
+    #[test]
+    fn tag_scenario_presses_on_own_tag_then_drags() {
+        let start = steps("tag", 600);
+        assert_eq!(start.first(), Some(&Step::CursorOnOwnTag));
+        assert!(start.contains(&Step::Press));
+        assert!(steps("tag", 620).contains(&Step::Drag(6.0, 0.0)));
+        assert!(steps("tag", 661).contains(&Step::Release));
     }
 }

@@ -225,6 +225,9 @@ pub struct App {
     login_info: ui::news::LoginInfo,
     /// Voice dots above the avatars (wave animation state).
     voice_dots: ui::voice_dot::VoiceDots,
+    /// Our name tag on screen last frame (egui points): a left click on it
+    /// counts as one on our avatar.
+    own_tag_rect: Option<egui::Rect>,
     /// Block list version applied to object sounds, and the objects whose
     /// sounds it silenced.
     sound_blocks: (u64, std::collections::HashSet<uuid::Uuid>),
@@ -436,6 +439,7 @@ impl App {
             voice_http,
             login_info,
             voice_dots: Default::default(),
+            own_tag_rect: None,
             sound_blocks: Default::default(),
             devices_listed: false,
             emoji: ui::emoji::Emoji::load(),
@@ -753,6 +757,13 @@ impl App {
         for step in crate::camera::demo::steps(spec, self.frame_count) {
             match step {
                 Step::Cursor(x, y) => self.cursor_pos = (x, y),
+                Step::CursorOnOwnTag => {
+                    let ppp = self.egui_ctx.pixels_per_point();
+                    match self.own_tag_rect {
+                        Some(r) => self.cursor_pos = (r.center().x * ppp, r.center().y * ppp),
+                        None => log::warn!("demo camera: our name tag is not on screen"),
+                    }
+                }
                 Step::Mods { ctrl, shift, alt } => {
                     self.ctrl = ctrl;
                     self.shift = shift;
@@ -983,6 +994,21 @@ impl App {
                 Some(t) if t < t0 - 0.05 => None,
                 Some(t) if t <= t1 + 0.05 => hit,
                 _ => axis.map(|t| o + d * t),
+            }
+        });
+        // or on our name tag: LLPipeline::lineSegmentIntersectInWorld tests
+        // the avatar tags after the world, a tag picking its avatar unless
+        // something is in front of it; the point is on the ray, at the tag
+        let ppp = self.egui_ctx.pixels_per_point().max(0.1);
+        let on_tag = self.own_tag_rect.is_some_and(|r| r.contains(egui::pos2(x / ppp, y / ppp)));
+        let avatar_hit = avatar_hit.or_else(|| {
+            let (o, d) = ray.filter(|_| on_tag)?;
+            let idx = self.world.objects.index_of_uuid(&self.world.agent_id)?;
+            let (pos, _, _) = crate::scene::Scene::object_transform(&self.world, idx, Instant::now(), 0)?;
+            let t = (pos + Vec3::Z * ui::hud::TAG_HEIGHT - o).dot(d);
+            match hit.map(|p| (p - o).dot(d)) {
+                Some(h) if h < t - 0.05 => None,
+                _ => Some(o + d * t),
             }
         });
         let on_avatar = avatar_hit.is_some();
@@ -3259,7 +3285,7 @@ impl App {
                 } else {
                     self.voice.levels()
                 };
-                ui::hud::draw(
+                self.own_tag_rect = ui::hud::draw(
                     &ctx,
                     &p,
                     &self.world,

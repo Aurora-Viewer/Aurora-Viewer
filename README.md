@@ -104,7 +104,7 @@ settings and cache (`…\config\demo`, `…\cache\demo`).
 | `AURORA_CAPTURE=<file.png>` | Save a capture of the frame (`AURORA_CAPTURE_FRAMES`, default 240; ~620 to pass the loading fade) |
 | `AURORA_CAPTURE_EXIT=1` | Quit after the capture |
 | `AURORA_DEMO_CAM="yaw,pitch,dist"` | Camera heading offset and pitch around the avatar (radians, positive pitch looks down) and distance (meters) |
-| `AURORA_DEMO_CAMERA=alt,x,y\|pan,x,y\|zoom,x,y\|ml\|wheel\|fly\|sit` | Camera scenario logged as `demo camera`: Alt+click at (x, y) then a drag and a walk back, mouselook in / out, wheel, flight lag, sitting on a turning seat with a sit camera (`camera/demo.rs`) |
+| `AURORA_DEMO_CAMERA=alt,x,y\|pan,x,y\|zoom,x,y\|tag\|ml\|wheel\|fly\|sit` | Camera scenario logged as `demo camera`: Alt+click at (x, y) then a drag and a walk back, a press on our own name tag then a drag (steering), mouselook in / out, wheel, flight lag, sitting on a turning seat with a sit camera (`camera/demo.rs`) |
 | `AURORA_DEMO_POS="x,y"` | Start position |
 | `AURORA_DEMO_TP=1` or `"x,y,z"` | Simulated teleport at frame 240 |
 | `AURORA_DEMO_SIT=n` | Click the toolbar sit button n times (frames 240, 300, 360…) |
