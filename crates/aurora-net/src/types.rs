@@ -156,6 +156,16 @@ pub mod parcel_flags {
     pub const USE_ESTATE_VOICE_CHAN: u32 = 1 << 30;
 }
 
+/// `REGION_FLAGS_*` (llregionflags.h) of RegionHandshake / SimStats.
+pub mod region_flags {
+    pub const ALLOW_DAMAGE: u32 = 1 << 0;
+    pub const SKIP_SCRIPTS: u32 = 1 << 13;
+    pub const BLOCK_FLY: u32 = 1 << 19;
+    pub const ESTATE_SKIP_SCRIPTS: u32 = 1 << 21;
+    pub const RESTRICT_PUSHOBJECT: u32 = 1 << 22;
+    pub const ALLOW_VOICE: u32 = 1 << 28;
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChatType {
     Whisper,
@@ -497,6 +507,13 @@ pub enum NetEvent {
         handle: RegionHandle,
         height: f32,
     },
+    /// A region's `REGION_FLAGS_*` (SimStats, about once a second).
+    RegionFlags {
+        handle: RegionHandle,
+        flags: u32,
+    },
+    /// Agent health in percent (HealthMessage, damage-enabled land).
+    Health(f32),
     /// The parcel the agent stands on (main region).
     AgentParcel(Arc<ParcelInfo>),
     /// ParcelMediaCommandMessage: llParcelMediaCommandList (flags of the

@@ -24,6 +24,7 @@ pub mod minimap;
 pub mod news;
 pub mod notifications;
 pub mod options;
+pub mod parcel_icons;
 pub mod people;
 pub mod perf;
 pub mod skin;

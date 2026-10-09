@@ -138,6 +138,8 @@ pub struct World {
     diag_reported: HashSet<Uuid>,
     pub events_this_frame: usize,
     pub balance: Option<i32>,
+    /// Health in percent (HealthMessage; only changes on damage-enabled land).
+    pub health: f32,
     /// Interface sounds to play (drained by the app).
     pub ui_sounds: Vec<UiSound>,
     /// Conversation messages received (their sound depends on the IM modes).
@@ -220,6 +222,7 @@ impl World {
             diag_reported: HashSet::new(),
             events_this_frame: 0,
             balance: None,
+            health: 100.0,
             social: social::Social::default(),
             mutes: mutes::MuteList::default(),
             lsl_bridge: lslbridge::LslBridge::default(),
@@ -990,6 +993,19 @@ impl World {
                     height,
                     looping,
                 });
+                None
+            }
+            NetEvent::RegionFlags { handle, flags } => {
+                if let Some(r) = self.regions.get_mut(&handle)
+                    && let Some(info) = r.info.as_mut()
+                    && info.region_flags != flags
+                {
+                    Arc::make_mut(info).region_flags = flags;
+                }
+                None
+            }
+            NetEvent::Health(health) => {
+                self.health = health;
                 None
             }
             NetEvent::AgentParcel(info) => {

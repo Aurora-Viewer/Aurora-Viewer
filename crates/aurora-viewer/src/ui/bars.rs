@@ -59,6 +59,8 @@ pub struct StatusInfo<'a> {
     pub status: crate::world::status::StatusModes,
     /// ShowBanLines mode (Monde › Lignes d'interdiction).
     pub ban_lines: u8,
+    /// Abilities of the current parcel (right end of the location field).
+    pub parcel_icons: Vec<super::parcel_icons::ParcelIcon>,
 }
 
 pub fn maturity_name(sim_access: u8) -> &'static str {
@@ -734,14 +736,35 @@ pub fn top_bars(
                                 if info_button(ui, p, icons) {
                                     panels.about_land = !panels.about_land;
                                 }
-                                // keep the maturity badge visible when the field is narrow
-                                let w = (ui.available_width() - 24.0).max(40.0);
+                                // keep the maturity badge and the parcel icons visible when
+                                // the field is narrow; the icons go first in a very narrow
+                                // window (they would spill over the clock)
+                                let icons_w = if st.parcel_icons.is_empty() {
+                                    0.0
+                                } else {
+                                    super::parcel_icons::width(ui, &st.parcel_icons) + 8.0
+                                };
+                                let icons_w = if ui.available_width() - 24.0 - icons_w >= 80.0 {
+                                    icons_w
+                                } else {
+                                    0.0
+                                };
+                                let w = (ui.available_width() - 24.0 - icons_w).max(40.0);
                                 ui.allocate_ui(Vec2::new(w, 18.0), |ui| {
                                     if let Some(a) = location_field(ui, p, panels, &loc, &st.slurl, w) {
                                         action = a;
                                     }
                                 });
                                 super::widgets::maturity_badge(ui, p, st.maturity, 14.0);
+                                // parcel abilities, anchored to the right edge of the field
+                                if icons_w > 0.0 {
+                                    ui.add_space((ui.available_width() - icons_w + 8.0).max(0.0));
+                                    ui.scope(|ui| {
+                                        if super::parcel_icons::show(ui, p, icons, &st.parcel_icons, p.field) {
+                                            panels.about_land = !panels.about_land;
+                                        }
+                                    });
+                                }
                             });
                         });
                 });

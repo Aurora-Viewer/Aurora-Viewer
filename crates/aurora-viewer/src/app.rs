@@ -3284,6 +3284,16 @@ impl App {
                     tp_back: self.world.tp_history.previous().map(|e| e.region.clone()),
                     tp_forward: self.world.tp_history.next().map(|e| e.region.clone()),
                     status: self.world.status.modes(),
+                    parcel_icons: match (self.world.main().and_then(|r| r.info.as_ref()), self.world.parcel.as_deref()) {
+                        (Some(region), Some(parcel)) => ui::parcel_icons::parcel_icons(&ui::parcel_icons::ParcelState {
+                            region_flags: region.region_flags,
+                            parcel,
+                            agent_id: self.world.agent_id,
+                            group: self.world.groups.group(&parcel.group_id),
+                            health: self.world.health,
+                        }),
+                        _ => Vec::new(),
+                    },
                 };
                 let media = ui::audio::MediaState {
                     music_available: self.world.parcel.as_ref().is_some_and(|pc| !pc.music_url.is_empty()),
