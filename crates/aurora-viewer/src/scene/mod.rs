@@ -119,6 +119,9 @@ pub struct ObjGpu {
     /// Skeleton bound to the face records (changes on attachment / flag updates).
     pub skeleton_owner: Option<Uuid>,
     pub mat_generation: u64,
+    /// Geometry faces the records were built for (fully transparent faces
+    /// get no record, so `faces` can be shorter).
+    pub built_faces: usize,
     pub is_avatar: bool,
     pub hud: bool,
     pub sculpt_wait: Option<Uuid>,
@@ -178,6 +181,9 @@ pub struct Scene {
     pub avatar_complexity: HashMap<Uuid, u32>,
     /// Avatars over RenderAvatarMaxComplexity: grey silhouettes, no attachments.
     pub too_complex: std::collections::HashSet<usize>,
+    /// Per object, this frame: 0 not known yet, 1 still, 2 moves or follows
+    /// something that moves or was updated (see `follows_motion`).
+    motion: Vec<u8>,
     /// Build tools: selected mesh / sculpted objects drawn as wireframes
     /// (object index -> root color).
     pub selection_wire: HashMap<usize, bool>,
@@ -382,6 +388,7 @@ impl Scene {
             particles: particles::ParticleManager::default(),
             avatar_complexity: HashMap::new(),
             too_complex: Default::default(),
+            motion: Vec::new(),
             selection_wire: HashMap::new(),
             debug_alpha: None,
             last_cull: None,
@@ -948,6 +955,57 @@ impl Scene {
         Some((pp + pr * p, (pr * r).normalize(), phud))
     }
 
+    /// Whether an object needs a new transform this frame: it moves (or is
+    /// predicted to), is an avatar or a rigged mesh, was just updated, or one
+    /// of its ancestors does (linkset children, attachments). Memoized in
+    /// `motion` along the parent chain. Before, every child prim was treated
+    /// as moving and resynced every frame.
+    fn follows_motion(world: &World, gpu: &[ObjGpu], motion: &mut [u8], idx: usize) -> bool {
+        // walk up until something decides: a known object, one that moves by
+        // itself, a still root; every object walked shares that answer (the
+        // walk stops at the first one that moves, so all are at or below it)
+        let mut chain = [0usize; 18];
+        let mut len = 0;
+        let mut cur = idx;
+        let moves = loop {
+            match motion.get(cur) {
+                Some(1) => break false,
+                Some(2) => break true,
+                _ => {}
+            }
+            let Some(o) = world.objects.get(cur) else {
+                break false;
+            };
+            if len == chain.len() {
+                break true;
+            }
+            chain[len] = cur;
+            len += 1;
+            let own = o.has_motion()
+                || o.is_avatar()
+                || o.full_id == world.agent_id
+                || o.render.needs_records
+                || gpu.get(cur).is_some_and(|g| g.rigged);
+            if own {
+                break true;
+            }
+            if o.parent_id == 0 {
+                break false;
+            }
+            match world.objects.parent_of(o) {
+                Some(p) => cur = p,
+                // parent not known yet: keep trying every frame, as before
+                None => break true,
+            }
+        };
+        for &c in &chain[..len] {
+            if let Some(m) = motion.get_mut(c) {
+                *m = if moves { 2 } else { 1 };
+            }
+        }
+        moves
+    }
+
     /// Bring GPU records up to date for every object (incremental).
     pub fn sync(&mut self, renderer: &mut Renderer, world: &mut World, view: &CullView) {
         let t0 = Instant::now();
@@ -986,12 +1044,18 @@ impl Scene {
         let n = world.objects.slots.len();
         self.stats.synced = 0;
         self.stats.rebuilt = 0;
+        // before the loop: syncing an object clears its update flag, which
+        // its children (later in the slab or not) must still see
+        self.motion.clear();
+        self.motion.resize(n, 0);
+        for idx in 0..n {
+            Self::follows_motion(world, &self.gpu, &mut self.motion, idx);
+        }
         for idx in 0..n {
             let Some(o) = world.objects.get(idx) else {
                 continue;
             };
-            // objects whose parent moves need new transforms too
-            let moving = o.is_moving() || o.parent_id != 0 || o.is_avatar() || o.full_id == world.agent_id || self.gpu[idx].rigged;
+            let moving = self.motion[idx] == 2;
             let lod_due = (self.frame.wrapping_add(idx as u32)).is_multiple_of(24);
             let g = &self.gpu[idx];
             let sculpt_ready = g.sculpt_wait.is_some_and(|t| self.textures.sculpt_map(&t).is_some());
@@ -1228,7 +1292,9 @@ impl Scene {
             || self.gpu[idx].skeleton_owner != skeleton_owner.map(|p| p.0)
             || self.gpu[idx].rigged != rigged
             || o.shape_dirty
-            || self.gpu[idx].faces.len() != geom.faces.iter().filter(|f| f.is_some()).count()
+            // compared with the faces built, not drawn: fully transparent
+            // faces get no record and made this rebuild every frame
+            || self.gpu[idx].built_faces != geom.faces.iter().filter(|f| f.is_some()).count()
             || bind_new.is_some()
             || (!self.gpu[idx].material_ids.is_empty() && self.gpu[idx].mat_generation != self.materials.generation);
 
@@ -1236,12 +1302,15 @@ impl Scene {
             self.stats.rebuilt += 1;
             self.rebuild_faces(renderer, world, idx, &geom, model);
         } else {
-            // transform-only update
+            // transform-only update; an unchanged record is not uploaded again
+            let model = model.to_cols_array_2d();
             let g = &self.gpu[idx];
             for f in &g.faces {
-                if let Some(rec) = renderer.records.get(f.record).copied() {
-                    let mut r = rec;
-                    r.model = model.to_cols_array_2d();
+                if let Some(rec) = renderer.records.get(f.record)
+                    && rec.model != model
+                {
+                    let mut r = *rec;
+                    r.model = model;
                     renderer.records.set(f.record, r);
                 }
             }
@@ -1495,6 +1564,7 @@ impl Scene {
         }
         g.tex_generation = self.textures.generation;
         g.mat_generation = self.materials.generation;
+        g.built_faces = geom.faces.iter().filter(|f| f.is_some()).count();
         self.gpu[idx] = g;
     }
 
@@ -2822,5 +2892,106 @@ fn classify(f: &FaceDraw, tex_alpha: AlphaKind) -> Pass {
             }
         }
         AlphaKind::Blend => Pass::Blend,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aurora_net::NetEvent;
+
+    /// A demo prim as root (local id 9000) and its child (9001); the child
+    /// is added first so the slab order is the reverse of the link order.
+    fn linkset() -> (World, usize, usize) {
+        let (world, root, child, _) = linkset_and_orphan();
+        (world, root, child)
+    }
+
+    /// The linkset plus a prim whose parent (9999) is not known yet.
+    fn linkset_and_orphan() -> (World, usize, usize, usize) {
+        let mut world = World::new(Arc::new(AvatarLibrary::load()));
+        let (handle, prim) = crate::demo::events()
+            .into_iter()
+            .find_map(|ev| match ev {
+                NetEvent::ObjectUpdates { handle, objects } => objects.into_iter().find(|o| !o.is_avatar()).map(|o| (handle, o)),
+                _ => None,
+            })
+            .expect("demo contains a prim");
+        let still = |local_id: u32, parent_id: u32| {
+            let mut u = prim.clone();
+            u.local_id = local_id;
+            u.full_id = Uuid::from_u128(local_id as u128);
+            u.parent_id = parent_id;
+            u.velocity = Vec3::ZERO;
+            u.acceleration = Vec3::ZERO;
+            u.angular_velocity = Vec3::ZERO;
+            u
+        };
+        let child = world.objects.upsert(handle, still(9001, 9000));
+        let root = world.objects.upsert(handle, still(9000, 0));
+        let orphan = world.objects.upsert(handle, still(9002, 9999));
+        (world, root, child, orphan)
+    }
+
+    fn motion(world: &World) -> Vec<u8> {
+        let n = world.objects.slots.len();
+        let mut m = vec![0; n];
+        let gpu: Vec<ObjGpu> = (0..n).map(|_| ObjGpu::default()).collect();
+        for idx in 0..n {
+            Scene::follows_motion(world, &gpu, &mut m, idx);
+        }
+        m
+    }
+
+    fn settle(world: &mut World) {
+        for o in world.objects.slots.iter_mut().flatten() {
+            o.render.needs_records = false;
+        }
+    }
+
+    #[test]
+    fn still_children_are_not_resynced() {
+        let (mut world, root, child) = linkset();
+        settle(&mut world);
+        let m = motion(&world);
+        assert_eq!((m[root], m[child]), (1, 1));
+    }
+
+    #[test]
+    fn children_follow_a_moving_or_updated_root() {
+        let (mut world, root, child) = linkset();
+        settle(&mut world);
+        if let Some(o) = world.objects.get_mut(root) {
+            o.angular_velocity = Vec3::Z;
+        }
+        let m = motion(&world);
+        assert_eq!((m[root], m[child]), (2, 2));
+
+        let (mut world, root, child) = linkset();
+        settle(&mut world);
+        if let Some(o) = world.objects.get_mut(root) {
+            o.render.needs_records = true;
+        }
+        let m = motion(&world);
+        assert_eq!((m[root], m[child]), (2, 2));
+    }
+
+    #[test]
+    fn a_moving_child_does_not_move_its_root() {
+        let (mut world, root, child) = linkset();
+        settle(&mut world);
+        if let Some(o) = world.objects.get_mut(child) {
+            o.velocity = Vec3::X;
+        }
+        let m = motion(&world);
+        assert_eq!((m[root], m[child]), (1, 2));
+    }
+
+    #[test]
+    fn a_child_without_its_parent_keeps_being_tried() {
+        let (mut world, root, child, orphan) = linkset_and_orphan();
+        settle(&mut world);
+        let m = motion(&world);
+        assert_eq!((m[root], m[child], m[orphan]), (1, 1, 2));
     }
 }

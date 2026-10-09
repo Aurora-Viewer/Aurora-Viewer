@@ -248,7 +248,7 @@ impl Object {
     /// Dead-reckoned local position/rotation at `now`.
     pub fn predicted(&self, now: Instant) -> (Vec3, Quat) {
         let dt = now.duration_since(self.update_time).as_secs_f32().min(0.6);
-        if self.velocity == Vec3::ZERO && self.acceleration == Vec3::ZERO && self.angular_velocity == Vec3::ZERO {
+        if !self.has_motion() {
             return (self.position, self.rotation);
         }
         let p = self.position + self.velocity * dt + self.acceleration * (0.5 * dt * dt);
@@ -261,8 +261,9 @@ impl Object {
         (p, r)
     }
 
-    pub fn is_moving(&self) -> bool {
-        self.velocity.length_squared() > 1e-6 || self.angular_velocity.length_squared() > 1e-6
+    /// Whether `predicted` moves it (any velocity, acceleration or spin).
+    pub fn has_motion(&self) -> bool {
+        self.velocity != Vec3::ZERO || self.acceleration != Vec3::ZERO || self.angular_velocity != Vec3::ZERO
     }
 }
 
