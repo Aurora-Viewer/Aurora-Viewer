@@ -66,13 +66,40 @@ pub enum Kind {
 #[derive(Debug, Clone)]
 pub enum Data {
     None,
-    Lure { from: Uuid, lure: Uuid },
-    Friend { from: Uuid, tx: Uuid },
-    Inventory { from: Uuid, tx: Uuid, asset_type: i8, task: bool },
-    Group { group: Uuid, tx: Uuid },
-    Dialog { object: Uuid, channel: i32, buttons: Vec<String> },
-    TextBox { object: Uuid, channel: i32 },
-    Permissions { task: Uuid, item: Uuid, questions: i32 },
+    Lure {
+        from: Uuid,
+        lure: Uuid,
+    },
+    Friend {
+        from: Uuid,
+        tx: Uuid,
+    },
+    Inventory {
+        from: Uuid,
+        tx: Uuid,
+        asset_type: i8,
+        task: bool,
+    },
+    Group {
+        group: Uuid,
+        tx: Uuid,
+    },
+    Dialog {
+        object: Uuid,
+        object_name: String,
+        own_object: bool,
+        channel: i32,
+        buttons: Vec<String>,
+    },
+    TextBox {
+        object: Uuid,
+        channel: i32,
+    },
+    Permissions {
+        task: Uuid,
+        item: Uuid,
+        questions: i32,
+    },
     Url(String),
 }
 
@@ -99,6 +126,8 @@ impl Notification {
 #[derive(Debug, Clone)]
 pub enum Response {
     Dismiss,
+    /// Block the source object and discard its script menus, without replying.
+    Block,
     Accept,
     Decline,
     /// Script dialog button (index).
@@ -214,7 +243,12 @@ impl Notifications {
                 out.push(inventory_answer(*from, *tx, *task, accept, folder));
             }
             (Data::Group { group, tx }, _) => out.push(group_answer(*group, *tx, accept)),
-            (Data::Dialog { object, channel, buttons }, Response::Button(i)) => {
+            (
+                Data::Dialog {
+                    object, channel, buttons, ..
+                },
+                Response::Button(i),
+            ) => {
                 if let Some(label) = buttons.get(*i) {
                     out.push(NetCommand::ScriptDialogReply {
                         object_id: *object,
@@ -302,6 +336,8 @@ mod tests {
             "Choisis",
             Data::Dialog {
                 object: obj,
+                object_name: "Menu".into(),
+                own_object: false,
                 channel: -42,
                 buttons: vec!["Oui".into(), "Non".into()],
             },

@@ -281,6 +281,18 @@ pub fn flat_button(ui: &mut egui::Ui, p: &Palette, label: &str) -> egui::Respons
     )
 }
 
+/// Equal-sized dialog buttons; long script labels keep their full hover text.
+pub fn flat_button_sized(ui: &mut egui::Ui, p: &Palette, label: &str, size: Vec2) -> egui::Response {
+    ui.add_sized(
+        size,
+        egui::Button::new(RichText::new(label).size(12.0).color(p.ink))
+            .fill(p.raised)
+            .corner_radius(CornerRadius::same(2))
+            .truncate(),
+    )
+    .on_hover_text(label)
+}
+
 /// Green online / grey offline.
 pub fn online_color(p: &Palette, online: bool) -> Color32 {
     if online { p.success } else { p.muted_dim }
