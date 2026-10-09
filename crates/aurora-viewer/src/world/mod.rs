@@ -103,6 +103,10 @@ pub struct World {
     pub regions: HashMap<RegionHandle, Region>,
     pub main_region: Option<RegionHandle>,
     pub objects: ObjectStore,
+    /// GLTF material overrides by object, (face, override) pairs. Kept apart
+    /// from the objects like LL's region override cache: a message may come
+    /// before its object, and the scene merges them when it builds the faces.
+    pub gltf_overrides: HashMap<ObjKey, Arc<[(u8, aurora_assets::material::PbrOverride)]>>,
     pub chat: VecDeque<ChatLine>,
     pub chat_unread: usize,
     pub sun: Option<(SunInfo, Instant)>,
@@ -193,6 +197,7 @@ impl World {
             regions: HashMap::new(),
             main_region: None,
             objects: ObjectStore::default(),
+            gltf_overrides: HashMap::new(),
             chat: VecDeque::new(),
             chat_unread: 0,
             sun: None,
@@ -648,10 +653,30 @@ impl World {
             }
             NetEvent::ObjectsKilled { handle, local_ids } => {
                 for id in local_ids {
-                    self.objects.remove(&ObjKey {
+                    let key = ObjKey {
                         region: handle,
                         local_id: id,
-                    });
+                    };
+                    self.objects.remove(&key);
+                    // a cache hit replays the cached ones, a full update comes with them
+                    self.gltf_overrides.remove(&key);
+                }
+                None
+            }
+            NetEvent::GltfOverrides { handle, local_id, sides } => {
+                let key = ObjKey { region: handle, local_id };
+                if sides.is_empty() {
+                    self.gltf_overrides.remove(&key);
+                } else {
+                    let sides: Arc<[_]> = sides
+                        .iter()
+                        .map(|(face, od)| (*face, aurora_assets::material::PbrOverride::from_llsd(od)))
+                        .collect();
+                    self.gltf_overrides.insert(key, sides);
+                }
+                if let Some(o) = self.objects.index_of(&key).and_then(|i| self.objects.get_mut(i)) {
+                    o.material_dirty = true;
+                    o.render.needs_records = true;
                 }
                 None
             }
@@ -712,6 +737,7 @@ impl World {
             }
             NetEvent::RegionRemoved { handle } => {
                 self.objects.remove_region(handle);
+                self.gltf_overrides.retain(|k, _| k.region != handle);
                 self.regions.remove(&handle);
                 self.coarse.remove(&handle);
                 None

@@ -1614,14 +1614,20 @@ impl Session<'_> {
             // cache hits (same CRC) are applied locally, misses requested
             let mut hits = Vec::new();
             let mut misses = Vec::new();
+            // the simulator does not resend the overrides of a cache hit
+            let mut overrides = Vec::new();
             for o in &m.object_data {
-                let cached = self
-                    .obj_caches
-                    .get(&from)
+                let cache = self.obj_caches.get(&from);
+                let cached = cache
                     .and_then(|c| c.get(o.id, o.crc))
                     .and_then(|e| objects::parse_compressed(&e.data, o.update_flags));
                 match cached {
-                    Some(u) => hits.push(u),
+                    Some(u) => {
+                        if let Some(ov) = cache.and_then(|c| c.gltf_override(o.id)).and_then(objects::parse_gltf_override) {
+                            overrides.push(ov);
+                        }
+                        hits.push(u)
+                    }
                     None => misses.push(o.id),
                 }
             }
@@ -1636,7 +1642,40 @@ impl Session<'_> {
                     },
                 );
             }
+            for (local_id, sides) in overrides {
+                emit(
+                    self.sh,
+                    NetEvent::GltfOverrides {
+                        handle: self.handle_of(from),
+                        local_id,
+                        sides,
+                    },
+                );
+            }
             self.request_objects(from, &misses);
+        } else if id == GenericStreamingMessage::ID {
+            let m: GenericStreamingMessage = pkt.decode()?;
+            if m.method_data.method == objects::METHOD_GLTF_MATERIAL_OVERRIDE {
+                let payload = &m.data_block.data;
+                match objects::parse_gltf_override(payload) {
+                    Some((local_id, sides)) => {
+                        if let Some(c) = self.obj_caches.get_mut(&from) {
+                            c.set_gltf_override(local_id, (!sides.is_empty()).then_some(payload.as_slice()));
+                        }
+                        emit(
+                            self.sh,
+                            NetEvent::GltfOverrides {
+                                handle: self.handle_of(from),
+                                local_id,
+                                sides,
+                            },
+                        );
+                    }
+                    None => log::warn!("malformed GLTF material override ({} bytes)", payload.len()),
+                }
+            } else {
+                log::debug!("GenericStreamingMessage: unknown method {:#06x}", m.method_data.method);
+            }
         } else if id == ObjectProperties::ID {
             let m: ObjectProperties = pkt.decode()?;
             emit(self.sh, NetEvent::ObjectProperties(build_cmds::parse_properties(&m)));

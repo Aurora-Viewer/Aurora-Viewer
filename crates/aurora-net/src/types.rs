@@ -374,6 +374,15 @@ pub enum NetEvent {
         handle: RegionHandle,
         local_ids: Vec<u32>,
     },
+    /// GLTF material overrides of one object (GenericStreamingMessage
+    /// 0x4175, LLGLTFMaterialList::applyOverrideMessage): every message
+    /// replaces all the object's overrides; `sides` = (face, `od` entry),
+    /// empty clears them. Also replayed from the object cache on a hit.
+    GltfOverrides {
+        handle: RegionHandle,
+        local_id: u32,
+        sides: Vec<(u8, aurora_llsd::Llsd)>,
+    },
     Terrain {
         handle: RegionHandle,
         patches: Vec<TerrainPatch>,

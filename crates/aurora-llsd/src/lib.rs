@@ -1,9 +1,10 @@
-//! LLSD (Linden Lab Structured Data) value type with XML and binary codecs.
+//! LLSD (Linden Lab Structured Data) value type with XML and binary codecs, and a notation parser.
 //!
 //! Port of the semantics of `llcommon/llsd.cpp` and `llsdserialize*.cpp`
 //! from the Second Life viewer (originally LGPL 2.1).
 
 pub mod binary;
+pub mod notation;
 pub mod xml;
 mod xml_llsd;
 
@@ -11,6 +12,7 @@ use std::collections::BTreeMap;
 use uuid::Uuid;
 
 pub use binary::{from_binary, to_binary};
+pub use notation::from_notation;
 pub use xml_llsd::{from_xml, from_xml_element, to_xml, to_xml_string};
 
 #[derive(Debug, thiserror::Error)]

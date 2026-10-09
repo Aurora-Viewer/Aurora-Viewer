@@ -14,7 +14,7 @@ pub(crate) fn format_date(secs: f64) -> String {
     }
 }
 
-fn parse_date(s: &str) -> f64 {
+pub(crate) fn parse_date(s: &str) -> f64 {
     let s = s.trim();
     if s.is_empty() {
         return 0.0;

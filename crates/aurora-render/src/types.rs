@@ -81,14 +81,17 @@ pub struct DrawRecord {
     pub params: [f32; 4],
     pub tex: [u32; 4],
     pub flags: [u32; 4],
-    /// Legacy material: normal map scale s, t, offset s, t.
+    /// Legacy and PBR materials: normal map scale s, t, offset s, t.
     pub mat_uv: [f32; 4],
-    /// Legacy material: specular map scale s, t, offset s, t.
+    /// Legacy material: specular map scale s, t, offset s, t (PBR: the
+    /// metallic-roughness map's).
     pub spec_uv: [f32; 4],
     /// Legacy material: normal rotation, specular rotation, glossiness
-    /// (exponent / 255), environment intensity (/ 255).
+    /// (exponent / 255), environment intensity (/ 255). PBR: normal,
+    /// metallic-roughness and emissive map rotations.
     pub legacy: [f32; 4],
-    /// Legacy material: specular light color (rgb, linear).
+    /// Legacy material: specular light color (rgb, linear). PBR: emissive
+    /// map scale s, t, offset s, t.
     pub spec_color: [f32; 4],
 }
 

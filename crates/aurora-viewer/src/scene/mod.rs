@@ -1218,6 +1218,8 @@ impl Scene {
             let mut pbr_alpha = None;
             let mut aux_tex = [Uuid::nil(); 3];
             let base_repeats = tf.scale_s.abs().max(tf.scale_t.abs()).clamp(0.1, 16.0);
+            // texture streaming: how many times each map repeats on the face
+            let mut repeats = base_repeats;
             let mut aux_repeats = [base_repeats; 3];
             let mut two_sided = false;
             // GLTF material?
@@ -1231,20 +1233,40 @@ impl Scene {
             let mut base_tex = tf.texture;
             if let Some(mid) = mat_id {
                 g.material_ids.push(mid);
-                if let Some(m) = self.materials.get(&mid) {
+                if let Some(base) = self.materials.get(&mid) {
+                    // render material: the asset with the face's override on top
+                    // (LLViewerObject::initRenderMaterial)
+                    let mut m = (*base).clone();
+                    if let Some((_, ov)) = world
+                        .gltf_overrides
+                        .get(&o.key)
+                        .and_then(|s| s.iter().rev().find(|(f, _)| *f as usize == fi))
+                    {
+                        m.apply_override(ov);
+                    }
                     // glTF materials replace the legacy shininess
                     rec.flags[0] &= !flags::LEGACY_MAT;
                     rec.flags[0] |= flags::PBR;
                     rec.flags[0] &= !flags::FULLBRIGHT;
-                    let c = m.base_color_factor;
-                    rec.base_color = [c[0] * tf.color[0], c[1] * tf.color[1], c[2] * tf.color[2], c[3] * tf.color[3]];
+                    // the material's base color replaces the face color (LLFace::getGeometryVolume)
+                    rec.base_color = m.base_color_factor;
                     rec.params[1] = m.metallic_factor;
                     rec.params[2] = m.roughness_factor;
                     rec.params[3] = m.alpha_cutoff;
                     rec.emissive = [m.emissive_factor[0], m.emissive_factor[1], m.emissive_factor[2], tf.glow];
-                    let t = &m.transforms[0];
-                    rec.uv_st = [t.scale[0], t.scale[1], t.offset[0], t.offset[1]];
-                    rec.params[0] = t.rotation;
+                    // one transform per map; the texture entry's repeats do not
+                    // apply to glTF faces (LLFace::getGeometryVolume)
+                    let so = |t: &aurora_assets::material::TextureTransform| [t.scale[0], t.scale[1], t.offset[0], t.offset[1]];
+                    let [tb, tn, tmr, te_] = &m.transforms;
+                    rec.uv_st = so(tb);
+                    rec.params[0] = tb.rotation;
+                    rec.mat_uv = so(tn);
+                    rec.spec_uv = so(tmr);
+                    rec.spec_color = so(te_);
+                    rec.legacy = [tn.rotation, tmr.rotation, te_.rotation, 0.0];
+                    let rep = |t: &aurora_assets::material::TextureTransform| t.scale[0].abs().max(t.scale[1].abs()).clamp(0.1, 64.0);
+                    repeats = tb.scale[0].abs().max(tb.scale[1].abs()).clamp(0.1, 16.0);
+                    aux_repeats = [rep(tn), rep(tmr), rep(te_)];
                     base_tex = m.base_color_texture.unwrap_or(Uuid::nil());
                     let mut slot_of = |id: Option<Uuid>, default: u32, g: &mut ObjGpu, s: &mut Self| -> u32 {
                         match id {
@@ -1365,7 +1387,7 @@ impl Scene {
                 pbr_alpha,
                 legacy_alpha,
                 two_sided,
-                repeats: tf.scale_s.abs().max(tf.scale_t.abs()).clamp(0.1, 16.0),
+                repeats,
                 glow: rec.emissive[3] > 0.0,
             });
         }
@@ -2496,6 +2518,7 @@ impl Scene {
             );
             let te = o.te.as_ref();
             let mut mats: Vec<Uuid> = Vec::new();
+            let mut pbr_mats: Vec<Uuid> = Vec::new();
             for (fi, f) in g.faces.iter().enumerate() {
                 let tf = te.map(|t| *t.face(fi)).unwrap_or_default();
                 let a = alpha.get(f.base_slot as usize).copied().unwrap_or(AlphaKind::Opaque);
@@ -2519,6 +2542,25 @@ impl Scene {
                 if !tf.material_id.is_nil() && !mats.contains(&tf.material_id) {
                     mats.push(tf.material_id);
                 }
+                if let Some(id) = pbr.filter(|id| !id.is_nil() && !pbr_mats.contains(id)) {
+                    pbr_mats.push(id);
+                }
+            }
+            for id in pbr_mats {
+                match self.materials.peek(&id) {
+                    Some(m) => log::info!(
+                        "  pbr {id}: base {:?}, normal {:?}, orm {:?}, emissive {:?}, transforms (scale, offset, rotation) {:?}",
+                        m.base_color_texture,
+                        m.normal_texture,
+                        m.metallic_roughness_texture,
+                        m.emissive_texture,
+                        m.transforms.map(|t| (t.scale, t.offset, t.rotation))
+                    ),
+                    None => log::info!("  pbr {id}: not loaded"),
+                }
+            }
+            for (face, ov) in world.gltf_overrides.get(&o.key).iter().flat_map(|s| s.iter()) {
+                log::info!("  pbr override face {face}: {ov:?}");
             }
             for id in mats {
                 match self.legacy_mats.peek(&id) {

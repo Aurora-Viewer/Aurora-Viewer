@@ -521,9 +521,58 @@ pub fn parse_terse(b: &msgs::improved_terse_object_update::ObjectData) -> Option
     })
 }
 
+/// `LLGenericStreamingMessage::METHOD_GLTF_MATERIAL_OVERRIDE`.
+pub const METHOD_GLTF_MATERIAL_OVERRIDE: u16 = 0x4175;
+
+/// Faces an override message can address (`MAX_TES` of applyOverrideMessage).
+const MAX_OVERRIDE_TES: usize = 45;
+
+/// Payload of a GLTF material override message (LLGenericStreamingMessage::
+/// unpack + LLGLTFMaterialList::applyOverrideMessage): LLSD notation
+/// `{'id':<local id>,'te':[faces],'od':[override per face]}`. Returns the
+/// local id and the (face, override) pairs; `None` for a malformed message
+/// (no `te` array), which LL ignores. Faces outside 0..45 are dropped (LL
+/// indexes its table with them unchecked).
+pub fn parse_gltf_override(payload: &[u8]) -> Option<(u32, Vec<(u8, aurora_llsd::Llsd)>)> {
+    // LL copies at most 7 KB (MAX_SIZE)
+    let payload = &payload[..payload.len().min(7 * 1024)];
+    let data = aurora_llsd::from_notation(payload).ok()?;
+    let local_id = data.get("id").as_i32() as u32;
+    let tes = data.get("te");
+    if !tes.is_array() {
+        return None;
+    }
+    let od = data.get("od");
+    let sides = tes
+        .as_array()
+        .iter()
+        .take(MAX_OVERRIDE_TES)
+        .enumerate()
+        .filter_map(|(i, te)| {
+            let face = u8::try_from(te.as_i32()).ok().filter(|&f| (f as usize) < MAX_OVERRIDE_TES)?;
+            Some((face, od.at(i).clone()))
+        })
+        .collect();
+    Some((local_id, sides))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gltf_override_message() {
+        let (id, sides) = parse_gltf_override(b"{'id':i1234,'te':[i0,i2,i99,i-1],'od':[{'ti':[{'s':[r10,r10]}]},{'mf':r0}]}\0").unwrap();
+        assert_eq!(id, 1234);
+        assert_eq!(sides.len(), 2, "out of range faces are dropped");
+        assert_eq!(sides[0].0, 0);
+        assert_eq!(sides[0].1.get("ti").at(0).get("s").at(0).as_f64(), 10.0);
+        assert_eq!(sides[1].0, 2);
+        let (_, cleared) = parse_gltf_override(b"{'id':i7,'te':[],'od':[]}").unwrap();
+        assert!(cleared.is_empty());
+        assert!(parse_gltf_override(b"{'id':i7}").is_none());
+        assert!(parse_gltf_override(b"garbage").is_none());
+    }
 
     #[test]
     fn u16_quant() {

@@ -336,6 +336,25 @@ impl MaterialStreamer {
         e.material.clone()
     }
 
+    /// A material known locally (offline demo).
+    pub fn insert(&mut self, id: Uuid, m: PbrMaterial) {
+        self.entries.insert(
+            id,
+            MatEntry {
+                material: Some(Arc::new(m)),
+                state: 3,
+                retry_at: None,
+                failures: 0,
+            },
+        );
+        self.generation += 1;
+    }
+
+    /// The material if it is loaded, without requesting it (diagnostics).
+    pub fn peek(&self, id: &Uuid) -> Option<Arc<PbrMaterial>> {
+        self.entries.get(id).and_then(|e| e.material.clone())
+    }
+
     pub fn update(&mut self, jobs: &Jobs, fetcher: &Fetcher, viewer_asset: Option<&str>) {
         let now = Instant::now();
         for (id, e) in self.entries.iter_mut() {

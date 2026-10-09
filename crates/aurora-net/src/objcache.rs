@@ -2,12 +2,19 @@
 //! LLVOCache): compressed object updates keyed by local id with their CRC,
 //! persisted to `<dir>/<region id>.objc`. Assets referenced by the objects
 //! (textures, meshes...) are cached separately, once, by asset id.
+//!
+//! The GLTF material overrides of the objects are kept with them (LL's
+//! `objects_<x>_<y>_extras.slec`, LLVOCache::writeGenericExtrasToCache): the
+//! simulator does not resend them for a cache hit.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
-const MAGIC: &[u8; 4] = b"AOC1";
+/// v2 adds the GLTF overrides. A v1 file is dropped: its objects would come
+/// back from the cache without their overrides, so the simulator must send
+/// them again with full updates (as LL does when the extras file is invalid).
+const MAGIC: &[u8; 4] = b"AOC2";
 /// Entries beyond this are not kept (very dense regions).
 const MAX_ENTRIES: usize = 60_000;
 
@@ -20,13 +27,17 @@ pub struct Entry {
 pub struct RegionObjectCache {
     path: PathBuf,
     entries: HashMap<u32, Entry>,
+    /// Raw override message payload (LLSD notation) by local id.
+    overrides: HashMap<u32, Vec<u8>>,
     dirty: bool,
 }
+
+type Decoded = (HashMap<u32, Entry>, HashMap<u32, Vec<u8>>);
 
 impl RegionObjectCache {
     pub fn load(dir: &Path, region_id: Uuid) -> RegionObjectCache {
         let path = dir.join(format!("{region_id}.objc"));
-        let entries = std::fs::read(&path).ok().and_then(|d| Self::decode(&d)).unwrap_or_default();
+        let (entries, overrides) = std::fs::read(&path).ok().and_then(|d| Self::decode(&d)).unwrap_or_default();
         if !entries.is_empty() {
             // used: keep it in the rolling cache
             if let Ok(f) = std::fs::File::options().append(true).open(&path) {
@@ -36,18 +47,19 @@ impl RegionObjectCache {
         RegionObjectCache {
             path,
             entries,
+            overrides,
             dirty: false,
         }
     }
 
-    fn decode(d: &[u8]) -> Option<HashMap<u32, Entry>> {
+    fn decode(d: &[u8]) -> Option<Decoded> {
         if d.len() < 8 || &d[..4] != MAGIC {
             return None;
         }
         let u32_at = |p: usize| -> Option<u32> { Some(u32::from_le_bytes(d.get(p..p + 4)?.try_into().ok()?)) };
         let count = u32_at(4)? as usize;
         let mut p = 8;
-        let mut out = HashMap::with_capacity(count.min(MAX_ENTRIES));
+        let mut entries = HashMap::with_capacity(count.min(MAX_ENTRIES));
         for _ in 0..count.min(MAX_ENTRIES) {
             let local_id = u32_at(p)?;
             let crc = u32_at(p + 4)?;
@@ -55,9 +67,22 @@ impl RegionObjectCache {
             let len = u32_at(p + 12)? as usize;
             let data = d.get(p + 16..p + 16 + len)?.to_vec();
             p += 16 + len;
-            out.insert(local_id, Entry { crc, update_flags, data });
+            entries.insert(local_id, Entry { crc, update_flags, data });
         }
-        Some(out)
+        let count = u32_at(p)? as usize;
+        p += 4;
+        let mut overrides = HashMap::new();
+        for _ in 0..count.min(MAX_ENTRIES) {
+            let local_id = u32_at(p)?;
+            let len = u32_at(p + 4)? as usize;
+            let data = d.get(p + 8..p + 8 + len)?.to_vec();
+            p += 8 + len;
+            // like readGenericExtrasFromCache: only for cached objects
+            if entries.contains_key(&local_id) {
+                overrides.insert(local_id, data);
+            }
+        }
+        Some((entries, overrides))
     }
 
     pub fn save(&mut self) {
@@ -73,6 +98,13 @@ impl RegionObjectCache {
             out.extend_from_slice(&e.update_flags.to_le_bytes());
             out.extend_from_slice(&(e.data.len() as u32).to_le_bytes());
             out.extend_from_slice(&e.data);
+        }
+        let overrides: Vec<_> = self.overrides.iter().filter(|(id, _)| self.entries.contains_key(id)).collect();
+        out.extend_from_slice(&(overrides.len() as u32).to_le_bytes());
+        for (id, data) in overrides {
+            out.extend_from_slice(&id.to_le_bytes());
+            out.extend_from_slice(&(data.len() as u32).to_le_bytes());
+            out.extend_from_slice(data);
         }
         if let Some(dir) = self.path.parent() {
             let _ = std::fs::create_dir_all(dir);
@@ -106,9 +138,29 @@ impl RegionObjectCache {
         }
     }
 
+    /// Override message payload of an object, replayed on a cache hit.
+    pub fn gltf_override(&self, local_id: u32) -> Option<&[u8]> {
+        self.overrides.get(&local_id).map(Vec::as_slice)
+    }
+
+    /// Latest override message of an object (each one replaces the previous;
+    /// `None` when it cleared them: LLViewerRegion::cacheFullUpdateGLTFOverride).
+    pub fn set_gltf_override(&mut self, local_id: u32, payload: Option<&[u8]>) {
+        let changed = match payload {
+            Some(p) if self.overrides.get(&local_id).map(Vec::as_slice) == Some(p) => false,
+            Some(p) => {
+                self.overrides.insert(local_id, p.to_vec());
+                true
+            }
+            None => self.overrides.remove(&local_id).is_some(),
+        };
+        self.dirty |= changed && self.entries.contains_key(&local_id);
+    }
+
     /// Drop every entry without writing (cache cleared on disk).
     pub fn reset(&mut self) {
         self.entries.clear();
+        self.overrides.clear();
         self.dirty = false;
     }
 
@@ -133,21 +185,29 @@ mod tests {
         assert!(c.is_empty());
         c.put(42, 7, 1, &[1, 2, 3]);
         c.put(43, 9, 0, &[4]);
+        c.set_gltf_override(42, Some(b"{'id':i42}"));
+        // not a cached object: not saved
+        c.set_gltf_override(99, Some(b"{'id':i99}"));
         c.save();
         let c2 = RegionObjectCache::load(&dir, region);
         assert_eq!(c2.len(), 2);
         assert_eq!(c2.get(42, 7).map(|e| e.data.clone()), Some(vec![1, 2, 3]));
         assert!(c2.get(42, 8).is_none(), "stale crc is a miss");
+        assert_eq!(c2.gltf_override(42), Some(&b"{'id':i42}"[..]));
+        assert_eq!(c2.gltf_override(43), None);
+        assert_eq!(c2.gltf_override(99), None);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn corrupt_file_is_ignored() {
+    fn corrupt_or_old_file_is_ignored() {
         assert!(
-            RegionObjectCache::decode(b"AOC1\xff\xff\xff\xff")
-                .map(|m| m.is_empty())
+            RegionObjectCache::decode(b"AOC2\xff\xff\xff\xff")
+                .map(|(m, _)| m.is_empty())
                 .unwrap_or(true)
         );
         assert!(RegionObjectCache::decode(b"nope").is_none());
+        // v1 (no overrides): dropped so that the simulator resends them
+        assert!(RegionObjectCache::decode(b"AOC1\0\0\0\0").is_none());
     }
 }

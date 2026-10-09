@@ -866,6 +866,85 @@ pub fn events() -> Vec<NetEvent> {
             }
         }
     }
+    // AURORA_DEMO_PLANAR=1: planar texgen test, floor slabs of different
+    // sizes ahead of the start position. The planar ones (two tile repeats
+    // per metre, centers 0.5 m apart) must line up across slabs; the strip at
+    // the back uses default mapping (one repeat stretched over 5 m); the cube
+    // checks the side faces.
+    if std::env::var_os("AURORA_DEMO_PLANAR").is_some() {
+        let floor = height(cx, cy) + 0.35;
+        let slabs: [(Vec3, Vec3, bool); 5] = [
+            (Vec3::new(135.0, 127.0, 0.0), Vec3::new(2.0, 2.0, 0.1), true),
+            (Vec3::new(137.5, 127.0, 0.0), Vec3::new(3.0, 2.0, 0.1), true),
+            (Vec3::new(136.0, 124.5, 0.0), Vec3::new(4.0, 3.0, 0.1), true),
+            (Vec3::new(136.5, 129.5, 0.0), Vec3::new(5.0, 3.0, 0.1), false),
+            (Vec3::new(138.0, 124.5, 0.5), Vec3::new(1.0, 1.0, 1.0), true),
+        ];
+        for (p, scale, planar) in slabs {
+            let mut t = TextureEntry::default();
+            for f in t.faces.iter_mut() {
+                f.texture = TEX_TILES;
+                f.color = [1.0, 1.0, 1.0, 1.0];
+                // TEM_TEX_GEN_PLANAR (LLTextureEntry), under TEM_TEX_GEN_MASK
+                if planar {
+                    f.media_flags |= 0x02;
+                }
+            }
+            add(prim(
+                id,
+                Vec3::new(p.x, p.y, floor + p.z + scale.z * 0.5),
+                Quat::IDENTITY,
+                scale,
+                boxp,
+                Arc::new(t),
+                ExtraParams::default(),
+                "",
+            ));
+            id += 1;
+        }
+    }
+    // AURORA_DEMO_PBR_OVERRIDE=1: two slabs with the same PBR material (one
+    // tile over the whole face); the second one gets a GLTF material override
+    // (4 × 4 repeats on every map, a tint), sent as the simulator's notation
+    // payload so that the network parser is exercised too
+    let mut overrides = Vec::new();
+    if std::env::var_os("AURORA_DEMO_PBR_OVERRIDE").is_some() {
+        let floor = height(cx, cy) + 0.35;
+        for (k, (x, y)) in [(137.5f32, 129.0f32), (135.0, 127.5)].into_iter().enumerate() {
+            let mut t = TextureEntry::default();
+            for f in t.faces.iter_mut() {
+                f.texture = BLANK_TEXTURE;
+                f.color = [1.0, 1.0, 1.0, 1.0];
+            }
+            let mut o = prim(
+                id,
+                Vec3::new(x, y, floor + 0.17),
+                Quat::IDENTITY,
+                Vec3::new(2.0, 2.0, 0.1),
+                boxp,
+                Arc::new(t),
+                ExtraParams {
+                    render_materials: (0..6).map(|f| (f, MAT_PBR_TILES)).collect(),
+                    ..Default::default()
+                },
+                "",
+            );
+            if k == 1 {
+                let ti = "{'s':[r4,r4]}";
+                let payload = format!("{{'id':i{id},'te':[i0],'od':[{{'bc':[r1,r0.8,r0.7,r1],'ti':[{ti},{ti},{ti},{ti}]}}]}}");
+                if let Some((local_id, sides)) = aurora_net::objects::parse_gltf_override(payload.as_bytes()) {
+                    overrides.push(NetEvent::GltfOverrides {
+                        handle: HANDLE,
+                        local_id,
+                        sides,
+                    });
+                }
+                o.text = "Override : 4 × 4, teinte".into();
+            }
+            add(o);
+            id += 1;
+        }
+    }
     // particle fountain at the plaza center (legacy 86-byte particle block)
     {
         let mut o = prim(
@@ -922,6 +1001,7 @@ pub fn events() -> Vec<NetEvent> {
         handle: HANDLE,
         objects: objs,
     });
+    ev.extend(overrides);
 
     // our avatar + a second one
     let mut avatars = Vec::new();
@@ -1366,6 +1446,9 @@ pub fn voice_levels(t: f64, me: Uuid, talking: bool, mic_level: f32) -> std::col
 pub const TEX_GRADIENT: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0001);
 pub const TEX_HOLES: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0002);
 pub const TEX_BUMPS: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0003);
+/// Floor tiles of AURORA_DEMO_PLANAR: 2 × 2 tiles with grout lines, the
+/// top-left tile marked so the orientation shows.
+pub const TEX_TILES: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0004);
 const MAT_NONE: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0001);
 const MAT_MASK: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0002);
 const MAT_EMISSIVE: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0003);
@@ -1403,6 +1486,18 @@ pub fn local_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
                 let n = Vec3::new(-dx * 2.0, -dy * 2.0, 1.0).normalize();
                 let e = |v: f32| ((v * 0.5 + 0.5) * 255.0) as u8;
                 [e(n.x), e(n.y), e(n.z), 255]
+            } else if *id == TEX_TILES {
+                let (tx, ty) = (x / 32, y / 32);
+                let (lx, ly) = (x % 32, y % 32);
+                if lx < 2 || ly < 2 {
+                    [40, 36, 48, 255]
+                } else if tx == 0 && ty == 0 && (8..24).contains(&lx) && (8..24).contains(&ly) {
+                    [124, 58, 237, 255]
+                } else if (tx + ty) % 2 == 0 {
+                    [214, 196, 160, 255]
+                } else {
+                    [170, 120, 84, 255]
+                }
             } else {
                 return None;
             };
@@ -1410,6 +1505,24 @@ pub fn local_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
         }
     }
     Some((px, N, N))
+}
+
+/// PBR material of AURORA_DEMO_PBR_OVERRIDE: the floor tiles with the
+/// bumps as normal map.
+const MAT_PBR_TILES: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0010);
+
+/// PBR materials of the demo (normally fetched as assets).
+pub fn pbr_materials() -> Vec<(Uuid, aurora_assets::PbrMaterial)> {
+    vec![(
+        MAT_PBR_TILES,
+        aurora_assets::PbrMaterial {
+            base_color_texture: Some(TEX_TILES),
+            normal_texture: Some(TEX_BUMPS),
+            metallic_factor: 0.0,
+            roughness_factor: 0.6,
+            ..Default::default()
+        },
+    )]
 }
 
 /// Legacy materials of the test panels (normally fetched from the region).
