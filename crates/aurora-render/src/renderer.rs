@@ -843,8 +843,8 @@ pub struct Renderer {
     /// Palette bytes written since the last frame (AURORA_PROFILE).
     palettes_uploaded: u64,
     skin_bind_buffer: wgpu::Buffer,
+    /// Shadow atlas: one tile per cascade (see `make_shadow_atlas`).
     shadow_view: wgpu::TextureView,
-    shadow_layer_views: Vec<wgpu::TextureView>,
     shadow_buffers: Vec<wgpu::Buffer>,
     shadow_bind_groups: Vec<wgpu::BindGroup>,
     shadow_size: u32,
@@ -1644,7 +1644,7 @@ impl Renderer {
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Depth,
-                        view_dimension: wgpu::TextureViewDimension::D2Array,
+                        view_dimension: wgpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
                     count: None,
@@ -1785,7 +1785,7 @@ impl Renderer {
         let probes = crate::probes::Probes::new(&device, RenderSettings::default().probe_slots);
 
         let shadow_size = 2048u32;
-        let (shadow_view, shadow_layer_views) = Self::make_shadow_views(&device, shadow_size);
+        let shadow_view = Self::make_shadow_atlas(&device, shadow_size);
         let shadow_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("shadow"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -1999,7 +1999,6 @@ impl Renderer {
             palettes_uploaded: 0,
             skin_bind_buffer,
             shadow_view,
-            shadow_layer_views,
             shadow_buffers,
             shadow_bind_groups,
             shadow_size,
@@ -2050,13 +2049,17 @@ impl Renderer {
         }
     }
 
-    fn make_shadow_views(device: &wgpu::Device, size: u32) -> (wgpu::TextureView, Vec<wgpu::TextureView>) {
+    /// Shadow atlas of 2x2 tiles of `size` (cascade i in tile (i % 2, i / 2)),
+    /// all rendered in one pass: the bindless texture group, which wgpu checks
+    /// element by element for every pass binding it, is bound once instead of
+    /// once per cascade. The fourth tile is unused.
+    fn make_shadow_atlas(device: &wgpu::Device, size: u32) -> wgpu::TextureView {
         let tex = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("shadow cascades"),
+            label: Some("shadow atlas"),
             size: wgpu::Extent3d {
-                width: size,
-                height: size,
-                depth_or_array_layers: CASCADES as u32,
+                width: size * 2,
+                height: size * 2,
+                depth_or_array_layers: 1,
             },
             mip_level_count: 1,
             sample_count: 1,
@@ -2065,21 +2068,7 @@ impl Renderer {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
-        let all = tex.create_view(&wgpu::TextureViewDescriptor {
-            dimension: Some(wgpu::TextureViewDimension::D2Array),
-            ..Default::default()
-        });
-        let layers = (0..CASCADES as u32)
-            .map(|i| {
-                tex.create_view(&wgpu::TextureViewDescriptor {
-                    dimension: Some(wgpu::TextureViewDimension::D2),
-                    base_array_layer: i,
-                    array_layer_count: Some(1),
-                    ..Default::default()
-                })
-            })
-            .collect();
-        (all, layers)
+        tex.create_view(&wgpu::TextureViewDescriptor::default())
     }
 
     fn make_skin_bind_buffer(device: &wgpu::Device, count: usize) -> wgpu::Buffer {
@@ -3018,12 +3007,14 @@ impl Renderer {
         if probes_dirty {
             self.probes = crate::probes::Probes::new(&self.device, slots);
         }
-        let res = s.shadow_resolution.clamp(512, 8192);
+        // the atlas is two tiles wide
+        let res = s
+            .shadow_resolution
+            .clamp(512, 8192)
+            .min(self.device.limits().max_texture_dimension_2d / 2);
         let shadows_dirty = s.shadow_resolution > 0 && res != self.shadow_size;
         if shadows_dirty {
-            let (all, layers) = Self::make_shadow_views(&self.device, res);
-            self.shadow_view = all;
-            self.shadow_layer_views = layers;
+            self.shadow_view = Self::make_shadow_atlas(&self.device, res);
             self.shadow_size = res;
         }
         self.settings = s;
@@ -3750,35 +3741,43 @@ impl Renderer {
         };
         // ---- shadows
         if f.shadows {
-            for ci in 0..CASCADES {
-                let ts = if take_first() { ts_begin(&self.timer) } else { None };
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("shadow"),
-                    color_attachments: &[],
-                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                        view: &self.shadow_layer_views[ci],
-                        depth_ops: Some(wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(1.0),
-                            store: wgpu::StoreOp::Store,
-                        }),
-                        stencil_ops: None,
+            // one pass for all cascades, each in its atlas tile
+            let ts = if take_first() { ts_begin(&self.timer) } else { None };
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("shadow"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.shadow_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
                     }),
-                    timestamp_writes: ts,
-                    occlusion_query_set: None,
-                    multiview_mask: None,
-                });
+                    stencil_ops: None,
+                }),
+                timestamp_writes: ts,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            if rg.shadow.iter().any(|r| r.1 > 0) {
+                pass.set_pipeline(&self.pipelines.shadow);
+                pass.set_bind_group(1, &self.records_bind_group, &[]);
+                pass.set_bind_group(2, &self.textures.bind_group, &[]);
+                pass.set_vertex_buffer(0, geo.vertex_buffer.slice(..));
+                pass.set_vertex_buffer(1, geo.skin_buffer.slice(..));
+                pass.set_index_buffer(geo.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+            }
+            let size = self.shadow_size;
+            for ci in 0..CASCADES {
                 let (off, count) = rg.shadow[ci];
-                if count > 0 {
-                    pass.set_pipeline(&self.pipelines.shadow);
-                    pass.set_bind_group(1, &self.records_bind_group, &[]);
-                    pass.set_bind_group(2, &self.textures.bind_group, &[]);
-                    pass.set_bind_group(3, &self.shadow_bind_groups[ci], &[]);
-                    pass.set_vertex_buffer(0, geo.vertex_buffer.slice(..));
-                    pass.set_vertex_buffer(1, geo.skin_buffer.slice(..));
-                    pass.set_index_buffer(geo.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-                    pass.multi_draw_indexed_indirect(&self.indirect, off, count);
-                    calls.set(calls.get() + 1);
+                if count == 0 {
+                    continue;
                 }
+                let (x, y) = ((ci as u32 % 2) * size, (ci as u32 / 2) * size);
+                pass.set_viewport(x as f32, y as f32, size as f32, size as f32, 0.0, 1.0);
+                pass.set_scissor_rect(x, y, size, size);
+                pass.set_bind_group(3, &self.shadow_bind_groups[ci], &[]);
+                pass.multi_draw_indexed_indirect(&self.indirect, off, count);
+                calls.set(calls.get() + 1);
             }
         }
 

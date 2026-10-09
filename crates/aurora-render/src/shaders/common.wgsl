@@ -83,7 +83,8 @@ const FLAG_LEGACY_MAT: u32 = 256u;
 const FLAG_EMISSIVE_MASK: u32 = 512u;
 
 @group(0) @binding(0) var<uniform> frame: Frame;
-@group(0) @binding(1) var shadow_map: texture_depth_2d_array;
+// atlas of 2x2 tiles, cascade i in tile (i % 2, i / 2)
+@group(0) @binding(1) var shadow_map: texture_depth_2d;
 @group(0) @binding(2) var shadow_sampler: sampler_comparison;
 @group(0) @binding(3) var ao_tex: texture_2d<f32>;
 @group(0) @binding(4) var lin_clamp: sampler;
@@ -521,12 +522,18 @@ fn shadow_factor(world_pos: vec3<f32>, n: vec3<f32>, view_depth: f32) -> f32 {
     if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || ndc.z < 0.0 || ndc.z > 1.0) {
         return 1.0;
     }
-    let texel = 1.0 / f32(textureDimensions(shadow_map).x);
+    // texel of a tile, in tile coordinates
+    let texel = 2.0 / f32(textureDimensions(shadow_map).x);
+    let tile = vec2<f32>(f32(cascade % 2u), f32(cascade / 2u));
     var sum = 0.0;
     for (var y = -1; y <= 1; y++) {
         for (var x = -1; x <= 1; x++) {
             let o = vec2<f32>(f32(x), f32(y)) * texel;
-            sum += textureSampleCompareLevel(shadow_map, shadow_sampler, uv + o, i32(cascade), ndc.z - 0.0005);
+            // clamped to the centers of the tile's edge texels: the same
+            // result as the clamp-to-edge of a separate texture, never a
+            // texel of the neighbouring tile
+            let t = clamp(uv + o, vec2<f32>(0.5 * texel), vec2<f32>(1.0 - 0.5 * texel));
+            sum += textureSampleCompareLevel(shadow_map, shadow_sampler, (t + tile) * 0.5, ndc.z - 0.0005);
         }
     }
     let s = sum / 9.0;
