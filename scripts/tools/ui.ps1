@@ -10,12 +10,12 @@ $Esc = [char]27
 # Aurora palette (docs/BRANDING.md).
 $Palette = @{
     violet = '8B5CF6'; indigo = '4F46E5'; teal = '5EEAD4'; violet_light = 'A78BFA'
-    ink = 'E8EDFB'; muted = '9AA6C6'; muted_dim = '6F7BA0'; bar = '1C1C1C'
+    ink = 'E8EDFB'; muted = '9AA6C6'; muted_dim = '6F7BA0'; bar = '1C1C1C'; raised = '3A3A3A'
     success = '4ADE80'; warn = 'FB923C'; danger = 'F87171'; amber = 'FCD34D'
 }
 $BasicColors = @{
     violet = 'Magenta'; indigo = 'Blue'; teal = 'Cyan'; violet_light = 'Magenta'
-    ink = 'White'; muted = 'Gray'; muted_dim = 'DarkGray'; bar = 'Black'
+    ink = 'White'; muted = 'Gray'; muted_dim = 'DarkGray'; bar = 'Black'; raised = 'DarkGray'
     success = 'Green'; warn = 'Yellow'; danger = 'Red'; amber = 'Yellow'
 }
 
@@ -30,7 +30,7 @@ function Write-Color([string]$Text, [string]$Color = 'ink', [switch]$NoNewline, 
         $bg = if ($Background) { Get-Ansi $Background -Background } else { '' }
         Write-Host "$bg$(Get-Ansi $Color)$Text$Esc[0m" -NoNewline:$NoNewline
     } elseif ($Background) {
-        Write-Host $Text -ForegroundColor $BasicColors[$Color] -BackgroundColor $(if ($Background -eq 'bar') { 'Black' } else { 'DarkMagenta' }) -NoNewline:$NoNewline
+        Write-Host $Text -ForegroundColor $BasicColors[$Color] -BackgroundColor $(switch ($Background) { 'bar' { 'Black' } 'raised' { 'DarkGray' } default { 'DarkMagenta' } }) -NoNewline:$NoNewline
     } else {
         Write-Host $Text -ForegroundColor $BasicColors[$Color] -NoNewline:$NoNewline
     }

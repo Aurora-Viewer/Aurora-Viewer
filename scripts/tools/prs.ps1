@@ -255,19 +255,26 @@ function Format-Cell([string]$Text, [int]$Width) {
 function Write-PanelLine([object[]]$Segments, [int]$Width, [switch]$Selected) {
     # @(@('text', 'color')) is unrolled by PowerShell into a single segment
     if ($Segments.Count -gt 0 -and $Segments[0] -isnot [array]) { $Segments = @(, $Segments) }
+    # selected: a violet bar in the first column and a dark grey background,
+    # every segment keeping its own colour (green CI stays green)
     $used = 0
+    if ($Selected -and $Width -gt 0) {
+        Write-Color '▌' violet -Background raised -NoNewline
+        $used = 1
+        $first = [string]$Segments[0][0]
+        if ($first.StartsWith(' ')) { $Segments = @(, @($first.Substring(1), $Segments[0][1])) + @($Segments | Select-Object -Skip 1) }
+    }
     foreach ($s in $Segments) {
         $text = [string]$s[0]
         if ($used + $text.Length -gt $Width) { $text = $text.Substring(0, [Math]::Max(0, $Width - $used)) }
         if ($text) {
-            # selected: ink on violet, but the status square keeps its colour
-            if ($Selected) { Write-Color $text $(if ($text.Contains($StatusMark)) { $s[1] } else { 'ink' }) -Background violet -NoNewline }
+            if ($Selected) { Write-Color $text $s[1] -Background raised -NoNewline }
             else { Write-Color $text $s[1] -NoNewline }
         }
         $used += $text.Length
     }
     $pad = ' ' * [Math]::Max(0, $Width - $used)
-    if ($Selected) { Write-Color $pad ink -Background violet } else { Write-Host $pad }
+    if ($Selected) { Write-Color $pad ink -Background raised } else { Write-Host $pad }
 }
 
 function Show-PrPanel {
