@@ -93,6 +93,7 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
 | `settings.rs`, `keybinds.rs`, `keybinds/layout.rs`, `theme.rs` | Réglages enregistrés, raccourcis, disposition Windows et touches de déplacement par défaut, palette |
 | `ui_sound.rs` | Catalogue des sons de l'interface (UISnd* de Firestorm), réglages par son |
 | `logging.rs`, `cache.rs`, `credentials.rs` | Logs, cache disque, mot de passe retenu (coffre de l'OS) |
+| `scene/animesh.rs` | Squelettes autonomes des objets animés, animations du linkset, limites des poses pour le culling et les ombres, scénario de démo |
 
 ## Déroulement d'une image
 

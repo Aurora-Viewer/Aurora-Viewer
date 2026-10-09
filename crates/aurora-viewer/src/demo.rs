@@ -411,6 +411,12 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 Uuid::nil(),
                 DEMO_GROUP2,
             );
+            // The animesh fixture needs its wearer visible in full.
+            let text = if std::env::var_os("AURORA_DEMO_ANIMESH").is_some() {
+                text.lines().skip(1).collect::<Vec<_>>().join("\n")
+            } else {
+                text
+            };
             vec![NetEvent::MuteList(aurora_net::MuteListSource::File(text))]
         }
         // two groups, and someone starts a chat in the first one
@@ -1466,6 +1472,99 @@ pub fn idle_animation() -> aurora_assets::Animation {
 }
 
 pub const IDLE_ANIM: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0000_0000_0001);
+
+pub const ANIMESH_MESH: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0000_0000_0100);
+pub const ANIMESH_TEXTURE: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0000_0000_0101);
+pub const ANIMESH_ANIM: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0000_0000_0102);
+
+/// Root mesh, linked mesh driven by a child's signal, and a worn root mesh.
+pub fn animesh_events() -> Vec<NetEvent> {
+    let mesh = SculptParams {
+        texture: ANIMESH_MESH,
+        sculpt_type: LL_SCULPT_TYPE_MESH,
+    };
+    let ground = floor_at(134.0, 126.0) + 0.2;
+    let mut objects = Vec::new();
+    for (id, pos, parent, animated, is_mesh, color) in [
+        (9200, Vec3::new(134.0, 126.0, ground), 0, true, true, [0.9, 0.45, 0.1, 1.0]),
+        (9201, Vec3::new(134.0, 127.5, ground), 0, true, false, [0.0; 4]),
+        (9202, Vec3::ZERO, 9201, false, true, [0.1, 0.85, 0.65, 1.0]),
+        (9203, Vec3::new(0.15, 0.0, 0.2), 9001, true, true, [0.55, 0.35, 0.9, 1.0]),
+        (
+            9204,
+            Vec3::new(134.5, 127.0, ground - 0.17),
+            0,
+            false,
+            false,
+            [0.7, 0.72, 0.75, 1.0],
+        ),
+    ] {
+        let mut t = (*te(color, 0, false, 0.0)).clone();
+        for f in &mut t.faces {
+            f.texture = if is_mesh { ANIMESH_TEXTURE } else { BLANK_TEXTURE };
+        }
+        let volume = aurora_prim::VolumeParams {
+            sculpt: is_mesh.then_some(mesh),
+            ..Default::default()
+        };
+        let mut o = prim(
+            id,
+            pos,
+            Quat::IDENTITY,
+            Vec3::splat(0.1),
+            volume,
+            Arc::new(t),
+            ExtraParams {
+                sculpt: is_mesh.then_some(mesh),
+                extended_mesh_flags: animated.then_some(aurora_prim::extra::EXTENDED_MESH_ANIMATED),
+                ..Default::default()
+            },
+            "",
+        );
+        o.parent_id = parent;
+        if id == 9204 {
+            o.scale = Vec3::new(7.0, 5.0, 0.02);
+        }
+        if parent == 9001 {
+            o.state = 0x60;
+        } // Right hand.
+        objects.push(o);
+    }
+    let mut events: Vec<_> = objects
+        .iter()
+        .filter(|o| o.volume.is_mesh())
+        .map(|o| NetEvent::AvatarAnimations {
+            avatar: o.full_id,
+            anims: vec![(ANIMESH_ANIM, 1)],
+        })
+        .collect();
+    // Signals deliberately arrive before their objects, as on a grid.
+    events.push(NetEvent::ObjectUpdates { handle: HANDLE, objects });
+    events
+}
+
+pub fn animesh_animation() -> aurora_assets::Animation {
+    use aurora_assets::anim::{JointMotion, RotKey};
+    let mut a = idle_animation();
+    a.duration = 2.0;
+    a.loop_out = 2.0;
+    a.joints = ["mHead", "mTail1"]
+        .into_iter()
+        .map(|name| JointMotion {
+            joint_name: name.into(),
+            priority: 4,
+            rot_keys: [(0.0, -0.65), (1.0, 0.65), (2.0, -0.65)]
+                .into_iter()
+                .map(|(time, angle)| RotKey {
+                    time,
+                    rotation: Quat::from_rotation_z(angle),
+                })
+                .collect(),
+            pos_keys: Vec::new(),
+        })
+        .collect();
+    a
+}
 
 /// Offline seam test: different first/last poses, first key at 1/15 s.
 pub fn loop_animation() -> aurora_assets::Animation {

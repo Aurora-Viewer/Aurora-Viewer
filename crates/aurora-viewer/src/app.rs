@@ -2410,6 +2410,9 @@ impl App {
                 .banlines
                 .update(&mut gfx.renderer, &self.world, self.settings.maps.ban_lines, self.camera.position);
             self.scene.build_lists(&cull, self.settings.shadows);
+            if self.demo && std::env::var_os("AURORA_DEMO_ANIMESH").is_some() && self.frame_count.is_multiple_of(120) {
+                self.scene.log_demo_animesh(&self.world);
+            }
             self.options_ui.vram = (gfx.renderer.info.vram_mb, gfx.renderer.info.integrated);
             // diagnostic: our attachments 40 s and 120 s after arrival
             let since_arrival = self.move_complete_at.map(|t| t.elapsed().as_secs()).unwrap_or(0);
@@ -4046,6 +4049,14 @@ impl ApplicationHandler for App {
             for ev in crate::demo::events() {
                 if let Some(e) = self.world.apply(ev) {
                     self.on_app_event(e);
+                }
+            }
+            if std::env::var_os("AURORA_DEMO_ANIMESH").is_some() {
+                if let Some(g) = &mut self.gfx {
+                    self.scene.install_demo_animesh(&mut g.renderer);
+                }
+                for ev in crate::demo::animesh_events() {
+                    self.world.apply(ev);
                 }
             }
             // AURORA_DEMO_SOUND=1: a looped chime on the fountain and the

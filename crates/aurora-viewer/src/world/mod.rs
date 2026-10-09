@@ -80,7 +80,7 @@ pub struct PlayingAnimation {
 }
 
 impl PlayingAnimation {
-    fn from_signal(id: Uuid, sequence: i32, now: Instant, previous: Option<&Self>) -> Self {
+    pub(crate) fn from_signal(id: Uuid, sequence: i32, now: Instant, previous: Option<&Self>) -> Self {
         Self {
             id,
             sequence,

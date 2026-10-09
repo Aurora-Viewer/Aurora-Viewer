@@ -22,6 +22,10 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "GetMesh2",
     "GetTexture",
     "ModifyMaterialParams",
+    // LLViewerRegionImpl::buildCapabilityNames (indra/newview/llviewerregion.cpp,
+    // originally LGPL 2.1): advertise support so the simulator sends the
+    // ObjectAnimation UDP messages. This capability needs no HTTP request.
+    "ObjectAnimation",
     "ObjectMedia",
     "ObjectMediaNavigate",
     "ParcelVoiceInfoRequest",
@@ -169,5 +173,66 @@ pub async fn event_queue_loop(http: reqwest::Client, url: String, sim: std::net:
             log::warn!("event queue for {sim} giving up");
             return;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[tokio::test]
+    async fn seed_post_advertises_object_animation_without_requiring_a_cap_url() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("local seed server");
+        let seed = format!("http://{}/seed", listener.local_addr().expect("local address"));
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("seed client");
+            let mut request = Vec::new();
+            let body_start = loop {
+                let mut buf = [0; 1024];
+                let n = socket.read(&mut buf).await.expect("read seed request");
+                assert_ne!(n, 0, "incomplete HTTP headers");
+                request.extend_from_slice(&buf[..n]);
+                if let Some(end) = request.windows(4).position(|v| v == b"\r\n\r\n") {
+                    break end + 4;
+                }
+            };
+            let headers = std::str::from_utf8(&request[..body_start]).expect("HTTP headers");
+            assert!(headers.starts_with("POST /seed HTTP/1.1\r\n"));
+            let body_len: usize = headers
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse().expect("body length"))
+                })
+                .expect("content-length");
+            while request.len() < body_start + body_len {
+                let mut buf = [0; 1024];
+                let n = socket.read(&mut buf).await.expect("read seed body");
+                assert_ne!(n, 0, "incomplete LLSD request");
+                request.extend_from_slice(&buf[..n]);
+            }
+            let requested = from_xml(&request[body_start..body_start + body_len]).expect("seed LLSD");
+            let supports_animesh = requested.as_array().iter().any(|v| v.as_str() == "ObjectAnimation");
+            // Support markers may not return a URL. Asset caps must still resolve.
+            let body = to_xml(&llsd_map! { "ViewerAsset" => "http://127.0.0.1/asset" });
+            let headers = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/llsd+xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            socket.write_all(headers.as_bytes()).await.expect("write headers");
+            socket.write_all(&body).await.expect("write LLSD");
+            supports_animesh
+        });
+        let http = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .expect("HTTP client");
+        let resolved = resolve_seed(&http, &seed).await.expect("seed response");
+        assert!(server.await.expect("seed server"), "simulator was not told to send ObjectAnimation");
+        assert_eq!(resolved.get("ViewerAsset").map(String::as_str), Some("http://127.0.0.1/asset"));
+        assert!(!resolved.contains_key("ObjectAnimation"));
     }
 }

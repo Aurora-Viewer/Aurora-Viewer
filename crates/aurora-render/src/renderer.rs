@@ -2202,7 +2202,7 @@ impl Renderer {
         });
         let shadow_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("shadow"),
-            bind_group_layouts: &[None, Some(records_layout), None, Some(shadow_layout)],
+            bind_group_layouts: &[None, Some(records_layout), Some(tex_layout), Some(shadow_layout)],
             immediate_size: 0,
         });
         let a2c = [("ALPHA_TO_COVERAGE", if samples > 1 { 1.0 } else { 0.0 })];
@@ -2484,7 +2484,7 @@ impl Renderer {
             PipeDesc {
                 label: "shadow",
                 vs: "vs_shadow",
-                fs: None,
+                fs: Some("fs_shadow"),
                 vb: Vb::Mesh,
                 cull: None,
                 blend: None,
@@ -3762,6 +3762,7 @@ impl Renderer {
                 if count > 0 {
                     pass.set_pipeline(&self.pipelines.shadow);
                     pass.set_bind_group(1, &self.records_bind_group, &[]);
+                    pass.set_bind_group(2, &self.textures.bind_group, &[]);
                     pass.set_bind_group(3, &self.shadow_bind_groups[ci], &[]);
                     pass.set_vertex_buffer(0, geo.vertex_buffer.slice(..));
                     pass.set_vertex_buffer(1, geo.skin_buffer.slice(..));
