@@ -29,18 +29,20 @@ aurora-viewer/                  dépôt git (GitHub : Aurora-Viewer/Aurora-Viewe
 ├─ ARCHITECTURE.md              ce fichier
 ├─ TASKS.md                     suivi des tâches : fait / en cours / à faire
 ├─ LICENSE, NOTICE.md           GPL-3.0-or-later, licences tierces
+├─ aurora-tools.cmd             outils de développement (double-clic) : scripts/tools
 ├─ assets/
-│  ├─ branding/                 logos (couleur, silhouette), SVG + PNG 4096
+│  ├─ branding/                 logos (couleur, silhouette), SVG + PNG 4096, aurora.ico
 │  ├─ phosphor-icons/           bibliothèque Phosphor complète (SVG, 6 graisses)
 │  └─ emoji/                    police emoji (téléchargée, hors git)
 ├─ crates/                      le code (voir ci-dessous)
 ├─ docs/                        BRANDING.md et autres documents
 ├─ scripts/                     outils des agents et des humains (PowerShell)
+│  └─ tools/                    aurora-tools : menu, interface (ui), vérifications et réparation (checks), actions
 └─ .github/                     CI (workflows/, actions/), release, modèle de PR, Dependabot
 ```
 
-À côté du dépôt (hors git), dans le dossier du projet installé par
-`scripts/setup.ps1` :
+À côté du dépôt (hors git), dans le dossier du projet installé par la
+commande en une ligne (`scripts/setup.ps1`, puis les outils) :
 
 ```
 <dossier du projet>\            par exemple C:\Aurora-Viewer

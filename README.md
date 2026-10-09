@@ -52,8 +52,10 @@ open a command prompt in it and paste the command below. It shows what it
 found and what it will do, asks where to install, then installs whatever is
 missing (Git, GitHub CLI, the Visual Studio C++ tools, Rust), clones this
 repository and the Firestorm sources side by side, and downloads the emoji
-font, the Rust toolchain and the crates. It can be run again at any time
-(`./scripts/setup.ps1`).
+font, the Rust toolchain and the crates. Afterwards, **`aurora-tools.cmd`**
+(double-click, at the root of the repository) opens the development tools,
+driven by the keyboard: environment check and repair, release / dev / debug
+viewers, demo, agents' tasks, disk, logs (see [HUMANS.md](HUMANS.md)).
 
 ```bat
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$f = Join-Path $env:TEMP 'aurora-setup.ps1'; irm https://raw.githubusercontent.com/Aurora-Viewer/Aurora-Viewer/main/scripts/setup.ps1 -OutFile $f; & $f"

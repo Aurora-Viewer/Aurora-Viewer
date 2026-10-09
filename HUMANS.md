@@ -6,7 +6,8 @@ plusieurs agents IA (Claude Code, Codex…) en parallèle. Les agents suivent
 s'enchaîne.
 
 **Pour commencer :** [installe l'environnement](#installer-lenvironnement)
-en une ligne.
+en une ligne. Ensuite, tout se fait avec
+[les outils Aurora](#les-outils-aurora--aurora-toolscmd) (`aurora-tools.cmd`).
 
 ## Ce que font les agents, ce que tu fais
 
@@ -121,28 +122,48 @@ demande le chemin exact du dossier du projet (créé s'il n'existe pas). Puis :
    et règle ton identité git dans le dépôt : ton pseudo GitHub et ton
    adresse « noreply » (ton e-mail reste privé).
 
-On peut le relancer à tout moment, depuis le dépôt :
-`./scripts/setup.ps1`. Ce qui est déjà là est mis à jour, rien n'est
-réinstallé.
+À la fin, il propose d'ouvrir les outils Aurora (section suivante).
 
 Dans la suite, **le dossier du projet** est celui de l'installation : il
-contient `aurora-viewer\`, `phoenix-firestorm\`, et plus tard `work\` (les
-tâches des agents) et `RELEASE\`.
+contient `aurora-viewer\`, `phoenix-firestorm\`, `work\` (les tâches des
+agents) et, plus tard, `RELEASE\`.
+
+## Les outils Aurora : `aurora-tools.cmd`
+
+Double-clic sur **`aurora-tools.cmd`**, à la racine du dépôt (ou sur le
+raccourci « Aurora Tools » que l'outil peut créer). Tout se fait au clavier :
+**↑ ↓** pour choisir, **Entrée** pour valider, **Échap** ou **Retour
+arrière** pour revenir, et la touche affichée devant chaque choix comme
+raccourci.
+
+À l'ouverture, l'outil vérifie l'environnement : outils, dépôt en retard sur
+GitHub, sources de Firestorm périmées, Rust pas à jour, police, connexion
+GitHub… S'il manque ou s'il est périmé quelque chose, le premier choix est
+**Réparer / mettre à jour** (la même installation que la commande en une
+ligne : ce qui est là est mis à jour, rien n'est réinstallé).
+
+| Choix | Ce que ça fait |
+|---|---|
+| Viewer release | Le dernier `main` de GitHub en `--release`, dans `RELEASE\` (voir plus bas), puis « lancer ? » |
+| Viewer de dev | Ton dépôt local, profil par défaut (celui des agents) |
+| Viewer de debug | Ton dépôt local avec une console, les contrôles de débogage et les infos de débogage complètes (profil `debugging`, son propre dossier de quelques Go) |
+| Démo | Le viewer hors ligne, avec le choix d'un scénario `AURORA_DEMO_*` (lus dans le README) |
+| Tâches des agents | Les dossiers de `work\` : PR, changements en cours, dernière compilation, taille ; ménage de celles dont la PR est fusionnée |
+| Disque | La place prise par les compilations, et le nettoyage (`clean.ps1`) |
+| Logs du viewer | Ouvrir le dossier, lire la fin du dernier log, copier son chemin pour un agent |
+| Raccourci | « Aurora Tools » sur le Bureau et dans le menu Démarrer, avec le logo |
+| Vérifier à nouveau | Le tableau complet de l'environnement |
+
+Chaque choix existe aussi sans menu, pour un script :
+`./scripts/tools/aurora-tools.ps1 -Action diagnose` (`repair`, `release`,
+`dev`, `debug`, `demo`, `tasks`, `disk`, `logs`, `shortcut`).
 
 ## Le viewer à jour de `main`, en `--release`
 
-Pour avoir à tout moment l'exe optimisé du dernier `main` de GitHub :
-
-```powershell
-# la première fois, depuis le dépôt à jour
-git switch main; git pull
-./scripts/build-release.ps1
-```
-
-Ensuite, double-clic sur `RELEASE\build-release.bat`, dans le dossier du
-projet.
-L'exe prêt à lancer est dans `RELEASE\Aurora-Viewer\` (avec ses assets, comme
-le zip des releases), et `version.txt` dit quel commit a été compilé.
+Choix **Viewer release** des outils, ou double-clic sur
+`RELEASE\build-release.bat` dans le dossier du projet. L'exe prêt à lancer
+est dans `RELEASE\Aurora-Viewer\` (avec ses assets, comme le zip des
+releases), et `version.txt` dit quel commit a été compilé.
 
 - Le code vient **toujours de GitHub** : tes changements locaux et tes
   commits non poussés n'y entrent pas.
@@ -175,6 +196,8 @@ Les compilations prennent de la place : comptez 3 à 4 Go par dossier
 cache, qu'on peut toujours supprimer : il sera recompilé au besoin. Une
 nouvelle tâche libère d'elle-même le `target` des tâches fusionnées ou
 inactives depuis 7 jours.
+
+Le choix **Disque** des outils fait la même chose que :
 
 ```powershell
 ./scripts/clean.ps1                 # montre la place prise, n'efface rien
