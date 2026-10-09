@@ -1486,65 +1486,63 @@ impl Scene {
             let mut base_tex = tf.texture;
             if let Some(mid) = mat_id {
                 g.material_ids.push(mid);
-                if let Some(base) = self.materials.get(&mid) {
-                    // render material: the asset with the face's override on top
-                    // (LLViewerObject::initRenderMaterial)
-                    let mut m = (*base).clone();
-                    if let Some((_, ov)) = world
-                        .gltf_overrides
-                        .get(&o.key)
-                        .and_then(|s| s.iter().rev().find(|(f, _)| *f as usize == fi))
-                    {
-                        m.apply_override(ov);
-                    }
-                    // glTF materials replace the legacy shininess
-                    rec.flags[0] &= !flags::LEGACY_MAT;
-                    rec.flags[0] |= flags::PBR;
-                    rec.flags[0] &= !flags::FULLBRIGHT;
-                    // the material's base color replaces the face color (LLFace::getGeometryVolume)
-                    rec.base_color = m.base_color_factor;
-                    rec.params[1] = m.metallic_factor;
-                    rec.params[2] = m.roughness_factor;
-                    rec.params[3] = m.alpha_cutoff;
-                    rec.emissive = [m.emissive_factor[0], m.emissive_factor[1], m.emissive_factor[2], tf.glow];
-                    // one transform per map; the texture entry's repeats do not
-                    // apply to glTF faces (LLFace::getGeometryVolume)
-                    let so = |t: &aurora_assets::material::TextureTransform| [t.scale[0], t.scale[1], t.offset[0], t.offset[1]];
-                    let [tb, tn, tmr, te_] = &m.transforms;
-                    rec.uv_st = so(tb);
-                    rec.params[0] = tb.rotation;
-                    rec.mat_uv = so(tn);
-                    rec.spec_uv = so(tmr);
-                    rec.spec_color = so(te_);
-                    rec.legacy = [tn.rotation, tmr.rotation, te_.rotation, 0.0];
-                    let rep = |t: &aurora_assets::material::TextureTransform| t.scale[0].abs().max(t.scale[1].abs()).clamp(0.1, 64.0);
-                    repeats = tb.scale[0].abs().max(tb.scale[1].abs()).clamp(0.1, 16.0);
-                    aux_repeats = [rep(tn), rep(tmr), rep(te_)];
-                    base_tex = m.base_color_texture.unwrap_or(Uuid::nil());
-                    let mut slot_of = |id: Option<Uuid>, default: u32, g: &mut ObjGpu, s: &mut Self| -> u32 {
-                        match id {
-                            Some(id) if !id.is_nil() => {
-                                g.tex_ids.push(id);
-                                s.textures.acquire(renderer, id, TexSource::Asset)
-                            }
-                            _ => default,
+                // render material: the asset with the face's override on
+                // top, or the default material while the asset loads or
+                // when it cannot be loaded; never the texture entry's
+                // diffuse texture (see meshes::render_material)
+                let ov = world
+                    .gltf_overrides
+                    .get(&o.key)
+                    .and_then(|s| s.iter().rev().find(|(f, _)| *f as usize == fi))
+                    .map(|(_, ov)| ov);
+                let m = meshes::render_material(&self.materials.resolve(&mid), ov);
+                // glTF materials replace the legacy shininess
+                rec.flags[0] &= !flags::LEGACY_MAT;
+                rec.flags[0] |= flags::PBR;
+                rec.flags[0] &= !flags::FULLBRIGHT;
+                // the material's base color replaces the face color (LLFace::getGeometryVolume)
+                rec.base_color = m.base_color_factor;
+                rec.params[1] = m.metallic_factor;
+                rec.params[2] = m.roughness_factor;
+                rec.params[3] = m.alpha_cutoff;
+                rec.emissive = [m.emissive_factor[0], m.emissive_factor[1], m.emissive_factor[2], tf.glow];
+                // one transform per map; the texture entry's repeats do not
+                // apply to glTF faces (LLFace::getGeometryVolume)
+                let so = |t: &aurora_assets::material::TextureTransform| [t.scale[0], t.scale[1], t.offset[0], t.offset[1]];
+                let [tb, tn, tmr, te_] = &m.transforms;
+                rec.uv_st = so(tb);
+                rec.params[0] = tb.rotation;
+                rec.mat_uv = so(tn);
+                rec.spec_uv = so(tmr);
+                rec.spec_color = so(te_);
+                rec.legacy = [tn.rotation, tmr.rotation, te_.rotation, 0.0];
+                let rep = |t: &aurora_assets::material::TextureTransform| t.scale[0].abs().max(t.scale[1].abs()).clamp(0.1, 64.0);
+                repeats = tb.scale[0].abs().max(tb.scale[1].abs()).clamp(0.1, 16.0);
+                aux_repeats = [rep(tn), rep(tmr), rep(te_)];
+                base_tex = m.base_color_texture.unwrap_or(Uuid::nil());
+                let mut slot_of = |id: Option<Uuid>, default: u32, g: &mut ObjGpu, s: &mut Self| -> u32 {
+                    match id {
+                        Some(id) if !id.is_nil() => {
+                            g.tex_ids.push(id);
+                            s.textures.acquire(renderer, id, TexSource::Asset)
                         }
-                    };
-                    aux_tex = [
-                        m.normal_texture.unwrap_or_default(),
-                        m.metallic_roughness_texture.unwrap_or_default(),
-                        m.emissive_texture.unwrap_or_default(),
-                    ];
-                    rec.tex[1] = slot_of(m.normal_texture, aurora_render::textures::FLAT_NORMAL, &mut g, self);
-                    rec.tex[2] = slot_of(m.metallic_roughness_texture, aurora_render::textures::WHITE, &mut g, self);
-                    rec.tex[3] = slot_of(m.emissive_texture, aurora_render::textures::WHITE, &mut g, self);
-                    pbr_alpha = Some(match m.alpha_mode {
-                        aurora_assets::AlphaMode::Opaque => 0,
-                        aurora_assets::AlphaMode::Blend => 1,
-                        aurora_assets::AlphaMode::Mask => 2,
-                    });
-                    two_sided = m.double_sided;
-                }
+                        _ => default,
+                    }
+                };
+                aux_tex = [
+                    m.normal_texture.unwrap_or_default(),
+                    m.metallic_roughness_texture.unwrap_or_default(),
+                    m.emissive_texture.unwrap_or_default(),
+                ];
+                rec.tex[1] = slot_of(m.normal_texture, aurora_render::textures::FLAT_NORMAL, &mut g, self);
+                rec.tex[2] = slot_of(m.metallic_roughness_texture, aurora_render::textures::WHITE, &mut g, self);
+                rec.tex[3] = slot_of(m.emissive_texture, aurora_render::textures::WHITE, &mut g, self);
+                pbr_alpha = Some(match m.alpha_mode {
+                    aurora_assets::AlphaMode::Opaque => 0,
+                    aurora_assets::AlphaMode::Blend => 1,
+                    aurora_assets::AlphaMode::Mask => 2,
+                });
+                two_sided = m.double_sided;
             }
             // legacy material (LLMaterial) of the texture entry
             let mut legacy_alpha = None;
@@ -2262,8 +2260,9 @@ impl Scene {
             let (ready, fetching, failed) = self.meshes.counts();
             let t = &self.textures.stats;
             let (lm_ready, lm_wait, lm_unknown) = self.legacy_mats.counts();
+            let (gm_ready, gm_wait, gm_missing) = self.materials.counts();
             log::info!(
-                "streaming: {} objects, meshes {ready} ready / {fetching} downloading / {failed} failed, textures {}/{} ({} downloading, {} failing), legacy materials {lm_ready} ready / {lm_wait} pending / {lm_unknown} unknown, viewer asset cap {}",
+                "streaming: {} objects, meshes {ready} ready / {fetching} downloading / {failed} failed, textures {}/{} ({} downloading, {} failing), legacy materials {lm_ready} ready / {lm_wait} pending / {lm_unknown} unknown, glTF materials {gm_ready} ready / {gm_wait} pending / {gm_missing} missing, viewer asset cap {}",
                 world.objects.len(),
                 t.loaded,
                 t.total,
@@ -2715,6 +2714,7 @@ impl Scene {
             });
             let (mut meshes, mut rigged, mut faces, mut shown, mut pending) = (0, 0, 0, 0, 0);
             let mut suspects: Vec<String> = Vec::new();
+            let mut gltf_faces: Vec<String> = Vec::new();
             let mut far = 0.0f32;
             for &i in &prims {
                 let Some(o) = world.objects.get(i) else {
@@ -2742,15 +2742,28 @@ impl Scene {
                     if classify(f, a) != Pass::Hidden {
                         shown += 1;
                     }
+                    let gltf = self.gltf_face_desc(world, o, fi);
                     if let Some(why) = self.textures.face_problem(&f.tex_id, f.base_slot, table) {
                         suspects.push(format!(
-                            "  face {} #{fi}: {why} — tex {} ({}), slot {} = {}, maps {:?}",
+                            "  face {} #{fi}: {why} — tex {} ({}), slot {} = {}, maps {:?}, {}",
                             o.full_id,
                             f.tex_id,
                             self.textures.describe(&f.tex_id),
                             f.base_slot,
                             table.describe(f.base_slot),
-                            f.aux_tex
+                            f.aux_tex,
+                            gltf.as_deref().unwrap_or("no glTF material")
+                        ));
+                    }
+                    if let Some(desc) = gltf {
+                        let tf = o.te.as_ref().map(|t| *t.face(fi)).unwrap_or_default();
+                        gltf_faces.push(format!(
+                            "  glTF face {} #{fi}: {desc}, drawn with base {} ({}), maps {:?}, texture entry {} unused",
+                            o.full_id,
+                            f.tex_id,
+                            self.textures.describe(&f.tex_id),
+                            f.aux_tex,
+                            tf.texture
                         ));
                     }
                 }
@@ -2770,13 +2783,14 @@ impl Scene {
                         };
                         let a = alpha.get(f.base_slot as usize).copied().unwrap_or(AlphaKind::Opaque);
                         line.push_str(&format!(
-                            " [{fi} {tex} rgba {:.2},{:.2},{:.2},{:.2} legacy {:?} pbr {:?} tex {:?} -> {:?}]",
+                            " [{fi} {tex} rgba {:.2},{:.2},{:.2},{:.2} legacy {:?} pbr {:?}{} tex {:?} -> {:?}]",
                             tf.color[0],
                             tf.color[1],
                             tf.color[2],
                             f.te_alpha,
                             f.legacy_alpha,
                             f.pbr_alpha,
+                            self.gltf_face_desc(world, o, fi).map(|d| format!(" ({d})")).unwrap_or_default(),
                             a,
                             classify(f, a)
                         ));
@@ -2831,7 +2845,47 @@ impl Scene {
             if more > 0 {
                 log::info!("  … {more} more faces with a texture problem");
             }
+            // glTF faces: material, whether it loaded, override (they are
+            // drawn with the material's base color texture, never with the
+            // texture entry's)
+            let more = gltf_faces.len().saturating_sub(24);
+            for line in gltf_faces.iter().take(24) {
+                log::info!("{line}");
+            }
+            if more > 0 {
+                log::info!("  … {more} more glTF faces");
+            }
         }
+    }
+
+    /// Diagnostic: the glTF material of a face (id, loading state, the
+    /// override's base color), None for a Blinn-Phong face.
+    fn gltf_face_desc(&self, world: &World, o: &Object, fi: usize) -> Option<String> {
+        let mid = o
+            .extra
+            .render_materials
+            .iter()
+            .find(|(t, _)| *t as usize == fi)
+            .map(|(_, id)| *id)
+            .filter(|id| !id.is_nil())?;
+        let ov = world
+            .gltf_overrides
+            .get(&o.key)
+            .and_then(|s| s.iter().rev().find(|(f, _)| *f as usize == fi))
+            .map(|(_, ov)| ov);
+        let ov = match ov {
+            Some(ov) => {
+                let tex = ov.textures[aurora_assets::material::TEXTURE_BASE_COLOR];
+                let tex = if tex.is_nil() {
+                    "-".to_string()
+                } else {
+                    format!("{tex} ({})", self.textures.describe(&tex))
+                };
+                format!("override base tex {tex} factor {:?}", ov.base_color_factor)
+            }
+            None => "no override".into(),
+        };
+        Some(format!("glTF material {mid} ({}), {ov}", self.materials.describe(&mid)))
     }
 
     /// Diagnostic: the objects (not avatars nor their attachments) within
@@ -2902,7 +2956,7 @@ impl Scene {
                         m.emissive_texture,
                         m.transforms.map(|t| (t.scale, t.offset, t.rotation))
                     ),
-                    None => log::info!("  pbr {id}: not loaded"),
+                    None => log::info!("  pbr {id}: {} (drawn with the default material)", self.materials.describe(&id)),
                 }
             }
             for (face, ov) in world.gltf_overrides.get(&o.key).iter().flat_map(|s| s.iter()) {

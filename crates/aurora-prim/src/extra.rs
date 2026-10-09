@@ -298,6 +298,41 @@ mod tests {
             let _ = parse_extra_params(&v[..n]);
         }
     }
+    /// What a rigged glTF attachment carries: mesh, extended mesh and render
+    /// material entries (LLRenderMaterialParams::pack: count, then per entry
+    /// the face index and the material asset id).
+    #[test]
+    fn parses_render_materials() {
+        let push = |v: &mut Vec<u8>, ty: u16, d: &[u8]| {
+            v.extend_from_slice(&ty.to_le_bytes());
+            v.extend_from_slice(&(d.len() as u32).to_le_bytes());
+            v.extend_from_slice(d);
+        };
+        let mat_a = Uuid::from_u128(0x968cbad0_4dad_d64e_71b5_72bf13ad051a);
+        let mat_b = Uuid::from_u128(0x1234);
+        let mut rm = vec![2u8, 0];
+        rm.extend_from_slice(mat_a.as_bytes());
+        rm.push(3);
+        rm.extend_from_slice(mat_b.as_bytes());
+        let mut mesh = vec![9u8; 16];
+        mesh.push(5);
+        let mut v = vec![3u8];
+        push(&mut v, PARAMS_MESH, &mesh);
+        push(&mut v, PARAMS_EXTENDED_MESH, &0u32.to_le_bytes());
+        push(&mut v, PARAMS_RENDER_MATERIAL, &rm);
+        let ep = parse_extra_params(&v);
+        assert!(ep.sculpt.expect("mesh").is_mesh());
+        assert_eq!(ep.extended_mesh_flags, Some(0));
+        assert_eq!(ep.render_materials, vec![(0, mat_a), (3, mat_b)]);
+        // a truncated entry list leaves no half-read materials
+        let mut short = vec![1u8];
+        push(&mut short, PARAMS_RENDER_MATERIAL, &rm[..rm.len() - 1]);
+        let ep = parse_extra_params(&short);
+        assert!(ep.render_materials.is_empty());
+        // no entries: no materials
+        assert!(entry(PARAMS_RENDER_MATERIAL, &[0]).render_materials.is_empty());
+    }
+
     #[test]
     fn mesh_params_are_sculpt_params() {
         // what the servers send for a mesh object: PARAMS_MESH (0x60)
