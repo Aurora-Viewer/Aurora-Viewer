@@ -97,17 +97,18 @@ impl App {
                 }
                 None => self.report_command(format!("Objet de clé {id} introuvable !")),
             },
-            Command::SitOn(id) => {
-                if self.world.objects.index_of_uuid(&id).is_none() {
-                    self.report_command(format!("Objet de clé {id} introuvable !"));
-                } else {
+            Command::SitOn(id) => match self.world.objects.index_of_uuid(&id).and_then(|i| self.world.objects.get(i)) {
+                Some(o) => {
+                    let handle = o.key.region;
                     self.send(NetCommand::RequestSit {
+                        handle,
                         target: id,
                         offset: Vec3::ZERO,
                     });
                     self.report_command(format!("Assis sur l'objet de clé {id}."));
                 }
-            }
+                None => self.report_command(format!("Objet de clé {id} introuvable !")),
+            },
             Command::StandUp => {
                 self.send(NetCommand::OneShotControl(aurora_net::control::STAND_UP));
                 self.report_command("Debout.");
