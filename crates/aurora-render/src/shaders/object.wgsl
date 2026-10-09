@@ -55,15 +55,38 @@ fn cofactor(m: mat4x4<f32>) -> mat3x3<f32> {
     return mat3x3<f32>(cross(b, c), cross(c, a), cross(a, b));
 }
 
-// LL texture-entry transform about the face center (LLFace xform), then GL->wgpu V flip.
-// `st_rot`: scale s, t, offset s, t and rotation (diffuse, or a legacy
-// material's normal / specular map).
-fn ll_uv(uv: vec2<f32>, flags: u32, pos: vec3<f32>, sto: vec4<f32>, rot: f32) -> vec2<f32> {
-    var st = uv;
-    if ((flags & FLAG_PLANAR) != 0u) {
-        // planar mapping: project object-space position on the dominant plane
-        st = vec2<f32>(pos.y + 0.5, pos.z + 0.5);
+// Planar texgen (planarProjection, indra/newview/llface.cpp): the scaled
+// volume position projected on a binormal / tangent pair picked from the
+// unit-volume normal, two repeats per metre. `pos` is the unit-volume
+// position; the object scale comes from the model matrix (rigged meshes
+// have none, like LL's global volumes).
+fn planar_st(pos: vec3<f32>, normal: vec3<f32>, model: mat4x4<f32>) -> vec2<f32> {
+    let n = normalize(normal);
+    var b = vec3<f32>(1.0, 0.0, 0.0);
+    if (abs(n.x) >= 0.5) {
+        b = vec3<f32>(0.0, select(1.0, -1.0, n.x < 0.0), 0.0);
+    } else if (n.y > 0.0) {
+        b = vec3<f32>(-1.0, 0.0, 0.0);
     }
+    let t = cross(b, n);
+    let scale = vec3<f32>(length(model[0].xyz), length(model[1].xyz), length(model[2].xyz));
+    let p = pos * scale;
+    return vec2<f32>(1.0 + (dot(b, p) * 2.0 - 0.5), -(dot(t, p) * 2.0 - 0.5));
+}
+
+// Face texture coordinates before any transform: the vertex's own, or the
+// planar projection when the texture entry asks for it.
+fn face_st(in: VsIn, rec: DrawRecord) -> vec2<f32> {
+    if ((rec.flags.x & FLAG_PLANAR) != 0u) {
+        return planar_st(in.pos, in.normal.xyz, rec.model);
+    }
+    return in.uv;
+}
+
+// LL texture-entry transform about the face center (LLFace xform), then GL->wgpu V flip.
+// `sto`, `rot`: scale s, t, offset s, t and rotation (diffuse, or a legacy
+// material's normal / specular map).
+fn ll_uv(st: vec2<f32>, sto: vec4<f32>, rot: f32) -> vec2<f32> {
     var s = st.x - 0.5;
     var t = st.y - 0.5;
     let ca = cos(rot);
@@ -76,12 +99,9 @@ fn ll_uv(uv: vec2<f32>, flags: u32, pos: vec3<f32>, sto: vec4<f32>, rot: f32) ->
     return vec2<f32>(s, 1.0 - t);
 }
 
-fn te_uv(uv: vec2<f32>, rec: DrawRecord, pos: vec3<f32>) -> vec2<f32> {
+fn te_uv(uv: vec2<f32>, rec: DrawRecord) -> vec2<f32> {
     if ((rec.flags.x & FLAG_PBR) != 0u) {
         var st = uv;
-        if ((rec.flags.x & FLAG_PLANAR) != 0u) {
-            st = vec2<f32>(pos.y + 0.5, pos.z + 0.5);
-        }
         // textureUtilV.glsl texture_transform: SL (GL) t -> glTF v = 1 - t,
         // then KHR_texture_transform (offset, rotation, scale). LL flips back
         // to GL; our top-left-origin textures are sampled in glTF space directly.
@@ -96,7 +116,7 @@ fn te_uv(uv: vec2<f32>, rec: DrawRecord, pos: vec3<f32>) -> vec2<f32> {
         st = rv + o;
         return vec2<f32>(st.x, st.y);
     }
-    return ll_uv(uv, rec.flags.x, pos, rec.uv_st, rec.params.x);
+    return ll_uv(uv, rec.uv_st, rec.params.x);
 }
 
 @vertex
@@ -108,12 +128,13 @@ fn vs_main(in: VsIn) -> VsOut {
     out.clip = frame.view_proj * wp;
     out.world_pos = wp.xyz;
     out.normal = cofactor(model) * in.normal.xyz;
-    out.uv = te_uv(in.uv, rec, in.pos);
+    let st = face_st(in, rec);
+    out.uv = te_uv(st, rec);
     out.uv_n = out.uv;
     out.uv_s = out.uv;
     if ((rec.flags.x & FLAG_LEGACY_MAT) != 0u) {
-        out.uv_n = ll_uv(in.uv, rec.flags.x, in.pos, rec.mat_uv, rec.legacy.x);
-        out.uv_s = ll_uv(in.uv, rec.flags.x, in.pos, rec.spec_uv, rec.legacy.y);
+        out.uv_n = ll_uv(st, rec.mat_uv, rec.legacy.x);
+        out.uv_s = ll_uv(st, rec.spec_uv, rec.legacy.y);
     }
     out.record = in.instance;
     out.view_depth = distance(wp.xyz, frame.camera_pos.xyz);
