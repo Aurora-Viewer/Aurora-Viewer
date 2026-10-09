@@ -25,6 +25,12 @@ const GRAPH_H: f32 = 64.0;
 /// Lowest top of the graph scale (images/s).
 const GRAPH_MIN_TOP: f32 = 72.0;
 
+/// Network rate samples kept for the graph (one per second).
+const NET_HISTORY: usize = 60;
+/// Lowest top of the network graph scale (kb/s).
+const NET_MIN_TOP: f32 = 10.0;
+const NET_GRAPH_H: f32 = 56.0;
+
 /// CPU parts of a frame, in [`cpu_parts`] order.
 const CPU_PARTS: usize = 7;
 
@@ -53,6 +59,21 @@ fn frame_stats(frames: &VecDeque<f32>) -> FrameStats {
     }
 }
 
+fn fmt_ms(ms: f32) -> String {
+    format!("{ms:.2} ms")
+}
+
+/// A rate in the unit that reads best: kb/s, Mb/s or Gb/s.
+fn fmt_rate(kbps: f32) -> String {
+    if kbps >= 1e6 {
+        format!("{:.2} Gb/s", kbps / 1e6)
+    } else if kbps >= 1e3 {
+        format!("{:.1} Mb/s", kbps / 1e3)
+    } else {
+        format!("{kbps:.0} kb/s")
+    }
+}
+
 fn fps_of(ms: f32) -> f32 {
     1000.0 / ms.max(0.1)
 }
@@ -70,21 +91,20 @@ fn graph_top(frames: &VecDeque<f32>) -> f32 {
     (fast * 1.15).max(GRAPH_MIN_TOP)
 }
 
-/// Step between the graph marks (images/s): the round value (1, 2 or 5
-/// times a power of ten) giving two or three marks under `top`, far enough
-/// apart for their labels.
+/// Step between the graph marks (images/s, kb/s): the smallest round
+/// value (1, 2 or 5 times a power of ten) giving at most three marks under
+/// `top`, far enough apart for their labels.
 fn grid_step(top: f32) -> f32 {
-    let raw = (top / 2.5).max(1.0);
-    let pow = 10f32.powf(raw.log10().floor());
-    let unit = raw / pow;
-    let nice = if unit >= 5.0 {
-        5.0
-    } else if unit >= 2.0 {
-        2.0
-    } else {
-        1.0
-    };
-    nice * pow
+    let min = (top / 4.0).max(1e-3);
+    let mut pow = 10f32.powf(min.log10().floor());
+    loop {
+        for nice in [1.0, 2.0, 5.0] {
+            if nice * pow >= min {
+                return nice * pow;
+            }
+        }
+        pow *= 10.0;
+    }
 }
 
 /// CPU parts of a frame (ms): network → world, scene sync, culling and
@@ -133,6 +153,12 @@ pub struct PerfData {
     cpu_shown: [f32; CPU_PARTS],
     /// Top of the graph scale (images/s): follows the fast frames, eases down.
     graph_top: f32,
+    /// Network rates (kb/s) per second: (in, UDP + HTTP; out).
+    net_hist: VecDeque<(f32, f32)>,
+    /// The last one, smoothed for the bar.
+    net_live: [f32; 2],
+    /// Top of the network graph scale (kb/s), eased like `graph_top`.
+    net_top: f32,
 }
 
 impl Default for PerfData {
@@ -155,6 +181,9 @@ impl Default for PerfData {
             cpu: [0.0; CPU_PARTS],
             cpu_shown: [0.0; CPU_PARTS],
             graph_top: GRAPH_MIN_TOP,
+            net_hist: VecDeque::with_capacity(NET_HISTORY),
+            net_live: [0.0; 2],
+            net_top: NET_MIN_TOP,
         }
     }
 }
@@ -212,7 +241,21 @@ impl PerfData {
             self.http_rate_kbps = (net.http_bytes - p.http_bytes) as f32 * 8.0 / 1000.0 / nel;
             self.net_prev = net;
             self.last_net = Instant::now();
+            if self.net_hist.len() >= NET_HISTORY {
+                self.net_hist.pop_front();
+            }
+            self.net_hist.push_back((self.net_rate.2 + self.http_rate_kbps, self.net_rate.3));
         }
+        if let Some(&(i, o)) = self.net_hist.back() {
+            smooth(&mut self.net_live, &[i, o], k);
+        }
+        let busiest = self.net_hist.iter().fold(0.0f32, |m, &(i, o)| m.max(i).max(o));
+        let target = (busiest * 1.15).max(NET_MIN_TOP);
+        self.net_top = if target > self.net_top {
+            target
+        } else {
+            self.net_top + (target - self.net_top) * ease(dt_ms, GRAPH_EASE_S)
+        };
     }
 }
 
@@ -392,6 +435,79 @@ fn graph(ui: &mut egui::Ui, p: &Palette, d: &PerfData) {
     }
 }
 
+/// Network rates of the last minute: incoming (line over a light area)
+/// and outgoing, marks at round rates, both values under the pointer.
+fn net_graph(ui: &mut egui::Ui, p: &Palette, d: &PerfData) {
+    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), NET_GRAPH_H), Sense::hover());
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 3.0, p.field);
+    let top = d.net_top.max(1.0);
+    let plot = rect.shrink2(vec2(0.0, 4.0));
+    let y = |kbps: f32| plot.bottom() - (kbps / top).min(1.0) * plot.height();
+
+    let mark_font = egui::FontId::proportional(9.0);
+    let grid = grid_step(top);
+    let mut rate = grid;
+    while rate < top * 0.95 {
+        let ly = y(rate).round() + 0.5;
+        painter.extend(egui::Shape::dashed_line(
+            &[pos2(rect.left() + 4.0, ly), pos2(rect.right() - 52.0, ly)],
+            Stroke::new(1.0, p.raised),
+            3.0,
+            3.0,
+        ));
+        painter.text(
+            pos2(rect.right() - 4.0, ly),
+            egui::Align2::RIGHT_CENTER,
+            fmt_rate(rate),
+            mark_font.clone(),
+            p.muted_dim,
+        );
+        rate += grid;
+    }
+
+    let n = d.net_hist.len();
+    if n < 2 {
+        return;
+    }
+    let step = rect.width() / (NET_HISTORY - 1) as f32;
+    let x0 = rect.right() - (n - 1) as f32 * step;
+    let x = |i: usize| x0 + i as f32 * step;
+    let ins: Vec<egui::Pos2> = d.net_hist.iter().enumerate().map(|(i, s)| pos2(x(i), y(s.0))).collect();
+    let outs: Vec<egui::Pos2> = d.net_hist.iter().enumerate().map(|(i, s)| pos2(x(i), y(s.1))).collect();
+    let fill = p.teal.gamma_multiply(0.12);
+    let mut mesh = egui::Mesh::default();
+    for (i, pt) in ins.iter().enumerate() {
+        mesh.colored_vertex(*pt, fill);
+        mesh.colored_vertex(pos2(pt.x, rect.bottom()), fill);
+        if i > 0 {
+            let k = i as u32 * 2;
+            mesh.add_triangle(k - 2, k - 1, k);
+            mesh.add_triangle(k - 1, k + 1, k);
+        }
+    }
+    painter.add(mesh);
+    painter.add(egui::Shape::line(outs.clone(), Stroke::new(1.5, p.rose)));
+    painter.add(egui::Shape::line(ins.clone(), Stroke::new(1.5, p.teal)));
+
+    if let Some(pos) = resp.hover_pos() {
+        let i = (((pos.x - x0) / step).round().max(0.0) as usize).min(n - 1);
+        let (rin, rout) = d.net_hist[i];
+        let px = x(i);
+        painter.line_segment([pos2(px, rect.top()), pos2(px, rect.bottom())], Stroke::new(1.0, p.muted_dim));
+        painter.circle(outs[i], 3.5, p.rose, Stroke::new(2.0, p.field));
+        painter.circle(ins[i], 3.5, p.teal, Stroke::new(2.0, p.field));
+        let text = format!("Entrant {} · Sortant {}", fmt_rate(rin), fmt_rate(rout));
+        let galley = painter.layout_no_wrap(text, egui::FontId::proportional(11.0), p.ink);
+        let size = galley.size() + vec2(10.0, 4.0);
+        let left = px + 6.0 + size.x > rect.right();
+        let bx = if left { (px - 6.0 - size.x).max(rect.left()) } else { px + 6.0 };
+        let r = Rect::from_min_size(pos2(bx, rect.top() + 3.0), size);
+        painter.rect_filled(r, 3.0, p.panel);
+        painter.galley(r.min + vec2(5.0, 2.0), galley, p.ink);
+    }
+}
+
 /// One part of a breakdown: name, help, color, smoothed and shown time (ms).
 struct Part {
     name: &'static str,
@@ -460,7 +576,7 @@ fn cpu_parts_view(p: &Palette, live: &[f32; CPU_PARTS], shown: &[f32; CPU_PARTS]
 /// A titled segmented bar and its legend, both in the fixed order of the
 /// parts (nothing jumps around); hovering a segment or a legend row
 /// highlights that part.
-fn breakdown(ui: &mut egui::Ui, p: &Palette, id: &str, title: &str, parts: Vec<Part>) {
+fn breakdown(ui: &mut egui::Ui, p: &Palette, id: &str, title: &str, parts: Vec<Part>, fmt: fn(f32) -> String) {
     let total_shown: f32 = parts.iter().map(|x| x.shown).sum();
     let total_live: f32 = parts.iter().map(|x| x.live).sum::<f32>().max(1e-3);
     let hover_id = ui.id().with(("breakdown_hover", id));
@@ -470,7 +586,7 @@ fn breakdown(ui: &mut egui::Ui, p: &Palette, id: &str, title: &str, parts: Vec<P
     ui.horizontal(|ui| {
         ui.label(RichText::new(title).size(12.0).strong().color(p.ink));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.label(RichText::new(format!("{total_shown:.1} ms")).size(12.0).color(p.muted));
+            ui.label(RichText::new(fmt(total_shown)).size(12.0).color(p.muted));
         });
     });
     ui.add_space(2.0);
@@ -545,7 +661,7 @@ fn breakdown(ui: &mut egui::Ui, p: &Palette, id: &str, title: &str, parts: Vec<P
         painter.text(
             pos2(row.right() - 48.0, cy),
             egui::Align2::RIGHT_CENTER,
-            format!("{:.2} ms", part.shown),
+            fmt(part.shown),
             font,
             p.ink,
         );
@@ -591,7 +707,7 @@ fn details(ui: &mut egui::Ui, p: &Palette, v: &PerfView) {
     let d = v.data;
     rule(ui, p);
     match (d.gpu, d.gpu_shown) {
-        (Some(live), Some(shown)) => breakdown(ui, p, "gpu", "Rendu GPU", gpu_parts(p, &live, &shown)),
+        (Some(live), Some(shown)) => breakdown(ui, p, "gpu", "Rendu GPU", gpu_parts(p, &live, &shown), fmt_ms),
         _ => {
             row(
                 ui,
@@ -607,7 +723,7 @@ fn details(ui: &mut egui::Ui, p: &Palette, v: &PerfView) {
         }
     }
     rule(ui, p);
-    breakdown(ui, p, "cpu", "Processeur", cpu_parts_view(p, &d.cpu, &d.cpu_shown));
+    breakdown(ui, p, "cpu", "Processeur", cpu_parts_view(p, &d.cpu, &d.cpu_shown), fmt_ms);
     rule(ui, p);
 
     group(ui, p, "Rendu", false, |ui| {
@@ -674,9 +790,29 @@ fn details(ui: &mut egui::Ui, p: &Palette, v: &PerfView) {
         row(ui, p, "Records GPU", format!("{}", v.render.records));
     });
     group(ui, p, "Réseau", false, |ui| {
+        let last = d.net_hist.back().copied().unwrap_or_default();
+        let parts = vec![
+            Part {
+                name: "Entrant",
+                help: "Reçu du simulateur (UDP) et téléchargé (HTTP : textures, meshes, sons…)",
+                color: p.teal,
+                live: d.net_live[0],
+                shown: last.0,
+            },
+            Part {
+                name: "Sortant",
+                help: "Envoyé au simulateur (UDP)",
+                color: p.rose,
+                live: d.net_live[1],
+                shown: last.1,
+            },
+        ];
+        breakdown(ui, p, "net", "Débit", parts, fmt_rate);
+        ui.add_space(6.0);
+        net_graph(ui, p, d);
+        ui.add_space(6.0);
         row(ui, p, "Ping", format!("{} ms", v.net.ping_ms));
         row(ui, p, "Paquets", format!("in {:.0}/s · out {:.0}/s", d.net_rate.0, d.net_rate.1));
-        row(ui, p, "Débit UDP", format!("in {:.0} · out {:.0} kb/s", d.net_rate.2, d.net_rate.3));
         row(ui, p, "Renvoyés / perdus", format!("{} / {}", v.net.resent, v.net.dropped_reliable));
         row(ui, p, "Non acquittés", format!("{}", v.net.unacked));
         row(
@@ -685,7 +821,7 @@ fn details(ui: &mut egui::Ui, p: &Palette, v: &PerfView) {
             "HTTP",
             format!("{} actifs · {} en file", v.net.http_in_flight, v.net.http_queued),
         );
-        row(ui, p, "Débit HTTP", format!("{:.0} kb/s", d.http_rate_kbps));
+        row(ui, p, "Débit HTTP", fmt_rate(d.http_rate_kbps));
         row(
             ui,
             p,
@@ -755,7 +891,16 @@ mod tests {
         assert_eq!(grid_step(160.0 * 1.15), 50.0); // 50, 100, 150
         assert_eq!(grid_step(GRAPH_MIN_TOP), 20.0); // 20, 40, 60
         assert_eq!(grid_step(400.0), 100.0);
-        assert_eq!(grid_step(1200.0), 200.0);
+        assert_eq!(grid_step(1200.0), 500.0); // 500, 1000
+        assert_eq!(grid_step(2400.0), 1000.0); // 1 Mb/s, 2 Mb/s
+    }
+
+    #[test]
+    fn rates_in_the_unit_that_reads_best() {
+        assert_eq!(fmt_rate(0.0), "0 kb/s");
+        assert_eq!(fmt_rate(850.4), "850 kb/s");
+        assert_eq!(fmt_rate(1250.0), "1.2 Mb/s");
+        assert_eq!(fmt_rate(2_500_000.0), "2.50 Gb/s");
     }
 
     #[test]
