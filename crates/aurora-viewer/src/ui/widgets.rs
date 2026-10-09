@@ -12,6 +12,8 @@ pub struct Floater<'a> {
     pub min_size: Vec2,
     pub resizable: bool,
     pub help: Option<&'a str>,
+    /// Extra title bar button: (Phosphor icon, tooltip, set when clicked).
+    pub action: Option<(&'a str, &'a str, &'a mut bool)>,
 }
 
 impl<'a> Floater<'a> {
@@ -24,6 +26,7 @@ impl<'a> Floater<'a> {
             min_size: Vec2::new(220.0, 120.0),
             resizable: true,
             help: None,
+            action: None,
         }
     }
 
@@ -37,8 +40,14 @@ impl<'a> Floater<'a> {
         self
     }
 
+    /// Add a title bar button left of « Réduire »; `clicked` is set when pressed.
+    pub fn action(mut self, icon: &'a str, tip: &'a str, clicked: &'a mut bool) -> Self {
+        self.action = Some((icon, tip, clicked));
+        self
+    }
+
     /// Show the floater; `open` is cleared by the close button.
-    pub fn show<R>(self, ctx: &egui::Context, p: &Palette, open: &mut bool, body: impl FnOnce(&mut egui::Ui) -> R) -> Option<R> {
+    pub fn show<R>(mut self, ctx: &egui::Context, p: &Palette, open: &mut bool, body: impl FnOnce(&mut egui::Ui) -> R) -> Option<R> {
         if !*open {
             return None;
         }
@@ -83,14 +92,19 @@ impl<'a> Floater<'a> {
                 ui.label(RichText::new(&self.title).size(13.0).color(p.ink));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
-                    if title_button(ui, p, "✕").on_hover_text("Fermer").clicked() {
+                    if title_button(ui, p, "x").on_hover_text("Fermer").clicked() {
                         close = true;
                     }
-                    if title_button(ui, p, "—").on_hover_text("Réduire").clicked() {
+                    if title_button(ui, p, "minus").on_hover_text("Réduire").clicked() {
                         toggle_min = true;
                     }
+                    if let Some((icon, tip, clicked)) = self.action.as_mut()
+                        && title_button(ui, p, icon).on_hover_text(*tip).clicked()
+                    {
+                        **clicked = true;
+                    }
                     if let Some(h) = self.help {
-                        title_button(ui, p, "?").on_hover_text(h);
+                        title_button(ui, p, "question").on_hover_text(h);
                     }
                 });
             });
@@ -109,34 +123,37 @@ impl<'a> Floater<'a> {
     }
 }
 
-fn title_button(ui: &mut egui::Ui, p: &Palette, glyph: &str) -> egui::Response {
+/// Title bar button with a Phosphor icon (drawn by hand if it is missing).
+fn title_button(ui: &mut egui::Ui, p: &Palette, icon: &str) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(16.0, 16.0), Sense::click());
     let col = if resp.hovered() { p.ink } else { p.muted };
     let c = rect.center();
     let stroke = Stroke::new(1.4, col);
     let painter = ui.painter();
-    // Phosphor icons when available
-    let icon = match glyph {
-        "✕" => "x",
-        "—" => "minus",
-        _ => "question",
-    };
     if let Some(t) = super::icons::global(icon) {
         let r = egui::Rect::from_center_size(c, Vec2::splat(14.0));
         painter.image(t.id(), r, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), col);
         return resp;
     }
-    match glyph {
-        "✕" => {
+    match icon {
+        "x" => {
             painter.line_segment([c + Vec2::new(-4.0, -4.0), c + Vec2::new(4.0, 4.0)], stroke);
             painter.line_segment([c + Vec2::new(4.0, -4.0), c + Vec2::new(-4.0, 4.0)], stroke);
         }
-        "—" => {
+        "minus" => {
             painter.line_segment([c + Vec2::new(-5.0, 1.0), c + Vec2::new(5.0, 1.0)], stroke);
         }
-        _ => {
+        "question" => {
             painter.circle_stroke(c, 6.0, Stroke::new(1.2, col));
             painter.text(c, egui::Align2::CENTER_CENTER, "?", egui::FontId::proportional(10.0), col);
+        }
+        _ => {
+            painter.rect_stroke(
+                egui::Rect::from_center_size(c, Vec2::splat(10.0)),
+                1.0,
+                stroke,
+                egui::StrokeKind::Inside,
+            );
         }
     }
     resp

@@ -74,6 +74,8 @@ const SVGS: &[(&str, &[u8])] = svg_list!(
     "users-three",
     "person-simple-walk",
     "minus",
+    "corners-out",
+    "corners-in",
     "arrows-out",
     "star",
     "address-book",

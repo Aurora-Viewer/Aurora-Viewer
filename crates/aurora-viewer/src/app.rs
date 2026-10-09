@@ -2756,7 +2756,8 @@ impl App {
                 }
             }
         }
-        self.perf.frame(dt * 1000.0, self.net.stats.snapshot());
+        self.perf
+            .frame(dt * 1000.0, self.net.stats.snapshot(), &self.last_render, &self.scene.stats);
         self.gfx = Some(gfx);
         // closing the window: leave once the last view is kept (or after 1 s)
         if let Some(t) = self.closing
@@ -3792,6 +3793,11 @@ impl ApplicationHandler for App {
                 self.panels.perf = false;
                 self.options_ui.tab = std::env::var("AURORA_DEMO_OPTIONS").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
             }
+            // AURORA_DEMO_PERF=compact|full: the performance window in that view
+            if let Ok(v) = std::env::var("AURORA_DEMO_PERF") {
+                self.panels.perf = true;
+                ui::perf::set_full(&self.egui_ctx, v.trim() == "full");
+            }
             if let Some(t) = std::env::var("AURORA_DEMO_TOD").ok().and_then(|v| v.parse::<u8>().ok()) {
                 self.panels.time_of_day = t.min(4);
             }
@@ -3989,7 +3995,17 @@ impl ApplicationHandler for App {
                             return;
                         }
                     }
-                    if (!pressed || (!resp.consumed && !typing)) && !(pressed && ke.repeat) {
+                    // Ctrl / Alt shortcuts of the viewer still work while a text
+                    // field has the focus (chat bar...), as Firestorm's menu
+                    // accelerators go before the focused field
+                    // (LLViewerWindow::handleKey); the field keeps its own
+                    // editing shortcuts (copy, paste, undo, words...)
+                    let shortcut = pressed
+                        && typing
+                        && (self.ctrl || self.alt)
+                        && !crate::keybinds::is_text_edit_key(code)
+                        && self.settings.keybinds.triggered(&Input::key(code), self.mods()).is_some();
+                    if (!pressed || (!resp.consumed && !typing) || shortcut) && !(pressed && ke.repeat) {
                         self.on_input(Input::key(code), pressed);
                     }
                 }

@@ -637,31 +637,69 @@ struct GpuTimer {
     next: usize,
     period_ns: f32,
     last_ms: Option<f32>,
-    /// Marks between passes are written (TIMESTAMP_QUERY_INSIDE_ENCODERS).
+    /// Marks between and inside passes are written
+    /// (TIMESTAMP_QUERY_INSIDE_ENCODERS + TIMESTAMP_QUERY_INSIDE_PASSES).
     marks: bool,
-    /// Last per-pass breakdown (ms), see [`GPU_PASSES`].
-    last_passes: Option<[f32; GPU_PASSES.len()]>,
+    /// Last breakdown by kind of element (ms), in [`GpuElement::ALL`] order.
+    last_elements: Option<[f32; GpuElement::ALL.len()]>,
 }
 
 /// Timestamps of a frame: 0 first pass, 1 end of post, then the marks.
 const GPU_TIMESTAMPS: u32 = 2 + GPU_MARKS;
-const GPU_MARKS: u32 = 6;
-/// Mark indices, in frame order.
+const GPU_MARKS: u32 = 15;
+/// Mark indices, in frame order. Those inside the scene passes split them
+/// by draw group; a timestamp there waits for the draws before it, so the
+/// split is close but not exact (the GPU overlaps neighbouring draws).
 const MARK_SHADOWS_END: u32 = 2;
-const MARK_PREPASS1_END: u32 = 3;
-const MARK_OCCLUSION_END: u32 = 4;
-const MARK_PREPASS2_END: u32 = 5;
+/// Depth prepass, occlusion culling, second prepass.
+const MARK_DEPTH_END: u32 = 3;
+const MARK_SSAO_END: u32 = 4;
+/// Planar reflections, then the reflection probe face and its filtering.
+const MARK_REFL_END: u32 = 5;
+/// After the impostor pictures.
 const MARK_SCENE_BEGIN: u32 = 6;
-const MARK_SCENE_END: u32 = 7;
-/// Per-pass GPU times: (name, from, to) timestamp indices.
-pub const GPU_PASSES: [(&str, u32, u32); 7] = [
-    ("shadows", 0, MARK_SHADOWS_END),
-    ("prepass", MARK_SHADOWS_END, MARK_PREPASS1_END),
-    ("occlusion", MARK_PREPASS1_END, MARK_OCCLUSION_END),
-    ("prepass2", MARK_OCCLUSION_END, MARK_PREPASS2_END),
-    ("ssao_refl_probes", MARK_PREPASS2_END, MARK_SCENE_BEGIN),
-    ("scene", MARK_SCENE_BEGIN, MARK_SCENE_END),
-    ("taa_post", MARK_SCENE_END, 1),
+/// Inside scene pass A.
+const MARK_SKY_END: u32 = 7;
+const MARK_TERRAIN_END: u32 = 8;
+const MARK_OBJECTS_END: u32 = 9;
+/// After scene pass A (impostor cards).
+const MARK_SCENE_A_END: u32 = 10;
+/// After the scene copy (refraction / SSR source).
+const MARK_COPY_END: u32 = 11;
+/// Inside scene pass B.
+const MARK_SSR_END: u32 = 12;
+const MARK_WATER_END: u32 = 13;
+const MARK_GLOW_END: u32 = 14;
+/// Blended faces and the debug / selection overlays.
+const MARK_BLEND_END: u32 = 15;
+/// After scene pass B (particles).
+const MARK_SCENE_END: u32 = 16;
+/// GPU time ranges `(from, to)` of each kind of element, in
+/// [`GpuElement::ALL`] order; together they cover the whole frame.
+const GPU_ELEMENTS: [&[(u32, u32)]; GpuElement::ALL.len()] = [
+    // shadows and depth
+    &[(0, MARK_SHADOWS_END), (MARK_SHADOWS_END, MARK_DEPTH_END)],
+    // effects: SSAO, planar reflections, probes, scene copy, SSR
+    &[
+        (MARK_DEPTH_END, MARK_SSAO_END),
+        (MARK_SSAO_END, MARK_REFL_END),
+        (MARK_SCENE_A_END, MARK_COPY_END),
+        (MARK_COPY_END, MARK_SSR_END),
+    ],
+    // terrain and sky
+    &[(MARK_SCENE_BEGIN, MARK_SKY_END), (MARK_SKY_END, MARK_TERRAIN_END)],
+    // objects and avatars (opaque, masked), impostor pictures and cards
+    &[
+        (MARK_TERRAIN_END, MARK_OBJECTS_END),
+        (MARK_REFL_END, MARK_SCENE_BEGIN),
+        (MARK_OBJECTS_END, MARK_SCENE_A_END),
+    ],
+    // water
+    &[(MARK_SSR_END, MARK_WATER_END)],
+    // blended faces and particles
+    &[(MARK_GLOW_END, MARK_BLEND_END), (MARK_BLEND_END, MARK_SCENE_END)],
+    // post: glow, TAA, tonemap, SMAA
+    &[(MARK_WATER_END, MARK_GLOW_END), (MARK_SCENE_END, 1)],
 ];
 
 impl GpuTimer {
@@ -698,8 +736,10 @@ impl GpuTimer {
             next: 0,
             period_ns: queue.get_timestamp_period(),
             last_ms: None,
-            marks: device.features().contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS),
-            last_passes: None,
+            marks: device
+                .features()
+                .contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS | wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES),
+            last_elements: None,
         }
     }
 
@@ -716,11 +756,11 @@ impl GpuTimer {
                     if ts[1] > ts[0] {
                         self.last_ms = Some(ms(0, 1));
                         if self.marks {
-                            let mut p = [0.0; GPU_PASSES.len()];
-                            for (i, (_, a, b)) in GPU_PASSES.iter().enumerate() {
-                                p[i] = ms(*a, *b);
+                            let mut e = [0.0; GpuElement::ALL.len()];
+                            for (t, ranges) in e.iter_mut().zip(GPU_ELEMENTS) {
+                                *t = ranges.iter().map(|&(a, b)| ms(a, b)).sum();
                             }
-                            self.last_passes = Some(p);
+                            self.last_elements = Some(e);
                         }
                     }
                 }
@@ -1526,9 +1566,14 @@ impl Renderer {
         let timestamps = afeat.contains(wgpu::Features::TIMESTAMP_QUERY);
         if timestamps {
             features |= wgpu::Features::TIMESTAMP_QUERY;
-            // per-pass GPU times (performance panel)
-            if afeat.contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS) {
-                features |= wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS;
+            // GPU time by kind of element (performance panel)
+            for f in [
+                wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS,
+                wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES,
+            ] {
+                if afeat.contains(f) {
+                    features |= f;
+                }
             }
         }
         // needed for MSAA 8x on HDR targets (adapter-specific sample counts)
@@ -3678,7 +3723,7 @@ impl Renderer {
         };
 
         prof.push(("d0_setup", Instant::now()));
-        // GPU timestamp between passes (per-pass times)
+        // GPU timestamps between and inside passes (time by kind of element)
         let marks = self
             .timer
             .as_ref()
@@ -3687,6 +3732,11 @@ impl Renderer {
         let mark = |encoder: &mut wgpu::CommandEncoder, i: u32| {
             if let Some(q) = marks {
                 encoder.write_timestamp(q, i);
+            }
+        };
+        let pass_mark = |pass: &mut wgpu::RenderPass, i: u32| {
+            if let Some(q) = marks {
+                pass.write_timestamp(q, i);
             }
         };
         // ---- shadows
@@ -3753,12 +3803,10 @@ impl Renderer {
             draw_from(&mut pass, &self.pipelines.pre_mask, pre, rg.mask);
             draw_from(&mut pass, &self.pipelines.pre_mask_2s, pre, rg.mask_2s);
         }
-        mark(&mut encoder, MARK_PREPASS1_END);
         // ---- occlusion: Hi-Z of phase 1, test of every draw, then phase 2
         // adds the draws visible now that phase 1 did not draw
         if occl {
             self.occlusion.encode_cull(&self.device, &mut encoder, &self.indirect);
-            mark(&mut encoder, MARK_OCCLUSION_END);
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("depth prepass 2"),
                 color_attachments: &[],
@@ -3783,10 +3831,7 @@ impl Renderer {
         }
 
         prof.push(("d2_prepass", Instant::now()));
-        if !occl {
-            mark(&mut encoder, MARK_OCCLUSION_END);
-        }
-        mark(&mut encoder, MARK_PREPASS2_END);
+        mark(&mut encoder, MARK_DEPTH_END);
         // ---- SSAO
         if let (Some((raw, blurred, _, _)), Some((bg_ssao, bg_blur))) = (&self.targets.ao, &self.ssao_groups) {
             for (view, pipe, bg, label) in [
@@ -3815,6 +3860,7 @@ impl Renderer {
             }
         }
 
+        mark(&mut encoder, MARK_SSAO_END);
         // ---- planar reflections
         let refl_passes = [
             (
@@ -3908,6 +3954,7 @@ impl Renderer {
             }
         }
 
+        mark(&mut encoder, MARK_REFL_END);
         // ---- impostor pictures, copied into their atlas tile
         for (i, (c, (opaque, blend))) in imp_caps.iter().zip(&imp_ranges).enumerate() {
             {
@@ -4035,11 +4082,14 @@ impl Renderer {
             bind_mesh(&mut pass, &self.groups.a);
             pass.set_pipeline(&self.pipelines.sky);
             pass.draw(0..3, 0..1);
+            pass_mark(&mut pass, MARK_SKY_END);
             draw(&mut pass, &self.pipelines.terrain, rg.terrain);
+            pass_mark(&mut pass, MARK_TERRAIN_END);
             draw(&mut pass, &self.pipelines.opaque, rg.opaque);
             draw(&mut pass, &self.pipelines.opaque_2s, rg.opaque_2s);
             draw(&mut pass, &self.pipelines.mask, rg.mask);
             draw(&mut pass, &self.pipelines.mask_2s, rg.mask_2s);
+            pass_mark(&mut pass, MARK_OBJECTS_END);
             // impostor cards (last: they rebind vertex buffer 0)
             if n_sprites > 0 {
                 pass.set_pipeline(&self.impostors.sprite);
@@ -4049,6 +4099,7 @@ impl Renderer {
             }
         }
 
+        mark(&mut encoder, MARK_SCENE_A_END);
         // ---- scene copy (refraction / SSR source)
         let size = wgpu::Extent3d {
             width: self.config.width.max(1),
@@ -4071,6 +4122,7 @@ impl Renderer {
             size,
         );
 
+        mark(&mut encoder, MARK_COPY_END);
         // ---- scene pass B: SSR, water, blended faces, particles
         {
             let (view, resolve) = match &self.targets.color_msaa {
@@ -4105,7 +4157,9 @@ impl Renderer {
                 pass.set_bind_group(3, gbg, &[]);
                 pass.draw(0..3, 0..1);
             }
+            pass_mark(&mut pass, MARK_SSR_END);
             draw(&mut pass, &self.pipelines.water, rg.water);
+            pass_mark(&mut pass, MARK_WATER_END);
             if glow_on {
                 if glow_skip & 2 == 0 {
                     draw(&mut pass, &self.pipelines.glow_max, rg.glow);
@@ -4117,6 +4171,7 @@ impl Renderer {
                     draw(&mut pass, &self.pipelines.glow, (g0 + i * stride, 1));
                 }
             }
+            pass_mark(&mut pass, MARK_GLOW_END);
             // blended faces back to front; a glowing one adds its glow right
             // after itself, so later layers in front dim it (LLDrawPoolAlpha)
             let stride = std::mem::size_of::<DrawIndexedIndirect>() as u64;
@@ -4145,6 +4200,7 @@ impl Renderer {
                     draw(&mut pass, wire, r);
                 }
             }
+            pass_mark(&mut pass, MARK_BLEND_END);
             // particles last: they rebind vertex buffer 0
             if n_particles > 0 {
                 pass.set_pipeline(&self.pipelines.particles);
@@ -4347,13 +4403,13 @@ impl Renderer {
         stats.index_used = iu;
         stats.records = self.records.live();
         stats.gpu_ms = self.timer.as_ref().and_then(|t| t.last_ms);
-        stats.gpu_passes = self.timer.as_ref().and_then(|t| t.last_passes);
+        stats.gpu_elements = self.timer.as_ref().and_then(|t| t.last_elements);
         if std::env::var_os("AURORA_PROFILE").is_some()
-            && let Some(p) = stats.gpu_passes
+            && let Some(e) = stats.gpu_elements
         {
             let mut out = String::new();
-            for ((name, _, _), ms) in GPU_PASSES.iter().zip(p) {
-                out.push_str(&format!("{name}={ms:.3} "));
+            for (el, ms) in GpuElement::ALL.iter().zip(e) {
+                out.push_str(&format!("{}={ms:.3} ", el.key()));
             }
             log::info!("gpu profile: {out}");
         }
