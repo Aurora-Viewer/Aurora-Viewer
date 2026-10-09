@@ -274,6 +274,7 @@ mod tests {
             inv_type: 25,
             asset_id: Uuid::from_u128(asset),
             flags,
+            favorite: false,
             creator: Uuid::nil(),
             created_at: 0,
             owner: Uuid::nil(),
@@ -332,6 +333,7 @@ mod tests {
                     name: name.into(),
                     type_default: t,
                     version: 1,
+                    ..Default::default()
                 },
                 children: Vec::new(),
                 items: Vec::new(),

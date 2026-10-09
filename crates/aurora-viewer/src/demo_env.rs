@@ -104,6 +104,7 @@ pub fn folder_contents(folder_id: Uuid, owner: Uuid) -> Option<FolderContents> {
         name: name.into(),
         type_default: -1,
         version: 2,
+        ..Default::default()
     };
     let folders = match n {
         LIB_ROOT => vec![sub(LIB_ENVIRONMENTS, "Environments"), sub(LIB_TEXTURES, "Textures")],
@@ -126,6 +127,7 @@ pub fn folder_contents(folder_id: Uuid, owner: Uuid) -> Option<FolderContents> {
                 SettingsKind::Water => 1,
                 SettingsKind::Day => 2,
             },
+            favorite: false,
             creator: Uuid::nil(),
             created_at: 0,
             owner,
