@@ -211,6 +211,8 @@ pub struct App {
     /// Offline demo teleport: started at.
     demo_tp_start: Option<Instant>,
     demo_tp_triggered: bool,
+    /// AURORA_DEMO_MMO: frame its script starts at (world shown).
+    demo_mmo_start: Option<u64>,
     /// Where the offline demo teleport lands (the asked position).
     demo_tp_dest: Option<Vec3>,
     /// Destination of the teleport being started (teleport screen).
@@ -466,6 +468,7 @@ impl App {
             was_teleporting: false,
             demo_tp_start: None,
             demo_tp_triggered: false,
+            demo_mmo_start: None,
             demo_tp_dest: None,
             tp_dest: None,
             geom_changed: None,
@@ -1062,6 +1065,48 @@ impl App {
         })
     }
 
+    /// The right button walks forward: held while steering with the left
+    /// button on our avatar.
+    fn mouse_walks(&self) -> bool {
+        self.right_drag && self.mouse_mode == MouseMode::Steer
+    }
+
+    /// A walk input of `group` pressed or released: pressed twice quickly, it
+    /// runs while held (agent_handle_doubletap_run). The right button of
+    /// mouse steering counts as a forward key, so a double right click runs.
+    fn walk_tap(&mut self, group: u8, pressed: bool) {
+        if pressed && self.in_world() {
+            if self.temp_run.is_none()
+                && let Some((last, at)) = self.last_tap
+                && last == group
+                && at.elapsed().as_secs_f32() < NUDGE_TIME
+            {
+                self.temp_run = Some(group);
+                if !self.always_run {
+                    self.send(NetCommand::SetAlwaysRun(true));
+                }
+            }
+            self.last_tap = Some((group, Instant::now()));
+        } else if !pressed {
+            self.check_temp_run();
+        }
+    }
+
+    /// Stop the temporary run once nothing of its walk group is held any more
+    /// (agent_check_temporary_run).
+    fn check_temp_run(&mut self) {
+        let Some(group) = self.temp_run else {
+            return;
+        };
+        let still_held = self.down.iter().any(|k| self.run_group(k) == Some(group)) || (group == 0 && self.mouse_walks());
+        if !still_held {
+            self.temp_run = None;
+            if !self.always_run {
+                self.send(NetCommand::SetAlwaysRun(false));
+            }
+        }
+    }
+
     /// Voice transmission wanted (microphone button / push-to-talk).
     fn talking(&self) -> bool {
         if self.settings.audio.mic_hold {
@@ -1078,29 +1123,8 @@ impl App {
         } else {
             self.down.remove(&input);
         }
-        // double-tap a walk key to run while it is held (agent_handle_doubletap_run)
         if let Some(group) = self.run_group(&input) {
-            if pressed && self.in_world() {
-                if self.temp_run.is_none()
-                    && let Some((last, at)) = self.last_tap
-                    && last == group
-                    && at.elapsed().as_secs_f32() < NUDGE_TIME
-                {
-                    self.temp_run = Some(group);
-                    if !self.always_run {
-                        self.send(NetCommand::SetAlwaysRun(true));
-                    }
-                }
-                self.last_tap = Some((group, Instant::now()));
-            } else if !pressed && self.temp_run == Some(group) {
-                let still_held = self.down.iter().any(|k| self.run_group(k) == Some(group));
-                if !still_held {
-                    self.temp_run = None;
-                    if !self.always_run {
-                        self.send(NetCommand::SetAlwaysRun(false));
-                    }
-                }
-            }
+            self.walk_tap(group, pressed);
         }
         if !pressed || !self.in_world() {
             return;
@@ -2010,6 +2034,24 @@ impl App {
         true
     }
 
+    /// Right button: orbit drag, context menu on a click, and walking forward
+    /// while steering with the left button (a double click runs).
+    fn on_right_button(&mut self, pressed: bool, over_ui: bool) {
+        let was_drag = self.right_drag;
+        self.right_drag = pressed && (!over_ui || self.mouse_mode == MouseMode::Steer) && self.in_world();
+        if self.mouse_walks() {
+            self.walk_tap(0, true);
+        } else if !pressed {
+            self.check_temp_run();
+        }
+        if pressed {
+            self.right_moved = 0.0;
+        } else if was_drag && self.right_moved < 4.0 && self.mouse_mode == MouseMode::None {
+            // a click (no drag): context menu
+            self.open_context_menu();
+        }
+    }
+
     fn on_left_release(&mut self) {
         self.release_object_hold();
         self.left_down = false;
@@ -2026,6 +2068,8 @@ impl App {
             if !self.camera.mouselook() {
                 self.set_mouselook_grab(false);
             }
+            // the right button no longer walks: a double right click run ends
+            self.check_temp_run();
         }
     }
 
@@ -3672,32 +3716,45 @@ impl App {
         {
             self.demo_camera_steps(&v);
         }
-        // AURORA_DEMO_MMO="x,y": left press on the avatar at frame 225, right
-        // button held from 235 to 330 (MMO walking test), positions logged
+        // AURORA_DEMO_MMO="x,y": left press on the avatar once the world shows
+        // (frame 225 at the earliest), right button held 10 to 105 frames
+        // later (MMO walking test), positions logged
         if self.demo
             && let Ok(v) = std::env::var("AURORA_DEMO_MMO")
         {
+            if self.demo_mmo_start.is_none() && self.frame_count >= 225 && matches!(self.screen, Screen::World) && self.tp_overlay.is_none()
+            {
+                self.demo_mmo_start = Some(self.frame_count);
+            }
             let c: Vec<f32> = v.split(',').filter_map(|s| s.trim().parse().ok()).collect();
-            match (self.frame_count, c.len()) {
-                (225, n) if n >= 2 => {
+            let f = self.demo_mmo_start.map_or(u64::MAX, |s| self.frame_count - s);
+            match (f, c.len()) {
+                (0, n) if n >= 2 => {
                     self.cursor_pos = (c[0], c[1]);
                     self.on_left_press();
                     log::info!("demo mmo: mode {:?}, pos {:?}", self.mouse_mode, self.world.agent.position);
                 }
                 // third value 1: hold the right arrow instead of the right button
-                (235, _) if c.get(2) == Some(&1.0) => {
+                (10, _) if c.get(2) == Some(&1.0) => {
                     self.down.insert(Input::key(KeyCode::ArrowRight));
                 }
-                (235, _) => self.right_drag = self.mouse_mode == MouseMode::Steer && self.in_world(),
-                (330, _) => {
-                    self.right_drag = false;
+                // third value 2: double right click, held the second time (run)
+                (11, _) if c.get(2) == Some(&2.0) => self.on_right_button(false, false),
+                (12, _) if c.get(2) == Some(&2.0) => self.on_right_button(true, false),
+                (10, _) => self.on_right_button(true, false),
+                (105, _) => {
+                    let running = self.temp_run.is_some();
+                    if self.right_drag {
+                        self.on_right_button(false, false);
+                    }
                     self.down.remove(&Input::key(KeyCode::ArrowRight));
                     log::info!(
-                        "demo mmo: after walking, mode {:?}, pos {:?}, yaw {:.2}, camera yaw {:.2}",
+                        "demo mmo: after walking, mode {:?}, pos {:?}, yaw {:.2}, camera yaw {:.2}, running {running} (after release {})",
                         self.mouse_mode,
                         self.world.agent.position,
                         self.world.agent.yaw,
-                        self.world.agent.yaw + self.camera.orbit_yaw
+                        self.world.agent.yaw + self.camera.orbit_yaw,
+                        self.temp_run.is_some()
                     );
                 }
                 _ => {}
@@ -5070,16 +5127,7 @@ impl ApplicationHandler for App {
                     return;
                 }
                 match button {
-                    MouseButton::Right => {
-                        let was_drag = self.right_drag;
-                        self.right_drag = pressed && (!over_ui || self.mouse_mode == MouseMode::Steer) && self.in_world();
-                        if pressed {
-                            self.right_moved = 0.0;
-                        } else if was_drag && self.right_moved < 4.0 && self.mouse_mode == MouseMode::None {
-                            // a click (no drag): context menu
-                            self.open_context_menu();
-                        }
-                    }
+                    MouseButton::Right => self.on_right_button(pressed, over_ui),
                     MouseButton::Left if pressed => {
                         if !over_ui && self.in_world() && !self.camera.mouselook() && !self.build_mouse_down() {
                             self.on_left_press();
