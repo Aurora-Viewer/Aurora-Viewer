@@ -532,6 +532,13 @@ impl Camera {
         self.set_focus_global(Some(focus), object.map(|o| o.0), object.map(|o| o.1), s);
     }
 
+    /// `pstcampos` chat command (cmdline_apply_camera): unlockView, then
+    /// setCameraPosAndFocusGlobal.
+    pub fn set_view(&mut self, camera: Vec3, focus: Vec3, agent: &mut AgentState, s: &CameraSettings) {
+        self.unlock_view(agent, s);
+        self.set_camera_pos_and_focus(camera, focus, None, s);
+    }
+
     /// Context menu « Zoomer » (handle_zoom_to_object).
     pub fn zoom_to(&mut self, point: Vec3, agent: &mut AgentState, s: &CameraSettings) {
         self.set_focus_on_avatar(false, true, true, agent, s);

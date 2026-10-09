@@ -2,6 +2,7 @@
 //! right (label column + control column), flat Aurora style.
 
 mod camera;
+mod commands;
 
 use super::fonts::{self, SystemFont};
 use super::icons::Icons;
@@ -53,7 +54,7 @@ pub struct OptionsResult {
 }
 
 /// Category tabs (index = `OptionsUi::tab`).
-const CATEGORIES: [(&str, &str); 11] = [
+const CATEGORIES: [(&str, &str); 12] = [
     ("Graphismes", "Command_Environments_Icon"),
     ("Interface", "Command_Appearance_Icon"),
     ("Polices", "Command_Chat_Icon"),
@@ -65,14 +66,16 @@ const CATEGORIES: [(&str, &str); 11] = [
     ("Raccourcis", "keyboard"),
     ("Debug", "code"),
     ("Caméra", "camera"),
+    ("Commandes", "terminal-window"),
 ];
 
 /// Order of the tabs in the sidebar.
-const ORDER: [usize; 11] = [0, 1, 2, 3, 7, 4, TAB_CAMERA, 8, 5, 6, 9];
+const ORDER: [usize; 12] = [0, 1, 2, 3, TAB_COMMANDS, 7, 4, TAB_CAMERA, 8, 5, 6, 9];
 
 pub const TAB_AUDIO: usize = 7;
 pub const TAB_CHAT: usize = 3;
 pub const TAB_CAMERA: usize = 10;
+pub const TAB_COMMANDS: usize = 11;
 
 const LABEL_W: f32 = 180.0;
 
@@ -147,6 +150,9 @@ fn group_icon(title: &str) -> Option<&'static str> {
         "Groupes et blocage" => "prohibit",
         "Réponses automatiques" => "paper-plane-tilt",
         "Refus automatiques" => "hand-waving",
+        "Ligne de commande" | "Autres commandes" => "terminal-window",
+        "Commandes de téléportation" => "map-pin",
+        "Commandes de caméra et d'affichage" => "camera",
         "Fenêtres" => "squares-four",
         _ => return None,
     })
@@ -405,6 +411,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
                             8 => keys_page(ui, p, s, st),
                             9 => debug_page(ui, p, s),
                             TAB_CAMERA => camera::page(ui, p, s),
+                            TAB_COMMANDS => commands::page(ui, p, &mut s.chat_commands),
                             _ => content(ui, p, s, st, &mut r.font_changed, &mut r.clear_cache),
                         };
                     });
