@@ -1,5 +1,6 @@
 //! Local chat window (nearby chat + instant messages).
 
+use super::context::CtxAction;
 use crate::theme::Palette;
 use crate::world::{ChatKind, World};
 use aurora_net::ChatType;
@@ -200,6 +201,9 @@ enum Seg<'a> {
     Text(&'a str),
     Url(&'a str),
     Slurl(&'a str),
+    /// A place (maps.secondlife.com, secondlife://Region/x/y/z, app/region,
+    /// app/teleport): shown as "Region (x,y,z)", clickable.
+    Place(&'a str, crate::slurl::PlaceLink),
     /// secondlife:///app/agent/<id>/mention
     Mention(uuid::Uuid),
     /// secondlife:///app/agent/<id>/about (inspect, completename...): shown
@@ -211,7 +215,7 @@ fn segments(text: &str) -> Vec<Seg<'_>> {
     let mut out = Vec::new();
     let mut rest = text;
     while !rest.is_empty() {
-        let next = ["https://", "http://", "secondlife:///"].iter().filter_map(|p| rest.find(p)).min();
+        let next = ["https://", "http://", "secondlife://"].iter().filter_map(|p| rest.find(p)).min();
         let Some(i) = next else {
             out.push(Seg::Text(rest));
             break;
@@ -233,7 +237,9 @@ fn segments(text: &str) -> Vec<Seg<'_>> {
                 (Some(id), "about" | "inspect" | "completename" | "displayname" | "username") => Seg::Agent(id),
                 _ => Seg::Slurl(link),
             }
-        } else if link.starts_with("secondlife:///") {
+        } else if let Some(place) = crate::slurl::place_link(link) {
+            Seg::Place(link, place)
+        } else if link.starts_with("secondlife://") {
             Seg::Slurl(link)
         } else {
             Seg::Url(link)
@@ -248,6 +254,22 @@ fn segments(text: &str) -> Vec<Seg<'_>> {
 fn name_menu(r: &egui::Response, p: &Palette, world: &World, id: uuid::Uuid) {
     super::menu::context_menu(r, p, |ui| {
         super::context::avatar_list_menu(ui, p, world, id, super::context::AvatarList::Name)
+    });
+}
+
+/// Right click on a place link (menu_url_slurl.xml, menu_url_teleport.xml).
+fn place_menu(r: &egui::Response, p: &Palette, url: &str, place: &crate::slurl::PlaceLink) {
+    super::menu::context_menu(r, p, |ui| {
+        let l = &place.location;
+        if super::menu::item(ui, p, "navigation-arrow", "Se téléporter à cet emplacement") {
+            super::context::request(ui.ctx(), CtxAction::TeleportToPlace(l.region.clone(), l.pos));
+        }
+        if super::menu::item(ui, p, "map-trifold", "Voir sur la carte") {
+            super::context::request(ui.ctx(), CtxAction::ShowPlace(l.region.clone(), l.pos));
+        }
+        if super::menu::item(ui, p, "link", "Copier la SLurl") {
+            ui.ctx().copy_text(url.to_owned());
+        }
     });
 }
 
@@ -280,8 +302,32 @@ pub(crate) fn chat_text(
                     ui.hyperlink_to(RichText::new(u).size(size).color(super::colors::c(k.chat_urls)), u);
                 }
                 Seg::Slurl(u) => {
-                    ui.add(egui::Label::new(RichText::new(u).size(size).color(super::colors::c(k.chat_slurl))))
+                    ui.add(egui::Label::new(RichText::new(u).size(size).color(super::colors::c(k.chat_slurl))).selectable(true))
                         .on_hover_text(u);
+                }
+                Seg::Place(u, place) => {
+                    let r = ui.add(egui::Link::new(
+                        RichText::new(&place.label).size(size).color(super::colors::c(k.chat_slurl)),
+                    ));
+                    place_menu(&r, p, u, &place);
+                    // TooltipTeleportUrl; a place opens the world map on it
+                    // (Firestorm's place details floater is not ported yet)
+                    let tip = if place.teleport {
+                        "Cliquez pour vous téléporter à cet endroit"
+                    } else {
+                        "Cliquez pour voir cet endroit sur la carte"
+                    };
+                    if r.on_hover_text(format!("{tip}\n{u}")).clicked() {
+                        let l = place.location;
+                        super::context::request(
+                            ui.ctx(),
+                            if place.teleport {
+                                CtxAction::TeleportToPlace(l.region, l.pos)
+                            } else {
+                                CtxAction::ShowPlace(l.region, l.pos)
+                            },
+                        );
+                    }
                 }
                 Seg::Mention(id) => {
                     want_names.insert(id);

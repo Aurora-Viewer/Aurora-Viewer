@@ -327,7 +327,8 @@ Il se modifie ici, l'enregistrement reste local."
             "Loup solitaire, bâtisseur du dimanche.
 
 Ma partenaire : secondlife:///app/agent/{DEMO_NOVA}/about
-Mon site : https://example.com/loup 🐺"
+Mon site : https://example.com/loup 🐺
+Ma maison : http://maps.secondlife.com/secondlife/Aurora%20D%C3%A9mo/140/120/25"
         );
         p.fl_about = "Passionné de montagne.".into();
         p.partner = DEMO_NOVA;

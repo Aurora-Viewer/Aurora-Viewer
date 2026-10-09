@@ -1,5 +1,6 @@
-//! SLURLs (LLSLURL): parse what is typed or pasted in the navigation bar and
-//! build the SLURL of the current position.
+//! SLURLs (LLSLURL): parse what is typed or pasted in the navigation bar,
+//! build the SLURL of the current position, and label the place links of a
+//! chat or profile text.
 //!
 //! Accepted: `http(s)://maps.secondlife.com/secondlife/Region/x/y/z`,
 //! `slurl.com/secondlife/...`, `secondlife://Region/x/y/z`,
@@ -155,9 +156,102 @@ pub fn parse(input: &str) -> Option<Location> {
     })
 }
 
+/// A place link found in a chat or profile text, shown by its label instead
+/// of the raw URL.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlaceLink {
+    pub location: Location,
+    /// "Region (x,y,z)", or "Me téléporter vers Region (x,y,z)".
+    pub label: String,
+    /// `secondlife:///app/teleport/...`: a click teleports (once confirmed).
+    pub teleport: bool,
+}
+
+/// Recognize a place URL and build its label, like Firestorm's
+/// LLUrlEntrySLURL (maps.secondlife.com / slurl.com), LLUrlEntryPlace
+/// (`secondlife://Region/x/y[/z]`), LLUrlEntryRegion
+/// (`secondlife:///app/region/...`) and LLUrlEntryTeleport
+/// (`secondlife:///app/teleport/...`), indra/llui/llurlentry.cpp.
+pub fn place_link(url: &str) -> Option<PlaceLink> {
+    let lower = url.to_ascii_lowercase();
+    let after = |prefix: &str| lower.starts_with(prefix).then(|| &url[prefix.len()..]);
+    // (rest, teleport link, minimum number of coordinates)
+    let (rest, teleport, min) = if let Some(r) = [
+        "https://maps.secondlife.com/secondlife/",
+        "http://maps.secondlife.com/secondlife/",
+        "https://slurl.com/secondlife/",
+        "http://slurl.com/secondlife/",
+        "secondlife:///app/region/",
+    ]
+    .iter()
+    .find_map(|p| after(p))
+    {
+        (r, false, 0)
+    } else if let Some(r) = after("secondlife:///app/teleport/") {
+        (r, true, 0)
+    } else if lower.starts_with("secondlife:///") {
+        // other app links (agent, group, inventory...)
+        return None;
+    } else {
+        (after("secondlife://")?, false, 2)
+    };
+    let path = rest.split(['?', '#']).next().unwrap_or("").trim_end_matches('/');
+    let parts: Vec<&str> = path.split('/').collect();
+    let region = decode(parts[0]).trim().to_owned();
+    let nums = &parts[1..];
+    if region.is_empty() || nums.len() < min || nums.len() > 3 || nums.iter().any(|n| n.parse::<i32>().is_err()) {
+        return None;
+    }
+    let mut label = region.clone();
+    if !nums.is_empty() {
+        label = format!("{label} ({})", nums.join(","));
+    }
+    if teleport {
+        label = format!("Me téléporter vers {label}");
+    }
+    Some(PlaceLink {
+        location: Location {
+            region,
+            pos: coords(nums).unwrap_or(Vec3::new(128.0, 128.0, 0.0)),
+        },
+        label,
+        teleport,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn place_links() {
+        let l = place_link("http://maps.secondlife.com/secondlife/Aurora%20D%C3%A9mo/12/34/56").expect("slurl");
+        assert_eq!(l.label, "Aurora Démo (12,34,56)");
+        assert_eq!(l.location.pos, Vec3::new(12.0, 34.0, 56.0));
+        assert!(!l.teleport);
+        let l = place_link("https://maps.secondlife.com/secondlife/Ahern/50/60/?title=Hi").expect("slurl");
+        assert_eq!(l.label, "Ahern (50,60)");
+        assert_eq!(
+            place_link("https://slurl.com/secondlife/Ahern").map(|l| l.label).as_deref(),
+            Some("Ahern")
+        );
+        assert_eq!(
+            place_link("secondlife://Ahern/1/2/3").map(|l| l.label).as_deref(),
+            Some("Ahern (1,2,3)")
+        );
+        assert_eq!(
+            place_link("secondlife:///app/region/Ahern/1/2/3").map(|l| l.label).as_deref(),
+            Some("Ahern (1,2,3)")
+        );
+        let l = place_link("secondlife:///app/teleport/Ahern/1/2/3").expect("teleport");
+        assert_eq!(l.label, "Me téléporter vers Ahern (1,2,3)");
+        assert!(l.teleport);
+        // not places
+        assert!(place_link("secondlife:///app/agent/0e346d8b-4433-4d66-a6b0-fd37083abc4c/about").is_none());
+        assert!(place_link("secondlife://Ahern").is_none());
+        assert!(place_link("https://maps.secondlife.com/secondlife/Ahern/x/y").is_none());
+        assert!(place_link("https://example.com/secondlife/Ahern/1/2/3").is_none());
+    }
 
     fn p(s: &str) -> (String, [i32; 3]) {
         let l = parse(s).expect(s);
