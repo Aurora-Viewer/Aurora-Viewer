@@ -28,7 +28,8 @@ const GP_LAND_ALLOW_CREATE: u64 = 1 << 25;
 /// One ability of the current parcel.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParcelIcon {
-    /// Phosphor icon name.
+    /// Phosphor icon name, "fill" weight (chosen by the user: the small
+    /// shapes read better in green / red on the bar than the regular outline).
     pub icon: &'static str,
     /// Green when true, red when false.
     pub ok: bool,
@@ -62,7 +63,7 @@ pub fn parcel_icons(s: &ParcelState) -> Vec<ParcelIcon> {
     // allowAgentVoice: region voice and parcel voice
     let voice = region(rf::ALLOW_VOICE) && parcel(pf::ALLOW_VOICE_CHAT);
     out.push(icon(
-        "microphone",
+        "microphone-fill",
         voice,
         if voice {
             "Voix autorisée"
@@ -76,7 +77,7 @@ pub fn parcel_icons(s: &ParcelState) -> Vec<ParcelIcon> {
     // allowAgentFly
     let fly = !region(rf::BLOCK_FLY) && parcel(pf::ALLOW_FLY);
     out.push(icon(
-        "airplane-tilt",
+        "airplane-tilt-fill",
         fly,
         if fly {
             "Vol autorisé"
@@ -90,7 +91,7 @@ pub fn parcel_icons(s: &ParcelState) -> Vec<ParcelIcon> {
     // allowAgentPush: pushes by others' scripts (llPushObject)
     let push = !region(rf::RESTRICT_PUSHOBJECT) && !parcel(pf::RESTRICT_PUSHOBJECT);
     out.push(icon(
-        "hand-palm",
+        "hand-palm-fill",
         push,
         if push {
             "Bousculades autorisées : les scripts des autres peuvent vous pousser."
@@ -106,7 +107,7 @@ pub fn parcel_icons(s: &ParcelState) -> Vec<ParcelIcon> {
         .is_some_and(|g| parcel(pf::CREATE_GROUP_OBJECTS) || g.powers & GP_LAND_ALLOW_CREATE != 0);
     let build = owner || parcel(pf::CREATE_OBJECTS) || group_create;
     out.push(icon(
-        "cube",
+        "cube-fill",
         build,
         if build && parcel(pf::CREATE_OBJECTS) {
             "Construction autorisée à tous : vous pouvez créer et poser des objets."
@@ -123,7 +124,7 @@ pub fn parcel_icons(s: &ParcelState) -> Vec<ParcelIcon> {
     // onParcelIconClick
     let scripts = !region(rf::SKIP_SCRIPTS) && !region(rf::ESTATE_SKIP_SCRIPTS) && parcel(pf::ALLOW_OTHER_SCRIPTS);
     out.push(icon(
-        "code",
+        "code-fill",
         scripts,
         if scripts {
             "Scripts autorisés"
@@ -142,7 +143,7 @@ pub fn parcel_icons(s: &ParcelState) -> Vec<ParcelIcon> {
     let damage = region(rf::ALLOW_DAMAGE) || parcel(pf::ALLOW_DAMAGE);
     let health = s.health.clamp(0.0, 100.0) as i32;
     let mut d = icon(
-        "heart",
+        "heart-fill",
         !damage,
         &if damage {
             format!(
@@ -160,7 +161,7 @@ pub fn parcel_icons(s: &ParcelState) -> Vec<ParcelIcon> {
     // LLParcel::getSeeAVs
     let see = s.parcel.see_avatars;
     out.push(icon(
-        if see { "eye" } else { "eye-slash" },
+        if see { "eye-fill" } else { "eye-slash-fill" },
         see,
         if see {
             "Avatars visibles : on vous voit et vous entend depuis les autres parcelles."
@@ -176,7 +177,7 @@ fn icon(icon: &'static str, ok: bool, tip: &str) -> ParcelIcon {
     ParcelIcon {
         icon,
         ok,
-        strike: !ok && !icon.ends_with("-slash"),
+        strike: !ok && !icon.contains("-slash"),
         label: None,
         tip: tip.to_owned(),
     }
@@ -287,13 +288,13 @@ mod tests {
         assert_eq!(
             oks(&icons),
             vec![
-                ("microphone", false),
-                ("airplane-tilt", false),
-                ("hand-palm", false),
-                ("cube", false),
-                ("code", false),
-                ("heart", false),
-                ("eye", true),
+                ("microphone-fill", false),
+                ("airplane-tilt-fill", false),
+                ("hand-palm-fill", false),
+                ("cube-fill", false),
+                ("code-fill", false),
+                ("heart-fill", false),
+                ("eye-fill", true),
             ]
         );
         assert!(icons[4].tip.contains("administrateur"));
@@ -361,6 +362,6 @@ mod tests {
         let icons = parcel_icons(&s);
         assert_eq!(icons[5].label.as_deref(), Some("72%"));
         assert!(!icons[5].strike);
-        assert_eq!((icons[6].icon, icons[6].ok, icons[6].strike), ("eye-slash", false, false));
+        assert_eq!((icons[6].icon, icons[6].ok, icons[6].strike), ("eye-slash-fill", false, false));
     }
 }
