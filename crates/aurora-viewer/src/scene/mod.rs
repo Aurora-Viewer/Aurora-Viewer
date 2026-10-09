@@ -2258,8 +2258,10 @@ impl Scene {
     }
 
     /// Evaluate skeleton poses of every palette owner near the camera and
-    /// upload the joint palettes.
-    pub fn update_poses(&mut self, renderer: &mut Renderer, world: &mut World, eye: Vec3, now: Instant) {
+    /// upload the joint palettes. Only our avatar reports timed animation stops
+    /// to the simulator (LLVOAvatarSelf::requestStopMotion).
+    pub fn update_poses(&mut self, renderer: &mut Renderer, world: &mut World, eye: Vec3, now: Instant) -> Vec<Uuid> {
+        let mut completed = Vec::new();
         // free palettes of owners that disappeared
         if self.last_palette_gc.elapsed().as_secs_f32() > 2.0 {
             self.last_palette_gc = now;
@@ -2284,7 +2286,7 @@ impl Scene {
         let n = self.palette_count as usize * anim::PALETTE_JOINTS;
         if n == 0 {
             world.avatar_poses.clear();
-            return;
+            return completed;
         }
         if self.palettes.len() != n {
             self.palettes.resize(n, Mat4::IDENTITY.to_cols_array_2d());
@@ -2308,7 +2310,9 @@ impl Scene {
                 .get(idx)
                 .map(|g| g.center.distance(eye) < self.draw_distance + 32.0)
                 .unwrap_or(true);
-            if !near {
+            // Our animation stops drive simulator state even when the camera
+            // is looking elsewhere (in particular the pre-jump -> jump).
+            if !near && owner != world.agent_id {
                 continue;
             }
             // where it looks (LLHUDEffectLookAt::update / calcTargetPosition)
@@ -2355,7 +2359,10 @@ impl Scene {
                 let playing = self.object_signals.entry(owner).or_default().update(world, idx, now);
                 motions.sync(&playing, now, |id| anims.get(id));
             } else {
-                motions.sync(world.animations_of(&owner), now, |id| anims.get(id));
+                let stopped = motions.sync(world.animations_of(&owner), now, |id| anims.get(id));
+                if owner == world.agent_id {
+                    completed.extend(stopped);
+                }
             }
             let (base, dz) = self.skeleton_of(world, owner, idx, now);
             root_dz.push((owner, dz));
@@ -2405,6 +2412,7 @@ impl Scene {
         }
         // only the skeletons posed this frame (the others keep their last pose)
         renderer.set_palette_slots(&self.palettes, &posed_slots, anim::PALETTE_JOINTS);
+        completed
     }
 }
 

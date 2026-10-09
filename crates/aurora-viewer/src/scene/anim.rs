@@ -532,7 +532,10 @@ impl Controller {
 
     /// Follow the server's animation list (LLVOAvatar::processAnimationStateChanges).
     /// `get` gives an animation once it has loaded.
-    pub fn sync(&mut self, playing: &[PlayingAnimation], now: Instant, mut get: impl FnMut(&Uuid) -> Option<Arc<BoundAnim>>) {
+    /// Return timed stops once, at the start of ease-out, like
+    /// LLMotionController::updateMotionsByType -> requestStopMotion.
+    pub fn sync(&mut self, playing: &[PlayingAnimation], now: Instant, mut get: impl FnMut(&Uuid) -> Option<Arc<BoundAnim>>) -> Vec<Uuid> {
+        let mut completed = Vec::new();
         // stop the motions the server no longer plays
         for m in self.motions.iter_mut() {
             if !playing
@@ -587,6 +590,7 @@ impl Controller {
                 let end = m.activation + Duration::from_secs_f64((f64::from(a.duration) - f64::from(a.ease_out)).max(0.0));
                 if now >= end {
                     m.stop_at(end);
+                    completed.push(m.id);
                 }
             }
             match m.stop {
@@ -605,6 +609,7 @@ impl Controller {
             }
             true
         });
+        completed
     }
 
     /// Evaluate the pose and write the joint world matrices (skeleton
@@ -1037,10 +1042,10 @@ mod tests {
         let at = |s| t0 + Duration::from_secs_f64(s);
         let first = signal(id, 1, t0);
         let mut c = Controller::default();
-        c.sync(&[first], t0, |_| Some(anim.clone()));
-        c.sync(&[first], at(2.0), |_| Some(anim.clone()));
+        assert!(c.sync(&[first], t0, |_| Some(anim.clone())).is_empty());
+        assert_eq!(c.sync(&[first], at(2.0), |_| Some(anim.clone())), vec![id]);
         assert!(c.motions.is_empty());
-        c.sync(&[first], at(3.0), |_| Some(anim.clone()));
+        assert!(c.sync(&[first], at(3.0), |_| Some(anim.clone())).is_empty());
         assert!(c.motions.is_empty());
         let second = PlayingAnimation {
             sequence: 2,
@@ -1062,6 +1067,56 @@ mod tests {
         assert_eq!(c.motions.len(), 2);
         assert_eq!(c.motions[0].activation, at(3.1));
         assert_eq!(c.motions[1].stop, Some(at(3.1)));
+        assert_eq!(c.sync(&[c.signals[&id]], at(4.0), |_| Some(anim.clone())), vec![id]);
+    }
+
+    #[test]
+    fn pre_jump_notifies_simulator_at_ease_out_once_after_asset_loads() {
+        let rig = rig();
+        let id = uuid::uuid!("7a4e87fe-de39-6fcb-6223-024b00893244");
+        let mut bound = BoundAnim::bind(bend(&rig, 0.7, 0.25).anim.clone(), &rig);
+        bound.anim.looping = false;
+        let anim = Arc::new(bound);
+        let t0 = Instant::now();
+        let at = |s| t0 + Duration::from_secs_f64(s);
+        let playing = [signal(id, 1, t0)];
+        let mut c = Controller::default();
+        let mut agent = crate::agent::AgentState::default();
+        agent.record_jump_input(t0);
+        // Loading must not consume the completion; its clock starts on arrival.
+        assert!(c.sync(&playing, t0, |_| None).is_empty());
+        assert!(c.sync(&playing, at(2.0), |_| Some(anim.clone())).is_empty());
+        assert!(c.sync(&playing, at(2.74), |_| Some(anim.clone())).is_empty());
+        let stopped = c.sync(&playing, at(2.75), |_| Some(anim.clone()));
+        assert_eq!(stopped, vec![id]);
+        assert_eq!(
+            agent.animation_stop_flags(stopped[0], false, at(2.75)),
+            aurora_net::control::FINISH_ANIM
+        );
+        assert_eq!(c.motions.len(), 1, "notification precedes visual ease-out completion");
+        assert!(c.sync(&playing, at(2.9), |_| Some(anim.clone())).is_empty());
+        assert!(c.sync(&playing, at(3.0), |_| Some(anim.clone())).is_empty());
+        assert!(c.motions.is_empty());
+    }
+
+    #[test]
+    fn server_stop_and_loop_do_not_request_timed_stops() {
+        let rig = rig();
+        let (once, looped) = (Uuid::from_u128(20), Uuid::from_u128(21));
+        let mut bound = BoundAnim::bind(bend(&rig, 0.7, 0.25).anim.clone(), &rig);
+        bound.anim.looping = false;
+        let once_anim = Arc::new(bound);
+        let loop_anim = bend(&rig, -0.7, 0.25);
+        let t0 = Instant::now();
+        let at = |s| t0 + Duration::from_secs_f64(s);
+        let loop_signal = signal(looped, 1, t0);
+        let mut c = Controller::default();
+        let get = |id: &Uuid| Some(if *id == once { once_anim.clone() } else { loop_anim.clone() });
+        assert!(c.sync(&[signal(once, 1, t0), loop_signal], t0, get).is_empty());
+        assert!(c.sync(&[loop_signal], at(0.5), get).is_empty());
+        assert!(c.sync(&[loop_signal], at(20.0), get).is_empty());
+        assert_eq!(c.motions.len(), 1);
+        assert_eq!(c.motions[0].id, looped);
     }
 
     #[test]
