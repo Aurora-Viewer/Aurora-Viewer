@@ -908,7 +908,7 @@ pub fn external_link_confirm(ctx: &egui::Context, p: &Palette, url: &str, dont_w
         ui.set_width(380.0);
         ui.horizontal(|ui| {
             let (rect, _) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::hover());
-            if let Some(t) = super::icons::global("warning") {
+            if let Some(t) = super::icons::global("warning-fill") {
                 let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
                 ui.painter().image(t.id(), rect, uv, p.amber);
             }

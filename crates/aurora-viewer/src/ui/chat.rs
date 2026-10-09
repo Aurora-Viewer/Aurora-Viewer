@@ -126,9 +126,9 @@ pub(crate) fn trusted_url(url: &str) -> bool {
 /// Check or warning triangle before a web link, with its explanation.
 fn link_badge_look(p: &Palette, url: &str) -> (&'static str, Color32, &'static str) {
     if trusted_url(url) {
-        ("check", p.success, "Site officiel")
+        ("check-circle-fill", p.success, "Site officiel")
     } else {
-        ("warning", p.amber, "Lien externe : vérifiez l'adresse avant de l'ouvrir")
+        ("warning-fill", p.amber, "Lien externe : vérifiez l'adresse avant de l'ouvrir")
     }
 }
 

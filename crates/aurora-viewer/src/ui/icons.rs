@@ -144,6 +144,8 @@ const SVGS: &[(&str, &[u8])] = svg_list!(
     "heart-fill",
     "eye-fill",
     "eye-slash-fill",
+    "warning-fill",
+    "check-circle-fill",
     "arrow-square-in",
     "plus",
     "push-pin",
