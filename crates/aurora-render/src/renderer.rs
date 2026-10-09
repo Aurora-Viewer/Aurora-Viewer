@@ -840,6 +840,8 @@ pub struct Renderer {
     records_bind_group: wgpu::BindGroup,
     records_generation: u64,
     palette_buffer: wgpu::Buffer,
+    /// Palette bytes written since the last frame (AURORA_PROFILE).
+    palettes_uploaded: u64,
     skin_bind_buffer: wgpu::Buffer,
     shadow_view: wgpu::TextureView,
     shadow_layer_views: Vec<wgpu::TextureView>,
@@ -1994,6 +1996,7 @@ impl Renderer {
             records_bind_group,
             records_generation: 0,
             palette_buffer,
+            palettes_uploaded: 0,
             skin_bind_buffer,
             shadow_view,
             shadow_layer_views,
@@ -2170,6 +2173,7 @@ impl Renderer {
             );
         }
         self.queue.write_buffer(&self.palette_buffer, 0, bytemuck::cast_slice(mats));
+        self.palettes_uploaded += bytes;
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3372,6 +3376,7 @@ impl Renderer {
                 self.egui.free_texture(id);
             }
         }
+        let t_acquire = Instant::now();
         let surface_tex = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
@@ -3383,7 +3388,7 @@ impl Renderer {
         let surface_view = surface_tex.texture.create_view(&wgpu::TextureViewDescriptor::default());
         // CPU encode time excludes waiting for the swapchain (vsync).
         let t0 = Instant::now();
-        let mut prof: Vec<(&str, Instant)> = vec![("acquired", t0)];
+        let mut prof: Vec<(&str, Instant)> = vec![("acquire", t0)];
 
         // ---- resources
         self.records.flush(&self.device, &self.queue);
@@ -3398,7 +3403,7 @@ impl Renderer {
             self.records_generation = self.records.generation;
         }
         self.textures.maintain(&self.device, false);
-        prof.push(("b_resources", Instant::now()));
+        prof.push(("resources", Instant::now()));
 
         let (cascades, splits) = self.cascade_matrices(f);
         let unjittered_vp = f.proj * f.view;
@@ -3687,7 +3692,7 @@ impl Renderer {
         stats.particles = n_particles;
         stats.occluded = occl.then_some(self.occlusion.last_hidden);
 
-        prof.push(("c_lists", Instant::now()));
+        prof.push(("lists", Instant::now()));
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("frame") });
@@ -3709,20 +3714,24 @@ impl Renderer {
             pass.set_vertex_buffer(1, geo.skin_buffer.slice(..));
             pass.set_index_buffer(geo.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
         };
+        // draw commands recorded (AURORA_PROFILE)
+        let calls = std::cell::Cell::new(0u32);
         let draw = |pass: &mut wgpu::RenderPass, pipe: &wgpu::RenderPipeline, r: (u64, u32)| {
             if r.1 > 0 {
+                calls.set(calls.get() + 1);
                 pass.set_pipeline(pipe);
                 pass.multi_draw_indexed_indirect(&self.indirect, r.0, r.1);
             }
         };
         let draw_from = |pass: &mut wgpu::RenderPass, pipe: &wgpu::RenderPipeline, buf: &wgpu::Buffer, r: (u64, u32)| {
             if r.1 > 0 {
+                calls.set(calls.get() + 1);
                 pass.set_pipeline(pipe);
                 pass.multi_draw_indexed_indirect(buf, r.0, r.1);
             }
         };
 
-        prof.push(("d0_setup", Instant::now()));
+        prof.push(("setup", Instant::now()));
         // GPU timestamps between and inside passes (time by kind of element)
         let marks = self
             .timer
@@ -3768,11 +3777,12 @@ impl Renderer {
                     pass.set_vertex_buffer(1, geo.skin_buffer.slice(..));
                     pass.set_index_buffer(geo.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
                     pass.multi_draw_indexed_indirect(&self.indirect, off, count);
+                    calls.set(calls.get() + 1);
                 }
             }
         }
 
-        prof.push(("d1_shadows", Instant::now()));
+        prof.push(("shadows", Instant::now()));
         mark(&mut encoder, MARK_SHADOWS_END);
         // ---- depth prepass (single sample); with occlusion, phase 1 draws
         // what was visible last frame
@@ -3831,7 +3841,7 @@ impl Renderer {
             draw_from(&mut pass, &self.pipelines.pre_mask_2s, pre, rg.mask_2s);
         }
 
-        prof.push(("d2_prepass", Instant::now()));
+        prof.push(("prepass", Instant::now()));
         mark(&mut encoder, MARK_DEPTH_END);
         // ---- SSAO
         if let (Some((raw, blurred, _, _)), Some((bg_ssao, bg_blur))) = (&self.targets.ao, &self.ssao_groups) {
@@ -3861,6 +3871,7 @@ impl Renderer {
             }
         }
 
+        prof.push(("ssao", Instant::now()));
         mark(&mut encoder, MARK_SSAO_END);
         // ---- planar reflections
         let refl_passes = [
@@ -3955,6 +3966,7 @@ impl Renderer {
             }
         }
 
+        prof.push(("reflections", Instant::now()));
         mark(&mut encoder, MARK_REFL_END);
         // ---- impostor pictures, copied into their atlas tile
         for (i, (c, (opaque, blend))) in imp_caps.iter().zip(&imp_ranges).enumerate() {
@@ -4012,6 +4024,7 @@ impl Renderer {
             );
         }
 
+        prof.push(("impostors", Instant::now()));
         mark(&mut encoder, MARK_SCENE_BEGIN);
         // ---- scene pass A: sky, terrain, opaque, masked
         let single = self.targets.color_msaa.is_none();
@@ -4100,6 +4113,7 @@ impl Renderer {
             }
         }
 
+        prof.push(("scene_a", Instant::now()));
         mark(&mut encoder, MARK_SCENE_A_END);
         // ---- scene copy (refraction / SSR source)
         let size = wgpu::Extent3d {
@@ -4210,6 +4224,7 @@ impl Renderer {
             }
         }
 
+        prof.push(("scene_b", Instant::now()));
         mark(&mut encoder, MARK_SCENE_END);
         // ---- temporal anti-aliasing
         let mut post_bg = &self.targets.post_bind_group;
@@ -4312,6 +4327,7 @@ impl Renderer {
             capture = self.encode_capture(&mut encoder, &surface_tex.texture);
         }
 
+        prof.push(("post", Instant::now()));
         // ---- egui
         let mut extra_cmds = Vec::new();
         if let Some(ui) = &ui {
@@ -4342,11 +4358,12 @@ impl Renderer {
             self.egui.render(&mut pass, ui.primitives, &sd);
         }
 
+        prof.push(("egui", Instant::now()));
         if capture.is_none() && self.capture_request {
             capture = self.encode_capture(&mut encoder, &surface_tex.texture);
         }
         extra_cmds.push(encoder.finish());
-        prof.push(("d_encode", Instant::now()));
+        prof.push(("finish", Instant::now()));
         self.queue.submit(extra_cmds);
         if let Some((buf, w, h, row)) = capture {
             self.capture_request = false;
@@ -4383,13 +4400,22 @@ impl Renderer {
             });
         }
         self.occlusion.after_submit();
-        prof.push(("e_submit", Instant::now()));
+        prof.push(("submit", Instant::now()));
         let encode_ms = t0.elapsed().as_secs_f32() * 1000.0;
         self.queue.present(surface_tex);
         let _ = self.device.poll(wgpu::PollType::Poll);
-        prof.push(("f_present", Instant::now()));
+        prof.push(("present", Instant::now()));
+        stats.cpu_phases[0] = (t0 - t_acquire).as_secs_f32() * 1000.0;
+        for w in prof.windows(2) {
+            if let Some(i) = RENDER_PHASES.iter().position(|p| *p == w[1].0) {
+                stats.cpu_phases[i] += (w[1].1 - w[0].1).as_secs_f32() * 1000.0;
+            }
+        }
+        stats.draw_calls = calls.get();
+        stats.records_uploaded = self.records.uploaded;
+        stats.palettes_uploaded = std::mem::take(&mut self.palettes_uploaded);
         if std::env::var_os("AURORA_PROFILE").is_some() {
-            let mut out = String::new();
+            let mut out = format!("acquire={:.2} ", stats.cpu_phases[0]);
             for w in prof.windows(2) {
                 out.push_str(&format!("{}={:.2} ", w[1].0, (w[1].1 - w[0].1).as_secs_f32() * 1000.0));
             }

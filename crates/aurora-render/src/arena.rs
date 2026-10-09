@@ -266,6 +266,8 @@ pub struct RecordStore {
     live: u32,
     /// Set when the buffer was reallocated (bind group must be rebuilt).
     pub generation: u64,
+    /// Bytes sent by the last `flush` (AURORA_PROFILE summary).
+    pub uploaded: u64,
 }
 
 impl RecordStore {
@@ -279,6 +281,7 @@ impl RecordStore {
             any_dirty: false,
             live: 0,
             generation: 0,
+            uploaded: 0,
         }
     }
 
@@ -342,6 +345,7 @@ impl RecordStore {
     /// Upload dirty chunks; reallocates the buffer when it is too small.
     pub fn flush(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
         let rec_size = std::mem::size_of::<DrawRecord>();
+        self.uploaded = 0;
         let needed = self.mirror.len() * rec_size;
         if needed as u64 > self.buffer.size() {
             let mut cap = self.buffer.size() as usize / rec_size;
@@ -352,6 +356,7 @@ impl RecordStore {
             self.generation += 1;
             // everything must be re-uploaded
             queue.write_buffer(&self.buffer, 0, bytemuck::cast_slice(&self.mirror));
+            self.uploaded = needed as u64;
             self.dirty.iter_mut().for_each(|d| *d = false);
             self.any_dirty = false;
             return;
@@ -375,6 +380,7 @@ impl RecordStore {
             let b = (c * CHUNK).min(self.mirror.len());
             if a < b {
                 queue.write_buffer(&self.buffer, (a * rec_size) as u64, bytemuck::cast_slice(&self.mirror[a..b]));
+                self.uploaded += ((b - a) * rec_size) as u64;
             }
         }
         self.any_dirty = false;

@@ -12,6 +12,7 @@ mod cmdline;
 mod credentials;
 mod cursors;
 mod demo;
+mod frame_profile;
 mod interaction;
 mod keybinds;
 mod links;

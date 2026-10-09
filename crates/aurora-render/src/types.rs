@@ -613,7 +613,35 @@ pub struct RenderStats {
     /// GPU time by kind of element (ms), in [`GpuElement::ALL`] order;
     /// None without in-pass timestamps.
     pub gpu_elements: Option<[f32; GpuElement::ALL.len()]>,
+    /// CPU time of each step of `Renderer::render` (ms), in
+    /// [`RENDER_PHASES`] order; "acquire" is the wait for the swapchain.
+    pub cpu_phases: [f32; RENDER_PHASES.len()],
+    /// Draw commands recorded (multi-draws, fullscreen and sprite draws).
+    pub draw_calls: u32,
+    /// Bytes of draw records and joint palettes sent to the GPU this frame.
+    pub records_uploaded: u64,
+    pub palettes_uploaded: u64,
 }
+
+/// Steps of `Renderer::render`, in frame order (AURORA_PROFILE).
+pub const RENDER_PHASES: [&str; 16] = [
+    "acquire",
+    "resources",
+    "lists",
+    "setup",
+    "shadows",
+    "prepass",
+    "ssao",
+    "reflections",
+    "impostors",
+    "scene_a",
+    "scene_b",
+    "post",
+    "egui",
+    "finish",
+    "submit",
+    "present",
+];
 
 /// What the GPU time of a frame goes to (performance panel). Each one
 /// gathers the passes and draw groups that render it.
