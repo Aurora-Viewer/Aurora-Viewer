@@ -3567,7 +3567,9 @@ impl Renderer {
                 view_proj: unjittered_vp.to_cols_array_2d(),
                 inv_view_proj: unjittered_vp.inverse().to_cols_array_2d(),
                 camera_pos: f.camera_pos.extend(0.0).to_array(),
-                params: [0.6, samples, 1.4, (self.frame_index % 64) as f32],
+                // Firestorm defaults: RenderSSAOScale 500, RenderSSAOMaxScale
+                // 200, RenderSSAOFactor 0.3 (LLPipeline::bindDeferredShader)
+                params: [500.0, samples, 200.0, 0.3],
             };
             self.queue.write_buffer(&self.ssao.buffer, 0, bytemuck::bytes_of(&u));
         }

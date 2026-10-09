@@ -885,10 +885,15 @@ fn ll_haze(col: vec3<f32>, a: LLAtmos) -> vec3<f32> {
     return col * a.atten + srgb_to_linear(a.additive * 2.0) * frame.sky_cloud_pd2.w;
 }
 
-// adjustIrradiance (SSAO only darkens the ambient).
+// adjustIrradiance (SSAO only darkens the ambient): RenderSSAOIrradianceScale
+// 0.6, RenderSSAOIrradianceMax 0.18, then ssao_effect_mat from
+// RenderSSAOEffect (0.8, 1.0): value x 0.8, saturation x 1, i.e. minus 0.2 x
+// the mean of the channels.
 fn ll_ssao(irr: vec3<f32>, frag: vec2<f32>) -> vec3<f32> {
     let ao = screen_ao(frag);
-    return mix(min(irr * 0.6, vec3<f32>(0.18)), irr, ao);
+    let occluded = min(irr * 0.6, vec3<f32>(0.18));
+    let effect = occluded - vec3<f32>(0.2 * (occluded.r + occluded.g + occluded.b) / 3.0);
+    return mix(effect, irr, ao);
 }
 
 // softenLightF.glsl final_scale: 1.1 on classic skies, applied to the whole
