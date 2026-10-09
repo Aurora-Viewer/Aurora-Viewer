@@ -999,7 +999,7 @@ fn ll_classic_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, n: vec3<f32
     }
     // pbrIbl scales the specular by the material's occlusion only (ORM red);
     // SSAO darkens the irradiance alone (adjustIrradiance)
-    col += env * env_brdf(f0, roughness, nv) * screen_ao(frag);
+    col += env * env_brdf(f0, roughness, nv);
     return col;
 }
 
