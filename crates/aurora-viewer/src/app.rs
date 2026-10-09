@@ -283,6 +283,7 @@ pub struct App {
     lighting_was_open: bool,
     demo: bool,
     inventory_ui: ui::inventory::InventoryUi,
+    appearance_ui: ui::appearance::AppearanceUi,
     last_social_poll: Instant,
     /// Last keyboard / mouse button input (automatic away, AFKTimeout), and
     /// whether the current away status was set by that timer.
@@ -368,6 +369,7 @@ impl App {
             environment: false,
             personal_lighting: false,
             inventory: settings.show_inventory,
+            appearance: settings.show_appearance,
             people_tab: settings.people_tab.min(1),
             contacts: false,
             about_land: false,
@@ -520,6 +522,7 @@ impl App {
             lighting_was_open: false,
             demo: false,
             inventory_ui: Default::default(),
+            appearance_ui: Default::default(),
             last_social_poll: Instant::now(),
             last_input: Instant::now(),
             auto_away: false,
@@ -593,7 +596,51 @@ impl App {
                 }
                 return;
             }
-            for ev in crate::demo::demo_reply(&cmd) {
+            if let NetCommand::UpdateOutfit { request, change } = &cmd {
+                let result = crate::world::appearance::demo_mutate(&mut self.world.inventory, self.world.agent_id, change);
+                self.on_app_event(NetEvent::OutfitUpdated { request: *request, result });
+                return;
+            }
+            if let NetCommand::RezAttachments(items) = &cmd {
+                self.world.apply(NetEvent::ObjectUpdates {
+                    handle: self.world.main_region.unwrap_or_default(),
+                    objects: items.iter().map(crate::demo::outfit_attachment).collect(),
+                });
+                return;
+            }
+            if let NetCommand::DetachAttachments(items) = &cmd {
+                let local_ids = items
+                    .iter()
+                    .filter_map(|id| self.world.objects.index_of_uuid(id))
+                    .filter_map(|idx| self.world.objects.get(idx))
+                    .map(|o| o.key.local_id)
+                    .collect();
+                self.world.apply(NetEvent::ObjectsKilled {
+                    handle: self.world.main_region.unwrap_or_default(),
+                    local_ids,
+                });
+                return;
+            }
+            for mut ev in crate::demo::demo_reply(&cmd) {
+                if let NetEvent::InventoryContents(contents) = &mut ev {
+                    for c in contents {
+                        if let Some(folder) = self.world.inventory.folders.get(&c.folder_id)
+                            && matches!(folder.info.type_default, 46..=48)
+                        {
+                            c.version = folder.info.version;
+                            c.folders = folder
+                                .children
+                                .iter()
+                                .filter_map(|id| self.world.inventory.folders.get(id).map(|f| f.info.clone()))
+                                .collect();
+                            c.items = folder
+                                .items
+                                .iter()
+                                .filter_map(|id| self.world.inventory.items.get(id).cloned())
+                                .collect();
+                        }
+                    }
+                }
                 if let Some(e) = self.world.apply(ev) {
                     self.on_app_event(e);
                 }
@@ -667,6 +714,7 @@ impl App {
             self.scene.clear(&mut g.renderer);
         }
         self.world.reset();
+        self.appearance_ui = Default::default();
         self.interactions = Default::default();
         self.screen = Screen::Login;
         self.login_form.busy = false;
@@ -679,6 +727,37 @@ impl App {
     }
 
     fn on_app_event(&mut self, ev: NetEvent) {
+        if let NetEvent::OutfitUpdated { request, result } = ev {
+            if self.appearance_ui.pending.is_some_and(|(id, _)| id == request) {
+                let sync = self.appearance_ui.pending.take().is_some_and(|(_, sync)| sync);
+                match result {
+                    Ok(contents) => {
+                        self.world.inventory.apply(contents);
+                        self.appearance_ui.message.clear();
+                        self.appearance_ui.save_as = None;
+                        if self.appearance_ui.saved_new {
+                            self.appearance_ui.open(1, false);
+                            self.appearance_ui.saved_new = false;
+                        }
+                        if sync {
+                            let commands = crate::world::appearance::sync_commands(
+                                &self.world.inventory,
+                                self.world.agent_id,
+                                &self.world.worn_attachment_items(),
+                            );
+                            for cmd in commands {
+                                self.send(cmd);
+                            }
+                        }
+                    }
+                    Err(reason) => {
+                        self.appearance_ui.message = reason;
+                        self.appearance_ui.refresh(&mut self.world.inventory);
+                    }
+                }
+            }
+            return;
+        }
         match ev {
             NetEvent::ObjectProperties(props) => {
                 self.interactions.on_properties(&props);
@@ -4297,6 +4376,30 @@ impl App {
                     }
                 }
                 self.panels.inventory = open;
+                if self.panels.appearance {
+                    let worn = self.world.worn_attachment_items();
+                    for command in self.appearance_ui.prepare(&mut self.world.inventory, self.world.agent_id, &worn) {
+                        self.send(command);
+                    }
+                }
+                let complexity = self.scene.avatar_complexity.get(&self.world.agent_id).copied().unwrap_or_default();
+                let mut open = self.panels.appearance;
+                for action in ui::appearance::show(&ctx, &p, &mut self.world, &mut self.appearance_ui, &mut open, complexity) {
+                    if self.appearance_ui.pending.is_some() {
+                        break;
+                    }
+                    self.appearance_ui.saved_new = matches!(&action, crate::world::appearance::Action::Save(Some(_)));
+                    match crate::world::appearance::plan(&self.world.inventory, action, &self.world.worn_attachment_items()) {
+                        Ok((change, sync)) => {
+                            let request = uuid::Uuid::new_v4();
+                            self.appearance_ui.pending = Some((request, sync));
+                            self.appearance_ui.message.clear();
+                            self.send(NetCommand::UpdateOutfit { request, change });
+                        }
+                        Err(reason) => self.appearance_ui.message = reason,
+                    }
+                }
+                self.panels.appearance = open;
                 let facts = self.context_facts();
                 let had_menu = self.context_menu.is_some();
                 ui::context::show(&ctx, &p, &mut self.context_menu, &facts);
@@ -4560,6 +4663,7 @@ impl App {
                 self.settings.show_people = self.panels.people;
                 self.settings.people_tab = self.panels.people_tab;
                 self.settings.show_inventory = self.panels.inventory;
+                self.settings.show_appearance = self.panels.appearance;
                 if self.panels.time_of_day != self.settings.time_of_day {
                     self.settings.time_of_day = self.panels.time_of_day;
                 }
@@ -4879,6 +4983,27 @@ impl ApplicationHandler for App {
             for ev in crate::demo::events() {
                 if let Some(e) = self.world.apply(ev) {
                     self.on_app_event(e);
+                }
+            }
+            if let Ok(view) = std::env::var("AURORA_DEMO_APPEARANCE") {
+                crate::world::appearance::seed_demo(&mut self.world.inventory, self.world.agent_id);
+                for cmd in
+                    crate::world::appearance::sync_commands(&self.world.inventory, self.world.agent_id, &self.world.worn_attachment_items())
+                {
+                    self.send(cmd);
+                }
+                self.panels.appearance = true;
+                self.panels.perf = false;
+                self.appearance_ui.open(
+                    match view.as_str() {
+                        "outfits" => 1,
+                        "worn" | "save" => 2,
+                        _ => 0,
+                    },
+                    view == "edit",
+                );
+                if view == "save" {
+                    self.appearance_ui.begin_save_as(&self.world.inventory);
                 }
             }
             if std::env::var_os("AURORA_DEMO_ACTIONS").is_some() {

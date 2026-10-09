@@ -56,7 +56,7 @@ impl Default for Layout {
                 tb("Command_View_Icon", "mouselook", "Vue souris (M)"),
                 tb("Command_People_Icon", "people", "Personnes"),
                 tb("Command_Inventory_Icon", "inventory", "Inventaire"),
-                tb("Command_Appearance_Icon", "appearance", "Apparence (à venir)"),
+                tb("Command_Appearance_Icon", "appearance", "Apparence"),
                 tb("Command_Search_Icon", "search", "Recherche (à venir)"),
                 tb("Command_Map_Icon", "worldmap", "Carte du monde"),
                 tb("Command_MiniMap_Icon", "minimap", "Mini-carte"),

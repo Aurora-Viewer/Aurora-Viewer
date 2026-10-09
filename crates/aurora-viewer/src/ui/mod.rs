@@ -1,5 +1,6 @@
 //! egui user interface.
 
+pub mod appearance;
 pub mod audio;
 pub mod aurora_bg;
 pub mod avatar_picker;
@@ -58,6 +59,7 @@ pub struct Panels {
     /// « Éclairage personnel » (LLFloaterEnvironmentAdjust).
     pub personal_lighting: bool,
     pub inventory: bool,
+    pub appearance: bool,
     pub people_tab: u8,
     /// The torn-off Contacts window (ContactsTornOff).
     pub contacts: bool,

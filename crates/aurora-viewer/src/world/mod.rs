@@ -1,5 +1,6 @@
 //! Viewer-side world model fed by network events.
 
+pub mod appearance;
 pub mod blocking;
 pub mod body;
 pub mod contact_sets;
@@ -540,6 +541,7 @@ impl World {
             .iter()
             .filter_map(|i| self.objects.get(*i))
             .filter_map(|o| o.attachment_item_id())
+            .filter(|id| !id.is_nil())
             .collect()
     }
 

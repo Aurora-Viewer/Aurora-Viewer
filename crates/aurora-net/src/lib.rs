@@ -10,6 +10,7 @@ pub mod land;
 pub mod login;
 pub mod objcache;
 pub mod objects;
+pub mod outfits;
 pub mod profile;
 mod session;
 pub mod social;

@@ -226,6 +226,26 @@ fn u(n: u128) -> Uuid {
     Uuid::from_u128(0xD0D0_0000_0000_0000_0000_0000_0000_0000 | n)
 }
 
+/// Tiny offline attachment used to exercise outfit changes without grid assets.
+pub fn outfit_attachment(item: &aurora_net::AttachRequest) -> ObjectUpdate {
+    let local_id = 30_000 + (item.item_id.as_u128() & 0xffff) as u32;
+    let mut o = prim(
+        local_id,
+        Vec3::ZERO,
+        Quat::IDENTITY,
+        Vec3::splat(0.001),
+        shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE, 100, 0, 0),
+        te([0.0, 0.0, 0.0, 0.0], 0, false, 0.0),
+        ExtraParams::default(),
+        "",
+    );
+    o.full_id = item.item_id;
+    o.parent_id = 9000;
+    o.state = 0x10;
+    o.name_values = format!("AttachItemID STRING RW SV {}", item.item_id);
+    o
+}
+
 fn demo_raw() -> Llsd {
     use aurora_llsd::llsd_map;
     let folder = |id: u128, parent: u128, name: &str, t: i32| {

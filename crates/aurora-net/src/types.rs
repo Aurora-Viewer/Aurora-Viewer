@@ -657,6 +657,10 @@ pub enum NetEvent {
         sources: Vec<Uuid>,
     },
     InventoryContents(Vec<crate::inventory::FolderContents>),
+    OutfitUpdated {
+        request: Uuid,
+        result: Result<Vec<crate::inventory::FolderContents>, String>,
+    },
     InventoryFetchFailed {
         folders: Vec<Uuid>,
     },
@@ -1032,6 +1036,12 @@ pub enum NetCommand {
     },
     /// Wear objects from the inventory (RezMultipleAttachmentsFromInv).
     RezAttachments(Vec<AttachRequest>),
+    /// AIS link changes, acknowledged and re-fetched before updating appearance.
+    UpdateOutfit {
+        request: Uuid,
+        change: crate::outfits::OutfitMutation,
+    },
+    DetachAttachments(Vec<Uuid>),
     /// Ask the server to rebuild our appearance from the Current Outfit
     /// folder (UpdateAvatarAppearance capability).
     RequestServerAppearance {

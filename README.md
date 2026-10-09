@@ -134,6 +134,7 @@ settings and cache (`…\config\demo`, `…\cache\demo`).
 | `AURORA_DEMO_KEYBOARD=system\|wasd\|zqsd\|fallback` | Use fresh movement defaults with the Windows layout, simulated QWERTY / AZERTY, or failed detection; combine with `AURORA_DEMO_OPTIONS=8` to inspect secondary bindings |
 | `AURORA_DEMO_PERF=compact\|full` | Open the performance window in its compact or full view |
 | `AURORA_DEMO_UI=<tab>` | Open people (tab), inventory and chat |
+| `AURORA_DEMO_APPEARANCE=gallery\|outfits\|worn\|save\|edit` | Open Appearance with four synthetic outfits: gallery, outfit list, worn items, Save As dialog or outfit editor; save / wear / remove operations stay offline |
 | `AURORA_DEMO_LOGIN=remembered\|empty` | Offline login screen with a synthetic saved-password marker or an empty password field (no grid or credential-store access) |
 | `AURORA_DEMO_MAP=1` or `mini` | World map and mini-map |
 | `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Notification list, status menu, location field |
