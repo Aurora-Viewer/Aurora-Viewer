@@ -10,6 +10,13 @@ use aurora_net::AgentControls;
 use aurora_net::control;
 use glam::{Quat, Vec3};
 use std::time::Instant;
+use uuid::Uuid;
+
+// indra/llcharacter/llanimationstates.cpp (originally LGPL 2.1).
+const PRE_JUMP: Uuid = uuid::uuid!("7a4e87fe-de39-6fcb-6223-024b00893244");
+const LAND: Uuid = uuid::uuid!("7a17b059-12b2-41b1-570a-186368b6aa6f");
+const MEDIUM_LAND: Uuid = uuid::uuid!("f4f00d6e-b9fe-9292-f4cb-0ae06ea58d57");
+const STANDUP: Uuid = uuid::uuid!("3da1d753-028a-5446-24f3-9c9b856d9422");
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct MoveInput {
@@ -52,6 +59,7 @@ pub struct AgentState {
     last_server: Instant,
     last_prediction: Instant,
     has_server: bool,
+    last_jump_input: Option<Instant>,
 }
 
 impl Default for AgentState {
@@ -73,6 +81,7 @@ impl Default for AgentState {
             last_server: now,
             last_prediction: now,
             has_server: false,
+            last_jump_input: None,
         }
     }
 }
@@ -97,6 +106,29 @@ fn yaw_rate(held: f32) -> f32 {
 }
 
 impl AgentState {
+    /// LLAgent::moveUp records every upward input while not flying.
+    pub fn record_jump_input(&mut self, now: Instant) {
+        if !self.flying {
+            self.last_jump_input = Some(now);
+        }
+    }
+
+    /// Port of LLAgent::onAnimStop (indra/newview/llagent.cpp, LGPL 2.1).
+    /// The simulator waits for FINISH_ANIM after a quick jump tap. A landing
+    /// must not finish a newer pre-jump (FIRE-34049 / FIRE-34273); use the
+    /// default RecentJumpThresholdSecs (1 s), but never suppress pre-jump.
+    pub fn animation_stop_flags(&self, id: Uuid, up: bool, now: Instant) -> u32 {
+        let landing = id == LAND || id == MEDIUM_LAND;
+        let recent_jump = self
+            .last_jump_input
+            .is_some_and(|t| now.saturating_duration_since(t).as_secs_f32() < 1.0);
+        if id == STANDUP || (!up && (id == PRE_JUMP || (landing && !recent_jump))) {
+            control::FINISH_ANIM
+        } else {
+            0
+        }
+    }
+
     /// LLAgent::isSitting: on an object or on the ground.
     pub fn is_sitting(&self) -> bool {
         self.seated || self.ground_sit
@@ -429,6 +461,44 @@ mod tests {
 
     fn near(actual: Vec3, expected: Vec3) {
         assert!(actual.distance(expected) < 0.0001, "{actual:?} != {expected:?}");
+    }
+
+    #[test]
+    fn quick_jump_tap_finishes_pre_jump_but_not_recent_landing() {
+        let mut agent = AgentState::default();
+        let now = Instant::now();
+        agent.record_jump_input(now);
+        let released = at(now, 0.3);
+        assert_eq!(agent.animation_stop_flags(PRE_JUMP, false, released), control::FINISH_ANIM);
+        for landing in [LAND, MEDIUM_LAND] {
+            assert_eq!(agent.animation_stop_flags(landing, false, released), 0);
+            assert_eq!(agent.animation_stop_flags(landing, false, at(now, 1.0)), control::FINISH_ANIM);
+        }
+        assert_eq!(agent.animation_stop_flags(Uuid::from_u128(1), false, released), 0);
+    }
+
+    #[test]
+    fn held_up_suppresses_jump_and_landing_finish_but_not_standup() {
+        let agent = AgentState::default();
+        let now = Instant::now();
+        for anim in [PRE_JUMP, LAND, MEDIUM_LAND] {
+            assert_eq!(agent.animation_stop_flags(anim, true, now), 0);
+            assert_eq!(agent.animation_stop_flags(anim, false, now), control::FINISH_ANIM);
+        }
+        assert_eq!(agent.animation_stop_flags(STANDUP, true, now), control::FINISH_ANIM);
+    }
+
+    #[test]
+    fn repeated_jump_input_refreshes_landing_guard_and_flight_does_not() {
+        let mut agent = AgentState::default();
+        let now = Instant::now();
+        agent.record_jump_input(now);
+        agent.record_jump_input(at(now, 0.9));
+        assert_eq!(agent.animation_stop_flags(LAND, false, at(now, 1.1)), 0);
+        assert_eq!(agent.animation_stop_flags(PRE_JUMP, false, at(now, 1.1)), control::FINISH_ANIM);
+        agent.flying = true;
+        agent.record_jump_input(at(now, 1.8));
+        assert_eq!(agent.animation_stop_flags(LAND, false, at(now, 2.0)), control::FINISH_ANIM);
     }
 
     #[test]

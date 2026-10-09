@@ -2065,6 +2065,7 @@ impl App {
         i.nudge_lr = since(&mut self.lr_since, i.strafe_left || i.strafe_right);
         // holding jump for 0.5 s on the ground starts flying (AutomaticFly)
         if i.up {
+            self.world.agent.record_jump_input(now);
             let held = self.up_since.get_or_insert(now).elapsed().as_secs_f32();
             if held > FLY_TIME && !self.world.agent.flying && !self.world.agent.seated && self.in_world() {
                 self.world.agent.flying = true;
@@ -2574,8 +2575,19 @@ impl App {
             self.scene.process_results(&mut gfx.renderer, &self.net, Duration::from_millis(6));
             self.frame_profile.lap(Lap::Results);
             // poses first: attachments follow their bone in the same frame
-            self.scene
+            let completed = self
+                .scene
                 .update_poses(&mut gfx.renderer, &mut self.world, self.camera.position, now);
+            for anim in completed {
+                // LLAgent::requestStopMotion: stop the finished non-looping
+                // animation and advance simulator-controlled transitions.
+                let flags = self.world.agent.animation_stop_flags(anim, self.input.up, now);
+                if flags != 0 {
+                    self.send(NetCommand::OneShotControl(flags));
+                }
+                self.send(NetCommand::AgentAnimation { anim, start: false });
+                log::debug!("own animation timed stop: {anim}, finish_anim={}", flags != 0);
+            }
             self.frame_profile.lap(Lap::Poses);
             let mut exceptions = self.settings.render_exceptions_map();
             // blocked residents: grey silhouettes (FIRE-11783)
