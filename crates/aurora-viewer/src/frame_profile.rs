@@ -267,7 +267,8 @@ fn p95(frames: &[f32]) -> f32 {
     v[((v.len() - 1) * 95).div_ceil(100)]
 }
 
-/// One line: averages per frame over the period (times in ms).
+/// One line: averages per frame over the period (times in ms); renderer
+/// steps prefixed with `r_`, GPU elements with `g_`.
 fn summary(p: &Period, elapsed: Duration) -> String {
     let n = p.frames.max(1) as f32;
     let avg = |v: f32| v / n;
@@ -282,14 +283,14 @@ fn summary(p: &Period, elapsed: Duration) -> String {
     for (lap, ms) in Lap::ALL.iter().zip(p.laps) {
         let _ = write!(out, " {}={:.2}", lap.key(), avg(ms));
     }
-    out.push_str(" | render");
+    out.push_str(" |");
     for (key, ms) in RENDER_PHASES.iter().zip(p.phases) {
-        let _ = write!(out, " {key}={:.2}", avg(ms));
+        let _ = write!(out, " r_{key}={:.2}", avg(ms));
     }
     let gpu_n = p.gpu_frames.max(1) as f32;
     let _ = write!(out, " | gpu={:.2}", p.gpu.iter().sum::<f32>() / gpu_n);
     for (el, ms) in GpuElement::ALL.iter().zip(p.gpu) {
-        let _ = write!(out, " {}={:.3}", el.key(), ms / gpu_n);
+        let _ = write!(out, " g_{}={:.3}", el.key(), ms / gpu_n);
     }
     let s = &p.scene;
     let _ = write!(
@@ -371,6 +372,7 @@ mod tests {
         let l = &lines[0];
         assert!(l.starts_with("fps=51.0 frame=19.61"), "{l}");
         assert!(l.contains(" calls=40 "), "{l}");
+        assert!(l.contains(" r_finish=0.00 ") && l.contains(" g_objects=0.000 "), "{l}");
         assert!(l.contains(" synced=30 "), "{l}");
         assert!(l.contains(" posed=2.0 "), "{l}");
         assert!(l.contains(" records_kb=2.0 "), "{l}");
