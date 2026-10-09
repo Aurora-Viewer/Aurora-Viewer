@@ -87,7 +87,7 @@ fn grid_step(top: f32) -> f32 {
     nice * pow
 }
 
-/// CPU parts of a frame (ms): network â†’ world, scene sync, culling and
+/// CPU parts of a frame (ms): network → world, scene sync, culling and
 /// lists, the rest of the update, interface, GPU encoding, and the time
 /// left (vsync, frame limiter, present). Sync and culling run inside the
 /// update.
@@ -248,7 +248,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, v: &PerfView, open: &mut bool) {
     let (icon, tip) = if full {
         ("corners-in", "Version compacte")
     } else {
-        ("corners-out", "Afficher le dÃ©tail")
+        ("corners-out", "Afficher le détail")
     };
     let width = if full { FULL_W } else { COMPACT_W };
     let screen = ctx.content_rect();
@@ -260,7 +260,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, v: &PerfView, open: &mut bool) {
         vec2(width, 0.0),
     )
     .fixed()
-    .help("Le graphe montre les images/s des derniÃ¨res secondes : un creux est un Ã -coup. Survolez-le pour lire une image.")
+    .help("Le graphe montre les images/s des dernières secondes : un creux est un à-coup. Survolez-le pour lire une image.")
     .action(icon, tip, &mut toggle)
     .show(ctx, p, open, |ui| {
         ui.set_width(width);
@@ -305,7 +305,7 @@ fn headline(ui: &mut egui::Ui, p: &Palette, d: &PerfData) {
             ui.add_space(3.0);
             ui.label(RichText::new(format!("{:.1} ms", d.frames.avg)).size(15.0).color(p.ink));
             ui.label(
-                RichText::new(format!("min {:.1} Â· max {:.1}", d.frames.min, d.frames.max))
+                RichText::new(format!("min {:.1} · max {:.1}", d.frames.min, d.frames.max))
                     .size(11.0)
                     .color(p.muted),
             );
@@ -380,7 +380,7 @@ fn graph(ui: &mut egui::Ui, p: &Palette, d: &PerfData) {
         let ms = d.frame_ms[i];
         painter.line_segment([pos2(pt.x, rect.top()), pos2(pt.x, rect.bottom())], Stroke::new(1.0, p.muted_dim));
         painter.circle(pt, 3.5, p.violet_light, Stroke::new(2.0, p.field));
-        let text = format!("{:.0} i/s Â· {ms:.1} ms", fps_of(ms));
+        let text = format!("{:.0} i/s · {ms:.1} ms", fps_of(ms));
         let galley = painter.layout_no_wrap(text, egui::FontId::proportional(11.0), p.ink);
         let size = galley.size() + vec2(10.0, 4.0);
         // beside the line, on the side with room
@@ -402,7 +402,7 @@ struct Part {
 }
 
 /// Colors of the breakdown parts, in a fixed order: neighbours stay apart
-/// for colour-blind readers; the last one (neutral) is the Â« rest Â».
+/// for colour-blind readers; the last one (neutral) is the « rest ».
 fn part_colors(p: &Palette) -> [Color32; 7] {
     [p.indigo_light, p.rose, p.amber, p.violet, p.teal, p.violet_pale, p.muted_dim]
 }
@@ -414,13 +414,13 @@ fn gpu_parts(p: &Palette, live: &[f32; 7], shown: &[f32; 7]) -> Vec<Part> {
         .enumerate()
         .map(|(i, el)| {
             let (name, help) = match el {
-                GpuElement::ShadowsDepth => ("Ombres et profondeur", "Ombres du soleil, prÃ©passe de profondeur, occlusion"),
-                GpuElement::Effects => ("Effets", "Occlusion ambiante, reflets (eau, miroirs, sondes), reflets Ã©cran"),
-                GpuElement::TerrainSky => ("Terrain et ciel", "Sol des rÃ©gions et ciel"),
-                GpuElement::Objects => ("Objets et avatars", "Prims, meshes et avatars opaques ou masquÃ©s, imposteurs"),
-                GpuElement::Water => ("Eau", "Surface de l'eau (rÃ©fraction, vagues)"),
+                GpuElement::ShadowsDepth => ("Ombres et profondeur", "Ombres du soleil, prépasse de profondeur, occlusion"),
+                GpuElement::Effects => ("Effets", "Occlusion ambiante, reflets (eau, miroirs, sondes), reflets écran"),
+                GpuElement::TerrainSky => ("Terrain et ciel", "Sol des régions et ciel"),
+                GpuElement::Objects => ("Objets et avatars", "Prims, meshes et avatars opaques ou masqués, imposteurs"),
+                GpuElement::Water => ("Eau", "Surface de l'eau (réfraction, vagues)"),
                 GpuElement::Transparent => ("Transparents et particules", "Faces semi-transparentes et particules"),
-                GpuElement::Post => ("Post-traitement", "Lueur, anticrÃ©nelage (TAA, SMAA), tonalitÃ©"),
+                GpuElement::Post => ("Post-traitement", "Lueur, anticrénelage (TAA, SMAA), tonalité"),
             };
             Part {
                 name,
@@ -435,13 +435,13 @@ fn gpu_parts(p: &Palette, live: &[f32; 7], shown: &[f32; 7]) -> Vec<Part> {
 
 fn cpu_parts_view(p: &Palette, live: &[f32; CPU_PARTS], shown: &[f32; CPU_PARTS]) -> Vec<Part> {
     const NAMES: [(&str, &str); CPU_PARTS] = [
-        ("RÃ©seau vers monde", "Messages du simulateur appliquÃ©s au monde"),
-        ("ScÃ¨ne", "GÃ©omÃ©trie, textures et objets envoyÃ©s au GPU"),
+        ("Réseau vers monde", "Messages du simulateur appliqués au monde"),
+        ("Scène", "Géométrie, textures et objets envoyés au GPU"),
         ("Culling et listes", "Choix de ce qui est visible, listes de dessin"),
-        ("Avatars et camÃ©ra", "Animations, agent, camÃ©ra, flux des textures"),
-        ("Interface", "FenÃªtres et barres"),
-        ("Encodage GPU", "PrÃ©paration des commandes de rendu"),
-        ("Attente", "Synchronisation verticale, limite d'images/s, prÃ©sentation"),
+        ("Avatars et caméra", "Animations, agent, caméra, flux des textures"),
+        ("Interface", "Fenêtres et barres"),
+        ("Encodage GPU", "Préparation des commandes de rendu"),
+        ("Attente", "Synchronisation verticale, limite d'images/s, présentation"),
     ];
     let colors = part_colors(p);
     NAMES
@@ -600,7 +600,7 @@ fn details(ui: &mut egui::Ui, p: &Palette, v: &PerfView) {
                 v.render.gpu_ms.map(|g| format!("{g:.1} ms")).unwrap_or_else(|| "n/d".into()),
             );
             ui.label(
-                RichText::new("DÃ©tail par Ã©lÃ©ment indisponible avec cette carte graphique")
+                RichText::new("Détail par élément indisponible avec cette carte graphique")
                     .size(11.0)
                     .color(p.muted_dim),
             );
@@ -618,7 +618,7 @@ fn details(ui: &mut egui::Ui, p: &Palette, v: &PerfView) {
             format!("{} (+{} ombres)", v.render.draws, v.render.shadow_draws),
         );
         if let Some(n) = v.render.occluded {
-            row(ui, p, "CachÃ©s (occlusion)", format!("{n}"));
+            row(ui, p, "Cachés (occlusion)", format!("{n}"));
         }
         row(ui, p, "Triangles", format!("{:.2} M", v.render.triangles as f64 / 1e6));
         row(
@@ -630,13 +630,13 @@ fn details(ui: &mut egui::Ui, p: &Palette, v: &PerfView) {
         row(
             ui,
             p,
-            "GÃ©omÃ©tries",
+            "Géométries",
             format!("{} ({} en cours)", v.scene.geometries, v.scene.geom_pending),
         );
         row(ui, p, "Distance", format!("{:.0} m", v.draw_distance));
         row(ui, p, "Particules", format!("{}", v.render.particles));
         if let Some(c) = v.complexity.0 {
-            row(ui, p, "Votre complexitÃ©", format!("{c}"));
+            row(ui, p, "Votre complexité", format!("{c}"));
         }
         if v.complexity.1 > 0 {
             row(ui, p, "Avatars en silhouette", format!("{}", v.complexity.1));
@@ -651,68 +651,48 @@ fn details(ui: &mut egui::Ui, p: &Palette, v: &PerfView) {
             _ => "aucun",
         };
         row(ui, p, "Reflets plans", refl.to_owned());
-        row(
-            ui,
-            p,
-            "Sondes de rÃ©flexion",
-            format!("{} prÃªtes / {}", v.probes.1, v.probes.0 + 1),
-        );
+        row(ui, p, "Sondes de réflexion", format!("{} prêtes / {}", v.probes.1, v.probes.0 + 1));
         row(ui, p, "Sons en cours", format!("{}", v.sounds));
     });
-    group(ui, p, "MÃ©moire et flux", false, |ui| {
-        row(
-            ui,
-            p,
-            "GÃ©omÃ©trie",
-            format!("{:.0} Mo", v.render.geometry_bytes as f64 / 1048576.0),
-        );
+    group(ui, p, "Mémoire et flux", false, |ui| {
+        row(ui, p, "Géométrie", format!("{:.0} Mo", v.render.geometry_bytes as f64 / 1048576.0));
         row(
             ui,
             p,
             "Textures",
             format!(
-                "{} / {} Â· {:.0} Mo",
+                "{} / {} · {:.0} Mo",
                 v.tex.loaded,
                 v.tex.total,
                 v.render.texture_bytes as f64 / 1048576.0
             ),
         );
-        row(ui, p, "RÃ©seau textures", format!("{}", v.tex.fetching));
-        row(ui, p, "DÃ©codage", format!("{} Â· upload {}", v.tex.decoding, v.tex.pending_upload));
-        row(ui, p, "TÃ¢ches en fond", format!("{}", v.scene.jobs));
-        row(ui, p, "Meshes rÃ©seau", format!("{}", v.meshes_fetching));
+        row(ui, p, "Réseau textures", format!("{}", v.tex.fetching));
+        row(ui, p, "Décodage", format!("{} · upload {}", v.tex.decoding, v.tex.pending_upload));
+        row(ui, p, "Tâches en fond", format!("{}", v.scene.jobs));
+        row(ui, p, "Meshes réseau", format!("{}", v.meshes_fetching));
         row(ui, p, "Records GPU", format!("{}", v.render.records));
     });
-    group(ui, p, "RÃ©seau", false, |ui| {
+    group(ui, p, "Réseau", false, |ui| {
         row(ui, p, "Ping", format!("{} ms", v.net.ping_ms));
-        row(ui, p, "Paquets", format!("in {:.0}/s Â· out {:.0}/s", d.net_rate.0, d.net_rate.1));
-        row(
-            ui,
-            p,
-            "DÃ©bit UDP",
-            format!("in {:.0} Â· out {:.0} kb/s", d.net_rate.2, d.net_rate.3),
-        );
-        row(
-            ui,
-            p,
-            "RenvoyÃ©s / perdus",
-            format!("{} / {}", v.net.resent, v.net.dropped_reliable),
-        );
-        row(ui, p, "Non acquittÃ©s", format!("{}", v.net.unacked));
+        row(ui, p, "Paquets", format!("in {:.0}/s · out {:.0}/s", d.net_rate.0, d.net_rate.1));
+        row(ui, p, "Débit UDP", format!("in {:.0} · out {:.0} kb/s", d.net_rate.2, d.net_rate.3));
+        row(ui, p, "Renvoyés / perdus", format!("{} / {}", v.net.resent, v.net.dropped_reliable));
+        row(ui, p, "Non acquittés", format!("{}", v.net.unacked));
         row(
             ui,
             p,
             "HTTP",
-            format!("{} actifs Â· {} en file", v.net.http_in_flight, v.net.http_queued),
+            format!("{} actifs · {} en file", v.net.http_in_flight, v.net.http_queued),
         );
-        row(ui, p, "DÃ©bit HTTP", format!("{:.0} kb/s", d.http_rate_kbps));
+        row(ui, p, "Débit HTTP", format!("{:.0} kb/s", d.http_rate_kbps));
         row(
             ui,
             p,
-            "TÃ©lÃ©chargÃ©",
-            format!("{:.1} Mo ({} Ã©checs)", v.net.http_bytes as f64 / 1048576.0, v.net.http_failed),
+            "Téléchargé",
+            format!("{:.1} Mo ({} échecs)", v.net.http_bytes as f64 / 1048576.0, v.net.http_failed),
         );
-        row(ui, p, "RÃ©gions", format!("{}", v.regions));
+        row(ui, p, "Régions", format!("{}", v.regions));
     });
     group(ui, p, "Carte graphique", false, |ui| {
         row(ui, p, "Carte", v.gpu.name.clone());
