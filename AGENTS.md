@@ -52,6 +52,9 @@ la façon de le faire :
   impeccable et un très bon nombre d'images/s.
 - **Le réseau et le protocole** (messages, capabilities, débits, ordre des
   requêtes) suivent en revanche Firestorm à la lettre : le serveur l'attend.
+- **La performance est une exigence**, voir section 5 : le GPU est exploité
+  au maximum de ses capacités, et ce qui tourne sur un seul thread alors
+  qu'il pourrait être parallélisé (ou confié au GPU) doit l'être.
 
 Avant de porter ou de modifier une fonctionnalité, **regarde comment
 Firestorm la fait réellement**, pour connaître le comportement attendu et
@@ -171,6 +174,19 @@ Avant chaque commit significatif et obligatoirement avant la PR :
 - **Dépendances à jour** : on utilise les dernières versions (Rust stable,
   crates). Une nouvelle dépendance doit être maintenue, de licence compatible
   GPL v3 (MIT, Apache-2.0, BSD, MPL-2.0, LGPL…), et justifiée dans la PR.
+- **Performance et fluidité d'abord** (Rust, multithread, Vulkan) :
+  - exploite le GPU au maximum de ses capacités : travail piloté par le GPU
+    (culling, génération des dessins, calcul en compute), moins
+    d'allers-retours avec le CPU, jamais d'attente du GPU dans la boucle
+    d'image ;
+  - ce qui tourne sur un seul thread et peut être parallélisé l'est (rayon,
+    tâches en arrière-plan), sans bloquer l'image ; rien de lourd sur le
+    thread principal ;
+  - n'hésite pas à optimiser ou à réécrire proprement et de façon moderne
+    ce qui en a besoin, dès que ça fait gagner des performances ou de la
+    fluidité, sans régression fonctionnelle ni visuelle ;
+  - mesure avant et après (`AURORA_PROFILE=1`, voir le README) et donne les
+    chiffres dans la PR.
 - **Pas de régression de la réécriture** : si tu modifies un comportement porté
   de Firestorm, revérifie-le contre les sources de Firestorm (le comportement
   et le rendu, pas l'implémentation).
