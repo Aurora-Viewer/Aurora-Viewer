@@ -206,11 +206,13 @@ mod tests {
             ..Default::default()
         };
         cues.before(ctx, &raw);
-        let out = ctx.run_ui(raw, |ui| {
+        let mut out = ctx.run_ui(raw, |ui| {
             cues.pass_start(ui.ctx());
             let r = ui.add(egui::TextEdit::singleline(text).id(Id::new("field")));
             r.request_focus();
         });
+        // no renderer here (the font atlas would trip a debug assertion)
+        out.textures_delta.clear();
         cues.after(ctx, &out.platform_output.events, true)
     }
 
