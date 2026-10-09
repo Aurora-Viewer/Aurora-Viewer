@@ -505,30 +505,38 @@ fn apply_fog(col: vec3<f32>, world_pos: vec3<f32>) -> vec3<f32> {
 
 // ------------------------------------------------------------- shadows
 
-fn shadow_factor(world_pos: vec3<f32>, n: vec3<f32>, view_depth: f32) -> f32 {
-    if (frame.params.z < 0.5) {
-        return 1.0;
-    }
-    var cascade = 0u;
-    if (view_depth > frame.cascade_splits.x) { cascade = 1u; }
-    if (view_depth > frame.cascade_splits.y) { cascade = 2u; }
-    if (view_depth > frame.cascade_splits.z) {
-        return 1.0;
-    }
+// Half-width of the shadow filter in metres, the same in every cascade:
+// with a filter sized in texels, each cascade (texels from ~6 mm to ~7 cm)
+// had its own softness and the cascade borders showed as steps. Firestorm
+// softens its shadows in screen space (RenderShadowBlurSize).
+const SHADOW_PENUMBRA: f32 = 0.03;
+
+// Shadow of one cascade (1 lit, 0 shadowed); -1 when the point is outside
+// its tile, so that a blend never takes light from a cascade that does not
+// see the point.
+fn cascade_shadow(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32) -> f32 {
     let bias_n = n * (0.02 + 0.04 * f32(cascade));
-    let lp = frame.cascade_vp[cascade] * vec4<f32>(world_pos + bias_n, 1.0);
+    let m = frame.cascade_vp[cascade];
+    let lp = m * vec4<f32>(world_pos + bias_n, 1.0);
     let ndc = lp.xyz / lp.w;
     let uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
     if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || ndc.z < 0.0 || ndc.z > 1.0) {
-        return 1.0;
+        return -1.0;
     }
     // texel of a tile, in tile coordinates
     let texel = 2.0 / f32(textureDimensions(shadow_map).x);
+    // half extent of the cascade in metres: orthographic, so the first row
+    // of its matrix is the light's right axis divided by it
+    let radius = 1.0 / max(length(vec3<f32>(m[0].x, m[1].x, m[2].x)), 1e-6);
+    let half_uv = SHADOW_PENUMBRA * 0.5 / radius;
+    // 4x4 taps spread over the penumbra, kept between half a texel and two
+    // texels apart so the bilinear compare taps blend without gaps
+    let spacing = clamp(half_uv * (2.0 / 3.0), 0.5 * texel, 2.0 * texel);
     let tile = vec2<f32>(f32(cascade % 2u), f32(cascade / 2u));
     var sum = 0.0;
-    for (var y = -1; y <= 1; y++) {
-        for (var x = -1; x <= 1; x++) {
-            let o = vec2<f32>(f32(x), f32(y)) * texel;
+    for (var y = 0; y < 4; y++) {
+        for (var x = 0; x < 4; x++) {
+            let o = (vec2<f32>(f32(x), f32(y)) - 1.5) * spacing;
             // clamped to the centers of the tile's edge texels: the same
             // result as the clamp-to-edge of a separate texture, never a
             // texel of the neighbouring tile
@@ -536,9 +544,42 @@ fn shadow_factor(world_pos: vec3<f32>, n: vec3<f32>, view_depth: f32) -> f32 {
             sum += textureSampleCompareLevel(shadow_map, shadow_sampler, (t + tile) * 0.5, ndc.z - 0.0005);
         }
     }
-    let s = sum / 9.0;
+    return sum / 16.0;
+}
+
+fn shadow_factor(world_pos: vec3<f32>, n: vec3<f32>, view_depth: f32) -> f32 {
+    if (frame.params.z < 0.5) {
+        return 1.0;
+    }
+    let splits = frame.cascade_splits;
+    var cascade = 0u;
+    if (view_depth > splits.x) { cascade = 1u; }
+    if (view_depth > splits.y) { cascade = 2u; }
+    if (view_depth > splits.z) {
+        return 1.0;
+    }
+    var s = cascade_shadow(world_pos, n, cascade);
+    // blend into the next cascade over the last 15 % of this one: no visible
+    // border between cascades
+    if (cascade < 2u) {
+        let start = select(0.0, splits.x, cascade == 1u);
+        let end = select(splits.x, splits.y, cascade == 1u);
+        let band = (end - start) * 0.15;
+        let t = clamp((view_depth - (end - band)) / max(band, 1e-4), 0.0, 1.0);
+        if (t > 0.0) {
+            let next = cascade_shadow(world_pos, n, cascade + 1u);
+            if (s < 0.0) {
+                s = next;
+            } else if (next >= 0.0) {
+                s = mix(s, next, t);
+            }
+        }
+    }
+    if (s < 0.0) {
+        return 1.0;
+    }
     // fade out at the far end of the last cascade
-    let fade = clamp((frame.cascade_splits.z - view_depth) / (frame.cascade_splits.z * 0.1), 0.0, 1.0);
+    let fade = clamp((splits.z - view_depth) / (splits.z * 0.1), 0.0, 1.0);
     return mix(1.0, s, fade);
 }
 
