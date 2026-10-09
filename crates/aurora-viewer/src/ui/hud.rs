@@ -62,9 +62,15 @@ impl Projector {
     }
 }
 
+/// An avatar name tag on screen (egui points): it takes the clicks like its
+/// avatar (LLPipeline::lineSegmentIntersectInWorld picks the tags).
+pub struct NameTag {
+    pub id: uuid::Uuid,
+    pub rect: egui::Rect,
+}
+
 /// `voice`: avatars in voice chat (level, speaking) for the voice dots.
-/// Returns the rectangle of our own name tag (egui points): it takes the
-/// left click like our avatar does.
+/// Returns the avatar name tags, far first as drawn (the last one on top).
 #[allow(clippy::too_many_arguments)]
 pub fn draw(
     ctx: &egui::Context,
@@ -78,10 +84,10 @@ pub fn draw(
     dots: &mut super::voice_dot::VoiceDots,
     complexity: Option<TagComplexity<'_>>,
     loading: Option<&HashMap<uuid::Uuid, f32>>,
-) -> Option<egui::Rect> {
+) -> Vec<NameTag> {
     let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("hud")));
     let now = Instant::now();
-    // (distance, anchor, lines, voice: (id, level, speaking), loading, ours)
+    // (distance, anchor, lines, voice: (id, level, speaking), loading, avatar)
     #[allow(clippy::type_complexity)]
     let mut tags: Vec<(
         f32,
@@ -89,9 +95,9 @@ pub fn draw(
         Vec<(String, Color32, f32)>,
         Option<(uuid::Uuid, f32, bool)>,
         Option<f32>,
-        bool,
+        Option<uuid::Uuid>,
     )> = Vec::new();
-    let mut own_rect = None;
+    let mut name_tags = Vec::new();
     for (idx, o) in world.objects.iter() {
         if o.is_avatar() {
             if o.full_id == world.agent_id && !show_own {
@@ -188,7 +194,7 @@ pub fn draw(
             }
             let in_voice = voice.get(&o.full_id).map(|(level, speaking)| (o.full_id, *level, *speaking));
             let progress = loading.and_then(|l| l.get(&o.full_id).copied());
-            tags.push((d, sp, lines, in_voice, progress, o.full_id == world.agent_id));
+            tags.push((d, sp, lines, in_voice, progress, Some(o.full_id)));
         } else if !o.text.is_empty() {
             let Some((pos, _, hud)) = Scene::object_transform(world, idx, now, 0) else {
                 continue;
@@ -226,13 +232,13 @@ pub fn draw(
             };
             let col = Color32::from_rgba_unmultiplied(c[0], c[1], c[2], (c[3] as f32 * fade) as u8);
             let lines = o.text.lines().map(|l| (l.to_owned(), col, 12.0)).collect();
-            tags.push((d + 1000.0, sp, lines, None, None, false));
+            tags.push((d + 1000.0, sp, lines, None, None, None));
         }
     }
     let now_s = ctx.input(|i| i.time);
     // far first so near tags draw on top
     tags.sort_by(|a, b| b.0.total_cmp(&a.0));
-    for (d, sp, lines, in_voice, progress, ours) in tags {
+    for (d, sp, lines, in_voice, progress, avatar) in tags {
         let is_avatar = d < 1000.0;
         let fade = if is_avatar {
             (1.0 - (d - 40.0) / 24.0).clamp(0.35, 1.0)
@@ -254,8 +260,8 @@ pub fn draw(
         if is_avatar {
             let w = max_w + 12.0 + voice_w;
             let r = egui::Rect::from_min_size(Pos2::new(sp.x - w * 0.5, y - 3.0), egui::vec2(w, total_h + 6.0));
-            if ours {
-                own_rect = Some(r);
+            if let Some(id) = avatar {
+                name_tags.push(NameTag { id, rect: r });
             }
             painter.rect_filled(
                 r,
@@ -310,5 +316,5 @@ pub fn draw(
         }
     }
     dots.prune(now_s);
-    own_rect
+    name_tags
 }
