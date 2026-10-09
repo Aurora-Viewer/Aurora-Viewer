@@ -90,52 +90,18 @@ fn pieces(text: &str, mut name_of: impl FnMut(uuid::Uuid) -> String) -> Vec<(Str
         .collect()
 }
 
-/// Domains whose web links get a green check: Firestorm's trusted Second
-/// Life domains (LLUrlEntrySecondlifeURL) and its own sites
-/// (LLUrlEntryFirestormURL, indra/llui/llurlentry.cpp), plus Aurora's site,
-/// GitHub and a few well-known sites. Hosts of content anyone can publish
-/// (github.io, githubusercontent.com...) stay out. Other web links get an
-/// amber warning triangle, and a warning before they open.
-const TRUSTED_DOMAINS: &[&str] = &[
-    "secondlife.com",
-    "lindenlab.com",
-    "tilia-inc.com",
-    "secondlifegrid.net",
-    "secondlife.io",
-    "secondlife-status.statuspage.io",
-    "firestormviewer.org",
-    "phoenixviewer.com",
-    "auroraviewer.com",
-    "github.com",
-    "youtube.com",
-    "youtu.be",
-    "wikipedia.org",
-];
-
-/// A web link to one of the trusted domains (or a subdomain), judged on the
-/// real host: user info ("https://secondlife.com@evil.example") and a
-/// backslash (read as "/" by browsers) cannot pass another site off as one.
-pub(crate) fn trusted_url(url: &str) -> bool {
-    let Some((scheme, rest)) = url.split_once("://") else {
-        return false;
-    };
-    if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
-        return false;
-    }
-    let authority = rest.split(['/', '\\', '?', '#']).next().unwrap_or("");
-    let host = authority.rsplit('@').next().unwrap_or("");
-    let host = host.split(':').next().unwrap_or("").trim_end_matches('.').to_ascii_lowercase();
-    TRUSTED_DOMAINS
-        .iter()
-        .any(|d| host == *d || host.strip_suffix(d).is_some_and(|sub| sub.ends_with('.')))
-}
-
-/// Check or warning triangle before a web link, with its explanation.
-fn link_badge_look(p: &Palette, url: &str) -> (&'static str, Color32, &'static str) {
-    if trusted_url(url) {
-        ("check-circle-fill", p.success, "Site de confiance")
-    } else {
-        ("warning-fill", p.amber, "Lien externe : vérifiez l'adresse avant de l'ouvrir")
+/// Check, warning triangle or cross before a web link (`link_trust`), with
+/// its explanation.
+fn link_badge_look(p: &Palette, url: &str) -> (&'static str, Color32, String) {
+    use crate::link_trust::Trust;
+    match crate::link_trust::classify(url) {
+        Trust::Trusted => ("check-circle-fill", p.success, "Site de confiance".into()),
+        Trust::Unknown => (
+            "warning-fill",
+            p.amber,
+            "Lien externe : vérifiez l'adresse avant de l'ouvrir".into(),
+        ),
+        Trust::Dangerous(why) => ("x-circle-fill", p.danger, format!("Lien dangereux : {why}")),
     }
 }
 
@@ -155,8 +121,9 @@ fn link_badge(ui: &mut egui::Ui, p: &Palette, url: &str, size: f32) {
     resp.on_hover_text(link_badge_look(p, url).2);
 }
 
-/// Open a web link of a text: trusted ones (and all once the warning is
-/// turned off) open at once, others ask first (`CtxAction::OpenUrl`).
+/// Open a web link of a text: trusted ones open at once, unknown ones after
+/// a warning (unless turned off), dangerous ones always after a warning
+/// (`CtxAction::OpenUrl`).
 pub(crate) fn open_web_link(ctx: &egui::Context, url: &str) {
     super::context::request(ctx, CtxAction::OpenUrl(url.to_owned()));
 }
@@ -1386,41 +1353,6 @@ mod tests {
         assert_eq!(segs[3], Seg::Mention(id));
         let bad = segments("secondlife:///app/agent/nope/about");
         assert!(matches!(bad[0], Seg::Slurl(_)));
-    }
-
-    #[test]
-    fn trusted_links() {
-        for ok in [
-            "https://secondlife.com/destinations",
-            "http://community.secondlife.com/forums",
-            "https://marketplace.secondlife.com:443/p/x",
-            "https://WWW.LindenLab.com",
-            "https://auroraviewer.com",
-            "https://github.com/Aurora-Viewer/Aurora-Viewer/pulls",
-            "https://gist.github.com/x",
-            "https://secondlife.com./x",
-            "https://www.youtube.com/watch?v=x",
-            "https://youtu.be/x",
-            "https://fr.wikipedia.org/wiki/Second_Life",
-            "https://www.firestormviewer.org/downloads",
-        ] {
-            assert!(trusted_url(ok), "{ok}");
-        }
-        for bad in [
-            "https://example.com",
-            "https://secondlife.com.evil.example/x",
-            "https://evilsecondlife.com",
-            "https://notgithub.com",
-            "https://secondlife.com@evil.example/x",
-            "https://evil.example\\@secondlife.com",
-            "https://github.io",
-            "https://youtube.com.evil.example/watch",
-            "https://raw.githubusercontent.com/x",
-            "ftp://secondlife.com/x",
-            "secondlife.com",
-        ] {
-            assert!(!trusted_url(bad), "{bad}");
-        }
     }
 
     #[test]

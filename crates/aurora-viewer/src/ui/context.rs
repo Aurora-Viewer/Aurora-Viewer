@@ -900,30 +900,44 @@ pub fn place_teleport_confirm(ctx: &egui::Context, p: &Palette, region: &str) ->
 
 /// Warning before opening a web link outside the trusted domains (phishing,
 /// fake login pages...). Some(true) opens it, Some(false) cancels;
-/// `dont_warn` is the « Ne plus me prévenir » box.
-pub fn external_link_confirm(ctx: &egui::Context, p: &Palette, url: &str, dont_warn: &mut bool) -> Option<bool> {
+/// `dont_warn` is the « Ne plus me prévenir » box. A dangerous link
+/// (`danger`: the reason, from `link_trust`) gets the red version, without
+/// that box: it always warns.
+pub fn external_link_confirm(ctx: &egui::Context, p: &Palette, url: &str, dont_warn: &mut bool, danger: Option<&str>) -> Option<bool> {
     use egui::RichText;
     let mut answer = None;
     let modal = egui::Modal::new(egui::Id::new("external_link_confirm")).show(ctx, |ui| {
         ui.set_width(380.0);
+        let (icon, col, title) = match danger {
+            Some(_) => ("x-circle-fill", p.danger, "Lien dangereux"),
+            None => ("warning-fill", p.amber, "Attention avant de cliquer"),
+        };
         ui.horizontal(|ui| {
             let (rect, _) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::hover());
-            if let Some(t) = super::icons::global("warning-fill") {
+            if let Some(t) = super::icons::global(icon) {
                 let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
-                ui.painter().image(t.id(), rect, uv, p.amber);
+                ui.painter().image(t.id(), rect, uv, col);
             }
-            ui.label(RichText::new("Attention avant de cliquer").size(15.0).strong().color(p.ink));
+            ui.label(RichText::new(title).size(15.0).strong().color(p.ink));
         });
         ui.add_space(6.0);
-        ui.label(
-            RichText::new(
+        if let Some(why) = danger {
+            ui.label(RichText::new(why).size(12.5).strong().color(p.danger));
+            ui.add_space(4.0);
+        }
+        let text = match danger {
+            Some(_) => {
+                "Aurora vous déconseille d'ouvrir ce lien. S'il vous demande de vous connecter ou de \
+                 payer, c'est très probablement une arnaque : ne donnez jamais votre mot de passe ni \
+                 vos informations de paiement."
+            }
+            None => {
                 "Ce lien mène à un site qui n'est pas dans la liste des sites de confiance d'Aurora. \
                  Méfiez-vous des fausses pages de connexion et des offres trop belles : ne donnez \
-                 jamais votre mot de passe ni vos informations de paiement.",
-            )
-            .size(12.5)
-            .color(p.muted),
-        );
+                 jamais votre mot de passe ni vos informations de paiement."
+            }
+        };
+        ui.label(RichText::new(text).size(12.5).color(p.muted));
         ui.add_space(6.0);
         ui.add(
             egui::Label::new(RichText::new(url).size(12.0).monospace().color(p.ink))
@@ -931,14 +945,27 @@ pub fn external_link_confirm(ctx: &egui::Context, p: &Palette, url: &str, dont_w
                 .selectable(true),
         );
         ui.add_space(8.0);
-        ui.checkbox(dont_warn, RichText::new("Ne plus me prévenir").size(12.5).color(p.muted));
-        ui.add_space(8.0);
-        ui.horizontal(|ui| {
-            if super::widgets::flat_button(ui, p, "Visiter le lien").clicked() {
-                answer = Some(true);
+        if danger.is_none() {
+            ui.checkbox(dont_warn, RichText::new("Ne plus me prévenir").size(12.5).color(p.muted));
+            ui.add_space(8.0);
+        }
+        ui.horizontal(|ui| match danger {
+            // the safe choice first
+            Some(_) => {
+                if super::widgets::flat_button(ui, p, "Annuler").clicked() {
+                    answer = Some(false);
+                }
+                if super::widgets::flat_button(ui, p, "Visiter quand même").clicked() {
+                    answer = Some(true);
+                }
             }
-            if super::widgets::flat_button(ui, p, "Annuler").clicked() {
-                answer = Some(false);
+            None => {
+                if super::widgets::flat_button(ui, p, "Visiter le lien").clicked() {
+                    answer = Some(true);
+                }
+                if super::widgets::flat_button(ui, p, "Annuler").clicked() {
+                    answer = Some(false);
+                }
             }
         });
     });

@@ -187,8 +187,8 @@ pub struct App {
     /// Teleport asked by a place link, waiting for a yes (TeleportViaSLAPP).
     place_confirm: Option<(String, Vec3)>,
     /// External web link waiting for the warning's answer, with the state of
-    /// its « Ne plus me prévenir » box.
-    url_confirm: Option<(String, bool)>,
+    /// its « Ne plus me prévenir » box and, for a dangerous link, the reason.
+    url_confirm: Option<(String, bool, Option<&'static str>)>,
     script_dialogs_were: usize,
     /// Last tracker beacon sound (FIRE-16969).
     beacon_sound_at: Option<Instant>,
@@ -4563,8 +4563,8 @@ impl App {
                         ui::context::request(&ctx, ui::context::CtxAction::TeleportToPlaceConfirmed(region, pos));
                     }
                 }
-                if let Some((url, dont_warn)) = self.url_confirm.as_mut()
-                    && let Some(yes) = ui::context::external_link_confirm(&ctx, &p, url, dont_warn)
+                if let Some((url, dont_warn, danger)) = self.url_confirm.as_mut()
+                    && let Some(yes) = ui::context::external_link_confirm(&ctx, &p, url, dont_warn, *danger)
                 {
                     let (url, dont_warn) = (url.clone(), *dont_warn);
                     self.url_confirm = None;

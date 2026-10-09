@@ -962,7 +962,7 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     ui,
                     p,
                     "Prévenir avant un lien externe",
-                    "Avertissement avant d'ouvrir un lien qui ne mène pas à un site de confiance (Second Life, Firestorm, Aurora, GitHub, YouTube, Wikipédia)",
+                    "Avertissement avant d'ouvrir un lien qui ne mène pas à un site de confiance (coche verte). Les liens dangereux (croix rouge) avertissent toujours",
                     |ui| toggle(ui, p, &mut s.warn_external_links),
                 );
                 c |= row(ui, p, "Conversations au démarrage", "", |ui| toggle(ui, p, &mut s.show_chat));

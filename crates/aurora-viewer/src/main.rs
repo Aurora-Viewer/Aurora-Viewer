@@ -15,6 +15,7 @@ mod demo;
 mod frame_profile;
 mod interaction;
 mod keybinds;
+mod link_trust;
 mod links;
 mod logging;
 mod media;
