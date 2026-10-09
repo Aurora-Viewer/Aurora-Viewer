@@ -3,6 +3,7 @@
 //! joint palettes (joint world matrices; meshes apply their inverse binds).
 
 use super::jobs::Jobs;
+use crate::world::PlayingAnimation;
 use aurora_assets::{Animation, Skeleton};
 use aurora_net::{FetchRequest, FetchResult, Fetcher};
 use glam::{Mat3, Mat4, Quat, Vec3};
@@ -176,10 +177,46 @@ struct Motion {
     id: Uuid,
     anim: Arc<BoundAnim>,
     activation: Instant,
+    /// Loop phase and ease-in use this clock, independent of new sequences.
+    continuous_activation: Instant,
+    signal: PlayingAnimation,
     stop: Option<Instant>,
     /// Weight when the ease out began (mResidualWeight).
     residual: f32,
     weight: f32,
+}
+
+impl Motion {
+    fn ease_in_weight(&self, now: Instant) -> f32 {
+        let a = &self.anim.anim;
+        let start = if a.looping { self.continuous_activation } else { self.activation };
+        let elapsed = now.saturating_duration_since(start).as_secs_f64();
+        if a.ease_in > 0.0 {
+            aurora_assets::anim::cubic_step(elapsed / f64::from(a.ease_in))
+        } else {
+            1.0
+        }
+    }
+
+    fn stop_at(&mut self, now: Instant) {
+        if self.stop.is_none() {
+            self.residual = self.ease_in_weight(now);
+            self.stop = Some(now);
+        }
+    }
+
+    /// LLKeyframeMotion::onUpdate: a stopped loop advances from its current
+    /// phase into the outro, without wrapping again.
+    fn local_time(&self, now: Instant) -> f64 {
+        let a = &self.anim.anim;
+        let start = if a.looping { self.continuous_activation } else { self.activation };
+        if let Some(stop) = self.stop.filter(|stop| a.looping && now >= *stop) {
+            let phase = a.local_time(stop.saturating_duration_since(start).as_secs_f64());
+            (phase + now.duration_since(stop).as_secs_f64()).min(f64::from(a.duration))
+        } else {
+            a.local_time(now.saturating_duration_since(start).as_secs_f64())
+        }
+    }
 }
 
 /// Motions and held pose of one avatar (or animesh).
@@ -187,6 +224,9 @@ struct Motion {
 pub struct Controller {
     /// Newest first (mActiveMotions, push_front).
     motions: Vec<Motion>,
+    /// Signals already activated, including completed non-looping motions.
+    /// A still-signaled one-shot must not restart automatically every frame.
+    signals: HashMap<Uuid, PlayingAnimation>,
     /// Joint rotations of the last frame (None before the first one).
     rot: Vec<Quat>,
     /// Animated joint positions as offsets from the rest skeleton, held
@@ -484,32 +524,50 @@ impl Controller {
 
     /// Follow the server's animation list (LLVOAvatar::processAnimationStateChanges).
     /// `get` gives an animation once it has loaded.
-    pub fn sync(&mut self, playing: &[(Uuid, i32, Instant)], now: Instant, mut get: impl FnMut(&Uuid) -> Option<Arc<BoundAnim>>) {
+    pub fn sync(&mut self, playing: &[PlayingAnimation], now: Instant, mut get: impl FnMut(&Uuid) -> Option<Arc<BoundAnim>>) {
         // stop the motions the server no longer plays
         for m in self.motions.iter_mut() {
-            if m.stop.is_none() && !playing.iter().any(|p| p.0 == m.id) {
-                m.stop = Some(now);
+            if !playing
+                .iter()
+                .any(|p| p.id == m.id && p.continuous_start == m.signal.continuous_start)
+            {
+                m.stop_at(now);
             }
         }
+        self.signals.retain(|id, _| playing.iter().any(|p| p.id == *id));
         // start the new ones, once loaded (updateLoadingMotions: activated
         // when they arrive). A motion easing out is left to finish and a
         // new instance starts (startMotion, deprecateMotionInstance).
-        for (id, _, _) in playing {
-            if self.motions.iter().any(|m| m.id == *id && m.stop.is_none()) {
+        for signal in playing {
+            if self.signals.get(&signal.id) == Some(signal) {
                 continue;
             }
-            if let Some(anim) = get(id) {
+            if let Some(m) = self.motions.iter_mut().find(|m| m.id == signal.id && m.stop.is_none()) {
+                if m.anim.anim.looping && m.signal.continuous_start == signal.continuous_start {
+                    // LLVOAvatar signals sequence changes, but startMotion
+                    // keeps an already active loop running continuously.
+                    m.activation = now;
+                    m.signal = *signal;
+                    self.signals.insert(signal.id, *signal);
+                    continue;
+                }
+                m.stop_at(now);
+            }
+            if let Some(anim) = get(&signal.id) {
                 self.motions.insert(
                     0,
                     Motion {
-                        id: *id,
+                        id: signal.id,
                         anim,
                         activation: now,
+                        continuous_activation: now,
+                        signal: *signal,
                         stop: None,
                         residual: 0.0,
                         weight: 0.0,
                     },
                 );
+                self.signals.insert(signal.id, *signal);
             }
         }
         // weights (LLMotionController::updateMotionsByType)
@@ -518,22 +576,22 @@ impl Controller {
             // a non-looping motion stops itself before its end to ease out
             // (activateMotionInstance: mSendStopTimestamp)
             if m.stop.is_none() && !a.looping && a.duration > 0.0 {
-                let end = m.activation + Duration::from_secs_f32((a.duration - a.ease_out).max(0.0));
+                let end = m.activation + Duration::from_secs_f64((f64::from(a.duration) - f64::from(a.ease_out)).max(0.0));
                 if now >= end {
-                    m.stop = Some(end);
+                    m.stop_at(end);
                 }
             }
             match m.stop {
                 Some(stop) if now >= stop => {
-                    let out = now.duration_since(stop).as_secs_f32();
-                    if out >= a.ease_out {
+                    let a = &m.anim.anim;
+                    let out = now.duration_since(stop).as_secs_f64();
+                    if out >= f64::from(a.ease_out) {
                         return false;
                     }
-                    m.weight = m.residual * cubic_step(1.0 - out / a.ease_out);
+                    m.weight = m.residual * aurora_assets::anim::cubic_step(1.0 - out / f64::from(a.ease_out));
                 }
                 _ => {
-                    let t = now.duration_since(m.activation).as_secs_f32();
-                    m.weight = if a.ease_in > 0.0 { cubic_step(t / a.ease_in) } else { 1.0 };
+                    m.weight = m.ease_in_weight(now);
                     m.residual = m.weight;
                 }
             }
@@ -564,7 +622,7 @@ impl Controller {
                 continue;
             }
             let a = &m.anim.anim;
-            let t = a.local_time(now.duration_since(m.activation).as_secs_f32());
+            let t = m.local_time(now) as f32;
             for (jm, j) in a.joints.iter().zip(m.anim.joints.iter()) {
                 let Some(j) = *j else {
                     continue;
@@ -572,8 +630,8 @@ impl Controller {
                 if j >= n {
                     continue;
                 }
-                let rot = jm.rotation_at(t);
-                let pos = jm.position_at(t).filter(|p| p.is_finite());
+                let rot = jm.rotation_at_loop(t, a.loop_range());
+                let pos = jm.position_at_loop(t, a.loop_range()).filter(|p| p.is_finite());
                 if rot.is_none() && pos.is_none() {
                     continue;
                 }
@@ -812,6 +870,15 @@ impl AnimStreamer {
 mod tests {
     use super::*;
 
+    fn signal(id: Uuid, sequence: i32, start: Instant) -> PlayingAnimation {
+        PlayingAnimation {
+            id,
+            sequence,
+            sequence_start: start,
+            continuous_start: start,
+        }
+    }
+
     /// The rig at rest must give the SL joint world matrices (own scale
     /// included): rigged meshes' inverse bind matrices are built for them.
     #[test]
@@ -874,29 +941,279 @@ mod tests {
             c.evaluate(&rig, t, None, &mut out);
             c.rot[elbow].to_axis_angle().1 * c.rot[elbow].to_axis_angle().0.z.signum()
         };
-        c.sync(&[(stand, 1, t0)], at(0.0), |_| Some(a_stand.clone()));
-        c.sync(&[(stand, 1, t0)], at(1.0), |_| Some(a_stand.clone()));
+        c.sync(&[signal(stand, 1, t0)], at(0.0), |_| Some(a_stand.clone()));
+        c.sync(&[signal(stand, 1, t0)], at(1.0), |_| Some(a_stand.clone()));
         assert!((angle(&mut c, at(1.0)) - 0.5).abs() < 1e-3);
         // stand stopped, walk not loaded yet: still easing out at full pose
-        c.sync(&[(walk, 2, at(2.0))], at(2.0), |id| (*id == stand).then(|| a_stand.clone()));
-        c.sync(&[(walk, 2, at(2.0))], at(2.25), |id| (*id == stand).then(|| a_stand.clone()));
+        c.sync(&[signal(walk, 2, at(2.0))], at(2.0), |id| (*id == stand).then(|| a_stand.clone()));
+        c.sync(&[signal(walk, 2, at(2.0))], at(2.25), |id| (*id == stand).then(|| a_stand.clone()));
         assert!((angle(&mut c, at(2.25)) - 0.5).abs() < 1e-3);
         // ease out over: no motion left, the last pose is held
-        c.sync(&[(walk, 2, at(2.0))], at(3.0), |_| None);
+        c.sync(&[signal(walk, 2, at(2.0))], at(3.0), |_| None);
         assert!(c.motions.is_empty());
         assert!((angle(&mut c, at(3.0)) - 0.5).abs() < 1e-3);
         // walk arrives and is applied (alone on the joint: full rotation)
-        c.sync(&[(walk, 2, at(2.0))], at(3.1), |_| Some(a_walk.clone()));
-        c.sync(&[(walk, 2, at(2.0))], at(3.2), |_| Some(a_walk.clone()));
+        c.sync(&[signal(walk, 2, at(2.0))], at(3.1), |_| Some(a_walk.clone()));
+        c.sync(&[signal(walk, 2, at(2.0))], at(3.2), |_| Some(a_walk.clone()));
         assert!((angle(&mut c, at(3.2)) + 0.5).abs() < 1e-3);
         // a new stand eases in over walk (same priority, newer first)
-        c.sync(&[(walk, 2, at(2.0)), (stand, 3, at(4.0))], at(4.0), |id| {
+        c.sync(&[signal(walk, 2, at(2.0)), signal(stand, 3, at(4.0))], at(4.0), |id| {
             Some(if *id == stand { a_stand.clone() } else { a_walk.clone() })
         });
-        c.sync(&[(walk, 2, at(2.0)), (stand, 3, at(4.0))], at(4.25), |id| {
+        c.sync(&[signal(walk, 2, at(2.0)), signal(stand, 3, at(4.0))], at(4.25), |id| {
             Some(if *id == stand { a_stand.clone() } else { a_walk.clone() })
         });
         let mid = angle(&mut c, at(4.25));
         assert!(mid > -0.4 && mid < 0.4, "{mid}");
+    }
+
+    fn rig() -> Rig {
+        let xml = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/character/avatar_skeleton.xml")).expect("skeleton");
+        Rig::new(&Skeleton::parse(&xml).expect("parse"))
+    }
+
+    #[test]
+    fn new_sequence_preserves_loop_pose_clock_and_ease_in() {
+        let rig = rig();
+        let id = Uuid::from_u128(17);
+        let anim = bend(&rig, 0.7, 2.0);
+        let t0 = Instant::now();
+        let at = |s| t0 + Duration::from_secs_f64(s);
+        let mut c = Controller::default();
+        let first = signal(id, 1, t0);
+        c.sync(&[first], t0, |_| Some(anim.clone()));
+        let second = PlayingAnimation {
+            sequence: 2,
+            sequence_start: at(1.25),
+            ..first
+        };
+        c.sync(&[second], at(1.25), |_| Some(anim.clone()));
+        assert_eq!(c.motions.len(), 1);
+        assert_eq!(c.motions[0].activation, at(1.25));
+        assert_eq!(c.motions[0].continuous_activation, t0);
+        assert!((c.motions[0].local_time(at(1.25)) - 0.25).abs() < 1e-12);
+        assert!((c.motions[0].weight - 0.68359375).abs() < 1e-6);
+        for s in [2.0, 3.01, 20.0] {
+            c.sync(&[second], at(s), |_| Some(anim.clone()));
+            assert_eq!(c.motions[0].weight, 1.0);
+        }
+    }
+
+    #[test]
+    fn observed_stop_restart_resets_loop_even_between_rendered_frames() {
+        let rig = rig();
+        let id = Uuid::from_u128(18);
+        let anim = bend(&rig, 0.7, 0.5);
+        let t0 = Instant::now();
+        let later = t0 + Duration::from_secs(3);
+        let mut c = Controller::default();
+        c.sync(&[signal(id, 1, t0)], t0, |_| Some(anim.clone()));
+        // The world observed an empty list then the same UUID and sequence.
+        c.sync(&[signal(id, 1, later)], later, |_| Some(anim.clone()));
+        let active = c.motions.iter().find(|m| m.stop.is_none()).expect("restart");
+        assert_eq!(active.continuous_activation, later);
+        assert_eq!(active.local_time(later), 0.0);
+        assert_eq!(active.weight, 0.0);
+        assert!(c.motions.iter().any(|m| m.stop == Some(later)));
+    }
+
+    #[test]
+    fn one_shot_completes_once_and_new_sequence_explicitly_restarts_it() {
+        let rig = rig();
+        let id = Uuid::from_u128(19);
+        let mut bound = BoundAnim::bind(bend(&rig, 0.7, 0.2).anim.clone(), &rig);
+        bound.anim.looping = false;
+        let anim = Arc::new(bound);
+        let t0 = Instant::now();
+        let at = |s| t0 + Duration::from_secs_f64(s);
+        let first = signal(id, 1, t0);
+        let mut c = Controller::default();
+        c.sync(&[first], t0, |_| Some(anim.clone()));
+        c.sync(&[first], at(2.0), |_| Some(anim.clone()));
+        assert!(c.motions.is_empty());
+        c.sync(&[first], at(3.0), |_| Some(anim.clone()));
+        assert!(c.motions.is_empty());
+        let second = PlayingAnimation {
+            sequence: 2,
+            sequence_start: at(3.0),
+            ..first
+        };
+        c.sync(&[second], at(3.0), |_| Some(anim.clone()));
+        assert_eq!(c.motions.len(), 1);
+        assert_eq!(c.motions[0].activation, at(3.0));
+        c.sync(
+            &[PlayingAnimation {
+                sequence: 3,
+                sequence_start: at(3.1),
+                ..first
+            }],
+            at(3.1),
+            |_| Some(anim.clone()),
+        );
+        assert_eq!(c.motions.len(), 2);
+        assert_eq!(c.motions[0].activation, at(3.1));
+        assert_eq!(c.motions[1].stop, Some(at(3.1)));
+    }
+
+    #[test]
+    fn stop_leaves_current_loop_phase_and_preserves_partial_ease_in_weight() {
+        let rig = rig();
+        let id = Uuid::from_u128(20);
+        let mut bound = BoundAnim::bind(bend(&rig, 0.7, 4.0).anim.clone(), &rig);
+        bound.anim.duration = 3.0;
+        bound.anim.loop_in = 0.5;
+        bound.anim.loop_out = 1.5;
+        bound.anim.ease_out = 2.0;
+        let anim = Arc::new(bound);
+        let t0 = Instant::now();
+        let at = |s| t0 + Duration::from_secs_f64(s);
+        let mut c = Controller::default();
+        c.sync(&[signal(id, 1, t0)], t0, |_| Some(anim.clone()));
+        c.sync(&[], at(2.25), |_| Some(anim.clone()));
+        let residual = aurora_assets::anim::cubic_step(2.25 / 4.0);
+        assert!((c.motions[0].weight - residual).abs() < 1e-6);
+        assert_eq!(c.motions[0].local_time(at(2.25)), 1.25);
+        c.sync(&[], at(2.75), |_| Some(anim.clone()));
+        assert_eq!(c.motions[0].local_time(at(2.75)), 1.75);
+        assert!((c.motions[0].weight - residual * 0.84375).abs() < 1e-6);
+        assert_eq!(c.motions[0].local_time(at(4.0)), 3.0);
+    }
+
+    #[test]
+    fn evaluated_joint_palettes_are_continuous_across_repeated_loop_seams() {
+        let rig = rig();
+        let id = Uuid::from_u128(21);
+        let elbow = rig.names["mElbowLeft"];
+        let mut bound = BoundAnim::bind(bend(&rig, 0.0, 0.0).anim.clone(), &rig);
+        let j = &mut bound.anim.joints[0];
+        j.rot_keys = vec![
+            aurora_assets::anim::RotKey {
+                time: 1.0 / 15.0,
+                rotation: Quat::from_rotation_z(0.7),
+            },
+            aurora_assets::anim::RotKey {
+                time: 1.0,
+                rotation: Quat::from_rotation_z(-0.7),
+            },
+        ];
+        j.pos_keys = vec![
+            aurora_assets::anim::PosKey {
+                time: 1.0 / 15.0,
+                position: rig.local_pos[elbow] + Vec3::X * 0.1,
+            },
+            aurora_assets::anim::PosKey {
+                time: 1.0,
+                position: rig.local_pos[elbow] - Vec3::X * 0.1,
+            },
+        ];
+        let anim = Arc::new(bound);
+        let t0 = Instant::now();
+        let at = |s| t0 + Duration::from_secs_f64(s);
+        let mut c = Controller::default();
+        let mut out = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
+        let first = signal(id, 1, t0);
+        c.sync(&[first], t0, |_| Some(anim.clone()));
+        for cycle in 1..=100 {
+            let before = at(f64::from(cycle) - 1e-6);
+            c.sync(&[first], before, |_| Some(anim.clone()));
+            c.evaluate(&rig, before, None, &mut out);
+            let pose = out[elbow];
+            let after = at(f64::from(cycle) + 1e-6);
+            let next = PlayingAnimation {
+                sequence: cycle + 1,
+                sequence_start: after,
+                ..first
+            };
+            c.sync(&[next], after, |_| Some(anim.clone()));
+            c.evaluate(&rig, after, None, &mut out);
+            let error = Mat4::from_cols_array_2d(&pose) - Mat4::from_cols_array_2d(&out[elbow]);
+            assert!(error.to_cols_array().iter().all(|v| v.abs() < 5e-5), "cycle {cycle}: {error:?}");
+        }
+    }
+
+    #[test]
+    fn loaded_motion_starts_on_arrival_and_shared_frame_time_gives_identical_palettes() {
+        let rig = rig();
+        let id = Uuid::from_u128(22);
+        let anim = bend(&rig, 0.7, 0.5);
+        let t0 = Instant::now();
+        let loaded = t0 + Duration::from_secs(2);
+        let frame = loaded + Duration::from_millis(250);
+        let first = signal(id, 1, t0);
+        let changed = PlayingAnimation {
+            sequence: 2,
+            sequence_start: frame,
+            ..first
+        };
+        let mut a = Controller::default();
+        let mut b = Controller::default();
+        let mut out_a = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
+        let mut out_b = out_a.clone();
+        for c in [&mut a, &mut b] {
+            c.sync(&[first], t0, |_| None);
+            c.sync(&[first], loaded, |_| Some(anim.clone()));
+            c.sync(&[changed], frame, |_| Some(anim.clone()));
+            assert_eq!(c.motions[0].continuous_activation, loaded);
+            assert_eq!(c.motions[0].weight, 0.5);
+        }
+        a.evaluate(&rig, frame, None, &mut out_a);
+        b.evaluate(&rig, frame, None, &mut out_b);
+        assert_eq!(out_a, out_b);
+    }
+
+    #[test]
+    fn joint_priorities_use_separate_rotation_and_position_weight_budgets() {
+        let rig = rig();
+        let elbow = rig.names["mElbowLeft"];
+        let mut high = BoundAnim::bind(bend(&rig, 0.7, 0.5).anim.clone(), &rig);
+        high.anim.base_priority = 0;
+        high.anim.joints[0].priority = 6;
+        let high = Arc::new(high);
+        let mut low = BoundAnim::bind(bend(&rig, -0.7, 0.0).anim.clone(), &rig);
+        low.anim.base_priority = 6;
+        low.anim.joints[0].priority = 0;
+        let target = rig.local_pos[elbow] + Vec3::X;
+        low.anim.joints[0].pos_keys.push(aurora_assets::anim::PosKey {
+            time: 0.0,
+            position: target,
+        });
+        let low = Arc::new(low);
+        let t0 = Instant::now();
+        let frame = t0 + Duration::from_millis(250);
+        let (lo, hi) = (Uuid::from_u128(23), Uuid::from_u128(24));
+        let mut c = Controller::default();
+        let playing = [signal(hi, 1, t0), signal(lo, 1, t0)];
+        c.sync(&playing, t0, |id| Some(if *id == hi { high.clone() } else { low.clone() }));
+        c.sync(&playing, frame, |_| None);
+        let mut out = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
+        c.evaluate(&rig, frame, None, &mut out);
+        // High rotation consumes 0.5, lower rotation fills the other half.
+        assert!((c.rot[elbow] * Vec3::X - Vec3::X).length() < 1e-5);
+        // Rotation consumed none of the independent position budget.
+        assert!((c.pos_delta[elbow] - Vec3::X).length() < 1e-5);
+    }
+
+    #[test]
+    fn only_six_newest_joint_contributions_are_kept_at_equal_priority() {
+        let rig = rig();
+        let elbow = rig.names["mElbowLeft"];
+        let mut oldest = BoundAnim::bind(bend(&rig, 0.7, 0.0).anim.clone(), &rig);
+        oldest.anim.joints[0].pos_keys.push(aurora_assets::anim::PosKey {
+            time: 0.0,
+            position: rig.local_pos[elbow] + Vec3::X,
+        });
+        let oldest = Arc::new(oldest);
+        let newer = bend(&rig, -0.7, 0.0);
+        let t0 = Instant::now();
+        let playing: Vec<_> = (1..=7).map(|id| signal(Uuid::from_u128(id), 1, t0)).collect();
+        let mut c = Controller::default();
+        c.sync(&playing, t0, |id| {
+            Some(if id.as_u128() == 1 { oldest.clone() } else { newer.clone() })
+        });
+        c.sync(&playing, t0 + Duration::from_secs(1), |_| None);
+        let mut out = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
+        c.evaluate(&rig, t0 + Duration::from_secs(1), None, &mut out);
+        assert_eq!(c.pos_delta[elbow], Vec3::ZERO);
+        assert!((c.rot[elbow] * Vec3::X - Quat::from_rotation_z(-0.7) * Vec3::X).length() < 1e-5);
     }
 }

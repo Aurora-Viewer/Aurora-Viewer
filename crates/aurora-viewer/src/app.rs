@@ -2211,7 +2211,7 @@ impl App {
             self.scene.process_results(&mut gfx.renderer, &self.net, Duration::from_millis(6));
             // poses first: attachments follow their bone in the same frame
             self.scene
-                .update_poses(&mut gfx.renderer, &mut self.world, self.camera.position, Instant::now());
+                .update_poses(&mut gfx.renderer, &mut self.world, self.camera.position, now);
             let mut exceptions = self.settings.render_exceptions_map();
             // blocked residents: grey silhouettes (FIRE-11783)
             for id in self.world.mutes.blocked_ids() {
@@ -2699,6 +2699,11 @@ impl App {
         }
         self.frame_start = Instant::now();
         self.frame_count += 1;
+        if self.demo && std::env::var_os("AURORA_DEMO_ANIM_LOOP").is_some() {
+            for event in crate::demo::loop_animation_events(self.frame_count) {
+                self.world.apply(event);
+            }
+        }
         // last view for the loading screens (blurred in a thread, or now when quitting)
         if self.scene_capture_pending
             && let Some((w, h, px)) = gfx.renderer.captured.take()
@@ -3743,9 +3748,14 @@ impl ApplicationHandler for App {
             }
             log::info!("demo mode: injecting synthetic region");
             let rig = self.scene.avatar_lib.rig.clone();
+            let demo_anim = if std::env::var_os("AURORA_DEMO_ANIM_LOOP").is_some() {
+                crate::demo::loop_animation()
+            } else {
+                crate::demo::idle_animation()
+            };
             self.scene.anims.insert(
                 crate::demo::IDLE_ANIM,
-                Arc::new(crate::scene::anim::BoundAnim::bind(crate::demo::idle_animation(), &rig)),
+                Arc::new(crate::scene::anim::BoundAnim::bind(demo_anim, &rig)),
             );
             if std::env::var_os("AURORA_DEMO_OPTIONS").is_some() {
                 self.panels.settings = true;

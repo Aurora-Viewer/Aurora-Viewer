@@ -100,7 +100,7 @@ pub fn draw(
             {
                 use crate::world::status::{ANIM_AWAY, ANIM_DO_NOT_DISTURB};
                 let anims = world.animations_of(&o.full_id);
-                let playing = |id: uuid::Uuid| anims.iter().any(|(a, _, _)| *a == id);
+                let playing = |id: uuid::Uuid| anims.iter().any(|a| a.id == id);
                 let mut status = Vec::new();
                 if playing(ANIM_AWAY) {
                     status.push("Absent");

@@ -1995,9 +1995,9 @@ impl Scene {
         let near = center.distance(eye) < self.draw_distance + 32.0;
         let anims = world.animations_of(&me).to_vec();
         let mut missing = Vec::new();
-        for (id, _, _) in &anims {
-            if self.anims.get(id).is_none() {
-                missing.push(id.to_string());
+        for signal in &anims {
+            if self.anims.get(&signal.id).is_none() {
+                missing.push(signal.id.to_string());
             }
         }
         format!(
