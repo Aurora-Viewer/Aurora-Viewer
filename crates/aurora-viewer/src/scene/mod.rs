@@ -12,6 +12,7 @@ pub mod legacy_mat;
 pub mod loading;
 pub mod meshes;
 pub mod particles;
+pub mod picking;
 pub mod probes;
 pub mod shape;
 pub mod sounds;
@@ -48,6 +49,7 @@ pub struct GpuGeom {
     pub min: Vec3,
     pub max: Vec3,
     pub joint_bounds: Vec<animesh::JointBounds>,
+    pub pick_faces: Vec<Option<picking::PickFace>>,
 }
 
 enum GeomState {
@@ -502,6 +504,20 @@ impl Scene {
     }
 
     fn upload_geom(&mut self, renderer: &mut Renderer, key: GeomKey, faces: Vec<jobs::FaceData>, min: Vec3, max: Vec3) {
+        let pick_faces = if matches!(key, GeomKey::AvatarPart(_)) {
+            Vec::new()
+        } else {
+            faces
+                .iter()
+                .map(|f| {
+                    f.as_ref().map(|f| picking::PickFace {
+                        positions: f.vertices.iter().map(|v| v.pos).collect(),
+                        uvs: f.vertices.iter().map(|v| v.uv).collect(),
+                        indices: f.indices.clone(),
+                    })
+                })
+                .collect()
+        };
         let mut boxes = HashMap::<u8, (Vec3, Vec3)>::new();
         for f in faces.iter().flatten() {
             if let Some(skin) = &f.skin {
@@ -535,6 +551,7 @@ impl Scene {
             min,
             max,
             joint_bounds,
+            pick_faces,
         });
         match self.geoms.get_mut(&key) {
             Some(e) => {
@@ -742,6 +759,10 @@ impl Scene {
     /// What is at a picked world point: an avatar (capsule test) or the most
     /// specific object whose oriented box contains the point.
     pub fn pick_at(&self, world: &World, point: Vec3, now: Instant) -> Option<usize> {
+        self.pick_at_filtered(world, point, now, false)
+    }
+
+    fn pick_at_filtered(&self, world: &World, point: Vec3, now: Instant, skip_ignored: bool) -> Option<usize> {
         let mut best: Option<(f32, usize)> = None;
         for (idx, g) in self.gpu.iter().enumerate() {
             if g.faces.is_empty() || g.hud {
@@ -750,6 +771,9 @@ impl Scene {
             let Some(o) = world.objects.get(idx) else {
                 continue;
             };
+            if skip_ignored && o.click_action == crate::interaction::code::IGNORE {
+                continue;
+            }
             if g.is_avatar {
                 let rel = point - g.center;
                 if Vec3::new(rel.x, rel.y, 0.0).length() < 0.6 && (-1.25..=1.15).contains(&rel.z) {

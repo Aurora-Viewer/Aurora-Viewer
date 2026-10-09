@@ -20,6 +20,8 @@ pub struct FaceHit {
     pub t: f32,
     /// Interpolated vertex texture coordinates (before the TE transform).
     pub uv: Vec2,
+    pub normal: Vec3,
+    pub binormal: Vec3,
 }
 
 /// Nearest intersection of a world ray with the faces (two-sided).
@@ -60,7 +62,22 @@ pub fn ray_faces<'a>(faces: impl Iterator<Item = FaceTris<'a>>, model: Mat4, ori
             }
             let uv_of = |i: usize| f.uvs.get(i).map(|a| Vec2::from_array(*a)).unwrap_or(Vec2::ZERO);
             let uv = uv_of(i0) * (1.0 - u - v) + uv_of(i1) * u + uv_of(i2) * v;
-            best = Some(FaceHit { face: f.face, t, uv });
+            let normal = inv.transpose().transform_vector3(e1.cross(e2)).normalize_or_zero();
+            let duv1 = uv_of(i1) - uv_of(i0);
+            let duv2 = uv_of(i2) - uv_of(i0);
+            let uv_det = duv1.x * duv2.y - duv1.y * duv2.x;
+            let binormal = if uv_det.abs() > 1e-8 {
+                model.transform_vector3((e2 * duv1.x - e1 * duv2.x) / uv_det).normalize_or_zero()
+            } else {
+                Vec3::ZERO
+            };
+            best = Some(FaceHit {
+                face: f.face,
+                t,
+                uv,
+                normal,
+                binormal,
+            });
         }
     }
     // the object-space t equals the world-space t: the direction was

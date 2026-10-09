@@ -539,6 +539,24 @@ impl Camera {
         self.set_camera_pos_and_focus(point + dir * 3.0, point, None, s);
     }
 
+    /// LLToolPie CLICK_ACTION_ZOOM: fit the clicked bounding box, keep its
+    /// focus attached to the object, and animate from the current camera.
+    pub fn zoom_object(
+        &mut self,
+        center: Vec3,
+        extent: Vec3,
+        object: Option<(Uuid, FocusObject)>,
+        aspect: f32,
+        agent: &mut AgentState,
+        s: &CameraSettings,
+    ) {
+        self.set_focus_on_avatar(false, true, true, agent, s);
+        let angle = (self.fov_y * aspect.max(1.0)).max(0.1);
+        let distance = extent.length() * 2.0 / angle.atan();
+        let dir = (self.position - center).normalize_or(-self.forward());
+        self.set_camera_pos_and_focus(center + dir * distance.max(0.1), center, object, s);
+    }
+
     /// LLAgentCamera::resetView: back behind the avatar. `movement` = called
     /// by a movement key (FSResetCameraOnMovement); `steering` = left button
     /// held on the avatar.

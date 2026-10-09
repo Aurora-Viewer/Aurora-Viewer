@@ -608,6 +608,10 @@ pub enum NetEvent {
         default: i32,
         buttons: Vec<i32>,
     },
+    TaskInventory {
+        object: Uuid,
+        result: Result<Vec<crate::inventory::InvItem>, String>,
+    },
 }
 
 /// One avatar record of the People API (GetDisplayNames "agents" entries,
@@ -666,6 +670,28 @@ pub struct AttachRequest {
     pub desc: String,
 }
 
+/// LLToolGrab SurfaceInfo: llDetectedTouch* values in region coordinates.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TouchSurface {
+    pub uv: Vec3,
+    pub st: Vec3,
+    pub face: i32,
+    pub position: Vec3,
+    pub normal: Vec3,
+    pub binormal: Vec3,
+}
+impl Default for TouchSurface {
+    fn default() -> Self {
+        Self {
+            uv: Vec3::new(-1.0, -1.0, 0.0),
+            st: Vec3::new(-1.0, -1.0, 0.0),
+            face: -1,
+            position: Vec3::ZERO,
+            normal: Vec3::ZERO,
+            binormal: Vec3::ZERO,
+        }
+    }
+}
 #[derive(Debug, Clone)]
 pub enum NetCommand {
     /// Ask for the mute list (MuteListRequest; CRC of our cached copy, 0 if none).
@@ -759,6 +785,30 @@ pub enum NetCommand {
     /// Touch an object (ObjectGrab + ObjectDeGrab), like a left click in SL.
     Touch {
         local_id: u32,
+    },
+    ObjectGrab {
+        handle: RegionHandle,
+        local_id: u32,
+        offset: Vec3,
+        surface: TouchSurface,
+    },
+    ObjectGrabUpdate {
+        handle: RegionHandle,
+        object: Uuid,
+        offset: Vec3,
+        position: Vec3,
+        elapsed_ms: u32,
+        surface: TouchSurface,
+    },
+    ObjectRelease {
+        handle: RegionHandle,
+        local_id: u32,
+        surface: TouchSurface,
+    },
+    RequestTaskInventory {
+        handle: RegionHandle,
+        local_id: u32,
+        object: Uuid,
     },
     /// Sit on an object (AgentRequestSit; `offset` in the object frame).
     RequestSit {

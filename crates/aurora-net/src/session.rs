@@ -4,6 +4,7 @@
 //! Message flow follows `newview/llstartup.cpp` and `llviewermessage.cpp`.
 
 mod build_cmds;
+mod object_actions;
 
 use crate::caps::{self, EqEvent};
 use crate::circuit::Circuit;
@@ -117,6 +118,7 @@ struct Session<'a> {
     last_cache_save: Instant,
     /// Mute list download, groups, chat sessions (session_social.rs).
     social: social_net::SocialNet,
+    tasks: object_actions::TaskRequests,
 }
 
 fn emit(sh: &Shared, ev: NetEvent) {
@@ -208,6 +210,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         obj_caches: HashMap::new(),
         last_cache_save: Instant::now(),
         social: Default::default(),
+        tasks: Default::default(),
     };
 
     let addr = SocketAddr::V4(SocketAddrV4::new(login.sim_ip, login.sim_port));
@@ -623,6 +626,7 @@ impl Session<'_> {
     // ----------------------------------------------------------------- tick
 
     fn tick(&mut self) {
+        self.expire_task_inventory();
         let now = Instant::now();
         self.publish_motion();
         if self.last_cache_save.elapsed() > Duration::from_secs(120) {
@@ -748,7 +752,7 @@ impl Session<'_> {
     // -------------------------------------------------------------- commands
 
     fn on_command(&mut self, c: NetCommand) {
-        if self.on_social_command(&c) {
+        if self.on_object_action_command(&c) || self.on_social_command(&c) {
             return;
         }
         match c {
@@ -1224,6 +1228,10 @@ impl Session<'_> {
             | NetCommand::RemoveMute { .. }
             | NetCommand::RequestGroups
             | NetCommand::AgentAnimation { .. }
+            | NetCommand::ObjectGrab { .. }
+            | NetCommand::ObjectGrabUpdate { .. }
+            | NetCommand::ObjectRelease { .. }
+            | NetCommand::RequestTaskInventory { .. }
             | NetCommand::ChatSession { .. } => {}
         }
     }
@@ -1734,7 +1742,7 @@ impl Session<'_> {
 
     fn dispatch(&mut self, from: SocketAddr, pkt: &IncomingPacket) -> Result<(), aurora_msg::DecodeError> {
         let id = pkt.id;
-        if self.dispatch_social(from, pkt)? {
+        if self.dispatch_object_actions(from, pkt)? || self.dispatch_social(from, pkt)? {
             return Ok(());
         }
         if id == PacketAck::ID {

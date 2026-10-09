@@ -371,6 +371,8 @@ pub struct MediaFrame<'a> {
 }
 
 pub struct MediaManager {
+    /// Picking keeps CLICK_ACTION_IGNORE selectable while tools are open.
+    pub build_mode: bool,
     paths: Option<PluginPaths>,
     paths_for: Option<String>,
     pub impls: Vec<MediaImpl>,
@@ -412,6 +414,7 @@ impl Default for MediaManager {
     fn default() -> Self {
         let (nav_tx, nav_rx) = crossbeam_channel::unbounded();
         MediaManager {
+            build_mode: false,
             paths: None,
             paths_for: None,
             impls: Vec::new(),
@@ -514,6 +517,54 @@ impl MediaManager {
     /// Parcel media started (button state).
     pub fn parcel_playing(&self) -> bool {
         self.find(&MediaKey::Parcel).is_some_and(|m| m.wanted && !m.paused)
+    }
+
+    pub fn parcel_status_playing(&self) -> bool {
+        self.find(&MediaKey::Parcel).is_some_and(|m| m.status == MediaStatus::Playing)
+    }
+
+    /// LLToolPie::handle_click_action_play: pause, resume, or start parcel media.
+    pub fn toggle_parcel(&mut self, world: &World, settings: &MediaSettings) {
+        match self.find(&MediaKey::Parcel).map(|m| m.status) {
+            Some(MediaStatus::Playing) => {
+                if let Some(m) = self.find_mut(&MediaKey::Parcel) {
+                    m.pause();
+                }
+            }
+            Some(MediaStatus::Paused) => {
+                if let Some(m) = self.find_mut(&MediaKey::Parcel) {
+                    m.play();
+                }
+            }
+            _ => self.play_parcel(world, settings),
+        }
+    }
+
+    /// LLToolPie::handle_click_action_open_media: a face already displaying
+    /// a media texture toggles parcel playback; otherwise open its web URL.
+    pub fn click_open_media(&mut self, world: &World, idx: usize, face: i32, settings: &MediaSettings) -> Option<String> {
+        let parcel = world.parcel.as_ref()?;
+        let object = world.objects.get(idx)?;
+        if face < 0 {
+            return None;
+        }
+        let texture = object.te.as_ref()?.face(face as usize).texture;
+        if self.impls.iter().any(|m| {
+            (!m.media_id.is_nil() && m.media_id == texture)
+                || m.texture.id == texture
+                || m.key
+                    == MediaKey::Prim {
+                        object: object.full_id,
+                        face: face as u8,
+                    }
+        }) {
+            self.toggle_parcel(world, settings);
+            None
+        } else {
+            let url = parcel.media_url.trim();
+            // The platform opener handles web URLs, as with llLoadURL.
+            (url.starts_with("http://") || url.starts_with("https://")).then(|| url.to_owned())
+        }
     }
 
     /// Loaded plugins.
@@ -756,5 +807,44 @@ impl MediaManager {
             }
         }
         best
+    }
+}
+
+#[cfg(test)]
+mod click_tests {
+    use super::*;
+    #[test]
+    fn play_pause_resume_and_open_media_use_parcel_state_and_clicked_texture() {
+        let mut w = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for ev in crate::demo::events().into_iter().chain(crate::demo::action_events()) {
+            w.apply(ev);
+        }
+        let p = std::sync::Arc::make_mut(w.parcel.as_mut().unwrap());
+        p.media_url = "https://example.invalid/media".into();
+        p.media.mime = "text/html".into();
+        p.media.media_id = crate::demo::ACTION_MEDIA_TEX;
+        let settings = MediaSettings::default();
+        let mut m = MediaManager::default();
+        m.toggle_parcel(&w, &settings);
+        assert!(m.parcel_playing());
+        m.find_mut(&MediaKey::Parcel).unwrap().status = MediaStatus::Playing;
+        assert!(m.parcel_status_playing());
+        m.toggle_parcel(&w, &settings);
+        assert!(!m.parcel_playing());
+        m.find_mut(&MediaKey::Parcel).unwrap().status = MediaStatus::Paused;
+        m.toggle_parcel(&w, &settings);
+        assert!(m.parcel_playing());
+        let idx = w.objects.index_of_uuid(&crate::demo::action_id(970)).unwrap();
+        assert!(m.click_open_media(&w, idx, -1, &settings).is_none());
+        assert_eq!(
+            m.click_open_media(&w, idx, 0, &settings).as_deref(),
+            Some("https://example.invalid/media")
+        );
+        let idx = w.objects.index_of_uuid(&crate::demo::action_id(978)).unwrap();
+        m.find_mut(&MediaKey::Parcel).unwrap().status = MediaStatus::Playing;
+        assert!(m.click_open_media(&w, idx, 0, &settings).is_none());
+        assert!(!m.parcel_playing());
+        w.parcel = None;
+        assert!(m.click_open_media(&w, idx, 0, &settings).is_none());
     }
 }

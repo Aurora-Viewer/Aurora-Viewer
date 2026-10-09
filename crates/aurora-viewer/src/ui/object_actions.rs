@@ -108,3 +108,54 @@ pub fn show(ctx: &egui::Context, p: &Palette, state: &mut Interactions, world: &
     }
     confirm
 }
+
+/// LLFloaterOpenObject: load and show the root object's task inventory.
+pub fn show_contents(ctx: &egui::Context, p: &Palette, icons: &super::icons::Icons, state: &mut Interactions, world: &World) {
+    let Some(c) = state.contents.as_ref() else { return };
+    let mut open = true;
+    let center = ctx.content_rect().center();
+    Floater::new(
+        "object_contents",
+        "Contenu de l'objet",
+        egui::pos2(center.x - 190.0, center.y - 130.0),
+        Vec2::new(380.0, 260.0),
+    )
+    .show(ctx, p, &mut open, |ui| {
+        if let Some(props) = state.props.get(&c.target.root) {
+            ui.label(RichText::new(&props.name).strong().color(p.ink));
+        }
+        if world.objects.index_of_uuid(&c.target.object).is_none() {
+            ui.label(RichText::new("Cet objet n'est plus disponible.").color(p.danger));
+        } else {
+            match &c.result {
+                Some(Ok(items)) if items.is_empty() => {
+                    ui.label("Cet objet est vide.");
+                }
+                Some(Ok(items)) => {
+                    egui::ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
+                        for item in items {
+                            ui.horizontal(|ui| {
+                                if let Some(t) = icons.get(super::inventory::item_icon(item.asset_type, item.inv_type)) {
+                                    ui.add(egui::Image::new(t).fit_to_exact_size(Vec2::splat(16.0)).tint(p.ink));
+                                }
+                                ui.label(&item.name).on_hover_text(&item.desc);
+                            });
+                        }
+                    });
+                }
+                Some(Err(error)) => {
+                    ui.label(RichText::new(error).color(p.danger));
+                }
+                None if c.opened.elapsed().as_secs() > 30 => {
+                    ui.label(RichText::new("Le simulateur n'a pas répondu. Fermez puis réessayez.").color(p.danger));
+                }
+                None => {
+                    ui.label("Chargement du contenu…");
+                }
+            }
+        }
+    });
+    if !open {
+        state.contents = None;
+    }
+}
