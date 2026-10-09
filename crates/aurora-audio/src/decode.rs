@@ -3,13 +3,12 @@
 use std::io::Cursor;
 use std::sync::Arc;
 
-use symphonia::core::audio::{SampleBuffer, SignalSpec};
-use symphonia::core::codecs::{CODEC_TYPE_NULL, Decoder, DecoderOptions};
+use symphonia::core::codecs::audio::{AudioDecoder, AudioDecoderOptions};
 use symphonia::core::errors::Error as SymError;
-use symphonia::core::formats::{FormatOptions, FormatReader};
+use symphonia::core::formats::probe::Hint;
+use symphonia::core::formats::{FormatOptions, FormatReader, TrackType};
 use symphonia::core::io::{MediaSource, MediaSourceStream};
-use symphonia::core::meta::{MetadataOptions, StandardTagKey};
-use symphonia::core::probe::Hint;
+use symphonia::core::meta::{MetadataOptions, StandardTag};
 
 use crate::AudioError;
 use crate::mixer::ENGINE_SAMPLE_RATE;
@@ -25,9 +24,10 @@ pub(crate) struct Chunk<'a> {
 /// A demuxer + decoder pair reading from any (possibly non-seekable) source.
 pub(crate) struct DecodeStream {
     format: Box<dyn FormatReader>,
-    decoder: Box<dyn Decoder>,
+    decoder: Box<dyn AudioDecoder>,
     track_id: u32,
-    sample_buf: Option<(SampleBuffer<f32>, SignalSpec, usize)>,
+    /// Interleaved samples of the last decoded packet (reused between packets).
+    samples: Vec<f32>,
 }
 
 fn dec_err(e: SymError) -> AudioError {
@@ -42,16 +42,15 @@ impl DecodeStream {
         if let Some(ext) = ext {
             hint.with_extension(ext);
         }
-        let probed = symphonia::default::get_probe()
-            .format(&hint, mss, &FormatOptions::default(), &MetadataOptions::default())
+        let format = symphonia::default::get_probe()
+            .probe(&hint, mss, FormatOptions::default(), MetadataOptions::default())
             .map_err(dec_err)?;
-        let format = probed.format;
         let (decoder, track_id) = make_decoder(format.as_ref())?;
         Ok(Self {
             format,
             decoder,
             track_id,
-            sample_buf: None,
+            samples: Vec::new(),
         })
     }
 
@@ -60,15 +59,19 @@ impl DecodeStream {
         let Some((channels, rate)) = self.decode_next()? else {
             return Ok(None);
         };
-        let samples = self.sample_buf.as_ref().map(|(sb, _, _)| sb.samples()).unwrap_or(&[]);
-        Ok(Some(Chunk { samples, channels, rate }))
+        Ok(Some(Chunk {
+            samples: &self.samples,
+            channels,
+            rate,
+        }))
     }
 
-    /// Decodes the next packet into `sample_buf`; returns (channels, rate).
+    /// Decodes the next packet into `samples`; returns (channels, rate).
     fn decode_next(&mut self) -> Result<Option<(usize, u32)>, AudioError> {
         loop {
             let packet = match self.format.next_packet() {
-                Ok(p) => p,
+                Ok(Some(p)) => p,
+                Ok(None) => return Ok(None),
                 Err(SymError::IoError(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
                     return Ok(None);
                 }
@@ -81,25 +84,24 @@ impl DecodeStream {
                 }
                 Err(e) => return Err(dec_err(e)),
             };
-            if packet.track_id() != self.track_id {
+            if packet.track_id != self.track_id {
                 continue;
             }
             match self.decoder.decode(&packet) {
                 Ok(buf) => {
-                    let spec = *buf.spec();
-                    let cap = buf.capacity();
-                    let channels = spec.channels.count();
+                    let channels = buf.spec().channels().count();
                     if channels == 0 || buf.frames() == 0 {
                         continue;
                     }
-                    let reuse = matches!(&self.sample_buf, Some((_, s, c)) if *s == spec && *c >= cap);
-                    if !reuse {
-                        self.sample_buf = Some((SampleBuffer::new(cap as u64, spec), spec, cap));
+                    let rate = buf.spec().rate();
+                    buf.copy_to_vec_interleaved(&mut self.samples);
+                    // Symphonia 0.6 no longer clips its float output; the reference decodes to
+                    // 16-bit PCM (ov_read in LLVorbisDecodeState::decodeSection), which clips at
+                    // full scale, so overshooting peaks are clamped the same way.
+                    for s in &mut self.samples {
+                        *s = s.clamp(-1.0, 1.0);
                     }
-                    if let Some((sb, _, _)) = self.sample_buf.as_mut() {
-                        sb.copy_interleaved_ref(buf);
-                        return Ok(Some((channels, spec.rate)));
-                    }
+                    return Ok(Some((channels, rate)));
                 }
                 Err(SymError::DecodeError(e)) => {
                     log::debug!("skipping undecodable audio packet: {e}");
@@ -118,10 +120,10 @@ impl DecodeStream {
         let rev = meta.skip_to_latest()?;
         let mut title = None;
         let mut artist = None;
-        for tag in rev.tags() {
-            match tag.std_key {
-                Some(StandardTagKey::TrackTitle) => title = Some(tag.value.to_string()),
-                Some(StandardTagKey::Artist) => artist = Some(tag.value.to_string()),
+        for tag in &rev.media.tags {
+            match &tag.std {
+                Some(StandardTag::TrackTitle(t)) => title = Some(t.to_string()),
+                Some(StandardTag::Artist(a)) => artist = Some(a.to_string()),
                 _ => {}
             }
         }
@@ -133,14 +135,12 @@ impl DecodeStream {
     }
 }
 
-fn make_decoder(format: &dyn FormatReader) -> Result<(Box<dyn Decoder>, u32), AudioError> {
-    let track = format
-        .tracks()
-        .iter()
-        .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
-        .ok_or_else(|| AudioError::Decode("no audio track".into()))?;
+fn make_decoder(format: &dyn FormatReader) -> Result<(Box<dyn AudioDecoder>, u32), AudioError> {
+    let no_track = || AudioError::Decode("no audio track".into());
+    let track = format.first_track_known_codec(TrackType::Audio).ok_or_else(no_track)?;
+    let params = track.codec_params.as_ref().and_then(|p| p.audio()).ok_or_else(no_track)?;
     let decoder = symphonia::default::get_codecs()
-        .make(&track.codec_params, &DecoderOptions::default())
+        .make_audio_decoder(params, &AudioDecoderOptions::default())
         .map_err(dec_err)?;
     Ok((decoder, track.id))
 }
