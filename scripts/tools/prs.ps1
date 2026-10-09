@@ -324,28 +324,38 @@ function Show-PrPanel {
             if (-not $rows) {
                 Write-PanelLine @(@($(if ($GitHub.Data) { ' Aucune PR ouverte.' } else { ' Chargement…' }), 'muted')) $w; $lines++
             }
-            for ($i = 0; $i -lt $rows.Count; $i++) {
-                $r = $rows[$i]
+            # the texts of this frame (durations move), then column widths fitted
+            # to them: the title gets all the room the other columns leave
+            $cells = foreach ($r in $rows) {
                 $ci = $r.Ci
                 if ($r.CiRunning -and $r.CiSince) { $ci = "en cours $(Format-Duration ((Get-Date) - $r.CiSince.ToLocalTime()))" }
                 $queue = $r.Queue
                 if ($r.QueueSince) { $queue = "$queue $(Format-Duration ((Get-Date) - $r.QueueSince.ToLocalTime()))" }
+                [pscustomobject]@{ Row = $r; Ci = "CI $ci"; Queue = $queue; Author = $r.Author }
+            }
+            $fit = { param($texts, $min, $max) [Math]::Min($max, [Math]::Max($min, (@($texts | ForEach-Object { ([string]$_).Length }) + 0 | Measure-Object -Maximum).Maximum + 2)) }
+            $ciW = & $fit ($cells | ForEach-Object Ci) 8 26
+            $queueW = if ($cells | Where-Object Queue) { & $fit ($cells | ForEach-Object Queue) 8 24 } else { 0 }
+            $authorW = & $fit ($cells | ForEach-Object Author) 6 18
+            $verdictW = & $fit ($rows | ForEach-Object Verdict) 6 13
+            for ($i = 0; $i -lt $rows.Count; $i++) {
+                $c = $cells[$i]; $r = $c.Row
                 $num = ("#$($r.Number)").PadRight(6)
                 if ($compact) {
-                    $titleW = [Math]::Max(10, $w - 9 - 22 - 2)
-                    $title = if ($r.Title.Length -gt $titleW) { $r.Title.Substring(0, $titleW - 1) + '…' } else { $r.Title }
-                    Write-PanelLine @(@(" $StatusMark ", $r.Status), @($num, 'violet_light'), @($title.PadRight($titleW), 'ink'), @(" $ci", $r.CiColor)) $w -Selected:($i -eq $sel); $lines++
+                    $titleW = [Math]::Max(10, $w - 9 - $ciW)
+                    Write-PanelLine @(@(" $StatusMark ", $r.Status), @($num, 'violet_light'), @((Format-Cell $r.Title $titleW), 'ink'), @($c.Ci, $r.CiColor)) $w -Selected:($i -eq $sel); $lines++
                     $second = @(, @('         ', 'muted'))
-                    if ($queue) { $second += , @("$queue  ", $r.QueueColor) }
+                    if ($c.Queue) { $second += , @("$($c.Queue)  ", $r.QueueColor) }
                     $second += , @($r.Verdict, $r.VerdictColor)
                     $second += , @("  $($r.Author)$(if ($r.Draft) { ', brouillon' })", 'muted_dim')
                     Write-PanelLine $second $w; $lines++
                 } else {
-                    $titleW = [Math]::Max(20, $w - 9 - 16 - 22 - 22 - 12)
-                    $title = if ($r.Title.Length -gt $titleW) { $r.Title.Substring(0, $titleW - 1) + '…' } else { $r.Title }
-                    $author = if ($r.Author.Length -gt 15) { $r.Author.Substring(0, 14) + '…' } else { $r.Author }
-                    Write-PanelLine @(@(" $StatusMark ", $r.Status), @($num, 'violet_light'), @($title.PadRight($titleW + 1), 'ink'), @($author.PadRight(16), 'muted_dim'),
-                        @((Format-Cell "CI $ci" 22), $r.CiColor), @((Format-Cell $queue 22), $r.QueueColor), @($r.Verdict, $r.VerdictColor)) $w -Selected:($i -eq $sel)
+                    $titleW = [Math]::Max(20, $w - 9 - $authorW - $ciW - $queueW - $verdictW)
+                    $segments = @(@(" $StatusMark ", $r.Status), @($num, 'violet_light'), @((Format-Cell $r.Title $titleW), 'ink'),
+                        @((Format-Cell $r.Author $authorW), 'muted_dim'), @((Format-Cell $c.Ci $ciW), $r.CiColor))
+                    if ($queueW) { $segments += , @((Format-Cell $c.Queue $queueW), $r.QueueColor) }
+                    $segments += , @($r.Verdict, $r.VerdictColor)
+                    Write-PanelLine $segments $w -Selected:($i -eq $sel)
                     $lines++
                 }
             }
