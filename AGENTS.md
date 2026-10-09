@@ -223,6 +223,12 @@ couleur en dur : utilise la `Palette`. Réutilise les widgets de
      reprends à l'étape 8.
    - Verdict ⚠️ ou ❌ : ne fusionne pas ; explique le point à l'humain et
      propose des solutions (section 11).
+   - **Commande refusée par ton outil** (Claude Code en mode auto :
+     « auto-approbation » sur `gh pr comment` ou `merge-pr.ps1`) : ne la
+     contourne pas. Donne les deux commandes à l'humain, et propose-lui le
+     choix « Permissions de Claude » de `aurora-tools.cmd`, qui les autorise
+     une fois pour toutes. Lance chacune seule, sans `cd` ni `;`, pour
+     qu'elle corresponde à la règle.
 10. **Après la fusion** : place-toi d'abord dans le dépôt principal, **dans
     une commande à part** (`Set-Location <dépôt principal>`), puis lance
     `end-task.ps1`. Ton outil surveille son dossier courant : tant qu'il est
