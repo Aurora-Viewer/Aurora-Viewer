@@ -1245,6 +1245,76 @@ pub fn idle_animation() -> aurora_assets::Animation {
 
 pub const IDLE_ANIM: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0000_0000_0001);
 
+/// Offline seam test: different first/last poses, first key at 1/15 s.
+pub fn loop_animation() -> aurora_assets::Animation {
+    use aurora_assets::anim::{JointMotion, PosKey, RotKey};
+    use glam::Quat;
+    let mut anim = idle_animation();
+    anim.duration = 1.0;
+    anim.loop_out = 1.0;
+    anim.ease_in = 0.6;
+    anim.ease_out = 0.6;
+    for joint in &mut anim.joints {
+        joint.rot_keys.truncate(1);
+    }
+    for (name, axis, amplitude) in [
+        ("mElbowLeft", Vec3::Z, 0.8),
+        ("mElbowRight", Vec3::Z, -0.8),
+        ("mHipLeft", Vec3::Y, 0.35),
+        ("mHipRight", Vec3::Y, -0.35),
+    ] {
+        anim.joints.retain(|joint| joint.joint_name != name);
+        anim.joints.push(JointMotion {
+            joint_name: name.into(),
+            priority: -1,
+            rot_keys: [(1.0 / 15.0, 1.0), (0.5, -1.0), (1.0, -0.5)]
+                .into_iter()
+                .map(|(time, value)| RotKey {
+                    time,
+                    rotation: Quat::from_axis_angle(axis, value * amplitude),
+                })
+                .collect(),
+            pos_keys: Vec::new(),
+        });
+    }
+    anim.joints.push(JointMotion {
+        joint_name: "mPelvis".into(),
+        priority: -1,
+        rot_keys: Vec::new(),
+        pos_keys: [(1.0 / 15.0, 0.04), (0.5, 0.0), (1.0, -0.04)]
+            .into_iter()
+            .map(|(time, z)| PosKey {
+                time,
+                position: Vec3::Z * z,
+            })
+            .collect(),
+    });
+    anim
+}
+
+/// Sequence changes every 120 frames; a real stop/restart every 1200.
+pub fn loop_animation_events(frame: u64) -> Vec<NetEvent> {
+    let step = frame % 1200;
+    if step != 1020 && !frame.is_multiple_of(120) {
+        return Vec::new();
+    }
+    log::info!(
+        "demo animation loop: frame {frame}, {}",
+        if step == 960 { "stop" } else { "sequence" }
+    );
+    [DEMO_AGENT, Uuid::from_u128(0xA0E0_A6E1_0000_0000_0000_0000_0000_0002)]
+        .into_iter()
+        .map(|avatar| NetEvent::AvatarAnimations {
+            avatar,
+            anims: if step == 960 {
+                Vec::new()
+            } else {
+                vec![(IDLE_ANIM, (frame / 120 + 1) as i32)]
+            },
+        })
+        .collect()
+}
+
 /// Offline voice stand-in for the voice dots: the other demo avatar talks
 /// in bursts; our own dot follows the real microphone (`mic_level`, Firestorm
 /// meter scale) while the microphone button / push-to-talk is on.

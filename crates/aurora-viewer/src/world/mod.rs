@@ -75,6 +75,27 @@ pub struct ChatLine {
     pub source: Uuid,
 }
 
+/// One simulator signal, with independent sequence and continuous clocks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlayingAnimation {
+    pub id: Uuid,
+    pub sequence: i32,
+    pub sequence_start: Instant,
+    /// Preserved while the UUID remains signaled, reset after an observed stop.
+    pub continuous_start: Instant,
+}
+
+impl PlayingAnimation {
+    fn from_signal(id: Uuid, sequence: i32, now: Instant, previous: Option<&Self>) -> Self {
+        Self {
+            id,
+            sequence,
+            sequence_start: previous.filter(|p| p.sequence == sequence).map_or(now, |p| p.sequence_start),
+            continuous_start: previous.map_or(now, |p| p.continuous_start),
+        }
+    }
+}
+
 pub struct World {
     pub login: Option<Arc<LoginResponse>>,
     pub agent_id: Uuid,
@@ -126,8 +147,8 @@ pub struct World {
     /// Online status (away, do not disturb...) and automatic responses.
     pub status: status::Status,
     pub inventory: inventory::Inventory,
-    /// Playing animations per avatar / animesh: (anim, sequence, start).
-    pub animations: HashMap<Uuid, Vec<(Uuid, i32, Instant)>>,
+    /// Playing animations per avatar / animesh.
+    pub animations: HashMap<Uuid, Vec<PlayingAnimation>>,
     /// EEP day cycle of the main region (if the region provides one).
     pub day_cycle: Option<(RegionHandle, eep::DayCycle)>,
     /// Accumulated cloud scroll (LLEnvironment::mCloudScrollDelta).
@@ -857,19 +878,12 @@ impl World {
                 let prev = self.animations.remove(&avatar).unwrap_or_default();
                 // ANIM_AGENT_TYPE starting: the typing sound at the avatar
                 const ANIM_AGENT_TYPE: Uuid = Uuid::from_u128(0xc541c47f_e0c0_058b_ad1a_d6ae3a4584d9);
-                if anims.iter().any(|(id, _)| *id == ANIM_AGENT_TYPE) && !prev.iter().any(|(id, _, _)| *id == ANIM_AGENT_TYPE) {
+                if anims.iter().any(|(id, _)| *id == ANIM_AGENT_TYPE) && !prev.iter().any(|p| p.id == ANIM_AGENT_TYPE) {
                     self.typing_started.push(avatar);
                 }
                 let list = anims
                     .into_iter()
-                    .map(|(id, seq)| {
-                        let start = prev
-                            .iter()
-                            .find(|(pid, pseq, _)| *pid == id && *pseq == seq)
-                            .map(|p| p.2)
-                            .unwrap_or(now);
-                        (id, seq, start)
-                    })
+                    .map(|(id, seq)| PlayingAnimation::from_signal(id, seq, now, prev.iter().find(|p| p.id == id)))
                     .collect();
                 self.animations.insert(avatar, list);
                 None
@@ -1367,7 +1381,7 @@ impl World {
             let no_rotate = self
                 .animations
                 .get(&id)
-                .is_some_and(|l| l.iter().any(|a| body::NO_ROTATE_ANIMS.contains(&a.0)));
+                .is_some_and(|l| l.iter().any(|a| body::NO_ROTATE_ANIMS.contains(&a.id)));
             seen.insert(id);
             let b = self.bodies.entry(id).or_insert_with(|| body::Body::new(input.prim_dir));
             if no_rotate {
@@ -1382,7 +1396,7 @@ impl World {
         own_turn
     }
 
-    pub fn animations_of(&self, owner: &Uuid) -> &[(Uuid, i32, Instant)] {
+    pub fn animations_of(&self, owner: &Uuid) -> &[PlayingAnimation] {
         self.animations.get(owner).map(|v| v.as_slice()).unwrap_or(&[])
     }
 }
@@ -1391,6 +1405,52 @@ impl World {
 mod motion_tests {
     use super::*;
     use aurora_net::objects::TerseUpdate;
+
+    #[test]
+    fn animation_signals_keep_continuous_time_until_an_observed_stop() {
+        let id = Uuid::from_u128(17);
+        let t0 = Instant::now();
+        let t1 = t0 + std::time::Duration::from_secs(1);
+        let first = PlayingAnimation::from_signal(id, 1, t0, None);
+        assert_eq!(PlayingAnimation::from_signal(id, 1, t1, Some(&first)), first);
+        let changed = PlayingAnimation::from_signal(id, 2, t1, Some(&first));
+        assert_eq!(changed.sequence_start, t1);
+        assert_eq!(changed.continuous_start, t0);
+        let restart = PlayingAnimation::from_signal(id, 2, t1, None);
+        assert_eq!(restart.sequence_start, t1);
+        assert_eq!(restart.continuous_start, t1);
+    }
+
+    #[test]
+    fn animation_network_updates_preserve_loop_clock_and_record_interframe_stop() {
+        let (mut world, _, _) = fixture();
+        let avatar = world.agent_id;
+        let id = Uuid::from_u128(18);
+        world.apply(NetEvent::AvatarAnimations {
+            avatar,
+            anims: vec![(id, 1)],
+        });
+        // Deterministic earlier clock: no sleeps or dependence on timer resolution.
+        let early = Instant::now() - std::time::Duration::from_secs(1);
+        let previous = &mut world.animations.get_mut(&avatar).expect("signal")[0];
+        previous.sequence_start = early;
+        previous.continuous_start = early;
+        world.apply(NetEvent::AvatarAnimations {
+            avatar,
+            anims: vec![(id, 2)],
+        });
+        let changed = world.animations_of(&avatar)[0];
+        assert_eq!(changed.continuous_start, early);
+        assert!(changed.sequence_start > early);
+        world.apply(NetEvent::AvatarAnimations { avatar, anims: Vec::new() });
+        world.apply(NetEvent::AvatarAnimations {
+            avatar,
+            anims: vec![(id, 2)],
+        });
+        let restarted = world.animations_of(&avatar)[0];
+        assert_eq!(restarted.sequence_start, restarted.continuous_start);
+        assert!(restarted.continuous_start > early);
+    }
 
     fn fixture() -> (World, aurora_net::objects::ObjectUpdate, RegionHandle) {
         let mut world = World::new(Arc::new(AvatarLibrary::load()));
