@@ -90,7 +90,91 @@ fn pieces(text: &str, mut name_of: impl FnMut(uuid::Uuid) -> String) -> Vec<(Str
         .collect()
 }
 
-/// A chat bubble's text, with the char range of each link in it.
+/// Domains whose web links get a green check: Firestorm's trusted Second
+/// Life domains (LLUrlEntrySecondlifeURL, indra/llui/llurlentry.cpp), plus
+/// Aurora's site and GitHub. Other web links get an amber warning triangle,
+/// and a warning before they open.
+const TRUSTED_DOMAINS: &[&str] = &[
+    "secondlife.com",
+    "lindenlab.com",
+    "tilia-inc.com",
+    "secondlifegrid.net",
+    "secondlife.io",
+    "secondlife-status.statuspage.io",
+    "auroraviewer.com",
+    "github.com",
+];
+
+/// A web link to one of the trusted domains (or a subdomain), judged on the
+/// real host: user info ("https://secondlife.com@evil.example") and a
+/// backslash (read as "/" by browsers) cannot pass another site off as one.
+pub(crate) fn trusted_url(url: &str) -> bool {
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return false;
+    };
+    if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
+        return false;
+    }
+    let authority = rest.split(['/', '\\', '?', '#']).next().unwrap_or("");
+    let host = authority.rsplit('@').next().unwrap_or("");
+    let host = host.split(':').next().unwrap_or("").trim_end_matches('.').to_ascii_lowercase();
+    TRUSTED_DOMAINS
+        .iter()
+        .any(|d| host == *d || host.strip_suffix(d).is_some_and(|sub| sub.ends_with('.')))
+}
+
+/// Check or warning triangle before a web link, with its explanation.
+fn link_badge_look(p: &Palette, url: &str) -> (&'static str, Color32, &'static str) {
+    if trusted_url(url) {
+        ("check", p.success, "Site officiel")
+    } else {
+        ("warning", p.amber, "Lien externe : vérifiez l'adresse avant de l'ouvrir")
+    }
+}
+
+fn paint_link_badge(painter: &egui::Painter, p: &Palette, rect: egui::Rect, url: &str, alpha: f32) {
+    let (icon, col, _) = link_badge_look(p, url);
+    if let Some(t) = super::icons::global(icon) {
+        let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+        painter.image(t.id(), rect, uv, col.gamma_multiply(alpha));
+    }
+}
+
+/// The badge of a web link in a wrapping text (conversation, profile).
+fn link_badge(ui: &mut egui::Ui, p: &Palette, url: &str, size: f32) {
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(size + 3.0, size), egui::Sense::hover());
+    let icon = egui::Rect::from_min_size(rect.min, egui::vec2(size, size)).shrink(1.0);
+    paint_link_badge(ui.painter(), p, icon, url, 1.0);
+    resp.on_hover_text(link_badge_look(p, url).2);
+}
+
+/// Open a web link of a text: trusted ones (and all once the warning is
+/// turned off) open at once, others ask first (`CtxAction::OpenUrl`).
+pub(crate) fn open_web_link(ctx: &egui::Context, url: &str) {
+    super::context::request(ctx, CtxAction::OpenUrl(url.to_owned()));
+}
+
+/// Who wrote a bubble line, drawn before the name.
+enum Sender {
+    Avatar(uuid::Uuid),
+    Object,
+}
+
+/// A chat bubble laid out: the text, the char range of each link, the char
+/// of each web link's badge, and the char where the sender's name starts
+/// (room for its picture before it).
+struct BubbleJob {
+    job: egui::text::LayoutJob,
+    links: Vec<(std::ops::Range<usize>, Link)>,
+    badges: Vec<(usize, String)>,
+    sender: Option<(usize, Sender)>,
+}
+
+/// Side of the sender's picture, for a text size.
+fn pic_side(size: f32) -> f32 {
+    size + 3.0
+}
+
 fn line_job(
     line: &crate::world::ChatLine,
     p: &Palette,
@@ -99,7 +183,7 @@ fn line_job(
     width: f32,
     size: f32,
     times: bool,
-) -> (egui::text::LayoutJob, Vec<(std::ops::Range<usize>, Link)>) {
+) -> BubbleJob {
     let col = color_for(line.kind, p);
     let mut job = egui::text::LayoutJob::default();
     let small = egui::TextFormat {
@@ -122,30 +206,50 @@ fn line_job(
         italics: emote,
         ..Default::default()
     };
-    let body = match line.kind {
-        ChatKind::System => &line.text[..],
-        _ if emote => {
-            job.append(&line.from, 0.0, name_fmt);
-            &line.text[3..]
-        }
-        _ => {
-            let prefix = match line.kind {
-                ChatKind::Im => format!("[IM] {}: ", line.from),
-                ChatKind::Local(ChatType::Shout) => format!("{} crie : ", line.from),
-                ChatKind::Local(ChatType::Whisper) => format!("{} murmure : ", line.from),
-                _ => format!("{}: ", line.from),
-            };
-            job.append(&prefix, 0.0, name_fmt);
-            &line.text[..]
-        }
+    // (before the name, after it, body)
+    let (before, after, body) = match line.kind {
+        ChatKind::System => ("", "", &line.text[..]),
+        _ if emote => ("", "", &line.text[3..]),
+        ChatKind::Im => ("[IM] ", ": ", &line.text[..]),
+        ChatKind::Local(ChatType::Shout) => ("", " crie : ", &line.text[..]),
+        ChatKind::Local(ChatType::Whisper) => ("", " murmure : ", &line.text[..]),
+        _ => ("", ": ", &line.text[..]),
     };
+    let mut sender = None;
+    if line.kind != ChatKind::System {
+        job.append(before, 0.0, name_fmt.clone());
+        let who = match line.kind {
+            ChatKind::Object(_) | ChatKind::ObjectIm => Some(Sender::Object),
+            _ if !line.source.is_nil() => Some(Sender::Avatar(line.source)),
+            _ => None,
+        };
+        // room for the picture, painted over it once laid out
+        let lead = if who.is_some() { pic_side(size) + 4.0 } else { 0.0 };
+        sender = who.map(|w| (job.text.chars().count(), w));
+        job.append(&line.from, lead, name_fmt.clone());
+        job.append(after, 0.0, name_fmt);
+    }
     let mut links = Vec::new();
+    let mut badges = Vec::new();
     let mut at = job.text.chars().count();
     let name_of = |id| {
         want_names.insert(id);
         world.social.name_of(&id)
     };
+    // the badge of a web link takes the place of an invisible glyph glued to
+    // the link (no space between them), so both wrap to the next row
+    // together; a leading space would stay behind on the previous row
+    let badge_fmt = egui::TextFormat {
+        color: Color32::TRANSPARENT,
+        font_id: egui::FontId::proportional(size * 1.15),
+        ..Default::default()
+    };
     for (piece, link) in pieces(body, name_of) {
+        if let Some(Link::Url(u)) = &link {
+            job.append("M", 0.0, badge_fmt.clone());
+            badges.push((at, u.clone()));
+            at += 1;
+        }
         let n = piece.chars().count();
         job.append(&piece, 0.0, text_fmt.clone());
         if let Some(link) = link {
@@ -154,7 +258,12 @@ fn line_job(
         at += n;
     }
     job.wrap.max_width = width;
-    (job, links)
+    BubbleJob {
+        job,
+        links,
+        badges,
+        sender,
+    }
 }
 
 pub enum ConvAction {
@@ -347,7 +456,11 @@ pub(crate) fn chat_text(
             match s {
                 Seg::Text(t) => emoji.inline(ui, t, size, color, italics),
                 Seg::Url(u) => {
-                    ui.hyperlink_to(RichText::new(u).size(size).color(super::colors::c(k.chat_urls)), u);
+                    link_badge(ui, p, u, size);
+                    let r = ui.add(egui::Link::new(RichText::new(u).size(size).color(super::colors::c(k.chat_urls))));
+                    if r.on_hover_text(u).clicked() {
+                        open_web_link(ui.ctx(), u);
+                    }
                 }
                 Seg::Slurl(u) => {
                     ui.add(egui::Label::new(RichText::new(u).size(size).color(super::colors::c(k.chat_slurl))).selectable(true))
@@ -996,13 +1109,58 @@ pub fn local_chat_shown(ctx: &egui::Context, st: &ChatUi) -> bool {
     !st.contacts && st.selected.is_none() && !minimized
 }
 
+/// The sender of a bubble line: the avatar's profile picture (initials while
+/// it loads), or the tinted cube of an object, like the conversation window.
+#[allow(clippy::too_many_arguments)]
+fn bubble_sender(
+    painter: &egui::Painter,
+    p: &Palette,
+    pics: &HashMap<uuid::Uuid, egui::TextureHandle>,
+    wanted_pics: &mut HashSet<uuid::Uuid>,
+    r: egui::Rect,
+    who: &Sender,
+    line: &crate::world::ChatLine,
+    alpha: f32,
+) {
+    let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+    match who {
+        Sender::Object => {
+            if let Some(t) = super::icons::global("cube") {
+                painter.image(t.id(), r.shrink(1.0), uv, super::colors::sender_color(line).gamma_multiply(alpha));
+            }
+        }
+        Sender::Avatar(id) => {
+            wanted_pics.insert(*id);
+            match pics.get(id) {
+                Some(t) => {
+                    painter.image(t.id(), r, uv, Color32::WHITE.gamma_multiply(alpha));
+                }
+                None => {
+                    painter.rect_filled(r, 2.0, p.raised.gamma_multiply(alpha));
+                    painter.text(
+                        r.center(),
+                        egui::Align2::CENTER_CENTER,
+                        initials(&line.from),
+                        egui::FontId::proportional(r.height() * 0.45),
+                        p.violet_pale.gamma_multiply(alpha),
+                    );
+                }
+            }
+        }
+    }
+}
+
 /// Recent chat lines floating above the chat bar (fade out after 20 s);
-/// names of linked avatars are asked through `want_names`.
+/// names of linked avatars and pictures of the senders are asked through
+/// `want_names` / `wanted_pics`.
+#[allow(clippy::too_many_arguments)]
 pub fn toasts(
     ctx: &egui::Context,
     p: &Palette,
     world: &World,
+    pics: &HashMap<uuid::Uuid, egui::TextureHandle>,
     want_names: &mut HashSet<uuid::Uuid>,
+    wanted_pics: &mut HashSet<uuid::Uuid>,
     bottom: f32,
     seconds: f32,
     times: bool,
@@ -1041,13 +1199,36 @@ pub fn toasts(
                     .corner_radius(egui::CornerRadius::same(3))
                     .inner_margin(egui::Margin::symmetric(6, 2))
                     .show(ui, |ui| {
-                        let (mut job, line_links) = line_job(line, p, world, want_names, 540.0, 13.0, times);
+                        let size = 13.0;
+                        let BubbleJob {
+                            mut job,
+                            links: line_links,
+                            badges,
+                            sender,
+                        } = line_job(line, p, world, want_names, 540.0, size, times);
                         for s in job.sections.iter_mut() {
                             s.format.color = s.format.color.gamma_multiply(alpha);
                         }
                         let galley = ui.ctx().fonts_mut(|f| f.layout_job(job));
                         let (rect, _) = ui.allocate_exact_size(galley.size(), egui::Sense::hover());
-                        ui.painter().galley(rect.min, galley.clone(), p.ink);
+                        let painter = ui.painter();
+                        painter.galley(rect.min, galley.clone(), p.ink);
+                        // the sender's picture (or the object cube) in the room
+                        // left before its name
+                        if let Some((at, who)) = sender {
+                            let side = pic_side(size);
+                            let c = galley.pos_from_cursor(egui::text::CCursor::new(at)).translate(rect.min.to_vec2());
+                            let r =
+                                egui::Rect::from_center_size(egui::pos2(c.min.x - 2.0 - side * 0.5, c.center().y), egui::vec2(side, side));
+                            bubble_sender(painter, p, pics, wanted_pics, r, &who, line, alpha);
+                        }
+                        // web link badges over their invisible glyph
+                        for (at, url) in badges {
+                            if let Some(g) = range_rects(&galley, rect.min, at..at + 1).first() {
+                                let b = egui::Rect::from_center_size(g.center(), egui::vec2(size, size));
+                                paint_link_badge(painter, p, b, &url, alpha);
+                            }
+                        }
                         let col = color_for(line.kind, p).gamma_multiply(alpha);
                         for (range, link) in line_links {
                             for r in range_rects(&galley, rect.min, range) {
@@ -1100,8 +1281,8 @@ fn bubble_link(ctx: &egui::Context, p: &Palette, world: &World, k: usize, rect: 
             let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
             match link {
                 Link::Url(u) => {
-                    if resp.on_hover_text(u).clicked() {
-                        ui.ctx().open_url(egui::OpenUrl::same_tab(u));
+                    if resp.on_hover_text(format!("{}\n{u}", link_badge_look(p, u).2)).clicked() {
+                        open_web_link(ui.ctx(), u);
                     }
                 }
                 Link::Place(u, place) => {
@@ -1181,6 +1362,35 @@ mod tests {
         assert_eq!(segs[3], Seg::Mention(id));
         let bad = segments("secondlife:///app/agent/nope/about");
         assert!(matches!(bad[0], Seg::Slurl(_)));
+    }
+
+    #[test]
+    fn trusted_links() {
+        for ok in [
+            "https://secondlife.com/destinations",
+            "http://community.secondlife.com/forums",
+            "https://marketplace.secondlife.com:443/p/x",
+            "https://WWW.LindenLab.com",
+            "https://auroraviewer.com",
+            "https://github.com/Aurora-Viewer/Aurora-Viewer/pulls",
+            "https://gist.github.com/x",
+            "https://secondlife.com./x",
+        ] {
+            assert!(trusted_url(ok), "{ok}");
+        }
+        for bad in [
+            "https://example.com",
+            "https://secondlife.com.evil.example/x",
+            "https://evilsecondlife.com",
+            "https://notgithub.com",
+            "https://secondlife.com@evil.example/x",
+            "https://evil.example\\@secondlife.com",
+            "https://github.io",
+            "ftp://secondlife.com/x",
+            "secondlife.com",
+        ] {
+            assert!(!trusted_url(bad), "{bad}");
+        }
     }
 
     #[test]

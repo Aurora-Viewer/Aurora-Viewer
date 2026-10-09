@@ -120,6 +120,9 @@ pub struct Settings {
     pub font_scale: f32,
     pub chat_timestamps: bool,
     pub chat_toast_seconds: f32,
+    /// Ask before opening a web link outside the trusted domains (the box
+    /// « Ne plus me prévenir » of the warning turns it off).
+    pub warn_external_links: bool,
     /// FSMuteAllGroups: refuse every group chat.
     pub mute_all_groups: bool,
     /// FSMuteGroupWhenNoticesDisabled: refuse group chat of groups whose
@@ -443,6 +446,7 @@ impl Default for Settings {
             font_scale: 1.0,
             chat_timestamps: true,
             chat_toast_seconds: 20.0,
+            warn_external_links: true,
             mute_all_groups: false,
             mute_groups_without_notices: false,
             report_blocks: false,

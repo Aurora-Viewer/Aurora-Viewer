@@ -194,6 +194,9 @@ pub enum CtxAction {
     /// Place link of a text (SLURL): world map on it / teleport there, once
     /// confirmed (TeleportViaSLAPP).
     ShowPlace(String, glam::Vec3),
+    /// Web link clicked in a text: opened at once when trusted, else after
+    /// the external link warning.
+    OpenUrl(String),
     TeleportToPlace(String, glam::Vec3),
     TeleportToPlaceConfirmed(String, glam::Vec3),
     /// Rights given to a friend (GrantUserRights).
@@ -882,6 +885,56 @@ pub fn place_teleport_confirm(ctx: &egui::Context, p: &Palette, region: &str) ->
         ui.add_space(10.0);
         ui.horizontal(|ui| {
             if super::widgets::flat_button(ui, p, "Téléporter").clicked() {
+                answer = Some(true);
+            }
+            if super::widgets::flat_button(ui, p, "Annuler").clicked() {
+                answer = Some(false);
+            }
+        });
+    });
+    if modal.should_close() && answer.is_none() {
+        answer = Some(false);
+    }
+    answer
+}
+
+/// Warning before opening a web link outside the trusted domains (phishing,
+/// fake login pages...). Some(true) opens it, Some(false) cancels;
+/// `dont_warn` is the « Ne plus me prévenir » box.
+pub fn external_link_confirm(ctx: &egui::Context, p: &Palette, url: &str, dont_warn: &mut bool) -> Option<bool> {
+    use egui::RichText;
+    let mut answer = None;
+    let modal = egui::Modal::new(egui::Id::new("external_link_confirm")).show(ctx, |ui| {
+        ui.set_width(380.0);
+        ui.horizontal(|ui| {
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::hover());
+            if let Some(t) = super::icons::global("warning") {
+                let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+                ui.painter().image(t.id(), rect, uv, p.amber);
+            }
+            ui.label(RichText::new("Attention avant de cliquer").size(15.0).strong().color(p.ink));
+        });
+        ui.add_space(6.0);
+        ui.label(
+            RichText::new(
+                "Ce lien mène à un site qui n'est pas un site officiel de Second Life ou d'Aurora. \
+                 Méfiez-vous des fausses pages de connexion et des offres trop belles : ne donnez \
+                 jamais votre mot de passe ni vos informations de paiement.",
+            )
+            .size(12.5)
+            .color(p.muted),
+        );
+        ui.add_space(6.0);
+        ui.add(
+            egui::Label::new(RichText::new(url).size(12.0).monospace().color(p.ink))
+                .wrap()
+                .selectable(true),
+        );
+        ui.add_space(8.0);
+        ui.checkbox(dont_warn, RichText::new("Ne plus me prévenir").size(12.5).color(p.muted));
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            if super::widgets::flat_button(ui, p, "Visiter le lien").clicked() {
                 answer = Some(true);
             }
             if super::widgets::flat_button(ui, p, "Annuler").clicked() {
