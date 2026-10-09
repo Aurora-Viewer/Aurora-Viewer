@@ -216,9 +216,127 @@ pub fn parse_texture_entry(data: &[u8]) -> Option<TextureEntry> {
     Some(TextureEntry { faces })
 }
 
+/// Write one TE field like LLPrimitive::packTEField: the last face's value
+/// is the default, then each other distinct value (from the end) with the
+/// bitfield of the faces that have it.
+fn pack_field<const N: usize>(out: &mut Vec<u8>, values: &[[u8; N]]) {
+    let Some(last) = values.len().checked_sub(1) else {
+        return;
+    };
+    out.extend_from_slice(&values[last]);
+    for face in (0..last).rev() {
+        if values[face + 1..=last].contains(&values[face]) {
+            continue; // already sent with a later face
+        }
+        let mut bits: u64 = 0;
+        for i in (0..=face).rev() {
+            if values[i] == values[face] {
+                bits |= 1 << i;
+            }
+        }
+        // big-endian groups of 7 bits, high bit = more to come
+        let mut groups = Vec::with_capacity(7);
+        let mut b = bits;
+        groups.push((b & 0x7f) as u8);
+        b >>= 7;
+        while b != 0 {
+            groups.push((b & 0x7f) as u8 | 0x80);
+            b >>= 7;
+        }
+        out.extend(groups.iter().rev());
+        out.extend_from_slice(&values[face]);
+    }
+}
+
+/// Serialize the first `num_faces` faces for ObjectImage / ObjectUpdate
+/// (LLPrimitive::packTEMessage, indra/llprimitive/llprimitive.cpp,
+/// originally LGPL 2.1). The last field has no terminating zero.
+pub fn pack_texture_entry(te: &TextureEntry, num_faces: usize) -> Vec<u8> {
+    let n = num_faces.min(MAX_TES).min(te.faces.len());
+    let faces = &te.faces[..n];
+    let mut out = Vec::with_capacity(64 + n * 8);
+    if n == 0 {
+        return out;
+    }
+    let to_u8 = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+    let fields_end = |out: &mut Vec<u8>| out.push(0);
+    pack_field(&mut out, &faces.iter().map(|f| *f.texture.as_bytes()).collect::<Vec<_>>());
+    fields_end(&mut out);
+    // white (the common color) is sent as zeros: 255 - byte
+    pack_field(&mut out, &faces.iter().map(|f| f.color.map(|c| 255 - to_u8(c))).collect::<Vec<_>>());
+    fields_end(&mut out);
+    pack_field(&mut out, &faces.iter().map(|f| f.scale_s.to_le_bytes()).collect::<Vec<_>>());
+    fields_end(&mut out);
+    pack_field(&mut out, &faces.iter().map(|f| f.scale_t.to_le_bytes()).collect::<Vec<_>>());
+    fields_end(&mut out);
+    let offset = |v: f32| ((v.clamp(-1.0, 1.0) * 32767.0).round() as i16).to_le_bytes();
+    pack_field(&mut out, &faces.iter().map(|f| offset(f.offset_s)).collect::<Vec<_>>());
+    fields_end(&mut out);
+    pack_field(&mut out, &faces.iter().map(|f| offset(f.offset_t)).collect::<Vec<_>>());
+    fields_end(&mut out);
+    let tau = std::f32::consts::TAU;
+    let rot = |r: f32| (((r % tau) / tau * TEXTURE_ROTATION_PACK_FACTOR).round() as i16).to_le_bytes();
+    pack_field(&mut out, &faces.iter().map(|f| rot(f.rotation)).collect::<Vec<_>>());
+    fields_end(&mut out);
+    pack_field(&mut out, &faces.iter().map(|f| [f.bump_shiny_fullbright]).collect::<Vec<_>>());
+    fields_end(&mut out);
+    pack_field(&mut out, &faces.iter().map(|f| [f.media_flags]).collect::<Vec<_>>());
+    fields_end(&mut out);
+    pack_field(&mut out, &faces.iter().map(|f| [to_u8(f.glow)]).collect::<Vec<_>>());
+    fields_end(&mut out);
+    pack_field(&mut out, &faces.iter().map(|f| *f.material_id.as_bytes()).collect::<Vec<_>>());
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pack_round_trips() {
+        let mut te = TextureEntry::default();
+        te.faces[0].texture = Uuid::from_bytes([3; 16]);
+        te.faces[2].texture = Uuid::from_bytes([3; 16]);
+        te.faces[1].color = [1.0, 0.0, 0.5, 1.0];
+        te.faces[3].scale_s = 4.0;
+        te.faces[4].offset_t = -0.25;
+        te.faces[5].rotation = 1.5;
+        te.faces[6].bump_shiny_fullbright = 0x21;
+        te.faces[7].media_flags = 0x02;
+        te.faces[7].glow = 0.4;
+        te.faces[7].material_id = Uuid::from_bytes([9; 16]);
+        let n = 8;
+        let packed = pack_texture_entry(&te, n);
+        let back = parse_texture_entry(&packed).expect("parses");
+        for i in 0..n {
+            let (a, b) = (&te.faces[i], &back.faces[i]);
+            assert_eq!(a.texture, b.texture, "face {i}");
+            for c in 0..4 {
+                assert!((a.color[c] - b.color[c]).abs() < 0.003);
+            }
+            assert_eq!(a.scale_s, b.scale_s);
+            assert!((a.offset_t - b.offset_t).abs() < 1e-4);
+            assert!((a.rotation - b.rotation).abs() < 1e-3);
+            assert_eq!(a.bump_shiny_fullbright, b.bump_shiny_fullbright);
+            assert_eq!(a.media_flags, b.media_flags);
+            assert!((a.glow - b.glow).abs() < 0.003);
+            assert_eq!(a.material_id, b.material_id);
+        }
+        // the default is the last face's value: faces 0 and 2 are one exception
+        assert_eq!(&packed[..16], &DEFAULT_TEXTURE.as_bytes()[..]);
+        assert_eq!(packed[16], 0b101);
+    }
+
+    #[test]
+    fn pack_wide_bitfields() {
+        let mut te = TextureEntry::default();
+        te.faces[0].scale_t = 2.0;
+        te.faces[40].scale_t = 2.0;
+        let back = parse_texture_entry(&pack_texture_entry(&te, 45)).expect("parses");
+        assert_eq!(back.faces[0].scale_t, 2.0);
+        assert_eq!(back.faces[40].scale_t, 2.0);
+        assert_eq!(back.faces[20].scale_t, 1.0);
+    }
 
     fn build(default_img: [u8; 16], face2_img: [u8; 16]) -> Vec<u8> {
         let mut v = Vec::new();

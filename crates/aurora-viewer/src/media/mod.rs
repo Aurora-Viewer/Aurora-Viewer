@@ -211,6 +211,13 @@ impl MediaImpl {
         }
     }
 
+    /// (media size, texture size) of a loaded media (« Aligner » of the
+    /// build floater's Media tab).
+    pub fn sizes(&self) -> Option<((i32, i32), (i32, i32))> {
+        let p = self.plugin.as_ref()?;
+        Some((p.media_size(), p.texture_size()))
+    }
+
     pub fn is_loaded(&self) -> bool {
         self.plugin.is_some()
     }
@@ -582,6 +589,26 @@ impl MediaManager {
         self.client.clear();
         self.focus = None;
         self.last_parcel_key = None;
+    }
+
+    /// Media data known for an object (fetched with ObjectMedia, or local
+    /// in the demo): the build floater's Media tab reads it.
+    pub fn object_media(&self, object: &Uuid) -> Option<&ObjectMediaData> {
+        self.objects
+            .get(object)
+            .and_then(|o| o.data.as_ref())
+            .or_else(|| self.local_entries.get(object))
+    }
+
+    /// Our own ObjectMedia UPDATE: show it at once (the simulator's new
+    /// media version brings the definitive data); in the demo it is the data.
+    pub fn set_object_media(&mut self, object: Uuid, data: ObjectMediaData, demo: bool) {
+        if let Some(o) = self.objects.get_mut(&object) {
+            o.data = Some(data.clone());
+        }
+        if demo {
+            self.local_entries.insert(object, data);
+        }
     }
 
     /// Offline demo: media on a face without the capability, autoplaying.

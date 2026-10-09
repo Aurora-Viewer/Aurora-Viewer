@@ -70,6 +70,77 @@ impl LegacyMaterial {
     }
 }
 
+impl Default for LegacyMaterial {
+    /// LLMaterial::LLMaterial (llmaterial.cpp).
+    fn default() -> Self {
+        LegacyMaterial {
+            normal_map: Uuid::nil(),
+            normal_st: [1.0, 1.0, 0.0, 0.0],
+            normal_rot: 0.0,
+            specular_map: Uuid::nil(),
+            specular_st: [1.0, 1.0, 0.0, 0.0],
+            specular_rot: 0.0,
+            specular_color: [255; 4],
+            specular_exp: 51,
+            env_intensity: 0,
+            diffuse_alpha_mode: alpha_mode::BLEND,
+            alpha_cutoff: 0,
+        }
+    }
+}
+
+impl LegacyMaterial {
+    /// LLMaterial::asLLSD: offsets, repeats and rotations as integers ×10000.
+    pub fn to_llsd(&self) -> Llsd {
+        let mut m = Llsd::new_map();
+        let f = |v: f32| (v * MATERIALS_MULTIPLIER).round() as i32;
+        m.insert("NormMap", self.normal_map);
+        m.insert("NormRepeatX", f(self.normal_st[0]));
+        m.insert("NormRepeatY", f(self.normal_st[1]));
+        m.insert("NormOffsetX", f(self.normal_st[2]));
+        m.insert("NormOffsetY", f(self.normal_st[3]));
+        m.insert("NormRotation", f(self.normal_rot));
+        m.insert("SpecMap", self.specular_map);
+        m.insert("SpecRepeatX", f(self.specular_st[0]));
+        m.insert("SpecRepeatY", f(self.specular_st[1]));
+        m.insert("SpecOffsetX", f(self.specular_st[2]));
+        m.insert("SpecOffsetY", f(self.specular_st[3]));
+        m.insert("SpecRotation", f(self.specular_rot));
+        m.insert(
+            "SpecColor",
+            Llsd::Array(self.specular_color.iter().map(|c| Llsd::from(*c as i32)).collect()),
+        );
+        m.insert("SpecExp", self.specular_exp as i32);
+        m.insert("EnvIntensity", self.env_intensity as i32);
+        m.insert("DiffuseAlphaMode", self.diffuse_alpha_mode as i32);
+        m.insert("AlphaMaskCutoff", self.alpha_cutoff as i32);
+        m
+    }
+}
+
+/// RenderMaterials PUT body (LLMaterialMgr::processPutQueue): per face
+/// {"Face", "ID" (object local id), "Material"}; no "Material" removes the
+/// face's material.
+pub fn put_body(faces: &[(u8, u32, Option<LegacyMaterial>)]) -> Llsd {
+    let list: Vec<Llsd> = faces
+        .iter()
+        .map(|(face, local_id, mat)| {
+            let mut e = Llsd::new_map();
+            e.insert("Face", *face as i32);
+            e.insert("ID", *local_id as i32);
+            if let Some(m) = mat {
+                e.insert("Material", m.to_llsd());
+            }
+            e
+        })
+        .collect();
+    let mut inner = Llsd::new_map();
+    inner.insert("FullMaterialsPerFace", Llsd::Array(list));
+    let mut m = aurora_llsd::Map::new();
+    m.insert("Zipped".into(), Llsd::Binary(zip_llsd(&inner)));
+    Llsd::Map(m)
+}
+
 /// Zip an LLSD value like LL's `zip_llsd` (binary LLSD, zlib).
 pub fn zip_llsd(v: &Llsd) -> Vec<u8> {
     let raw = aurora_llsd::to_binary(v);
@@ -440,6 +511,26 @@ async fn fetch(http: &reqwest::Client, req: &Request) -> Result<Vec<(Uuid, Legac
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn material_round_trips_and_put_body_unzips() {
+        let m = LegacyMaterial {
+            normal_map: Uuid::from_u128(5),
+            normal_st: [2.0, 0.5, 0.25, -0.125],
+            normal_rot: 1.25,
+            specular_color: [10, 20, 30, 40],
+            specular_exp: 80,
+            ..Default::default()
+        };
+        assert_eq!(LegacyMaterial::from_llsd(&m.to_llsd()), m);
+        let body = put_body(&[(2, 77, Some(m.clone())), (3, 77, None)]);
+        let inner = unzip_llsd(body.get("Zipped").as_binary()).expect("zipped");
+        let faces = inner.get("FullMaterialsPerFace").as_array();
+        assert_eq!(faces.len(), 2);
+        assert_eq!(faces[0].get("ID").as_i32(), 77);
+        assert_eq!(LegacyMaterial::from_llsd(faces[0].get("Material")), m);
+        assert!(!faces[1].has("Material"));
+    }
 
     #[test]
     fn zip_round_trip_and_parse() {

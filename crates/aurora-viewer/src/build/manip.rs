@@ -137,6 +137,9 @@ pub struct Drag {
 
 #[derive(Debug, Default)]
 pub struct Manip {
+    /// Bounds of the reference objects (grid mode « Référence »), set by
+    /// the build tool every frame.
+    pub grid_ref: Option<Bounds>,
     pub hover: Option<Part>,
     pub drag: Option<Drag>,
     arrow_scale: [f32; 3],
@@ -153,11 +156,23 @@ struct Frame {
     prims: usize,
 }
 
-fn frame(world: &World, s: &BuildSettings, sel: &[ObjKey], linked: bool, now: Instant) -> Option<Frame> {
+fn frame(world: &World, s: &BuildSettings, sel: &[ObjKey], linked: bool, now: Instant, grid_ref: Option<&Bounds>) -> Option<Frame> {
     let bounds = bounds_of(world, sel, linked, now)?;
-    let grid = super::grid_of(s, Some(&bounds));
+    let grid = super::grid_of(s, Some(&bounds), grid_ref);
+    // FSBuildPrefs_ActualRoot (LLManip::getPivotPoint): pivot on the
+    // primary object's root prim rather than the selection's center
+    let pivot = if s.actual_root {
+        sel.first()
+            .and_then(|k| world.objects.index_of(k))
+            .map(|i| super::root_of(world, i))
+            .and_then(|r| Scene::object_transform(world, r, now, 0))
+            .map(|(p, _, _)| p)
+            .unwrap_or(bounds.center)
+    } else {
+        bounds.center
+    };
     Some(Frame {
-        pivot: bounds.center,
+        pivot,
         bounds,
         grid,
         prims: highlighted_of(world, sel, linked).len(),
@@ -221,6 +236,7 @@ impl Manip {
             EditMode::Move => pick_translate(cam, f, m),
             EditMode::Rotate => pick_rotate(cam, f, m),
             EditMode::Stretch => pick_scale(cam, f, m),
+            EditMode::Face | EditMode::Align => None,
         }
     }
 
@@ -250,7 +266,7 @@ impl Manip {
         self.hover = if over_ui || sel.is_empty() {
             None
         } else {
-            frame(world, s, sel, linked, now).and_then(|f| self.pick(cam, &f, mode, cursor))
+            frame(world, s, sel, linked, now, self.grid_ref.as_ref()).and_then(|f| self.pick(cam, &f, mode, cursor))
         };
         let h = self.hover;
         self.animate(h);
@@ -269,7 +285,7 @@ impl Manip {
         cursor: (f32, f32),
         now: Instant,
     ) -> bool {
-        let Some(f) = frame(world, s, sel, linked, now) else {
+        let Some(f) = frame(world, s, sel, linked, now, self.grid_ref.as_ref()) else {
             return false;
         };
         let Some(part) = self.pick(cam, &f, mode, cursor) else {
@@ -392,7 +408,10 @@ impl Manip {
 
     #[allow(clippy::too_many_arguments)]
     pub fn draw(&self, p: &mut Painter3d, world: &World, s: &BuildSettings, sel: &[ObjKey], linked: bool, mode: EditMode, now: Instant) {
-        let Some(mut f) = frame(world, s, sel, linked, now) else {
+        if !mode.is_manip() {
+            return;
+        }
+        let Some(mut f) = frame(world, s, sel, linked, now, self.grid_ref.as_ref()) else {
             return;
         };
         let cam = p.cam;
@@ -408,7 +427,7 @@ impl Manip {
         match mode {
             EditMode::Move => self.draw_translate(p, s, &f, drag),
             EditMode::Rotate => self.draw_rotate(p, s, &f, drag, world, sel, now),
-            EditMode::Stretch => self.draw_scale(p, s, &f, drag),
+            EditMode::Stretch | EditMode::Face | EditMode::Align => self.draw_scale(p, s, &f, drag),
         }
         // position / rotation / size readout (LLManip::renderXYZ)
         let values = match mode {
@@ -426,7 +445,7 @@ impl Manip {
                 let deg = |v: f32| (v.to_degrees() / 0.05).round() * 0.05;
                 [deg(x), deg(y), deg(z)]
             }
-            EditMode::Stretch => (f.bounds.half * 2.0).to_array(),
+            EditMode::Stretch | EditMode::Face | EditMode::Align => (f.bounds.half * 2.0).to_array(),
         };
         if drag.is_some() {
             readout(p, values);
@@ -1238,7 +1257,7 @@ fn drag_update(
         .movers
         .iter()
         .map(|m| match d.mode {
-            EditMode::Move => (m.pos + d.delta, m.rot, m.scale),
+            EditMode::Move | EditMode::Face | EditMode::Align => (m.pos + d.delta, m.rot, m.scale),
             EditMode::Rotate => (d.pivot + d.rotation * (m.pos - d.pivot), (d.rotation * m.rot).normalize(), m.scale),
             EditMode::Stretch => scale_target(d, m),
         })
@@ -1383,7 +1402,7 @@ fn scale_face(d: &mut Drag, s: &BuildSettings, cam: &Cam, o: Vec3, dir: Vec3, cu
 /// whole linksets (UPD_LINKED_SETS) unless "Edit linked", roots first.
 fn send_updates(world: &World, d: &Drag, linked: bool, out: &mut Vec<BuildCmd>) {
     let (pos, rot, scale, uniform) = match d.mode {
-        EditMode::Move => (true, false, false, false),
+        EditMode::Move | EditMode::Face | EditMode::Align => (true, false, false, false),
         EditMode::Rotate => (true, true, false, false),
         EditMode::Stretch => (true, false, true, matches!(d.part, Part::Corner(_))),
     };

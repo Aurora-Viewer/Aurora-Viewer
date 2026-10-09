@@ -8,11 +8,18 @@
 //! frame and send MultipleObjectUpdate when the mouse is released (stretching
 //! also every 0.1 s, like LLManipScale).
 
+pub mod align;
+pub mod contents;
+pub mod costs;
 pub mod demo;
+pub mod demo_sim;
 pub mod draw;
+pub mod edits;
 pub mod geom;
+pub mod grab;
 pub mod land;
 pub mod manip;
+pub mod materials;
 pub mod shapes;
 pub mod silhouette;
 pub mod ui;
@@ -78,6 +85,29 @@ pub struct BuildSettings {
     pub land_brush_size: f32,
     /// LandBrushForce (0.1 .. 100, logarithmic slider).
     pub land_brush_force: f32,
+    /// FSBuildPrefs_ActualRoot: the manipulators pivot on the root prim.
+    pub actual_root: bool,
+    /// SelectReflectionProbes: invisible reflection probes can be picked.
+    pub select_probes: bool,
+    /// FSBuildToolDecimalPrecision: decimals of the Object tab numbers.
+    pub decimal_precision: u8,
+    /// CreateToolCopySelection / CopyCenters / CopyRotates.
+    pub copy_selection: bool,
+    pub copy_centers: bool,
+    pub copy_rotates: bool,
+    /// LastSelectedTree / LastSelectedGrass: species name, empty = random.
+    pub last_tree: String,
+    pub last_grass: String,
+    /// FSToolboxExpanded: the tabs are shown under the tools.
+    pub expanded: bool,
+    /// ShowParcelOwners: parcels colored by owner on the ground.
+    pub show_parcel_owners: bool,
+    /// SyncMaterialSettings: normal / specular maps follow the diffuse UVs.
+    pub sync_materials: bool,
+    /// ShowPhysicsShapeInEdit (Features tab eye toggle).
+    pub show_physics_shape: bool,
+    /// FSCopyObjKeySeparator for « Copier l'UUID ».
+    pub copy_key_separator: String,
 }
 
 impl Default for BuildSettings {
@@ -101,6 +131,19 @@ impl Default for BuildSettings {
             land_action: 6,
             land_brush_size: 2.0,
             land_brush_force: 1.0,
+            actual_root: false,
+            select_probes: false,
+            decimal_precision: 5,
+            copy_selection: false,
+            copy_centers: true,
+            copy_rotates: false,
+            last_tree: String::new(),
+            last_grass: String::new(),
+            expanded: true,
+            show_parcel_owners: false,
+            sync_materials: false,
+            show_physics_shape: false,
+            copy_key_separator: ",".into(),
         }
     }
 }
@@ -112,18 +155,48 @@ impl BuildSettings {
     }
 }
 
+/// The five tools of the floater (LLToolCamera, LLToolGrab,
+/// LLToolCompTranslate, LLToolCompCreate, LLToolSelectLand).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tool {
+    Focus,
+    Grab,
     Edit,
     Create,
     Land,
 }
 
+/// The Edit tool's radio: the three manipulators, LLToolFace and QToolAlign.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EditMode {
     Move,
     Rotate,
     Stretch,
+    Face,
+    Align,
+}
+
+impl EditMode {
+    /// Uses the move / rotate / stretch manipulators.
+    pub fn is_manip(self) -> bool {
+        matches!(self, EditMode::Move | EditMode::Rotate | EditMode::Stretch)
+    }
+}
+
+/// Focus tool radio (gCameraBtnZoom / Orbit / Pan).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FocusMode {
+    Zoom,
+    Orbit,
+    Pan,
+}
+
+/// Grab tool radio (gGrabBtnVertical / gGrabBtnSpin).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GrabMode {
+    Move,
+    Lift,
+    Spin,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -156,8 +229,35 @@ pub struct BuildTool {
     pub open: bool,
     pub tool: Tool,
     pub edit_mode: EditMode,
+    pub focus_mode: FocusMode,
+    pub grab_mode: GrabMode,
     /// Selected units (linksets, or prims with "Edit linked"), latest first.
     pub selection: Vec<ObjKey>,
+    /// "Select face" mode: the faces chosen on each selected prim (missing
+    /// = all its faces; LLSelectNode::isTESelected).
+    pub faces: HashMap<ObjKey, Vec<u8>>,
+    /// Last face picked (LLSelectMgr::getLastOperatedTE, ◄ ► part buttons).
+    pub last_face: Option<u8>,
+    /// Number of faces of the selected prims (filled by the app from the
+    /// meshes / volumes: the texture entry always carries all of them).
+    pub face_counts: HashMap<uuid::Uuid, usize>,
+    /// Objects used as the reference grid (LLSelectMgr::mGridObjects).
+    pub grid_objects: Vec<ObjKey>,
+    /// Physics shape and material values of selected prims
+    /// (ObjectPhysicsProperties / GetObjectPhysicsData).
+    pub physics: HashMap<u32, aurora_net::build::PhysicsParams>,
+    /// Land impact, weights and parcel capacity.
+    pub costs: costs::Costs,
+    /// Object inventories (Contents tab).
+    pub contents: contents::Contents,
+    pub grab: grab::Grab,
+    pub align: align::Align,
+    /// Everything the floater keeps between frames (tabs, clipboards,
+    /// fields being typed, secondary floaters).
+    pub ui: ui::FloaterState,
+    /// Capability requests in flight (tag -> what for).
+    pub caps: HashMap<u64, edits::CapPurpose>,
+    next_tag: u64,
     /// Selection mode of `selection`.
     pub selection_linked: bool,
     /// ObjectProperties of selected objects.
@@ -173,7 +273,7 @@ pub struct BuildTool {
     pending_create: Option<(Instant, HashSet<Uuid>)>,
     /// Selection rectangle being dragged (start, current in pixels, extend).
     pub rect: Option<((f32, f32), (f32, f32), bool)>,
-    /// Floater tab (General, Object).
+    /// Floater tab (General, Object, Features, Texture, Contents).
     pub tab: usize,
     /// Last message for the floater's status line.
     pub status: String,
@@ -186,7 +286,21 @@ impl Default for BuildTool {
             open: false,
             tool: Tool::Edit,
             edit_mode: EditMode::Move,
+            focus_mode: FocusMode::Zoom,
+            grab_mode: GrabMode::Move,
             selection: Vec::new(),
+            faces: HashMap::new(),
+            last_face: None,
+            face_counts: HashMap::new(),
+            grid_objects: Vec::new(),
+            physics: HashMap::new(),
+            costs: costs::Costs::default(),
+            contents: contents::Contents::default(),
+            grab: grab::Grab::default(),
+            align: align::Align::default(),
+            ui: ui::FloaterState::default(),
+            caps: HashMap::new(),
+            next_tag: 1,
             selection_linked: false,
             props: HashMap::new(),
             cam: Cam::default(),
@@ -203,7 +317,7 @@ impl Default for BuildTool {
     }
 }
 
-fn root_of(world: &World, mut idx: usize) -> usize {
+pub fn root_of(world: &World, mut idx: usize) -> usize {
     for _ in 0..64 {
         let Some(o) = world.objects.get(idx) else {
             break;
@@ -310,10 +424,13 @@ pub fn bounds_of(world: &World, selection: &[ObjKey], linked: bool, now: Instant
     })
 }
 
-/// LLSelectMgr::getGrid: world grid, or the selection's own frame ("local").
-pub fn grid_of(s: &BuildSettings, bounds: Option<&Bounds>) -> Grid {
+/// LLSelectMgr::getGrid: world grid, the selection's own frame ("local"),
+/// or the frame of the objects chosen as reference (« Utiliser la sélection
+/// pour la grille »).
+pub fn grid_of(s: &BuildSettings, bounds: Option<&Bounds>, reference: Option<&Bounds>) -> Grid {
+    let bounds = if s.grid_mode == 2 { reference } else { bounds };
     match (s.grid_mode, bounds) {
-        (1, Some(b)) => Grid {
+        (1 | 2, Some(b)) => Grid {
             origin: b.center,
             rotation: b.rotation,
             scale: b.half.max(Vec3::splat(0.001)),
@@ -347,16 +464,21 @@ impl BuildTool {
 
     pub fn open_build(&mut self, tool: Tool) {
         self.open = true;
-        self.tool = tool;
+        self.set_tool(tool);
     }
 
-    /// LLFloaterTools::onClose: everything is deselected.
+    /// LLFloaterTools::onClose: everything is deselected, the tools reset
+    /// (resetToolState: zoom, no spin / lift).
     pub fn close(&mut self, world: &mut World, s: &mut BuildSettings) {
         self.open = false;
         self.manip.cancel();
         self.land.cancel();
+        self.grab_up();
         self.deselect_all(world);
+        self.faces.clear();
         s.edit_linked = false;
+        self.focus_mode = FocusMode::Zoom;
+        self.grab_mode = GrabMode::Move;
     }
 
     // ---- selection
@@ -638,6 +760,7 @@ impl BuildTool {
         let ids: Vec<u32> = roots.iter().filter_map(|&r| world.objects.get(r).map(|o| o.key.local_id)).collect();
         self.send(BuildCmd::Link { handle, local_ids: ids });
         self.status = format!("{} objets liés", roots.len());
+        self.costs_stale();
     }
 
     /// Ctrl+Shift+L: every selected prim (SEND_INDIVIDUALS).
@@ -650,6 +773,7 @@ impl BuildTool {
             self.send(BuildCmd::Delink { handle, local_ids: ids });
         }
         self.status = "Objet délié".into();
+        self.costs_stale();
     }
 
     /// Ctrl+Z / Ctrl+Y: the simulator's undo history of the selected roots.
@@ -791,30 +915,44 @@ impl BuildTool {
         }
         self.prune(world, now);
         self.pick_up_created(world, s);
+        self.refresh_costs(world);
+        // the reference grid follows its objects
+        self.grid_objects.retain(|k| world.objects.index_of(k).is_some());
+        self.manip.grid_ref = if self.grid_objects.is_empty() {
+            None
+        } else {
+            bounds_of(world, &self.grid_objects, false, now)
+        };
         match self.tool {
             Tool::Edit => {
                 let mode = self.effective_mode(mods);
-                let mut cmds = Vec::new();
-                self.manip.update(
-                    world,
-                    s,
-                    &self.cam,
-                    &self.selection,
-                    self.selection_linked,
-                    mode,
-                    cursor,
-                    over_ui,
-                    mods,
-                    now,
-                    &mut cmds,
-                );
+                if mode == EditMode::Align {
+                    self.align_hover(world, cursor, mods.shift);
+                }
+                if mode.is_manip() {
+                    let mut cmds = Vec::new();
+                    self.manip.update(
+                        world,
+                        s,
+                        &self.cam,
+                        &self.selection,
+                        self.selection_linked,
+                        mode,
+                        cursor,
+                        over_ui,
+                        mods,
+                        now,
+                        &mut cmds,
+                    );
+                    for c in cmds {
+                        self.send(c);
+                    }
+                }
                 if let Some(r) = self.rect.as_mut() {
                     r.1 = cursor;
                 }
-                for c in cmds {
-                    self.send(c);
-                }
             }
+            Tool::Grab => self.grab_hover(world, cursor, mods),
             Tool::Land => {
                 let mut cmds = Vec::new();
                 self.land.update(world, s, &self.cam, cursor, over_ui, dt, &mut cmds);
@@ -822,18 +960,26 @@ impl BuildTool {
                     self.send(c);
                 }
             }
-            Tool::Create => {}
+            Tool::Create | Tool::Focus => {
+                if let Some(r) = self.rect.as_mut() {
+                    r.1 = cursor;
+                }
+            }
         }
     }
 
     /// Left press in the world while building. `hit` is the picked surface
-    /// point and `target` the object there. Returns whether it was used.
+    /// point, `target` the object there and `surface` its face under the
+    /// cursor (scene picking). Returns whether it was used. The Focus tool
+    /// is the app's (camera).
+    #[allow(clippy::too_many_arguments)]
     pub fn mouse_down(
         &mut self,
         world: &mut World,
         s: &mut BuildSettings,
         hit: Option<Vec3>,
         target: Option<usize>,
+        surface: Option<aurora_net::TouchSurface>,
         cursor: (f32, f32),
         mods: Mods,
     ) -> bool {
@@ -842,21 +988,46 @@ impl BuildTool {
         }
         let now = Instant::now();
         match self.tool {
+            Tool::Focus => false,
+            Tool::Grab => {
+                if let (Some(idx), Some(point)) = (target, hit) {
+                    self.grab_down(world, idx, point, surface.unwrap_or_default(), cursor, mods);
+                } else if !mods.shift {
+                    self.deselect_all(world);
+                }
+                true
+            }
             Tool::Edit => {
                 let mode = self.effective_mode(mods);
-                if self
-                    .manip
-                    .try_grab(world, s, &self.cam, &self.selection, self.selection_linked, mode, cursor, now)
-                {
-                    return true;
+                match mode {
+                    EditMode::Face => {
+                        let face = surface.and_then(|s| u8::try_from(s.face).ok());
+                        self.face_click(world, target, face, mods.shift);
+                        true
+                    }
+                    EditMode::Align => {
+                        if !self.align_apply(world) {
+                            // QToolAlign::pickCallback: whole linksets
+                            s.edit_linked = false;
+                            self.click_select(world, s, target, mods.shift);
+                        }
+                        true
+                    }
+                    _ => {
+                        if self
+                            .manip
+                            .try_grab(world, s, &self.cam, &self.selection, self.selection_linked, mode, cursor, now)
+                        {
+                            return true;
+                        }
+                        // not on a handle: select, or drag a selection rectangle
+                        // (LLToolCompTranslate -> LLToolSelectRect)
+                        let extend = mods.shift || mods.ctrl;
+                        self.click_select(world, s, target, extend);
+                        self.rect = Some((cursor, cursor, extend));
+                        true
+                    }
                 }
-                // not on a handle: select, or drag a selection rectangle
-                // (LLToolCompTranslate -> LLToolSelectRect)
-                let extend = mods.shift || mods.ctrl;
-                self.click_select(world, s, target, extend);
-                self.rect = Some((cursor, cursor, extend));
-                let _ = hit;
-                true
             }
             Tool::Create => {
                 if mods.shift || mods.ctrl {
@@ -864,7 +1035,11 @@ impl BuildTool {
                     self.click_select(world, s, target, true);
                     return true;
                 }
-                self.place(world, s, hit, target, cursor);
+                if s.copy_selection {
+                    self.place_copy(world, s, hit, target, cursor);
+                } else {
+                    self.place(world, s, hit, target, cursor);
+                }
                 true
             }
             Tool::Land => {
@@ -881,6 +1056,51 @@ impl BuildTool {
         }
     }
 
+    /// LLToolFace::pickCallback: a click selects that face of that prim
+    /// alone; Shift adds it or takes it out.
+    fn face_click(&mut self, world: &mut World, target: Option<usize>, face: Option<u8>, shift: bool) {
+        let unit = target.and_then(|i| Self::unit_of(world, i, true));
+        let (Some(unit), Some(face)) = (unit, face) else {
+            if !shift {
+                self.deselect_all(world);
+                self.faces.clear();
+            }
+            return;
+        };
+        if !shift {
+            if !self.selection_linked || self.selection != vec![unit] {
+                self.deselect_all(world);
+                self.selection_linked = true;
+                self.add(world, unit);
+            }
+            self.faces.clear();
+            self.faces.insert(unit, vec![face]);
+        } else {
+            if !self.selection_linked {
+                self.deselect_all(world);
+                self.faces.clear();
+                self.selection_linked = true;
+            }
+            if !self.is_selected(&unit) {
+                self.add(world, unit);
+                self.faces.insert(unit, vec![face]);
+            } else {
+                let n = world.objects.index_of(&unit).map(|i| self.num_faces(world, i)).unwrap_or(1);
+                let list = self.faces.entry(unit).or_insert_with(|| (0..n as u8).collect());
+                if let Some(pos) = list.iter().position(|f| *f == face) {
+                    list.remove(pos);
+                    if list.is_empty() {
+                        self.faces.remove(&unit);
+                        self.deselect(world, &[unit]);
+                    }
+                } else {
+                    list.push(face);
+                }
+            }
+        }
+        self.last_face = Some(face);
+    }
+
     pub fn mouse_up(&mut self, world: &mut World, s: &BuildSettings) {
         if let Some((a, b, extend)) = self.rect.take() {
             self.rect_select(world, s, a, b, extend);
@@ -890,6 +1110,30 @@ impl BuildTool {
         self.land.mouse_up();
         for c in cmds {
             self.send(c);
+        }
+        self.grab_up();
+    }
+
+    /// The region under a point and its offset.
+    fn region_at(world: &World, point: Vec3) -> Option<(RegionHandle, Vec3)> {
+        world.regions.keys().find_map(|&h| {
+            let off = world.region_offset(h)?;
+            let r = world.regions.get(&h)?;
+            let (lx, ly) = (point.x - off.x, point.y - off.y);
+            (lx >= 0.0 && ly >= 0.0 && lx < r.heightmap.size_x as f32 && ly < r.heightmap.size_y as f32).then_some((h, off))
+        })
+    }
+
+    /// The ray of LLToolPlacer::raycastForNewObjPos (region-local): from the
+    /// camera to the land point, or through the object hit.
+    fn placement_ray(&self, world: &World, point: Vec3, target: Option<usize>, cursor: (f32, f32), off: Vec3) -> (Vec3, Vec3, Uuid, bool) {
+        // flora and avatars are not surfaces to build on
+        let target = target.filter(|&i| world.objects.get(i).is_some_and(|o| !o.is_avatar() && !o.is_tree()));
+        let (_, dir) = self.cam.ray(cursor.0, cursor.1);
+        let ray_start = self.cam.eye - off + self.cam.at * (0.1 + 0.01);
+        match target.and_then(|i| world.objects.get(i)) {
+            Some(o) => (ray_start, ray_start + dir * MAX_SELECT_DISTANCE, o.full_id, false),
+            None => (ray_start, point - off, Uuid::nil(), true),
         }
     }
 
@@ -902,46 +1146,107 @@ impl BuildTool {
             self.status = "Trop loin pour créer un objet ici".into();
             return;
         }
-        // flora and avatars are not surfaces to build on
-        let target = target.filter(|&i| world.objects.get(i).is_some_and(|o| !o.is_avatar() && !o.is_tree()));
-        let Some((handle, off)) = world.regions.keys().find_map(|&h| {
-            let off = world.region_offset(h)?;
-            let r = world.regions.get(&h)?;
-            let (lx, ly) = (point.x - off.x, point.y - off.y);
-            (lx >= 0.0 && ly >= 0.0 && lx < r.heightmap.size_x as f32 && ly < r.heightmap.size_y as f32).then_some((h, off))
-        }) else {
+        let Some((handle, off)) = Self::region_at(world, point) else {
             return;
         };
-        let (_, dir) = self.cam.ray(cursor.0, cursor.1);
-        let ray_start = self.cam.eye - off + self.cam.at * (0.1 + 0.01);
-        let (ray_end, target_id, bypass) = match target.and_then(|i| world.objects.get(i)) {
-            Some(o) => (ray_start + dir * MAX_SELECT_DISTANCE, o.full_id, false),
-            None => (point - off, Uuid::nil(), true),
+        let (ray_start, ray_end, target_id, bypass) = self.placement_ray(world, point, target, cursor, off);
+        let random = Uuid::new_v4().as_u128() as u32;
+        let n = shapes::SHAPES.len();
+        let plant = s.create_shape == n || s.create_shape == n + 1;
+        let (pcode, shape, rotation, state, scale, flags) = if plant {
+            // trees and grass: not created selected (LLToolPlacer)
+            let tree = s.create_shape == n;
+            let state = if tree {
+                shapes::plant_species(&shapes::TREE_SPECIES, &s.last_tree, random)
+            } else {
+                shapes::plant_species(&shapes::GRASS_SPECIES, &s.last_grass, random)
+            };
+            let scale = if tree {
+                Vec3::from_array(s.new_prim_size)
+            } else {
+                // random grass patch: 10..30 × 10..30 × 1..3
+                let r = |k: u32| ((random >> k) & 0xff) as f32 / 255.0;
+                Vec3::new(10.0 + r(0) * 20.0, 10.0 + r(8) * 20.0, 1.0 + r(16) * 2.0)
+            };
+            let pcode = if tree {
+                aurora_prim::params::LL_PCODE_LEGACY_TREE
+            } else {
+                aurora_prim::params::LL_PCODE_LEGACY_GRASS
+            };
+            (pcode, aurora_prim::RawShape::default(), glam::Quat::IDENTITY, state, scale, 0)
+        } else {
+            let sh = &shapes::SHAPES[s.create_shape.min(n - 1)];
+            (
+                aurora_prim::params::LL_PCODE_VOLUME,
+                sh.raw(),
+                sh.rotation(),
+                0,
+                Vec3::from_array(s.new_prim_size).clamp(Vec3::splat(MIN_PRIM_SCALE), Vec3::splat(MAX_PRIM_SCALE)),
+                FLAGS_CREATE_SELECTED,
+            )
         };
-        let shape = &shapes::SHAPES[s.create_shape.min(shapes::SHAPES.len() - 1)];
         let p = aurora_net::build::NewPrim {
             handle,
             group_id: Uuid::nil(),
-            pcode: aurora_prim::params::LL_PCODE_VOLUME,
+            pcode,
             material: s.new_prim_material,
-            add_flags: FLAGS_CREATE_SELECTED,
-            shape: shape.raw(),
+            add_flags: flags,
+            shape,
             ray_start,
             ray_end,
             ray_target: target_id,
             ray_end_is_intersection: false,
             bypass_raycast: bypass,
-            scale: Vec3::from_array(s.new_prim_size).clamp(Vec3::splat(MIN_PRIM_SCALE), Vec3::splat(MAX_PRIM_SCALE)),
-            rotation: shape.rotation(),
-            state: 0,
+            scale,
+            rotation,
+            state,
         };
         self.deselect_all(world);
-        self.expect_created(world);
+        if !plant {
+            self.expect_created(world);
+        }
         self.send(BuildCmd::Add(Box::new(p)));
         // LLToolPlacer::addObject
         world.ui_sounds.push(crate::ui_sound::UiSound::ObjectCreate);
         if !s.keep_tool {
-            self.tool = Tool::Edit;
+            self.set_tool(Tool::Edit);
+            self.edit_mode = EditMode::Move;
+        }
+    }
+
+    /// « Copier la sélection »: ObjectDuplicateOnRay of the selected roots
+    /// where the ray hits (LLToolPlacer::addDuplicate).
+    fn place_copy(&mut self, world: &mut World, s: &BuildSettings, hit: Option<Vec3>, target: Option<usize>, cursor: (f32, f32)) {
+        let Some(point) = hit else { return };
+        let roots = self.roots(world);
+        if roots.is_empty() {
+            self.status = "Sélectionnez d'abord les objets à copier.".into();
+            return;
+        }
+        let Some((_, off)) = Self::region_at(world, point) else { return };
+        let (ray_start, ray_end, ray_target, bypass) = self.placement_ray(world, point, target, cursor, off);
+        let mut by_region: HashMap<RegionHandle, Vec<u32>> = HashMap::new();
+        for r in roots {
+            if let Some(o) = world.objects.get(r) {
+                by_region.entry(o.key.region).or_default().push(o.key.local_id);
+            }
+        }
+        for (handle, local_ids) in by_region {
+            self.send(BuildCmd::DuplicateOnRay {
+                handle,
+                local_ids,
+                group_id: Uuid::nil(),
+                ray_start,
+                ray_end,
+                ray_target,
+                bypass_raycast: bypass,
+                copy_centers: s.copy_centers,
+                copy_rotates: s.copy_rotates,
+            });
+        }
+        world.ui_sounds.push(crate::ui_sound::UiSound::ObjectCreate);
+        if !s.keep_tool {
+            self.set_tool(Tool::Edit);
             self.edit_mode = EditMode::Move;
         }
     }
@@ -975,10 +1280,19 @@ impl BuildTool {
         match self.tool {
             Tool::Edit => {
                 let mode = self.effective_mode(mods);
-                self.manip.draw(&mut p, world, s, &self.selection, self.selection_linked, mode, now);
+                if mode == EditMode::Align {
+                    self.align_draw(&mut p, world);
+                } else {
+                    self.manip.draw(&mut p, world, s, &self.selection, self.selection_linked, mode, now);
+                }
             }
-            Tool::Land => self.land.draw(&mut p, world, s),
-            Tool::Create => {}
+            Tool::Land => {
+                self.land.draw(&mut p, world, s);
+                if s.show_parcel_owners {
+                    land::draw_owners(&mut p, world);
+                }
+            }
+            Tool::Create | Tool::Grab | Tool::Focus => {}
         }
         if let Some((a, b, _)) = self.rect
             && (a.0 - b.0).abs() + (a.1 - b.1).abs() > 3.0

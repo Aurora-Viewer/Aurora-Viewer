@@ -726,6 +726,7 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
             let reply = aurora_llsd::llsd_map!("contents" => Llsd::Array(contents));
             vec![NetEvent::TaskInventory {
                 object: *object,
+                serial: None,
                 result: aurora_net::task_inventory::parse_cap(&reply),
             }]
         }

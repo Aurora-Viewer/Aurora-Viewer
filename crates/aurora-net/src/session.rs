@@ -34,6 +34,7 @@ mod social_net;
 /// About Land: parcel selection, lists, covenant (land.rs).
 #[path = "session_land.rs"]
 mod land_net;
+use crate::build::BUILD_PARCEL_SEQ;
 
 const SIM_TIMEOUT: Duration = Duration::from_secs(60);
 const AGENT_UPDATE_INTERVAL: Duration = Duration::from_millis(100);
@@ -530,6 +531,20 @@ impl Session<'_> {
                     }),
                 );
             }
+            return;
+        }
+        if info.sequence_id >= BUILD_PARCEL_SEQ {
+            // the build tools' requests (capacity line, land tool), any region
+            let handle = self.handle_of(sim);
+            let sequence = info.sequence_id;
+            emit(
+                self.sh,
+                NetEvent::SelectedParcel {
+                    handle,
+                    sequence,
+                    parcel: Arc::new(info),
+                },
+            );
             return;
         }
         if self.main != Some(sim) || info.sequence_id < 0 {
@@ -1556,7 +1571,7 @@ impl Session<'_> {
     fn on_eq_event(&mut self, e: EqEvent) {
         log::debug!("EQ {} from {}", e.message, e.sim);
         let b = &e.body;
-        if self.on_social_eq(&e.message, b) || self.on_land_eq(&e.message, b) {
+        if self.on_social_eq(&e.message, b) || self.on_land_eq(&e.message, b) || self.on_build_eq(&e.message, b) {
             return;
         }
         match e.message.as_str() {
@@ -1706,7 +1721,11 @@ impl Session<'_> {
 
     fn dispatch(&mut self, from: SocketAddr, pkt: &IncomingPacket) -> Result<(), aurora_msg::DecodeError> {
         let id = pkt.id;
-        if self.dispatch_object_actions(from, pkt)? || self.dispatch_social(from, pkt)? || self.dispatch_land(from, pkt)? {
+        if self.dispatch_object_actions(from, pkt)?
+            || self.dispatch_social(from, pkt)?
+            || self.dispatch_land(from, pkt)?
+            || self.dispatch_build(pkt)?
+        {
             return Ok(());
         }
         if id == PacketAck::ID {

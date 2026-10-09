@@ -88,6 +88,30 @@ impl MediaEntry {
         e
     }
 
+    /// LLMediaEntry::asLLSD (ObjectMedia UPDATE, one per face).
+    pub fn to_llsd(&self) -> Llsd {
+        let mut m = Llsd::new_map();
+        m.insert("alt_image_enable", self.alt_image_enable);
+        m.insert("controls", self.controls as i32);
+        m.insert("current_url", self.current_url.clone());
+        m.insert("home_url", self.home_url.clone());
+        m.insert("auto_loop", self.auto_loop);
+        m.insert("auto_play", self.auto_play);
+        m.insert("auto_scale", self.auto_scale);
+        m.insert("auto_zoom", self.auto_zoom);
+        m.insert("first_click_interact", self.first_click_interact);
+        m.insert("width_pixels", self.width_pixels as i32);
+        m.insert("height_pixels", self.height_pixels as i32);
+        m.insert("whitelist_enable", self.whitelist_enable);
+        m.insert(
+            "whitelist",
+            Llsd::Array(self.whitelist.iter().map(|w| Llsd::from(w.clone())).collect()),
+        );
+        m.insert("perms_interact", self.perms_interact as i32);
+        m.insert("perms_control", self.perms_control as i32);
+        m
+    }
+
     /// URL to show: the current one, else home (LLViewerMediaImpl).
     pub fn url(&self) -> &str {
         if self.current_url.trim().is_empty() {
@@ -350,6 +374,20 @@ pub fn parse_get_response(v: &Llsd, object: Uuid) -> Result<ObjectMediaData, Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn entry_round_trips() {
+        let e = MediaEntry {
+            home_url: "https://example.com".into(),
+            auto_play: true,
+            width_pixels: 512,
+            whitelist_enable: true,
+            whitelist: vec!["example.com".into()],
+            perms_interact: 3,
+            ..Default::default()
+        };
+        assert_eq!(MediaEntry::from_llsd(&e.to_llsd()), e);
+    }
 
     #[test]
     fn version_strings() {

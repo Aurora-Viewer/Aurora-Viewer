@@ -17,7 +17,12 @@ const PARCEL_GRID: f32 = 4.0;
 /// LLViewerParcelMgr PARCEL_POST_HEIGHT.
 const POST_HEIGHT: f32 = 0.666;
 
-pub const ACTION_NAMES: [&str; 6] = ["Aplanir", "Élever", "Abaisser", "Lisser", "Rendre irrégulier", "Rétablir"];
+/// Labels of the land radio (floater_tools.xml, French skin).
+pub const ACTION_NAMES: [&str; 6] = ["Aplatir", "Élever", "Abaisser", "Lisser", "Bosseler", "Annuler modification"];
+
+/// ParcelPropertiesRequest sequence ids of the land selection (the build
+/// floater's capacity line uses the 1000 before them).
+const PARCEL_SEQ: i32 = aurora_net::build::BUILD_PARCEL_SEQ + 1000;
 
 #[derive(Debug, Default)]
 pub struct LandTool {
@@ -33,6 +38,11 @@ pub struct LandTool {
     dragging: Option<(Vec2, Vec2)>,
     pub selection: Option<(Vec2, Vec2)>,
     message: Option<String>,
+    /// Parcel properties of the selected land (LLViewerParcelMgr's
+    /// selection), asked for when the selection changes.
+    pub parcel: Option<(RegionHandle, std::sync::Arc<aurora_net::ParcelInfo>)>,
+    parcel_seq: i32,
+    request_parcel: bool,
 }
 
 /// Where the mouse ray meets the terrain (marching the height maps).
@@ -110,6 +120,8 @@ impl LandTool {
     pub fn mouse_up(&mut self) {
         self.brushing = None;
         if let Some((a, b)) = self.dragging.take() {
+            self.request_parcel = true;
+            self.parcel = None;
             if (a - b).length() >= 0.5 {
                 // round outwards to the parcel grid (LLToolSelectLand::roundXY)
                 let lo = (a.min(b) / PARCEL_GRID).floor() * PARCEL_GRID;
@@ -190,6 +202,9 @@ impl LandTool {
         // gFPSClamped: frame rate clamped to 1..200, smoothed (fps + 4 old) / 5
         let fps = (1.0 / dt.max(1e-4)).clamp(1.0, 200.0);
         self.fps = if self.fps <= 0.0 { 10.0 } else { (fps + 4.0 * self.fps) / 5.0 };
+        if std::mem::take(&mut self.request_parcel) {
+            self.ask_parcel(world, out);
+        }
         let (o, d) = cam.ray(cursor.0, cursor.1);
         let hit = if over_ui && self.brushing.is_none() && self.dragging.is_none() {
             None
@@ -287,6 +302,46 @@ impl LandTool {
         }
     }
 
+    /// ParcelPropertiesRequest for the selected land, in the region of its
+    /// south-west corner (LLViewerParcelMgr::selectLand).
+    fn ask_parcel(&mut self, world: &World, out: &mut Vec<BuildCmd>) {
+        let Some((lo, hi)) = self.selection else { return };
+        let Some((handle, off)) = region_at(world, lo.extend(0.0) + Vec3::new(0.01, 0.01, 0.0)) else {
+            return;
+        };
+        let (a, b) = (lo - off.truncate(), hi - off.truncate());
+        self.parcel_seq = PARCEL_SEQ + (self.parcel_seq + 1 - PARCEL_SEQ).rem_euclid(1000);
+        out.push(BuildCmd::ParcelRequest {
+            handle,
+            sequence: self.parcel_seq,
+            snap: false,
+            west: a.x,
+            south: a.y,
+            east: b.x,
+            north: b.y,
+        });
+    }
+
+    /// The answer to `ask_parcel`.
+    pub fn on_selected_parcel(&mut self, handle: RegionHandle, sequence: i32, parcel: std::sync::Arc<aurora_net::ParcelInfo>) {
+        if sequence == self.parcel_seq {
+            self.parcel = Some((handle, parcel));
+        }
+    }
+
+    /// The selection, in its region's coordinates: (region, west, south, east, north).
+    pub fn selection_local(&self, world: &World) -> Option<(RegionHandle, f32, f32, f32, f32)> {
+        let (lo, hi) = self.selection?;
+        let (handle, off) = region_at(world, lo.extend(0.0) + Vec3::new(0.01, 0.01, 0.0))?;
+        let (a, b) = (lo - off.truncate(), hi - off.truncate());
+        Some((handle, a.x, a.y, b.x, b.y))
+    }
+
+    /// Area of the selection (m²).
+    pub fn selection_area(&self) -> f32 {
+        self.selection.map(|(a, b)| (b.x - a.x) * (b.y - a.y)).unwrap_or(0.0)
+    }
+
     /// Undo the last stroke (UndoLand to every region it touched).
     pub fn undo(&mut self, out: &mut Vec<BuildCmd>) {
         for handle in self.last_regions.drain(..) {
@@ -361,6 +416,47 @@ impl LandTool {
             p.flush();
         }
     }
+}
+
+/// « Afficher les propriétaires » (ShowParcelOwners, LLViewerParcelOverlay
+/// colours): the 4 m parcel cells around the camera tinted by ownership
+/// (green yours, cyan group, red others, yellow for sale, purple auction,
+/// grey public), drawn on the ground.
+pub fn draw_owners(p: &mut Painter3d, world: &World) {
+    const RANGE: f32 = 64.0;
+    let eye = p.cam.eye;
+    for (h, (cx, cy, data)) in &world.map.overlays {
+        let Some(off) = world.region_offset(*h) else { continue };
+        for j in 0..*cy {
+            for i in 0..*cx {
+                let (x, y) = (off.x + i as f32 * PARCEL_GRID, off.y + j as f32 * PARCEL_GRID);
+                if (x + 2.0 - eye.x).abs() > RANGE || (y + 2.0 - eye.y).abs() > RANGE {
+                    continue;
+                }
+                let Some(b) = data.get((j * cx + i) as usize) else { continue };
+                let color = match b & 0x07 {
+                    3 => rgba(0.0, 0.8, 0.0, 0.3),
+                    2 => rgba(0.0, 0.8, 0.8, 0.3),
+                    1 => rgba(0.85, 0.0, 0.0, 0.3),
+                    4 => rgba(0.9, 0.9, 0.0, 0.3),
+                    5 => rgba(0.65, 0.25, 0.85, 0.3),
+                    _ => rgba(0.55, 0.55, 0.55, 0.3),
+                };
+                let z = |dx: f32, dy: f32| world.ground_height(Vec3::new(x + dx, y + dy, 0.0)).unwrap_or(0.0) + 0.05;
+                let g = PARCEL_GRID;
+                p.quad(
+                    [
+                        Vec3::new(x, y, z(0.0, 0.0)),
+                        Vec3::new(x + g, y, z(g, 0.0)),
+                        Vec3::new(x + g, y + g, z(g, g)),
+                        Vec3::new(x, y + g, z(0.0, g)),
+                    ],
+                    color,
+                );
+            }
+        }
+    }
+    p.flush();
 }
 
 #[cfg(test)]

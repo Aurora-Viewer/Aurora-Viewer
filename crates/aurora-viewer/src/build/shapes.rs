@@ -34,7 +34,7 @@ pub const SHAPES: [Shape; 13] = [
     shape("Cube", LL_PCODE_PROFILE_SQUARE, LL_PCODE_PATH_LINE, (100, 100)),
     Shape {
         shear_x: -50,
-        ..shape("Prisme", LL_PCODE_PROFILE_SQUARE, LL_PCODE_PATH_LINE, (200, 100))
+        ..shape("Prisme droit", LL_PCODE_PROFILE_SQUARE, LL_PCODE_PATH_LINE, (200, 100))
     },
     shape("Pyramide", LL_PCODE_PROFILE_SQUARE, LL_PCODE_PATH_LINE, (200, 200)),
     shape("Tétraèdre", LL_PCODE_PROFILE_EQUALTRI, LL_PCODE_PATH_LINE, (200, 200)),
@@ -69,6 +69,38 @@ pub const SHAPES: [Shape; 13] = [
         ..shape("Anneau", LL_PCODE_PROFILE_EQUALTRI, LL_PCODE_PATH_CIRCLE, (100, 175))
     },
 ];
+
+/// Species of trees.xml / grass.xml, in species id order: the Create
+/// tool's tree / grass combo (FIRE-7802), the id goes in ObjectAdd State.
+pub const TREE_SPECIES: [&str; 21] = [
+    "Pine 1",
+    "Oak",
+    "Tropical Bush 1",
+    "Palm 1",
+    "Dogwood",
+    "Tropical Bush 2",
+    "Palm 2",
+    "Cypress 1",
+    "Cypress 2",
+    "Pine 2",
+    "Plumeria",
+    "Winter Pine 1",
+    "Winter Aspen",
+    "Winter Pine 2",
+    "Eucalyptus",
+    "Fern",
+    "Eelgrass",
+    "Sea Sword",
+    "Kelp 1",
+    "Beach Grass 1",
+    "Kelp 2",
+];
+pub const GRASS_SPECIES: [&str; 6] = ["Grass 0", "Grass 1", "Grass 2", "Grass 3", "Grass 4", "undergrowth_1"];
+
+/// get_selected_plant (lltoolplacer.cpp): the named species, else a random one.
+pub fn plant_species(list: &[&str], name: &str, random: u32) -> u8 {
+    list.iter().position(|n| *n == name).unwrap_or(random as usize % list.len().max(1)) as u8
+}
 
 impl Shape {
     pub fn raw(&self) -> RawShape {

@@ -175,6 +175,110 @@ impl PbrOverride {
     }
 }
 
+impl PbrOverride {
+    /// The glTF document sent as `gltf_json` to ModifyMaterialParams
+    /// (`LLGLTFMaterial::asJSON` / `writeToModel` of an override material,
+    /// llgltfmaterial.cpp, originally LGPL 2.1). Unset values are written
+    /// with their defaults (the simulator ignores those); set values equal
+    /// to a default are nudged by FLT_EPSILON (`setBaseColorFactor(..., true)`
+    /// etc.) or flagged in "extras" so that they still override.
+    pub fn to_gltf_json(&self) -> String {
+        use serde_json::{Value, json};
+        let eps = f32::EPSILON;
+        let mut images: Vec<Value> = Vec::new();
+        let mut textures: Vec<Value> = Vec::new();
+        let mut slot = |id: Uuid, t: &TextureTransform| -> Option<Value> {
+            let blank = *t == TextureTransform::default();
+            if id.is_nil() && blank {
+                return None;
+            }
+            images.push(json!({ "uri": id.to_string() }));
+            textures.push(json!({ "source": images.len() - 1 }));
+            let mut info = json!({ "index": textures.len() - 1 });
+            if !blank {
+                info["extensions"] = json!({
+                    "KHR_texture_transform": {
+                        "offset": [t.offset[0], t.offset[1]],
+                        "scale": [t.scale[0], t.scale[1]],
+                        "rotation": t.rotation,
+                    }
+                });
+            }
+            Some(info)
+        };
+        let base = slot(self.textures[0], &self.transforms[0]);
+        let normal = slot(self.textures[1], &self.transforms[1]);
+        let mr = slot(self.textures[2], &self.transforms[2]);
+        let emissive = slot(self.textures[3], &self.transforms[3]);
+        // occlusion: the same texture as metallic-roughness (ORM)
+        let occlusion = slot(self.textures[2], &self.transforms[2]);
+
+        let mut bc = self.base_color_factor.unwrap_or([1.0; 4]);
+        if self.base_color_factor == Some([1.0; 4]) {
+            bc[3] -= eps;
+        }
+        let near_one = |v: Option<f32>| match v {
+            Some(v) => v.clamp(0.0, 1.0 - eps),
+            None => 1.0,
+        };
+        let mut pbr = json!({
+            "baseColorFactor": bc,
+            "metallicFactor": near_one(self.metallic_factor),
+            "roughnessFactor": near_one(self.roughness_factor),
+        });
+        if let Some(b) = base {
+            pbr["baseColorTexture"] = b;
+        }
+        if let Some(m) = mr {
+            pbr["metallicRoughnessTexture"] = m;
+        }
+        let mut cutoff = self.alpha_cutoff.unwrap_or(0.5);
+        if self.alpha_cutoff == Some(0.5) {
+            cutoff -= eps;
+        }
+        let mode = match self.alpha_mode.unwrap_or_default() {
+            AlphaMode::Opaque => "OPAQUE",
+            AlphaMode::Blend => "BLEND",
+            AlphaMode::Mask => "MASK",
+        };
+        let mut mat = json!({
+            "pbrMetallicRoughness": pbr,
+            "alphaMode": mode,
+            "alphaCutoff": cutoff,
+            "doubleSided": self.double_sided.unwrap_or(false),
+        });
+        if let Some(e) = self.emissive_factor {
+            let e = if e == [0.0; 3] { [eps, 0.0, 0.0] } else { e };
+            mat["emissiveFactor"] = json!(e);
+        }
+        for (k, v) in [
+            ("normalTexture", normal),
+            ("emissiveTexture", emissive),
+            ("occlusionTexture", occlusion),
+        ] {
+            if let Some(v) = v {
+                mat[k] = v;
+            }
+        }
+        let mut extras = serde_json::Map::new();
+        if self.alpha_mode == Some(AlphaMode::Opaque) {
+            extras.insert("override_alpha_mode".into(), Value::Bool(true));
+        }
+        if self.double_sided == Some(false) {
+            extras.insert("override_double_sided".into(), Value::Bool(true));
+        }
+        if !extras.is_empty() {
+            mat["extras"] = Value::Object(extras);
+        }
+        let mut doc = json!({ "asset": { "version": "2.0" }, "materials": [mat] });
+        if !images.is_empty() {
+            doc["images"] = Value::Array(images);
+            doc["textures"] = Value::Array(textures);
+        }
+        doc.to_string()
+    }
+}
+
 impl PbrMaterial {
     /// `LLGLTFMaterial::applyOverride`: the render material of a face is its
     /// base material with the override on top.
@@ -431,6 +535,42 @@ fn material_from_gltf(model: &Value) -> PbrMaterial {
 mod tests {
     use super::*;
     use aurora_llsd::llsd_map;
+
+    #[test]
+    fn override_json_reads_back() {
+        let o = PbrOverride {
+            textures: [Uuid::from_u128(1), Uuid::nil(), Uuid::from_u128(3), Uuid::nil()],
+            base_color_factor: Some([0.5, 0.25, 1.0, 1.0]),
+            metallic_factor: Some(0.2),
+            roughness_factor: Some(1.0),
+            alpha_mode: Some(AlphaMode::Mask),
+            alpha_cutoff: Some(0.3),
+            emissive_factor: Some([0.1, 0.2, 0.3]),
+            transforms: [
+                TextureTransform {
+                    offset: [0.5, 0.0],
+                    scale: [2.0, 2.0],
+                    rotation: 0.5,
+                },
+                TextureTransform::default(),
+                TextureTransform::default(),
+                TextureTransform::default(),
+            ],
+            ..Default::default()
+        };
+        let m = parse_material_asset(o.to_gltf_json().as_bytes()).expect("parses");
+        assert_eq!(m.base_color_texture, Some(Uuid::from_u128(1)));
+        assert_eq!(m.normal_texture, None);
+        assert_eq!(m.metallic_roughness_texture, Some(Uuid::from_u128(3)));
+        assert_eq!(m.base_color_factor, [0.5, 0.25, 1.0, 1.0]);
+        assert!((m.metallic_factor - 0.2).abs() < 1e-6);
+        // 1.0 is the default: nudged so that it still overrides
+        assert!(m.roughness_factor < 1.0 && m.roughness_factor > 0.999);
+        assert_eq!(m.alpha_mode, AlphaMode::Mask);
+        assert!((m.alpha_cutoff - 0.3).abs() < 1e-6);
+        assert_eq!(m.transforms[0].scale, [2.0, 2.0]);
+        assert!((m.emissive_factor[2] - 0.3).abs() < 1e-6);
+    }
 
     const BASE: &str = "11111111-2222-3333-4444-555555555555";
     const NORMAL: &str = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
