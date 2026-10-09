@@ -213,12 +213,19 @@ function Install-Tool([string]$Id, [string]$What, [string[]]$Extra = @()) {
 Show-Banner
 
 # Proposed folder: the parent of the clone this script runs from, or the
-# current folder (the one-liner runs a copy saved in %TEMP%).
+# current folder (the one-liner runs a copy saved in %TEMP%), or its parent
+# when the current folder is the repository itself (no clone inside a clone).
+function Test-Repo([string]$Dir) {
+    $Dir -and (Test-Path (Join-Path $Dir 'AGENTS.md')) -and (Test-Path (Join-Path $Dir 'Cargo.toml'))
+}
 $fromClone = if ($PSScriptRoot) { Split-Path $PSScriptRoot -Parent }
-$proposed = if ($fromClone -and (Test-Path (Join-Path $fromClone 'AGENTS.md')) -and (Test-Path (Join-Path $fromClone 'Cargo.toml'))) {
+$here = (Get-Location).Path
+$proposed = if (Test-Repo $fromClone) {
     Split-Path $fromClone -Parent
+} elseif (Test-Repo $here) {
+    Split-Path $here -Parent
 } else {
-    (Get-Location).Path
+    $here
 }
 
 if ($Path) {
