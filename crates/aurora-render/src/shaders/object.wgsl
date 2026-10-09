@@ -85,10 +85,9 @@ fn face_st(in: VsIn, rec: DrawRecord) -> vec2<f32> {
     return in.uv;
 }
 
-// LL texture-entry transform about the face center (LLFace xform), then GL->wgpu V flip.
-// `sto`, `rot`: scale s, t, offset s, t and rotation (diffuse, or a legacy
-// material's normal / specular map).
-fn ll_uv(st: vec2<f32>, sto: vec4<f32>, rot: f32) -> vec2<f32> {
+// LL texture-entry transform about the face center (LLFace xform), in GL
+// texture space (t up). `sto`, `rot`: scale s, t, offset s, t and rotation.
+fn ll_xform(st: vec2<f32>, sto: vec4<f32>, rot: f32) -> vec2<f32> {
     var s = st.x - 0.5;
     var t = st.y - 0.5;
     let ca = cos(rot);
@@ -98,7 +97,14 @@ fn ll_uv(st: vec2<f32>, sto: vec4<f32>, rot: f32) -> vec2<f32> {
     t = -tmp * sa + t * ca;
     s = s * sto.x + sto.z + 0.5;
     t = t * sto.y + sto.w + 0.5;
-    return vec2<f32>(s, 1.0 - t);
+    return vec2<f32>(s, t);
+}
+
+// LL texture-entry transform (diffuse, or a legacy material's normal /
+// specular map), then GL->wgpu V flip.
+fn ll_uv(st: vec2<f32>, sto: vec4<f32>, rot: f32) -> vec2<f32> {
+    let r = ll_xform(st, sto, rot);
+    return vec2<f32>(r.x, 1.0 - r.y);
 }
 
 // textureUtilV.glsl texture_transform: SL (GL) t -> glTF v = 1 - t, then
@@ -120,6 +126,148 @@ fn te_uv(uv: vec2<f32>, rec: DrawRecord) -> vec2<f32> {
     return ll_uv(uv, rec.uv_st, rec.params.x);
 }
 
+// ------------------------------------------------------ texture animation
+// llSetTextureAnim, evaluated per vertex from the renderer clock (`clock`:
+// ms, sub-ms fraction bits; Frame / ShadowParams anim_clock). A line-by-line
+// copy of aurora-render/src/tex_anim.rs (clock_counter, frame_from_counter),
+// the port of LLViewerTextureAnim::animateTextures
+// (indra/newview/llviewertextureanim.cpp, LGPL 2.1) and of the texture matrix
+// of LLVOVolume::animateTextures: the animation replaces the rotation
+// (ROTATE), the repeats (SCALE) or the offsets and repeats (frame grid) of the
+// face's texture transform, `anim_xf` holds the texture entry's other parts.
+
+const TA_LOOP: u32 = 2u;
+const TA_REVERSE: u32 = 4u;
+const TA_PING_PONG: u32 = 8u;
+const TA_SMOOTH: u32 = 16u;
+const TA_ROTATE: u32 = 32u;
+const TA_SCALE: u32 = 64u;
+
+struct TexAnimDef {
+    mode: u32,
+    size_x: f32,
+    size_y: f32,
+    start: f32,
+    rate: f32,
+    num: f32,
+    full: f32,
+};
+
+fn tex_anim_def(rec: DrawRecord) -> TexAnimDef {
+    var d: TexAnimDef;
+    let packed = rec.flags.w;
+    d.mode = packed & 0xffu;
+    d.size_x = f32((packed >> 8u) & 0xffu);
+    d.size_y = f32((packed >> 16u) & 0xffu);
+    d.start = bitcast<f32>(rec.anim.y);
+    let length = bitcast<f32>(rec.anim.z);
+    d.rate = bitcast<f32>(rec.anim.w);
+    d.num = select(max(d.size_x * d.size_y, 1.0), length, length != 0.0);
+    d.full = d.num;
+    if ((d.mode & TA_PING_PONG) != 0u) {
+        if ((d.mode & TA_SMOOTH) != 0u) {
+            d.full = 2.0 * d.num;
+        } else if ((d.mode & TA_LOOP) != 0u) {
+            d.full = max(2.0 * d.num - 2.0, 1.0);
+        } else {
+            d.full = max(2.0 * d.num - 1.0, 1.0);
+        }
+    }
+    return d;
+}
+
+// LOOP wraps (C fmod), one-shot stops on the last frame.
+fn tex_anim_wrap(d: TexAnimDef, raw: f32) -> f32 {
+    if ((d.mode & TA_LOOP) != 0u) {
+        return raw % d.full;
+    }
+    return min(d.full - 1.0, raw);
+}
+
+// Wrapped frame counter at the current time (tex_anim.rs clock_counter): a
+// looping animation wraps the whole seconds before adding the sub-second
+// part, so the motion stays smooth after hours.
+fn tex_anim_counter(d: TexAnimDef, rec: DrawRecord, clock: vec2<u32>) -> f32 {
+    if (d.rate == 0.0) {
+        return tex_anim_wrap(d, bitcast<f32>(rec.anim.x));
+    }
+    let e_ms = bitcast<i32>(clock.x - rec.anim.x);
+    let frac = bitcast<f32>(clock.y);
+    if (e_ms >= 0) {
+        let whole = f32(e_ms / 1000);
+        let part = (f32(e_ms % 1000) + frac) * 0.001;
+        if ((d.mode & TA_LOOP) != 0u) {
+            let full = abs(d.full);
+            let a = abs(d.rate);
+            let m = ((a * whole) % full + a * part) % full;
+            return select(m, -m, d.rate < 0.0);
+        }
+        return tex_anim_wrap(d, d.rate * whole + d.rate * part);
+    }
+    return tex_anim_wrap(d, d.rate * (f32(e_ms) + frac) * 0.001);
+}
+
+// Animated GL texture coordinates of a face (`st` before any transform).
+fn tex_anim_st(st: vec2<f32>, rec: DrawRecord, clock: vec2<u32>) -> vec2<f32> {
+    let d = tex_anim_def(rec);
+    let smooth_mode = (d.mode & TA_SMOOTH) != 0u;
+    var fc = tex_anim_counter(d, rec, clock);
+    if (!smooth_mode) {
+        fc = floor(fc + 0.01);
+        fc = min(d.full - 1.0, fc);
+    }
+    if ((d.mode & TA_PING_PONG) != 0u && fc >= d.num) {
+        fc = select((d.num - 1.99) - (fc - d.num), d.num - (fc - d.num), smooth_mode);
+    }
+    if ((d.mode & TA_REVERSE) != 0u) {
+        fc = select((d.num - 0.99) - fc, d.num - fc, smooth_mode);
+    }
+    fc += d.start;
+    if (!smooth_mode) {
+        fc = floor(fc + 0.5);
+    }
+    let c = rec.anim_xf;
+    var sto: vec4<f32>;
+    var rot: f32;
+    if ((d.mode & TA_ROTATE) != 0u) {
+        rot = fc;
+        sto = c;
+    } else if ((d.mode & TA_SCALE) != 0u) {
+        rot = c.z;
+        sto = vec4<f32>(fc, fc, c.x, c.y);
+    } else {
+        rot = c.x;
+        if (d.size_x > 0.0 && d.size_y > 0.0) {
+            // c.yz = 1 / grid size
+            let x_frame = fc % d.size_x;
+            let y_frame = trunc(fc / d.size_x);
+            sto = vec4<f32>(c.y, c.z, (-0.5 + 0.5 * c.y) + x_frame * c.y, (0.5 - 0.5 * c.z) - y_frame * c.z);
+        } else {
+            // no grid: offset only, the texture entry's repeats (c.yz)
+            sto = vec4<f32>(c.y, c.z, fc, 0.0);
+        }
+    }
+    return ll_xform(st, sto, rot);
+}
+
+fn has_tex_anim(rec: DrawRecord) -> bool {
+    return (rec.flags.x & FLAG_TEX_ANIM) != 0u;
+}
+
+// Diffuse map coordinates of a face: texture entry (or PBR base color)
+// transform, after the texture animation if any. An animated legacy face's
+// animation already includes its texture entry transform.
+fn diffuse_uv(st: vec2<f32>, rec: DrawRecord, clock: vec2<u32>) -> vec2<f32> {
+    if (has_tex_anim(rec)) {
+        let a = tex_anim_st(st, rec, clock);
+        if ((rec.flags.x & FLAG_PBR) != 0u) {
+            return pbr_uv(a, rec.uv_st, rec.params.x);
+        }
+        return vec2<f32>(a.x, 1.0 - a.y);
+    }
+    return te_uv(st, rec);
+}
+
 @vertex
 fn vs_main(in: VsIn) -> VsOut {
     let rec = records[in.instance];
@@ -129,12 +277,24 @@ fn vs_main(in: VsIn) -> VsOut {
     out.clip = frame.view_proj * wp;
     out.world_pos = wp.xyz;
     out.normal = cofactor(model) * in.normal.xyz;
-    let st = face_st(in, rec);
-    out.uv = te_uv(st, rec);
+    var st = face_st(in, rec);
+    let animated = has_tex_anim(rec);
+    if (animated) {
+        // texture animation first (PBR: before each map's KHR transform,
+        // textureUtilV.glsl texture_transform)
+        st = tex_anim_st(st, rec, frame.anim_clock.xy);
+    }
+    if (animated && (rec.flags.x & FLAG_PBR) == 0u) {
+        // the animation includes the texture entry transform; normal and
+        // specular maps follow the diffuse one (LLFace::getGeometryVolume)
+        out.uv = vec2<f32>(st.x, 1.0 - st.y);
+    } else {
+        out.uv = te_uv(st, rec);
+    }
     out.uv_n = out.uv;
     out.uv_s = out.uv;
     out.uv_e = out.uv;
-    if ((rec.flags.x & FLAG_LEGACY_MAT) != 0u) {
+    if ((rec.flags.x & FLAG_LEGACY_MAT) != 0u && !animated) {
         out.uv_n = ll_uv(st, rec.mat_uv, rec.legacy.x);
         out.uv_s = ll_uv(st, rec.spec_uv, rec.legacy.y);
     } else if ((rec.flags.x & FLAG_PBR) != 0u) {
@@ -531,6 +691,7 @@ struct ShadowOut {
 
 struct ShadowParams {
     vp: mat4x4<f32>,
+    anim_clock: vec4<u32>,  // texture animation clock, as Frame's
 };
 
 @group(3) @binding(0) var<uniform> shadow_params: ShadowParams;
@@ -541,7 +702,7 @@ fn vs_shadow(in: VsIn) -> ShadowOut {
     let wp = skinned_model(rec, in) * vec4<f32>(in.pos, 1.0);
     var out: ShadowOut;
     out.clip = shadow_params.vp * wp;
-    out.uv = te_uv(face_st(in, rec), rec);
+    out.uv = diffuse_uv(face_st(in, rec), rec, shadow_params.anim_clock.xy);
     out.record = in.instance;
     return out;
 }

@@ -380,6 +380,49 @@ fn te_record_base(model: Mat4, f: &TextureFace) -> DrawRecord {
     }
 }
 
+/// Texture animation fields of face `fi` of `o`, if it is animated.
+///
+/// Face selection as LLVOVolume::animateTextures: the animation's face, or
+/// every face for ALL_SIDES (-1) and out-of-range faces. The animation
+/// combines with the texture entry's transform (`tf`).
+fn tex_anim_record(
+    o: &Object,
+    fi: usize,
+    face_count: usize,
+    tf: &TextureFace,
+    pbr: bool,
+    clock: aurora_render::tex_anim::AnimClock,
+) -> Option<aurora_render::tex_anim::RecordAnim> {
+    use aurora_render::tex_anim::{TexAnimParams, TexXform, record_anim};
+    let ta = o.tex_anim?;
+    if let Ok(face) = usize::try_from(ta.face)
+        && face < face_count
+        && face != fi
+    {
+        return None;
+    }
+    // At rate 0 Firestorm bakes the first frame into the texture entry
+    // (LLVOVolume::animateTextures setTEOffset / setTEScale / setTERotation),
+    // which PBR faces ignore: they show no animation.
+    if pbr && ta.rate == 0.0 {
+        return None;
+    }
+    let params = TexAnimParams {
+        mode: ta.mode,
+        size_x: ta.size_x,
+        size_y: ta.size_y,
+        start: ta.start,
+        length: ta.length,
+        rate: ta.rate,
+    };
+    let te = TexXform {
+        rot: tf.rotation,
+        scale: [tf.scale_s, tf.scale_t],
+        offset: [tf.offset_s, tf.offset_t],
+    };
+    record_anim(&params, clock.ms(o.tex_anim_clock.start), o.tex_anim_clock.phase, &te)
+}
+
 impl Scene {
     pub fn new(cache_dir: std::path::PathBuf, avatar_lib: Arc<AvatarLibrary>) -> Scene {
         let (jobs, job_rx) = Jobs::new();
@@ -1578,6 +1621,14 @@ impl Scene {
                 rec.flags[0] |= flags::SKINNED;
                 rec.flags[1] = self.palette_base(owner);
                 rec.flags[2] = binds;
+            }
+            // texture animation: written once, evaluated by the vertex shaders
+            let pbr = rec.flags[0] & flags::PBR != 0;
+            if let Some(a) = tex_anim_record(o, fi, geom.faces.len(), &tf, pbr, renderer.anim_clock()) {
+                rec.flags[0] |= flags::TEX_ANIM;
+                rec.flags[3] = a.packed;
+                rec.anim = a.anim;
+                rec.anim_xf = a.constants;
             }
             let record = renderer.records.alloc(rec);
             g.faces.push(FaceDraw {

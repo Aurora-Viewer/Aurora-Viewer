@@ -30,6 +30,8 @@ impl TextureAnim {
     pub const ROTATE: u8 = 0x20;
     pub const SCALE: u8 = 0x40;
 
+    /// TextureAnim block of a compressed update or of the object cache
+    /// (LLTextureAnim::unpackTAMessage(LLDataPacker&): sizes as sent).
     pub fn parse(d: &[u8]) -> Option<TextureAnim> {
         if d.len() != 16 {
             return None;
@@ -44,6 +46,18 @@ impl TextureAnim {
             length: f(8),
             rate: f(12),
         })
+    }
+
+    /// TextureAnim block of a full ObjectUpdate
+    /// (LLTextureAnim::unpackTAMessage(LLMessageSystem*)): the frame grid is
+    /// at least 1 × 1 unless the animation is smooth.
+    pub fn parse_message(d: &[u8]) -> Option<TextureAnim> {
+        let mut a = Self::parse(d)?;
+        if a.mode & Self::SMOOTH == 0 {
+            a.size_x = a.size_x.max(1);
+            a.size_y = a.size_y.max(1);
+        }
+        Some(a)
     }
 }
 
@@ -311,7 +325,7 @@ pub fn parse_full(b: &msgs::object_update::ObjectData) -> Option<ObjectUpdate> {
         text_color,
         media_url: str_of(&b.media_url),
         tree_species,
-        texture_anim: TextureAnim::parse(&b.texture_anim),
+        texture_anim: TextureAnim::parse_message(&b.texture_anim),
         foot_plane,
         sound: AttachedSound {
             id: b.sound,
@@ -572,6 +586,24 @@ mod tests {
         assert!(cleared.is_empty());
         assert!(parse_gltf_override(b"{'id':i7}").is_none());
         assert!(parse_gltf_override(b"garbage").is_none());
+    }
+
+    #[test]
+    fn texture_anim_blocks() {
+        // ANIM_ON | LOOP, all sides, 0 × 0 grid, start 1, length 2, rate -0.5
+        let mut d = vec![0x03, 0xFF, 0, 0];
+        for v in [1.0f32, 2.0, -0.5] {
+            d.extend_from_slice(&v.to_le_bytes());
+        }
+        let a = TextureAnim::parse(&d).expect("16 bytes");
+        assert_eq!((a.mode, a.face, a.size_x, a.size_y), (3, -1, 0, 0));
+        assert_eq!((a.start, a.length, a.rate), (1.0, 2.0, -0.5));
+        let m = TextureAnim::parse_message(&d).expect("16 bytes");
+        assert_eq!((m.size_x, m.size_y), (1, 1));
+        d[0] |= TextureAnim::SMOOTH;
+        let m = TextureAnim::parse_message(&d).expect("16 bytes");
+        assert_eq!((m.size_x, m.size_y), (0, 0));
+        assert!(TextureAnim::parse(&d[..15]).is_none());
     }
 
     #[test]

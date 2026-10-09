@@ -101,7 +101,7 @@ settings and cache (`…\config\demo`, `…\cache\demo`).
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO=1` | Offline demo mode |
-| `AURORA_CAPTURE=<file.png>` | Save a capture of the frame (`AURORA_CAPTURE_FRAMES`, default 240; ~620 to pass the loading fade) |
+| `AURORA_CAPTURE=<file.png>` | Save a capture of the frame (`AURORA_CAPTURE_FRAMES`, default 240; ~620 to pass the loading fade). Several frames separated by commas (`2500,2600`) save one file each, `<file>-<frame>.png` |
 | `AURORA_CAPTURE_EXIT=1` | Quit after the capture |
 | `AURORA_DEMO_CAM="yaw,pitch,dist"` | Camera heading offset and pitch around the avatar (radians, positive pitch looks down) and distance (meters) |
 | `AURORA_DEMO_CAMERA=alt,x,y\|pan,x,y\|zoom,x,y\|tag\|ml\|wheel\|fly\|sit` | Camera scenario logged as `demo camera`: Alt+click at (x, y) then a drag and a walk back, a press on our own name tag then a drag (steering), mouselook in / out, wheel, flight lag, sitting on a turning seat with a sit camera (`camera/demo.rs`) |
@@ -126,6 +126,7 @@ settings and cache (`…\config\demo`, `…\cache\demo`).
 | `AURORA_DEMO_TEXTURES_CHURN=1` | With `AURORA_DEMO_TEXTURES`: a third of the cubes removed at frame 300 (their textures evicted 2 s later: freed layers, page compaction), then back at frame 700 with new textures (freed slots reused, streamed again); capture after frame ~1000 |
 | `AURORA_DEMO_PLANAR=1` | Floor slabs with planar texture mapping (tiles must line up across slabs) |
 | `AURORA_DEMO_PBR_OVERRIDE=1` | Two PBR slabs, one with a GLTF material override (4 × 4 repeats, tint) |
+| `AURORA_DEMO_TEXANIM=1` | Texture animations (llSetTextureAnim) on two rows of panels in place of the alpha panels: smooth scrolling, 4 × 4 frame grid, ping-pong, rotation, scale, a cube animated on one face only, a legacy material (normal map follows) and a PBR face |
 | `AURORA_DEMO_SKY=<gamma>` | Classic EEP sky (no reflection probe ambiance) with this sky gamma and a sunlight color above 1: legacy gamma and normalized object light as Firestorm |
 | `AURORA_DEMO_DEBUG="bounds,culling,lights,probes,skeletons,alpha,wire,complexity,glow,glow_view,freeze"` | Debug overlays |
 | `AURORA_DEMO_OPTIONS=<tab>` | Open the preferences on a tab |
