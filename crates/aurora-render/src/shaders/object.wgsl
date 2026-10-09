@@ -523,7 +523,7 @@ fn vs_shadow(in: VsIn) -> ShadowOut {
     let wp = skinned_model(rec, in) * vec4<f32>(in.pos, 1.0);
     var out: ShadowOut;
     out.clip = shadow_params.vp * wp;
-    out.uv = te_uv(in.uv, rec, in.pos);
+    out.uv = te_uv(face_st(in, rec), rec);
     out.record = in.instance;
     return out;
 }
