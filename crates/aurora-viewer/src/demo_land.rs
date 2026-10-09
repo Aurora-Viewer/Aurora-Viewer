@@ -14,7 +14,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 const COVENANT: Uuid = Uuid::from_u128(0xC0E0_0000_0000_0000_0000_0000_0000_0001);
-const PARCEL_UUID: Uuid = Uuid::from_u128(0x1214_B5B2_7C42_D6C4_8741_B182_4390_8089);
+pub(super) const PARCEL_UUID: Uuid = Uuid::from_u128(0x1214_B5B2_7C42_D6C4_8741_B182_4390_8089);
 const XP_AURORA: Uuid = Uuid::from_u128(0xE7E0_0000_0000_0000_0000_0000_0000_0001);
 const XP_SITTER: Uuid = Uuid::from_u128(0xE7E0_0000_0000_0000_0000_0000_0000_0002);
 const XP_INTERACT: Uuid = Uuid::from_u128(0xE7E0_0000_0000_0000_0000_0000_0000_0003);
@@ -100,7 +100,7 @@ fn initial(owner: bool) -> ParcelInfo {
     }
 }
 
-fn parcel() -> ParcelInfo {
+pub(super) fn parcel() -> ParcelInfo {
     let mut g = PARCEL.lock();
     g.get_or_insert_with(|| initial(scenario().is_some_and(|s| s.1))).clone()
 }

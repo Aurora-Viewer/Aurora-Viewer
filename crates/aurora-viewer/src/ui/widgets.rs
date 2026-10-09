@@ -100,7 +100,14 @@ impl<'a> Floater<'a> {
             // title bar
             ui.horizontal(|ui| {
                 ui.set_min_height(20.0);
-                ui.label(RichText::new(&self.title).size(13.0).color(p.ink));
+                let title = RichText::new(&self.title).size(13.0).color(p.ink);
+                // a fixed floater is as wide as its title; a resizable one
+                // cuts a long title short before the buttons (LLFloater
+                // titles end with an ellipsis)
+                let truncate = self.resizable && !minimized;
+                if !truncate {
+                    ui.label(title.clone());
+                }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
                     if title_button(ui, p, "x").on_hover_text("Fermer").clicked() {
@@ -116,6 +123,11 @@ impl<'a> Floater<'a> {
                     }
                     if let Some(h) = self.help {
                         title_button(ui, p, "question").on_hover_text(h);
+                    }
+                    if truncate {
+                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                            ui.add(egui::Label::new(title).truncate());
+                        });
                     }
                 });
             });
@@ -383,4 +395,67 @@ pub fn paint_ink_centered(painter: &egui::Painter, galley: std::sync::Arc<egui::
     // whole pixels keep the glyphs crisp
     let pos = (center - ink_center.to_vec2()).round();
     painter.galley(pos, galley, color);
+}
+
+/// A picture fitted in `size` keeping its aspect, or a placeholder (a
+/// Phosphor `icon` over a caption) while there is none.
+pub fn picture(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    tex: Option<&egui::TextureHandle>,
+    size: Vec2,
+    icon: &str,
+    placeholder: &str,
+) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
+    ui.painter().rect_filled(rect, 2.0, p.field);
+    match tex {
+        Some(t) => {
+            let [w, h] = t.size();
+            let aspect = w.max(1) as f32 / h.max(1) as f32;
+            let fit = if aspect >= size.x / size.y {
+                Vec2::new(size.x, size.x / aspect)
+            } else {
+                Vec2::new(size.y * aspect, size.y)
+            };
+            ui.painter().image(
+                t.id(),
+                egui::Rect::from_center_size(rect.center(), fit),
+                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                Color32::WHITE,
+            );
+        }
+        None => {
+            if let Some(t) = super::icons::global(icon) {
+                let ir = egui::Rect::from_center_size(rect.center(), Vec2::splat(size.min_elem() * 0.45));
+                ui.painter().image(
+                    t.id(),
+                    ir,
+                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                    p.muted_dim,
+                );
+            }
+            ui.painter().text(
+                rect.center_bottom() - Vec2::new(0.0, 12.0),
+                egui::Align2::CENTER_CENTER,
+                placeholder,
+                egui::FontId::proportional(10.5),
+                p.muted_dim,
+            );
+        }
+    }
+    ui.painter()
+        .rect_stroke(rect, 2.0, egui::Stroke::new(1.0, p.raised), egui::StrokeKind::Inside);
+    resp
+}
+
+/// A menu opened by a Phosphor icon button (menu_button with an image).
+pub fn icon_menu(ui: &mut egui::Ui, p: &Palette, name: &str, tip: &str, content: impl FnOnce(&mut egui::Ui)) {
+    let Some(t) = super::icons::global(name) else {
+        ui.menu_button(tip, content);
+        return;
+    };
+    let img = egui::Image::from_texture(egui::load::SizedTexture::new(t.id(), Vec2::splat(14.0))).tint(p.muted);
+    let (resp, _) = egui::containers::menu::MenuButton::from_button(egui::Button::image(img).frame(false)).ui(ui, content);
+    resp.on_hover_text(tip);
 }

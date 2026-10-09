@@ -463,50 +463,6 @@ fn inset<R>(ui: &mut egui::Ui, p: &Palette, width: f32, height: f32, body: impl 
         .inner
 }
 
-/// A picture fitted in `size` keeping its aspect, or a placeholder.
-fn picture(ui: &mut egui::Ui, p: &Palette, tex: Option<&egui::TextureHandle>, size: Vec2, placeholder: &str) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
-    ui.painter().rect_filled(rect, 2.0, p.field);
-    match tex {
-        Some(t) => {
-            let [w, h] = t.size();
-            let aspect = w.max(1) as f32 / h.max(1) as f32;
-            let fit = if aspect >= size.x / size.y {
-                Vec2::new(size.x, size.x / aspect)
-            } else {
-                Vec2::new(size.y * aspect, size.y)
-            };
-            ui.painter().image(
-                t.id(),
-                egui::Rect::from_center_size(rect.center(), fit),
-                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                Color32::WHITE,
-            );
-        }
-        None => {
-            if let Some(t) = super::icons::global("user-circle") {
-                let ir = egui::Rect::from_center_size(rect.center(), Vec2::splat(size.min_elem() * 0.45));
-                ui.painter().image(
-                    t.id(),
-                    ir,
-                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                    p.muted_dim,
-                );
-            }
-            ui.painter().text(
-                rect.center_bottom() - Vec2::new(0.0, 12.0),
-                egui::Align2::CENTER_CENTER,
-                placeholder,
-                egui::FontId::proportional(10.5),
-                p.muted_dim,
-            );
-        }
-    }
-    ui.painter()
-        .rect_stroke(rect, 2.0, egui::Stroke::new(1.0, p.raised), egui::StrokeKind::Inside);
-    resp
-}
-
 fn loading(ui: &mut egui::Ui, p: &Palette) {
     ui.label(RichText::new("(en cours de chargement...)").size(12.0).color(p.muted));
 }
@@ -593,17 +549,6 @@ fn icon(ui: &mut egui::Ui, p: &Palette, name: &str, size: f32, tint: Color32) ->
         );
     }
     resp
-}
-
-/// A menu opened by a Phosphor icon button (menu_button with an image).
-fn icon_menu(ui: &mut egui::Ui, p: &Palette, name: &str, tip: &str, content: impl FnOnce(&mut egui::Ui)) {
-    let Some(t) = super::icons::global(name) else {
-        ui.menu_button(tip, content);
-        return;
-    };
-    let img = egui::Image::from_texture(egui::load::SizedTexture::new(t.id(), Vec2::splat(14.0))).tint(p.muted);
-    let (resp, _) = egui::containers::menu::MenuButton::from_button(egui::Button::image(img).frame(false)).ui(ui, content);
-    resp.on_hover_text(tip);
 }
 
 /// The eye toggle of the editable texts (btn_preview).
@@ -730,7 +675,7 @@ fn second_life_tab(
         ui.allocate_ui_with_layout(Vec2::new(52.0, 162.0), egui::Layout::top_down(egui::Align::Max), |ui| {
             if own && let Some(pr) = profile {
                 // menu_fs_profile_image_actions.xml
-                icon_menu(ui, p, "gear-six", "Photo du profil", |ui| {
+                widgets::icon_menu(ui, p, "gear-six", "Photo du profil", |ui| {
                     ui.add_enabled(false, egui::Button::new("Charger une photo"))
                         .on_disabled_hover_text("À venir");
                     if ui.button("Changer la photo").clicked() {
@@ -750,7 +695,7 @@ fn second_life_tab(
                 });
             }
         });
-        let r = picture(ui, p, pics.get(&id), Vec2::splat(162.0), "Photo du profil");
+        let r = widgets::picture(ui, p, pics.get(&id), Vec2::splat(162.0), "user-circle", "Photo du profil");
         if own
             && let Some(pr) = profile
             && r.on_hover_text("Clic : changer la photo").clicked()
@@ -1003,7 +948,7 @@ fn action_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, w: &Window, is_
 
 /// menu_fs_profile_overflow.xml.
 fn overflow_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid, blocked: bool, actions: &mut Vec<ProfileAction>) {
-    icon_menu(ui, p, "list", "Plus", |ui| {
+    widgets::icon_menu(ui, p, "list", "Plus", |ui| {
         for label in ["Carte", "Payer", "Partager", "Appeler"] {
             ui.add_enabled(false, egui::Button::new(label)).on_disabled_hover_text("À venir");
         }
@@ -1035,7 +980,7 @@ fn copy_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid) {
     let names = &world.social.avatar_names;
     let display = names.get(&id).map(|n| n.display(&names.options));
     let legacy = world.legacy_name(&id);
-    icon_menu(ui, p, "link", "Copier", |ui| {
+    widgets::icon_menu(ui, p, "link", "Copier", |ui| {
         if ui
             .add_enabled(display.is_some(), egui::Button::new("Copier le nom d'affichage"))
             .clicked()
@@ -1348,7 +1293,14 @@ fn pick_detail(
     if !snapshot.is_nil() {
         wanted_images.insert(snapshot);
     }
-    picture(ui, p, c.images.get(&snapshot), Vec2::new(width, width * 179.0 / 290.0), "");
+    widgets::picture(
+        ui,
+        p,
+        c.images.get(&snapshot),
+        Vec2::new(width, width * 179.0 / 290.0),
+        "user-circle",
+        "",
+    );
     ui.label(RichText::new("Nom :").size(12.0).strong().color(p.ink));
     if let (true, Some((e, _))) = (own, w.pick_edit.as_mut()) {
         ui.add(egui::TextEdit::singleline(&mut e.name).desired_width(width).char_limit(63));
@@ -1533,7 +1485,14 @@ fn classified_detail(
     if !info.snapshot.is_nil() {
         wanted_images.insert(info.snapshot);
     }
-    picture(ui, p, c.images.get(&info.snapshot), Vec2::new(width, width * 161.0 / 260.0), "");
+    widgets::picture(
+        ui,
+        p,
+        c.images.get(&info.snapshot),
+        Vec2::new(width, width * 161.0 / 260.0),
+        "user-circle",
+        "",
+    );
     ui.label(RichText::new(&info.name).size(14.0).strong().color(p.ink));
     let row = |ui: &mut egui::Ui, label: &str, value: &str| {
         ui.horizontal_top(|ui| {
@@ -1593,7 +1552,7 @@ fn first_life_tab(
         wanted_images.insert(pr.fl_image);
     }
     ui.horizontal_top(|ui| {
-        let r = picture(ui, p, c.images.get(&pr.fl_image), Vec2::splat(200.0), "Photo RL");
+        let r = widgets::picture(ui, p, c.images.get(&pr.fl_image), Vec2::splat(200.0), "user-circle", "Photo RL");
         if c.own && r.on_hover_text("Clic : changer l'image").clicked() {
             *pick_picture = Some((PictureSlot::FirstLife, pr.fl_image));
         }

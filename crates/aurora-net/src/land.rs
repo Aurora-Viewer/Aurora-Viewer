@@ -542,6 +542,43 @@ pub fn environment_update_body(day_length: i32, day_offset: i32) -> Llsd {
     body
 }
 
+/// Why a RemoteParcelRequest gave no parcel (LLPanelPlaceInfo::setErrorStatus
+/// and the cases around it).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteParcelError {
+    /// The region has no RemoteParcelRequest capability
+    /// (LLPanelPlaceInfo::displayParcelInfo: "server_update_text").
+    NoCapability,
+    /// HTTP error status (404 and 499 have their own texts).
+    Status(u16),
+    /// The request could not be sent or its answer read.
+    Failed,
+    /// The answer has no parcel at that point (null `parcel_id`).
+    NoParcel,
+}
+
+/// Body of a RemoteParcelRequest POST
+/// (LLRemoteParcelInfoProcessor::regionParcelInfoCoro): the point in region
+/// coordinates, the region id when known and the handle of the 256 m slot
+/// holding the point (`ll_sd_from_U64`: 8 bytes, big-endian).
+pub fn remote_parcel_body(location: Vec3, region_id: Uuid, handle: Option<RegionHandle>) -> Llsd {
+    let mut body = Llsd::new_map();
+    body.insert("location", vec3_llsd(location));
+    if !region_id.is_nil() {
+        body.insert("region_id", region_id);
+    }
+    if let Some(h) = handle {
+        body.insert("region_handle", Llsd::Binary(h.to_be_bytes().to_vec()));
+    }
+    body
+}
+
+/// The parcel of a RemoteParcelRequest answer (`parcel_id`).
+pub fn parse_remote_parcel_reply(v: &Llsd) -> Result<Uuid, RemoteParcelError> {
+    let id = v["parcel_id"].as_uuid();
+    if id.is_nil() { Err(RemoteParcelError::NoParcel) } else { Ok(id) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -694,5 +731,30 @@ mod tests {
         let b = environment_update_body(14400, 0);
         assert_eq!(b["environment"]["day_length"].as_i32(), 14400);
         assert!(!b["environment"].has("day_offset"));
+    }
+
+    #[test]
+    fn remote_parcel_body_layout() {
+        let handle = crate::types::origin_to_handle(256_000, 256_256);
+        let b = remote_parcel_body(Vec3::new(140.0, 120.0, 25.0), Uuid::nil(), Some(handle));
+        assert_eq!(b["location"].as_vec3(), [140.0, 120.0, 25.0]);
+        assert!(!b.has("region_id"));
+        match &b["region_handle"] {
+            Llsd::Binary(v) => assert_eq!(v, &[0, 3, 232, 0, 0, 3, 233, 0]),
+            other => panic!("region_handle {other:?}"),
+        }
+        let r = Uuid::from_u128(7);
+        assert_eq!(remote_parcel_body(Vec3::ZERO, r, None)["region_id"].as_uuid(), r);
+    }
+
+    #[test]
+    fn remote_parcel_reply() {
+        let id = Uuid::from_u128(0x9A2C);
+        let mut v = Llsd::new_map();
+        v.insert("parcel_id", id);
+        assert_eq!(parse_remote_parcel_reply(&v), Ok(id));
+        v.insert("parcel_id", Uuid::nil());
+        assert_eq!(parse_remote_parcel_reply(&v), Err(RemoteParcelError::NoParcel));
+        assert_eq!(parse_remote_parcel_reply(&Llsd::Undef), Err(RemoteParcelError::NoParcel));
     }
 }

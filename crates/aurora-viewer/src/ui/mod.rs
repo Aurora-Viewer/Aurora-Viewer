@@ -33,6 +33,7 @@ pub mod options;
 pub mod parcel_icons;
 pub mod people;
 pub mod perf;
+pub mod place_details;
 pub mod profile;
 pub mod skin;
 pub mod sound_cues;

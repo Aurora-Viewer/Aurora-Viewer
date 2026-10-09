@@ -104,14 +104,25 @@ pub struct ClassifiedInfo {
     pub price: i32,
 }
 
-/// What a profile shows of a parcel (ParcelInfoReply, LLParcelData).
+/// A parcel seen from afar (ParcelInfoReply, LLParcelData): picks of a
+/// profile, place details of a place link.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ParcelSummary {
     pub id: Uuid,
+    pub owner: Uuid,
     pub name: String,
+    pub desc: String,
+    pub actual_area: i32,
+    pub billable_area: i32,
+    /// 0x1 mature region, 0x2 adult region (LLPanelPlaceProfile::processParcelInfo).
+    pub flags: u8,
     pub sim_name: String,
     pub global: glam::DVec3,
     pub snapshot: Uuid,
+    /// Traffic (dwell).
+    pub dwell: f32,
+    pub sale_price: i32,
+    pub auction_id: i32,
 }
 
 /// LLPanelProfilePick::createLocationText: the non-empty parts joined with

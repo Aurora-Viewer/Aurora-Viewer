@@ -18,6 +18,7 @@ pub mod names;
 pub mod notifications;
 pub mod objects;
 pub mod outfit;
+pub mod place_details;
 pub mod profiles;
 pub mod social;
 pub mod status;
@@ -194,6 +195,8 @@ pub struct World {
     pub tp_history: tphistory::TeleportHistory,
     /// World map regions, items, tracking and parcel overlays.
     pub map: worldmap::WorldMap,
+    /// Place details windows of place links (their parcel requests).
+    pub place_details: place_details::PlaceDetails,
     arrived_once: bool,
     /// Disk cache root (inventory cache).
     pub cache_dir: Option<std::path::PathBuf>,
@@ -258,6 +261,7 @@ impl World {
             media: Default::default(),
             tp_history: tphistory::TeleportHistory::default(),
             map: worldmap::WorldMap::default(),
+            place_details: Default::default(),
             notifications: notifications::Notifications::default(),
             profiles: profiles::Profiles::default(),
             arrived_once: false,
@@ -1231,6 +1235,10 @@ impl World {
             }
             NetEvent::ParcelInfo(p) => {
                 self.profiles.parcels.insert(p.id, *p);
+                None
+            }
+            NetEvent::RemoteParcel { handle, position, result } => {
+                self.place_details.apply_remote_parcel(handle, position, result);
                 None
             }
             NetEvent::UserRights { agent, rights } => {

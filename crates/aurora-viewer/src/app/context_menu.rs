@@ -307,6 +307,10 @@ impl App {
                     self.panels.world_map = true;
                 }
             }
+            CtxAction::ShowPlaceInfo(region, pos) => {
+                let serial = self.world.place_details.open(&self.world.map, &region, pos, Instant::now());
+                self.place_ui.raise(serial);
+            }
             CtxAction::ShowPlace(region, pos) => {
                 self.world.map.track_region(&region, pos);
                 self.panels.world_map = true;

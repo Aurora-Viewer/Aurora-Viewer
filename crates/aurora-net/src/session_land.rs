@@ -343,45 +343,35 @@ impl Session<'_> {
             emit(self.sh, NetEvent::Land(LandEvent::ParcelId { local_id, id: None }));
             return;
         };
-        let mut body = Llsd::new_map();
-        body.insert(
-            "location",
-            Llsd::Array(vec![
-                Llsd::Real(position.x as f64),
-                Llsd::Real(position.y as f64),
-                Llsd::Real(position.z as f64),
-            ]),
-        );
-        if !region_id.is_nil() {
-            body.insert("region_id", region_id);
-        }
-        body.insert("region_handle", Llsd::Binary(handle.to_be_bytes().to_vec()));
+        let body = land::remote_parcel_body(position, region_id, Some(handle));
         let http = self.sh.caps_http.clone();
         tokio::spawn(async move {
-            let id = match http
-                .post(&url)
-                .header("Content-Type", "application/llsd+xml")
-                .header("Accept", "application/llsd+xml")
-                .body(aurora_llsd::to_xml(&body))
-                .send()
-                .await
-            {
-                Ok(r) if r.status().is_success() => r
-                    .bytes()
-                    .await
-                    .ok()
-                    .and_then(|b| aurora_llsd::from_xml(&b).ok())
-                    .map(|v| v["parcel_id"].as_uuid()),
-                Ok(r) => {
-                    log::warn!("RemoteParcelRequest: HTTP {}", r.status().as_u16());
-                    None
-                }
-                Err(e) => {
-                    log::warn!("RemoteParcelRequest failed: {e}");
-                    None
-                }
+            let id = match post_remote_parcel(&http, &url, &body).await {
+                Ok(id) => Some(id),
+                Err(land::RemoteParcelError::NoParcel) => Some(Uuid::nil()),
+                Err(_) => None,
             };
             let _ = events.send(NetEvent::Land(LandEvent::ParcelId { local_id, id }));
+        });
+    }
+
+    /// LLPanelPlaceInfo::displayParcelInfo for a place of any region: the
+    /// capability of the agent's region (gAgent.getRegion()), the point in
+    /// its region's coordinates and the handle of its 256 m slot, no region
+    /// id (LLURLDispatcherImpl::regionHandleCallback → FSFloaterPlaceDetails).
+    pub(super) fn remote_parcel_request(&mut self, handle: RegionHandle, position: glam::Vec3) {
+        let Some(url) = self.main_cap("RemoteParcelRequest") else {
+            log::warn!("RemoteParcelRequest not available. Cannot request parcel ID");
+            let result = Err(land::RemoteParcelError::NoCapability);
+            emit(self.sh, NetEvent::RemoteParcel { handle, position, result });
+            return;
+        };
+        let body = land::remote_parcel_body(position, Uuid::nil(), Some(handle));
+        let http = self.sh.caps_http.clone();
+        let events = self.sh.events.clone();
+        tokio::spawn(async move {
+            let result = post_remote_parcel(&http, &url, &body).await;
+            let _ = events.send(NetEvent::RemoteParcel { handle, position, result });
         });
     }
 
@@ -681,4 +671,20 @@ enum EnvVerb {
     Get,
     Put(Llsd),
     Delete,
+}
+
+/// POST of a RemoteParcelRequest body: the parcel, or why there is none
+/// (the HTTP status is kept for LLPanelPlaceInfo::setErrorStatus).
+async fn post_remote_parcel(http: &reqwest::Client, url: &str, body: &Llsd) -> Result<Uuid, land::RemoteParcelError> {
+    match crate::caps::post_llsd(http, url, body).await {
+        Ok(v) => land::parse_remote_parcel_reply(&v),
+        Err(crate::caps::CapsError::Status(s)) => {
+            log::warn!("RemoteParcelRequest: HTTP {s}");
+            Err(land::RemoteParcelError::Status(s))
+        }
+        Err(e) => {
+            log::warn!("RemoteParcelRequest failed: {e}");
+            Err(land::RemoteParcelError::Failed)
+        }
+    }
 }

@@ -278,6 +278,8 @@ pub struct App {
     ui_images: std::collections::HashMap<uuid::Uuid, egui::TextureHandle>,
     /// Avatar profile windows.
     profile_ui: ui::profile::ProfileUi,
+    /// "Détails de l'emplacement" windows of place links.
+    place_ui: ui::place_details::PlaceDetailsUi,
     /// "À propos du terrain".
     land_ui: ui::land::LandUi,
     /// Environment selector and « Éclairage personnel ».
@@ -523,6 +525,7 @@ impl App {
             avatar_pics: Default::default(),
             ui_images: Default::default(),
             profile_ui: Default::default(),
+            place_ui: Default::default(),
             land_ui: Default::default(),
             env_ui: Default::default(),
             env_scan: false,
@@ -2605,6 +2608,7 @@ impl App {
             }
         }
         let mut images: Vec<uuid::Uuid> = self.profile_ui.wanted_images.drain().collect();
+        images.extend(self.place_ui.wanted_images.drain());
         images.extend(self.land_ui.wanted_images.drain());
         images.extend(self.contacts_ui.wanted_images.drain());
         images.extend(self.build.ui.wanted_images.drain());
@@ -2670,6 +2674,11 @@ impl App {
         }
         // About Land requests (selection, lists, covenant...)
         for c in self.world.land.take_commands() {
+            self.send(c);
+        }
+        // place details: region names resolved, parcel requests
+        self.world.place_details.update(&self.world.map, Instant::now());
+        for c in self.world.place_details.take_commands() {
             self.send(c);
         }
         for c in self.world.map.take_commands() {
@@ -4677,6 +4686,26 @@ impl App {
                         ui::profile::ProfileAction::Teleport(g) => self.world.map.track_location(g.x, g.y, g.z as f32, true),
                     }
                 }
+                let acts = self.place_ui.show(
+                    &ctx,
+                    &p,
+                    &mut self.emoji,
+                    &self.ui_images,
+                    &self.world,
+                    &mut self.chat_ui.wanted_names,
+                );
+                for pa in acts {
+                    match pa {
+                        // FSFloaterPlaceDetails::onTeleportButtonClicked: no
+                        // confirmation (teleportViaLocation + trackLocation)
+                        ui::place_details::PlaceAction::Teleport(g) => self.world.map.track_location(g.x, g.y, g.z as f32, true),
+                        ui::place_details::PlaceAction::ShowOnMap(g) => {
+                            self.world.map.track_location(g.x, g.y, g.z as f32, false);
+                            self.panels.world_map = true;
+                        }
+                        ui::place_details::PlaceAction::Close(serial) => self.world.place_details.close(serial),
+                    }
+                }
                 let mut open = self.panels.minimap;
                 mini.extend(self.minimap_ui.window(
                     &ctx,
@@ -5062,6 +5091,12 @@ impl ApplicationHandler for App {
                 self.panels.chat = true;
                 self.panels.perf = false;
                 self.panels.minimap = false;
+            }
+            // AURORA_DEMO_PLACE=1|lagune|nordheim|pinede|faille|inconnue: the
+            // place details of a place link, as if clicked
+            if let Some((region, pos)) = crate::demo::place::scenario() {
+                ui::context::request(&self.egui_ctx, ui::context::CtxAction::ShowPlaceInfo(region.to_owned(), pos));
+                self.panels.perf = false;
             }
             // AURORA_DEMO_PROFILE=loup|nova|friend|self[:tab]: a profile window
             if let Ok(v) = std::env::var("AURORA_DEMO_PROFILE") {
