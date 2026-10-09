@@ -11,6 +11,24 @@ pub struct PickFace {
     pub indices: Vec<u16>,
 }
 
+/// Whether a ray can meet an object, from its world bounding sphere kept by
+/// the sync: a few multiplications instead of the transform, matrix inverse
+/// and box test of `face_hit`, for every object, every hovered frame. Rigged
+/// meshes (sphere of the wearer, not of the bind pose) and objects without
+/// bounds yet always pass.
+pub(super) fn ray_may_hit(g: &super::ObjGpu, ray: (Vec3, Vec3)) -> bool {
+    if g.rigged || g.radius <= 0.0 {
+        return true;
+    }
+    let r = g.radius * 1.05 + 0.05;
+    let to = g.center - ray.0;
+    let along = to.dot(ray.1);
+    if along < -r {
+        return false;
+    }
+    to.length_squared() - along * along <= r * r
+}
+
 pub fn ray_box(origin: Vec3, dir: Vec3, min: Vec3, max: Vec3) -> Option<f32> {
     let mut near = 0.0f32;
     let mut far = f32::INFINITY;
@@ -95,6 +113,7 @@ impl Scene {
                     .objects
                     .get(idx)
                     .is_some_and(|o| o.click_action == crate::interaction::code::IGNORE)
+                && ray_may_hit(g, ray)
                 && self.face_hit(world, idx, ray, now, true).is_some_and(|h| h.t <= limit)
         });
         if !ignored {
@@ -105,6 +124,9 @@ impl Scene {
         for (idx, g) in self.gpu.iter().enumerate() {
             let Some(o) = world.objects.get(idx) else { continue };
             if g.faces.is_empty() || g.hud || o.click_action == crate::interaction::code::IGNORE {
+                continue;
+            }
+            if !g.is_avatar && !ray_may_hit(g, ray) {
                 continue;
             }
             let t = if g.is_avatar {
@@ -167,7 +189,7 @@ impl Scene {
         let props = HashMap::new();
         for (idx, g) in self.gpu.iter().enumerate() {
             let Some(o) = world.objects.get(idx) else { continue };
-            if g.hud || g.is_avatar || o.click_action == crate::interaction::code::IGNORE {
+            if g.hud || g.is_avatar || o.click_action == crate::interaction::code::IGNORE || !ray_may_hit(g, ray) {
                 continue;
             }
             if !g.faces.iter().any(|f| {
@@ -212,6 +234,26 @@ impl Scene {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn sphere_test_keeps_what_the_ray_can_reach() {
+        let g = |center: Vec3, radius: f32| super::super::ObjGpu {
+            center,
+            radius,
+            ..Default::default()
+        };
+        let ray = (Vec3::ZERO, Vec3::X);
+        assert!(ray_may_hit(&g(Vec3::new(10.0, 0.5, 0.0), 1.0), ray));
+        assert!(!ray_may_hit(&g(Vec3::new(10.0, 3.0, 0.0), 1.0), ray));
+        // behind the eye, but the eye is inside it
+        assert!(ray_may_hit(&g(Vec3::new(-0.5, 0.0, 0.0), 1.0), ray));
+        assert!(!ray_may_hit(&g(Vec3::new(-5.0, 0.0, 0.0), 1.0), ray));
+        // no bounds yet, rigged: never rejected
+        assert!(ray_may_hit(&g(Vec3::new(0.0, 50.0, 0.0), 0.0), ray));
+        let mut rigged = g(Vec3::new(0.0, 50.0, 0.0), 1.0);
+        rigged.rigged = true;
+        assert!(ray_may_hit(&rigged, ray));
+    }
+
     #[test]
     fn box_rejects_misses_and_parallel_rays() {
         assert_eq!(ray_box(Vec3::new(-2.0, 0.0, 0.0), Vec3::X, -Vec3::ONE, Vec3::ONE), Some(1.0));

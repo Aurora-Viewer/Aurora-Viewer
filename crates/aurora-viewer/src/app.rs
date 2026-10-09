@@ -2630,7 +2630,7 @@ impl App {
                     let point = self.scene.interaction_point(
                         &self.world,
                         Some(ray),
-                        gfx.renderer.pick_world(self.cursor_pos.0, self.cursor_pos.1),
+                        gfx.renderer.hover_pick(self.cursor_pos.0, self.cursor_pos.1),
                         self.build.open,
                         self.settings.draw_distance,
                     );
@@ -3042,6 +3042,7 @@ impl App {
         }
         let mut actions = UiActions::default();
         let vsync = gfx.renderer.vsync();
+        self.frame_profile.lap(Lap::UiPrep);
         self.sound_cues.before(&ctx, &raw);
         let mut full = ctx.run_ui(raw, |ui| {
             self.sound_cues.pass_start(ui.ctx());
@@ -3059,6 +3060,7 @@ impl App {
                 self.scene.sounds.play_ui(self.audio_engine.as_ref(), id);
             }
         }
+        self.frame_profile.lap(Lap::Ui);
         // Native bitmap cursors, including the original Firestorm hotspot.
         // Set this every frame because egui's custom cursor output is sticky.
         full.platform_output.cursor_image = None;
@@ -3086,7 +3088,7 @@ impl App {
             && let Some(point) = self.scene.interaction_point(
                 &self.world,
                 gfx.renderer.cursor_ray(self.cursor_pos.0, self.cursor_pos.1),
-                gfx.renderer.pick_world(self.cursor_pos.0, self.cursor_pos.1),
+                gfx.renderer.hover_pick(self.cursor_pos.0, self.cursor_pos.1),
                 false,
                 self.settings.draw_distance,
             )
@@ -3113,10 +3115,11 @@ impl App {
         }
         gfx.egui_state
             .handle_platform_output_with_event_loop(&gfx.window, event_loop, full.platform_output);
+        self.frame_profile.lap(Lap::Hover);
         let ppp = full.pixels_per_point;
         let prims = ctx.tessellate(full.shapes, ppp);
         self.perf.ui_ms = t_ui.elapsed().as_secs_f32() * 1000.0;
-        self.frame_profile.lap(Lap::Ui);
+        self.frame_profile.lap(Lap::Tessellate);
 
         // apply UI actions
         if actions.font_changed {
