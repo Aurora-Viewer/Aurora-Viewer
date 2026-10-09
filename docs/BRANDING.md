@@ -74,6 +74,7 @@ Fichiers dans [`assets/branding/`](../assets/branding/) :
 | `logo-loup-couleur.svg` / `-4096.png` | logo complet : écran de connexion, README, icône de fenêtre |
 | `silhouette-loup-blanche.svg` / `-4096.png` | silhouette blanche : petites icônes, barre d'outils, monochrome |
 | `silhouette-loup-blanche-fond-noir.svg` | silhouette sur fond noir (seul fichier avec un fond opaque) |
+| `aurora.ico` | logo complet en icône Windows (16 à 256 px, tiré du PNG 4096) : raccourci « Aurora Tools » |
 
 Le logo est une tête de loup de profil, tournée vers la droite, en 4 couleurs :
 violet `#8B5CF6`, indigo `#4F46E5`, turquoise `#5EEAD4` et bleu nuit `#070B1F`.

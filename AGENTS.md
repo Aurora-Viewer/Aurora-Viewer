@@ -42,8 +42,9 @@ une fonctionnalité, **regarde comment Firestorm la fait réellement**.
 
 - Les sources officielles doivent se trouver **à côté du dépôt** :
   `../phoenix-firestorm` (lecture seule, jamais dans le dépôt).
-- **Si ce dossier est absent**, propose à l'humain de relancer
-  `./scripts/setup.ps1` (il le clone avec le reste), ou de le cloner seul :
+- **Si ce dossier est absent**, propose à l'humain d'ouvrir
+  `aurora-tools.cmd` et de choisir « Réparer » (il le clone avec le reste),
+  ou de le cloner seul :
 
   ```bash
   git clone --depth 1 -c core.longpaths=true https://github.com/FirestormViewer/phoenix-firestorm ../phoenix-firestorm
@@ -91,6 +92,10 @@ worktree git, sa branche, son dossier `target` et ses logs.
   fusionnée ou qui n'ont rien compilé depuis 7 jours (le code reste).
 - Pour voir la place prise par les compilations et en libérer :
   `./scripts/clean.ps1` (n'efface rien sans `-Apply`).
+- `aurora-tools.cmd` (racine du dépôt) est le menu des humains : ne le lance
+  pas, il attend des touches. Ses actions existent sans menu si besoin :
+  `./scripts/tools/aurora-tools.ps1 -Action diagnose` (environnement),
+  `repair`, `tasks`… Si tu modifies ces outils, mets HUMANS.md à jour.
 - Une fois la PR fusionnée :
   `./scripts/end-task.ps1 -Name "regard-avatars"` supprime le worktree et la
   branche locale.

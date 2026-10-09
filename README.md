@@ -47,13 +47,22 @@ same rules, same defaults — while rethinking the user interface.
 Requirements: Windows 10/11, [Rust](https://rustup.rs) (stable, selected
 automatically by `rust-toolchain.toml`), a GPU with Vulkan support.
 
-**Development environment in one line:** create a folder for the project,
-open a command prompt in it and paste the command below. It shows what it
-found and what it will do, asks where to install, then installs whatever is
-missing (Git, GitHub CLI, the Visual Studio C++ tools, Rust), clones this
-repository and the Firestorm sources side by side, and downloads the emoji
-font, the Rust toolchain and the crates. It can be run again at any time
-(`./scripts/setup.ps1`).
+**Development environment:** create a folder for the project, clone this
+repository into it, then double-click **`aurora-tools.cmd`**:
+
+```bat
+git clone https://github.com/Aurora-Viewer/Aurora-Viewer aurora-viewer
+```
+
+The tools check the environment and offer to **repair** it: they install
+whatever is missing (GitHub CLI, the Visual Studio C++ tools, Rust), clone
+the Firestorm sources next to the repository, and download the emoji font,
+the Rust toolchain and the crates. Then, driven by the keyboard: release /
+dev / debug viewers, demo, agents' tasks, disk, logs (see
+[HUMANS.md](HUMANS.md)).
+
+Without Git yet, this command (in a command prompt, in the project folder)
+installs everything, Git included:
 
 ```bat
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$f = Join-Path $env:TEMP 'aurora-setup.ps1'; irm https://raw.githubusercontent.com/Aurora-Viewer/Aurora-Viewer/main/scripts/setup.ps1 -OutFile $f; & $f"

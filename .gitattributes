@@ -1,0 +1,4 @@
+# Windows batch files always get CRLF line endings: cmd.exe misreads labels
+# and goto in a batch file with Unix line endings.
+*.cmd text eol=crlf
+*.bat text eol=crlf

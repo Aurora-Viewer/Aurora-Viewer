@@ -5,8 +5,9 @@ plusieurs agents IA (Claude Code, Codex…) en parallèle. Les agents suivent
 [AGENTS.md](AGENTS.md) ; ce guide explique **ton** rôle et comment tout
 s'enchaîne.
 
-**Pour commencer :** [installe l'environnement](#installer-lenvironnement)
-en une ligne.
+**Pour commencer :** [clone le dépôt et double-clique sur
+`aurora-tools.cmd`](#installer-lenvironnement) ; ensuite, tout se fait avec
+[les outils Aurora](#les-outils-aurora--aurora-toolscmd).
 
 ## Ce que font les agents, ce que tu fais
 
@@ -98,51 +99,76 @@ git push origin v0.4.0
 
 ## Installer l'environnement
 
-Crée un dossier pour le projet (par exemple `C:\Aurora-Viewer`), ouvre une
-invite de commandes dedans (dans l'Explorateur : tape `cmd` dans la barre
-d'adresse, puis Entrée) et colle :
+1. Crée un dossier pour le projet (par exemple `C:\Aurora-Viewer`), ouvre une
+   invite de commandes dedans (dans l'Explorateur : tape `cmd` dans la barre
+   d'adresse, puis Entrée) et clone le dépôt :
+
+   ```bat
+   git clone https://github.com/Aurora-Viewer/Aurora-Viewer aurora-viewer
+   ```
+
+2. Double-clic sur **`aurora-viewer\aurora-tools.cmd`** (les outils Aurora,
+   section suivante). Ils vérifient ce qui manque et proposent **Réparer** :
+   - ils installent ce qui manque avec winget : GitHub CLI (pour toute la
+     machine), les outils C++ de Visual Studio dont Rust a besoin pour
+     compiler (plusieurs Go), et Rust (rustup, pour ton compte, comme le veut
+     Rust sous Windows) ; des fenêtres d'autorisation Windows peuvent
+     s'ouvrir ;
+   - ils clonent les sources de Firestorm dans `phoenix-firestorm\`, à côté
+     du dépôt ;
+   - ils téléchargent la police emoji, la toolchain Rust et toutes les crates ;
+   - ils te connectent à GitHub (`gh auth login`, dans le navigateur) si
+     besoin, et règlent ton identité git dans le dépôt : ton pseudo GitHub et
+     ton adresse « noreply » (ton e-mail reste privé).
+
+**Pas encore de Git ?** Dans une invite de commandes ouverte dans le dossier
+du projet, cette commande installe tout, Git compris, puis ouvre les outils
+(elle montre d'abord ce qu'elle va faire et demande où installer) :
 
 ```bat
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$f = Join-Path $env:TEMP 'aurora-setup.ps1'; irm https://raw.githubusercontent.com/Aurora-Viewer/Aurora-Viewer/main/scripts/setup.ps1 -OutFile $f; & $f"
 ```
 
-Le script montre d'abord un tableau : ce qu'il a trouvé sur ta machine et ce
-qu'il va faire. Il propose le dossier courant ; si tu réponds non, il te
-demande le chemin exact du dossier du projet (créé s'il n'existe pas). Puis :
-
-1. il installe ce qui manque avec winget : Git et GitHub CLI (pour toute la
-   machine), les outils C++ de Visual Studio dont Rust a besoin pour
-   compiler (plusieurs Go), et Rust (rustup, pour ton compte, comme le veut
-   Rust sous Windows) ; des fenêtres d'autorisation Windows peuvent s'ouvrir ;
-2. il clone le dépôt dans `aurora-viewer\` et les sources de Firestorm dans
-   `phoenix-firestorm\`, côte à côte ;
-3. il télécharge la police emoji, la toolchain Rust et toutes les crates ;
-4. il te connecte à GitHub (`gh auth login`, dans le navigateur) si besoin,
-   et règle ton identité git dans le dépôt : ton pseudo GitHub et ton
-   adresse « noreply » (ton e-mail reste privé).
-
-On peut le relancer à tout moment, depuis le dépôt :
-`./scripts/setup.ps1`. Ce qui est déjà là est mis à jour, rien n'est
-réinstallé.
-
 Dans la suite, **le dossier du projet** est celui de l'installation : il
-contient `aurora-viewer\`, `phoenix-firestorm\`, et plus tard `work\` (les
-tâches des agents) et `RELEASE\`.
+contient `aurora-viewer\`, `phoenix-firestorm\`, `work\` (les tâches des
+agents) et, plus tard, `RELEASE\`.
+
+## Les outils Aurora : `aurora-tools.cmd`
+
+Double-clic sur **`aurora-tools.cmd`**, à la racine du dépôt (ou sur le
+raccourci « Aurora Tools » que l'outil peut créer). Tout se fait au clavier :
+**↑ ↓** pour choisir, **Entrée** pour valider, **Échap** ou **Retour
+arrière** pour revenir, et la touche affichée devant chaque choix comme
+raccourci.
+
+À l'ouverture, l'outil vérifie l'environnement : outils, dépôt en retard sur
+GitHub, sources de Firestorm périmées, Rust pas à jour, police, connexion
+GitHub… S'il manque ou s'il est périmé quelque chose, le premier choix est
+**Réparer / mettre à jour** (la même installation que la commande en une
+ligne : ce qui est là est mis à jour, rien n'est réinstallé).
+
+| Choix | Ce que ça fait |
+|---|---|
+| Viewer release | Le dernier `main` de GitHub en `--release`, dans `RELEASE\` (voir plus bas), puis « lancer ? » |
+| Viewer de dev | Ton dépôt local, profil par défaut (celui des agents) |
+| Viewer de debug | Ton dépôt local avec une console, les contrôles de débogage et les infos de débogage complètes (profil `debugging`, son propre dossier de quelques Go) |
+| Démo | Le viewer hors ligne, avec le choix d'un scénario `AURORA_DEMO_*` (lus dans le README) |
+| Tâches des agents | Les dossiers de `work\` : PR, changements en cours, dernière compilation, taille ; ménage de celles dont la PR est fusionnée |
+| Disque | La place prise par les compilations, et le nettoyage (`clean.ps1`) |
+| Logs du viewer | Ouvrir le dossier, lire la fin du dernier log, copier son chemin pour un agent |
+| Raccourci | « Aurora Tools » sur le Bureau et dans le menu Démarrer, avec le logo |
+| Vérifier à nouveau | Le tableau complet de l'environnement |
+
+Chaque choix existe aussi sans menu, pour un script :
+`./scripts/tools/aurora-tools.ps1 -Action diagnose` (`repair`, `release`,
+`dev`, `debug`, `demo`, `tasks`, `disk`, `logs`, `shortcut`).
 
 ## Le viewer à jour de `main`, en `--release`
 
-Pour avoir à tout moment l'exe optimisé du dernier `main` de GitHub :
-
-```powershell
-# la première fois, depuis le dépôt à jour
-git switch main; git pull
-./scripts/build-release.ps1
-```
-
-Ensuite, double-clic sur `RELEASE\build-release.bat`, dans le dossier du
-projet.
-L'exe prêt à lancer est dans `RELEASE\Aurora-Viewer\` (avec ses assets, comme
-le zip des releases), et `version.txt` dit quel commit a été compilé.
+Choix **Viewer release** des outils, ou double-clic sur
+`RELEASE\build-release.bat` dans le dossier du projet. L'exe prêt à lancer
+est dans `RELEASE\Aurora-Viewer\` (avec ses assets, comme le zip des
+releases), et `version.txt` dit quel commit a été compilé.
 
 - Le code vient **toujours de GitHub** : tes changements locaux et tes
   commits non poussés n'y entrent pas.
@@ -175,6 +201,8 @@ Les compilations prennent de la place : comptez 3 à 4 Go par dossier
 cache, qu'on peut toujours supprimer : il sera recompilé au besoin. Une
 nouvelle tâche libère d'elle-même le `target` des tâches fusionnées ou
 inactives depuis 7 jours.
+
+Le choix **Disque** des outils fait la même chose que :
 
 ```powershell
 ./scripts/clean.ps1                 # montre la place prise, n'efface rien
