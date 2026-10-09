@@ -251,7 +251,20 @@ fn line_job(
             at += 1;
         }
         let n = piece.chars().count();
-        job.append(&piece, 0.0, text_fmt.clone());
+        // links in the link colors, like in the conversation window
+        let k = super::colors::get();
+        let fmt = match &link {
+            None => text_fmt.clone(),
+            Some(Link::Url(_)) => egui::TextFormat {
+                color: super::colors::c(k.chat_urls),
+                ..text_fmt.clone()
+            },
+            Some(_) => egui::TextFormat {
+                color: super::colors::c(k.chat_slurl),
+                ..text_fmt.clone()
+            },
+        };
+        job.append(&piece, 0.0, fmt);
         if let Some(link) = link {
             links.push((at..at + n, link));
         }

@@ -226,7 +226,7 @@ pub struct Settings {
     pub settings_version: u32,
 }
 
-const SETTINGS_VERSION: u32 = 7;
+const SETTINGS_VERSION: u32 = 8;
 
 /// RGBA color (sRGB, straight alpha).
 pub type Rgba = [u8; 4];
@@ -321,7 +321,9 @@ impl Default for ColorSettings {
             chat_object_im: hex(0xA78BFA),
             chat_owner: hex(0xFCD34D),
             chat_urls: hex(0x5EEAD4),
-            chat_slurl: hex(0x6F7BA0),
+            // every clickable link of a text (web, place, avatar, group)
+            // shares the brand teal
+            chat_slurl: hex(0x5EEAD4),
             chat_direct: hex(0xFB923C),
             sender_avatar: hex(0xC4B5FD),
             sender_object: hex(0x4ADE80),
@@ -613,6 +615,10 @@ impl Settings {
         if self.settings_version < 7 {
             // new default: parcel music waits for the radio toggle (Firestorm)
             self.audio.music_autoplay = false;
+        }
+        if self.settings_version < 8 && self.colors.chat_slurl == hex(0x6F7BA0) {
+            // new default: SL links (places, avatars, groups) in the link teal
+            self.colors.chat_slurl = ColorSettings::default().chat_slurl;
         }
         if self.settings_version < 4 {
             // walking: arrow keys only (no more WASD / ZQSD by default)

@@ -16,7 +16,7 @@ Dans le code, on utilise toujours la `Palette` résolue (`p.violet`, `p.ink`…)
 |---|---|---|
 | violet | `#8B5CF6` | accent principal : sélection, bouton actif, focus, liens |
 | indigo | `#4F46E5` | accent secondaire, dégradés de la marque (logo, fond de connexion) |
-| teal | `#5EEAD4` | petite touche : états « actif / en ligne », points d'attention positifs |
+| teal | `#5EEAD4` | petite touche : états « actif / en ligne », points d'attention positifs ; liens cliquables des textes (web, lieux, avatars, groupes dans le chat, les bulles et les profils) |
 | navy | `#070B1F` | fond profond (écran de connexion, aurores) |
 | violet_light | `#A78BFA` | violet sur fond sombre (texte d'accent, survol) |
 | violet_pale | `#C4B5FD` | violet très clair (détails discrets) |
