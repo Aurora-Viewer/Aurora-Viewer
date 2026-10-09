@@ -290,13 +290,17 @@ fn item_row(
         let worn = rules::original(inv, *id).is_some_and(|id| facts.worn.contains(&id));
         let text = if worn { format!("{} (porté)", it.name) } else { it.name.clone() };
         let r = ui
-            .dnd_drag_source(egui::Id::new(("inv_drag", it.id)), InvDrag(it.id), |ui| {
+            .push_id(("inv_item", it.id), |ui| {
                 ui.add_sized(
                     [ui.available_width(), 20.0],
-                    egui::Button::selectable(st.selection.contains(id), RichText::new(text).size(13.0).color(p.ink)).frame(false),
+                    egui::Button::selectable(st.selection.contains(id), RichText::new(text).size(13.0).color(p.ink))
+                        .sense(egui::Sense::click_and_drag()),
                 )
             })
             .inner;
+        // One response handles clicks and dragging; a separate drag-source
+        // interaction overlay used to consume secondary clicks on the label.
+        r.dnd_set_drag_payload(InvDrag(it.id));
         let r = if it.desc.is_empty() { r } else { r.on_hover_text(&it.desc) };
         if r.clicked() || r.secondary_clicked() {
             st.select(ui, *id, r.secondary_clicked());
@@ -371,7 +375,7 @@ fn folder_tree(
         state.visible.push(id);
         let r = ui.add_sized(
             [ui.available_width(), 20.0],
-            egui::Button::selectable(state.selection.contains(&id), RichText::new(label).size(13.0).color(p.ink)).frame(false),
+            egui::Button::selectable(state.selection.contains(&id), RichText::new(label).size(13.0).color(p.ink)),
         );
         if r.clicked() || r.secondary_clicked() {
             state.select(ui, id, r.secondary_clicked());
@@ -663,6 +667,98 @@ pub fn show(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn item_frame(ctx: &egui::Context, inv: &Inventory, state: &mut InventoryUi, events: Vec<egui::Event>) -> egui::FullOutput {
+        ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 900.0))),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                item_row(
+                    ui,
+                    &crate::theme::Theme::default().palette(),
+                    &Icons::default(),
+                    inv,
+                    &Uuid::from_u128(8100),
+                    state,
+                    &mut InventoryPreferences::default(),
+                    &Facts {
+                        worn: HashSet::new(),
+                        points: Vec::new(),
+                        appearance_busy: false,
+                    },
+                    &mut Vec::new(),
+                );
+            },
+        )
+    }
+
+    #[test]
+    fn a_secondary_click_on_an_item_selects_it_and_opens_its_menu() {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let p = crate::theme::Theme::default().palette();
+        let mut inv = Inventory::default();
+        crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+        let id = Uuid::from_u128(8100);
+        let mut state = InventoryUi::default();
+        let pos = egui::pos2(200.0, 18.0);
+        let mut output = None;
+        for n in 0..8 {
+            let mut events = vec![egui::Event::PointerMoved(pos)];
+            if matches!(n, 4 | 5) {
+                events.push(egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Secondary,
+                    pressed: n == 4,
+                    modifiers: egui::Modifiers::NONE,
+                });
+            }
+            output = Some(item_frame(&ctx, &inv, &mut state, events));
+        }
+        assert_eq!(state.selected, Some(id));
+        let output = output.expect("frame");
+        assert!(
+            output
+                .shapes
+                .iter()
+                .any(|s| matches!(&s.shape, egui::epaint::Shape::Text(t) if t.galley.text() == "Propriétés"))
+        );
+        assert!(
+            output
+                .shapes
+                .iter()
+                .any(|s| matches!(&s.shape, egui::epaint::Shape::Rect(r) if r.fill == p.violet)),
+            "selection must be visible"
+        );
+    }
+
+    #[test]
+    fn item_rows_still_supply_the_inventory_payload_when_dragged() {
+        let ctx = egui::Context::default();
+        let mut inv = Inventory::default();
+        crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+        let mut state = InventoryUi::default();
+        for n in 0..7 {
+            let pos = egui::pos2(if n < 5 { 200.0 } else { 260.0 }, 18.0);
+            let mut events = vec![egui::Event::PointerMoved(pos)];
+            if n == 4 {
+                events.push(egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                });
+            }
+            item_frame(&ctx, &inv, &mut state, events);
+        }
+        assert_eq!(
+            egui::DragAndDrop::payload::<InvDrag>(&ctx).expect("drag payload").0,
+            Uuid::from_u128(8100)
+        );
+    }
 
     #[test]
     fn showing_an_original_clears_filters_and_expands_its_ancestors() {
