@@ -282,8 +282,7 @@ impl EnvSelector {
         (Source::Legacy, None)
     }
 
-    /// Source of the environment shown last.
-    #[cfg(test)]
+    /// Source of the environment shown last (tests, sky log).
     pub fn shown_source(&self) -> Option<Source> {
         self.shown.map(|s| s.source)
     }

@@ -53,6 +53,7 @@ struct Frame {
     sky_misc: vec4<f32>,        // dome offset, dome radius, moon brightness, star brightness
     tex_slots: vec4<u32>,       // cloud, sun, moon, water normal map
     sky_ll: vec4<f32>,          // x classic sky (1 = no reflection probe ambiance), y distance multiplier
+    sky_obj_light: vec4<f32>,   // rgb sun / moon color lighting objects (mSunDiffuse, max component <= 1)
     cascade_vp: array<mat4x4<f32>, 3>,
     lights: array<Light, 64>,
 };
@@ -844,7 +845,9 @@ fn ll_atmos(rel_in: vec3<f32>) -> LLAtmos {
     let density_multiplier = frame.sky_ambient.w;
     let lightnorm = frame.sky_light.xyz;
     let light_dir = frame.sun_dir.xyz;
-    var sunlight = frame.sky_sunlight.rgb;
+    // sunlight_color / moonlight_color as LLPipeline::bindDeferredShader sets
+    // them: normalized, and the moon without skyV's 0.7
+    var sunlight = frame.sky_obj_light.rgb;
     let cloud_shadow = frame.sky_sunlight.w;
     let light_atten = (blue_density + vec3<f32>(haze_density * 0.25)) * (density_multiplier * max_y);
     let combined = max(blue_density + vec3<f32>(haze_density), vec3<f32>(1e-6));
@@ -882,36 +885,51 @@ fn ll_haze(col: vec3<f32>, a: LLAtmos) -> vec3<f32> {
     return col * a.atten + srgb_to_linear(a.additive * 2.0) * frame.sky_cloud_pd2.w;
 }
 
-// adjustIrradiance (SSAO only darkens the ambient).
+// adjustIrradiance (SSAO only darkens the ambient): RenderSSAOIrradianceScale
+// 0.6, RenderSSAOIrradianceMax 0.18, then ssao_effect_mat from
+// RenderSSAOEffect (0.8, 1.0): value x 0.8, saturation x 1, i.e. minus 0.2 x
+// the mean of the channels.
 fn ll_ssao(irr: vec3<f32>, frag: vec2<f32>) -> vec3<f32> {
     let ao = screen_ao(frag);
-    return mix(min(irr * 0.6, vec3<f32>(0.18)), irr, ao);
+    let occluded = min(irr * 0.6, vec3<f32>(0.18));
+    let effect = occluded - vec3<f32>(0.2 * (occluded.r + occluded.g + occluded.b) / 3.0);
+    return mix(effect, irr, ao);
 }
 
-// Diffuse lighting of a classic (Blinn-Phong) surface: softenLightF classic
-// branch (sun, sky ambient), plus local lights (multiPointLightF). `base` is
-// the linear albedo. Returns the lit color and the linear sunlight for the
-// specular terms.
-fn ll_classic_diffuse(base: vec3<f32>, n: vec3<f32>, world_pos: vec3<f32>, shadow: f32, frag: vec2<f32>, a: LLAtmos) -> vec3<f32> {
-    var col: vec3<f32>;
+// softenLightF.glsl final_scale: 1.1 on classic skies, applied to the whole
+// sun + sky result of every surface (legacy and PBR, specular, environment
+// and emissive included), but not to the local lights, which LL adds in
+// another pass (multiPointLightF, its own final_scale 0.9).
+fn ll_final_scale() -> f32 {
+    return select(1.0, 1.1, ll_classic_mode());
+}
+
+// multiPointLightF.glsl final_scale.
+fn ll_local_scale() -> f32 {
+    return select(1.0, 0.9, ll_classic_mode());
+}
+
+// Sun and sky lighting of a classic (Blinn-Phong) surface: softenLightF
+// legacy branch before its final_scale. `base` is the linear albedo.
+fn ll_classic_sun_ambient(base: vec3<f32>, n: vec3<f32>, shadow: f32, frag: vec2<f32>, a: LLAtmos) -> vec3<f32> {
     let nl_sun = max(dot(n, frame.sun_dir.xyz), 0.0);
     if (ll_classic_mode()) {
         let sunlit = a.sunlit * 1.35;
         let irr = ll_ssao(a.amblit * ll_ambient_lighting(n), frag);
         let sun_contrib = vec3<f32>(min(pow(nl_sun, 1.2), shadow));
-        col = srgb_to_linear(irr * 0.9 + ll_linear_to_srgb(sun_contrib) * sunlit * 0.7) * base;
-    } else {
-        // linear mode: grey sky ambient, linear sunlight, plain lambert
-        let amb_lin = srgb_to_linear(a.amblit * ll_ambient_lighting(n));
-        let irr = ll_ssao(vec3<f32>(dot(amb_lin, vec3<f32>(0.2126, 0.7152, 0.0722))), frag);
-        col = (irr + min(nl_sun, shadow) * srgb_to_linear(a.sunlit)) * base;
+        return srgb_to_linear(irr * 0.9 + ll_linear_to_srgb(sun_contrib) * sunlit * 0.7) * base;
     }
-    // softenLightF final_scale (classic 1.1); multiPointLightF uses 0.9
-    if (ll_classic_mode()) {
-        col *= 1.1;
-    }
+    // linear mode: grey sky ambient, linear sunlight, plain lambert
+    let amb_lin = srgb_to_linear(a.amblit * ll_ambient_lighting(n));
+    let irr = ll_ssao(vec3<f32>(dot(amb_lin, vec3<f32>(0.2126, 0.7152, 0.0722))), frag);
+    return (irr + min(nl_sun, shadow) * srgb_to_linear(a.sunlit)) * base;
+}
+
+// Local lights on a classic surface (multiPointLightF): light color x n.l x
+// attenuation x albedo, with its final_scale.
+fn ll_local_diffuse(base: vec3<f32>, n: vec3<f32>, world_pos: vec3<f32>) -> vec3<f32> {
     var local = vec3<f32>(0.0);
-    // local lights: light color * n.l * attenuation * albedo (our colors carry the 3.25 PBR factor)
+    // our colors carry the 3.25 PBR factor
     let count = u32(frame.params.w);
     for (var i = 0u; i < count; i++) {
         let lt = frame.lights[i];
@@ -925,19 +943,29 @@ fn ll_classic_diffuse(base: vec3<f32>, n: vec3<f32>, world_pos: vec3<f32>, shado
             }
         }
     }
-    if (ll_classic_mode()) {
-        local *= 0.9;
-    }
-    return col + local;
+    return local * ll_local_scale();
+}
+
+// Diffuse lighting of a classic surface without specular or emissive (the
+// terrain): sun and sky with the final scale, plus the local lights.
+fn ll_classic_diffuse(base: vec3<f32>, n: vec3<f32>, world_pos: vec3<f32>, shadow: f32, frag: vec2<f32>, a: LLAtmos) -> vec3<f32> {
+    return ll_classic_sun_ambient(base, n, shadow, frag, a) * ll_final_scale() + ll_local_diffuse(base, n, world_pos);
+}
+
+// calcDiffuseSpecular (deferredUtil.glsl): base x (1 - F0) x (1 - metallic).
+fn ll_pbr_diffuse_color(base: vec3<f32>, metallic: f32) -> vec3<f32> {
+    return base * 0.96 * (1.0 - metallic);
 }
 
 // pbrBaseLight classic mode (deferredUtil.glsl): metallic-roughness surfaces
-// recombined like Blinn-Phong ones, no image based specular.
+// recombined like Blinn-Phong ones, plus the image based specular (pbrIbl),
+// before softenLightF's final_scale. The local lights are separate
+// (ll_classic_pbr_local), as LL adds them in another pass.
 fn ll_classic_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, n: vec3<f32>, v: vec3<f32>, world_pos: vec3<f32>, shadow: f32, frag: vec2<f32>, a: LLAtmos) -> vec3<f32> {
     let roughness = clamp(roughness_in, 0.04, 1.0);
     let ra = roughness * roughness;
     let f0 = mix(vec3<f32>(0.04), base, metallic);
-    let diffuse_color = base * (1.0 - metallic);
+    let diffuse_color = ll_pbr_diffuse_color(base, metallic);
     let nv = max(dot(n, v), 1e-4);
     let sunlit = a.sunlit * 1.35;
     let irr = srgb_to_linear(ll_ssao(a.amblit * ll_ambient_lighting(n), frag) * 0.9);
@@ -955,6 +983,35 @@ fn ll_classic_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, n: vec3<f32
         final_sun = clamp(sun_contrib * (diff + spec) * shadow, vec3<f32>(0.0), vec3<f32>(10.0));
     }
     var col = srgb_to_linear(ll_linear_to_srgb(irr * diffuse_color) + ll_linear_to_srgb(final_sun) * 1.1);
+    // pbrBaseLight adds the image based specular (pbrIbl: radiance x
+    // (F0 x brdf.x + brdf.y) x ao) on classic skies too. LL samples its
+    // reflection probes; without them the radiance is the sky reflection,
+    // blurred toward the hemisphere with roughness, or the mirror.
+    let up = n.z * 0.5 + 0.5;
+    let hemi = mix(mix(frame.ground_color.rgb, frame.sky_horizon.rgb, clamp(up * 2.0, 0.0, 1.0)),
+                   frame.sky_zenith.rgb, clamp(up * 2.0 - 1.0, 0.0, 1.0));
+    let r = reflect(-v, n);
+    var env = probe_radiance(world_pos, r, roughness, mix(sky_color(vec3<f32>(r.x, r.y, max(r.z, -0.2))), hemi, roughness));
+    let mw = mirror_weight(world_pos, n) * clamp(1.0 - roughness * 1.5, 0.0, 1.0);
+    if (mw > 0.0) {
+        let m = textureSampleLevel(mirror_tex, lin_clamp, screen_uv(frag), 0.0).rgb;
+        env = mix(env, m, mw);
+    }
+    // pbrIbl scales the specular by the material's occlusion only (ORM red);
+    // SSAO darkens the irradiance alone (adjustIrradiance)
+    col += env * env_brdf(f0, roughness, nv);
+    return col;
+}
+
+// Local lights on a PBR surface (multiPointLightF -> pbrCalcPointLightOrSpotLight),
+// with multiPointLightF's final_scale.
+fn ll_classic_pbr_local(base: vec3<f32>, metallic: f32, roughness_in: f32, n: vec3<f32>, v: vec3<f32>, world_pos: vec3<f32>) -> vec3<f32> {
+    let roughness = clamp(roughness_in, 0.04, 1.0);
+    let ra = roughness * roughness;
+    let f0 = mix(vec3<f32>(0.04), base, metallic);
+    let diffuse_color = ll_pbr_diffuse_color(base, metallic);
+    let nv = max(dot(n, v), 1e-4);
+    var col = vec3<f32>(0.0);
     let count = u32(frame.params.w);
     for (var i = 0u; i < count; i++) {
         let lt = frame.lights[i];
@@ -970,25 +1027,9 @@ fn ll_classic_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, n: vec3<f32
                 let spec = d_ggx(max(dot(n, h), 0.0), ra) * v_smith(nv, lnl, ra) * f;
                 let diff = (vec3<f32>(1.0) - f) * diffuse_color / PI;
                 let intensity = ll_light_atten(dist / radius, lt.color_falloff.w) * lt.color_falloff.rgb;
-                // multiPointLightF final_scale: 0.9 on classic skies
-                col += select(1.0, 0.9, ll_classic_mode()) * intensity * clamp(lnl * (diff + spec), vec3<f32>(0.0), vec3<f32>(10.0));
+                col += intensity * clamp(lnl * (diff + spec), vec3<f32>(0.0), vec3<f32>(10.0));
             }
         }
     }
-    // pbrBaseLight adds the image based specular (pbrIbl: radiance x
-    // (F0 x brdf.x + brdf.y) x ao) on classic skies too. LL samples its
-    // reflection probes; without them the radiance is the sky reflection,
-    // blurred toward the hemisphere with roughness, or the mirror.
-    let up = n.z * 0.5 + 0.5;
-    let hemi = mix(mix(frame.ground_color.rgb, frame.sky_horizon.rgb, clamp(up * 2.0, 0.0, 1.0)),
-                   frame.sky_zenith.rgb, clamp(up * 2.0 - 1.0, 0.0, 1.0));
-    let r = reflect(-v, n);
-    var env = probe_radiance(world_pos, r, roughness, mix(sky_color(vec3<f32>(r.x, r.y, max(r.z, -0.2))), hemi, roughness));
-    let mw = mirror_weight(world_pos, n) * clamp(1.0 - roughness * 1.5, 0.0, 1.0);
-    if (mw > 0.0) {
-        let m = textureSampleLevel(mirror_tex, lin_clamp, screen_uv(frag), 0.0).rgb;
-        env = mix(env, m, mw);
-    }
-    col += env * env_brdf(f0, roughness, nv) * screen_ao(frag);
-    return col;
+    return col * ll_local_scale();
 }

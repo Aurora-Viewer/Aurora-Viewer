@@ -1568,6 +1568,17 @@ pub fn events() -> Vec<NetEvent> {
         sec_per_day: 14400,
         usec_since_start: 0,
     }));
+    // AURORA_DEMO_SKY=<gamma>: a classic EEP sky (no reflection probe
+    // ambiance) with the given sky gamma and a sunlight color above 1, as most
+    // Second Life skies carry: shows the legacy gamma and the normalized
+    // object light (Firestorm mSunDiffuse) without a grid
+    if let Some(gamma) = std::env::var("AURORA_DEMO_SKY").ok().and_then(|v| v.trim().parse::<f64>().ok()) {
+        ev.push(NetEvent::Environment {
+            handle: HANDLE,
+            parcel_id: -1,
+            environment: demo_sky(Vec3::new(0.55, 0.35, 0.6).normalize(), gamma),
+        });
+    }
     ev.push(NetEvent::FriendsOnline {
         ids: vec![u(100), u(102)],
         online: true,
@@ -2229,5 +2240,33 @@ pub fn sit_events(frame: u64) -> Vec<NetEvent> {
         f if f > 400 && f < 700 && f.is_multiple_of(5) => vec![update(vec![seat(f)])],
         700 => vec![update(vec![me(0, Vec3::new(x + 1.2, y, floor_at(x + 1.2, y) + 0.84))])],
         _ => Vec::new(),
+    }
+}
+
+/// Day cycle with a single classic sky frame (see AURORA_DEMO_SKY).
+fn demo_sky(sun: Vec3, gamma: f64) -> Llsd {
+    use aurora_llsd::llsd_map;
+    let q = Quat::from_rotation_arc(Vec3::X, sun);
+    let arr = |v: &[f64]| Llsd::Array(v.iter().map(|x| Llsd::Real(*x)).collect());
+    let mut frames = aurora_llsd::Map::new();
+    frames.insert(
+        "sky".into(),
+        llsd_map! {
+            "type" => "sky",
+            "sun_rotation" => arr(&[q.x as f64, q.y as f64, q.z as f64, q.w as f64]),
+            "sunlight_color" => arr(&[2.2, 2.34, 2.7]),
+            "gamma" => gamma,
+        },
+    );
+    // a valid day needs a water track too (Firestorm recordEnvironment)
+    frames.insert("water".into(), llsd_map! { "type" => "water" });
+    let key = |name: &str| Llsd::Array(vec![llsd_map! { "key_keyframe" => 0.0, "key_name" => name }]);
+    llsd_map! {
+        "day_length" => 14400,
+        "day_offset" => 0,
+        "day_cycle" => llsd_map! {
+            "frames" => Llsd::Map(frames),
+            "tracks" => Llsd::Array(vec![key("water"), key("sky")]),
+        },
     }
 }

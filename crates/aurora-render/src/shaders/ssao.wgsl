@@ -1,5 +1,8 @@
 // Screen-space ambient occlusion at half resolution, from the single-sample
-// depth prepass, followed by a depth-aware blur.
+// depth prepass, followed by a depth-aware blur. The occlusion is Second
+// Life's calcAmbientOcclusion (aoUtil.glsl, Copyright (C) Linden Research,
+// Inc., LGPL 2.1): screen-space taps around the pixel, each counting as an
+// occluding sphere whose solid angle falls off with the squared distance.
 
 @group(0) @binding(0) var depth_tex: texture_depth_2d;
 @group(0) @binding(1) var ao_in: texture_2d<f32>;
@@ -8,7 +11,9 @@ struct SsaoParams {
     view_proj: mat4x4<f32>,
     inv_view_proj: mat4x4<f32>,
     camera_pos: vec4<f32>,
-    params: vec4<f32>,  // x radius (m), y samples, z intensity, w frame
+    // x ssao_radius (RenderSSAOScale, pixels x meters), y samples (8 as LL,
+    // or 16), z ssao_max_radius (RenderSSAOMaxScale, pixels), w ssao_factor
+    params: vec4<f32>,
 };
 @group(0) @binding(2) var<uniform> ssao: SsaoParams;
 
@@ -42,9 +47,33 @@ fn world_at(px: vec2<i32>, d: f32) -> vec3<f32> {
     return w.xyz / w.w;
 }
 
-fn ign(p: vec2<f32>) -> f32 {
-    // interleaved gradient noise
-    return fract(52.9829189 * fract(dot(p, vec2<f32>(0.06711056, 0.00583715))));
+// PCG hash of a pixel, in [0, 1): white noise like LL's random noise map
+// (a structured noise shows as stripes through the blur).
+fn pixel_noise(px: vec2<i32>) -> f32 {
+    var h = u32(px.x & 127) | (u32(px.y & 127) << 7u);
+    h = h * 747796405u + 2891336453u;
+    h = ((h >> ((h >> 28u) + 4u)) ^ h) * 277803737u;
+    h = (h >> 22u) ^ h;
+    return f32(h) / 4294967296.0;
+}
+
+// getKern: exponentially (^2) distant taps spread around the pixel, in
+// pixels of the full resolution target (times the scale). Taps 8..15 are
+// Aurora's higher quality option: the same rings turned by 22.5 degrees,
+// in between LL's distances.
+fn ao_kernel(i: i32) -> vec2<f32> {
+    let dirs = array<vec2<f32>, 8>(
+        vec2<f32>(-1.0, 0.0), vec2<f32>(1.0, 0.0), vec2<f32>(0.0, 1.0), vec2<f32>(0.0, -1.0),
+        vec2<f32>(0.7071, 0.7071), vec2<f32>(-0.7071, -0.7071), vec2<f32>(-0.7071, 0.7071), vec2<f32>(0.7071, -0.7071));
+    let k = i & 7;
+    var d = dirs[k];
+    var r = f32(k + 1) * 0.125;
+    if (i >= 8) {
+        // rotate by 22.5 degrees, half a step closer
+        d = vec2<f32>(d.x * 0.92388 - d.y * 0.38268, d.x * 0.38268 + d.y * 0.92388);
+        r -= 0.0625;
+    }
+    return d * r * r;
 }
 
 @fragment
@@ -67,37 +96,40 @@ fn fs_ssao(in: Out) -> @location(0) vec4<f32> {
     if (dot(n, to_cam) < 0.0) {
         n = -n;
     }
-    let dist = length(to_cam);
-    let radius = ssao.params.x * clamp(dist * 0.05, 0.6, 3.0);
+    // view depth (-z in eye space) of the pixel
+    let view_z = (ssao.view_proj * vec4<f32>(p, 1.0)).w;
+    let full = vec2<f32>(full_size());
+    let pos_screen = (vec2<f32>(px) + vec2<f32>(0.5)) / full;
+    // LL reflects the kernel about a random unit vector from a 128 x 128
+    // noise texture (LLPipeline mNoiseMap), tiled over the screen
+    let a = pixel_noise(px) * 6.2831853;
+    let noise_reflect = vec2<f32>(cos(a), sin(a));
+    let scale = min(ssao.params.x / max(view_z, 1e-3), ssao.params.z);
+    let factor = ssao.params.w;
     let count = i32(ssao.params.y);
-    var t = normalize(cross(n, select(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, 0.0, 1.0), abs(n.x) > 0.8)));
-    let b = cross(n, t);
-    let rot = ign(in.clip.xy + vec2<f32>(ssao.params.w * 5.588)) * 6.2831853;
-    var occlusion = 0.0;
+    var angle_hidden = 0.0;
+    var points = 0.0;
     for (var i = 0; i < count; i++) {
-        let fi = (f32(i) + 0.5) / f32(count);
-        let ang = f32(i) * 2.3999632 + rot;
-        let z = sqrt(1.0 - fi);
-        let r = sqrt(fi);
-        let dir = t * (cos(ang) * r) + b * (sin(ang) * r) + n * z;
-        let scale = mix(0.15, 1.0, fi * fi);
-        let s = p + dir * radius * scale + n * 0.03;
-        let c = ssao.view_proj * vec4<f32>(s, 1.0);
-        if (c.w <= 0.01) {
-            continue;
-        }
-        let ndc = c.xyz / c.w;
-        let uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
-        let spx = vec2<i32>(uv * vec2<f32>(full_size()));
-        let sd = depth_at(spx);
-        if (sd > ndc.z) {
-            // occluder in front of the sample: count it if it is close to p
-            let q = world_at(spx, sd);
-            let range = clamp(radius / max(distance(q, p), 1e-3), 0.0, 1.0);
-            occlusion += range * range;
-        }
+        let k = ao_kernel(i) / full;
+        let samp_screen = pos_screen + scale * reflect(k, noise_reflect);
+        let spx = vec2<i32>(floor(samp_screen * full));
+        let q = world_at(spx, depth_at(spx));
+        let diff = p - q;
+        let dist2 = dot(diff, diff);
+        // samples above the surface (offset 5 cm along the normal) occlude
+        // with the solid angle of a sphere of constant radius, capped
+        let above = select(0.0, 1.0, dot(q - 0.05 * n - p, n) > 0.0);
+        angle_hidden += above * min(1.0 / max(dist2, 1e-6), 1.0 / factor);
+        // samples more than 1 m in front of the pixel are "no data", not
+        // "no occlusion"
+        let q_view_z = (ssao.view_proj * vec4<f32>(q, 1.0)).w;
+        points += select(0.0, 1.0, q_view_z - view_z > -1.0);
     }
-    let ao = clamp(1.0 - occlusion / f32(count) * ssao.params.z, 0.0, 1.0);
+    var ao = 1.0;
+    if (points > 0.0) {
+        ao = 1.0 - min(factor * angle_hidden / points, 1.0);
+    }
+    ao = clamp(ao, 0.0, 1.0);
     return vec4<f32>(ao, ao, ao, 1.0);
 }
 

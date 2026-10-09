@@ -73,6 +73,7 @@ struct FrameU {
     sky_misc: [f32; 4],
     tex_slots: [u32; 4],
     sky_ll: [f32; 4],
+    sky_obj_light: [f32; 4],
     cascade_vp: [[[f32; 4]; 4]; CASCADES],
     lights: [LightU; MAX_LIGHTS],
 }
@@ -87,7 +88,7 @@ struct PostU {
     sharpen: f32,
     glow: f32,
     debug_glow: f32,
-    _pad: f32,
+    legacy_gamma: f32,
 }
 
 #[repr(C)]
@@ -3358,6 +3359,7 @@ impl Renderer {
             0.0
         };
         u.sky_ll = [ll_mode, s.distance_multiplier, 0.0, 0.0];
+        u.sky_obj_light = s.object_sunlight.extend(0.0).to_array();
         for (i, m) in cascades.iter().enumerate() {
             u.cascade_vp[i] = m.to_cols_array_2d();
         }
@@ -3550,7 +3552,13 @@ impl Renderer {
                 let env = *DEBUG_GLOW.get_or_init(|| std::env::var_os("AURORA_DEBUG_GLOW").is_some());
                 if env || f.debug_glow { 1.0 } else { 0.0 }
             },
-            _pad: 0.0,
+            // legacyGamma (postDeferredTonemap / CASF LEGACY_GAMMA): same
+            // condition as no_post in LLPipeline::tonemap / applyCAS
+            legacy_gamma: if f.sky.no_post && f.sky.gamma.is_finite() {
+                f.sky.gamma.max(0.0)
+            } else {
+                1.0
+            },
         };
         self.queue.write_buffer(&self.post_buffer, 0, bytemuck::bytes_of(&post));
         if self.targets.ao.is_some() {
@@ -3559,7 +3567,9 @@ impl Renderer {
                 view_proj: unjittered_vp.to_cols_array_2d(),
                 inv_view_proj: unjittered_vp.inverse().to_cols_array_2d(),
                 camera_pos: f.camera_pos.extend(0.0).to_array(),
-                params: [0.6, samples, 1.4, (self.frame_index % 64) as f32],
+                // Firestorm defaults: RenderSSAOScale 500, RenderSSAOMaxScale
+                // 200, RenderSSAOFactor 0.3 (LLPipeline::bindDeferredShader)
+                params: [500.0, samples, 200.0, 0.3],
             };
             self.queue.write_buffer(&self.ssao.buffer, 0, bytemuck::bytes_of(&u));
         }

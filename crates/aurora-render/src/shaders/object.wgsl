@@ -258,10 +258,10 @@ fn ll_spec(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, gloss: f32) -> f32 {
     return lit * fres * ll_light_func(nh, gloss) * gt / (nh * nl);
 }
 
-// Legacy material lighting applied to the diffuse result `col`, as
-// materialF.glsl / softenLightF.glsl: sun and local light highlights,
-// applyGlossEnv and applyLegacyEnv. Our light colors are PBR radiances
-// (diffuse divided by pi): SL's classic light colors are those over pi.
+// Legacy material lighting applied to the sun + sky result `col`, as
+// softenLightF.glsl: sun highlight, applyGlossEnv and applyLegacyEnv. The
+// local light highlights are separate (legacy_local_spec), as LL adds them
+// in another pass (multiPointLightF).
 fn legacy_light(col_in: vec3<f32>, spec: vec4<f32>, env: f32, n: vec3<f32>, v: vec3<f32>, world_pos: vec3<f32>, shadow: f32,
                 sun_lin: vec3<f32>, sky_scale: f32) -> vec3<f32> {
     var col = col_in;
@@ -286,18 +286,6 @@ fn legacy_light(col_in: vec3<f32>, spec: vec4<f32>, env: f32, n: vec3<f32>, v: v
     if (spec.a > 0.0) {
         let l = normalize(frame.sun_dir.xyz);
         col += ll_spec(n, v, l, spec.a) * shadow * sun_lin * spec.rgb;
-        let count = u32(frame.params.w);
-        for (var i = 0u; i < count; i++) {
-            let lt = frame.lights[i];
-            let to_l = lt.pos_radius.xyz - world_pos;
-            let dist = length(to_l);
-            let radius = lt.pos_radius.w;
-            if (dist < radius) {
-                let atten = ll_light_atten(dist / radius, lt.color_falloff.w);
-                let s = ll_spec(n, v, to_l / max(dist, 1e-4), spec.a) * atten;
-                col += clamp(s * lt.color_falloff.rgb / 3.25 * spec.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
-            }
-        }
         // applyGlossEnv
         var fresnel = clamp(1.0 - dot(v, n), 0.3, 1.0);
         fresnel = fresnel * fresnel * spec.a;
@@ -309,6 +297,29 @@ fn legacy_light(col_in: vec3<f32>, spec: vec4<f32>, env: f32, n: vec3<f32>, v: v
         var fresnel = 1.0 - dot(v, n);
         fresnel = min(fresnel * fresnel + env, 1.0);
         col = mix(col, env_sky * env * fresnel * 0.5, env);
+    }
+    return col;
+}
+
+// Local light highlights of legacy materials (multiPointLightF). Our light
+// colors are PBR radiances (diffuse divided by pi): SL's classic light
+// colors are those over pi.
+fn legacy_local_spec(spec: vec4<f32>, n: vec3<f32>, v: vec3<f32>, world_pos: vec3<f32>) -> vec3<f32> {
+    var col = vec3<f32>(0.0);
+    if (spec.a <= 0.0) {
+        return col;
+    }
+    let count = u32(frame.params.w);
+    for (var i = 0u; i < count; i++) {
+        let lt = frame.lights[i];
+        let to_l = lt.pos_radius.xyz - world_pos;
+        let dist = length(to_l);
+        let radius = lt.pos_radius.w;
+        if (dist < radius) {
+            let atten = ll_light_atten(dist / radius, lt.color_falloff.w);
+            let s = ll_spec(n, v, to_l / max(dist, 1e-4), spec.a) * atten;
+            col += clamp(s * lt.color_falloff.rgb / 3.25 * spec.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+        }
     }
     return col;
 }
@@ -334,22 +345,29 @@ fn shade(in: VsOut, front: bool) -> Shaded {
         let v = normalize(frame.camera_pos.xyz - in.world_pos);
         let sh = shadow_factor(in.world_pos, m.n, in.view_depth);
         let a = ll_atmos(in.world_pos - frame.camera_pos.xyz);
+        // softenLightF: (sun + sky + specular + environment + emissive) x
+        // final_scale, then the local lights pass, then hazeF
         if ((rec.flags.x & FLAG_PBR) != 0u) {
             col = ll_classic_pbr(m.color.rgb, m.metallic, m.roughness, m.n, v, in.world_pos, sh, in.clip.xy, a);
+            col = (col + m.emissive) * ll_final_scale()
+                + ll_classic_pbr_local(m.color.rgb, m.metallic, m.roughness, m.n, v, in.world_pos);
         } else {
-            col = ll_classic_diffuse(m.color.rgb, m.n, in.world_pos, sh, in.clip.xy, a);
+            col = ll_classic_sun_ambient(m.color.rgb, m.n, sh, in.clip.xy, a);
             if (m.legacy_spec.a > 0.0 || m.legacy_env > 0.0) {
                 col = legacy_light(col, m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, sh, ll_sun_linear(a), 1.0);
             }
+            col = (col + m.emissive) * ll_final_scale() + ll_local_diffuse(m.color.rgb, m.n, in.world_pos)
+                + legacy_local_spec(m.legacy_spec, m.n, v, in.world_pos) * ll_local_scale();
         }
-        col = ll_haze(col + m.emissive, a);
+        col = ll_haze(col, a);
         hazed = true;
     } else {
         let v = normalize(frame.camera_pos.xyz - in.world_pos);
         let sh = shadow_factor(in.world_pos, m.n, in.view_depth);
         col = shade_pbr(m.color.rgb, m.metallic, m.roughness, m.n, v, in.world_pos, sh, in.clip.xy) + m.emissive;
         if (m.legacy_spec.a > 0.0 || m.legacy_env > 0.0) {
-            col = legacy_light(col - m.emissive, m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, sh, frame.sun_color.rgb / PI, 1.0 / PI) + m.emissive;
+            col = legacy_light(col - m.emissive, m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, sh, frame.sun_color.rgb / PI, 1.0 / PI)
+                + legacy_local_spec(m.legacy_spec, m.n, v, in.world_pos) + m.emissive;
         }
     }
     if ((rec.flags.x & FLAG_HIGHLIGHT) != 0u) {

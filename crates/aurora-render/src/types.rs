@@ -386,8 +386,16 @@ pub struct SkyParams {
     /// Direction towards the dominant light (sun, or moon at night), z-up,
     /// with z clamped to >= -0.1.
     pub light_norm: Vec3,
-    /// Light color driving the atmosphere (sunlight, or moonlight * 0.7).
+    /// Light color of the sky dome and clouds (sunlight, or moonlight * 0.7
+    /// in skyV.glsl).
     pub sunlight: Vec3,
+    /// Light color of objects, terrain and water (LLPipeline mSunDiffuse /
+    /// mMoonDiffuse: the sky's sunlight scaled so its largest component is
+    /// at most 1, then clamped; black when neither sun nor moon is up).
+    pub object_sunlight: Vec3,
+    /// Sky gamma: Firestorm's legacyGamma on skies without reflection probe
+    /// ambiance (post process, 1 = no change).
+    pub gamma: f32,
     pub ambient: Vec3,
     pub blue_horizon: Vec3,
     pub blue_density: Vec3,
@@ -434,6 +442,8 @@ impl Default for SkyParams {
         SkyParams {
             light_norm: sun,
             sunlight: Vec3::new(0.7342, 0.7815, 0.8999),
+            object_sunlight: Vec3::new(0.7342, 0.7815, 0.8999),
+            gamma: 1.0,
             ambient: Vec3::new(0.25, 0.25, 0.25),
             blue_horizon: Vec3::new(0.4954, 0.4954, 0.6399),
             blue_density: Vec3::new(0.2447, 0.4487, 0.7599),
