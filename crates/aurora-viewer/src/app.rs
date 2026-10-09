@@ -250,6 +250,10 @@ pub struct App {
 impl App {
     pub fn new() -> anyhow::Result<App> {
         let mut settings = Settings::load();
+        if std::env::var_os("AURORA_DEMO").is_some() && std::env::var_os("AURORA_DEMO_KEYBOARD").is_some() {
+            // Exercise a first launch without changing the user's bindings.
+            settings.keybinds = Default::default();
+        }
         // test overrides (used by automated captures)
         if let Some(v) = std::env::var("AURORA_AA").ok().and_then(|v| v.parse().ok()) {
             settings.antialiasing = v;
