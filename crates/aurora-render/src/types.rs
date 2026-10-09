@@ -318,8 +318,10 @@ pub mod particle_flags {
     pub const EMISSIVE: u32 = 1;
     /// Additive blending (destination factor ONE).
     pub const ADDITIVE: u32 = 2;
-    /// Quad stretched along `axis` (ribbons, follow velocity).
+    /// Quad stretched along its world-space `axis` (ribbons).
     pub const AXIS: u32 = 4;
+    /// Velocity-oriented billboard: project its axis onto the viewing plane.
+    pub const FOLLOW_VELOCITY: u32 = 8;
 }
 
 #[derive(Debug, Clone, Copy)]
