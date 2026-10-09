@@ -6,6 +6,7 @@ pub mod caps;
 pub mod circuit;
 pub mod fetch;
 pub mod inventory;
+pub mod land;
 pub mod login;
 pub mod objcache;
 pub mod objects;

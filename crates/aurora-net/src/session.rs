@@ -31,6 +31,10 @@ use tokio::task::JoinHandle;
 #[path = "session_social.rs"]
 mod social_net;
 
+/// About Land: parcel selection, lists, covenant (land.rs).
+#[path = "session_land.rs"]
+mod land_net;
+
 const SIM_TIMEOUT: Duration = Duration::from_secs(60);
 const AGENT_UPDATE_INTERVAL: Duration = Duration::from_millis(100);
 const AGENT_UPDATE_KEEPALIVE: Duration = Duration::from_secs(1);
@@ -119,6 +123,8 @@ struct Session<'a> {
     /// Mute list download, groups, chat sessions (session_social.rs).
     social: social_net::SocialNet,
     tasks: object_actions::TaskRequests,
+    /// Covenant transfer of the About Land floater (session_land.rs).
+    land: land_net::LandNet,
 }
 
 fn emit(sh: &Shared, ev: NetEvent) {
@@ -211,6 +217,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         last_cache_save: Instant::now(),
         social: Default::default(),
         tasks: Default::default(),
+        land: Default::default(),
     };
 
     let addr = SocketAddr::V4(SocketAddrV4::new(login.sim_ip, login.sim_port));
@@ -508,75 +515,28 @@ impl Session<'_> {
             );
             return;
         }
-        if self.main != Some(sim) {
-            return;
-        }
-        let pd = &b["ParcelData"][0];
-        let seq = pd["SequenceID"].as_i32();
-        if seq < 0 {
-            // replies to selection / hover / collision requests
-            return;
-        }
-        let local_id = pd["LocalID"].as_i32();
-        let version = b["ParcelEnvironmentBlock"][0]["ParcelEnvironmentVersion"].as_i32();
-        // U32 fields travel as 4-byte big-endian binaries in LLSD
-        let u32_of = |v: &Llsd| -> u32 {
-            match v {
-                Llsd::Binary(b) if b.len() == 4 => u32::from_be_bytes([b[0], b[1], b[2], b[3]]),
-                other => other.as_i32() as u32,
+        let info = crate::land::parse_parcel_properties(b);
+        if info.sequence_id == crate::land::SELECTED_PARCEL_SEQ_ID {
+            // the About Land selection, in whichever region it lies
+            if info.request_result != crate::land::PARCEL_RESULT_NO_DATA {
+                let handle = self.handle_of(sim);
+                let result = info.request_result;
+                emit(
+                    self.sh,
+                    NetEvent::Land(crate::land::LandEvent::Selected {
+                        handle,
+                        info: Arc::new(info),
+                        result,
+                    }),
+                );
             }
-        };
-        let info = ParcelInfo {
-            local_id,
-            name: pd["Name"].to_string_value(),
-            desc: pd["Desc"].to_string_value(),
-            owner_id: pd["OwnerID"].as_uuid(),
-            group_id: pd["GroupID"].as_uuid(),
-            is_group_owned: pd["IsGroupOwned"].as_bool(),
-            area: pd["Area"].as_i32(),
-            max_prims: pd["MaxPrims"].as_i32(),
-            owner_prims: pd["OwnerPrims"].as_i32(),
-            group_prims: pd["GroupPrims"].as_i32(),
-            other_prims: pd["OtherPrims"].as_i32(),
-            selected_prims: pd["SelectedPrims"].as_i32(),
-            sim_max_prims: pd["SimWideMaxPrims"].as_i32(),
-            sim_total_prims: pd["SimWideTotalPrims"].as_i32(),
-            flags: u32_of(&pd["ParcelFlags"]),
-            sale_price: pd["SalePrice"].as_i32(),
-            auth_buyer: pd["AuthBuyerID"].as_uuid(),
-            category: pd["Category"].as_i32(),
-            claim_date: pd["ClaimDate"].as_i32(),
-            music_url: pd["MusicURL"].to_string_value(),
-            media_url: pd["MediaURL"].to_string_value(),
-            snapshot_id: pd["SnapshotID"].as_uuid(),
-            landing_type: pd["LandingType"].as_i32(),
-            see_avatars: !pd.has("SeeAVs") || pd["SeeAVs"].as_bool(),
-            any_av_sounds: !pd.has("AnyAVSounds") || pd["AnyAVSounds"].as_bool(),
-            region_allow_env_override: b["ParcelEnvironmentBlock"][0]["RegionAllowEnvironmentOverride"].as_bool(),
-            media: {
-                let md = &b["MediaData"][0];
-                let ls = &b["MediaLinkSharing"][0];
-                ParcelMedia {
-                    media_id: pd["MediaID"].as_uuid(),
-                    auto_scale: pd["MediaAutoScale"].as_bool(),
-                    // no MediaData block: legacy QuickTime type, looping
-                    mime: if b.has("MediaData") {
-                        md["MediaType"].to_string_value()
-                    } else {
-                        "video/vnd.secondlife.qt.legacy".into()
-                    },
-                    desc: md["MediaDesc"].to_string_value(),
-                    width: md["MediaWidth"].as_i32(),
-                    height: md["MediaHeight"].as_i32(),
-                    looping: !b.has("MediaData") || md["MediaLoop"].as_bool(),
-                    current_url: ls["MediaCurrentURL"].to_string_value(),
-                    allow_navigate: ls["MediaAllowNavigate"].as_bool(),
-                    prevent_camera_zoom: ls["MediaPreventCameraZoom"].as_bool(),
-                    url_timeout: ls["MediaURLTimeout"].as_f32(),
-                    obscure_moap: u32_of(&b["ParcelExtendedFlags"][0]["Flags"]) & 1 != 0,
-                }
-            },
-        };
+            return;
+        }
+        if self.main != Some(sim) || info.sequence_id < 0 {
+            // other regions, hover requests
+            return;
+        }
+        let (local_id, version) = (info.local_id, info.env_version);
         emit(self.sh, NetEvent::AgentParcel(Arc::new(info)));
         if self.agent_parcel != Some((local_id, version)) {
             self.agent_parcel = Some((local_id, version));
@@ -1068,6 +1028,7 @@ impl Session<'_> {
                 m.data.classified_id = id;
                 self.send_main(&m, true);
             }
+            NetCommand::Land(l) => self.on_land_command(l),
             NetCommand::ParcelInfoRequest(id) => {
                 let mut m = ParcelInfoRequest::default();
                 m.agent_data.agent_id = self.agent_id();
@@ -1592,7 +1553,7 @@ impl Session<'_> {
     fn on_eq_event(&mut self, e: EqEvent) {
         log::debug!("EQ {} from {}", e.message, e.sim);
         let b = &e.body;
-        if self.on_social_eq(&e.message, b) {
+        if self.on_social_eq(&e.message, b) || self.on_land_eq(&e.message, b) {
             return;
         }
         match e.message.as_str() {
@@ -1742,7 +1703,7 @@ impl Session<'_> {
 
     fn dispatch(&mut self, from: SocketAddr, pkt: &IncomingPacket) -> Result<(), aurora_msg::DecodeError> {
         let id = pkt.id;
-        if self.dispatch_object_actions(from, pkt)? || self.dispatch_social(from, pkt)? {
+        if self.dispatch_object_actions(from, pkt)? || self.dispatch_social(from, pkt)? || self.dispatch_land(from, pkt)? {
             return Ok(());
         }
         if id == PacketAck::ID {
@@ -2093,7 +2054,8 @@ impl Session<'_> {
                     .region_info
                     .first()
                     .map_or(m.region.region_flags, |r| r.region_flags_extended as u32);
-                emit(self.sh, NetEvent::RegionFlags { handle, flags });
+                let max_tasks = m.region.object_capacity;
+                emit(self.sh, NetEvent::RegionFlags { handle, flags, max_tasks });
             }
         } else if id == HealthMessage::ID {
             let m: HealthMessage = pkt.decode()?;
@@ -2570,6 +2532,9 @@ impl Session<'_> {
             size_x: size.0,
             size_y: size.1,
             is_main,
+            owner: r.sim_owner,
+            is_estate_manager: r.is_estate_manager,
+            product_name: field_str(&m.region_info3.product_name),
         };
         emit(self.sh, NetEvent::RegionHandshake(Arc::new(info)));
         if is_main {
