@@ -187,6 +187,11 @@ pub enum CtxAction {
     TeleportToAvatar(Uuid),
     /// World map on an avatar (Avatar.ShowOnMap).
     ShowOnMap(Uuid),
+    /// Place link of a text (SLURL): world map on it / teleport there, once
+    /// confirmed (TeleportViaSLAPP).
+    ShowPlace(String, glam::Vec3),
+    TeleportToPlace(String, glam::Vec3),
+    TeleportToPlaceConfirmed(String, glam::Vec3),
     /// Rights given to a friend (GrantUserRights).
     GrantRights {
         friend: Uuid,
@@ -837,6 +842,36 @@ pub fn delete_confirm(ctx: &egui::Context, p: &Palette, text: &str) -> Option<bo
                     .corner_radius(CornerRadius::same(2)),
             );
             if yes.clicked() {
+                answer = Some(true);
+            }
+            if super::widgets::flat_button(ui, p, "Annuler").clicked() {
+                answer = Some(false);
+            }
+        });
+    });
+    if modal.should_close() && answer.is_none() {
+        answer = Some(false);
+    }
+    answer
+}
+
+/// TeleportViaSLAPP: confirm a teleport asked by a place link. Some(true)
+/// teleports, Some(false) cancels.
+pub fn place_teleport_confirm(ctx: &egui::Context, p: &Palette, region: &str) -> Option<bool> {
+    use egui::RichText;
+    let mut answer = None;
+    let modal = egui::Modal::new(egui::Id::new("place_teleport_confirm")).show(ctx, |ui| {
+        ui.set_width(340.0);
+        ui.label(RichText::new("Téléportation").size(15.0).strong().color(p.ink));
+        ui.add_space(6.0);
+        ui.label(
+            RichText::new(format!("Voulez-vous vraiment vous téléporter jusqu'à {region} ?"))
+                .size(12.5)
+                .color(p.muted),
+        );
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            if super::widgets::flat_button(ui, p, "Téléporter").clicked() {
                 answer = Some(true);
             }
             if super::widgets::flat_button(ui, p, "Annuler").clicked() {

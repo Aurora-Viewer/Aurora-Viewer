@@ -132,14 +132,24 @@ fn card(ui: &mut egui::Ui, p: &Palette, icons: &Icons, n: &mut Notification, toa
             });
             if !n.body.is_empty() {
                 ui.add_space(2.0);
+                // selectable: Firestorm shows the body in a read-only
+                // LLTextEditor (lltoastnotifypanel.cpp, "text_editor_box")
                 if script {
                     egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
-                        ui.add(egui::Label::new(RichText::new(&n.body).size(12.0).color(p.ink)).wrap());
+                        ui.add(
+                            egui::Label::new(RichText::new(&n.body).size(12.0).color(p.ink))
+                                .wrap()
+                                .selectable(true),
+                        );
                     });
                 } else {
                     ui.horizontal(|ui| {
                         ui.add_space(22.0);
-                        ui.add(egui::Label::new(RichText::new(&n.body).size(12.0).color(p.muted)).wrap());
+                        ui.add(
+                            egui::Label::new(RichText::new(&n.body).size(12.0).color(p.muted))
+                                .wrap()
+                                .selectable(true),
+                        );
                     });
                 }
             }

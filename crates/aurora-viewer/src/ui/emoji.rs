@@ -182,14 +182,15 @@ impl Emoji {
         out
     }
 
-    /// Text with color emoji inline (wraps like a label).
+    /// Text with color emoji inline (wraps like a label). The text stays
+    /// selectable for copying, like Firestorm's read-only chat editors.
     pub fn rich_text(&mut self, ui: &mut egui::Ui, text: &str, size: f32, color: egui::Color32, italics: bool) {
         if !self.available() || !text.chars().any(|c| self.has(c)) {
             let mut rt = egui::RichText::new(text).size(size).color(color);
             if italics {
                 rt = rt.italics();
             }
-            ui.add(egui::Label::new(rt).wrap());
+            ui.add(egui::Label::new(rt).wrap().selectable(true));
             return;
         }
         ui.horizontal_wrapped(|ui| {
@@ -207,7 +208,7 @@ impl Emoji {
                 if italics {
                     rt = rt.italics();
                 }
-                ui.add(egui::Label::new(rt).wrap());
+                ui.add(egui::Label::new(rt).wrap().selectable(true));
             }
         };
         for c in text.chars() {

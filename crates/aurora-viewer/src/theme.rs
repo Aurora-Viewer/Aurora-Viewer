@@ -195,7 +195,8 @@ impl Theme {
         style.spacing.text_edit_width = 280.0;
         // egui makes every label selectable by default; like Firestorm's
         // LLTextBox, UI text (window titles, captions) is not. Text meant to be
-        // copied (UUIDs, covenant) opts back in with `Label::selectable(true)`.
+        // copied (chat and IM messages, notification bodies, profile texts,
+        // UUIDs, covenant) opts back in with `Label::selectable(true)`.
         style.interaction.selectable_labels = false;
         if let Some(h) = style.text_styles.get_mut(&egui::TextStyle::Heading) {
             h.size = 15.0;

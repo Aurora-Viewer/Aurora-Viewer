@@ -184,6 +184,8 @@ pub struct App {
     context_menu_was: bool,
     /// « Supprimer » waiting for a yes: (object, why it asks).
     delete_confirm: Option<(uuid::Uuid, String)>,
+    /// Teleport asked by a place link, waiting for a yes (TeleportViaSLAPP).
+    place_confirm: Option<(String, Vec3)>,
     script_dialogs_were: usize,
     /// Last tracker beacon sound (FIRE-16969).
     beacon_sound_at: Option<Instant>,
@@ -448,6 +450,7 @@ impl App {
             mic_was: false,
             context_menu_was: false,
             delete_confirm: None,
+            place_confirm: None,
             script_dialogs_were: 0,
             beacon_sound_at: None,
             stuck_watch: None,
@@ -4308,6 +4311,14 @@ impl App {
                     self.delete_confirm = None;
                     if yes {
                         ui::context::request(&ctx, ui::context::CtxAction::DeleteConfirmed(id));
+                    }
+                }
+                if let Some((region, pos)) = self.place_confirm.clone()
+                    && let Some(yes) = ui::context::place_teleport_confirm(&ctx, &p, &region)
+                {
+                    self.place_confirm = None;
+                    if yes {
+                        ui::context::request(&ctx, ui::context::CtxAction::TeleportToPlaceConfirmed(region, pos));
                     }
                 }
                 ui::media::show(

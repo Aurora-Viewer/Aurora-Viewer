@@ -141,6 +141,9 @@ pub struct WorldMap {
     pub track: Option<Track>,
     /// Region name search in progress (lowercase) and when it was sent.
     pub search: Option<(String, Instant)>,
+    /// Place link waiting for its region by name (lowercase name, position in
+    /// the region): tracked when the MapNameRequest answer arrives.
+    wanted_place: Option<(String, glam::Vec3)>,
     /// Home location from the login response (global meters).
     pub home: Option<(f64, f64, f32)>,
     /// Parcel overlay of each connected region: (cells per side x, y, bytes).
@@ -305,6 +308,12 @@ impl WorldMap {
         if let Some((x, y, z)) = teleport {
             self.out.push(teleport_command(x, y, z));
         }
+        // a place link waiting for its region by name
+        if let Some((name, pos)) = self.wanted_place.take()
+            && !self.track_known_region(&name, pos)
+        {
+            self.wanted_place = Some((name, pos));
+        }
     }
 
     pub fn apply_items(&mut self, item_type: u32, items: Vec<MapItem>) {
@@ -432,6 +441,28 @@ impl WorldMap {
         self.track = Some(t);
     }
 
+    /// LLFloaterWorldMap::trackURL: track a position of a region given by
+    /// name, asking the region with MapNameRequest when it is not known yet
+    /// (LLWorldMapMessage::sendNamedRegionRequest).
+    pub fn track_region(&mut self, name: &str, pos: glam::Vec3) {
+        let lower = name.trim().to_lowercase();
+        if lower.is_empty() {
+            return;
+        }
+        if !self.track_known_region(&lower, pos) {
+            self.out.push(NetCommand::MapNameRequest { name: lower.clone() });
+            self.wanted_place = Some((lower, pos));
+        }
+    }
+
+    fn track_known_region(&mut self, lower: &str, pos: glam::Vec3) -> bool {
+        let Some(&(sx, sy)) = self.sims.iter().find(|(_, s)| s.name.to_lowercase() == lower).map(|(k, _)| k) else {
+            return false;
+        };
+        self.track_location(sx as f64 * 256.0 + pos.x as f64, sy as f64 * 256.0 + pos.y as f64, pos.z, false);
+        true
+    }
+
     /// LLFloaterWorldMap::onLocationCommit: MapNameRequest (a "#" is
     /// appended under 3 characters).
     pub fn search_region(&mut self, text: &str) {
@@ -503,6 +534,33 @@ mod tests {
         let mut m = WorldMap::default();
         m.set_home_from_login("{'region_handle':[r256000, r256512], 'position':[r33.5, r40, r22.75], 'look_at':[r1, r0, r0]}");
         assert_eq!(m.home, Some((256033.5, 256552.0, 22.75)));
+    }
+
+    #[test]
+    fn place_link_waits_for_its_region() {
+        let mut m = WorldMap::default();
+        m.track_region("Ahern", glam::Vec3::new(10.0, 20.0, 30.0));
+        assert!(matches!(&m.take_commands()[..], [NetCommand::MapNameRequest { name }] if name == "ahern"));
+        assert!(m.track.is_none());
+        m.apply_blocks(vec![MapBlock {
+            x: 1000,
+            y: 1001,
+            name: "Ahern".into(),
+            access: 13,
+            region_flags: 0,
+            water_height: 20,
+            agents: 0,
+            map_image_id: uuid::Uuid::nil(),
+            size_x: 256,
+            size_y: 256,
+        }]);
+        let t = m.track.as_ref().expect("tracked");
+        assert_eq!((t.x, t.y, t.z), (256010.0, 256276.0, 30.0));
+        // known now: tracked at once
+        m.track = None;
+        m.track_region("ahern", glam::Vec3::new(1.0, 2.0, 3.0));
+        assert!(m.take_commands().iter().all(|c| !matches!(c, NetCommand::MapNameRequest { .. })));
+        assert!(m.track.is_some());
     }
 
     #[test]

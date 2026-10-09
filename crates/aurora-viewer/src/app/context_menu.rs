@@ -303,6 +303,12 @@ impl App {
                     self.panels.world_map = true;
                 }
             }
+            CtxAction::ShowPlace(region, pos) => {
+                self.world.map.track_region(&region, pos);
+                self.panels.world_map = true;
+            }
+            CtxAction::TeleportToPlace(region, pos) => self.place_confirm = Some((region, pos)),
+            CtxAction::TeleportToPlaceConfirmed(region, pos) => self.teleport_to_location(region, pos),
             CtxAction::GrantRights { friend, rights } => {
                 let cmd = NetCommand::GrantUserRights { friend, rights };
                 self.world.profile_command(&cmd);
