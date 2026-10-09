@@ -356,6 +356,8 @@ mod tests {
             two_sided: false,
             repeats: 1.0,
             glow: false,
+            pass: super::Pass::Opaque,
+            glow_pool: false,
         };
         for idx in [front, back] {
             scene.gpu[idx].geom = Some(key);

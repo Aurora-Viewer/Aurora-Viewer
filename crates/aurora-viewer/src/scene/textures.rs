@@ -122,6 +122,18 @@ pub struct TextureStats {
     pub failing: usize,
 }
 
+/// Alpha class of a bindless slot; a change bumps `generation`.
+fn set_slot_alpha(alpha: &mut Vec<AlphaKind>, generation: &mut u64, slot: u32, a: AlphaKind) {
+    let i = slot as usize;
+    if i >= alpha.len() {
+        alpha.resize(i + 1024, AlphaKind::Opaque);
+    }
+    if alpha[i] != a {
+        alpha[i] = a;
+        *generation += 1;
+    }
+}
+
 pub struct TextureStreamer {
     entries: HashMap<Uuid, Entry>,
     by_fetch_key: HashMap<u64, Uuid>,
@@ -133,9 +145,11 @@ pub struct TextureStreamer {
     /// faces to the alpha pool when rigged or glowing, even if opaque).
     pub alpha_channel_by_slot: Vec<bool>,
     cache_dir: PathBuf,
-    /// Bumped whenever a texture's alpha class or a sculpt map changes.
     /// Procedural demo textures: id -> slot.
     local_slots: HashMap<Uuid, u32>,
+    /// Bumped whenever a slot's alpha class or alpha channel, or a sculpt
+    /// map, changes: the scene classifies its faces again (the faces'
+    /// pass is cached, and the GPU lists read it).
     pub generation: u64,
     max_decodes: usize,
     decodes: usize,
@@ -296,10 +310,12 @@ impl TextureStreamer {
                 data: &px,
             }])
         {
-            if slot as usize >= self.alpha_by_slot.len() {
-                self.alpha_by_slot.resize(slot as usize + 1024, AlphaKind::Opaque);
-            }
-            self.alpha_by_slot[slot as usize] = super::jobs::classify_alpha(&px);
+            set_slot_alpha(
+                &mut self.alpha_by_slot,
+                &mut self.generation,
+                slot,
+                super::jobs::classify_alpha(&px),
+            );
             self.local_slots.insert(id, slot);
             return slot;
         }
@@ -311,10 +327,7 @@ impl TextureStreamer {
                 data: &placeholder,
             }])
             .unwrap_or(aurora_render::textures::WHITE);
-        if slot as usize >= self.alpha_by_slot.len() {
-            self.alpha_by_slot.resize(slot as usize + 1024, AlphaKind::Opaque);
-        }
-        self.alpha_by_slot[slot as usize] = AlphaKind::Opaque;
+        set_slot_alpha(&mut self.alpha_by_slot, &mut self.generation, slot, AlphaKind::Opaque);
         self.entries.insert(
             id,
             Entry {
@@ -347,12 +360,12 @@ impl TextureStreamer {
 
     /// A texture drawn by the viewer itself (media): `acquire` returns its slot.
     pub fn register_local(&mut self, id: Uuid, slot: u32) {
-        if slot as usize >= self.alpha_by_slot.len() {
-            self.alpha_by_slot.resize(slot as usize + 1024, AlphaKind::Opaque);
-        }
-        self.alpha_by_slot[slot as usize] = AlphaKind::Opaque;
-        if let Some(c) = self.alpha_channel_by_slot.get_mut(slot as usize) {
+        set_slot_alpha(&mut self.alpha_by_slot, &mut self.generation, slot, AlphaKind::Opaque);
+        if let Some(c) = self.alpha_channel_by_slot.get_mut(slot as usize)
+            && *c
+        {
             *c = false;
+            self.generation += 1;
         }
         self.local_slots.insert(id, slot);
     }
@@ -785,13 +798,8 @@ impl TextureStreamer {
                     }
                 }
                 e.decoded = Some(u.discard);
-                if e.alpha != u.alpha {
-                    e.alpha = u.alpha;
-                    self.generation += 1;
-                }
-                if let Some(a) = self.alpha_by_slot.get_mut(e.slot as usize) {
-                    *a = u.alpha;
-                }
+                e.alpha = u.alpha;
+                set_slot_alpha(&mut self.alpha_by_slot, &mut self.generation, e.slot, u.alpha);
                 let slot = e.slot as usize;
                 if slot >= self.alpha_channel_by_slot.len() {
                     self.alpha_channel_by_slot.resize(slot + 1024, false);
@@ -842,9 +850,7 @@ impl TextureStreamer {
         for id in evict {
             if let Some(e) = self.entries.remove(&id) {
                 renderer.free_texture(e.slot);
-                if let Some(a) = self.alpha_by_slot.get_mut(e.slot as usize) {
-                    *a = AlphaKind::Opaque;
-                }
+                set_slot_alpha(&mut self.alpha_by_slot, &mut self.generation, e.slot, AlphaKind::Opaque);
             }
         }
         // Memory budget: raise the global discard bias when above budget.

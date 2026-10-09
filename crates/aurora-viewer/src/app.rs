@@ -328,6 +328,9 @@ impl App {
         if let Some(v) = std::env::var("AURORA_SHADOWS").ok().and_then(|v| v.parse().ok()) {
             settings.shadow_quality = v;
         }
+        if let Ok(v) = std::env::var("AURORA_OCCLUSION") {
+            settings.occlusion_culling = v != "0";
+        }
         let net = NetClient::new()?;
         let voice_http = net.caps_http();
         let login_info = ui::news::LoginInfo::start(net.runtime());
@@ -3110,7 +3113,7 @@ impl App {
                 .banlines
                 .update(&mut gfx.renderer, &self.world, self.settings.maps.ban_lines, self.camera.position);
             self.frame_profile.lap(Lap::Extras);
-            self.scene.build_lists(&cull, self.settings.shadows);
+            self.scene.build_lists(&mut gfx.renderer, &cull, self.settings.shadows);
             self.frame_profile.lap(Lap::Lists);
             if self.demo && std::env::var_os("AURORA_DEMO_ANIMESH").is_some() && self.frame_count.is_multiple_of(120) {
                 self.scene.log_demo_animesh(&self.world);

@@ -136,6 +136,8 @@ pub struct SceneCounts {
 #[derive(Default)]
 struct Period {
     frames: u32,
+    /// Draw lists culled on the GPU in the last frame (gpu_cull.rs).
+    gpu_cull: bool,
     /// Frame times (ms), for the 95th percentile and the maximum.
     frame_ms: Vec<f32>,
     laps: [f32; LAPS],
@@ -249,6 +251,7 @@ impl FrameProfile {
         p.texture_pages = render.texture_pages;
         p.texture_page_bytes = render.texture_page_bytes;
         p.geometry_bytes = render.geometry_bytes;
+        p.gpu_cull = render.gpu_cull;
         let s = scene;
         for (sum, v) in p.scene.iter_mut().zip([
             s.objects,
@@ -318,7 +321,7 @@ fn summary(p: &Period, elapsed: Duration) -> String {
     let s = &p.scene;
     let _ = write!(
         out,
-        " | draws={:.0} calls={:.0} tris_k={:.0} shadow_draws={:.0} particles={:.0} occluded={:.0} \
+        " | draws={:.0} calls={:.0} tris_k={:.0} shadow_draws={:.0} particles={:.0} occluded={:.0} cull={} \
          blend={:.0} blend_glow={:.0} glow_alpha={:.0} | objects={:.0} visible={:.0} synced={:.0} rebuilt={:.1} posed={:.1} \
          records_kb={:.1} palettes_kb={:.1} | textures={} texture_mb={} texture_pages={} pages_mb={} geometry_mb={} jobs={:.0} geom_pending={:.0}",
         count(p.draws),
@@ -327,6 +330,7 @@ fn summary(p: &Period, elapsed: Duration) -> String {
         count(p.shadow_draws),
         count(p.particles),
         count(p.occluded),
+        if p.gpu_cull { "gpu" } else { "cpu" },
         count(s[5]),
         count(s[6]),
         count(s[7]),

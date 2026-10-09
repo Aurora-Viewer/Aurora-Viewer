@@ -1,6 +1,7 @@
 //! GPU memory arenas: one big vertex buffer, one big u16 index buffer and
 //! a storage buffer of draw records, all sub-allocated on the CPU side.
 
+use crate::gpu_cull::{CullFace, GpuTable};
 use crate::types::{DrawRecord, SkinVertex, Vertex};
 use std::collections::BTreeMap;
 
@@ -260,8 +261,12 @@ impl GeometryArena {
 const CHUNK: usize = 64;
 
 /// Storage buffer of `DrawRecord`s with a CPU mirror and chunked dirty uploads.
+/// Each record also has a `CullFace` (GPU draw lists, gpu_cull.rs), reset
+/// when the record is allocated or freed: only object faces set one.
 pub struct RecordStore {
     pub buffer: wgpu::Buffer,
+    /// GPU culling entry of each record (its face, when it is an object's).
+    pub faces: GpuTable<CullFace>,
     mirror: Vec<DrawRecord>,
     free: Vec<u32>,
     dirty: Vec<bool>,
@@ -278,6 +283,7 @@ impl RecordStore {
         let cap = 16384usize;
         Self {
             buffer: Self::make(device, cap),
+            faces: GpuTable::new(device, "cull faces", cap, CullFace::NONE),
             mirror: Vec::with_capacity(cap),
             free: Vec::new(),
             dirty: Vec::new(),
@@ -310,6 +316,7 @@ impl RecordStore {
         self.live += 1;
         if let Some(id) = self.free.pop() {
             self.set(id, rec);
+            self.faces.set(id as usize, CullFace::NONE);
             return id;
         }
         let id = self.mirror.len() as u32;
@@ -345,6 +352,13 @@ impl RecordStore {
         }
     }
 
+    /// The face drawn with record `id` (GPU draw lists).
+    pub fn set_face(&mut self, id: u32, face: CullFace) {
+        if (id as usize) < self.mirror.len() {
+            self.faces.set(id as usize, face);
+        }
+    }
+
     pub fn get(&self, id: u32) -> Option<&DrawRecord> {
         self.mirror.get(id as usize)
     }
@@ -353,11 +367,13 @@ impl RecordStore {
         if (id as usize) < self.mirror.len() {
             self.live = self.live.saturating_sub(1);
             self.free.push(id);
+            self.faces.set(id as usize, CullFace::NONE);
         }
     }
 
     /// Upload dirty chunks; reallocates the buffer when it is too small.
     pub fn flush(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        self.faces.flush(device, queue);
         let rec_size = std::mem::size_of::<DrawRecord>();
         self.uploaded = 0;
         let needed = self.mirror.len() * rec_size;

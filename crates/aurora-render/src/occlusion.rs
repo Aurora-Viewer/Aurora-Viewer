@@ -136,7 +136,15 @@ impl Occlusion {
     pub fn new(device: &wgpu::Device) -> Self {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("occlusion"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/occlusion.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                format!(
+                    "{}
+{}",
+                    include_str!("shaders/hiz_test.wgsl"),
+                    include_str!("shaders/occlusion.wgsl")
+                )
+                .into(),
+            ),
         });
         let first_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("hiz first"),
@@ -359,6 +367,22 @@ impl Occlusion {
             build_bgs,
             dims,
         });
+    }
+
+    /// Visible-last-frame flags by record (also read and written by the
+    /// GPU draw lists, gpu_cull.rs).
+    pub fn visibility(&self) -> &wgpu::Buffer {
+        &self.visibility
+    }
+
+    /// Camera, screen and pyramid levels of this frame's test (uniform).
+    pub fn params(&self) -> &wgpu::Buffer {
+        &self.params
+    }
+
+    /// The whole Hi-Z pyramid, once `prepare` built it.
+    pub fn hiz_view(&self) -> Option<&wgpu::TextureView> {
+        self.hiz.as_ref().map(|h| &h.view)
     }
 
     /// Drop the pyramid (its bind groups hold the old depth after a resize).

@@ -27,6 +27,7 @@ use crate::world::objects::{Object, ObjectStore};
 use crate::world::terrain::{self, CHUNK_CELLS, Composition};
 use aurora_net::NetClient;
 use aurora_prim::te::TextureFace;
+use aurora_render::gpu_cull::{CullFace, CullObject, FACE_FIRST, GpuCullView, NO_OBJECT, avatar_state, object_flags};
 use aurora_render::{DrawCmd, DrawLists, DrawRecord, MeshAlloc, Renderer, ShadowCaster, flags};
 use avatar::AvatarLibrary;
 use glam::{Mat4, Quat, Vec3, Vec4};
@@ -75,14 +76,39 @@ struct GeomEntry {
 const GEOM_KEEP_FRAMES: u32 = 600;
 
 /// Pass a face is drawn in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Pass {
     Opaque,
     OpaqueTwoSided,
     Mask,
     MaskTwoSided,
     Blend,
+    #[default]
     Hidden,
+}
+
+impl Pass {
+    /// Code of the pass in the GPU face table (`gpu_cull::pass`).
+    pub fn gpu_code(self) -> u32 {
+        use aurora_render::gpu_cull::pass;
+        match self {
+            Pass::Opaque => pass::OPAQUE,
+            Pass::OpaqueTwoSided => pass::OPAQUE_2S,
+            Pass::Mask => pass::MASK,
+            Pass::MaskTwoSided => pass::MASK_2S,
+            Pass::Blend => pass::BLEND,
+            Pass::Hidden => pass::HIDDEN,
+        }
+    }
+
+    /// Alpha mode bits of the face's draw record (shaders, shadows).
+    fn record_flags(self) -> u32 {
+        match self {
+            Pass::Blend => flags::ALPHA_BLEND,
+            Pass::Mask | Pass::MaskTwoSided => flags::ALPHA_MASK,
+            _ => 0,
+        }
+    }
 }
 
 /// Cached per-face draw info.
@@ -105,6 +131,11 @@ pub struct FaceDraw {
     pub repeats: f32,
     /// TE glow > 0: also drawn in the glow pass.
     pub glow: bool,
+    /// Pass from the alpha classification (`face_mode`), redone when a
+    /// texture changes alpha class (`TextureStreamer::generation`).
+    pub pass: Pass,
+    /// Glowing face drawn in LL's alpha pool (`glow_alpha`).
+    pub glow_pool: bool,
 }
 
 /// Per-object GPU data kept by the scene (indexed like the object slab).
@@ -141,6 +172,163 @@ pub struct ObjGpu {
     pub mirror: bool,
     /// Listed in `Scene::light_objects` by its last sync.
     pub is_light: bool,
+    /// Has blended or glowing faces: still listed by the CPU when the GPU
+    /// culls the other draws (gpu_cull.rs).
+    pub special: bool,
+    /// Avatars: sphere of the posed body (system mesh skinned by the current
+    /// palette), for culling and occlusion; None until posed.
+    pub posed_sphere: Option<(Vec3, f32)>,
+    /// Avatars: `gpu_cull::avatar_state` of the last lists.
+    pub cull_state: u32,
+}
+
+impl ObjGpu {
+    /// Culling sphere: the bounds, or for an avatar its posed body (2.5 m
+    /// around its position until posed).
+    pub fn sphere(&self) -> (Vec3, f32) {
+        if self.is_avatar {
+            self.posed_sphere.unwrap_or((self.center, 2.5))
+        } else {
+            (self.center, self.radius)
+        }
+    }
+
+    /// Avatar whose limits apply: itself, or the wearer of an attachment.
+    pub fn avatar(&self, idx: usize) -> Option<usize> {
+        if self.is_avatar { Some(idx) } else { self.owner_avatar }
+    }
+
+    /// Entry of the GPU object table.
+    fn cull_object(&self, idx: usize) -> CullObject {
+        if self.faces.is_empty() {
+            // nothing to draw, but an avatar's state still rules its
+            // attachments
+            return CullObject {
+                state: self.cull_state,
+                ..CullObject::NONE
+            };
+        }
+        let (c, r) = self.sphere();
+        let avatar = self.avatar(idx);
+        let mut fl = object_flags::ACTIVE;
+        for (on, bit) in [
+            (self.is_avatar, object_flags::AVATAR),
+            (self.rigged, object_flags::RIGGED),
+            (self.hud, object_flags::HUD),
+            (avatar.is_some() || self.skeleton_owner.is_some(), object_flags::NO_PROBE),
+        ] {
+            if on {
+                fl |= bit;
+            }
+        }
+        CullObject {
+            sphere: [c.x, c.y, c.z, r],
+            flags: fl,
+            avatar: avatar.map_or(NO_OBJECT, |a| a as u32),
+            state: self.cull_state,
+            _pad: 0,
+        }
+    }
+}
+
+/// Pass of a face and whether its glow goes to LL's alpha pool, from the
+/// alpha class and alpha channel of its base texture.
+fn face_mode(f: &FaceDraw, alpha: &[AlphaKind], channel: &[bool]) -> (Pass, bool) {
+    let tex_alpha = alpha.get(f.base_slot as usize).copied().unwrap_or(AlphaKind::Opaque);
+    let pass = classify(f, tex_alpha);
+    // LLPipeline::getPoolTypeFromTE + canRenderAsMask: a glowing face whose
+    // texture has an alpha channel goes to the alpha pool unless its
+    // material says none / mask / emissive
+    let has_channel = channel.get(f.base_slot as usize).copied().unwrap_or(false);
+    let pool = f.pbr_alpha.is_none() && has_channel && matches!(f.legacy_alpha, None | Some(legacy_mat::alpha_mode::BLEND));
+    (pass, pool)
+}
+
+/// What the object tests of a frame need (CPU lists).
+struct CullCtx<'a> {
+    view: &'a CullView,
+    draw_distance: f32,
+    shadow_distance: f32,
+    reflection_distance: f32,
+    shadows: bool,
+    reflections: bool,
+}
+
+/// An object that passed the tests: its culling sphere and the views it
+/// may be drawn in.
+struct ObjVis {
+    sphere: (Vec3, f32),
+    in_view: bool,
+    casts: bool,
+    reflects: bool,
+}
+
+/// Object tests of the CPU lists, the same as `face_mask` in cull.wgsl:
+/// avatar limit (impostor), too complex (attachments hidden), still
+/// loading, draw distance, view / shadow / reflection reach and small
+/// object culling, on the culling sphere (avatars: their posed body).
+fn object_visibility(
+    g: &ObjGpu,
+    idx: usize,
+    ctx: &CullCtx,
+    avatar_full: impl Fn(usize) -> bool,
+    too_complex: impl Fn(usize) -> bool,
+    loading: impl Fn(usize) -> bool,
+) -> Option<ObjVis> {
+    if g.faces.is_empty() || g.hud {
+        return None;
+    }
+    let avatar = g.avatar(idx);
+    if avatar.is_some_and(|a| !avatar_full(a)) {
+        return None;
+    }
+    // too complex: only its silhouette, no attachments
+    if g.owner_avatar.is_some_and(&too_complex) {
+        return None;
+    }
+    // still loading: a cloud until complete (not half an avatar)
+    if avatar.is_some_and(loading) {
+        return None;
+    }
+    let (sc, sr) = g.sphere();
+    let d = (sc - ctx.view.eye).length();
+    if d - sr > ctx.draw_distance && !g.is_avatar {
+        return None;
+    }
+    let in_view = ctx.view.sphere_visible(sc, sr);
+    let casts = ctx.shadows && d - sr < ctx.shadow_distance;
+    let reflects = ctx.reflections && d - sr < ctx.reflection_distance;
+    if !in_view && !casts && !reflects {
+        return None;
+    }
+    // tiny objects far away are culled (LL-like small object culling)
+    if ctx.view.pixel_size(sc, sr) < 1.5 && !g.is_avatar {
+        return None;
+    }
+    Some(ObjVis {
+        sphere: (sc, sr),
+        in_view,
+        casts,
+        reflects,
+    })
+}
+
+/// GPU face table entry of a face of object `idx`.
+fn cull_face(f: &FaceDraw, idx: usize, first: bool) -> CullFace {
+    CullFace {
+        index_count: f.cmd.index_count,
+        first_index: f.cmd.first_index,
+        base_vertex: f.cmd.base_vertex,
+        object: idx as u32,
+        bits: f.pass.gpu_code() | if first { FACE_FIRST } else { 0 },
+        _pad: [0; 3],
+    }
+}
+
+/// Faces listed by the CPU even with the GPU lists: blended (sorted back
+/// to front) and glowing ones.
+fn is_special(faces: &[FaceDraw]) -> bool {
+    faces.iter().any(|f| f.pass == Pass::Blend || (f.glow && f.pass != Pass::Hidden))
 }
 
 struct TerrainChunk {
@@ -202,10 +390,15 @@ pub struct Scene {
     geom_zero: VecDeque<(GeomKey, u32)>,
     /// Geometries still being built or downloaded.
     geom_pending: usize,
-    /// Texture generation of the last face alpha re-classification, and
-    /// faces built since: the pass over every face only runs then.
+    /// Texture generation of the last face alpha re-classification: faces
+    /// are classified when built, and all again only when a texture
+    /// changes alpha class.
     alpha_seen_gen: u64,
-    faces_changed: bool,
+    /// Joint boxes of the system avatar meshes, all parts merged (posed
+    /// avatar spheres).
+    system_bounds: Vec<animesh::JointBounds>,
+    /// Objects visited by the CPU lists this frame (reused).
+    visit_tmp: Vec<(usize, bool)>,
     /// Objects with light parameters (kept by `sync_object`, which sees every
     /// object when it arrives and on each update): the light list reads
     /// these instead of every object each frame. May hold removed indices;
@@ -473,7 +666,8 @@ impl Scene {
             geom_zero: VecDeque::new(),
             geom_pending: 0,
             alpha_seen_gen: u64::MAX,
-            faces_changed: true,
+            system_bounds: Vec::new(),
+            visit_tmp: Vec::new(),
             light_objects: Default::default(),
             selection_wire: HashMap::new(),
             debug_alpha: None,
@@ -835,6 +1029,7 @@ impl Scene {
             if let Some(mut g) = self.gpu.get_mut(i).map(std::mem::take) {
                 self.release_obj(renderer, &mut g);
             }
+            renderer.cull.objects.set(i, CullObject::NONE);
         }
     }
 
@@ -844,6 +1039,7 @@ impl Scene {
         for g in gpus.iter_mut() {
             self.release_obj(renderer, g);
         }
+        renderer.cull.objects.reset();
         for (_, r) in self.regions.drain() {
             for (_, c) in r.chunks {
                 renderer.free_mesh(c.alloc);
@@ -1123,6 +1319,9 @@ impl Scene {
         if self.gpu.len() < world.objects.slots.len() {
             self.gpu.resize_with(world.objects.slots.len(), ObjGpu::default);
         }
+        // the GPU object table covers every slot (an attachment's avatar
+        // index is always in it, as in the CPU lists)
+        renderer.cull.objects.ensure_len(self.gpu.len());
         let now = Instant::now();
         let n = world.objects.slots.len();
         let agent = world.agent_id;
@@ -1176,6 +1375,7 @@ impl Scene {
             }
             plans.extend(planned);
         }
+        let synced: Vec<usize> = plans.iter().map(|(idx, _)| *idx).collect();
         for (idx, plan) in plans {
             match plan {
                 Plan::Move(m) => self.apply_move(renderer, world, idx, m),
@@ -1185,6 +1385,13 @@ impl Scene {
                 }
             }
         }
+        // GPU object table: bounds and flags of what was synced (unchanged
+        // entries are not uploaded)
+        for idx in synced {
+            if let Some(g) = self.gpu.get(idx) {
+                renderer.cull.objects.set(idx, g.cull_object(idx));
+            }
+        }
 
         self.geom_gc(renderer);
         self.stats.objects = world.objects.len();
@@ -1192,31 +1399,70 @@ impl Scene {
         self.stats.geom_pending = self.geom_pending;
         self.stats.jobs = self.jobs.pending();
         self.stats.sync_ms = t0.elapsed().as_secs_f32() * 1000.0;
-        // Alpha classification can change when a texture finishes streaming
-        // (generation bump) or faces are rebuilt; else nothing to redo.
-        // Shadow shaders use the same face mode as the visible draw lists.
-        if self.textures.generation == self.alpha_seen_gen && !self.faces_changed {
-            return;
+        // A texture changed alpha class (generation bump): faces built
+        // before are classified again (new faces are classified when built).
+        if self.textures.generation != self.alpha_seen_gen {
+            self.alpha_seen_gen = self.textures.generation;
+            self.reclassify_faces(renderer);
         }
-        self.alpha_seen_gen = self.textures.generation;
-        self.faces_changed = false;
-        for g in &self.gpu {
-            for f in &g.faces {
-                let alpha = self.textures.alpha_by_slot.get(f.base_slot as usize).copied().unwrap_or_default();
-                let mode = match classify(f, alpha) {
-                    Pass::Blend => flags::ALPHA_BLEND,
-                    Pass::Mask | Pass::MaskTwoSided => flags::ALPHA_MASK,
-                    _ => 0,
-                };
-                if let Some(mut r) = renderer.records.get(f.record).copied() {
-                    let flags = (r.flags[0] & !(flags::ALPHA_BLEND | flags::ALPHA_MASK)) | mode;
-                    if flags != r.flags[0] {
-                        r.flags[0] = flags;
-                        renderer.records.set(f.record, r);
-                    }
-                }
+    }
+
+    /// Classify every face again (in parallel); the changed ones update
+    /// their record's alpha mode, their GPU face entry and their object's
+    /// `special` flag. Shadow shaders use the same face mode as the lists.
+    fn reclassify_faces(&mut self, renderer: &mut Renderer) {
+        let alpha = &self.textures.alpha_by_slot;
+        let channel = &self.textures.alpha_channel_by_slot;
+        let changes: Vec<(usize, usize, Pass, bool)> = self
+            .gpu
+            .par_iter()
+            .enumerate()
+            .flat_map_iter(|(idx, g)| {
+                g.faces.iter().enumerate().filter_map(move |(fi, f)| {
+                    let (pass, pool) = face_mode(f, alpha, channel);
+                    (pass != f.pass || pool != f.glow_pool).then_some((idx, fi, pass, pool))
+                })
+            })
+            .collect();
+        let mut last = usize::MAX;
+        for (idx, fi, pass, pool) in changes {
+            let g = &mut self.gpu[idx];
+            let f = &mut g.faces[fi];
+            let mode_changed = f.pass.record_flags() != pass.record_flags();
+            f.pass = pass;
+            f.glow_pool = pool;
+            let (record, face) = (f.record, cull_face(f, idx, fi == 0));
+            if mode_changed && let Some(mut r) = renderer.records.get(record).copied() {
+                r.flags[0] = (r.flags[0] & !(flags::ALPHA_BLEND | flags::ALPHA_MASK)) | pass.record_flags();
+                renderer.records.set(record, r);
+            }
+            renderer.records.set_face(record, face);
+            if idx != last {
+                last = idx;
+                g.special = is_special(&g.faces);
             }
         }
+    }
+
+    /// Classify freshly built faces of object `idx`: pass, record alpha
+    /// mode, GPU face entries, `special`.
+    fn finish_faces(&self, renderer: &mut Renderer, idx: usize, g: &mut ObjGpu) {
+        let alpha = &self.textures.alpha_by_slot;
+        let channel = &self.textures.alpha_channel_by_slot;
+        for (fi, f) in g.faces.iter_mut().enumerate() {
+            let (pass, pool) = face_mode(f, alpha, channel);
+            f.pass = pass;
+            f.glow_pool = pool;
+            let mode = pass.record_flags();
+            if mode != 0
+                && let Some(mut r) = renderer.records.get(f.record).copied()
+            {
+                r.flags[0] = (r.flags[0] & !(flags::ALPHA_BLEND | flags::ALPHA_MASK)) | mode;
+                renderer.records.set(f.record, r);
+            }
+            renderer.records.set_face(f.record, cull_face(f, idx, fi == 0));
+        }
+        g.special = is_special(&g.faces);
     }
 
     /// Keep `light_objects` in step with an object's light parameters.
@@ -1670,6 +1916,8 @@ impl Scene {
                 two_sided,
                 repeats,
                 glow: rec.emissive[3] > 0.0,
+                pass: Pass::Hidden,
+                glow_pool: false,
             });
         }
         for t in old_tex {
@@ -1678,8 +1926,8 @@ impl Scene {
         g.tex_generation = self.textures.generation;
         g.mat_generation = self.materials.generation;
         g.built_faces = geom.faces.iter().filter(|f| f.is_some()).count();
+        self.finish_faces(renderer, idx, &mut g);
         self.gpu[idx] = g;
-        self.faces_changed = true;
     }
 
     /// For an attachment, the wearing avatar (full id, object index).
@@ -1816,6 +2064,8 @@ impl Scene {
                     two_sided: false,
                     repeats: 1.0,
                     glow: false,
+                    pass: Pass::Hidden,
+                    glow_pool: false,
                 });
             }
             for t in old_tex {
@@ -1825,8 +2075,8 @@ impl Scene {
             g.tex_generation = appearance_gen;
             g.bom_mask = bom_mask;
             g.jelly = jelly;
+            self.finish_faces(renderer, idx, &mut g);
             self.gpu[idx] = g;
-            self.faces_changed = true;
         } else {
             // an avatar standing still keeps its records: not uploaded again
             let model = avatar_model.to_cols_array_2d();
@@ -1834,9 +2084,38 @@ impl Scene {
                 renderer.records.set_model(f.record, model);
             }
         }
+        let posed = self.posed_avatar_sphere(o.full_id, palette, system_binds, avatar_model, pos);
         let g = &mut self.gpu[idx];
         g.center = pos;
         g.radius = 1.2;
+        g.posed_sphere = posed;
+    }
+
+    /// Sphere of an avatar's system body as posed by its current palette
+    /// (joint boxes of the skinned vertices, as `animesh::posed_bounds`),
+    /// for culling and occlusion; None before a sane pose exists.
+    fn posed_avatar_sphere(&mut self, _id: Uuid, palette_base: u32, binds: u32, model: Mat4, pos: Vec3) -> Option<(Vec3, f32)> {
+        if self.system_bounds.is_empty() {
+            let mut boxes = HashMap::<u8, (Vec3, Vec3)>::new();
+            for i in 0..self.avatar_lib.parts.len() {
+                for b in self.geom_ready(&GeomKey::AvatarPart(i as u8))?.joint_bounds.iter() {
+                    let e = boxes.entry(b.joint).or_insert((b.min, b.max));
+                    e.0 = e.0.min(b.min);
+                    e.1 = e.1.max(b.max);
+                }
+            }
+            self.system_bounds = boxes
+                .into_iter()
+                .map(|(joint, (min, max))| animesh::JointBounds { joint, min, max })
+                .collect();
+        }
+        let (c, r) = animesh::posed_bounds(&self.system_bounds, |j| {
+            let b = self.skin_binds.get(binds as usize + j as usize)?;
+            let p = self.palettes.get(palette_base as usize + b.joint[0] as usize)?;
+            Some(model * Mat4::from_cols_array_2d(p) * Mat4::from_cols_array_2d(&b.inverse_bind))
+        })?;
+        // a palette not posed yet collapses the body (or throws it away)
+        (c.is_finite() && (0.3..8.0).contains(&r) && c.distance(pos) < 4.0).then_some((c, r))
     }
 
     // ------------------------------------------------------------ terrain & water
@@ -1937,10 +2216,19 @@ impl Scene {
     // ------------------------------------------------------------ culling
 
     /// Build this frame's draw lists.
-    pub fn build_lists(&mut self, view: &CullView, shadows: bool) {
+    ///
+    /// With the GPU lists (`Renderer::gpu_culling`, gpu_cull.rs) the GPU
+    /// culls the opaque and masked faces, the object shadow casters and
+    /// the reflection / probe draws from the scene's tables; this only
+    /// visits the objects with blended or glowing faces (`ObjGpu::special`),
+    /// a thirtieth of the objects for the texture usage, the selection,
+    /// the pictured impostors and, in debug, everything. Without them (or
+    /// AURORA_CPU_CULL=1) every object is visited and every list built here.
+    pub fn build_lists(&mut self, renderer: &mut Renderer, view: &CullView, shadows: bool) {
         let t0 = Instant::now();
         self.lists.clear();
         self.last_cull = Some(*view);
+        let gpu_mode = renderer.gpu_culling();
         let debug_alpha = self.debug_alpha;
         let dd = self.draw_distance;
         let shadow_dist = dd.min(256.0);
@@ -1965,7 +2253,9 @@ impl Scene {
                     });
                 }
                 if self.reflections {
-                    self.lists.reflection_terrain.push(cmd);
+                    // with its bounds: each reflection pass keeps the chunks
+                    // in its own frustum
+                    self.lists.reflection_terrain.push(cmd.with_bounds(c.center, c.radius));
                 }
                 if view.sphere_visible(c.center, c.radius) {
                     self.lists.terrain.push(cmd);
@@ -2006,14 +2296,61 @@ impl Scene {
             })
             .collect();
         let mut plan = self.impostors.plan(&imp_avatars, view.eye, Instant::now());
-        let hidden_loading = if self.hide_loading { Some(&self.loading.indices) } else { None };
         self.stats.avatars_hidden = imp_avatars.len();
+        // avatar states of the GPU object table (few avatars: every frame)
+        for &(_, i) in &avatars {
+            let mut st = 0;
+            if avatar_ok[i] {
+                st |= avatar_state::FULL;
+            }
+            if self.too_complex.contains(&i) {
+                st |= avatar_state::TOO_COMPLEX;
+            }
+            if self.hide_loading && self.loading.indices.contains(&i) {
+                st |= avatar_state::LOADING;
+            }
+            if self.gpu[i].cull_state != st {
+                self.gpu[i].cull_state = st;
+                renderer.cull.objects.set(i, self.gpu[i].cull_object(i));
+            }
+        }
+        let hidden_loading = if self.hide_loading { Some(&self.loading.indices) } else { None };
         let reflections = self.reflections;
         let refl_dist = dd.min(128.0);
 
+        // objects visited here: all of them on the CPU path; with the GPU
+        // lists the special ones, the usage slice, the selection, the
+        // pictured impostors and, in debug, all
+        let usage_phase = (self.frame % 30) as usize;
+        let mut visit = std::mem::take(&mut self.visit_tmp);
+        visit.clear();
+        if gpu_mode {
+            let debug = debug_alpha.is_some();
+            let selection = &self.selection_wire;
+            let captured = |g: &ObjGpu, i: usize| !plan.capture.is_empty() && g.avatar(i).is_some_and(|a| plan.capture.contains_key(&a));
+            for (i, g) in self.gpu.iter().enumerate() {
+                if g.faces.is_empty() || g.hud {
+                    continue;
+                }
+                let usage = i % 30 == usage_phase;
+                if usage || g.special || debug || (!selection.is_empty() && selection.contains_key(&i)) || captured(g, i) {
+                    visit.push((i, usage));
+                }
+            }
+        } else {
+            visit.extend((0..self.gpu.len()).map(|i| (i, i % 30 == usage_phase)));
+        }
+        let full = !gpu_mode;
+        let ctx = CullCtx {
+            view,
+            draw_distance: dd,
+            shadow_distance: shadow_dist,
+            reflection_distance: refl_dist,
+            shadows,
+            reflections,
+        };
+
         // objects in parallel
-        let alpha = &self.textures.alpha_by_slot;
-        let alpha_channel = &self.textures.alpha_channel_by_slot;
         let selection_wire = &self.selection_wire;
         struct Local {
             opaque: Vec<DrawCmd>,
@@ -2054,23 +2391,22 @@ impl Scene {
             visible: 0,
             usage: Vec::new(),
         };
-        let note_usage = self.frame.is_multiple_of(30);
-        let result = self
-            .gpu
+        let result = visit
             .par_iter()
-            .enumerate()
-            .fold(new_local, |mut l, (idx, g)| {
+            .fold(new_local, |mut l, &(idx, usage)| {
+                let Some(g) = self.gpu.get(idx) else {
+                    return l;
+                };
                 if g.faces.is_empty() || g.hud {
                     return l;
                 }
                 // avatar limit: far avatars and everything they wear are drawn
                 // as impostors; pictured ones give their draws to the picture
-                let avatar = if g.is_avatar { Some(idx) } else { g.owner_avatar };
+                let avatar = g.avatar(idx);
                 if let Some(a) = avatar.filter(|a| !avatar_ok.get(*a).copied().unwrap_or(true)) {
                     if let Some(&slot) = plan.capture.get(&a) {
                         for f in &g.faces {
-                            let tex_alpha = alpha.get(f.base_slot as usize).copied().unwrap_or(AlphaKind::Opaque);
-                            match classify(f, tex_alpha) {
+                            match f.pass {
                                 Pass::Hidden => {}
                                 Pass::Blend => l.impostor.push((slot, f.cmd, true)),
                                 _ => l.impostor.push((slot, f.cmd, false)),
@@ -2079,46 +2415,35 @@ impl Scene {
                     }
                     return l;
                 }
-                // too complex: only its silhouette, no attachments
-                if g.owner_avatar.is_some_and(|a| self.too_complex.contains(&a)) {
+                let Some(ObjVis {
+                    sphere: (sc, sr),
+                    in_view,
+                    casts,
+                    reflects,
+                }) = object_visibility(
+                    g,
+                    idx,
+                    &ctx,
+                    |a| avatar_ok.get(a).copied().unwrap_or(true),
+                    |a| self.too_complex.contains(&a),
+                    |a| hidden_loading.is_some_and(|h| h.contains(&a)),
+                )
+                else {
                     return l;
-                }
-                // still loading: a cloud until complete (not half an avatar)
-                if avatar.is_some_and(|a| hidden_loading.is_some_and(|h| h.contains(&a))) {
-                    return l;
-                }
-                let d = (g.center - view.eye).length();
-                if d - g.radius > dd && !g.is_avatar {
-                    return l;
-                }
-                let in_view = view.sphere_visible(g.center, g.radius);
-                let casts = shadows && d - g.radius < shadow_dist;
-                let reflects = reflections && d - g.radius < refl_dist;
-                if !in_view && !casts && !reflects {
-                    return l;
-                }
-                // tiny objects far away are culled (LL-like small object culling)
-                let px = view.pixel_size(g.center, g.radius);
-                if px < 1.5 && !g.is_avatar {
-                    return l;
-                }
+                };
                 if in_view {
                     l.visible += 1;
                 }
+                // texture usage and blend order on the object's own bounds
+                let px = view.pixel_size(g.center, g.radius);
+                let blend_d = (g.center - view.eye).length();
                 for f in &g.faces {
-                    // whole-object sphere for the GPU occlusion test (avatars: their
-                    // whole animated extent)
-                    let cmd = f.cmd.with_bounds(g.center, if g.is_avatar { g.radius.max(2.5) } else { g.radius });
-                    let tex_alpha = alpha.get(f.base_slot as usize).copied().unwrap_or(AlphaKind::Opaque);
-                    let pass = classify(f, tex_alpha);
+                    // object sphere for the GPU occlusion test
+                    let cmd = f.cmd.with_bounds(sc, sr);
+                    let pass = f.pass;
                     // blended faces glow in their sorted place; hidden faces do not glow
                     if f.glow && in_view && pass != Pass::Blend && pass != Pass::Hidden {
-                        // LLPipeline::getPoolTypeFromTE + canRenderAsMask: a glowing face
-                        // whose texture has an alpha channel goes to the alpha pool unless
-                        // its material says none / mask / emissive
-                        let channel = alpha_channel.get(f.base_slot as usize).copied().unwrap_or(false);
-                        let pool = f.pbr_alpha.is_none() && channel && matches!(f.legacy_alpha, None | Some(legacy_mat::alpha_mode::BLEND));
-                        if pool {
+                        if f.glow_pool {
                             l.glow_alpha.push(cmd);
                         } else {
                             l.glow.push(cmd);
@@ -2148,41 +2473,44 @@ impl Scene {
                     if pass == Pass::Hidden {
                         continue;
                     }
-                    // LLDrawPoolAvatar::renderShadow includes alpha-blended
-                    // rigged faces (fur, hair, etc.) with an alpha-tested shadow.
-                    if casts && (pass != Pass::Blend || g.rigged || g.is_avatar) {
-                        l.casters.push(ShadowCaster {
-                            cmd,
-                            center: g.center,
-                            radius: g.radius,
-                        });
-                    }
-                    if reflects && matches!(pass, Pass::Opaque | Pass::OpaqueTwoSided | Pass::Mask | Pass::MaskTwoSided) {
-                        let c = ShadowCaster {
-                            cmd,
-                            center: g.center,
-                            radius: g.radius,
-                        };
-                        l.refl.push(c);
-                        if avatar.is_none() && g.skeleton_owner.is_none() {
-                            l.probe.push(c);
+                    if full {
+                        // LLDrawPoolAvatar::renderShadow includes alpha-blended
+                        // rigged faces (fur, hair, etc.) with an alpha-tested shadow.
+                        if casts && (pass != Pass::Blend || g.rigged || g.is_avatar) {
+                            l.casters.push(ShadowCaster {
+                                cmd,
+                                center: sc,
+                                radius: sr,
+                            });
+                        }
+                        if reflects && matches!(pass, Pass::Opaque | Pass::OpaqueTwoSided | Pass::Mask | Pass::MaskTwoSided) {
+                            let c = ShadowCaster {
+                                cmd,
+                                center: sc,
+                                radius: sr,
+                            };
+                            l.refl.push(c);
+                            if avatar.is_none() && g.skeleton_owner.is_none() {
+                                l.probe.push(c);
+                            }
                         }
                     }
                     if !in_view {
                         continue;
                     }
-                    if note_usage {
+                    if usage {
                         l.usage.push((f.tex_id, px * f.repeats));
                         for (t, r) in f.aux_tex.iter().zip(f.aux_repeats).filter(|(t, _)| !t.is_nil()) {
                             l.usage.push((*t, px * r));
                         }
                     }
                     match pass {
+                        Pass::Blend => l.blend.push((blend_d, cmd, f.glow)),
+                        _ if !full => {}
                         Pass::Opaque => l.opaque.push(cmd),
                         Pass::OpaqueTwoSided => l.opaque2.push(cmd),
                         Pass::Mask => l.mask.push(cmd),
                         Pass::MaskTwoSided => l.mask2.push(cmd),
-                        Pass::Blend => l.blend.push((d, cmd, f.glow)),
                         Pass::Hidden => {}
                     }
                 }
@@ -2208,6 +2536,7 @@ impl Scene {
                 a.usage.append(&mut b.usage);
                 a
             });
+        self.visit_tmp = visit;
         self.lists.opaque = result.opaque;
         self.lists.opaque_two_sided = result.opaque2;
         self.lists.mask = result.mask;
@@ -2233,12 +2562,29 @@ impl Scene {
         self.lists.debug_blue = result.debug_blue;
         self.lists.select_root = result.select_root;
         self.lists.select_child = result.select_child;
-        self.stats.visible_objects = result.visible;
+        if gpu_mode {
+            self.lists.gpu = Some(GpuCullView {
+                planes: view.planes,
+                eye: view.eye,
+                draw_distance: dd,
+                shadow_distance: shadow_dist,
+                reflection_distance: refl_dist,
+                pixel_scale: view.screen_height / view.tan_half_fov.max(1e-6),
+                shadows,
+                reflections,
+            });
+            // counted by the GPU, a frame or two late
+            self.stats.visible_objects = renderer.cull.last.visible_objects as usize;
+        } else {
+            self.stats.visible_objects = result.visible;
+        }
 
-        if note_usage {
-            for (id, px) in result.usage {
-                self.textures.note_usage(&id, px);
-            }
+        // texture usage: a thirtieth of the objects each frame, wants
+        // recomputed once all were seen
+        for (id, px) in result.usage {
+            self.textures.note_usage(&id, px);
+        }
+        if usage_phase == 0 {
             // terrain detail textures: always wanted at decent resolution
             for r in self.regions.values() {
                 for id in &r.detail_ids {
@@ -3332,5 +3678,161 @@ mod tests {
             .insert_demo_skin(crate::demo::ANIMESH_MESH, aurora_assets::SkinInfo::default());
         assert!(scene.changed_skeletons(&world).is_none());
         assert!(changed(&mut scene, &world).is_empty());
+    }
+
+    fn test_face(p: Pass, glow: bool) -> FaceDraw {
+        FaceDraw {
+            record: 0,
+            cmd: DrawCmd {
+                index_count: 6,
+                first_index: 0,
+                base_vertex: 0,
+                record: 0,
+                bounds: [0.0; 4],
+            },
+            base_slot: 0,
+            tex_id: Uuid::nil(),
+            aux_tex: [Uuid::nil(); 3],
+            aux_repeats: [1.0; 3],
+            te_alpha: 1.0,
+            pbr_alpha: None,
+            legacy_alpha: None,
+            two_sided: false,
+            repeats: 1.0,
+            glow,
+            pass: p,
+            glow_pool: false,
+        }
+    }
+
+    /// The GPU culling (reference of cull.wgsl, `gpu_cull::face_bins`) takes
+    /// the same decisions as the CPU lists for random objects, avatars and
+    /// avatar states: main view bins, shadow casters, reflections, probes
+    /// and visible objects.
+    #[test]
+    fn gpu_culling_matches_the_cpu_lists() {
+        use aurora_render::gpu_cull::{BIN_PROBE, BIN_REFL_WATER, BIN_SHADOW, CullFrame, face_bins, frame_flags};
+        let mut seed = 0x853c_49e6_748f_ea9bu64;
+        let mut rand = move |n: u32| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % n as u64) as u32
+        };
+        let eye = Vec3::new(128.0, 128.0, 25.0);
+        let view_m = glam::camera::rh::view::look_at_mat4(eye, eye + Vec3::new(1.0, 0.3, -0.1), Vec3::Z);
+        let fov = 1.0f32;
+        let proj = glam::camera::rh::proj::directx::perspective_infinite_reverse(fov, 16.0 / 9.0, 0.1);
+        let view = CullView::new(proj * view_m, eye, 900.0, fov);
+        let passes = [
+            Pass::Opaque,
+            Pass::OpaqueTwoSided,
+            Pass::Mask,
+            Pass::MaskTwoSided,
+            Pass::Blend,
+            Pass::Hidden,
+        ];
+        let n = 4000usize;
+        let mut gpu: Vec<ObjGpu> = (0..n).map(|_| ObjGpu::default()).collect();
+        for (i, g) in gpu.iter_mut().enumerate() {
+            g.center = eye + Vec3::new(rand(400) as f32 - 200.0, rand(400) as f32 - 200.0, rand(60) as f32 - 30.0);
+            g.radius = 0.02 + rand(400) as f32 * 0.01;
+            g.is_avatar = rand(12) == 0;
+            if g.is_avatar {
+                g.posed_sphere = (rand(2) == 0).then(|| (g.center + Vec3::Z, 0.9));
+            } else if rand(4) == 0 {
+                // an attachment, sometimes of an index that is no avatar
+                g.owner_avatar = Some(rand(n as u32) as usize);
+            }
+            g.rigged = rand(6) == 0;
+            g.hud = rand(40) == 0;
+            g.skeleton_owner = (rand(10) == 0).then(Uuid::new_v4);
+            let faces = rand(3) as usize;
+            g.faces = (0..faces).map(|_| test_face(passes[rand(6) as usize], false)).collect();
+            let _ = i;
+        }
+        let full: Vec<bool> = (0..n).map(|i| gpu[i].is_avatar && rand(3) != 0).collect();
+        let complex: Vec<bool> = (0..n).map(|i| gpu[i].is_avatar && rand(5) == 0).collect();
+        let loading: Vec<bool> = (0..n).map(|i| gpu[i].is_avatar && rand(6) == 0).collect();
+        for i in 0..n {
+            let mut st = 0;
+            for (on, bit) in [
+                (full[i], avatar_state::FULL),
+                (complex[i], avatar_state::TOO_COMPLEX),
+                (loading[i], avatar_state::LOADING),
+            ] {
+                if on {
+                    st |= bit;
+                }
+            }
+            gpu[i].cull_state = st;
+        }
+        let ctx = CullCtx {
+            view: &view,
+            draw_distance: 128.0,
+            shadow_distance: 128.0,
+            reflection_distance: 64.0,
+            shadows: true,
+            reflections: true,
+        };
+        let gview = GpuCullView {
+            planes: view.planes,
+            eye,
+            draw_distance: ctx.draw_distance,
+            shadow_distance: ctx.shadow_distance,
+            reflection_distance: ctx.reflection_distance,
+            pixel_scale: view.screen_height / view.tan_half_fov,
+            shadows: true,
+            reflections: true,
+        };
+        // cascades and reflection views that hold everything: the bins then
+        // show the CPU's casts / reflects decisions
+        let all = Mat4::from_scale(Vec3::splat(1e-5));
+        let flags = frame_flags::SHADOWS | frame_flags::REFLECTIONS | frame_flags::WATER | frame_flags::PROBE;
+        let mut frame = CullFrame::new(&gview, &[all; 3], [Mat4::IDENTITY; 3], flags);
+        frame.water = [[0.0, 0.0, 0.0, 1.0]; 6];
+        frame.probe = frame.water;
+        frame.sizes[1] = n as u32;
+        let objects: Vec<CullObject> = gpu.iter().enumerate().map(|(i, g)| g.cull_object(i)).collect();
+        let mut faces = Vec::new();
+        let mut owner = Vec::new();
+        for (i, g) in gpu.iter().enumerate() {
+            for (fi, f) in g.faces.iter().enumerate() {
+                faces.push(cull_face(f, i, fi == 0));
+                owner.push((i, fi));
+            }
+        }
+        let (mut drawn, mut casting) = (0, 0);
+        for (k, &(i, fi)) in owner.iter().enumerate() {
+            let g = &gpu[i];
+            let f = &g.faces[fi];
+            let (m, visible) = face_bins(&frame, &faces, &objects, k);
+            let vis = object_visibility(g, i, &ctx, |a| full.get(a).copied().unwrap_or(true), |a| complex[a], |a| loading[a]);
+            let solid = matches!(f.pass, Pass::Opaque | Pass::OpaqueTwoSided | Pass::Mask | Pass::MaskTwoSided);
+            let (main, casts, refl, probe, in_view) = match &vis {
+                Some(v) => (
+                    v.in_view && solid,
+                    v.casts && f.pass != Pass::Hidden && (f.pass != Pass::Blend || g.rigged || g.is_avatar),
+                    v.reflects && solid,
+                    v.reflects && solid && g.avatar(i).is_none() && g.skeleton_owner.is_none(),
+                    v.in_view,
+                ),
+                None => (false, false, false, false, false),
+            };
+            assert_eq!(m & 0xf != 0, main, "main view, object {i}");
+            if main {
+                assert_eq!(m & 0xf, 1 << (f.pass.gpu_code() - 1), "pass bin, object {i}");
+            }
+            assert_eq!(m >> BIN_SHADOW & 7 == 7, casts, "shadows, object {i}");
+            assert_eq!(m >> BIN_REFL_WATER & 1 == 1, refl, "reflection, object {i}");
+            assert_eq!(m >> BIN_PROBE & 1 == 1, probe, "probe, object {i}");
+            assert_eq!(visible, in_view && fi == 0, "visible object {i}");
+            drawn += main as u32;
+            casting += casts as u32;
+        }
+        assert!(
+            drawn > 50 && casting > 100,
+            "the scene exercises the tests ({drawn} drawn, {casting} casting)"
+        );
     }
 }

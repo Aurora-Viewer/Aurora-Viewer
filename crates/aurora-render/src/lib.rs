@@ -2,6 +2,7 @@
 //! sub-allocated geometry and multi-draw-indirect submission.
 
 pub mod arena;
+pub mod gpu_cull;
 mod occlusion;
 mod pick;
 pub mod probes;
@@ -74,7 +75,22 @@ mod shader_tests {
 
     #[test]
     fn occlusion_shader_is_valid() {
-        validate(include_str!("shaders/occlusion.wgsl"));
+        validate(&format!(
+            "{}
+{}",
+            include_str!("shaders/hiz_test.wgsl"),
+            include_str!("shaders/occlusion.wgsl")
+        ));
+    }
+
+    #[test]
+    fn cull_shader_is_valid() {
+        validate(&format!(
+            "{}
+{}",
+            include_str!("shaders/hiz_test.wgsl"),
+            include_str!("shaders/cull.wgsl")
+        ));
     }
 
     #[test]

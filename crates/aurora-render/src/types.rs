@@ -226,6 +226,11 @@ pub struct DrawLists {
     pub impostor_captures: Vec<ImpostorCapture>,
     /// Impostor cards to draw.
     pub impostor_sprites: Vec<ImpostorSprite>,
+    /// GPU draw lists this frame (gpu_cull.rs): the opaque and masked main
+    /// draws, the object shadow casters and the reflection / probe draws
+    /// are culled by the GPU from the scene's tables, so those lists hold
+    /// only what the CPU still draws (terrain). None: CPU lists only.
+    pub gpu: Option<crate::gpu_cull::GpuCullView>,
 }
 
 /// Impostor atlas: square tiles of `IMPOSTOR_TILE` pixels.
@@ -283,6 +288,7 @@ impl DrawLists {
         self.select_child.clear();
         self.impostor_captures.clear();
         self.impostor_sprites.clear();
+        self.gpu = None;
     }
 
     pub fn total(&self) -> usize {
@@ -372,7 +378,7 @@ pub struct RenderSettings {
     /// Reflection probe cube slots, the default probe included
     /// (RenderReflectionProbeCount; 1..=probes::MAX_PROBES).
     pub probe_slots: u32,
-    /// GPU occlusion culling (UseOcclusion; off by default, WIP).
+    /// GPU occlusion culling (UseOcclusion).
     pub occlusion: bool,
 }
 
@@ -388,7 +394,7 @@ impl Default for RenderSettings {
             ssr: false,
             anisotropy: 8,
             probe_slots: 32,
-            occlusion: false,
+            occlusion: true,
         }
     }
 }
@@ -637,6 +643,10 @@ pub struct RenderStats {
     pub mirror: bool,
     /// Draws hidden by the GPU occlusion (a frame or two late; None = off).
     pub occluded: Option<u32>,
+    /// The draw lists were culled on the GPU this frame (gpu_cull.rs).
+    pub gpu_cull: bool,
+    /// GPU draw lists: objects in view (a frame or two late).
+    pub visible_objects: Option<u32>,
     /// GPU time by kind of element (ms), in [`GpuElement::ALL`] order;
     /// None without in-pass timestamps.
     pub gpu_elements: Option<[f32; GpuElement::ALL.len()]>,

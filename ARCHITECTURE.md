@@ -65,7 +65,7 @@ commande en une ligne (`scripts/setup.ps1`, puis les outils) :
 | `aurora-llsd` | Type LLSD et ses formats XML / binaire / notation |
 | `aurora-prim` | Modèle des prims : paramètres de volume, faces, paramètres étendus, génération de la géométrie (port de `llvolume`) |
 | `aurora-assets` | Décodeurs d'assets : JPEG2000, mesh, animations, matériaux, maillages d'avatar `.llm`, squelette |
-| `aurora-render` | Moteur de rendu wgpu / Vulkan : textures bindless regroupées en pages (texture arrays), géométrie sous-allouée, multi-draw-indirect, ombres, reflets, post-traitement ; animations de texture (`tex_anim.rs` : référence CPU et paramètres des enregistrements, évaluées par les vertex shaders) |
+| `aurora-render` | Moteur de rendu wgpu / Vulkan : textures bindless regroupées en pages (texture arrays), géométrie sous-allouée, multi-draw-indirect, ombres, reflets, post-traitement ; animations de texture (`tex_anim.rs` : référence CPU et paramètres des enregistrements, évaluées par les vertex shaders) ; listes de dessin pilotées par le GPU (`gpu_cull.rs`, `shaders/cull.wgsl` : tables des faces et des objets tenues par la scène, culling et compactage en compute pour chaque vue, dessin par `multi_draw_indexed_indirect_count`) ; occlusion Hi-Z en deux phases (`occlusion.rs`, `shaders/occlusion.wgsl`, test commun `shaders/hiz_test.wgsl`) |
 | `aurora-audio` | Sortie audio : mixeur avec les canaux de volume SL, streams de musique, sons du monde |
 | `aurora-voice` | Voix SL en WebRTC (réception et émission) |
 | `aurora-media` | Hôte des plugins médias SLPlugin (CEF pour le web, LibVLC pour la vidéo) |
@@ -119,9 +119,18 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
    mouvements façon `LLMotionController`), puis `Scene::sync` met à jour la
    géométrie, les textures et les enregistrements GPU de ce qui a changé ou
    bouge (ensembles tenus par événements, placement calculé en parallèle).
-4. **Scène → GPU.** `build_lists` fait le culling et prépare les listes de
-   dessin ; `aurora-render` encode les passes (ombres, prépasse, scène, eau,
-   reflets, post-traitement).
+4. **Scène → GPU.** La synchro tient à jour sur le GPU une table des faces
+   (une entrée par enregistrement de dessin, avec sa passe) et une table des
+   objets (sphère englobante, drapeaux, état des avatars). `build_lists` ne
+   prépare sur le CPU que ce que le GPU ne fait pas : terrain, eau, faces
+   transparentes triées de l'arrière vers l'avant, glow, imposteurs,
+   sélection et listes de débogage (seuls les objets qui en ont sont
+   parcourus). `aurora-render` lance le culling en compute (vue principale,
+   cascades d'ombres, reflets, sonde ; occlusion Hi-Z en deux phases), puis
+   encode les passes (ombres, prépasse, scène, eau, reflets,
+   post-traitement) avec des draws indirects dont le nombre est écrit par le
+   GPU. Sans `MULTI_DRAW_INDIRECT_COUNT` (ou avec `AURORA_CPU_CULL=1`),
+   `build_lists` prépare toutes les listes sur le CPU comme avant.
 5. **Interface.** egui dessine les fenêtres par-dessus.
 
 Les traitements lourds (décodage d'images, maillage, sons) passent par des

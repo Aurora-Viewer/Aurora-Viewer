@@ -554,15 +554,7 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     p,
                     "Occlusion",
                     "Les objets cachés derrière d'autres (murs, sols) ne sont pas dessinés ; test sur la carte graphique",
-                    |ui| {
-                        let changed = toggle(ui, p, &mut s.gpu_occlusion);
-                        super::widgets::warning_hint(
-                            ui,
-                            p,
-                            "Expérimental : pour l'instant, l'occlusion fait perdre des images par seconde au lieu d'en gagner (désactivée par défaut).",
-                        );
-                        changed
-                    },
+                    |ui| toggle(ui, p, &mut s.occlusion_culling),
                 );
                 c |= row(ui, p, "Particules", "Nombre maximal de particules (0 = désactivées)", |ui| {
                     ui.spacing_mut().slider_width = SLIDER_W;

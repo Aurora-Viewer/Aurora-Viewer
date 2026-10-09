@@ -357,26 +357,6 @@ pub fn maturity_badge(ui: &mut egui::Ui, p: &Palette, maturity: &str, size: f32)
     Some(resp.on_hover_text(tip))
 }
 
-/// Amber warning triangle next to an experimental option; the explanation
-/// shows on hover.
-pub fn warning_hint(ui: &mut egui::Ui, p: &Palette, tip: &str) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(16.0), Sense::hover());
-    match super::icons::global("warning") {
-        Some(t) => {
-            let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
-            ui.painter().image(t.id(), rect, uv, p.amber);
-        }
-        None => {
-            // no icon theme: a drawn triangle
-            let r = rect.shrink(1.5);
-            let pts = vec![egui::pos2(r.center().x, r.top()), r.right_bottom(), r.left_bottom()];
-            ui.painter()
-                .add(egui::Shape::convex_polygon(pts, Color32::TRANSPARENT, Stroke::new(1.5, p.amber)));
-        }
-    }
-    resp.on_hover_text(tip)
-}
-
 /// Paint a galley so that its visible ink (not egui's text row, which
 /// includes ascender / descender room) is centered on `center`: digits in
 /// round badges then sit exactly in the middle.
