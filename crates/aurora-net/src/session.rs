@@ -1760,7 +1760,10 @@ impl Session<'_> {
             let m: SimStats = pkt.decode()?;
             if let Some(handle) = self.sims.get(&from).map(|s| s.handle) {
                 // the flags we use are all in the low 32 bits
-                let flags = m.region_info.first().map_or(m.region.region_flags, |r| r.region_flags_extended as u32);
+                let flags = m
+                    .region_info
+                    .first()
+                    .map_or(m.region.region_flags, |r| r.region_flags_extended as u32);
                 emit(self.sh, NetEvent::RegionFlags { handle, flags });
             }
         } else if id == HealthMessage::ID {
