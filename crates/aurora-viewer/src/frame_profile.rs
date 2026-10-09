@@ -37,7 +37,14 @@ pub enum Lap {
     Stream,
     /// Loading transition, lights, environment, frame parameters.
     Params,
+    /// Interface input, build tools and selection outlines.
+    UiPrep,
+    /// The egui windows (`run_ui`).
     Ui,
+    /// What is under the cursor: hover cursor, touch / sit targets.
+    Hover,
+    /// egui shapes to triangles.
+    Tessellate,
     /// Interface actions, avatar pictures, maps.
     Actions,
     /// `Renderer::render`, swapchain wait included.
@@ -49,7 +56,7 @@ pub enum Lap {
 }
 
 impl Lap {
-    const ALL: [Lap; 19] = [
+    const ALL: [Lap; 22] = [
         Lap::Between,
         Lap::Start,
         Lap::Events,
@@ -64,7 +71,10 @@ impl Lap {
         Lap::Lists,
         Lap::Stream,
         Lap::Params,
+        Lap::UiPrep,
         Lap::Ui,
+        Lap::Hover,
+        Lap::Tessellate,
         Lap::Actions,
         Lap::Render,
         Lap::Limiter,
@@ -87,7 +97,10 @@ impl Lap {
             Lap::Lists => "lists",
             Lap::Stream => "stream",
             Lap::Params => "params",
+            Lap::UiPrep => "ui_prep",
             Lap::Ui => "ui",
+            Lap::Hover => "hover",
+            Lap::Tessellate => "tessellate",
             Lap::Actions => "actions",
             Lap::Render => "render",
             Lap::Limiter => "limiter",

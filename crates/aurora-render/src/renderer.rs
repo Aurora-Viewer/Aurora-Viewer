@@ -577,7 +577,6 @@ struct Targets {
     depth_msaa: Option<wgpu::TextureView>,
     /// Single-sample depth from the prepass.
     depth_ss: wgpu::TextureView,
-    depth_ss_tex: wgpu::Texture,
     scene_copy_tex: wgpu::Texture,
     scene_copy: wgpu::TextureView,
     /// G-buffer (normal, roughness, metallic) for SSR.
@@ -858,6 +857,8 @@ pub struct Renderer {
     indirect: wgpu::Buffer,
     indirect_cpu: Vec<DrawIndexedIndirect>,
     occlusion: crate::occlusion::Occlusion,
+    /// Depth under the cursor (hover without waiting, clicks).
+    depth_pick: crate::pick::DepthPick,
     impostors: Impostors,
     cull_cpu: Vec<crate::occlusion::CullDraw>,
     particle_buffer: wgpu::Buffer,
@@ -1939,6 +1940,7 @@ impl Renderer {
             usage: wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         });
+        let depth_pick = crate::pick::DepthPick::new(&device);
         let occlusion = crate::occlusion::Occlusion::new(&device);
         let impostors = Impostors::new(
             &device,
@@ -2012,6 +2014,7 @@ impl Renderer {
             indirect,
             indirect_cpu: Vec::new(),
             occlusion,
+            depth_pick,
             impostors,
             cull_cpu: Vec::new(),
             particle_buffer,
@@ -2638,15 +2641,8 @@ impl Renderer {
         let (color_tex, color) = make_view(device, "hdr", w, h, HDR_FORMAT, 1, sampled | wgpu::TextureUsages::COPY_SRC);
         let color_msaa = (samples > 1).then(|| make_view(device, "hdr msaa", w, h, HDR_FORMAT, samples, att).1);
         let depth_msaa = (samples > 1).then(|| make_view(device, "depth msaa", w, h, DEPTH_FORMAT, samples, att).1);
-        let (depth_ss_tex, depth_ss) = make_view(
-            device,
-            "depth prepass",
-            w,
-            h,
-            DEPTH_FORMAT,
-            1,
-            sampled | wgpu::TextureUsages::COPY_SRC,
-        );
+        // read by the cursor picks through a compute pass (pick.rs)
+        let depth_ss = make_view(device, "depth prepass", w, h, DEPTH_FORMAT, 1, sampled).1;
         let (scene_copy_tex, scene_copy) = make_view(
             device,
             "scene copy",
@@ -2715,7 +2711,6 @@ impl Renderer {
             color,
             depth_msaa,
             depth_ss,
-            depth_ss_tex,
             scene_copy_tex,
             scene_copy,
             gbuf_msaa,
@@ -3355,6 +3350,7 @@ impl Renderer {
         {
             self.occlusion.harvest();
         }
+        self.depth_pick.harvest();
 
         // egui textures first, so they are never lost on a skipped frame
         if let Some(ui) = &ui {
@@ -4225,6 +4221,15 @@ impl Renderer {
 
         prof.push(("scene_b", Instant::now()));
         mark(&mut encoder, MARK_SCENE_END);
+        // depth under the cursor, read back in a later frame
+        self.depth_pick.encode_hover(
+            &self.device,
+            &self.queue,
+            &mut encoder,
+            &self.targets.depth_ss,
+            (self.config.width, self.config.height),
+            unjittered_vp.inverse(),
+        );
         // ---- temporal anti-aliasing
         let mut post_bg = &self.targets.post_bind_group;
         if let Some(taa) = &mut self.taa {
@@ -4399,6 +4404,7 @@ impl Renderer {
             });
         }
         self.occlusion.after_submit();
+        self.depth_pick.after_submit();
         prof.push(("submit", Instant::now()));
         let encode_ms = t0.elapsed().as_secs_f32() * 1000.0;
         self.queue.present(surface_tex);
@@ -4491,61 +4497,25 @@ impl Renderer {
         if x < 0.0 || y < 0.0 || x >= w as f32 || y >= h as f32 {
             return None;
         }
-        let (px, py) = (x as u32, y as u32);
-        // depth textures only allow whole-subresource copies: read it all
-        let row = (w * 4).div_ceil(256) * 256;
-        let buf = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("pick"),
-            size: (row * h) as u64,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("pick") });
-        encoder.copy_texture_to_buffer(
-            wgpu::TexelCopyTextureInfo {
-                texture: &self.targets.depth_ss_tex,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::DepthOnly,
-            },
-            wgpu::TexelCopyBufferInfo {
-                buffer: &buf,
-                layout: wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(row),
-                    rows_per_image: Some(h),
-                },
-            },
-            wgpu::Extent3d {
-                width: w,
-                height: h,
-                depth_or_array_layers: 1,
-            },
-        );
-        self.queue.submit([encoder.finish()]);
-        buf.map_async(wgpu::MapMode::Read, .., |_| {});
-        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
-        let depth = {
-            let view = buf.get_mapped_range(..).ok()?;
-            let o = (py * row + px * 4) as usize;
-            let b = view.get(o..o + 4)?;
-            f32::from_le_bytes([b[0], b[1], b[2], b[3]])
+        let px = crate::pick::PickPixel {
+            x: x as u32,
+            y: y as u32,
+            width: w,
+            height: h,
+            inv_view_proj: self.last_inv_vp,
         };
-        buf.unmap();
-        // reverse-Z: 0 is the far plane (sky)
-        if !depth.is_finite() || depth <= 0.0 {
+        self.depth_pick.blocking(&self.device, &self.queue, &self.targets.depth_ss, px)
+    }
+
+    /// Like `pick_world` for the hover cursor, without waiting for the GPU:
+    /// asks for this pixel in the next frame and returns the last answer
+    /// (a frame or two old).
+    pub fn hover_pick(&mut self, x: f32, y: f32) -> Option<Vec3> {
+        let (w, h) = (self.config.width, self.config.height);
+        if x < 0.0 || y < 0.0 || x >= w as f32 || y >= h as f32 {
             return None;
         }
-        let ndc = Vec4::new(
-            (px as f32 + 0.5) / w as f32 * 2.0 - 1.0,
-            1.0 - (py as f32 + 0.5) / h as f32 * 2.0,
-            depth,
-            1.0,
-        );
-        let p = self.last_inv_vp * ndc;
-        (p.w.abs() > 1e-9).then(|| p.truncate() / p.w).filter(|v| v.is_finite())
+        self.depth_pick.hover(x as u32, y as u32)
     }
 
     /// World ray under a pixel of the last frame: origin on the near plane,

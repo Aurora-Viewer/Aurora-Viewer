@@ -3,6 +3,7 @@
 
 pub mod arena;
 mod occlusion;
+mod pick;
 pub mod probes;
 pub mod renderer;
 pub mod textures;
