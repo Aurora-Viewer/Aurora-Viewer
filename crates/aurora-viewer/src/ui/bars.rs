@@ -37,6 +37,9 @@ pub enum BarAction {
     ChatPrefs,
     /// Moi > Profil.
     MyProfile,
+    /// Monde › Environnement › Utiliser les environnements partagés
+    /// (setSharedEnvironment: drops every local choice).
+    SharedEnvironment,
 }
 
 pub struct StatusInfo<'a> {
@@ -63,6 +66,8 @@ pub struct StatusInfo<'a> {
     pub ban_lines: u8,
     /// Abilities of the current parcel (right end of the location field).
     pub parcel_icons: Vec<super::parcel_icons::ParcelIcon>,
+    /// A local environment is shown (selector, preset, personal lighting).
+    pub local_env: bool,
 }
 
 pub fn maturity_name(sim_access: u8) -> &'static str {
@@ -363,12 +368,13 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         });
         ui.menu_button("Environnement", |ui| {
             // back to the region / parcel EEP cycle, in real time
-            let shared = panels.time_of_day == 0;
+            let shared = !st.local_env;
             if ui
                 .add(egui::Button::new("Utiliser les environnements partagés").selected(shared))
                 .clicked()
             {
                 panels.time_of_day = 0;
+                *action = BarAction::SharedEnvironment;
                 ui.close();
             }
             ui.separator();
@@ -377,6 +383,17 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
                     panels.time_of_day = i as u8;
                     ui.close();
                 }
+            }
+            ui.separator();
+            // Firestorm's quick preferences lists, and World > Environment >
+            // Personal Lighting...
+            if ui.button("Sélecteur d'environnement…").clicked() {
+                panels.environment = true;
+                ui.close();
+            }
+            if ui.button("Éclairage personnel…").clicked() {
+                panels.personal_lighting = true;
+                ui.close();
             }
         });
         ui.separator();

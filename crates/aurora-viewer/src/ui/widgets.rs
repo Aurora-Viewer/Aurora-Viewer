@@ -271,6 +271,34 @@ pub fn search_field(ui: &mut egui::Ui, text: &mut String, hint: &str, width: f32
     ui.add(egui::TextEdit::singleline(text).hint_text(hint).desired_width(width))
 }
 
+/// Small flat button with a Phosphor icon (copy / paste / flip...).
+pub fn icon_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, enabled: bool) -> bool {
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(20.0, 20.0), if enabled { Sense::click() } else { Sense::hover() });
+    let fill = if resp.hovered() && enabled { p.raised } else { p.field };
+    ui.painter().rect_filled(rect, 2.0, fill);
+    let col = if enabled { p.ink } else { p.muted_dim };
+    match super::icons::global(icon) {
+        Some(t) => {
+            ui.painter().image(
+                t.id(),
+                egui::Rect::from_center_size(rect.center(), Vec2::splat(14.0)),
+                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                col,
+            );
+        }
+        None => {
+            ui.painter().text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                icon,
+                egui::FontId::proportional(10.0),
+                col,
+            );
+        }
+    }
+    resp.on_hover_text(tip).clicked() && enabled
+}
+
 /// Small flat text button.
 pub fn flat_button(ui: &mut egui::Ui, p: &Palette, label: &str) -> egui::Response {
     ui.add(

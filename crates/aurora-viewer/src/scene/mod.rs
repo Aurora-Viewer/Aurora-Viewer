@@ -1085,8 +1085,9 @@ impl Scene {
         self.frame = self.frame.wrapping_add(1);
         self.ensure_avatar_parts(renderer);
         self.collect_garbage(renderer, &mut world.objects);
-        // settings assets the environment waits for (the default day)
-        if let Some(id) = world.eep.wanted_settings() {
+        // settings assets the environment waits for (the default day, the
+        // environment selector's items)
+        for id in world.eep.wanted_settings() {
             match self.settings.get(id) {
                 settings::SettingsState::Ready(s) => world.eep.on_settings(id, Some(s)),
                 settings::SettingsState::Failed => world.eep.on_settings(id, None),

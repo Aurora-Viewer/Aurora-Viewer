@@ -574,10 +574,129 @@ impl WaterFrame {
     }
 }
 
+fn llsd_vec3(v: Vec3) -> Llsd {
+    Llsd::Array(vec![v.x.into(), v.y.into(), v.z.into()])
+}
+
+fn llsd_vec2(v: Vec2) -> Llsd {
+    Llsd::Array(vec![v.x.into(), v.y.into()])
+}
+
+fn llsd_quat(q: Quat) -> Llsd {
+    Llsd::Array(vec![q.x.into(), q.y.into(), q.z.into(), q.w.into()])
+}
+
+impl SkyFrame {
+    /// The sky as a settings map (LLSettingsSky::getSettings, the keys
+    /// [`Settings::from_llsd`] reads back): Firestorm's `sky_llsd` of a local
+    /// sky that has no asset (LLEnvironment::saveToSettings).
+    pub fn settings_llsd(&self) -> Llsd {
+        use aurora_llsd::llsd_map;
+        let mut m = llsd_map! {
+            "type" => "sky",
+            "sun_rotation" => llsd_quat(self.sun_rotation),
+            "moon_rotation" => llsd_quat(self.moon_rotation),
+            "sunlight_color" => llsd_vec3(self.sunlight),
+            "legacy_haze" => llsd_map! {
+                "ambient" => llsd_vec3(self.ambient),
+                "blue_horizon" => llsd_vec3(self.blue_horizon),
+                "blue_density" => llsd_vec3(self.blue_density),
+                "haze_density" => self.haze_density,
+                "haze_horizon" => self.haze_horizon,
+                "density_multiplier" => self.density_multiplier,
+                "distance_multiplier" => self.distance_multiplier,
+            },
+            "max_y" => self.max_y,
+            "glow" => llsd_vec3(self.glow),
+            "cloud_color" => llsd_vec3(self.cloud_color),
+            "cloud_pos_density1" => llsd_vec3(self.cloud_pos_density1),
+            "cloud_pos_density2" => llsd_vec3(self.cloud_pos_density2),
+            "cloud_scale" => self.cloud_scale,
+            "cloud_scroll_rate" => llsd_vec2(self.cloud_scroll_rate),
+            "cloud_shadow" => self.cloud_shadow,
+            "cloud_variance" => self.cloud_variance,
+            "cloud_id" => self.cloud_id,
+            "sun_id" => self.sun_id,
+            "moon_id" => self.moon_id,
+            "sun_scale" => self.sun_scale,
+            "moon_scale" => self.moon_scale,
+            "moon_brightness" => self.moon_brightness,
+            "star_brightness" => self.star_brightness,
+            "gamma" => self.gamma,
+            "dome_offset" => self.dome_offset,
+            "dome_radius" => self.dome_radius,
+        };
+        // a classic sky has no probe ambiance key (canAutoAdjust)
+        if !self.can_auto_adjust {
+            m.insert("reflection_probe_ambiance", self.probe_ambiance);
+        }
+        m
+    }
+}
+
+impl WaterFrame {
+    /// The water as a settings map (LLSettingsWater::getSettings).
+    pub fn settings_llsd(&self) -> Llsd {
+        use aurora_llsd::llsd_map;
+        llsd_map! {
+            "type" => "water",
+            "water_fog_color" => llsd_vec3(self.fog_color),
+            "water_fog_density" => self.fog_density,
+            "underwater_fog_mod" => self.underwater_fog_mod,
+            "fresnel_scale" => self.fresnel_scale,
+            "fresnel_offset" => self.fresnel_offset,
+            "blur_multiplier" => self.blur_multiplier,
+            "normal_scale" => llsd_vec3(self.normal_scale),
+            "wave1_direction" => llsd_vec2(self.wave1),
+            "wave2_direction" => llsd_vec2(self.wave2),
+            "normal_map" => self.normal_map,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use aurora_llsd::llsd_map;
+
+    #[test]
+    fn sky_and_water_round_trip_through_llsd() {
+        let sky = SkyFrame {
+            gamma: 1.7,
+            haze_density: 3.25,
+            ambient: Vec3::new(0.1, 0.2, 0.3),
+            cloud_shadow: 0.8,
+            probe_ambiance: 0.6,
+            can_auto_adjust: false,
+            ..SkyFrame::with_sun(Vec3::new(0.3, -0.2, 0.9))
+        };
+        let Some(Settings::Sky(back)) = Settings::from_llsd(&sky.settings_llsd()) else {
+            panic!("sky expected");
+        };
+        assert_eq!(back.gamma, sky.gamma);
+        assert_eq!(back.haze_density, sky.haze_density);
+        assert_eq!(back.ambient, sky.ambient);
+        assert_eq!(back.cloud_shadow, sky.cloud_shadow);
+        assert!(!back.can_auto_adjust && back.probe_ambiance == 0.6);
+        assert!(back.sun_direction().distance(sky.sun_direction()) < 1e-5);
+        // a classic sky stays classic
+        let classic = SkyFrame::default();
+        let Some(Settings::Sky(back)) = Settings::from_llsd(&classic.settings_llsd()) else {
+            panic!("sky expected");
+        };
+        assert!(back.can_auto_adjust);
+        let water = WaterFrame {
+            fog_density: 7.5,
+            wave2: Vec2::new(0.5, 0.25),
+            ..Default::default()
+        };
+        let Some(Settings::Water(back)) = Settings::from_llsd(&water.settings_llsd()) else {
+            panic!("water expected");
+        };
+        assert_eq!(back.fog_density, 7.5);
+        assert_eq!(back.wave2, water.wave2);
+        assert_eq!(back.normal_map, water.normal_map);
+    }
 
     fn frame(q: [f64; 4]) -> Llsd {
         llsd_map! {

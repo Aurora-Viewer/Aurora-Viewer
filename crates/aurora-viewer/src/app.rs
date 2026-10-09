@@ -273,6 +273,12 @@ pub struct App {
     profile_ui: ui::profile::ProfileUi,
     /// "À propos du terrain".
     land_ui: ui::land::LandUi,
+    /// Environment selector and « Éclairage personnel ».
+    env_ui: ui::environment::EnvironmentUi,
+    /// The selector's folder fetches started (the selector was opened).
+    env_scan: bool,
+    /// « Éclairage personnel » was open last frame (captures on opening).
+    lighting_was_open: bool,
     demo: bool,
     inventory_ui: ui::inventory::InventoryUi,
     last_social_poll: Instant,
@@ -357,6 +363,8 @@ impl App {
             world_map: false,
             settings: false,
             time_of_day: settings.time_of_day,
+            environment: false,
+            personal_lighting: false,
             inventory: settings.show_inventory,
             people_tab: settings.people_tab.min(1),
             contacts: false,
@@ -504,6 +512,9 @@ impl App {
             ui_images: Default::default(),
             profile_ui: Default::default(),
             land_ui: Default::default(),
+            env_ui: Default::default(),
+            env_scan: false,
+            lighting_was_open: false,
             demo: false,
             inventory_ui: Default::default(),
             last_social_poll: Instant::now(),
@@ -638,6 +649,11 @@ impl App {
     fn back_to_login(&mut self, error: Option<String>) {
         self.media.clear();
         self.media.openid.clear();
+        self.save_local_environment();
+        self.env_ui = Default::default();
+        self.env_scan = false;
+        self.panels.environment = false;
+        self.panels.personal_lighting = false;
         self.world.save_inventory_cache();
         self.world.save_mute_cache();
         if let Some(path) = self.name_cache_path() {
@@ -766,6 +782,7 @@ impl App {
                     self.world.system_message(l.message.trim().to_owned());
                 }
                 self.world.system_message(format!("Bienvenue, {} {}.", l.first_name, l.last_name));
+                self.restore_local_environment();
             }
             NetEvent::TeleportFinished { .. } => {
                 if self.world.tp_show_progress && matches!(self.screen, Screen::World) && !self.was_teleporting {
@@ -975,6 +992,40 @@ impl App {
                     self.world.agent.yaw
                 ),
             }
+        }
+    }
+
+    /// One scripted step of AURORA_DEMO_ENV_SELECT, through the same calls
+    /// as the environment window.
+    fn demo_env_step(&mut self, step: crate::demo::env::Step) {
+        use crate::demo::env::Step;
+        use crate::world::env_select::{self, SettingsKind};
+        match step {
+            Step::Open { lighting } => {
+                self.panels.environment = true;
+                self.panels.personal_lighting = lighting;
+            }
+            Step::Pick(kind, asset) => self.world.eep.request_local(asset, kind),
+            Step::Next(kind) => {
+                let view = self.world.eep.local_view();
+                let shown = match kind {
+                    SettingsKind::Sky => view.sky,
+                    SettingsKind::Water => view.water,
+                    SettingsKind::Day => view.day,
+                };
+                let list = self.env_ui.catalog().list(kind);
+                if let Some(asset) = env_select::step(list, env_select::shown_index(list, shown), true) {
+                    self.world.eep.request_local(asset, kind);
+                }
+            }
+            Step::Shared => {
+                self.world.eep.clear_local();
+                self.panels.time_of_day = 0;
+            }
+            Step::EditLighting => {
+                self.world.eep.edit_personal(crate::demo::env::edit_lighting);
+            }
+            Step::OpenList(kind) => self.env_ui.open_list = Some(kind),
         }
     }
 
@@ -2242,6 +2293,58 @@ impl App {
 
     /// Display name cache file (avatar_name_cache.xml; per grid; none in
     /// demo mode).
+    /// LLEnvironment's local_environment_data.bin, in the account folder
+    /// (never in the offline demo).
+    fn local_env_path(&self) -> Option<std::path::PathBuf> {
+        (!self.demo && !self.world.agent_id.is_nil())
+            .then(|| crate::settings::account_dir(&self.world.agent_id).join(crate::world::eep_env::LOCAL_ENV_FILE))
+    }
+
+    /// Keep the local environment for the next session when it changed
+    /// (LLEnvironment::saveToSettings; the file goes when there is nothing
+    /// to keep or EnvironmentPersistAcrossLogin is off).
+    fn save_local_environment(&mut self) {
+        if !self.world.eep.take_local_dirty() {
+            return;
+        }
+        let Some(path) = self.local_env_path() else {
+            return;
+        };
+        match self.world.eep.saved_local().filter(|_| self.settings.env_persist) {
+            Some(data) => {
+                if let Some(dir) = path.parent() {
+                    let _ = std::fs::create_dir_all(dir);
+                }
+                if let Err(e) = std::fs::write(&path, aurora_llsd::to_binary(&data)) {
+                    log::warn!("local environment not saved ({e}): {}", path.display());
+                }
+            }
+            None => {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+    }
+
+    /// The last session's local environment (LLEnvironment::loadFromSettings).
+    fn restore_local_environment(&mut self) {
+        if !self.settings.env_persist {
+            return;
+        }
+        let Some(path) = self.local_env_path() else {
+            return;
+        };
+        let Ok(bytes) = std::fs::read(&path) else {
+            return;
+        };
+        match aurora_llsd::from_binary(&bytes) {
+            Ok((data, _)) if data.is_map() => {
+                log::info!("local environment of the last session restored");
+                self.world.eep.restore_local(&data);
+            }
+            _ => log::warn!("local environment unreadable: {}", path.display()),
+        }
+    }
+
     fn name_cache_path(&self) -> Option<std::path::PathBuf> {
         use crate::settings::GridChoice;
         if self.demo {
@@ -2492,6 +2595,26 @@ impl App {
             self.world.tick_social();
             for cmd in self.world.take_social_commands() {
                 self.send(cmd);
+            }
+            // the environment selector's lists: library Environments, then the
+            // inventory, once the selector has been opened
+            if self.env_scan && self.env_ui.scan_left != 0 {
+                self.env_ui.scan_left = crate::world::env_select::scan_step(&mut self.world.inventory);
+            }
+            self.save_local_environment();
+            for id in self.world.eep.take_failed() {
+                // FailedToFindSettings
+                let name = [
+                    crate::world::env_select::SettingsKind::Sky,
+                    crate::world::env_select::SettingsKind::Water,
+                    crate::world::env_select::SettingsKind::Day,
+                ]
+                .iter()
+                .find_map(|k| self.env_ui.catalog().name_of(*k, id).map(str::to_owned))
+                .unwrap_or_else(|| id.to_string());
+                self.world.system_message(format!(
+                    "Impossible de charger les paramètres de {name} à partir de la base de données."
+                ));
             }
             let queue: Vec<(uuid::Uuid, bool)> = std::mem::take(&mut self.world.inventory.queue);
             let (mine, lib): (Vec<_>, Vec<_>) = queue.into_iter().partition(|(_, l)| !l);
@@ -2922,7 +3045,8 @@ impl App {
 
         // ---- environment: local preset > parcel > region (or default day),
         // with crossfades; the simulator sun only for regions without EEP
-        let (sky_frame, water_frame) = self.world.environment_frames(self.panels.time_of_day);
+        self.world.eep.set_manual_transition(self.settings.env_manual_transition);
+        let (sky_frame, water_frame) = self.world.environment_frames(&mut self.panels.time_of_day);
         // cloud scroll (LLEnvironment::updateCloudScroll: rate / 100 per second)
         self.world.cloud_scroll += sky_frame.cloud_scroll_rate * dt / 100.0;
         self.world.cloud_scroll = glam::Vec2::new(
@@ -3260,6 +3384,9 @@ impl App {
         if self.demo {
             for event in crate::demo::eep::events(self.frame_count) {
                 self.world.apply(event);
+            }
+            if let Some(step) = crate::demo::env::step(self.frame_count) {
+                self.demo_env_step(step);
             }
         }
         // last view for the loading screens (blurred in a thread, or now when quitting)
@@ -3772,6 +3899,7 @@ impl App {
             BarAction::StandUp => self.send(NetCommand::OneShotControl(control::STAND_UP)),
             BarAction::ResetCamera => self.reset_camera_view(),
             BarAction::BanLines(v) => self.settings.maps.ban_lines = v,
+            BarAction::SharedEnvironment => self.world.eep.clear_local(),
         }
     }
 
@@ -3883,6 +4011,7 @@ impl App {
                     tp_back: self.world.tp_history.previous().map(|e| e.region.clone()),
                     tp_forward: self.world.tp_history.next().map(|e| e.region.clone()),
                     status: self.world.status.modes(),
+                    local_env: self.world.eep.has_local(),
                     parcel_icons: match (self.world.main().and_then(|r| r.info.as_ref()), self.world.parcel.as_deref()) {
                         (Some(region), Some(parcel)) => ui::parcel_icons::parcel_icons(&ui::parcel_icons::ParcelState {
                             region_flags: region.region_flags,
@@ -4349,6 +4478,44 @@ impl App {
                 };
                 ui::perf::show(&ctx, &p, &view, &mut open);
                 self.panels.perf = open;
+                // environment selector (Firestorm's quick preferences lists)
+                if self.panels.environment {
+                    if !self.env_scan {
+                        self.env_scan = true;
+                        self.env_ui.scan_left = usize::MAX;
+                    }
+                    self.env_ui.refresh(&self.world.inventory);
+                }
+                let mut open = self.panels.environment;
+                let mut lighting = self.panels.personal_lighting;
+                let env_actions = self.env_ui.show_selector(
+                    &ctx,
+                    &p,
+                    self.world.eep.local_view(),
+                    self.world.eep.local_loading(),
+                    self.panels.time_of_day,
+                    &mut open,
+                    &mut lighting,
+                );
+                self.panels.environment = open;
+                // captureCurrentEnvironment: on opening, and again when another
+                // local change left no fixed sky to edit (onEnvironmentUpdated)
+                if lighting && (!self.lighting_was_open || self.world.eep.personal_sky().is_none()) {
+                    self.world.eep.capture_personal();
+                }
+                let reset = self.env_ui.show_lighting(&ctx, &p, &mut self.world.eep, &mut lighting);
+                self.lighting_was_open = lighting;
+                self.panels.personal_lighting = lighting;
+                for action in env_actions.into_iter().chain(reset) {
+                    match action {
+                        ui::environment::EnvAction::Pick(kind, asset) => self.world.eep.request_local(asset, kind),
+                        ui::environment::EnvAction::Shared => {
+                            self.world.eep.clear_local();
+                            self.panels.time_of_day = 0;
+                        }
+                        ui::environment::EnvAction::Preset(n) => self.panels.time_of_day = n,
+                    }
+                }
                 let mut open = self.panels.settings;
                 self.options_ui.cache_usage = self.disk_cache.usage();
                 self.options_ui.cache_clearing = self.disk_cache.is_clearing();
@@ -4574,6 +4741,12 @@ impl ApplicationHandler for App {
                 crate::demo::IDLE_ANIM,
                 Arc::new(crate::scene::anim::BoundAnim::bind(demo_anim, &rig)),
             );
+            // AURORA_DEMO_ENV_SELECT: the library's settings assets, known locally
+            if crate::demo::env::enabled() {
+                for (id, settings) in crate::demo::env::settings_assets() {
+                    self.scene.settings.insert_local(id, settings);
+                }
+            }
             if std::env::var_os("AURORA_DEMO_OPTIONS").is_some() {
                 self.panels.settings = true;
                 self.panels.perf = false;
