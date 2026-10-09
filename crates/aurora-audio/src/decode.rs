@@ -95,6 +95,12 @@ impl DecodeStream {
                     }
                     let rate = buf.spec().rate();
                     buf.copy_to_vec_interleaved(&mut self.samples);
+                    // Symphonia 0.6 no longer clips its float output; the reference decodes to
+                    // 16-bit PCM (ov_read in LLVorbisDecodeState::decodeSection), which clips at
+                    // full scale, so overshooting peaks are clamped the same way.
+                    for s in &mut self.samples {
+                        *s = s.clamp(-1.0, 1.0);
+                    }
                     return Ok(Some((channels, rate)));
                 }
                 Err(SymError::DecodeError(e)) => {
