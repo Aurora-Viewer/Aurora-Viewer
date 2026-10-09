@@ -6,9 +6,7 @@
 
 use super::{DEMO_AGENT, DEMO_GROUP1, DEMO_LOUP, DEMO_NOVA, DEMO_TESS, TEX_GRADIENT};
 use aurora_llsd::Llsd;
-use aurora_net::land::{
-    AL_ACCESS, AL_ALLOW_EXPERIENCE, AL_BAN, AccessEntry, FoundAvatar, LandCommand, LandEvent, ObjectOwner,
-};
+use aurora_net::land::{AL_ACCESS, AL_ALLOW_EXPERIENCE, AL_BAN, AccessEntry, FoundAvatar, LandCommand, LandEvent, ObjectOwner};
 use aurora_net::{NetEvent, ParcelInfo, ParcelMedia, parcel_flags as pf};
 use glam::Vec3;
 use parking_lot::Mutex;
@@ -120,10 +118,16 @@ fn environment(day_length: i32, day_offset: i32) -> Llsd {
     env.insert("parcel_id", 1);
     env.insert("day_length", day_length);
     env.insert("day_offset", day_offset);
-    env.insert("track_altitudes", Llsd::Array(vec![Llsd::Real(1000.0), Llsd::Real(2000.0), Llsd::Real(3000.0)]));
+    env.insert(
+        "track_altitudes",
+        Llsd::Array(vec![Llsd::Real(1000.0), Llsd::Real(2000.0), Llsd::Real(3000.0)]),
+    );
     let mut day = Llsd::new_map();
     let frame = || Llsd::Array(vec![Llsd::new_map()]);
-    day.insert("tracks", Llsd::Array(vec![frame(), frame(), Llsd::new_array(), Llsd::new_array(), Llsd::new_array()]));
+    day.insert(
+        "tracks",
+        Llsd::Array(vec![frame(), frame(), Llsd::new_array(), Llsd::new_array(), Llsd::new_array()]),
+    );
     env.insert("day_cycle", day);
     env
 }

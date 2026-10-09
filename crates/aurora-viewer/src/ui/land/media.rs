@@ -35,8 +35,17 @@ pub(super) fn widget_type(mime: &str) -> &'static str {
         | "video/x-ms-asf"
         | "video/x-ms-wmv"
         | "video/x-msvideo" => "movie",
-        "image/*" | "application/pdf" | "application/postscript" | "application/rtf" | "application/x-director" | "image/bmp"
-        | "image/gif" | "image/jpeg" | "image/png" | "image/svg+xml" | "image/tiff" => "image",
+        "image/*"
+        | "application/pdf"
+        | "application/postscript"
+        | "application/rtf"
+        | "application/x-director"
+        | "image/bmp"
+        | "image/gif"
+        | "image/jpeg"
+        | "image/png"
+        | "image/svg+xml"
+        | "image/tiff" => "image",
         "text/html" | "application/javascript" | "application/xhtml+xml" => "web",
         "text/plain" | "text/xml" => "text",
         _ => "none",
@@ -90,7 +99,10 @@ pub(super) fn show(
     });
     super::row(ui, p, "Page d'accueil :", |ui| {
         let mut url = parcel.media_url.clone();
-        ui.add_enabled(false, egui::TextEdit::singleline(&mut url).desired_width(ui.available_width() - 80.0));
+        ui.add_enabled(
+            false,
+            egui::TextEdit::singleline(&mut url).desired_width(ui.available_width() - 80.0),
+        );
         if super::button(ui, p, "Choisir", can).clicked() {
             world.land.media_type = None;
             s.dialog = Some(Dialog::MediaUrl(parcel.media_url.clone()));
@@ -151,8 +163,12 @@ pub(super) fn show(
             (0, 0)
         };
         let tip = "Taille du média Web, laisser 0 pour la valeur par défaut.";
-        let rw = ui.add_enabled(can && allow_resize, egui::DragValue::new(&mut width).range(0..=1024)).on_hover_text(tip);
-        let rh = ui.add_enabled(can && allow_resize, egui::DragValue::new(&mut height).range(0..=1024)).on_hover_text(tip);
+        let rw = ui
+            .add_enabled(can && allow_resize, egui::DragValue::new(&mut width).range(0..=1024))
+            .on_hover_text(tip);
+        let rh = ui
+            .add_enabled(can && allow_resize, egui::DragValue::new(&mut height).range(0..=1024))
+            .on_hover_text(tip);
         dim(ui, p, "pixels");
         let commit = |r: &egui::Response| (r.changed() && !r.dragged()) || r.drag_stopped();
         if commit(&rw) || commit(&rh) {

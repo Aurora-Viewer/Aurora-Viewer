@@ -158,13 +158,17 @@ pub(super) fn show(
         });
         // explicitly on (and greyed) while everyone may build
         let (r, on) = check(ui, can_options && !before.edit_objects, now.edit_group, "Groupe");
-        r.on_hover_text("Si la case est cochée, les membres du groupe de la parcelle peuvent créer et rezzer des objets sur votre terrain.");
+        r.on_hover_text(
+            "Si la case est cochée, les membres du groupe de la parcelle peuvent créer et rezzer des objets sur votre terrain.",
+        );
         now.edit_group = on;
     });
     line(ui, "Laisser entrer des objets :", &mut |ui| {
         col(ui, 130.0, &mut |ui| {
             let (r, on) = check(ui, can_options, now.all_entry, "Tous");
-            r.on_hover_text("Si la case est cochée, les résidents peuvent déplacer leurs objets depuis d'autres parcelles jusqu'à celle-ci.");
+            r.on_hover_text(
+                "Si la case est cochée, les résidents peuvent déplacer leurs objets depuis d'autres parcelles jusqu'à celle-ci.",
+            );
             now.all_entry = on;
         });
         let (r, on) = check(ui, can_options && !before.all_entry, now.group_entry, "Groupe");
@@ -186,13 +190,22 @@ pub(super) fn show(
     let can_search = v.can(powers::LAND_FIND_PLACES) && !v.region_flag(rf::BLOCK_PARCEL_SEARCH);
     let large = parcel.area >= MIN_PARCEL_AREA;
     let (search_on, search_tip) = match (large, can_search) {
-        (true, true) => (true, "Permettre aux autres résidents de voir cette parcelle dans les résultats de recherche"),
-        (false, true) if before.directory => (true, "Permettre aux autres résidents de voir cette parcelle dans les résultats de recherche"),
+        (true, true) => (
+            true,
+            "Permettre aux autres résidents de voir cette parcelle dans les résultats de recherche",
+        ),
+        (false, true) if before.directory => (
+            true,
+            "Permettre aux autres résidents de voir cette parcelle dans les résultats de recherche",
+        ),
         (false, true) => (
             false,
             "Cette option est désactivée car la superficie de cette parcelle est inférieure ou égale à 128 m². Seules les parcelles de grande taille peuvent apparaître dans la recherche.",
         ),
-        _ => (false, "Cette option est désactivée car vous ne pouvez pas modifier les options de cette parcelle."),
+        _ => (
+            false,
+            "Cette option est désactivée car vous ne pouvez pas modifier les options de cette parcelle.",
+        ),
     };
     ui.columns(2, |cols| {
         let ui = &mut cols[0];
@@ -279,17 +292,32 @@ pub(super) fn show(
             let (rect, r) = ui.allocate_exact_size(size, if can_identity { egui::Sense::click() } else { egui::Sense::hover() });
             ui.painter().rect_filled(rect, 2.0, p.field);
             if parcel.snapshot_id.is_nil() {
-                ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, "(aucune)", egui::FontId::proportional(12.0), p.muted);
+                ui.painter().text(
+                    rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    "(aucune)",
+                    egui::FontId::proportional(12.0),
+                    p.muted,
+                );
             } else {
                 s.wanted_images.insert(parcel.snapshot_id);
                 match images.get(&parcel.snapshot_id) {
                     Some(t) => {
-                        ui.painter()
-                            .image(t.id(), rect, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE);
+                        ui.painter().image(
+                            t.id(),
+                            rect,
+                            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                            egui::Color32::WHITE,
+                        );
                     }
                     None => {
-                        ui.painter()
-                            .text(rect.center(), egui::Align2::CENTER_CENTER, "Chargement…", egui::FontId::proportional(12.0), p.muted);
+                        ui.painter().text(
+                            rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            "Chargement…",
+                            egui::FontId::proportional(12.0),
+                            p.muted,
+                        );
                     }
                 }
             }
@@ -330,15 +358,23 @@ pub(super) fn show(
                         ));
                     }
                 }
-                if super::button(ui, p, "Annuler", can_landing).on_hover_text("Effacer le lieu d'arrivée").clicked() {
+                if super::button(ui, p, "Annuler", can_landing)
+                    .on_hover_text("Effacer le lieu d'arrivée")
+                    .clicked()
+                {
                     world.land.update(|u| {
                         u.user_location = glam::Vec3::ZERO;
                         u.user_look_at = glam::Vec3::ZERO;
                     });
                 }
-                if super::button(ui, p, "Teleport", has_lp).on_hover_text("Se téléporter au lieu d'arrivée").clicked() {
+                if super::button(ui, p, "Teleport", has_lp)
+                    .on_hover_text("Se téléporter au lieu d'arrivée")
+                    .clicked()
+                {
                     let (ox, oy) = aurora_net::handle_to_origin(v.handle);
-                    world.map.track_location(ox as f64 + lp.x as f64, oy as f64 + lp.y as f64, lp.z, true);
+                    world
+                        .map
+                        .track_location(ox as f64 + lp.x as f64, oy as f64 + lp.y as f64, lp.z, true);
                 }
             });
             ui.add_space(6.0);

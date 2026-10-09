@@ -88,7 +88,11 @@ impl AvatarPicker {
                         }
                     }
                     _ => {
-                        ui.label(RichText::new("Saisissez une partie du nom d'une personne :").size(12.0).color(p.muted));
+                        ui.label(
+                            RichText::new("Saisissez une partie du nom d'une personne :")
+                                .size(12.0)
+                                .color(p.muted),
+                        );
                         ui.horizontal(|ui| {
                             let r = ui.add(egui::TextEdit::singleline(&mut self.query).desired_width(ui.available_width() - 60.0));
                             let go = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));

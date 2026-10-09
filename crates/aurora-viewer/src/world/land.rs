@@ -191,8 +191,16 @@ impl EnvSummary {
     pub fn from_llsd(env: &Llsd) -> EnvSummary {
         let has_day = env.has("day_cycle");
         let mut s = EnvSummary {
-            day_length: if has_day && env.has("day_length") { env["day_length"].as_i32() as i64 } else { -1 },
-            day_offset: if has_day && env.has("day_offset") { env["day_offset"].as_i32() as i64 } else { -1 },
+            day_length: if has_day && env.has("day_length") {
+                env["day_length"].as_i32() as i64
+            } else {
+                -1
+            },
+            day_offset: if has_day && env.has("day_offset") {
+                env["day_offset"].as_i32() as i64
+            } else {
+                -1
+            },
             has_day,
             ..Default::default()
         };
@@ -225,11 +233,7 @@ impl EnvSummary {
         let i = index as usize;
         let mut name = if self.day_name.is_empty() {
             let n = self.names[i].clone();
-            if n.is_empty() && i <= 1 {
-                "(envt de la région)".into()
-            } else {
-                n
-            }
+            if n.is_empty() && i <= 1 { "(envt de la région)".into() } else { n }
         } else if self.tracks_set[i] {
             self.day_name.clone()
         } else {
@@ -653,15 +657,7 @@ impl Land {
             return;
         };
         let handle = sel.handle;
-        let ids = |v: &[Uuid]| -> Vec<AccessEntry> {
-            v.iter()
-                .map(|&id| AccessEntry {
-                    id,
-                    time: 0,
-                    flags: 0,
-                })
-                .collect()
-        };
+        let ids = |v: &[Uuid]| -> Vec<AccessEntry> { v.iter().map(|&id| AccessEntry { id, time: 0, flags: 0 }).collect() };
         let lists = [
             (land::AL_ACCESS, sel.access.clone()),
             (land::AL_BAN, sel.bans.clone()),
@@ -776,7 +772,10 @@ mod tests {
 
     #[test]
     fn select_snaps_to_the_parcel_grid() {
-        assert_eq!(parcel_rect_at(Vec3::new(130.3, 61.0, 22.0), (256.0, 256.0)), (128.0, 60.0, 132.0, 64.0));
+        assert_eq!(
+            parcel_rect_at(Vec3::new(130.3, 61.0, 22.0), (256.0, 256.0)),
+            (128.0, 60.0, 132.0, 64.0)
+        );
         assert_eq!(parcel_rect_at(Vec3::new(255.5, 0.5, 0.0), (256.0, 256.0)), (252.0, 0.0, 256.0, 4.0));
     }
 
@@ -826,7 +825,10 @@ mod tests {
     fn selection_asks_for_what_the_floater_shows() {
         let mut land = Land::default();
         land.select_at(5, Vec3::new(100.0, 100.0, 20.0), (256.0, 256.0));
-        assert!(matches!(land.take_commands()[..], [NetCommand::Land(LandCommand::Select { snap: true, .. })]));
+        assert!(matches!(
+            land.take_commands()[..],
+            [NetCommand::Land(LandCommand::Select { snap: true, .. })]
+        ));
         let ctx = SelectionContext {
             agent_region: Some(5),
             region_id: Uuid::from_u128(3),

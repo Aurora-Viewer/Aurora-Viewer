@@ -54,9 +54,8 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
         }
         // the combo's drop-down: the parcel's URL, then the saved streams
         ui.add_enabled_ui(can_media, |ui| {
-            let img = super::super::icons::global("caret-down").map(|t| {
-                egui::Image::from_texture(egui::load::SizedTexture::new(t.id(), egui::Vec2::splat(14.0))).tint(p.muted)
-            });
+            let img = super::super::icons::global("caret-down")
+                .map(|t| egui::Image::from_texture(egui::load::SizedTexture::new(t.id(), egui::Vec2::splat(14.0))).tint(p.muted));
             let button = match img {
                 Some(img) => egui::Button::image(img),
                 None => egui::Button::new("v"),

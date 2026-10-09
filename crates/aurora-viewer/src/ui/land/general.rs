@@ -23,7 +23,10 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
 
     row(ui, p, "Nom :", |ui| {
         s.name.sync(&parcel.name);
-        let r = ui.add_enabled(can_identity, egui::TextEdit::singleline(&mut s.name.text).desired_width(f32::INFINITY));
+        let r = ui.add_enabled(
+            can_identity,
+            egui::TextEdit::singleline(&mut s.name.text).desired_width(f32::INFINITY),
+        );
         // validateASCIIPrintableNoPipe, on what is typed (a name set
         // elsewhere keeps its other characters)
         if r.changed() {
@@ -48,7 +51,9 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
         s.desc.sync(&parcel.desc);
         let r = ui.add_enabled(
             can_identity,
-            egui::TextEdit::multiline(&mut s.desc.text).desired_rows(3).desired_width(f32::INFINITY),
+            egui::TextEdit::multiline(&mut s.desc.text)
+                .desired_rows(3)
+                .desired_width(f32::INFINITY),
         );
         if let Some(desc) = s.desc.after(&r) {
             world.land.update(|u| u.desc = desc);
@@ -75,7 +80,10 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
             "(aucun)".to_owned()
         } else {
             let groups = world.groups.groups.clone();
-            world.land.group_name(&parcel.group_id, &groups).unwrap_or_else(|| "Chargement...".into())
+            world
+                .land
+                .group_name(&parcel.group_id, &groups)
+                .unwrap_or_else(|| "Chargement...".into())
         };
         text(ui, p, name);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -224,7 +232,9 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
             if region_owner {
                 // reclaimParcel: the region owner takes back someone's parcel
                 if button(ui, p, "Récupérer le terrain", !is_public && parcel.owner_id != agent).clicked() {
-                    world.land.parcel_command(|handle, local_id| LandCommand::Reclaim { handle, local_id });
+                    world
+                        .land
+                        .parcel_command(|handle, local_id| LandCommand::Reclaim { handle, local_id });
                 }
             } else if button(ui, p, "Abandonner le terrain", release).clicked() {
                 s.dialog = Some(Dialog::Confirm(Confirm::Release));

@@ -146,7 +146,10 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
             ui,
             now.public && can_allowed && !parcel.region_deny_age_unverified,
             now.age,
-            &format!("Doit avoir plus de 18 ans{}", if parcel.region_deny_age_unverified { estate } else { "" }),
+            &format!(
+                "Doit avoir plus de 18 ans{}",
+                if parcel.region_deny_age_unverified { estate } else { "" }
+            ),
         );
         r.on_hover_text("Pour accéder à cette parcelle, les résidents doivent avoir au moins 18 ans.");
         now.age = on;
@@ -207,7 +210,10 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
         let r = ui.add_enabled(pass_on, egui::DragValue::new(&mut price).range(0..=500));
         ui.add_space(16.0);
         dim(ui, p, "Durée en heures :");
-        let r2 = ui.add_enabled(pass_on, egui::DragValue::new(&mut hours).range(0.0..=24.0).speed(0.1).fixed_decimals(2));
+        let r2 = ui.add_enabled(
+            pass_on,
+            egui::DragValue::new(&mut hours).range(0.0..=24.0).speed(0.1).fixed_decimals(2),
+        );
         let active = r.dragged() || r.has_focus() || r2.dragged() || r2.has_focus();
         if active {
             s.pass_edit = Some((price, hours));
@@ -224,7 +230,9 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
 
     // the two lists
     let sel = world.land.sel.clone();
-    let (access, bans) = sel.as_ref().map_or((Vec::new(), Vec::new()), |s| (s.access.clone(), s.bans.clone()));
+    let (access, bans) = sel
+        .as_ref()
+        .map_or((Vec::new(), Vec::new()), |s| (s.access.clone(), s.bans.clone()));
     ui.add_space(4.0);
     let half = (ui.available_width() - 12.0) / 2.0;
     let mut add_access = false;
@@ -237,103 +245,113 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
             let can = if kind == AL_ACCESS { can_allowed } else { can_banned };
             let sel_set = if kind == AL_ACCESS { &mut s.access_sel } else { &mut s.ban_sel };
             sel_set.retain(|id| list.iter().any(|e| e.id == *id));
-            ui.allocate_ui_with_layout(Vec2::new(half, ui.available_height()), egui::Layout::top_down(egui::Align::Min), |ui| {
-                let title = if kind == AL_ACCESS {
-                    format!("Toujours autorisé ({}, max. {PARCEL_MAX_ACCESS_LIST})", list.len())
-                } else {
-                    format!("Interdits ({}, max. {PARCEL_MAX_ACCESS_LIST})", list.len())
-                };
-                ui.label(RichText::new(title).size(12.0).color(p.ink));
-                let list_h = (ui.available_height() - 60.0).max(80.0);
-                let mut rows: Vec<(AccessEntry, String)> = list
-                    .iter()
-                    .map(|e| {
-                        world.social.want_name(e.id);
-                        (*e, world.social.name_of(&e.id))
-                    })
-                    .collect();
-                rows.sort_by_key(|r| r.1.to_lowercase());
-                egui::Frame::new().fill(p.field).show(ui, |ui| {
-                    ui.set_width(half);
-                    ui.set_min_height(list_h);
-                    egui::ScrollArea::vertical()
-                        .id_salt(("land_list", kind))
-                        .max_height(list_h)
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| {
-                            ui.add_enabled_ui(can, |ui| {
-                                ui.spacing_mut().item_spacing.y = 1.0;
-                                for (e, name) in &rows {
-                                    let selected = sel_set.contains(&e.id);
-                                    let label = if kind == AL_ACCESS {
-                                        format!("{}{name}", access_prefix(e.time, v.now))
-                                    } else {
-                                        name.clone()
-                                    };
-                                    let (rect, r) = ui.allocate_exact_size(Vec2::new(half - 14.0, 20.0), egui::Sense::click());
-                                    let fill = if selected {
-                                        p.violet.gamma_multiply(0.6)
-                                    } else if r.hovered() {
-                                        p.raised
-                                    } else {
-                                        p.field
-                                    };
-                                    ui.painter().rect_filled(rect, 0.0, fill);
-                                    let dur_w = if kind == AL_BAN { 70.0 } else { 0.0 };
-                                    let mut job = egui::text::LayoutJob::simple_singleline(label, egui::FontId::proportional(12.0), p.ink);
-                                    job.wrap = egui::text::TextWrapping::truncate_at_width(rect.width() - dur_w - 10.0);
-                                    let g = ui.painter().layout_job(job);
-                                    ui.painter().galley(egui::pos2(rect.left() + 5.0, rect.center().y - g.size().y / 2.0), g, p.ink);
-                                    if kind == AL_BAN {
-                                        ui.painter().text(
-                                            egui::pos2(rect.right() - dur_w, rect.center().y),
-                                            egui::Align2::LEFT_CENTER,
-                                            ban_duration(e.time, v.now),
-                                            egui::FontId::proportional(11.5),
-                                            p.muted,
-                                        );
-                                    }
-                                    if r.clicked() {
-                                        // multi-select with Ctrl, like the name lists
-                                        if !ui.input(|i| i.modifiers.ctrl || i.modifiers.command) {
-                                            sel_set.clear();
+            ui.allocate_ui_with_layout(
+                Vec2::new(half, ui.available_height()),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    let title = if kind == AL_ACCESS {
+                        format!("Toujours autorisé ({}, max. {PARCEL_MAX_ACCESS_LIST})", list.len())
+                    } else {
+                        format!("Interdits ({}, max. {PARCEL_MAX_ACCESS_LIST})", list.len())
+                    };
+                    ui.label(RichText::new(title).size(12.0).color(p.ink));
+                    let list_h = (ui.available_height() - 60.0).max(80.0);
+                    let mut rows: Vec<(AccessEntry, String)> = list
+                        .iter()
+                        .map(|e| {
+                            world.social.want_name(e.id);
+                            (*e, world.social.name_of(&e.id))
+                        })
+                        .collect();
+                    rows.sort_by_key(|r| r.1.to_lowercase());
+                    egui::Frame::new().fill(p.field).show(ui, |ui| {
+                        ui.set_width(half);
+                        ui.set_min_height(list_h);
+                        egui::ScrollArea::vertical()
+                            .id_salt(("land_list", kind))
+                            .max_height(list_h)
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                ui.add_enabled_ui(can, |ui| {
+                                    ui.spacing_mut().item_spacing.y = 1.0;
+                                    for (e, name) in &rows {
+                                        let selected = sel_set.contains(&e.id);
+                                        let label = if kind == AL_ACCESS {
+                                            format!("{}{name}", access_prefix(e.time, v.now))
+                                        } else {
+                                            name.clone()
+                                        };
+                                        let (rect, r) = ui.allocate_exact_size(Vec2::new(half - 14.0, 20.0), egui::Sense::click());
+                                        let fill = if selected {
+                                            p.violet.gamma_multiply(0.6)
+                                        } else if r.hovered() {
+                                            p.raised
+                                        } else {
+                                            p.field
+                                        };
+                                        ui.painter().rect_filled(rect, 0.0, fill);
+                                        let dur_w = if kind == AL_BAN { 70.0 } else { 0.0 };
+                                        let mut job =
+                                            egui::text::LayoutJob::simple_singleline(label, egui::FontId::proportional(12.0), p.ink);
+                                        job.wrap = egui::text::TextWrapping::truncate_at_width(rect.width() - dur_w - 10.0);
+                                        let g = ui.painter().layout_job(job);
+                                        ui.painter()
+                                            .galley(egui::pos2(rect.left() + 5.0, rect.center().y - g.size().y / 2.0), g, p.ink);
+                                        if kind == AL_BAN {
+                                            ui.painter().text(
+                                                egui::pos2(rect.right() - dur_w, rect.center().y),
+                                                egui::Align2::LEFT_CENTER,
+                                                ban_duration(e.time, v.now),
+                                                egui::FontId::proportional(11.5),
+                                                p.muted,
+                                            );
                                         }
-                                        if !sel_set.insert(e.id) {
-                                            sel_set.remove(&e.id);
+                                        if r.clicked() {
+                                            // multi-select with Ctrl, like the name lists
+                                            if !ui.input(|i| i.modifiers.ctrl || i.modifiers.command) {
+                                                sel_set.clear();
+                                            }
+                                            if !sel_set.insert(e.id) {
+                                                sel_set.remove(&e.id);
+                                            }
+                                        }
+                                        if r.double_clicked() {
+                                            super::super::profile::request_open(ui.ctx(), e.id);
                                         }
                                     }
-                                    if r.double_clicked() {
-                                        super::super::profile::request_open(ui.ctx(), e.id);
-                                    }
-                                }
+                                });
                             });
-                        });
-                });
-                ui.horizontal(|ui| {
-                    if super::button(ui, p, "Ajouter", can && list.len() < PARCEL_MAX_ACCESS_LIST).clicked() {
-                        if kind == AL_ACCESS {
-                            add_access = true;
-                        } else {
-                            add_ban = true;
-                        }
-                    }
-                    if super::button(ui, p, "Supprimer", can && !sel_set.is_empty()).clicked() {
-                        remove = Some((kind, sel_set.clone()));
-                    }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if super::button(ui, p, "Importer", can && list.len() < PARCEL_MAX_ACCESS_LIST)
-                            .on_hover_text("Importer un fichier CSV contenant uniquement des UUID valides, un par ligne.")
-                            .clicked()
-                        {
-                            import = Some(kind);
-                        }
-                        if super::button(ui, p, "Exporter", can && !list.is_empty()).clicked() {
-                            let file = if kind == AL_ACCESS { "land_access_list.csv" } else { "land_banned_list.csv" };
-                            export = Some((file, list.clone()));
-                        }
                     });
-                });
-            });
+                    ui.horizontal(|ui| {
+                        if super::button(ui, p, "Ajouter", can && list.len() < PARCEL_MAX_ACCESS_LIST).clicked() {
+                            if kind == AL_ACCESS {
+                                add_access = true;
+                            } else {
+                                add_ban = true;
+                            }
+                        }
+                        if super::button(ui, p, "Supprimer", can && !sel_set.is_empty()).clicked() {
+                            remove = Some((kind, sel_set.clone()));
+                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if super::button(ui, p, "Importer", can && list.len() < PARCEL_MAX_ACCESS_LIST)
+                                .on_hover_text("Importer un fichier CSV contenant uniquement des UUID valides, un par ligne.")
+                                .clicked()
+                            {
+                                import = Some(kind);
+                            }
+                            if super::button(ui, p, "Exporter", can && !list.is_empty()).clicked() {
+                                let file = if kind == AL_ACCESS {
+                                    "land_access_list.csv"
+                                } else {
+                                    "land_banned_list.csv"
+                                };
+                                export = Some((file, list.clone()));
+                            }
+                        });
+                    });
+                },
+            );
             ui.add_space(12.0);
         }
     });

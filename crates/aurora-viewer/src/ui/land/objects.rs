@@ -23,7 +23,11 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
         max = max.min(r.max_tasks as i32);
     }
     if parcel.prim_bonus != 1.0 {
-        ui.label(RichText::new(format!("Facteur Bonus objets : {:.2}", parcel.prim_bonus)).size(12.0).color(p.ink));
+        ui.label(
+            RichText::new(format!("Facteur Bonus objets : {:.2}", parcel.prim_bonus))
+                .size(12.0)
+                .color(p.ink),
+        );
     }
     let wide = 210.0;
     let line = |ui: &mut egui::Ui, label: &str, value: String| {
@@ -223,8 +227,12 @@ fn owners_list(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, world: &mut World
                         let tint = if o.is_group || online { p.ink } else { p.muted_dim };
                         if let Some(t) = super::super::icons::global(icon) {
                             let ir = egui::Rect::from_center_size(egui::pos2(x + 8.0, rect.center().y), Vec2::splat(14.0));
-                            ui.painter()
-                                .image(t.id(), ir, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), tint);
+                            ui.painter().image(
+                                t.id(),
+                                ir,
+                                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                                tint,
+                            );
                         }
                         if !o.is_group {
                             // FIRE-1292: in our region (or us) = online

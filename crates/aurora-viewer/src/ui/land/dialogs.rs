@@ -67,7 +67,10 @@ fn question(c: &Confirm, parcel: &ParcelInfo, world: &mut World) -> String {
         Confirm::Deed => {
             let group = group_name(world, &parcel.group_id);
             let contribution = if parcel.flags & pf::CONTRIBUTE_WITH_DEED != 0 {
-                format!(" Elle inclura une contribution simultanée au groupe de la part de '{}'.", world.social.name_of(&parcel.owner_id))
+                format!(
+                    " Elle inclura une contribution simultanée au groupe de la part de '{}'.",
+                    world.social.name_of(&parcel.owner_id)
+                )
             } else {
                 String::new()
             };
@@ -118,7 +121,9 @@ fn question(c: &Confirm, parcel: &ParcelInfo, world: &mut World) -> String {
             world.social.name_of(&o.id),
             o.count
         ),
-        Confirm::ResetEnvironment => "Vous êtes sur le point de supprimer tous les paramètres appliqués. Voulez-vous vraiment continuer ?".into(),
+        Confirm::ResetEnvironment => {
+            "Vous êtes sur le point de supprimer tous les paramètres appliqués. Voulez-vous vraiment continuer ?".into()
+        }
     }
 }
 
@@ -136,12 +141,18 @@ fn accept(c: Confirm, parcel: &ParcelInfo, world: &mut World) {
         world.land.update(|_| {});
     };
     match c {
-        Confirm::Release => world.land.parcel_command(|handle, local_id| LandCommand::Release { handle, local_id }),
+        Confirm::Release => world
+            .land
+            .parcel_command(|handle, local_id| LandCommand::Release { handle, local_id }),
         Confirm::Deed => {
             let group = parcel.group_id;
-            world.land.parcel_command(|handle, local_id| LandCommand::DeedToGroup { handle, local_id, group });
+            world
+                .land
+                .parcel_command(|handle, local_id| LandCommand::DeedToGroup { handle, local_id, group });
         }
-        Confirm::BuyPass => world.land.parcel_command(|handle, local_id| LandCommand::BuyPass { handle, local_id }),
+        Confirm::BuyPass => world
+            .land
+            .parcel_command(|handle, local_id| LandCommand::BuyPass { handle, local_id }),
         Confirm::ReturnOwner => {
             let body = if parcel.owner_id == me {
                 "Les objets que vous possédez sur la parcelle de terrain sélectionnée ont été renvoyés dans votre inventaire.".to_owned()
@@ -192,9 +203,14 @@ fn accept(c: Confirm, parcel: &ParcelInfo, world: &mut World) {
 fn window(ctx: &egui::Context, p: &Palette, title: &str, width: f32, body: impl FnOnce(&mut egui::Ui)) -> bool {
     let mut open = true;
     let screen = ctx.content_rect();
-    super::super::widgets::Floater::new("land_dialog", title, screen.center() - Vec2::new(width / 2.0, 110.0), Vec2::new(width, 160.0))
-        .fixed()
-        .show(ctx, p, &mut open, body);
+    super::super::widgets::Floater::new(
+        "land_dialog",
+        title,
+        screen.center() - Vec2::new(width / 2.0, 110.0),
+        Vec2::new(width, 160.0),
+    )
+    .fixed()
+    .show(ctx, p, &mut open, body);
     open
 }
 
@@ -235,7 +251,11 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, s: &mut LandUi, v: &View, w
                 return;
             };
             let text = question(&c, &parcel, world);
-            let (ok, cancel) = if matches!(c, Confirm::ResetEnvironment) { ("Oui", "Non") } else { ("OK", "Annuler") };
+            let (ok, cancel) = if matches!(c, Confirm::ResetEnvironment) {
+                ("Oui", "Non")
+            } else {
+                ("OK", "Annuler")
+            };
             let mut answer = None;
             let open = window(ctx, p, "À propos du terrain", 420.0, |ui| {
                 ui.add(egui::Label::new(RichText::new(&text).size(12.5).color(p.ink)).wrap());
@@ -276,7 +296,11 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, s: &mut LandUi, v: &View, w
             });
             (open && keep).then_some(Dialog::GroupPicker)
         }
-        Dialog::BanDuration { ids, mut temporary, mut hours } => {
+        Dialog::BanDuration {
+            ids,
+            mut temporary,
+            mut hours,
+        } => {
             let mut answer = None;
             let open = window(ctx, p, "Durée de l'interdiction", 300.0, |ui| {
                 ui.label(RichText::new("Durée de l'interdiction :").size(12.0).color(p.muted));
@@ -304,7 +328,9 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, s: &mut LandUi, v: &View, w
                 return;
             };
             let mut close = false;
-            let open = window(ctx, p, "Vendre le terrain", 420.0, |ui| sell_form(ui, p, s, world, &parcel, &mut form, &mut close));
+            let open = window(ctx, p, "Vendre le terrain", 420.0, |ui| {
+                sell_form(ui, p, s, world, &parcel, &mut form, &mut close)
+            });
             (open && !close).then_some(Dialog::Sell(form))
         }
         Dialog::MediaUrl(mut url) => {
@@ -354,7 +380,11 @@ fn sell_form(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, world: &mut World, 
     let price: i32 = f.price.trim().parse().unwrap_or(-1);
     let buyer_name = f.buyer.map(|id| world.social.name_of(&id));
     if f.confirming {
-        let name = if f.to == 1 { "Tout le monde".to_owned() } else { buyer_name.clone().unwrap_or_default() };
+        let name = if f.to == 1 {
+            "Tout le monde".to_owned()
+        } else {
+            buyer_name.clone().unwrap_or_default()
+        };
         let text = if f.to == 1 {
             format!(
                 "ATTENTION : en cliquant sur Vendre à n'importe qui, vous rendez votre terrain disponible à toute la communauté de Second Life, même aux personnes qui ne sont pas dans cette région.\n\nLe terrain sélectionné, de {} m², est mis en vente. Votre prix de vente sera de {price} L$ et la vente sera disponible à {name}.",
@@ -403,10 +433,13 @@ fn sell_form(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, world: &mut World, 
             2 => "Personne spécifique :",
             _ => "- Sélectionnez -",
         };
-        egui::ComboBox::from_id_salt("land_sell_to").selected_text(label).width(160.0).show_ui(ui, |ui| {
-            ui.selectable_value(&mut f.to, 1, "Tout le monde");
-            ui.selectable_value(&mut f.to, 2, "Personne spécifique :");
-        });
+        egui::ComboBox::from_id_salt("land_sell_to")
+            .selected_text(label)
+            .width(160.0)
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut f.to, 1, "Tout le monde");
+                ui.selectable_value(&mut f.to, 2, "Personne spécifique :");
+            });
         if f.to == 2 {
             if let Some(n) = &buyer_name {
                 super::text(ui, p, n.clone());

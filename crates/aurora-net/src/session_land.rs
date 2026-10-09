@@ -167,11 +167,7 @@ impl Session<'_> {
                     .collect();
                 self.send(addr, &m, true);
             }
-            LandCommand::SetOtherCleanTime {
-                handle,
-                local_id,
-                minutes,
-            } => {
+            LandCommand::SetOtherCleanTime { handle, local_id, minutes } => {
                 let Some(addr) = self.land_sim(handle) else {
                     return;
                 };

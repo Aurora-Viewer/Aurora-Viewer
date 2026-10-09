@@ -207,16 +207,9 @@ pub enum LandCommand {
         snap: bool,
     },
     /// sendParcelPropertiesUpdate: capability, else ParcelPropertiesUpdate.
-    Update {
-        handle: RegionHandle,
-        update: Box<ParcelUpdate>,
-    },
+    Update { handle: RegionHandle, update: Box<ParcelUpdate> },
     /// sendParcelAccessListRequest (`flags` = AL_* bits).
-    AccessListRequest {
-        handle: RegionHandle,
-        local_id: i32,
-        flags: u32,
-    },
+    AccessListRequest { handle: RegionHandle, local_id: i32, flags: u32 },
     /// sendParcelAccessListUpdate: the whole list of one kind.
     AccessListUpdate {
         handle: RegionHandle,
@@ -225,15 +218,9 @@ pub enum LandCommand {
         entries: Vec<AccessEntry>,
     },
     /// sendParcelDwellRequest.
-    DwellRequest {
-        handle: RegionHandle,
-        local_id: i32,
-    },
+    DwellRequest { handle: RegionHandle, local_id: i32 },
     /// LLPanelLandObjects::onClickRefresh: ParcelObjectOwnersRequest.
-    ObjectOwnersRequest {
-        handle: RegionHandle,
-        local_id: i32,
-    },
+    ObjectOwnersRequest { handle: RegionHandle, local_id: i32 },
     /// send_return_objects_message (`owners` with RT_LIST).
     ReturnObjects {
         handle: RegionHandle,
@@ -242,36 +229,17 @@ pub enum LandCommand {
         owners: Vec<Uuid>,
     },
     /// send_other_clean_time_message: auto-return delay in minutes.
-    SetOtherCleanTime {
-        handle: RegionHandle,
-        local_id: i32,
-        minutes: i32,
-    },
+    SetOtherCleanTime { handle: RegionHandle, local_id: i32, minutes: i32 },
     /// sendParcelRelease (Abandon Land).
-    Release {
-        handle: RegionHandle,
-        local_id: i32,
-    },
+    Release { handle: RegionHandle, local_id: i32 },
     /// reclaimParcel (region owner).
-    Reclaim {
-        handle: RegionHandle,
-        local_id: i32,
-    },
+    Reclaim { handle: RegionHandle, local_id: i32 },
     /// sendParcelDeed.
-    DeedToGroup {
-        handle: RegionHandle,
-        local_id: i32,
-        group: Uuid,
-    },
+    DeedToGroup { handle: RegionHandle, local_id: i32, group: Uuid },
     /// buyPass.
-    BuyPass {
-        handle: RegionHandle,
-        local_id: i32,
-    },
+    BuyPass { handle: RegionHandle, local_id: i32 },
     /// EstateCovenantRequest (LLPanelLandCovenant::refresh).
-    CovenantRequest {
-        handle: RegionHandle,
-    },
+    CovenantRequest { handle: RegionHandle },
     /// RemoteParcelRequest capability: the parcel UUID of a point.
     ParcelIdRequest {
         handle: RegionHandle,
@@ -281,32 +249,20 @@ pub enum LandCommand {
     },
     /// LLEnvironment::requestParcel: GET ExtEnvironment?parcelid=N (the
     /// answer is only shown, not applied to the sky).
-    EnvironmentRequest {
-        local_id: i32,
-    },
+    EnvironmentRequest { local_id: i32 },
     /// updateParcel with the day length / offset (seconds; 0 = unchanged).
-    EnvironmentUpdate {
-        local_id: i32,
-        day_length: i32,
-        day_offset: i32,
-    },
+    EnvironmentUpdate { local_id: i32, day_length: i32, day_offset: i32 },
     /// resetParcel: back to the region environment.
-    EnvironmentReset {
-        local_id: i32,
-    },
+    EnvironmentReset { local_id: i32 },
     /// Names of experiences (GetExperienceInfo capability).
     ExperienceInfo(Vec<Uuid>),
     /// Group names (UUIDGroupNameRequest, LLCacheName::getGroupName).
     GroupNames(Vec<Uuid>),
     /// Resident search of the avatar picker (LLFloaterAvatarPicker::find):
     /// AvatarPickerSearch capability, else AvatarPickerRequest.
-    AvatarSearch {
-        query: String,
-    },
+    AvatarSearch { query: String },
     /// LLFloaterURLEntry::getMediaTypeCoro: HEAD of a parcel media URL.
-    MediaType {
-        url: String,
-    },
+    MediaType { url: String },
 }
 
 /// Answers for the About Land floater.
@@ -326,10 +282,7 @@ pub enum LandEvent {
         entries: Vec<AccessEntry>,
     },
     /// ParcelDwellReply.
-    Dwell {
-        local_id: i32,
-        dwell: f32,
-    },
+    Dwell { local_id: i32, dwell: f32 },
     /// ParcelObjectOwnersReply.
     ObjectOwners(Vec<ObjectOwner>),
     /// EstateCovenantReply.
@@ -341,34 +294,19 @@ pub enum LandEvent {
         estate_owner: Uuid,
     },
     /// The covenant notecard text (None: it could not be loaded).
-    CovenantText {
-        covenant_id: Uuid,
-        text: Option<String>,
-    },
+    CovenantText { covenant_id: Uuid, text: Option<String> },
     /// RemoteParcelRequest answer (None: the parcel id could not be resolved).
-    ParcelId {
-        local_id: i32,
-        id: Option<Uuid>,
-    },
+    ParcelId { local_id: i32, id: Option<Uuid> },
     /// ExtEnvironment of a parcel (`environment` map), or why it failed.
-    Environment {
-        local_id: i32,
-        result: Result<Llsd, String>,
-    },
+    Environment { local_id: i32, result: Result<Llsd, String> },
     /// GetExperienceInfo: (experience, name).
     ExperienceInfo(Vec<(Uuid, String)>),
     /// UUIDGroupNameReply: (group, name).
     GroupNames(Vec<(Uuid, String)>),
     /// Avatar picker results for `query`, None when the search failed.
-    AvatarSearch {
-        query: String,
-        results: Option<Vec<FoundAvatar>>,
-    },
+    AvatarSearch { query: String, results: Option<Vec<FoundAvatar>> },
     /// MIME type of a media URL ("none/none" when it could not be found).
-    MediaType {
-        url: String,
-        mime: String,
-    },
+    MediaType { url: String, mime: String },
 }
 
 /// One resident found by the avatar picker.

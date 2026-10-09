@@ -29,7 +29,9 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
         (Some(pa), _) if !pa.region_allow_env_override => {
             Some("Le gérant du domaine n'autorise pas la modification de l'environnement des parcelles dans cette région.")
         }
-        (Some(pa), _) if pa.area < MIN_PARCEL_AREA => Some("La parcelle doit faire au moins 128 mètres carrés pour supporter un environnement."),
+        (Some(pa), _) if pa.area < MIN_PARCEL_AREA => {
+            Some("La parcelle doit faire au moins 128 mètres carrés pour supporter un environnement.")
+        }
         _ => None,
     };
     if let Some(why) = unavailable {
@@ -78,9 +80,15 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
             _ => (4.0, -8.0),
         };
         dim(ui, p, "Durée de la journée (heures)");
-        let r1 = ui.add_enabled(can_enable, egui::Slider::new(&mut length_h, 4.0..=168.0).step_by(0.5).fixed_decimals(1));
+        let r1 = ui.add_enabled(
+            can_enable,
+            egui::Slider::new(&mut length_h, 4.0..=168.0).step_by(0.5).fixed_decimals(1),
+        );
         dim(ui, p, "Décalage horaire (heures)");
-        let r2 = ui.add_enabled(can_enable, egui::Slider::new(&mut offset_h, -11.5..=12.0).step_by(0.5).fixed_decimals(1));
+        let r2 = ui.add_enabled(
+            can_enable,
+            egui::Slider::new(&mut offset_h, -11.5..=12.0).step_by(0.5).fixed_decimals(1),
+        );
         let dragging = r1.dragged() || r2.dragged() || r1.has_focus() || r2.has_focus();
         if dragging || r1.changed() || r2.changed() {
             s.env_drag = Some((length_h, offset_h));
@@ -148,7 +156,11 @@ fn altitudes(ui: &mut egui::Ui, p: &Palette, e: Option<&EnvSummary>) {
     marks.sort_by(|a, b| b.0.total_cmp(&a.0));
     let mut last = f32::INFINITY;
     for (y, sky, alt) in marks {
-        painter.rect_filled(egui::Rect::from_center_size(egui::pos2(bar_x, y), Vec2::new(14.0, 6.0)), 2.0, p.violet_light);
+        painter.rect_filled(
+            egui::Rect::from_center_size(egui::pos2(bar_x, y), Vec2::new(14.0, 6.0)),
+            2.0,
+            p.violet_light,
+        );
         let ly = y.min(last - 30.0);
         last = ly;
         painter.text(

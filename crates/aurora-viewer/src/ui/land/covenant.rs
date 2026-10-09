@@ -34,7 +34,11 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, v: &View, world: &mut World) 
                 .min_scrolled_height(190.0)
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
-                    ui.add(egui::Label::new(RichText::new(body).size(12.0).color(p.ink)).wrap().selectable(true));
+                    ui.add(
+                        egui::Label::new(RichText::new(body).size(12.0).color(p.ink))
+                            .wrap()
+                            .selectable(true),
+                    );
                 });
         });
     // covenant_timestamp_text, right-aligned

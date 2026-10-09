@@ -1,8 +1,8 @@
 //! egui user interface.
 
 pub mod audio;
-pub mod avatar_picker;
 pub mod aurora_bg;
+pub mod avatar_picker;
 pub mod backdrop;
 pub mod bars;
 pub mod chat;

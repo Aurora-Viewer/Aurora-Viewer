@@ -17,9 +17,9 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
     }
     let editable = v.can(powers::LAND_OPTIONS);
     let sel = world.land.sel.clone();
-    let (allowed, blocked) = sel
-        .as_ref()
-        .map_or((Vec::new(), Vec::new()), |s| (s.allowed_experiences.clone(), s.blocked_experiences.clone()));
+    let (allowed, blocked) = sel.as_ref().map_or((Vec::new(), Vec::new()), |s| {
+        (s.allowed_experiences.clone(), s.blocked_experiences.clone())
+    });
     let half_h = (ui.available_height() - 10.0) / 2.0;
     for (kind, list, title, help) in [
         (

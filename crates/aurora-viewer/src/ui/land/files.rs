@@ -47,7 +47,11 @@ pub(super) fn save(file_name: &str, text: String) -> Job {
 pub(super) fn open(kind: u32) -> Job {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
-        let done = match rfd::FileDialog::new().add_filter("CSV", &["csv"]).add_filter("Tous les fichiers", &["*"]).pick_file() {
+        let done = match rfd::FileDialog::new()
+            .add_filter("CSV", &["csv"])
+            .add_filter("Tous les fichiers", &["*"])
+            .pick_file()
+        {
             None => Done::Cancelled,
             Some(path) => match std::fs::read(&path) {
                 Ok(bytes) => Done::Opened(kind, String::from_utf8_lossy(&bytes).into_owned()),

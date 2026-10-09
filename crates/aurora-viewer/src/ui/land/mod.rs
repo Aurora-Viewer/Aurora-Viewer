@@ -150,7 +150,11 @@ enum Dialog {
     /// LLFloaterSellLand.
     Sell(dialogs::SellForm),
     /// LLFloaterBanDuration for the residents picked.
-    BanDuration { ids: Vec<Uuid>, temporary: bool, hours: u32 },
+    BanDuration {
+        ids: Vec<Uuid>,
+        temporary: bool,
+        hours: u32,
+    },
     /// A message with only "OK" (alerts of the panels).
     Message(String),
     /// LLFloaterURLEntry for the media home page.
@@ -210,7 +214,11 @@ impl LandUi {
             let (ox, oy) = aurora_net::handle_to_origin(*h);
             let (sx, sy) = (r.heightmap.size_x.max(256) as f64, r.heightmap.size_y.max(256) as f64);
             let (lx, ly) = (gx - ox as f64, gy - oy as f64);
-            ((0.0..sx).contains(&lx) && (0.0..sy).contains(&ly)).then_some((*h, glam::Vec3::new(lx as f32, ly as f32, 0.0), (sx as f32, sy as f32)))
+            ((0.0..sx).contains(&lx) && (0.0..sy).contains(&ly)).then_some((
+                *h,
+                glam::Vec3::new(lx as f32, ly as f32, 0.0),
+                (sx as f32, sy as f32),
+            ))
         });
         if let Some((h, pos, size)) = hit {
             world.land.select_at(h, pos, size);
@@ -235,7 +243,11 @@ impl LandUi {
             let l = t.label().to_lowercase();
             l == key || l.replace(['é', 'è'], "e") == key
         };
-        if let Some(t) = all.iter().find(by_name).or_else(|| key.parse::<usize>().ok().and_then(|i| all.get(i))) {
+        if let Some(t) = all
+            .iter()
+            .find(by_name)
+            .or_else(|| key.parse::<usize>().ok().and_then(|i| all.get(i)))
+        {
             self.tab = *t;
         }
     }
@@ -243,10 +255,9 @@ impl LandUi {
     /// LLFloaterLand::onOpen: no selection, the agent's parcel.
     fn select_agent_parcel(world: &mut World) {
         if let Some(h) = world.main_region {
-            let size = world
-                .regions
-                .get(&h)
-                .map_or((256.0, 256.0), |r| (r.heightmap.size_x.max(256) as f32, r.heightmap.size_y.max(256) as f32));
+            let size = world.regions.get(&h).map_or((256.0, 256.0), |r| {
+                (r.heightmap.size_x.max(256) as f32, r.heightmap.size_y.max(256) as f32)
+            });
             let pos = world.agent.position;
             world.land.select_at(h, pos, size);
         }
@@ -322,7 +333,11 @@ impl LandUi {
             ui.add_space(8.0);
             let body = egui::Rect::from_min_max(ui.cursor().min, ui.max_rect().max);
             ui.allocate_rect(body, egui::Sense::hover());
-            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(body).layout(egui::Layout::top_down(egui::Align::Min)));
+            let mut child = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(body)
+                    .layout(egui::Layout::top_down(egui::Align::Min)),
+            );
             child.set_clip_rect(body.intersect(ui.clip_rect()));
             let ui = &mut child;
             ui.spacing_mut().item_spacing.y = 4.0;
@@ -479,7 +494,11 @@ fn button(ui: &mut egui::Ui, p: &Palette, label: &str, enabled: bool) -> egui::R
 fn icon_button(ui: &mut egui::Ui, p: &Palette, icon: &str, enabled: bool) -> egui::Response {
     let sense = if enabled { egui::Sense::click() } else { egui::Sense::hover() };
     let (rect, r) = ui.allocate_exact_size(Vec2::splat(22.0), sense);
-    let fill = if enabled && r.hovered() { p.raised.gamma_multiply(1.3) } else { p.raised };
+    let fill = if enabled && r.hovered() {
+        p.raised.gamma_multiply(1.3)
+    } else {
+        p.raised
+    };
     ui.painter().rect_filled(rect, 2.0, fill);
     if let Some(t) = super::icons::global(icon) {
         ui.painter().image(
