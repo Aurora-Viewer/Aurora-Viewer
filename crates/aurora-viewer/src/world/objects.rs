@@ -327,6 +327,11 @@ impl Object {
 }
 
 /// Slab of objects with lookup maps.
+///
+/// Changes go through `upsert` and `get_mut`, which note the object for the
+/// scene sync (`take_touched`): the sync visits the changed objects instead
+/// of every object each frame. Code changing sync state (flags, motion,
+/// links) through `slots` directly is only seen by the periodic LOD pass.
 #[derive(Default)]
 pub struct ObjectStore {
     pub slots: Vec<Option<Object>>,
@@ -338,6 +343,11 @@ pub struct ObjectStore {
     count: usize,
     /// Removed objects whose GPU resources must be released by the scene.
     pub graveyard: Vec<Object>,
+    /// Their slot indices, in removal order (a slot may be reused since).
+    pub removed_slots: Vec<usize>,
+    /// Objects changed since the scene last took them, each once.
+    touched: Vec<usize>,
+    touched_mark: Vec<bool>,
 }
 
 impl ObjectStore {
@@ -349,8 +359,43 @@ impl ObjectStore {
         self.slots.get(idx).and_then(|o| o.as_ref())
     }
 
+    /// Mutable access, noted for the scene sync.
     pub fn get_mut(&mut self, idx: usize) -> Option<&mut Object> {
+        self.touch(idx);
+        self.get_mut_untracked(idx)
+    }
+
+    /// Mutable access the scene sync does not hear of: for the sync itself,
+    /// which clears the flags it has handled.
+    pub fn get_mut_untracked(&mut self, idx: usize) -> Option<&mut Object> {
         self.slots.get_mut(idx).and_then(|o| o.as_mut())
+    }
+
+    /// Note an object as changed for the scene sync.
+    pub fn touch(&mut self, idx: usize) {
+        if self.slots.get(idx).is_none_or(|o| o.is_none()) {
+            return;
+        }
+        if self.touched_mark.len() <= idx {
+            self.touched_mark.resize(idx + 1, false);
+        }
+        if !self.touched_mark[idx] {
+            self.touched_mark[idx] = true;
+            self.touched.push(idx);
+        }
+    }
+
+    /// The objects changed since the scene sync last took them.
+    pub fn touched(&self) -> &[usize] {
+        &self.touched
+    }
+
+    /// The objects changed since the last call (appended to `out`).
+    pub fn take_touched(&mut self, out: &mut Vec<usize>) {
+        for &i in &self.touched {
+            self.touched_mark[i] = false;
+        }
+        out.append(&mut self.touched);
     }
 
     pub fn index_of(&self, key: &ObjKey) -> Option<usize> {
@@ -424,6 +469,7 @@ impl ObjectStore {
                 self.by_uuid.remove(&old);
                 self.by_uuid.insert(new, idx);
             }
+            self.touch(idx);
             return idx;
         }
         // An object with the same UUID may exist under another region (crossing).
@@ -452,6 +498,7 @@ impl ObjectStore {
                 if parent_changed {
                     self.link(old);
                 }
+                self.touch(old);
                 return old;
             }
         }
@@ -468,6 +515,7 @@ impl ObjectStore {
         self.by_key.insert(key, idx);
         self.count += 1;
         self.link(idx);
+        self.touch(idx);
         idx
     }
 
@@ -481,6 +529,7 @@ impl ObjectStore {
             self.by_uuid.remove(&obj.full_id);
         }
         self.free.push(idx);
+        self.removed_slots.push(idx);
         self.count -= 1;
         // Children of a removed object are removed too (linkset / attachments).
         let kids = self.children.remove(&obj.key).unwrap_or_default();

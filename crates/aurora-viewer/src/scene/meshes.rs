@@ -42,6 +42,9 @@ pub struct MeshStreamer {
     pub fetching: usize,
     /// Failures written to the log (the first ones, then one in 50).
     logged_failures: u32,
+    /// Bumped whenever a mesh's metadata (header, skin) arrives: skeletons
+    /// using worn meshes check their joint offsets again.
+    pub meta_generation: u64,
 }
 
 impl MeshStreamer {
@@ -54,6 +57,7 @@ impl MeshStreamer {
             cache_dir,
             fetching: 0,
             logged_failures: 0,
+            meta_generation: 0,
         }
     }
 
@@ -80,6 +84,7 @@ impl MeshStreamer {
 
     /// In-memory mesh metadata for offline geometry fixtures; no asset fetch.
     pub fn insert_demo_skin(&mut self, id: Uuid, skin: SkinInfo) {
+        self.meta_generation += 1;
         self.entries.insert(
             id,
             MeshEntry {
@@ -184,6 +189,7 @@ impl MeshStreamer {
                 e.data = Some(Arc::new(data));
                 e.state = 3;
                 e.building.clear();
+                self.meta_generation += 1;
                 true
             }
             Err(err) => {

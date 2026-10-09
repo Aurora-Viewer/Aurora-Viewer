@@ -102,6 +102,8 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
 | `logging.rs`, `cache.rs`, `credentials.rs` | Logs, cache disque, mot de passe retenu (coffre de l'OS) |
 | `frame_profile.rs` | Profil des images (AURORA_PROFILE) : temps de chaque étape de l'image, ligne de synthèse par seconde dans le log |
 | `scene/animesh.rs` | Squelettes autonomes des objets animés, animations du linkset, limites des poses pour le culling et les ombres, scénario de démo |
+| `scene/sync_sets.rs` | Objets que la synchro de la scène visite à chaque image, tenus à jour par événements (objets modifiés notés par `ObjectStore`, ensemble des objets qui bougent d'eux-mêmes et de ce qui les suit, géométries en attente, tranche de LOD) au lieu d'un parcours de tous les objets |
+| `scene/sync_plan.rs` | Placement en parallèle (rayon) des objets de l'image, niveau par niveau des chaînes de parents : transformation, LOD, limites ; mise à jour de la seule matrice ou synchro complète |
 
 ## Déroulement d'une image
 
@@ -110,9 +112,10 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
    animations, chat…).
 2. **Entrées → agent.** Les touches deviennent des drapeaux de contrôle ;
    `AgentState` et la caméra avancent ; l'`AgentUpdate` est envoyé.
-3. **Monde → scène.** `Scene::sync` met à jour la géométrie, les textures et les
-   enregistrements GPU qui ont changé (incrémental) ; les poses des avatars
-   sont calculées (contrôleur de mouvements façon `LLMotionController`).
+3. **Monde → scène.** Les poses des avatars sont calculées (contrôleur de
+   mouvements façon `LLMotionController`), puis `Scene::sync` met à jour la
+   géométrie, les textures et les enregistrements GPU de ce qui a changé ou
+   bouge (ensembles tenus par événements, placement calculé en parallèle).
 4. **Scène → GPU.** `build_lists` fait le culling et prépare les listes de
    dessin ; `aurora-render` encode les passes (ombres, prépasse, scène, eau,
    reflets, post-traitement).

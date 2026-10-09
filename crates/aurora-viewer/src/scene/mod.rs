@@ -17,6 +17,8 @@ pub mod probes;
 pub mod settings;
 pub mod shape;
 pub mod sounds;
+mod sync_plan;
+pub mod sync_sets;
 pub mod textures;
 pub mod water;
 
@@ -31,9 +33,11 @@ use glam::{Mat4, Quat, Vec3, Vec4};
 use jobs::{AlphaKind, JobResult, Jobs};
 use meshes::{MaterialStreamer, MeshStreamer};
 use rayon::prelude::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::Instant;
+use sync_plan::{FrameState, MoveSync, Placement, Plan};
+use sync_sets::{SyncSets, Xf, XfCache};
 use textures::{TexSource, TextureStreamer};
 use uuid::Uuid;
 
@@ -62,8 +66,13 @@ enum GeomState {
 struct GeomEntry {
     state: GeomState,
     refs: u32,
-    unused_frames: u32,
+    /// Scene frame its last reference went away (or it was created):
+    /// unused for `GEOM_KEEP_FRAMES` frames, it is freed.
+    zero_since: u32,
 }
+
+/// Frames an unused geometry is kept (an object may want it back soon).
+const GEOM_KEEP_FRAMES: u32 = 600;
 
 /// Pass a face is drawn in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -130,6 +139,8 @@ pub struct ObjGpu {
     pub owner_avatar: Option<usize>,
     /// Reflection probe flagged as a mirror (box).
     pub mirror: bool,
+    /// Listed in `Scene::light_objects` by its last sync.
+    pub is_light: bool,
 }
 
 struct TerrainChunk {
@@ -182,9 +193,15 @@ pub struct Scene {
     pub avatar_complexity: HashMap<Uuid, u32>,
     /// Avatars over RenderAvatarMaxComplexity: grey silhouettes, no attachments.
     pub too_complex: std::collections::HashSet<usize>,
-    /// Per object, this frame: 0 not known yet, 1 still, 2 moves or follows
-    /// something that moves or was updated (see `follows_motion`).
-    motion: Vec<u8>,
+    /// Objects the sync visits: moving, changed, pending (sync_sets.rs).
+    sets: SyncSets,
+    /// Transforms placed this frame (parents of the next levels).
+    xf_cache: XfCache,
+    touched_tmp: Vec<usize>,
+    /// Geometries whose last reference went away, oldest first (key, frame).
+    geom_zero: VecDeque<(GeomKey, u32)>,
+    /// Geometries still being built or downloaded.
+    geom_pending: usize,
     /// Texture generation of the last face alpha re-classification, and
     /// faces built since: the pass over every face only runs then.
     alpha_seen_gen: u64,
@@ -248,6 +265,10 @@ pub struct Scene {
     last_diag: Instant,
     /// Rest skeleton (shape + joint offsets of worn meshes) per skeleton owner.
     skeletons: HashMap<Uuid, AvatarSkeleton>,
+    /// Skeleton owner of each object listed in a cached skeleton's members.
+    skeleton_member_of: HashMap<usize, Uuid>,
+    /// Mesh metadata generation the cached skeletons were checked against.
+    skeleton_meta_gen: u64,
     /// Playing motions and held pose per skeleton owner.
     motions: HashMap<Uuid, anim::Controller>,
     /// Skin bindings uploaded to the GPU: the default skeleton first (system
@@ -443,7 +464,11 @@ impl Scene {
             particles: particles::ParticleManager::default(),
             avatar_complexity: HashMap::new(),
             too_complex: Default::default(),
-            motion: Vec::new(),
+            sets: SyncSets::default(),
+            xf_cache: XfCache::default(),
+            touched_tmp: Vec::new(),
+            geom_zero: VecDeque::new(),
+            geom_pending: 0,
             alpha_seen_gen: u64::MAX,
             faces_changed: true,
             light_objects: Default::default(),
@@ -482,6 +507,8 @@ impl Scene {
             last_palette_gc: Instant::now(),
             last_diag: Instant::now(),
             skeletons: HashMap::new(),
+            skeleton_member_of: HashMap::new(),
+            skeleton_meta_gen: 0,
             motions: HashMap::new(),
             skin_binds: Vec::new(),
             skin_bind_ranges: HashMap::new(),
@@ -505,14 +532,68 @@ impl Scene {
     fn geom_ref(&mut self, key: GeomKey) {
         if let Some(e) = self.geoms.get_mut(&key) {
             e.refs += 1;
-            e.unused_frames = 0;
         }
     }
 
     fn geom_unref(&mut self, key: GeomKey) {
-        if let Some(e) = self.geoms.get_mut(&key) {
-            e.refs = e.refs.saturating_sub(1);
+        if let Some(e) = self.geoms.get_mut(&key)
+            && e.refs > 0
+        {
+            e.refs -= 1;
+            if e.refs == 0 {
+                e.zero_since = self.frame;
+                self.geom_zero.push_back((key, self.frame));
+            }
         }
+    }
+
+    /// A new geometry entry, unreferenced until an object binds it.
+    fn geom_insert(&mut self, key: GeomKey, state: GeomState) {
+        if matches!(state, GeomState::Pending) {
+            self.geom_pending += 1;
+        }
+        let old = self.geoms.insert(
+            key,
+            GeomEntry {
+                state,
+                refs: 0,
+                zero_since: self.frame,
+            },
+        );
+        if old.is_some_and(|e| matches!(e.state, GeomState::Pending)) {
+            self.geom_pending = self.geom_pending.saturating_sub(1);
+        }
+        self.geom_zero.push_back((key, self.frame));
+    }
+
+    /// Free the geometries nobody used for `GEOM_KEEP_FRAMES` frames: only
+    /// the entries whose last reference went away that long ago are looked
+    /// at, not every geometry.
+    fn geom_gc(&mut self, renderer: &mut Renderer) {
+        while let Some(&(key, since)) = self.geom_zero.front() {
+            if self.frame.wrapping_sub(since) <= GEOM_KEEP_FRAMES {
+                break;
+            }
+            self.geom_zero.pop_front();
+            // referenced again since (or released again later: a later entry)
+            if !self.geoms.get(&key).is_some_and(|e| e.refs == 0 && e.zero_since == since) {
+                continue;
+            }
+            match self.geoms.remove(&key).map(|e| e.state) {
+                Some(GeomState::Ready(g)) => {
+                    for f in g.faces.iter().flatten() {
+                        renderer.free_mesh(*f);
+                    }
+                }
+                Some(GeomState::Pending) => self.geom_pending = self.geom_pending.saturating_sub(1),
+                _ => {}
+            }
+        }
+        debug_assert!(
+            !self.frame.is_multiple_of(600)
+                || self.geom_pending == self.geoms.values().filter(|e| matches!(e.state, GeomState::Pending)).count(),
+            "pending geometry count out of step"
+        );
     }
 
     /// Ensure a geometry is (being) built. Returns true when ready.
@@ -563,14 +644,7 @@ impl Scene {
             }
             GeomKey::AvatarPart(_) => {}
         }
-        self.geoms.insert(
-            key,
-            GeomEntry {
-                state: GeomState::Pending,
-                refs: 0,
-                unused_frames: 0,
-            },
-        );
+        self.geom_insert(key, GeomState::Pending);
         false
     }
 
@@ -625,23 +699,16 @@ impl Scene {
             pick_faces,
         });
         match self.geoms.get_mut(&key) {
-            Some(e) => {
-                if let GeomState::Ready(old) = std::mem::replace(&mut e.state, GeomState::Ready(g)) {
+            Some(e) => match std::mem::replace(&mut e.state, GeomState::Ready(g)) {
+                GeomState::Ready(old) => {
                     for f in old.faces.iter().flatten() {
                         renderer.free_mesh(*f);
                     }
                 }
-            }
-            None => {
-                self.geoms.insert(
-                    key,
-                    GeomEntry {
-                        state: GeomState::Ready(g),
-                        refs: 0,
-                        unused_frames: 0,
-                    },
-                );
-            }
+                GeomState::Pending => self.geom_pending = self.geom_pending.saturating_sub(1),
+                GeomState::Failed => {}
+            },
+            None => self.geom_insert(key, GeomState::Ready(g)),
         }
     }
 
@@ -722,8 +789,10 @@ impl Scene {
                     if let GeomKey::Mesh { id, lod } = key {
                         self.meshes.on_geometry_done(&id, lod);
                     }
-                    if let Some(e) = self.geoms.get_mut(&key) {
-                        e.state = GeomState::Failed;
+                    if let Some(e) = self.geoms.get_mut(&key)
+                        && matches!(std::mem::replace(&mut e.state, GeomState::Failed), GeomState::Pending)
+                    {
+                        self.geom_pending = self.geom_pending.saturating_sub(1);
                     }
                 }
                 JobResult::MeshCache { id, data } => self.meshes.on_cache(id, data),
@@ -752,15 +821,12 @@ impl Scene {
 
     /// Free GPU state for removed objects.
     pub fn collect_garbage(&mut self, renderer: &mut Renderer, store: &mut ObjectStore) {
-        // Objects removed from the slab: their slot index is free now.
-        let removed: Vec<Object> = std::mem::take(&mut store.graveyard);
-        if removed.is_empty() {
-            return;
-        }
-        for (i, slot) in store.slots.iter().enumerate() {
-            if slot.is_none()
-                && let Some(mut g) = self.gpu.get_mut(i).map(std::mem::take)
-            {
+        store.graveyard.clear();
+        // the slots of the removed objects (one reused since still holds the
+        // old object's state: the new object is built from scratch)
+        for i in std::mem::take(&mut store.removed_slots) {
+            self.sets.forget(i);
+            if let Some(mut g) = self.gpu.get_mut(i).map(std::mem::take) {
                 self.release_obj(renderer, &mut g);
             }
         }
@@ -785,48 +851,11 @@ impl Scene {
         self.banlines.clear(renderer);
         self.particles.clear(&mut self.textures);
         self.last_origin = None;
+        self.sets.clear();
         self.palette_slots.clear();
         self.motions.clear();
         self.palette_free.clear();
         self.palette_count = 0;
-    }
-
-    /// (radius, distance) used for an object's LOD (LLVOVolume::calcLOD):
-    /// rigged meshes use their skeleton owner's distance and size, other
-    /// volumes the LOD-biased scale (LLVolume::mLODScaleBias).
-    fn lod_metrics(&self, world: &World, idx: usize, pos: Vec3, eye: Vec3, now: Instant) -> (f32, f32) {
-        let Some(o) = world.objects.get(idx) else {
-            return (1.0, pos.distance(eye));
-        };
-        if o.volume.is_mesh() {
-            let rigged = o
-                .volume
-                .sculpt
-                .is_some_and(|s| self.meshes.meta(&s.texture).is_some_and(|m| m.skin.is_some()));
-            if rigged
-                && let Some((_, owner)) = Self::skeleton_owner(world, idx)
-                && let (Some(ow), Some((op, _, _))) = (world.objects.get(owner), Self::object_transform(world, owner, now, 0))
-            {
-                // avatars: diagonal of the animated extents (~2.2 m);
-                // animesh: half of it (LL uses the dynamic box)
-                let radius = if ow.is_avatar() { 2.2 } else { (ow.scale.length() * 0.5).max(0.5) };
-                return (radius, op.distance(eye));
-            }
-            return ((o.scale * 0.5).length(), pos.distance(eye));
-        }
-        let path = o.volume.path.curve_type & 0xF0;
-        let profile = o.volume.profile.curve_type & 0x0F;
-        let bias = if o.volume.is_sculpt() {
-            Vec3::splat(0.5)
-        } else if path == aurora_prim::params::LL_PCODE_PATH_LINE && profile == aurora_prim::params::LL_PCODE_PROFILE_CIRCLE {
-            // cylinders don't care about the Z axis
-            Vec3::new(0.6, 0.6, 0.0)
-        } else if path == aurora_prim::params::LL_PCODE_PATH_CIRCLE {
-            Vec3::splat(0.6)
-        } else {
-            Vec3::splat(0.5)
-        };
-        ((bias * o.scale).length(), pos.distance(eye))
     }
 
     /// What is at a picked world point: an avatar (capsule test) or the most
@@ -942,7 +971,7 @@ impl Scene {
         best.map(|(_, m)| m)
     }
 
-    fn object_geom_key(&self, o: &Object, lod: u8) -> Option<GeomKey> {
+    fn object_geom_key(o: &Object, lod: u8) -> Option<GeomKey> {
         if o.is_avatar() || o.is_tree() || o.pcode != aurora_prim::params::LL_PCODE_VOLUME {
             return None;
         }
@@ -963,8 +992,14 @@ impl Scene {
 
     /// World (render-space) transform of an object, following parents. For
     /// an avatar: its root (pelvis) position, shape offset included.
-    pub fn object_transform(world: &World, idx: usize, now: Instant, depth: u32) -> Option<(Vec3, Quat, bool)> {
-        let (p, r, hud) = Self::object_transform_raw(world, idx, now, depth)?;
+    pub fn object_transform(world: &World, idx: usize, now: Instant, depth: u32) -> Option<Xf> {
+        Self::object_transform_in(world, idx, now, depth, None)
+    }
+
+    /// `object_transform`, taking the parents' transforms from `cache` when
+    /// they were placed this frame (same `now`, so the same result).
+    fn object_transform_in(world: &World, idx: usize, now: Instant, depth: u32, cache: Option<&XfCache>) -> Option<Xf> {
+        let (p, r, hud) = Self::object_transform_raw(world, idx, now, depth, cache)?;
         let o = world.objects.get(idx)?;
         let dz = if o.is_avatar() {
             world.avatar_root_dz.get(&o.full_id).copied().unwrap_or(0.0)
@@ -981,7 +1016,7 @@ impl Scene {
         Some((p + offset, r, hud))
     }
 
-    fn object_transform_raw(world: &World, idx: usize, now: Instant, depth: u32) -> Option<(Vec3, Quat, bool)> {
+    fn object_transform_raw(world: &World, idx: usize, now: Instant, depth: u32, cache: Option<&XfCache>) -> Option<Xf> {
         let o = world.objects.get(idx)?;
         let (p, mut r) = if o.full_id == world.agent_id && world.agent.has_local_control() {
             // The agent is already in main-region coordinates. Its object
@@ -1006,7 +1041,10 @@ impl Scene {
         }
         let pidx = world.objects.parent_of(o)?;
         let parent = world.objects.get(pidx)?;
-        let (pp, pr, phud) = Self::object_transform(world, pidx, now, depth + 1)?;
+        let (pp, pr, phud) = match cache.and_then(|c| c.get(pidx)) {
+            Some(xf) => xf,
+            None => Self::object_transform_in(world, pidx, now, depth + 1, cache)?,
+        };
         if parent.is_avatar() && o.state != 0 {
             // attachment root: relative to the attachment point
             let point = o.attachment_point();
@@ -1028,58 +1066,14 @@ impl Scene {
         Some((pp + pr * p, (pr * r).normalize(), phud))
     }
 
-    /// Whether an object needs a new transform this frame: it moves (or is
-    /// predicted to), is an avatar or a rigged mesh, was just updated, or one
-    /// of its ancestors does (linkset children, attachments). Memoized in
-    /// `motion` along the parent chain. Before, every child prim was treated
-    /// as moving and resynced every frame.
-    fn follows_motion(world: &World, gpu: &[ObjGpu], motion: &mut [u8], idx: usize) -> bool {
-        // walk up until something decides: a known object, one that moves by
-        // itself, a still root; every object walked shares that answer (the
-        // walk stops at the first one that moves, so all are at or below it)
-        let mut chain = [0usize; 18];
-        let mut len = 0;
-        let mut cur = idx;
-        let moves = loop {
-            match motion.get(cur) {
-                Some(1) => break false,
-                Some(2) => break true,
-                _ => {}
-            }
-            let Some(o) = world.objects.get(cur) else {
-                break false;
-            };
-            if len == chain.len() {
-                break true;
-            }
-            chain[len] = cur;
-            len += 1;
-            let own = o.has_motion()
-                || o.is_avatar()
-                || o.full_id == world.agent_id
-                || o.render.needs_records
-                || gpu.get(cur).is_some_and(|g| g.rigged);
-            if own {
-                break true;
-            }
-            if o.parent_id == 0 {
-                break false;
-            }
-            match world.objects.parent_of(o) {
-                Some(p) => cur = p,
-                // parent not known yet: keep trying every frame, as before
-                None => break true,
-            }
-        };
-        for &c in &chain[..len] {
-            if let Some(m) = motion.get_mut(c) {
-                *m = if moves { 2 } else { 1 };
-            }
-        }
-        moves
-    }
-
-    /// Bring GPU records up to date for every object (incremental).
+    /// Bring GPU records up to date, visiting only the objects that need it
+    /// (sync_sets.rs): what moves (avatars, their attachments, moving
+    /// linksets), what changed, what waits for its geometry, and this
+    /// frame's LOD slice. Their placement (transform, detail level, bounds)
+    /// is computed in parallel, parents' level first so children reuse the
+    /// parents' transforms; transform-only updates are then applied in turn
+    /// (unchanged records are not uploaded again), the rest goes through the
+    /// full `sync_object`.
     pub fn sync(&mut self, renderer: &mut Renderer, world: &mut World, view: &CullView) {
         let t0 = Instant::now();
         self.frame = self.frame.wrapping_add(1);
@@ -1099,8 +1093,11 @@ impl Scene {
         let origin = world.main_origin();
         if origin != self.last_origin {
             self.last_origin = origin;
-            for o in world.objects.slots.iter_mut().flatten() {
-                o.render.needs_records = true;
+            for (idx, o) in world.objects.slots.iter_mut().enumerate() {
+                if let Some(o) = o {
+                    o.render.needs_records = true;
+                    self.sets.dirty.insert(idx);
+                }
             }
             for r in self.regions.values_mut() {
                 for (_, c) in r.chunks.drain() {
@@ -1121,67 +1118,72 @@ impl Scene {
             self.gpu.resize_with(world.objects.slots.len(), ObjGpu::default);
         }
         let now = Instant::now();
-        let tex_gen = self.textures.generation;
-        let mat_gen = self.materials.generation;
         let n = world.objects.slots.len();
-        self.stats.synced = 0;
-        self.stats.rebuilt = 0;
-        // before the loop: syncing an object clears its update flag, which
-        // its children (later in the slab or not) must still see
-        self.motion.clear();
-        self.motion.resize(n, 0);
-        for idx in 0..n {
-            Self::follows_motion(world, &self.gpu, &mut self.motion, idx);
+        let agent = world.agent_id;
+        // objects changed since the last frame
+        let mut touched = std::mem::take(&mut self.touched_tmp);
+        world.objects.take_touched(&mut touched);
+        for &idx in &touched {
+            let rigged = self.gpu.get(idx).is_some_and(|g| g.rigged);
+            self.sets.touched(&world.objects, agent, idx, rigged);
         }
-        for idx in 0..n {
-            let Some(o) = world.objects.get(idx) else {
-                continue;
+        touched.clear();
+        self.touched_tmp = touched;
+        // a new material generation: the faces using materials are rebuilt
+        let mat_gen = self.materials.generation;
+        if mat_gen != self.sets.seen_mat_gen {
+            self.sets.seen_mat_gen = mat_gen;
+            let users = self.sets.material_users.as_slice().to_vec();
+            for idx in users {
+                self.sets.dirty.insert(idx);
+            }
+        }
+        let list = {
+            let state = FrameState {
+                gpu: &self.gpu,
+                geoms: &self.geoms,
+                textures: &self.textures,
+                mat_gen,
             };
-            let moving = self.motion[idx] == 2;
-            let lod_due = (self.frame.wrapping_add(idx as u32)).is_multiple_of(24);
-            let g = &self.gpu[idx];
-            let sculpt_ready = g.sculpt_wait.is_some_and(|t| self.textures.sculpt_map(&t).is_some());
-            let mats_changed = !g.material_ids.is_empty() && g.mat_generation != mat_gen;
-            let pending = g.wanted_geom.is_some_and(|k| Some(k) != g.geom);
-            if !(o.render.needs_records
-                || o.shape_dirty
-                || o.material_dirty
-                || moving
-                || lod_due
-                || pending
-                || sculpt_ready
-                || mats_changed)
-            {
-                continue;
-            }
-            self.stats.synced += 1;
-            self.sync_object(renderer, world, idx, now, view);
-            let _ = tex_gen;
-        }
+            self.sets.frame_list(&world.objects, agent, self.frame, n, &state)
+        };
+        self.stats.synced = list.items.len();
+        self.stats.rebuilt = 0;
 
-        // Garbage-collect unused geometry after a while.
-        let mut drop_keys = Vec::new();
-        for (k, e) in self.geoms.iter_mut() {
-            if e.refs == 0 {
-                e.unused_frames += 1;
-                if e.unused_frames > 600 {
-                    drop_keys.push(*k);
+        // placement in parallel, one level of the parent chains at a time
+        self.xf_cache.next_frame(n);
+        let mut plans: Vec<(usize, Plan)> = Vec::with_capacity(list.items.len());
+        for level in list.levels() {
+            let planned: Vec<(usize, Plan)> = {
+                let ctx = self.sync_ctx(world, &renderer.records, view.eye, now);
+                // a few objects (the avatars' level): not worth waking the pool
+                if level.len() < 64 {
+                    level.iter().map(|&idx| (idx, ctx.plan(idx))).collect()
+                } else {
+                    level.par_iter().with_min_len(32).map(|&idx| (idx, ctx.plan(idx))).collect()
+                }
+            };
+            for (idx, plan) in &planned {
+                if let Some(xf) = plan.xf() {
+                    self.xf_cache.set(*idx, xf);
                 }
             }
+            plans.extend(planned);
         }
-        for k in drop_keys {
-            if let Some(e) = self.geoms.remove(&k)
-                && let GeomState::Ready(g) = e.state
-            {
-                for f in g.faces.iter().flatten() {
-                    renderer.free_mesh(*f);
+        for (idx, plan) in plans {
+            match plan {
+                Plan::Move(m) => self.apply_move(renderer, world, idx, m),
+                Plan::Full(xf) => {
+                    self.sync_object(renderer, world, idx, now, view, xf);
+                    self.after_full_sync(world, idx, mat_gen);
                 }
             }
         }
 
+        self.geom_gc(renderer);
         self.stats.objects = world.objects.len();
         self.stats.geometries = self.geoms.len();
-        self.stats.geom_pending = self.geoms.values().filter(|e| matches!(e.state, GeomState::Pending)).count();
+        self.stats.geom_pending = self.geom_pending;
         self.stats.jobs = self.jobs.pending();
         self.stats.sync_ms = t0.elapsed().as_secs_f32() * 1000.0;
         // Alpha classification can change when a texture finishes streaming
@@ -1211,13 +1213,77 @@ impl Scene {
         }
     }
 
-    fn sync_object(&mut self, renderer: &mut Renderer, world: &mut World, idx: usize, now: Instant, view: &CullView) {
-        if world.objects.get(idx).is_some_and(|o| o.extra.light.is_some()) {
-            self.light_objects.insert(idx);
-        } else {
-            self.light_objects.remove(&idx);
+    /// Keep `light_objects` in step with an object's light parameters.
+    fn note_light(&mut self, world: &World, idx: usize) {
+        let light = world.objects.get(idx).is_some_and(|o| o.extra.light.is_some());
+        if let Some(g) = self.gpu.get_mut(idx)
+            && g.is_light != light
+        {
+            g.is_light = light;
+            if light {
+                self.light_objects.insert(idx);
+            } else {
+                self.light_objects.remove(&idx);
+            }
         }
-        let Some((pos, rot, hud)) = Self::object_transform(world, idx, now, 0) else {
+    }
+
+    /// Transform-only update planned in parallel: bounds and the faces'
+    /// model matrix (records uploaded only when it changed).
+    fn apply_move(&mut self, renderer: &mut Renderer, world: &mut World, idx: usize, m: MoveSync) {
+        self.note_light(world, idx);
+        let Some(g) = self.gpu.get_mut(idx) else {
+            return;
+        };
+        g.hud = m.xf.2;
+        g.owner_avatar = m.owner_avatar;
+        g.mirror = m.mirror;
+        g.center = m.center;
+        g.radius = m.radius;
+        if m.changed {
+            for f in &g.faces {
+                renderer.records.set_model(f.record, m.model);
+            }
+        }
+        if m.clear_flags
+            && let Some(o) = world.objects.get_mut_untracked(idx)
+        {
+            o.render.needs_records = false;
+        }
+    }
+
+    /// Bookkeeping after a full sync: what could not finish is retried next
+    /// frame, geometry still pending is watched, material users noted, and
+    /// a mesh found rigged starts moving.
+    fn after_full_sync(&mut self, world: &World, idx: usize, mat_gen: u64) {
+        let Some(g) = self.gpu.get(idx) else {
+            return;
+        };
+        let mats_changed = !g.material_ids.is_empty() && g.mat_generation != mat_gen;
+        if world
+            .objects
+            .get(idx)
+            .is_some_and(|o| o.render.needs_records || o.shape_dirty || o.material_dirty || mats_changed)
+        {
+            self.sets.dirty.insert(idx);
+        }
+        if g.wanted_geom.is_some() && g.wanted_geom != g.geom {
+            self.sets.pending.insert(idx);
+        } else {
+            self.sets.pending.remove(idx);
+        }
+        if g.material_ids.is_empty() {
+            self.sets.material_users.remove(idx);
+        } else {
+            self.sets.material_users.insert(idx);
+        }
+        let rigged = g.rigged;
+        self.sets.synced(&world.objects, world.agent_id, idx, rigged);
+    }
+
+    fn sync_object(&mut self, renderer: &mut Renderer, world: &mut World, idx: usize, now: Instant, view: &CullView, xf: Option<Xf>) {
+        self.note_light(world, idx);
+        let Some((pos, rot, hud)) = xf.or_else(|| Self::object_transform_in(world, idx, now, 0, Some(&self.xf_cache))) else {
             return;
         };
         let Some(o) = world.objects.get(idx) else {
@@ -1230,7 +1296,7 @@ impl Scene {
         // ---- avatar
         if is_avatar {
             self.sync_avatar(renderer, world, idx, pos, rot);
-            if let Some(o) = world.objects.get_mut(idx) {
+            if let Some(o) = world.objects.get_mut_untracked(idx) {
                 o.render.needs_records = false;
                 o.shape_dirty = false;
                 o.material_dirty = false;
@@ -1239,13 +1305,13 @@ impl Scene {
         }
 
         // ---- geometry / LOD
-        let (lod_radius, lod_dist) = self.lod_metrics(world, idx, pos, view.eye, now);
         let lod = if hud {
             3
         } else {
+            let (lod_radius, lod_dist) = self.sync_ctx(world, &renderer.records, view.eye, now).lod_metrics(idx, o, pos);
             lod_for(lod_radius, lod_dist, self.lod_factor, self.fov_y)
         };
-        let wanted = self.object_geom_key(o, lod);
+        let wanted = Self::object_geom_key(o, lod);
         let owner_avatar = Self::wearer_avatar(world, idx).map(|(_, i)| i);
         let g = &mut self.gpu[idx];
         g.hud = hud;
@@ -1262,8 +1328,6 @@ impl Scene {
         {
             sculpt_wait = Some(s.texture);
         }
-        let o_clone_volume = o.volume;
-        let _ = o_clone_volume;
         let mut bind_new = None;
         if let Some(k) = wanted {
             // need an Object reference for building: re-borrow
@@ -1280,15 +1344,17 @@ impl Scene {
                 // fall back to any other LOD already loaded
             }
         }
-        if let Some(st) = sculpt_wait {
+        if let Some(st) = sculpt_wait
+            && !self.gpu[idx].tex_ids.contains(&st)
+        {
             // sculpt textures are fetched at full resolution and kept on the CPU
-            if !self.gpu[idx].tex_ids.contains(&st) {
-                let _ = self.textures.acquire(renderer, st, TexSource::Asset);
-                self.textures.want_sculpt(&st);
-                self.gpu[idx].tex_ids.push(st);
-            }
-            self.gpu[idx].sculpt_wait = Some(st);
+            let _ = self.textures.acquire(renderer, st, TexSource::Asset);
+            self.textures.want_sculpt(&st);
+            self.gpu[idx].tex_ids.push(st);
         }
+        // waits for its sculpt texture only until this sculpt is bound (a
+        // wait left set kept the object synced every frame)
+        self.gpu[idx].sculpt_wait = sculpt_wait.filter(|_| self.gpu[idx].geom != wanted);
         if let Some(k) = bind_new {
             if let Some(old) = self.gpu[idx].geom.replace(k) {
                 self.geom_unref(old);
@@ -1302,10 +1368,16 @@ impl Scene {
 
         // ---- records
         let Some(geom_key) = self.gpu[idx].geom else {
-            // Not ready: keep bounds for culling anyway.
+            // Not ready: keep bounds for culling anyway. The pending set
+            // brings it back when its geometry can progress.
             let g = &mut self.gpu[idx];
             g.center = pos;
             g.radius = radius;
+            if let Some(o) = world.objects.get_mut_untracked(idx) {
+                o.render.needs_records = false;
+                o.shape_dirty = false;
+                o.material_dirty = false;
+            }
             return;
         };
         let Some(geom) = self.geom_ready(&geom_key) else {
@@ -1314,72 +1386,15 @@ impl Scene {
         let Some(o) = world.objects.get(idx) else {
             return;
         };
-        let rigged = matches!(geom_key, GeomKey::Mesh { id, .. } if self.meshes.meta(&id).is_some_and(|m| m.skin.is_some()));
-        let skeleton_owner = rigged.then(|| Self::skeleton_owner(world, idx)).flatten();
-        let model = if rigged {
-            // Rigged meshes are already in avatar skeleton space (bind pose):
-            // place them relative to the avatar that wears them.
-            let pelvis = world.avatar_lib.pelvis;
-            match skeleton_owner {
-                Some((_, owner_idx)) => match Self::object_transform(world, owner_idx, now, 0) {
-                    Some((ap, mut ar, _)) => {
-                        // LLControlAvatar::matchVolumeTransform: ground animesh
-                        // also follow their root mesh's unscaled bind rotation.
-                        if let Some(root) = world.objects.get(owner_idx)
-                            && !root.is_avatar()
-                            && Self::wearer_avatar(world, owner_idx).is_none()
-                            && let Some(skin) = root.volume.sculpt.and_then(|s| self.meshes.meta(&s.texture)).and_then(|m| m.skin)
-                        {
-                            let (_, bind_rot, _) = skin.bind_shape.to_scale_rotation_translation();
-                            if bind_rot.is_finite() {
-                                ar = (ar * bind_rot).normalize();
-                            }
-                        }
-                        Mat4::from_rotation_translation(ar, ap) * Mat4::from_translation(-pelvis)
-                    }
-                    None => Mat4::from_scale_rotation_translation(scale, rot, pos),
-                },
-                None => Mat4::from_scale_rotation_translation(scale, rot, pos),
-            }
-        } else {
-            Mat4::from_scale_rotation_translation(scale, rot, pos)
-        };
-        let center_local = (geom.min + geom.max) * 0.5;
-        let half = (geom.max - geom.min) * 0.5;
-        let mut center = model.transform_point3(center_local);
-        let col_scale = model
-            .x_axis
-            .truncate()
-            .length()
-            .max(model.y_axis.truncate().length())
-            .max(model.z_axis.truncate().length());
-        let mut radius = (half.length() * col_scale).max(0.05);
-        if rigged {
-            // the bind-pose bounds can be anywhere (the bones bring the mesh
-            // onto the skeleton): cull with the wearer's extent, as LL does
-            if let Some((_, owner_idx)) = Self::skeleton_owner(world, idx)
-                && let (Some(ow), Some((ap, _, _))) = (world.objects.get(owner_idx), Self::object_transform(world, owner_idx, now, 0))
-            {
-                center = ap;
-                radius = if ow.is_avatar() { 2.5 } else { (ow.scale.length() * 0.75).max(1.0) };
-            }
-        }
-
-        if let Some((owner, _)) = skeleton_owner
-            && let Some(&slot) = self.palette_slots.get(&owner)
-            && let Some(&binds) = match geom_key {
-                GeomKey::Mesh { id, .. } => self.skin_bind_ranges.get(&id),
-                _ => None,
-            }
-            && let Some((c, r)) = animesh::posed_bounds(&geom.joint_bounds, |j| {
-                let b = self.skin_binds.get(binds as usize + j as usize)?;
-                let p = self.palettes.get(slot as usize * anim::PALETTE_JOINTS + b.joint[0] as usize)?;
-                Some(model * Mat4::from_cols_array_2d(p) * Mat4::from_cols_array_2d(&b.inverse_bind))
-            })
-        {
-            center = c;
-            radius = r;
-        }
+        let Placement {
+            model,
+            center,
+            radius,
+            rigged,
+            skeleton_owner,
+        } = self
+            .sync_ctx(world, &renderer.records, view.eye, now)
+            .placement(idx, o, (pos, rot, hud), geom_key, &geom);
 
         let full_rebuild = o.material_dirty
             || self.gpu[idx].skeleton_owner != skeleton_owner.map(|p| p.0)
@@ -1397,15 +1412,8 @@ impl Scene {
         } else {
             // transform-only update; an unchanged record is not uploaded again
             let model = model.to_cols_array_2d();
-            let g = &self.gpu[idx];
-            for f in &g.faces {
-                if let Some(rec) = renderer.records.get(f.record)
-                    && rec.model != model
-                {
-                    let mut r = *rec;
-                    r.model = model;
-                    renderer.records.set(f.record, r);
-                }
+            for f in &self.gpu[idx].faces {
+                renderer.records.set_model(f.record, model);
             }
         }
         let g = &mut self.gpu[idx];
@@ -1415,7 +1423,7 @@ impl Scene {
         g.skeleton_owner = skeleton_owner.map(|p| p.0);
         g.is_avatar = false;
         g.hud = hud;
-        if let Some(o) = world.objects.get_mut(idx) {
+        if let Some(o) = world.objects.get_mut_untracked(idx) {
             o.render.needs_records = false;
             o.shape_dirty = false;
             o.material_dirty = false;
@@ -1817,13 +1825,7 @@ impl Scene {
             // an avatar standing still keeps its records: not uploaded again
             let model = avatar_model.to_cols_array_2d();
             for f in &self.gpu[idx].faces {
-                if let Some(rec) = renderer.records.get(f.record)
-                    && rec.model != model
-                {
-                    let mut r = *rec;
-                    r.model = model;
-                    renderer.records.set(f.record, r);
-                }
+                renderer.records.set_model(f.record, model);
             }
         }
         let g = &mut self.gpu[idx];
@@ -2361,6 +2363,7 @@ impl Scene {
         let mut root_dz: Vec<(Uuid, f32)> = Vec::new();
         let mut posed: Vec<(Uuid, usize)> = Vec::new();
         let owners: Vec<(Uuid, u32)> = self.palette_slots.iter().map(|(k, v)| (*k, *v)).collect();
+        let changed = self.changed_skeletons(world);
         for (owner, slot) in owners {
             let Some(idx) = world.objects.index_of_uuid(&owner) else {
                 continue;
@@ -2427,7 +2430,14 @@ impl Scene {
                     completed.extend(stopped);
                 }
             }
-            let (base, dz) = self.skeleton_of(world, owner, idx, now);
+            let cached = changed.as_ref().is_some_and(|c| !c.contains(&owner))
+                && self.skeletons.get(&owner).is_some_and(|s| {
+                    s.appearance_gen == world.appearance_generation(&owner) && now.duration_since(s.at).as_secs_f32() < 2.0
+                });
+            let (base, dz) = match self.skeletons.get(&owner).filter(|_| cached) {
+                Some(s) => (s.base.clone(), s.root_dz),
+                None => self.skeleton_of(world, owner, idx, now),
+            };
             root_dz.push((owner, dz));
             work.push((slot as usize, motions, base, owner));
             posed.push((owner, slot as usize));
@@ -2458,6 +2468,10 @@ impl Scene {
         world.avatar_root_dz.extend(root_dz);
         self.skeletons
             .retain(|id, _| world.avatar_poses.contains_key(id) || posed.iter().any(|p| p.0 == *id));
+        if self.skeleton_member_of.len() > 4 * self.skeletons.values().map(|s| s.members.len()).sum::<usize>() + 1024 {
+            let skeletons = &self.skeletons;
+            self.skeleton_member_of.retain(|_, owner| skeletons.contains_key(owner));
+        }
         let posed_slots: Vec<usize> = posed.iter().map(|p| p.1).collect();
         for (owner, slot) in posed {
             let base = slot * anim::PALETTE_JOINTS;
@@ -2600,17 +2614,21 @@ impl Scene {
         }
         let signature = signature.finish();
         let generation = world.appearance_generation(&owner);
-        if let Some(s) = self.skeletons.get(&owner)
+        self.note_skeleton_members(owner, &members);
+        if let Some(s) = self.skeletons.get_mut(&owner)
             && s.appearance_gen == generation
             && s.signature == signature
             && now.duration_since(s.at).as_secs_f32() < 2.0
         {
+            if s.members != members {
+                s.members = members;
+            }
             return (s.base.clone(), s.root_dz);
         }
         let rig = self.avatar_lib.rig.clone();
         // joint offsets of the worn meshes
         let mut overrides: Vec<(usize, Vec3, bool)> = Vec::new();
-        for i in members {
+        for &i in &members {
             let Some(o) = world.objects.get(i) else {
                 continue;
             };
@@ -2672,9 +2690,51 @@ impl Scene {
                 signature,
                 base: base.clone(),
                 root_dz,
+                members,
             },
         );
         (base, root_dz)
+    }
+
+    /// Note which objects a skeleton is made of (its previous members that
+    /// left are forgotten).
+    fn note_skeleton_members(&mut self, owner: Uuid, members: &[usize]) {
+        if let Some(s) = self.skeletons.get(&owner) {
+            if s.members == members {
+                return;
+            }
+            for i in &s.members {
+                if self.skeleton_member_of.get(i) == Some(&owner) {
+                    self.skeleton_member_of.remove(i);
+                }
+            }
+        }
+        for &i in members {
+            self.skeleton_member_of.insert(i, owner);
+        }
+    }
+
+    /// Skeleton owners whose rest skeleton may have changed since the last
+    /// frame (None: any of them): the owners, old and new, of the objects
+    /// changed or removed since (their shape, links, meshes), or all of them
+    /// when mesh metadata arrived. The others keep their cached skeleton
+    /// without hashing their members again (still rebuilt every 2 s and on
+    /// a new appearance). Poses run before the sync takes these lists.
+    fn changed_skeletons(&mut self, world: &World) -> Option<std::collections::HashSet<Uuid>> {
+        if self.meshes.meta_generation != self.skeleton_meta_gen {
+            self.skeleton_meta_gen = self.meshes.meta_generation;
+            return None;
+        }
+        let mut changed = std::collections::HashSet::new();
+        for &idx in world.objects.touched().iter().chain(&world.objects.removed_slots) {
+            if let Some(&owner) = self.skeleton_member_of.get(&idx) {
+                changed.insert(owner);
+            }
+            if let Some((owner, _)) = Self::skeleton_owner(world, idx) {
+                changed.insert(owner);
+            }
+        }
+        Some(changed)
     }
 }
 
@@ -3051,6 +3111,8 @@ struct AvatarSkeleton {
     appearance_gen: u64,
     base: Arc<anim::SkeletonBase>,
     root_dz: f32,
+    /// Objects whose shape or meshes went into it (see `skeleton_member_of`).
+    members: Vec<usize>,
 }
 
 fn classify(f: &FaceDraw, tex_alpha: AlphaKind) -> Pass {
@@ -3170,104 +3232,99 @@ mod tests {
         let (_, dz) = scene.skeleton_of(&world, owner, idx, now);
         assert!((dz - 0.25).abs() < 1e-5);
         world.avatar_root_dz.insert(owner, dz);
-        let (raw, rotation, _) = Scene::object_transform_raw(&world, idx, now, 0).expect("raw transform");
+        let (raw, rotation, _) = Scene::object_transform_raw(&world, idx, now, 0, None).expect("raw transform");
         let (posed, _, _) = Scene::object_transform(&world, idx, now, 0).expect("posed transform");
         assert!(posed.abs_diff_eq(raw + rotation * (Vec3::Z * 0.25), 1e-5));
         assert!(!posed.abs_diff_eq(raw + Vec3::Z * 0.25, 1e-3));
     }
 
-    /// A demo prim as root (local id 9000) and its child (9001); the child
-    /// is added first so the slab order is the reverse of the link order.
-    fn linkset() -> (World, usize, usize) {
-        let (world, root, child, _) = linkset_and_orphan();
-        (world, root, child)
-    }
-
-    /// The linkset plus a prim whose parent (9999) is not known yet.
-    fn linkset_and_orphan() -> (World, usize, usize, usize) {
-        let mut world = World::new(Arc::new(AvatarLibrary::load()));
-        let (handle, prim) = crate::demo::events()
-            .into_iter()
-            .find_map(|ev| match ev {
-                NetEvent::ObjectUpdates { handle, objects } => objects.into_iter().find(|o| !o.is_avatar()).map(|o| (handle, o)),
-                _ => None,
-            })
-            .expect("demo contains a prim");
-        let still = |local_id: u32, parent_id: u32| {
-            let mut u = prim.clone();
-            u.local_id = local_id;
-            u.full_id = Uuid::from_u128(local_id as u128);
-            u.parent_id = parent_id;
-            u.velocity = Vec3::ZERO;
-            u.acceleration = Vec3::ZERO;
-            u.angular_velocity = Vec3::ZERO;
-            u
-        };
-        let child = world.objects.upsert(handle, still(9001, 9000));
-        let root = world.objects.upsert(handle, still(9000, 0));
-        let orphan = world.objects.upsert(handle, still(9002, 9999));
-        (world, root, child, orphan)
-    }
-
-    fn motion(world: &World) -> Vec<u8> {
-        let n = world.objects.slots.len();
-        let mut m = vec![0; n];
-        let gpu: Vec<ObjGpu> = (0..n).map(|_| ObjGpu::default()).collect();
-        for idx in 0..n {
-            Scene::follows_motion(world, &gpu, &mut m, idx);
+    /// The demo region with a prim linked under Loup Violet's hat, the
+    /// avatar posed off its rest pose.
+    fn posed_attachment() -> (World, [usize; 3]) {
+        let lib = Arc::new(AvatarLibrary::load());
+        let mut world = World::new(lib.clone());
+        for ev in crate::demo::events() {
+            world.apply(ev);
         }
-        m
-    }
-
-    fn settle(world: &mut World) {
-        for o in world.objects.slots.iter_mut().flatten() {
-            o.render.needs_records = false;
-        }
+        let avatar_id = Uuid::from_u128(0xA0E0_A6E1_0000_0000_0000_0000_0000_0002);
+        let avatar = world.objects.index_of_uuid(&avatar_id).expect("Loup Violet");
+        let hat = world
+            .objects
+            .index_of_uuid(&Uuid::from_u128(0xA0E0_0000_0000_0000_0000_0000_0000_0000 | 9100))
+            .expect("hat");
+        let mut u = crate::demo::action_avatar(false);
+        let region = world.objects.get(hat).expect("hat").key.region;
+        u.pcode = aurora_prim::params::LL_PCODE_VOLUME;
+        u.local_id = 9150;
+        u.full_id = Uuid::from_u128(9150);
+        u.parent_id = 9100;
+        u.position = Vec3::new(0.1, -0.05, 0.2);
+        u.rotation = Quat::from_rotation_x(0.4);
+        let child = world.objects.upsert(region, u);
+        let pose = Mat4::from_rotation_translation(Quat::from_rotation_z(0.3), Vec3::new(0.02, 0.0, 0.05));
+        world.avatar_poses.insert(avatar_id, vec![pose; lib.rig.len()]);
+        (world, [avatar, hat, child])
     }
 
     #[test]
-    fn still_children_are_not_resynced() {
-        let (mut world, root, child) = linkset();
-        settle(&mut world);
-        let m = motion(&world);
-        assert_eq!((m[root], m[child]), (1, 1));
+    fn cached_parent_transforms_give_the_same_placement() {
+        let (world, [avatar, hat, child]) = posed_attachment();
+        let now = Instant::now();
+        let direct: Vec<Xf> = [avatar, hat, child]
+            .iter()
+            .map(|&i| Scene::object_transform(&world, i, now, 0).expect("placed"))
+            .collect();
+        // the levels of a frame: the avatar, then its attachment, then the prim
+        let mut cache = XfCache::default();
+        cache.next_frame(world.objects.slots.len());
+        for (k, &i) in [avatar, hat, child].iter().enumerate() {
+            let xf = Scene::object_transform_in(&world, i, now, 0, Some(&cache)).expect("placed");
+            assert_eq!(xf, direct[k]);
+            cache.set(i, xf);
+        }
+        // the prim follows the posed bone, not the rest pose
+        let mut rest = World::new(world.avatar_lib.clone());
+        for ev in crate::demo::events() {
+            rest.apply(ev);
+        }
+        let hat_rest = Scene::object_transform(&rest, hat, now, 0).expect("placed");
+        assert!(hat_rest.0.distance(direct[1].0) > 1e-3);
     }
 
     #[test]
-    fn children_follow_a_moving_or_updated_root() {
-        let (mut world, root, child) = linkset();
-        settle(&mut world);
-        if let Some(o) = world.objects.get_mut(root) {
-            o.angular_velocity = Vec3::Z;
-        }
-        let m = motion(&world);
-        assert_eq!((m[root], m[child]), (2, 2));
-
-        let (mut world, root, child) = linkset();
-        settle(&mut world);
-        if let Some(o) = world.objects.get_mut(root) {
-            o.render.needs_records = true;
-        }
-        let m = motion(&world);
-        assert_eq!((m[root], m[child]), (2, 2));
-    }
-
-    #[test]
-    fn a_moving_child_does_not_move_its_root() {
-        let (mut world, root, child) = linkset();
-        settle(&mut world);
-        if let Some(o) = world.objects.get_mut(child) {
-            o.velocity = Vec3::X;
-        }
-        let m = motion(&world);
-        assert_eq!((m[root], m[child]), (1, 2));
-    }
-
-    #[test]
-    fn a_child_without_its_parent_keeps_being_tried() {
-        let (mut world, root, child, orphan) = linkset_and_orphan();
-        settle(&mut world);
-        let m = motion(&world);
-        assert_eq!((m[root], m[child], m[orphan]), (1, 1, 2));
+    fn skeletons_are_checked_again_only_when_their_objects_change() {
+        let (mut world, [avatar, hat, child]) = posed_attachment();
+        let lib = world.avatar_lib.clone();
+        let cache = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/skeleton-tests")
+            .join(Uuid::new_v4().to_string());
+        let mut scene = Scene::new(cache, lib);
+        let now = Instant::now();
+        let avatar_id = world.objects.get(avatar).expect("avatar").full_id;
+        scene.skeleton_of(&world, avatar_id, avatar, now);
+        let mut drained = Vec::new();
+        world.objects.take_touched(&mut drained);
+        let changed = |scene: &mut Scene, world: &World| scene.changed_skeletons(world).expect("no new mesh");
+        assert!(changed(&mut scene, &world).is_empty());
+        // a prim of an attachment updated
+        world.objects.touch(child);
+        assert!(changed(&mut scene, &world).contains(&avatar_id));
+        world.objects.take_touched(&mut drained);
+        // the hat dropped on the ground: its old owner is checked again
+        let region = world.objects.get(hat).expect("hat").key.region;
+        let mut u = crate::demo::action_avatar(false);
+        u.pcode = aurora_prim::params::LL_PCODE_VOLUME;
+        u.local_id = 9100;
+        u.full_id = world.objects.get(hat).expect("hat").full_id;
+        u.parent_id = 0;
+        world.objects.upsert(region, u);
+        assert!(changed(&mut scene, &world).contains(&avatar_id));
+        world.objects.take_touched(&mut drained);
+        // mesh metadata arrived: every skeleton
+        scene
+            .meshes
+            .insert_demo_skin(crate::demo::ANIMESH_MESH, aurora_assets::SkinInfo::default());
+        assert!(scene.changed_skeletons(&world).is_none());
+        assert!(changed(&mut scene, &world).is_empty());
     }
 }

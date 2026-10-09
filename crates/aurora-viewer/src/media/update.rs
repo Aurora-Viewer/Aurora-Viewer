@@ -694,12 +694,24 @@ impl MediaManager {
         }
         world.media.by_texture = by_texture;
         world.media.by_face = by_face;
-        for o in world.objects.slots.iter_mut().flatten() {
-            let uses_tex = !dirty_tex.is_empty()
-                && o.te
-                    .as_ref()
-                    .is_some_and(|te| te.faces.iter().any(|f| dirty_tex.contains(&f.texture)));
-            if uses_tex || dirty_obj.contains(&o.full_id) {
+        if dirty_tex.is_empty() && dirty_obj.is_empty() {
+            return;
+        }
+        // through `get_mut`: the scene sync visits the objects it marks
+        let marked: Vec<usize> = world
+            .objects
+            .iter()
+            .filter(|(_, o)| {
+                let uses_tex = !dirty_tex.is_empty()
+                    && o.te
+                        .as_ref()
+                        .is_some_and(|te| te.faces.iter().any(|f| dirty_tex.contains(&f.texture)));
+                uses_tex || dirty_obj.contains(&o.full_id)
+            })
+            .map(|(i, _)| i)
+            .collect();
+        for i in marked {
+            if let Some(o) = world.objects.get_mut(i) {
                 o.material_dirty = true;
             }
         }

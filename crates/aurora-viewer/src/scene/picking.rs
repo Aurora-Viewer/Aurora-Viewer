@@ -323,7 +323,7 @@ mod tests {
             key,
             GeomEntry {
                 refs: 2,
-                unused_frames: 0,
+                zero_since: 0,
                 state: GeomState::Ready(Arc::new(GpuGeom {
                     faces: vec![None],
                     min: -Vec3::splat(0.5),
@@ -436,7 +436,7 @@ mod tests {
             chair_key,
             GeomEntry {
                 refs: 1,
-                unused_frames: 0,
+                zero_since: 0,
                 state: GeomState::Ready(Arc::new(GpuGeom {
                     faces: vec![None],
                     min: -Vec3::splat(0.5),
@@ -488,7 +488,7 @@ mod tests {
                 key,
                 GeomEntry {
                     refs: 1,
-                    unused_frames: 0,
+                    zero_since: 0,
                     state: GeomState::Ready(Arc::new(GpuGeom {
                         faces: vec![None],
                         min: Vec3::new(2.0, -0.5, -0.5),
