@@ -143,6 +143,9 @@ const SVGS: &[(&str, &[u8])] = svg_list!(
     "heart-fill",
     "eye-fill",
     "eye-slash-fill",
+    "arrow-square-in",
+    "plus",
+    "push-pin",
 );
 
 /// Brand SVGs (white wolf silhouette from Branding/), drawn untinted or tinted.

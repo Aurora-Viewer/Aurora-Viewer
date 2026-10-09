@@ -223,6 +223,33 @@ pub struct AvatarNames {
     pub options: NameOptions,
     /// Bumped whenever a name changes.
     pub generation: u64,
+    /// Contact set aliases (LGGContactSets pseudonyms, unquoted; "--- ---"
+    /// = display name removed) and the cached names they rewrite, which
+    /// `get` returns instead (the CustomNameCheckCallback of Firestorm's
+    /// LLAvatarNameCache).
+    aliases: HashMap<Uuid, String>,
+    aliased: HashMap<Uuid, AvatarName>,
+}
+
+/// Name with a contact set alias: the alias in quotes as display name, or
+/// the legacy name when the display name is removed.
+fn with_alias(n: &AvatarName, alias: &str) -> AvatarName {
+    let mut a = n.clone();
+    if alias == super::contact_sets::DN_REMOVED {
+        a.is_default = true;
+        a.display_name = if a.legacy_last.is_empty() || a.legacy_last == "Resident" {
+            a.legacy_first.clone()
+        } else {
+            format!("{} {}", a.legacy_first, a.legacy_last)
+        };
+        if a.display_name.is_empty() {
+            a.display_name = n.display_name.clone();
+        }
+    } else {
+        a.is_default = false;
+        a.display_name = format!("'{alias}'");
+    }
+    a
 }
 
 impl AvatarNames {
@@ -236,7 +263,33 @@ impl AvatarNames {
         if n.is_none_or(|n| n.expires < now()) && !self.is_pending(id) {
             self.ask.lock().insert(*id);
         }
-        n
+        n.map(|n| self.aliased.get(id).unwrap_or(n))
+    }
+
+    /// New contact set aliases: every name is rewritten again.
+    pub fn set_aliases(&mut self, aliases: HashMap<Uuid, String>) {
+        if aliases == self.aliases {
+            return;
+        }
+        self.aliases = aliases;
+        self.aliased = self
+            .aliases
+            .iter()
+            .filter_map(|(id, a)| Some((*id, with_alias(self.cache.get(id)?, a))))
+            .collect();
+        self.generation += 1;
+    }
+
+    fn realias(&mut self, id: &Uuid) {
+        match (self.cache.get(id), self.aliases.get(id)) {
+            (Some(n), Some(a)) => {
+                let n = with_alias(n, a);
+                self.aliased.insert(*id, n);
+            }
+            _ => {
+                self.aliased.remove(id);
+            }
+        }
     }
 
     /// Queue a lookup if the name is missing or expired.
@@ -271,7 +324,9 @@ impl AvatarNames {
         }
         self.pending.remove(&id);
         self.generation += 1;
-        self.cache.insert(id, name)
+        let old = self.cache.insert(id, name);
+        self.realias(&id);
+        old
     }
 
     /// GetDisplayNames reply (handleAvNameCacheSuccess).
@@ -338,6 +393,7 @@ impl AvatarNames {
     /// Forget a name (our own, refused as out of date) and ask it again.
     pub fn refetch(&mut self, id: &Uuid) {
         self.cache.remove(id);
+        self.aliased.remove(id);
         self.pending.remove(id);
         self.generation += 1;
         self.want(id);
@@ -351,6 +407,8 @@ impl AvatarNames {
             self.last_expire_check = t;
             let before = self.cache.len();
             self.cache.retain(|_, n| n.expires >= max_unrefreshed);
+            let cache = &self.cache;
+            self.aliased.retain(|id, _| cache.contains_key(id));
             let expired = before - self.cache.len();
             if expired > 0 {
                 self.generation += 1;
@@ -373,6 +431,7 @@ impl AvatarNames {
             for (k, e) in m.iter() {
                 if let Ok(id) = Uuid::parse_str(k) {
                     self.cache.insert(id, AvatarName::from_llsd(e));
+                    self.realias(&id);
                 }
             }
         }
@@ -467,5 +526,26 @@ mod tests {
         let n = AvatarName::from_legacy("Bob", "Smith", 60.0);
         assert_eq!((n.username.as_str(), n.display_name.as_str()), ("bob.smith", "Bob Smith"));
         assert!(n.temporary && n.is_default);
+    }
+
+    #[test]
+    fn contact_set_aliases() {
+        let (jane, bob) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        let mut names = AvatarNames::default();
+        names.process(jane, named("Jane Doe", "janedoe", "janedoe", "Resident", false));
+        names.set_aliases(HashMap::from([
+            (jane, "Janou".to_owned()),
+            (bob, crate::world::contact_sets::DN_REMOVED.to_owned()),
+        ]));
+        let o = NameOptions::default();
+        assert_eq!(names.complete(&jane).as_deref(), Some("'Janou' (janedoe)"));
+        // a name arriving later gets its alias too: the display name removed
+        names.process(bob, named("Bobby", "bob.smith", "Bob", "Smith", false));
+        let b = names.get(&bob).expect("cached");
+        assert!(b.is_default);
+        assert_eq!(b.display(&o), "Bob Smith");
+        // the alias gone, the real names come back
+        names.set_aliases(HashMap::new());
+        assert_eq!(names.get(&jane).map(|n| n.display(&o)).as_deref(), Some("Jane Doe"));
     }
 }

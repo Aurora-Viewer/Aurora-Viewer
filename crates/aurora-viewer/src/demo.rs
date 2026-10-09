@@ -178,7 +178,7 @@ fn demo_raw() -> Llsd {
         skel.push(folder(10 + i as u128, 1, name, *t));
     }
     let buddies: Vec<Llsd> = (0..4)
-        .map(|i| llsd_map! {"buddy_id" => u(100 + i), "buddy_rights_given" => 1, "buddy_rights_has" => if i % 2 == 0 { 3 } else { 1 }})
+        .map(|i| llsd_map! {"buddy_id" => u(100 + i), "buddy_rights_given" => [1, 3, 7, 0][i as usize], "buddy_rights_has" => if i % 2 == 0 { 3 } else { 1 }})
         .collect();
     llsd_map! {
         "inventory-root" => Llsd::Array(vec![llsd_map!{"folder_id" => u(1)}]),
@@ -201,6 +201,8 @@ pub const DEMO_NOVA: Uuid = Uuid::from_u128(0xA0E0_A6E1_0000_0000_0000_0000_0000
 pub const DEMO_TESS: Uuid = Uuid::from_u128(0xA0E0_A6E1_0000_0000_0000_0000_0000_0004);
 pub const DEMO_GROUP1: Uuid = Uuid::from_u128(0x6E00_0000_0000_0000_0000_0000_0000_0001);
 pub const DEMO_GROUP2: Uuid = Uuid::from_u128(0x6E00_0000_0000_0000_0000_0000_0000_0002);
+/// Hidden from the profile (Contacts › Groupes shows it in the other color).
+pub const DEMO_GROUP3: Uuid = Uuid::from_u128(0x6E00_0000_0000_0000_0000_0000_0000_0003);
 
 /// AgentProfile reply of the demo residents (AURORA_DEMO_PROFILE).
 fn demo_profile(id: Uuid) -> aurora_net::AvatarProfile {
@@ -263,6 +265,25 @@ Mon site : https://example.com/loup 🐺"
         p.groups = groups.into_iter().take(1).collect();
     }
     p
+}
+
+/// AURORA_DEMO_CONTACTS: two contact sets (one with a non-friend), an alias
+/// and a removed display name, written to the demo account's file once.
+pub fn seed_contact_sets(world: &mut crate::world::World) {
+    if !world.contact_sets.set_names().is_empty() {
+        return;
+    }
+    let friends: Vec<Uuid> = world.social.friends.iter().map(|f| f.id).collect();
+    let is_friend = |id: &Uuid| friends.contains(id);
+    let cs = &mut world.contact_sets;
+    cs.add_set("Famille");
+    cs.set_color("Famille", [0.72, 0.52, 1.0, 1.0]);
+    cs.add_to_set(&[u(100), u(102), DEMO_LOUP], "Famille", is_friend);
+    cs.add_set("Travail");
+    cs.set_color("Travail", [0.35, 0.85, 0.8, 1.0]);
+    cs.add_to_set(&[u(101), u(102)], "Travail", is_friend);
+    cs.set_pseudonym(&[u(102)], "Orion le Grand", is_friend);
+    cs.remove_display_name(&[u(103)], is_friend);
 }
 
 pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
@@ -426,11 +447,12 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
         }
         // two groups, and someone starts a chat in the first one
         aurora_net::NetCommand::RequestGroups => {
+            // GP_SESSION_JOIN: the group chat can be opened from Contacts
             let g = |id: Uuid, name: &str, notices: bool| aurora_net::GroupMembership {
                 id,
                 name: name.into(),
                 insignia: Uuid::nil(),
-                powers: 0,
+                powers: 1 << 16,
                 accept_notices: notices,
                 list_in_profile: true,
                 contribution: 0,
@@ -439,7 +461,16 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 NetEvent::Groups(vec![
                     g(DEMO_GROUP1, "Aurora Builders", true),
                     g(DEMO_GROUP2, "Loups du Nord", false),
+                    aurora_net::GroupMembership {
+                        list_in_profile: false,
+                        ..g(DEMO_GROUP3, "Marché de la Place", true)
+                    },
                 ]),
+                NetEvent::ActiveGroup {
+                    id: DEMO_GROUP1,
+                    name: "Aurora Builders".into(),
+                    title: "Bâtisseuse".into(),
+                },
                 NetEvent::SessionInvite(aurora_net::SessionInvite {
                     session: DEMO_GROUP1,
                     from: DEMO_NOVA,
@@ -451,6 +482,12 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 }),
             ]
         }
+        aurora_net::NetCommand::ActivateGroup(id) => vec![NetEvent::ActiveGroup {
+            id: *id,
+            name: String::new(),
+            title: String::new(),
+        }],
+        aurora_net::NetCommand::LeaveGroup(id) => vec![NetEvent::GroupDropped(*id)],
         aurora_net::NetCommand::ChatSession { method, session } => {
             let agents = |ids: &[Uuid]| {
                 ids.iter()

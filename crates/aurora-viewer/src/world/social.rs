@@ -6,6 +6,13 @@ use aurora_llsd::Llsd;
 use std::collections::HashMap;
 use uuid::Uuid;
 
+/// LLRelationship rights bits.
+pub mod rights {
+    pub const ONLINE_STATUS: i32 = 1;
+    pub const MAP_LOCATION: i32 = 2;
+    pub const MODIFY_OBJECTS: i32 = 4;
+}
+
 #[derive(Debug, Clone)]
 pub struct Friend {
     pub id: Uuid,
@@ -112,6 +119,32 @@ impl Social {
             }
         }
         out
+    }
+
+    pub fn is_friend(&self, id: &Uuid) -> bool {
+        self.friends.iter().any(|f| f.id == *id)
+    }
+
+    /// LLAvatarTracker::formFriendship: a new friend sees the other online
+    /// both ways until rights change.
+    pub fn form_friendship(&mut self, id: Uuid) {
+        if id.is_nil() || self.is_friend(&id) {
+            return;
+        }
+        self.friends.push(Friend {
+            id,
+            online: false,
+            rights_given: rights::ONLINE_STATUS,
+            rights_has: rights::ONLINE_STATUS,
+        });
+        self.want_name(id);
+    }
+
+    /// The friendship ended (terminateBuddy / processTerminateFriendship).
+    pub fn end_friendship(&mut self, id: &Uuid) -> bool {
+        let before = self.friends.len();
+        self.friends.retain(|f| f.id != *id);
+        self.friends.len() != before
     }
 
     /// A conversation with this avatar exists.

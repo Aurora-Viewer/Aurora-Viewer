@@ -2,6 +2,7 @@
 
 pub mod blocking;
 pub mod body;
+pub mod contact_sets;
 pub mod eep;
 pub mod env;
 pub mod groups;
@@ -146,6 +147,10 @@ pub struct World {
     /// Avatars that just started typing (typing sound, LLVOAvatar::startMotion).
     pub typing_started: Vec<Uuid>,
     pub social: social::Social,
+    /// Contact sets and aliases (LGGContactSets), per account.
+    pub contact_sets: contact_sets::ContactSets,
+    /// Contact sets generation whose aliases the name cache has.
+    aliases_synced: u64,
     /// Block list (LLMuteList).
     pub mutes: mutes::MuteList,
     /// Firestorm LSL bridge messages kept out of nearby chat.
@@ -221,6 +226,8 @@ impl World {
             balance: None,
             health: 100.0,
             social: social::Social::default(),
+            contact_sets: Default::default(),
+            aliases_synced: 0,
             mutes: mutes::MuteList::default(),
             lsl_bridge: lslbridge::LslBridge::default(),
             groups: groups::GroupChats::default(),
@@ -429,6 +436,17 @@ impl World {
         }
     }
 
+    /// Contact set aliases into the name cache after a change (setPseudonym
+    /// erases and fetches the name again in Firestorm).
+    pub fn sync_contact_aliases(&mut self) {
+        if self.aliases_synced == self.contact_sets.generation {
+            return;
+        }
+        self.aliases_synced = self.contact_sets.generation;
+        let aliases = self.contact_sets.pseudonyms().iter().map(|(id, a)| (*id, a.clone())).collect();
+        self.social.avatar_names.set_aliases(aliases);
+    }
+
     /// Save profile fields (the profile window): shown at once, sent with
     /// the returned command.
     pub fn save_profile(&mut self, target: Uuid, data: aurora_llsd::Llsd) -> aurora_net::NetCommand {
@@ -555,6 +573,11 @@ impl World {
                 self.agent.position = Vec3::new(128.0, 128.0, 30.0);
                 self.agent.set_look_at(l.look_at);
                 self.social = social::Social::from_login(&l.raw);
+                let account = crate::settings::account_dir(&l.agent_id);
+                self.contact_sets = contact_sets::ContactSets::load(account.join(contact_sets::CONTACT_SETS_FILE));
+                self.groups.load_favorites(account.join(groups::FAVORITE_GROUPS_FILE));
+                self.aliases_synced = u64::MAX;
+                self.sync_contact_aliases();
                 self.inventory = inventory::Inventory::from_login(&l.raw);
                 if let Some(path) = self.inventory_cache_path() {
                     let n = self.inventory.load_cache(&path);
@@ -737,7 +760,14 @@ impl World {
                 self.on_mute_list(src);
                 None
             }
+            NetEvent::FriendshipTerminated(id) => {
+                if self.social.end_friendship(&id) {
+                    log::info!("friendship ended by {id}");
+                }
+                None
+            }
             ev @ (NetEvent::Groups(_)
+            | NetEvent::ActiveGroup { .. }
             | NetEvent::GroupDropped(_)
             | NetEvent::SessionInvite(_)
             | NetEvent::SessionStarted { .. }
@@ -1333,7 +1363,10 @@ impl World {
                     Kind::Friendship,
                     format!("{from} vous propose son amitié"),
                     im.message.clone(),
-                    Data::Friend { tx: im.session_id },
+                    Data::Friend {
+                        from: im.from_agent_id,
+                        tx: im.session_id,
+                    },
                 );
             }
             d::INVENTORY_OFFERED | d::TASK_INVENTORY_OFFERED => {
@@ -1391,6 +1424,7 @@ impl World {
                 );
             }
             d::FRIENDSHIP_ACCEPTED => {
+                self.social.form_friendship(im.from_agent_id);
                 n.push(
                     Kind::Friendship,
                     format!("{from} a accepté votre amitié"),
@@ -1418,8 +1452,26 @@ impl World {
         true
     }
 
+    /// The Calling Cards folder, sent with a friendship offer
+    /// (LLAvatarActions::requestFriendship).
+    pub fn calling_card_folder(&self) -> Uuid {
+        let inv = &self.inventory;
+        inv.folders
+            .values()
+            .find(|f| !f.library && f.info.type_default == 2)
+            .map(|f| f.info.id)
+            .unwrap_or(inv.root)
+    }
+
     /// Answer a notification: messages to send and a URL to open.
     pub fn respond_notification(&mut self, id: u64, r: notifications::Response) -> (Vec<aurora_net::NetCommand>, Option<String>) {
+        // friendship_offer_callback: formFriendship on accept
+        if matches!(r, notifications::Response::Accept)
+            && let Some(notifications::Data::Friend { from, .. }) =
+                self.notifications.list.iter().find(|n| n.id == id).map(|n| n.data.clone())
+        {
+            self.social.form_friendship(from);
+        }
         let inv = &self.inventory;
         let folder_of = |t: i32| {
             inv.folders

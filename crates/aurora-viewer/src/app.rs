@@ -209,6 +209,7 @@ pub struct App {
     geom_changed: Option<Instant>,
     frame_start: Instant,
     people_ui: ui::people::PeopleUi,
+    contacts_ui: ui::contacts::ContactsUi,
     /// Mini-map and world map state, map server tiles.
     minimap_ui: ui::minimap::MiniMap,
     display_name_ui: ui::display_name::DisplayNameUi,
@@ -346,6 +347,7 @@ impl App {
             time_of_day: settings.time_of_day,
             inventory: settings.show_inventory,
             people_tab: settings.people_tab.min(1),
+            contacts: false,
             about_land: false,
             nav_edit: None,
             nav_edit_new: false,
@@ -444,6 +446,7 @@ impl App {
             geom_changed: None,
             frame_start: Instant::now(),
             people_ui: Default::default(),
+            contacts_ui: Default::default(),
             minimap_ui: Default::default(),
             display_name_ui: Default::default(),
             people_map_ui: Default::default(),
@@ -2238,6 +2241,7 @@ impl App {
             self.send(NetCommand::RequestNames(legacy));
         }
         self.world.social.avatar_names.idle();
+        self.world.sync_contact_aliases();
         self.world.flush_online_notices();
     }
 
@@ -2264,6 +2268,52 @@ impl App {
         Some(crate::settings::cache_dir().join(file))
     }
 
+    /// An action of the Contacts window (docked or torn off).
+    fn on_contacts_action(&mut self, c: ui::contacts::ContactsAction, a: &mut UiActions) {
+        use ui::contacts::ContactsAction;
+        match c {
+            ContactsAction::Im(id) => {
+                self.world.ui_sounds.push(UiSound::StartIm);
+                self.world.social.session_mut(id);
+                self.world.social.focus_im = Some(id);
+                self.panels.chat = true;
+            }
+            ContactsAction::Profile(id) => self.profile_ui.open(&mut self.world, id),
+            ContactsAction::OfferTeleport(id) => a.offer_tp.push(id),
+            ContactsAction::GroupChat(id) => {
+                self.world.ui_sounds.push(UiSound::StartIm);
+                self.world.start_group_chat(id);
+                self.world.social.focus_im = Some(id);
+                self.panels.chat = true;
+            }
+            ContactsAction::Net(cmd) => {
+                match &cmd {
+                    // LLAvatarTracker::terminateBuddy forgets the friend at once
+                    NetCommand::TerminateFriendship(id) => {
+                        self.world.social.end_friendship(id);
+                    }
+                    NetCommand::GrantUserRights { .. } => self.world.profile_command(&cmd),
+                    _ => {}
+                }
+                self.send(cmd);
+            }
+            ContactsAction::OfferFriendship { to, message } => {
+                let folder = self.world.calling_card_folder();
+                self.send(ui::contacts::friendship_offer(to, message, folder));
+            }
+            ContactsAction::ToggleTornOff => {
+                let torn_off = !self.settings.contacts.torn_off;
+                self.settings.contacts.torn_off = torn_off;
+                // FSFloaterIMContainer::removeFloater / addFloater
+                self.panels.contacts = torn_off;
+                self.chat_ui.contacts = !torn_off;
+                if !torn_off {
+                    self.panels.chat = true;
+                }
+            }
+        }
+    }
+
     /// Profile pictures wanted by the UI: request profiles, stream the
     /// picture textures and turn the decoded copies into egui textures.
     fn update_avatar_pics(&mut self, renderer: &mut Renderer) {
@@ -2272,6 +2322,7 @@ impl App {
         }
         let mut wanted: Vec<uuid::Uuid> = self.chat_ui.wanted_pics.drain().collect();
         wanted.extend(self.profile_ui.wanted_pics.drain());
+        wanted.extend(self.contacts_ui.wanted_pics.drain());
         for agent in wanted {
             if self.avatar_pics.contains_key(&agent) {
                 continue;
@@ -2291,6 +2342,7 @@ impl App {
         }
         let mut images: Vec<uuid::Uuid> = self.profile_ui.wanted_images.drain().collect();
         images.extend(self.land_ui.wanted_images.drain());
+        images.extend(self.contacts_ui.wanted_images.drain());
         for image in images {
             if self.ui_images.contains_key(&image) {
                 continue;
@@ -3180,6 +3232,10 @@ impl App {
                 self.open_context_menu();
             }
         }
+        // AURORA_DEMO_CONTACTS: contact sets and aliases to show, once logged in
+        if self.demo && self.frame_count == 60 && std::env::var_os("AURORA_DEMO_CONTACTS").is_some() {
+            crate::demo::seed_contact_sets(&mut self.world);
+        }
         // AURORA_DEMO_NAVEDIT=1: click in the location field at frame 230
         if self.demo && self.frame_count == 230 && std::env::var_os("AURORA_DEMO_NAVEDIT").is_some() {
             self.panels.nav_edit = Some(crate::slurl::make(&self.world.region_name(), self.world.agent.position));
@@ -3807,14 +3863,18 @@ impl App {
                 };
                 let mut mini = Vec::new();
                 let mut open = self.panels.chat;
+                let mut contact_actions = Vec::new();
                 for c in ui::chat::show(
                     &ctx,
                     &p,
                     icons,
                     &mut self.emoji,
                     &self.avatar_pics,
+                    &self.ui_images,
                     &mut self.world,
                     &mut self.chat_ui,
+                    &mut self.contacts_ui,
+                    &mut self.settings.contacts,
                     &mut open,
                 ) {
                     match c {
@@ -3835,9 +3895,31 @@ impl App {
                             self.panels.people_tab = tab;
                         }
                         ui::chat::ConvAction::Profile(id) => self.profile_ui.open(&mut self.world, id),
+                        ui::chat::ConvAction::Contacts(c) => contact_actions.push(c),
+                        ui::chat::ConvAction::OpenContacts => self.panels.contacts = true,
                     }
                 }
                 self.panels.chat = open;
+                if self.settings.contacts.torn_off {
+                    let mut open = self.panels.contacts;
+                    let pics = ui::contacts::Pics {
+                        avatars: &self.avatar_pics,
+                        images: &self.ui_images,
+                    };
+                    contact_actions.extend(ui::contacts::window(
+                        &ctx,
+                        &p,
+                        &mut self.world,
+                        &mut self.contacts_ui,
+                        &mut self.settings.contacts,
+                        &pics,
+                        &mut open,
+                    ));
+                    self.panels.contacts = open;
+                }
+                for c in contact_actions {
+                    self.on_contacts_action(c, &mut a);
+                }
                 let mut people_map = |ui: &mut egui::Ui, size: egui::Vec2| {
                     let acts = self
                         .people_map_ui
@@ -4369,6 +4451,24 @@ impl ApplicationHandler for App {
                 self.land_ui.set_tab(&tab);
                 self.panels.about_land = true;
                 self.panels.perf = false;
+            }
+            // AURORA_DEMO_CONTACTS=amis|groupes|cercles|detache|ajout: the
+            // Contacts tab of Conversations (or its torn-off window, or the
+            // resident picker of « Ajouter... »)
+            if let Ok(v) = std::env::var("AURORA_DEMO_CONTACTS") {
+                self.panels.chat = true;
+                self.panels.perf = false;
+                self.chat_ui.contacts = true;
+                self.settings.contacts.tab = match v.as_str() {
+                    "groupes" => 1,
+                    "cercles" => 2,
+                    _ => 0,
+                };
+                self.settings.contacts.torn_off = v == "detache";
+                self.panels.contacts = v == "detache";
+                if v == "ajout" {
+                    self.contacts_ui.pick_new_friend();
+                }
             }
             // AURORA_DEMO_CONV=1: the demo group chat with its participants
             if std::env::var_os("AURORA_DEMO_CONV").is_some() {
