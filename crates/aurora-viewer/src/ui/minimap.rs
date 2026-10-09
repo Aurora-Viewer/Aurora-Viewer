@@ -107,7 +107,8 @@ pub enum MiniMapAction {
     OfferTeleport(Uuid),
     /// "Voir le profil" (LLNetMap::handleShowProfile).
     Profile(Uuid),
-    AboutLand,
+    /// "À propos du terrain" on the parcel under the click (popupShowAboutLand).
+    AboutLand(f64, f64),
     /// Chat ring options changed (saved with the color settings).
     Colors(crate::settings::ColorSettings),
     /// "Fermer la mini-carte" (the floater has no close button).
@@ -876,7 +877,7 @@ impl MiniMap {
             });
             ui.separator();
             if ui.button("À propos du terrain").clicked() {
-                actions.push(MiniMapAction::AboutLand);
+                actions.push(MiniMapAction::AboutLand(px, py));
                 ui.close();
             }
             if ui.button("Carte du monde").clicked() {

@@ -14,6 +14,10 @@ use uuid::Uuid;
 
 const HANDLE: u64 = (256000u64 << 32) | 256000;
 
+/// About Land answers (AURORA_DEMO_LAND).
+#[path = "demo_land.rs"]
+pub mod land;
+
 /// Walkable floor of the demo (plaza top, else the terrain), for the
 /// offline movement stand-in.
 pub fn floor_at(x: f32, y: f32) -> f32 {
@@ -264,6 +268,7 @@ Mon site : https://example.com/loup 🐺"
 pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
     use aurora_net::inventory::{FolderContents, InvItem};
     match cmd {
+        aurora_net::NetCommand::Land(l) => land::reply(l),
         aurora_net::NetCommand::RequestNames(ids) => {
             let names = ["Nova Exemple", "Pixel Boutique", "Orion Exemple", "Tess Touch"];
             vec![NetEvent::Names(
@@ -949,6 +954,9 @@ pub fn events() -> Vec<NetEvent> {
             size_x: 256,
             size_y: 256,
             is_main: true,
+            owner: DEMO_LOUP,
+            is_estate_manager: false,
+            product_name: "Estate / Full Region".into(),
         })),
     ];
     // parcel overlay (mini-map property lines): four parcels split at

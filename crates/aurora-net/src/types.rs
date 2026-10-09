@@ -35,39 +35,78 @@ pub struct RegionInfo {
     pub size_x: u32,
     pub size_y: u32,
     pub is_main: bool,
+    /// RegionHandshake SimOwner / IsEstateManager (LLViewerRegion::getOwner,
+    /// canManageEstate).
+    pub owner: Uuid,
+    pub is_estate_manager: bool,
+    /// RegionInfo3 ProductName ("Mainland / Full Region"...).
+    pub product_name: String,
 }
 
 /// Parcel description from ParcelProperties (About Land).
 #[derive(Debug, Clone, Default)]
 pub struct ParcelInfo {
     pub local_id: i32,
+    /// SequenceID of the message (0+ agent parcel, -10000 selection...).
+    pub sequence_id: i32,
+    /// PARCEL_RESULT_* (land::PARCEL_RESULT_MULTIPLE: several parcels).
+    pub request_result: i32,
     pub name: String,
     pub desc: String,
     pub owner_id: Uuid,
     pub group_id: Uuid,
     pub is_group_owned: bool,
+    pub auction_id: u32,
+    /// LLParcel::EOwnershipStatus (land::OS_LEASED...).
+    pub status: u8,
     pub area: i32,
+    pub claim_price: i32,
+    pub rent_price: i32,
+    /// Bounding box in region coordinates (z unused).
+    pub aabb_min: Vec3,
+    pub aabb_max: Vec3,
     /// Parcel prim capacity (with bonus) and usage.
     pub max_prims: i32,
+    pub total_prims: i32,
+    /// Region object bonus factor (ParcelPrimBonus).
+    pub prim_bonus: f32,
     pub owner_prims: i32,
     pub group_prims: i32,
     pub other_prims: i32,
     pub selected_prims: i32,
     pub sim_max_prims: i32,
     pub sim_total_prims: i32,
+    /// Auto-return of other residents' objects, minutes (0 = off).
+    pub other_clean_time: i32,
     /// `PF_*` flags (llparcelflags.h).
     pub flags: u32,
     pub sale_price: i32,
     pub auth_buyer: Uuid,
     pub category: i32,
     pub claim_date: i32,
+    pub pass_price: i32,
+    pub pass_hours: f32,
     pub music_url: String,
     pub media_url: String,
     pub snapshot_id: Uuid,
+    /// Landing point (zero = none) and its look-at direction.
+    pub user_location: Vec3,
+    pub user_look_at: Vec3,
+    /// LLParcel::ELandingType: 0 blocked, 1 landing point, 2 anywhere.
     pub landing_type: i32,
     pub see_avatars: bool,
     pub any_av_sounds: bool,
+    pub group_av_sounds: bool,
+    /// The server sent SeeAVs / AnyAVSounds / GroupAVSounds.
+    pub have_new_parcel_limit_data: bool,
+    /// Estate overrides (RegionPushOverride, RegionDenyAnonymous,
+    /// RegionDenyAgeUnverified, RegionAllowAccessOverride).
+    pub region_push_override: bool,
+    pub region_deny_anonymous: bool,
+    pub region_deny_age_unverified: bool,
+    pub region_allow_access_override: bool,
     pub region_allow_env_override: bool,
+    pub env_version: i32,
     /// Parcel media (MediaData / MediaLinkSharing blocks).
     pub media: ParcelMedia,
 }
@@ -139,14 +178,23 @@ pub mod parcel_flags {
     pub const ALLOW_FLY: u32 = 1 << 0;
     pub const ALLOW_OTHER_SCRIPTS: u32 = 1 << 1;
     pub const FOR_SALE: u32 = 1 << 2;
+    pub const ALLOW_LANDMARK: u32 = 1 << 3;
     pub const ALLOW_TERRAFORM: u32 = 1 << 4;
     pub const ALLOW_DAMAGE: u32 = 1 << 5;
     pub const CREATE_OBJECTS: u32 = 1 << 6;
     pub const USE_ACCESS_GROUP: u32 = 1 << 8;
     pub const USE_ACCESS_LIST: u32 = 1 << 9;
+    pub const USE_BAN_LIST: u32 = 1 << 10;
+    pub const USE_PASS_LIST: u32 = 1 << 11;
     pub const SHOW_DIRECTORY: u32 = 1 << 12;
+    pub const ALLOW_DEED_TO_GROUP: u32 = 1 << 13;
+    pub const CONTRIBUTE_WITH_DEED: u32 = 1 << 14;
     pub const SOUND_LOCAL: u32 = 1 << 15;
+    pub const SELL_PARCEL_OBJECTS: u32 = 1 << 16;
+    pub const ALLOW_PUBLISH: u32 = 1 << 17;
+    pub const MATURE_PUBLISH: u32 = 1 << 18;
     pub const RESTRICT_PUSHOBJECT: u32 = 1 << 21;
+    pub const DENY_ANONYMOUS: u32 = 1 << 22;
     pub const ALLOW_GROUP_SCRIPTS: u32 = 1 << 25;
     pub const CREATE_GROUP_OBJECTS: u32 = 1 << 26;
     pub const ALLOW_ALL_OBJECT_ENTRY: u32 = 1 << 27;
@@ -154,16 +202,20 @@ pub mod parcel_flags {
     pub const ALLOW_VOICE_CHAT: u32 = 1 << 29;
     /// Voice uses the estate channel (else the parcel has its own).
     pub const USE_ESTATE_VOICE_CHAN: u32 = 1 << 30;
+    pub const DENY_AGEUNVERIFIED: u32 = 1 << 31;
 }
 
 /// `REGION_FLAGS_*` (llregionflags.h) of RegionHandshake / SimStats.
 pub mod region_flags {
     pub const ALLOW_DAMAGE: u32 = 1 << 0;
+    pub const BLOCK_LAND_RESELL: u32 = 1 << 7;
     pub const SKIP_SCRIPTS: u32 = 1 << 13;
     pub const BLOCK_FLY: u32 = 1 << 19;
     pub const ESTATE_SKIP_SCRIPTS: u32 = 1 << 21;
     pub const RESTRICT_PUSHOBJECT: u32 = 1 << 22;
+    pub const ALLOW_PARCEL_CHANGES: u32 = 1 << 26;
     pub const ALLOW_VOICE: u32 = 1 << 28;
+    pub const BLOCK_PARCEL_SEARCH: u32 = 1 << 29;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -524,15 +576,19 @@ pub enum NetEvent {
         handle: RegionHandle,
         height: f32,
     },
-    /// A region's `REGION_FLAGS_*` (SimStats, about once a second).
+    /// A region's `REGION_FLAGS_*` and object capacity (SimStats, about
+    /// once a second; LLViewerRegion::setRegionFlags / setMaxTasks).
     RegionFlags {
         handle: RegionHandle,
         flags: u32,
+        max_tasks: u32,
     },
     /// Agent health in percent (HealthMessage, damage-enabled land).
     Health(f32),
     /// The parcel the agent stands on (main region).
     AgentParcel(Arc<ParcelInfo>),
+    /// About Land: selected parcel, its lists, covenant... (land.rs).
+    Land(crate::land::LandEvent),
     /// ParcelMediaCommandMessage: llParcelMediaCommandList (flags of the
     /// PARCEL_MEDIA_COMMAND_* bits, command, time).
     ParcelMediaCommand {
@@ -856,6 +912,8 @@ pub enum NetCommand {
     ClassifiedDelete(Uuid),
     /// ParcelInfoRequest (name and region of a pick's parcel).
     ParcelInfoRequest(Uuid),
+    /// About Land requests (land.rs).
+    Land(crate::land::LandCommand),
     /// GrantUserRights: rights we give a friend (1 online, 2 map, 4 modify).
     GrantUserRights {
         friend: Uuid,

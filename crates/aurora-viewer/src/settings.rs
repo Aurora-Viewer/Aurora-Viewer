@@ -356,6 +356,9 @@ pub struct AudioSettings {
     pub ui_sounds: bool,
     /// Each interface sound: played or not, asset (UISnd* / PlayModeUISnd*).
     pub ui: crate::ui_sound::UiSoundSettings,
+    /// Saved music stream URLs (FSStreamList "audio", FIRE-593), offered by
+    /// the "Son" tab of About Land.
+    pub saved_streams: Vec<String>,
 }
 
 impl Default for AudioSettings {
@@ -375,6 +378,7 @@ impl Default for AudioSettings {
             gesture_sounds: true,
             ui_sounds: true,
             ui: Default::default(),
+            saved_streams: Vec::new(),
         }
     }
 }

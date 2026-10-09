@@ -128,6 +128,8 @@ const SVGS: &[(&str, &[u8])] = svg_list!(
     "check-circle",
     "sparkle",
     "arrows-clockwise",
+    "plus",
+    "copy",
     "calendar-dots",
     "broadcast",
     "prohibit",

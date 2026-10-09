@@ -260,6 +260,8 @@ pub struct App {
     ui_images: std::collections::HashMap<uuid::Uuid, egui::TextureHandle>,
     /// Avatar profile windows.
     profile_ui: ui::profile::ProfileUi,
+    /// "À propos du terrain".
+    land_ui: ui::land::LandUi,
     demo: bool,
     inventory_ui: ui::inventory::InventoryUi,
     last_social_poll: Instant,
@@ -481,6 +483,7 @@ impl App {
             avatar_pics: Default::default(),
             ui_images: Default::default(),
             profile_ui: Default::default(),
+            land_ui: Default::default(),
             demo: false,
             inventory_ui: Default::default(),
             last_social_poll: Instant::now(),
@@ -1784,7 +1787,11 @@ impl App {
                 }
             }
             CtxAction::Zoom(p) => self.camera.zoom_to(p, &mut self.world.agent, &self.settings.camera),
-            CtxAction::AboutLand => self.panels.about_land = true,
+            CtxAction::AboutLand(point) => {
+                let (gx, gy) = ui::minimap::to_global(&self.world, point);
+                ui::land::LandUi::select_at_global(&mut self.world, gx, gy);
+                self.panels.about_land = true;
+            }
             CtxAction::DisplayName => self.display_name_ui.open(),
             CtxAction::StandUp => self.send(NetCommand::OneShotControl(control::STAND_UP)),
             CtxAction::SitGround => self.send(NetCommand::OneShotControl(control::SIT_ON_GROUND)),
@@ -2282,7 +2289,8 @@ impl App {
                 self.avatar_pics.insert(agent, t);
             }
         }
-        let images: Vec<uuid::Uuid> = self.profile_ui.wanted_images.drain().collect();
+        let mut images: Vec<uuid::Uuid> = self.profile_ui.wanted_images.drain().collect();
+        images.extend(self.land_ui.wanted_images.drain());
         for image in images {
             if self.ui_images.contains_key(&image) {
                 continue;
@@ -2341,6 +2349,10 @@ impl App {
         let me = ui::minimap::to_global(&self.world, self.world.agent.position);
         if self.world.movement_complete && !self.world.teleporting {
             self.world.map.check_arrival(me.0, me.1, self.world.agent.position.z);
+        }
+        // About Land requests (selection, lists, covenant...)
+        for c in self.world.land.take_commands() {
+            self.send(c);
         }
         for c in self.world.map.take_commands() {
             if matches!(c, NetCommand::TeleportTo { .. }) {
@@ -3922,7 +3934,17 @@ impl App {
                     }
                 }
                 let mut open = self.panels.about_land;
-                ui::land::show(&ctx, &p, &self.world, &mut open);
+                if self.land_ui.show(
+                    &ctx,
+                    &p,
+                    &mut self.world,
+                    &self.ui_images,
+                    &mut self.settings.audio.saved_streams,
+                    self.demo,
+                    &mut open,
+                ) {
+                    self.settings.save();
+                }
                 self.panels.about_land = open;
                 a.set_display_name = self.display_name_ui.show(&ctx, &p, &self.world);
                 // links and names clicked anywhere (LLAgentHandler)
@@ -4010,7 +4032,10 @@ impl App {
                         }
                         ui::minimap::MiniMapAction::OfferTeleport(id) => a.offer_tp.push(id),
                         ui::minimap::MiniMapAction::Profile(id) => self.profile_ui.open(&mut self.world, id),
-                        ui::minimap::MiniMapAction::AboutLand => self.panels.about_land = true,
+                        ui::minimap::MiniMapAction::AboutLand(gx, gy) => {
+                            ui::land::LandUi::select_at_global(&mut self.world, gx, gy);
+                            self.panels.about_land = true;
+                        }
                         ui::minimap::MiniMapAction::Colors(k) => self.settings.colors = k,
                         ui::minimap::MiniMapAction::Close => self.panels.minimap = false,
                     }
@@ -4337,6 +4362,12 @@ impl ApplicationHandler for App {
                 };
                 self.profile_ui.open(&mut self.world, id);
                 self.profile_ui.set_tab(id, tab.parse().unwrap_or(0));
+                self.panels.perf = false;
+            }
+            // AURORA_DEMO_LAND=<onglet>[:owner]: About Land on that tab
+            if let Some((tab, _)) = crate::demo::land::scenario() {
+                self.land_ui.set_tab(&tab);
+                self.panels.about_land = true;
                 self.panels.perf = false;
             }
             // AURORA_DEMO_CONV=1: the demo group chat with its participants
