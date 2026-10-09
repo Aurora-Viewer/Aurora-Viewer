@@ -97,13 +97,18 @@ function Format-Duration([TimeSpan]$T) {
     else { '{0}:{1:00}' -f [int][Math]::Floor($T.TotalMinutes), $T.Seconds }
 }
 
-# Short age for a column: '04 min', '29 min', '02 h', '03 j'.
+# Short age for a column: '55 sec', '04 min', '02 hrs', '03 jrs', '02 sem',
+# '05 moi', '01 yrs'. Units all take 3 letters so numbers and units line up
+# from one row to the next.
 function Format-Age([datetime]$When) {
     $t = (Get-Date) - $When
-    if ($t.TotalMinutes -lt 1) { '{0:00} s' -f [int][Math]::Floor($t.TotalSeconds) }
+    if ($t.TotalMinutes -lt 1) { '{0:00} sec' -f [int][Math]::Floor($t.TotalSeconds) }
     elseif ($t.TotalHours -lt 1) { '{0:00} min' -f [int][Math]::Floor($t.TotalMinutes) }
-    elseif ($t.TotalDays -lt 1) { '{0:00} h' -f [int][Math]::Floor($t.TotalHours) }
-    else { '{0:00} j' -f [int][Math]::Floor($t.TotalDays) }
+    elseif ($t.TotalDays -lt 1) { '{0:00} hrs' -f [int][Math]::Floor($t.TotalHours) }
+    elseif ($t.TotalDays -lt 7) { '{0:00} jrs' -f [int][Math]::Floor($t.TotalDays) }
+    elseif ($t.TotalDays -lt 30) { '{0:00} sem' -f [int][Math]::Floor($t.TotalDays / 7) }
+    elseif ($t.TotalDays -lt 365) { '{0:00} moi' -f [int][Math]::Floor($t.TotalDays / 30) }
+    else { '{0:00} yrs' -f [int][Math]::Floor($t.TotalDays / 365) }
 }
 
 function Format-Ago([datetime]$When) {
