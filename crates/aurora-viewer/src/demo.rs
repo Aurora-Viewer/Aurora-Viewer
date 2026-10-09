@@ -1218,7 +1218,9 @@ pub fn events() -> Vec<NetEvent> {
     // alpha modes / legacy materials test panels (procedural textures)
     // Keep the manual click-action targets unobstructed. Reserve the same
     // ids so other demo objects and replies retain their identities.
-    if !std::env::var("AURORA_DEMO_ACTIONS").is_ok_and(|m| m == "1") {
+    // AURORA_DEMO_TEXANIM puts its own panels there.
+    let texanim = std::env::var_os("AURORA_DEMO_TEXANIM").is_some();
+    if !std::env::var("AURORA_DEMO_ACTIONS").is_ok_and(|m| m == "1") && !texanim {
         let yaw = 0.4f32.atan2(0.8);
         let across = Vec3::new(-yaw.sin(), yaw.cos(), 0.0);
         let center = Vec3::new(138.5, 125.5, 0.0);
@@ -1387,6 +1389,109 @@ pub fn events() -> Vec<NetEvent> {
                 }
                 o.text = "Override : 4 × 4, teinte".into();
             }
+            add(o);
+            id += 1;
+        }
+    }
+    // AURORA_DEMO_TEXANIM=1: texture animations (llSetTextureAnim) on a row
+    // of panels facing the start position, in place of the alpha panels
+    if texanim {
+        use aurora_net::objects::TextureAnim as Ta;
+        let anim = |mode: u8, face: i8, size: (u8, u8), start: f32, length: f32, rate: f32| Ta {
+            mode: Ta::ON | mode,
+            face,
+            size_x: size.0,
+            size_y: size.1,
+            start,
+            length,
+            rate,
+        };
+        let smooth = Ta::SMOOTH | Ta::LOOP;
+        // (texture, legacy material, PBR, animation, hover text); the scaled
+        // one is alpha masked (prepass and shadow alpha tests animate too)
+        let panels: [(Uuid, Uuid, bool, Ta, &str); 8] = [
+            (
+                TEX_TILES,
+                Uuid::nil(),
+                false,
+                anim(smooth, -1, (1, 1), 0.0, 1.0, 0.25),
+                "Défilement (SMOOTH)",
+            ),
+            (
+                TEX_FRAMES,
+                Uuid::nil(),
+                false,
+                anim(Ta::LOOP, -1, (4, 4), 0.0, 0.0, 4.0),
+                "Grille 4 × 4 (LOOP)",
+            ),
+            (
+                TEX_FRAMES,
+                Uuid::nil(),
+                false,
+                anim(Ta::LOOP | Ta::PING_PONG, -1, (4, 4), 0.0, 4.0, 2.0),
+                "Aller-retour (PING_PONG)",
+            ),
+            (
+                TEX_TILES,
+                Uuid::nil(),
+                false,
+                anim(smooth | Ta::ROTATE, -1, (1, 1), 0.0, std::f32::consts::TAU, 1.0),
+                "Rotation (ROTATE)",
+            ),
+            (
+                TEX_HOLES,
+                Uuid::nil(),
+                false,
+                anim(smooth | Ta::PING_PONG | Ta::SCALE, -1, (1, 1), 1.0, 2.0, 0.5),
+                "Échelle (SCALE), masque alpha",
+            ),
+            (
+                TEX_FRAMES,
+                Uuid::nil(),
+                false,
+                anim(Ta::LOOP, 3, (4, 4), 0.0, 0.0, 4.0),
+                "Une seule face (face 3)",
+            ),
+            (
+                TEX_TILES,
+                MAT_BUMPY,
+                false,
+                anim(smooth, -1, (1, 1), 0.0, 1.0, -0.25),
+                "Matériau : normales suivent",
+            ),
+            (BLANK_TEXTURE, Uuid::nil(), true, anim(smooth, -1, (1, 1), 0.0, 1.0, 0.25), "PBR"),
+        ];
+        // two rows of four, right to left as seen from the start position
+        let yaw = 0.4f32.atan2(0.8);
+        let across = Vec3::new(-yaw.sin(), yaw.cos(), 0.0);
+        let center = Vec3::new(138.5, 125.5, 0.0) + across * 3.3;
+        let floor = height(cx, cy) + 0.35;
+        for (k, (tex, mat, pbr, ta, label)) in panels.into_iter().enumerate() {
+            let p = center + across * (((k % 4) as f32 - 1.5) * 1.75);
+            let z = floor + if k < 4 { 2.9 } else { 0.95 };
+            let mut t = TextureEntry::default();
+            for f in t.faces.iter_mut() {
+                f.texture = tex;
+                f.color = [1.0, 1.0, 1.0, 1.0];
+                f.material_id = mat;
+            }
+            // the single-face one is a cube turned to show two sides (faces 3
+            // and 4: +Y and -X)
+            let (rot, scale) = if ta.face >= 0 {
+                (Quat::from_rotation_z(yaw + std::f32::consts::FRAC_PI_4), Vec3::splat(1.1))
+            } else {
+                (Quat::from_rotation_z(yaw), Vec3::new(0.06, 1.5, 1.5))
+            };
+            let extra = if pbr {
+                ExtraParams {
+                    render_materials: (0..6).map(|f| (f, MAT_PBR_TILES)).collect(),
+                    ..Default::default()
+                }
+            } else {
+                ExtraParams::default()
+            };
+            let mut o = prim(id, Vec3::new(p.x, p.y, z), rot, scale, boxp, Arc::new(t), extra, label);
+            o.texture_anim = Some(ta);
             add(o);
             id += 1;
         }
@@ -2160,6 +2265,9 @@ pub const TEX_BUMPS: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000
 /// Floor tiles of AURORA_DEMO_PLANAR: 2 × 2 tiles with grout lines, the
 /// top-left tile marked so the orientation shows.
 pub const TEX_TILES: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0004);
+/// Frames of AURORA_DEMO_TEXANIM: a 4 × 4 grid, one hue per frame (frame 0
+/// top left, red, then along the rows), each cell framed in dark.
+pub const TEX_FRAMES: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0005);
 const MAT_NONE: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0001);
 const MAT_MASK: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0002);
 const MAT_EMISSIVE: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0003);
@@ -2199,6 +2307,21 @@ pub fn local_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
                 let n = Vec3::new(-dx * 2.0, -dy * 2.0, 1.0).normalize();
                 let e = |v: f32| ((v * 0.5 + 0.5) * 255.0) as u8;
                 [e(n.x), e(n.y), e(n.z), 255]
+            } else if *id == TEX_FRAMES {
+                let (lx, ly) = (x % 16, y % 16);
+                let frame = (y / 16) * 4 + x / 16;
+                if lx < 1 || ly < 1 || lx > 14 || ly > 14 {
+                    [24, 22, 30, 255]
+                } else {
+                    // hue frame / 16 at full saturation
+                    let h = frame as f32 / 16.0 * 6.0;
+                    let c = |o: f32| {
+                        let k = (o + h) % 6.0;
+                        let v = 1.0 - (k.min(4.0 - k).clamp(0.0, 1.0));
+                        (v * 230.0 + 20.0) as u8
+                    };
+                    [c(5.0), c(3.0), c(1.0), 255]
+                }
             } else if *id == TEX_TILES {
                 let (tx, ty) = (x / 32, y / 32);
                 let (lx, ly) = (x % 32, y % 32);

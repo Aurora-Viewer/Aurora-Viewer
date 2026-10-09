@@ -36,6 +36,42 @@ pub struct RenderState {
     pub visible: bool,
 }
 
+/// Clock of an object's texture animation (LLViewerTextureAnim mTimer /
+/// mLastTime): its raw frame counter at time `t` is
+/// `phase + (t - start) * rate`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TexAnimClock {
+    pub start: Instant,
+    pub phase: f32,
+}
+
+impl TexAnimClock {
+    /// Clock after an update carrying a texture animation block
+    /// (LLVOVolume::processUpdateMessage, LLViewerTextureAnim::animateTextures):
+    /// a new animation starts now; an existing non-smooth one restarts (its
+    /// timer is reset on every such update, even unchanged: a known SL
+    /// behaviour, e.g. llSetText restarts frame animations); a smooth one
+    /// carries on from its accumulated counter, which an animation that is
+    /// off keeps at 0.
+    pub fn after_update(old: Option<(&TextureAnim, &TexAnimClock)>, new: &TextureAnim, now: Instant) -> TexAnimClock {
+        let accumulated = match old {
+            Some((a, c)) if a.mode & TextureAnim::ON != 0 => {
+                let rate = if a.rate.is_finite() { a.rate } else { 0.0 };
+                c.phase + now.saturating_duration_since(c.start).as_secs_f32() * rate
+            }
+            _ => 0.0,
+        };
+        TexAnimClock {
+            start: now,
+            phase: if new.mode & TextureAnim::SMOOTH != 0 && accumulated.is_finite() {
+                accumulated
+            } else {
+                0.0
+            },
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Object {
     pub key: ObjKey,
@@ -60,6 +96,7 @@ pub struct Object {
     pub text: String,
     pub text_color: [u8; 4],
     pub tex_anim: Option<TextureAnim>,
+    pub tex_anim_clock: TexAnimClock,
     pub update_flags: u32,
     pub owner_id: Uuid,
     pub tree_species: Option<u8>,
@@ -105,6 +142,10 @@ impl Object {
             text: u.text,
             text_color: u.text_color,
             tex_anim: u.texture_anim,
+            tex_anim_clock: TexAnimClock {
+                start: Instant::now(),
+                phase: 0.0,
+            },
             update_flags: u.update_flags,
             owner_id: u.owner_id,
             tree_species: u.tree_species,
@@ -168,11 +209,29 @@ impl Object {
         self.name_values = u.name_values;
         self.text = u.text;
         self.text_color = u.text_color;
-        self.tex_anim = u.texture_anim;
+        if self.set_tex_anim(u.texture_anim, Instant::now()) {
+            self.material_dirty = true;
+        }
         self.update_flags = u.update_flags;
         self.owner_id = u.owner_id;
         self.tree_species = u.tree_species;
         self.render.needs_records = true;
+    }
+
+    /// Texture animation of a full update (None: the block is absent, the
+    /// animation is removed). True when the face records must be rebuilt:
+    /// the animation or its clock changed visibly.
+    pub fn set_tex_anim(&mut self, new: Option<TextureAnim>, now: Instant) -> bool {
+        let Some(new) = new else {
+            return self.tex_anim.take().is_some();
+        };
+        let old = self.tex_anim;
+        self.tex_anim_clock = TexAnimClock::after_update(old.as_ref().map(|a| (a, &self.tex_anim_clock)), &new, now);
+        self.tex_anim = Some(new);
+        let on = new.mode & TextureAnim::ON != 0;
+        // an unchanged smooth animation keeps its time origin (its phase moved
+        // with the start); a non-smooth one restarted
+        old != Some(new) || (on && new.mode & TextureAnim::SMOOTH == 0)
     }
 
     pub fn apply_terse(&mut self, t: &TerseUpdate) {
@@ -458,5 +517,49 @@ impl ObjectStore {
             region: o.key.region,
             local_id: o.parent_id,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn anim(mode: u8, rate: f32) -> TextureAnim {
+        TextureAnim {
+            mode,
+            face: -1,
+            size_x: 1,
+            size_y: 1,
+            start: 0.0,
+            length: 1.0,
+            rate,
+        }
+    }
+
+    const SMOOTH_ON: u8 = TextureAnim::ON | TextureAnim::SMOOTH | TextureAnim::LOOP;
+
+    #[test]
+    fn tex_anim_clock_follows_firestorm() {
+        let t0 = Instant::now();
+        let t1 = t0 + Duration::from_secs(4);
+        let clock = TexAnimClock { start: t0, phase: 0.5 };
+        // a smooth animation carries on: 0.5 + 4 s * 0.25
+        let c = TexAnimClock::after_update(Some((&anim(SMOOTH_ON, 0.25), &clock)), &anim(SMOOTH_ON, 1.0), t1);
+        assert_eq!(c.start, t1);
+        assert!((c.phase - 1.5).abs() < 1e-5);
+        // a non-smooth one restarts
+        let c = TexAnimClock::after_update(Some((&anim(SMOOTH_ON, 0.25), &clock)), &anim(TextureAnim::ON, 1.0), t1);
+        assert_eq!(c.phase, 0.0);
+        // smooth after an animation that was off: from 0
+        let c = TexAnimClock::after_update(Some((&anim(TextureAnim::SMOOTH, 0.25), &clock)), &anim(SMOOTH_ON, 1.0), t1);
+        assert_eq!(c.phase, 0.0);
+        // smooth after a non-smooth one: its elapsed counter (mLastTime)
+        let frames = TexAnimClock { start: t0, phase: 0.0 };
+        let c = TexAnimClock::after_update(Some((&anim(TextureAnim::ON, 2.0), &frames)), &anim(SMOOTH_ON, 1.0), t1);
+        assert!((c.phase - 8.0).abs() < 1e-5);
+        // new animation
+        let c = TexAnimClock::after_update(None, &anim(SMOOTH_ON, 1.0), t1);
+        assert_eq!((c.start, c.phase), (t1, 0.0));
     }
 }

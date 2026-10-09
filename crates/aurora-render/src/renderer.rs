@@ -74,8 +74,17 @@ struct FrameU {
     tex_slots: [u32; 4],
     sky_ll: [f32; 4],
     sky_obj_light: [f32; 4],
+    anim_clock: [u32; 4],
     cascade_vp: [[[f32; 4]; 4]; CASCADES],
     lights: [LightU; MAX_LIGHTS],
+}
+
+/// Must match `ShadowParams` in object.wgsl.
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct ShadowU {
+    vp: [[f32; 4]; 4],
+    anim_clock: [u32; 4],
 }
 
 #[repr(C)]
@@ -870,6 +879,9 @@ pub struct Renderer {
     taa: Option<Taa>,
     prev_view_proj: Option<Mat4>,
     frame_index: u64,
+    /// Texture animation clock (tex_anim.rs) and its value for this frame.
+    anim_clock: crate::tex_anim::AnimClock,
+    anim_now: [u32; 2],
     /// Inverse view-projection of the last rendered frame (picking).
     last_inv_vp: Mat4,
     msaa_supported: Vec<u32>,
@@ -1819,7 +1831,7 @@ impl Renderer {
             .map(|_| {
                 device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("shadow vp"),
-                    size: 64,
+                    size: std::mem::size_of::<ShadowU>() as u64,
                     usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 })
@@ -2033,6 +2045,8 @@ impl Renderer {
             taa: None,
             prev_view_proj: None,
             frame_index: 0,
+            anim_clock: crate::tex_anim::AnimClock::new(Instant::now()),
+            anim_now: [0, 0],
             last_inv_vp: Mat4::IDENTITY,
             msaa_supported,
             capture_request: false,
@@ -3297,6 +3311,12 @@ impl Renderer {
         (out, splits)
     }
 
+    /// Clock of the texture animations: the scene puts their time origins on
+    /// it, the shaders read the current time from the frame uniforms.
+    pub fn anim_clock(&self) -> crate::tex_anim::AnimClock {
+        self.anim_clock
+    }
+
     /// Fill the uniform block for a camera (main view or a reflection).
     fn frame_uniforms(&self, f: &FrameParams, view: Mat4, cascades: &[Mat4; CASCADES], splits: &[f32; CASCADES]) -> FrameU {
         let vp = f.proj * view;
@@ -3306,6 +3326,7 @@ impl Renderer {
         u.view_proj = vp.to_cols_array_2d();
         u.inv_view_proj = vp.inverse().to_cols_array_2d();
         u.camera_pos = camera_pos.extend(f.time).to_array();
+        u.anim_clock = [self.anim_now[0], self.anim_now[1], 0, 0];
         u.sun_dir = f.sun_dir.normalize_or(Vec3::Z).extend(f.sun_visible).to_array();
         u.sun_color = f.sun_color.extend(1.0).to_array();
         u.sky_zenith = f.sky_zenith.extend(1.0).to_array();
@@ -3439,6 +3460,8 @@ impl Renderer {
         self.textures.maintain(&self.device, &self.queue, false);
         prof.push(("resources", Instant::now()));
 
+        // one texture animation time for every pass of the frame
+        self.anim_now = self.anim_clock.now(Instant::now());
         let (cascades, splits) = self.cascade_matrices(f);
         let unjittered_vp = f.proj * f.view;
         let jittered;
@@ -3534,8 +3557,11 @@ impl Renderer {
             );
         }
         for (i, m) in cascades.iter().enumerate() {
-            self.queue
-                .write_buffer(&self.shadow_buffers[i], 0, bytemuck::bytes_of(&m.to_cols_array_2d()));
+            let u = ShadowU {
+                vp: m.to_cols_array_2d(),
+                anim_clock: [self.anim_now[0], self.anim_now[1], 0, 0],
+            };
+            self.queue.write_buffer(&self.shadow_buffers[i], 0, bytemuck::bytes_of(&u));
         }
         // glow passes only when some visible face glows (RenderGlow)
         let glow_on = f.glow && (!lists.glow.is_empty() || !lists.glow_alpha.is_empty() || lists.blend_glow.contains(&true));

@@ -6,6 +6,7 @@ mod occlusion;
 mod pick;
 pub mod probes;
 pub mod renderer;
+pub mod tex_anim;
 pub mod textures;
 pub mod types;
 

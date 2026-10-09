@@ -68,6 +68,9 @@ pub mod flags {
     pub const LEGACY_MAT: u32 = 256;
     /// Legacy "emissive mask" alpha mode: texture alpha = emissive amount.
     pub const EMISSIVE_MASK: u32 = 512;
+    /// Texture animation (llSetTextureAnim): `anim`, `anim_xf` and `flags[3]`
+    /// (see `tex_anim::RecordAnim`), evaluated by the vertex shaders.
+    pub const TEX_ANIM: u32 = 1024;
 }
 
 /// Per-face GPU record (must match `DrawRecord` in common.wgsl).
@@ -93,6 +96,13 @@ pub struct DrawRecord {
     /// Legacy material: specular light color (rgb, linear). PBR: emissive
     /// map scale s, t, offset s, t.
     pub spec_color: [f32; 4],
+    /// Texture animation (flag `TEX_ANIM`): time origin on the renderer's
+    /// `AnimClock` (ms; the frozen counter's f32 bits at rate 0), start,
+    /// length, rate (f32 bits). `flags[3]` holds mode | size_x << 8 | size_y << 16.
+    pub anim: [u32; 4],
+    /// Texture animation: the texture entry's transform parts the animation
+    /// leaves alone (`tex_anim::RecordAnim::constants`).
+    pub anim_xf: [f32; 4],
 }
 
 impl Default for DrawRecord {
@@ -114,6 +124,8 @@ impl Default for DrawRecord {
             spec_uv: [1.0, 1.0, 0.0, 0.0],
             legacy: [0.0; 4],
             spec_color: [1.0, 1.0, 1.0, 0.0],
+            anim: [0; 4],
+            anim_xf: [0.0; 4],
         }
     }
 }
@@ -697,5 +709,46 @@ impl GpuElement {
             GpuElement::Transparent => "transparent",
             GpuElement::Post => "post",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `DrawRecord` must match the WGSL struct (std430: 4 × 4 floats for the
+    /// matrix, then one 16-byte vector per field).
+    #[test]
+    fn draw_record_layout_matches_wgsl() {
+        assert_eq!(std::mem::size_of::<DrawRecord>(), 64 + 12 * 16);
+        assert_eq!(std::mem::offset_of!(DrawRecord, anim), 64 + 10 * 16);
+        assert_eq!(std::mem::offset_of!(DrawRecord, anim_xf), 64 + 11 * 16);
+        let wgsl = include_str!("shaders/common.wgsl");
+        let start = wgsl.find("struct DrawRecord {").expect("DrawRecord in common.wgsl");
+        let body = &wgsl[start..start + wgsl[start..].find("};").expect("end of DrawRecord")];
+        let fields: Vec<&str> = body
+            .lines()
+            .skip(1)
+            .filter_map(|l| l.trim().split(':').next())
+            .filter(|n| !n.is_empty())
+            .collect();
+        assert_eq!(
+            fields,
+            [
+                "model",
+                "base_color",
+                "emissive",
+                "uv_st",
+                "params",
+                "tex",
+                "flags",
+                "mat_uv",
+                "spec_uv",
+                "legacy",
+                "spec_color",
+                "anim",
+                "anim_xf"
+            ]
+        );
     }
 }

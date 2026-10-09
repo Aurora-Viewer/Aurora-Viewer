@@ -280,7 +280,9 @@ pub struct App {
     /// whether the current away status was set by that timer.
     last_input: Instant,
     auto_away: bool,
-    capture: Option<(std::path::PathBuf, u64, bool)>,
+    /// AURORA_CAPTURE: file, frames to capture (several: one file each,
+    /// `<name>-<frame>.png`), quit after the last one.
+    capture: Option<(Vec<(u64, std::path::PathBuf)>, bool)>,
 }
 
 impl App {
@@ -508,13 +510,9 @@ impl App {
             last_input: Instant::now(),
             auto_away: false,
             capture: std::env::var_os("AURORA_CAPTURE").map(|p| {
-                let frames = std::env::var("AURORA_CAPTURE_FRAMES")
-                    .ok()
-                    .and_then(|v| v.parse().ok())
-                    .unwrap_or(240);
+                let frames = std::env::var("AURORA_CAPTURE_FRAMES").unwrap_or_default();
                 (
-                    std::path::PathBuf::from(p),
-                    frames,
+                    capture_files(std::path::Path::new(&p), &frames),
                     std::env::var_os("AURORA_CAPTURE_EXIT").is_some(),
                 )
             }),
@@ -3269,16 +3267,20 @@ impl App {
             let wait = self.closing.is_some() || self.quit_at.is_some();
             self.backdrop.set_capture(w, h, px, wait);
         }
-        if let Some((path, at, exit)) = self.capture.clone() {
-            if self.frame_count == at {
+        if let Some((files, exit)) = &mut self.capture {
+            if files.iter().any(|(at, _)| *at == self.frame_count) {
                 gfx.renderer.capture_request = true;
             }
-            if let Some((w, h, px)) = gfx.renderer.captured.take() {
-                match image::save_buffer(&path, &px, w, h, image::ExtendedColorType::Rgba8) {
-                    Ok(()) => log::info!("frame captured to {}", path.display()),
+            // the picture of the earliest pending capture
+            if let Some((w, h, px)) = gfx.renderer.captured.take()
+                && !files.is_empty()
+            {
+                let (at, file) = files.remove(0);
+                match image::save_buffer(&file, &px, w, h, image::ExtendedColorType::Rgba8) {
+                    Ok(()) => log::info!("frame {at} captured to {}", file.display()),
                     Err(e) => log::warn!("capture failed: {e}"),
                 }
-                if exit {
+                if *exit && files.is_empty() {
                     self.quit_at = Some(Instant::now());
                 }
             }
@@ -4964,5 +4966,44 @@ impl ApplicationHandler for App {
         if let Some(g) = &self.gfx {
             g.window.request_redraw();
         }
+    }
+}
+
+/// AURORA_CAPTURE files: one per frame of AURORA_CAPTURE_FRAMES (comma
+/// separated, default 240), in frame order; with several frames each file is
+/// named `<name>-<frame>.<ext>`.
+fn capture_files(path: &std::path::Path, frames: &str) -> Vec<(u64, std::path::PathBuf)> {
+    let mut at: Vec<u64> = frames.split(',').filter_map(|v| v.trim().parse().ok()).collect();
+    if at.is_empty() {
+        at.push(240);
+    }
+    at.sort_unstable();
+    at.dedup();
+    if at.len() == 1 {
+        return vec![(at[0], path.to_path_buf())];
+    }
+    let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let ext = path
+        .extension()
+        .map(|e| e.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "png".into());
+    at.into_iter()
+        .map(|f| (f, path.with_file_name(format!("{stem}-{f}.{ext}"))))
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::capture_files;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn capture_files_by_frame() {
+        assert_eq!(capture_files(Path::new("c/a.png"), ""), vec![(240, PathBuf::from("c/a.png"))]);
+        assert_eq!(capture_files(Path::new("c/a.png"), "620"), vec![(620, PathBuf::from("c/a.png"))]);
+        assert_eq!(
+            capture_files(Path::new("c/a.png"), "2560, 2500"),
+            vec![(2500, PathBuf::from("c/a-2500.png")), (2560, PathBuf::from("c/a-2560.png"))]
+        );
     }
 }

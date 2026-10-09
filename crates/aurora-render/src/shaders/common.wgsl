@@ -54,6 +54,7 @@ struct Frame {
     tex_slots: vec4<u32>,       // cloud, sun, moon, water normal map
     sky_ll: vec4<f32>,          // x classic sky (1 = no reflection probe ambiance), y distance multiplier
     sky_obj_light: vec4<f32>,   // rgb sun / moon color lighting objects (mSunDiffuse, max component <= 1)
+    anim_clock: vec4<u32>,      // texture animation clock: x ms (wrapping), y sub-ms fraction (f32 bits)
     cascade_vp: array<mat4x4<f32>, 3>,
     lights: array<Light, 64>,
 };
@@ -65,11 +66,13 @@ struct DrawRecord {
     uv_st: vec4<f32>,         // scale s, scale t, offset s, offset t
     params: vec4<f32>,        // x rotation, y metallic, z roughness, w alpha cutoff
     tex: vec4<u32>,           // base, normal, metallic-roughness, emissive
-    flags: vec4<u32>,         // x flags
+    flags: vec4<u32>,         // x flags, y palette base, z skin binds, w texture animation mode | size x << 8 | size y << 16
     mat_uv: vec4<f32>,        // normal map: scale s, t, offset s, t
     spec_uv: vec4<f32>,       // legacy specular / PBR metallic-roughness map: scale s, t, offset s, t
     legacy: vec4<f32>,        // x normal rot, y spec / MR rot, z glossiness (PBR: emissive rot), w env intensity
     spec_color: vec4<f32>,    // legacy specular light color (PBR: emissive map scale s, t, offset s, t)
+    anim: vec4<u32>,          // texture animation: time origin (ms), start, length, rate (f32 bits)
+    anim_xf: vec4<f32>,       // texture animation: texture entry parts it leaves alone (tex_anim.rs)
 };
 
 const FLAG_FULLBRIGHT: u32 = 1u;
@@ -82,6 +85,7 @@ const FLAG_UNLIT_SHADOWLESS: u32 = 64u;
 const FLAG_SKINNED: u32 = 128u;
 const FLAG_LEGACY_MAT: u32 = 256u;
 const FLAG_EMISSIVE_MASK: u32 = 512u;
+const FLAG_TEX_ANIM: u32 = 1024u;
 
 @group(0) @binding(0) var<uniform> frame: Frame;
 // atlas of 2x2 tiles, cascade i in tile (i % 2, i / 2)
