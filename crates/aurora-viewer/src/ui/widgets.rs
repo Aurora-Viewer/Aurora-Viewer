@@ -14,6 +14,8 @@ pub struct Floater<'a> {
     pub help: Option<&'a str>,
     /// Extra title bar button: (Phosphor icon, tooltip, set when clicked).
     pub action: Option<(&'a str, &'a str, &'a mut bool)>,
+    /// No open / close sounds (sound_flags="0", e.g. floater_tools).
+    pub silent: bool,
 }
 
 impl<'a> Floater<'a> {
@@ -27,6 +29,7 @@ impl<'a> Floater<'a> {
             resizable: true,
             help: None,
             action: None,
+            silent: false,
         }
     }
 
@@ -46,6 +49,11 @@ impl<'a> Floater<'a> {
         self
     }
 
+    pub fn silent(mut self) -> Self {
+        self.silent = true;
+        self
+    }
+
     /// Show the floater; `open` is cleared by the close button.
     pub fn show<R>(mut self, ctx: &egui::Context, p: &Palette, open: &mut bool, body: impl FnOnce(&mut egui::Ui) -> R) -> Option<R> {
         if !*open {
@@ -54,6 +62,9 @@ impl<'a> Floater<'a> {
         let min_id = egui::Id::new((self.id, "minimized"));
         // persisted with the UI layout (ui_layout.ron)
         let minimized = ctx.data_mut(|d| d.get_persisted::<bool>(min_id)).unwrap_or(false);
+        if !self.silent {
+            super::sound_cues::floater_shown(ctx, egui::Id::new(self.id));
+        }
         let frame = egui::Frame::new()
             .fill(Color32::from_rgba_unmultiplied(
                 p.panel.r(),
@@ -118,6 +129,10 @@ impl<'a> Floater<'a> {
         }
         if toggle_min {
             ctx.data_mut(|d| d.insert_persisted(min_id, !minimized));
+            // LLFloater::setMinimized(false) plays UISndWindowClose
+            if minimized && !self.silent {
+                super::sound_cues::request(ctx, crate::ui_sound::UiSound::WindowClose);
+            }
         }
         out
     }

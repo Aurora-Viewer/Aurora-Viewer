@@ -65,10 +65,23 @@ pub enum CtxAction {
     DisplayName,
 }
 
+/// egui temp data: (rows drawn, hovered row) of the open menu, and the row
+/// hovered last frame.
+const ROWS: &str = "world_context_menu_rows";
+const HOVERED: &str = "world_context_menu_hovered";
+
 /// Flat menu row; disabled rows are greyed (SL shows unavailable actions).
 fn item(ui: &mut egui::Ui, p: &Palette, label: &str, enabled: bool) -> bool {
     let w = ui.available_width().max(170.0);
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, 22.0), egui::Sense::click());
+    // row number and hovered row, for the slice sounds
+    ui.ctx().data_mut(|d| {
+        let (n, hovered) = d.get_temp_mut_or_default::<(usize, Option<usize>)>(egui::Id::new(ROWS));
+        if enabled && resp.hovered() {
+            *hovered = Some(*n);
+        }
+        *n += 1;
+    });
     if enabled && resp.hovered() {
         ui.painter().rect_filled(rect, 2.0, p.violet.gamma_multiply(0.35));
     }
@@ -92,6 +105,7 @@ fn separator(ui: &mut egui::Ui, p: &Palette) {
 /// Draw the open menu; returns the chosen action (the menu closes).
 pub fn show(ctx: &egui::Context, p: &Palette, menu: &mut Option<ContextMenu>, seated: bool, flying: bool) -> Option<CtxAction> {
     let m = menu.as_ref()?.clone();
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new(ROWS), (0usize, None::<usize>)));
     let mut action = None;
     let mut close = false;
     let area = egui::Area::new(egui::Id::new("world_context_menu"))
@@ -235,6 +249,18 @@ pub fn show(ctx: &egui::Context, p: &Palette, menu: &mut Option<ContextMenu>, se
                     ui.add_space(2.0);
                 });
         });
+    // UISndPieMenuSliceHighlight0..7 when an enabled row gets hovered (the
+    // eight slices of Firestorm's default pie menu, PieMenu::draw)
+    let hovered = ctx
+        .data(|d| d.get_temp::<(usize, Option<usize>)>(egui::Id::new(ROWS)))
+        .and_then(|r| r.1);
+    let before = ctx.data_mut(|d| d.get_temp::<Option<usize>>(egui::Id::new(HOVERED)).flatten());
+    if hovered != before {
+        if let Some(i) = hovered.filter(|i| *i < 8) {
+            super::sound_cues::request(ctx, crate::ui_sound::UiSound::PieMenuSlice(i as u8));
+        }
+        ctx.data_mut(|d| d.insert_temp(egui::Id::new(HOVERED), hovered));
+    }
     // click elsewhere or Escape closes it
     let outside = ctx.input(|i| i.pointer.any_pressed()) && !area.response.contains_pointer();
     if action.is_some() || outside || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
@@ -242,6 +268,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, menu: &mut Option<ContextMenu>, se
     }
     if close {
         *menu = None;
+        ctx.data_mut(|d| d.remove::<Option<usize>>(egui::Id::new(HOVERED)));
     }
     action
 }

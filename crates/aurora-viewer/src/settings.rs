@@ -351,6 +351,8 @@ pub struct AudioSettings {
     /// Interface sounds (IM, money, teleport, windows, menus, typing...;
     /// Firestorm's PlayModeUISnd* defaults).
     pub ui_sounds: bool,
+    /// Each interface sound: played or not, asset (UISnd* / PlayModeUISnd*).
+    pub ui: crate::ui_sound::UiSoundSettings,
 }
 
 impl Default for AudioSettings {
@@ -369,6 +371,7 @@ impl Default for AudioSettings {
             collision_sounds: true,
             gesture_sounds: true,
             ui_sounds: true,
+            ui: Default::default(),
         }
     }
 }

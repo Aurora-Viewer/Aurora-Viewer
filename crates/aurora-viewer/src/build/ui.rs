@@ -215,6 +215,8 @@ pub fn show(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world: &mut 
         Vec2::new(340.0, 600.0),
     )
     .help("Outils de construction : Ctrl+B ouvre / ferme, Ctrl+3 / 4 / 5 : modifier / créer / terrain")
+    // floater_tools is silent in Firestorm (sound_flags="0")
+    .silent()
     .show(ctx, p, &mut open, |ui| {
         ui.horizontal(|ui| {
             if tool_button(

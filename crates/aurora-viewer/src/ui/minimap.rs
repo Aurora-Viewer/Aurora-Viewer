@@ -381,6 +381,7 @@ impl MiniMap {
         if !*open {
             return actions;
         }
+        super::sound_cues::floater_shown(ctx, egui::Id::new("minimap"));
         // floater_map.xml: no header nor border, DkGray background at
         // FSMiniMapOpacity (0.66); dragged anywhere, resized by its corner
         let _ = p;

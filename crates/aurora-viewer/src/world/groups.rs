@@ -158,6 +158,21 @@ impl World {
         self.social.ims.last_mut().unwrap()
     }
 
+    /// A message in a group chat or conference: its sound follows the
+    /// group / conference IM mode (LLIMMgr::addMessage).
+    fn session_sound(&mut self, session: Uuid, new_session: bool) {
+        let group = self.groups.sessions.get(&session).is_some_and(|s| s.group) || self.groups.is_member(&session);
+        self.im_messages.push(crate::ui_sound::ImMessage {
+            kind: if group {
+                crate::ui_sound::ImKind::Group
+            } else {
+                crate::ui_sound::ImKind::Conference
+            },
+            session,
+            new_session,
+        });
+    }
+
     fn session_push(&mut self, session: Uuid, l: ChatLine, unread: bool) {
         let s = self.session_lines(session);
         s.lines.push(l);
@@ -291,7 +306,11 @@ impl World {
             self.info_mut(group, &g.name);
             self.session_lines(group);
             self.groups.im(group, dialog::SESSION_GROUP_START, group, String::new());
-            self.ui_sounds.push(crate::scene::sounds::ui::NEW_IM_SESSION);
+            self.im_messages.push(crate::ui_sound::ImMessage {
+                kind: crate::ui_sound::ImKind::Group,
+                session: group,
+                new_session: true,
+            });
         }
     }
 
@@ -472,9 +491,7 @@ impl World {
         if !self.mutes.text_muted(&inv.from, &inv.from_name) {
             let new = !self.groups.sessions.contains_key(&session);
             self.info_mut(session, &inv.session_name);
-            if new {
-                self.ui_sounds.push(crate::scene::sounds::ui::NEW_IM_SESSION);
-            }
+            self.session_sound(session, new);
             if !inv.from_name.is_empty() {
                 self.social.names.entry(inv.from).or_insert_with(|| inv.from_name.clone());
             }
@@ -530,6 +547,7 @@ impl World {
             im.from_agent_id,
             SystemTime::now(),
         );
+        self.session_sound(session, false);
         self.session_push(session, l, true);
         true
     }

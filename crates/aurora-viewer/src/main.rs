@@ -19,6 +19,7 @@ mod settings;
 mod slurl;
 mod theme;
 mod ui;
+mod ui_sound;
 mod voice;
 mod world;
 

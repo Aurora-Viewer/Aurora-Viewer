@@ -90,7 +90,7 @@ impl Social {
     }
 
     /// Online / offline notices whose name is known (or after 10 s without).
-    pub fn take_online_notices(&mut self) -> Vec<String> {
+    pub fn take_online_notices(&mut self) -> Vec<(String, bool)> {
         let mut out = Vec::new();
         let mut i = 0;
         while i < self.online_notices.len() {
@@ -99,11 +99,14 @@ impl Social {
             if known || since.elapsed().as_secs() >= 10 {
                 self.online_notices.remove(i);
                 let n = self.name_of(&id);
-                out.push(if online {
-                    format!("{n} est en ligne.")
-                } else {
-                    format!("{n} est hors ligne.")
-                });
+                out.push((
+                    if online {
+                        format!("{n} est en ligne.")
+                    } else {
+                        format!("{n} est hors ligne.")
+                    },
+                    online,
+                ));
             } else {
                 i += 1;
             }

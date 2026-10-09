@@ -35,6 +35,8 @@ pub struct OptionsUi {
     clear: Option<(crate::keybinds::Action, usize)>,
     /// "Tout réinitialiser" confirmation open.
     confirm_reset: bool,
+    /// Sound assets being typed (Firestorm name -> text).
+    ui_sound_text: std::collections::HashMap<&'static str, String>,
 }
 
 #[derive(Default)]
@@ -1310,7 +1312,7 @@ fn audio_page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut Options
             ui,
             p,
             "Sons de l'interface",
-            "Nouvel IM, L$, téléportation, fenêtres, menus, frappe au clavier, alertes",
+            "Tous les sons de l'interface : clics, fenêtres, conversations, L$, téléportation, menus, alertes… (réglage par son plus bas)",
             |ui| toggle(ui, p, &mut a.ui_sounds),
         );
         c |= row(
@@ -1321,6 +1323,7 @@ fn audio_page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut Options
             |ui| toggle(ui, p, &mut a.media_autoplay),
         );
     });
+    c |= ui_sounds_group(ui, p, a, st);
     group(ui, p, "Voix", |ui| {
         let v = row(ui, p, "Activer la voix", "Connexion au chat vocal (WebRTC) des régions", |ui| {
             toggle(ui, p, &mut a.voice_enabled)
@@ -1547,4 +1550,138 @@ fn keys_page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsU
         c = true;
     }
     c
+}
+
+/// Préférences › Son et voix › Sons de l'interface: each sound on / off, its
+/// asset and a preview, the IM modes and the L$ threshold
+/// (FSPanelPreferenceUISounds, fspanelpreferenceuisounds.cpp).
+fn ui_sounds_group(ui: &mut egui::Ui, p: &Palette, a: &mut crate::settings::AudioSettings, st: &mut OptionsUi) -> bool {
+    use crate::ui_sound::{CATALOG, ImSoundMode, UiSound};
+    let mut c = false;
+    group(ui, p, "Sons de l'interface", |ui| {
+        ui.label(
+            RichText::new(
+                "Mêmes sons et mêmes choix par défaut que Firestorm. Ce sont des sons de Second Life : ils se chargent une fois connecté.",
+            )
+            .size(12.0)
+            .color(p.muted),
+        );
+        ui.add_space(4.0);
+        let u = &mut a.ui;
+        let modes = [
+            (
+                "Messages privés",
+                "PlayModeUISndNewIncomingIMSession",
+                &mut u.im_mode,
+                UiSound::NewIncomingImSession,
+            ),
+            (
+                "Messages de groupe",
+                "PlayModeUISndNewIncomingGroupIMSession",
+                &mut u.group_mode,
+                UiSound::NewIncomingGroupImSession,
+            ),
+            (
+                "Conférences",
+                "PlayModeUISndNewIncomingConfIMSession",
+                &mut u.conf_mode,
+                UiSound::NewIncomingConfImSession,
+            ),
+        ];
+        let mut previews = Vec::new();
+        for (label, hint, mode, sound) in modes {
+            c |= row(ui, p, label, hint, |ui| {
+                let mut ch = false;
+                egui::ComboBox::from_id_salt(hint)
+                    .width(SLIDER_W)
+                    .selected_text(mode.label())
+                    .show_ui(ui, |ui| {
+                        for m in ImSoundMode::ALL {
+                            ch |= ui.selectable_value(mode, m, m.label()).changed();
+                        }
+                    });
+                if super::widgets::flat_button(ui, p, "Écouter").clicked() {
+                    previews.push(sound);
+                }
+                ch
+            });
+        }
+        c |= row(
+            ui,
+            p,
+            "Seuil des sons L$",
+            "Écart de solde au-delà duquel les sons L$ reçus / dépensés sont joués (UISndMoneyChangeThreshold)",
+            |ui| {
+                ui.add(
+                    egui::DragValue::new(&mut u.money_threshold)
+                        .range(0.0..=100_000.0)
+                        .speed(1.0)
+                        .suffix(" L$"),
+                )
+                .changed()
+            },
+        );
+        egui::CollapsingHeader::new(RichText::new("Choix par son").size(13.0).color(p.ink))
+            .id_salt("ui_sounds_each")
+            .show(ui, |ui| {
+                for e in CATALOG
+                    .iter()
+                    .filter(|e| !e.sound.caller_gated() || e.sound == UiSound::TrackerBeacon)
+                {
+                    let hint = format!("UISnd{} : asset du son (vide = aucun son) · PlayModeUISnd{}", e.name, e.name);
+                    c |= row(ui, p, e.label, &hint, |ui| {
+                        let mut on = u.plays(e.sound);
+                        let mut ch = super::widgets::switch(ui, p, &mut on).changed();
+                        if ch {
+                            u.set_plays(e.sound, on);
+                        }
+                        let text = st.ui_sound_text.entry(e.name).or_insert_with(|| uuid_text(u.uuid(e.sound)));
+                        let parsed = parse_uuid_text(text);
+                        let edit = ui.add(
+                            egui::TextEdit::singleline(text)
+                                .desired_width(290.0)
+                                .font(egui::TextStyle::Monospace)
+                                .text_color(if parsed.is_some() { p.ink } else { p.danger })
+                                .hint_text("aucun son"),
+                        );
+                        if edit.changed()
+                            && let Some(id) = parse_uuid_text(text)
+                        {
+                            u.set_uuid(e.sound, id);
+                            ch = true;
+                        }
+                        if super::widgets::flat_button(ui, p, "Écouter").clicked() {
+                            previews.push(e.sound);
+                        }
+                        if u.uuid(e.sound) != e.uuid && super::widgets::flat_button(ui, p, "Défaut").clicked() {
+                            u.set_uuid(e.sound, e.uuid);
+                            *text = uuid_text(e.uuid);
+                            ch = true;
+                        }
+                        ch
+                    });
+                }
+            });
+        // force_sound: heard even when switched off
+        for s in previews {
+            if let Some(id) = u.resolve(s, true) {
+                super::sound_cues::preview(ui.ctx(), id);
+            }
+        }
+    });
+    c
+}
+
+fn uuid_text(id: uuid::Uuid) -> String {
+    if id.is_nil() { String::new() } else { id.to_string() }
+}
+
+/// A typed sound asset: a UUID, or empty for no sound.
+fn parse_uuid_text(text: &str) -> Option<uuid::Uuid> {
+    let t = text.trim();
+    if t.is_empty() {
+        Some(uuid::Uuid::nil())
+    } else {
+        uuid::Uuid::parse_str(t).ok()
+    }
 }

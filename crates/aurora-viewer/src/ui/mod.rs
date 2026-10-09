@@ -27,6 +27,7 @@ pub mod options;
 pub mod people;
 pub mod perf;
 pub mod skin;
+pub mod sound_cues;
 pub mod voice_dot;
 pub mod widgets;
 pub mod worldmap;
