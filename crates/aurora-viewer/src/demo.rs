@@ -2258,13 +2258,15 @@ fn demo_sky(sun: Vec3, gamma: f64) -> Llsd {
             "gamma" => gamma,
         },
     );
+    // a valid day needs a water track too (Firestorm recordEnvironment)
+    frames.insert("water".into(), llsd_map! { "type" => "water" });
     let key = |name: &str| Llsd::Array(vec![llsd_map! { "key_keyframe" => 0.0, "key_name" => name }]);
     llsd_map! {
         "day_length" => 14400,
         "day_offset" => 0,
         "day_cycle" => llsd_map! {
             "frames" => Llsd::Map(frames),
-            "tracks" => Llsd::Array(vec![Llsd::Array(Vec::new()), key("sky")]),
+            "tracks" => Llsd::Array(vec![key("water"), key("sky")]),
         },
     }
 }
