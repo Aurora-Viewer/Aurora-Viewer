@@ -607,6 +607,51 @@ pub struct RenderStats {
     pub mirror: bool,
     /// Draws hidden by the GPU occlusion (a frame or two late; None = off).
     pub occluded: Option<u32>,
-    /// GPU time per pass (ms), in `renderer::GPU_PASSES` order.
-    pub gpu_passes: Option<[f32; 7]>,
+    /// GPU time by kind of element (ms), in [`GpuElement::ALL`] order;
+    /// None without in-pass timestamps.
+    pub gpu_elements: Option<[f32; GpuElement::ALL.len()]>,
+}
+
+/// What the GPU time of a frame goes to (performance panel). Each one
+/// gathers the passes and draw groups that render it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GpuElement {
+    /// Shadow cascades, depth prepass and occlusion culling.
+    ShadowsDepth,
+    /// SSAO, planar reflections, reflection probes, SSR.
+    Effects,
+    TerrainSky,
+    /// Opaque and alpha-masked faces (prims, meshes, avatars), impostors.
+    Objects,
+    Water,
+    /// Blended faces and particles.
+    Transparent,
+    /// Glow, TAA, tone mapping, SMAA.
+    Post,
+}
+
+impl GpuElement {
+    /// In frame order.
+    pub const ALL: [GpuElement; 7] = [
+        GpuElement::ShadowsDepth,
+        GpuElement::Effects,
+        GpuElement::TerrainSky,
+        GpuElement::Objects,
+        GpuElement::Water,
+        GpuElement::Transparent,
+        GpuElement::Post,
+    ];
+
+    /// Short key for the profile log.
+    pub fn key(self) -> &'static str {
+        match self {
+            GpuElement::ShadowsDepth => "shadows_depth",
+            GpuElement::Effects => "effects",
+            GpuElement::TerrainSky => "terrain_sky",
+            GpuElement::Objects => "objects",
+            GpuElement::Water => "water",
+            GpuElement::Transparent => "transparent",
+            GpuElement::Post => "post",
+        }
+    }
 }
