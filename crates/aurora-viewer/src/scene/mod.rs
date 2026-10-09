@@ -796,10 +796,15 @@ impl Scene {
             if g.owner_avatar.is_some() && o.volume.is_mesh() {
                 continue; // rigged / worn mesh: the avatar capsule handles it
             }
+            let scale = o.scale.max(Vec3::splat(0.01));
+            // the geometry centre lies in the prim box: farther than the box
+            // diagonal plus the tolerance, the point cannot be inside
+            if !g.rigged && g.radius > 0.0 && (point - g.center).length() > scale.length() + 0.2 {
+                continue;
+            }
             let Some((pos, rot, _)) = Self::object_transform(world, idx, now, 0) else {
                 continue;
             };
-            let scale = o.scale.max(Vec3::splat(0.01));
             let local = rot.inverse() * (point - pos);
             let tol = Vec3::splat(0.06);
             if (local.abs() - (scale * 0.5 + tol)).max_element() <= 0.0 {
