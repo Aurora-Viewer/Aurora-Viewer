@@ -11,7 +11,7 @@ struct PostParams {
     sharpen: f32, // AMD CAS sharpness (0 = off)
     glow: f32,    // 1: add the blurred glow (glowcombineF.glsl)
     debug_glow: f32, // AURORA_DEBUG_GLOW: show the glow amount of each pixel
-    _p2: f32,
+    legacy_gamma: f32, // sky gamma on skies without probe ambiance, else 1
 };
 @group(0) @binding(2) var<uniform> post: PostParams;
 // Blurred glow (512x512, display space), see glow.wgsl.
@@ -80,12 +80,37 @@ fn linear_to_srgb(c: vec3<f32>) -> vec3<f32> {
     return select(hi, lo, c <= vec3<f32>(0.0031308));
 }
 
+fn srgb_to_linear_post(c: vec3<f32>) -> vec3<f32> {
+    let lo = c / 12.92;
+    let hi = pow((c + vec3<f32>(0.055)) / 1.055, vec3<f32>(2.4));
+    return select(hi, lo, c <= vec3<f32>(0.04045));
+}
+
+// legacyGamma (postDeferredTonemap.glsl, postDeferredGammaCorrect.glsl,
+// CASF.glsl with LEGACY_GAMMA): 1 - (1 - c)^gamma on the sRGB-encoded
+// color, after linear_to_srgb, with the sky's raw gamma. Our pipeline
+// stays linear until the output, hence the round trip.
+fn legacy_gamma(m: vec3<f32>) -> vec3<f32> {
+    if (abs(post.legacy_gamma - 1.0) < 1e-4) {
+        return m;
+    }
+    let c = vec3<f32>(1.0) - clamp(linear_to_srgb(m), vec3<f32>(0.0), vec3<f32>(1.0));
+    return srgb_to_linear_post(vec3<f32>(1.0) - pow(c, vec3<f32>(post.legacy_gamma)));
+}
+
 fn luma(c: vec3<f32>) -> f32 {
     return dot(sqrt(c), vec3<f32>(0.299, 0.587, 0.114));
 }
 
-fn tap(uv: vec2<f32>) -> vec3<f32> {
+// Tone mapped color, before legacyGamma (CAS input).
+fn tap_linear(uv: vec2<f32>) -> vec3<f32> {
     return tonemap(textureSampleLevel(hdr, hdr_sampler, uv, 0.0).rgb);
+}
+
+// Final color as LLPipeline::tonemap writes it (legacyGamma included): what
+// the glow, FXAA and SMAA work on.
+fn tap(uv: vec2<f32>) -> vec3<f32> {
+    return legacy_gamma(tap_linear(uv));
 }
 
 // FXAA (Lottes, "FXAA 2" PC variant) on tonemapped color.
@@ -118,7 +143,7 @@ fn fxaa(uv: vec2<f32>) -> vec3<f32> {
 // AMD FidelityFX CAS, no-scaling path with the diagonals (CASF.glsl, as
 // Firestorm's RenderCASSharpness), in display (sRGB) space.
 fn cas_tap(uv: vec2<f32>, o: vec2<f32>, texel: vec2<f32>) -> vec3<f32> {
-    return linear_to_srgb(tap(uv + o * texel));
+    return linear_to_srgb(tap_linear(uv + o * texel));
 }
 
 fn cas(uv: vec2<f32>) -> vec3<f32> {
@@ -149,12 +174,6 @@ fn cas(uv: vec2<f32>) -> vec3<f32> {
     return clamp((b * w + d * w + f * w + h * w + e) * rcp_w, vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
-fn srgb_to_linear_post(c: vec3<f32>) -> vec3<f32> {
-    let lo = c / 12.92;
-    let hi = pow((c + vec3<f32>(0.055)) / 1.055, vec3<f32>(2.4));
-    return select(hi, lo, c <= vec3<f32>(0.04045));
-}
-
 // glowExtractF.glsl (RenderGlowMinLuminance 9999: only the glow amount
 // accumulated in the scene alpha counts) on the gamma-corrected image,
 // blended with BT_ADD_WITH_ALPHA: rgb x alpha. LL takes one tap per glow
@@ -168,7 +187,7 @@ fn fs_glow_extract(in: Out) -> @location(0) vec4<f32> {
         let o = vec2<f32>(f32(i & 1) - 0.5, f32(i >> 1u) - 0.5) * 0.5 * foot;
         let c = textureSampleLevel(hdr, hdr_sampler, in.uv + o, 0.0);
         let a = clamp(c.a, 0.0, 1.0);
-        acc += vec4<f32>(linear_to_srgb(tonemap(c.rgb)) * a, a * a);
+        acc += vec4<f32>(linear_to_srgb(legacy_gamma(tonemap(c.rgb))) * a, a * a);
     }
     return acc * 0.25;
 }
@@ -179,7 +198,8 @@ fn fs_post(in: Out) -> @location(0) vec4<f32> {
     if (post.fxaa > 0.5) {
         m = fxaa(in.uv);
     } else if (post.sharpen > 0.001) {
-        m = srgb_to_linear_post(cas(in.uv));
+        // CASF.glsl: sharpening, then linear_to_srgb and legacyGamma
+        m = legacy_gamma(srgb_to_linear_post(cas(in.uv)));
     } else {
         m = tap(in.uv);
     }

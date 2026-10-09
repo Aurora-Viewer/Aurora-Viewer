@@ -7,6 +7,7 @@
 use super::eep::{SkyFrame, WaterFrame};
 use aurora_render::{SkyParams, WaterParams};
 use glam::Vec3;
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Environment {
@@ -36,6 +37,17 @@ fn srgb_to_linear(c: Vec3) -> Vec3 {
         if x <= 0.04045 { x / 12.92 } else { ((x + 0.055) / 1.055).powf(2.4) }
     };
     Vec3::new(f(c.x), f(c.y), f(c.z))
+}
+
+/// LLPipeline::setupHWLights (pipeline.cpp) mSunDiffuse / mMoonDiffuse:
+/// the sky's light color scaled down so its largest component is at most 1,
+/// then clamped to [0, 1]. LLPipeline::bindDeferredShader hands these to the
+/// deferred lighting (sunlight_color / moonlight_color), so objects never see
+/// a light brighter than white, whatever the sky's sunlight_color.
+pub fn normalized_light(c: Vec3) -> Vec3 {
+    let max = c.max_element();
+    let c = if max > 1.0 { c / max } else { c };
+    c.clamp(Vec3::ZERO, Vec3::ONE)
 }
 
 fn exp3(v: Vec3) -> Vec3 {
@@ -145,7 +157,16 @@ impl Environment {
         };
         let sky_params = SkyParams {
             light_norm,
+            // skyV.glsl: "magic 0.7 to match legacy color" for the moon
             sunlight: if sun_up { sky.sunlight } else { sky.sunlight * 0.7 },
+            // objects: the moon shares the sun's color (getMoonlightColor),
+            // with no 0.7 (atmosphericsFuncs.glsl); black with neither up
+            object_sunlight: if sun_up || moon_up {
+                normalized_light(sky.sunlight)
+            } else {
+                Vec3::ZERO
+            },
+            gamma: sky.gamma,
             ambient: sky.ambient,
             blue_horizon: sky.blue_horizon,
             blue_density: sky.blue_density,
@@ -214,6 +235,56 @@ impl Environment {
     }
 }
 
+/// Throttles the log line describing the interpolated sky: at most every
+/// 30 s, or at once when the sky source changes (region, day cycle, altitude
+/// track, time of day preset), identified by `key`.
+#[derive(Debug, Default)]
+pub struct SkyLog {
+    last: Option<(Instant, u64)>,
+}
+
+impl SkyLog {
+    pub const INTERVAL: Duration = Duration::from_secs(30);
+
+    pub fn due(&mut self, now: Instant, key: u64) -> bool {
+        let due = match self.last {
+            Some((at, k)) => k != key || now.duration_since(at) >= Self::INTERVAL,
+            None => true,
+        };
+        if due {
+            self.last = Some((now, key));
+        }
+        due
+    }
+}
+
+impl Environment {
+    /// One line with what drives the lighting of this frame (for comparing
+    /// with Firestorm on the grid).
+    pub fn describe(&self, sky: &SkyFrame) -> String {
+        let elevation = sky.sun_direction().z.clamp(-1.0, 1.0).asin().to_degrees();
+        format!(
+            concat!(
+                "sky frame: classic {} probe ambiance {} gamma {} sun elevation {:.1} deg, ",
+                "sunlight {:.3?} (objects {:.3?}), ambient {:.3?}, cloud shadow {:.3}, ",
+                "haze {:.3} / {:.3}, density x {:.6}, distance x {:.3}"
+            ),
+            sky.can_auto_adjust,
+            sky.probe_ambiance,
+            sky.gamma,
+            elevation,
+            sky.sunlight.to_array(),
+            self.sky.object_sunlight.to_array(),
+            sky.ambient.to_array(),
+            sky.cloud_shadow,
+            sky.haze_horizon,
+            sky.haze_density,
+            sky.density_multiplier,
+            sky.distance_multiplier,
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -229,5 +300,29 @@ mod tests {
         assert!(night.sun_color.max_element() < noon.sun_color.max_element());
         // the moon (opposite the sun) lights the night
         assert!(night.sun_dir.z > 0.0);
+        // objects are lit by the moon with the sun's normalized color
+        assert_eq!(night.sky.object_sunlight, noon.sky.object_sunlight);
+    }
+
+    #[test]
+    fn sky_log_throttle() {
+        let mut log = SkyLog::default();
+        let t0 = Instant::now();
+        assert!(log.due(t0, 1));
+        assert!(!log.due(t0 + Duration::from_secs(10), 1));
+        // a new sky source logs at once
+        assert!(log.due(t0 + Duration::from_secs(11), 2));
+        assert!(!log.due(t0 + Duration::from_secs(40), 2));
+        assert!(log.due(t0 + Duration::from_secs(41), 2));
+    }
+
+    #[test]
+    fn object_light_is_normalized() {
+        // EEP skies often carry sunlight_color above 1 (legacy x 3 scale)
+        let n = normalized_light(Vec3::new(2.25, 2.4, 3.0));
+        assert!((n - Vec3::new(0.75, 0.8, 1.0)).length() < 1e-6, "{n:?}");
+        let dim = Vec3::new(0.7342, 0.7815, 0.8999);
+        assert_eq!(normalized_light(dim), dim);
+        assert_eq!(normalized_light(Vec3::new(-0.5, 0.2, 0.3)), Vec3::new(0.0, 0.2, 0.3));
     }
 }

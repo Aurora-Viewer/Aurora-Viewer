@@ -100,6 +100,8 @@ pub struct App {
     world: World,
     scene: Scene,
     probes: crate::scene::probes::ProbeManager,
+    /// Throttle of the "sky frame" log line.
+    sky_log: crate::world::env::SkyLog,
     camera: Camera,
     input: MoveInput,
     /// Keys and bindable mouse buttons held down.
@@ -379,6 +381,7 @@ impl App {
             },
             scene,
             probes: Default::default(),
+            sky_log: Default::default(),
             camera: Camera::default(),
             input: MoveInput::default(),
             down: HashSet::new(),
@@ -2878,6 +2881,21 @@ impl App {
             self.world.cloud_scroll.y.rem_euclid(1024.0),
         );
         let mut env = Environment::from_eep(&sky_frame, &water_frame, self.world.cloud_scroll, self.settings.draw_distance);
+        if in_world {
+            // what the sky source is: region, day cycle, altitude track, preset
+            let key = {
+                use std::hash::{Hash, Hasher};
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                self.world.main_region.hash(&mut h);
+                self.panels.time_of_day.hash(&mut h);
+                // local preset / parcel / region day / default, with its id
+                format!("{:?}", self.world.eep.shown_source()).hash(&mut h);
+                h.finish()
+            };
+            if self.sky_log.due(Instant::now(), key) {
+                log::info!("{}", env.describe(&sky_frame));
+            }
+        }
         let slots = self.scene.env_textures(&mut gfx.renderer, env.textures);
         env.sky.cloud_texture = slots[0];
         env.sky.sun_texture = slots[1];
