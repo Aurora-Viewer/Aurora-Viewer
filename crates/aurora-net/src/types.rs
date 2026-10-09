@@ -652,6 +652,9 @@ pub enum NetEvent {
     AvatarAnimations {
         avatar: Uuid,
         anims: Vec<(Uuid, i32)>,
+        /// AnimationSourceList, aligned with the first entries of `anims`.
+        /// Empty for ObjectAnimation (animesh), which has no source blocks.
+        sources: Vec<Uuid>,
     },
     InventoryContents(Vec<crate::inventory::FolderContents>),
     InventoryFetchFailed {

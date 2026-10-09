@@ -971,7 +971,14 @@ impl Scene {
         } else {
             0.0
         };
-        Some((p + Vec3::Z * dz, r, hud))
+        // updateRootPositionAndRotation: a seated root follows the full seat
+        // rotation; hover is in avatar-local space (vehicles can tilt).
+        let offset = if o.is_avatar() && o.parent_id != 0 {
+            r * (Vec3::Z * dz)
+        } else {
+            Vec3::Z * dz
+        };
+        Some((p + offset, r, hud))
     }
 
     fn object_transform_raw(world: &World, idx: usize, now: Instant, depth: u32) -> Option<(Vec3, Quat, bool)> {
@@ -2569,8 +2576,8 @@ impl Scene {
     ///   (LLVOAvatar::addAttachmentOverridesForObject: the translation of each
     ///   alternate inverse bind matrix is the joint's local position; with
     ///   lock_scale_if_joint_position the joint keeps its default scale),
-    /// - LLVOAvatar::updateCharacter: the pelvis sits (0.5 · body height −
-    ///   pelvis to foot) below the object center, raised by the hover.
+    /// - LLVOAvatar::updateRootPositionAndRotation: standing/ground-sit roots
+    ///   use body size and shape hover; seated roots use only local hover.
     ///
     /// Joint overrides never cross a control-avatar boundary. Rebuild when
     /// topology, skin metadata or appearance changes, including late assets.
@@ -2578,6 +2585,7 @@ impl Scene {
         use std::hash::{Hash, Hasher};
         let members = animesh::members(&world.objects, owner_idx);
         let mut signature = std::collections::hash_map::DefaultHasher::new();
+        let seated = world.objects.get(owner_idx).is_some_and(|o| o.is_avatar() && o.parent_id != 0);
         for &i in &members {
             if let Some(o) = world.objects.get(i) {
                 (o.full_id, o.pcode, o.parent_id, o.extra.extended_mesh_flags).hash(&mut signature);
@@ -2643,11 +2651,14 @@ impl Scene {
             }
         }
         let root_dz = if avatar {
-            let (pelvis_to_foot, height) = shape::body_size(&rig, &local_pos, &scale);
-            let seated = world.objects.get(owner_idx).is_some_and(|o| o.parent_id != 0);
-            let hover_offset = if seated { 0.0 } else { world.appearance_hover(&owner) };
             let pelvis_shift = local_pos[rig.pelvis].z - rig.local_pos[rig.pelvis].z;
-            hover - (0.5 * height - pelvis_to_foot) + hover_offset - pelvis_shift
+            let hover_offset = world.appearance_hover(&owner);
+            if seated {
+                hover_offset - pelvis_shift
+            } else {
+                let (pelvis_to_foot, height) = shape::body_size(&rig, &local_pos, &scale);
+                hover - (0.5 * height - pelvis_to_foot) + hover_offset - pelvis_shift
+            }
         } else {
             0.0
         };
@@ -3090,6 +3101,79 @@ fn classify(f: &FaceDraw, tex_alpha: AlphaKind) -> Pass {
 mod tests {
     use super::*;
     use aurora_net::NetEvent;
+
+    #[test]
+    fn seat_root_skips_body_height_and_cache_changes_immediately_on_standing() {
+        let mut world = World::new(Arc::new(AvatarLibrary::load()));
+        world.agent_id = crate::demo::DEMO_AGENT;
+        for frame in [250, 300] {
+            for event in crate::demo::sit_events(frame) {
+                world.apply(event);
+            }
+        }
+        let owner = world.agent_id;
+        let idx = world.objects.index_of_uuid(&owner).expect("demo avatar");
+        let mut scene = Scene::new(std::path::PathBuf::new(), world.avatar_lib.clone());
+        let now = Instant::now();
+        let (_, seated_dz) = scene.skeleton_of(&world, owner, idx, now);
+        assert!(seated_dz.abs() < 1e-5, "seat root must match simulator offset: {seated_dz}");
+        let generation = world.appearance_generation(&owner);
+        for event in crate::demo::sit_events(700) {
+            world.apply(event);
+        }
+        assert_eq!(world.appearance_generation(&owner), generation);
+        let (_, standing_dz) = scene.skeleton_of(&world, owner, idx, now);
+        let rig = &world.avatar_lib.rig;
+        let shape = world.avatar_lib.shape_params.shape(&[], rig);
+        let (foot, height) = shape::body_size(rig, &shape.local_pos, &shape.scale);
+        let expected = shape.hover - (0.5 * height - foot) - (shape.local_pos[rig.pelvis].z - rig.local_pos[rig.pelvis].z);
+        assert!((standing_dz - expected).abs() < 1e-5);
+        assert!((standing_dz - seated_dz).abs() > 0.01, "cache must not keep the seated offset");
+        // A ground sit retains the standing/body-height calculation.
+        world.agent.ground_sit = true;
+        let (_, ground_dz) = scene.skeleton_of(&world, owner, idx, now);
+        assert_eq!(ground_dz, standing_dz);
+        for event in crate::demo::sit_events(300) {
+            world.apply(event);
+        }
+        let (_, seated_again_dz) = scene.skeleton_of(&world, owner, idx, now);
+        assert_eq!(seated_again_dz, seated_dz);
+    }
+
+    #[test]
+    fn seated_hover_follows_the_avatar_rotation_on_a_tilted_linked_seat() {
+        let mut world = World::new(Arc::new(AvatarLibrary::load()));
+        world.agent_id = crate::demo::DEMO_AGENT;
+        for frame in [250, 300] {
+            for event in crate::demo::sit_events(frame) {
+                if let NetEvent::ObjectUpdates { handle, .. } = &event {
+                    world.main_region = Some(*handle);
+                }
+                world.apply(event);
+            }
+        }
+        let owner = world.agent_id;
+        world.apply(NetEvent::Appearance(aurora_net::AvatarAppearance {
+            avatar_id: owner,
+            texture_entry: None,
+            visual_params: Vec::new(),
+            cof_version: 1,
+            hover_height: 0.25,
+        }));
+        let idx = world.objects.index_of_uuid(&owner).expect("demo avatar");
+        let seat_idx = world.objects.parent_of(world.objects.get(idx).expect("avatar")).expect("seat");
+        let seat = world.objects.get_mut(seat_idx).expect("seat");
+        seat.rotation = Quat::from_rotation_y(0.7) * Quat::from_rotation_z(1.2);
+        let mut scene = Scene::new(std::path::PathBuf::new(), world.avatar_lib.clone());
+        let now = Instant::now();
+        let (_, dz) = scene.skeleton_of(&world, owner, idx, now);
+        assert!((dz - 0.25).abs() < 1e-5);
+        world.avatar_root_dz.insert(owner, dz);
+        let (raw, rotation, _) = Scene::object_transform_raw(&world, idx, now, 0).expect("raw transform");
+        let (posed, _, _) = Scene::object_transform(&world, idx, now, 0).expect("posed transform");
+        assert!(posed.abs_diff_eq(raw + rotation * (Vec3::Z * 0.25), 1e-5));
+        assert!(!posed.abs_diff_eq(raw + Vec3::Z * 0.25, 1e-3));
+    }
 
     /// A demo prim as root (local id 9000) and its child (9001); the child
     /// is added first so the slab order is the reverse of the link order.
