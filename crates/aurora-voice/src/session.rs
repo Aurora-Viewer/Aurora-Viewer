@@ -11,30 +11,31 @@
 //! Copyright (C) Linden Research, Inc. and The Phoenix Firestorm Project.
 //! Licensed under the GNU Lesser General Public License, version 2.1.
 
+use std::net::{IpAddr, Ipv4Addr, UdpSocket};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 
 use aurora_audio::VoiceSink;
 use aurora_llsd::Llsd;
 use parking_lot::Mutex;
-use tokio::sync::mpsc;
-use webrtc::api::APIBuilder;
-use webrtc::api::interceptor_registry::register_default_interceptors;
-use webrtc::api::media_engine::{MIME_TYPE_OPUS, MediaEngine};
-use webrtc::api::setting_engine::SettingEngine;
-use webrtc::data_channel::RTCDataChannel;
-use webrtc::data_channel::data_channel_init::RTCDataChannelInit;
-use webrtc::ice::udp_network::{EphemeralUDP, UDPNetwork};
-use webrtc::ice_transport::ice_candidate::RTCIceCandidate;
-use webrtc::ice_transport::ice_server::RTCIceServer;
-use webrtc::interceptor::registry::Registry;
-use webrtc::peer_connection::RTCPeerConnection;
-use webrtc::peer_connection::configuration::RTCConfiguration;
-use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
-use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
-use webrtc::rtp_transceiver::rtp_codec::{RTCRtpCodecCapability, RTCRtpCodecParameters, RTPCodecType};
-use webrtc::track::track_local::track_local_static_sample::TrackLocalStaticSample;
-use webrtc::track::track_remote::TrackRemote;
+use rtc::ice::mdns::MulticastDnsMode;
+use rtc::media::Sample;
+use rtc::media_stream::MediaStreamTrack;
+use rtc::peer_connection::configuration::media_engine::MIME_TYPE_OPUS;
+use rtc::rtp_transceiver::rtp_sender::{
+    RTCRtpCodec, RTCRtpCodecParameters, RTCRtpCodingParameters, RTCRtpEncodingParameters, RtpCodecKind,
+};
+use tokio::sync::{Notify, mpsc, watch};
+use webrtc::data_channel::{DataChannel, DataChannelEvent, RTCDataChannelInit};
+use webrtc::media_stream::track_local::TrackLocal;
+use webrtc::media_stream::track_local::static_sample::TrackLocalStaticSample;
+use webrtc::media_stream::track_remote::{TrackRemote, TrackRemoteEvent};
+use webrtc::peer_connection::{
+    MediaEngine, PeerConnection, PeerConnectionBuilder, PeerConnectionEventHandler, RTCConfigurationBuilder, RTCIceCandidate,
+    RTCIceGatheringState, RTCIceServer, RTCPeerConnectionIceEvent, RTCPeerConnectionState, RTCSessionDescription, Registry,
+    SettingEngineBuilder, register_default_interceptors,
+};
 
 use crate::protocol::{self, AUDIO_TRACK_ID, DATA_CHANNEL_LABEL, LocalCandidate, STREAM_ID};
 use crate::state::{LocalPrefs, ParticipantTable, SpatialState};
@@ -94,7 +95,7 @@ pub(crate) enum Cmd {
 /// Events from webrtc callbacks.
 enum Event {
     State(RTCPeerConnectionState),
-    DataOpen(Arc<RTCDataChannel>),
+    DataOpen(Arc<dyn DataChannel>),
     DataText(String),
 }
 
@@ -103,13 +104,17 @@ enum Outcome {
     Retry,
 }
 
-/// A value in 0.5..1.5, like `(F32)rand() / RAND_MAX + 0.5f`.
-fn jitter_secs() -> f32 {
-    let nanos = SystemTime::now()
+/// Sub-second clock noise, the only randomness the retry jitter needs.
+fn clock_nanos() -> u32 {
+    SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .map(|d| d.subsec_nanos())
-        .unwrap_or(0);
-    0.5 + (nanos % 1_000_000) as f32 / 1_000_000.0
+        .unwrap_or(0)
+}
+
+/// A value in 0.5..1.5, like `(F32)rand() / RAND_MAX + 0.5f`.
+fn jitter_secs() -> f32 {
+    0.5 + (clock_nanos() % 1_000_000) as f32 / 1_000_000.0
 }
 
 pub(crate) async fn run(
@@ -159,8 +164,8 @@ pub(crate) async fn run(
     shared.set_status(VoiceStatus::Disconnected);
 }
 
-fn opus_capability() -> RTCRtpCodecCapability {
-    RTCRtpCodecCapability {
+fn opus_capability() -> RTCRtpCodec {
+    RTCRtpCodec {
         mime_type: MIME_TYPE_OPUS.to_owned(),
         clock_rate: 48_000,
         channels: 2,
@@ -169,33 +174,54 @@ fn opus_capability() -> RTCRtpCodecCapability {
     }
 }
 
-async fn new_peer_connection(params: &VoiceConnectParams) -> Result<Arc<RTCPeerConnection>, String> {
-    let mut media = MediaEngine::default();
-    media
-        .register_codec(
-            RTCRtpCodecParameters {
-                capability: opus_capability(),
-                payload_type: 111,
-                ..Default::default()
-            },
-            RTPCodecType::Audio,
-        )
-        .map_err(|e| e.to_string())?;
-    let registry = register_default_interceptors(Registry::new(), &mut media).map_err(|e| e.to_string())?;
-    let mut settings = SettingEngine::default();
-    match EphemeralUDP::new(UDP_PORT_MIN, UDP_PORT_MAX) {
-        Ok(udp) => settings.set_udp_network(UDPNetwork::Ephemeral(udp)),
-        Err(e) => log::warn!("voice: cannot restrict UDP ports: {e}"),
-    }
+/// SSRC of a local track. webrtc 0.21 no longer draws it when the track is
+/// bound: the application names it in the track's encoding.
+fn random_ssrc() -> u32 {
+    (uuid::Uuid::new_v4().as_u128() & u128::from(u32::MAX)) as u32
+}
+
+/// A free port of llwebrtc's range, probed from a random start like the
+/// ephemeral port-range allocator of webrtc 0.17 (`EphemeralUDP`), which
+/// 0.21 no longer has.
+fn free_udp_port() -> Option<u16> {
+    let span = UDP_PORT_MAX - UDP_PORT_MIN + 1;
+    let start = (clock_nanos() % u32::from(span)) as u16;
+    (0..span)
+        .map(|i| UDP_PORT_MIN + (start + i) % span)
+        .find(|&port| UdpSocket::bind((Ipv4Addr::UNSPECIFIED, port)).is_ok())
+}
+
+/// Whether an interface has an IPv6 address a peer can reach. Without one a
+/// `[::]` bind is kept unexpanded by webrtc and would advertise `::`.
+fn has_routable_ipv6() -> bool {
+    rtc::shared::ifaces::ifaces().is_ok_and(|list| {
+        list.iter().filter_map(|i| i.addr).any(|a| match a.ip() {
+            IpAddr::V6(ip) => !ip.is_loopback() && !ip.is_unspecified() && !ip.is_unicast_link_local(),
+            IpAddr::V4(_) => false,
+        })
+    })
+}
+
+/// Local UDP sockets for ICE: every interface, IPv4 and IPv6 (webrtc 0.17's
+/// default network types), on one port of the llwebrtc range. webrtc 0.21
+/// expands each wildcard into one socket per routable interface address.
+fn udp_bind_addrs() -> Vec<String> {
+    let port = free_udp_port().unwrap_or_else(|| {
+        log::warn!("voice: cannot restrict UDP ports: no free port in {UDP_PORT_MIN}..={UDP_PORT_MAX}");
+        0
+    });
     #[cfg(test)]
-    if tests::LOOPBACK_ONLY.load(std::sync::atomic::Ordering::Relaxed) {
-        tests::restrict_to_loopback(&mut settings);
+    if tests::LOOPBACK_ONLY.load(Ordering::Relaxed) {
+        return vec![format!("127.0.0.1:{port}")];
     }
-    let api = APIBuilder::new()
-        .with_media_engine(media)
-        .with_interceptor_registry(registry)
-        .with_setting_engine(settings)
-        .build();
+    let mut addrs = vec![format!("0.0.0.0:{port}")];
+    if has_routable_ipv6() {
+        addrs.push(format!("[::]:{port}"));
+    }
+    addrs
+}
+
+async fn new_peer_connection(params: &VoiceConnectParams, handler: Arc<Handler>) -> Result<Arc<dyn PeerConnection>, String> {
     let urls = match &params.stun_servers {
         Some(list) => list.clone(),
         None => protocol::stun_servers_for_grid(&params.grid),
@@ -208,11 +234,96 @@ async fn new_peer_connection(params: &VoiceConnectParams) -> Result<Arc<RTCPeerC
             ..Default::default()
         }]
     };
-    let config = RTCConfiguration {
-        ice_servers,
-        ..Default::default()
+    let udp_addrs = udp_bind_addrs();
+    match build_peer_connection(&ice_servers, &udp_addrs, MulticastDnsMode::QueryOnly, handler.clone()).await {
+        Ok(pc) => Ok(pc),
+        // mDNS (resolving `.local` candidates) is opportunistic, as it was in
+        // webrtc 0.17; 0.21 fails the whole build when its multicast socket
+        // cannot be opened.
+        Err(e) => {
+            log::warn!("voice: WebRTC setup with mDNS failed ({e}), retrying without mDNS");
+            build_peer_connection(&ice_servers, &udp_addrs, MulticastDnsMode::Disabled, handler).await
+        }
+    }
+}
+
+async fn build_peer_connection(
+    ice_servers: &[RTCIceServer],
+    udp_addrs: &[String],
+    mdns: MulticastDnsMode,
+    handler: Arc<Handler>,
+) -> Result<Arc<dyn PeerConnection>, String> {
+    let mut media = MediaEngine::default();
+    media
+        .register_codec(
+            RTCRtpCodecParameters {
+                rtp_codec: opus_capability(),
+                payload_type: 111,
+            },
+            RtpCodecKind::Audio,
+        )
+        .map_err(|e| e.to_string())?;
+    let registry = register_default_interceptors(Registry::new(), &mut media).map_err(|e| e.to_string())?;
+    let settings = SettingEngineBuilder::new().with_multicast_dns_mode(mdns);
+    #[cfg(test)]
+    let settings = if tests::LOOPBACK_ONLY.load(Ordering::Relaxed) {
+        tests::restrict_to_loopback(settings)
+    } else {
+        settings
     };
-    api.new_peer_connection(config).await.map(Arc::new).map_err(|e| e.to_string())
+    let pc = PeerConnectionBuilder::new()
+        .with_configuration(RTCConfigurationBuilder::new().with_ice_servers(ice_servers.to_vec()).build())
+        .with_media_engine(media)
+        .with_interceptor_registry(registry)
+        .with_setting_engine(settings.build())
+        .with_handler(handler)
+        .with_udp_addrs(udp_addrs.to_vec())
+        .build()
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(Arc::new(pc))
+}
+
+/// Peer connection callbacks. webrtc 0.21 awaits them inline on its driver,
+/// so each one only records or forwards.
+struct Handler {
+    events: mpsc::UnboundedSender<Event>,
+    candidates: Mutex<Vec<LocalCandidate>>,
+    gathered: Notify,
+    /// The DTLS/SRTP path has come up: from then on the local track sends
+    /// (webrtc 0.17 bound it there and kept it bound until the close).
+    connected: Arc<AtomicBool>,
+    sink: Arc<Mutex<VoiceSink>>,
+    stop: watch::Receiver<bool>,
+}
+
+#[async_trait::async_trait]
+impl PeerConnectionEventHandler for Handler {
+    async fn on_ice_candidate(&self, event: RTCPeerConnectionIceEvent) {
+        self.candidates.lock().push(to_local_candidate(&event.candidate));
+    }
+
+    async fn on_ice_gathering_state_change(&self, state: RTCIceGatheringState) {
+        if state == RTCIceGatheringState::Complete {
+            self.gathered.notify_one();
+        }
+    }
+
+    async fn on_connection_state_change(&self, state: RTCPeerConnectionState) {
+        if state == RTCPeerConnectionState::Connected {
+            self.connected.store(true, Ordering::Relaxed);
+        }
+        let _ = self.events.send(Event::State(state));
+    }
+
+    async fn on_data_channel(&self, dc: Arc<dyn DataChannel>) {
+        // The server may also open its own channel (`OnDataChannel`).
+        watch_data_channel(dc, self.events.clone(), self.stop.clone());
+    }
+
+    async fn on_track(&self, track: Arc<dyn TrackRemote>) {
+        tokio::spawn(receive_audio(track, self.sink.clone(), self.stop.clone()));
+    }
 }
 
 fn to_local_candidate(c: &RTCIceCandidate) -> LocalCandidate {
@@ -226,7 +337,7 @@ fn to_local_candidate(c: &RTCIceCandidate) -> LocalCandidate {
         typ: c.typ.to_string(),
         related_address: c.related_address.clone(),
         related_port: c.related_port,
-        tcp_type: c.tcp_type.clone(),
+        tcp_type: c.tcp_type.to_ice().to_string(),
         // Audio is the first m-line (bundled), as with llwebrtc.
         sdp_mid: "0".to_string(),
         mline_index: 0,
@@ -276,7 +387,7 @@ const MAX_OPUS_FRAME: usize = 5760;
 const PLC_FRAME: usize = 960;
 
 /// Decodes the incoming Opus track into the Voice channel.
-async fn receive_audio(track: Arc<TrackRemote>, sink: Arc<Mutex<VoiceSink>>) {
+async fn receive_audio(track: Arc<dyn TrackRemote>, sink: Arc<Mutex<VoiceSink>>, mut stop: watch::Receiver<bool>) {
     let mut decoder = match rusty_opus::OpusDecoder::new(48_000, 2) {
         Ok(d) => d,
         Err(e) => {
@@ -286,7 +397,18 @@ async fn receive_audio(track: Arc<TrackRemote>, sink: Arc<Mutex<VoiceSink>>) {
     };
     let mut pcm = vec![0.0f32; MAX_OPUS_FRAME * 2];
     let mut last_seq: Option<u16> = None;
-    while let Ok((packet, _)) = track.read_rtp().await {
+    loop {
+        // webrtc 0.21 keeps a closed connection's track queues open, so the
+        // session's stop signal also ends the loop.
+        let event = tokio::select! {
+            event = track.poll() => event,
+            _ = stop.changed() => break,
+        };
+        let packet = match event {
+            Some(TrackRemoteEvent::OnRtpPacket(packet)) => packet,
+            None | Some(TrackRemoteEvent::OnEnded) => break,
+            Some(_) => continue,
+        };
         let seq = packet.header.sequence_number;
         if let Some(prev) = last_seq {
             let gap = seq.wrapping_sub(prev).wrapping_sub(1);
@@ -317,8 +439,18 @@ async fn receive_audio(track: Arc<TrackRemote>, sink: Arc<Mutex<VoiceSink>>) {
 
 /// Sends the microphone on the local track: Opus while transmitting, the
 /// muted-track silence frame otherwise (and while no microphone delivers),
-/// so the media path stays established in both directions.
-async fn send_audio(track: Arc<TrackLocalStaticSample>, shared: Arc<Shared>, mut stop: tokio::sync::watch::Receiver<bool>) {
+/// so the media path stays established in both directions. Frames produced
+/// before the connection first comes up are dropped, as webrtc 0.17 did for
+/// a track not yet bound to its DTLS transport (0.21 would log each one as
+/// a send error).
+async fn send_audio(
+    track: Arc<TrackLocalStaticSample>,
+    ssrc: u32,
+    payload_type: u8,
+    connected: Arc<AtomicBool>,
+    shared: Arc<Shared>,
+    mut stop: watch::Receiver<bool>,
+) {
     let mut tx = Transmitter::new();
     let mut payloads: Vec<Payload> = Vec::with_capacity(4);
     let mut tick = tokio::time::interval(TX_POLL);
@@ -331,16 +463,19 @@ async fn send_audio(track: Arc<TrackLocalStaticSample>, shared: Arc<Shared>, mut
                 tx.poll(Instant::now(), mic.as_ref(), transmit, shared.tx.gain(), &mut payloads);
                 shared.tx.set_level(tx.level(transmit));
                 for payload in payloads.drain(..) {
+                    if !connected.load(Ordering::Relaxed) {
+                        continue;
+                    }
                     let data = match payload {
                         Payload::Silence => bytes::Bytes::from_static(&OPUS_SILENCE),
                         Payload::Opus(v) => bytes::Bytes::from(v),
                     };
-                    let sample = webrtc::media::Sample {
+                    let sample = Sample {
                         data,
                         duration: FRAME_DURATION,
-                        ..Default::default()
+                        ..Sample::new(Instant::now())
                     };
-                    if track.write_sample(&sample).await.is_err() {
+                    if track.write_sample(ssrc, payload_type, &sample, &[]).await.is_err() {
                         break 'run;
                     }
                 }
@@ -351,23 +486,33 @@ async fn send_audio(track: Arc<TrackLocalStaticSample>, shared: Arc<Shared>, mut
     shared.tx.set_level(0.0);
 }
 
-fn hook_data_channel(dc: &Arc<RTCDataChannel>, ev_tx: &mpsc::UnboundedSender<Event>) {
-    let tx = ev_tx.clone();
-    let dc_open = dc.clone();
-    dc.on_open(Box::new(move || {
-        let _ = tx.send(Event::DataOpen(dc_open));
-        Box::pin(async {})
-    }));
-    let tx = ev_tx.clone();
-    dc.on_message(Box::new(move |msg| {
-        if msg.is_string {
-            let text = String::from_utf8_lossy(&msg.data).to_string();
-            let _ = tx.send(Event::DataText(text));
-        } else {
-            log::warn!("voice: binary data received from data channel");
+/// Forwards a data channel's open and text messages to the session loop
+/// (webrtc 0.21 delivers them by polling the channel), until the channel or
+/// the session ends.
+fn watch_data_channel(dc: Arc<dyn DataChannel>, ev_tx: mpsc::UnboundedSender<Event>, mut stop: watch::Receiver<bool>) {
+    tokio::spawn(async move {
+        loop {
+            let event = tokio::select! {
+                event = dc.poll() => event,
+                _ = stop.changed() => break,
+            };
+            match event {
+                None => break,
+                Some(DataChannelEvent::OnOpen) => {
+                    let _ = ev_tx.send(Event::DataOpen(dc.clone()));
+                }
+                Some(DataChannelEvent::OnMessage(msg)) => {
+                    if msg.is_string {
+                        let text = String::from_utf8_lossy(&msg.data).to_string();
+                        let _ = ev_tx.send(Event::DataText(text));
+                    } else {
+                        log::warn!("voice: binary data received from data channel");
+                    }
+                }
+                Some(_) => {}
+            }
         }
-        Box::pin(async {})
-    }));
+    });
 }
 
 async fn logout(http: &reqwest::Client, url: &str, viewer_session: &Llsd) {
@@ -384,15 +529,24 @@ async fn connect_once(
     shared: &Arc<Shared>,
     cmd_rx: &mut mpsc::UnboundedReceiver<Cmd>,
 ) -> Outcome {
-    let pc = match new_peer_connection(params).await {
+    let (stop_tx, stop_rx) = watch::channel(false);
+    let (ev_tx, ev_rx) = mpsc::unbounded_channel::<Event>();
+    let handler = Arc::new(Handler {
+        events: ev_tx,
+        candidates: Mutex::new(Vec::new()),
+        gathered: Notify::new(),
+        connected: Arc::new(AtomicBool::new(false)),
+        sink: sink.clone(),
+        stop: stop_rx.clone(),
+    });
+    let pc = match new_peer_connection(params, handler.clone()).await {
         Ok(pc) => pc,
         Err(e) => {
             shared.set_status(VoiceStatus::Error(format!("WebRTC setup failed: {e}")));
             return Outcome::Retry;
         }
     };
-    let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
-    let outcome = negotiate_and_run(http, params, sink, shared, cmd_rx, &pc, stop_rx).await;
+    let outcome = negotiate_and_run(http, params, shared, cmd_rx, &pc, &handler, ev_rx, stop_rx).await;
     let _ = stop_tx.send(true);
     if let Err(e) = pc.close().await {
         log::debug!("voice: closing peer connection: {e}");
@@ -404,11 +558,12 @@ async fn connect_once(
 async fn negotiate_and_run(
     http: &reqwest::Client,
     params: &VoiceConnectParams,
-    sink: &Arc<Mutex<VoiceSink>>,
     shared: &Arc<Shared>,
     cmd_rx: &mut mpsc::UnboundedReceiver<Cmd>,
-    pc: &Arc<RTCPeerConnection>,
-    stop_rx: tokio::sync::watch::Receiver<bool>,
+    pc: &Arc<dyn PeerConnection>,
+    handler: &Arc<Handler>,
+    mut ev_rx: mpsc::UnboundedReceiver<Event>,
+    stop_rx: watch::Receiver<bool>,
 ) -> Outcome {
     let fail = |msg: String| {
         log::warn!("voice: {msg}");
@@ -416,14 +571,12 @@ async fn negotiate_and_run(
         Outcome::Retry
     };
 
-    let (ev_tx, mut ev_rx) = mpsc::unbounded_channel::<Event>();
-
     // Data channel "SLData", ordered (llwebrtc `initializeConnection`).
     let dc = match pc
         .create_data_channel(
             DATA_CHANNEL_LABEL,
             Some(RTCDataChannelInit {
-                ordered: Some(true),
+                ordered: true,
                 ..Default::default()
             }),
         )
@@ -432,52 +585,35 @@ async fn negotiate_and_run(
         Ok(dc) => dc,
         Err(e) => return fail(format!("cannot create data channel: {e}")),
     };
-    hook_data_channel(&dc, &ev_tx);
-    {
-        // The server may also open its own channel (`OnDataChannel`).
-        let tx = ev_tx.clone();
-        pc.on_data_channel(Box::new(move |dc| {
-            hook_data_channel(&dc, &tx);
-            Box::pin(async {})
-        }));
-    }
+    watch_data_channel(dc, handler.events.clone(), stop_rx.clone());
 
     // Local audio track ("SLAudio" in stream "SLStream"): the microphone,
     // silent until transmission is enabled.
-    let local_track = Arc::new(TrackLocalStaticSample::new(
-        opus_capability(),
-        AUDIO_TRACK_ID.to_owned(),
-        STREAM_ID.to_owned(),
-    ));
-    if let Err(e) = pc.add_track(local_track.clone()).await {
-        return fail(format!("cannot add audio track: {e}"));
-    }
-
-    {
-        let sink = sink.clone();
-        pc.on_track(Box::new(move |track, _receiver, _transceiver| {
-            let sink = sink.clone();
-            tokio::spawn(receive_audio(track, sink));
-            Box::pin(async {})
-        }));
-    }
-    {
-        let tx = ev_tx.clone();
-        pc.on_peer_connection_state_change(Box::new(move |s| {
-            let _ = tx.send(Event::State(s));
-            Box::pin(async {})
-        }));
-    }
-    let candidates: Arc<Mutex<Vec<LocalCandidate>>> = Arc::new(Mutex::new(Vec::new()));
-    {
-        let candidates = candidates.clone();
-        pc.on_ice_candidate(Box::new(move |c| {
-            if let Some(c) = c {
-                candidates.lock().push(to_local_candidate(&c));
-            }
-            Box::pin(async {})
-        }));
-    }
+    let ssrc = random_ssrc();
+    let local_track = match TrackLocalStaticSample::new(
+        Instant::now(),
+        MediaStreamTrack::new(
+            STREAM_ID.to_owned(),
+            AUDIO_TRACK_ID.to_owned(),
+            AUDIO_TRACK_ID.to_owned(),
+            RtpCodecKind::Audio,
+            vec![RTCRtpEncodingParameters {
+                rtp_coding_parameters: RTCRtpCodingParameters {
+                    ssrc: Some(ssrc),
+                    ..Default::default()
+                },
+                codec: opus_capability(),
+                ..Default::default()
+            }],
+        ),
+    ) {
+        Ok(track) => Arc::new(track),
+        Err(e) => return fail(format!("cannot create audio track: {e}")),
+    };
+    let sender = match pc.add_track(local_track.clone() as Arc<dyn TrackLocal>).await {
+        Ok(sender) => sender,
+        Err(e) => return fail(format!("cannot add audio track: {e}")),
+    };
 
     // Offer; wait for ICE gathering so the offer carries our candidates.
     // webrtc-rs refuses a modified local description, so the offer is set
@@ -487,11 +623,10 @@ async fn negotiate_and_run(
         Ok(o) => o,
         Err(e) => return fail(format!("cannot create offer: {e}")),
     };
-    let mut gathered = pc.gathering_complete_promise().await;
     if let Err(e) = pc.set_local_description(offer).await {
         return fail(format!("cannot set local description: {e}"));
     }
-    if tokio::time::timeout(GATHER_TIMEOUT, gathered.recv()).await.is_err() {
+    if tokio::time::timeout(GATHER_TIMEOUT, handler.gathered.notified()).await.is_err() {
         log::debug!("voice: ICE gathering not complete after {GATHER_TIMEOUT:?}, sending offer anyway");
     }
     let offer_sdp = match pc.local_description().await {
@@ -527,12 +662,21 @@ async fn negotiate_and_run(
         if let Err(e) = pc.set_remote_description(remote).await {
             return fail(format!("cannot set remote description: {e}"));
         }
+        // webrtc 0.21 stamps each sample with the payload type it is given;
+        // use the one negotiated for the sender, as 0.17 did when binding.
+        let payload_type = match sender.get_parameters().await {
+            Ok(p) => match p.rtp_parameters.codecs.first() {
+                Some(codec) => codec.payload_type,
+                None => return fail("no audio codec negotiated".into()),
+            },
+            Err(e) => return fail(format!("cannot read audio sender parameters: {e}")),
+        };
 
         // Trickle our candidates through VoiceSignalingRequest, then mark
         // gathering complete (processIceUpdatesCoro). They are also in the
         // offer SDP, so failures here are not fatal.
         if let Some(url) = params.signaling_cap_url.as_deref().filter(|u| !u.is_empty()) {
-            let list = std::mem::take(&mut *candidates.lock());
+            let list = std::mem::take(&mut *handler.candidates.lock());
             if let Some(body) = protocol::build_ice_request(&list, false, &viewer_session)
                 && let Err(e) = post_llsd(http, url, &body, HTTP_TIMEOUT).await
             {
@@ -545,7 +689,14 @@ async fn negotiate_and_run(
             }
         }
 
-        tokio::spawn(send_audio(local_track.clone(), shared.clone(), stop_rx.clone()));
+        tokio::spawn(send_audio(
+            local_track.clone(),
+            ssrc,
+            payload_type,
+            handler.connected.clone(),
+            shared.clone(),
+            stop_rx.clone(),
+        ));
         session_loop(params, shared, cmd_rx, &mut ev_rx).await
     }
     .await;
@@ -575,7 +726,7 @@ async fn session_loop(
     let started = Instant::now();
     let mut connected = false;
     let mut disconnected_since: Option<Instant> = None;
-    let mut data: Option<Arc<RTCDataChannel>> = None;
+    let mut data: Option<Arc<dyn DataChannel>> = None;
     let mut joined = false;
     let mut tick = tokio::time::interval(UPDATE_PERIOD);
 
@@ -585,7 +736,7 @@ async fn session_loop(
                 None | Some(Cmd::Shutdown) => return Outcome::Shutdown,
                 Some(Cmd::Data(msg)) => {
                     if let (Some(dc), true) = (&data, joined) {
-                        let _ = dc.send_text(msg).await;
+                        let _ = dc.send_text(&msg).await;
                     }
                 }
             },
@@ -610,11 +761,11 @@ async fn session_loop(
                 }
                 Some(Event::DataOpen(dc)) => {
                     // VOICE_STATE_WAIT_FOR_DATA_CHANNEL: join, then position.
-                    let _ = dc.send_text(protocol::join_message(true)).await;
+                    let _ = dc.send_text(&protocol::join_message(true)).await;
                     if spatial {
                         let msg = shared.spatial.lock().take_message(true);
                         if let Some(msg) = msg {
-                            let _ = dc.send_text(msg).await;
+                            let _ = dc.send_text(&msg).await;
                         }
                     }
                     data = Some(dc);
@@ -628,7 +779,7 @@ async fn session_loop(
                                 shared.participants.lock().apply(&updates, &prefs, spatial, params.agent_id)
                             };
                             if let (Some(reply), Some(dc)) = (reply, &data) {
-                                let _ = dc.send_text(reply).await;
+                                let _ = dc.send_text(&reply).await;
                             }
                         }
                         Err(e) => log::warn!("voice: bad data channel message: {e}"),
@@ -643,7 +794,7 @@ async fn session_loop(
                     if spatial {
                         let msg = shared.spatial.lock().take_message(false);
                         if let (Some(msg), Some(dc)) = (msg, &data) {
-                            let _ = dc.send_text(msg).await;
+                            let _ = dc.send_text(&msg).await;
                         }
                     }
                 }
