@@ -181,7 +181,7 @@ mod tests {
 
     #[test]
     fn music_urls_get_a_scheme() {
-        assert_eq!(normalize_url("  dj.rapa.live:8000/ "), "http://dj.rapa.live:8000/");
+        assert_eq!(normalize_url("  flux.exemple.org:8000/ "), "http://flux.exemple.org:8000/");
         assert_eq!(normalize_url("https://x.fr/s"), "https://x.fr/s");
         assert_eq!(normalize_url(""), "");
     }
