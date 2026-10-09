@@ -149,25 +149,50 @@ function Get-PrRows {
             elseif ($review.body -match 'Verdict : ❌') { $verdict = 'bloquée'; $verdictColor = 'danger' }
             else { $verdict = 'relue'; $verdictColor = 'muted' }
         }
+        # one colour for the whole PR (the square before its number), worst first
+        $status = if ($p.isDraft) { 'muted_dim' }
+            elseif ($ci -like 'rouge*' -or $queue -eq 'file : bloquée' -or $verdict -eq 'bloquée') { 'danger' }
+            elseif ($queue -like 'file*' -or $queue -eq 'fusion demandée') { 'teal' }
+            elseif ($ciRunning) { 'amber' }
+            elseif ($verdict -eq 'à trancher') { 'warn' }
+            elseif ($ci -eq 'verte' -and $verdict -eq 'relue : OK') { 'success' }
+            else { 'violet_light' }
         [pscustomobject]@{
             Number = $p.number; Title = $p.title; Url = $p.url; Author = $p.author.login; Draft = $p.isDraft
             Ci = $ci; CiColor = $ciColor; CiRunning = $ciRunning; CiSince = $since
             Queue = $queue; QueueColor = $queueColor; QueueSince = $queueSince
-            Verdict = $verdict; VerdictColor = $verdictColor
+            Verdict = $verdict; VerdictColor = $verdictColor; Status = $status
         }
     }
 }
 
-# Footer: "PR : 3 ouvertes · 1 CI · 1 en file · 1 rouge", or why there is nothing.
+# The square drawn before a count or a PR number, in the status colour.
+$StatusMark = '■'
+
+# Footer, as coloured segments: "PR ■ 3 ouvertes ■ 1 CI ■ 1 en file ■ 1 prête
+# ■ 1 rouge", or why there is nothing.
 function Get-PrSummary {
-    if (-not $GitHub.Data) { if ($GitHub.Error) { return "GitHub : $($GitHub.Error)" } else { return 'GitHub…' } }
+    if (-not $GitHub.Data) {
+        if ($GitHub.Error) { return , @("GitHub : $($GitHub.Error)", 'warn') }
+        return , @('GitHub…', 'muted')
+    }
     $rows = @(Get-PrRows)
-    if (-not $rows) { return 'PR : aucune ouverte' }
-    $parts = @("PR : $($rows.Count) ouverte$(if ($rows.Count -gt 1) { 's' })")
-    $n = @($rows | Where-Object CiRunning).Count; if ($n) { $parts += "$n CI" }
-    $n = @($rows | Where-Object { $_.Queue -like 'file*' }).Count; if ($n) { $parts += "$n en file" }
-    $n = @($rows | Where-Object { $_.Ci -like 'rouge*' }).Count; if ($n) { $parts += "$n rouge$(if ($n -gt 1) { 's' })" }
-    $parts -join ' · '
+    if (-not $rows) { return , @('PR : aucune ouverte', 'muted') }
+    $counts = @(
+        @($rows.Count, 'ouverte', 'violet_light'),
+        @(@($rows | Where-Object CiRunning).Count, 'CI', 'amber'),
+        @(@($rows | Where-Object { $_.Queue -like 'file*' }).Count, 'en file', 'teal'),
+        @(@($rows | Where-Object { $_.Status -eq 'success' }).Count, 'prête', 'success'),
+        @(@($rows | Where-Object { $_.Ci -like 'rouge*' }).Count, 'rouge', 'danger')
+    )
+    $segments = @(, @('PR', 'muted'))
+    foreach ($c in $counts) {
+        if (-not $c[0]) { continue }
+        $label = if ($c[1] -ne 'CI' -and $c[1] -ne 'en file' -and $c[0] -gt 1) { "$($c[1])s" } else { $c[1] }
+        $segments += , @("  $StatusMark ", $c[2])
+        $segments += , @("$($c[0]) $label", 'ink')
+    }
+    $segments
 }
 
 # A Windows notification (toast); a beep when they are not available.
@@ -235,7 +260,9 @@ function Write-PanelLine([object[]]$Segments, [int]$Width, [switch]$Selected) {
         $text = [string]$s[0]
         if ($used + $text.Length -gt $Width) { $text = $text.Substring(0, [Math]::Max(0, $Width - $used)) }
         if ($text) {
-            if ($Selected) { Write-Color $text ink -Background violet -NoNewline } else { Write-Color $text $s[1] -NoNewline }
+            # selected: ink on violet, but the status square keeps its colour
+            if ($Selected) { Write-Color $text $(if ($text.Contains($StatusMark)) { $s[1] } else { 'ink' }) -Background violet -NoNewline }
+            else { Write-Color $text $s[1] -NoNewline }
         }
         $used += $text.Length
     }
@@ -280,7 +307,8 @@ function Show-PrPanel {
             $lines = 0
 
             $mainState = if ($GitHub.Data) { $GitHub.Data.data.repository.defaultBranchRef.target.statusCheckRollup.state }
-            $main = switch ($mainState) { 'SUCCESS' { 'verte', 'success' } { $_ -in 'FAILURE', 'ERROR' } { 'rouge', 'danger' } { $_ -in 'PENDING', 'EXPECTED' } { 'en cours', 'violet_light' } default { '?', 'muted' } }
+            # switch skips a null value entirely, default included: test it first
+            $main = if (-not $mainState) { '…', 'muted' } else { switch ($mainState) { 'SUCCESS' { 'verte', 'success' } { $_ -in 'FAILURE', 'ERROR' } { 'rouge', 'danger' } { $_ -in 'PENDING', 'EXPECTED' } { 'en cours', 'violet_light' } default { '?', 'muted' } } }
             $fresh = if ($GitHub.Updated) { Format-Ago $GitHub.Updated } else { 'chargement…' }
             Write-PanelLine @(@(' Aurora · PR', 'violet_light'), @('   main : ', 'muted'), @($main[0], $main[1]), @("   à jour $fresh", 'muted_dim'), @("   $(Get-Date -Format 'HH:mm:ss')", 'muted_dim')) $w; $lines++
             if ($GitHub.Error) { Write-PanelLine @(@(" GitHub : $($GitHub.Error)", 'warn')) $w; $lines++ }
@@ -297,19 +325,19 @@ function Show-PrPanel {
                 if ($r.QueueSince) { $queue = "$queue $(Format-Duration ((Get-Date) - $r.QueueSince.ToLocalTime()))" }
                 $num = ("#$($r.Number)").PadRight(6)
                 if ($compact) {
-                    $titleW = [Math]::Max(10, $w - 6 - 22 - 2)
+                    $titleW = [Math]::Max(10, $w - 9 - 22 - 2)
                     $title = if ($r.Title.Length -gt $titleW) { $r.Title.Substring(0, $titleW - 1) + '…' } else { $r.Title }
-                    Write-PanelLine @(@(" $num", 'violet_light'), @($title.PadRight($titleW), 'ink'), @(" $ci", $r.CiColor)) $w -Selected:($i -eq $sel); $lines++
-                    $second = @(, @('       ', 'muted'))
+                    Write-PanelLine @(@(" $StatusMark ", $r.Status), @($num, 'violet_light'), @($title.PadRight($titleW), 'ink'), @(" $ci", $r.CiColor)) $w -Selected:($i -eq $sel); $lines++
+                    $second = @(, @('         ', 'muted'))
                     if ($queue) { $second += , @("$queue  ", $r.QueueColor) }
                     $second += , @($r.Verdict, $r.VerdictColor)
                     $second += , @("  $($r.Author)$(if ($r.Draft) { ', brouillon' })", 'muted_dim')
                     Write-PanelLine $second $w; $lines++
                 } else {
-                    $titleW = [Math]::Max(20, $w - 6 - 16 - 22 - 22 - 12)
+                    $titleW = [Math]::Max(20, $w - 9 - 16 - 22 - 22 - 12)
                     $title = if ($r.Title.Length -gt $titleW) { $r.Title.Substring(0, $titleW - 1) + '…' } else { $r.Title }
                     $author = if ($r.Author.Length -gt 15) { $r.Author.Substring(0, 14) + '…' } else { $r.Author }
-                    Write-PanelLine @(@(" $num", 'violet_light'), @($title.PadRight($titleW + 1), 'ink'), @($author.PadRight(16), 'muted_dim'),
+                    Write-PanelLine @(@(" $StatusMark ", $r.Status), @($num, 'violet_light'), @($title.PadRight($titleW + 1), 'ink'), @($author.PadRight(16), 'muted_dim'),
                         @((Format-Cell "CI $ci" 22), $r.CiColor), @((Format-Cell $queue 22), $r.QueueColor), @($r.Verdict, $r.VerdictColor)) $w -Selected:($i -eq $sel)
                     $lines++
                 }
@@ -321,12 +349,14 @@ function Show-PrPanel {
                 Write-PanelLine @(@(' Fusionnées récemment', 'muted')) $w; $lines++
                 foreach ($m in $merged) {
                     $when = Format-Ago ([datetime]$m.mergedAt).ToLocalTime()
-                    $titleW = [Math]::Max(10, $w - 7 - $when.Length - 3)
+                    $titleW = [Math]::Max(10, $w - 9 - $when.Length - 3)
                     $title = if ($m.title.Length -gt $titleW) { $m.title.Substring(0, $titleW - 1) + '…' } else { $m.title }
-                    Write-PanelLine @(@((" #$($m.number)").PadRight(7), 'teal'), @($title.PadRight($titleW + 1), 'muted'), @($when, 'muted_dim')) $w; $lines++
+                    Write-PanelLine @(@(" $StatusMark ", 'teal'), @(("#$($m.number)").PadRight(6), 'teal'), @($title.PadRight($titleW + 1), 'muted'), @($when, 'muted_dim')) $w; $lines++
                 }
             }
             Write-PanelLine @(, @((' ' + ('─' * ($w - 2))), 'muted_dim')) $w; $lines++
+            Write-PanelLine @(@(" $StatusMark", 'danger'), @(' rouge  ', 'muted_dim'), @($StatusMark, 'amber'), @(' CI en cours  ', 'muted_dim'), @($StatusMark, 'teal'), @(' en file  ', 'muted_dim'),
+                @($StatusMark, 'warn'), @(' à trancher  ', 'muted_dim'), @($StatusMark, 'success'), @(' prête  ', 'muted_dim'), @($StatusMark, 'violet_light'), @(' à relire  ', 'muted_dim'), @($StatusMark, 'muted_dim'), @(' brouillon', 'muted_dim')) $w; $lines++
             Write-PanelLine @(@(' ↑↓ choisir · Entrée ouvrir · R rafraîchir · Échap retour', 'muted_dim')) $w; $lines++
             # erase what a longer previous frame left below
             for ($i = $lines; $i -lt $lastHeight; $i++) { Write-Host (' ' * $w) }

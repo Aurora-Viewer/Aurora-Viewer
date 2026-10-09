@@ -31,6 +31,9 @@ foreach ($m in @('ui.ps1') + @(Get-ChildItem -LiteralPath $PSScriptRoot -Filter 
     . (Join-Path $PSScriptRoot $m)
 }
 if ($Interactive) { $Host.UI.RawUI.WindowTitle = 'Aurora Tools' }
+# gh, git and cargo write UTF-8; the console decodes their output with its
+# OEM code page by default (accents of PR titles came out garbled)
+try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
 
 # The project folder of the repository these tools belong to (also from an
 # agent's worktree: the main repository is the one in git's common folder).
