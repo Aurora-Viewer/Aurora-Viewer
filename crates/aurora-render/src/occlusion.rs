@@ -136,7 +136,15 @@ impl Occlusion {
     pub fn new(device: &wgpu::Device) -> Self {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("occlusion"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/occlusion.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                format!(
+                    "{}
+{}",
+                    include_str!("shaders/hiz_test.wgsl"),
+                    include_str!("shaders/occlusion.wgsl")
+                )
+                .into(),
+            ),
         });
         let first_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("hiz first"),
