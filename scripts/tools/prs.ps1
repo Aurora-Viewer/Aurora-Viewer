@@ -380,11 +380,12 @@ function Show-PrPanel {
             $mergedAuthorW = & $fit ($merged | ForEach-Object { $_.author.login }) 6 18
             $queued = @(for ($i = 0; $i -lt $rows.Count; $i++) { if ($rows[$i].InQueue) { $i } })
             $open = @(for ($i = 0; $i -lt $rows.Count; $i++) { if (-not $rows[$i].InQueue) { $i } })
+            # lists of indexes: test their .Count, @(0) alone is false
 
             if (-not $rows) {
                 & $line @(, @($(if ($GitHub.Data) { ' Aucune PR ouverte.' } else { ' Chargement…' }), 'muted'))
             }
-            if ($queued) {
+            if ($queued.Count) {
                 & $heading 'FILE DE FUSION' $queued.Count
                 foreach ($i in $queued) {
                     $c = $cells[$i]; $r = $c.Row
@@ -398,8 +399,8 @@ function Show-PrPanel {
                     }
                 }
             }
-            if ($open) {
-                if ($queued) { & $line @(, @('', 'muted')) }
+            if ($open.Count) {
+                if ($queued.Count) { & $line @(, @('', 'muted')) }
                 & $heading 'PR OUVERTES' $open.Count
                 foreach ($i in $open) {
                     $c = $cells[$i]; $r = $c.Row
