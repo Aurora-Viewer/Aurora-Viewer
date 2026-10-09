@@ -38,6 +38,7 @@ the Second Life viewer sources (originally LGPL 2.1).
 | Roboto | `crates/aurora-viewer/assets/fonts/` | Apache License 2.0 |
 | Noto 3D emoji font (downloaded by `scripts/fetch-assets.ps1`) | `assets/emoji/` | SIL Open Font License 1.1 ([LICENSE-OFL.txt](assets/emoji/LICENSE-OFL.txt)) |
 | Aurora wolf logo and silhouette | `assets/branding/` | Part of Aurora Viewer, GPL-3.0-or-later |
+| Firestorm / Second Life modern Sit and Buy/Pay cursors | `crates/aurora-viewer/assets/cursors/` | Original Firestorm artwork; source and conversion documented in [README](crates/aurora-viewer/assets/cursors/README.md), covered by the viewer source notice above |
 
 Fonts keep their own license (the OFL allows bundling them with software under
 any license). The license texts of the fonts are next to them.

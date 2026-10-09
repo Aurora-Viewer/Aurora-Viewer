@@ -649,8 +649,111 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 anims: vec![(anim, 1)],
             }]
         }
+        aurora_net::NetCommand::RequestObjectProperties { object, .. } if (970..=974).any(|id| action_id(id) == *object) => {
+            vec![NetEvent::ObjectProperties(vec![aurora_net::build::ObjectProps {
+                object_id: *object,
+                owner_id: DEMO_NOVA,
+                sale_type: if *object == action_id(971) { 2 } else { 0 },
+                sale_price: 10,
+                name: if *object == action_id(971) {
+                    "Cube à acheter"
+                } else {
+                    "Objet de démonstration"
+                }
+                .into(),
+                description: "Démo hors ligne : aucun L$ réel n'est dépensé.".into(),
+                ..Default::default()
+            }])]
+        }
+        aurora_net::NetCommand::RequestPayPrice { object, .. } if *object == action_id(972) => {
+            vec![NetEvent::PayPrice {
+                object: *object,
+                default: 10,
+                buttons: vec![1, 5, 10, 20],
+            }]
+        }
+        aurora_net::NetCommand::RequestSit { target, .. } if *target == action_id(970) => {
+            vec![
+                NetEvent::SitResponse {
+                    object: *target,
+                    camera_eye: Vec3::ZERO,
+                    camera_at: Vec3::ZERO,
+                    force_mouselook: false,
+                },
+                NetEvent::ObjectUpdates {
+                    handle: HANDLE,
+                    objects: vec![action_avatar(true)],
+                },
+            ]
+        }
         _ => Vec::new(),
     }
+}
+
+pub fn action_id(id: u32) -> Uuid {
+    Uuid::from_u128(0xA0E0_0000_0000_0000_0000_0000_0000_0000 | id as u128)
+}
+
+pub fn action_avatar(seated: bool) -> ObjectUpdate {
+    let mut o = prim(
+        9000,
+        if seated {
+            Vec3::new(0.0, 0.0, 1.2)
+        } else {
+            Vec3::new(132.0, 126.0, floor_at(132.0, 126.0) + 0.84)
+        },
+        Quat::from_rotation_z(0.3),
+        Vec3::new(0.45, 0.6, 1.9),
+        shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE, 100, 0, 0),
+        te([0.91, 0.93, 0.98, 1.0], 0, false, 0.0),
+        ExtraParams::default(),
+        "",
+    );
+    o.full_id = DEMO_AGENT;
+    o.pcode = LL_PCODE_LEGACY_AVATAR;
+    o.parent_id = if seated { 970 } else { 0 };
+    o.name_values = "FirstName STRING RW SV Aurora\nLastName STRING RW SV Demo".into();
+    o
+}
+
+/// AURORA_DEMO_ACTIONS: the three one-click actions, plus an inherited Buy
+/// action on a linked child. Purchases/payments are simulated by App::send.
+pub fn action_events() -> Vec<NetEvent> {
+    let boxp = shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE, 100, 0, 0);
+    let mut objects = Vec::new();
+    for (id, action, x, y, color, label) in [
+        (970, 1, 138.0, 122.0, [0.48, 0.3, 0.75, 1.0], "Sit : s'asseoir"),
+        (971, 2, 138.0, 126.0, [0.35, 0.65, 0.8, 1.0], "Buy : copie à L$ 10"),
+        (972, 3, 135.0, 130.0, [0.3, 0.75, 0.55, 1.0], "Pay : payer l'objet"),
+    ] {
+        let mut o = prim(
+            id,
+            Vec3::new(x, y, floor_at(x, y) + 0.6),
+            Quat::IDENTITY,
+            Vec3::new(1.2, 1.2, 1.2),
+            boxp,
+            te(color, 0, false, 0.0),
+            ExtraParams::default(),
+            label,
+        );
+        o.click_action = action;
+        o.owner_id = DEMO_NOVA;
+        o.update_flags = if action == 3 { 1 << 9 } else { 0 };
+        objects.push(o);
+    }
+    let mut child = prim(
+        974,
+        Vec3::new(0.0, 0.0, 1.0),
+        Quat::IDENTITY,
+        Vec3::splat(0.4),
+        boxp,
+        te([0.7, 0.7, 0.9, 1.0], 0, false, 0.0),
+        ExtraParams::default(),
+        "Buy hérité",
+    );
+    child.parent_id = 971;
+    objects.push(child);
+    vec![NetEvent::ObjectUpdates { handle: HANDLE, objects }, NetEvent::Balance(250)]
 }
 
 /// AURORA_DEMO_BAN: the south-east lot (x >= 192 m, y < 64 m) is banned.

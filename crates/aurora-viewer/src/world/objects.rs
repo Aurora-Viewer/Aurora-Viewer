@@ -43,6 +43,7 @@ pub struct Object {
     pub parent_id: u32,
     pub pcode: u8,
     pub state: u8,
+    pub click_action: u8,
     /// Prim physical material (LL_MCODE_*); 7 = light, drawn fullbright.
     pub prim_material: u8,
     pub position: Vec3,
@@ -88,6 +89,7 @@ impl Object {
             parent_id: u.parent_id,
             pcode: u.pcode,
             state: u.state,
+            click_action: u.click_action,
             prim_material: u.material,
             position: u.position,
             rotation: u.rotation,
@@ -150,6 +152,7 @@ impl Object {
         self.parent_id = u.parent_id;
         self.pcode = u.pcode;
         self.state = u.state;
+        self.click_action = u.click_action;
         self.position = u.position;
         self.rotation = u.rotation;
         self.scale = u.scale;

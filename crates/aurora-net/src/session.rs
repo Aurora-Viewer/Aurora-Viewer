@@ -901,13 +901,81 @@ impl Session<'_> {
                 d.object_data.local_id = local_id;
                 self.send_main(&d, true);
             }
-            NetCommand::RequestSit { target, offset } => {
-                let mut m = AgentRequestSit::default();
-                m.agent_data.agent_id = self.agent_id();
-                m.agent_data.session_id = self.session_id();
-                m.target_object.target_id = target;
-                m.target_object.offset = offset;
-                self.send_main(&m, true);
+            NetCommand::RequestSit { handle, target, offset } => {
+                // handle_object_sit (Firestorm llviewermenu.cpp) sends to the
+                // object's region, which can differ from the agent's region.
+                if let Some(addr) = self.sim_for_handle(handle) {
+                    let mut m = AgentRequestSit::default();
+                    m.agent_data.agent_id = self.agent_id();
+                    m.agent_data.session_id = self.session_id();
+                    m.target_object.target_id = target;
+                    m.target_object.offset = offset;
+                    self.send(addr, &m, true);
+                }
+            }
+            NetCommand::RequestObjectProperties { handle, object } => {
+                if let Some(addr) = self.sim_for_handle(handle) {
+                    let mut m = RequestObjectPropertiesFamily::default();
+                    m.agent_data.agent_id = self.agent_id();
+                    m.agent_data.session_id = self.session_id();
+                    m.object_data.object_id = object;
+                    self.send(addr, &m, true);
+                }
+            }
+            NetCommand::RequestPayPrice { handle, object } => {
+                if let Some(addr) = self.sim_for_handle(handle) {
+                    let mut m = RequestPayPrice::default();
+                    m.object_data.object_id = object;
+                    self.send(addr, &m, true);
+                }
+            }
+            NetCommand::BuyObject {
+                handle,
+                local_id,
+                folder,
+                sale_type,
+                price,
+            } => {
+                // Port of LLSelectMgr::sendBuy / packBuyObjectIDs (llselectmgr.cpp).
+                if (1..=3).contains(&sale_type)
+                    && price >= 0
+                    && !folder.is_nil()
+                    && let Some(addr) = self.sim_for_handle(handle)
+                {
+                    let mut m = ObjectBuy::default();
+                    m.agent_data.agent_id = self.agent_id();
+                    m.agent_data.session_id = self.session_id();
+                    m.agent_data.category_id = folder;
+                    m.object_data.push(object_buy::ObjectData {
+                        object_local_id: local_id,
+                        sale_type,
+                        sale_price: price,
+                    });
+                    self.send(addr, &m, true);
+                }
+            }
+            NetCommand::PayObject {
+                handle,
+                object,
+                amount,
+                description,
+            } => {
+                // Port of give_money (llviewermessage.cpp): TRANS_PAY_OBJECT,
+                // no group transfer flags, destination is the actual clicked prim.
+                if amount > 0
+                    && !object.is_nil()
+                    && let Some(addr) = self.sim_for_handle(handle)
+                {
+                    let mut m = MoneyTransferRequest::default();
+                    m.agent_data.agent_id = self.agent_id();
+                    m.agent_data.session_id = self.session_id();
+                    m.money_data.source_id = self.agent_id();
+                    m.money_data.dest_id = object;
+                    m.money_data.amount = amount;
+                    m.money_data.transaction_type = 5008;
+                    m.money_data.description = str_field(&description);
+                    self.send(addr, &m, true);
+                }
             }
             NetCommand::RequestProfile(id) => {
                 let cap = self
@@ -1806,6 +1874,16 @@ impl Session<'_> {
             } else {
                 log::debug!("GenericStreamingMessage: unknown method {:#06x}", m.method_data.method);
             }
+        } else if id == PayPriceReply::ID {
+            let m: PayPriceReply = pkt.decode()?;
+            emit(
+                self.sh,
+                NetEvent::PayPrice {
+                    object: m.object_data.object_id,
+                    default: m.object_data.default_pay_price,
+                    buttons: m.button_data.iter().take(4).map(|b| b.pay_button).collect(),
+                },
+            );
         } else if id == ObjectProperties::ID {
             let m: ObjectProperties = pkt.decode()?;
             emit(self.sh, NetEvent::ObjectProperties(build_cmds::parse_properties(&m)));

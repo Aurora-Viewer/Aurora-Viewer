@@ -122,6 +122,8 @@ pub struct App {
     mouse_mode: MouseMode,
     /// Build tools (selection, manipulators, create, terraform).
     build: crate::build::BuildTool,
+    interactions: crate::interaction::Interactions,
+    cursors: crate::cursors::Cursors,
     /// Cursor position in physical pixels.
     cursor_pos: (f32, f32),
     /// Last walk-key press (for double-tap running) and the active temporary run.
@@ -379,6 +381,8 @@ impl App {
             context_menu: None,
             mouse_mode: MouseMode::None,
             build: Default::default(),
+            interactions: Default::default(),
+            cursors: Default::default(),
             cursor_pos: (0.0, 0.0),
             last_tap: None,
             temp_run: None,
@@ -488,6 +492,25 @@ impl App {
 
     fn send(&mut self, cmd: NetCommand) {
         if self.demo {
+            let expense = match &cmd {
+                NetCommand::BuyObject { price, .. } => Some((*price, "achat")),
+                NetCommand::PayObject { amount, .. } => Some((*amount, "paiement")),
+                _ => None,
+            };
+            if let Some((amount, kind)) = expense {
+                log::info!("demo action: {kind} L$ {amount}");
+                let balance = self.world.balance.unwrap_or(250).saturating_sub(amount);
+                self.world.apply(NetEvent::Balance(balance));
+                self.world.system_message(format!("Démo : {kind} de L$ {amount} simulé."));
+            }
+            if matches!(&cmd, NetCommand::OneShotControl(f) if f & control::STAND_UP != 0)
+                && std::env::var_os("AURORA_DEMO_ACTIONS").is_some()
+            {
+                self.world.apply(NetEvent::ObjectUpdates {
+                    handle: self.world.main_region.unwrap_or_default(),
+                    objects: vec![crate::demo::action_avatar(false)],
+                });
+            }
             for ev in crate::demo::demo_reply(&cmd) {
                 if let Some(e) = self.world.apply(ev) {
                     self.on_app_event(e);
@@ -557,6 +580,7 @@ impl App {
             self.scene.clear(&mut g.renderer);
         }
         self.world.reset();
+        self.interactions = Default::default();
         self.screen = Screen::Login;
         self.login_form.busy = false;
         self.login_form.focused = false;
@@ -569,7 +593,11 @@ impl App {
 
     fn on_app_event(&mut self, ev: NetEvent) {
         match ev {
-            NetEvent::ObjectProperties(props) => self.build.on_properties(props),
+            NetEvent::ObjectProperties(props) => {
+                self.interactions.on_properties(&props);
+                self.build.on_properties(props);
+            }
+            NetEvent::PayPrice { object, default, buttons } => self.interactions.on_prices(object, default, buttons),
             NetEvent::LoginProgress { message, fraction } => {
                 self.loading_stage = message.clone();
                 self.login_progress = Some((message, fraction));
@@ -1079,6 +1107,30 @@ impl App {
         }
         let now = Instant::now();
         let own_idx = self.world.objects.index_of_uuid(&self.world.agent_id);
+        if !on_avatar
+            && !self.alt
+            && !self.ctrl
+            && !self.shift
+            && !self.build.open
+            && let Some(point) = hit
+            && let Some(idx) = self.scene.pick_at(&self.world, point, now)
+            && let Some(target) = crate::interaction::target(&self.world, idx, &self.interactions.props)
+        {
+            if target.action == crate::interaction::Action::Sit {
+                if let Some((pos, rot, _)) = Scene::object_transform(&self.world, idx, now, 0) {
+                    self.send(NetCommand::RequestSit {
+                        handle: target.key.region,
+                        target: target.object,
+                        offset: rot.inverse() * (point - pos),
+                    });
+                }
+            } else {
+                for cmd in self.interactions.open(target) {
+                    self.send(cmd);
+                }
+            }
+            return;
+        }
         if self.alt {
             // Alt+click (LLToolCamera): lock the camera on the clicked point
             // (our avatar too, to look at a part of it closely); keep holding
@@ -1673,7 +1725,17 @@ impl App {
         use ui::context::CtxAction;
         match act {
             CtxAction::Touch(local_id) => self.send(NetCommand::Touch { local_id }),
-            CtxAction::Sit { target, offset } => self.send(NetCommand::RequestSit { target, offset }),
+            CtxAction::Sit { target, offset } => {
+                if let Some(idx) = self.world.objects.index_of_uuid(&target)
+                    && let Some(object) = self.world.objects.get(idx)
+                {
+                    self.send(NetCommand::RequestSit {
+                        handle: object.key.region,
+                        target,
+                        offset,
+                    });
+                }
+            }
             CtxAction::Zoom(p) => self.camera.zoom_to(p, &mut self.world.agent, &self.settings.camera),
             CtxAction::AboutLand => self.panels.about_land = true,
             CtxAction::DisplayName => self.display_name_ui.open(),
@@ -1743,6 +1805,45 @@ impl App {
     fn flush_build(&mut self) {
         for c in std::mem::take(&mut self.build.out) {
             self.send(c);
+        }
+    }
+
+    fn demo_action_steps(&mut self) {
+        // Exercise the real depth pick after the renderer is back in self.gfx.
+        if !self.demo {
+            return;
+        }
+        let Ok(mode) = std::env::var("AURORA_DEMO_ACTIONS") else {
+            return;
+        };
+        let id = match mode.split('-').next().unwrap_or("") {
+            "sit" => 970,
+            "buy" => 971,
+            "pay" => 972,
+            _ => 0,
+        };
+        if id != 0
+            && (280..=284).contains(&self.frame_count)
+            && let Some(idx) = self.world.objects.index_of_uuid(&crate::demo::action_id(id))
+            && let Some((pos, _, _)) = Scene::object_transform(&self.world, idx, Instant::now(), 0)
+            && let Some(cursor) = self.build.cam.project_px(pos)
+        {
+            self.cursor_pos = cursor;
+        }
+        if id != 0 && self.frame_count == 284 {
+            self.on_left_press();
+            self.on_left_release();
+            log::info!(
+                "demo action click: {mode}; dialog={}, seated={}",
+                self.interactions.dialog.is_some(),
+                self.world.agent.is_sitting()
+            );
+        }
+        if mode.ends_with("-confirm")
+            && self.frame_count == 320
+            && let Some(cmd) = self.interactions.confirm(&self.world, (id == 972).then_some(10))
+        {
+            self.send(cmd);
         }
     }
 
@@ -2780,7 +2881,32 @@ impl App {
                 self.scene.sounds.play_ui(self.audio_engine.as_ref(), id);
             }
         }
-        gfx.egui_state.handle_platform_output(&gfx.window, full.platform_output);
+        // Native bitmap cursors, including the original Firestorm hotspot.
+        // Set this every frame because egui's custom cursor output is sticky.
+        full.platform_output.cursor_image = None;
+        if matches!(self.screen, Screen::World)
+            && !self.build.open
+            && !self.alt
+            && !self.ctrl
+            && !self.shift
+            && self.mouse_mode == MouseMode::None
+            && !self.camera.mouselook()
+            && self.media_cursor.is_none()
+            && !ctx.is_pointer_over_egui()
+            && !ctx.egui_wants_pointer_input()
+            && let Some(point) = gfx.renderer.pick_world(self.cursor_pos.0, self.cursor_pos.1)
+            && let Some(idx) = self.scene.pick_at(&self.world, point, Instant::now())
+            && let Some(target) = crate::interaction::target(&self.world, idx, &std::collections::HashMap::new())
+        {
+            if let Some(cmd) = self.interactions.hover_request(target) {
+                self.send(cmd);
+            }
+            if let Some(target) = crate::interaction::target(&self.world, idx, &self.interactions.props) {
+                full.platform_output.cursor_image = self.cursors.image(target.action);
+            }
+        }
+        gfx.egui_state
+            .handle_platform_output_with_event_loop(&gfx.window, event_loop, full.platform_output);
         let ppp = full.pixels_per_point;
         let prims = ctx.tessellate(full.shapes, ppp);
         self.perf.ui_ms = t_ui.elapsed().as_secs_f32() * 1000.0;
@@ -2880,6 +3006,7 @@ impl App {
         self.perf
             .frame(dt * 1000.0, self.net.stats.snapshot(), &self.last_render, &self.scene.stats);
         self.gfx = Some(gfx);
+        self.demo_action_steps();
         // closing the window: leave once the last view is kept (or after 1 s)
         if let Some(t) = self.closing
             && ((!self.scene_capture_pending && !self.want_scene_capture) || t.elapsed() > Duration::from_secs(1))
@@ -3139,6 +3266,11 @@ impl App {
         }
         if let Some(act) = a.ctx_action {
             self.on_ctx_action(act);
+        }
+        if let Some(amount) = a.object_confirm
+            && let Some(cmd) = self.interactions.confirm(&self.world, amount)
+        {
+            self.send(cmd);
         }
         if let Some((old, new)) = a.set_display_name {
             self.send(NetCommand::SetDisplayName { old, new });
@@ -3626,6 +3758,7 @@ impl App {
                 if let Some(c) = self.media_cursor {
                     ctx.set_cursor_icon(c);
                 }
+                a.object_confirm = ui::object_actions::show(&ctx, &p, &mut self.interactions, &self.world);
                 for (id, r) in ui::notifications::show(&ctx, &p, &self.skin.icons, &mut self.world.notifications, &mut self.notif_ui) {
                     let (cmds, url) = self.world.respond_notification(id, r);
                     if cmds.iter().any(|c| matches!(c, NetCommand::AcceptLure { .. })) {
@@ -3869,6 +4002,7 @@ struct UiActions {
     landmark: Option<uuid::Uuid>,
     audio: Option<ui::audio::AudioAction>,
     ctx_action: Option<ui::context::CtxAction>,
+    object_confirm: Option<Option<i32>>,
     /// Display name change to send (old, new).
     set_display_name: Option<(String, String)>,
 }
@@ -4089,6 +4223,11 @@ impl ApplicationHandler for App {
             for ev in crate::demo::events() {
                 if let Some(e) = self.world.apply(ev) {
                     self.on_app_event(e);
+                }
+            }
+            if std::env::var_os("AURORA_DEMO_ACTIONS").is_some() {
+                for ev in crate::demo::action_events() {
+                    self.world.apply(ev);
                 }
             }
             if std::env::var_os("AURORA_DEMO_ANIMESH").is_some() {

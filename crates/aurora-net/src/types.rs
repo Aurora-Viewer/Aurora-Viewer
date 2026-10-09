@@ -602,6 +602,12 @@ pub enum NetEvent {
     },
     /// ObjectProperties / ObjectPropertiesFamily (build tools: selection).
     ObjectProperties(Vec<crate::build::ObjectProps>),
+    /// llSetPayPrice values for the clicked object.
+    PayPrice {
+        object: Uuid,
+        default: i32,
+        buttons: Vec<i32>,
+    },
 }
 
 /// One avatar record of the People API (GetDisplayNames "agents" entries,
@@ -756,8 +762,32 @@ pub enum NetCommand {
     },
     /// Sit on an object (AgentRequestSit; `offset` in the object frame).
     RequestSit {
+        handle: RegionHandle,
         target: Uuid,
         offset: Vec3,
+    },
+    RequestObjectProperties {
+        handle: RegionHandle,
+        object: Uuid,
+    },
+    RequestPayPrice {
+        handle: RegionHandle,
+        object: Uuid,
+    },
+    /// Sent only after the user confirms the displayed price (ObjectBuy).
+    BuyObject {
+        handle: RegionHandle,
+        local_id: u32,
+        folder: Uuid,
+        sale_type: u8,
+        price: i32,
+    },
+    /// Payment to the clicked prim, not directly to its owner.
+    PayObject {
+        handle: RegionHandle,
+        object: Uuid,
+        amount: i32,
+        description: String,
     },
     /// Profile of an avatar (picture, about text): AgentProfile cap or AvatarPropertiesRequest.
     RequestProfile(Uuid),
