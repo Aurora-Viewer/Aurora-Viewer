@@ -40,6 +40,8 @@ pub enum BarAction {
     /// Monde › Environnement › Utiliser les environnements partagés
     /// (setSharedEnvironment: drops every local choice).
     SharedEnvironment,
+    /// Monde › Historique de téléportation (ToggleTeleportHistory, Alt+H).
+    TeleportHistory,
 }
 
 pub struct StatusInfo<'a> {
@@ -357,6 +359,15 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         ui.menu_button("Statut de connexion", |ui| status_menu(ui, st.status, action));
     });
     ui.menu_button(small("Monde", p.ink), |ui| {
+        // menu_viewer.xml: Historique de téléportation (Alt+H), Lieux
+        if ui
+            .add(egui::Button::new("Historique de téléportation").shortcut_text("Alt+H"))
+            .clicked()
+        {
+            *action = BarAction::TeleportHistory;
+            ui.close();
+        }
+        ui.checkbox(&mut panels.places, "Lieux");
         ui.checkbox(&mut panels.minimap, "Mini-carte");
         ui.checkbox(&mut panels.world_map, "Carte du monde");
         ui.menu_button("Lignes d'interdiction", |ui| {
@@ -814,6 +825,7 @@ pub fn run_command(cmd: &str, panels: &mut Panels) -> BarAction {
         "appearance" => panels.appearance = !panels.appearance,
         "minimap" => panels.minimap = !panels.minimap,
         "worldmap" => panels.world_map = !panels.world_map,
+        "places" => panels.places = !panels.places,
         "performance" => panels.perf = !panels.perf,
         "preferences" => panels.settings = !panels.settings,
         "fly" => return BarAction::ToggleFly,
@@ -833,6 +845,7 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "appearance" => panels.appearance,
         "minimap" => panels.minimap,
         "worldmap" => panels.world_map,
+        "places" => panels.places,
         "performance" => panels.perf,
         "preferences" => panels.settings,
         "fly" => flying,

@@ -456,11 +456,17 @@ impl WorldMap {
     }
 
     fn track_known_region(&mut self, lower: &str, pos: glam::Vec3) -> bool {
-        let Some(&(sx, sy)) = self.sims.iter().find(|(_, s)| s.name.to_lowercase() == lower).map(|(k, _)| k) else {
+        let Some((sx, sy)) = self.region_by_name(lower) else {
             return false;
         };
         self.track_location(sx as f64 * 256.0 + pos.x as f64, sy as f64 * 256.0 + pos.y as f64, pos.z, false);
         true
+    }
+
+    /// Grid position (region units) of a known region, by name, ignoring case.
+    pub fn region_by_name(&self, name: &str) -> Option<(u32, u32)> {
+        let lower = name.trim().to_lowercase();
+        self.sims.iter().find(|(_, s)| s.name.to_lowercase() == lower).map(|(k, _)| *k)
     }
 
     /// LLFloaterWorldMap::onLocationCommit: MapNameRequest (a "#" is
@@ -539,6 +545,7 @@ mod tests {
     #[test]
     fn place_link_waits_for_its_region() {
         let mut m = WorldMap::default();
+        assert_eq!(m.region_by_name("Ahern"), None);
         m.track_region("Ahern", glam::Vec3::new(10.0, 20.0, 30.0));
         assert!(matches!(&m.take_commands()[..], [NetCommand::MapNameRequest { name }] if name == "ahern"));
         assert!(m.track.is_none());
@@ -556,6 +563,7 @@ mod tests {
         }]);
         let t = m.track.as_ref().expect("tracked");
         assert_eq!((t.x, t.y, t.z), (256010.0, 256276.0, 30.0));
+        assert_eq!(m.region_by_name(" AHERN "), Some((1000, 1001)));
         // known now: tracked at once
         m.track = None;
         m.track_region("ahern", glam::Vec3::new(1.0, 2.0, 3.0));

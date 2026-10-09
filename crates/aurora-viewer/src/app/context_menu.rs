@@ -144,6 +144,22 @@ impl App {
         f
     }
 
+    /// FSFloaterPlaceDetails::showPlaceDetails: a standalone window when
+    /// FSUseStandalonePlaceDetailsFloater is on, else the profile in « Lieux »
+    /// (LLFloaterSidePanelContainer::showPanel("places", key)).
+    pub(super) fn show_place_profile(&mut self, source: crate::world::place_details::Source) {
+        let now = Instant::now();
+        let w = &mut self.world;
+        if self.settings.standalone_place_details {
+            let serial = w.place_details.open_window(source, &w.map, &mut w.landmarks, now);
+            self.place_ui.raise(serial);
+        } else {
+            w.place_details.open_panel(source, &w.map, &mut w.landmarks, now);
+            self.panels.places = true;
+            self.places_ui.raise();
+        }
+    }
+
     pub(super) fn on_ctx_action(&mut self, act: CtxAction) {
         match act {
             CtxAction::Touch(local_id) => self.send(NetCommand::Touch { local_id }),
@@ -307,6 +323,7 @@ impl App {
                     self.panels.world_map = true;
                 }
             }
+            CtxAction::ShowPlaceInfo(region, pos) => self.show_place_profile(crate::world::place_details::Source::Link { region, pos }),
             CtxAction::ShowPlace(region, pos) => {
                 self.world.map.track_region(&region, pos);
                 self.panels.world_map = true;

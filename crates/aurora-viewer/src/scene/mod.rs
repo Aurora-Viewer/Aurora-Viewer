@@ -256,6 +256,9 @@ pub struct Scene {
     pub sounds: sounds::SoundManager,
     /// Environment settings assets (the EEP default day).
     pub settings: settings::SettingsStreamer,
+    /// Landmark asset fetches done, for `World::landmarks` (the app passes
+    /// them on).
+    pub landmark_results: Vec<aurora_net::FetchResult>,
     palette_slots: HashMap<Uuid, u32>,
     palette_free: Vec<u32>,
     palette_count: u32,
@@ -498,6 +501,7 @@ impl Scene {
             blend_tmp: Vec::new(),
             sounds: sounds::SoundManager::new(cache_dir_anim.clone()),
             settings: settings::SettingsStreamer::new(cache_dir_anim.clone()),
+            landmark_results: Vec::new(),
             anims: anim::AnimStreamer::new(cache_dir_anim),
             object_signals: HashMap::new(),
             palette_slots: HashMap::new(),
@@ -763,6 +767,8 @@ impl Scene {
                 self.sounds.on_fetch(r, &self.jobs);
             } else if kind == settings::FETCH_KIND_SETTINGS {
                 self.settings.on_fetch(r, &self.jobs);
+            } else if kind == crate::world::landmarks::FETCH_KIND_LANDMARK {
+                self.landmark_results.push(r);
             }
         }
         while t0.elapsed() < budget {

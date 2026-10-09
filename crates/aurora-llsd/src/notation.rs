@@ -297,6 +297,71 @@ pub fn from_notation(data: &[u8]) -> Result<Llsd, LlsdError> {
     Parser { data, pos: 0 }.value(MAX_DEPTH)
 }
 
+/// One-line LLSD notation of a value, like LLSDNotationFormatter without
+/// pretty printing (map keys and strings single-quoted with the
+/// serialize_string escapes, `r` reals, `d"…"` dates, `b64"…"` binaries).
+pub fn to_notation(v: &Llsd) -> String {
+    let mut out = String::new();
+    write_value(v, &mut out);
+    out
+}
+
+fn write_string(s: &str, out: &mut String) {
+    out.push('\'');
+    for c in s.chars() {
+        match c {
+            '\'' => out.push_str("\\'"),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\x{:02x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('\'');
+}
+
+fn write_value(v: &Llsd, out: &mut String) {
+    use base64::Engine;
+    match v {
+        Llsd::Undef => out.push('!'),
+        Llsd::Boolean(b) => out.push(if *b { '1' } else { '0' }),
+        Llsd::Integer(i) => out.push_str(&format!("i{i}")),
+        Llsd::Real(r) => out.push_str(&format!("r{r}")),
+        Llsd::String(s) => write_string(s, out),
+        Llsd::Uuid(u) => out.push_str(&format!("u{u}")),
+        Llsd::Date(d) => out.push_str(&format!("d\"{}\"", crate::xml_llsd::format_date(*d))),
+        Llsd::Uri(u) => {
+            out.push('l');
+            write_string(u, out);
+        }
+        Llsd::Binary(b) => out.push_str(&format!("b64\"{}\"", base64::engine::general_purpose::STANDARD.encode(b))),
+        Llsd::Array(a) => {
+            out.push('[');
+            for (i, x) in a.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                write_value(x, out);
+            }
+            out.push(']');
+        }
+        Llsd::Map(m) => {
+            out.push('{');
+            for (i, (k, x)) in m.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                write_string(k, out);
+                out.push(':');
+                write_value(x, out);
+            }
+            out.push('}');
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -314,6 +379,26 @@ mod tests {
         assert_eq!(od.at(0).get("ti").at(0).get("s").at(1), &Llsd::Real(2.0));
         assert_eq!(od.at(1).get("mf"), &Llsd::Real(0.0));
         assert_eq!(od.at(1).get("ds"), &Llsd::Boolean(true));
+    }
+
+    #[test]
+    fn writes_what_it_reads() {
+        // a teleport history line (LLTeleportHistoryPersistentItem::toLLSD)
+        let mut m = Map::new();
+        m.insert("title".into(), Llsd::String("Place d'Aurora, Aurora \\ Démo\n".into()));
+        m.insert(
+            "global_pos".into(),
+            Llsd::Array(vec![Llsd::Real(256140.5), Llsd::Real(256120.0), Llsd::Real(25.0)]),
+        );
+        m.insert("date".into(), Llsd::Date(1_760_000_000.25));
+        m.insert("slurl".into(), Llsd::String(String::new()));
+        m.insert("n".into(), Llsd::Array(vec![Llsd::Undef, Llsd::Boolean(true), Llsd::Integer(-3)]));
+        m.insert("id".into(), Llsd::Uuid(Uuid::from_u128(7)));
+        m.insert("bin".into(), Llsd::Binary(vec![0, 255, 7]));
+        let v = Llsd::Map(m);
+        let text = to_notation(&v);
+        assert!(!text.contains('\n'), "one line: {text}");
+        assert_eq!(from_notation(text.as_bytes()).unwrap(), v);
     }
 
     #[test]

@@ -401,16 +401,39 @@ fn name_menu(r: &egui::Response, p: &Palette, world: &World, id: uuid::Uuid) {
     });
 }
 
-/// Right click on a place link (menu_url_slurl.xml, menu_url_teleport.xml).
+/// Right click on a place link: menu_url_slurl.xml (place details first)
+/// or menu_url_teleport.xml (teleport first), in Firestorm's order.
 fn place_menu(r: &egui::Response, p: &Palette, url: &str, place: &crate::slurl::PlaceLink) {
     super::menu::context_menu(r, p, |ui| {
         let l = &place.location;
-        if super::menu::item(ui, p, "navigation-arrow", "Se téléporter à cet emplacement") {
-            super::context::request(ui.ctx(), CtxAction::TeleportToPlace(l.region.clone(), l.pos));
+        let teleport = |ui: &mut egui::Ui| {
+            if super::menu::item(ui, p, "navigation-arrow", "Se téléporter à cet emplacement") {
+                super::context::request(ui.ctx(), CtxAction::TeleportToPlace(l.region.clone(), l.pos));
+            }
+        };
+        let map_label = if place.teleport {
+            "Afficher sur la carte"
+        } else {
+            "Voir sur la carte"
+        };
+        let map = |ui: &mut egui::Ui| {
+            if super::menu::item(ui, p, "map-trifold", map_label) {
+                super::context::request(ui.ctx(), CtxAction::ShowPlace(l.region.clone(), l.pos));
+            }
+        };
+        if place.teleport {
+            teleport(ui);
+            super::menu::separator(ui, p);
+            map(ui);
+        } else {
+            if super::menu::item(ui, p, "info", "Afficher les informations sur ce lieu") {
+                super::context::request(ui.ctx(), CtxAction::ShowPlaceInfo(l.region.clone(), l.pos));
+            }
+            super::menu::separator(ui, p);
+            map(ui);
+            teleport(ui);
         }
-        if super::menu::item(ui, p, "map-trifold", "Voir sur la carte") {
-            super::context::request(ui.ctx(), CtxAction::ShowPlace(l.region.clone(), l.pos));
-        }
+        super::menu::separator(ui, p);
         if super::menu::item(ui, p, "link", "Copier la SLurl") {
             ui.ctx().copy_text(url.to_owned());
         }
@@ -458,12 +481,13 @@ pub(crate) fn chat_text(
                         RichText::new(&place.label).size(size).color(super::colors::c(k.chat_slurl)),
                     ));
                     place_menu(&r, p, u, &place);
-                    // TooltipTeleportUrl; a place opens the world map on it
-                    // (Firestorm's place details floater is not ported yet)
+                    // TooltipTeleportUrl / TooltipSLURL; a place opens its
+                    // details (LLURLDispatcherImpl::regionHandleCallback,
+                    // SLURLTeleportDirectly off: FSFloaterPlaceDetails)
                     let tip = if place.teleport {
                         "Cliquez pour vous téléporter à cet endroit"
                     } else {
-                        "Cliquez pour voir cet endroit sur la carte"
+                        "Cliquez pour en savoir plus sur cet endroit"
                     };
                     if r.on_hover_text(format!("{tip}\n{u}")).clicked() {
                         let l = place.location;
@@ -472,7 +496,7 @@ pub(crate) fn chat_text(
                             if place.teleport {
                                 CtxAction::TeleportToPlace(l.region, l.pos)
                             } else {
-                                CtxAction::ShowPlace(l.region, l.pos)
+                                CtxAction::ShowPlaceInfo(l.region, l.pos)
                             },
                         );
                     }
@@ -1281,7 +1305,7 @@ fn bubble_link(ctx: &egui::Context, p: &Palette, world: &World, k: usize, rect: 
                     let tip = if place.teleport {
                         "Cliquez pour vous téléporter à cet endroit"
                     } else {
-                        "Cliquez pour voir cet endroit sur la carte"
+                        "Cliquez pour en savoir plus sur cet endroit"
                     };
                     if resp.on_hover_text(format!("{tip}\n{u}")).clicked() {
                         let l = &place.location;
@@ -1290,7 +1314,7 @@ fn bubble_link(ctx: &egui::Context, p: &Palette, world: &World, k: usize, rect: 
                             if place.teleport {
                                 CtxAction::TeleportToPlace(l.region.clone(), l.pos)
                             } else {
-                                CtxAction::ShowPlace(l.region.clone(), l.pos)
+                                CtxAction::ShowPlaceInfo(l.region.clone(), l.pos)
                             },
                         );
                     }

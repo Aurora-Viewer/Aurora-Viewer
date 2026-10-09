@@ -1139,6 +1139,16 @@ impl Session<'_> {
                 m.data.parcel_id = id;
                 self.send_main(&m, true);
             }
+            NetCommand::RemoteParcelRequest {
+                handle,
+                position,
+                region_id,
+            } => self.remote_parcel_request(handle, position, region_id),
+            NetCommand::RegionHandleRequest(region_id) => {
+                let mut m = RegionHandleRequest::default();
+                m.request_block.region_id = region_id;
+                self.send_main(&m, true);
+            }
             NetCommand::GrantUserRights { friend, rights } => {
                 // LLAvatarActions / LLAvatarTracker::sendRightsGrantedUpdate
                 let mut m = GrantUserRights::default();
@@ -2205,15 +2215,34 @@ impl Session<'_> {
                 price: d.price_for_listing,
             };
             emit(self.sh, NetEvent::ClassifiedInfo(Box::new(c)));
+        } else if id == RegionIDAndHandleReply::ID {
+            let m: RegionIDAndHandleReply = pkt.decode()?;
+            let b = &m.reply_block;
+            emit(
+                self.sh,
+                NetEvent::RegionIdHandle {
+                    region_id: b.region_id,
+                    handle: b.region_handle,
+                },
+            );
         } else if id == ParcelInfoReply::ID {
             let m: ParcelInfoReply = pkt.decode()?;
             let d = &m.data;
+            // LLRemoteParcelInfoProcessor::processParcelInfoReply
             let p = crate::ParcelSummary {
                 id: d.parcel_id,
+                owner: d.owner_id,
                 name: field_str(&d.name),
+                desc: field_str(&d.desc),
+                actual_area: d.actual_area,
+                billable_area: d.billable_area,
+                flags: d.flags,
                 sim_name: field_str(&d.sim_name),
                 global: glam::DVec3::new(d.global_x as f64, d.global_y as f64, d.global_z as f64),
                 snapshot: d.snapshot_id,
+                dwell: d.dwell,
+                sale_price: d.sale_price,
+                auction_id: d.auction_id,
             };
             emit(self.sh, NetEvent::ParcelInfo(Box::new(p)));
         } else if id == ChangeUserRights::ID {

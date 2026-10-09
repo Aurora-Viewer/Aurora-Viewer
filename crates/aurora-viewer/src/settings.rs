@@ -96,6 +96,11 @@ pub struct Settings {
     pub show_perf: bool,
     pub show_chat: bool,
     pub show_minimap: bool,
+    /// FSUseStandalonePlaceDetailsFloater: landmarks, place links and history
+    /// entries open in their own window instead of the Places window.
+    pub standalone_place_details: bool,
+    /// LandmarksSortedByDate: the Landmarks tab of Places sorted by date.
+    pub landmarks_by_date: bool,
     /// Mini-map and world map options (Firestorm MiniMap* / Map* settings).
     pub maps: MapSettings,
     /// Other panels open at exit (restored at startup) and the People tab.
@@ -430,6 +435,8 @@ impl Default for Settings {
             show_perf: true,
             show_chat: true,
             show_minimap: true,
+            standalone_place_details: false,
+            landmarks_by_date: true,
             maps: MapSettings::default(),
             show_people: false,
             people_tab: 0,

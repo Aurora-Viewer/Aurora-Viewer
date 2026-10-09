@@ -191,8 +191,10 @@ pub enum CtxAction {
     TeleportToAvatar(Uuid),
     /// World map on an avatar (Avatar.ShowOnMap).
     ShowOnMap(Uuid),
-    /// Place link of a text (SLURL): world map on it / teleport there, once
-    /// confirmed (TeleportViaSLAPP).
+    /// Place link of a text (SLURL): place details window (FSFloaterPlaceDetails
+    /// "remote_place"), world map on it, teleport there once confirmed
+    /// (TeleportViaSLAPP).
+    ShowPlaceInfo(String, glam::Vec3),
     ShowPlace(String, glam::Vec3),
     /// Web link clicked in a text: opened at once when trusted, else after
     /// the external link warning.

@@ -23,6 +23,9 @@ pub mod env;
 /// About Land answers (AURORA_DEMO_LAND).
 #[path = "demo_land.rs"]
 pub mod land;
+/// Place details of place links (AURORA_DEMO_PLACE).
+#[path = "demo_place.rs"]
+pub mod place;
 
 /// Walkable floor of the demo (plaza top, else the terrain), for the
 /// offline movement stand-in.
@@ -269,12 +272,14 @@ fn demo_raw() -> Llsd {
         ("Corbeille", 14),
         ("Mes tenues", 48),
         ("Materials", 57),
+        ("Favoris", 23),
     ]
     .iter()
     .enumerate()
     {
         skel.push(folder(10 + i as u128, 1, name, *t));
     }
+    skel.push(folder(place::SHOPS_FOLDER, place::LANDMARKS_FOLDER, "Boutiques", -1));
     if env::enabled() {
         skel.push(env::settings_folder(u(1)));
     }
@@ -506,7 +511,7 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
         aurora_net::NetCommand::FetchInventory { folders, owner, .. } => {
             let mut out = Vec::new();
             for f in folders {
-                if let Some(c) = env::folder_contents(*f, *owner) {
+                if let Some(c) = env::folder_contents(*f, *owner).or_else(|| place::folder_contents(*f, *owner)) {
                     out.push(c);
                     continue;
                 }
@@ -718,12 +723,18 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 ..Default::default()
             }))]
         }
-        aurora_net::NetCommand::ParcelInfoRequest(id) => vec![NetEvent::ParcelInfo(Box::new(aurora_net::ParcelSummary {
-            id: *id,
-            name: "Place d'Aurora".into(),
-            sim_name: "Aurora Démo".into(),
-            ..Default::default()
-        }))],
+        aurora_net::NetCommand::RemoteParcelRequest { handle, position, .. } => place::remote_parcel(*handle, *position),
+        aurora_net::NetCommand::RegionHandleRequest(id) => place::region_handle(*id),
+        aurora_net::NetCommand::ParcelInfoRequest(id) => match place::parcel_info(*id) {
+            Some(ev) => vec![ev],
+            // the parcels of the profile picks
+            None => vec![NetEvent::ParcelInfo(Box::new(aurora_net::ParcelSummary {
+                id: *id,
+                name: "Place d'Aurora".into(),
+                sim_name: "Aurora Démo".into(),
+                ..Default::default()
+            }))],
+        },
         aurora_net::NetCommand::ClassifiedsRequest(id) if *id == DEMO_LOUP => vec![NetEvent::AvatarClassifieds {
             target: *id,
             list: vec![(Uuid::from_u128(0xC1A5_0001), "Atelier du Loup : meubles en mesh".into())],
@@ -2537,6 +2548,9 @@ pub const TEX_TILES: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000
 /// Frames of AURORA_DEMO_TEXANIM: a 4 × 4 grid, one hue per frame (frame 0
 /// top left, red, then along the rows), each cell framed in dark.
 pub const TEX_FRAMES: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0005);
+/// Parcel snapshot of AURORA_DEMO_PLACE: a night landscape (sky with an
+/// aurora, hills, water), top row first.
+pub const TEX_SNAPSHOT: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0006);
 const MAT_NONE: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0001);
 const MAT_MASK: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0002);
 const MAT_EMISSIVE: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0003);
@@ -2590,6 +2604,31 @@ pub fn local_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
                         (v * 230.0 + 20.0) as u8
                     };
                     [c(5.0), c(3.0), c(1.0), 255]
+                }
+            } else if *id == TEX_SNAPSHOT {
+                let (u, v) = (fx / (N - 1) as f32, fy / (N - 1) as f32);
+                let hill = 0.58 - 0.07 * (u * 7.0).sin() - 0.04 * (u * 17.0 + 1.0).sin();
+                let mix = |a: [f32; 3], b: [f32; 3], t: f32| {
+                    let t = t.clamp(0.0, 1.0);
+                    [
+                        (a[0] + (b[0] - a[0]) * t) as u8,
+                        (a[1] + (b[1] - a[1]) * t) as u8,
+                        (a[2] + (b[2] - a[2]) * t) as u8,
+                        255,
+                    ]
+                };
+                if v > 0.72 {
+                    // water, with the aurora's reflection
+                    let glint = (1.0 - ((v - 0.72) * 12.0 - (u * 9.0).sin() * 0.4).abs()).max(0.0) * 0.5;
+                    mix([24.0, 34.0, 78.0], [94.0, 234.0, 212.0], glint * (0.5 + 0.5 * (u * 3.0).sin()))
+                } else if v > hill {
+                    mix([28.0, 30.0, 52.0], [18.0, 20.0, 36.0], (v - hill) * 6.0)
+                } else {
+                    let sky = mix([22.0, 18.0, 64.0], [150.0, 110.0, 200.0], v / 0.6);
+                    let band = 0.22 + 0.06 * (u * 6.0).sin();
+                    let a = (1.0 - (v - band).abs() / 0.07).max(0.0);
+                    let s = [sky[0] as f32, sky[1] as f32, sky[2] as f32];
+                    mix(s, [94.0, 234.0, 212.0], a * 0.85)
                 }
             } else if *id == TEX_TILES {
                 let (tx, ty) = (x / 32, y / 32);

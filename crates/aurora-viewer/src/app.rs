@@ -278,6 +278,15 @@ pub struct App {
     ui_images: std::collections::HashMap<uuid::Uuid, egui::TextureHandle>,
     /// Avatar profile windows.
     profile_ui: ui::profile::ProfileUi,
+    /// "Détails de l'emplacement" windows (standalone place profiles).
+    place_ui: ui::place_details::PlaceDetailsUi,
+    /// « Lieux ».
+    places_ui: ui::places::PlacesUi,
+    /// AURORA_DEMO_PLACE=repere|historique, opened once logged in.
+    demo_place: Option<crate::world::place_details::Source>,
+    /// Parcel snapshots and group names the place profiles want.
+    place_images: std::collections::HashSet<uuid::Uuid>,
+    place_groups: std::collections::HashSet<uuid::Uuid>,
     /// "À propos du terrain".
     land_ui: ui::land::LandUi,
     /// Environment selector and « Éclairage personnel ».
@@ -378,6 +387,7 @@ impl App {
             people_tab: settings.people_tab.min(1),
             contacts: false,
             about_land: false,
+            places: false,
             nav_edit: None,
             nav_edit_new: false,
         };
@@ -523,6 +533,11 @@ impl App {
             avatar_pics: Default::default(),
             ui_images: Default::default(),
             profile_ui: Default::default(),
+            place_ui: Default::default(),
+            places_ui: Default::default(),
+            place_images: Default::default(),
+            demo_place: None,
+            place_groups: Default::default(),
             land_ui: Default::default(),
             env_ui: Default::default(),
             env_scan: false,
@@ -861,6 +876,10 @@ impl App {
                 }
             }
             NetEvent::LoggedIn(l) => {
+                // the demo's teleport history: several days, never saved
+                if self.demo {
+                    self.world.tp_storage = crate::world::tphistory::HistoryStorage::in_memory(crate::demo::place::history());
+                }
                 // web profiles know who we are (LLStartup: LLViewerMedia::openIDSetup)
                 let (openid_url, openid_token) = (l.raw["openid_url"].as_str(), l.raw["openid_token"].as_str());
                 if !openid_url.is_empty() && !openid_token.is_empty() {
@@ -1281,6 +1300,7 @@ impl App {
             Action::Inventory => self.panels.inventory = !self.panels.inventory,
             Action::Minimap => self.panels.minimap = !self.panels.minimap,
             Action::WorldMap => self.panels.world_map = !self.panels.world_map,
+            Action::TeleportHistory => self.toggle_teleport_history(),
             Action::Performance => self.panels.perf = !self.panels.perf,
             Action::Preferences => self.panels.settings = !self.panels.settings,
             Action::ShowTransparency => {
@@ -2605,6 +2625,7 @@ impl App {
             }
         }
         let mut images: Vec<uuid::Uuid> = self.profile_ui.wanted_images.drain().collect();
+        images.extend(self.place_images.drain());
         images.extend(self.land_ui.wanted_images.drain());
         images.extend(self.contacts_ui.wanted_images.drain());
         images.extend(self.build.ui.wanted_images.drain());
@@ -2621,6 +2642,82 @@ impl App {
                 let t = self.egui_ctx.load_texture(format!("img-{image}"), ci, egui::TextureOptions::LINEAR);
                 self.ui_images.insert(image, t);
             }
+        }
+    }
+
+    /// Place profiles and « Lieux »: arrivals saved in the history, landmark
+    /// assets and region handles, folders and group names asked by the
+    /// lists, region names resolved, parcel requests.
+    fn update_places(&mut self) {
+        let now = Instant::now();
+        if self.world.movement_complete
+            && let Some(source) = self.demo_place.take()
+        {
+            // a landmark's profile shows its item: fetch the landmarks first
+            let missing = match &source {
+                crate::world::place_details::Source::Landmark { item, .. } => !self.world.inventory.items.contains_key(item),
+                _ => false,
+            };
+            if missing {
+                let inv = &self.world.inventory;
+                let root = ui::places::system_folder(inv, ui::places::FOLDER_LANDMARKS);
+                let folders: Vec<uuid::Uuid> = root
+                    .into_iter()
+                    .chain(
+                        root.and_then(|r| inv.folders.get(&r))
+                            .map(|f| f.children.clone())
+                            .unwrap_or_default(),
+                    )
+                    .collect();
+                for f in folders {
+                    self.world.inventory.request(f);
+                }
+                self.demo_place = Some(source);
+            } else {
+                self.show_place_profile(source);
+            }
+        }
+        self.world.flush_arrival(now);
+        // LLLandmark::setRegionHandle: the agent's region needs no request
+        if let Some(h) = self.world.main_region
+            && let Some(id) = self.world.regions.get(&h).and_then(|r| r.info.as_ref()).map(|i| i.region_id)
+        {
+            self.world.landmarks.set_local_region(id, h);
+        }
+        for asset in self.places_ui.want_landmarks.drain() {
+            self.world.landmarks.resolve(asset);
+        }
+        for folder in self.places_ui.want_folders.drain() {
+            self.world.inventory.request(folder);
+        }
+        for g in self.place_groups.drain() {
+            self.world.land.group_name(&g, &self.world.groups.groups);
+        }
+        for r in std::mem::take(&mut self.scene.landmark_results) {
+            self.world.landmarks.on_fetch(r.key, r.data.as_deref().ok());
+        }
+        if self.demo {
+            for (_, asset) in self.world.landmarks.take_wanted() {
+                let data = crate::demo::place::landmark_asset(asset);
+                self.world.landmarks.on_data(asset, data.as_deref().map(str::as_bytes));
+            }
+        } else if let Some(base) = self.world.viewer_asset_url() {
+            for (key, asset) in self.world.landmarks.take_wanted() {
+                self.net.fetcher.request(aurora_net::FetchRequest {
+                    key,
+                    url: crate::scene::textures::asset_url(&base, "landmark_id", &asset),
+                    range: None,
+                    // a window waits on it
+                    priority: 1e12,
+                    accept: "*/*",
+                });
+            }
+        }
+        self.world.place_details.update(&self.world.map, &mut self.world.landmarks, now);
+        let mut cmds = self.world.place_details.take_commands();
+        cmds.extend(self.world.landmarks.take_commands());
+        for c in cmds {
+            self.send(c);
         }
     }
 
@@ -2672,6 +2769,7 @@ impl App {
         for c in self.world.land.take_commands() {
             self.send(c);
         }
+        self.update_places();
         for c in self.world.map.take_commands() {
             if let NetCommand::TeleportTo { handle, .. } = &c {
                 let dest = self.world.map.track.as_ref().map(|t| t.label.clone()).unwrap_or_default();
@@ -4079,6 +4177,19 @@ impl App {
             BarAction::ResetCamera => self.reset_camera_view(),
             BarAction::BanLines(v) => self.settings.maps.ban_lines = v,
             BarAction::SharedEnvironment => self.world.eep.clear_local(),
+            BarAction::TeleportHistory => self.toggle_teleport_history(),
+        }
+    }
+
+    /// toggleTeleportHistory (llviewermenu.cpp) without the standalone
+    /// history floater: hide Lieux when shown, else open it on the history.
+    fn toggle_teleport_history(&mut self) {
+        if self.panels.places {
+            self.panels.places = false;
+        } else {
+            self.world.place_details.close_panel();
+            self.places_ui.open_tab(ui::places::TAB_HISTORY);
+            self.panels.places = true;
         }
     }
 
@@ -4473,6 +4584,9 @@ impl App {
                 ) {
                     match ia {
                         ui::inventory::InvAction::TeleportLandmark(asset) => a.landmark = Some(asset),
+                        ui::inventory::InvAction::AboutLandmark(item, asset) => {
+                            self.show_place_profile(crate::world::place_details::Source::Landmark { item, asset })
+                        }
                     }
                 }
                 self.panels.inventory = open;
@@ -4675,6 +4789,61 @@ impl App {
                             self.panels.world_map = true;
                         }
                         ui::profile::ProfileAction::Teleport(g) => self.world.map.track_location(g.x, g.y, g.z as f32, true),
+                    }
+                }
+                // place profiles: standalone windows and « Lieux »
+                let mut c = ui::place_details::Ctx {
+                    p: &p,
+                    world: &self.world,
+                    images: &self.ui_images,
+                    emoji: &mut self.emoji,
+                    want_names: &mut self.chat_ui.wanted_names,
+                    wanted_images: &mut self.place_images,
+                    want_groups: &mut self.place_groups,
+                };
+                let window_acts = self.place_ui.show(&ctx, &mut c);
+                let mut open = self.panels.places;
+                let places_acts = self.places_ui.show(&ctx, &mut c, &mut open, self.settings.landmarks_by_date);
+                self.panels.places = open;
+                for pa in window_acts {
+                    match pa {
+                        // FSFloaterPlaceDetails::onTeleportButtonClicked: no
+                        // confirmation for a place (teleportViaLocation +
+                        // trackLocation), TeleportFromLandmark for a landmark
+                        ui::place_details::PlaceAction::Teleport(g) => self.world.map.track_location(g.x, g.y, g.z as f32, true),
+                        ui::place_details::PlaceAction::TeleportLandmark { asset, name } => self.places_ui.confirm_landmark(asset, name),
+                        ui::place_details::PlaceAction::ShowOnMap(g) => {
+                            self.world.map.track_location(g.x, g.y, g.z as f32, false);
+                            self.panels.world_map = true;
+                        }
+                        ui::place_details::PlaceAction::Close(serial) => self.world.place_details.close_window(serial),
+                    }
+                }
+                for pa in places_acts {
+                    use ui::places::PlacesAction;
+                    match pa {
+                        PlacesAction::Teleport(g) => self.world.map.track_location(g.x, g.y, g.z as f32, true),
+                        PlacesAction::TeleportLandmark(asset) => a.landmark = Some(asset),
+                        PlacesAction::ShowOnMap(g) => {
+                            self.world.map.track_location(g.x, g.y, g.z as f32, false);
+                            self.panels.world_map = true;
+                        }
+                        PlacesAction::OpenProfile(source) => {
+                            self.world
+                                .place_details
+                                .open_panel(source, &self.world.map, &mut self.world.landmarks, Instant::now())
+                        }
+                        PlacesAction::CloseProfile => self.world.place_details.close_panel(),
+                        PlacesAction::RemoveHistory(i) => self.world.tp_storage.remove(i),
+                        PlacesAction::ClearHistory => {
+                            // order matters: the back / forward list first
+                            self.world.tp_history.purge();
+                            self.world.tp_storage.clear();
+                        }
+                        PlacesAction::SortByDate(on) => {
+                            self.settings.landmarks_by_date = on;
+                            self.settings.save();
+                        }
                     }
                 }
                 let mut open = self.panels.minimap;
@@ -5062,6 +5231,28 @@ impl ApplicationHandler for App {
                 self.panels.chat = true;
                 self.panels.perf = false;
                 self.panels.minimap = false;
+            }
+            // AURORA_DEMO_PLACE=1|lagune|nordheim|pinede|faille|inconnue: the
+            // place details of a place link, as if clicked
+            if let Some((region, pos)) = crate::demo::place::scenario() {
+                ui::context::request(&self.egui_ctx, ui::context::CtxAction::ShowPlaceInfo(region.to_owned(), pos));
+                self.panels.perf = false;
+            }
+            // AURORA_DEMO_PLACE=repere|historique: a landmark's / history
+            // entry's profile (asked once the inventory is there: demo_pending)
+            if let Some(source) = crate::demo::place::profile_scenario() {
+                self.demo_place = Some(source);
+                self.panels.perf = false;
+            }
+            // AURORA_DEMO_PLACES=favoris|reperes|historique: « Lieux » on a tab
+            if let Some(tab) = std::env::var("AURORA_DEMO_PLACES").ok().and_then(|v| ui::places::tab_from_name(&v)) {
+                self.places_ui.open_tab(tab);
+                self.panels.places = true;
+                self.panels.perf = false;
+            }
+            // AURORA_DEMO_PLACE_WINDOW=1: the standalone windows instead
+            if std::env::var_os("AURORA_DEMO_PLACE_WINDOW").is_some() {
+                self.settings.standalone_place_details = true;
             }
             // AURORA_DEMO_PROFILE=loup|nova|friend|self[:tab]: a profile window
             if let Ok(v) = std::env::var("AURORA_DEMO_PROFILE") {

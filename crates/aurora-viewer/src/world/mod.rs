@@ -11,6 +11,7 @@ pub mod env_select;
 pub mod groups;
 pub mod inventory;
 pub mod land;
+pub mod landmarks;
 pub mod lookat;
 pub mod lslbridge;
 pub mod mutes;
@@ -18,6 +19,7 @@ pub mod names;
 pub mod notifications;
 pub mod objects;
 pub mod outfit;
+pub mod place_details;
 pub mod profiles;
 pub mod social;
 pub mod status;
@@ -192,8 +194,18 @@ pub struct World {
     pub notifications: notifications::Notifications,
     /// Teleport history (navigation bar back / forward).
     pub tp_history: tphistory::TeleportHistory,
+    /// Dated history of the Places window (teleport_history.txt).
+    pub tp_storage: tphistory::HistoryStorage,
+    /// Arrival waiting for its parcel name before it is saved in
+    /// `tp_storage` (LLViewerParcelMgr's teleport finished signal): global
+    /// position and when it happened.
+    tp_record: Option<(glam::DVec3, Instant)>,
+    /// Landmark assets and the handles of their regions.
+    pub landmarks: landmarks::Landmarks,
     /// World map regions, items, tracking and parcel overlays.
     pub map: worldmap::WorldMap,
+    /// Place details windows of place links (their parcel requests).
+    pub place_details: place_details::PlaceDetails,
     arrived_once: bool,
     /// Disk cache root (inventory cache).
     pub cache_dir: Option<std::path::PathBuf>,
@@ -257,7 +269,11 @@ impl World {
             land: land::Land::default(),
             media: Default::default(),
             tp_history: tphistory::TeleportHistory::default(),
+            tp_storage: Default::default(),
+            tp_record: None,
+            landmarks: Default::default(),
             map: worldmap::WorldMap::default(),
+            place_details: Default::default(),
             notifications: notifications::Notifications::default(),
             profiles: profiles::Profiles::default(),
             arrived_once: false,
@@ -272,6 +288,35 @@ impl World {
         *self = World::new(lib);
         self.chat = chat;
         self.cache_dir = cache_dir;
+    }
+
+    /// LLTeleportHistory::onTeleportFinished → LLTeleportHistoryStorage:
+    /// the arrival is saved once the parcel of the new place is known.
+    fn record_arrival(&mut self) {
+        let Some((global, _)) = self.tp_record.take() else {
+            return;
+        };
+        let region = self
+            .main_region
+            .and_then(|h| self.regions.get(&h))
+            .map(|r| r.name.clone())
+            .unwrap_or_default();
+        let title = tphistory::location_title(&self.parcel_name, &region);
+        if title.is_empty() {
+            return;
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0.0, |d| d.as_secs_f64());
+        self.tp_storage.add(&title, global, now);
+    }
+
+    /// An arrival whose parcel did not come within a few seconds is saved
+    /// with what is known (the region name).
+    pub fn flush_arrival(&mut self, now: Instant) {
+        if self.tp_record.is_some_and(|(_, at)| now.duration_since(at).as_secs_f32() > 5.0) {
+            self.record_arrival();
+        }
     }
 
     pub fn main_origin(&self) -> Option<(u32, u32)> {
@@ -626,6 +671,7 @@ impl World {
                 let account = crate::settings::account_dir(&l.agent_id);
                 self.contact_sets = contact_sets::ContactSets::load(account.join(contact_sets::CONTACT_SETS_FILE));
                 self.groups.load_favorites(account.join(groups::FAVORITE_GROUPS_FILE));
+                self.tp_storage = tphistory::HistoryStorage::load(account.join(tphistory::TELEPORT_HISTORY_FILE));
                 self.aliases_synced = u64::MAX;
                 self.sync_contact_aliases();
                 self.inventory = inventory::Inventory::from_login(&l.raw);
@@ -697,6 +743,11 @@ impl World {
                         self.parcel = None;
                         self.parcel_name.clear();
                     }
+                    let (ox, oy) = aurora_net::handle_to_origin(handle);
+                    let global = glam::DVec3::new(ox as f64 + position.x as f64, oy as f64 + position.y as f64, position.z as f64);
+                    // saved when the new parcel arrives; a local teleport
+                    // within the same parcel gets none: flush_arrival
+                    self.tp_record = Some((global, Instant::now()));
                 }
                 if self.teleporting {
                     self.tp_progress = 0.6;
@@ -1205,6 +1256,11 @@ impl World {
                     self.social.want_name(info.owner_id);
                 }
                 self.parcel = Some(info);
+                self.record_arrival();
+                None
+            }
+            NetEvent::RegionIdHandle { region_id, handle } => {
+                self.landmarks.on_region_handle(region_id, handle);
                 None
             }
             NetEvent::AvatarProfile(p) => {
@@ -1231,6 +1287,10 @@ impl World {
             }
             NetEvent::ParcelInfo(p) => {
                 self.profiles.parcels.insert(p.id, *p);
+                None
+            }
+            NetEvent::RemoteParcel { handle, position, result } => {
+                self.place_details.apply_remote_parcel(handle, position, result);
                 None
             }
             NetEvent::UserRights { agent, rights } => {
