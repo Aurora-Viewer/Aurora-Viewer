@@ -1932,6 +1932,80 @@ pub fn animesh_events() -> Vec<NetEvent> {
     events
 }
 
+/// AURORA_DEMO_TEXTURES=<n>: texture stress test, `n` small cubes (9000 for
+/// any value that is not a number, as many textures as a busy region), each
+/// with its own texture. Returns the cube count.
+pub fn texture_stress_count() -> Option<u32> {
+    let v = std::env::var("AURORA_DEMO_TEXTURES").ok()?;
+    Some(v.trim().parse().unwrap_or(9000).min(20_000))
+}
+
+/// Texture of stress cube `i`.
+pub fn stress_texture(i: u32) -> Uuid {
+    Uuid::from_u128(0xDE40_7E57_0000_0000_0000_0000_0000_0000 | i as u128)
+}
+
+/// Level-0 sizes of the stress textures, cycled: the common square and
+/// oblong powers of two, plus one size that is not a power of two.
+const STRESS_SIZES: [(u32, u32); 8] = [(64, 64), (32, 32), (128, 64), (64, 128), (128, 128), (16, 16), (48, 48), (64, 32)];
+
+/// Mip chain of stress texture `i` at a discard level (level 0 halved
+/// `discard` times), down to 1×1: a 4 × 4 checker of a color proper to the
+/// texture and its inverse, so a texture showing in the wrong place or at
+/// the wrong level is visible.
+pub fn stress_texture_mips(i: u32, discard: u32) -> Vec<(u32, u32, Vec<u8>)> {
+    let (w, h) = STRESS_SIZES[i as usize % STRESS_SIZES.len()];
+    let base = [(i * 97 % 256) as u8, (i * 57 % 256) as u8, (i * 31 % 256) as u8];
+    let mut out = Vec::new();
+    let mut level = discard;
+    loop {
+        let (lw, lh) = ((w >> level).max(1), (h >> level).max(1));
+        let mut px = Vec::with_capacity((lw * lh * 4) as usize);
+        for y in 0..lh {
+            for x in 0..lw {
+                let on = (x * 4 / lw + y * 4 / lh) % 2 == 0;
+                let c = if on { base } else { base.map(|v| 255 - v) };
+                px.extend_from_slice(&[c[0], c[1], c[2], 255]);
+            }
+        }
+        out.push((lw, lh, px));
+        if lw == 1 && lh == 1 {
+            break;
+        }
+        level += 1;
+    }
+    out
+}
+
+/// The cubes of AURORA_DEMO_TEXTURES: a square field east of the plaza,
+/// facing the start position, 0.5 m cubes every 0.8 m.
+pub fn texture_stress_events(n: u32) -> Vec<NetEvent> {
+    let boxp = shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE, 100, 0, 0);
+    let side = (n as f32).sqrt().ceil().max(1.0) as u32;
+    let mut objects = Vec::with_capacity(n as usize);
+    for i in 0..n {
+        let (x, y) = (
+            146.0 + (i / side) as f32 * 0.8,
+            126.0 + ((i % side) as f32 - side as f32 * 0.5) * 0.8,
+        );
+        let mut t = (*te([1.0; 4], 0, false, 0.0)).clone();
+        for f in &mut t.faces {
+            f.texture = stress_texture(i);
+        }
+        objects.push(prim(
+            50_000 + i,
+            Vec3::new(x, y, height(x, y) + 0.25),
+            Quat::IDENTITY,
+            Vec3::splat(0.5),
+            boxp,
+            Arc::new(t),
+            ExtraParams::default(),
+            "",
+        ));
+    }
+    vec![NetEvent::ObjectUpdates { handle: HANDLE, objects }]
+}
+
 pub fn animesh_animation() -> aurora_assets::Animation {
     use aurora_assets::anim::{JointMotion, RotKey};
     let mut a = idle_animation();

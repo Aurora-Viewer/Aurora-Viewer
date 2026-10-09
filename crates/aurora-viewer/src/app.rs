@@ -4685,6 +4685,14 @@ impl ApplicationHandler for App {
                     self.world.apply(ev);
                 }
             }
+            if let Some(n) = crate::demo::texture_stress_count() {
+                if let Some(g) = &mut self.gfx {
+                    self.scene.textures.install_demo_stress(&mut g.renderer, n);
+                }
+                for ev in crate::demo::texture_stress_events(n) {
+                    self.world.apply(ev);
+                }
+            }
             // AURORA_DEMO_SOUND=1: a looped chime on the fountain and the
             // interface sounds (audible: off by default for the captures)
             if std::env::var_os("AURORA_DEMO_SOUND").is_some() {

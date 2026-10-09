@@ -584,6 +584,26 @@ impl TextureStreamer {
         }
     }
 
+    /// AURORA_DEMO_TEXTURES: the stress textures arrive as decoded jobs, a
+    /// low-resolution level first then the full one, so they take the
+    /// streaming path of grid textures (placeholder, then upgrades).
+    pub fn install_demo_stress(&mut self, renderer: &mut Renderer, count: u32) {
+        for i in 0..count {
+            let id = crate::demo::stress_texture(i);
+            let _ = self.acquire(renderer, id, TexSource::Asset);
+            for discard in [2, 0] {
+                self.on_job(JobResult::Texture {
+                    id,
+                    discard: discard as u8,
+                    mips: crate::demo::stress_texture_mips(i, discard),
+                    alpha: AlphaKind::Opaque,
+                    alpha_channel: false,
+                    sculpt: None,
+                });
+            }
+        }
+    }
+
     /// Upload decoded textures within a byte budget.
     pub fn upload(&mut self, renderer: &mut Renderer, budget_bytes: u64) {
         let mut spent = 0u64;

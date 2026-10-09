@@ -122,6 +122,7 @@ settings and cache (`…\config\demo`, `…\cache\demo`).
 | `AURORA_DEMO_SOUND=1` | Audible world sounds (looped chime) and interface sounds (from the real sound cache when present, else a short tick per sound) |
 | `AURORA_DEMO_CLOUD=1` | Loading clouds for avatars |
 | `AURORA_DEMO_OCCLUSION=1` | Wall with hidden objects (occlusion test) |
+| `AURORA_DEMO_TEXTURES=<n>` | Texture stress test: n small cubes (9000 for a non-number), each with its own texture of several sizes (one not a power of two), streamed low resolution first then full, as in a busy region |
 | `AURORA_DEMO_PLANAR=1` | Floor slabs with planar texture mapping (tiles must line up across slabs) |
 | `AURORA_DEMO_PBR_OVERRIDE=1` | Two PBR slabs, one with a GLTF material override (4 × 4 repeats, tint) |
 | `AURORA_DEMO_SKY=<gamma>` | Classic EEP sky (no reflection probe ambiance) with this sky gamma and a sunlight color above 1: legacy gamma and normalized object light as Firestorm |
