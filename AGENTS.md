@@ -37,8 +37,25 @@ casse le travail des autres.
 
 ## 2. Comportement de référence : Firestorm
 
-Aurora reproduit le comportement de Firestorm. Avant de porter ou de modifier
-une fonctionnalité, **regarde comment Firestorm la fait réellement**.
+Firestorm est la référence de **ce que l'utilisateur voit et fait**, pas de
+la façon de le faire :
+
+- **On garde** ses fonctionnalités telles quelles (mêmes règles, mêmes
+  options, mêmes valeurs par défaut), et pour le graphique **le même rendu,
+  ou mieux**. Aucune régression fonctionnelle ou visuelle : compare le
+  résultat à Firestorm (captures côte à côte, mêmes réglages).
+- **On ne recopie pas** ses procédés dépassés : contraintes héritées
+  d'OpenGL, mises à jour espacées qui sacrifient la fluidité, rustines
+  historiques. Aurora est en Rust sur Vulkan : on refait proprement et de
+  façon moderne, en exploitant le GPU au maximum (bindless, compute, culling
+  sur le GPU, travail en parallèle…), pour un viewer fluide, un rendu
+  impeccable et un très bon nombre d'images/s.
+- **Le réseau et le protocole** (messages, capabilities, débits, ordre des
+  requêtes) suivent en revanche Firestorm à la lettre : le serveur l'attend.
+
+Avant de porter ou de modifier une fonctionnalité, **regarde comment
+Firestorm la fait réellement**, pour connaître le comportement attendu et
+ses cas limites, puis choisis la meilleure implémentation pour Aurora.
 
 - Les sources officielles doivent se trouver **à côté du dépôt** :
   `../phoenix-firestorm` (lecture seule, jamais dans le dépôt).
@@ -58,8 +75,10 @@ une fonctionnalité, **regarde comment Firestorm la fait réellement**.
   fonction, par exemple : `Port of LLMotionController::updateMotionsByType
   (indra/llcharacter/llmotioncontroller.cpp, originally LGPL 2.1)`. Ce code est
   distribué sous GPL-3.0-or-later (voir [NOTICE.md](NOTICE.md)).
-- Écart volontaire par rapport à Firestorm : seulement s'il est justifié, et
-  noté dans le code et dans `TASKS.md`.
+- Une implémentation différente de celle de Firestorm est normale. Un écart
+  de **comportement visible** (fonction, rendu, valeurs par défaut) ne l'est
+  pas : seulement s'il est justifié (et alors meilleur pour l'utilisateur),
+  et noté dans le code et dans `TASKS.md`.
 
 ## 3. Travail en parallèle : un worktree par tâche
 
@@ -153,7 +172,8 @@ Avant chaque commit significatif et obligatoirement avant la PR :
   crates). Une nouvelle dépendance doit être maintenue, de licence compatible
   GPL v3 (MIT, Apache-2.0, BSD, MPL-2.0, LGPL…), et justifiée dans la PR.
 - **Pas de régression de la réécriture** : si tu modifies un comportement porté
-  de Firestorm, revérifie-le contre les sources de Firestorm.
+  de Firestorm, revérifie-le contre les sources de Firestorm (le comportement
+  et le rendu, pas l'implémentation).
 
 ## 6. TASKS.md
 
@@ -299,8 +319,9 @@ exigeant :
 3. **Non-régression** : relance les scénarios de démo touchés par ta PR **et**
    ceux des fonctionnalités voisines (le travail fusionné des autres agents
    entre-temps ne doit pas être cassé). Compare avant / après en captures.
-4. **Fidélité Firestorm** : le comportement correspond aux sources
-   consultées ; les écarts sont justifiés.
+4. **Fidélité Firestorm** : le comportement et le rendu correspondent aux
+   sources consultées (ou font mieux, sans régression) ; les écarts visibles
+   sont justifiés.
 5. **Secrets et données personnelles** : `git diff origin/main...HEAD` ne
    contient aucun secret, URL de capability, identifiant, chemin personnel.
 6. **Qualité** : code lisible, pas de code mort, README / ARCHITECTURE /
