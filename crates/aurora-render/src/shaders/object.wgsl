@@ -43,9 +43,11 @@ struct VsOut {
     @location(2) uv: vec2<f32>,
     @location(3) @interpolate(flat) record: u32,
     @location(4) view_depth: f32,
-    // legacy material normal / specular map coordinates
+    // normal / specular (legacy) or metallic-roughness (PBR) map coordinates
     @location(5) uv_n: vec2<f32>,
     @location(6) uv_s: vec2<f32>,
+    // PBR emissive map coordinates
+    @location(7) uv_e: vec2<f32>,
 };
 
 fn cofactor(m: mat4x4<f32>) -> mat3x3<f32> {
@@ -99,22 +101,21 @@ fn ll_uv(st: vec2<f32>, sto: vec4<f32>, rot: f32) -> vec2<f32> {
     return vec2<f32>(s, 1.0 - t);
 }
 
+// textureUtilV.glsl texture_transform: SL (GL) t -> glTF v = 1 - t, then
+// KHR_texture_transform (`so`: scale, offset; `r`: rotation). LL flips back
+// to GL; our top-left-origin textures are sampled in glTF space directly.
+fn pbr_uv(uv: vec2<f32>, so: vec4<f32>, r: f32) -> vec2<f32> {
+    let st = vec2<f32>(uv.x, 1.0 - uv.y);
+    let c = cos(r);
+    let sn = sin(r);
+    let v = st * so.xy;
+    let rv = vec2<f32>(c * v.x + sn * v.y, -sn * v.x + c * v.y);
+    return rv + so.zw;
+}
+
 fn te_uv(uv: vec2<f32>, rec: DrawRecord) -> vec2<f32> {
     if ((rec.flags.x & FLAG_PBR) != 0u) {
-        var st = uv;
-        // textureUtilV.glsl texture_transform: SL (GL) t -> glTF v = 1 - t,
-        // then KHR_texture_transform (offset, rotation, scale). LL flips back
-        // to GL; our top-left-origin textures are sampled in glTF space directly.
-        st.y = 1.0 - st.y;
-        let s = rec.uv_st.xy;
-        let o = rec.uv_st.zw;
-        let r = rec.params.x;
-        let c = cos(r);
-        let sn = sin(r);
-        let v = vec2<f32>(st.x * s.x, st.y * s.y);
-        let rv = vec2<f32>(c * v.x + sn * v.y, -sn * v.x + c * v.y);
-        st = rv + o;
-        return vec2<f32>(st.x, st.y);
+        return pbr_uv(uv, rec.uv_st, rec.params.x);
     }
     return ll_uv(uv, rec.uv_st, rec.params.x);
 }
@@ -132,9 +133,16 @@ fn vs_main(in: VsIn) -> VsOut {
     out.uv = te_uv(st, rec);
     out.uv_n = out.uv;
     out.uv_s = out.uv;
+    out.uv_e = out.uv;
     if ((rec.flags.x & FLAG_LEGACY_MAT) != 0u) {
         out.uv_n = ll_uv(st, rec.mat_uv, rec.legacy.x);
         out.uv_s = ll_uv(st, rec.spec_uv, rec.legacy.y);
+    } else if ((rec.flags.x & FLAG_PBR) != 0u) {
+        // one KHR transform per map (LLFetchedGLTFMaterial::bind), packed in
+        // the legacy fields: normal, metallic-roughness, emissive
+        out.uv_n = pbr_uv(st, rec.mat_uv, rec.legacy.x);
+        out.uv_s = pbr_uv(st, rec.spec_uv, rec.legacy.y);
+        out.uv_e = pbr_uv(st, rec.spec_color, rec.legacy.z);
     }
     out.record = in.instance;
     out.view_depth = distance(wp.xyz, frame.camera_pos.xyz);
@@ -182,10 +190,10 @@ fn eval_material(in: VsOut, front: bool) -> Material {
     let rec = records[in.record];
     var m: Material;
     let base_s = sample_tex(rec.tex.x, in.uv);
-    // uv_n / uv_s equal uv except for legacy materials (own transforms)
+    // each map with its own transform (legacy and PBR materials)
     let nrm_s = sample_tex(rec.tex.y, in.uv_n);
     let mr_s = sample_tex(rec.tex.z, in.uv_s);
-    let em_s = sample_tex(rec.tex.w, in.uv);
+    let em_s = sample_tex(rec.tex.w, in.uv_e);
     var n = normalize(in.normal);
     if (!front) {
         n = -n;
@@ -460,7 +468,7 @@ fn fs_glow(in: VsOut) -> @location(0) vec4<f32> {
         if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u && base.a * rec.base_color.a < max(rec.params.w, 0.01)) {
             discard;
         }
-        let e = rec.emissive.rgb * srgb_to_linear(sample_tex(rec.tex.w, in.uv).rgb);
+        let e = rec.emissive.rgb * srgb_to_linear(sample_tex(rec.tex.w, in.uv_e).rgb);
         a = max(e.r, max(e.g, e.b)) * rec.emissive.w;
     } else {
         a = base.a * rec.emissive.w;

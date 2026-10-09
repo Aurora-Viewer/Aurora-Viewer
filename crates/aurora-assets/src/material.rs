@@ -102,6 +102,133 @@ impl Default for PbrMaterial {
     }
 }
 
+/// `LLGLTFMaterial::GLTF_OVERRIDE_NULL_UUID`: an override texture that
+/// removes the base material's texture.
+pub const OVERRIDE_NULL_UUID: Uuid = Uuid::from_u128(u128::MAX);
+
+/// Per-face override of a GLTF material, as sent by the simulator (edits made
+/// in the build tools on top of the material asset). Port of the override
+/// side of `LLGLTFMaterial` (indra/llprimitive/llgltfmaterial.cpp, originally
+/// LGPL 2.1): `None` / nil / identity means "keep the base material's value".
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct PbrOverride {
+    /// Base color, normal, metallic-roughness, emissive: nil keeps the base
+    /// texture, [`OVERRIDE_NULL_UUID`] removes it, any other id replaces it.
+    pub textures: [Uuid; 4],
+    pub base_color_factor: Option<[f32; 4]>,
+    pub emissive_factor: Option<[f32; 3]>,
+    pub metallic_factor: Option<f32>,
+    pub roughness_factor: Option<f32>,
+    pub alpha_mode: Option<AlphaMode>,
+    pub alpha_cutoff: Option<f32>,
+    pub double_sided: Option<bool>,
+    /// Applied per component (offset, scale, rotation) when not identity.
+    pub transforms: [TextureTransform; 4],
+}
+
+impl PbrOverride {
+    /// `LLGLTFMaterial::applyOverrideLLSD` on a default material: one `od`
+    /// entry of the override message. LL nudges a value equal to the default
+    /// by FLT_EPSILON so that `applyOverride` still takes it; a present key
+    /// becomes `Some` here instead. The type checks are LL's (`mf`, `rf`,
+    /// `ac`, `r` must be reals, `am` an integer, `ds` a boolean).
+    pub fn from_llsd(data: &Llsd) -> PbrOverride {
+        let mut o = PbrOverride::default();
+        let real = |v: &Llsd| matches!(v, Llsd::Real(_)).then(|| v.as_f64() as f32);
+        for (i, id) in data.get("tex").as_array().iter().take(4).enumerate() {
+            o.textures[i] = id.as_uuid();
+        }
+        let bc = data.get("bc");
+        if !bc.is_undef() {
+            o.base_color_factor = Some(std::array::from_fn(|i| bc.at(i).as_f64() as f32));
+        }
+        let ec = data.get("ec");
+        if !ec.is_undef() {
+            o.emissive_factor = Some(std::array::from_fn(|i| ec.at(i).as_f64() as f32));
+        }
+        o.metallic_factor = real(data.get("mf"));
+        o.roughness_factor = real(data.get("rf"));
+        if let Llsd::Integer(am) = data.get("am") {
+            o.alpha_mode = Some(match am {
+                1 => AlphaMode::Blend,
+                2 => AlphaMode::Mask,
+                _ => AlphaMode::Opaque,
+            });
+        }
+        o.alpha_cutoff = real(data.get("ac"));
+        if let Llsd::Boolean(ds) = data.get("ds") {
+            o.double_sided = Some(*ds);
+        }
+        for (i, t) in data.get("ti").as_array().iter().take(4).enumerate() {
+            let vec2 = |v: &Llsd| [v.at(0).as_f64() as f32, v.at(1).as_f64() as f32];
+            if !t.get("o").is_undef() {
+                o.transforms[i].offset = vec2(t.get("o"));
+            }
+            if !t.get("s").is_undef() {
+                o.transforms[i].scale = vec2(t.get("s"));
+            }
+            if let Some(r) = real(t.get("r")) {
+                o.transforms[i].rotation = r;
+            }
+        }
+        o
+    }
+}
+
+impl PbrMaterial {
+    /// `LLGLTFMaterial::applyOverride`: the render material of a face is its
+    /// base material with the override on top.
+    pub fn apply_override(&mut self, o: &PbrOverride) {
+        let textures = [
+            &mut self.base_color_texture,
+            &mut self.normal_texture,
+            &mut self.metallic_roughness_texture,
+            &mut self.emissive_texture,
+        ];
+        for (dst, id) in textures.into_iter().zip(o.textures) {
+            // applyOverrideUUID
+            if id == OVERRIDE_NULL_UUID {
+                *dst = None;
+            } else if !id.is_nil() {
+                *dst = Some(id);
+            }
+        }
+        if let Some(v) = o.base_color_factor {
+            self.base_color_factor = v;
+        }
+        if let Some(v) = o.emissive_factor {
+            self.emissive_factor = v;
+        }
+        if let Some(v) = o.metallic_factor {
+            self.metallic_factor = v;
+        }
+        if let Some(v) = o.roughness_factor {
+            self.roughness_factor = v;
+        }
+        if let Some(v) = o.alpha_mode {
+            self.alpha_mode = v;
+        }
+        if let Some(v) = o.alpha_cutoff {
+            self.alpha_cutoff = v;
+        }
+        if let Some(v) = o.double_sided {
+            self.double_sided = v;
+        }
+        let identity = TextureTransform::default();
+        for (dst, t) in self.transforms.iter_mut().zip(&o.transforms) {
+            if t.offset != identity.offset {
+                dst.offset = t.offset;
+            }
+            if t.scale != identity.scale {
+                dst.scale = t.scale;
+            }
+            if t.rotation != identity.rotation {
+                dst.rotation = t.rotation;
+            }
+        }
+    }
+}
+
 /// Parse a material asset (LLSD container in binary, XML or notation form) or a
 /// bare glTF JSON document.
 pub fn parse_material_asset(data: &[u8]) -> Result<PbrMaterial, AssetError> {
@@ -118,7 +245,7 @@ pub fn parse_material_asset(data: &[u8]) -> Result<PbrMaterial, AssetError> {
         return material_from_container(&aurora_llsd::from_xml(rest)?);
     }
     if let Some(rest) = strip_header(body, b"llsd/notation") {
-        return material_from_container(&parse_notation(rest)?);
+        return material_from_container(&aurora_llsd::from_notation(rest)?);
     }
     if body.starts_with(b"<") {
         return material_from_container(&aurora_llsd::from_xml(body)?);
@@ -138,7 +265,7 @@ pub fn parse_material_asset(data: &[u8]) -> Result<PbrMaterial, AssetError> {
             }
             return Ok(material_from_gltf(&json));
         }
-        if let Ok(v) = parse_notation(body) {
+        if let Ok(v) = aurora_llsd::from_notation(body) {
             return material_from_container(&v);
         }
         // Headerless binary LLSD map.
@@ -300,245 +427,6 @@ fn material_from_gltf(model: &Value) -> PbrMaterial {
     m
 }
 
-// ---------------------------------------------------------------------------
-// Minimal LLSD notation parser (subset of LLSDNotationParser sufficient for
-// material containers: maps, arrays, strings, numbers, booleans, uuids, undef).
-// ---------------------------------------------------------------------------
-
-const MAX_NOTATION_DEPTH: usize = 64;
-
-struct Notation<'a> {
-    d: &'a [u8],
-    pos: usize,
-}
-
-fn parse_notation(d: &[u8]) -> Result<Llsd, AssetError> {
-    let mut p = Notation { d, pos: 0 };
-    p.value(0)
-}
-
-impl Notation<'_> {
-    fn err(&self, msg: &str) -> AssetError {
-        AssetError::invalid(format!("llsd notation at {}: {msg}", self.pos))
-    }
-
-    fn ws(&mut self) {
-        while self.d.get(self.pos).is_some_and(|b| b.is_ascii_whitespace()) {
-            self.pos += 1;
-        }
-    }
-
-    fn peek(&self) -> Option<u8> {
-        self.d.get(self.pos).copied()
-    }
-
-    fn bump(&mut self) -> Option<u8> {
-        let b = self.peek()?;
-        self.pos += 1;
-        Some(b)
-    }
-
-    fn eat_word(&mut self, w: &[u8]) -> bool {
-        if self.d.get(self.pos..self.pos + w.len()) == Some(w) {
-            self.pos += w.len();
-            true
-        } else {
-            false
-        }
-    }
-
-    fn quoted(&mut self, quote: u8) -> Result<String, AssetError> {
-        let mut out = Vec::new();
-        loop {
-            let b = self.bump().ok_or(AssetError::Truncated("notation string"))?;
-            if b == quote {
-                break;
-            }
-            if b != b'\\' {
-                out.push(b);
-                continue;
-            }
-            let e = self.bump().ok_or(AssetError::Truncated("notation escape"))?;
-            out.push(match e {
-                b'a' => 0x07,
-                b'b' => 0x08,
-                b'f' => 0x0C,
-                b'n' => b'\n',
-                b'r' => b'\r',
-                b't' => b'\t',
-                b'v' => 0x0B,
-                b'x' => {
-                    let h = self.d.get(self.pos..self.pos + 2).ok_or(AssetError::Truncated("hex escape"))?;
-                    let s = std::str::from_utf8(h).map_err(|_| self.err("bad hex escape"))?;
-                    let v = u8::from_str_radix(s, 16).map_err(|_| self.err("bad hex escape"))?;
-                    self.pos += 2;
-                    v
-                }
-                other => other,
-            });
-        }
-        Ok(String::from_utf8_lossy(&out).into_owned())
-    }
-
-    fn sized(&mut self) -> Result<Vec<u8>, AssetError> {
-        // after 's' or 'b': (N)"raw bytes"
-        if self.bump() != Some(b'(') {
-            return Err(self.err("expected '('"));
-        }
-        let start = self.pos;
-        while self.peek().is_some_and(|b| b.is_ascii_digit()) {
-            self.pos += 1;
-        }
-        let n: usize = std::str::from_utf8(&self.d[start..self.pos])
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .ok_or_else(|| self.err("bad size"))?;
-        if self.bump() != Some(b')') {
-            return Err(self.err("expected ')'"));
-        }
-        let q = self.bump().ok_or(AssetError::Truncated("sized string"))?;
-        let raw = self
-            .d
-            .get(self.pos..self.pos.saturating_add(n))
-            .ok_or(AssetError::Truncated("sized string"))?
-            .to_vec();
-        self.pos += n;
-        if self.bump() != Some(q) {
-            return Err(self.err("unterminated sized string"));
-        }
-        Ok(raw)
-    }
-
-    fn string(&mut self) -> Result<String, AssetError> {
-        match self.bump() {
-            Some(q @ (b'\'' | b'"')) => self.quoted(q),
-            Some(b's') => Ok(String::from_utf8_lossy(&self.sized()?).into_owned()),
-            _ => Err(self.err("expected string")),
-        }
-    }
-
-    fn number(&mut self) -> &str {
-        let start = self.pos;
-        while self
-            .peek()
-            .is_some_and(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'+' | b'.'))
-        {
-            self.pos += 1;
-        }
-        std::str::from_utf8(&self.d[start..self.pos]).unwrap_or("")
-    }
-
-    fn value(&mut self, depth: usize) -> Result<Llsd, AssetError> {
-        if depth > MAX_NOTATION_DEPTH {
-            return Err(self.err("nesting too deep"));
-        }
-        self.ws();
-        let b = self.peek().ok_or(AssetError::Truncated("notation value"))?;
-        Ok(match b {
-            b'{' => {
-                self.pos += 1;
-                let mut m = Map::new();
-                loop {
-                    self.ws();
-                    match self.peek() {
-                        Some(b'}') => {
-                            self.pos += 1;
-                            break;
-                        }
-                        Some(b',') => {
-                            self.pos += 1;
-                            continue;
-                        }
-                        None => return Err(AssetError::Truncated("notation map")),
-                        _ => {}
-                    }
-                    let k = self.string()?;
-                    self.ws();
-                    if self.bump() != Some(b':') {
-                        return Err(self.err("expected ':'"));
-                    }
-                    let v = self.value(depth + 1)?;
-                    m.insert(k, v);
-                }
-                Llsd::Map(m)
-            }
-            b'[' => {
-                self.pos += 1;
-                let mut a = Vec::new();
-                loop {
-                    self.ws();
-                    match self.peek() {
-                        Some(b']') => {
-                            self.pos += 1;
-                            break;
-                        }
-                        Some(b',') => {
-                            self.pos += 1;
-                            continue;
-                        }
-                        None => return Err(AssetError::Truncated("notation array")),
-                        _ => a.push(self.value(depth + 1)?),
-                    }
-                }
-                Llsd::Array(a)
-            }
-            b'!' => {
-                self.pos += 1;
-                Llsd::Undef
-            }
-            b'\'' | b'"' | b's' => Llsd::String(self.string()?),
-            b'i' => {
-                self.pos += 1;
-                Llsd::Integer(self.number().parse().map_err(|_| self.err("bad integer"))?)
-            }
-            b'r' => {
-                self.pos += 1;
-                Llsd::Real(self.number().parse().map_err(|_| self.err("bad real"))?)
-            }
-            b'u' => {
-                self.pos += 1;
-                let s = self.d.get(self.pos..self.pos + 36).ok_or(AssetError::Truncated("uuid"))?;
-                let u = std::str::from_utf8(s)
-                    .ok()
-                    .and_then(|s| Uuid::parse_str(s).ok())
-                    .ok_or_else(|| self.err("bad uuid"))?;
-                self.pos += 36;
-                Llsd::Uuid(u)
-            }
-            b'l' => {
-                self.pos += 1;
-                Llsd::Uri(self.string()?)
-            }
-            b'd' => {
-                self.pos += 1;
-                let _ = self.string()?;
-                Llsd::Date(0.0)
-            }
-            b'b' => {
-                self.pos += 1;
-                if self.peek() == Some(b'(') {
-                    Llsd::Binary(self.sized()?)
-                } else {
-                    return Err(self.err("encoded binary not supported"));
-                }
-            }
-            _ => {
-                if self.eat_word(b"true") || self.eat_word(b"TRUE") {
-                    Llsd::Boolean(true)
-                } else if self.eat_word(b"false") || self.eat_word(b"FALSE") {
-                    Llsd::Boolean(false)
-                } else {
-                    match self.bump() {
-                        Some(b'1' | b't' | b'T') => Llsd::Boolean(true),
-                        Some(b'0' | b'f' | b'F') => Llsd::Boolean(false),
-                        _ => return Err(self.err("unexpected character")),
-                    }
-                }
-            }
-        })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -651,5 +539,44 @@ mod tests {
         let bad = llsd_map! { "version" => "1.1", "type" => "GLTF 2.0", "data" => "{not json" };
         assert!(parse_material_asset(&aurora_llsd::to_binary(&bad)).is_err());
         assert!(parse_material_asset(b"{'version':'1.1'").is_err());
+    }
+
+    #[test]
+    fn override_from_llsd_and_apply() {
+        let od = aurora_llsd::from_notation(
+            b"{'bc':[r1,r0.5,r0.5,r1],'tex':[!,!,!,uffffffff-ffff-ffff-ffff-ffffffffffff],\
+              'ti':[{'s':[r8,r4]},{'s':[r8,r4],'o':[r0.25,r0]}],'mf':i0,'rf':r0.25,'am':i2,'ac':r0.5,'ds':1}",
+        )
+        .unwrap();
+        let o = PbrOverride::from_llsd(&od);
+        assert_eq!(o.base_color_factor, Some([1.0, 0.5, 0.5, 1.0]));
+        assert_eq!(o.textures[TEXTURE_EMISSIVE], OVERRIDE_NULL_UUID);
+        // mf must be a real (LL ignores an integer)
+        assert_eq!(o.metallic_factor, None);
+        assert_eq!(o.roughness_factor, Some(0.25));
+        assert_eq!(o.alpha_mode, Some(AlphaMode::Mask));
+        // equal to the default but present: LL nudges it so that it applies
+        assert_eq!(o.alpha_cutoff, Some(0.5));
+        assert_eq!(o.double_sided, Some(true));
+
+        let base_id = Uuid::parse_str(BASE).unwrap();
+        let mut m = PbrMaterial {
+            base_color_texture: Some(base_id),
+            emissive_texture: Some(Uuid::parse_str(NORMAL).unwrap()),
+            alpha_cutoff: 0.3,
+            ..Default::default()
+        };
+        m.transforms[TEXTURE_NORMAL].rotation = 1.0;
+        m.apply_override(&o);
+        assert_eq!(m.base_color_texture, Some(base_id), "nil override keeps the base texture");
+        assert_eq!(m.emissive_texture, None, "the null sentinel removes it");
+        assert_eq!(m.base_color_factor, [1.0, 0.5, 0.5, 1.0]);
+        assert_eq!(m.metallic_factor, 1.0);
+        assert_eq!(m.roughness_factor, 0.25);
+        assert_eq!(m.alpha_cutoff, 0.5);
+        assert_eq!(m.transforms[TEXTURE_BASE_COLOR].scale, [8.0, 4.0]);
+        assert_eq!(m.transforms[TEXTURE_NORMAL].offset, [0.25, 0.0]);
+        assert_eq!(m.transforms[TEXTURE_NORMAL].rotation, 1.0, "identity components keep the base");
+        assert_eq!(m.transforms[TEXTURE_METALLIC_ROUGHNESS], TextureTransform::default());
     }
 }

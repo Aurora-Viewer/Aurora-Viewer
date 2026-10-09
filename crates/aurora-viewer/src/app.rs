@@ -3860,6 +3860,9 @@ impl ApplicationHandler for App {
             for (id, m) in crate::demo::legacy_materials() {
                 self.scene.legacy_mats.insert(id, m);
             }
+            for (id, m) in crate::demo::pbr_materials() {
+                self.scene.materials.insert(id, m);
+            }
             for ev in crate::demo::events() {
                 if let Some(e) = self.world.apply(ev) {
                     self.on_app_event(e);

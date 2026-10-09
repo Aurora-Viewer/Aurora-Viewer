@@ -65,10 +65,10 @@ struct DrawRecord {
     params: vec4<f32>,        // x rotation, y metallic, z roughness, w alpha cutoff
     tex: vec4<u32>,           // base, normal, metallic-roughness, emissive
     flags: vec4<u32>,         // x flags
-    mat_uv: vec4<f32>,        // legacy normal map: scale s, t, offset s, t
-    spec_uv: vec4<f32>,       // legacy specular map: scale s, t, offset s, t
-    legacy: vec4<f32>,        // x normal rot, y spec rot, z glossiness, w env intensity
-    spec_color: vec4<f32>,    // legacy specular light color
+    mat_uv: vec4<f32>,        // normal map: scale s, t, offset s, t
+    spec_uv: vec4<f32>,       // legacy specular / PBR metallic-roughness map: scale s, t, offset s, t
+    legacy: vec4<f32>,        // x normal rot, y spec / MR rot, z glossiness (PBR: emissive rot), w env intensity
+    spec_color: vec4<f32>,    // legacy specular light color (PBR: emissive map scale s, t, offset s, t)
 };
 
 const FLAG_FULLBRIGHT: u32 = 1u;

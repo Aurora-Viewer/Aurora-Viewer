@@ -59,7 +59,7 @@ commande en une ligne (`scripts/setup.ps1`, puis les outils) :
 | `aurora-viewer` | L'application : boucle de fenêtre (winit), état du monde, scène, interface egui, agent, caméra, démo hors ligne |
 | `aurora-net` | Connexion (XML-RPC), circuits UDP, capabilities, file d'événements, téléchargement HTTP des assets ; tourne sur son propre runtime tokio |
 | `aurora-msg` | Système de messages UDP de SL : trames, zerocoding, messages typés générés depuis `message_template.msg` (build.rs) |
-| `aurora-llsd` | Type LLSD et ses formats XML / binaire |
+| `aurora-llsd` | Type LLSD et ses formats XML / binaire / notation |
 | `aurora-prim` | Modèle des prims : paramètres de volume, faces, paramètres étendus, génération de la géométrie (port de `llvolume`) |
 | `aurora-assets` | Décodeurs d'assets : JPEG2000, mesh, animations, matériaux, maillages d'avatar `.llm`, squelette |
 | `aurora-render` | Moteur de rendu wgpu / Vulkan : textures bindless, géométrie sous-allouée, multi-draw-indirect, ombres, reflets, post-traitement |
