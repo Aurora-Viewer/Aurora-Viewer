@@ -737,11 +737,17 @@ pub fn top_bars(
                                     panels.about_land = !panels.about_land;
                                 }
                                 // keep the maturity badge and the parcel icons visible when
-                                // the field is narrow
+                                // the field is narrow; the icons go first in a very narrow
+                                // window (they would spill over the clock)
                                 let icons_w = if st.parcel_icons.is_empty() {
                                     0.0
                                 } else {
                                     super::parcel_icons::width(ui, &st.parcel_icons) + 8.0
+                                };
+                                let icons_w = if ui.available_width() - 24.0 - icons_w >= 80.0 {
+                                    icons_w
+                                } else {
+                                    0.0
                                 };
                                 let w = (ui.available_width() - 24.0 - icons_w).max(40.0);
                                 ui.allocate_ui(Vec2::new(w, 18.0), |ui| {
