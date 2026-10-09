@@ -23,6 +23,7 @@ pub mod media;
 pub mod minimap;
 pub mod news;
 pub mod notifications;
+pub mod object_actions;
 pub mod options;
 pub mod parcel_icons;
 pub mod people;

@@ -602,6 +602,16 @@ pub enum NetEvent {
     },
     /// ObjectProperties / ObjectPropertiesFamily (build tools: selection).
     ObjectProperties(Vec<crate::build::ObjectProps>),
+    /// llSetPayPrice values for the clicked object.
+    PayPrice {
+        object: Uuid,
+        default: i32,
+        buttons: Vec<i32>,
+    },
+    TaskInventory {
+        object: Uuid,
+        result: Result<Vec<crate::inventory::InvItem>, String>,
+    },
 }
 
 /// One avatar record of the People API (GetDisplayNames "agents" entries,
@@ -660,6 +670,28 @@ pub struct AttachRequest {
     pub desc: String,
 }
 
+/// LLToolGrab SurfaceInfo: llDetectedTouch* values in region coordinates.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TouchSurface {
+    pub uv: Vec3,
+    pub st: Vec3,
+    pub face: i32,
+    pub position: Vec3,
+    pub normal: Vec3,
+    pub binormal: Vec3,
+}
+impl Default for TouchSurface {
+    fn default() -> Self {
+        Self {
+            uv: Vec3::new(-1.0, -1.0, 0.0),
+            st: Vec3::new(-1.0, -1.0, 0.0),
+            face: -1,
+            position: Vec3::ZERO,
+            normal: Vec3::ZERO,
+            binormal: Vec3::ZERO,
+        }
+    }
+}
 #[derive(Debug, Clone)]
 pub enum NetCommand {
     /// Ask for the mute list (MuteListRequest; CRC of our cached copy, 0 if none).
@@ -754,10 +786,58 @@ pub enum NetCommand {
     Touch {
         local_id: u32,
     },
+    ObjectGrab {
+        handle: RegionHandle,
+        local_id: u32,
+        offset: Vec3,
+        surface: TouchSurface,
+    },
+    ObjectGrabUpdate {
+        handle: RegionHandle,
+        object: Uuid,
+        offset: Vec3,
+        position: Vec3,
+        elapsed_ms: u32,
+        surface: TouchSurface,
+    },
+    ObjectRelease {
+        handle: RegionHandle,
+        local_id: u32,
+        surface: TouchSurface,
+    },
+    RequestTaskInventory {
+        handle: RegionHandle,
+        local_id: u32,
+        object: Uuid,
+    },
     /// Sit on an object (AgentRequestSit; `offset` in the object frame).
     RequestSit {
+        handle: RegionHandle,
         target: Uuid,
         offset: Vec3,
+    },
+    RequestObjectProperties {
+        handle: RegionHandle,
+        object: Uuid,
+    },
+    RequestPayPrice {
+        handle: RegionHandle,
+        object: Uuid,
+    },
+    /// Sent only after the user confirms the displayed price (ObjectBuy).
+    BuyObject {
+        handle: RegionHandle,
+        local_id: u32,
+        folder: Uuid,
+        sale_type: u8,
+        price: i32,
+    },
+    /// Payment to the clicked prim, not directly to its owner.
+    PayObject {
+        handle: RegionHandle,
+        object: Uuid,
+        amount: i32,
+        description: String,
     },
     /// Profile of an avatar (picture, about text): AgentProfile cap or AvatarPropertiesRequest.
     RequestProfile(Uuid),

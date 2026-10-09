@@ -13,6 +13,7 @@ pub mod profile;
 mod session;
 pub mod social;
 pub mod stats;
+pub mod task_inventory;
 pub mod terrain;
 pub mod types;
 pub mod xmlrpc;

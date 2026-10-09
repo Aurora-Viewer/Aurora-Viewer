@@ -99,6 +99,9 @@ impl MediaManager {
             let Some(o) = world.objects.get(idx) else {
                 continue;
             };
+            if !self.build_mode && o.click_action == crate::interaction::code::IGNORE {
+                continue;
+            }
             let Some((pos, rot, _)) = Scene::object_transform(world, idx, now, 0) else {
                 continue;
             };

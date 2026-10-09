@@ -31,6 +31,7 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "ParcelVoiceInfoRequest",
     "ProvisionVoiceAccountRequest",
     "RenderMaterials",
+    "RequestTaskInventory",
     "SetDisplayName",
     "SimulatorFeatures",
     "UpdateAvatarAppearance",

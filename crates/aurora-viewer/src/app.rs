@@ -24,6 +24,8 @@ use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{CursorGrabMode, Window, WindowId};
 
+mod object_actions;
+
 enum Screen {
     Login,
     Loading { since: Instant },
@@ -122,6 +124,8 @@ pub struct App {
     mouse_mode: MouseMode,
     /// Build tools (selection, manipulators, create, terraform).
     build: crate::build::BuildTool,
+    interactions: crate::interaction::Interactions,
+    cursors: crate::cursors::Cursors,
     /// Cursor position in physical pixels.
     cursor_pos: (f32, f32),
     /// Last walk-key press (for double-tap running) and the active temporary run.
@@ -379,6 +383,8 @@ impl App {
             context_menu: None,
             mouse_mode: MouseMode::None,
             build: Default::default(),
+            interactions: Default::default(),
+            cursors: Default::default(),
             cursor_pos: (0.0, 0.0),
             last_tap: None,
             temp_run: None,
@@ -488,6 +494,39 @@ impl App {
 
     fn send(&mut self, cmd: NetCommand) {
         if self.demo {
+            match &cmd {
+                NetCommand::ObjectGrab { local_id, surface, .. } => {
+                    log::info!("demo touch_start: prim={local_id}, face={}, uv={:?}", surface.face, surface.uv);
+                    self.world.system_message("Démo : touch_start simulé.");
+                }
+                NetCommand::ObjectGrabUpdate { surface, .. } => {
+                    log::info!("demo touch / grab update: face={}, uv={:?}", surface.face, surface.uv);
+                }
+                NetCommand::ObjectRelease { local_id, surface, .. } => {
+                    log::info!("demo touch_end: prim={local_id}, face={}", surface.face);
+                    self.world.system_message("Démo : touch_end simulé.");
+                }
+                _ => {}
+            }
+            let expense = match &cmd {
+                NetCommand::BuyObject { price, .. } => Some((*price, "achat")),
+                NetCommand::PayObject { amount, .. } => Some((*amount, "paiement")),
+                _ => None,
+            };
+            if let Some((amount, kind)) = expense {
+                log::info!("demo action: {kind} L$ {amount}");
+                let balance = self.world.balance.unwrap_or(250).saturating_sub(amount);
+                self.world.apply(NetEvent::Balance(balance));
+                self.world.system_message(format!("Démo : {kind} de L$ {amount} simulé."));
+            }
+            if matches!(&cmd, NetCommand::OneShotControl(f) if f & control::STAND_UP != 0)
+                && std::env::var_os("AURORA_DEMO_ACTIONS").is_some()
+            {
+                self.world.apply(NetEvent::ObjectUpdates {
+                    handle: self.world.main_region.unwrap_or_default(),
+                    objects: vec![crate::demo::action_avatar(false)],
+                });
+            }
             for ev in crate::demo::demo_reply(&cmd) {
                 if let Some(e) = self.world.apply(ev) {
                     self.on_app_event(e);
@@ -557,6 +596,7 @@ impl App {
             self.scene.clear(&mut g.renderer);
         }
         self.world.reset();
+        self.interactions = Default::default();
         self.screen = Screen::Login;
         self.login_form.busy = false;
         self.login_form.focused = false;
@@ -569,7 +609,12 @@ impl App {
 
     fn on_app_event(&mut self, ev: NetEvent) {
         match ev {
-            NetEvent::ObjectProperties(props) => self.build.on_properties(props),
+            NetEvent::ObjectProperties(props) => {
+                self.interactions.on_properties(&props);
+                self.build.on_properties(props);
+            }
+            NetEvent::PayPrice { object, default, buttons } => self.interactions.on_prices(object, default, buttons),
+            NetEvent::TaskInventory { object, result } => self.interactions.on_contents(object, result),
             NetEvent::LoginProgress { message, fraction } => {
                 self.loading_stage = message.clone();
                 self.login_progress = Some((message, fraction));
@@ -1039,8 +1084,14 @@ impl App {
             return;
         };
         let (x, y) = self.cursor_pos;
-        let hit = g.renderer.pick_world(x, y);
         let ray = g.renderer.cursor_ray(x, y);
+        let hit = self.scene.action_point(
+            &self.world,
+            ray,
+            g.renderer.pick_world(x, y),
+            self.build.open,
+            self.settings.draw_distance,
+        );
         // on our avatar: a surface inside its box under the cursor (nothing
         // in front of it); or, when the ray goes through the box without
         // touching anything (body not drawn yet), close to the body's axis
@@ -1059,6 +1110,7 @@ impl App {
         });
         let on_avatar = avatar_hit.is_some();
         // a media face takes the click (LLToolPie::handleMediaClick)
+        self.media.build_mode = self.build.open;
         if !self.alt && !on_avatar {
             if let Some(ray) = ray {
                 let depth_t = hit.map(|p| (p - ray.0).dot(ray.1));
@@ -1079,6 +1131,27 @@ impl App {
         }
         let now = Instant::now();
         let own_idx = self.world.objects.index_of_uuid(&self.world.agent_id);
+        if self.demo && std::env::var_os("AURORA_DEMO_ACTIONS").is_some() {
+            log::info!(
+                "demo action pick: hit={hit:?}, avatar={on_avatar}, picked={:?}",
+                hit.and_then(|p| self.scene.interaction_at(&self.world, p, now, self.build.open))
+                    .and_then(|i| self.world.objects.get(i))
+                    .map(|o| (o.key.local_id, o.click_action))
+            );
+        }
+        if !on_avatar
+            && !self.alt
+            && !self.ctrl
+            && !self.shift
+            && !self.build.open
+            && !self.camera.mouselook()
+            && let Some(point) = hit
+            && let Some(idx) = self.scene.interaction_at(&self.world, point, now, self.build.open)
+            && let Some(target) = crate::interaction::target(&self.world, idx, &self.interactions.props)
+        {
+            self.activate_object_action(target, idx, point, ray);
+            return;
+        }
         if self.alt {
             // Alt+click (LLToolCamera): lock the camera on the clicked point
             // (our avatar too, to look at a part of it closely); keep holding
@@ -1087,7 +1160,7 @@ impl App {
                 let idx = if on_avatar {
                     own_idx
                 } else {
-                    self.scene.pick_at(&self.world, p, now)
+                    self.scene.interaction_at(&self.world, p, now, self.build.open)
                 };
                 let object = idx.and_then(|i| crate::camera::pick_focus_object(&self.world, i, now));
                 self.camera.alt_focus(p, object, ray, &mut self.world.agent, &self.settings.camera);
@@ -1609,8 +1682,14 @@ impl App {
             return;
         };
         let (x, y) = self.cursor_pos;
-        let hit = g.renderer.pick_world(x, y);
         let ray = g.renderer.cursor_ray(x, y);
+        let hit = self.scene.action_point(
+            &self.world,
+            ray,
+            g.renderer.pick_world(x, y),
+            self.build.open,
+            self.settings.draw_distance,
+        );
         let now = Instant::now();
         // an avatar name tag opens its avatar's menu, as a click on the
         // avatar; its point is the avatar, not the air at the tag ("Zoomer"
@@ -1624,7 +1703,7 @@ impl App {
                 let Some(p) = hit else {
                     return;
                 };
-                (self.scene.pick_at(&self.world, p, now), p)
+                (self.scene.interaction_at(&self.world, p, now, self.build.open), p)
             }
         };
         let target = match picked {
@@ -1673,7 +1752,17 @@ impl App {
         use ui::context::CtxAction;
         match act {
             CtxAction::Touch(local_id) => self.send(NetCommand::Touch { local_id }),
-            CtxAction::Sit { target, offset } => self.send(NetCommand::RequestSit { target, offset }),
+            CtxAction::Sit { target, offset } => {
+                if let Some(idx) = self.world.objects.index_of_uuid(&target)
+                    && let Some(object) = self.world.objects.get(idx)
+                {
+                    self.send(NetCommand::RequestSit {
+                        handle: object.key.region,
+                        target,
+                        offset,
+                    });
+                }
+            }
             CtxAction::Zoom(p) => self.camera.zoom_to(p, &mut self.world.agent, &self.settings.camera),
             CtxAction::AboutLand => self.panels.about_land = true,
             CtxAction::DisplayName => self.display_name_ui.open(),
@@ -1746,6 +1835,87 @@ impl App {
         }
     }
 
+    fn demo_action_steps(&mut self) {
+        // Exercise the real depth pick after the renderer is back in self.gfx.
+        if !self.demo {
+            return;
+        }
+        let Ok(mode) = std::env::var("AURORA_DEMO_ACTIONS") else {
+            return;
+        };
+        let id = crate::demo::action_mode_id(&mode);
+        if self.frame_count == 260
+            && (id == 0 || id == 980 || id == 981)
+            && let Some(idx) = self.world.objects.index_of_uuid(&crate::demo::action_id(971))
+            && let Some((pos, _, _)) = Scene::object_transform(&self.world, idx, Instant::now(), 0)
+        {
+            let direction = (self.camera.position - pos).normalize_or(-Vec3::X);
+            let rotation = glam::Quat::from_rotation_arc(Vec3::X, direction);
+            self.world.apply(crate::demo::action_overlay(
+                if id == 980 { 980 } else { 981 },
+                pos + direction * 1.0,
+                rotation,
+            ));
+        }
+        if self.frame_count == 275 && (mode == "pause" || mode == "open-media-playing") {
+            self.media.play_parcel(&self.world, &self.settings.media);
+        }
+        if (283..=284).contains(&self.frame_count)
+            && (mode == "pause" || mode == "open-media-playing")
+            && let Some(m) = self.media.find_mut(&crate::media::MediaKey::Parcel)
+        {
+            // Offline state fixture; real status is supplied by the media plugin.
+            m.status = aurora_media::MediaStatus::Playing;
+        }
+        if id != 0
+            && (280..=284).contains(&self.frame_count)
+            && let Some(idx) = self.world.objects.index_of_uuid(&crate::demo::action_id(id))
+            && let Some((pos, _, _)) = Scene::object_transform(&self.world, idx, Instant::now(), 0)
+            && let Some(cursor) = self.build.cam.project_px(pos)
+        {
+            self.cursor_pos = cursor;
+        }
+        if id != 0 && self.frame_count == 284 {
+            if mode.ends_with("-build") {
+                self.build.open_build(crate::build::Tool::Edit);
+                self.build_mouse_down();
+            } else {
+                self.on_left_press();
+            }
+            if id != 975 && id != 982 {
+                self.on_left_release();
+            }
+            log::info!(
+                "demo action click: {mode}; dialog={}, seated={}, contents={}, parcel_playing={}, parcel_paused={}, selected={:?}, focus={:?}, media_url={}",
+                self.interactions.dialog.is_some(),
+                self.world.agent.is_sitting(),
+                self.interactions
+                    .contents
+                    .as_ref()
+                    .and_then(|c| c.result.as_ref())
+                    .and_then(|r| r.as_ref().ok())
+                    .map_or(0, Vec::len),
+                self.media.parcel_playing(),
+                self.media.find(&crate::media::MediaKey::Parcel).is_some_and(|m| m.paused),
+                self.build.selection,
+                self.camera.focus_point(),
+                self.interactions.media_url.is_some(),
+            );
+        }
+        if (id == 975 || id == 982) && self.frame_count == 300 {
+            self.cursor_pos.0 += 30.0;
+        }
+        if (id == 975 || id == 982) && self.frame_count == 325 {
+            self.on_left_release();
+        }
+        if mode.ends_with("-confirm")
+            && self.frame_count == 320
+            && let Some(cmd) = self.interactions.confirm(&self.world, (id == 972).then_some(10))
+        {
+            self.send(cmd);
+        }
+    }
+
     /// Left press while building: handles, selection, create, terraform.
     fn build_mouse_down(&mut self) -> bool {
         if !self.build.open || self.alt {
@@ -1773,6 +1943,7 @@ impl App {
     }
 
     fn on_left_release(&mut self) {
+        self.release_object_hold();
         self.left_down = false;
         self.build.mouse_up(&mut self.world, &self.settings.build);
         self.flush_build();
@@ -1794,6 +1965,7 @@ impl App {
     /// A teleport asked by the user: the screen shows at once (fade in) and
     /// follows the steps from here.
     fn begin_teleport(&mut self, dest: String) {
+        self.release_object_hold();
         // LLAgent::teleportCore
         self.world.ui_sounds.push(UiSound::TeleportOut);
         self.tp_dest = Some(dest);
@@ -2406,7 +2578,16 @@ impl App {
                         alt: self.alt,
                         shift: self.shift,
                     };
-                    if let Some(c) = self.media.on_hover(&self.world, &self.scene, ray, None, mods) {
+                    self.media.build_mode = self.build.open;
+                    let point = self.scene.interaction_point(
+                        &self.world,
+                        Some(ray),
+                        gfx.renderer.pick_world(self.cursor_pos.0, self.cursor_pos.1),
+                        self.build.open,
+                        self.settings.draw_distance,
+                    );
+                    let depth = point.map(|p| (p - ray.0).dot(ray.1));
+                    if let Some(c) = self.media.on_hover(&self.world, &self.scene, ray, depth, mods) {
                         self.media_cursor = Some(match c.as_str() {
                             "UI_CURSOR_HAND" | "hand" => egui::CursorIcon::PointingHand,
                             "UI_CURSOR_IBEAM" | "ibeam" => egui::CursorIcon::Text,
@@ -2780,7 +2961,60 @@ impl App {
                 self.scene.sounds.play_ui(self.audio_engine.as_ref(), id);
             }
         }
-        gfx.egui_state.handle_platform_output(&gfx.window, full.platform_output);
+        // Native bitmap cursors, including the original Firestorm hotspot.
+        // Set this every frame because egui's custom cursor output is sticky.
+        full.platform_output.cursor_image = None;
+        self.update_object_hold(&gfx.renderer);
+        if let Some(url) = self.interactions.media_url.take() {
+            if self.demo {
+                log::info!("demo open media: external browser request simulated");
+                self.world.system_message("Démo : ouverture de l'URL du média simulée.");
+            } else {
+                full.platform_output
+                    .commands
+                    .push(egui::OutputCommand::OpenUrl(egui::OpenUrl::new_tab(url)));
+            }
+        }
+        if matches!(self.screen, Screen::World)
+            && !self.build.open
+            && !self.alt
+            && !self.ctrl
+            && !self.shift
+            && self.mouse_mode == MouseMode::None
+            && !self.camera.mouselook()
+            && self.media_cursor.is_none()
+            && !ctx.is_pointer_over_egui()
+            && !ctx.egui_wants_pointer_input()
+            && let Some(point) = self.scene.interaction_point(
+                &self.world,
+                gfx.renderer.cursor_ray(self.cursor_pos.0, self.cursor_pos.1),
+                gfx.renderer.pick_world(self.cursor_pos.0, self.cursor_pos.1),
+                false,
+                self.settings.draw_distance,
+            )
+            && let Some(idx) = self.scene.interaction_at(&self.world, point, Instant::now(), false)
+            && let Some(target) = crate::interaction::target(&self.world, idx, &std::collections::HashMap::new())
+        {
+            if let Some(cmd) = self.interactions.hover_request(target) {
+                self.send(cmd);
+            }
+            if let Some(action) = crate::interaction::cursor_action(&self.world, idx, &self.interactions.props) {
+                if action == crate::interaction::Action::Touch {
+                    full.platform_output.cursor_icon = egui::CursorIcon::PointingHand;
+                }
+                full.platform_output.cursor_image = self.cursors.image(action, self.media.parcel_status_playing());
+            }
+        }
+        if let Some(h) = &self.interactions.held {
+            if h.physical {
+                full.platform_output.cursor_image = self.cursors.image(crate::interaction::Action::Grab, false);
+            } else {
+                full.platform_output.cursor_icon = egui::CursorIcon::PointingHand;
+                full.platform_output.cursor_image = None;
+            }
+        }
+        gfx.egui_state
+            .handle_platform_output_with_event_loop(&gfx.window, event_loop, full.platform_output);
         let ppp = full.pixels_per_point;
         let prims = ctx.tessellate(full.shapes, ppp);
         self.perf.ui_ms = t_ui.elapsed().as_secs_f32() * 1000.0;
@@ -2880,6 +3114,7 @@ impl App {
         self.perf
             .frame(dt * 1000.0, self.net.stats.snapshot(), &self.last_render, &self.scene.stats);
         self.gfx = Some(gfx);
+        self.demo_action_steps();
         // closing the window: leave once the last view is kept (or after 1 s)
         if let Some(t) = self.closing
             && ((!self.scene_capture_pending && !self.want_scene_capture) || t.elapsed() > Duration::from_secs(1))
@@ -3139,6 +3374,11 @@ impl App {
         }
         if let Some(act) = a.ctx_action {
             self.on_ctx_action(act);
+        }
+        if let Some(amount) = a.object_confirm
+            && let Some(cmd) = self.interactions.confirm(&self.world, amount)
+        {
+            self.send(cmd);
         }
         if let Some((old, new)) = a.set_display_name {
             self.send(NetCommand::SetDisplayName { old, new });
@@ -3626,6 +3866,8 @@ impl App {
                 if let Some(c) = self.media_cursor {
                     ctx.set_cursor_icon(c);
                 }
+                a.object_confirm = ui::object_actions::show(&ctx, &p, &mut self.interactions, &self.world);
+                ui::object_actions::show_contents(&ctx, &p, &self.skin.icons, &mut self.interactions, &self.world);
                 for (id, r) in ui::notifications::show(&ctx, &p, &self.skin.icons, &mut self.world.notifications, &mut self.notif_ui) {
                     let (cmds, url) = self.world.respond_notification(id, r);
                     if cmds.iter().any(|c| matches!(c, NetCommand::AcceptLure { .. })) {
@@ -3869,6 +4111,7 @@ struct UiActions {
     landmark: Option<uuid::Uuid>,
     audio: Option<ui::audio::AudioAction>,
     ctx_action: Option<ui::context::CtxAction>,
+    object_confirm: Option<Option<i32>>,
     /// Display name change to send (old, new).
     set_display_name: Option<(String, String)>,
 }
@@ -3912,6 +4155,8 @@ impl ApplicationHandler for App {
         }
         let mut attrs = Window::default_attributes()
             .with_title(crate::cli::window_title())
+            // Automated captures must not steal the user's keyboard focus.
+            .with_active(!capture)
             .with_inner_size(winit::dpi::LogicalSize::new(w, h))
             .with_min_inner_size(winit::dpi::LogicalSize::new(800, 560));
         if let Some((x, y)) = pos {
@@ -4089,6 +4334,20 @@ impl ApplicationHandler for App {
             for ev in crate::demo::events() {
                 if let Some(e) = self.world.apply(ev) {
                     self.on_app_event(e);
+                }
+            }
+            if std::env::var_os("AURORA_DEMO_ACTIONS").is_some() {
+                for ev in crate::demo::action_events() {
+                    self.world.apply(ev);
+                }
+                self.settings.audio.media_autoplay = false;
+                if let Some(parcel) = self.world.parcel.as_mut() {
+                    let p = Arc::make_mut(parcel);
+                    p.media_url = "https://example.invalid/aurora-media".into();
+                    p.media.current_url = crate::demo::DEMO_MEDIA_PAGE.into();
+                    p.media.mime = "text/html".into();
+                    p.media.media_id = crate::demo::ACTION_MEDIA_TEX;
+                    p.media.auto_scale = true;
                 }
             }
             if std::env::var_os("AURORA_DEMO_ANIMESH").is_some() {

@@ -649,8 +649,217 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 anims: vec![(anim, 1)],
             }]
         }
+        aurora_net::NetCommand::RequestObjectProperties { object, .. } if (970..=982).any(|id| action_id(id) == *object) => {
+            vec![NetEvent::ObjectProperties(vec![aurora_net::build::ObjectProps {
+                object_id: *object,
+                owner_id: DEMO_NOVA,
+                sale_type: if *object == action_id(971) { 2 } else { 0 },
+                sale_price: 10,
+                name: if *object == action_id(971) {
+                    "Cube à acheter"
+                } else {
+                    "Objet de démonstration"
+                }
+                .into(),
+                description: "Démo hors ligne : aucun L$ réel n'est dépensé.".into(),
+                ..Default::default()
+            }])]
+        }
+        aurora_net::NetCommand::RequestPayPrice { object, .. } if *object == action_id(972) => {
+            vec![NetEvent::PayPrice {
+                object: *object,
+                default: 10,
+                buttons: vec![1, 5, 10, 20],
+            }]
+        }
+        aurora_net::NetCommand::RequestTaskInventory { object, .. } if *object == action_id(976) => {
+            let contents = [(7, "Carte de bienvenue"), (10, "Script de démonstration"), (6, "Cube de réserve")]
+                .into_iter()
+                .enumerate()
+                .map(|(i, (ty, name))| {
+                    aurora_llsd::llsd_map!("item_id" => action_id(990+i as u32),"parent_id" => *object,
+                    "type" => ty,"inv_type" => ty,"name" => name,"desc" => "Contenu simulé hors ligne.")
+                })
+                .collect();
+            let reply = aurora_llsd::llsd_map!("contents" => Llsd::Array(contents));
+            vec![NetEvent::TaskInventory {
+                object: *object,
+                result: aurora_net::task_inventory::parse_cap(&reply),
+            }]
+        }
+        aurora_net::NetCommand::ObjectGrabUpdate { object, position, .. } if *object == action_id(982) => {
+            let mut o = action_object(982, 0, 138.0, 126.0, [0.8, 0.6, 0.3, 1.0], "Grab : déplacer");
+            o.position = *position;
+            vec![NetEvent::ObjectUpdates {
+                handle: HANDLE,
+                objects: vec![o],
+            }]
+        }
+        aurora_net::NetCommand::RequestSit { target, .. } if *target == action_id(970) => {
+            vec![
+                NetEvent::SitResponse {
+                    object: *target,
+                    camera_eye: Vec3::ZERO,
+                    camera_at: Vec3::ZERO,
+                    force_mouselook: false,
+                },
+                NetEvent::ObjectUpdates {
+                    handle: HANDLE,
+                    objects: vec![action_avatar(true)],
+                },
+            ]
+        }
         _ => Vec::new(),
     }
+}
+
+pub fn action_id(id: u32) -> Uuid {
+    Uuid::from_u128(0xA0E0_0000_0000_0000_0000_0000_0000_0000 | id as u128)
+}
+
+pub fn action_avatar(seated: bool) -> ObjectUpdate {
+    let mut o = prim(
+        9000,
+        if seated {
+            Vec3::new(0.0, 0.0, 1.2)
+        } else {
+            Vec3::new(132.0, 126.0, floor_at(132.0, 126.0) + 0.84)
+        },
+        Quat::from_rotation_z(0.3),
+        Vec3::new(0.45, 0.6, 1.9),
+        shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE, 100, 0, 0),
+        te([0.91, 0.93, 0.98, 1.0], 0, false, 0.0),
+        ExtraParams::default(),
+        "",
+    );
+    o.full_id = DEMO_AGENT;
+    o.pcode = LL_PCODE_LEGACY_AVATAR;
+    o.parent_id = if seated { 970 } else { 0 };
+    o.name_values = "FirstName STRING RW SV Aurora\nLastName STRING RW SV Demo".into();
+    o
+}
+
+pub fn action_mode_id(mode: &str) -> u32 {
+    if mode.starts_with("open-media") {
+        return 978;
+    }
+    match mode.split('-').next().unwrap_or("") {
+        "sit" => 970,
+        "buy" => 971,
+        "pay" => 972,
+        "none" | "touch" => 975,
+        "open" => 976,
+        "play" | "pause" => 977,
+        "zoom" => 979,
+        "disabled" => 980,
+        "ignore" => 981,
+        "grab" => 982,
+        _ => 0,
+    }
+}
+
+fn action_object(id: u32, action: u8, x: f32, y: f32, color: [f32; 4], label: &str) -> ObjectUpdate {
+    let boxp = shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE, 100, 0, 0);
+    let mut o = prim(
+        id,
+        Vec3::new(x, y, floor_at(x, y) + 0.6),
+        Quat::IDENTITY,
+        Vec3::splat(1.2),
+        boxp,
+        te(color, 0, false, 0.0),
+        ExtraParams::default(),
+        label,
+    );
+    o.click_action = action;
+    o.owner_id = if id == 976 { DEMO_AGENT } else { DEMO_NOVA };
+    o.update_flags = match id {
+        972 => 1 << 9,
+        975 | 980 | 981 => 1 << 7,
+        976 => (1 << 5) | (1 << 2),
+        982 => 1 | (1 << 8) | (1 << 5),
+        _ => 0,
+    };
+    if id == 978
+        && let Some(t) = o.texture_entry.as_mut()
+    {
+        for f in Arc::make_mut(t).faces.iter_mut() {
+            f.texture = ACTION_MEDIA_TEX;
+        }
+    }
+    o
+}
+
+/// A visible screen placed in front of Buy: Ignore passes through; Disabled
+/// occludes and consumes the click. Geometry remains selectable in build mode.
+pub fn action_overlay(id: u32, pos: Vec3, rotation: Quat) -> NetEvent {
+    let mut o = action_object(
+        id,
+        if id == 981 { 9 } else { 8 },
+        138.0,
+        126.0,
+        [0.75, 0.3, 0.35, 1.0],
+        if id == 981 {
+            "IGNORE : cliquer à travers"
+        } else {
+            "DISABLED : aucun clic"
+        },
+    );
+    o.position = pos;
+    o.rotation = rotation;
+    o.scale = Vec3::new(0.12, 2.0, 2.0);
+    NetEvent::ObjectUpdates {
+        handle: HANDLE,
+        objects: vec![o],
+    }
+}
+
+/// All click actions, plus an inherited Buy on a child. Named modes isolate
+/// a target and App::demo_action_steps exercises the real picking / input.
+pub fn action_events() -> Vec<NetEvent> {
+    let boxp = shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE, 100, 0, 0);
+    let mut objects = Vec::new();
+    for (id, action, x, y, color, label) in [
+        (970, 1, 138.0, 122.0, [0.48, 0.3, 0.75, 1.0], "Sit : s'asseoir"),
+        (971, 2, 138.0, 126.0, [0.35, 0.65, 0.8, 1.0], "Buy : copie à L$ 10"),
+        (972, 3, 135.0, 130.0, [0.3, 0.75, 0.55, 1.0], "Pay : payer l'objet"),
+        (975, 0, 139.0, 132.0, [0.7, 0.55, 0.8, 1.0], "NONE / TOUCH : toucher"),
+        (976, 4, 138.0, 134.0, [0.8, 0.7, 0.4, 1.0], "Open : contenu"),
+        (977, 5, 142.0, 122.0, [0.3, 0.65, 0.7, 1.0], "Play : lecture / pause"),
+        (978, 6, 142.0, 126.0, [0.35, 0.65, 0.8, 1.0], "Open Media : média de parcelle"),
+        (979, 7, 142.0, 130.0, [0.6, 0.65, 0.85, 1.0], "Zoom : cadrer l'objet"),
+        (980, 8, 142.0, 134.0, [0.75, 0.3, 0.35, 1.0], "DISABLED : aucun clic"),
+        (981, 9, 136.5, 125.8, [0.75, 0.3, 0.35, 1.0], "IGNORE : cliquer à travers"),
+        (982, 0, 139.0, 138.0, [0.8, 0.6, 0.3, 1.0], "Grab : déplacer"),
+    ] {
+        objects.push(action_object(id, action, x, y, color, label));
+    }
+    let mut child = prim(
+        974,
+        Vec3::new(0.0, 0.0, 1.0),
+        Quat::IDENTITY,
+        Vec3::splat(0.4),
+        boxp,
+        te([0.7, 0.7, 0.9, 1.0], 0, false, 0.0),
+        ExtraParams::default(),
+        "Buy hérité",
+    );
+    child.parent_id = 971;
+    objects.push(child);
+    let mode = std::env::var("AURORA_DEMO_ACTIONS").unwrap_or_default();
+    let selected = action_mode_id(&mode);
+    if selected != 0 {
+        objects.retain(|o| {
+            o.local_id == selected || ((selected == 971 || selected == 980 || selected == 981) && (o.local_id == 971 || o.local_id == 974))
+        });
+        if selected >= 975
+            && selected != 980
+            && selected != 981
+            && let Some(o) = objects.iter_mut().find(|o| o.local_id == selected)
+        {
+            o.position = Vec3::new(138.0, 126.0, floor_at(138.0, 126.0) + 0.6);
+        }
+    }
+    vec![NetEvent::ObjectUpdates { handle: HANDLE, objects }, NetEvent::Balance(250)]
 }
 
 /// AURORA_DEMO_BAN: the south-east lot (x >= 192 m, y < 64 m) is banned.
@@ -886,7 +1095,9 @@ pub fn events() -> Vec<NetEvent> {
     ));
     id += 1;
     // alpha modes / legacy materials test panels (procedural textures)
-    {
+    // Keep the manual click-action targets unobstructed. Reserve the same
+    // ids so other demo objects and replies retain their identities.
+    if !std::env::var("AURORA_DEMO_ACTIONS").is_ok_and(|m| m == "1") {
         let yaw = 0.4f32.atan2(0.8);
         let across = Vec3::new(-yaw.sin(), yaw.cos(), 0.0);
         let center = Vec3::new(138.5, 125.5, 0.0);
@@ -911,6 +1122,8 @@ pub fn events() -> Vec<NetEvent> {
             ));
             id += 1;
         }
+    } else {
+        id += ALPHA_PANELS.len() as u32;
     }
     // a little city of boxes
     for i in 0..6 {
@@ -1660,6 +1873,8 @@ pub fn voice_levels(t: f64, me: Uuid, talking: bool, mic_level: f32) -> std::col
 
 /// Procedural demo textures (offline): alpha gradient, holes, bump normals.
 pub const TEX_GRADIENT: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0001);
+/// Opaque parcel placeholder isolated from the alpha-regression panels.
+pub const ACTION_MEDIA_TEX: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0011);
 pub const TEX_HOLES: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0002);
 pub const TEX_BUMPS: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0003);
 /// Floor tiles of AURORA_DEMO_PLANAR: 2 × 2 tiles with grout lines, the
@@ -1688,7 +1903,9 @@ pub fn local_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
     for y in 0..N {
         for x in 0..N {
             let (fx, fy) = (x as f32, y as f32);
-            let p: [u8; 4] = if *id == TEX_GRADIENT {
+            let p: [u8; 4] = if *id == ACTION_MEDIA_TEX {
+                [255, 255, 255, 255]
+            } else if *id == TEX_GRADIENT {
                 [196, 181, 253, (fx / (N - 1) as f32 * 255.0) as u8]
             } else if *id == TEX_HOLES {
                 let (cx, cy) = ((fx % 32.0) - 16.0, (fy % 32.0) - 16.0);
