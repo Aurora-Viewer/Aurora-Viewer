@@ -37,7 +37,7 @@ aurora-viewer/                  dépôt git (GitHub : Aurora-Viewer/Aurora-Viewe
 ├─ crates/                      le code (voir ci-dessous)
 ├─ docs/                        BRANDING.md et autres documents
 ├─ scripts/                     outils des agents et des humains (PowerShell)
-│  └─ tools/                    aurora-tools : menu, interface (ui), vérifications et réparation (checks), actions, PR en direct (prs), releases, réinitialisation (reset)
+│  └─ tools/                    aurora-tools : menu, interface (ui), vérifications et réparation (checks), actions, PR en direct (prs), releases, réinitialisation (reset), permissions de Claude Code (claude)
 └─ .github/                     CI (workflows/, actions/), release, modèle de PR, Dependabot
 ```
 

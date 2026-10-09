@@ -4,7 +4,7 @@
     (flèches, Entrée, Échap) : diagnostic et réparation de l'environnement,
     viewers release / dev / debug, démo, tâches des agents, disque, logs,
     suivi des PR en direct (bandeau du bas, notifications), gestion des
-    releases, raccourcis, réinitialisation du dépôt. Se lance par aurora-tools.cmd, à la racine du dépôt.
+    releases, raccourcis, permissions de Claude Code, réinitialisation du dépôt. Se lance par aurora-tools.cmd, à la racine du dépôt.
 
 .DESCRIPTION
     Sans dépôt (première installation : la commande en une ligne lance
@@ -16,13 +16,13 @@
     ./scripts/tools/aurora-tools.ps1 -Action diagnose    # une action, sans menu
 #>
 param(
-    [ValidateSet('menu', 'install', 'diagnose', 'repair', 'release', 'dev', 'debug', 'demo', 'tasks', 'disk', 'logs', 'shortcut', 'prs', 'releases', 'reset')]
+    [ValidateSet('menu', 'install', 'diagnose', 'repair', 'release', 'dev', 'debug', 'demo', 'tasks', 'disk', 'logs', 'shortcut', 'prs', 'releases', 'reset', 'claude')]
     [string]$Action = 'menu',
     # project folder for -Action install (asked for when not given)
     [string]$Path,
     # -Action install without questions
     [switch]$Yes,
-    # releases, reset: show what would be written or erased instead of doing it
+    # releases, reset, claude: show what would be written or erased instead of doing it
     [switch]$DryRun
 )
 $ErrorActionPreference = 'Continue'
@@ -133,6 +133,7 @@ function Show-Main {
             @{ Key = 'p'; Label = 'Suivi des PR'; Hint = 'en direct, à garder dans un coin de l''écran' }
             @{ Key = 'g'; Label = 'Gérer les releases'; Hint = 'créer ou supprimer une version' }
             @{ Key = '8'; Label = 'Raccourcis'; Hint = 'Bureau et menu Démarrer' }
+            @{ Key = 'c'; Label = 'Permissions de Claude'; Hint = 'laisser les agents relire et fusionner leurs PR' }
             @{ Key = 'v'; Label = 'Vérifier à nouveau'; Hint = 'le tableau complet de l''environnement' }
             @{ Key = 'x'; Label = 'Réinitialiser le dépôt'; Hint = 'clone neuf de GitHub, efface tout le local (inventaire d''abord)' }
             @{ Key = '0'; Label = 'Quitter'; Hint = '' }
@@ -154,6 +155,7 @@ function Show-Main {
                 'p' { Show-PrPanel }
                 'g' { Invoke-Releases }
                 '8' { Invoke-Shortcut }
+                'c' { Invoke-ClaudePermissions }
                 'x' { Invoke-Reset; $checks = $null }
                 'v' { $checks = Get-Checks $Paths; Show-Checks $checks "Environnement : $($Paths.Root)"; Wait-Back }
             }
@@ -189,5 +191,6 @@ switch ($Action) {
     'disk' { Invoke-Disk }
     'logs' { Invoke-Logs }
     'shortcut' { Invoke-Shortcut }
+    'claude' { Invoke-ClaudePermissions }
 }
 Stop-GitHubWatch

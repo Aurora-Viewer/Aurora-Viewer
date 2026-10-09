@@ -166,6 +166,7 @@ ligne : ce qui est là est mis à jour, rien n'est réinstallé).
 | Suivi des PR | Le panneau en direct (voir ci-dessous) |
 | Gérer les releases | Créer ou supprimer une version (voir [Publier une version](#publier-une-version)) |
 | Raccourcis | « Aurora Tools » et « Aurora PR » (le panneau des PR directement) sur le Bureau et dans le menu Démarrer, avec le logo |
+| Permissions de Claude | Laisse tes agents Claude Code poster leur relecture et fusionner leur PR (`gh pr comment`, `merge-pr.ps1`), que le mode auto leur refuse sinon (« auto-approbation »). Ajoute deux règles dans tes réglages Claude Code (`%USERPROFILE%\.claude\settings.json`) sans toucher au reste, en gardant une copie de l'ancien fichier ; la file de fusion et la protection de `main` s'appliquent toujours. Ouvre ensuite une nouvelle session de Claude Code |
 | Vérifier à nouveau | Le tableau complet de l'environnement |
 | Réinitialiser le dépôt | Repartir d'un clone neuf du `main` de GitHub : l'outil liste d'abord tout ce qui serait perdu (changements non commités, commits jamais poussés, stashs, tâches des agents avec leurs changements, fichiers ignorés comme un `.env`), refuse si une compilation ou un viewer tourne, et ne fait rien sans que tu tapes `REINITIALISER`. Il supprime alors les tâches de `work\` et `RELEASE\`, remet le dépôt sur `origin/main` (fichiers non suivis et compilations effacés, branches locales et stashs supprimés), puis répare l'environnement. Ton identité git, ta connexion GitHub et les sources de Firestorm sont gardées |
 
@@ -184,8 +185,8 @@ le quota de GitHub (5 000 requêtes par heure) est partagé avec tes agents.
 Chaque choix existe aussi sans menu, pour un script :
 `./scripts/tools/aurora-tools.ps1 -Action diagnose` (`repair`, `release`,
 `dev`, `debug`, `demo`, `tasks`, `disk`, `logs`, `prs`, `releases`,
-`reset`, `shortcut`) ; `-DryRun` montre ce que `releases` et `reset`
-feraient sans le faire.
+`reset`, `shortcut`, `claude`) ; `-DryRun` montre ce que `releases`,
+`reset` et `claude` feraient sans le faire.
 
 ## Le viewer à jour de `main`, en `--release`
 
