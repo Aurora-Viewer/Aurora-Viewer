@@ -2384,6 +2384,7 @@ impl Session<'_> {
                 NetEvent::AvatarAnimations {
                     avatar: m.sender.id,
                     anims: m.animation_list.iter().map(|a| (a.anim_id, a.anim_sequence_id)).collect(),
+                    sources: m.animation_source_list.iter().map(|s| s.object_id).collect(),
                 },
             );
         } else if id == ObjectAnimation::ID {
@@ -2393,6 +2394,7 @@ impl Session<'_> {
                 NetEvent::AvatarAnimations {
                     avatar: m.sender.id,
                     anims: m.animation_list.iter().map(|a| (a.anim_id, a.anim_sequence_id)).collect(),
+                    sources: Vec::new(),
                 },
             );
         } else if id == MoneyBalanceReply::ID {

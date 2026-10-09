@@ -2457,6 +2457,9 @@ impl App {
             }
         }
         self.perf.events_ms = t_ev.elapsed().as_secs_f32() * 1000.0;
+        for anim in std::mem::take(&mut self.world.animation_stops) {
+            self.send(NetCommand::AgentAnimation { anim, start: false });
+        }
         self.frame_profile.lap(Lap::Events);
         if self.in_world() && self.last_social_poll.elapsed() > Duration::from_millis(500) {
             self.last_social_poll = Instant::now();
@@ -4558,6 +4561,10 @@ impl ApplicationHandler for App {
             }
             log::info!("demo mode: injecting synthetic region");
             let rig = self.scene.avatar_lib.rig.clone();
+            self.scene.anims.insert(
+                crate::demo::SEAT_ANIM,
+                Arc::new(crate::scene::anim::BoundAnim::bind(crate::demo::seat_animation(), &rig)),
+            );
             let demo_anim = if std::env::var_os("AURORA_DEMO_ANIM_LOOP").is_some() {
                 crate::demo::loop_animation()
             } else {

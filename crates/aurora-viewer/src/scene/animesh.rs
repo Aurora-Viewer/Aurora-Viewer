@@ -326,6 +326,7 @@ mod tests {
         let first = signals.update(&w, root, t);
         assert_eq!(first.len(), 1); // Only the child has a signal.
         w.apply(NetEvent::AvatarAnimations {
+            sources: Vec::new(),
             avatar: root_id,
             anims: vec![(id, 9)],
         });
@@ -333,6 +334,7 @@ mod tests {
         assert_eq!(second[0].sequence, 9);
         assert_eq!(second[0].continuous_start, first[0].continuous_start);
         w.apply(NetEvent::AvatarAnimations {
+            sources: Vec::new(),
             avatar: root_id,
             anims: vec![],
         });
@@ -340,21 +342,25 @@ mod tests {
         assert_eq!(third[0].sequence, 1);
         assert_eq!(third[0].continuous_start, first[0].continuous_start);
         w.apply(NetEvent::AvatarAnimations {
+            sources: Vec::new(),
             avatar: child_id,
             anims: vec![],
         });
         assert!(signals.update(&w, root, t + Duration::from_secs(3)).is_empty());
         w.apply(NetEvent::AvatarAnimations {
+            sources: Vec::new(),
             avatar: child_id,
             anims: vec![(id, 10)],
         });
         let restarted = signals.update(&w, root, t + Duration::from_secs(4));
         assert!(restarted[0].continuous_start > first[0].continuous_start);
         w.apply(NetEvent::AvatarAnimations {
+            sources: Vec::new(),
             avatar: child_id,
             anims: vec![],
         });
         w.apply(NetEvent::AvatarAnimations {
+            sources: Vec::new(),
             avatar: child_id,
             anims: vec![(id, 11)],
         });

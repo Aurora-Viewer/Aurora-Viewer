@@ -166,6 +166,10 @@ pub struct World {
     pub inventory: inventory::Inventory,
     /// Playing animations per avatar / animesh.
     pub animations: HashMap<Uuid, Vec<PlayingAnimation>>,
+    /// Our animation sources, kept until the simulator stops the motion.
+    animation_sources: HashMap<Uuid, HashSet<Uuid>>,
+    /// Motions to stop on the simulator after leaving a seat (drained by app).
+    pub animation_stops: Vec<Uuid>,
     /// EEP environments (region, parcel, local) and their crossfades.
     pub eep: eep_env::EnvSelector,
     /// Monotonic clock of the environment crossfades.
@@ -241,6 +245,8 @@ impl World {
             status: status::Status::default(),
             inventory: inventory::Inventory::default(),
             animations: HashMap::new(),
+            animation_sources: HashMap::new(),
+            animation_stops: Vec::new(),
             eep: eep_env::EnvSelector::default(),
             env_clock: Instant::now(),
             cloud_scroll: glam::Vec2::ZERO,
@@ -706,6 +712,9 @@ impl World {
                     let velocity = u.velocity;
                     let acceleration = u.acceleration;
                     let parent = u.parent_id;
+                    if is_me {
+                        self.on_seat_parent_change(handle, parent);
+                    }
                     self.objects.upsert(handle, u);
                     if is_me {
                         self.agent
@@ -1020,11 +1029,23 @@ impl World {
                 self.flush_online_notices();
                 None
             }
-            NetEvent::AvatarAnimations { avatar, anims } => {
+            NetEvent::AvatarAnimations { avatar, anims, sources } => {
                 let now = Instant::now();
                 if avatar == self.agent_id {
                     log::info!("own animations: {} playing", anims.len());
                     self.agent.ground_sit = anims.iter().any(|(id, _)| *id == body::ANIM_SIT_GROUND_CONSTRAINED);
+                    // Firestorm process_avatar_animation / processAnimationStateChanges:
+                    // source blocks correspond by index, and previous source entries
+                    // survive packets without sources while the animation is active.
+                    self.animation_sources.retain(|_, motions| {
+                        motions.retain(|id| anims.iter().any(|(active, _)| active == id));
+                        !motions.is_empty()
+                    });
+                    for (source, (id, _)) in sources.into_iter().zip(&anims) {
+                        if !source.is_nil() && self.objects.index_of_uuid(&source).is_some() {
+                            self.animation_sources.entry(source).or_default().insert(*id);
+                        }
+                    }
                 }
                 let prev = self.animations.remove(&avatar).unwrap_or_default();
                 // ANIM_AGENT_TYPE starting: the typing sound at the avatar
@@ -1683,6 +1704,37 @@ impl World {
     pub fn animations_of(&self, owner: &Uuid) -> &[PlayingAnimation] {
         self.animations.get(owner).map(|v| v.as_slice()).unwrap_or(&[])
     }
+
+    /// Port of LLVOAvatar::getOffObject / LLVOAvatarSelf::stopMotionFromSource
+    /// (indra/newview/llvoavatar.cpp, llvoavatarself.cpp, LGPL 2.1). Run before
+    /// replacing our object's parent, while the old seat/linkset is known.
+    fn on_seat_parent_change(&mut self, region: RegionHandle, parent: u32) {
+        let Some(avatar) = self.objects.index_of_uuid(&self.agent_id).and_then(|i| self.objects.get(i)) else {
+            return;
+        };
+        if avatar.parent_id == 0 || (avatar.key.region == region && avatar.parent_id == parent) {
+            return;
+        }
+        let seat_key = ObjKey {
+            region: avatar.key.region,
+            local_id: avatar.parent_id,
+        };
+        let seat = self.objects.index_of(&seat_key).into_iter();
+        let children = self.objects.children_of(&seat_key).iter().copied();
+        for idx in seat.chain(children) {
+            let Some(source) = self.objects.get(idx).map(|o| o.full_id) else {
+                continue;
+            };
+            if let Some(motions) = self.animation_sources.remove(&source) {
+                for id in motions {
+                    if !self.animation_stops.contains(&id) {
+                        log::info!("leaving seat: stop animation {id} from {source}");
+                        self.animation_stops.push(id);
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1711,6 +1763,7 @@ mod motion_tests {
         let avatar = world.agent_id;
         let id = Uuid::from_u128(18);
         world.apply(NetEvent::AvatarAnimations {
+            sources: Vec::new(),
             avatar,
             anims: vec![(id, 1)],
         });
@@ -1720,14 +1773,20 @@ mod motion_tests {
         previous.sequence_start = early;
         previous.continuous_start = early;
         world.apply(NetEvent::AvatarAnimations {
+            sources: Vec::new(),
             avatar,
             anims: vec![(id, 2)],
         });
         let changed = world.animations_of(&avatar)[0];
         assert_eq!(changed.continuous_start, early);
         assert!(changed.sequence_start > early);
-        world.apply(NetEvent::AvatarAnimations { avatar, anims: Vec::new() });
         world.apply(NetEvent::AvatarAnimations {
+            sources: Vec::new(),
+            avatar,
+            anims: Vec::new(),
+        });
+        world.apply(NetEvent::AvatarAnimations {
+            sources: Vec::new(),
             avatar,
             anims: vec![(id, 2)],
         });
@@ -1764,6 +1823,147 @@ mod motion_tests {
         });
         world.parcel_name = "Parcelle de démo".into();
         (world, handle)
+    }
+
+    fn seated_fixture() -> (World, aurora_net::objects::ObjectUpdate, RegionHandle, Uuid, Uuid) {
+        let (mut world, mut avatar, handle) = fixture();
+        let mut seat = avatar.clone();
+        seat.full_id = Uuid::from_u128(950);
+        seat.local_id = 950;
+        seat.pcode = aurora_prim::params::LL_PCODE_VOLUME;
+        let mut child = seat.clone();
+        child.full_id = Uuid::from_u128(951);
+        child.local_id = 951;
+        child.parent_id = seat.local_id;
+        let (root, linked) = (seat.full_id, child.full_id);
+        let mut ao = seat.clone();
+        ao.full_id = Uuid::from_u128(999);
+        ao.local_id = 999;
+        ao.parent_id = avatar.local_id;
+        avatar.parent_id = seat.local_id;
+        world.apply(NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![seat, child, ao, avatar.clone()],
+        });
+        (world, avatar, handle, root, linked)
+    }
+
+    #[test]
+    fn standing_requests_only_seat_and_linked_prim_animation_stops_once() {
+        let (mut world, mut avatar, handle, root, linked) = seated_fixture();
+        let (sit, hands, ao) = (Uuid::from_u128(71), Uuid::from_u128(72), Uuid::from_u128(73));
+        world.apply(NetEvent::AvatarAnimations {
+            avatar: world.agent_id,
+            anims: vec![(sit, 1), (hands, 1), (ao, 1), (Uuid::from_u128(74), 1)],
+            sources: vec![root, linked, Uuid::from_u128(999)],
+        });
+        // A sequence change/sparse source list must not forget the seat.
+        world.apply(NetEvent::AvatarAnimations {
+            avatar: world.agent_id,
+            anims: vec![(sit, 2), (hands, 2), (ao, 2)],
+            // The same motion can also be associated with a linked prim.
+            sources: vec![linked],
+        });
+        world.apply(NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![avatar.clone()],
+        });
+        assert!(world.animation_stops.is_empty(), "still on the same seat");
+        avatar.parent_id = 0;
+        world.apply(NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![avatar.clone()],
+        });
+        assert_eq!(world.animation_stops.len(), 2);
+        assert!(world.animation_stops.contains(&sit) && world.animation_stops.contains(&hands));
+        assert!(!world.animation_stops.contains(&ao));
+        assert!(world.animation_sources.contains_key(&Uuid::from_u128(999)));
+        world.animation_stops.clear();
+        world.apply(NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![avatar],
+        });
+        assert!(world.animation_stops.is_empty(), "repeated standing packet");
+    }
+
+    #[test]
+    fn stopped_motion_loses_its_source_before_restart_elsewhere() {
+        let (mut world, mut avatar, handle, root, _) = seated_fixture();
+        let id = Uuid::from_u128(71);
+        for (anims, sources) in [
+            (vec![(id, 1)], vec![root]),
+            (Vec::new(), Vec::new()),
+            (vec![(id, 2)], vec![Uuid::from_u128(999)]),
+        ] {
+            world.apply(NetEvent::AvatarAnimations {
+                avatar: world.agent_id,
+                anims,
+                sources,
+            });
+        }
+        avatar.parent_id = 0;
+        world.apply(NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![avatar],
+        });
+        assert!(world.animation_stops.is_empty());
+        assert_eq!(world.animation_sources.len(), 1);
+    }
+
+    #[test]
+    fn other_avatars_and_excess_source_blocks_do_not_stop_our_motions() {
+        let (mut world, mut avatar, handle, root, _) = seated_fixture();
+        let id = Uuid::from_u128(71);
+        world.apply(NetEvent::AvatarAnimations {
+            avatar: Uuid::from_u128(111),
+            anims: vec![(id, 1)],
+            sources: vec![root],
+        });
+        world.apply(NetEvent::AvatarAnimations {
+            avatar: world.agent_id,
+            anims: vec![(id, 1)],
+            sources: vec![Uuid::nil(), root],
+        });
+        avatar.parent_id = 0;
+        world.apply(NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![avatar],
+        });
+        assert!(world.animation_stops.is_empty());
+    }
+
+    #[test]
+    fn switching_seats_stops_the_previous_seat_motion() {
+        let (mut world, mut avatar, handle, root, _) = seated_fixture();
+        let id = Uuid::from_u128(71);
+        world.apply(NetEvent::AvatarAnimations {
+            avatar: world.agent_id,
+            anims: vec![(id, 1)],
+            sources: vec![root],
+        });
+        avatar.parent_id = 952;
+        world.apply(NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![avatar],
+        });
+        assert_eq!(world.animation_stops, vec![id]);
+    }
+
+    #[test]
+    fn demo_seat_motion_stops_after_the_simulator_receives_our_request() {
+        let (mut world, _, _) = fixture();
+        for frame in [250, 300, 700] {
+            for event in crate::demo::sit_events(frame) {
+                world.apply(event);
+            }
+        }
+        assert_eq!(world.animation_stops, vec![crate::demo::SEAT_ANIM]);
+        for anim in std::mem::take(&mut world.animation_stops) {
+            for event in crate::demo::demo_reply(&aurora_net::NetCommand::AgentAnimation { anim, start: false }) {
+                world.apply(event);
+            }
+        }
+        assert!(!world.animations_of(&world.agent_id).iter().any(|a| a.id == crate::demo::SEAT_ANIM));
     }
 
     #[test]
@@ -1967,6 +2167,7 @@ mod motion_tests {
         let (mut world, _, _) = fixture();
         let me = world.agent_id;
         let sit = |avatar, anim| NetEvent::AvatarAnimations {
+            sources: Vec::new(),
             avatar,
             anims: vec![(anim, 1)],
         };

@@ -359,6 +359,13 @@ pub fn seed_contact_sets(world: &mut crate::world::World) {
 pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
     use aurora_net::inventory::{FolderContents, InvItem};
     match cmd {
+        aurora_net::NetCommand::AgentAnimation { anim, start: false } if *anim == SEAT_ANIM => {
+            vec![NetEvent::AvatarAnimations {
+                avatar: DEMO_AGENT,
+                anims: vec![(IDLE_ANIM, 1)],
+                sources: Vec::new(),
+            }]
+        }
         aurora_net::NetCommand::Land(l) => land::reply(l),
         aurora_net::NetCommand::RequestNames(ids) => {
             let names = ["Nova Exemple", "Pixel Boutique", "Orion Exemple", "Tess Touch"];
@@ -757,6 +764,7 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 crate::world::body::ANIM_SIT_GROUND_CONSTRAINED
             };
             vec![NetEvent::AvatarAnimations {
+                sources: Vec::new(),
                 avatar: DEMO_AGENT,
                 anims: vec![(anim, 1)],
             }]
@@ -1765,6 +1773,7 @@ pub fn events() -> Vec<NetEvent> {
     }
     for a in [agent, Uuid::from_u128(0xA0E0_A6E1_0000_0000_0000_0000_0000_0002)] {
         ev.push(NetEvent::AvatarAnimations {
+            sources: Vec::new(),
             avatar: a,
             anims: vec![(IDLE_ANIM, 1)],
         });
@@ -2054,6 +2063,10 @@ pub fn idle_animation() -> aurora_assets::Animation {
             ),
             joint("mElbowLeft", vec![k(0.0, Quat::from_rotation_z(0.25))]),
             joint("mElbowRight", vec![k(0.0, Quat::from_rotation_z(-0.25))]),
+            joint("mHipLeft", vec![k(0.0, Quat::IDENTITY)]),
+            joint("mHipRight", vec![k(0.0, Quat::IDENTITY)]),
+            joint("mKneeLeft", vec![k(0.0, Quat::IDENTITY)]),
+            joint("mKneeRight", vec![k(0.0, Quat::IDENTITY)]),
             joint("mChest", vec![k(0.0, breathe(0.0)), k(2.0, breathe(-0.03)), k(4.0, breathe(0.0))]),
             joint(
                 "mHead",
@@ -2130,6 +2143,7 @@ pub fn animesh_events() -> Vec<NetEvent> {
         .iter()
         .filter(|o| o.volume.is_mesh())
         .map(|o| NetEvent::AvatarAnimations {
+            sources: Vec::new(),
             avatar: o.full_id,
             anims: vec![(ANIMESH_ANIM, 1)],
         })
@@ -2326,6 +2340,7 @@ pub fn loop_animation_events(frame: u64) -> Vec<NetEvent> {
     [DEMO_AGENT, Uuid::from_u128(0xA0E0_A6E1_0000_0000_0000_0000_0000_0002)]
         .into_iter()
         .map(|avatar| NetEvent::AvatarAnimations {
+            sources: Vec::new(),
             avatar,
             anims: if step == 960 {
                 Vec::new()
@@ -2556,7 +2571,15 @@ pub fn sit_events(frame: u64) -> Vec<NetEvent> {
     };
     let update = |objects: Vec<ObjectUpdate>| NetEvent::ObjectUpdates { handle: HANDLE, objects };
     match frame {
-        250 => vec![update(vec![seat(frame)])],
+        250 => {
+            let mut child = seat(frame);
+            child.local_id = 951;
+            child.full_id = Uuid::from_u128(951);
+            child.parent_id = SEAT;
+            child.position = Vec3::new(0.0, 0.0, -0.1);
+            child.scale = Vec3::splat(0.1);
+            vec![update(vec![seat(frame), child])]
+        }
         300 => vec![
             NetEvent::SitResponse {
                 object: seat(frame).full_id,
@@ -2564,12 +2587,51 @@ pub fn sit_events(frame: u64) -> Vec<NetEvent> {
                 camera_at: Vec3::new(0.0, 0.0, 0.8),
                 force_mouselook: false,
             },
-            update(vec![me(SEAT, Vec3::new(0.0, 0.0, 0.9))]),
+            update(vec![me(SEAT, Vec3::new(0.0, 0.0, 0.4))]),
+            NetEvent::AvatarAnimations {
+                avatar: DEMO_AGENT,
+                anims: vec![(SEAT_ANIM, 1), (IDLE_ANIM, 1)],
+                sources: vec![Uuid::from_u128(951)],
+            },
         ],
         f if f > 400 && f < 700 && f.is_multiple_of(5) => vec![update(vec![seat(f)])],
         700 => vec![update(vec![me(0, Vec3::new(x + 1.2, y, floor_at(x + 1.2, y) + 0.84))])],
         _ => Vec::new(),
     }
+}
+
+pub const SEAT_ANIM: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0000_0000_0103);
+
+/// A seat's scripted animation (legs bent, pelvis position explicitly reset).
+/// The simulator leaves it signaled at frame 700 until the viewer requests a
+/// stop, so AURORA_DEMO_CAMERA=sit exercises the complete source/stop path.
+pub fn seat_animation() -> aurora_assets::Animation {
+    use aurora_assets::anim::{JointMotion, PosKey, RotKey};
+    let mut a = idle_animation();
+    a.base_priority = 4;
+    for (name, rotation) in [
+        ("mHipLeft", Quat::from_rotation_y(-1.45)),
+        ("mHipRight", Quat::from_rotation_y(-1.45)),
+        ("mKneeLeft", Quat::from_rotation_y(1.55)),
+        ("mKneeRight", Quat::from_rotation_y(1.55)),
+        ("mPelvis", Quat::IDENTITY),
+    ] {
+        a.joints.retain(|joint| joint.joint_name != name);
+        a.joints.push(JointMotion {
+            joint_name: name.into(),
+            priority: -1,
+            rot_keys: vec![RotKey { time: 0.0, rotation }],
+            pos_keys: if name == "mPelvis" {
+                vec![PosKey {
+                    time: 0.0,
+                    position: Vec3::ZERO,
+                }]
+            } else {
+                Vec::new()
+            },
+        });
+    }
+    a
 }
 
 /// Day cycle with a single classic sky frame (see AURORA_DEMO_SKY).
