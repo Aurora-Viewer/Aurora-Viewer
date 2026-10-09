@@ -749,6 +749,12 @@ fn details(ui: &mut egui::Ui, p: &Palette, v: &PerfView) {
         if let Some(n) = v.render.occluded {
             row(ui, p, "Cachés (occlusion)", format!("{n}"));
         }
+        row(
+            ui,
+            p,
+            "Culling",
+            if v.render.gpu_cull { "carte graphique" } else { "processeur" }.to_string(),
+        );
         row(ui, p, "Triangles", format!("{:.2} M", v.render.triangles as f64 / 1e6));
         row(
             ui,

@@ -328,6 +328,9 @@ impl App {
         if let Some(v) = std::env::var("AURORA_SHADOWS").ok().and_then(|v| v.parse().ok()) {
             settings.shadow_quality = v;
         }
+        if let Ok(v) = std::env::var("AURORA_OCCLUSION") {
+            settings.gpu_occlusion = v != "0";
+        }
         let net = NetClient::new()?;
         let voice_http = net.caps_http();
         let login_info = ui::news::LoginInfo::start(net.runtime());

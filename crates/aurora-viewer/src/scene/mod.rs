@@ -2390,7 +2390,6 @@ impl Scene {
         };
         let result = visit
             .par_iter()
-            .with_min_len(64)
             .fold(new_local, |mut l, &(idx, usage)| {
                 let Some(g) = self.gpu.get(idx) else {
                     return l;
