@@ -165,6 +165,10 @@ impl App {
                 self.panels.about_land = true;
             }
             CtxAction::DisplayName => self.display_name_ui.open(),
+            CtxAction::OpenAppearance { tab, editing } => {
+                self.panels.appearance = true;
+                self.appearance_ui.open(tab, editing);
+            }
             CtxAction::StandUp => self.send(NetCommand::OneShotControl(control::STAND_UP)),
             CtxAction::SitGround => self.send(NetCommand::OneShotControl(control::SIT_ON_GROUND)),
             CtxAction::ToggleFly => self.toggle_fly(),

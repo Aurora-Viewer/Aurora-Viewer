@@ -25,6 +25,7 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "GetObjectCost",
     "GetObjectPhysicsData",
     "GetTexture",
+    "InventoryAPIv3",
     "ModifyMaterialParams",
     // LLViewerRegionImpl::buildCapabilityNames (indra/newview/llviewerregion.cpp,
     // originally LGPL 2.1): advertise support so the simulator sends the

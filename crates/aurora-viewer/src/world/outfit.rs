@@ -324,6 +324,7 @@ mod tests {
             inv_type,
             asset_id: Uuid::from_u128(target),
             flags: 0,
+            favorite: false,
             creator: Uuid::nil(),
             created_at: 0,
             owner: Uuid::nil(),
@@ -351,6 +352,7 @@ mod tests {
                     name: "Current Outfit".into(),
                     type_default: FT_CURRENT_OUTFIT,
                     version: 5,
+                    ..Default::default()
                 },
                 children: Vec::new(),
                 items: Vec::new(),
@@ -429,6 +431,7 @@ mod tests {
                     name: "COF".into(),
                     type_default: FT_CURRENT_OUTFIT,
                     version: 1,
+                    ..Default::default()
                 },
                 children: Vec::new(),
                 items: Vec::new(),

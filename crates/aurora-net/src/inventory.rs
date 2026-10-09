@@ -4,7 +4,7 @@
 use aurora_llsd::{Llsd, llsd_map};
 use uuid::Uuid;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct InvFolder {
     pub id: Uuid,
     pub parent: Uuid,
@@ -12,6 +12,8 @@ pub struct InvFolder {
     /// Preferred (system) folder type, -1 for normal folders.
     pub type_default: i32,
     pub version: i32,
+    pub favorite: bool,
+    pub thumbnail: Uuid,
 }
 
 #[derive(Debug, Clone)]
@@ -24,6 +26,7 @@ pub struct InvItem {
     pub inv_type: i32,
     pub asset_id: Uuid,
     pub flags: u32,
+    pub favorite: bool,
     pub creator: Uuid,
     pub created_at: i64,
     /// Owner and permission masks (needed to attach an object).
@@ -124,6 +127,8 @@ pub fn folder_from_llsd(v: &Llsd) -> Option<InvFolder> {
         name: v["name"].to_string_value(),
         type_default,
         version: v["version"].as_i32(),
+        favorite: v["favorite"]["toggled"].as_bool(),
+        thumbnail: v["thumbnail"]["asset_id"].as_uuid(),
     })
 }
 
@@ -147,6 +152,7 @@ pub fn item_from_llsd(v: &Llsd) -> Option<InvItem> {
         inv_type: int_or_name(&v["inv_type"], inv_type_from_name),
         asset_id,
         flags: v["flags"].as_u32(),
+        favorite: v["favorite"]["toggled"].as_bool(),
         creator: v["permissions"]["creator_id"].as_uuid(),
         created_at: v["created_at"].as_i32() as i64,
         owner: v["permissions"]["owner_id"].as_uuid(),

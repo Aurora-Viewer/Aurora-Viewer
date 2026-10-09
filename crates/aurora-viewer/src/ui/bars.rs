@@ -292,6 +292,7 @@ fn status_dot(ui: &mut egui::Ui, p: &Palette, status: crate::world::status::Stat
 /// of the navigation bar (without "Avancé").
 fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusInfo, action: &mut BarAction, advanced: bool) {
     ui.menu_button(small("Moi", p.ink), |ui| {
+        ui.checkbox(&mut panels.appearance, "Apparence…");
         if ui.button("Profil…").clicked() {
             *action = BarAction::MyProfile;
             ui.close();
@@ -810,6 +811,7 @@ pub fn run_command(cmd: &str, panels: &mut Panels) -> BarAction {
             panels.people_tab = 1;
         }
         "inventory" => panels.inventory = !panels.inventory,
+        "appearance" => panels.appearance = !panels.appearance,
         "minimap" => panels.minimap = !panels.minimap,
         "worldmap" => panels.world_map = !panels.world_map,
         "performance" => panels.perf = !panels.perf,
@@ -828,6 +830,7 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "conversations" => panels.chat,
         "people" | "friends" => panels.people,
         "inventory" => panels.inventory,
+        "appearance" => panels.appearance,
         "minimap" => panels.minimap,
         "worldmap" => panels.world_map,
         "performance" => panels.perf,

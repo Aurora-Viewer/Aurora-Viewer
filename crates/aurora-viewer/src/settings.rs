@@ -102,6 +102,7 @@ pub struct Settings {
     pub show_people: bool,
     pub people_tab: u8,
     pub show_inventory: bool,
+    pub show_appearance: bool,
     /// Loading / teleport screens show the last view, blurred.
     pub loading_backdrop: bool,
     pub mouse_sensitivity: f32,
@@ -428,6 +429,7 @@ impl Default for Settings {
             show_people: false,
             people_tab: 0,
             show_inventory: false,
+            show_appearance: false,
             loading_backdrop: true,
             mouse_sensitivity: 1.0,
             window_width: 1600,

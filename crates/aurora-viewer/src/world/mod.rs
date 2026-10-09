@@ -1,5 +1,6 @@
 //! Viewer-side world model fed by network events.
 
+pub mod appearance;
 pub mod blocking;
 pub mod body;
 pub mod contact_sets;
@@ -540,7 +541,27 @@ impl World {
             .iter()
             .filter_map(|i| self.objects.get(*i))
             .filter_map(|o| o.attachment_item_id())
+            .filter(|id| !id.is_nil())
             .collect()
+    }
+
+    pub fn worn_attachment_points(&self) -> HashMap<Uuid, u8> {
+        self.objects
+            .index_of_uuid(&self.agent_id)
+            .and_then(|idx| self.objects.get(idx))
+            .map(|me| {
+                self.objects
+                    .children_of(&me.key)
+                    .iter()
+                    .filter_map(|idx| self.objects.get(*idx))
+                    .filter_map(|o| {
+                        o.attachment_item_id()
+                            .filter(|id| !id.is_nil())
+                            .map(|id| (id, o.attachment_point()))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// Run the outfit restore; its network commands are left in

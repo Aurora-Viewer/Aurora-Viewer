@@ -179,6 +179,10 @@ pub enum CtxAction {
     EditTerrain,
     /// Change our display name (LLFloaterDisplayName).
     DisplayName,
+    OpenAppearance {
+        tab: usize,
+        editing: bool,
+    },
     /// People floater on a tab (0 nearby, 1 friends, 2 groups).
     OpenPeople(u8),
     /// Camera on an avatar of a list (Avatar.ZoomIn).
@@ -388,7 +392,7 @@ fn attachment_self_menu(ui: &mut egui::Ui, p: &Palette, f: &Facts, key: ObjKey, 
     menu::todo(ui, p, "floppy-disk", "Enregistrer sous");
     menu::separator(ui, p);
     sit_stand(ui, p, f, act);
-    appearance_submenu(ui, p);
+    appearance_submenu(ui, p, act);
     take_off_submenu(ui, p);
     menu::separator(ui, p);
     if menu::item(ui, p, "airplane-takeoff", "Voler / Atterrir") {
@@ -490,7 +494,7 @@ fn avatar_menu(ui: &mut egui::Ui, p: &Palette, f: &Facts, id: Uuid, attachment: 
 fn self_menu(ui: &mut egui::Ui, p: &Palette, f: &Facts, id: Uuid, act: &mut dyn FnMut(CtxAction)) {
     sit_stand(ui, p, f, act);
     take_off_submenu(ui, p);
-    appearance_submenu(ui, p);
+    appearance_submenu(ui, p, act);
     community_submenu(ui, p, id, act);
     // not in Firestorm's menu: kept from Aurora's (fly is in menu_attachment_self.xml)
     if menu::item(
@@ -528,12 +532,18 @@ fn take_off_submenu(ui: &mut egui::Ui, p: &Palette) {
     });
 }
 
-fn appearance_submenu(ui: &mut egui::Ui, p: &Palette) {
+fn appearance_submenu(ui: &mut egui::Ui, p: &Palette, act: &mut dyn FnMut(CtxAction)) {
     menu::submenu(ui, p, "person", "Apparence", true, |ui| {
-        menu::todo(ui, p, "t-shirt", "Tenue actuelle");
-        menu::todo(ui, p, "backpack", "Changer de tenue");
+        if menu::item(ui, p, "t-shirt", "Tenue actuelle") {
+            act(CtxAction::OpenAppearance { tab: 2, editing: false });
+        }
+        if menu::item(ui, p, "backpack", "Changer de tenue") {
+            act(CtxAction::OpenAppearance { tab: 0, editing: false });
+        }
         menu::todo(ui, p, "person", "Modifier la silhouette");
-        menu::todo(ui, p, "pencil-simple", "Modifier la tenue");
+        if menu::item(ui, p, "pencil-simple", "Modifier la tenue") {
+            act(CtxAction::OpenAppearance { tab: 2, editing: true });
+        }
         menu::todo(ui, p, "arrows-out-cardinal", "Voltigement");
         menu::separator(ui, p);
         menu::todo(ui, p, "bone", "Réinitialiser le squelette");

@@ -1259,6 +1259,74 @@ impl Session<'_> {
                     self.send_main(&m, true);
                 }
             }
+            NetCommand::DetachAttachments(items) => {
+                for item_id in items {
+                    let mut m = DetachAttachmentIntoInv::default();
+                    m.object_data.agent_id = self.agent_id();
+                    m.object_data.item_id = item_id;
+                    self.send_main(&m, true);
+                }
+            }
+            NetCommand::SetInventoryFavorite { item, favorite } => {
+                let caps = self.main_cap("InventoryAPIv3").zip(self.main_cap("FetchInventory2"));
+                let Some((cap, fetch_cap)) = caps else {
+                    emit(
+                        self.sh,
+                        NetEvent::InventoryFavoriteUpdated {
+                            item,
+                            result: Err("Le serveur d’inventaire n’est pas encore disponible.".into()),
+                        },
+                    );
+                    return;
+                };
+                let http = self.sh.caps_http.clone();
+                let events = self.sh.events.clone();
+                let owner = self.agent_id();
+                tokio::spawn(async move {
+                    let result = crate::outfits::set_favorite(&http, &cap, &fetch_cap, owner, item, favorite).await;
+                    let _ = events.send(NetEvent::InventoryFavoriteUpdated { item, result });
+                });
+            }
+            NetCommand::UpdateOutfitCategory { request, change } => {
+                let caps = self.main_cap("InventoryAPIv3").zip(self.main_cap("FetchInventoryDescendents2"));
+                let Some((cap, fetch_cap)) = caps else {
+                    emit(
+                        self.sh,
+                        NetEvent::OutfitUpdated {
+                            request,
+                            result: Err("Le serveur d’inventaire n’est pas encore disponible.".into()),
+                        },
+                    );
+                    return;
+                };
+                let http = self.sh.caps_http.clone();
+                let events = self.sh.events.clone();
+                let owner = self.agent_id();
+                tokio::spawn(async move {
+                    let result = crate::outfits::categories::mutate(&http, &cap, &fetch_cap, owner, change).await;
+                    let _ = events.send(NetEvent::OutfitUpdated { request, result });
+                });
+            }
+            NetCommand::UpdateOutfit { request, change } => {
+                let caps = self.main_cap("InventoryAPIv3").zip(self.main_cap("FetchInventoryDescendents2"));
+                let Some((cap, fetch_cap)) = caps else {
+                    emit(
+                        self.sh,
+                        NetEvent::OutfitUpdated {
+                            request,
+                            result: Err("Le serveur d’inventaire n’est pas encore disponible.".into()),
+                        },
+                    );
+                    return;
+                };
+                let http = self.sh.caps_http.clone();
+                let events = self.sh.events.clone();
+                let owner = self.agent_id();
+                tokio::spawn(async move {
+                    let result = crate::outfits::mutate(&http, &cap, &fetch_cap, owner, change).await;
+                    let _ = events.send(NetEvent::OutfitUpdated { request, result });
+                });
+            }
             NetCommand::RequestServerAppearance { cof_version } => self.request_server_appearance(cof_version),
             NetCommand::DummyWearablesUpdate => {
                 // the 4 standard placeholder ids LL's viewer sends
