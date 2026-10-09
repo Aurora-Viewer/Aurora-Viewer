@@ -121,14 +121,20 @@ function Write-Footer([string]$Hints) {
 
 # --- Keyboard ---------------------------------------------------------------
 
-# Next key, redrawing the footer every second while waiting. $KeySource (a
+# Next key, redrawing the footer every second while waiting; $TickHook (a
+# script block) also runs every second (GitHub notifications…). $KeySource (a
 # script block returning ConsoleKeyInfo) replaces the keyboard in tests.
 $KeySource = $null
+$TickHook = $null
 function Read-Key([string]$Hints) {
     if ($KeySource) { return & $KeySource }
     $last = [DateTime]::MinValue
     while (-not [Console]::KeyAvailable) {
-        if (((Get-Date) - $last).TotalMilliseconds -ge 1000) { Write-Footer $Hints; $last = Get-Date }
+        if (((Get-Date) - $last).TotalMilliseconds -ge 1000) {
+            if ($TickHook) { & $TickHook }
+            Write-Footer $Hints
+            $last = Get-Date
+        }
         Start-Sleep -Milliseconds 50
     }
     [Console]::ReadKey($true)
