@@ -89,7 +89,7 @@ builds GitHub's latest `main` with `--release` into `..\RELEASE\`.
 
 | Argument | Effect |
 |---|---|
-| `--title <text>` | Window title "Aurora Viewer — <text>"; log file `aurora-<text>.log` (`aurora-demo-<text>.log` in demo mode) |
+| `--title <text>` | Window title "Aurora Viewer - <text> (Dev)" (the build profile ends the title: Dev, Release, Debug); log file `aurora-<text>.log` (`aurora-demo-<text>.log` in demo mode) |
 | `-h`, `--help` | Show the help |
 
 ### Test switches

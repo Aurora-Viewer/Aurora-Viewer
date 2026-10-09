@@ -137,7 +137,8 @@ cargo run -p aurora-viewer -- --title "Test regard-avatars"
 ```
 
 - **Toujours `--title "Test <tâche>"`** : la fenêtre s'appelle
-  « Aurora Viewer — Test <tâche> » et le log est
+  « Aurora Viewer - Test <tâche> (Dev) » (le profil de compilation termine
+  le titre : Dev, Release ou Debug) et le log est
   `%LOCALAPPDATA%\Aurora\AuroraViewer\data\logs\aurora-demo-test-<tâche>.log`.
   Les fenêtres et logs des agents ne se mélangent pas.
 - Captures automatiques : `AURORA_CAPTURE=<fichier.png>`,
