@@ -1319,6 +1319,9 @@ impl Scene {
         if self.gpu.len() < world.objects.slots.len() {
             self.gpu.resize_with(world.objects.slots.len(), ObjGpu::default);
         }
+        // the GPU object table covers every slot (an attachment's avatar
+        // index is always in it, as in the CPU lists)
+        renderer.cull.objects.ensure_len(self.gpu.len());
         let now = Instant::now();
         let n = world.objects.slots.len();
         let agent = world.agent_id;

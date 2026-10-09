@@ -449,6 +449,17 @@ impl<T: Pod + PartialEq> GpuTable<T> {
         }
     }
 
+    /// At least `len` entries (new ones hold the fill value).
+    pub fn ensure_len(&mut self, len: usize) {
+        let from = self.mirror.len();
+        if len > from {
+            self.mirror.resize(len, self.fill);
+            for k in from..len {
+                self.dirty.mark(k);
+            }
+        }
+    }
+
     /// Every entry back to the fill value.
     pub fn reset(&mut self) {
         let fill = self.fill;
