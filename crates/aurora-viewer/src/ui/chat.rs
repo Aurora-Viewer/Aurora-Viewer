@@ -1249,11 +1249,15 @@ fn range_rects(galley: &egui::Galley, origin: egui::Pos2, range: std::ops::Range
     use egui::text::CCursor;
     let mut out: Vec<egui::Rect> = Vec::new();
     for i in range {
-        let a = galley.pos_from_cursor(CCursor::new(i));
+        let mut a = galley.pos_from_cursor(CCursor::new(i));
         let b = galley.pos_from_cursor(CCursor::new(i + 1));
-        // the last char of a wrapped row: its end is on the next row
+        // the first char of a wrapped row: a cursor at a row break reads as
+        // the end of the previous row, the char starts its own row
         if (a.min.y - b.min.y).abs() > 0.5 {
-            continue;
+            let Some(row) = galley.rows.iter().find(|r| r.rect().y_range().contains(b.center().y)) else {
+                continue;
+            };
+            a = egui::Rect::from_min_max(egui::pos2(row.pos.x, b.min.y), b.max);
         }
         let r = egui::Rect::from_min_max(a.min, egui::pos2(b.min.x, a.max.y)).translate(origin.to_vec2());
         match out.last_mut() {
