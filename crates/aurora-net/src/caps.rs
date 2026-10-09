@@ -21,6 +21,9 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "GetDisplayNames",
     "GetMesh",
     "GetMesh2",
+    // build floater: land impact, object weights, physics shape costs
+    "GetObjectCost",
+    "GetObjectPhysicsData",
     "GetTexture",
     "ModifyMaterialParams",
     // LLViewerRegionImpl::buildCapabilityNames (indra/newview/llviewerregion.cpp,
@@ -33,9 +36,14 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "ProvisionVoiceAccountRequest",
     "RenderMaterials",
     "RequestTaskInventory",
+    "ResourceCostSelected",
     "SetDisplayName",
     "SimulatorFeatures",
     "UpdateAvatarAppearance",
+    "UpdateMaterialAgentInventory",
+    "UpdateMaterialTaskInventory",
+    "UpdateNotecardTaskInventory",
+    "UpdateScriptTask",
     "ViewerAsset",
     "ViewerStats",
     "VoiceSignalingRequest",
@@ -52,8 +60,13 @@ pub enum CapsError {
 }
 
 pub async fn post_llsd(http: &reqwest::Client, url: &str, body: &Llsd) -> Result<Llsd, CapsError> {
-    let resp = http
-        .post(url)
+    request_llsd(http, url, body, false).await
+}
+
+/// POST, or PUT (RenderMaterials writes, LLMaterialMgr::processPutQueue), of LLSD XML.
+pub async fn request_llsd(http: &reqwest::Client, url: &str, body: &Llsd, put: bool) -> Result<Llsd, CapsError> {
+    let req = if put { http.put(url) } else { http.post(url) };
+    let resp = req
         .header("Content-Type", "application/llsd+xml")
         .header("Accept", "application/llsd+xml")
         .body(to_xml(body))

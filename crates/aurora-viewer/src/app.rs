@@ -127,6 +127,8 @@ pub struct App {
     build: crate::build::BuildTool,
     interactions: crate::interaction::Interactions,
     cursors: crate::cursors::Cursors,
+    /// Demo mode: answers to the build tools' commands.
+    build_demo: crate::build::demo_sim::DemoSim,
     /// Cursor position in physical pixels.
     cursor_pos: (f32, f32),
     /// Last walk-key press (for double-tap running) and the active temporary run.
@@ -395,6 +397,7 @@ impl App {
             build: Default::default(),
             interactions: Default::default(),
             cursors: Default::default(),
+            build_demo: Default::default(),
             cursor_pos: (0.0, 0.0),
             last_tap: None,
             temp_run: None,
@@ -541,6 +544,14 @@ impl App {
                     objects: vec![crate::demo::action_avatar(false)],
                 });
             }
+            if let NetCommand::Build(b) = &cmd {
+                for ev in self.build_demo.reply(&self.world, b) {
+                    if let Some(e) = self.world.apply(ev) {
+                        self.on_app_event(e);
+                    }
+                }
+                return;
+            }
             for ev in crate::demo::demo_reply(&cmd) {
                 if let Some(e) = self.world.apply(ev) {
                     self.on_app_event(e);
@@ -628,7 +639,32 @@ impl App {
                 self.build.on_properties(props);
             }
             NetEvent::PayPrice { object, default, buttons } => self.interactions.on_prices(object, default, buttons),
-            NetEvent::TaskInventory { object, result } => self.interactions.on_contents(object, result),
+            NetEvent::TaskInventory { object, serial, result } => {
+                let items = result
+                    .as_ref()
+                    .map(|v| v.iter().filter_map(|i| i.to_inv_item()).collect())
+                    .map_err(|e| e.clone());
+                self.interactions.on_contents(object, items);
+                if let Ok(items) = result {
+                    self.build.on_task_inventory(&self.world, object, serial, items);
+                    self.flush_build();
+                }
+            }
+            NetEvent::CapReply { tag, result } => self.build.on_cap_reply(&mut self.world, tag, result),
+            NetEvent::ScriptRunning {
+                object_id,
+                item_id,
+                running,
+                mono,
+            } => {
+                self.build.contents.running.insert((object_id, item_id), (running, mono));
+            }
+            NetEvent::PhysicsProperties(list) => {
+                for (local_id, params) in list {
+                    self.build.physics.insert(local_id, params);
+                }
+            }
+            NetEvent::SelectedParcel { handle, sequence, parcel } => self.build.on_selected_parcel(handle, sequence, parcel),
             NetEvent::LoginProgress { message, fraction } => {
                 self.loading_stage = message.clone();
                 self.login_progress = Some((message, fraction));
@@ -829,8 +865,14 @@ impl App {
             self.camera.look(dx, dy, s, &mut self.world.agent);
         } else if self.mouse_mode != MouseMode::None {
             // LLToolCamera: steering is the zoom tool on our avatar
+            let focus_tool = self.build.open && self.build.tool == crate::build::Tool::Focus && !self.ctrl && !self.shift;
             let mode = match self.mouse_mode {
                 MouseMode::Steer => crate::camera::ToolMode::Zoom,
+                _ if focus_tool => match self.build.focus_mode {
+                    crate::build::FocusMode::Zoom => crate::camera::ToolMode::Zoom,
+                    crate::build::FocusMode::Orbit => crate::camera::ToolMode::Orbit,
+                    crate::build::FocusMode::Pan => crate::camera::ToolMode::Pan,
+                },
                 _ => crate::camera::ToolMode::from_mods(self.ctrl, self.shift),
             };
             let width = self.gfx.as_ref().map(|g| g.renderer.size().0 as f32).unwrap_or(1280.0);
@@ -1858,6 +1900,27 @@ impl App {
         }
     }
 
+    /// What the build floater asked for (build::ui::Request).
+    fn on_build_request(&mut self, r: crate::build::ui::Request) {
+        use crate::build::ui::Request;
+        match r {
+            Request::ZoomFraction(f) => self.camera.set_zoom_fraction(f),
+            Request::AboutLand => self.panels.about_land = true,
+            Request::BuyLand => self
+                .world
+                .system_message("L'achat de terrain n'est pas encore disponible dans Aurora."),
+            Request::Profile(id) => self.profile_ui.open(&mut self.world, id),
+            Request::GroupProfile(_) => self
+                .world
+                .system_message("Le profil des groupes n'est pas encore disponible dans Aurora."),
+            Request::PasteVector(which) => {
+                let text = self.gfx.as_mut().and_then(|g| g.egui_state.clipboard_text()).unwrap_or_default();
+                self.build.paste_vector(&mut self.world, &self.settings.build, which, &text);
+            }
+        }
+        self.flush_build();
+    }
+
     /// Send what the build tools queued.
     fn flush_build(&mut self) {
         for c in std::mem::take(&mut self.build.out) {
@@ -1951,6 +2014,9 @@ impl App {
         if !self.build.open || self.alt {
             return false;
         }
+        if self.build.tool == crate::build::Tool::Focus {
+            return self.focus_tool_down();
+        }
         let Some(g) = self.gfx.as_mut() else {
             return false;
         };
@@ -1962,14 +2028,49 @@ impl App {
             ctrl: self.ctrl,
             alt: self.alt,
         };
-        let used = self
-            .build
-            .mouse_down(&mut self.world, &mut self.settings.build, hit, target, self.cursor_pos, mods);
+        // the surface under the cursor: face tool, grab surface info
+        let surface = match (self.build.tool, target) {
+            (crate::build::Tool::Edit | crate::build::Tool::Grab, Some(i)) => {
+                self.scene.touch_surface(&self.world, i, self.build.cam.ray(x, y))
+            }
+            _ => None,
+        };
+        let used = self.build.mouse_down(
+            &mut self.world,
+            &mut self.settings.build,
+            hit,
+            target,
+            surface,
+            self.cursor_pos,
+            mods,
+        );
         self.flush_build();
         if used {
             self.left_down = true;
         }
         used
+    }
+
+    /// Focus tool press (LLToolCamera): focus on the clicked point, then
+    /// the drag zooms, orbits or pans as the tool's radio or Ctrl / Shift say.
+    fn focus_tool_down(&mut self) -> bool {
+        let Some(g) = self.gfx.as_mut() else {
+            return false;
+        };
+        let (x, y) = self.cursor_pos;
+        let hit = g.renderer.pick_world(x, y);
+        let ray = self.build.cam.ray(x, y);
+        let now = Instant::now();
+        if let Some(p) = hit {
+            let idx = self.scene.pick_at(&self.world, p, now);
+            let object = idx.and_then(|i| crate::camera::pick_focus_object(&self.world, i, now));
+            self.camera.alt_focus(p, object, ray, &mut self.world.agent, &self.settings.camera);
+        }
+        self.camera.begin_drag(false);
+        self.mouse_mode = MouseMode::FocusOrbit;
+        self.set_mouselook_grab(true);
+        self.left_down = true;
+        true
     }
 
     fn on_left_release(&mut self) {
@@ -2343,6 +2444,7 @@ impl App {
         let mut images: Vec<uuid::Uuid> = self.profile_ui.wanted_images.drain().collect();
         images.extend(self.land_ui.wanted_images.drain());
         images.extend(self.contacts_ui.wanted_images.drain());
+        images.extend(self.build.ui.wanted_images.drain());
         for image in images {
             if self.ui_images.contains_key(&image) {
                 continue;
@@ -3021,6 +3123,19 @@ impl App {
                 ctrl: self.ctrl,
                 alt: self.alt,
             };
+            if self.build.open {
+                for idx in self.build.sel_prims(&self.world) {
+                    if let Some(id) = self.world.objects.get(idx).map(|o| o.full_id)
+                        && !self.build.face_counts.contains_key(&id)
+                        && let Some(n) = self.media.face_count(&self.world, &self.scene, idx)
+                    {
+                        self.build.face_counts.insert(id, n);
+                    }
+                }
+                if self.build.face_counts.len() > 1024 {
+                    self.build.face_counts.clear();
+                }
+            }
             self.build
                 .update(&mut self.world, &self.settings.build, self.cursor_pos, over_ui, mods);
             self.scene.selection_wire = self.build.wire_selection(&self.world, &self.settings.build);
@@ -3120,6 +3235,9 @@ impl App {
             self.disk_cache.set_limit_mb(self.settings.cache_size_mb);
         }
         self.handle_actions(actions, event_loop);
+        for r in std::mem::take(&mut self.build.ui.requests) {
+            self.on_build_request(r);
+        }
         self.update_avatar_pics(&mut gfx.renderer);
         self.update_maps();
         self.poll_key_to_name();
@@ -3356,6 +3474,7 @@ impl App {
                     crate::build::demo::Step::Open(t, m, land) => {
                         self.build.open_build(t);
                         self.build.edit_mode = m;
+                        crate::build::demo::apply_tab(&mut self.build);
                         self.settings.build.land_action = land;
                     }
                     crate::build::demo::Step::Cursor(x, y) => self.cursor_pos = (x, y),
@@ -3531,11 +3650,8 @@ impl App {
                     2 => self.build.open_build(crate::build::Tool::Create),
                     3 => self.build.open_build(crate::build::Tool::Land),
                     _ if self.build.open => self.build.close(&mut self.world, &mut self.settings.build),
-                    _ => self.build.open_build(if self.build.selection.is_empty() {
-                        crate::build::Tool::Create
-                    } else {
-                        crate::build::Tool::Edit
-                    }),
+                    // LLToolMgr::enterBuildMode: the Create tool
+                    _ => self.build.open_build(crate::build::Tool::Create),
                 }
                 self.flush_build();
             }
@@ -3823,7 +3939,14 @@ impl App {
                     };
                     crate::build::ui::shortcuts(&ctx, &mut self.build, &mut self.world, &mut self.settings.build);
                     self.build.draw_overlay(&ctx, &self.world, &self.settings.build, mods);
-                    if crate::build::ui::show(&ctx, &p, &mut self.build, &mut self.world, &mut self.settings.build, mods) {
+                    let mut env = crate::build::ui::Env {
+                        images: &self.ui_images,
+                        media: &mut self.media,
+                        scene: &mut self.scene,
+                        zoom_fraction: self.camera.zoom_fraction(),
+                        demo: self.demo,
+                    };
+                    if crate::build::ui::show(&ctx, &p, &mut self.build, &mut self.world, &mut self.settings.build, mods, &mut env) {
                         self.settings.save();
                     }
                 }

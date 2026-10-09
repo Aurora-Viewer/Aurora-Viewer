@@ -714,6 +714,39 @@ impl Camera {
             .min(REGION_WIDTH - CAMERA_FUDGE_FROM_OBJECT)
     }
 
+    /// Distance limits of the alt camera for its focus (min, max).
+    fn zoom_limits(&self) -> (f32, f32) {
+        let min = match self.focus_geom {
+            Some(g) if g.avatar => AVATAR_MIN_ZOOM,
+            Some(_) => OBJECT_MIN_ZOOM,
+            None => LAND_MIN_ZOOM,
+        };
+        (min, self.max_zoom_distance().min(MAX_CAMERA_DISTANCE_FROM_OBJECT))
+    }
+
+    /// LLAgentCamera::getCameraZoomFraction: 0 zoomed all the way out, 1
+    /// all the way in (the build floater's Focus slider).
+    pub fn zoom_fraction(&self) -> f32 {
+        let rescale = |v: f32, a: f32, b: f32| ((v - a) / (b - a)).clamp(0.0, 1.0);
+        if self.focus_on_avatar && self.third_person() {
+            return 1.0 - rescale(self.zoom_fraction, MIN_ZOOM_FRACTION, MAX_ZOOM_FRACTION);
+        }
+        let (min, max) = self.zoom_limits();
+        1.0 - rescale(self.focus_offset_target.length(), min, max)
+    }
+
+    /// LLAgentCamera::setCameraZoomFraction.
+    pub fn set_zoom_fraction(&mut self, fraction: f32) {
+        let f = fraction.clamp(0.0, 1.0);
+        if self.focus_on_avatar && self.third_person() {
+            self.zoom_fraction = MAX_ZOOM_FRACTION + (MIN_ZOOM_FRACTION - MAX_ZOOM_FRACTION) * f;
+        } else {
+            let (min, max) = self.zoom_limits();
+            let unit = self.focus_offset_target.normalize_or(Vec3::X);
+            self.focus_offset_target = unit * (max + (min - max) * f);
+        }
+    }
+
     /// LLAgentCamera::cameraZoomIn: alt-camera distance × `fraction`, kept
     /// in bounds.
     fn zoom_in(&mut self, fraction: f32) {

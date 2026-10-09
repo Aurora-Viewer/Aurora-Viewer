@@ -226,6 +226,283 @@ pub enum BuildCmd {
     UndoLand {
         handle: RegionHandle,
     },
+    /// ObjectFlagUpdate with its ExtraPhysics block (physics shape type,
+    /// density, friction, restitution, gravity: LLSelectMgr::selectionUpdatePhysicsParam).
+    SetPhysicsParams {
+        handle: RegionHandle,
+        local_id: u32,
+        physics: bool,
+        temporary: bool,
+        phantom: bool,
+        params: PhysicsParams,
+    },
+    /// ObjectPermissions (field `perm_field::*`, set or clear `mask`).
+    SetPermissions {
+        handle: RegionHandle,
+        local_ids: Vec<u32>,
+        field: u8,
+        set: bool,
+        mask: u32,
+    },
+    /// ObjectGroup.
+    SetGroup {
+        handle: RegionHandle,
+        local_ids: Vec<u32>,
+        group_id: Uuid,
+    },
+    /// ObjectOwner: deed to the group (LLSelectMgr::sendOwner with override false).
+    SetOwner {
+        handle: RegionHandle,
+        local_ids: Vec<u32>,
+        owner_id: Uuid,
+        group_id: Uuid,
+    },
+    /// ObjectSaleInfo (sale type 0 = not for sale).
+    SetSaleInfo {
+        handle: RegionHandle,
+        local_ids: Vec<u32>,
+        sale_type: u8,
+        price: i32,
+    },
+    /// ObjectClickAction (CLICK_ACTION_*).
+    SetClickAction {
+        handle: RegionHandle,
+        local_ids: Vec<u32>,
+        action: u8,
+    },
+    /// ObjectIncludeInSearch.
+    SetIncludeInSearch {
+        handle: RegionHandle,
+        local_ids: Vec<u32>,
+        include: bool,
+    },
+    /// ObjectImage: the whole packed TextureEntry and the media URL
+    /// (LLPrimitive::packTEMessage, LLViewerObject::sendTEUpdate).
+    SetTextures {
+        handle: RegionHandle,
+        local_id: u32,
+        media_url: String,
+        texture_entry: Vec<u8>,
+    },
+    /// ObjectExtraParams: one parameter block (aurora_prim::extra PARAMS_*).
+    SetExtraParam {
+        handle: RegionHandle,
+        local_id: u32,
+        param_type: u16,
+        in_use: bool,
+        data: Vec<u8>,
+    },
+    SpinStart {
+        handle: RegionHandle,
+        object_id: Uuid,
+    },
+    /// ObjectSpinUpdate: absolute rotation.
+    SpinUpdate {
+        handle: RegionHandle,
+        object_id: Uuid,
+        rotation: Quat,
+    },
+    SpinStop {
+        handle: RegionHandle,
+        object_id: Uuid,
+    },
+    /// ObjectDuplicateOnRay: copies of the selection where the ray hits
+    /// (LLSelectMgr::selectDuplicateOnRay).
+    DuplicateOnRay {
+        handle: RegionHandle,
+        local_ids: Vec<u32>,
+        group_id: Uuid,
+        ray_start: Vec3,
+        ray_end: Vec3,
+        ray_target: Uuid,
+        bypass_raycast: bool,
+        copy_centers: bool,
+        copy_rotates: bool,
+    },
+    /// ParcelPropertiesRequest for a region-local rectangle (the simulator
+    /// answers with ParcelProperties: prim counts, owner...).
+    ParcelRequest {
+        handle: RegionHandle,
+        sequence: i32,
+        /// The simulator widens the rectangle to the whole parcel.
+        snap: bool,
+        west: f32,
+        south: f32,
+        east: f32,
+        north: f32,
+    },
+    /// ParcelDivide / ParcelJoin of a region-local rectangle.
+    ParcelDivide {
+        handle: RegionHandle,
+        west: f32,
+        south: f32,
+        east: f32,
+        north: f32,
+    },
+    ParcelJoin {
+        handle: RegionHandle,
+        west: f32,
+        south: f32,
+        east: f32,
+        north: f32,
+    },
+    /// ParcelRelease (abandon to the estate owner).
+    ParcelRelease {
+        handle: RegionHandle,
+        local_id: i32,
+    },
+    /// RequestTaskInventory: the simulator answers with ReplyTaskInventory
+    /// (the name of a file to download with Xfer).
+    RequestTaskInventory {
+        handle: RegionHandle,
+        local_id: u32,
+        object_id: Uuid,
+    },
+    RemoveTaskInventory {
+        handle: RegionHandle,
+        local_id: u32,
+        item_id: Uuid,
+    },
+    /// MoveTaskInventory: copy an object's item into the agent's inventory.
+    MoveTaskInventory {
+        handle: RegionHandle,
+        local_id: u32,
+        item_id: Uuid,
+        folder_id: Uuid,
+    },
+    /// UpdateTaskInventory (key 0 = inventory item): put / rename an item.
+    UpdateTaskInventory {
+        handle: RegionHandle,
+        local_id: u32,
+        item: Box<TaskItem>,
+    },
+    /// RezScript: a script into an object, running or not.
+    RezScript {
+        handle: RegionHandle,
+        local_id: u32,
+        enabled: bool,
+        group_id: Uuid,
+        item: Box<TaskItem>,
+    },
+    ScriptReset {
+        handle: RegionHandle,
+        object_id: Uuid,
+        item_id: Uuid,
+    },
+    SetScriptRunning {
+        handle: RegionHandle,
+        object_id: Uuid,
+        item_id: Uuid,
+        running: bool,
+    },
+    GetScriptRunning {
+        handle: RegionHandle,
+        object_id: Uuid,
+        item_id: Uuid,
+    },
+    /// LLSD request to a region capability (GetObjectCost, ResourceCostSelected,
+    /// GetObjectPhysicsData, ObjectMedia, ModifyMaterialParams, RenderMaterials):
+    /// the reply comes back as NetEvent::CapReply with the same `tag`.
+    Cap {
+        handle: RegionHandle,
+        cap: String,
+        put: bool,
+        body: aurora_llsd::Llsd,
+        tag: u64,
+    },
+}
+
+/// ParcelPropertiesRequest sequence ids of the build tools start here
+/// (the agent's own parcel updates come with 0): their replies come back
+/// as NetEvent::SelectedParcel.
+pub const BUILD_PARCEL_SEQ: i32 = 1000;
+
+/// ObjectPermissions `Field` (llpermissionsflags.h PERM_BASE...).
+pub mod perm_field {
+    pub const BASE: u8 = 0x01;
+    pub const OWNER: u8 = 0x02;
+    pub const GROUP: u8 = 0x04;
+    pub const EVERYONE: u8 = 0x08;
+    pub const NEXT_OWNER: u8 = 0x10;
+}
+
+/// ExtraPhysics of ObjectFlagUpdate (LLPhysicsShapeType and material values).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PhysicsParams {
+    /// 0 prim, 1 none, 2 convex hull (LLViewerObject::PHYSICS_SHAPE_*).
+    pub shape_type: u8,
+    pub density: f32,
+    pub friction: f32,
+    pub restitution: f32,
+    pub gravity_multiplier: f32,
+}
+
+impl Default for PhysicsParams {
+    /// DEFAULT_DENSITY etc. (llprimitive.h).
+    fn default() -> Self {
+        PhysicsParams {
+            shape_type: 0,
+            density: 1000.0,
+            friction: 0.6,
+            restitution: 0.5,
+            gravity_multiplier: 1.0,
+        }
+    }
+}
+
+/// An item of an object's inventory (task inventory), as listed in the
+/// file the simulator sends (LLInventoryItem::importLegacyStream) and as
+/// sent with UpdateTaskInventory / RezScript (packMessage).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct TaskItem {
+    pub item_id: Uuid,
+    pub parent_id: Uuid,
+    pub creator_id: Uuid,
+    pub owner_id: Uuid,
+    pub last_owner_id: Uuid,
+    pub group_id: Uuid,
+    pub group_owned: bool,
+    pub base_mask: u32,
+    pub owner_mask: u32,
+    pub group_mask: u32,
+    pub everyone_mask: u32,
+    pub next_owner_mask: u32,
+    pub asset_id: Uuid,
+    /// LLAssetType (as a number).
+    pub asset_type: i8,
+    /// LLInventoryType.
+    pub inv_type: i8,
+    pub flags: u32,
+    pub sale_type: u8,
+    pub sale_price: i32,
+    pub name: String,
+    pub description: String,
+    pub creation_date: i32,
+    /// A folder (the inventory's root "Contents" category) rather than an item.
+    pub is_folder: bool,
+}
+
+impl TaskItem {
+    /// The item as an inventory item (object contents window of the click
+    /// actions); None for the folder.
+    pub fn to_inv_item(&self) -> Option<crate::inventory::InvItem> {
+        (!self.is_folder).then(|| crate::inventory::InvItem {
+            id: self.item_id,
+            parent: self.parent_id,
+            name: self.name.clone(),
+            desc: self.description.clone(),
+            asset_type: self.asset_type as i32,
+            inv_type: self.inv_type as i32,
+            asset_id: self.asset_id,
+            flags: self.flags,
+            creator: self.creator_id,
+            created_at: self.creation_date as i64,
+            owner: self.owner_id,
+            group_mask: self.group_mask,
+            everyone_mask: self.everyone_mask,
+            next_owner_mask: self.next_owner_mask,
+        })
+    }
 }
 
 /// ObjectProperties (selected objects) or ObjectPropertiesFamily (hover /

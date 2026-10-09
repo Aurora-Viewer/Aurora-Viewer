@@ -19,6 +19,8 @@ pub(super) struct TaskRequests {
 }
 struct TaskXfer {
     object: Uuid,
+    /// ReplyTaskInventory serial of the listing.
+    serial: i16,
     sim: SocketAddr,
     next: u32,
     size: usize,
@@ -75,6 +77,7 @@ impl Session<'_> {
                 self.sh,
                 NetEvent::TaskInventory {
                     object,
+                    serial: None,
                     result: Err("Le simulateur n'a pas répondu à temps.".into()),
                 },
             );
@@ -155,7 +158,7 @@ impl Session<'_> {
         true
     }
 
-    fn request_task_inventory(&mut self, handle: u64, local_id: u32, object: Uuid) {
+    pub(super) fn request_task_inventory(&mut self, handle: u64, local_id: u32, object: Uuid) {
         let Some(addr) = self.sim_for_handle(handle) else { return };
         if let Some(url) = self.sims.get(&addr).and_then(|s| s.caps.get("RequestTaskInventory")).cloned() {
             let http = self.sh.caps_http.clone();
@@ -185,10 +188,14 @@ impl Session<'_> {
                         data.extend_from_slice(&chunk);
                     }
                     let doc = aurora_llsd::from_xml(&data).map_err(|_| "Réponse d'inventaire invalide.".to_string())?;
-                    task_inventory::parse_cap(&doc)
+                    Ok((task_inventory::cap_serial(&doc), task_inventory::parse_cap(&doc)?))
                 }
                 .await;
-                let _ = events.send(NetEvent::TaskInventory { object, result });
+                let (serial, result) = match result {
+                    Ok((serial, items)) => (serial, Ok(items)),
+                    Err(e) => (None, Err(e)),
+                };
+                let _ = events.send(NetEvent::TaskInventory { object, serial, result });
             });
         } else {
             if self.tasks.pending.len() >= 32 {
@@ -196,6 +203,7 @@ impl Session<'_> {
                     self.sh,
                     NetEvent::TaskInventory {
                         object,
+                        serial: None,
                         result: Err("Trop de requêtes d'inventaire en cours.".into()),
                     },
                 );
@@ -219,11 +227,13 @@ impl Session<'_> {
             }
             self.tasks.pending.remove(&object);
             let filename = field_str(&m.inventory_data.filename);
+            let serial = m.inventory_data.serial;
             if filename.is_empty() {
                 emit(
                     self.sh,
                     NetEvent::TaskInventory {
                         object,
+                        serial: Some(serial),
                         result: Ok(Vec::new()),
                     },
                 );
@@ -233,6 +243,7 @@ impl Session<'_> {
                     id,
                     TaskXfer {
                         object,
+                        serial,
                         sim: from,
                         next: 0,
                         size: 0,
@@ -252,6 +263,7 @@ impl Session<'_> {
                     self.sh,
                     NetEvent::TaskInventory {
                         object,
+                        serial: None,
                         result: Err("Trop de transferts d'inventaire en cours.".into()),
                     },
                 );
@@ -279,7 +291,14 @@ impl Session<'_> {
                 } else {
                     Err("Transfert d'inventaire incomplet ou invalide.".into())
                 };
-                emit(self.sh, NetEvent::TaskInventory { object: x.object, result });
+                emit(
+                    self.sh,
+                    NetEvent::TaskInventory {
+                        object: x.object,
+                        serial: Some(x.serial),
+                        result,
+                    },
+                );
             }
             return Ok(true);
         }
@@ -292,6 +311,7 @@ impl Session<'_> {
                     self.sh,
                     NetEvent::TaskInventory {
                         object: x.object,
+                        serial: None,
                         result: Err("Transfert d'inventaire annulé par le simulateur.".into()),
                     },
                 );
@@ -308,6 +328,7 @@ mod tests {
     fn xfer() -> TaskXfer {
         TaskXfer {
             object: Uuid::nil(),
+            serial: 0,
             sim: SocketAddr::from(([127, 0, 0, 1], 1)),
             next: 0,
             size: 0,

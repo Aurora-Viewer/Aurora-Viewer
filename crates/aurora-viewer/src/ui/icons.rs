@@ -146,6 +146,22 @@ const SVGS: &[(&str, &[u8])] = svg_list!(
     "arrow-square-in",
     "plus",
     "push-pin",
+    // build floater
+    "hand-grabbing",
+    "cursor",
+    "magic-wand",
+    "mountains",
+    "clipboard-text",
+    "caret-left",
+    "caret-right",
+    "caret-up",
+    "arrows-left-right",
+    "lock-simple",
+    "lock-simple-open",
+    "file-code",
+    "note-pencil",
+    "arrow-clockwise",
+    "wrench",
 );
 
 /// Brand SVGs (white wolf silhouette from Branding/), drawn untinted or tinted.

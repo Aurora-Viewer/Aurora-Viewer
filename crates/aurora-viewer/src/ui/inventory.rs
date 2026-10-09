@@ -10,6 +10,11 @@ pub enum InvAction {
     TeleportLandmark(Uuid),
 }
 
+/// An inventory item being dragged (dropped on an object's contents in
+/// the build floater, like LLToolDragAndDrop).
+#[derive(Debug, Clone, Copy)]
+pub struct InvDrag(pub Uuid);
+
 #[derive(Default)]
 pub struct InventoryUi {
     pub search: String,
@@ -65,7 +70,11 @@ fn item_row(ui: &mut egui::Ui, p: &Palette, icons: &Icons, inv: &Inventory, id: 
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         icon(ui, icons, item_icon(it.asset_type, it.inv_type), p);
-        let r = ui.add(egui::Label::new(RichText::new(&it.name).size(13.0).color(p.ink)).sense(egui::Sense::click()));
+        let r = ui
+            .dnd_drag_source(egui::Id::new(("inv_drag", it.id)), InvDrag(it.id), |ui| {
+                ui.add(egui::Label::new(RichText::new(&it.name).size(13.0).color(p.ink)).sense(egui::Sense::click()))
+            })
+            .inner;
         let r = if it.desc.is_empty() { r } else { r.on_hover_text(&it.desc) };
         if it.asset_type == 3 && !it.asset_id.is_nil() {
             if r.double_clicked() {

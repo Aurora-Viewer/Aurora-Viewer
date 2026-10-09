@@ -8,7 +8,7 @@ use std::f32::consts::PI;
 use glam::{Mat3, Quat, Vec3};
 
 use super::{MIN_DETAIL_FACES, lerp, llfloor};
-use crate::params::{LL_PCODE_PATH_CIRCLE, LL_PCODE_PATH_CIRCLE2, PathParams};
+use crate::params::{LL_PCODE_PATH_CIRCLE, LL_PCODE_PATH_CIRCLE2, LL_PCODE_PATH_TEST, PathParams};
 
 /// `LLPath::PathPt`. `rot` is the rotation as a column-vector matrix
 /// (equivalent to LL's row-vector `LLMatrix3`).
@@ -152,7 +152,7 @@ impl Path {
     }
 
     /// `LLPath::generate`. `sculpt_size` is `Some(n)` for sculpted generation.
-    /// Path types other than circle/circle2 (line, test, flexible) are
+    /// Path types other than circle / circle2 / test (line, flexible) are
     /// generated as a straight line.
     pub(crate) fn generate(&mut self, params: &PathParams, detail: f32, split: i32, sculpt_size: Option<i32>) {
         let detail = detail.max(0.0);
@@ -183,8 +183,23 @@ impl Path {
                     toggle = if toggle == 0.5 { -0.5 } else { 0.5 };
                 }
             }
+            LL_PCODE_PATH_TEST => {
+                // five points bending around X by the twist
+                const NP: usize = 5;
+                let step = 1.0 / (NP - 1) as f32;
+                for i in 0..NP {
+                    let t = i as f32 * step;
+                    let a = PI * params.twist_end * t;
+                    self.points.push(PathPt {
+                        pos: Vec3::new(0.0, lerp(0.0, -a.sin() * 0.5, t), lerp(-0.5, a.cos() * 0.5, t)),
+                        rot: Mat3::from_quat(Quat::from_rotation_x(a)),
+                        scale: [lerp(1.0, params.scale[0], t), lerp(1.0, params.scale[1], t)],
+                        tex_t: t,
+                    });
+                }
+            }
             _ => {
-                // LL_PCODE_PATH_LINE (and test/flexible, treated as a line).
+                // LL_PCODE_PATH_LINE (and flexible, treated as a line).
                 // Take the begin/end twist into account for detail.
                 let mut np = llfloor((params.twist_begin - params.twist_end).abs() * 3.5 * (detail - 0.5)) + 2;
                 if np < split + 2 {

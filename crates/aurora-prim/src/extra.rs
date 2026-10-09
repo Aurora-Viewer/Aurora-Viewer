@@ -165,9 +165,118 @@ pub fn parse_extra_params(data: &[u8]) -> ExtraParams {
     ep
 }
 
+// ---- packing (LL*Params::pack, for ObjectExtraParams)
+
+fn push_f32(v: &mut Vec<u8>, f: f32) {
+    v.extend_from_slice(&f.to_le_bytes());
+}
+
+/// LLFlexibleObjectData::pack: softness in the top bits of tension / drag,
+/// values truncated after `* 10.01` like the C++ casts.
+pub fn pack_flexible(f: &FlexibleParams) -> Vec<u8> {
+    let bit1 = (f.softness & 2) << 6;
+    let bit2 = (f.softness & 1) << 7;
+    let byte = |x: f32| (x * 10.01).clamp(0.0, 255.0) as u8;
+    let mut v = vec![
+        (byte(f.tension) & 0x7f) + bit1,
+        (byte(f.air_friction) & 0x7f) + bit2,
+        byte(f.gravity + 10.0),
+        byte(f.wind_sensitivity),
+    ];
+    for c in f.user_force.to_array() {
+        push_f32(&mut v, c);
+    }
+    v
+}
+
+/// LLLightParams::pack: linear color as bytes (alpha = intensity).
+pub fn pack_light(l: &LightParams) -> Vec<u8> {
+    let mut v: Vec<u8> = l.color.iter().map(|c| (c.clamp(0.0, 1.0) * 255.0).round() as u8).collect();
+    push_f32(&mut v, l.radius);
+    push_f32(&mut v, l.cutoff);
+    push_f32(&mut v, l.falloff);
+    v
+}
+
+/// LLSculptParams::pack.
+pub fn pack_sculpt(s: &SculptParams) -> Vec<u8> {
+    let mut v = s.texture.as_bytes().to_vec();
+    v.push(s.sculpt_type);
+    v
+}
+
+/// LLLightImageParams::pack: texture then (fov, focus, ambiance).
+pub fn pack_light_image(l: &LightImageParams) -> Vec<u8> {
+    let mut v = l.texture.as_bytes().to_vec();
+    for c in l.params.to_array() {
+        push_f32(&mut v, c);
+    }
+    v
+}
+
+/// LLExtendedMeshParams::pack.
+pub fn pack_extended_mesh(flags: u32) -> Vec<u8> {
+    flags.to_le_bytes().to_vec()
+}
+
+/// LLReflectionProbeParams::pack.
+pub fn pack_reflection_probe(r: &ReflectionProbeParams) -> Vec<u8> {
+    let mut v = Vec::with_capacity(9);
+    push_f32(&mut v, r.ambiance);
+    push_f32(&mut v, r.clip_distance);
+    v.push(r.flags);
+    v
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn entry(ty: u16, d: &[u8]) -> ExtraParams {
+        let mut v = vec![1u8];
+        v.extend_from_slice(&ty.to_le_bytes());
+        v.extend_from_slice(&(d.len() as u32).to_le_bytes());
+        v.extend_from_slice(d);
+        parse_extra_params(&v)
+    }
+
+    #[test]
+    fn packs_round_trip() {
+        let f = FlexibleParams {
+            softness: 3,
+            tension: 1.5,
+            air_friction: 2.0,
+            gravity: 0.3,
+            wind_sensitivity: 4.2,
+            user_force: Vec3::new(1.0, -2.0, 0.5),
+        };
+        let back = entry(PARAMS_FLEXIBLE, &pack_flexible(&f)).flexible.expect("flexible");
+        assert_eq!(back.softness, 3);
+        assert!((back.tension - 1.5).abs() < 0.01);
+        assert!((back.gravity - 0.3).abs() < 0.01);
+        assert!((back.wind_sensitivity - 4.2).abs() < 0.01);
+        assert_eq!(back.user_force, f.user_force);
+        let l = LightParams {
+            color: [1.0, 0.5, 0.0, 1.0],
+            radius: 10.0,
+            cutoff: 0.0,
+            falloff: 0.75,
+        };
+        let back = entry(PARAMS_LIGHT, &pack_light(&l)).light.expect("light");
+        assert_eq!(back.radius, 10.0);
+        assert!((back.color[1] - 0.5).abs() < 0.003);
+        let r = ReflectionProbeParams {
+            ambiance: 0.5,
+            clip_distance: 2.0,
+            flags: 3,
+        };
+        assert_eq!(entry(PARAMS_REFLECTION_PROBE, &pack_reflection_probe(&r)).reflection_probe, Some(r));
+        let li = LightImageParams {
+            texture: Uuid::from_bytes([4; 16]),
+            params: Vec3::new(1.0, 2.0, 0.5),
+        };
+        assert_eq!(entry(PARAMS_LIGHT_IMAGE, &pack_light_image(&li)).light_image, Some(li));
+    }
 
     #[test]
     fn parses_sculpt_and_light() {

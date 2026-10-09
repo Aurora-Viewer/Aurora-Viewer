@@ -1,10 +1,12 @@
 //! Sending the build tool commands (see `crate::build`), each to the
 //! simulator of the region the objects / land belong to.
 
-use super::Session;
-use crate::build::{BuildCmd, ObjectProps, brush_index};
+use super::{Session, emit};
+use crate::build::{BuildCmd, ObjectProps, PhysicsParams, brush_index};
+use crate::types::NetEvent;
+use aurora_llsd::Llsd;
 use aurora_msg::msgs::{self, *};
-use aurora_msg::{field_str, str_field};
+use aurora_msg::{IncomingPacket, Msg, field_str, str_field};
 
 /// Most objects per message (LLSelectMgr::sendListToRegions MAX_OBJECTS_PER_PACKET).
 const MAX_PER_PACKET: usize = 254;
@@ -323,8 +325,537 @@ impl Session<'_> {
                 m.agent_data.session_id = session_id;
                 self.send(addr, &m, true);
             }
+            other => self.on_build_more(other),
         }
     }
+
+    /// The commands of the build floater's tabs and of the other tools.
+    fn on_build_more(&mut self, c: BuildCmd) {
+        let (agent_id, session_id) = (self.agent_id(), self.session_id());
+        let Some(addr) = build_handle(&c).and_then(|h| self.sim_for_handle(h)) else {
+            if let BuildCmd::Cap { tag, cap, .. } = c {
+                emit(
+                    self.sh,
+                    NetEvent::CapReply {
+                        tag,
+                        result: Err(format!("{cap}: no region")),
+                    },
+                );
+            }
+            return;
+        };
+        match c {
+            BuildCmd::SetPhysicsParams {
+                local_id,
+                physics,
+                temporary,
+                phantom,
+                params,
+                ..
+            } => {
+                let mut m = ObjectFlagUpdate::default();
+                m.agent_data.agent_id = agent_id;
+                m.agent_data.session_id = session_id;
+                m.agent_data.object_local_id = local_id;
+                m.agent_data.use_physics = physics;
+                m.agent_data.is_temporary = temporary;
+                m.agent_data.is_phantom = phantom;
+                m.extra_physics = vec![object_flag_update::ExtraPhysics {
+                    physics_shape_type: params.shape_type,
+                    density: params.density,
+                    friction: params.friction,
+                    restitution: params.restitution,
+                    gravity_multiplier: params.gravity_multiplier,
+                }];
+                self.send(addr, &m, true);
+            }
+            BuildCmd::SetPermissions {
+                local_ids,
+                field,
+                set,
+                mask,
+                ..
+            } => {
+                for chunk in local_ids.chunks(MAX_PER_PACKET) {
+                    let mut m = ObjectPermissions::default();
+                    m.agent_data.agent_id = agent_id;
+                    m.agent_data.session_id = session_id;
+                    m.header_data.override_ = false;
+                    m.object_data = chunk
+                        .iter()
+                        .map(|&id| object_permissions::ObjectData {
+                            object_local_id: id,
+                            field,
+                            set: set as u8,
+                            mask,
+                        })
+                        .collect();
+                    self.send(addr, &m, true);
+                }
+            }
+            BuildCmd::SetGroup { local_ids, group_id, .. } => {
+                for chunk in local_ids.chunks(MAX_PER_PACKET) {
+                    let mut m = ObjectGroup::default();
+                    m.agent_data.agent_id = agent_id;
+                    m.agent_data.session_id = session_id;
+                    m.agent_data.group_id = group_id;
+                    m.object_data = chunk.iter().map(|&id| object_group::ObjectData { object_local_id: id }).collect();
+                    self.send(addr, &m, true);
+                }
+            }
+            BuildCmd::SetOwner {
+                local_ids,
+                owner_id,
+                group_id,
+                ..
+            } => {
+                for chunk in local_ids.chunks(MAX_PER_PACKET) {
+                    let mut m = ObjectOwner::default();
+                    m.agent_data.agent_id = agent_id;
+                    m.agent_data.session_id = session_id;
+                    m.header_data.override_ = false;
+                    m.header_data.owner_id = owner_id;
+                    m.header_data.group_id = group_id;
+                    m.object_data = chunk.iter().map(|&id| object_owner::ObjectData { object_local_id: id }).collect();
+                    self.send(addr, &m, true);
+                }
+            }
+            BuildCmd::SetSaleInfo {
+                local_ids,
+                sale_type,
+                price,
+                ..
+            } => {
+                for chunk in local_ids.chunks(MAX_PER_PACKET) {
+                    let mut m = ObjectSaleInfo::default();
+                    m.agent_data.agent_id = agent_id;
+                    m.agent_data.session_id = session_id;
+                    m.object_data = chunk
+                        .iter()
+                        .map(|&id| object_sale_info::ObjectData {
+                            local_id: id,
+                            sale_type,
+                            sale_price: price,
+                        })
+                        .collect();
+                    self.send(addr, &m, true);
+                }
+            }
+            BuildCmd::SetClickAction { local_ids, action, .. } => {
+                for chunk in local_ids.chunks(MAX_PER_PACKET) {
+                    let mut m = ObjectClickAction::default();
+                    m.agent_data.agent_id = agent_id;
+                    m.agent_data.session_id = session_id;
+                    m.object_data = chunk
+                        .iter()
+                        .map(|&id| object_click_action::ObjectData {
+                            object_local_id: id,
+                            click_action: action,
+                        })
+                        .collect();
+                    self.send(addr, &m, true);
+                }
+            }
+            BuildCmd::SetIncludeInSearch { local_ids, include, .. } => {
+                for chunk in local_ids.chunks(MAX_PER_PACKET) {
+                    let mut m = ObjectIncludeInSearch::default();
+                    m.agent_data.agent_id = agent_id;
+                    m.agent_data.session_id = session_id;
+                    m.object_data = chunk
+                        .iter()
+                        .map(|&id| object_include_in_search::ObjectData {
+                            object_local_id: id,
+                            include_in_search: include,
+                        })
+                        .collect();
+                    self.send(addr, &m, true);
+                }
+            }
+            BuildCmd::SetTextures {
+                local_id,
+                media_url,
+                texture_entry,
+                ..
+            } => {
+                let mut m = ObjectImage::default();
+                m.agent_data.agent_id = agent_id;
+                m.agent_data.session_id = session_id;
+                m.object_data = vec![object_image::ObjectData {
+                    object_local_id: local_id,
+                    media_url: str_field(&media_url),
+                    texture_entry,
+                }];
+                self.send(addr, &m, true);
+            }
+            BuildCmd::SetExtraParam {
+                local_id,
+                param_type,
+                in_use,
+                data,
+                ..
+            } => {
+                let mut m = ObjectExtraParams::default();
+                m.agent_data.agent_id = agent_id;
+                m.agent_data.session_id = session_id;
+                m.object_data = vec![object_extra_params::ObjectData {
+                    object_local_id: local_id,
+                    param_type,
+                    param_in_use: in_use,
+                    param_size: data.len() as u32,
+                    param_data: data,
+                }];
+                self.send(addr, &m, true);
+            }
+            BuildCmd::SpinStart { object_id, .. } => {
+                let mut m = ObjectSpinStart::default();
+                m.agent_data.agent_id = agent_id;
+                m.agent_data.session_id = session_id;
+                m.object_data.object_id = object_id;
+                self.send(addr, &m, true);
+            }
+            BuildCmd::SpinUpdate { object_id, rotation, .. } => {
+                let mut m = ObjectSpinUpdate::default();
+                m.agent_data.agent_id = agent_id;
+                m.agent_data.session_id = session_id;
+                m.object_data.object_id = object_id;
+                m.object_data.rotation = rotation.normalize();
+                self.send(addr, &m, false);
+            }
+            BuildCmd::SpinStop { object_id, .. } => {
+                let mut m = ObjectSpinStop::default();
+                m.agent_data.agent_id = agent_id;
+                m.agent_data.session_id = session_id;
+                m.object_data.object_id = object_id;
+                self.send(addr, &m, true);
+            }
+            BuildCmd::DuplicateOnRay {
+                local_ids,
+                group_id,
+                ray_start,
+                ray_end,
+                ray_target,
+                bypass_raycast,
+                copy_centers,
+                copy_rotates,
+                ..
+            } => {
+                for chunk in local_ids.chunks(MAX_PER_PACKET) {
+                    let mut m = ObjectDuplicateOnRay::default();
+                    let a = &mut m.agent_data;
+                    a.agent_id = agent_id;
+                    a.session_id = session_id;
+                    a.group_id = group_id;
+                    a.ray_start = ray_start;
+                    a.ray_end = ray_end;
+                    a.bypass_raycast = bypass_raycast;
+                    a.ray_end_is_intersection = false;
+                    a.copy_centers = copy_centers;
+                    a.copy_rotates = copy_rotates;
+                    a.ray_target_id = ray_target;
+                    a.duplicate_flags = 0;
+                    m.object_data = chunk
+                        .iter()
+                        .map(|&id| object_duplicate_on_ray::ObjectData { object_local_id: id })
+                        .collect();
+                    self.send(addr, &m, true);
+                }
+            }
+            BuildCmd::ParcelRequest {
+                sequence,
+                snap,
+                west,
+                south,
+                east,
+                north,
+                ..
+            } => {
+                let mut m = ParcelPropertiesRequest::default();
+                m.agent_data.agent_id = agent_id;
+                m.agent_data.session_id = session_id;
+                let d = &mut m.parcel_data;
+                d.sequence_id = sequence;
+                d.west = west;
+                d.south = south;
+                d.east = east;
+                d.north = north;
+                d.snap_selection = snap;
+                self.send(addr, &m, true);
+            }
+            BuildCmd::ParcelDivide {
+                west, south, east, north, ..
+            } => {
+                let mut m = ParcelDivide::default();
+                m.agent_data.agent_id = agent_id;
+                m.agent_data.session_id = session_id;
+                m.parcel_data = parcel_divide::ParcelData { west, south, east, north };
+                self.send(addr, &m, true);
+            }
+            BuildCmd::ParcelJoin {
+                west, south, east, north, ..
+            } => {
+                let mut m = ParcelJoin::default();
+                m.agent_data.agent_id = agent_id;
+                m.agent_data.session_id = session_id;
+                m.parcel_data = parcel_join::ParcelData { west, south, east, north };
+                self.send(addr, &m, true);
+            }
+            BuildCmd::ParcelRelease { local_id, .. } => {
+                let mut m = ParcelRelease::default();
+                m.agent_data.agent_id = agent_id;
+                m.agent_data.session_id = session_id;
+                m.data.local_id = local_id;
+                self.send(addr, &m, true);
+            }
+            BuildCmd::RequestTaskInventory {
+                handle,
+                local_id,
+                object_id,
+            } => {
+                // the capability first, else UDP + Xfer (object_actions.rs)
+                self.request_task_inventory(handle, local_id, object_id);
+            }
+            BuildCmd::RemoveTaskInventory { local_id, item_id, .. } => {
+                let mut m = RemoveTaskInventory::default();
+                m.agent_data.agent_id = agent_id;
+                m.agent_data.session_id = session_id;
+                m.inventory_data.local_id = local_id;
+                m.inventory_data.item_id = item_id;
+                self.send(addr, &m, true);
+            }
+            BuildCmd::MoveTaskInventory {
+                local_id,
+                item_id,
+                folder_id,
+                ..
+            } => {
+                let mut m = MoveTaskInventory::default();
+                m.agent_data.agent_id = agent_id;
+                m.agent_data.session_id = session_id;
+                m.agent_data.folder_id = folder_id;
+                m.inventory_data.local_id = local_id;
+                m.inventory_data.item_id = item_id;
+                self.send(addr, &m, true);
+            }
+            BuildCmd::UpdateTaskInventory { local_id, item, .. } => {
+                let mut m = UpdateTaskInventory::default();
+                m.agent_data.agent_id = agent_id;
+                m.agent_data.session_id = session_id;
+                m.update_data.local_id = local_id;
+                m.update_data.key = 0; // TASK_INVENTORY_ITEM_KEY
+                let i = &item;
+                m.inventory_data = update_task_inventory::InventoryData {
+                    item_id: i.item_id,
+                    folder_id: i.parent_id,
+                    creator_id: i.creator_id,
+                    owner_id: i.owner_id,
+                    group_id: i.group_id,
+                    base_mask: i.base_mask,
+                    owner_mask: i.owner_mask,
+                    group_mask: i.group_mask,
+                    everyone_mask: i.everyone_mask,
+                    next_owner_mask: i.next_owner_mask,
+                    group_owned: i.group_owned,
+                    transaction_id: uuid::Uuid::nil(),
+                    type_: i.asset_type,
+                    inv_type: i.inv_type,
+                    flags: i.flags,
+                    sale_type: i.sale_type,
+                    sale_price: i.sale_price,
+                    name: str_field(&i.name),
+                    description: str_field(&i.description),
+                    creation_date: i.creation_date,
+                    crc: crate::task_inventory::item_crc(i),
+                };
+                self.send(addr, &m, true);
+            }
+            BuildCmd::RezScript {
+                local_id,
+                enabled,
+                group_id,
+                item,
+                ..
+            } => {
+                let mut m = RezScript::default();
+                m.agent_data.agent_id = agent_id;
+                m.agent_data.session_id = session_id;
+                m.agent_data.group_id = group_id;
+                m.update_block.object_local_id = local_id;
+                m.update_block.enabled = enabled;
+                let i = &item;
+                m.inventory_block = rez_script::InventoryBlock {
+                    item_id: i.item_id,
+                    folder_id: i.parent_id,
+                    creator_id: i.creator_id,
+                    owner_id: i.owner_id,
+                    group_id: i.group_id,
+                    base_mask: i.base_mask,
+                    owner_mask: i.owner_mask,
+                    group_mask: i.group_mask,
+                    everyone_mask: i.everyone_mask,
+                    next_owner_mask: i.next_owner_mask,
+                    group_owned: i.group_owned,
+                    transaction_id: uuid::Uuid::nil(),
+                    type_: i.asset_type,
+                    inv_type: i.inv_type,
+                    flags: i.flags,
+                    sale_type: i.sale_type,
+                    sale_price: i.sale_price,
+                    name: str_field(&i.name),
+                    description: str_field(&i.description),
+                    creation_date: i.creation_date,
+                    crc: crate::task_inventory::item_crc(i),
+                };
+                self.send(addr, &m, true);
+            }
+            BuildCmd::ScriptReset { object_id, item_id, .. } => {
+                let mut m = ScriptReset::default();
+                m.agent_data.agent_id = agent_id;
+                m.agent_data.session_id = session_id;
+                m.script.object_id = object_id;
+                m.script.item_id = item_id;
+                self.send(addr, &m, true);
+            }
+            BuildCmd::SetScriptRunning {
+                object_id,
+                item_id,
+                running,
+                ..
+            } => {
+                let mut m = SetScriptRunning::default();
+                m.agent_data.agent_id = agent_id;
+                m.agent_data.session_id = session_id;
+                m.script.object_id = object_id;
+                m.script.item_id = item_id;
+                m.script.running = running;
+                self.send(addr, &m, true);
+            }
+            BuildCmd::GetScriptRunning { object_id, item_id, .. } => {
+                let mut m = GetScriptRunning::default();
+                m.script.object_id = object_id;
+                m.script.item_id = item_id;
+                self.send(addr, &m, true);
+            }
+            BuildCmd::Cap { cap, put, body, tag, .. } => {
+                let url = self.sims.get(&addr).and_then(|s| s.caps.get(&cap).cloned());
+                let Some(url) = url else {
+                    emit(
+                        self.sh,
+                        NetEvent::CapReply {
+                            tag,
+                            result: Err(format!("{cap}: capability not granted")),
+                        },
+                    );
+                    return;
+                };
+                let http = self.sh.caps_http.clone();
+                let events = self.sh.events.clone();
+                tokio::spawn(async move {
+                    let result = crate::caps::request_llsd(&http, &url, &body, put)
+                        .await
+                        .map_err(|e| format!("{cap}: {e}"));
+                    if let Err(e) = &result {
+                        log::warn!("{e}");
+                    }
+                    let _ = events.send(NetEvent::CapReply { tag, result });
+                });
+            }
+            _ => {}
+        }
+    }
+
+    /// Build-related UDP messages; Ok(false) when not one of them.
+    pub(super) fn dispatch_build(&mut self, pkt: &IncomingPacket) -> Result<bool, aurora_msg::DecodeError> {
+        let id = pkt.id;
+        if id == ScriptRunningReply::ID {
+            let m: ScriptRunningReply = pkt.decode()?;
+            emit(
+                self.sh,
+                NetEvent::ScriptRunning {
+                    object_id: m.script.object_id,
+                    item_id: m.script.item_id,
+                    running: m.script.running,
+                    mono: None,
+                },
+            );
+        } else {
+            return Ok(false);
+        }
+        Ok(true)
+    }
+
+    /// Build-related event queue messages; false when not one of them.
+    pub(super) fn on_build_eq(&mut self, message: &str, b: &Llsd) -> bool {
+        match message {
+            // LLSelectMgr::processObjectPhysicsProperties
+            "ObjectPhysicsProperties" => {
+                let list = b["ObjectData"]
+                    .as_array()
+                    .iter()
+                    .map(|o| {
+                        (
+                            o["LocalID"].as_u32(),
+                            PhysicsParams {
+                                shape_type: o["PhysicsShapeType"].as_i32() as u8,
+                                density: o["Density"].as_f32(),
+                                friction: o["Friction"].as_f32(),
+                                restitution: o["Restitution"].as_f32(),
+                                gravity_multiplier: o["GravityMultiplier"].as_f32(),
+                            },
+                        )
+                    })
+                    .collect();
+                emit(self.sh, NetEvent::PhysicsProperties(list));
+            }
+            // the event queue form carries the Mono flag (LLLiveLSLEditor)
+            "ScriptRunningReply" => {
+                let s = &b["Script"][0];
+                emit(
+                    self.sh,
+                    NetEvent::ScriptRunning {
+                        object_id: s["ObjectID"].as_uuid(),
+                        item_id: s["ItemID"].as_uuid(),
+                        running: s["Running"].as_bool(),
+                        mono: s.has("Mono").then(|| s["Mono"].as_bool()),
+                    },
+                );
+            }
+            _ => return false,
+        }
+        true
+    }
+}
+
+/// The region a command of `on_build_more` goes to.
+fn build_handle(c: &BuildCmd) -> Option<crate::types::RegionHandle> {
+    Some(match c {
+        BuildCmd::SetPhysicsParams { handle, .. }
+        | BuildCmd::SetPermissions { handle, .. }
+        | BuildCmd::SetGroup { handle, .. }
+        | BuildCmd::SetOwner { handle, .. }
+        | BuildCmd::SetSaleInfo { handle, .. }
+        | BuildCmd::SetClickAction { handle, .. }
+        | BuildCmd::SetIncludeInSearch { handle, .. }
+        | BuildCmd::SetTextures { handle, .. }
+        | BuildCmd::SetExtraParam { handle, .. }
+        | BuildCmd::SpinStart { handle, .. }
+        | BuildCmd::SpinUpdate { handle, .. }
+        | BuildCmd::SpinStop { handle, .. }
+        | BuildCmd::DuplicateOnRay { handle, .. }
+        | BuildCmd::ParcelRequest { handle, .. }
+        | BuildCmd::ParcelDivide { handle, .. }
+        | BuildCmd::ParcelJoin { handle, .. }
+        | BuildCmd::ParcelRelease { handle, .. }
+        | BuildCmd::RequestTaskInventory { handle, .. }
+        | BuildCmd::RemoveTaskInventory { handle, .. }
+        | BuildCmd::MoveTaskInventory { handle, .. }
+        | BuildCmd::UpdateTaskInventory { handle, .. }
+        | BuildCmd::RezScript { handle, .. }
+        | BuildCmd::ScriptReset { handle, .. }
+        | BuildCmd::SetScriptRunning { handle, .. }
+        | BuildCmd::GetScriptRunning { handle, .. }
+        | BuildCmd::Cap { handle, .. } => *handle,
+        _ => return None,
+    })
 }
 
 /// ObjectProperties blocks (selected objects).

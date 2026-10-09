@@ -672,9 +672,37 @@ pub enum NetEvent {
         default: i32,
         buttons: Vec<i32>,
     },
+    /// Reply to BuildCmd::Cap (`Err` holds the HTTP / LLSD error).
+    CapReply {
+        tag: u64,
+        result: Result<aurora_llsd::Llsd, String>,
+    },
+    /// An object's inventory: capability RequestTaskInventory, or
+    /// RequestTaskInventory → ReplyTaskInventory → Xfer of the listing file
+    /// (LLViewerObject::loadTaskInvLLSD / loadTaskInvFile). `serial`: the
+    /// simulator's inventory serial when given. Items include the
+    /// "Contents" root folder (`is_folder`).
     TaskInventory {
         object: Uuid,
-        result: Result<Vec<crate::inventory::InvItem>, String>,
+        serial: Option<i16>,
+        result: Result<Vec<crate::build::TaskItem>, String>,
+    },
+    /// ScriptRunningReply (and the event queue's Mono flag when given).
+    ScriptRunning {
+        object_id: Uuid,
+        item_id: Uuid,
+        running: bool,
+        mono: Option<bool>,
+    },
+    /// ObjectPhysicsProperties (event queue): physics shape and material
+    /// values of selected prims.
+    PhysicsProperties(Vec<(u32, crate::build::PhysicsParams)>),
+    /// ParcelProperties answering a ParcelPropertiesRequest of the build
+    /// tools (sequence ≥ 1, LLViewerParcelMgr's selection), any region.
+    SelectedParcel {
+        handle: RegionHandle,
+        sequence: i32,
+        parcel: std::sync::Arc<ParcelInfo>,
     },
 }
 

@@ -76,6 +76,19 @@ impl MediaManager {
         Some(faces)
     }
 
+    /// Number of faces (texture entries) of an object: the prim volume's,
+    /// or the mesh asset's submeshes once it is cached.
+    pub fn face_count(&mut self, world: &World, scene: &Scene, idx: usize) -> Option<usize> {
+        let o = world.objects.get(idx)?;
+        if o.volume.is_mesh() {
+            return self.cpu_faces(world, scene, idx).map(|f| f.len().max(1));
+        }
+        if o.volume.is_sculpt() {
+            return Some(1);
+        }
+        Some(aurora_prim::volume::num_faces(&o.volume).max(1))
+    }
+
     /// The nearest media face along a ray (objects with media data only),
     /// unless something drawn is in front (`depth_t`: distance of the
     /// picked depth).

@@ -1,7 +1,8 @@
 //! Offline test script of the build tools (demo mode):
 //! `AURORA_DEMO_BUILD="mode,x,y[,part,dx,dy]"`.
 //!
-//! - mode: move | rotate | stretch | create | land | select
+//! - mode: move | rotate | stretch | face | align | grab | focus | create |
+//!   land | select
 //! - x, y: click (physical pixels) at frame 220: selects the object there,
 //!   creates a prim, or presses the land brush (held until the capture)
 //! - part: handle grabbed at frame 250 (move: x y z xy yz xz; rotate: rx ry
@@ -10,6 +11,11 @@
 //!
 //! Frames are counted from AURORA_DEMO_BUILD_FRAME (600 by default: after
 //! the loading fade; capture at about +90 frames).
+//!
+//! `AURORA_DEMO_BUILD_TAB` shows a tab of the floater: general | object |
+//! features | texture | contents, the texture tab with `:pbr`, `:bp` or
+//! `:media` (e.g. `texture:bp`), and opens `+weights`, `+grid`, `+media`
+//! (e.g. `general+weights+grid`).
 
 use super::manip::Part;
 use super::{BuildSettings, BuildTool, EditMode, Tool};
@@ -49,7 +55,7 @@ fn part_of(s: &str) -> Option<Part> {
 fn handle_px(tool: &BuildTool, world: &World, s: &BuildSettings, part: Part) -> Option<(f32, f32)> {
     let now = Instant::now();
     let b = tool.bounds(world, now)?;
-    let g = super::grid_of(s, Some(&b));
+    let g = super::grid_of(s, Some(&b), None);
     let cam = &tool.cam;
     let c = b.center;
     let len = cam.meters_for_pixels(c, 50.0);
@@ -96,6 +102,37 @@ fn handle_px(tool: &BuildTool, world: &World, s: &BuildSettings, part: Part) -> 
     cam.project_px(p)
 }
 
+/// AURORA_DEMO_BUILD_TAB: the floater tab (and texture sub-tab) to show.
+pub fn apply_tab(tool: &mut BuildTool) {
+    let Ok(v) = std::env::var("AURORA_DEMO_BUILD_TAB") else { return };
+    // secondary floaters: +weights, +grid, +media
+    let mut parts = v.split('+');
+    let v = parts.next().unwrap_or("").to_owned();
+    for extra in parts {
+        match extra.trim() {
+            "weights" => tool.ui.weights_open = true,
+            "grid" => tool.ui.grid_options_open = true,
+            "media" => tool.ui.media_settings = Some(super::ui::MediaSettingsState::new(None)),
+            _ => {}
+        }
+    }
+    let (tab, sub) = v.split_once(':').unwrap_or((v.as_str(), ""));
+    tool.tab = match tab.trim() {
+        "general" => 0,
+        "object" => 1,
+        "features" => 2,
+        "texture" => 3,
+        "contents" => 4,
+        _ => tool.tab,
+    };
+    tool.ui.tex_tab = match sub.trim() {
+        "pbr" => 0,
+        "bp" => 1,
+        "media" => 2,
+        _ => tool.ui.tex_tab,
+    };
+}
+
 /// What to do at this frame.
 pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildSettings) -> Vec<Step> {
     let parts: Vec<&str> = spec.split(',').map(|x| x.trim()).collect();
@@ -106,6 +143,10 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
     let (t, m, land) = match parts[0] {
         "rotate" => (Tool::Edit, EditMode::Rotate, 6),
         "stretch" => (Tool::Edit, EditMode::Stretch, 6),
+        "face" => (Tool::Edit, EditMode::Face, 6),
+        "align" => (Tool::Edit, EditMode::Align, 6),
+        "grab" => (Tool::Grab, EditMode::Move, 6),
+        "focus" => (Tool::Focus, EditMode::Move, 6),
         "create" => (Tool::Create, EditMode::Move, 6),
         "land" => (Tool::Land, EditMode::Move, 1),
         "select" => (Tool::Land, EditMode::Move, 6),

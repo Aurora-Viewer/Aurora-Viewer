@@ -143,6 +143,15 @@ impl TextureStreamer {
         self.entries.get(id)?.info.map(|i| (i.width, i.height))
     }
 
+    /// The texture has see-through pixels (None until it is decoded): the
+    /// build floater's « Mode alpha » is only offered then.
+    pub fn has_alpha(&self, id: &Uuid) -> Option<bool> {
+        if !self.is_loaded(id) {
+            return None;
+        }
+        Some(self.entries.get(id)?.alpha != AlphaKind::Opaque)
+    }
+
     pub fn describe(&self, id: &Uuid) -> String {
         match self.entries.get(id) {
             None => "not requested".into(),
