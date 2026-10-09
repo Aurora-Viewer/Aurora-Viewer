@@ -58,6 +58,7 @@ pub struct Settings {
     pub camera: crate::camera::CameraSettings,
     /// Contacts window (Amis / Groupes / Cercles).
     pub contacts: crate::ui::contacts::ContactsSettings,
+    pub inventory: crate::ui::inventory::InventoryPreferences,
     pub username: String,
     pub remember_username: bool,
     /// Remember the password (its login hash, in the system credential
@@ -411,6 +412,7 @@ impl Default for Settings {
             build: Default::default(),
             camera: Default::default(),
             contacts: Default::default(),
+            inventory: Default::default(),
             username: String::new(),
             remember_username: true,
             remember_password: false,

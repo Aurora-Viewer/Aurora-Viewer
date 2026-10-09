@@ -12,7 +12,7 @@ use model::Action;
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 mod gallery;
-mod items;
+pub(crate) mod items;
 
 #[derive(Default)]
 pub struct AppearanceUi {

@@ -4,6 +4,13 @@ use aurora_llsd::Llsd;
 use aurora_net::inventory::{FolderContents, InvFolder, InvItem, parse_skeleton};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
+#[cfg(test)]
+#[path = "inventory/tests.rs"]
+mod action_tests;
+pub mod actions;
+pub mod demo;
+pub mod preview;
+pub mod wearable;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FetchState {
@@ -192,6 +199,26 @@ impl Inventory {
         self.items.len()
     }
 
+    /// AIS deletions remove descendants too; retain no stale search results.
+    pub fn remove(&mut self, ids: &[Uuid]) {
+        let mut removed: HashSet<_> = ids.iter().copied().collect();
+        loop {
+            let old = removed.len();
+            for f in self.folders.values() {
+                if removed.contains(&f.info.parent) {
+                    removed.insert(f.info.id);
+                }
+            }
+            if old == removed.len() {
+                break;
+            }
+        }
+        self.items.retain(|id, it| !removed.contains(id) && !removed.contains(&it.parent));
+        self.folders.retain(|id, _| !removed.contains(id));
+        self.sort_all();
+        self.generation += 1;
+    }
+
     /// Write fetched folders and their items (LLInventoryModel::saveToFile).
     pub fn save_cache(&self, path: &std::path::Path) {
         use aurora_llsd::llsd_map;
@@ -219,6 +246,11 @@ impl Inventory {
                             "asset_id" => it.asset_id,
                             "flags" => it.flags as i32,
                     "favorite" => it.favorite,
+                        "thumbnail" => it.thumbnail,
+                        "base_mask" => it.base_mask as i32,
+                        "owner_mask" => it.owner_mask as i32,
+                        "last_owner" => it.last_owner, "group_id" => it.group_id, "group_owned" => it.group_owned,
+                        "sale_type" => i32::from(it.sale_type), "sale_price" => it.sale_price,
                             "creator" => it.creator,
                             "created_at" => it.created_at as i32,
                             "owner" => it.owner,
@@ -233,7 +265,7 @@ impl Inventory {
             return;
         }
         let doc = llsd_map! {
-            "version" => 1,
+            "version" => 2,
             "folders" => Llsd::Array(folders),
             "items" => Llsd::Array(items),
         };
@@ -255,6 +287,9 @@ impl Inventory {
         let Ok((doc, _)) = aurora_llsd::from_binary(&bytes) else {
             return 0;
         };
+        if doc["version"].as_i32() != 2 {
+            return 0;
+        }
         let mut valid = std::collections::HashSet::new();
         for f in doc["folders"].as_array() {
             let id = f["id"].as_uuid();
@@ -290,6 +325,14 @@ impl Inventory {
                 group_mask: v["group_mask"].as_i32() as u32,
                 everyone_mask: v["everyone_mask"].as_i32() as u32,
                 next_owner_mask: v["next_owner_mask"].as_i32() as u32,
+                thumbnail: v["thumbnail"].as_uuid(),
+                base_mask: v["base_mask"].as_u32(),
+                owner_mask: v["owner_mask"].as_u32(),
+                last_owner: v["last_owner"].as_uuid(),
+                group_id: v["group_id"].as_uuid(),
+                group_owned: v["group_owned"].as_bool(),
+                sale_type: v["sale_type"].as_u32() as u8,
+                sale_price: v["sale_price"].as_i32(),
             };
             if it.id.is_nil() {
                 continue;

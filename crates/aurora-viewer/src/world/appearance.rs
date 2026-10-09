@@ -31,9 +31,17 @@ pub const WEARABLES: &[&str] = &[
     "Universel",
 ];
 
+#[derive(Clone, Copy, Debug)]
+pub enum WearMode {
+    ReplaceOutfit,
+    Append,
+    ReplaceItems,
+}
+
 #[derive(Clone, Debug)]
 pub enum Action {
     Wear(Uuid, bool),
+    WearContents { folder: Uuid, mode: WearMode },
     Save(Option<String>),
     Remove(Uuid),
     Add(Uuid),
@@ -164,6 +172,34 @@ pub fn prepare(inv: &mut Inventory, agent: Uuid, worn: &HashSet<Uuid>) -> Vec<Ne
     }
 }
 
+/// LLAppearanceMgr::wearInventoryCategory: ordinary folders are recursive;
+/// unrelated inventory types are ignored, incomplete or broken links are refused.
+pub fn wearable_contents(inv: &Inventory, folder: Uuid) -> Result<Vec<OutfitLink>, String> {
+    let mut pending = vec![folder];
+    let mut seen = HashSet::new();
+    let mut links = Vec::new();
+    while let Some(id) = pending.pop() {
+        if !seen.insert(id) {
+            return Err("Cycle dans les dossiers de la tenue.".into());
+        }
+        let f = inv.folders.get(&id).ok_or("Dossier introuvable.")?;
+        require_complete(inv, id)?;
+        for link in folder_links(inv, id).into_iter().filter(|l| !l.folder) {
+            let item = inv
+                .items
+                .get(&link.target)
+                .ok_or("Un lien de la tenue est cassé ou encore en cours de chargement.")?;
+            if matches!(item.asset_type, 5 | 6 | 13 | 21) {
+                links.push(link);
+            }
+        }
+        pending.extend(f.children.iter().copied());
+    }
+    let mut targets = HashSet::new();
+    links.retain(|l| targets.insert(l.target));
+    Ok(links)
+}
+
 fn require_complete(inv: &Inventory, folder: Uuid) -> Result<(), String> {
     if complete(inv, folder) {
         Ok(())
@@ -288,12 +324,31 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
                 sync = false;
             }
         }
-        Action::Wear(id, append) => {
+        Action::Wear(id, _) | Action::WearContents { folder: id, .. } => {
+            let append = matches!(
+                action,
+                Action::Wear(_, true)
+                    | Action::WearContents {
+                        mode: WearMode::Append | WearMode::ReplaceItems,
+                        ..
+                    }
+            );
+            let replace_items = matches!(
+                action,
+                Action::WearContents {
+                    mode: WearMode::ReplaceItems,
+                    ..
+                }
+            );
             require_complete(inv, id)?;
-            let mut next: Vec<_> = folder_links(inv, id)
-                .into_iter()
-                .filter(|l| !l.folder && inv.items.get(&l.target).is_none_or(|it| it.asset_type != 0))
-                .collect();
+            let mut next: Vec<_> = (if matches!(action, Action::WearContents { .. }) {
+                wearable_contents(inv, id)?
+            } else {
+                folder_links(inv, id)
+            })
+            .into_iter()
+            .filter(|l| !l.folder && inv.items.get(&l.target).is_none_or(|it| it.asset_type != 0))
+            .collect();
             if next
                 .iter()
                 .any(|l| inv.items.get(&l.target).is_none_or(|it| !matches!(it.asset_type, 5 | 6 | 13 | 21)))
@@ -301,7 +356,16 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
                 return Err("Cette tenue contient un lien qui ne peut pas être porté.".into());
             }
             for old in current.iter().filter(|l| !l.folder) {
-                let preserve = append
+                let preserve = (append
+                    && (!replace_items
+                        || inv.items.get(&old.target).is_none_or(|it| {
+                            it.asset_type != 5
+                                || !next.iter().any(|n| {
+                                    inv.items
+                                        .get(&n.target)
+                                        .is_some_and(|n| n.asset_type == 5 && n.flags & 0xff == it.flags & 0xff)
+                                })
+                        })))
                     || inv.items.get(&old.target).is_some_and(|it| {
                         it.asset_type == 13
                             && !next.iter().any(|l| {
@@ -324,7 +388,11 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
                         .get(&l.target)
                         .is_none_or(|it| it.asset_type != 13 || body.insert(it.flags & 0xff))
             });
-            if let Some(base) = if append { base(inv) } else { Some(id) } {
+            if let Some(base) = if append {
+                base(inv)
+            } else {
+                inv.folders.get(&id).filter(|f| f.info.type_default == FT_OUTFIT).map(|_| id)
+            } {
                 next.push(base_link(inv, base));
             }
             change.links = next;
@@ -345,10 +413,9 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
             change.links = current;
         }
         Action::RemoveOutfit(id) => {
-            require_outfit(inv, id)?;
             require_complete(inv, id)?;
             // takeOffOutfit never removes the four required body parts.
-            let removable: HashSet<_> = folder_links(inv, id)
+            let removable: HashSet<_> = wearable_contents(inv, id)?
                 .iter()
                 .filter(|l| !l.folder && inv.items.get(&l.target).is_some_and(|it| it.asset_type != 13))
                 .map(|l| l.target)
@@ -692,6 +759,14 @@ pub fn seed_demo(inv: &mut Inventory, agent: Uuid) {
             group_mask: 0,
             everyone_mask: 0,
             next_owner_mask: 0,
+            thumbnail: Uuid::nil(),
+            base_mask: 0x7fffffff,
+            owner_mask: 0x7fffffff,
+            last_owner: uuid::Uuid::nil(),
+            group_id: uuid::Uuid::nil(),
+            group_owned: false,
+            sale_type: 0,
+            sale_price: 0,
         });
     }
     inv.add_items(items.clone());
@@ -769,6 +844,14 @@ fn demo_replace(inv: &mut Inventory, agent: Uuid, id: Uuid, links: &[OutfitLink]
             group_mask: 0,
             everyone_mask: 0,
             next_owner_mask: 0,
+            thumbnail: Uuid::nil(),
+            base_mask: 0x7fffffff,
+            owner_mask: 0x7fffffff,
+            last_owner: uuid::Uuid::nil(),
+            group_id: uuid::Uuid::nil(),
+            group_owned: false,
+            sale_type: 0,
+            sale_price: 0,
         })
         .collect();
     inv.apply(vec![aurora_net::inventory::FolderContents {

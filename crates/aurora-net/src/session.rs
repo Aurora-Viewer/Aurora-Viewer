@@ -4,6 +4,7 @@
 //! Message flow follows `newview/llstartup.cpp` and `llviewermessage.cpp`.
 
 mod build_cmds;
+mod inventory_upload;
 mod object_actions;
 
 use crate::caps::{self, EqEvent};
@@ -149,6 +150,10 @@ struct Session<'a> {
     land: land_net::LandNet,
     /// Decode failures per message name, to rate-limit their warnings.
     decode_failures: HashMap<&'static str, u64>,
+    inventory_uploads: inventory_upload::Uploads,
+    inventory_callbacks: HashMap<u32, (Instant, bool)>,
+    inventory_merchant_pending: bool,
+    next_inventory_callback: u32,
 }
 
 fn emit(sh: &Shared, ev: NetEvent) {
@@ -243,6 +248,10 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         tasks: Default::default(),
         land: Default::default(),
         decode_failures: HashMap::new(),
+        inventory_uploads: Default::default(),
+        inventory_callbacks: HashMap::new(),
+        inventory_merchant_pending: false,
+        next_inventory_callback: 0,
     };
 
     let addr = SocketAddr::V4(SocketAddrV4::new(login.sim_ip, login.sim_port));
@@ -447,6 +456,10 @@ impl Session<'_> {
         if self.main == Some(addr) {
             // LLEnvironment::onRegionChange -> requestRegion once caps arrive
             self.request_environment(None);
+            if self.inventory_merchant_pending {
+                self.inventory_merchant_pending = false;
+                self.on_command(NetCommand::RequestInventoryMerchant);
+            }
         }
     }
 
@@ -641,6 +654,18 @@ impl Session<'_> {
 
     fn tick(&mut self) {
         self.expire_task_inventory();
+        self.expire_inventory_uploads();
+        let before = self.inventory_callbacks.len();
+        self.inventory_callbacks
+            .retain(|_, (sent, _)| sent.elapsed() < Duration::from_secs(60));
+        if before != self.inventory_callbacks.len() {
+            emit(
+                self.sh,
+                NetEvent::InventoryOperationFailed(
+                    "Une création ou copie n’a pas été confirmée. Rechargez le dossier avant de réessayer.".into(),
+                ),
+            );
+        }
         let now = Instant::now();
         self.publish_motion();
         if self.last_cache_save.elapsed() > Duration::from_secs(120) {
@@ -1245,6 +1270,157 @@ impl Session<'_> {
             }
             NetCommand::FetchInventory { folders, owner, library } => self.fetch_inventory(folders, owner, library),
             NetCommand::FetchItems { items, owner } => self.fetch_items(items, owner),
+            NetCommand::EditInventory { request, change } => {
+                let Some((cap, fetch_cap)) = self.main_cap("InventoryAPIv3").zip(self.main_cap("FetchInventoryDescendents2")) else {
+                    emit(
+                        self.sh,
+                        NetEvent::InventoryEdited {
+                            request,
+                            result: Err("Le serveur d’inventaire n’est pas encore disponible.".into()),
+                        },
+                    );
+                    return;
+                };
+                let http = self.sh.caps_http.clone();
+                let events = self.sh.events.clone();
+                let owner = self.agent_id();
+                tokio::spawn(async move {
+                    let result = crate::inventory::operations::mutate(&http, &cap, &fetch_cap, owner, change).await;
+                    let _ = events.send(NetEvent::InventoryEdited { request, result });
+                });
+            }
+            NetCommand::RequestInventoryMerchant => {
+                if self.main.and_then(|a| self.sims.get(&a)).is_none_or(|s| s.caps.is_empty()) {
+                    self.inventory_merchant_pending = true;
+                    return;
+                }
+                let events = self.sh.events.clone();
+                let http = self.sh.caps_http.clone();
+                let cap = self.main_cap("DirectDelivery");
+                tokio::spawn(async move {
+                    let result = if let Some(cap) = cap {
+                        match http
+                            .get(format!("{}/merchant", cap.trim_end_matches('/')))
+                            .timeout(Duration::from_secs(20))
+                            .send()
+                            .await
+                        {
+                            Ok(r) if r.status().is_success() => Ok(true),
+                            Ok(r) if matches!(r.status().as_u16(), 404 | 503) => Ok(false),
+                            _ => Err("Le service de la Place du marché est indisponible.".into()),
+                        }
+                    } else {
+                        Ok(false)
+                    };
+                    let _ = events.send(NetEvent::InventoryMerchant(result));
+                });
+            }
+            NetCommand::PreviewInventoryItem(it) => {
+                let Some(cap) = self.main_cap("ViewerAsset") else {
+                    emit(
+                        self.sh,
+                        NetEvent::InventoryPreview {
+                            item: it.id,
+                            result: Err("La région ne permet pas de charger ce contenu.".into()),
+                        },
+                    );
+                    return;
+                };
+                let http = self.sh.caps_http.clone();
+                let events = self.sh.events.clone();
+                tokio::spawn(async move {
+                    let kind = match it.asset_type {
+                        7 => "notecard_id",
+                        10 => "lsltext_id",
+                        21 => "gesture_id",
+                        56 => "settings_id",
+                        57 => "material_id",
+                        _ => "",
+                    };
+                    let result = crate::inventory::operations::preview(&http, &cap, kind, it.asset_id).await;
+                    let _ = events.send(NetEvent::InventoryPreview { item: it.id, result });
+                });
+            }
+            NetCommand::CreateInventoryWearable { parent, kind, name, data } => self.create_wearable(parent, kind, name, data),
+            NetCommand::RestoreInventoryObject(it) => {
+                let mut m = RezRestoreToWorld::default();
+                m.agent_data.agent_id = self.agent_id();
+                m.agent_data.session_id = self.session_id();
+                m.inventory_data.item_id = it.id;
+                m.inventory_data.folder_id = it.parent;
+                m.inventory_data.creator_id = it.creator;
+                m.inventory_data.owner_id = it.owner;
+                m.inventory_data.base_mask = it.base_mask;
+                m.inventory_data.owner_mask = it.owner_mask;
+                m.inventory_data.group_mask = it.group_mask;
+                m.inventory_data.everyone_mask = it.everyone_mask;
+                m.inventory_data.next_owner_mask = it.next_owner_mask;
+                m.inventory_data.type_ = it.asset_type as i8;
+                m.inventory_data.inv_type = it.inv_type as i8;
+                m.inventory_data.flags = it.flags;
+                m.inventory_data.name = str_field(&it.name);
+                m.inventory_data.description = str_field(&it.desc);
+                m.inventory_data.creation_date = it.created_at as i32;
+                m.inventory_data.group_id = it.group_id;
+                m.inventory_data.group_owned = it.group_owned;
+                m.inventory_data.sale_type = it.sale_type;
+                m.inventory_data.sale_price = it.sale_price;
+                m.inventory_data.crc = crate::inventory::operations::checksum(&it);
+                self.send_main(&m, true);
+            }
+            NetCommand::SaveInventoryContent { item, asset_type, data } => {
+                let name = match asset_type {
+                    7 => "UpdateNotecardAgentInventory",
+                    10 => "UpdateScriptAgent",
+                    _ => "",
+                };
+                let Some((cap, fetch)) = self.main_cap(name).zip(self.main_cap("FetchInventory2")) else {
+                    emit(
+                        self.sh,
+                        NetEvent::InventoryContentSaved {
+                            item,
+                            result: Err("L’enregistrement n’est pas disponible dans cette région.".into()),
+                        },
+                    );
+                    return;
+                };
+                let http = self.sh.caps_http.clone();
+                let events = self.sh.events.clone();
+                let owner = self.agent_id();
+                tokio::spawn(async move {
+                    let result = crate::inventory::operations::save_content(&http, &cap, &fetch, owner, item, asset_type, data).await;
+                    let _ = events.send(NetEvent::InventoryContentSaved { item, result });
+                });
+            }
+            NetCommand::CopyInventoryItems(items) => {
+                for it in items {
+                    let mut m = CopyInventoryItem::default();
+                    m.agent_data.agent_id = self.agent_id();
+                    m.agent_data.session_id = self.session_id();
+                    m.inventory_data = vec![copy_inventory_item::InventoryData {
+                        callback_id: self.inventory_callback(false),
+                        old_agent_id: it.owner,
+                        old_item_id: it.item,
+                        new_folder_id: it.parent,
+                        new_name: str_field(&it.name),
+                    }];
+                    self.send_main(&m, true);
+                }
+            }
+            NetCommand::CreateInventoryItem { parent, kind, name } => {
+                let (asset, inventory, subtype) = kind.types();
+                let mut m = CreateInventoryItem::default();
+                m.agent_data.agent_id = self.agent_id();
+                m.agent_data.session_id = self.session_id();
+                m.inventory_block.folder_id = parent;
+                m.inventory_block.callback_id = self.inventory_callback(true);
+                m.inventory_block.next_owner_mask = 0x7fffffff;
+                m.inventory_block.type_ = asset;
+                m.inventory_block.inv_type = inventory;
+                m.inventory_block.wearable_type = subtype;
+                m.inventory_block.name = str_field(&name);
+                self.send_main(&m, true);
+            }
             NetCommand::RezAttachments(list) => {
                 // one object per message: batching makes the servers drop
                 // attachments (LLAttachmentsMgr, FIRE-6070)
@@ -1923,7 +2099,8 @@ impl Session<'_> {
 
     fn dispatch(&mut self, from: SocketAddr, pkt: &IncomingPacket) -> Result<(), aurora_msg::DecodeError> {
         let id = pkt.id;
-        if self.dispatch_object_actions(from, pkt)?
+        if self.dispatch_inventory_upload(from, pkt)?
+            || self.dispatch_object_actions(from, pkt)?
             || self.dispatch_social(from, pkt)?
             || self.dispatch_land(from, pkt)?
             || self.dispatch_build(pkt)?
@@ -2583,6 +2760,77 @@ impl Session<'_> {
                     online: false,
                 },
             );
+        } else if id == UpdateCreateInventoryItem::ID {
+            let m: UpdateCreateInventoryItem = pkt.decode()?;
+            if m.agent_data.agent_id == self.agent_id() {
+                let mut created = Vec::new();
+                let items = m
+                    .inventory_data
+                    .iter()
+                    .map(|it| {
+                        let item = crate::inventory::operations::item_from_udp(it);
+                        if self.inventory_callbacks.remove(&it.callback_id).is_some_and(|(_, new)| new) {
+                            created.push(item.clone());
+                        }
+                        item
+                    })
+                    .collect();
+                emit(self.sh, NetEvent::InventoryItems(items));
+                for item in created {
+                    emit(self.sh, NetEvent::InventoryCreated(item));
+                }
+            }
+        } else if id == BulkUpdateInventory::ID {
+            let m: BulkUpdateInventory = pkt.decode()?;
+            if m.agent_data.agent_id == self.agent_id() {
+                let mut parents = Vec::new();
+                let mut created = Vec::new();
+                let items = m
+                    .item_data
+                    .iter()
+                    .map(|it| {
+                        let new = self.inventory_callbacks.remove(&it.callback_id).is_some_and(|(_, new)| new);
+                        parents.push(it.folder_id);
+                        let item = crate::inventory::InvItem {
+                            id: it.item_id,
+                            parent: it.folder_id,
+                            asset_id: it.asset_id,
+                            name: field_str(&it.name),
+                            desc: field_str(&it.description),
+                            asset_type: i32::from(it.type_),
+                            inv_type: i32::from(it.inv_type),
+                            flags: it.flags,
+                            creator: it.creator_id,
+                            owner: it.owner_id,
+                            base_mask: it.base_mask,
+                            owner_mask: it.owner_mask,
+                            group_id: it.group_id,
+                            group_owned: it.group_owned,
+                            group_mask: it.group_mask,
+                            everyone_mask: it.everyone_mask,
+                            next_owner_mask: it.next_owner_mask,
+                            sale_type: it.sale_type,
+                            sale_price: it.sale_price,
+                            created_at: i64::from(it.creation_date),
+                            ..Default::default()
+                        };
+                        if new {
+                            created.push(item.clone());
+                        }
+                        item
+                    })
+                    .collect();
+                emit(self.sh, NetEvent::InventoryItems(items));
+                for item in created {
+                    emit(self.sh, NetEvent::InventoryCreated(item));
+                }
+                parents.extend(m.folder_data.iter().map(|f| f.parent_id).filter(|id| !id.is_nil()));
+                parents.sort();
+                parents.dedup();
+                if !parents.is_empty() {
+                    self.fetch_inventory(parents, self.agent_id(), false);
+                }
+            }
         } else if id == AvatarAnimation::ID {
             let m: AvatarAnimation = pkt.decode()?;
             emit(
@@ -2865,4 +3113,16 @@ fn parse_lookat(e: &msgs::viewer_effect::Effect) -> Option<(uuid::Uuid, uuid::Uu
         *v = f64::from_le_bytes(b);
     }
     Some((source, target, offset, d[56]))
+}
+
+impl Session<'_> {
+    fn inventory_callback(&mut self, created: bool) -> u32 {
+        loop {
+            self.next_inventory_callback = self.next_inventory_callback.wrapping_add(1).max(1);
+            if let std::collections::hash_map::Entry::Vacant(entry) = self.inventory_callbacks.entry(self.next_inventory_callback) {
+                entry.insert((Instant::now(), created));
+                return self.next_inventory_callback;
+            }
+        }
+    }
 }

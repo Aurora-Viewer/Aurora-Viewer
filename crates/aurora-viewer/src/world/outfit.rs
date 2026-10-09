@@ -331,6 +331,14 @@ mod tests {
             group_mask: 0,
             everyone_mask: 0,
             next_owner_mask: 0,
+            thumbnail: Uuid::nil(),
+            base_mask: 0x7fffffff,
+            owner_mask: 0x7fffffff,
+            last_owner: uuid::Uuid::nil(),
+            group_id: uuid::Uuid::nil(),
+            group_owned: false,
+            sale_type: 0,
+            sale_price: 0,
         }
     }
 

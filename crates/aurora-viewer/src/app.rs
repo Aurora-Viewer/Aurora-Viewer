@@ -26,6 +26,7 @@ use winit::window::{CursorGrabMode, Window, WindowId};
 
 mod chat_commands;
 mod context_menu;
+mod inventory;
 mod object_actions;
 
 enum Screen {
@@ -621,6 +622,78 @@ impl App {
                 }
                 return;
             }
+            if matches!(cmd, NetCommand::RequestInventoryMerchant) {
+                self.inventory_ui.merchant = true;
+                return;
+            }
+            if let NetCommand::EditInventory { request, change } = &cmd {
+                let result = crate::world::inventory::actions::demo_mutate(&mut self.world.inventory, self.world.agent_id, change.clone());
+                self.on_app_event(NetEvent::InventoryEdited { request: *request, result });
+                return;
+            }
+            if let NetCommand::CopyInventoryItems(copies) = &cmd {
+                let items = copies
+                    .iter()
+                    .filter_map(|c| {
+                        self.world.inventory.items.get(&c.item).cloned().map(|mut it| {
+                            it.id = uuid::Uuid::new_v4();
+                            it.parent = c.parent;
+                            it
+                        })
+                    })
+                    .collect();
+                self.world.inventory.add_items(items);
+                return;
+            }
+            if let NetCommand::CreateInventoryWearable { parent, kind, name, .. } = &cmd {
+                self.send(NetCommand::CreateInventoryItem {
+                    parent: *parent,
+                    kind: aurora_net::inventory::operations::NewItem::Wearable(*kind),
+                    name: name.clone(),
+                });
+                return;
+            }
+            if let NetCommand::SaveInventoryContent { item, .. } = &cmd {
+                let result = self
+                    .world
+                    .inventory
+                    .items
+                    .get(item)
+                    .cloned()
+                    .ok_or_else(|| "Élément introuvable.".to_owned());
+                self.on_app_event(NetEvent::InventoryContentSaved { item: *item, result });
+                return;
+            }
+            if let NetCommand::CreateInventoryItem { parent, kind, name } = &cmd {
+                let (asset, inventory, subtype) = kind.types();
+                let item = aurora_net::inventory::InvItem {
+                    id: uuid::Uuid::new_v4(),
+                    parent: *parent,
+                    name: name.clone(),
+                    asset_type: asset as i32,
+                    inv_type: inventory as i32,
+                    flags: subtype as u32,
+                    owner: self.world.agent_id,
+                    creator: self.world.agent_id,
+                    base_mask: 0x7fffffff,
+                    owner_mask: 0x7fffffff,
+                    next_owner_mask: 0x7fffffff,
+                    ..Default::default()
+                };
+                self.on_app_event(NetEvent::InventoryCreated(item));
+                return;
+            }
+            if let NetCommand::PreviewInventoryItem(it) = &cmd {
+                let bytes = match it.asset_type {
+                    56 => b"<?llsd/notation?>\n{'type':'sky'}".to_vec(),
+                    57 => aurora_llsd::to_binary(
+                        &aurora_llsd::llsd_map! { "version" => "1.1", "type" => "GLTF 2.0", "data" => "{\"asset\":{\"version\":\"2.0\"},\"materials\":[{}]}" },
+                    ),
+                    _ => format!("Contenu de démonstration : {}", it.name).into_bytes(),
+                };
+                self.inventory_preview(it.id, Ok(bytes));
+                return;
+            }
             if let NetCommand::UpdateOutfit { request, change } = &cmd {
                 let result = crate::world::appearance::demo_mutate(&mut self.world.inventory, self.world.agent_id, change);
                 self.on_app_event(NetEvent::OutfitUpdated { request: *request, result });
@@ -772,6 +845,61 @@ impl App {
     }
 
     fn on_app_event(&mut self, ev: NetEvent) {
+        if let NetEvent::InventoryCreated(item) = ev {
+            let id = item.id;
+            let document = matches!(item.asset_type, 7 | 10);
+            self.world.inventory.add_items(vec![item]);
+            self.inventory_ui.show_original(&self.world.inventory, id);
+            if document && !self.inventory_ui.preview_dirty && !self.inventory_ui.save_pending {
+                self.inventory_ui.preview = Some(id);
+                self.inventory_ui.preview_text = None;
+                self.apply_inventory_action(ui::inventory::InvAction::Preview(id));
+            }
+            return;
+        }
+        if let NetEvent::InventoryMerchant(result) = ev {
+            match result {
+                Ok(merchant) => self.inventory_ui.merchant = merchant,
+                Err(reason) => self.inventory_ui.message = reason,
+            }
+            return;
+        }
+        if let NetEvent::InventoryContentSaved { item, result } = ev {
+            self.inventory_ui.save_pending = false;
+            let saved = result.is_ok();
+            match result {
+                Ok(it) => {
+                    self.world.inventory.add_items(vec![it]);
+                    if self.inventory_ui.preview == Some(item) {
+                        self.inventory_ui.preview_dirty = false;
+                    }
+                    self.inventory_ui.message = "Document enregistré.".into();
+                }
+                Err(reason) => self.inventory_ui.message = reason,
+            }
+            for w in &mut self.inventory_ui.windows {
+                if w.state.preview == Some(item) {
+                    w.state.save_pending = false;
+                    if saved {
+                        w.state.preview_dirty = false;
+                    }
+                    w.state.message.clone_from(&self.inventory_ui.message);
+                }
+            }
+            return;
+        }
+        if let NetEvent::InventoryOperationFailed(reason) = ev {
+            self.inventory_ui.message = reason;
+            return;
+        }
+        if let NetEvent::InventoryEdited { request, result } = ev {
+            self.inventory_result(request, result);
+            return;
+        }
+        if let NetEvent::InventoryPreview { item, result } = ev {
+            self.inventory_preview(item, result);
+            return;
+        }
         if let NetEvent::InventoryFavoriteUpdated { item, result } = ev {
             if self.appearance_ui.favorite_pending.remove(&item) {
                 match result {
@@ -812,6 +940,7 @@ impl App {
                     }
                     Err(reason) => {
                         self.appearance_ui.attachment = None;
+                        self.inventory_ui.message.clone_from(&reason);
                         self.appearance_ui.message = reason;
                         self.appearance_ui.refresh(&mut self.world.inventory);
                     }
@@ -2633,6 +2762,7 @@ impl App {
         images.extend(self.contacts_ui.wanted_images.drain());
         images.extend(self.build.ui.wanted_images.drain());
         images.extend(self.appearance_ui.wanted_images.drain());
+        images.extend(self.inventory_ui.wanted_images.drain());
         for image in images {
             if self.ui_images.contains_key(&image) {
                 continue;
@@ -4577,19 +4707,27 @@ impl App {
                     }
                 }
                 let mut open = self.panels.inventory;
+                if !self.inventory_ui.merchant_requested {
+                    self.inventory_ui.merchant_requested = true;
+                    self.send(NetCommand::RequestInventoryMerchant);
+                }
                 for ia in ui::inventory::show(
                     &ctx,
                     &p,
                     &self.skin.icons,
-                    &mut self.world.inventory,
+                    &mut self.world,
                     &mut self.inventory_ui,
+                    &mut self.settings.inventory,
                     &mut open,
+                    self.appearance_ui.pending.is_some(),
+                    &self.ui_images,
                 ) {
                     match ia {
                         ui::inventory::InvAction::TeleportLandmark(asset) => a.landmark = Some(asset),
                         ui::inventory::InvAction::AboutLandmark(item, asset) => {
                             self.show_place_profile(crate::world::place_details::Source::Landmark { item, asset })
                         }
+                        other => self.apply_inventory_action(other),
                     }
                 }
                 self.panels.inventory = open;
@@ -4610,50 +4748,7 @@ impl App {
                     complexity,
                     &self.ui_images,
                 ) {
-                    if let crate::world::appearance::Action::ShowOriginal(id) = action {
-                        self.panels.inventory = true;
-                        self.inventory_ui.show_original(&self.world.inventory, id);
-                        continue;
-                    }
-                    if let crate::world::appearance::Action::Favorite(id) = action {
-                        if let Some(it) = self.world.inventory.items.get(&id)
-                            && self.appearance_ui.favorite_pending.insert(id)
-                        {
-                            self.send(NetCommand::SetInventoryFavorite {
-                                item: id,
-                                favorite: !it.favorite,
-                            });
-                        }
-                        continue;
-                    }
-                    if self.appearance_ui.pending.is_some() {
-                        break;
-                    }
-                    if let crate::world::appearance::Action::Category(id, update) = action {
-                        self.appearance_ui.saved_new = false;
-                        match crate::world::appearance::category_plan(&self.world.inventory, id, update) {
-                            Ok(change) => {
-                                let request = uuid::Uuid::new_v4();
-                                self.appearance_ui.pending = Some((request, false));
-                                self.appearance_ui.message.clear();
-                                self.send(NetCommand::UpdateOutfitCategory { request, change });
-                            }
-                            Err(reason) => self.appearance_ui.message = reason,
-                        }
-                        continue;
-                    }
-                    self.appearance_ui.saved_new = matches!(&action, crate::world::appearance::Action::Save(Some(_)));
-                    let attachment = crate::world::appearance::attachment_for_action(&self.world.inventory, self.world.agent_id, &action);
-                    match crate::world::appearance::plan(&self.world.inventory, action, &self.world.worn_attachment_points()) {
-                        Ok((change, sync)) => {
-                            let request = uuid::Uuid::new_v4();
-                            self.appearance_ui.pending = Some((request, sync));
-                            self.appearance_ui.attachment = attachment;
-                            self.appearance_ui.message.clear();
-                            self.send(NetCommand::UpdateOutfit { request, change });
-                        }
-                        Err(reason) => self.appearance_ui.message = reason,
-                    }
+                    self.apply_appearance_action(action);
                 }
                 self.panels.appearance = open;
                 let facts = self.context_facts();
@@ -5356,6 +5451,29 @@ impl ApplicationHandler for App {
                 }
                 if matches!(view.as_str(), "menu" | "duplicates") {
                     self.appearance_ui.open_outfit(uuid::Uuid::from_u128(704));
+                }
+            }
+            if let Ok(view) = std::env::var("AURORA_DEMO_INVENTORY") {
+                crate::world::inventory::demo::seed(&mut self.world.inventory, self.world.agent_id);
+                self.panels.inventory = true;
+                self.panels.perf = false;
+                self.panels.appearance = false;
+                self.panels.minimap = false;
+                self.world.notifications = Default::default();
+                if let Some(id) = crate::world::inventory::demo::target(&view) {
+                    self.inventory_ui.show_original(&self.world.inventory, id);
+                    if view == "properties" {
+                        self.inventory_ui.dialog = Some(ui::inventory::EditDialog::Properties(id));
+                    } else {
+                        self.inventory_ui.demo_menu = Some(id);
+                    }
+                } else {
+                    self.inventory_ui.show_original(&self.world.inventory, uuid::Uuid::from_u128(8100));
+                }
+                for cmd in
+                    crate::world::appearance::sync_commands(&self.world.inventory, self.world.agent_id, &self.world.worn_attachment_items())
+                {
+                    self.send(cmd);
                 }
             }
             if std::env::var_os("AURORA_DEMO_ACTIONS").is_some() {

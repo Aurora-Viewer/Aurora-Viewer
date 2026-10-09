@@ -124,7 +124,7 @@ fn attach_menu(ui: &mut egui::Ui, p: &Palette, world: &World, item: Uuid, hud: b
     );
 }
 
-fn point_name(name: &str) -> &str {
+pub(crate) fn point_name(name: &str) -> &str {
     match name {
         "Chest" => "Poitrine",
         "Skull" => "Crâne",

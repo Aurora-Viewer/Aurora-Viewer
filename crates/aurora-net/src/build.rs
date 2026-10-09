@@ -502,6 +502,14 @@ impl TaskItem {
             group_mask: self.group_mask,
             everyone_mask: self.everyone_mask,
             next_owner_mask: self.next_owner_mask,
+            thumbnail: Uuid::nil(),
+            base_mask: self.base_mask,
+            owner_mask: self.owner_mask,
+            last_owner: self.last_owner_id,
+            group_id: self.group_id,
+            group_owned: self.group_owned,
+            sale_type: self.sale_type,
+            sale_price: self.sale_price,
         })
     }
 }
