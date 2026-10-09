@@ -1407,7 +1407,8 @@ pub fn events() -> Vec<NetEvent> {
             rate,
         };
         let smooth = Ta::SMOOTH | Ta::LOOP;
-        // (texture, legacy material, PBR, animation, hover text)
+        // (texture, legacy material, PBR, animation, hover text); the scaled
+        // one is alpha masked (prepass and shadow alpha tests animate too)
         let panels: [(Uuid, Uuid, bool, Ta, &str); 8] = [
             (
                 TEX_TILES,
@@ -1438,11 +1439,11 @@ pub fn events() -> Vec<NetEvent> {
                 "Rotation (ROTATE)",
             ),
             (
-                TEX_TILES,
+                TEX_HOLES,
                 Uuid::nil(),
                 false,
                 anim(smooth | Ta::PING_PONG | Ta::SCALE, -1, (1, 1), 1.0, 2.0, 0.5),
-                "Échelle (SCALE)",
+                "Échelle (SCALE), masque alpha",
             ),
             (
                 TEX_FRAMES,
