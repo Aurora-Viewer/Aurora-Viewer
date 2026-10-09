@@ -207,6 +207,48 @@ impl Scene {
     pub fn interaction_at(&self, world: &World, point: Vec3, now: Instant, build: bool) -> Option<usize> {
         self.pick_at_filtered(world, point, now, !build)
     }
+
+    /// LLViewerWindow::cursorIntersect / LLVOVolume::lineSegmentIntersect:
+    /// identify the hit surface, not the smallest overlapping prim box. The
+    /// depth point bounds the ray so terrain and avatars still occlude objects.
+    pub fn interaction_at_ray(&self, world: &World, point: Vec3, ray: (Vec3, Vec3), include_hidden: bool) -> Option<usize> {
+        let now = Instant::now();
+        const TOLERANCE: f32 = 0.06;
+        let ray = (point - ray.1 * TOLERANCE, ray.1);
+        let mut nearest = TOLERANCE * 2.0;
+        let mut picked = None;
+        for (idx, g) in self.gpu.iter().enumerate() {
+            let Some(o) = world.objects.get(idx) else { continue };
+            if g.faces.is_empty()
+                || g.hud
+                || g.is_avatar
+                || (g.owner_avatar.is_some() && o.volume.is_mesh())
+                || o.click_action == crate::interaction::code::IGNORE
+            {
+                continue;
+            }
+            if g.radius > 0.0 && g.center.distance_squared(point) > (g.radius + TOLERANCE).powi(2) {
+                continue;
+            }
+            let Some(geom) = g.geom.and_then(|key| self.geom_ready(&key)) else {
+                continue;
+            };
+            let Some((pos, rot, _)) = Self::object_transform(world, idx, now, 0) else {
+                continue;
+            };
+            let inv = Mat4::from_scale_rotation_translation(o.scale, rot, pos).inverse();
+            if !ray_box(inv.transform_point3(ray.0), inv.transform_vector3(ray.1), geom.min, geom.max).is_some_and(|t| t < nearest) {
+                continue;
+            }
+            if let Some(hit) = self.face_hit(world, idx, ray, now, include_hidden)
+                && hit.t < nearest
+            {
+                nearest = hit.t;
+                picked = Some(idx);
+            }
+        }
+        picked
+    }
 }
 
 #[cfg(test)]
@@ -218,8 +260,7 @@ mod tests {
         assert!(ray_box(Vec3::new(-2.0, 3.0, 0.0), Vec3::X, -Vec3::ONE, Vec3::ONE).is_none());
         assert!(ray_box(Vec3::new(-2.0, 0.0, 0.0), -Vec3::X, -Vec3::ONE, Vec3::ONE).is_none());
     }
-    #[test]
-    fn ignore_picks_through_disabled_occludes_and_build_includes_both() {
+    fn scene_with_two_objects() -> (World, Scene, usize, usize) {
         let lib = Arc::new(AvatarLibrary::load());
         let mut world = World::new(lib.clone());
         for ev in crate::demo::events().into_iter().chain(crate::demo::action_events()) {
@@ -278,6 +319,12 @@ mod tests {
             scene.gpu[idx].geom = Some(key);
             scene.gpu[idx].faces.push(face);
         }
+        (world, scene, front, back)
+    }
+
+    #[test]
+    fn ignore_picks_through_disabled_occludes_and_build_includes_both() {
+        let (mut world, mut scene, front, back) = scene_with_two_objects();
         let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
         let depth = Vec3::new(2.5, 0.0, 50.0);
         world.objects.get_mut(front).unwrap().click_action = crate::interaction::code::IGNORE;
@@ -316,5 +363,121 @@ mod tests {
             Some(through)
         );
         assert_eq!(scene.action_point(&world, Some(ray), Some(through), false, 100.0), Some(depth));
+    }
+
+    #[test]
+    fn linked_chair_surface_wins_over_touch_root_with_overlapping_bounds() {
+        let (mut world, mut scene, front, back) = scene_with_two_objects();
+        let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
+        let depth = Vec3::new(2.5, 0.0, 50.0);
+        // A hollow table's smaller box contains the chair's surface, but its
+        // triangles do not intersect this ray. Both belong to one linkset.
+        {
+            let table = world.objects.get_mut(front).unwrap();
+            table.click_action = crate::interaction::code::TOUCH;
+            table.update_flags = 1 << 7;
+            for f in Arc::make_mut(table.te.as_mut().unwrap()).faces.iter_mut() {
+                f.color[3] = 1.0;
+            }
+        }
+        let table_local_id = world.objects.get(front).unwrap().key.local_id;
+        {
+            let chair = world.objects.get_mut(back).unwrap();
+            chair.parent_id = table_local_id;
+            chair.position = Vec3::ZERO;
+            chair.scale = Vec3::splat(2.0);
+            chair.click_action = crate::interaction::code::SIT;
+            chair.update_flags = 0;
+        }
+        let chair_key = GeomKey::Prim { hash: 1, lod: 0 };
+        scene.geoms.insert(
+            chair_key,
+            GeomEntry {
+                refs: 1,
+                unused_frames: 0,
+                state: GeomState::Ready(Arc::new(GpuGeom {
+                    faces: vec![None],
+                    min: -Vec3::splat(0.5),
+                    max: Vec3::splat(0.5),
+                    joint_bounds: Vec::new(),
+                    pick_faces: vec![Some(PickFace {
+                        positions: vec![[-0.5, -0.5, 0.2], [0.5, -0.5, 0.2], [0.5, 0.5, 0.2], [-0.5, 0.5, 0.2]],
+                        uvs: vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+                        indices: vec![0, 1, 2, 0, 2, 3],
+                    })],
+                })),
+            },
+        );
+        scene.gpu[back].geom = Some(chair_key);
+        let chair_ray = (Vec3::new(3.0, 0.0, 55.0), -Vec3::Z);
+        let chair_point = Vec3::new(3.0, 0.0, 50.4);
+        for include_hidden in [false, true] {
+            let idx = scene.interaction_at_ray(&world, chair_point, chair_ray, include_hidden).unwrap();
+            assert_eq!(idx, back);
+            let target = crate::interaction::target(&world, idx, &HashMap::new()).unwrap();
+            assert_eq!(target.action, crate::interaction::Action::Sit);
+            assert_eq!(target.object, world.objects.get(back).unwrap().full_id);
+            assert_eq!(crate::interaction::cursor_action(&world, idx, &HashMap::new()), Some(target.action));
+            let idx = scene.interaction_at_ray(&world, depth, ray, include_hidden).unwrap();
+            assert_eq!(idx, front);
+            assert_eq!(
+                crate::interaction::cursor_action(&world, idx, &HashMap::new()),
+                Some(crate::interaction::Action::Touch)
+            );
+        }
+        assert!(
+            scene
+                .interaction_at_ray(&world, Vec3::new(3.0, 0.0, 53.0), chair_ray, false)
+                .is_none()
+        );
+        world.objects.get_mut(back).unwrap().click_action = crate::interaction::code::IGNORE;
+        assert!(scene.interaction_at_ray(&world, chair_point, chair_ray, true).is_none());
+    }
+
+    #[test]
+    fn ray_pick_uses_real_geometry_bounds_and_preserves_hidden_face_rules() {
+        let (mut world, mut scene, front, _) = scene_with_two_objects();
+        for key in [
+            GeomKey::Prim { hash: 2, lod: 0 },
+            GeomKey::Sculpt { hash: 2, lod: 0 },
+            GeomKey::Mesh { id: Uuid::nil(), lod: 0 },
+        ] {
+            scene.geoms.insert(
+                key,
+                GeomEntry {
+                    refs: 1,
+                    unused_frames: 0,
+                    state: GeomState::Ready(Arc::new(GpuGeom {
+                        faces: vec![None],
+                        min: Vec3::new(2.0, -0.5, -0.5),
+                        max: Vec3::new(2.0, 0.5, 0.5),
+                        joint_bounds: Vec::new(),
+                        pick_faces: vec![Some(PickFace {
+                            positions: vec![[2.0, -0.5, -0.5], [2.0, 0.5, -0.5], [2.0, 0.5, 0.5], [2.0, -0.5, 0.5]],
+                            uvs: vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+                            indices: vec![0, 1, 2, 0, 2, 3],
+                        })],
+                    })),
+                },
+            );
+            scene.gpu[front].geom = Some(key);
+            let point = Vec3::new(5.0, 0.0, 50.0);
+            let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
+            assert_eq!(scene.interaction_at_ray(&world, point, ray, false), Some(front));
+            for f in Arc::make_mut(world.objects.get_mut(front).unwrap().te.as_mut().unwrap())
+                .faces
+                .iter_mut()
+            {
+                f.color[3] = 0.0;
+            }
+            assert!(scene.interaction_at_ray(&world, point, ray, false).is_none());
+            assert_eq!(scene.interaction_at_ray(&world, point, ray, true), Some(front));
+            for f in Arc::make_mut(world.objects.get_mut(front).unwrap().te.as_mut().unwrap())
+                .faces
+                .iter_mut()
+            {
+                f.color[3] = 1.0;
+            }
+        }
     }
 }

@@ -738,7 +738,9 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 objects: vec![o],
             }]
         }
-        aurora_net::NetCommand::RequestSit { target, .. } if *target == action_id(970) => {
+        aurora_net::NetCommand::RequestSit { target, .. } if *target == action_id(970) || *target == action_id(986) => {
+            let mut avatar = action_avatar(true);
+            avatar.parent_id = if *target == action_id(986) { 986 } else { 970 };
             vec![
                 NetEvent::SitResponse {
                     object: *target,
@@ -748,7 +750,7 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 },
                 NetEvent::ObjectUpdates {
                     handle: HANDLE,
-                    objects: vec![action_avatar(true)],
+                    objects: vec![avatar],
                 },
             ]
         }
@@ -783,6 +785,11 @@ pub fn action_avatar(seated: bool) -> ObjectUpdate {
 }
 
 pub fn action_mode_id(mode: &str) -> u32 {
+    match mode {
+        "linked-touch" => return 985,
+        "linked-sit" => return 986,
+        _ => {}
+    }
     if mode.starts_with("open-media") {
         return 978;
     }
@@ -859,6 +866,24 @@ pub fn action_overlay(id: u32, pos: Vec3, rotation: Quat) -> NetEvent {
 /// All click actions, plus an inherited Buy on a child. Named modes isolate
 /// a target and App::demo_action_steps exercises the real picking / input.
 pub fn action_events() -> Vec<NetEvent> {
+    let mode = std::env::var("AURORA_DEMO_ACTIONS").unwrap_or_default();
+    if mode.starts_with("linked-") {
+        // The root's hollow geometry encloses a larger child's seat: its
+        // smaller bounding box must not steal hits on the seat inside it.
+        let mut table = action_object(985, 0, 138.0, 126.0, [0.7, 0.55, 0.8, 1.0], "Racine : Touch");
+        table.scale = Vec3::new(2.4, 2.4, 1.4);
+        table.position.z = floor_at(138.0, 126.0) + 0.7;
+        table.volume = shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE, 100, 35000, 0);
+        table.update_flags = 1 << 7;
+        let mut chair = action_object(986, 1, 138.0, 126.0, [0.3, 0.75, 0.55, 1.0], "Enfant lié : Sit");
+        chair.parent_id = table.local_id;
+        chair.position = Vec3::ZERO;
+        chair.scale = Vec3::new(3.0, 3.0, 1.2);
+        return vec![NetEvent::ObjectUpdates {
+            handle: HANDLE,
+            objects: vec![table, chair],
+        }];
+    }
     let boxp = shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE, 100, 0, 0);
     let mut objects = Vec::new();
     for (id, action, x, y, color, label) in [
@@ -888,7 +913,6 @@ pub fn action_events() -> Vec<NetEvent> {
     );
     child.parent_id = 971;
     objects.push(child);
-    let mode = std::env::var("AURORA_DEMO_ACTIONS").unwrap_or_default();
     let selected = action_mode_id(&mode);
     if selected != 0 {
         objects.retain(|o| {

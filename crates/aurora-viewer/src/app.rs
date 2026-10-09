@@ -1198,7 +1198,8 @@ impl App {
         if self.demo && std::env::var_os("AURORA_DEMO_ACTIONS").is_some() {
             log::info!(
                 "demo action pick: hit={hit:?}, avatar={on_avatar}, picked={:?}",
-                hit.and_then(|p| self.scene.interaction_at(&self.world, p, now, self.build.open))
+                hit.zip(ray)
+                    .and_then(|(p, r)| self.scene.interaction_at_ray(&self.world, p, r, true))
                     .and_then(|i| self.world.objects.get(i))
                     .map(|o| (o.key.local_id, o.click_action))
             );
@@ -1210,7 +1211,8 @@ impl App {
             && !self.build.open
             && !self.camera.mouselook()
             && let Some(point) = hit
-            && let Some(idx) = self.scene.interaction_at(&self.world, point, now, self.build.open)
+            && let Some(pick_ray) = ray
+            && let Some(idx) = self.scene.interaction_at_ray(&self.world, point, pick_ray, true)
             && let Some(target) = crate::interaction::target(&self.world, idx, &self.interactions.props)
         {
             self.activate_object_action(target, idx, point, ray);
@@ -1790,6 +1792,7 @@ impl App {
             return;
         };
         let id = crate::demo::action_mode_id(&mode);
+        let click_frame = if mode.starts_with("linked-") { 724 } else { 284 };
         if self.frame_count == 260
             && (id == 0 || id == 980 || id == 981)
             && let Some(idx) = self.world.objects.index_of_uuid(&crate::demo::action_id(971))
@@ -1814,14 +1817,18 @@ impl App {
             m.status = aurora_media::MediaStatus::Playing;
         }
         if id != 0
-            && (280..=284).contains(&self.frame_count)
+            && (click_frame - 4..=click_frame).contains(&self.frame_count)
             && let Some(idx) = self.world.objects.index_of_uuid(&crate::demo::action_id(id))
-            && let Some((pos, _, _)) = Scene::object_transform(&self.world, idx, Instant::now(), 0)
+            && let Some(pos) = Scene::object_transform(&self.world, idx, Instant::now(), 0).map(|(pos, _, _)| match id {
+                985 => pos + Vec3::new(-1.05, 0.0, 0.7),
+                986 => pos + Vec3::Z * 0.6,
+                _ => pos,
+            })
             && let Some(cursor) = self.build.cam.project_px(pos)
         {
             self.cursor_pos = cursor;
         }
-        if id != 0 && self.frame_count == 284 {
+        if id != 0 && self.frame_count == click_frame {
             if mode.ends_with("-build") {
                 self.build.open_build(crate::build::Tool::Edit);
                 self.build_mouse_down();
@@ -3090,13 +3097,17 @@ impl App {
                 false,
                 self.settings.draw_distance,
             )
-            && let Some(idx) = self.scene.interaction_at(&self.world, point, Instant::now(), false)
+            && let Some(ray) = gfx.renderer.cursor_ray(self.cursor_pos.0, self.cursor_pos.1)
+            && let Some(idx) = self.scene.interaction_at_ray(&self.world, point, ray, false)
             && let Some(target) = crate::interaction::target(&self.world, idx, &std::collections::HashMap::new())
         {
             if let Some(cmd) = self.interactions.hover_request(target) {
                 self.send(cmd);
             }
             if let Some(action) = crate::interaction::cursor_action(&self.world, idx, &self.interactions.props) {
+                if self.demo && self.frame_count == 722 && std::env::var_os("AURORA_DEMO_ACTIONS").is_some() {
+                    log::info!("demo action hover: {action:?}, prim={}", target.clicked.local_id);
+                }
                 if action == crate::interaction::Action::Touch {
                     full.platform_output.cursor_icon = egui::CursorIcon::PointingHand;
                 }
