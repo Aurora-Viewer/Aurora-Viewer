@@ -100,10 +100,12 @@ pub fn init() {
     let path = log_path();
     let _ = std::fs::rename(&path, dir.join(format!("{}.previous.log", log_stem())));
     let file = std::fs::File::create(&path).ok();
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info,wgpu_core=warn,wgpu_hal=warn,naga=warn,reqwest=warn"))
-        .format_timestamp_millis()
-        .target(env_logger::Target::Pipe(Box::new(Tee { file })))
-        .init();
+    env_logger::Builder::from_env(
+        env_logger::Env::default().default_filter_or("info,wgpu_core=warn,wgpu_hal=warn,naga=warn,reqwest=warn,symphonia=warn"),
+    )
+    .format_timestamp_millis()
+    .target(env_logger::Target::Pipe(Box::new(Tee { file })))
+    .init();
     std::panic::set_hook(Box::new(|info| {
         let bt = std::backtrace::Backtrace::force_capture();
         log::error!("panic: {info}\n{bt}");
