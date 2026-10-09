@@ -16,7 +16,7 @@ Dans le code, on utilise toujours la `Palette` résolue (`p.violet`, `p.ink`…)
 |---|---|---|
 | violet | `#8B5CF6` | accent principal : sélection, bouton actif, focus, liens |
 | indigo | `#4F46E5` | accent secondaire, dégradés de la marque (logo, fond de connexion) |
-| teal | `#5EEAD4` | petite touche : états « actif / en ligne », points d'attention positifs |
+| teal | `#5EEAD4` | petite touche : états « actif / en ligne », points d'attention positifs ; liens cliquables des textes (web, lieux, avatars, groupes dans le chat, les bulles et les profils) |
 | navy | `#070B1F` | fond profond (écran de connexion, aurores) |
 | violet_light | `#A78BFA` | violet sur fond sombre (texte d'accent, survol) |
 | violet_pale | `#C4B5FD` | violet très clair (détails discrets) |
@@ -105,4 +105,6 @@ Les graisses « fill » ou « bold » ne servent qu'à un état précis (éléme
 sélectionné, alerte) et uniquement si c'est cohérent avec le reste de l'écran.
 Exception : les icônes des autorisations de la parcelle (bout droit du champ de
 lieu) sont en « fill », car ces petites formes colorées en vert / rouge s'y
-lisent mieux qu'au trait.
+lisent mieux qu'au trait. De même pour l'icône devant les liens web du chat et
+des profils : `check-circle-fill` en `success` (site de confiance) et
+`warning-fill` en `amber` (lien externe) et `x-circle-fill` en `danger` (lien dangereux), aussi dans leurs avertissements.

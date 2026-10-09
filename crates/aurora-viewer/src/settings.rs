@@ -120,6 +120,9 @@ pub struct Settings {
     pub font_scale: f32,
     pub chat_timestamps: bool,
     pub chat_toast_seconds: f32,
+    /// Ask before opening a web link outside the trusted domains (the box
+    /// « Ne plus me prévenir » of the warning turns it off).
+    pub warn_external_links: bool,
     /// FSMuteAllGroups: refuse every group chat.
     pub mute_all_groups: bool,
     /// FSMuteGroupWhenNoticesDisabled: refuse group chat of groups whose
@@ -223,7 +226,7 @@ pub struct Settings {
     pub settings_version: u32,
 }
 
-const SETTINGS_VERSION: u32 = 7;
+const SETTINGS_VERSION: u32 = 8;
 
 /// RGBA color (sRGB, straight alpha).
 pub type Rgba = [u8; 4];
@@ -318,7 +321,9 @@ impl Default for ColorSettings {
             chat_object_im: hex(0xA78BFA),
             chat_owner: hex(0xFCD34D),
             chat_urls: hex(0x5EEAD4),
-            chat_slurl: hex(0x6F7BA0),
+            // every clickable link of a text (web, place, avatar, group)
+            // shares the brand teal
+            chat_slurl: hex(0x5EEAD4),
             chat_direct: hex(0xFB923C),
             sender_avatar: hex(0xC4B5FD),
             sender_object: hex(0x4ADE80),
@@ -443,6 +448,7 @@ impl Default for Settings {
             font_scale: 1.0,
             chat_timestamps: true,
             chat_toast_seconds: 20.0,
+            warn_external_links: true,
             mute_all_groups: false,
             mute_groups_without_notices: false,
             report_blocks: false,
@@ -609,6 +615,10 @@ impl Settings {
         if self.settings_version < 7 {
             // new default: parcel music waits for the radio toggle (Firestorm)
             self.audio.music_autoplay = false;
+        }
+        if self.settings_version < 8 && self.colors.chat_slurl == hex(0x6F7BA0) {
+            // new default: SL links (places, avatars, groups) in the link teal
+            self.colors.chat_slurl = ColorSettings::default().chat_slurl;
         }
         if self.settings_version < 4 {
             // walking: arrow keys only (no more WASD / ZQSD by default)

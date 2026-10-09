@@ -958,6 +958,13 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                 c |= row(ui, p, "Durée des bulles", "0 = pas de bulles au-dessus de la barre de chat", |ui| {
                     slider(ui, &mut s.chat_toast_seconds, 0.0..=60.0, " s")
                 });
+                c |= row(
+                    ui,
+                    p,
+                    "Prévenir avant un lien externe",
+                    "Avertissement avant d'ouvrir un lien qui ne mène pas à un site de confiance (coche verte). Les liens dangereux (croix rouge) avertissent toujours",
+                    |ui| toggle(ui, p, &mut s.warn_external_links),
+                );
                 c |= row(ui, p, "Conversations au démarrage", "", |ui| toggle(ui, p, &mut s.show_chat));
             });
             group(ui, p, "Groupes et blocage", |ui| {

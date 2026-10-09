@@ -186,6 +186,9 @@ pub struct App {
     delete_confirm: Option<(uuid::Uuid, String)>,
     /// Teleport asked by a place link, waiting for a yes (TeleportViaSLAPP).
     place_confirm: Option<(String, Vec3)>,
+    /// External web link waiting for the warning's answer, with the state of
+    /// its « Ne plus me prévenir » box and, for a dangerous link, the reason.
+    url_confirm: Option<(String, bool, Option<&'static str>)>,
     script_dialogs_were: usize,
     /// Last tracker beacon sound (FIRE-16969).
     beacon_sound_at: Option<Instant>,
@@ -455,6 +458,7 @@ impl App {
             context_menu_was: false,
             delete_confirm: None,
             place_confirm: None,
+            url_confirm: None,
             script_dialogs_were: 0,
             beacon_sound_at: None,
             stuck_watch: None,
@@ -4327,11 +4331,14 @@ impl App {
                     let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("xhair")));
                     painter.circle_stroke(c, 4.0, egui::Stroke::new(1.5, p.ink));
                 }
-                if !self.panels.chat && self.skin.layout.chat_toasts {
+                if self.skin.layout.chat_toasts && !(self.panels.chat && ui::chat::local_chat_shown(&ctx, &self.chat_ui)) {
                     ui::chat::toasts(
                         &ctx,
                         &p,
                         &self.world,
+                        &self.avatar_pics,
+                        &mut self.chat_ui.wanted_names,
+                        &mut self.chat_ui.wanted_pics,
                         bottom_top,
                         self.settings.chat_toast_seconds,
                         self.settings.chat_timestamps,
@@ -4554,6 +4561,19 @@ impl App {
                     self.place_confirm = None;
                     if yes {
                         ui::context::request(&ctx, ui::context::CtxAction::TeleportToPlaceConfirmed(region, pos));
+                    }
+                }
+                if let Some((url, dont_warn, danger)) = self.url_confirm.as_mut()
+                    && let Some(yes) = ui::context::external_link_confirm(&ctx, &p, url, dont_warn, *danger)
+                {
+                    let (url, dont_warn) = (url.clone(), *dont_warn);
+                    self.url_confirm = None;
+                    if yes {
+                        if dont_warn {
+                            self.settings.warn_external_links = false;
+                            self.settings.save();
+                        }
+                        ctx.open_url(egui::OpenUrl::new_tab(url));
                     }
                 }
                 ui::media::show(

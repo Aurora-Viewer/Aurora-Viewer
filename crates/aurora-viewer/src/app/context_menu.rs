@@ -312,6 +312,14 @@ impl App {
                 self.panels.world_map = true;
             }
             CtxAction::TeleportToPlace(region, pos) => self.place_confirm = Some((region, pos)),
+            CtxAction::OpenUrl(url) => {
+                use crate::link_trust::Trust;
+                match crate::link_trust::classify(&url) {
+                    Trust::Dangerous(why) => self.url_confirm = Some((url, false, Some(why))),
+                    Trust::Unknown if self.settings.warn_external_links => self.url_confirm = Some((url, false, None)),
+                    _ => self.egui_ctx.open_url(egui::OpenUrl::new_tab(url)),
+                }
+            }
             CtxAction::TeleportToPlaceConfirmed(region, pos) => self.teleport_to_location(region, pos),
             CtxAction::GrantRights { friend, rights } => {
                 let cmd = NetCommand::GrantUserRights { friend, rights };

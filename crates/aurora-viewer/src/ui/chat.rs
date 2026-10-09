@@ -65,7 +65,99 @@ pub(crate) fn hhmm(t: std::time::SystemTime) -> String {
     format!("{:02}:{:02}", (secs / 3600) % 24, (secs / 60) % 60)
 }
 
-fn line_job(line: &crate::world::ChatLine, p: &Palette, width: f32, size: f32, times: bool) -> egui::text::LayoutJob {
+/// A link of a chat bubble, clickable like in the conversation window.
+#[derive(Debug, Clone, PartialEq)]
+enum Link {
+    Url(String),
+    Place(String, crate::slurl::PlaceLink),
+    Agent(uuid::Uuid),
+}
+
+/// A line's text cut into pieces, links replaced by their labels as
+/// Firestorm's chat console does (LLConsole::Paragraph with parse_urls,
+/// indra/llui/llconsole.cpp): places read "Region (x,y,z)", agent links the
+/// avatar's name, mentions "@name" like the conversation window.
+fn pieces(text: &str, mut name_of: impl FnMut(uuid::Uuid) -> String) -> Vec<(String, Option<Link>)> {
+    segments(text)
+        .into_iter()
+        .map(|s| match s {
+            Seg::Text(t) | Seg::Slurl(t) => (t.to_owned(), None),
+            Seg::Url(u) => (u.to_owned(), Some(Link::Url(u.to_owned()))),
+            Seg::Place(u, place) => (place.label.clone(), Some(Link::Place(u.to_owned(), place))),
+            Seg::Agent(id) => (name_of(id), Some(Link::Agent(id))),
+            Seg::Mention(id) => (format!("@{}", name_of(id)), Some(Link::Agent(id))),
+        })
+        .collect()
+}
+
+/// Check, warning triangle or cross before a web link (`link_trust`), with
+/// its explanation.
+fn link_badge_look(p: &Palette, url: &str) -> (&'static str, Color32, String) {
+    use crate::link_trust::Trust;
+    match crate::link_trust::classify(url) {
+        Trust::Trusted => ("check-circle-fill", p.success, "Site de confiance".into()),
+        Trust::Unknown => (
+            "warning-fill",
+            p.amber,
+            "Lien externe : vérifiez l'adresse avant de l'ouvrir".into(),
+        ),
+        Trust::Dangerous(why) => ("x-circle-fill", p.danger, format!("Lien dangereux : {why}")),
+    }
+}
+
+fn paint_link_badge(painter: &egui::Painter, p: &Palette, rect: egui::Rect, url: &str, alpha: f32) {
+    let (icon, col, _) = link_badge_look(p, url);
+    if let Some(t) = super::icons::global(icon) {
+        let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+        painter.image(t.id(), rect, uv, col.gamma_multiply(alpha));
+    }
+}
+
+/// The badge of a web link in a wrapping text (conversation, profile).
+fn link_badge(ui: &mut egui::Ui, p: &Palette, url: &str, size: f32) {
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(size + 3.0, size), egui::Sense::hover());
+    let icon = egui::Rect::from_min_size(rect.min, egui::vec2(size, size)).shrink(1.0);
+    paint_link_badge(ui.painter(), p, icon, url, 1.0);
+    resp.on_hover_text(link_badge_look(p, url).2);
+}
+
+/// Open a web link of a text: trusted ones open at once, unknown ones after
+/// a warning (unless turned off), dangerous ones always after a warning
+/// (`CtxAction::OpenUrl`).
+pub(crate) fn open_web_link(ctx: &egui::Context, url: &str) {
+    super::context::request(ctx, CtxAction::OpenUrl(url.to_owned()));
+}
+
+/// Who wrote a bubble line, drawn before the name.
+enum Sender {
+    Avatar(uuid::Uuid),
+    Object,
+}
+
+/// A chat bubble laid out: the text, the char range of each link, the char
+/// of each web link's badge, and the char where the sender's name starts
+/// (room for its picture before it).
+struct BubbleJob {
+    job: egui::text::LayoutJob,
+    links: Vec<(std::ops::Range<usize>, Link)>,
+    badges: Vec<(usize, String)>,
+    sender: Option<(usize, Sender)>,
+}
+
+/// Side of the sender's picture, for a text size.
+fn pic_side(size: f32) -> f32 {
+    size + 3.0
+}
+
+fn line_job(
+    line: &crate::world::ChatLine,
+    p: &Palette,
+    world: &World,
+    want_names: &mut HashSet<uuid::Uuid>,
+    width: f32,
+    size: f32,
+    times: bool,
+) -> BubbleJob {
     let col = color_for(line.kind, p);
     let mut job = egui::text::LayoutJob::default();
     let small = egui::TextFormat {
@@ -88,25 +180,77 @@ fn line_job(line: &crate::world::ChatLine, p: &Palette, width: f32, size: f32, t
         italics: emote,
         ..Default::default()
     };
-    match line.kind {
-        ChatKind::System => job.append(&line.text, 0.0, text_fmt),
-        _ if emote => {
-            job.append(&line.from, 0.0, name_fmt);
-            job.append(&line.text[3..], 0.0, text_fmt);
+    // (before the name, after it, body)
+    let (before, after, body) = match line.kind {
+        ChatKind::System => ("", "", &line.text[..]),
+        _ if emote => ("", "", &line.text[3..]),
+        ChatKind::Im => ("[IM] ", ": ", &line.text[..]),
+        ChatKind::Local(ChatType::Shout) => ("", " crie : ", &line.text[..]),
+        ChatKind::Local(ChatType::Whisper) => ("", " murmure : ", &line.text[..]),
+        _ => ("", ": ", &line.text[..]),
+    };
+    let mut sender = None;
+    if line.kind != ChatKind::System {
+        job.append(before, 0.0, name_fmt.clone());
+        let who = match line.kind {
+            ChatKind::Object(_) | ChatKind::ObjectIm => Some(Sender::Object),
+            _ if !line.source.is_nil() => Some(Sender::Avatar(line.source)),
+            _ => None,
+        };
+        // room for the picture, painted over it once laid out
+        let lead = if who.is_some() { pic_side(size) + 4.0 } else { 0.0 };
+        sender = who.map(|w| (job.text.chars().count(), w));
+        job.append(&line.from, lead, name_fmt.clone());
+        job.append(after, 0.0, name_fmt);
+    }
+    let mut links = Vec::new();
+    let mut badges = Vec::new();
+    let mut at = job.text.chars().count();
+    let name_of = |id| {
+        want_names.insert(id);
+        world.social.name_of(&id)
+    };
+    // the badge of a web link takes the place of an invisible glyph glued to
+    // the link (no space between them), so both wrap to the next row
+    // together; a leading space would stay behind on the previous row
+    let badge_fmt = egui::TextFormat {
+        color: Color32::TRANSPARENT,
+        font_id: egui::FontId::proportional(size * 1.15),
+        ..Default::default()
+    };
+    for (piece, link) in pieces(body, name_of) {
+        if let Some(Link::Url(u)) = &link {
+            job.append("M", 0.0, badge_fmt.clone());
+            badges.push((at, u.clone()));
+            at += 1;
         }
-        _ => {
-            let prefix = match line.kind {
-                ChatKind::Im => format!("[IM] {}: ", line.from),
-                ChatKind::Local(ChatType::Shout) => format!("{} crie : ", line.from),
-                ChatKind::Local(ChatType::Whisper) => format!("{} murmure : ", line.from),
-                _ => format!("{}: ", line.from),
-            };
-            job.append(&prefix, 0.0, name_fmt);
-            job.append(&line.text, 0.0, text_fmt);
+        let n = piece.chars().count();
+        // links in the link colors, like in the conversation window
+        let k = super::colors::get();
+        let fmt = match &link {
+            None => text_fmt.clone(),
+            Some(Link::Url(_)) => egui::TextFormat {
+                color: super::colors::c(k.chat_urls),
+                ..text_fmt.clone()
+            },
+            Some(_) => egui::TextFormat {
+                color: super::colors::c(k.chat_slurl),
+                ..text_fmt.clone()
+            },
+        };
+        job.append(&piece, 0.0, fmt);
+        if let Some(link) = link {
+            links.push((at..at + n, link));
         }
+        at += n;
     }
     job.wrap.max_width = width;
-    job
+    BubbleJob {
+        job,
+        links,
+        badges,
+        sender,
+    }
 }
 
 pub enum ConvAction {
@@ -299,7 +443,11 @@ pub(crate) fn chat_text(
             match s {
                 Seg::Text(t) => emoji.inline(ui, t, size, color, italics),
                 Seg::Url(u) => {
-                    ui.hyperlink_to(RichText::new(u).size(size).color(super::colors::c(k.chat_urls)), u);
+                    link_badge(ui, p, u, size);
+                    let r = ui.add(egui::Link::new(RichText::new(u).size(size).color(super::colors::c(k.chat_urls))));
+                    if r.on_hover_text(u).clicked() {
+                        open_web_link(ui.ctx(), u);
+                    }
                 }
                 Seg::Slurl(u) => {
                     ui.add(egui::Label::new(RichText::new(u).size(size).color(super::colors::c(k.chat_slurl))).selectable(true))
@@ -936,8 +1084,74 @@ pub fn show(
     actions
 }
 
-/// Recent chat lines floating above the chat bar (fade out after 20 s).
-pub fn toasts(ctx: &egui::Context, p: &Palette, world: &World, bottom: f32, seconds: f32, times: bool) {
+/// The open Conversations floater shows the local chat: its tab is selected
+/// and the floater is not minimized. Only then are the bubbles hidden, as
+/// Firestorm's nearby chat toasts are while the nearby chat panel is visible
+/// (LLFloaterIMNearbyChatHandler::processChat, nearby_chat->getVisible());
+/// on the Contacts or an IM tab the bubbles come back.
+pub fn local_chat_shown(ctx: &egui::Context, st: &ChatUi) -> bool {
+    let minimized = ctx
+        .data_mut(|d| d.get_persisted::<bool>(egui::Id::new(("conversations", "minimized"))))
+        .unwrap_or(false);
+    !st.contacts && st.selected.is_none() && !minimized
+}
+
+/// The sender of a bubble line: the avatar's profile picture (initials while
+/// it loads), or the tinted cube of an object, like the conversation window.
+#[allow(clippy::too_many_arguments)]
+fn bubble_sender(
+    painter: &egui::Painter,
+    p: &Palette,
+    pics: &HashMap<uuid::Uuid, egui::TextureHandle>,
+    wanted_pics: &mut HashSet<uuid::Uuid>,
+    r: egui::Rect,
+    who: &Sender,
+    line: &crate::world::ChatLine,
+    alpha: f32,
+) {
+    let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+    match who {
+        Sender::Object => {
+            if let Some(t) = super::icons::global("cube") {
+                painter.image(t.id(), r.shrink(1.0), uv, super::colors::sender_color(line).gamma_multiply(alpha));
+            }
+        }
+        Sender::Avatar(id) => {
+            wanted_pics.insert(*id);
+            match pics.get(id) {
+                Some(t) => {
+                    painter.image(t.id(), r, uv, Color32::WHITE.gamma_multiply(alpha));
+                }
+                None => {
+                    painter.rect_filled(r, 2.0, p.raised.gamma_multiply(alpha));
+                    painter.text(
+                        r.center(),
+                        egui::Align2::CENTER_CENTER,
+                        initials(&line.from),
+                        egui::FontId::proportional(r.height() * 0.45),
+                        p.violet_pale.gamma_multiply(alpha),
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Recent chat lines floating above the chat bar (fade out after 20 s);
+/// names of linked avatars and pictures of the senders are asked through
+/// `want_names` / `wanted_pics`.
+#[allow(clippy::too_many_arguments)]
+pub fn toasts(
+    ctx: &egui::Context,
+    p: &Palette,
+    world: &World,
+    pics: &HashMap<uuid::Uuid, egui::TextureHandle>,
+    want_names: &mut HashSet<uuid::Uuid>,
+    wanted_pics: &mut HashSet<uuid::Uuid>,
+    bottom: f32,
+    seconds: f32,
+    times: bool,
+) {
     let now = std::time::SystemTime::now();
     let recent: Vec<_> = world
         .chat
@@ -949,6 +1163,7 @@ pub fn toasts(ctx: &egui::Context, p: &Palette, world: &World, bottom: f32, seco
     if recent.is_empty() {
         return;
     }
+    let mut links: Vec<(egui::Rect, Link, Color32)> = Vec::new();
     egui::Area::new(egui::Id::new("chat_toasts"))
         .anchor(
             egui::Align2::LEFT_BOTTOM,
@@ -971,13 +1186,121 @@ pub fn toasts(ctx: &egui::Context, p: &Palette, world: &World, bottom: f32, seco
                     .corner_radius(egui::CornerRadius::same(3))
                     .inner_margin(egui::Margin::symmetric(6, 2))
                     .show(ui, |ui| {
-                        let mut job = line_job(line, p, 540.0, 13.0, times);
+                        let size = 13.0;
+                        let BubbleJob {
+                            mut job,
+                            links: line_links,
+                            badges,
+                            sender,
+                        } = line_job(line, p, world, want_names, 540.0, size, times);
                         for s in job.sections.iter_mut() {
                             s.format.color = s.format.color.gamma_multiply(alpha);
                         }
-                        ui.label(job);
+                        let galley = ui.ctx().fonts_mut(|f| f.layout_job(job));
+                        let (rect, _) = ui.allocate_exact_size(galley.size(), egui::Sense::hover());
+                        let painter = ui.painter();
+                        painter.galley(rect.min, galley.clone(), p.ink);
+                        // the sender's picture (or the object cube) in the room
+                        // left before its name
+                        if let Some((at, who)) = sender {
+                            let side = pic_side(size);
+                            let c = galley.pos_from_cursor(egui::text::CCursor::new(at)).translate(rect.min.to_vec2());
+                            let r =
+                                egui::Rect::from_center_size(egui::pos2(c.min.x - 2.0 - side * 0.5, c.center().y), egui::vec2(side, side));
+                            bubble_sender(painter, p, pics, wanted_pics, r, &who, line, alpha);
+                        }
+                        // web link badges over their invisible glyph
+                        for (at, url) in badges {
+                            if let Some(g) = range_rects(&galley, rect.min, at..at + 1).first() {
+                                let b = egui::Rect::from_center_size(g.center(), egui::vec2(size, size));
+                                paint_link_badge(painter, p, b, &url, alpha);
+                            }
+                        }
+                        let col = color_for(line.kind, p).gamma_multiply(alpha);
+                        for (range, link) in line_links {
+                            for r in range_rects(&galley, rect.min, range) {
+                                links.push((r, link.clone(), col));
+                            }
+                        }
                     });
                 ui.add_space(2.0);
+            }
+        });
+    for (k, (rect, link, col)) in links.iter().enumerate() {
+        bubble_link(ctx, p, world, k, *rect, link, *col);
+    }
+}
+
+/// Screen rects of a char range of a laid-out text, one per row.
+fn range_rects(galley: &egui::Galley, origin: egui::Pos2, range: std::ops::Range<usize>) -> Vec<egui::Rect> {
+    use egui::text::CCursor;
+    let mut out: Vec<egui::Rect> = Vec::new();
+    for i in range {
+        let mut a = galley.pos_from_cursor(CCursor::new(i));
+        let b = galley.pos_from_cursor(CCursor::new(i + 1));
+        // the first char of a wrapped row: a cursor at a row break reads as
+        // the end of the previous row, the char starts its own row
+        if (a.min.y - b.min.y).abs() > 0.5 {
+            let Some(row) = galley.rows.iter().find(|r| r.rect().y_range().contains(b.center().y)) else {
+                continue;
+            };
+            a = egui::Rect::from_min_max(egui::pos2(row.pos.x, b.min.y), b.max);
+        }
+        let r = egui::Rect::from_min_max(a.min, egui::pos2(b.min.x, a.max.y)).translate(origin.to_vec2());
+        match out.last_mut() {
+            Some(last) if (last.min.y - r.min.y).abs() < 0.5 => *last = last.union(r),
+            _ => out.push(r),
+        }
+    }
+    out
+}
+
+/// A link of a chat bubble. The bubbles let clicks through to the world
+/// (Firestorm's console is read-only), so each link gets its own small
+/// clickable area, as the links of Firestorm's chat toasts are
+/// (LLFloaterIMNearbyChatToastPanel::handleMouseUp): same actions and
+/// right-click menus as in the conversation window.
+fn bubble_link(ctx: &egui::Context, p: &Palette, world: &World, k: usize, rect: egui::Rect, link: &Link, col: Color32) {
+    egui::Area::new(egui::Id::new(("chat_toast_link", k)))
+        .fixed_pos(rect.min)
+        .order(egui::Order::Background)
+        .show(ctx, |ui| {
+            let (r, resp) = ui.allocate_exact_size(rect.size(), egui::Sense::click());
+            if resp.hovered() {
+                ui.painter().hline(r.x_range(), r.bottom() - 1.0, egui::Stroke::new(1.0, col));
+            }
+            let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+            match link {
+                Link::Url(u) => {
+                    if resp.on_hover_text(format!("{}\n{u}", link_badge_look(p, u).2)).clicked() {
+                        open_web_link(ui.ctx(), u);
+                    }
+                }
+                Link::Place(u, place) => {
+                    place_menu(&resp, p, u, place);
+                    let tip = if place.teleport {
+                        "Cliquez pour vous téléporter à cet endroit"
+                    } else {
+                        "Cliquez pour voir cet endroit sur la carte"
+                    };
+                    if resp.on_hover_text(format!("{tip}\n{u}")).clicked() {
+                        let l = &place.location;
+                        super::context::request(
+                            ui.ctx(),
+                            if place.teleport {
+                                CtxAction::TeleportToPlace(l.region.clone(), l.pos)
+                            } else {
+                                CtxAction::ShowPlace(l.region.clone(), l.pos)
+                            },
+                        );
+                    }
+                }
+                Link::Agent(id) => {
+                    name_menu(&resp, p, world, *id);
+                    if resp.on_hover_text("Voir le profil").clicked() {
+                        super::profile::request_open(ui.ctx(), *id);
+                    }
+                }
             }
         });
 }
@@ -1030,6 +1353,26 @@ mod tests {
         assert_eq!(segs[3], Seg::Mention(id));
         let bad = segments("secondlife:///app/agent/nope/about");
         assert!(matches!(bad[0], Seg::Slurl(_)));
+    }
+
+    #[test]
+    fn toast_text_shows_link_labels() {
+        let id = uuid::Uuid::from_u128(5);
+        let t = format!(
+            "Viens secondlife:///app/agent/{id}/about à http://maps.secondlife.com/secondlife/Ahern/1/2/3, merci secondlife:///app/agent/{id}/mention ! https://example.com/x"
+        );
+        let ps = pieces(&t, |_| "Loup Violet".into());
+        let text: String = ps.iter().map(|(s, _)| s.as_str()).collect();
+        assert_eq!(
+            text,
+            "Viens Loup Violet à Ahern (1,2,3), merci @Loup Violet ! https://example.com/x"
+        );
+        let links: Vec<_> = ps.iter().filter_map(|(s, l)| l.as_ref().map(|l| (s.as_str(), l))).collect();
+        assert_eq!(links.len(), 4);
+        assert_eq!(links[0], ("Loup Violet", &Link::Agent(id)));
+        assert!(matches!(links[1], ("Ahern (1,2,3)", Link::Place(..))));
+        assert_eq!(links[2], ("@Loup Violet", &Link::Agent(id)));
+        assert_eq!(links[3].1, &Link::Url("https://example.com/x".into()));
     }
 
     #[test]

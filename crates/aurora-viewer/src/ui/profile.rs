@@ -789,8 +789,12 @@ fn second_life_tab(
                 Some(partner) if !partner.is_nil() => {
                     world.social.avatar_names.want(&partner);
                     let r = ui.add(
-                        egui::Label::new(RichText::new(world.social.name_of(&partner)).size(12.0).color(p.indigo_light))
-                            .sense(egui::Sense::click()),
+                        egui::Label::new(
+                            RichText::new(world.social.name_of(&partner))
+                                .size(12.0)
+                                .color(super::colors::c(super::colors::get().chat_slurl)),
+                        )
+                        .sense(egui::Sense::click()),
                     );
                     if r.on_hover_cursor(egui::CursorIcon::PointingHand)
                         .on_hover_text("Voir le profil")

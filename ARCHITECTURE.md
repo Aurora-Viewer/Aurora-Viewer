@@ -101,6 +101,7 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
 | `ui_sound.rs` | Catalogue des sons de l'interface (UISnd* de Firestorm), réglages par son |
 | `ui/appearance.rs`, `ui/appearance/items.rs`, `ui/appearance/gallery.rs`, `world/appearance.rs` | Fenêtre Apparence, galerie / tenues / portés, édition et dialogue Enregistrer sous ; menus des éléments et de la galerie, confirmation de sauvegarde / suppression, choix d’image, renommage ; points d’attachement / HUD, profil et original ; règles de changement du COF, sauvegarde par liens, protection des parties du corps, scénario hors ligne |
 | `aurora-net/src/outfits.rs`, `aurora-net/src/outfits/categories.rs` | Écriture des liens de tenue, favoris, noms et images par AIS InventoryAPIv3, déplacement dans la corbeille ; confirmation et relecture des dossiers / éléments |
+| `slurl.rs`, `link_trust.rs` | Liens des textes : SLURL (barre de navigation, libellés « Région (x,y,z) » des liens de lieu) ; confiance des liens web (site de confiance, inconnu, dangereux : raccourcisseurs, faux noms officiels, adresses IP…), jugée localement sur l'URL |
 | `logging.rs`, `cache.rs`, `credentials.rs` | Logs, cache disque, mot de passe retenu (coffre de l'OS) |
 | `frame_profile.rs` | Profil des images (AURORA_PROFILE) : temps de chaque étape de l'image, ligne de synthèse par seconde dans le log |
 | `scene/animesh.rs` | Squelettes autonomes des objets animés, animations du linkset, limites des poses pour le culling et les ombres, scénario de démo |
