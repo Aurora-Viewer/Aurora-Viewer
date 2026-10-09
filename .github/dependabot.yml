@@ -1,5 +1,6 @@
 # Weekly update PRs for the Rust crates and the GitHub actions, so the
-# project never falls behind (an agent checks them, a human merges).
+# project never falls behind (an agent checks them, and merges them once
+# its human agrees).
 version: 2
 updates:
   - package-ecosystem: cargo

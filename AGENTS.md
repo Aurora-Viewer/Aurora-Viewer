@@ -42,10 +42,11 @@ une fonctionnalité, **regarde comment Firestorm la fait réellement**.
 
 - Les sources officielles doivent se trouver **à côté du dépôt** :
   `../phoenix-firestorm` (lecture seule, jamais dans le dépôt).
-- **Si ce dossier est absent**, propose à l'humain de le cloner :
+- **Si ce dossier est absent**, propose à l'humain de relancer
+  `./scripts/setup.ps1` (il le clone avec le reste), ou de le cloner seul :
 
   ```bash
-  git clone --depth 1 https://github.com/FirestormViewer/phoenix-firestorm ../phoenix-firestorm
+  git clone --depth 1 -c core.longpaths=true https://github.com/FirestormViewer/phoenix-firestorm ../phoenix-firestorm
   ```
 
 - Les fichiers utiles sont surtout dans `indra/newview/` (viewer),
@@ -67,7 +68,7 @@ worktree git, sa branche, son dossier `target` et ses logs.
 ```powershell
 # depuis le dépôt principal
 ./scripts/new-task.ps1 -Name "regard-avatars" -Kind feat
-# → C:\Aurora_Viewer_v2\work\regard-avatars  (branche feat/regard-avatars)
+# → ..\work\regard-avatars, à côté du dépôt  (branche feat/regard-avatars)
 ```
 
 - `-Kind` : `feat` (fonctionnalité), `fix` (correctif), `perf`, `refactor`,
@@ -312,7 +313,7 @@ commentaire de la PR, pas dans le dépôt. Structure :
 | Vérification | Résultat |
 |---|---|
 | Sans conflit avec main | ✅ |
-| CI (fmt, clippy, tests, secrets) | ✅ |
+| CI de la PR (fmt, clippy, secrets) | ✅ |
 | Scénarios démo (avant / après) | ✅ captures ci-dessous |
 | Non-régression des fonctionnalités voisines | ✅ … |
 | Fidélité Firestorm | ✅ fichiers vérifiés : … |
