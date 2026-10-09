@@ -178,7 +178,9 @@ une PR sortie de la file de fusion, une nouvelle PR, ou `main` qui casse. Le
 panneau **Suivi des PR** (ou le raccourci « Aurora PR ») a trois sections :
 la **file de fusion** (place et durée), les **PR ouvertes** (CI avec la
 durée qui défile, verdict de la relecture de l'agent) et les **fusionnées
-récemment**, avec leur auteur. Il s'adapte à la
+récemment** (depuis combien de temps : « 04 min »), avec pour chaque PR son
+auteur et ses lignes ajoutées et supprimées (**+120** en vert, **-8** en
+rouge). Il s'adapte à la
 taille de la fenêtre : réduis-la et garde-la dans un coin de l'écran (trop
 basse, elle cache d'abord les dernières fusions, puis fait défiler les PR
 avec la sélection).

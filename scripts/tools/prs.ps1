@@ -11,7 +11,7 @@ query($o: String!, $r: String!) {
     defaultBranchRef { target { ... on Commit { statusCheckRollup { state } } } }
     open: pullRequests(states: OPEN, first: 30, orderBy: {field: UPDATED_AT, direction: DESC}) {
       nodes {
-        number title url isDraft
+        number title url isDraft additions deletions
         author { login }
         mergeQueueEntry { position state enqueuedAt }
         autoMergeRequest { enabledAt }
@@ -26,7 +26,7 @@ query($o: String!, $r: String!) {
       }
     }
     merged: pullRequests(states: MERGED, first: 5, orderBy: {field: UPDATED_AT, direction: DESC}) {
-      nodes { number title url mergedAt author { login } }
+      nodes { number title url mergedAt additions deletions author { login } }
     }
   }
 }
@@ -97,6 +97,15 @@ function Format-Duration([TimeSpan]$T) {
     else { '{0}:{1:00}' -f [int][Math]::Floor($T.TotalMinutes), $T.Seconds }
 }
 
+# Short age for a column: '04 min', '29 min', '02 h', '03 j'.
+function Format-Age([datetime]$When) {
+    $t = (Get-Date) - $When
+    if ($t.TotalMinutes -lt 1) { '{0:00} s' -f [int][Math]::Floor($t.TotalSeconds) }
+    elseif ($t.TotalHours -lt 1) { '{0:00} min' -f [int][Math]::Floor($t.TotalMinutes) }
+    elseif ($t.TotalDays -lt 1) { '{0:00} h' -f [int][Math]::Floor($t.TotalHours) }
+    else { '{0:00} j' -f [int][Math]::Floor($t.TotalDays) }
+}
+
 function Format-Ago([datetime]$When) {
     $t = (Get-Date) - $When
     if ($t.TotalMinutes -lt 1) { "il y a $([int]$t.TotalSeconds) s" }
@@ -159,6 +168,7 @@ function Get-PrRows {
             else { 'violet_light' }
         [pscustomobject]@{
             Number = $p.number; Title = $p.title; Url = $p.url; Author = $p.author.login; Draft = $p.isDraft
+            Additions = [int]$p.additions; Deletions = [int]$p.deletions
             Ci = $ci; CiColor = $ciColor; CiRunning = $ciRunning; CiSince = $since
             Queue = $queue; QueueColor = $queueColor; QueueSince = $queueSince
             Verdict = $verdict; VerdictColor = $verdictColor; Status = $status
@@ -370,7 +380,7 @@ function Show-PrPanel {
                 [pscustomobject]@{ Row = $r; Ci = "CI $ci"; Queue = $queue; Author = "$($r.Author)$(if ($r.Draft) { ', brouillon' })" }
             }
             $merged = if ($GitHub.Data) { @($GitHub.Data.data.repository.merged.nodes | Select-Object -First $(if ($compact) { 3 } else { 5 })) } else { @() }
-            $whens = @($merged | ForEach-Object { Format-Ago ([datetime]$_.mergedAt).ToLocalTime() })
+            $whens = @($merged | ForEach-Object { Format-Age ([datetime]$_.mergedAt).ToLocalTime() })
             $fit = { param($texts, $min, $max) [Math]::Min($max, [Math]::Max($min, (@($texts | ForEach-Object { ([string]$_).Length }) + 0 | Measure-Object -Maximum).Maximum + 2)) }
             $ciW = & $fit ($cells | ForEach-Object Ci) 8 26
             $queueW = & $fit ($cells | Where-Object { $_.Row.InQueue } | ForEach-Object Queue) 8 26
@@ -378,28 +388,34 @@ function Show-PrPanel {
             $verdictW = & $fit ($rows | ForEach-Object Verdict) 6 13
             $whenW = & $fit $whens 6 16
             $mergedAuthorW = & $fit ($merged | ForEach-Object { $_.author.login }) 6 18
+            # lines added and removed, '+120 -8', one column for all three sections
+            $addL = (@($rows | ForEach-Object { "+$($_.Additions)".Length }) + @($merged | ForEach-Object { "+$($_.additions)".Length }) + 2 | Measure-Object -Maximum).Maximum
+            $delL = (@($rows | ForEach-Object { "-$($_.Deletions)".Length }) + @($merged | ForEach-Object { "-$($_.deletions)".Length }) + 2 | Measure-Object -Maximum).Maximum
+            $diffW = $addL + $delL + 3
+            $diff = { param($Add, $Del) @((("+$Add").PadLeft($addL) + ' '), 'success'), @((("-$Del").PadRight($delL) + '  '), 'danger') }
             $queued = @(for ($i = 0; $i -lt $rows.Count; $i++) { if ($rows[$i].InQueue) { $i } })
             $open = @(for ($i = 0; $i -lt $rows.Count; $i++) { if (-not $rows[$i].InQueue) { $i } })
+            # lists of indexes: test their .Count, @(0) alone is false
 
             if (-not $rows) {
                 & $line @(, @($(if ($GitHub.Data) { ' Aucune PR ouverte.' } else { ' Chargement…' }), 'muted'))
             }
-            if ($queued) {
+            if ($queued.Count) {
                 & $heading 'FILE DE FUSION' $queued.Count
                 foreach ($i in $queued) {
                     $c = $cells[$i]; $r = $c.Row
                     $start = @(@(" $StatusMark ", $r.Status), @(("#$($r.Number)").PadRight(6), 'violet_light'))
                     if ($compact) {
                         & $line ($start + @(, @((Format-Cell $r.Title ($w - 9)), 'ink'))) $i
-                        & $line @(@('         ', 'muted'), @("$($c.Queue)  ", $r.QueueColor), @($c.Author, 'muted_dim'))
+                        & $line (@(, @('         ', 'muted')) + (& $diff $r.Additions $r.Deletions) + @(@("$($c.Queue)  ", $r.QueueColor), @($c.Author, 'muted_dim')))
                     } else {
-                        $titleW = [Math]::Max(20, $w - 9 - $authorW - $queueW)
-                        & $line ($start + @(@((Format-Cell $r.Title $titleW), 'ink'), @((Format-Cell $c.Author $authorW), 'muted_dim'), @($c.Queue, $r.QueueColor))) $i
+                        $titleW = [Math]::Max(20, $w - 9 - $authorW - $diffW - $queueW)
+                        & $line ($start + @(@((Format-Cell $r.Title $titleW), 'ink'), @((Format-Cell $c.Author $authorW), 'muted_dim')) + (& $diff $r.Additions $r.Deletions) + @(, @($c.Queue, $r.QueueColor))) $i
                     }
                 }
             }
-            if ($open) {
-                if ($queued) { & $line @(, @('', 'muted')) }
+            if ($open.Count) {
+                if ($queued.Count) { & $line @(, @('', 'muted')) }
                 & $heading 'PR OUVERTES' $open.Count
                 foreach ($i in $open) {
                     $c = $cells[$i]; $r = $c.Row
@@ -407,10 +423,10 @@ function Show-PrPanel {
                     if ($compact) {
                         $titleW = [Math]::Max(10, $w - 9 - $ciW)
                         & $line ($start + @(@((Format-Cell $r.Title $titleW), 'ink'), @($c.Ci, $r.CiColor))) $i
-                        & $line @(@('         ', 'muted'), @($r.Verdict, $r.VerdictColor), @("  $($c.Author)", 'muted_dim'))
+                        & $line (@(, @('         ', 'muted')) + (& $diff $r.Additions $r.Deletions) + @(@($r.Verdict, $r.VerdictColor), @("  $($c.Author)", 'muted_dim')))
                     } else {
-                        $titleW = [Math]::Max(20, $w - 9 - $authorW - $ciW - $verdictW)
-                        & $line ($start + @(@((Format-Cell $r.Title $titleW), 'ink'), @((Format-Cell $c.Author $authorW), 'muted_dim'),
+                        $titleW = [Math]::Max(20, $w - 9 - $authorW - $diffW - $ciW - $verdictW)
+                        & $line ($start + @(@((Format-Cell $r.Title $titleW), 'ink'), @((Format-Cell $c.Author $authorW), 'muted_dim')) + (& $diff $r.Additions $r.Deletions) + @(
                                 @((Format-Cell $c.Ci $ciW), $r.CiColor), @($r.Verdict, $r.VerdictColor))) $i
                     }
                 }
@@ -421,9 +437,9 @@ function Show-PrPanel {
                 & $heading 'FUSIONNÉES RÉCEMMENT'
                 for ($j = 0; $j -lt $merged.Count; $j++) {
                     $m = $merged[$j]
-                    $titleW = [Math]::Max(10, $w - 9 - $mergedAuthorW - $whenW)
-                    & $line @(@(" $StatusMark ", 'teal'), @(("#$($m.number)").PadRight(6), 'teal'), @((Format-Cell $m.title $titleW), 'muted'),
-                        @((Format-Cell $m.author.login $mergedAuthorW), 'muted_dim'), @($whens[$j].PadLeft($whenW - 1), 'muted_dim'))
+                    $titleW = [Math]::Max(10, $w - 9 - $mergedAuthorW - $diffW - $whenW)
+                    & $line (@(@(" $StatusMark ", 'teal'), @(("#$($m.number)").PadRight(6), 'teal'), @((Format-Cell $m.title $titleW), 'muted'),
+                        @((Format-Cell $m.author.login $mergedAuthorW), 'muted_dim')) + (& $diff $m.additions $m.deletions) + @(, @($whens[$j].PadLeft($whenW - 1), 'muted_dim')))
                 }
             }
 
