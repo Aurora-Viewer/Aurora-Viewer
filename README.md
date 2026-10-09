@@ -109,7 +109,7 @@ settings and cache (`…\config\demo`, `…\cache\demo`).
 | `AURORA_DEMO_POS="x,y"` | Start position |
 | `AURORA_DEMO_ACTIONS=pay-layout\|pay-hidden\|pay-large\|buy-original\|buy-contents\|buy-empty` | Fenêtres de transaction : quatre montants à quatre chiffres, champ libre et boutons masqués, montant maximal ; achat d'un original, d'une copie (`buy`) ou du contenu, liste des éléments inclus et permissions du prochain propriétaire ; `buy-empty` propose un contenu non vendable et désactive l'achat. |
 | `AURORA_DEMO_DIALOG=12\|4\|long` | Menu llDialog de douze réponses sur trois colonnes, rangées du bas vers le haut comme Firestorm ; quatre réponses pour vérifier la dernière rangée incomplète, ou libellé long tronqué avec texte complet au survol. Boutons Bloquer et Ignorer sous le menu. |
-| `AURORA_DEMO_TP=1` or `"x,y,z"` | Simulated teleport at frame 240 |
+| `AURORA_DEMO_TP=1` ou `"x,y,z"` ou `remote` | Téléportation après le fondu du chargement initial (image 240 au plus tôt) : arrivée locale immédiate sans écran de chargement ; `remote` simule la progression entre régions |
 | `AURORA_DEMO_CHATCMD="calc 2+2;rolld 2 20"` | Lines typed in the chat bar at frame 240, separated by `;` (chat bar commands: `calc`, `rolld`, `gtp`…) |
 | `AURORA_DEMO_SIT=n` | Click the toolbar sit button n times (frames 240, 300, 360…) |
 | `AURORA_DEMO_KEY=down\|up\|left\|right` | Hold an arrow key from frame 235 (movement, body orientation) |

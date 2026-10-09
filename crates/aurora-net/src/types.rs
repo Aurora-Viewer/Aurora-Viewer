@@ -474,7 +474,9 @@ pub enum NetEvent {
         message: String,
     },
     /// TeleportFinish: the destination region is known, connecting to it.
-    TeleportFinished,
+    TeleportFinished {
+        handle: RegionHandle,
+    },
     TeleportFailed {
         reason: String,
     },
