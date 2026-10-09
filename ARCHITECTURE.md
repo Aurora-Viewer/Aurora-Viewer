@@ -90,7 +90,7 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
 | `build/` | Outils de construction (édition d'objets, terrain) |
 | `media/` | Médias des prims et des parcelles |
 | `demo.rs` | Le mode démo : une scène locale qui simule un serveur |
-| `settings.rs`, `keybinds.rs`, `theme.rs` | Réglages enregistrés, raccourcis, palette |
+| `settings.rs`, `keybinds.rs`, `keybinds/layout.rs`, `theme.rs` | Réglages enregistrés, raccourcis, disposition Windows et touches de déplacement par défaut, palette |
 | `logging.rs`, `cache.rs`, `credentials.rs` | Logs, cache disque, mot de passe retenu (coffre de l'OS) |
 
 ## Déroulement d'une image

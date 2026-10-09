@@ -3,6 +3,8 @@
 //! forward, others) with optional modifiers. Keys are stored by their winit
 //! physical code name so the layout does not matter (ZQSD on AZERTY = WASD).
 
+mod layout;
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use winit::event::MouseButton;
@@ -61,7 +63,7 @@ impl Input {
 }
 
 /// Characters seen for physical keys (the real keyboard layout), learned
-/// from key events; labels fall back to an AZERTY guess before that.
+/// from key events; Windows supplies their labels before the first key press.
 static LEARNED: std::sync::RwLock<Option<std::collections::HashMap<String, String>>> = std::sync::RwLock::new(None);
 
 /// Remember the character a physical key produces (unshifted).
@@ -85,6 +87,9 @@ fn key_label(k: &str) -> String {
     {
         return l;
     }
+    if let Some(l) = layout::current().label(k) {
+        return l;
+    }
     let fixed = match k {
         "ArrowUp" => "Flèche haut",
         "ArrowDown" => "Flèche bas",
@@ -103,17 +108,17 @@ fn key_label(k: &str) -> String {
         "Space" => "Espace",
         "Tab" => "Tab",
         "CapsLock" => "Verr. maj",
-        "Backquote" => "²",
-        "Minus" => ")",
+        "Backquote" => "`",
+        "Minus" => "-",
         "Equal" => "=",
-        "BracketLeft" => "^",
-        "BracketRight" => "$",
-        "Semicolon" => "M",
-        "Quote" => "ù",
-        "Backslash" => "*",
-        "Comma" => ";",
-        "Period" => ":",
-        "Slash" => "!",
+        "BracketLeft" => "[",
+        "BracketRight" => "]",
+        "Semicolon" => ";",
+        "Quote" => "'",
+        "Backslash" => "\\",
+        "Comma" => ",",
+        "Period" => ".",
+        "Slash" => "/",
         "IntlBackslash" => "<",
         "NumpadAdd" => "+ (pavé)",
         "NumpadSubtract" => "- (pavé)",
@@ -126,16 +131,7 @@ fn key_label(k: &str) -> String {
         return fixed.into();
     }
     if let Some(c) = k.strip_prefix("Key") {
-        // physical position on a QWERTY board: show the AZERTY letter
-        return match c {
-            "Q" => "A",
-            "A" => "Q",
-            "W" => "Z",
-            "Z" => "W",
-            "M" => ",",
-            other => other,
-        }
-        .into();
+        return c.into();
     }
     if let Some(d) = k.strip_prefix("Digit") {
         return d.into();
@@ -354,12 +350,19 @@ fn kalt(code: KeyCode, ctrl: bool, shift: bool) -> Option<Binding> {
 
 impl Default for KeyBindings {
     fn default() -> Self {
+        Self::for_layout(layout::current())
+    }
+}
+
+impl KeyBindings {
+    fn for_layout(layout: &layout::KeyboardLayout) -> Self {
         use KeyCode as K;
+        let [forward, back, left, right] = layout.movement_keys();
         let defaults: Vec<(Action, [Option<Binding>; 2])> = vec![
-            (Action::Forward, [k(K::ArrowUp), None]),
-            (Action::Back, [k(K::ArrowDown), None]),
-            (Action::Left, [k(K::ArrowLeft), None]),
-            (Action::Right, [k(K::ArrowRight), None]),
+            (Action::Forward, [k(K::ArrowUp), k(forward)]),
+            (Action::Back, [k(K::ArrowDown), k(back)]),
+            (Action::Left, [k(K::ArrowLeft), k(left)]),
+            (Action::Right, [k(K::ArrowRight), k(right)]),
             (Action::StrafeLeft, [None, None]),
             (Action::StrafeRight, [None, None]),
             (Action::Up, [k(K::PageUp), k(K::KeyE)]),
@@ -431,8 +434,8 @@ impl KeyBindings {
         self
     }
 
-    /// Walking uses the arrow keys only (former WASD / ZQSD defaults removed
-    /// from older settings files; custom bindings are kept).
+    /// Historical settings-version 4 migration: remove the former letter
+    /// defaults. Newly created settings already use the current version.
     pub fn drop_letter_walk(&mut self) {
         let old = [
             (Action::Forward, KeyCode::KeyW),
@@ -631,6 +634,33 @@ mod tests {
         let kb = kb.sanitized();
         assert_eq!(kb.map.iter().filter(|(a, _)| *a == Action::Forward).count(), 1);
         assert!(kb.map.iter().any(|(a, _)| *a == Action::ToggleMic));
-        assert_eq!(Input::key(KeyCode::KeyW).label(), "Z");
+    }
+
+    #[test]
+    fn fresh_defaults_bind_movement_in_the_secondary_slots() {
+        for layout in [layout::KeyboardLayout::wasd(), layout::KeyboardLayout::zqsd(), Default::default()] {
+            let kb = KeyBindings::for_layout(&layout);
+            for (action, arrow, letter) in [
+                (Action::Forward, KeyCode::ArrowUp, KeyCode::KeyW),
+                (Action::Back, KeyCode::ArrowDown, KeyCode::KeyS),
+                (Action::Left, KeyCode::ArrowLeft, KeyCode::KeyA),
+                (Action::Right, KeyCode::ArrowRight, KeyCode::KeyD),
+            ] {
+                assert_eq!(kb.get(action), [k(arrow), k(letter)]);
+                let down = [Input::key(letter)].into_iter().collect();
+                assert!(kb.held(action, &down, Mods::default()));
+                assert!(kb.held_actions_of(&Input::key(letter)).contains(&action));
+            }
+        }
+    }
+
+    #[test]
+    fn saved_custom_and_empty_movement_slots_are_kept() {
+        let mut kb = KeyBindings::default();
+        kb.set(Action::Forward, 1, k(KeyCode::KeyT));
+        kb.set(Action::Left, 1, None);
+        let bytes = serde_json::to_vec(&kb).expect("serialize bindings");
+        let loaded: KeyBindings = serde_json::from_slice(&bytes).expect("read bindings");
+        assert_eq!(loaded.sanitized(), kb);
     }
 }

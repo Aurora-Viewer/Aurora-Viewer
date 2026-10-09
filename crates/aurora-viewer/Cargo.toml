@@ -48,5 +48,8 @@ tokio = { version = "1", default-features = false, features = ["rt"] }
 [dependencies.keyring]
 version = "4"
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_UI_Input_KeyboardAndMouse"] }
+
 [lints]
 workspace = true

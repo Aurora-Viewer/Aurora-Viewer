@@ -823,3 +823,42 @@ impl Default for MapSettings {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::keybinds::{Action, Input};
+    use winit::keyboard::KeyCode;
+
+    #[test]
+    fn first_launch_movement_defaults_survive_saving_and_loading() {
+        let fresh = Settings::default().sanitized();
+        let bytes = serde_json::to_vec(&fresh).expect("serialize synthetic settings");
+        let saved: Settings = serde_json::from_slice(&bytes).expect("read synthetic settings");
+        assert_eq!(saved.sanitized().keybinds, fresh.keybinds);
+        for action in [Action::Forward, Action::Back, Action::Left, Action::Right] {
+            assert!(fresh.keybinds.get(action)[1].is_some());
+        }
+    }
+
+    #[test]
+    fn existing_settings_do_not_gain_or_replace_movement_bindings() {
+        let mut existing = Settings::default();
+        for action in [Action::Forward, Action::Back, Action::Left, Action::Right] {
+            existing.keybinds.set(action, 1, None);
+        }
+        existing.keybinds.set(
+            Action::Forward,
+            1,
+            Some(crate::keybinds::Binding {
+                input: Input::key(KeyCode::KeyT),
+                ctrl: false,
+                shift: false,
+                alt: false,
+            }),
+        );
+        let bytes = serde_json::to_vec(&existing).expect("serialize synthetic settings");
+        let saved: Settings = serde_json::from_slice(&bytes).expect("read synthetic settings");
+        assert_eq!(saved.sanitized().keybinds, existing.keybinds);
+    }
+}
