@@ -134,6 +134,28 @@ pub fn target(world: &World, idx: usize, props: &HashMap<Uuid, ObjectProps>) -> 
     })
 }
 
+/// Target of a right-click menu entry (Payer, Acheter, Ouvrir), whatever
+/// the click action: Pay goes to the clicked prim if it takes money, else
+/// its parent (LLFloaterPay::payViaObject); Buy and Open to the root.
+pub fn menu_target(world: &World, idx: usize, action: Action) -> Option<Target> {
+    let clicked = world.objects.get(idx)?;
+    let (root_idx, _) = root(world, idx)?;
+    let root = world.objects.get(root_idx)?;
+    let object = match action {
+        Action::Pay if clicked.update_flags & (1 << 9) == 0 => world.objects.parent_of(clicked).and_then(|p| world.objects.get(p))?,
+        Action::Pay => clicked,
+        _ => root,
+    };
+    Some(Target {
+        action,
+        clicked: clicked.key,
+        clicked_id: clicked.full_id,
+        key: object.key,
+        object: object.full_id,
+        root: root.full_id,
+    })
+}
+
 /// LLViewerObject::allowOpen: task inventory must be nonempty and editable.
 pub fn allow_open(world: &World, idx: usize) -> bool {
     root(world, idx)

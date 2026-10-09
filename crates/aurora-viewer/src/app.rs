@@ -25,6 +25,7 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{CursorGrabMode, Window, WindowId};
 
 mod chat_commands;
+mod context_menu;
 mod object_actions;
 
 enum Screen {
@@ -177,6 +178,8 @@ pub struct App {
     /// dialogs (their sounds).
     mic_was: bool,
     context_menu_was: bool,
+    /// « Supprimer » waiting for a yes: (object, why it asks).
+    delete_confirm: Option<(uuid::Uuid, String)>,
     script_dialogs_were: usize,
     /// Last tracker beacon sound (FIRE-16969).
     beacon_sound_at: Option<Instant>,
@@ -427,6 +430,7 @@ impl App {
             sound_cues: Default::default(),
             mic_was: false,
             context_menu_was: false,
+            delete_confirm: None,
             script_dialogs_were: 0,
             beacon_sound_at: None,
             stuck_watch: None,
@@ -1745,161 +1749,6 @@ impl App {
         }
     }
 
-    fn open_context_menu(&mut self) {
-        let Some(g) = self.gfx.as_mut() else {
-            return;
-        };
-        let (x, y) = self.cursor_pos;
-        let ray = g.renderer.cursor_ray(x, y);
-        let hit = self.scene.action_point(
-            &self.world,
-            ray,
-            g.renderer.pick_world(x, y),
-            self.build.open,
-            self.settings.draw_distance,
-        );
-        let now = Instant::now();
-        // an avatar name tag opens its avatar's menu, as a click on the
-        // avatar; its point is the avatar, not the air at the tag ("Zoomer"
-        // frames the avatar, like handle_look_at_selection)
-        let (picked, point) = match self.pick_name_tag(hit, ray) {
-            Some((idx, p)) => (
-                Some(idx),
-                Scene::object_transform(&self.world, idx, now, 0).map_or(p, |(pos, _, _)| pos),
-            ),
-            None => {
-                let Some(p) = hit else {
-                    return;
-                };
-                (self.scene.interaction_at(&self.world, p, now, self.build.open), p)
-            }
-        };
-        let target = match picked {
-            Some(idx) => match self.world.objects.get(idx) {
-                Some(o) if o.is_avatar() => {
-                    let id = o.full_id;
-                    ui::context::Target::Avatar {
-                        id,
-                        name: self.world.person_name(&id).unwrap_or_else(|| self.world.social.name_of(&id)),
-                        own: id == self.world.agent_id,
-                        complexity: self
-                            .scene
-                            .avatar_complexity
-                            .get(&id)
-                            .map(|c| (*c, self.scene.too_complex.contains(&idx))),
-                        render: self.settings.render_exception(&id),
-                        blocked: self.world.is_avatar_blocked(&id),
-                    }
-                }
-                Some(o) => {
-                    let (local_id, full_id) = (o.key.local_id, o.full_id);
-                    let offset = Scene::object_transform(&self.world, idx, now, 0)
-                        .map(|(pos, rot, _)| rot.inverse() * (point - pos))
-                        .unwrap_or(Vec3::ZERO);
-                    ui::context::Target::Object {
-                        local_id,
-                        full_id,
-                        offset,
-                        name: "Objet".into(),
-                    }
-                }
-                None => ui::context::Target::Ground,
-            },
-            None => ui::context::Target::Ground,
-        };
-        let ppp = self.egui_ctx.pixels_per_point().max(0.1);
-        self.world.ui_sounds.push(UiSound::PieMenuAppear);
-        self.context_menu = Some(ui::context::ContextMenu {
-            pos: egui::pos2(self.cursor_pos.0 / ppp, self.cursor_pos.1 / ppp),
-            point,
-            target,
-        });
-    }
-
-    fn on_ctx_action(&mut self, act: ui::context::CtxAction) {
-        use ui::context::CtxAction;
-        match act {
-            CtxAction::Touch(local_id) => self.send(NetCommand::Touch { local_id }),
-            CtxAction::Sit { target, offset } => {
-                if let Some(idx) = self.world.objects.index_of_uuid(&target)
-                    && let Some(object) = self.world.objects.get(idx)
-                {
-                    self.send(NetCommand::RequestSit {
-                        handle: object.key.region,
-                        target,
-                        offset,
-                    });
-                }
-            }
-            CtxAction::Zoom(p) => self.camera.zoom_to(p, &mut self.world.agent, &self.settings.camera),
-            CtxAction::AboutLand(point) => {
-                let (gx, gy) = ui::minimap::to_global(&self.world, point);
-                ui::land::LandUi::select_at_global(&mut self.world, gx, gy);
-                self.panels.about_land = true;
-            }
-            CtxAction::DisplayName => self.display_name_ui.open(),
-            CtxAction::StandUp => self.send(NetCommand::OneShotControl(control::STAND_UP)),
-            CtxAction::SitGround => self.send(NetCommand::OneShotControl(control::SIT_ON_GROUND)),
-            CtxAction::ToggleFly => self.toggle_fly(),
-            CtxAction::ResetCamera => self.reset_camera_view(),
-            CtxAction::Im(id) => {
-                // UISndStartIM (LLAvatarActions::startIM)
-                self.world.ui_sounds.push(UiSound::StartIm);
-                self.world.social.session_mut(id);
-                self.world.social.focus_im = Some(id);
-                self.panels.chat = true;
-            }
-            CtxAction::Profile(id) => self.profile_ui.open(&mut self.world, id),
-            CtxAction::ToggleBlock(id) => {
-                let name = self.world.legacy_name(&id).unwrap_or_else(|| self.world.social.name_of(&id));
-                if let Err(e) = self.world.toggle_block_avatar(id, &name) {
-                    self.world.system_message(e);
-                }
-            }
-            CtxAction::Edit(id) => {
-                // pie menu "Edit": select the object, build floater on Edit (handle_object_edit)
-                if let Some(idx) = self.world.objects.index_of_uuid(&id) {
-                    let s = self.settings.build.clone();
-                    self.build.click_select(&mut self.world, &s, Some(idx), false);
-                    self.build.open_build(crate::build::Tool::Edit);
-                    self.build.edit_mode = crate::build::EditMode::Move;
-                    self.flush_build();
-                }
-            }
-            CtxAction::TakeCopy(id) => {
-                if let Some(idx) = self.world.objects.index_of_uuid(&id) {
-                    let s = self.settings.build.clone();
-                    self.build.click_select(&mut self.world, &s, Some(idx), false);
-                    self.build.take(&mut self.world, true);
-                    if !self.build.open {
-                        self.build.deselect_all(&self.world);
-                    }
-                    self.flush_build();
-                }
-            }
-            CtxAction::BlockObject(id) => {
-                if let Err(e) = self.world.block(
-                    id,
-                    &format!("Objet {}", &id.to_string()[..8]),
-                    crate::world::mutes::MuteType::Object,
-                ) {
-                    self.world.system_message(e);
-                }
-            }
-            CtxAction::SetRender(id, mode) => {
-                self.settings.set_render_exception(id, mode);
-                self.settings.save();
-            }
-            CtxAction::OfferTeleport(id) => {
-                self.send(NetCommand::OfferTeleport {
-                    to: id,
-                    message: "Rejoins-moi !".into(),
-                });
-                self.world.system_message("Offre de téléportation envoyée.");
-            }
-        }
-    }
-
     /// What the build floater asked for (build::ui::Request).
     fn on_build_request(&mut self, r: crate::build::ui::Request) {
         use crate::build::ui::Request;
@@ -3098,7 +2947,39 @@ impl App {
 
         // ---- UI
         let t_ui = Instant::now();
-        let raw = gfx.egui_state.take_egui_input(&gfx.window);
+        let mut raw = gfx.egui_state.take_egui_input(&gfx.window);
+        // AURORA_DEMO_POINTER="x,y[,r][;x,y…]": the pointer at these window
+        // pixels from frame 300, one point every 60 frames (hover states,
+        // sub-menus); ",r" right-clicks the interface there
+        if self.demo
+            && self.frame_count >= 300
+            && let Ok(v) = std::env::var("AURORA_DEMO_POINTER")
+        {
+            let points: Vec<(f32, f32, bool)> = v
+                .split(';')
+                .filter_map(|pt| {
+                    let mut it = pt.split(',').map(str::trim);
+                    Some((it.next()?.parse().ok()?, it.next()?.parse().ok()?, it.next() == Some("r")))
+                })
+                .collect();
+            let step = (self.frame_count - 300) / 60;
+            let i = (step as usize).min(points.len().saturating_sub(1));
+            if let Some(&(x, y, right)) = points.get(i) {
+                let ppp = self.egui_ctx.pixels_per_point().max(0.1);
+                let pos = egui::pos2(x / ppp, y / ppp);
+                raw.events.push(egui::Event::PointerMoved(pos));
+                if right && step as usize == i && (self.frame_count - 300) % 60 == 2 {
+                    for pressed in [true, false] {
+                        raw.events.push(egui::Event::PointerButton {
+                            pos,
+                            button: egui::PointerButton::Secondary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        });
+                    }
+                }
+            }
+        }
         let ctx = self.egui_ctx.clone();
         let projector = ui::hud::Projector {
             view_proj: vp,
@@ -3599,6 +3480,10 @@ impl App {
             self.world.own_im(to, &text);
             self.send(NetCommand::SendIm { to, message: text });
         }
+        // menu choices made anywhere in the interface (ui::context::request)
+        for act in ui::context::take_requests(&self.egui_ctx) {
+            self.on_ctx_action(act);
+        }
         if let Some(act) = a.ctx_action {
             self.on_ctx_action(act);
         }
@@ -4040,13 +3925,22 @@ impl App {
                     ));
                     self.panels.contacts = open;
                 }
+                // their confirmations, also asked from the other menus
+                contact_actions.extend(ui::contacts::dialog_windows(&ctx, &p, &mut self.world, &mut self.contacts_ui));
                 for c in contact_actions {
                     self.on_contacts_action(c, &mut a);
                 }
                 let mut people_map = |ui: &mut egui::Ui, size: egui::Vec2| {
-                    let acts = self
-                        .people_map_ui
-                        .draw(ui, &self.world, &mut self.map_tiles, &map_cam, &mut self.settings.maps, size, true);
+                    let acts = self.people_map_ui.draw(
+                        ui,
+                        &p,
+                        &self.world,
+                        &mut self.map_tiles,
+                        &map_cam,
+                        &mut self.settings.maps,
+                        size,
+                        true,
+                    );
                     mini.extend(acts);
                 };
                 let people = ui::people::people_window(&ctx, &p, &self.world, &mut self.panels, &mut self.people_ui, &mut people_map);
@@ -4066,17 +3960,6 @@ impl App {
                             self.panels.chat = true;
                         }
                         ui::people::PeopleAction::GroupChatBlocked(id, on) => self.world.set_group_chat_blocked(id, on),
-                        ui::people::PeopleAction::BlockAvatar(id, name, on) => {
-                            let r = if on {
-                                self.world.block(id, &name, crate::world::mutes::MuteType::Agent)
-                            } else {
-                                self.world.unblock(id, &name, 0);
-                                Ok(())
-                            };
-                            if let Err(e) = r {
-                                self.world.system_message(e);
-                            }
-                        }
                         ui::people::PeopleAction::Unblock(id, name) => self.world.unblock(id, &name, 0),
                         ui::people::PeopleAction::BlockByName(name) => {
                             if let Err(e) = self.world.block(uuid::Uuid::nil(), &name, crate::world::mutes::MuteType::ByName) {
@@ -4108,9 +3991,21 @@ impl App {
                     }
                 }
                 self.panels.inventory = open;
-                let (seated, flying) = (self.world.agent.is_sitting(), self.world.agent.flying);
-                if let Some(act) = ui::context::show(&ctx, &p, &mut self.context_menu, seated, flying) {
-                    a.ctx_action = Some(act);
+                let facts = self.context_facts();
+                let had_menu = self.context_menu.is_some();
+                ui::context::show(&ctx, &p, &mut self.context_menu, &facts);
+                if had_menu && self.context_menu.is_none() {
+                    // LLViewerMenuHolderGL::hideMenus drops the menu's selection
+                    self.build.release_menu_selection(&self.world);
+                    self.flush_build();
+                }
+                if let Some((id, text)) = self.delete_confirm.clone()
+                    && let Some(yes) = ui::context::delete_confirm(&ctx, &p, &text)
+                {
+                    self.delete_confirm = None;
+                    if yes {
+                        ui::context::request(&ctx, ui::context::CtxAction::DeleteConfirmed(id));
+                    }
                 }
                 ui::media::show(
                     &ctx,
@@ -4230,12 +4125,6 @@ impl App {
                         ui::minimap::MiniMapAction::Track { x, y, z } => self.world.map.track_location(x, y, z, false),
                         ui::minimap::MiniMapAction::StopTracking => self.world.map.track = None,
                         ui::minimap::MiniMapAction::OpenWorldMap => self.panels.world_map = true,
-                        ui::minimap::MiniMapAction::OpenIm(id) => {
-                            self.world.social.session_mut(id);
-                            self.world.social.focus_im = Some(id);
-                            self.panels.chat = true;
-                        }
-                        ui::minimap::MiniMapAction::OfferTeleport(id) => a.offer_tp.push(id),
                         ui::minimap::MiniMapAction::Profile(id) => self.profile_ui.open(&mut self.world, id),
                         ui::minimap::MiniMapAction::AboutLand(gx, gy) => {
                             ui::land::LandUi::select_at_global(&mut self.world, gx, gy);

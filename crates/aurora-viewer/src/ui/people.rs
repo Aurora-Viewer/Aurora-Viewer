@@ -1,6 +1,8 @@
 //! "Personnes" floater (nearby / friends / groups / blocked).
 
 use super::Panels;
+use super::context::{self, AvatarList};
+use super::menu;
 use super::widgets::{self, Floater};
 use crate::theme::Palette;
 use crate::world::World;
@@ -18,8 +20,6 @@ pub enum PeopleAction {
     GroupChat(Uuid),
     /// Block / unblock a group's chat (exoGroupMuteList).
     GroupChatBlocked(Uuid, bool),
-    /// Block (true) or unblock a resident.
-    BlockAvatar(Uuid, String, bool),
     /// Remove a block list entry (by id, or by name for legacy entries).
     Unblock(Uuid, String),
     /// Block an object by its name (LLFloaterGetBlockedObjectName).
@@ -130,26 +130,8 @@ pub fn people_window(
                         ui.horizontal(|ui| {
                             ui.set_min_height(18.0);
                             let r = ui.add(egui::Label::new(RichText::new(name).size(13.0).color(p.ink)).sense(egui::Sense::click()));
-                            r.context_menu(|ui| {
-                                if ui.button("Voir le profil").clicked() {
-                                    actions.push(PeopleAction::Profile(*id));
-                                    ui.close();
-                                }
-                                if ui.button("Envoyer un IM").clicked() {
-                                    actions.push(PeopleAction::OpenIm(*id));
-                                    ui.close();
-                                }
-                                if ui.button("Proposer une téléportation").clicked() {
-                                    actions.push(PeopleAction::OfferTeleport(*id));
-                                    ui.close();
-                                }
-                                let blocked = world.is_avatar_blocked(id);
-                                if ui.button(if blocked { "Débloquer" } else { "Bloquer" }).clicked() {
-                                    let legacy = world.legacy_name(id).unwrap_or_else(|| name.clone());
-                                    actions.push(PeopleAction::BlockAvatar(*id, legacy, !blocked));
-                                    ui.close();
-                                }
-                            });
+                            // menu_people_nearby.xml
+                            menu::context_menu(&r, p, |ui| context::avatar_list_menu(ui, p, world, *id, AvatarList::Nearby));
                             if r.double_clicked() {
                                 actions.push(PeopleAction::OpenIm(*id));
                             }
@@ -198,20 +180,8 @@ pub fn people_window(
                             if r.double_clicked() {
                                 actions.push(PeopleAction::OpenIm(f.id));
                             }
-                            r.context_menu(|ui| {
-                                if ui.button("Voir le profil").clicked() {
-                                    actions.push(PeopleAction::Profile(f.id));
-                                    ui.close();
-                                }
-                                if ui.button("Envoyer un IM").clicked() {
-                                    actions.push(PeopleAction::OpenIm(f.id));
-                                    ui.close();
-                                }
-                                if f.online && ui.button("Proposer une téléportation").clicked() {
-                                    actions.push(PeopleAction::OfferTeleport(f.id));
-                                    ui.close();
-                                }
-                            });
+                            // menu_fs_contacts_friends.xml
+                            menu::context_menu(&r, p, |ui| context::avatar_list_menu(ui, p, world, f.id, AvatarList::Friend));
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 ui.spacing_mut().item_spacing.x = 4.0;
                                 if f.online
@@ -279,6 +249,8 @@ fn groups_tab(ui: &mut egui::Ui, p: &Palette, world: &World, filter: &str, actio
                     })
                     .inner;
                 let r = if blocked { r.on_hover_text("Chat du groupe bloqué") } else { r };
+                // menu_people_groups.xml
+                menu::context_menu(&r, p, |ui| context::group_menu(ui, p, world, g.id));
                 if r.double_clicked() {
                     actions.push(PeopleAction::GroupChat(g.id));
                 }
@@ -362,21 +334,21 @@ fn blocked_tab(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut PeopleUi,
                 } else {
                     r
                 };
-                if m.kind != MuteType::ByName {
-                    r.context_menu(|ui| {
-                        if m.kind == MuteType::Agent && ui.button("Voir le profil").clicked() {
-                            actions.push(PeopleAction::Profile(m.id));
-                            ui.close();
-                        }
-                        ui.label(RichText::new("Bloquer :").size(11.5).color(p.muted));
-                        for (bit, label) in [
-                            (flag::TEXT_CHAT, "Chat et IM"),
-                            (flag::VOICE_CHAT, "Voix"),
-                            (flag::PARTICLES, "Particules"),
-                            (flag::OBJECT_SOUNDS, "Sons des objets"),
+                // menu_fs_block_list.xml
+                menu::context_menu(&r, p, |ui| {
+                    if menu::item(ui, p, "check-circle", "Cesser d'ignorer") {
+                        actions.push(PeopleAction::Unblock(m.id, m.name.clone()));
+                    }
+                    if m.kind != MuteType::ByName {
+                        for (bit, icon, label) in [
+                            (flag::VOICE_CHAT, "microphone-slash", "Bloquer la voix"),
+                            (flag::TEXT_CHAT, "chat-teardrop-slash", "Bloquer le texte"),
+                            (flag::PARTICLES, "sparkle", "Bloquer les particules"),
+                            (flag::OBJECT_SOUNDS, "speaker-x", "Bloquer les sons des objets"),
                         ] {
+                            // a set flag means « not blocked » (LLMute flags)
                             let mut on = m.flags & bit == 0;
-                            if ui.checkbox(&mut on, label).changed() {
+                            if menu::toggle(ui, p, icon, label, &mut on) {
                                 actions.push(PeopleAction::BlockFlag {
                                     id: m.id,
                                     name: m.name.clone(),
@@ -386,8 +358,12 @@ fn blocked_tab(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut PeopleUi,
                                 });
                             }
                         }
-                    });
-                }
+                    }
+                    menu::separator(ui, p);
+                    if menu::item_if(ui, p, "user-circle", "Profil", m.kind == MuteType::Agent) {
+                        actions.push(PeopleAction::Profile(m.id));
+                    }
+                });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
                     if widgets::flat_button(ui, p, "Débloquer").clicked() {

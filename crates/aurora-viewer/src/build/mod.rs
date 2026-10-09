@@ -258,6 +258,10 @@ pub struct BuildTool {
     /// Capability requests in flight (tag -> what for).
     pub caps: HashMap<u64, edits::CapPurpose>,
     next_tag: u64,
+    /// The selection only lives while a right-click menu is open (the pie
+    /// menu selection of LLViewerMenuHolderGL, dropped by deselectUnused
+    /// when the menu closes outside build mode). Outlined like in build mode.
+    pub menu_selection: bool,
     /// Selection mode of `selection`.
     pub selection_linked: bool,
     /// ObjectProperties of selected objects.
@@ -301,6 +305,7 @@ impl Default for BuildTool {
             ui: ui::FloaterState::default(),
             caps: HashMap::new(),
             next_tag: 1,
+            menu_selection: false,
             selection_linked: false,
             props: HashMap::new(),
             cam: Cam::default(),
@@ -464,6 +469,8 @@ impl BuildTool {
 
     pub fn open_build(&mut self, tool: Tool) {
         self.open = true;
+        // a right-click selection becomes the build selection
+        self.menu_selection = false;
         self.set_tool(tool);
     }
 
@@ -546,6 +553,28 @@ impl BuildTool {
             // clicking a selected object makes it the primary one
             self.selection.retain(|k| *k != unit);
             self.selection.insert(0, unit);
+        }
+    }
+
+    /// Right click on an object: select it like a click while the menu is
+    /// open (LLToolPie::handleRightClickPick -> LLToolSelect::handleObjectSelection
+    /// with temp_select). Returns whether something got selected.
+    pub fn select_for_menu(&mut self, world: &mut World, s: &BuildSettings, idx: usize) -> bool {
+        if Self::unit_of(world, idx, s.edit_linked).is_none() {
+            return false;
+        }
+        self.click_select(world, s, Some(idx), false);
+        if !self.open {
+            self.menu_selection = true;
+        }
+        !self.selection.is_empty()
+    }
+
+    /// The right-click menu closed: drop its selection unless the build
+    /// tools took it over (LLSelectMgr::deselectUnused).
+    pub fn release_menu_selection(&mut self, world: &World) {
+        if std::mem::take(&mut self.menu_selection) && !self.open {
+            self.deselect_all(world);
         }
     }
 
@@ -1254,7 +1283,7 @@ impl BuildTool {
     /// Selected mesh / sculpted prims the renderer outlines as wireframes
     /// (object index -> root color); the others get their edges drawn here.
     pub fn wire_selection(&self, world: &World, s: &BuildSettings) -> HashMap<usize, bool> {
-        if !self.open || !s.show_highlight || self.manip.dragging() {
+        if !(self.open || self.menu_selection) || !s.show_highlight || self.manip.dragging() {
             return HashMap::new();
         }
         self.highlighted(world)
@@ -1266,7 +1295,7 @@ impl BuildTool {
     /// Selection outlines, manipulators, land brush and selection rectangle
     /// over the scene.
     pub fn draw_overlay(&mut self, ctx: &egui::Context, world: &World, s: &BuildSettings, mods: Mods) {
-        if !self.open {
+        if !self.open && !self.menu_selection {
             return;
         }
         let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("build_overlay")));
@@ -1276,6 +1305,9 @@ impl BuildTool {
         if s.show_highlight && !self.manip.dragging() {
             let prims = self.highlighted(world);
             self.silhouettes.draw(&p, world, &prims);
+        }
+        if !self.open {
+            return;
         }
         match self.tool {
             Tool::Edit => {

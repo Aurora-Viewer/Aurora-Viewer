@@ -517,7 +517,7 @@ fn rich(ui: &mut egui::Ui, p: &Palette, emoji: &mut super::emoji::Emoji, world: 
         if line.is_empty() {
             ui.add_space(6.0);
         } else {
-            super::chat::chat_text(ui, emoji, world, want_names, line, 12.5, p.ink, false);
+            super::chat::chat_text(ui, p, emoji, world, want_names, line, 12.5, p.ink, false);
         }
     }
 }

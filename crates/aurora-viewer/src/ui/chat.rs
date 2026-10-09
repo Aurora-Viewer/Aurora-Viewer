@@ -244,11 +244,19 @@ fn segments(text: &str) -> Vec<Seg<'_>> {
     out
 }
 
+/// Right click on an avatar name in a conversation (menu_url_agent.xml).
+fn name_menu(r: &egui::Response, p: &Palette, world: &World, id: uuid::Uuid) {
+    super::menu::context_menu(r, p, |ui| {
+        super::context::avatar_list_menu(ui, p, world, id, super::context::AvatarList::Name)
+    });
+}
+
 /// Message text with emoji, clickable links and highlighted mentions
 /// (agent links and mentions open the profile).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn chat_text(
     ui: &mut egui::Ui,
+    p: &Palette,
     emoji: &mut super::emoji::Emoji,
     world: &World,
     want_names: &mut HashSet<uuid::Uuid>,
@@ -289,6 +297,7 @@ pub(crate) fn chat_text(
                         )
                         .sense(egui::Sense::click()),
                     );
+                    name_menu(&r, p, world, id);
                     if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                         super::profile::request_open(ui.ctx(), id);
                     }
@@ -303,6 +312,7 @@ pub(crate) fn chat_text(
                         )
                         .sense(egui::Sense::click()),
                     );
+                    name_menu(&r, p, world, id);
                     if r.on_hover_cursor(egui::CursorIcon::PointingHand)
                         .on_hover_text("Voir le profil")
                         .clicked()
@@ -360,6 +370,7 @@ fn conversation(
         if line.kind == ChatKind::System {
             chat_text(
                 ui,
+                p,
                 emoji,
                 world,
                 want_names,
@@ -421,6 +432,9 @@ fn conversation(
                         let r = ui.add(egui::Label::new(RichText::new(&name).size(13.0).strong().color(col)).sense(egui::Sense::click()));
                         // the inspector in Firestorm; Aurora opens the profile
                         let avatar = if own { world.agent_id } else { line.source };
+                        if !object && !avatar.is_nil() {
+                            name_menu(&r, p, world, avatar);
+                        }
                         if !object
                             && !avatar.is_nil()
                             && r.on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -461,6 +475,7 @@ fn conversation(
             .show(ui, |ui| {
                 chat_text(
                     ui,
+                    p,
                     emoji,
                     world,
                     want_names,
@@ -710,6 +725,7 @@ pub fn show(
                                     for (id, n, moderator) in names {
                                         let t = RichText::new(n).size(12.0).color(if moderator { p.violet_light } else { p.ink });
                                         let r = ui.add(egui::Label::new(t).sense(egui::Sense::click()));
+                                        name_menu(&r, p, world, id);
                                         let tip = if moderator {
                                             "Modérateur · clic : profil"
                                         } else {

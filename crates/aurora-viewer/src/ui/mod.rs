@@ -22,6 +22,7 @@ pub mod loading;
 pub mod login;
 pub mod map_tiles;
 pub mod media;
+pub mod menu;
 pub mod minimap;
 pub mod news;
 pub mod notifications;
