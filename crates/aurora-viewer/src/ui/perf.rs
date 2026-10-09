@@ -136,7 +136,9 @@ pub struct PerfData {
     pub frames: FrameStats,
     last_fps_update: Instant,
     frames_since: u32,
-    pub net_prev: NetStatsSnapshot,
+    /// Counters at the last rate sample; None before the first frame (the
+    /// first rate must not count everything received since the start).
+    pub net_prev: Option<NetStatsSnapshot>,
     pub net_rate: (f32, f32, f32, f32), // pkts in/s, pkts out/s, kbps in, kbps out
     last_net: Instant,
     pub http_rate_kbps: f32,
@@ -169,7 +171,7 @@ impl Default for PerfData {
             frames: FrameStats::default(),
             last_fps_update: Instant::now(),
             frames_since: 0,
-            net_prev: NetStatsSnapshot::default(),
+            net_prev: None,
             net_rate: (0.0, 0.0, 0.0, 0.0),
             last_net: Instant::now(),
             http_rate_kbps: 0.0,
@@ -229,17 +231,20 @@ impl PerfData {
             self.gpu_shown = self.gpu;
             self.cpu_shown = self.cpu;
         }
+        let p = *self.net_prev.get_or_insert_with(|| {
+            self.last_net = Instant::now();
+            net
+        });
         let nel = self.last_net.elapsed().as_secs_f32();
         if nel >= 1.0 {
-            let p = &self.net_prev;
             self.net_rate = (
-                (net.packets_in - p.packets_in) as f32 / nel,
-                (net.packets_out - p.packets_out) as f32 / nel,
-                (net.bytes_in - p.bytes_in) as f32 * 8.0 / 1000.0 / nel,
-                (net.bytes_out - p.bytes_out) as f32 * 8.0 / 1000.0 / nel,
+                net.packets_in.saturating_sub(p.packets_in) as f32 / nel,
+                net.packets_out.saturating_sub(p.packets_out) as f32 / nel,
+                net.bytes_in.saturating_sub(p.bytes_in) as f32 * 8.0 / 1000.0 / nel,
+                net.bytes_out.saturating_sub(p.bytes_out) as f32 * 8.0 / 1000.0 / nel,
             );
-            self.http_rate_kbps = (net.http_bytes - p.http_bytes) as f32 * 8.0 / 1000.0 / nel;
-            self.net_prev = net;
+            self.http_rate_kbps = net.http_bytes.saturating_sub(p.http_bytes) as f32 * 8.0 / 1000.0 / nel;
+            self.net_prev = Some(net);
             self.last_net = Instant::now();
             if self.net_hist.len() >= NET_HISTORY {
                 self.net_hist.pop_front();
@@ -466,6 +471,10 @@ fn net_graph(ui: &mut egui::Ui, p: &Palette, d: &PerfData) {
         rate += grid;
     }
 
+    // zero line over the whole width: the history fills it from the right
+    let y0 = y(0.0).round() - 0.5;
+    painter.line_segment([pos2(rect.left(), y0), pos2(rect.right(), y0)], Stroke::new(1.0, p.raised));
+
     let n = d.net_hist.len();
     if n < 2 {
         return;
@@ -598,6 +607,10 @@ fn breakdown(ui: &mut egui::Ui, p: &Palette, id: &str, title: &str, parts: Vec<P
     let painter = ui.painter_at(rect);
     // the ends are the first and last parts with some width
     let wide = |x: &Part| x.live / total_live * rect.width() >= 0.5;
+    if !parts.iter().any(wide) {
+        // nothing measured yet (no traffic): the empty track
+        painter.rect_filled(rect, 3.0, p.field);
+    }
     let first = parts.iter().position(wide).unwrap_or(0);
     let last = parts.iter().rposition(wide).unwrap_or(parts.len() - 1);
     let mut x = rect.left();
