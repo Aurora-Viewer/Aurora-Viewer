@@ -5,29 +5,92 @@ use aurora_render::Vertex;
 
 pub const CHUNK_CELLS: u32 = 32;
 
-/// Classic improved Perlin noise (2D/3D), used for terrain texture blending.
-mod perlin {
-    const P: [u8; 256] = [
-        151, 160, 137, 91, 90, 15, 131, 13, 201, 95, 96, 53, 194, 233, 7, 225, 140, 36, 103, 30, 69, 142, 8, 99, 37, 240, 21, 10, 23, 190,
-        6, 148, 247, 120, 234, 75, 0, 26, 197, 62, 94, 252, 219, 203, 117, 35, 11, 32, 57, 177, 33, 88, 237, 149, 56, 87, 174, 20, 125,
-        136, 171, 168, 68, 175, 74, 165, 71, 134, 139, 48, 27, 166, 77, 146, 158, 231, 83, 111, 229, 122, 60, 211, 133, 230, 220, 105, 92,
-        41, 55, 46, 245, 40, 244, 102, 143, 54, 65, 25, 63, 161, 1, 216, 80, 73, 209, 76, 132, 187, 208, 89, 18, 169, 200, 196, 135, 130,
-        116, 188, 159, 86, 164, 100, 109, 198, 173, 186, 3, 64, 52, 217, 226, 250, 124, 123, 5, 202, 38, 147, 118, 126, 255, 82, 85, 212,
-        207, 206, 59, 227, 47, 16, 58, 17, 182, 189, 28, 42, 223, 183, 170, 213, 119, 248, 152, 2, 44, 154, 163, 70, 221, 153, 101, 155,
-        167, 43, 172, 9, 129, 22, 39, 253, 19, 98, 108, 110, 79, 113, 224, 232, 178, 185, 112, 104, 218, 246, 97, 228, 251, 34, 242, 193,
-        238, 210, 144, 12, 191, 179, 162, 241, 81, 51, 145, 235, 249, 14, 239, 107, 49, 192, 214, 31, 181, 199, 106, 157, 184, 84, 204,
-        176, 115, 121, 50, 45, 127, 4, 150, 254, 138, 236, 205, 93, 222, 114, 67, 29, 24, 72, 243, 141, 128, 195, 78, 66, 215, 61, 156,
-        180,
-    ];
+/// Port of the Second Life viewer's lattice noise (indra/newview/noise.h,
+/// noise.cpp, originally LGPL 2.1), used by the terrain composition. The
+/// gradient and permutation tables come from `srand(42)` + `rand()`, so the
+/// texture blend only matches Firestorm's if the same pseudo-random sequence
+/// is reproduced: Firestorm for Windows (the reference) is built with MSVC,
+/// whose `rand()` is a 32-bit LCG returning bits 16..30. All arithmetic is in
+/// f32 in the same order as the C code (built with /fp:precise, no FMA).
+mod noise {
+    use std::sync::OnceLock;
 
+    const B: usize = 0x100;
+    const BM: i32 = 0xff;
+    const NF32: f32 = 4096.0;
+
+    struct Tables {
+        p: [usize; B + B + 2],
+        g2: [[f32; 2]; B + B + 2],
+    }
+
+    /// MSVC CRT `rand()`: holdrand = holdrand * 214013 + 2531011,
+    /// result (holdrand >> 16) & 0x7fff.
+    pub(super) struct MsvcRand(u32);
+
+    impl MsvcRand {
+        pub(super) fn new(seed: u32) -> MsvcRand {
+            MsvcRand(seed)
+        }
+
+        pub(super) fn next(&mut self) -> i32 {
+            self.0 = self.0.wrapping_mul(214_013).wrapping_add(2_531_011);
+            ((self.0 >> 16) & 0x7fff) as i32
+        }
+    }
+
+    /// noise.h `init`: g1, g2 and g3 are drawn interleaved for each lattice
+    /// point (1 + 2 + 3 calls), then the permutation is shuffled. Only `p`
+    /// and `g2` are used (noise2), but g1 / g3 still consume their draws.
+    fn init() -> Tables {
+        let mut r = MsvcRand::new(42);
+        let mut t = Tables {
+            p: [0; B + B + 2],
+            g2: [[0.0; 2]; B + B + 2],
+        };
+        let draw = |r: &mut MsvcRand| ((r.next() % (B + B) as i32) - B as i32) as f32 / B as f32;
+        for i in 0..B {
+            t.p[i] = i;
+            let _g1 = draw(&mut r);
+            let v = [draw(&mut r), draw(&mut r)];
+            // normalize2 (never a zero vector with this seed, see tests)
+            let s = 1.0 / (v[0] * v[0] + v[1] * v[1]).sqrt();
+            t.g2[i] = [v[0] * s, v[1] * s];
+            for _ in 0..3 {
+                let _g3 = draw(&mut r);
+            }
+        }
+        // while (--i) { k = p[i]; p[i] = p[j = rand() % B]; p[j] = k; }
+        for i in (1..B).rev() {
+            let j = (r.next() % B as i32) as usize;
+            t.p.swap(i, j);
+        }
+        for i in 0..B + 2 {
+            t.p[B + i] = t.p[i];
+            t.g2[B + i] = t.g2[i];
+        }
+        t
+    }
+
+    fn tables() -> &'static Tables {
+        static T: OnceLock<Tables> = OnceLock::new();
+        T.get_or_init(init)
+    }
+
+    /// noise.h `fast_setup`: lattice cell (wrapped to 8 bits) and offsets.
     #[inline]
-    fn p(i: i32) -> i32 {
-        P[(i & 255) as usize] as i32
+    fn fast_setup(v: f32) -> (usize, usize, f32, f32) {
+        let r1 = v + NF32;
+        let t = r1 as i32;
+        let b0 = (t & BM) as u8;
+        let b1 = b0.wrapping_add(1);
+        let r0 = r1 - t as f32;
+        (b0 as usize, b1 as usize, r0, r0 - 1.0)
     }
 
     #[inline]
-    fn fade(t: f32) -> f32 {
-        t * t * t * (t * (t * 6.0 - 15.0) + 10.0)
+    fn s_curve(t: f32) -> f32 {
+        t * t * (3.0 - 2.0 * t)
     }
 
     #[inline]
@@ -35,53 +98,32 @@ mod perlin {
         a + t * (b - a)
     }
 
-    #[inline]
-    fn grad(hash: i32, x: f32, y: f32, z: f32) -> f32 {
-        let h = hash & 15;
-        let u = if h < 8 { x } else { y };
-        let v = if h < 4 {
-            y
-        } else if h == 12 || h == 14 {
-            x
-        } else {
-            z
-        };
-        (if h & 1 == 0 { u } else { -u }) + (if h & 2 == 0 { v } else { -v })
+    /// noise.cpp `noise2`: signed 2-D gradient noise, about [-0.7, 0.7].
+    pub fn noise2(x: f32, y: f32) -> f32 {
+        let t = tables();
+        let (bx0, bx1, rx0, rx1) = fast_setup(x);
+        let (by0, by1, ry0, ry1) = fast_setup(y);
+        let i = t.p[bx0];
+        let j = t.p[bx1];
+        let b00 = t.p[i + by0];
+        let b10 = t.p[j + by0];
+        let b01 = t.p[i + by1];
+        let b11 = t.p[j + by1];
+        let sx = s_curve(rx0);
+        let sy = s_curve(ry0);
+        let at2 = |rx: f32, ry: f32, q: [f32; 2]| rx * q[0] + ry * q[1];
+        let a = lerp(sx, at2(rx0, ry0, t.g2[b00]), at2(rx1, ry0, t.g2[b10]));
+        let b = lerp(sx, at2(rx0, ry1, t.g2[b01]), at2(rx1, ry1, t.g2[b11]));
+        lerp(sy, a, b)
     }
 
-    pub fn noise3(x: f32, y: f32, z: f32) -> f32 {
-        let xi = x.floor() as i32;
-        let yi = y.floor() as i32;
-        let zi = z.floor() as i32;
-        let (x, y, z) = (x - x.floor(), y - y.floor(), z - z.floor());
-        let (u, v, w) = (fade(x), fade(y), fade(z));
-        let a = p(xi) + yi;
-        let aa = p(a) + zi;
-        let ab = p(a + 1) + zi;
-        let b = p(xi + 1) + yi;
-        let ba = p(b) + zi;
-        let bb = p(b + 1) + zi;
-        lerp(
-            w,
-            lerp(
-                v,
-                lerp(u, grad(p(aa), x, y, z), grad(p(ba), x - 1.0, y, z)),
-                lerp(u, grad(p(ab), x, y - 1.0, z), grad(p(bb), x - 1.0, y - 1.0, z)),
-            ),
-            lerp(
-                v,
-                lerp(u, grad(p(aa + 1), x, y, z - 1.0), grad(p(ba + 1), x - 1.0, y, z - 1.0)),
-                lerp(u, grad(p(ab + 1), x, y - 1.0, z - 1.0), grad(p(bb + 1), x - 1.0, y - 1.0, z - 1.0)),
-            ),
-        )
-    }
-
-    pub fn turbulence3(x: f32, y: f32, z: f32, octaves: u32) -> f32 {
+    /// noise.h `turbulence2`: signed octaves from `freq` down to 1, each
+    /// weighted by 1/freq (zero mean, unlike a classic |noise| turbulence).
+    pub fn turbulence2(x: f32, y: f32, mut freq: f32) -> f32 {
         let mut t = 0.0;
-        let mut f = 1.0;
-        for _ in 0..octaves {
-            t += noise3(x * f, y * f, z * f).abs() / f;
-            f *= 2.0;
+        while freq >= 1.0 {
+            t += noise2(freq * x, freq * y) / freq;
+            freq *= 0.5;
         }
         t
     }
@@ -187,37 +229,49 @@ impl Heightmap {
 /// Parameters for the texture composition (from RegionHandshake).
 #[derive(Debug, Clone, Copy)]
 pub struct Composition {
-    /// SW, SE, NW, NE (= 00, 01, 10, 11)
+    /// TerrainStartHeight00, 01, 10, 11 = LLVLComposition corners SOUTHWEST,
+    /// SOUTHEAST, NORTHWEST, NORTHEAST.
     pub start_height: [f32; 4],
     pub height_range: [f32; 4],
     pub origin_x: f64,
     pub origin_y: f64,
 }
 
+/// llvlcomposition.cpp `bilinear(v00, v01, v10, v11, x, y)`, called with
+/// (SW, SE, NW, NE): despite the corner names, the second corner (SE) is
+/// weighted along y and the third (NW) along x. Kept as is: the region's
+/// corner heights are authored against what the viewers draw.
 fn bilinear(v: [f32; 4], x: f32, y: f32) -> f32 {
-    let s = v[0] + (v[1] - v[0]) * x;
-    let n = v[2] + (v[3] - v[2]) * x;
-    s + (n - s) * y
+    let ix = 1.0 - x;
+    let iy = 1.0 - y;
+    ix * iy * v[0] + x * iy * v[2] + ix * y * v[1] + x * y * v[3]
 }
 
 impl Composition {
-    /// Composition value in [0, 3] at region coordinates (llvlcomposition.cpp).
+    /// Composition value in [0, 3] at region coordinates: port of
+    /// LLVLComposition::generateHeights (llvlcomposition.cpp, originally
+    /// LGPL 2.1). Only the horizontal position feeds the noise (noise2 /
+    /// turbulence2 ignore the height component LL fills in).
     pub fn value(&self, hm: &Heightmap, x: f32, y: f32, height: f32) -> f32 {
         const XY_SCALE_INV: f32 = 1.0 / 4.9215;
-        const Z_SCALE_INV: f32 = 1.0 / 4.0;
         const SLOPE_SQUARED: f32 = 1.5 * 1.5;
         const NOISE_MAGNITUDE: f32 = 2.0;
+        const ASSET_COUNT: f32 = 4.0;
         let fx = x / hm.size_x as f32;
         let fy = y / hm.size_y as f32;
         let start = bilinear(self.start_height, fx, fy);
-        let range = bilinear(self.height_range, fx, fy).max(0.01);
+        let range = bilinear(self.height_range, fx, fy);
         let vx = ((self.origin_x + x as f64) as f32) * XY_SCALE_INV;
         let vy = ((self.origin_y + y as f64) as f32) * XY_SCALE_INV;
-        let vz = height * Z_SCALE_INV;
-        let mut twiddle = perlin::noise3(vx * 0.222_222_22, vy * 0.222_222_22, vz * 0.222_222_22) * 6.5;
-        twiddle += perlin::turbulence3(vx, vy, vz, 2) * SLOPE_SQUARED;
+        // low frequency component for large divisions
+        let mut twiddle = noise::noise2(vx * 0.222_222_22, vy * 0.222_222_22) * 6.5;
+        // high frequency component
+        twiddle += noise::turbulence2(vx, vy, 2.0) * SLOPE_SQUARED;
         twiddle *= NOISE_MAGNITUDE;
-        ((height + twiddle - start) * 4.0 / range).clamp(0.0, 3.0)
+        let v = (height + twiddle - start) * ASSET_COUNT / range;
+        // LL divides by the raw range: a zero range gives +-inf (clamped to
+        // 0 or 3); 0 / 0 (undefined in LL) gives the first layer
+        if v.is_nan() { 0.0 } else { v.clamp(0.0, 3.0) }
     }
 }
 
@@ -281,11 +335,80 @@ mod tests {
         assert!(i.iter().all(|&x| (x as usize) < v.len()));
     }
 
+    /// Reference values from Firestorm's noise.cpp / noise.h compiled with
+    /// MSVC 2022 (/O2 /fp:precise /arch:AVX2, the CRT's rand()), the same
+    /// toolchain as Firestorm for Windows.
     #[test]
-    fn noise_is_bounded() {
-        for i in 0..1000 {
-            let v = perlin::noise3(i as f32 * 0.37, i as f32 * 0.11, 0.5);
-            assert!((-1.5..=1.5).contains(&v));
+    fn noise_matches_firestorm() {
+        let close = |a: f32, b: f32| (a - b).abs() <= 1e-6;
+        for (x, y, n, t) in [
+            (0.0, 0.0, 0.0, 0.0),
+            (0.5, 0.25, -0.356_576_26, -0.409_460_78),
+            (1.37, 2.11, 0.197_173_73, 0.061_257_884),
+            (10.3, -4.7, 0.099_117_63, -0.060_509_764),
+            (123.456, 78.9, 0.125_369_07, 0.200_200_22),
+            (52012.2, 52043.7, -0.132_383_69, -0.441_523_5),
+        ] {
+            let got = noise::noise2(x, y);
+            assert!(close(got, n), "noise2({x}, {y}) = {got}, Firestorm {n}");
+            let got = noise::turbulence2(x, y, 2.0);
+            assert!(close(got, t), "turbulence2({x}, {y}) = {got}, Firestorm {t}");
         }
+    }
+
+    #[test]
+    fn msvc_rand_sequence() {
+        // srand(42); rand() x 3 with the MSVC CRT
+        let mut r = noise::MsvcRand::new(42);
+        assert_eq!([r.next(), r.next(), r.next()], [175, 400, 17869]);
+    }
+
+    #[test]
+    fn composition_matches_firestorm() {
+        let mut hm = Heightmap::new(256, 256);
+        for (x, y, h) in [(0, 0, 20.0), (10, 20, 21.5), (128, 64, 35.0), (200, 250, 60.0), (33, 177, 24.25)] {
+            hm.heights[y * 256 + x] = h;
+        }
+        let comp = Composition {
+            start_height: [10.0; 4],
+            height_range: [60.0; 4],
+            origin_x: 256000.0,
+            origin_y: 256000.0,
+        };
+        for (x, y, h, want) in [
+            (0, 0, 20.0, 0.828_389_2),
+            (10, 20, 21.5, 0.958_008_5),
+            (128, 64, 35.0, 1.700_175_2),
+            (200, 250, 60.0, 3.0),
+            (33, 177, 24.25, 0.699_741),
+        ] {
+            let got = comp.value(&hm, x as f32, y as f32, h);
+            assert!((got - want).abs() <= 1e-5, "comp({x}, {y}) = {got}, Firestorm {want}");
+        }
+    }
+
+    #[test]
+    fn corner_mapping_follows_firestorm() {
+        // v = [SW, SE, NW, NE]: NW is reached along x, SE along y
+        let v = [1.0, 2.0, 3.0, 4.0];
+        assert_eq!(bilinear(v, 0.0, 0.0), 1.0);
+        assert_eq!(bilinear(v, 1.0, 0.0), 3.0);
+        assert_eq!(bilinear(v, 0.0, 1.0), 2.0);
+        assert_eq!(bilinear(v, 1.0, 1.0), 4.0);
+        assert!((bilinear(v, 0.5, 0.5) - 2.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn turbulence_has_no_bias() {
+        // the old |noise| turbulence always raised the blend height
+        let mut sum = 0.0f64;
+        let n = 200;
+        for j in 0..n {
+            for i in 0..n {
+                sum += noise::turbulence2(i as f32 * 0.37 + 1000.0, j as f32 * 0.41 + 2000.0, 2.0) as f64;
+            }
+        }
+        let mean = sum / (n * n) as f64;
+        assert!(mean.abs() < 0.05, "mean {mean}");
     }
 }

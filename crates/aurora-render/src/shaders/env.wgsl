@@ -134,6 +134,43 @@ fn vs_terrain(in: VsIn) -> TerrainOut {
     return out;
 }
 
+// IMG_ALPHA_GRAD (skins/default/textures/alpha_gradient.tga, Second Life
+// viewer, Copyright (C) Linden Research, Inc., LGPL 2.1): 256 x 1 alpha
+// ramp from 255 down to 0, slightly eased at both ends. Four 8-bit texels
+// per word, first texel in the low byte.
+const TERRAIN_ALPHA_RAMP: array<u32, 64> = array<u32, 64>(
+    0xfdfdfeffu, 0xfbfbfbfcu, 0xf9f9fafau, 0xf6f6f7f7u, 0xf3f4f4f5u, 0xf0f1f1f2u, 0xedeeeeefu, 0xeaeaebecu,
+    0xe6e7e7e8u, 0xe3e3e4e5u, 0xdfe0e1e2u, 0xdbdcdddfu, 0xd7d9d9dau, 0xd3d5d5d7u, 0xcfd0d2d3u, 0xcbcccdcfu,
+    0xc7c8c9cau, 0xc2c3c5c6u, 0xbebfc0c1u, 0xb9babbbdu, 0xb5b6b7b9u, 0xb0b1b2b4u, 0xabacaeafu, 0xa7a8a9abu,
+    0xa2a4a4a6u, 0x9d9ea0a1u, 0x989a9b9cu, 0x94959697u, 0x8f8f9193u, 0x8a8a8c8du, 0x84868788u, 0x80818283u,
+    0x7b7b7d7eu, 0x7676787au, 0x70727374u, 0x6c6c6f6fu, 0x6768696au, 0x62636466u, 0x5d5e5f61u, 0x585a5b5cu,
+    0x53545657u, 0x4f505152u, 0x4a4c4d4eu, 0x45474849u, 0x41424344u, 0x3d3d3f3fu, 0x38393a3bu, 0x34353537u,
+    0x2f303232u, 0x2c2c2e2fu, 0x2728292bu, 0x23242527u, 0x20212223u, 0x1d1e1e1fu, 0x19191b1cu, 0x15161718u,
+    0x12131415u, 0x0f101111u, 0x0c0d0d0fu, 0x090a0a0bu, 0x06070909u, 0x04050506u, 0x02020303u, 0x00010101u,
+);
+
+fn terrain_ramp_texel(i: u32) -> f32 {
+    return f32((TERRAIN_ALPHA_RAMP[i >> 2u] >> ((i & 3u) * 8u)) & 0xffu) / 255.0;
+}
+
+// texture(alpha_ramp, vec2(u, ..)).a with the ramp's GL_LINEAR filtering
+// and TAM_CLAMP addressing (texel centers at (i + 0.5) / 256).
+fn terrain_ramp(u: f32) -> f32 {
+    let x = clamp(u * 256.0 - 0.5, 0.0, 255.0);
+    let i = u32(x);
+    return mix(terrain_ramp_texel(i), terrain_ramp_texel(min(i + 1u, 255u)), x - f32(i));
+}
+
+// terrainF.glsl / terrainV.glsl layer weights for the composition value c
+// in [0, 3]: mix(mix(d3, d2, R(c - 2)), mix(d1, d0, R(c)), R(c - 1)) with R
+// the alpha ramp, written as one weight per detail texture.
+fn terrain_weights(c: f32) -> vec4<f32> {
+    let a1 = terrain_ramp(c);
+    let a2 = terrain_ramp(c - 2.0);
+    let af = terrain_ramp(c - 1.0);
+    return vec4<f32>(af * a1, af * (1.0 - a1), (1.0 - af) * a2, (1.0 - af) * (1.0 - a2));
+}
+
 fn terrain_color(in: TerrainOut) -> vec3<f32> {
     let rec = records[in.record];
     // uv is region-space meters; detail textures repeat every uv_st.x meters
@@ -142,11 +179,11 @@ fn terrain_color(in: TerrainOut) -> vec3<f32> {
     let t1 = sample_tex(rec.tex.y, tc).rgb;
     let t2 = sample_tex(rec.tex.z, tc).rgb;
     let t3 = sample_tex(rec.tex.w, tc).rgb;
-    let c = clamp(in.comp, 0.0, 3.0);
-    let w0 = clamp(1.0 - c, 0.0, 1.0);
-    let w1 = clamp(1.0 - abs(c - 1.0), 0.0, 1.0);
-    let w2 = clamp(1.0 - abs(c - 2.0), 0.0, 1.0);
-    let w3 = clamp(c - 2.0, 0.0, 1.0);
+    let w = terrain_weights(clamp(in.comp, 0.0, 3.0));
+    let w0 = w.x;
+    let w1 = w.y;
+    let w2 = w.z;
+    let w3 = w.w;
     var albedo = srgb_to_linear(t0 * w0 + t1 * w1 + t2 * w2 + t3 * w3);
     if (rec.tex.x == 0u && rec.tex.y == 0u) {
         // no detail textures: flat palette (sand, grass, earth, rock)
