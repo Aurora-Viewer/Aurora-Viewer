@@ -2,6 +2,7 @@
 
 use crate::agent::MoveInput;
 use crate::camera::Camera;
+use crate::frame_profile::{FrameProfile, Lap, SceneCounts};
 use crate::keybinds::{Action, Input, Mods};
 use crate::scene::avatar::AvatarLibrary;
 use crate::scene::{CullView, Scene};
@@ -112,6 +113,8 @@ pub struct App {
     panels: Panels,
     chat_ui: ChatUi,
     perf: PerfData,
+    /// AURORA_PROFILE: frame laps and the summary line in the log.
+    frame_profile: FrameProfile,
     last_frame: Instant,
     start: Instant,
     right_drag: bool,
@@ -388,6 +391,7 @@ impl App {
             panels,
             chat_ui: ChatUi::default(),
             perf: PerfData::default(),
+            frame_profile: FrameProfile::default(),
             last_frame: Instant::now(),
             start: Instant::now(),
             right_drag: false,
@@ -2371,6 +2375,7 @@ impl App {
     }
 
     fn frame(&mut self, event_loop: &ActiveEventLoop) {
+        self.frame_profile.lap(Lap::Between);
         let now = Instant::now();
         let dt = now.duration_since(self.last_frame).as_secs_f32().min(0.1);
         self.last_frame = now;
@@ -2398,6 +2403,7 @@ impl App {
             self.egui_ctx.set_zoom_factor(self.settings.ui_scale);
         }
 
+        self.frame_profile.lap(Lap::Start);
         // ---- network events (time-boxed)
         let t_ev = Instant::now();
         self.world.events_this_frame = 0;
@@ -2410,6 +2416,7 @@ impl App {
             }
         }
         self.perf.events_ms = t_ev.elapsed().as_secs_f32() * 1000.0;
+        self.frame_profile.lap(Lap::Events);
         if self.in_world() && self.last_social_poll.elapsed() > Duration::from_millis(500) {
             self.last_social_poll = Instant::now();
             self.poll_names();
@@ -2460,6 +2467,7 @@ impl App {
             }
         }
 
+        self.frame_profile.lap(Lap::Social);
         let Some(mut gfx) = self.gfx.take() else {
             return;
         };
@@ -2535,6 +2543,7 @@ impl App {
             self.frozen_cull = None;
         }
 
+        self.frame_profile.lap(Lap::AgentCamera);
         // ---- scene
         let in_world = self.in_world();
         if in_world {
@@ -2550,9 +2559,11 @@ impl App {
                 _ => None,
             };
             self.scene.process_results(&mut gfx.renderer, &self.net, Duration::from_millis(6));
+            self.frame_profile.lap(Lap::Results);
             // poses first: attachments follow their bone in the same frame
             self.scene
                 .update_poses(&mut gfx.renderer, &mut self.world, self.camera.position, now);
+            self.frame_profile.lap(Lap::Poses);
             let mut exceptions = self.settings.render_exceptions_map();
             // blocked residents: grey silhouettes (FIRE-11783)
             for id in self.world.mutes.blocked_ids() {
@@ -2569,7 +2580,9 @@ impl App {
                     friends: &friends,
                 },
             );
+            self.frame_profile.lap(Lap::Complexity);
             self.scene.sync(&mut gfx.renderer, &mut self.world, &cull);
+            self.frame_profile.lap(Lap::Sync);
             {
                 // web pages and videos on faces (LLViewerMedia::updateMedia)
                 let a = &self.settings.audio;
@@ -2631,6 +2644,7 @@ impl App {
                     }
                 }
             }
+            self.frame_profile.lap(Lap::Media);
             // avatars still loading: clouds (Firestorm) and progress bars
             self.scene.update_loading(&self.world, Instant::now());
             // the demo avatars have no real bakes: no clouds offline unless
@@ -2652,7 +2666,9 @@ impl App {
             self.scene
                 .banlines
                 .update(&mut gfx.renderer, &self.world, self.settings.maps.ban_lines, self.camera.position);
+            self.frame_profile.lap(Lap::Extras);
             self.scene.build_lists(&cull, self.settings.shadows);
+            self.frame_profile.lap(Lap::Lists);
             if self.demo && std::env::var_os("AURORA_DEMO_ANIMESH").is_some() && self.frame_count.is_multiple_of(120) {
                 self.scene.log_demo_animesh(&self.world);
             }
@@ -2689,6 +2705,7 @@ impl App {
                 .stream(&mut gfx.renderer, &self.net, &self.world, texture_budget * 1024 * 1024);
         }
         self.perf.update_ms = t_up.elapsed().as_secs_f32() * 1000.0;
+        self.frame_profile.lap(Lap::Stream);
 
         // ---- loading -> world transition
         if let Screen::Loading { since } = self.screen {
@@ -2945,6 +2962,7 @@ impl App {
             debug_glow: self.settings.debug.glow_view,
         };
 
+        self.frame_profile.lap(Lap::Params);
         // ---- UI
         let t_ui = Instant::now();
         let mut raw = gfx.egui_state.take_egui_input(&gfx.window);
@@ -3098,6 +3116,7 @@ impl App {
         let ppp = full.pixels_per_point;
         let prims = ctx.tessellate(full.shapes, ppp);
         self.perf.ui_ms = t_ui.elapsed().as_secs_f32() * 1000.0;
+        self.frame_profile.lap(Lap::Ui);
 
         // apply UI actions
         if actions.font_changed {
@@ -3128,6 +3147,7 @@ impl App {
             gfx.renderer.capture_scene = true;
             self.scene_capture_pending = true;
         }
+        self.frame_profile.lap(Lap::Actions);
         // ---- render
         let lists = if self.in_world() { &self.scene.lists } else { &self.empty_lists };
         let stats = gfx.renderer.render(
@@ -3141,6 +3161,7 @@ impl App {
         );
         full.textures_delta.clear();
         self.last_render = stats;
+        self.frame_profile.lap(Lap::Render);
         // frame limiter: the background cap when the window is not focused,
         // else the user cap; vsync already paces at the screen rate
         let s = &self.settings;
@@ -3166,6 +3187,7 @@ impl App {
                 }
             }
         }
+        self.frame_profile.lap(Lap::Limiter);
         self.frame_start = Instant::now();
         self.frame_count += 1;
         if self.demo && std::env::var_os("AURORA_DEMO_ANIM_LOOP").is_some() {
@@ -3197,6 +3219,8 @@ impl App {
         }
         self.perf
             .frame(dt * 1000.0, self.net.stats.snapshot(), &self.last_render, &self.scene.stats);
+        self.frame_profile.lap(Lap::Tail);
+        self.end_profile_frame(w, h);
         self.gfx = Some(gfx);
         self.demo_action_steps();
         // closing the window: leave once the last view is kept (or after 1 s)
@@ -3440,6 +3464,44 @@ impl App {
                 _ => {}
             }
         }
+    }
+
+    /// AURORA_PROFILE: the frame's counters and the settings that change its
+    /// cost, for the summary line.
+    fn end_profile_frame(&mut self, width: u32, height: u32) {
+        let s = &self.settings;
+        self.frame_profile.settings(|| {
+            format!(
+                "{width}x{height} vsync={} fps_cap={} draw_distance={:.0} lod_factor={:.2} max_avatars={} shadows={} \
+                 shadow_quality={} probes={} mirrors={} {:?}",
+                s.vsync,
+                if s.fps_cap { s.fps_limit } else { 0 },
+                s.draw_distance,
+                s.lod_factor,
+                s.max_avatars,
+                s.shadows,
+                s.shadow_quality,
+                s.reflection_probes,
+                s.mirrors,
+                s.render_settings(),
+            )
+        });
+        let in_world = self.in_world();
+        let lists = &self.scene.lists;
+        let st = &self.scene.stats;
+        let counts = SceneCounts {
+            objects: st.objects,
+            visible: st.visible_objects,
+            synced: if in_world { st.synced } else { 0 },
+            rebuilt: if in_world { st.rebuilt } else { 0 },
+            posed: if in_world { st.posed } else { 0 },
+            blend: lists.blend.len(),
+            blend_glow: lists.blend_glow.iter().filter(|g| **g).count(),
+            glow_alpha: lists.glow_alpha.len(),
+            jobs: st.jobs,
+            geom_pending: st.geom_pending,
+        };
+        self.frame_profile.end_frame(&self.last_render, &counts);
     }
 
     /// Local chat from the chat bar or the conversations window: a chat bar

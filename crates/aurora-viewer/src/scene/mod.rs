@@ -151,6 +151,11 @@ pub struct SceneStats {
     pub cull_ms: f32,
     pub avatars_hidden: usize,
     pub sync_ms: f32,
+    /// Objects updated by the last sync, and those whose faces were rebuilt.
+    pub synced: usize,
+    pub rebuilt: usize,
+    /// Skeleton owners posed this frame.
+    pub posed: usize,
 }
 
 pub struct Scene {
@@ -979,6 +984,8 @@ impl Scene {
         let tex_gen = self.textures.generation;
         let mat_gen = self.materials.generation;
         let n = world.objects.slots.len();
+        self.stats.synced = 0;
+        self.stats.rebuilt = 0;
         for idx in 0..n {
             let Some(o) = world.objects.get(idx) else {
                 continue;
@@ -1001,6 +1008,7 @@ impl Scene {
             {
                 continue;
             }
+            self.stats.synced += 1;
             self.sync_object(renderer, world, idx, now, view);
             let _ = tex_gen;
         }
@@ -1225,6 +1233,7 @@ impl Scene {
             || (!self.gpu[idx].material_ids.is_empty() && self.gpu[idx].mat_generation != self.materials.generation);
 
         if full_rebuild {
+            self.stats.rebuilt += 1;
             self.rebuild_faces(renderer, world, idx, &geom, model);
         } else {
             // transform-only update
@@ -2151,6 +2160,7 @@ impl Scene {
                 }
             }
         }
+        self.stats.posed = 0;
         let n = self.palette_count as usize * anim::PALETTE_JOINTS;
         if n == 0 {
             world.avatar_poses.clear();
@@ -2232,6 +2242,7 @@ impl Scene {
             work.push((slot as usize, motions, base, owner));
             posed.push((owner, slot as usize));
         }
+        self.stats.posed = work.len();
         let pal = &mut self.palettes;
         let mut chunks: Vec<Option<&mut [[[f32; 4]; 4]]>> = pal.chunks_mut(anim::PALETTE_JOINTS).map(Some).collect();
         let jobs: Vec<(&mut [[[f32; 4]; 4]], &mut (usize, anim::Controller, Arc<anim::SkeletonBase>, Uuid))> = work
