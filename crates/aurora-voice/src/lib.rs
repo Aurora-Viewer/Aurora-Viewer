@@ -105,10 +105,10 @@ impl VoiceSession {
     /// `sink`. Non-WebRTC regions end up in [`VoiceStatus::Unsupported`]
     /// without any network traffic.
     pub fn connect(http: reqwest::Client, params: VoiceConnectParams, sink: VoiceSink) -> VoiceSession {
-        // WebRTC's DTLS uses rustls' process-wide crypto provider, which is
-        // ambiguous when several backends are compiled in (ring via webrtc,
-        // aws-lc-rs via reqwest). Install aws-lc-rs unless the application
-        // already chose one.
+        // rustls' process-wide crypto provider is ambiguous when several
+        // backends are compiled in (ring via webrtc, aws-lc-rs via reqwest);
+        // webrtc's DTLS takes its own provider, the other rustls users do
+        // not. Install aws-lc-rs unless the application already chose one.
         if rustls::crypto::CryptoProvider::get_default().is_none() {
             let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
         }

@@ -10,19 +10,20 @@ use std::sync::atomic::AtomicBool;
 
 use aurora_audio::{MicCapture, PcmSink};
 use glam::{DVec3, Quat};
+use rtc::ice::network_type::NetworkType;
 use uuid::Uuid;
-use webrtc::ice::mdns::MulticastDnsMode;
-use webrtc::ice::network_type::NetworkType;
 
 use crate::{ChannelKind, VoiceConnectParams, VoiceSession};
 
 pub(crate) static LOOPBACK_ONLY: AtomicBool = AtomicBool::new(false);
 
-pub(crate) fn restrict_to_loopback(settings: &mut SettingEngine) {
-    settings.set_include_loopback_candidate(true);
-    settings.set_ip_filter(Box::new(|ip| ip.is_loopback()));
-    settings.set_network_types(vec![NetworkType::Udp4]);
-    settings.set_ice_multicast_dns_mode(MulticastDnsMode::Disabled);
+/// Loopback candidates only; the sockets themselves are bound on 127.0.0.1
+/// (`udp_bind_addrs`), webrtc 0.21 having no IP filter.
+pub(crate) fn restrict_to_loopback(settings: SettingEngineBuilder) -> SettingEngineBuilder {
+    settings
+        .with_include_loopback_candidate(true)
+        .with_network_types(vec![NetworkType::Udp4])
+        .with_multicast_dns_mode(MulticastDnsMode::Disabled)
 }
 
 #[derive(Default)]
@@ -30,79 +31,123 @@ struct ServerState {
     provision_bodies: Mutex<Vec<Llsd>>,
     logouts: Mutex<Vec<Llsd>>,
     data_messages: Mutex<Vec<String>>,
-    peers: Mutex<Vec<Arc<RTCPeerConnection>>>,
+    peers: Mutex<Vec<Arc<dyn PeerConnection>>>,
     /// Opus payloads received from the client, in arrival order.
     rx_packets: Mutex<Vec<Vec<u8>>>,
+}
+
+/// Callbacks of the fake server's peer connection.
+struct ServerHandler {
+    state: Arc<ServerState>,
+    other: Uuid,
+    gathered: Notify,
+    connected: Notify,
+}
+
+#[async_trait::async_trait]
+impl PeerConnectionEventHandler for ServerHandler {
+    async fn on_ice_gathering_state_change(&self, state: RTCIceGatheringState) {
+        if state == RTCIceGatheringState::Complete {
+            self.gathered.notify_one();
+        }
+    }
+
+    async fn on_connection_state_change(&self, state: RTCPeerConnectionState) {
+        if state == RTCPeerConnectionState::Connected {
+            self.connected.notify_one();
+        }
+    }
+
+    async fn on_data_channel(&self, dc: Arc<dyn DataChannel>) {
+        let (state, other) = (self.state.clone(), self.other);
+        tokio::spawn(async move {
+            while let Some(event) = dc.poll().await {
+                let DataChannelEvent::OnMessage(msg) = event else { continue };
+                let text = String::from_utf8_lossy(&msg.data).to_string();
+                let is_join = text.contains(r#""j""#);
+                state.data_messages.lock().push(text);
+                if is_join {
+                    let roster = format!(r#"{{"{other}":{{"j":{{"p":true}},"v":true,"p":64}}}}"#);
+                    let _ = dc.send_text(&roster).await;
+                }
+            }
+        });
+    }
+
+    async fn on_track(&self, track: Arc<dyn TrackRemote>) {
+        // Record what the client transmits.
+        let state = self.state.clone();
+        tokio::spawn(async move {
+            while let Some(event) = track.poll().await {
+                if let TrackRemoteEvent::OnRtpPacket(packet) = event {
+                    state.rx_packets.lock().push(packet.payload.to_vec());
+                }
+            }
+        });
+    }
 }
 
 async fn make_answer(offer: String, state: Arc<ServerState>, other: Uuid) -> String {
     let mut media = MediaEngine::default();
     media.register_default_codecs().unwrap();
     let registry = register_default_interceptors(Registry::new(), &mut media).unwrap();
-    let mut settings = SettingEngine::default();
-    restrict_to_loopback(&mut settings);
-    let api = APIBuilder::new()
-        .with_media_engine(media)
-        .with_interceptor_registry(registry)
-        .with_setting_engine(settings)
-        .build();
-    let pc = Arc::new(api.new_peer_connection(RTCConfiguration::default()).await.unwrap());
-    {
-        let state = state.clone();
-        pc.on_data_channel(Box::new(move |dc| {
-            let state = state.clone();
-            let reply_dc = dc.clone();
-            dc.on_message(Box::new(move |msg| {
-                let text = String::from_utf8_lossy(&msg.data).to_string();
-                let is_join = text.contains(r#""j""#);
-                state.data_messages.lock().push(text);
-                let dc = reply_dc.clone();
-                Box::pin(async move {
-                    if is_join {
-                        let roster = format!(r#"{{"{other}":{{"j":{{"p":true}},"v":true,"p":64}}}}"#);
-                        let _ = dc.send_text(roster).await;
-                    }
-                })
-            }));
-            Box::pin(async {})
-        }));
-    }
-    {
-        // Record what the client transmits.
-        let state = state.clone();
-        pc.on_track(Box::new(move |track, _receiver, _transceiver| {
-            let state = state.clone();
-            tokio::spawn(async move {
-                while let Ok((packet, _)) = track.read_rtp().await {
-                    state.rx_packets.lock().push(packet.payload.to_vec());
-                }
-            });
-            Box::pin(async {})
-        }));
-    }
+    let handler = Arc::new(ServerHandler {
+        state: state.clone(),
+        other,
+        gathered: Notify::new(),
+        connected: Notify::new(),
+    });
+    let pc: Arc<dyn PeerConnection> = Arc::new(
+        PeerConnectionBuilder::new()
+            .with_media_engine(media)
+            .with_interceptor_registry(registry)
+            .with_setting_engine(restrict_to_loopback(SettingEngineBuilder::new()).build())
+            .with_handler(handler.clone())
+            .with_udp_addrs(vec!["127.0.0.1:0"])
+            .build()
+            .await
+            .unwrap(),
+    );
     // Add the sending track first so the offered audio m-line is matched
     // with a sendrecv transceiver.
-    let track = Arc::new(TrackLocalStaticSample::new(
-        opus_capability(),
-        "srv-audio".into(),
-        "srv-stream".into(),
-    ));
-    pc.add_track(track.clone()).await.unwrap();
+    let ssrc = random_ssrc();
+    let track = Arc::new(
+        TrackLocalStaticSample::new(
+            Instant::now(),
+            MediaStreamTrack::new(
+                "srv-stream".into(),
+                "srv-audio".into(),
+                "srv-audio".into(),
+                RtpCodecKind::Audio,
+                vec![RTCRtpEncodingParameters {
+                    rtp_coding_parameters: RTCRtpCodingParameters {
+                        ssrc: Some(ssrc),
+                        ..Default::default()
+                    },
+                    codec: opus_capability(),
+                    ..Default::default()
+                }],
+            ),
+        )
+        .unwrap(),
+    );
+    let sender = pc.add_track(track.clone() as Arc<dyn TrackLocal>).await.unwrap();
     pc.set_remote_description(RTCSessionDescription::offer(offer).unwrap())
         .await
         .unwrap();
+    let payload_type = sender.get_parameters().await.unwrap().rtp_parameters.codecs[0].payload_type;
     let answer = pc.create_answer(None).await.unwrap();
-    let mut gathered = pc.gathering_complete_promise().await;
     pc.set_local_description(answer).await.unwrap();
-    let _ = gathered.recv().await;
+    handler.gathered.notified().await;
     tokio::spawn(async move {
+        handler.connected.notified().await;
         loop {
-            let sample = webrtc::media::Sample {
+            let sample = Sample {
                 data: bytes::Bytes::from_static(&OPUS_SILENCE),
                 duration: Duration::from_millis(20),
-                ..Default::default()
+                ..Sample::new(Instant::now())
             };
-            if track.write_sample(&sample).await.is_err() {
+            if track.write_sample(ssrc, payload_type, &sample, &[]).await.is_err() {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
