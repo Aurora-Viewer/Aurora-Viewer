@@ -2129,7 +2129,10 @@ impl App {
     fn lights(&self) -> Vec<PointLight> {
         let eye = self.camera.position;
         let mut lights: Vec<(f32, PointLight)> = Vec::new();
-        for (idx, o) in self.world.objects.iter() {
+        for &idx in &self.scene.light_objects {
+            let Some(o) = self.world.objects.get(idx) else {
+                continue;
+            };
             let Some(l) = o.extra.light else {
                 continue;
             };

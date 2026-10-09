@@ -254,7 +254,10 @@ impl GeometryArena {
     }
 }
 
-const CHUNK: usize = 256;
+/// Records per dirty chunk: small enough that scattered updates (worn
+/// attachments, avatars) do not drag big untouched ranges along; neighbours
+/// are still uploaded in one write.
+const CHUNK: usize = 64;
 
 /// Storage buffer of `DrawRecord`s with a CPU mirror and chunked dirty uploads.
 pub struct RecordStore {

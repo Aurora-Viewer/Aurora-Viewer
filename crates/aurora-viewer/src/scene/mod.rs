@@ -184,6 +184,15 @@ pub struct Scene {
     /// Per object, this frame: 0 not known yet, 1 still, 2 moves or follows
     /// something that moves or was updated (see `follows_motion`).
     motion: Vec<u8>,
+    /// Texture generation of the last face alpha re-classification, and
+    /// faces built since: the pass over every face only runs then.
+    alpha_seen_gen: u64,
+    faces_changed: bool,
+    /// Objects with light parameters (kept by `sync_object`, which sees every
+    /// object when it arrives and on each update): the light list reads
+    /// these instead of every object each frame. May hold removed indices;
+    /// readers check the object again.
+    pub light_objects: std::collections::BTreeSet<usize>,
     /// Build tools: selected mesh / sculpted objects drawn as wireframes
     /// (object index -> root color).
     pub selection_wire: HashMap<usize, bool>,
@@ -389,6 +398,9 @@ impl Scene {
             avatar_complexity: HashMap::new(),
             too_complex: Default::default(),
             motion: Vec::new(),
+            alpha_seen_gen: u64::MAX,
+            faces_changed: true,
+            light_objects: Default::default(),
             selection_wire: HashMap::new(),
             debug_alpha: None,
             last_cull: None,
@@ -1107,8 +1119,14 @@ impl Scene {
         self.stats.geom_pending = self.geoms.values().filter(|e| matches!(e.state, GeomState::Pending)).count();
         self.stats.jobs = self.jobs.pending();
         self.stats.sync_ms = t0.elapsed().as_secs_f32() * 1000.0;
-        // Alpha classification can change when a texture finishes streaming.
+        // Alpha classification can change when a texture finishes streaming
+        // (generation bump) or faces are rebuilt; else nothing to redo.
         // Shadow shaders use the same face mode as the visible draw lists.
+        if self.textures.generation == self.alpha_seen_gen && !self.faces_changed {
+            return;
+        }
+        self.alpha_seen_gen = self.textures.generation;
+        self.faces_changed = false;
         for g in &self.gpu {
             for f in &g.faces {
                 let alpha = self.textures.alpha_by_slot.get(f.base_slot as usize).copied().unwrap_or_default();
@@ -1129,6 +1147,11 @@ impl Scene {
     }
 
     fn sync_object(&mut self, renderer: &mut Renderer, world: &mut World, idx: usize, now: Instant, view: &CullView) {
+        if world.objects.get(idx).is_some_and(|o| o.extra.light.is_some()) {
+            self.light_objects.insert(idx);
+        } else {
+            self.light_objects.remove(&idx);
+        }
         let Some((pos, rot, hud)) = Self::object_transform(world, idx, now, 0) else {
             return;
         };
@@ -1571,6 +1594,7 @@ impl Scene {
         g.mat_generation = self.materials.generation;
         g.built_faces = geom.faces.iter().filter(|f| f.is_some()).count();
         self.gpu[idx] = g;
+        self.faces_changed = true;
     }
 
     /// For an attachment, the wearing avatar (full id, object index).
@@ -1717,10 +1741,16 @@ impl Scene {
             g.bom_mask = bom_mask;
             g.jelly = jelly;
             self.gpu[idx] = g;
+            self.faces_changed = true;
         } else {
+            // an avatar standing still keeps its records: not uploaded again
+            let model = avatar_model.to_cols_array_2d();
             for f in &self.gpu[idx].faces {
-                if let Some(mut r) = renderer.records.get(f.record).copied() {
-                    r.model = avatar_model.to_cols_array_2d();
+                if let Some(rec) = renderer.records.get(f.record)
+                    && rec.model != model
+                {
+                    let mut r = *rec;
+                    r.model = model;
                     renderer.records.set(f.record, r);
                 }
             }
@@ -2343,6 +2373,7 @@ impl Scene {
         world.avatar_root_dz.extend(root_dz);
         self.skeletons
             .retain(|id, _| world.avatar_poses.contains_key(id) || posed.iter().any(|p| p.0 == *id));
+        let posed_slots: Vec<usize> = posed.iter().map(|p| p.1).collect();
         for (owner, slot) in posed {
             let base = slot * anim::PALETTE_JOINTS;
             let Some(src) = self.palettes.get(base..base + joints) else {
@@ -2357,7 +2388,8 @@ impl Scene {
                     .map(|(m, inv)| Mat4::from_cols_array_2d(m) * *inv),
             );
         }
-        renderer.set_palettes(&self.palettes);
+        // only the skeletons posed this frame (the others keep their last pose)
+        renderer.set_palette_slots(&self.palettes, &posed_slots, anim::PALETTE_JOINTS);
     }
 }
 
