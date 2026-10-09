@@ -7,7 +7,7 @@ mod build_cmds;
 mod object_actions;
 
 use crate::caps::{self, EqEvent};
-use crate::circuit::Circuit;
+use crate::circuit::{Circuit, Resend};
 use crate::login::{self, LoginError, LoginRequest, LoginResponse};
 use crate::objects;
 use crate::stats::NetStats;
@@ -40,6 +40,10 @@ const SIM_TIMEOUT: Duration = Duration::from_secs(60);
 const AGENT_UPDATE_INTERVAL: Duration = Duration::from_millis(100);
 const AGENT_UPDATE_KEEPALIVE: Duration = Duration::from_secs(1);
 const PING_INTERVAL: Duration = Duration::from_secs(5);
+/// Diagnostic: the RegionHandshake of a region the agent arrived in should
+/// come along with AgentMovementComplete; without it the simulator never
+/// sends terrain or objects (it waits for RegionHandshakeReply).
+const HANDSHAKE_WARN_DELAY: Duration = Duration::from_secs(10);
 
 struct Sim {
     circuit: Circuit,
@@ -56,6 +60,17 @@ struct Sim {
     ucc_seq: Option<u32>,
     pending_cam: bool,
     ucc_sent_at: Instant,
+    /// Login circuit: CompleteAgentMovement strictly after the UseCircuitCode
+    /// ack, and the login fails if it never comes (llstartup.cpp).
+    ucc_login: bool,
+    /// RegionHandshake handled (the simulator then waits for our reply).
+    handshake_seen: bool,
+    /// AgentMovementComplete from this region, for the handshake diagnostic.
+    arrived_at: Option<Instant>,
+    handshake_warned: bool,
+    /// Packets received and packets that failed to decode (diagnostics).
+    packets_in: u64,
+    decode_failures: u64,
 }
 
 impl Sim {
@@ -74,6 +89,12 @@ impl Sim {
             ucc_seq: None,
             pending_cam: false,
             ucc_sent_at: Instant::now(),
+            ucc_login: false,
+            handshake_seen: false,
+            arrived_at: None,
+            handshake_warned: false,
+            packets_in: 0,
+            decode_failures: 0,
         }
     }
 }
@@ -126,6 +147,8 @@ struct Session<'a> {
     tasks: object_actions::TaskRequests,
     /// Covenant transfer of the About Land floater (session_land.rs).
     land: land_net::LandNet,
+    /// Decode failures per message name, to rate-limit their warnings.
+    decode_failures: HashMap<&'static str, u64>,
 }
 
 fn emit(sh: &Shared, ev: NetEvent) {
@@ -219,10 +242,11 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         social: Default::default(),
         tasks: Default::default(),
         land: Default::default(),
+        decode_failures: HashMap::new(),
     };
 
     let addr = SocketAddr::V4(SocketAddrV4::new(login.sim_ip, login.sim_port));
-    s.add_sim(addr, login.region_handle(), (login.region_size_x, login.region_size_y));
+    s.add_sim(addr, login.region_handle(), (login.region_size_x, login.region_size_y), true);
     s.set_main(addr, Some(login.seed_capability.clone()));
     s.complete_agent_movement(addr);
 
@@ -280,7 +304,9 @@ impl Session<'_> {
         }
     }
 
-    fn add_sim(&mut self, addr: SocketAddr, handle: RegionHandle, size: (u32, u32)) {
+    /// `login`: the first region of the session, whose UseCircuitCode has
+    /// llstartup.cpp's own resend policy.
+    fn add_sim(&mut self, addr: SocketAddr, handle: RegionHandle, size: (u32, u32), login: bool) {
         if self.sims.contains_key(&addr) {
             return;
         }
@@ -292,9 +318,11 @@ impl Session<'_> {
         m.circuit_code.session_id = self.session_id();
         m.circuit_code.id = self.agent_id();
         if let Some(sim) = self.sims.get_mut(&addr) {
-            let seq = sim.circuit.send(&self.sock, &self.sh.stats, &m, true);
+            let policy = if login { Resend::LOGIN_USE_CIRCUIT_CODE } else { Resend::DEFAULT };
+            let seq = sim.circuit.send_reliable_with(&self.sock, &self.sh.stats, &m, policy);
             sim.ucc_seq = Some(seq);
             sim.ucc_sent_at = Instant::now();
+            sim.ucc_login = login;
         }
         self.sh.stats.sim_count.store(self.sims.len() as u32, Ordering::Relaxed);
     }
@@ -622,21 +650,45 @@ impl Session<'_> {
             }
         }
         let stats = self.sh.stats.clone();
-        // Deferred CompleteAgentMovement once UseCircuitCode is acked (or 2 s passed).
-        let ready: Vec<SocketAddr> = self
-            .sims
-            .iter()
-            .filter(|(_, s)| {
-                s.pending_cam && (s.ucc_seq.is_none_or(|q| !s.circuit.is_unacked(q)) || s.ucc_sent_at.elapsed() > Duration::from_secs(2))
-            })
-            .map(|(a, _)| *a)
-            .collect();
+        // Deferred CompleteAgentMovement once UseCircuitCode is acked. At
+        // login it waits for the ack itself, as llstartup.cpp STATE_WORLD_WAIT
+        // does (gGotUseCircuitCodeAck); elsewhere 2 s are enough.
+        let mut ready = Vec::new();
+        let mut ucc_failed = false;
+        for (addr, s) in self.sims.iter_mut() {
+            let dropped = s.circuit.take_dropped();
+            if !s.pending_cam {
+                continue;
+            }
+            let ucc_dropped = s.ucc_seq.is_some_and(|q| dropped.contains(&q));
+            if s.ucc_login && ucc_dropped {
+                ucc_failed = true;
+            } else if s.ucc_seq.is_none_or(|q| !s.circuit.is_unacked(q) && !ucc_dropped)
+                || (!s.ucc_login && s.ucc_sent_at.elapsed() > Duration::from_secs(2))
+            {
+                ready.push(*addr);
+            }
+        }
+        if ucc_failed {
+            // use_circuit_callback: the region never acknowledged our circuit
+            // (notification LoginPacketNeverReceived), back to the login screen
+            log::warn!("UseCircuitCode never acknowledged by the login region: login abandoned");
+            emit(
+                self.sh,
+                NetEvent::Disconnected {
+                    reason: "Nous avons des difficultés à vous connecter. Il y a peut-être un problème avec votre connexion Internet ou la grille. Vérifiez votre connexion Internet et réessayez dans quelques minutes.".into(),
+                },
+            );
+            self.finished = true;
+            return;
+        }
         for addr in ready {
             if let Some(sim) = self.sims.get_mut(&addr) {
                 sim.pending_cam = false;
             }
             self.send_complete_agent_movement(addr);
         }
+        self.check_region_handshake();
         if let Some(t) = self.cam_requested_at {
             // diagnostic: no AgentUpdate is sent until AgentMovementComplete
             if !self.agent_moved && !self.cam_warned && t.elapsed() > Duration::from_secs(5) {
@@ -705,6 +757,31 @@ impl Session<'_> {
         if self.agent_moved && self.logout_started.is_none() {
             self.maybe_send_agent_update(now);
         }
+    }
+
+    /// Warn once when the region the agent arrived in has not sent its
+    /// RegionHandshake: nothing else would show why terrain and objects
+    /// never arrive. Firestorm has no recovery here (there is no message to
+    /// request a handshake again): the simulator resends it until acked.
+    fn check_region_handshake(&mut self) {
+        let Some(sim) = self.main.and_then(|a| self.sims.get_mut(&a)) else {
+            return;
+        };
+        if sim.handshake_seen || sim.handshake_warned || sim.arrived_at.is_none_or(|t| t.elapsed() < HANDSHAKE_WARN_DELAY) {
+            return;
+        }
+        sim.handshake_warned = true;
+        let stats = &self.sh.stats;
+        log::warn!(
+            "no RegionHandshake from {} {} s after AgentMovementComplete: no terrain or objects will arrive \
+             (from this region: {} packets, {} decode failures; session: {} duplicates, {} reliable packets given up)",
+            sim.circuit.addr,
+            HANDSHAKE_WARN_DELAY.as_secs(),
+            sim.packets_in,
+            sim.decode_failures,
+            stats.duplicates.load(Ordering::Relaxed),
+            stats.dropped_reliable.load(Ordering::Relaxed),
+        );
     }
 
     fn maybe_send_agent_update(&mut self, now: Instant) {
@@ -1595,7 +1672,7 @@ impl Session<'_> {
                     let port = info["Port"].as_i32() as u16;
                     let size = (info["RegionSizeX"].as_u32().max(256), info["RegionSizeY"].as_u32().max(256));
                     let addr = SocketAddr::V4(SocketAddrV4::new(ip, port));
-                    self.add_sim(addr, handle, size);
+                    self.add_sim(addr, handle, size, false);
                 }
             }
             "EstablishAgentCommunication" => {
@@ -1688,7 +1765,7 @@ impl Session<'_> {
             return;
         };
         let addr = SocketAddr::V4(SocketAddrV4::new(ip, port));
-        self.add_sim(addr, handle, size);
+        self.add_sim(addr, handle, size, false);
         if let Some(sim) = self.sims.get_mut(&addr) {
             sim.handle = handle;
             // A new seed means new capabilities.
@@ -1716,18 +1793,49 @@ impl Session<'_> {
             }
         };
         let Some(sim) = self.sims.get_mut(&from) else {
+            log::debug!("packet from {from}, which is not one of our circuits");
             return;
         };
+        sim.packets_in += 1;
         if !sim.circuit.on_receive(pkt.flags, pkt.sequence, &pkt.acks) {
             stats.duplicates.fetch_add(1, Ordering::Relaxed);
             return;
         }
-        if let Err(e) = self.dispatch(from, &pkt) {
-            log::debug!(
-                "failed to decode {} from {from}: {e}",
-                aurora_msg::message_info(pkt.id).map(|i| i.name).unwrap_or("?")
+        match self.dispatch(from, &pkt) {
+            // ack only now (the handler may also have removed the circuit)
+            Ok(()) => {
+                if let Some(sim) = self.sims.get_mut(&from) {
+                    sim.circuit.accept(pkt.flags, pkt.sequence);
+                }
+            }
+            Err(e) => self.on_decode_failure(from, &pkt, &e),
+        }
+    }
+
+    /// A known message that does not decode is not acked (the simulator
+    /// resends it, as for LL's message system) and is logged: a lost
+    /// RegionHandshake, for one, leaves the region without terrain or
+    /// objects. Warnings are rate-limited per message.
+    fn on_decode_failure(&mut self, from: SocketAddr, pkt: &IncomingPacket, e: &aurora_msg::DecodeError) {
+        self.sh.stats.decode_errors.fetch_add(1, Ordering::Relaxed);
+        if let Some(sim) = self.sims.get_mut(&from) {
+            sim.decode_failures += 1;
+        }
+        let name = aurora_msg::message_info(pkt.id).map(|i| i.name).unwrap_or("?");
+        let n = self.decode_failures.entry(name).or_default();
+        *n += 1;
+        if *n <= 3 || n.is_multiple_of(100) {
+            log::warn!(
+                "failed to decode {name} from {from} (#{n}, seq {}{}{}, {} body bytes): {e}",
+                pkt.sequence,
+                if pkt.reliable() {
+                    ", reliable: not acked, will be resent"
+                } else {
+                    ""
+                },
+                if pkt.resent() { ", resent" } else { "" },
+                pkt.body.len(),
             );
-            self.sh.stats.decode_errors.fetch_add(1, Ordering::Relaxed);
         }
     }
 
@@ -2108,6 +2216,7 @@ impl Session<'_> {
             self.cam_requested_at = None;
             if let Some(sim) = self.sims.get_mut(&from) {
                 sim.handle = m.data.region_handle;
+                sim.arrived_at.get_or_insert_with(Instant::now);
             }
             emit(
                 self.sh,
@@ -2545,10 +2654,16 @@ impl Session<'_> {
         let (handle, size) = match self.sims.get_mut(&from) {
             Some(sim) => {
                 sim.name = field_str(&r.sim_name);
+                sim.handshake_seen = true;
                 (sim.handle, sim.size)
             }
             None => return,
         };
+        log::info!(
+            "region handshake from {from}: {}{}",
+            field_str(&r.sim_name),
+            if is_main { " (main)" } else { "" }
+        );
         let info = crate::types::RegionInfo {
             handle,
             name: field_str(&r.sim_name),
