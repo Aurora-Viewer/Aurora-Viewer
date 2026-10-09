@@ -77,6 +77,25 @@ impl MeshStreamer {
         })
     }
 
+    /// In-memory mesh metadata for offline geometry fixtures; no asset fetch.
+    pub fn insert_demo_skin(&mut self, id: Uuid, skin: SkinInfo) {
+        self.entries.insert(
+            id,
+            MeshEntry {
+                skin: Some(Arc::new(skin)),
+                header: Some(MeshHeader {
+                    header_size: 0,
+                    lods: [Some((0, 1)); 4],
+                    skin: None,
+                    physics_convex: None,
+                    version: 1,
+                }),
+                state: 3,
+                ..Default::default()
+            },
+        );
+    }
+
     pub fn failed(&self, id: &Uuid) -> bool {
         self.entries.get(id).is_some_and(|e| e.state == 4 && e.failures > 3)
     }

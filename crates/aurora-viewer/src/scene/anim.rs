@@ -100,7 +100,7 @@ impl Rig {
     /// Same with per-avatar joint positions and scales (shape, attachment
     /// overrides). A joint's position is scaled by its parent's scale; its
     /// own scale is part of its matrix only (LLXformMatrix).
-    fn world_with(&self, rot: &[Quat], pelvis_offset: Vec3, local_pos: &[Vec3], scale: &[Vec3]) -> Vec<Mat4> {
+    pub(super) fn world_with(&self, rot: &[Quat], pelvis_offset: Vec3, local_pos: &[Vec3], scale: &[Vec3]) -> Vec<Mat4> {
         let n = self.len();
         let mut wpos = vec![Vec3::ZERO; n];
         let mut wrot = vec![Quat::IDENTITY; n];
@@ -222,6 +222,8 @@ impl Motion {
 /// Motions and held pose of one avatar (or animesh).
 #[derive(Default)]
 pub struct Controller {
+    /// LLControlAvatar disables default head / eye motions.
+    pub control: bool,
     /// Newest first (mActiveMotions, push_front).
     motions: Vec<Motion>,
     /// Signals already activated, including completed non-looping motions.
@@ -428,6 +430,12 @@ fn facing(dir: Vec3) -> Option<Quat> {
 }
 
 impl Controller {
+    pub fn for_control_avatar() -> Self {
+        Self {
+            control: true,
+            ..Default::default()
+        }
+    }
     /// Skeleton-space position of the head as posed last frame.
     pub fn head_pos(&self) -> Option<Vec3> {
         self.posed.head.map(|h| h.1)
@@ -646,7 +654,8 @@ impl Controller {
         }
         // head and eye motions, started with the avatar (startDefaultMotions)
         let lj = LookJoints::of(rig);
-        for (j, w, r) in self.procedural(&lj, now) {
+        let procedural = if self.control { Vec::new() } else { self.procedural(&lj, now) };
+        for (j, w, r) in procedural {
             if let Some(s) = states.get_mut(j) {
                 let at = s.iter().position(|o| MEDIUM_PRIORITY > o.0).unwrap_or(s.len());
                 if at < JOINT_STATES {

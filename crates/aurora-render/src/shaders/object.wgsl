@@ -507,6 +507,8 @@ fn fs_glow_suppress(in: VsOut) -> @location(0) vec4<f32> {
 
 struct ShadowOut {
     @builtin(position) clip: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+    @location(1) @interpolate(flat) record: u32,
 };
 
 struct ShadowParams {
@@ -521,7 +523,27 @@ fn vs_shadow(in: VsIn) -> ShadowOut {
     let wp = skinned_model(rec, in) * vec4<f32>(in.pos, 1.0);
     var out: ShadowOut;
     out.clip = shadow_params.vp * wp;
+    out.uv = te_uv(in.uv, rec, in.pos);
+    out.record = in.instance;
     return out;
+}
+
+// LLDrawPoolAvatar::renderShadow / deferred/avatarAlphaShadowF.glsl (LGPL 2.1):
+// transparent texels cast no shadow; semi-transparent texels use alternating
+// shadow-map columns. Opaque material modes ignore the texture alpha.
+@fragment
+fn fs_shadow(in: ShadowOut) {
+    let rec = records[in.record];
+    let alpha = sample_tex(rec.tex.x, in.uv).a * rec.base_color.a;
+    if ((rec.flags.x & (FLAG_ALPHA_MASK | FLAG_ALPHA_BLEND)) != 0u) {
+        if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u) {
+            if (alpha < rec.params.w) { discard; }
+        } else {
+            if (alpha < 0.05) { discard; }
+            let cutoff = select(0.598, 0.88, (rec.flags.x & FLAG_PBR) != 0u);
+            if (alpha < cutoff && (u32(in.clip.x) % 2u) == 0u) { discard; }
+        }
+    }
 }
 
 // --------------------------------------------------------------- particles

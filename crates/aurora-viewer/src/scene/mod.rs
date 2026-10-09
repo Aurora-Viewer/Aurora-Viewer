@@ -2,6 +2,7 @@
 //! texture/mesh/material streaming, culling and draw-list building.
 
 pub mod anim;
+pub mod animesh;
 pub mod avatar;
 pub mod banlines;
 pub mod complexity;
@@ -46,6 +47,7 @@ pub struct GpuGeom {
     pub faces: Vec<Option<MeshAlloc>>,
     pub min: Vec3,
     pub max: Vec3,
+    pub joint_bounds: Vec<animesh::JointBounds>,
 }
 
 enum GeomState {
@@ -112,6 +114,8 @@ pub struct ObjGpu {
     pub jelly: bool,
     /// Rigged mesh (skinned to an avatar skeleton).
     pub rigged: bool,
+    /// Skeleton bound to the face records (changes on attachment / flag updates).
+    pub skeleton_owner: Option<Uuid>,
     pub mat_generation: u64,
     pub is_avatar: bool,
     pub hud: bool,
@@ -207,6 +211,7 @@ pub struct Scene {
     last_origin: Option<(u32, u32)>,
     blend_tmp: Vec<(f32, DrawCmd, bool)>,
     pub anims: anim::AnimStreamer,
+    object_signals: HashMap<Uuid, animesh::Signals>,
     /// World and interface sounds.
     pub sounds: sounds::SoundManager,
     palette_slots: HashMap<Uuid, u32>,
@@ -396,6 +401,7 @@ impl Scene {
             blend_tmp: Vec::new(),
             sounds: sounds::SoundManager::new(cache_dir_anim.clone()),
             anims: anim::AnimStreamer::new(cache_dir_anim),
+            object_signals: HashMap::new(),
             palette_slots: HashMap::new(),
             palette_free: Vec::new(),
             palette_count: 0,
@@ -496,6 +502,25 @@ impl Scene {
     }
 
     fn upload_geom(&mut self, renderer: &mut Renderer, key: GeomKey, faces: Vec<jobs::FaceData>, min: Vec3, max: Vec3) {
+        let mut boxes = HashMap::<u8, (Vec3, Vec3)>::new();
+        for f in faces.iter().flatten() {
+            if let Some(skin) = &f.skin {
+                for (v, s) in f.vertices.iter().zip(skin) {
+                    let p = Vec3::from_array(v.pos);
+                    for (&j, &w) in s.joints.iter().zip(&s.weights) {
+                        if w != 0 {
+                            let b = boxes.entry(j).or_insert((p, p));
+                            b.0 = b.0.min(p);
+                            b.1 = b.1.max(p);
+                        }
+                    }
+                }
+            }
+        }
+        let joint_bounds = boxes
+            .into_iter()
+            .map(|(joint, (min, max))| animesh::JointBounds { joint, min, max })
+            .collect();
         let gfaces = faces
             .into_iter()
             .map(|f| {
@@ -505,7 +530,12 @@ impl Scene {
                 })
             })
             .collect();
-        let g = Arc::new(GpuGeom { faces: gfaces, min, max });
+        let g = Arc::new(GpuGeom {
+            faces: gfaces,
+            min,
+            max,
+            joint_bounds,
+        });
         match self.geoms.get_mut(&key) {
             Some(e) => {
                 if let GeomState::Ready(old) = std::mem::replace(&mut e.state, GeomState::Ready(g)) {
@@ -930,7 +960,7 @@ impl Scene {
                 continue;
             };
             // objects whose parent moves need new transforms too
-            let moving = o.is_moving() || o.parent_id != 0 || o.is_avatar() || o.full_id == world.agent_id;
+            let moving = o.is_moving() || o.parent_id != 0 || o.is_avatar() || o.full_id == world.agent_id || self.gpu[idx].rigged;
             let lod_due = (self.frame.wrapping_add(idx as u32)).is_multiple_of(24);
             let g = &self.gpu[idx];
             let sculpt_ready = g.sculpt_wait.is_some_and(|t| self.textures.sculpt_map(&t).is_some());
@@ -976,6 +1006,25 @@ impl Scene {
         self.stats.geom_pending = self.geoms.values().filter(|e| matches!(e.state, GeomState::Pending)).count();
         self.stats.jobs = self.jobs.pending();
         self.stats.sync_ms = t0.elapsed().as_secs_f32() * 1000.0;
+        // Alpha classification can change when a texture finishes streaming.
+        // Shadow shaders use the same face mode as the visible draw lists.
+        for g in &self.gpu {
+            for f in &g.faces {
+                let alpha = self.textures.alpha_by_slot.get(f.base_slot as usize).copied().unwrap_or_default();
+                let mode = match classify(f, alpha) {
+                    Pass::Blend => flags::ALPHA_BLEND,
+                    Pass::Mask | Pass::MaskTwoSided => flags::ALPHA_MASK,
+                    _ => 0,
+                };
+                if let Some(mut r) = renderer.records.get(f.record).copied() {
+                    let flags = (r.flags[0] & !(flags::ALPHA_BLEND | flags::ALPHA_MASK)) | mode;
+                    if flags != r.flags[0] {
+                        r.flags[0] = flags;
+                        renderer.records.set(f.record, r);
+                    }
+                }
+            }
+        }
     }
 
     fn sync_object(&mut self, renderer: &mut Renderer, world: &mut World, idx: usize, now: Instant, view: &CullView) {
@@ -1077,13 +1126,28 @@ impl Scene {
             return;
         };
         let rigged = matches!(geom_key, GeomKey::Mesh { id, .. } if self.meshes.meta(&id).is_some_and(|m| m.skin.is_some()));
+        let skeleton_owner = rigged.then(|| Self::skeleton_owner(world, idx)).flatten();
         let model = if rigged {
             // Rigged meshes are already in avatar skeleton space (bind pose):
             // place them relative to the avatar that wears them.
             let pelvis = world.avatar_lib.pelvis;
-            match Self::skeleton_owner(world, idx) {
+            match skeleton_owner {
                 Some((_, owner_idx)) => match Self::object_transform(world, owner_idx, now, 0) {
-                    Some((ap, ar, _)) => Mat4::from_rotation_translation(ar, ap) * Mat4::from_translation(-pelvis),
+                    Some((ap, mut ar, _)) => {
+                        // LLControlAvatar::matchVolumeTransform: ground animesh
+                        // also follow their root mesh's unscaled bind rotation.
+                        if let Some(root) = world.objects.get(owner_idx)
+                            && !root.is_avatar()
+                            && Self::wearer_avatar(world, owner_idx).is_none()
+                            && let Some(skin) = root.volume.sculpt.and_then(|s| self.meshes.meta(&s.texture)).and_then(|m| m.skin)
+                        {
+                            let (_, bind_rot, _) = skin.bind_shape.to_scale_rotation_translation();
+                            if bind_rot.is_finite() {
+                                ar = (ar * bind_rot).normalize();
+                            }
+                        }
+                        Mat4::from_rotation_translation(ar, ap) * Mat4::from_translation(-pelvis)
+                    }
                     None => Mat4::from_scale_rotation_translation(scale, rot, pos),
                 },
                 None => Mat4::from_scale_rotation_translation(scale, rot, pos),
@@ -1112,7 +1176,25 @@ impl Scene {
             }
         }
 
+        if let Some((owner, _)) = skeleton_owner
+            && let Some(&slot) = self.palette_slots.get(&owner)
+            && let Some(&binds) = match geom_key {
+                GeomKey::Mesh { id, .. } => self.skin_bind_ranges.get(&id),
+                _ => None,
+            }
+            && let Some((c, r)) = animesh::posed_bounds(&geom.joint_bounds, |j| {
+                let b = self.skin_binds.get(binds as usize + j as usize)?;
+                let p = self.palettes.get(slot as usize * anim::PALETTE_JOINTS + b.joint[0] as usize)?;
+                Some(model * Mat4::from_cols_array_2d(p) * Mat4::from_cols_array_2d(&b.inverse_bind))
+            })
+        {
+            center = c;
+            radius = r;
+        }
+
         let full_rebuild = o.material_dirty
+            || self.gpu[idx].skeleton_owner != skeleton_owner.map(|p| p.0)
+            || self.gpu[idx].rigged != rigged
             || o.shape_dirty
             || self.gpu[idx].faces.len() != geom.faces.iter().filter(|f| f.is_some()).count()
             || bind_new.is_some()
@@ -1135,6 +1217,7 @@ impl Scene {
         g.center = center;
         g.radius = radius;
         g.rigged = rigged;
+        g.skeleton_owner = skeleton_owner.map(|p| p.0);
         g.is_avatar = false;
         g.hud = hud;
         if let Some(o) = world.objects.get_mut(idx) {
@@ -1146,25 +1229,8 @@ impl Scene {
 
     /// The object owning the skeleton that drives a rigged mesh: the wearing
     /// avatar, or the root of an animated-mesh (animesh) linkset.
-    pub fn skeleton_owner(world: &World, mut idx: usize) -> Option<(Uuid, usize)> {
-        for _ in 0..16 {
-            let o = world.objects.get(idx)?;
-            if o.is_avatar() {
-                return Some((o.full_id, idx));
-            }
-            if o.parent_id == 0 {
-                let animated = o
-                    .extra
-                    .extended_mesh_flags
-                    .is_some_and(|f| f & aurora_prim::extra::EXTENDED_MESH_ANIMATED != 0);
-                return animated.then_some((o.full_id, idx));
-            }
-            {
-                let p = world.objects.parent_of(o)?;
-                idx = p
-            }
-        }
-        None
+    pub fn skeleton_owner(world: &World, idx: usize) -> Option<(Uuid, usize)> {
+        animesh::owner(&world.objects, idx)
     }
 
     /// Palette base (first matrix index) for a skeleton owner.
@@ -1428,6 +1494,9 @@ impl Scene {
             }
         };
         for &att in world.objects.children_of(&av.key) {
+            if Self::skeleton_owner(world, att).is_some_and(|(_, i)| i != avatar_idx) {
+                continue;
+            }
             scan(att);
             if let Some(a) = world.objects.get(att) {
                 for &c in world.objects.children_of(&a.key) {
@@ -1862,7 +1931,9 @@ impl Scene {
                     if pass == Pass::Hidden {
                         continue;
                     }
-                    if casts && matches!(pass, Pass::Opaque | Pass::OpaqueTwoSided | Pass::Mask | Pass::MaskTwoSided) {
+                    // LLDrawPoolAvatar::renderShadow includes alpha-blended
+                    // rigged faces (fur, hair, etc.) with an alpha-tested shadow.
+                    if casts && (pass != Pass::Blend || g.rigged || g.is_avatar) {
                         l.casters.push(ShadowCaster {
                             cmd,
                             center: g.center,
@@ -1876,7 +1947,7 @@ impl Scene {
                             radius: g.radius,
                         };
                         l.refl.push(c);
-                        if avatar.is_none() {
+                        if avatar.is_none() && g.skeleton_owner.is_none() {
                             l.probe.push(c);
                         }
                     }
@@ -2042,7 +2113,12 @@ impl Scene {
             let gone: Vec<Uuid> = self
                 .palette_slots
                 .keys()
-                .filter(|id| world.objects.index_of_uuid(id).is_none())
+                .filter(|id| {
+                    world
+                        .objects
+                        .index_of_uuid(id)
+                        .is_none_or(|i| Self::skeleton_owner(world, i).is_none_or(|p| p.0 != **id))
+                })
                 .copied()
                 .collect();
             for id in gone {
@@ -2070,6 +2146,9 @@ impl Scene {
             let Some(idx) = world.objects.index_of_uuid(&owner) else {
                 continue;
             };
+            if Self::skeleton_owner(world, idx).is_none_or(|p| p.0 != owner) {
+                continue;
+            }
             let near = self
                 .gpu
                 .get(idx)
@@ -2096,7 +2175,15 @@ impl Scene {
                     _ => None,
                 },
             };
-            let mut motions = self.motions.remove(&owner).unwrap_or_default();
+            let control = world.objects.get(idx).is_some_and(|o| !o.is_avatar());
+            let mut motions = self.motions.remove(&owner).unwrap_or_else(|| {
+                if control {
+                    anim::Controller::for_control_avatar()
+                } else {
+                    anim::Controller::default()
+                }
+            });
+            motions.control = control;
             match look {
                 Some((true, _)) => motions.look_cleared = true,
                 Some((false, None)) => {
@@ -2110,7 +2197,12 @@ impl Scene {
                 None => {}
             }
             let anims = &mut self.anims;
-            motions.sync(world.animations_of(&owner), now, |id| anims.get(id));
+            if motions.control {
+                let playing = self.object_signals.entry(owner).or_default().update(world, idx, now);
+                motions.sync(&playing, now, |id| anims.get(id));
+            } else {
+                motions.sync(world.animations_of(&owner), now, |id| anims.get(id));
+            }
             let (base, dz) = self.skeleton_of(world, owner, idx, now);
             root_dz.push((owner, dz));
             work.push((slot as usize, motions, base, owner));
@@ -2133,6 +2225,7 @@ impl Scene {
         }
         let slots = &self.palette_slots;
         self.motions.retain(|id, _| slots.contains_key(id));
+        self.object_signals.retain(|id, _| slots.contains_key(id));
         // joint matrices for the attachments (rest -> posed, skeleton space)
         let joints = rig.len().min(anim::PALETTE_JOINTS);
         world.avatar_poses.retain(|id, _| posed.iter().any(|p| p.0 == *id));
@@ -2259,11 +2352,28 @@ impl Scene {
     /// - LLVOAvatar::updateCharacter: the pelvis sits (0.5 · body height −
     ///   pelvis to foot) below the object center, raised by the hover.
     ///
-    /// Attachments are re-read every 2 s, the shape on each new appearance.
+    /// Joint overrides never cross a control-avatar boundary. Rebuild when
+    /// topology, skin metadata or appearance changes, including late assets.
     fn skeleton_of(&mut self, world: &World, owner: Uuid, owner_idx: usize, now: Instant) -> (Arc<anim::SkeletonBase>, f32) {
+        use std::hash::{Hash, Hasher};
+        let members = animesh::members(&world.objects, owner_idx);
+        let mut signature = std::collections::hash_map::DefaultHasher::new();
+        for &i in &members {
+            if let Some(o) = world.objects.get(i) {
+                (o.full_id, o.pcode, o.parent_id, o.extra.extended_mesh_flags).hash(&mut signature);
+                if let Some(s) = o.volume.sculpt {
+                    s.texture.hash(&mut signature);
+                    if let Some(skin) = self.meshes.meta(&s.texture).and_then(|m| m.skin) {
+                        (Arc::as_ptr(&skin) as usize).hash(&mut signature);
+                    }
+                }
+            }
+        }
+        let signature = signature.finish();
         let generation = world.appearance_generation(&owner);
         if let Some(s) = self.skeletons.get(&owner)
             && s.appearance_gen == generation
+            && s.signature == signature
             && now.duration_since(s.at).as_secs_f32() < 2.0
         {
             return (s.base.clone(), s.root_dz);
@@ -2271,18 +2381,11 @@ impl Scene {
         let rig = self.avatar_lib.rig.clone();
         // joint offsets of the worn meshes
         let mut overrides: Vec<(usize, Vec3, bool)> = Vec::new();
-        let mut stack = vec![owner_idx];
-        let mut guard = 0;
-        while let Some(i) = stack.pop() {
-            guard += 1;
-            if guard > 20_000 {
-                break;
-            }
+        for i in members {
             let Some(o) = world.objects.get(i) else {
                 continue;
             };
-            stack.extend_from_slice(world.objects.children_of(&o.key));
-            if i == owner_idx || !o.volume.is_mesh() {
+            if !o.volume.is_mesh() {
                 continue;
             }
             let Some(skin) = o.volume.sculpt.and_then(|s| self.meshes.meta(&s.texture)).and_then(|m| m.skin) else {
@@ -2334,6 +2437,7 @@ impl Scene {
             AvatarSkeleton {
                 at: now,
                 appearance_gen: generation,
+                signature,
                 base: base.clone(),
                 root_dz,
             },
@@ -2634,6 +2738,7 @@ impl Scene {
 
 /// Cached rest skeleton of one skeleton owner.
 struct AvatarSkeleton {
+    signature: u64,
     at: Instant,
     appearance_gen: u64,
     base: Arc<anim::SkeletonBase>,

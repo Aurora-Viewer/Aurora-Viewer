@@ -86,6 +86,7 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
 | `camera/` | La caméra comme LLAgentCamera : vue derrière l'avatar, caméra Alt sur un point ou un objet (`focus.rs`), caméra de siège, vue subjective, transitions, lissage, recul en vol, collision envoyée par le simulateur ; réglages Firestorm (`settings.rs`), scénarios de démo (`demo.rs`) |
 | `world/` | État du monde reçu du réseau : objets, régions, terrain, environnement (EEP), social, profils des avatars, inventaire, groupes, blocages, messages du bridge LSL de Firestorm (cachés), orientation des corps, regard (LookAt), carte… |
 | `scene/` | Ce qu'on envoie au GPU : géométrie et LOD, textures (streaming), avatars (squelette, animations, silhouette), particules, eau, sondes de reflets, sons du monde, imposteurs |
+| `scene/animesh.rs` | Squelettes autonomes des objets animés, animations du linkset, limites des poses pour le culling et les ombres, scénario de démo |
 | `ui/` | Interface egui : barres, fenêtres, options, chat, profils des avatars, page web dans une fenêtre (`web_view.rs`), choix d'une texture, inventaire, cartes, overlays de débogage ; sons causés par les widgets (`sound_cues.rs` : clics, touches refusées, fenêtres) |
 | `build/` | Outils de construction (édition d'objets, terrain) |
 | `media/` | Médias des prims et des parcelles, cookie OpenID des pages web de la grille (`openid.rs`) |

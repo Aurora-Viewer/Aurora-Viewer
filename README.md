@@ -110,6 +110,7 @@ settings and cache (`…\config\demo`, `…\cache\demo`).
 | `AURORA_DEMO_SIT=n` | Click the toolbar sit button n times (frames 240, 300, 360…) |
 | `AURORA_DEMO_KEY=down\|up\|left\|right` | Hold an arrow key from frame 235 (movement, body orientation) |
 | `AURORA_DEMO_ANIM_LOOP=1` | Loop with a missing first interval, changing sequence every 120 frames and stopping/restarting at frames 960/1020 every 1200 frames |
+| `AURORA_DEMO_ANIMESH=1` | Animated root mesh, linked mesh signaled by a child, and worn animesh with independent custom skeletons and alpha shadows |
 | `AURORA_DEMO_MMO="x,y[,1]"` | Left press on the avatar then right button held (mouse steering) |
 | `AURORA_DEMO_RCLICK="x,y"` | Right click (context menu) |
 | `AURORA_DEMO_LOOKAT=1` | Eye tracking on (in memory only) and a remote look-at |
