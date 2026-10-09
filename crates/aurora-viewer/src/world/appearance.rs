@@ -64,11 +64,13 @@ pub fn base(inv: &Inventory) -> Option<Uuid> {
 }
 
 pub fn folder_links(inv: &Inventory, folder: Uuid) -> Vec<OutfitLink> {
-    inv.folders
+    let mut links: Vec<_> = inv
+        .folders
         .get(&folder)
         .into_iter()
         .flat_map(|f| &f.items)
         .filter_map(|id| inv.items.get(id))
+        .filter(|it| it.parent == folder)
         .filter_map(|it| {
             if matches!(it.asset_type, 24 | 25) {
                 Some(OutfitLink {
@@ -84,7 +86,14 @@ pub fn folder_links(inv: &Inventory, folder: Uuid) -> Vec<OutfitLink> {
                 None
             }
         })
-        .collect()
+        .collect();
+    // LLAppearanceMgr::removeDuplicateItems keeps the last link to each
+    // original, preserving its layer order. Separate inventory copies stay.
+    let mut seen = HashSet::new();
+    links.reverse();
+    links.retain(|l| !l.target.is_nil() && seen.insert((l.folder, l.target)));
+    links.reverse();
+    links
 }
 
 fn item_link(it: &InvItem) -> OutfitLink {
@@ -632,6 +641,35 @@ pub fn seed_demo(inv: &mut Inventory, agent: Uuid) {
     demo_replace(inv, agent, cof, &current);
 }
 
+/// Replay a folder response with repeated links and originals from other parents.
+pub fn seed_duplicate_response(inv: &mut Inventory, agent: Uuid) {
+    for folder in [Uuid::from_u128(704), Uuid::from_u128(701)] {
+        let links: Vec<_> = inv
+            .folders
+            .get(&folder)
+            .into_iter()
+            .flat_map(|f| &f.items)
+            .filter_map(|id| inv.items.get(id))
+            .cloned()
+            .collect();
+        let mut items = links.clone();
+        for mut link in links {
+            if let Some(original) = inv.items.get(&link.asset_id) {
+                items.push(original.clone());
+            }
+            link.id = Uuid::new_v4();
+            items.push(link);
+        }
+        inv.apply(vec![aurora_net::inventory::FolderContents {
+            folder_id: folder,
+            owner_id: agent,
+            version: 3,
+            folders: Vec::new(),
+            items,
+        }]);
+    }
+}
+
 fn demo_replace(inv: &mut Inventory, agent: Uuid, id: Uuid, links: &[OutfitLink]) {
     let old = inv.folders.get(&id).map(|f| f.items.clone()).unwrap_or_default();
     for id in old {
@@ -702,6 +740,70 @@ mod tests {
         let mut inv = Inventory::default();
         seed_demo(&mut inv, Uuid::from_u128(1));
         inv
+    }
+
+    #[test]
+    fn adding_objects_or_clothes_counts_each_original_once() {
+        let mut inv = fixture();
+        let cof = cof(&inv).expect("COF");
+        let mut links = folder_links(&inv, cof);
+        for i in 0..20 {
+            let mut item = inv.items[&Uuid::from_u128(717)].clone();
+            item.id = Uuid::from_u128(1000 + i);
+            inv.items.insert(item.id, item.clone());
+            links.extend([item_link(&item), item_link(&item)]);
+        }
+        demo_replace(&mut inv, Uuid::from_u128(1), cof, &links);
+        for item in [Uuid::from_u128(722), Uuid::from_u128(723)] {
+            let (change, sync) = plan(
+                &inv,
+                Action::WearItem {
+                    item,
+                    replace: false,
+                    point: 0,
+                },
+                &HashMap::new(),
+            )
+            .expect("duplicate links must not exhaust the attachment limit");
+            assert!(sync);
+            assert_eq!(change.links.iter().filter(|l| l.target == item).count(), 1);
+            let mut seen = HashSet::new();
+            assert!(change.links.iter().all(|l| seen.insert((l.folder, l.target))));
+            for i in 0..20 {
+                assert_eq!(
+                    change.links.iter().filter(|l| l.target == Uuid::from_u128(1000 + i)).count(),
+                    1,
+                    "distinct inventory copies must remain"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn duplicate_links_keep_the_last_layer_and_ignore_foreign_originals() {
+        let mut inv = fixture();
+        let folder = Uuid::from_u128(704);
+        let original = inv.items[&Uuid::from_u128(715)].clone();
+        let mut children = vec![original.id]; // index left over from an older cache
+        for (id, desc) in [(990, "@800"), (991, "@801")] {
+            let mut link = original.clone();
+            link.id = Uuid::from_u128(id);
+            link.parent = folder;
+            link.asset_type = 24;
+            link.asset_id = original.id;
+            link.desc = desc.into();
+            children.push(link.id);
+            inv.items.insert(link.id, link);
+        }
+        let mut copy = original.clone();
+        copy.id = Uuid::from_u128(992);
+        copy.parent = folder;
+        children.push(copy.id);
+        inv.items.insert(copy.id, copy);
+        inv.folders.get_mut(&folder).expect("outfit").items = children;
+        let links = folder_links(&inv, folder);
+        assert_eq!(links.len(), 2, "a separate inventory copy stays");
+        assert_eq!(links.iter().find(|l| l.target == original.id).expect("link").desc, "@801");
     }
     #[test]
     fn replace_empty_outfit_preserves_required_body_parts() {

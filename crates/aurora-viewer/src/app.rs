@@ -5053,7 +5053,10 @@ impl ApplicationHandler for App {
                 if view == "save" {
                     self.appearance_ui.begin_save_as(&self.world.inventory);
                 }
-                if view == "menu" {
+                if view == "duplicates" {
+                    crate::world::appearance::seed_duplicate_response(&mut self.world.inventory, self.world.agent_id);
+                }
+                if matches!(view.as_str(), "menu" | "duplicates") {
                     self.appearance_ui.open_outfit(uuid::Uuid::from_u128(704));
                 }
             }

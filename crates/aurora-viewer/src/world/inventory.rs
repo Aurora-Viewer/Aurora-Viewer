@@ -2,7 +2,7 @@
 
 use aurora_llsd::Llsd;
 use aurora_net::inventory::{FolderContents, InvFolder, InvItem, parse_skeleton};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,6 +94,8 @@ impl Inventory {
             return;
         };
         let mut kids = f.children.clone();
+        let mut seen = HashSet::new();
+        kids.retain(|child| self.folders.get(child).is_some_and(|f| f.info.parent == id) && seen.insert(*child));
         kids.sort_by(|a, b| {
             let fa = self.folders.get(a);
             let fb = self.folders.get(b);
@@ -102,6 +104,10 @@ impl Inventory {
             sys(fb).cmp(&sys(fa)).then_with(|| name(fa).cmp(&name(fb)))
         });
         let mut items = f.items.clone();
+        seen.clear();
+        // FetchInventoryDescendents2 may include linked originals from other
+        // folders. LLInventoryModel::updateItem indexes each by its parent.
+        items.retain(|item| self.items.get(item).is_some_and(|it| it.parent == id) && seen.insert(*item));
         items.sort_by_key(|i| self.items.get(i).map(|it| it.name.to_lowercase()).unwrap_or_default());
         if let Some(f) = self.folders.get_mut(&id) {
             f.children = kids;
@@ -135,15 +141,13 @@ impl Inventory {
                 self.upsert_folder(f, library);
             }
             let item_ids: Vec<Uuid> = c.items.iter().map(|i| i.id).collect();
-            for it in c.items {
-                self.items.insert(it.id, it);
-            }
             if let Some(f) = self.folders.get_mut(&c.folder_id) {
                 f.children = child_ids;
                 f.items = item_ids;
                 f.state = FetchState::Fetched;
                 f.info.version = c.version;
             }
+            self.add_items(c.items);
             self.sort_children(c.folder_id);
         }
     }
@@ -152,14 +156,27 @@ impl Inventory {
     /// that folder is loaded.
     pub fn add_items(&mut self, items: Vec<InvItem>) {
         self.generation += 1;
+        let mut changed = HashSet::new();
         for it in items {
+            if let Some(old) = self.items.get(&it.id)
+                && old.parent != it.parent
+                && let Some(folder) = self.folders.get_mut(&old.parent)
+            {
+                folder.items.retain(|id| *id != it.id);
+                changed.insert(old.parent);
+            }
             if let Some(f) = self.folders.get_mut(&it.parent)
                 && f.state == FetchState::Fetched
-                && !f.items.contains(&it.id)
             {
-                f.items.push(it.id);
+                if !f.items.contains(&it.id) {
+                    f.items.push(it.id);
+                }
+                changed.insert(it.parent);
             }
             self.items.insert(it.id, it);
+        }
+        for id in changed {
+            self.sort_children(id);
         }
     }
 
@@ -288,5 +305,95 @@ impl Inventory {
         }
         self.generation += 1;
         valid.len()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fixture() -> Inventory {
+        let mut inv = Inventory {
+            root: Uuid::from_u128(800),
+            ..Default::default()
+        };
+        inv.folders.insert(
+            inv.root,
+            Folder {
+                info: InvFolder {
+                    id: inv.root,
+                    parent: Uuid::nil(),
+                    name: "Inventaire".into(),
+                    type_default: 8,
+                    version: 1,
+                },
+                children: Vec::new(),
+                items: Vec::new(),
+                state: FetchState::Fetched,
+                library: false,
+            },
+        );
+        super::super::appearance::seed_demo(&mut inv, Uuid::from_u128(1));
+        inv
+    }
+
+    #[test]
+    fn fetched_link_targets_are_stored_under_their_own_parent_once() {
+        let mut inv = fixture();
+        let folder = Uuid::from_u128(704);
+        let original = inv.items.remove(&Uuid::from_u128(723)).expect("original");
+        inv.folders.get_mut(&inv.root).expect("root").items.retain(|id| *id != original.id);
+        let mut link = inv.items[&inv.folders[&folder].items[0]].clone();
+        link.asset_id = original.id;
+        for _ in 0..2 {
+            inv.apply(vec![FolderContents {
+                folder_id: folder,
+                owner_id: Uuid::from_u128(1),
+                version: 4,
+                folders: Vec::new(),
+                items: vec![link.clone(), original.clone(), link.clone()],
+            }]);
+            assert_eq!(
+                inv.folders[&folder].items,
+                vec![link.id],
+                "only direct children belong to the outfit"
+            );
+            assert_eq!(inv.items[&original.id].parent, original.parent, "linked target is retained");
+            assert_eq!(inv.folders[&inv.root].items.iter().filter(|id| **id == original.id).count(), 1);
+        }
+    }
+
+    #[test]
+    fn changing_an_item_parent_removes_the_old_membership() {
+        let mut inv = fixture();
+        let mut item = inv.items[&Uuid::from_u128(723)].clone();
+        let old = item.parent;
+        item.parent = Uuid::from_u128(702);
+        inv.add_items(vec![item.clone(), item.clone()]);
+        assert!(!inv.folders[&old].items.contains(&item.id));
+        assert_eq!(inv.folders[&item.parent].items, vec![item.id]);
+    }
+
+    #[test]
+    fn old_caches_do_not_restore_duplicate_or_foreign_memberships() {
+        let mut inv = fixture();
+        let item = Uuid::from_u128(723);
+        inv.folders
+            .get_mut(&Uuid::from_u128(704))
+            .expect("outfit")
+            .items
+            .extend([item, item]);
+        let path = std::env::temp_dir().join(format!("aurora-inventory-{}.bin", Uuid::new_v4()));
+        inv.save_cache(&path);
+        let mut restored = fixture();
+        for folder in restored.folders.values_mut() {
+            folder.items.clear();
+            folder.state = FetchState::Unknown;
+        }
+        restored.items.clear();
+        assert!(restored.load_cache(&path) > 0);
+        std::fs::remove_file(path).expect("synthetic cache cleanup");
+        assert!(!restored.folders[&Uuid::from_u128(704)].items.contains(&item));
+        assert_eq!(restored.folders[&restored.root].items.iter().filter(|id| **id == item).count(), 1);
     }
 }

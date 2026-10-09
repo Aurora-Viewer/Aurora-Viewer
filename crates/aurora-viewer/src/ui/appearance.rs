@@ -856,4 +856,64 @@ mod tests {
         }
         assert!(egui::Popup::is_any_open(&ctx), "menu must remain open");
     }
+
+    #[test]
+    fn add_from_context_menu_dispatches_one_action_for_objects_and_clothes() {
+        for item in [Uuid::from_u128(722), Uuid::from_u128(723)] {
+            let ctx = egui::Context::default();
+            crate::theme::Theme::default().apply(&ctx, 1.0);
+            let _icons = icons::Icons::load(&ctx, None);
+            let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+            model::seed_demo(&mut world.inventory, Uuid::from_u128(1));
+            let folder = Uuid::from_u128(704);
+            let mut link = world.inventory.items[&world.inventory.folders[&folder].items[0]].clone();
+            link.asset_id = item;
+            link.name = world.inventory.items[&item].name.clone();
+            link.id = Uuid::from_u128(990);
+            let first = link.id;
+            world.inventory.items.insert(first, link.clone());
+            link.id = Uuid::from_u128(991);
+            let second = link.id;
+            world.inventory.items.insert(second, link);
+            world.inventory.folders.get_mut(&folder).expect("outfit").items = vec![first, second];
+            let mut st = AppearanceUi::default();
+            st.open_outfit(folder);
+            for _ in 0..4 {
+                draw(&ctx, &mut world, &mut st, None);
+            }
+            let mut actions = Vec::new();
+            for (pos, button) in [
+                (egui::pos2(180.0, 378.0), egui::PointerButton::Secondary),
+                (egui::pos2(245.0, 415.0), egui::PointerButton::Primary),
+            ] {
+                for pressed in [true, false] {
+                    actions.extend(draw_input(
+                        &ctx,
+                        &mut world,
+                        &mut st,
+                        egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 900.0))),
+                            events: vec![
+                                egui::Event::PointerMoved(pos),
+                                egui::Event::PointerButton {
+                                    pos,
+                                    button,
+                                    pressed,
+                                    modifiers: Default::default(),
+                                },
+                            ],
+                            ..Default::default()
+                        },
+                    ));
+                }
+                for _ in 0..4 {
+                    actions.extend(draw(&ctx, &mut world, &mut st, None));
+                }
+            }
+            assert!(
+                matches!(&actions[..], [Action::WearItem { item: id, replace: false, point: 0 }] if *id == item),
+                "{actions:?}"
+            );
+        }
+    }
 }
