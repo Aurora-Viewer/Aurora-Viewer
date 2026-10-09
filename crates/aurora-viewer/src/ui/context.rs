@@ -43,7 +43,8 @@ pub enum CtxAction {
         offset: Vec3,
     },
     Zoom(Vec3),
-    AboutLand,
+    /// About Land on the parcel at the clicked point (LLToolPie selects it).
+    AboutLand(Vec3),
     StandUp,
     SitGround,
     ToggleFly,
@@ -245,7 +246,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, menu: &mut Option<ContextMenu>, se
                                 action = Some(CtxAction::Zoom(m.point));
                             }
                             if item(ui, p, "À propos du terrain", true) {
-                                action = Some(CtxAction::AboutLand);
+                                action = Some(CtxAction::AboutLand(m.point));
                             }
                             separator(ui, p);
                             item(ui, p, "Construire", false);

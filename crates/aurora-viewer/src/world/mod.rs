@@ -6,6 +6,7 @@ pub mod eep;
 pub mod env;
 pub mod groups;
 pub mod inventory;
+pub mod land;
 pub mod lookat;
 pub mod lslbridge;
 pub mod mutes;
@@ -46,6 +47,9 @@ pub struct Region {
     pub voice_server: String,
     /// RenderMaterials limits of the region (SimulatorFeatures).
     pub materials_limits: crate::scene::legacy_mat::RegionLimits,
+    /// Object capacity (SimStats ObjectCapacity, LLViewerRegion::getMaxTasks);
+    /// 0 until known.
+    pub max_tasks: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -159,8 +163,10 @@ pub struct World {
     pub cloud_scroll: glam::Vec2,
     /// Name of the parcel the agent stands on.
     pub parcel_name: String,
-    /// Full description of that parcel (About Land).
+    /// Full description of that parcel (navigation bar icons, media, voice).
     pub parcel: Option<Arc<aurora_net::ParcelInfo>>,
+    /// About Land: the selected parcel, covenant, group / experience names.
+    pub land: land::Land,
     /// Media texture overrides and parcel media messages (media module).
     pub media: crate::media::WorldMedia,
     /// Avatar profiles and the ids still to request.
@@ -225,6 +231,7 @@ impl World {
             cloud_scroll: glam::Vec2::ZERO,
             parcel_name: String::new(),
             parcel: None,
+            land: land::Land::default(),
             media: Default::default(),
             tp_history: tphistory::TeleportHistory::default(),
             map: worldmap::WorldMap::default(),
@@ -449,6 +456,7 @@ impl World {
             caps: Arc::new(HashMap::new()),
             voice_server: String::new(),
             materials_limits: Default::default(),
+            max_tasks: 0,
         })
     }
 
@@ -1025,13 +1033,34 @@ impl World {
                 });
                 None
             }
-            NetEvent::RegionFlags { handle, flags } => {
-                if let Some(r) = self.regions.get_mut(&handle)
-                    && let Some(info) = r.info.as_mut()
-                    && info.region_flags != flags
-                {
-                    Arc::make_mut(info).region_flags = flags;
+            NetEvent::RegionFlags { handle, flags, max_tasks } => {
+                if let Some(r) = self.regions.get_mut(&handle) {
+                    r.max_tasks = max_tasks;
+                    if let Some(info) = r.info.as_mut()
+                        && info.region_flags != flags
+                    {
+                        Arc::make_mut(info).region_flags = flags;
+                    }
                 }
+                None
+            }
+            NetEvent::Land(ev) => {
+                let ctx = land::SelectionContext {
+                    agent_region: self.main_region,
+                    region_id: self
+                        .land
+                        .sel
+                        .as_ref()
+                        .and_then(|s| self.regions.get(&s.handle))
+                        .and_then(|r| r.info.as_ref())
+                        .map_or(Uuid::nil(), |i| i.region_id),
+                };
+                if let aurora_net::land::LandEvent::Selected { info, .. } = &ev
+                    && !info.is_group_owned
+                {
+                    self.social.want_name(info.owner_id);
+                }
+                self.land.apply(ev, &ctx);
                 None
             }
             NetEvent::Health(health) => {

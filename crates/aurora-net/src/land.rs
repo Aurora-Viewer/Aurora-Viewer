@@ -296,6 +296,17 @@ pub enum LandCommand {
     },
     /// Names of experiences (GetExperienceInfo capability).
     ExperienceInfo(Vec<Uuid>),
+    /// Group names (UUIDGroupNameRequest, LLCacheName::getGroupName).
+    GroupNames(Vec<Uuid>),
+    /// Resident search of the avatar picker (LLFloaterAvatarPicker::find):
+    /// AvatarPickerSearch capability, else AvatarPickerRequest.
+    AvatarSearch {
+        query: String,
+    },
+    /// LLFloaterURLEntry::getMediaTypeCoro: HEAD of a parcel media URL.
+    MediaType {
+        url: String,
+    },
 }
 
 /// Answers for the About Land floater.
@@ -346,6 +357,38 @@ pub enum LandEvent {
     },
     /// GetExperienceInfo: (experience, name).
     ExperienceInfo(Vec<(Uuid, String)>),
+    /// UUIDGroupNameReply: (group, name).
+    GroupNames(Vec<(Uuid, String)>),
+    /// Avatar picker results for `query`, None when the search failed.
+    AvatarSearch {
+        query: String,
+        results: Option<Vec<FoundAvatar>>,
+    },
+    /// MIME type of a media URL ("none/none" when it could not be found).
+    MediaType {
+        url: String,
+        mime: String,
+    },
+}
+
+/// One resident found by the avatar picker.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FoundAvatar {
+    pub id: Uuid,
+    pub display_name: String,
+    pub username: String,
+}
+
+/// Escape a picker query like LLURI::escape after the viewer replaced
+/// the dots of usernames with spaces.
+pub fn avatar_search_query(text: &str) -> String {
+    text.replace('.', " ")
+        .bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'~' => (b as char).to_string(),
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
 }
 
 /// Parse the ParcelProperties event queue message (LLSD form of the UDP
@@ -540,7 +583,7 @@ pub fn notecard_text(data: &[u8]) -> Option<String> {
     let rest = &s[at..];
     let nl = rest.find('\n')?;
     let len: usize = rest[..nl].trim().parse().ok()?;
-    let body = rest[nl + 1..].as_bytes();
+    let body = &rest.as_bytes()[nl + 1..];
     let text = String::from_utf8_lossy(&body[..len.min(body.len())]).into_owned();
     Some(text.chars().filter(|c| !('\u{F0000}'..='\u{FFFFD}').contains(c)).collect())
 }
@@ -700,6 +743,12 @@ mod tests {
         let card = "Linden text version 2\n{\nLLEmbeddedItems version 1\n{\ncount 0\n}\nText length 23\nBy purchasing\u{F0000} land\n}\n";
         assert_eq!(notecard_text(card.as_bytes()).as_deref(), Some("By purchasing land\n"));
         assert_eq!(notecard_text(b"not a notecard"), None);
+    }
+
+    #[test]
+    fn picker_query_is_escaped() {
+        assert_eq!(avatar_search_query("tess.touch"), "tess%20touch");
+        assert_eq!(avatar_search_query("Zoë"), "Zo%C3%AB");
     }
 
     #[test]

@@ -19,6 +19,8 @@ const LLTCT_ASSET: i32 = 2;
 const LLTST_SIM_ESTATE: i32 = 4;
 const LLTS_OK: i32 = 0;
 const LLTS_DONE: i32 = 1;
+/// Names asked per UUIDGroupNameRequest (the variable block holds 255).
+const MAX_NAME_BLOCKS: usize = 50;
 
 /// The covenant notecard being received.
 #[derive(Debug)]
@@ -31,6 +33,8 @@ struct CovenantTransfer {
 #[derive(Debug, Default)]
 pub(super) struct LandNet {
     covenant: Option<CovenantTransfer>,
+    /// AvatarPickerRequest queries waiting for their reply (query id, text).
+    picker_queries: Vec<(Uuid, String)>,
 }
 
 impl Session<'_> {
@@ -242,6 +246,43 @@ impl Session<'_> {
             } => self.parcel_environment(local_id, EnvVerb::Put(land::environment_update_body(day_length, day_offset))),
             LandCommand::EnvironmentReset { local_id } => self.parcel_environment(local_id, EnvVerb::Delete),
             LandCommand::ExperienceInfo(ids) => self.request_experience_info(ids),
+            LandCommand::AvatarSearch { query } => self.avatar_search(query),
+            LandCommand::MediaType { url } => {
+                let http = self.sh.http.clone();
+                let events = self.sh.events.clone();
+                tokio::spawn(async move {
+                    // headers only, redirects followed; an error is "none/none"
+                    let mime = match http
+                        .head(&url)
+                        .header("Accept", "*/*")
+                        .timeout(std::time::Duration::from_secs(15))
+                        .send()
+                        .await
+                    {
+                        Ok(r) => r
+                            .headers()
+                            .get("content-type")
+                            .and_then(|v| v.to_str().ok())
+                            .map(|t| t.split(';').next().unwrap_or("").trim().to_lowercase())
+                            .filter(|t| !t.is_empty())
+                            .unwrap_or_else(|| "none/none".into()),
+                        Err(e) => {
+                            log::info!("media type of {url}: {e}");
+                            "none/none".into()
+                        }
+                    };
+                    let _ = events.send(NetEvent::Land(LandEvent::MediaType { url, mime }));
+                });
+            }
+            LandCommand::GroupNames(ids) => {
+                // LLCacheName::Impl::sendRequest: one block per group
+                for chunk in ids.chunks(MAX_NAME_BLOCKS) {
+                    let m = UUIDGroupNameRequest {
+                        uuid_name_block: chunk.iter().map(|&id| uuid_group_name_request::UUIDNameBlock { id }).collect(),
+                    };
+                    self.send_main(&m, true);
+                }
+            }
         }
     }
 
@@ -416,6 +457,53 @@ impl Session<'_> {
         });
     }
 
+    /// LLFloaterAvatarPicker::find: the capability searches usernames and
+    /// display names; the UDP request is the legacy fallback (FIRE-15194).
+    fn avatar_search(&mut self, query: String) {
+        let Some(mut url) = self.main_cap("AvatarPickerSearch") else {
+            let query_id = Uuid::new_v4();
+            let mut m = AvatarPickerRequest::default();
+            m.agent_data.agent_id = self.agent_id();
+            m.agent_data.session_id = self.session_id();
+            m.agent_data.query_id = query_id;
+            m.data.name = str_field(&query);
+            self.send_main(&m, true);
+            self.land.picker_queries.push((query_id, query));
+            return;
+        };
+        if !url.ends_with('/') {
+            url.push('/');
+        }
+        url.push_str(&format!("?page_size=100&names={}", land::avatar_search_query(&query)));
+        let http = self.sh.caps_http.clone();
+        let events = self.sh.events.clone();
+        tokio::spawn(async move {
+            let results = match http.get(&url).header("Accept", "application/llsd+xml").send().await {
+                Ok(r) if r.status().is_success() => r.bytes().await.ok().and_then(|b| aurora_llsd::from_xml(&b).ok()).map(|v| {
+                    v["agents"]
+                        .as_array()
+                        .iter()
+                        .map(|a| land::FoundAvatar {
+                            id: a["id"].as_uuid(),
+                            display_name: a["display_name"].to_string_value(),
+                            username: a["username"].to_string_value(),
+                        })
+                        .filter(|a| !a.id.is_nil())
+                        .collect()
+                }),
+                Ok(r) => {
+                    log::warn!("AvatarPickerSearch: HTTP {}", r.status().as_u16());
+                    None
+                }
+                Err(e) => {
+                    log::warn!("AvatarPickerSearch failed: {e}");
+                    None
+                }
+            };
+            let _ = events.send(NetEvent::Land(LandEvent::AvatarSearch { query, results }));
+        });
+    }
+
     /// UDP messages of this module; Ok(false) when not one of them.
     pub(super) fn dispatch_land(&mut self, from: SocketAddr, pkt: &IncomingPacket) -> Result<bool, aurora_msg::DecodeError> {
         let id = pkt.id;
@@ -439,6 +527,44 @@ impl Session<'_> {
                     entries,
                 }),
             );
+        } else if id == AvatarPickerReply::ID {
+            let m: AvatarPickerReply = pkt.decode()?;
+            let Some(i) = self.land.picker_queries.iter().position(|(q, _)| *q == m.agent_data.query_id) else {
+                return Ok(true);
+            };
+            let (_, query) = self.land.picker_queries.remove(i);
+            let results = m
+                .data
+                .iter()
+                .filter(|d| !d.avatar_id.is_nil())
+                .map(|d| {
+                    let (first, last) = (field_str(&d.first_name), field_str(&d.last_name));
+                    land::FoundAvatar {
+                        id: d.avatar_id,
+                        display_name: if last.is_empty() || last.eq_ignore_ascii_case("resident") {
+                            first.clone()
+                        } else {
+                            format!("{first} {last}")
+                        },
+                        username: if last.is_empty() || last.eq_ignore_ascii_case("resident") {
+                            first.to_lowercase()
+                        } else {
+                            format!("{first}.{last}").to_lowercase()
+                        },
+                    }
+                })
+                .collect();
+            emit(
+                self.sh,
+                NetEvent::Land(LandEvent::AvatarSearch {
+                    query,
+                    results: Some(results),
+                }),
+            );
+        } else if id == UUIDGroupNameReply::ID {
+            let m: UUIDGroupNameReply = pkt.decode()?;
+            let names = m.uuid_name_block.iter().map(|b| (b.id, field_str(&b.group_name))).collect();
+            emit(self.sh, NetEvent::Land(LandEvent::GroupNames(names)));
         } else if id == ParcelDwellReply::ID {
             let m: ParcelDwellReply = pkt.decode()?;
             emit(
