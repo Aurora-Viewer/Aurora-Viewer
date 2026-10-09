@@ -984,6 +984,18 @@ pub fn show(
     actions
 }
 
+/// The open Conversations floater shows the local chat: its tab is selected
+/// and the floater is not minimized. Only then are the bubbles hidden, as
+/// Firestorm's nearby chat toasts are while the nearby chat panel is visible
+/// (LLFloaterIMNearbyChatHandler::processChat, nearby_chat->getVisible());
+/// on the Contacts or an IM tab the bubbles come back.
+pub fn local_chat_shown(ctx: &egui::Context, st: &ChatUi) -> bool {
+    let minimized = ctx
+        .data_mut(|d| d.get_persisted::<bool>(egui::Id::new(("conversations", "minimized"))))
+        .unwrap_or(false);
+    !st.contacts && st.selected.is_none() && !minimized
+}
+
 /// Recent chat lines floating above the chat bar (fade out after 20 s);
 /// names of linked avatars are asked through `want_names`.
 pub fn toasts(

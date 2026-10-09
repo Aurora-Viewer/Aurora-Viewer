@@ -4327,7 +4327,7 @@ impl App {
                     let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("xhair")));
                     painter.circle_stroke(c, 4.0, egui::Stroke::new(1.5, p.ink));
                 }
-                if !self.panels.chat && self.skin.layout.chat_toasts {
+                if self.skin.layout.chat_toasts && !(self.panels.chat && ui::chat::local_chat_shown(&ctx, &self.chat_ui)) {
                     ui::chat::toasts(
                         &ctx,
                         &p,
