@@ -76,15 +76,31 @@ pub enum JobResult {
 pub struct Jobs {
     tx: Sender<JobResult>,
     pub in_flight: Arc<AtomicUsize>,
+    /// Background pool, apart from the global one used by the frame
+    /// (`par_iter` of culling and poses): a frame never waits behind a
+    /// JPEG 2000 decode or a disk read.
+    pool: Arc<rayon::ThreadPool>,
 }
 
 impl Jobs {
     pub fn new() -> (Jobs, Receiver<JobResult>) {
         let (tx, rx) = crossbeam_channel::unbounded();
+        let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(threads.saturating_sub(2).max(1))
+            .thread_name(|i| format!("aurora-jobs-{i}"))
+            .build()
+            .map(Arc::new)
+            .unwrap_or_else(|e| {
+                log::warn!("background pool: {e}; falling back to one thread");
+                // a pool of one thread cannot fail in practice; keep going
+                Arc::new(rayon::ThreadPoolBuilder::new().num_threads(1).build().expect("one-thread pool"))
+            });
         (
             Jobs {
                 tx,
                 in_flight: Arc::new(AtomicUsize::new(0)),
+                pool,
             },
             rx,
         )
@@ -94,7 +110,7 @@ impl Jobs {
         let tx = self.tx.clone();
         let n = self.in_flight.clone();
         n.fetch_add(1, Ordering::Relaxed);
-        rayon::spawn(move || {
+        self.pool.spawn(move || {
             let r = f();
             n.fetch_sub(1, Ordering::Relaxed);
             let _ = tx.send(r);

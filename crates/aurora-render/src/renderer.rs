@@ -2168,6 +2168,35 @@ impl Renderer {
         self.palettes_uploaded += bytes;
     }
 
+    /// Upload only some palettes (`per` matrices each, by slot index): the
+    /// skeletons posed this frame. Everything when the buffer must grow.
+    pub fn set_palette_slots(&mut self, mats: &[[[f32; 4]; 4]], slots: &[usize], per: usize) {
+        if (mats.len() * 64) as u64 > self.palette_buffer.size() {
+            self.set_palettes(mats);
+            return;
+        }
+        let mut sorted = slots.to_vec();
+        sorted.sort_unstable();
+        sorted.dedup();
+        let mut i = 0;
+        while i < sorted.len() {
+            // neighbouring slots in one write
+            let first = sorted[i];
+            let mut last = first;
+            while i + 1 < sorted.len() && sorted[i + 1] == last + 1 {
+                i += 1;
+                last = sorted[i];
+            }
+            i += 1;
+            let (a, b) = (first * per, ((last + 1) * per).min(mats.len()));
+            if a < b {
+                self.queue
+                    .write_buffer(&self.palette_buffer, (a * 64) as u64, bytemuck::cast_slice(&mats[a..b]));
+                self.palettes_uploaded += ((b - a) * 64) as u64;
+            }
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn make_pipelines(
         device: &wgpu::Device,
@@ -4020,6 +4049,14 @@ impl Renderer {
         }
 
         prof.push(("impostors", Instant::now()));
+        // the frame is recorded into three encoders finished in parallel
+        // below (wgpu replays and tracks every command in finish())
+        let enc_pre = std::mem::replace(
+            &mut encoder,
+            self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("frame scene"),
+            }),
+        );
         mark(&mut encoder, MARK_SCENE_BEGIN);
         // ---- scene pass A: sky, terrain, opaque, masked
         let single = self.targets.color_msaa.is_none();
@@ -4230,6 +4267,11 @@ impl Renderer {
             (self.config.width, self.config.height),
             unjittered_vp.inverse(),
         );
+        let enc_scene = std::mem::replace(
+            &mut encoder,
+            self.device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("frame post") }),
+        );
         // ---- temporal anti-aliasing
         let mut post_bg = &self.targets.post_bind_group;
         if let Some(taa) = &mut self.taa {
@@ -4366,7 +4408,22 @@ impl Renderer {
         if capture.is_none() && self.capture_request {
             capture = self.encode_capture(&mut encoder, &surface_tex.texture);
         }
-        extra_cmds.push(encoder.finish());
+        // finish() validates, tracks and encodes every command of its
+        // encoder: the three run at once (wgpu-core only takes a shared
+        // lock there), then are submitted in frame order
+        let (pre, scene) = std::thread::scope(|s| {
+            let pre = s.spawn(move || enc_pre.finish());
+            let scene = s.spawn(move || enc_scene.finish());
+            (pre.join(), scene.join())
+        });
+        let post = encoder.finish();
+        match (pre, scene) {
+            (Ok(pre), Ok(scene)) => extra_cmds.extend([pre, scene, post]),
+            _ => {
+                log::error!("render: a command encoder thread panicked");
+                return stats;
+            }
+        }
         prof.push(("finish", Instant::now()));
         self.queue.submit(extra_cmds);
         if let Some((buf, w, h, row)) = capture {
