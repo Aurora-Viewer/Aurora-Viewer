@@ -1456,6 +1456,12 @@ pub fn events() -> Vec<NetEvent> {
         if restricted {
             ev.push(NetEvent::Health(72.0));
         }
+        // AURORA_DEMO_MUSIC=<url>|1: parcel music, started by the radio toggle
+        let music_url = match std::env::var("AURORA_DEMO_MUSIC").unwrap_or_default().trim() {
+            "" | "0" => String::new(),
+            "1" => land::MUSIC_URL.into(),
+            url => url.to_owned(),
+        };
         ev.push(NetEvent::AgentParcel(Arc::new(aurora_net::ParcelInfo {
             local_id: 1,
             name: "Place d'Aurora".into(),
@@ -1471,6 +1477,7 @@ pub fn events() -> Vec<NetEvent> {
             see_avatars: !restricted,
             any_av_sounds: true,
             region_allow_env_override: true,
+            music_url,
             ..Default::default()
         })));
     }
