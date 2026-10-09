@@ -12,6 +12,7 @@ pub mod context;
 pub mod debug_overlay;
 pub mod display_name;
 pub mod emoji;
+pub mod environment;
 pub mod fonts;
 pub mod hud;
 pub mod icons;
@@ -52,6 +53,10 @@ pub struct Panels {
     pub settings: bool,
     /// Local time of day: 0 shared (region EEP), 1 sunrise, 2 noon, 3 sunset, 4 midnight.
     pub time_of_day: u8,
+    /// The environment selector (Firestorm's quick preferences lists).
+    pub environment: bool,
+    /// « Éclairage personnel » (LLFloaterEnvironmentAdjust).
+    pub personal_lighting: bool,
     pub inventory: bool,
     pub people_tab: u8,
     /// The torn-off Contacts window (ContactsTornOff).

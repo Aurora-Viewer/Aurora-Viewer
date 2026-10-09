@@ -652,6 +652,29 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                         changed
                     },
                 );
+                c |= row(
+                    ui,
+                    p,
+                    "Fondu de l'environnement",
+                    "Durée du fondu quand vous changez l'environnement vous-même (sélecteur, heure du jour) ; 0 = immédiat, comme Firestorm",
+                    |ui| {
+                        ui.spacing_mut().slider_width = SLIDER_W;
+                        ui.add(
+                            egui::Slider::new(&mut s.env_manual_transition, 0.0..=60.0)
+                                .step_by(0.5)
+                                .suffix(" s")
+                                .trailing_fill(true),
+                        )
+                        .changed()
+                    },
+                );
+                c |= row(
+                    ui,
+                    p,
+                    "Garder l'environnement",
+                    "Rétablit l'environnement local (ciel, eau, cycle du jour choisis) à la prochaine connexion",
+                    |ui| toggle(ui, p, &mut s.env_persist),
+                );
                 c |= row(ui, p, "Exposition", "", |ui| {
                     ui.spacing_mut().slider_width = SLIDER_W;
                     ui.add(egui::Slider::new(&mut s.exposure, 0.25..=4.0).logarithmic(true).trailing_fill(true))

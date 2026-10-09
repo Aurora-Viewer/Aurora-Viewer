@@ -31,6 +31,8 @@ pub struct Inventory {
     pub items: HashMap<Uuid, InvItem>,
     /// Folders waiting to be fetched (id, library).
     pub queue: Vec<(Uuid, bool)>,
+    /// Bumped whenever folders or items change (cached views rebuild).
+    pub generation: u64,
 }
 
 fn first_id(v: &Llsd, key: &str) -> Uuid {
@@ -125,6 +127,7 @@ impl Inventory {
     }
 
     pub fn apply(&mut self, contents: Vec<FolderContents>) {
+        self.generation += 1;
         for c in contents {
             let library = self.folders.get(&c.folder_id).map(|f| f.library).unwrap_or(false);
             let child_ids: Vec<Uuid> = c.folders.iter().map(|f| f.id).collect();
@@ -148,6 +151,7 @@ impl Inventory {
     /// Items fetched by id (FetchInventory2), listed in their folder when
     /// that folder is loaded.
     pub fn add_items(&mut self, items: Vec<InvItem>) {
+        self.generation += 1;
         for it in items {
             if let Some(f) = self.folders.get_mut(&it.parent)
                 && f.state == FetchState::Fetched
@@ -280,6 +284,7 @@ impl Inventory {
         for id in ids {
             self.sort_children(id);
         }
+        self.generation += 1;
         valid.len()
     }
 }

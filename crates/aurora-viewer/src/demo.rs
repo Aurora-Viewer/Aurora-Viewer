@@ -17,6 +17,9 @@ const HANDLE: u64 = (256000u64 << 32) | 256000;
 /// EEP environment answers (AURORA_DEMO_EEP_PARCEL).
 #[path = "demo_eep.rs"]
 pub mod eep;
+/// Environment selector library and script (AURORA_DEMO_ENV_SELECT).
+#[path = "demo_env.rs"]
+pub mod env;
 /// About Land answers (AURORA_DEMO_LAND).
 #[path = "demo_land.rs"]
 pub mod land;
@@ -247,10 +250,13 @@ fn demo_raw() -> Llsd {
     {
         skel.push(folder(10 + i as u128, 1, name, *t));
     }
+    if env::enabled() {
+        skel.push(env::settings_folder(u(1)));
+    }
     let buddies: Vec<Llsd> = (0..4)
         .map(|i| llsd_map! {"buddy_id" => u(100 + i), "buddy_rights_given" => [1, 3, 7, 0][i as usize], "buddy_rights_has" => if i % 2 == 0 { 3 } else { 1 }})
         .collect();
-    llsd_map! {
+    let mut raw = llsd_map! {
         "inventory-root" => Llsd::Array(vec![llsd_map!{"folder_id" => u(1)}]),
         "inventory-skeleton" => Llsd::Array(skel),
         "buddy-list" => Llsd::Array(buddies),
@@ -260,7 +266,13 @@ fn demo_raw() -> Llsd {
                 .map(|(id, name)| llsd_map! {"category_id" => id, "category_name" => name})
                 .collect(),
         ),
+    };
+    if env::enabled()
+        && let Llsd::Map(m) = &mut raw
+    {
+        env::library_login(m);
     }
+    raw
 }
 
 /// Fake replies for name / inventory requests in demo mode.
@@ -461,6 +473,10 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
         aurora_net::NetCommand::FetchInventory { folders, owner, .. } => {
             let mut out = Vec::new();
             for f in folders {
+                if let Some(c) = env::folder_contents(*f, *owner) {
+                    out.push(c);
+                    continue;
+                }
                 let items: Vec<InvItem> = (0..5u128)
                     .map(|i| InvItem {
                         id: Uuid::from_u128(f.as_u128() ^ (0xABC0 + i)),

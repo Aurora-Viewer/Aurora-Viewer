@@ -4,8 +4,8 @@
 //! LLSettingsVOBase::getSettingsAsset / onAssetDownloadComplete
 //! (newview/llsettingsvo.cpp, originally LGPL 2.1).
 //!
-//! Used for Firestorm's default day; the environment selector will load its
-//! sky, water and day items the same way.
+//! Used for Firestorm's default day and the environment selector's sky,
+//! water and day cycle items.
 
 use super::jobs::{JobResult, Jobs};
 use crate::world::eep::Settings;
@@ -89,6 +89,20 @@ impl SettingsStreamer {
             (None, Step::Failed) => SettingsState::Failed,
             _ => SettingsState::Pending,
         }
+    }
+
+    /// A settings asset known without fetching it (the offline demo's
+    /// library).
+    pub fn insert_local(&mut self, id: Uuid, settings: Settings) {
+        self.entries.insert(
+            id,
+            Entry {
+                settings: Some(Arc::new(settings)),
+                step: Step::Ready,
+                retry_at: None,
+                failures: 0,
+            },
+        );
     }
 
     fn failed(e: &mut Entry, retry: Duration) {

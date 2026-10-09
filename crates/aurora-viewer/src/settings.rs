@@ -73,6 +73,12 @@ pub struct Settings {
     pub force_midday: bool,
     /// Local time of day: 0 shared (region EEP), 1 sunrise, 2 noon, 3 sunset, 4 midnight.
     pub time_of_day: u8,
+    /// Crossfade (s) of manual environment changes: selector, presets
+    /// (Firestorm FSEnvironmentManualTransitionTime, 0 = instant).
+    pub env_manual_transition: f32,
+    /// Keep the local environment from one session to the next (Firestorm
+    /// EnvironmentPersistAcrossLogin, on).
+    pub env_persist: bool,
     pub exposure: f32,
     /// Contrast adaptive sharpening (Firestorm RenderCASSharpness, 0.4).
     pub sharpen: f32,
@@ -405,6 +411,8 @@ impl Default for Settings {
             shadows: true,
             force_midday: false,
             time_of_day: 0,
+            env_manual_transition: 0.0,
+            env_persist: true,
             exposure: 1.0,
             sharpen: 0.4,
             glow: true,
@@ -609,6 +617,11 @@ impl Settings {
         }
         self.audio.mic_gain = self.audio.mic_gain.clamp(0.0, 2.0);
         self.time_of_day = self.time_of_day.min(4);
+        self.env_manual_transition = if self.env_manual_transition.is_finite() {
+            self.env_manual_transition.clamp(0.0, 60.0)
+        } else {
+            0.0
+        };
         self.settings_version = SETTINGS_VERSION;
         self.max_particles = self.max_particles.min(8192);
         self.max_avatars = self.max_avatars.clamp(1, 100);
