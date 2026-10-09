@@ -162,9 +162,12 @@ impl SoundCues {
             && let Some((id, before)) = self.text
             && ctx.memory(|m| m.focused()) == Some(id)
         {
-            let edited = events
-                .iter()
-                .any(|e| matches!(e, OutputEvent::ValueChanged(i) if i.typ == WidgetType::TextEdit));
+            // egui reports a change for any editing key, even Backspace in
+            // an empty field; prev_text_value is only set when the text changed
+            let edited = events.iter().any(|e| {
+                matches!(e, OutputEvent::ValueChanged(i)
+                    if i.typ == WidgetType::TextEdit && i.prev_text_value.is_some())
+            });
             let after = egui::text_edit::TextEditState::load(ctx, id).and_then(|s| s.cursor.char_range());
             if !edited && after == before {
                 out.push(UiSound::BadKeystroke);
@@ -187,5 +190,57 @@ impl SoundCues {
             self.floaters = None;
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// One frame of a window with a focused single-line field holding
+    /// `text`, receiving `events`; returns the sounds.
+    fn frame(ctx: &Context, cues: &mut SoundCues, text: &mut String, events: Vec<Event>) -> Vec<UiSound> {
+        let raw = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 300.0))),
+            events,
+            ..Default::default()
+        };
+        cues.before(ctx, &raw);
+        let out = ctx.run_ui(raw, |ui| {
+            cues.pass_start(ui.ctx());
+            let r = ui.add(egui::TextEdit::singleline(text).id(Id::new("field")));
+            r.request_focus();
+        });
+        cues.after(ctx, &out.platform_output.events, true)
+    }
+
+    fn key(k: Key) -> Event {
+        Event::Key {
+            key: k,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Default::default(),
+        }
+    }
+
+    #[test]
+    fn bad_keystroke_only_when_nothing_changes() {
+        let ctx = Context::default();
+        let mut cues = SoundCues::default();
+        let mut text = String::new();
+        // focus the field first
+        for _ in 0..3 {
+            frame(&ctx, &mut cues, &mut text, vec![]);
+        }
+        assert!(frame(&ctx, &mut cues, &mut text, vec![key(Key::Backspace)]).contains(&UiSound::BadKeystroke));
+        assert!(!frame(&ctx, &mut cues, &mut text, vec![Event::Text("ab".into())]).contains(&UiSound::BadKeystroke));
+        assert_eq!(text, "ab");
+        assert!(!frame(&ctx, &mut cues, &mut text, vec![key(Key::Backspace)]).contains(&UiSound::BadKeystroke));
+        assert_eq!(text, "a");
+        // the cursor is at the end: Right does nothing, Left moves
+        assert!(frame(&ctx, &mut cues, &mut text, vec![key(Key::ArrowRight)]).contains(&UiSound::BadKeystroke));
+        assert!(!frame(&ctx, &mut cues, &mut text, vec![key(Key::ArrowLeft)]).contains(&UiSound::BadKeystroke));
+        assert!(frame(&ctx, &mut cues, &mut text, vec![key(Key::Backspace)]).contains(&UiSound::BadKeystroke));
     }
 }
