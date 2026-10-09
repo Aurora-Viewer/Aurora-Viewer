@@ -412,6 +412,33 @@ impl KeyBindings {
     }
 }
 
+/// Keys a focused text field uses with Ctrl (select all, copy, cut, paste,
+/// undo / redo, word moves and deletes): a viewer shortcut on them never
+/// fires while typing. Physical keys, so both the QWERTY and the AZERTY
+/// places of A and Z count.
+pub fn is_text_edit_key(code: KeyCode) -> bool {
+    use KeyCode as K;
+    matches!(
+        code,
+        K::KeyA
+            | K::KeyQ
+            | K::KeyC
+            | K::KeyV
+            | K::KeyX
+            | K::KeyZ
+            | K::KeyW
+            | K::KeyY
+            | K::ArrowLeft
+            | K::ArrowRight
+            | K::ArrowUp
+            | K::ArrowDown
+            | K::Home
+            | K::End
+            | K::Backspace
+            | K::Delete
+    )
+}
+
 /// Current modifier state.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Mods {
@@ -537,6 +564,18 @@ impl KeyBindings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn text_edit_keys_stay_with_the_field() {
+        // the default window shortcuts work while typing...
+        for code in [KeyCode::Digit1, KeyCode::KeyT, KeyCode::KeyI, KeyCode::KeyM, KeyCode::KeyP] {
+            assert!(!is_text_edit_key(code), "{code:?}");
+        }
+        // ...not on the field's own editing keys
+        for code in [KeyCode::KeyC, KeyCode::KeyV, KeyCode::KeyZ, KeyCode::KeyQ, KeyCode::ArrowLeft] {
+            assert!(is_text_edit_key(code), "{code:?}");
+        }
+    }
 
     #[test]
     fn defaults_cover_every_action() {

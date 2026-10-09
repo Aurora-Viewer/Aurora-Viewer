@@ -3995,7 +3995,17 @@ impl ApplicationHandler for App {
                             return;
                         }
                     }
-                    if (!pressed || (!resp.consumed && !typing)) && !(pressed && ke.repeat) {
+                    // Ctrl / Alt shortcuts of the viewer still work while a text
+                    // field has the focus (chat bar...), as Firestorm's menu
+                    // accelerators go before the focused field
+                    // (LLViewerWindow::handleKey); the field keeps its own
+                    // editing shortcuts (copy, paste, undo, words...)
+                    let shortcut = pressed
+                        && typing
+                        && (self.ctrl || self.alt)
+                        && !crate::keybinds::is_text_edit_key(code)
+                        && self.settings.keybinds.triggered(&Input::key(code), self.mods()).is_some();
+                    if (!pressed || (!resp.consumed && !typing) || shortcut) && !(pressed && ke.repeat) {
                         self.on_input(Input::key(code), pressed);
                     }
                 }
