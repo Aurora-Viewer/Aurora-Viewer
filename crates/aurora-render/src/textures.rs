@@ -762,6 +762,26 @@ impl TextureTable {
         Some((s.key.width, s.key.height))
     }
 
+    /// Diagnostic: where a slot lives (page, layer, size and levels).
+    pub fn describe(&self, slot: u32) -> String {
+        match self.store.slots.get(slot as usize).and_then(Option::as_ref) {
+            None => "free".into(),
+            Some(s) => format!(
+                "page {} layer {} ({}×{}, {} levels{})",
+                s.page,
+                s.layer,
+                s.key.width,
+                s.key.height,
+                s.key.mips,
+                if self.store.loc.get(slot as usize) == Some(&pack(s.page, s.layer)) {
+                    ""
+                } else {
+                    ", location out of date"
+                }
+            ),
+        }
+    }
+
     /// Overwrite a rectangle of level 0 in place (media textures updated
     /// every frame: no new texture, no bind group rebuild). `data` holds
     /// `h` rows of `w` RGBA8 pixels.
@@ -1227,5 +1247,326 @@ mod tests {
             }
         }
         assert_eq!(store.live as usize, live.len() + RESERVED as usize);
+    }
+
+    /// Randomized GPU check of the page store: creations, upgrades to the
+    /// same or another size, frees, slot reuse and compaction interleaved
+    /// (as streaming and eviction do), with every live slot read back from
+    /// its location at regular intervals. `cargo test -p aurora-render
+    /// pages_fuzz -- --ignored`.
+    #[test]
+    #[ignore]
+    fn pages_fuzz_on_the_gpu() {
+        let instance = wgpu::Instance::default();
+        let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())) else {
+            eprintln!("no GPU adapter: skipped");
+            return;
+        };
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).expect("GPU device");
+        // small pages so that sizes spread over several pages and compact
+        let mut store = PageStore::new(4096, 512, 16, 4096);
+        for _ in 0..RESERVED {
+            store.create(
+                &device,
+                &queue,
+                &[MipLevel {
+                    width: 1,
+                    height: 1,
+                    data: &[255; 4],
+                }],
+            );
+        }
+        let sizes = [(1, 1), (4, 4), (8, 8), (16, 16), (16, 8), (8, 16), (12, 12), (32, 32)];
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        let mut rand = move |n: usize| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % n as u64) as usize
+        };
+        let upload = |store: &mut PageStore, id: u32, (w, h): (u32, u32), slot: Option<u32>| {
+            let count = 32 - w.max(h).leading_zeros();
+            let levels: Vec<Vec<u8>> = (0..count).map(|l| texels(id, w, h, l)).collect();
+            let mips: Vec<MipLevel> = levels
+                .iter()
+                .enumerate()
+                .map(|(l, d)| MipLevel {
+                    width: level_dim(w, l as u32),
+                    height: level_dim(h, l as u32),
+                    data: d,
+                })
+                .collect();
+            match slot {
+                Some(s) => store.replace(&device, &queue, s, &mips).then_some(s),
+                None => store.create(&device, &queue, &mips),
+            }
+        };
+        // slot -> (texture id, size)
+        let mut live: std::collections::BTreeMap<u32, (u32, (u32, u32))> = Default::default();
+        let mut next_id = 1u32;
+        for step in 0..3000 {
+            match rand(10) {
+                0..=3 => {
+                    // a new texture starts as a 1×1 placeholder
+                    let slot = upload(&mut store, next_id, (1, 1), None).expect("slot");
+                    assert!(!live.contains_key(&slot), "slot {slot} handed out twice");
+                    live.insert(slot, (next_id, (1, 1)));
+                    next_id += 1;
+                }
+                4..=6 if !live.is_empty() => {
+                    // upgrade (sometimes to the same size: in place)
+                    let slot = *live.keys().nth(rand(live.len())).expect("slot");
+                    let size = sizes[rand(sizes.len())];
+                    assert_eq!(upload(&mut store, next_id, size, Some(slot)), Some(slot));
+                    live.insert(slot, (next_id, size));
+                    next_id += 1;
+                }
+                7..=8 if !live.is_empty() => {
+                    let slot = *live.keys().nth(rand(live.len())).expect("slot");
+                    store.free(slot);
+                    live.remove(&slot);
+                }
+                _ => store.compact(&device, &queue),
+            }
+            if step % 250 == 249 {
+                for (&slot, &(id, (w, h))) in &live {
+                    let got = read_back(&device, &queue, &store, slot);
+                    for (l, level) in got.iter().enumerate() {
+                        assert_eq!(level, &texels(id, w, h, l as u32), "step {step} slot {slot} texture {id} level {l}");
+                    }
+                }
+                // owners and slots agree
+                for (p, page) in store.pages.iter().enumerate() {
+                    let Some(page) = page else { continue };
+                    for (layer, &owner) in page.owners.iter().enumerate() {
+                        if owner != NO_SLOT {
+                            let s = store.slots[owner as usize].as_ref().expect("owner is live");
+                            assert_eq!((s.page, s.layer), (p as u32, layer as u32));
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(store.live as usize, live.len() + RESERVED as usize);
+    }
+
+    /// The whole table on the GPU as the renderer uses it: random creations,
+    /// upgrades, frees and compactions between "frames" (`maintain`), then
+    /// every live slot is sampled through the bind group and the location
+    /// buffer (one pixel per slot) and must give its texture's first texel.
+    /// `cargo test -p aurora-render pages_sampled -- --ignored`.
+    #[test]
+    #[ignore]
+    fn pages_sampled_through_the_bind_group() {
+        let instance = wgpu::Instance::default();
+        let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())) else {
+            eprintln!("no GPU adapter: skipped");
+            return;
+        };
+        let features = wgpu::Features::TEXTURE_BINDING_ARRAY
+            | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING
+            | (adapter.features() & wgpu::Features::PARTIALLY_BOUND_BINDING_ARRAY);
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            required_features: features,
+            required_limits: adapter.limits(),
+            ..Default::default()
+        }))
+        .expect("GPU device");
+        const SLOTS: u32 = 512;
+        let mut table = TextureTable::new(&device, &queue, SLOTS, 8);
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: None,
+            source: wgpu::ShaderSource::Wgsl(
+                "enable wgpu_binding_array;
+                @group(0) @binding(0) var tex_pages: binding_array<texture_2d_array<f32>>;
+                @group(0) @binding(1) var tex_sampler: sampler;
+                @group(0) @binding(2) var<storage, read> tex_loc: array<u32>;
+                @vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
+                    let p = vec2<f32>(f32((i << 1u) & 2u), f32(i & 2u));
+                    return vec4<f32>(p * 2.0 - 1.0, 0.0, 1.0);
+                }
+                @fragment fn fs(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
+                    // row 0: level 0, row 1: the last level (first texel of each)
+                    let loc = tex_loc[u32(p.x)];
+                    let levels = textureNumLevels(tex_pages[loc >> 16u]);
+                    let level = select(0u, levels - 1u, p.y > 1.0);
+                    let dims = textureDimensions(tex_pages[loc >> 16u], level);
+                    let uv = vec2<f32>(0.5) / vec2<f32>(dims);
+                    return textureSampleLevel(tex_pages[loc >> 16u], tex_sampler, uv, loc & 0xffffu, f32(level));
+                }"
+                .into(),
+            ),
+        });
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: None,
+            bind_group_layouts: &[Some(&table.layout)],
+            immediate_size: 0,
+        });
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: None,
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::TextureFormat::Rgba8Unorm.into())],
+            }),
+            primitive: Default::default(),
+            depth_stencil: None,
+            multisample: Default::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+        let target = device.create_texture(&wgpu::TextureDescriptor {
+            label: None,
+            size: wgpu::Extent3d {
+                width: SLOTS,
+                height: 2,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let target_view = target.create_view(&Default::default());
+        let sample_all = |table: &TextureTable| -> Vec<u8> {
+            let buf = device.create_buffer(&wgpu::BufferDescriptor {
+                label: None,
+                size: SLOTS as u64 * 8,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+            let mut enc = device.create_command_encoder(&Default::default());
+            {
+                let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: None,
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &target_view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                pass.set_pipeline(&pipeline);
+                pass.set_bind_group(0, &table.bind_group, &[]);
+                pass.draw(0..3, 0..1);
+            }
+            enc.copy_texture_to_buffer(
+                target.as_image_copy(),
+                wgpu::TexelCopyBufferInfo {
+                    buffer: &buf,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(SLOTS * 4),
+                        rows_per_image: Some(2),
+                    },
+                },
+                wgpu::Extent3d {
+                    width: SLOTS,
+                    height: 2,
+                    depth_or_array_layers: 1,
+                },
+            );
+            queue.submit(std::iter::once(enc.finish()));
+            buf.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+            let _ = device.poll(wgpu::PollType::wait_indefinitely());
+            buf.slice(..).get_mapped_range().expect("mapped read-back").to_vec()
+        };
+        let sizes = [
+            (1, 1),
+            (4, 4),
+            (64, 64),
+            (128, 128),
+            (128, 64),
+            (12, 12),
+            (256, 256),
+            (1024, 1024),
+            (2048, 2048),
+            (2048, 1024),
+            (512, 1024),
+        ];
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut rand = move |n: usize| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % n as u64) as usize
+        };
+        let upload = |table: &mut TextureTable, id: u32, (w, h): (u32, u32), slot: Option<u32>| {
+            let levels: Vec<Vec<u8>> = (0..32 - w.max(h).leading_zeros()).map(|l| texels(id, w, h, l)).collect();
+            let mips: Vec<MipLevel> = levels
+                .iter()
+                .enumerate()
+                .map(|(l, d)| MipLevel {
+                    width: level_dim(w, l as u32),
+                    height: level_dim(h, l as u32),
+                    data: d,
+                })
+                .collect();
+            match slot {
+                Some(s) => table.replace(&device, &queue, s, &mips).then_some(s),
+                None => table.create(&device, &queue, &mips),
+            }
+        };
+        let mut live: std::collections::BTreeMap<u32, (u32, (u32, u32))> = Default::default();
+        let mut next_id = 1u32;
+        for frame in 0..400 {
+            for _ in 0..rand(12) {
+                match rand(10) {
+                    0..=3 if live.len() < SLOTS as usize - 8 => {
+                        let slot = upload(&mut table, next_id, (1, 1), None).expect("slot");
+                        live.insert(slot, (next_id, (1, 1)));
+                        next_id += 1;
+                    }
+                    4..=6 if !live.is_empty() => {
+                        let slot = *live.keys().nth(rand(live.len())).expect("slot");
+                        let size = sizes[rand(sizes.len())];
+                        assert_eq!(upload(&mut table, next_id, size, Some(slot)), Some(slot));
+                        live.insert(slot, (next_id, size));
+                        next_id += 1;
+                    }
+                    7..=9 if !live.is_empty() => {
+                        let slot = *live.keys().nth(rand(live.len())).expect("slot");
+                        table.free(slot);
+                        live.remove(&slot);
+                    }
+                    _ => {}
+                }
+            }
+            if frame % 7 == 0 {
+                // let the throttled compaction run this frame
+                table.last_compact = Instant::now() - COMPACT_INTERVAL;
+            }
+            table.maintain(&device, &queue, false);
+            let px = sample_all(&table);
+            for (&slot, &(id, (w, h))) in &live {
+                let at = |row: u32| &px[(row * SLOTS + slot) as usize * 4..][..4];
+                let last = 31 - w.max(h).leading_zeros();
+                assert_eq!(at(0), &texels(id, w, h, 0)[..4], "frame {frame} slot {slot} texture {id}");
+                assert_eq!(
+                    at(1),
+                    &texels(id, w, h, last)[..4],
+                    "frame {frame} slot {slot} texture {id} level {last}"
+                );
+            }
+            assert_eq!(&px[..4], &[255, 255, 255, 255]);
+        }
+        eprintln!("{} live, {} pages", live.len(), table.pages());
     }
 }

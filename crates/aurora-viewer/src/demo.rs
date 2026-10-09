@@ -1980,17 +1980,47 @@ pub fn stress_texture_mips(i: u32, discard: u32) -> Vec<(u32, u32, Vec<u8>)> {
 /// The cubes of AURORA_DEMO_TEXTURES: a square field east of the plaza,
 /// facing the start position, 0.5 m cubes every 0.8 m.
 pub fn texture_stress_events(n: u32) -> Vec<NetEvent> {
+    stress_cubes(n, |_| true, 0)
+}
+
+/// AURORA_DEMO_TEXTURES_CHURN=1: streaming churn on top of the stress test,
+/// as in a busy region where objects come and go. The cubes of
+/// `stress_churned` are removed at frame 300 (their textures are evicted a
+/// few seconds later, which frees layers and compacts pages), then put back
+/// at frame 700 with new textures (placeholders in the freed slots, then
+/// low and full resolution).
+pub fn texture_churn() -> bool {
+    std::env::var_os("AURORA_DEMO_TEXTURES_CHURN").is_some()
+}
+
+pub fn stress_churned(i: u32) -> bool {
+    i.is_multiple_of(3)
+}
+
+pub fn texture_churn_kill(n: u32) -> Vec<NetEvent> {
+    vec![NetEvent::ObjectsKilled {
+        handle: HANDLE,
+        local_ids: (0..n).filter(|&i| stress_churned(i)).map(|i| 50_000 + i).collect(),
+    }]
+}
+
+/// The removed cubes back, each with texture `n + i`.
+pub fn texture_churn_respawn(n: u32) -> Vec<NetEvent> {
+    stress_cubes(n, stress_churned, n)
+}
+
+fn stress_cubes(n: u32, keep: impl Fn(u32) -> bool, texture_offset: u32) -> Vec<NetEvent> {
     let boxp = shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE, 100, 0, 0);
     let side = (n as f32).sqrt().ceil().max(1.0) as u32;
     let mut objects = Vec::with_capacity(n as usize);
-    for i in 0..n {
+    for i in (0..n).filter(|&i| keep(i)) {
         let (x, y) = (
             146.0 + (i / side) as f32 * 0.8,
             126.0 + ((i % side) as f32 - side as f32 * 0.5) * 0.8,
         );
         let mut t = (*te([1.0; 4], 0, false, 0.0)).clone();
         for f in &mut t.faces {
-            f.texture = stress_texture(i);
+            f.texture = stress_texture(texture_offset + i);
         }
         objects.push(prim(
             50_000 + i,
