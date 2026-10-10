@@ -39,7 +39,7 @@ pub fn object(point: u8, active: bool) -> ObjectUpdate {
     o.parent_id = 9000;
     o.state = point.rotate_left(4);
     o.owner_id = DEMO_AGENT;
-    o.update_flags = (1 << 7) | (1 << 5) | (1 << 2);
+    o.update_flags = (1 << 8) | (1 << 7) | (1 << 5) | (1 << 2);
     o.name_values = format!("AttachItemID STRING RW SV {}", o.full_id);
     o
 }
@@ -85,6 +85,21 @@ pub fn reply(cmd: &aurora_net::NetCommand) -> Option<Vec<NetEvent>> {
     })
 }
 
+/// A script's color reply must keep the placement already saved by a drag.
+pub fn preserve_placement(world: &crate::world::World, event: &mut NetEvent) {
+    if let NetEvent::ObjectUpdates { objects, .. } = event {
+        for update in objects {
+            if let Some(current) = world.objects.index_of_uuid(&update.full_id).and_then(|idx| world.objects.get(idx))
+                && (31..=38).contains(&current.attachment_point())
+            {
+                update.position = current.position;
+                update.rotation = current.rotation;
+                update.scale = current.scale;
+            }
+        }
+    }
+}
+
 pub fn seed_inventory(world: &mut crate::world::World) {
     use crate::world::appearance::{self, Action};
     let inv = &mut world.inventory;
@@ -128,6 +143,26 @@ pub fn seed_inventory(world: &mut crate::world::World) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn script_color_reply_preserves_moved_hud() {
+        let mut world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for ev in super::super::events().into_iter().chain(events()) {
+            world.apply(ev);
+        }
+        let id = object(31, false).full_id;
+        let idx = world.objects.index_of_uuid(&id).unwrap();
+        let moved = Vec3::new(0.0, -0.25, 0.2);
+        world.objects.get_mut(idx).unwrap().position = moved;
+        let mut reply = NetEvent::ObjectUpdates {
+            handle: HANDLE,
+            objects: vec![object(31, true)],
+        };
+        preserve_placement(&world, &mut reply);
+        world.apply(reply);
+        assert_eq!(world.objects.get(idx).unwrap().position, moved);
+        assert!(world.objects.get(idx).unwrap().text.contains("Touché"));
+    }
 
     #[test]
     fn hud_detach_removes_only_its_current_outfit_link_and_keeps_inventory() {

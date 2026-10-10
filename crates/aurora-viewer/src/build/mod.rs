@@ -17,6 +17,7 @@ pub mod draw;
 pub mod edits;
 pub mod geom;
 pub mod grab;
+pub mod hud_drag;
 pub mod land;
 pub mod manip;
 pub mod materials;

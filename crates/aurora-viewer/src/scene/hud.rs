@@ -46,6 +46,21 @@ impl Scene {
     }
 
     pub fn hud_pick(&self, world: &World, cursor: (f32, f32), include_hidden: bool) -> Option<(usize, Vec3, (Vec3, Vec3))> {
+        self.hud_pick_impl(world, cursor, include_hidden, false)
+    }
+
+    /// Alt movement picks visible geometry even when its click action is IGNORE.
+    pub fn hud_move_pick(&self, world: &World, cursor: (f32, f32)) -> Option<usize> {
+        self.hud_pick_impl(world, cursor, false, true).map(|(idx, _, _)| idx)
+    }
+
+    fn hud_pick_impl(
+        &self,
+        world: &World,
+        cursor: (f32, f32),
+        include_hidden: bool,
+        include_ignored: bool,
+    ) -> Option<(usize, Vec3, (Vec3, Vec3))> {
         let view = self.lists.hud_view?;
         let ray = view.ray(cursor.0, cursor.1);
         let own = world.objects.index_of_uuid(&world.agent_id)?;
@@ -54,7 +69,11 @@ impl Scene {
         let mut found = None;
         for (idx, g) in self.gpu.iter().enumerate() {
             let Some(o) = world.objects.get(idx) else { continue };
-            if !g.hud || g.owner_avatar != Some(own) || o.click_action == crate::interaction::code::IGNORE || !picking::ray_may_hit(g, ray)
+            if !g.hud
+                || g.owner_avatar != Some(own)
+                || (!include_hidden && g.faces.iter().all(|f| f.pass == Pass::Hidden))
+                || (!include_ignored && o.click_action == crate::interaction::code::IGNORE)
+                || !picking::ray_may_hit(g, ray)
             {
                 continue;
             }
