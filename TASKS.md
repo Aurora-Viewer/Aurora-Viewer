@@ -10,6 +10,17 @@ Légende : ✅ fait (et vérifié sur Agni quand ça dépend de la grille) · �
 > (la précédente : `aurora.previous.log`, le mode démo : `aurora-demo.log`),
 > bouton « Ouvrir le dossier » dans Réseau et cache.
 
+## Priorité
+
+Ce qui passe avant le reste (demandé par l'humain).
+
+- ⬜ **Viewer en anglais et choix de la langue** (demandé le 10/10/2026, très prioritaire). Aujourd'hui tous les textes de l'interface sont en français, écrits en dur dans le code : de l'ordre de 2 000 textes dans environ 120 fichiers (comptage rapide du 10/10), surtout `crates/aurora-viewer/src/ui/`, `build/ui/`, `world/` et `app/`, mais aussi `aurora-net` (messages d'erreur de la session, de l'inventaire et des tenues), les commandes de chat, les notifications et l'écran de connexion.
+  - **Système de traduction facile à utiliser et à modifier** : un fichier par langue (`fr.json`, `en.json`, ou un format plus pratique s'il y en a un : à comparer et à proposer à l'humain au début de la tâche), clés lisibles, textes à variables (« {nom} est en ligne ») et pluriels. Ajouter une langue = ajouter un fichier, sans toucher au code. Texte absent d'une langue = texte anglais. Un test vérifie que chaque langue a les mêmes clés et les mêmes variables que l'anglais.
+  - **Tous les textes sortis du code** et traduits en anglais ; le français reste complet. Plus aucun texte d'interface en dur (à vérifier par une recherche à la relecture).
+  - **Langue de l'OS détectée** au démarrage ; **anglais par défaut** si la langue de l'OS n'existe pas dans le viewer. Choix dans les Préférences (« Langue du système » + la liste des langues), enregistré. Même ordre que `LLUI::getUILanguage` de Firestorm (`indra/llui/llui.cpp` : réglage `Language`, « default » = `SystemLanguage`, sinon « en »).
+  - À regarder dans Firestorm pendant la tâche : la langue envoyée au simulateur (capability `UpdateAgentLanguage`, réglage `LanguageIsPublic`, `indra/newview/llagentlanguage.cpp`, lue par llGetAgentLanguage) ; les dates et les nombres selon la langue (l'âge du profil écrit « jj/mm/aaaa », voir Réseau et protocole).
+  - À mettre à jour avec la tâche : la règle 6 d'AGENTS.md (« textes de l'interface en français ») et la façon d'écrire un texte d'interface (clé + les deux langues dans la même PR), ARCHITECTURE.md, un scénario de démo ou un argument pour forcer la langue (captures dans les deux langues).
+
 ## Dépôt et outillage
 - ✅ Dépôt GitHub public `Aurora-Viewer/Aurora-Viewer` (GPL-3.0-or-later) : README, AGENTS.md (règles des agents), CLAUDE.md, HUMANS.md, ARCHITECTURE.md, docs/BRANDING.md, NOTICE.md ; un worktree par tâche (`scripts/new-task.ps1` / `end-task.ps1`), `scripts/check.ps1` (fmt, clippy -D warnings, tests), `scripts/pr-captures.ps1` (captures des PR sur la branche `captures`), `scripts/fetch-assets.ps1` (police emoji), étiquettes type + zone (`scripts/setup-labels.ps1`) ; CI GitHub Actions (Windows : fmt, clippy, tests avec un profil `ci` rapide à compiler, sautés pour les PR de documentation ; gitleaks), release sur tag SemVer (zip Windows, notes par type), Dependabot hebdomadaire
 - ✅ Workspace : édition 2024, lints communs, Rust stable (`rust-toolchain.toml`), rustfmt (140 colonnes), clippy à zéro avertissement
