@@ -56,11 +56,11 @@ function Invoke-DebugViewer {
     }
 }
 
-# Demo scenarios switched on with "=1", read from the README table.
+# Demo scenarios switched on with "=1", read from the tables of docs/TESTING.md.
 function Get-DemoScenarios {
-    $readme = Join-Path $Paths.Repo 'README.md'
-    if (-not (Test-Path $readme)) { return @() }
-    Get-Content $readme -Encoding UTF8 | ForEach-Object {
+    $switches = Join-Path $Paths.Repo 'docs\TESTING.md'
+    if (-not (Test-Path $switches)) { return @() }
+    Get-Content $switches -Encoding UTF8 | ForEach-Object {
         if ($_ -match '^\| `(AURORA_DEMO_[A-Z_]+)=1`[^|]*\| ([^|]+)\|') {
             [pscustomobject]@{ Var = $Matches[1]; Label = $Matches[2].Trim() }
         }

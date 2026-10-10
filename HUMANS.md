@@ -160,7 +160,7 @@ ligne : ce qui est là est mis à jour, rien n'est réinstallé).
 | Viewer release | Le dernier `main` de GitHub en `--release`, dans `RELEASE\` (voir plus bas), puis « lancer ? » |
 | Viewer de dev | Ton dépôt local, profil par défaut (celui des agents) |
 | Viewer de debug | Ton dépôt local avec une console, les contrôles de débogage et les infos de débogage complètes (profil `debugging`, son propre dossier de quelques Go) |
-| Démo | Le viewer hors ligne, avec le choix d'un scénario `AURORA_DEMO_*` (lus dans le README) |
+| Démo | Le viewer hors ligne, avec le choix d'un scénario `AURORA_DEMO_*` (lus dans [docs/TESTING.md](docs/TESTING.md)) |
 | Tâches des agents | Les dossiers de `work\` : PR, changements en cours, dernière compilation, taille ; ménage de celles dont la PR est fusionnée |
 | Disque | La place prise par les compilations, et le nettoyage (`clean.ps1`) |
 | Logs du viewer | Ouvrir le dossier, lire la fin du dernier log, copier son chemin pour un agent |
