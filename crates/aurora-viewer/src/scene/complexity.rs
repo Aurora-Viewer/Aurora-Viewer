@@ -101,6 +101,9 @@ pub fn radius_weighted_tris(lod_bytes: [u32; 4], radius: f32) -> f32 {
     (t_high * high_area + t_mid * mid_area + t_low * low_area + t_lowest * lowest_area) / total
 }
 
+/// Shapes kept by `Scene::prim_triangle_counts` (then it starts over).
+const PRIM_TRIANGLES_CACHED: usize = 16384;
+
 /// What decides which avatars show as grey silhouettes.
 pub struct Rules<'a> {
     /// RenderAvatarMaxComplexity (0 = no limit).
@@ -153,6 +156,24 @@ pub fn texture_cost(size: Option<(u32, u32)>) -> u32 {
 }
 
 impl Scene {
+    /// `lod_triangle_counts` of a prim shape, kept per shape: it builds the
+    /// path and the profile of the four LODs (1–3 µs), and an avatar wearing
+    /// a few hundred prims (flexi hair, old jewelry) made its refresh take
+    /// 1–2 ms of a frame.
+    fn prim_triangle_counts(&self, volume: &aurora_prim::VolumeParams) -> [u32; 4] {
+        let key = volume.cache_key();
+        let mut cache = self.prim_triangles.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(counts) = cache.get(&key) {
+            return *counts;
+        }
+        if cache.len() >= PRIM_TRIANGLES_CACHED {
+            cache.clear();
+        }
+        let counts = aurora_prim::lod_triangle_counts(volume);
+        cache.insert(key, counts);
+        counts
+    }
+
     /// LLVOVolume::getRenderCost of one prim; its textures go into `textures`.
     fn prim_render_cost(&self, world: &World, idx: usize, textures: &mut HashSet<Uuid>) -> f32 {
         let Some(o) = world.objects.get(idx) else {
@@ -177,7 +198,7 @@ impl Scene {
         } else {
             // prims: each LOD's triangles estimated from the shape
             // (getLoDTriangleCounts), as LOD sizes of 10 bytes per triangle
-            let counts = aurora_prim::lod_triangle_counts(&o.volume);
+            let counts = self.prim_triangle_counts(&o.volume);
             radius_weighted_tris(counts.map(|c| c.saturating_mul(10)), radius)
         };
         if num_triangles <= 0.0 {
@@ -363,6 +384,28 @@ mod tests {
         for p in 1..=100 {
             assert_eq!(slider::from_limit(slider::to_limit(p)), p);
         }
+    }
+
+    #[test]
+    fn prim_triangle_counts_are_kept_per_shape() {
+        let world = World::new(std::sync::Arc::new(avatar::AvatarLibrary::load()));
+        let scene = Scene::new(std::path::PathBuf::new(), world.avatar_lib.clone());
+        let shape = |hollow: u16| {
+            aurora_prim::RawShape {
+                path_curve: aurora_prim::params::LL_PCODE_PATH_CIRCLE,
+                profile_curve: aurora_prim::params::LL_PCODE_PROFILE_CIRCLE,
+                path_scale_x: 100,
+                path_scale_y: 50,
+                profile_hollow: hollow,
+                ..Default::default()
+            }
+            .to_params()
+        };
+        for hollow in [0, 20_000, 0, 20_000] {
+            let v = shape(hollow);
+            assert_eq!(scene.prim_triangle_counts(&v), aurora_prim::lod_triangle_counts(&v));
+        }
+        assert_eq!(scene.prim_triangles.lock().expect("cache").len(), 2);
     }
 
     #[test]

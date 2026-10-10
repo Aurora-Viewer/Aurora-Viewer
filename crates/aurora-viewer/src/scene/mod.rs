@@ -417,6 +417,8 @@ pub struct Scene {
     pub loading_bars: bool,
     /// Surface area of the generated sculpts (attachment area limit).
     pub sculpt_area: HashMap<GeomKey, f32>,
+    /// LOD triangle counts by prim shape (complexity.rs).
+    prim_triangles: std::sync::Mutex<HashMap<u64, [u32; 4]>>,
     /// Attachment surface area of each avatar (m², RenderAutoMuteSurfaceAreaLimit).
     pub avatar_area: HashMap<Uuid, f32>,
     complexity_rules: u64,
@@ -688,6 +690,7 @@ impl Scene {
             hide_loading: true,
             loading_bars: true,
             sculpt_area: HashMap::new(),
+            prim_triangles: Default::default(),
             avatar_area: HashMap::new(),
             complexity_rules: 0,
             complexity_at: None,
