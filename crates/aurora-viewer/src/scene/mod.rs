@@ -426,6 +426,10 @@ pub struct Scene {
     pub last_cull: Option<CullView>,
     complexity_at: Option<Instant>,
     complexity_max: u32,
+    /// Avatars (slot, id) still to refresh in this complexity round, and
+    /// how many per frame (complexity.rs).
+    complexity_round: Vec<(usize, Uuid)>,
+    complexity_slice: usize,
     /// Avatars drawn (the nearest ones; own avatar always).
     pub max_avatars: usize,
     /// Build reflection draw lists (planar reflections enabled).
@@ -681,6 +685,8 @@ impl Scene {
             complexity_rules: 0,
             complexity_at: None,
             complexity_max: 0,
+            complexity_round: Vec::new(),
+            complexity_slice: 0,
             max_avatars: 16,
             reflections: true,
             fov_y: 1.0,
