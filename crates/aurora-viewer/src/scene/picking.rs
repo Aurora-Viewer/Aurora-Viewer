@@ -463,6 +463,7 @@ mod tests {
             assert_eq!(scene.hud_pick(&world, cursor, hidden).unwrap().0, back);
         }
         assert_eq!(scene.hud_edit_pick(&world, cursor).unwrap().0, back);
+        assert_eq!(scene.hud_move_pick(&world, cursor), Some(back));
         assert!(
             scene
                 .touch_surface(&world, front, scene.lists.hud_view.unwrap().ray(cursor.0, cursor.1))
@@ -479,6 +480,8 @@ mod tests {
             },
         );
         assert_eq!(scene.hud_pick(&world, cursor, true).unwrap().0, front);
+        world.objects.get_mut(front).unwrap().click_action = crate::interaction::code::IGNORE;
+        assert_eq!(scene.hud_move_pick(&world, cursor), Some(front));
         let key = world.objects.get(front).unwrap().key;
         world.gltf_overrides.insert(
             key,
@@ -492,6 +495,7 @@ mod tests {
             .into(),
         );
         assert_eq!(scene.hud_pick(&world, cursor, true).unwrap().0, back);
+        assert_eq!(scene.hud_move_pick(&world, cursor), Some(back));
         world.gltf_overrides.insert(
             key,
             vec![(
@@ -504,6 +508,8 @@ mod tests {
             .into(),
         );
         scene.materials.insert(mat, aurora_assets::PbrMaterial::default());
+        assert_eq!(scene.hud_move_pick(&world, cursor), Some(front));
+        world.objects.get_mut(front).unwrap().click_action = crate::interaction::code::NONE;
         assert_eq!(scene.hud_pick(&world, cursor, true).unwrap().0, front);
     }
 
@@ -549,6 +555,7 @@ mod tests {
         }
         assert_eq!(scene.hud_pick(&world, cursor, true).unwrap().0, front);
         assert_eq!(scene.hud_pick(&world, cursor, false).unwrap().0, back);
+        assert_eq!(scene.hud_move_pick(&world, cursor), Some(back));
         scene.gpu[front].owner_avatar = None;
         scene.build_huds(&world, [1280, 720], true);
         assert_eq!(scene.lists.hud_opaque.len(), 1);
@@ -556,6 +563,7 @@ mod tests {
         scene.build_huds(&world, [1280, 720], false);
         assert!(scene.lists.hud_opaque.is_empty());
         assert!(scene.hud_pick(&world, cursor, true).is_none());
+        assert!(scene.hud_move_pick(&world, cursor).is_none());
     }
 
     #[test]

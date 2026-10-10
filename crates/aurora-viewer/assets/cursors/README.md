@@ -20,6 +20,10 @@ points actifs d'origine conservés dans `src/cursors.rs`. Aucun de ces dessins
 ne contient de pixel monochrome demandant l'inversion du fond.
 
 Touch utilise la main native du système, comme Firestorm sous Windows.
+Le déplacement des HUDs avec ALT utilise l’icône Phosphor regular
+`hand-grabbing.svg`, rastérisée en curseur de 32 × 32 avec un contour contrasté
+et un point actif central. Windows remplace la main « Grabbing » native par
+des flèches : ce curseur personnalisé conserve la main demandée.
 NONE / TOUCH sur un objet non interactif, DISABLED sur un objet non physique et les actions indisponibles
 gardent la flèche. IGNORE laisse le curseur et le clic atteindre ce qui est derrière.
 DISABLED supprime le toucher et l'héritage de l'action, mais ne verrouille pas

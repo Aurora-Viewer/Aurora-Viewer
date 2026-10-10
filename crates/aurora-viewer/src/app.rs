@@ -26,6 +26,7 @@ use winit::window::{CursorGrabMode, Window, WindowId};
 
 mod chat_commands;
 mod context_menu;
+mod hud_drag;
 mod inventory;
 mod inventory_thumbnail;
 mod object_actions;
@@ -132,6 +133,7 @@ pub struct App {
     mouse_mode: MouseMode,
     /// Build tools (selection, manipulators, create, terraform).
     build: crate::build::BuildTool,
+    hud_drag: Option<crate::build::hud_drag::HudDrag>,
     interactions: crate::interaction::Interactions,
     cursors: crate::cursors::Cursors,
     /// Demo mode: answers to the build tools' commands.
@@ -450,8 +452,9 @@ impl App {
             context_menu: None,
             mouse_mode: MouseMode::None,
             build: Default::default(),
+            hud_drag: None,
             interactions: Default::default(),
-            cursors: Default::default(),
+            cursors: crate::cursors::Cursors::with_palette(&palette),
             build_demo: Default::default(),
             cursor_pos: (0.0, 0.0),
             last_tap: None,
@@ -854,6 +857,7 @@ impl App {
     }
 
     fn back_to_login(&mut self, error: Option<String>) {
+        self.hud_drag = None;
         self.media.clear();
         self.media.openid.clear();
         self.save_local_environment();
@@ -1233,6 +1237,9 @@ impl App {
 
     /// Mouse motion: mouselook, camera drags (steering, Alt), right drag orbit.
     fn camera_mouse_delta(&mut self, dx: f32, dy: f32) {
+        if self.hud_drag.is_some() {
+            return;
+        }
         let s = self.settings.mouse_sensitivity;
         if self.camera.mouselook() {
             self.camera.look(dx, dy, s, &mut self.world.agent);
@@ -1565,6 +1572,20 @@ impl App {
 
     fn on_left_press(&mut self) {
         self.left_down = true;
+        if self.hud_drag_requested()
+            && self.settings.show_huds
+            && let Some(idx) = self.scene.hud_move_pick(&self.world, self.cursor_pos)
+        {
+            // Own the complete gesture: no media / script click or camera focus,
+            // even when the visible frontmost HUD cannot be moved.
+            self.media.unfocus();
+            self.hud_drag = self
+                .scene
+                .lists
+                .hud_view
+                .and_then(|view| crate::build::hud_drag::HudDrag::start(&self.world, idx, view, self.cursor_pos));
+            return;
+        }
         let Some(g) = self.gfx.as_mut() else {
             return;
         };
@@ -2026,6 +2047,9 @@ impl App {
 
     /// Log out, save the window, layout, inventory cache and settings, exit.
     fn shutdown(&mut self, event_loop: &ActiveEventLoop) {
+        if self.hud_drag.is_some() {
+            self.on_left_release();
+        }
         if self.in_world() {
             self.net.send(NetCommand::Logout);
             std::thread::sleep(Duration::from_millis(300));
@@ -2180,17 +2204,28 @@ impl App {
 
     /// End of a shortcut capture (None = cancelled).
     fn finish_capture(&mut self, input: Option<Input>) {
-        let Some((action, slot)) = self.options_ui.capture.take() else {
+        let Some(capture) = self.options_ui.capture.take() else {
             return;
         };
         if let Some(input) = input {
-            let b = crate::keybinds::Binding {
-                input,
-                ctrl: self.ctrl,
-                shift: self.shift,
-                alt: self.alt,
-            };
-            self.settings.keybinds.set(action, slot, Some(b));
+            match capture {
+                ui::options::Capture::Binding(action, slot) => {
+                    let b = crate::keybinds::Binding {
+                        input,
+                        ctrl: self.ctrl,
+                        shift: self.shift,
+                        alt: self.alt,
+                    };
+                    self.settings.keybinds.set(action, slot, Some(b));
+                }
+                ui::options::Capture::HudDrag => {
+                    let Some(key) = crate::keybinds::HoldKey::from_input(input) else {
+                        return;
+                    };
+                    self.settings.hud_drag_key = key;
+                    self.down.clear();
+                }
+            }
             self.settings.save();
         }
     }
@@ -2317,7 +2352,10 @@ impl App {
 
     /// Left press while building: handles, selection, create, terraform.
     fn build_mouse_down(&mut self) -> bool {
-        if !self.build.open || self.alt {
+        if !self.build.open
+            || self.alt
+            || (self.hud_drag_requested() && self.settings.show_huds && self.scene.hud_move_pick(&self.world, self.cursor_pos).is_some())
+        {
             return false;
         }
         if self.build.tool == crate::build::Tool::Focus {
@@ -2389,6 +2427,9 @@ impl App {
     /// Right button: orbit drag, context menu on a click, and walking forward
     /// while steering with the left button (a double click runs).
     fn on_right_button(&mut self, pressed: bool, over_ui: bool) {
+        if self.hud_drag.is_some() {
+            return;
+        }
         let was_drag = self.right_drag;
         self.right_drag = pressed && (!over_ui || self.mouse_mode == MouseMode::Steer) && self.in_world();
         if self.mouse_walks() {
@@ -2405,6 +2446,13 @@ impl App {
     }
 
     fn on_left_release(&mut self) {
+        self.update_hud_drag(self.scene.lists.hud_view);
+        if let Some(cmd) = self.hud_drag.take().and_then(|drag| drag.release(&self.world)) {
+            if self.demo {
+                log::info!("demo HUD drag saved: {cmd:?}");
+            }
+            self.send(NetCommand::Build(cmd));
+        }
         self.release_object_hold();
         self.left_down = false;
         self.build.mouse_up(&mut self.world, &self.settings.build);
@@ -2430,6 +2478,9 @@ impl App {
     /// server's destination before showing a screen for an unknown destination,
     /// so even these local teleports remain direct.
     fn begin_teleport(&mut self, dest: String, show_progress: bool) {
+        if self.hud_drag.is_some() {
+            self.on_left_release();
+        }
         self.release_object_hold();
         self.tp_dest = Some(dest);
         self.media.on_teleport();
@@ -3021,6 +3072,7 @@ impl App {
         }
         if self.skin.maybe_reload(&self.egui_ctx, self.settings.font_scale) {
             self.palette = self.skin.theme.palette();
+            self.cursors.set_palette(&self.palette);
             self.egui_ctx.set_zoom_factor(self.settings.ui_scale);
         }
 
@@ -3247,6 +3299,11 @@ impl App {
             self.frame_profile.lap(Lap::Complexity);
             let hud_size = gfx.window.inner_size();
             self.world.hud_aspect = hud_size.width as f32 / hud_size.height.max(1) as f32;
+            let drag_view =
+                self.scene.lists.hud_view.map(|view| {
+                    aurora_render::HudView::new([hud_size.width, hud_size.height], self.world.hud_zoom, view.min_x, view.max_x)
+                });
+            self.update_hud_drag(drag_view);
             self.scene.sync(&mut gfx.renderer, &mut self.world, &cull);
             self.frame_profile.lap(Lap::Sync);
             {
@@ -3816,6 +3873,22 @@ impl App {
                 full.platform_output.cursor_image = None;
             }
         }
+        if self.hud_drag.is_some()
+            || (self.hud_drag_requested()
+                && self.settings.show_huds
+                && matches!(self.screen, Screen::World)
+                && self.mouse_mode == MouseMode::None
+                && !self.camera.mouselook()
+                && !ctx.is_pointer_over_egui()
+                && !ctx.egui_wants_pointer_input()
+                && self
+                    .scene
+                    .hud_move_pick(&self.world, self.cursor_pos)
+                    .is_some_and(|idx| crate::build::hud_drag::HudDrag::can_start(&self.world, idx)))
+        {
+            full.platform_output.cursor_icon = egui::CursorIcon::Grabbing;
+            full.platform_output.cursor_image = self.cursors.hud_drag();
+        }
         gfx.egui_state
             .handle_platform_output_with_event_loop(&gfx.window, event_loop, full.platform_output);
         self.frame_profile.lap(Lap::Hover);
@@ -3888,7 +3961,14 @@ impl App {
         self.frame_profile.lap(Lap::Render);
         // frame limiter; vsync already paces at the screen rate
         let timed = self.capture.is_some() || self.frame_profile.enabled();
-        let cap = frame_cap(&self.settings, self.focused, self.in_world(), self.monitor_hz, timed);
+        let cap = frame_cap(
+            &self.settings,
+            self.focused,
+            self.in_world(),
+            self.monitor_hz,
+            timed,
+            crate::cli::get().fps_limit,
+        );
         let paced_by_vsync = gfx.renderer.vsync() && cap >= self.monitor_hz - 0.5;
         if cap >= 1.0 && !paced_by_vsync {
             let target = Duration::from_secs_f32(1.0 / cap);
@@ -3979,6 +4059,7 @@ impl App {
         self.end_profile_frame(w, h);
         self.gfx = Some(gfx);
         self.demo_action_steps();
+        self.demo_hud_drag_steps();
         if self.demo && std::env::var("AURORA_DEMO_HUDS").is_ok_and(|m| m == "touch") {
             if self.frame_count == 720
                 && let Some(view) = self.scene.lists.hud_view
@@ -4480,6 +4561,9 @@ impl App {
         }
         match a.bar {
             BarAction::ShowHuds(visible) => {
+                if self.hud_drag.is_some() {
+                    self.on_left_release();
+                }
                 self.release_object_hold();
                 self.settings.show_huds = visible;
                 self.settings.save();
@@ -5864,8 +5948,27 @@ impl ApplicationHandler for App {
                 self.panels.settings = false;
                 self.world.notifications.list.clear();
                 crate::demo::hud::seed_inventory(&mut self.world);
-                if matches!(mode.as_str(), "zoom" | "edit-zoom") {
+                if matches!(mode.as_str(), "zoom" | "edit-zoom" | "drag-zoom") {
                     self.world.hud_zoom = 0.5;
+                }
+                if mode.starts_with("drag") {
+                    use crate::keybinds::HoldKey;
+                    self.settings.hud_drag_key = match mode.as_str() {
+                        "drag-ctrl" => HoldKey::Ctrl,
+                        "drag-key" => HoldKey::Key("KeyB".into()),
+                        _ => HoldKey::default(),
+                    };
+                }
+                if mode == "drag-ignore" {
+                    let idx = self
+                        .world
+                        .objects
+                        .iter()
+                        .find(|(_, o)| o.key.local_id == crate::demo::hud::CHILD)
+                        .map(|(idx, _)| idx);
+                    if let Some(o) = idx.and_then(|idx| self.world.objects.get_mut(idx)) {
+                        o.click_action = crate::interaction::code::IGNORE;
+                    }
                 }
                 if mode == "media" {
                     let mut hud = crate::demo::hud::object(35, false);
@@ -5938,6 +6041,9 @@ impl ApplicationHandler for App {
             WindowEvent::Focused(false) => {
                 self.focused = false;
                 self.down.clear();
+                self.alt = false;
+                self.ctrl = false;
+                self.shift = false;
                 self.right_drag = false;
                 self.mic_button_held = false;
                 self.on_left_release();
@@ -5962,11 +6068,24 @@ impl ApplicationHandler for App {
                     }
                     // shortcut being captured in the preferences
                     if self.options_ui.capture.is_some() {
-                        if pressed && !ke.repeat && !Input::is_modifier(code) {
+                        if pressed
+                            && !ke.repeat
+                            && (!Input::is_modifier(code) || self.options_ui.capture == Some(ui::options::Capture::HudDrag))
+                        {
                             let input = (code != KeyCode::Escape).then(|| Input::key(code));
                             self.finish_capture(input);
                         }
                         return;
+                    }
+                    // A gesture key must still be held when the chat or a web
+                    // page has keyboard focus; it only owns a visible HUD drag.
+                    let input = Input::key(code);
+                    if self.settings.hud_drag_key.is_key(&input) {
+                        if pressed {
+                            self.down.insert(input);
+                        } else {
+                            self.down.remove(&input);
+                        }
                     }
                     // Releases always go through so keys never get stuck.
                     let typing = self.egui_ctx.egui_wants_keyboard_input();
@@ -6020,7 +6139,7 @@ impl ApplicationHandler for App {
                 let over_ui = self.egui_ctx.is_pointer_over_egui() || self.egui_ctx.egui_wants_pointer_input();
                 // shortcut being captured: middle / side buttons bind, left / right cancel
                 if self.options_ui.capture.is_some() {
-                    if pressed {
+                    if pressed && (self.options_ui.capture != Some(ui::options::Capture::HudDrag) || Input::mouse(*button).is_none()) {
                         self.finish_capture(Input::mouse(*button));
                     }
                     return;
@@ -6109,8 +6228,11 @@ impl ApplicationHandler for App {
 /// desktop compositor and makes the whole machine stutter on some setups.
 /// `timed` runs (AURORA_CAPTURE, AURORA_PROFILE) count or measure frames,
 /// often in a window that never had the focus: no background cap there.
-fn frame_cap(s: &Settings, focused: bool, in_world: bool, monitor_hz: f32, timed: bool) -> f32 {
+fn frame_cap(s: &Settings, focused: bool, in_world: bool, monitor_hz: f32, timed: bool, fps_limit: Option<u32>) -> f32 {
     let mut cap = if s.fps_cap { s.fps_limit as f32 } else { f32::INFINITY };
+    if let Some(limit) = fps_limit {
+        cap = cap.min(limit as f32);
+    }
     if !focused && s.background_fps_cap && !timed {
         cap = cap.min(s.background_fps_limit as f32);
     }
@@ -6157,10 +6279,10 @@ mod tests {
             ..Settings::default()
         };
         // in world: free unless the user asks for a cap
-        assert_eq!(frame_cap(&free, true, true, 144.0, false), 0.0);
-        assert_eq!(frame_cap(&free, false, true, 144.0, false), 0.0);
+        assert_eq!(frame_cap(&free, true, true, 144.0, false, None), 0.0);
+        assert_eq!(frame_cap(&free, false, true, 144.0, false, None), 0.0);
         // outside the world (login): never above the screen rate
-        assert_eq!(frame_cap(&free, true, false, 144.0, false), 144.0);
+        assert_eq!(frame_cap(&free, true, false, 144.0, false, None), 144.0);
         let capped = Settings {
             fps_cap: true,
             fps_limit: 90,
@@ -6168,15 +6290,25 @@ mod tests {
             background_fps_limit: 15,
             ..Settings::default()
         };
-        assert_eq!(frame_cap(&capped, true, true, 144.0, false), 90.0);
-        assert_eq!(frame_cap(&capped, true, false, 144.0, false), 90.0);
-        assert_eq!(frame_cap(&capped, true, false, 60.0, false), 60.0);
+        assert_eq!(frame_cap(&capped, true, true, 144.0, false, None), 90.0);
+        assert_eq!(frame_cap(&capped, true, false, 144.0, false, None), 90.0);
+        assert_eq!(frame_cap(&capped, true, false, 60.0, false, None), 60.0);
         // not focused: the lower of the two caps
-        assert_eq!(frame_cap(&capped, false, true, 144.0, false), 15.0);
-        assert_eq!(frame_cap(&capped, false, false, 144.0, false), 15.0);
+        assert_eq!(frame_cap(&capped, false, true, 144.0, false, None), 15.0);
+        assert_eq!(frame_cap(&capped, false, false, 144.0, false, None), 15.0);
         // captures and profiles keep their pace without the focus
-        assert_eq!(frame_cap(&capped, false, true, 144.0, true), 90.0);
-        assert_eq!(frame_cap(&free, false, false, 144.0, true), 144.0);
+        assert_eq!(frame_cap(&capped, false, true, 144.0, true, None), 90.0);
+        assert_eq!(frame_cap(&free, false, false, 144.0, true, None), 144.0);
+        // A process cap survives preferences, capture mode and loss of focus.
+        for focused in [false, true] {
+            for in_world in [false, true] {
+                for timed in [false, true] {
+                    assert_eq!(frame_cap(&free, focused, in_world, 144.0, timed, Some(60)), 60.0);
+                    assert!(frame_cap(&capped, focused, in_world, 144.0, timed, Some(60)) <= 60.0);
+                }
+            }
+        }
+        assert_eq!(frame_cap(&capped, true, true, 144.0, false, Some(30)), 30.0);
     }
 
     #[test]

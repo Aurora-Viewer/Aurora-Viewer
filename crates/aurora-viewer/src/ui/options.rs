@@ -3,6 +3,7 @@
 
 mod camera;
 mod commands;
+mod practical;
 
 use super::fonts::{self, SystemFont};
 use super::icons::Icons;
@@ -10,6 +11,12 @@ use super::widgets::Floater;
 use crate::settings::Settings;
 use crate::theme::Palette;
 use egui::{Color32, CornerRadius, RichText, Sense, Vec2};
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Capture {
+    Binding(crate::keybinds::Action, usize),
+    HudDrag,
+}
 
 #[derive(Default)]
 pub struct OptionsUi {
@@ -30,9 +37,8 @@ pub struct OptionsUi {
     /// Media plugins folder found (empty: none) and plugins running.
     pub media_plugins: String,
     pub media_running: usize,
-    /// Shortcut waiting for a key / mouse button (action, slot); the app
-    /// captures the next input.
-    pub capture: Option<(crate::keybinds::Action, usize)>,
+    /// Shortcut or gesture waiting for its next input, captured by the app.
+    pub capture: Option<Capture>,
     clear: Option<(crate::keybinds::Action, usize)>,
     /// "Tout réinitialiser" confirmation open.
     confirm_reset: bool,
@@ -54,7 +60,7 @@ pub struct OptionsResult {
 }
 
 /// Category tabs (index = `OptionsUi::tab`).
-const CATEGORIES: [(&str, &str); 12] = [
+const CATEGORIES: [(&str, &str); 13] = [
     ("Graphismes", "Command_Environments_Icon"),
     ("Interface", "Command_Appearance_Icon"),
     ("Polices", "Command_Chat_Icon"),
@@ -67,15 +73,17 @@ const CATEGORIES: [(&str, &str); 12] = [
     ("Debug", "code"),
     ("Caméra", "camera"),
     ("Commandes", "terminal-window"),
+    ("Pratique", "hand-grabbing"),
 ];
 
 /// Order of the tabs in the sidebar.
-const ORDER: [usize; 12] = [0, 1, 2, 3, TAB_COMMANDS, 7, 4, TAB_CAMERA, 8, 5, 6, 9];
+const ORDER: [usize; 13] = [0, 1, 2, 3, TAB_COMMANDS, 7, 4, TAB_CAMERA, TAB_PRACTICAL, 8, 5, 6, 9];
 
 pub const TAB_AUDIO: usize = 7;
 pub const TAB_CHAT: usize = 3;
 pub const TAB_CAMERA: usize = 10;
 pub const TAB_COMMANDS: usize = 11;
+pub const TAB_PRACTICAL: usize = 12;
 
 const LABEL_W: f32 = 180.0;
 
@@ -131,6 +139,7 @@ fn group_icon(title: &str) -> Option<&'static str> {
         "Émetteur" => "user-circle",
         "Mentions dans le chat" => "at",
         "Souris" => "mouse",
+        "HUDs" => "hand-grabbing",
         "Clavier" => "keyboard",
         "Couleur des étiquettes" => "tag",
         "Repères sur la mini-carte" => "map-trifold",
@@ -412,6 +421,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
                             9 => debug_page(ui, p, s),
                             TAB_CAMERA => camera::page(ui, p, s),
                             TAB_COMMANDS => commands::page(ui, p, &mut s.chat_commands),
+                            TAB_PRACTICAL => practical::page(ui, p, s, st),
                             _ => content(ui, p, s, st, &mut r.font_changed, &mut r.clear_cache),
                         };
                     });
@@ -1509,7 +1519,7 @@ fn binding_cell(
     a: crate::keybinds::Action,
     slot: usize,
 ) {
-    let capturing = st.capture == Some((a, slot));
+    let capturing = st.capture == Some(Capture::Binding(a, slot));
     let b = kb.get(a)[slot].clone();
     let (text, col) = if capturing {
         ("Appuyez sur une touche…".to_owned(), Color32::WHITE)
@@ -1526,7 +1536,7 @@ fn binding_cell(
             .min_size(Vec2::new(132.0, 20.0)),
     );
     if resp.clicked() {
-        st.capture = if capturing { None } else { Some((a, slot)) };
+        st.capture = if capturing { None } else { Some(Capture::Binding(a, slot)) };
     }
     if resp.secondary_clicked() && b.is_some() {
         st.clear = Some((a, slot));

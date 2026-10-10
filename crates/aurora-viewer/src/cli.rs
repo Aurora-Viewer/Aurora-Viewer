@@ -9,14 +9,17 @@ pub struct Cli {
     /// `--title <text>`: shown in the window title ("Aurora Viewer - <text>")
     /// and used to name the log, so parallel test windows can be told apart.
     pub title: Option<String>,
+    /// Additional cap for this process only, including captures and online tests.
+    pub fps_limit: Option<u32>,
 }
 
 const HELP: &str = "Aurora Viewer
 
-Usage: aurora-viewer [--title <text>]
+Usage: aurora-viewer [--title <text>] [--fps-limit <fps>]
 
   --title <text>   Name this window (\"Aurora Viewer - <text>\") and its log
                    file (aurora-<text>.log, aurora-demo-<text>.log in demo mode)
+  --fps-limit <fps>  Cap this process at 1..500 FPS without saving preferences
   -h, --help       Show this help
 
 Test switches are environment variables (AURORA_DEMO=1, AURORA_CAPTURE=...):
@@ -40,10 +43,22 @@ fn parse(args: impl Iterator<Item = String>) -> Cli {
             cli.title = Some(v.to_owned());
         } else if a == "--title" {
             cli.title = args.next();
+        } else if let Some(v) = a.strip_prefix("--fps-limit=") {
+            cli.fps_limit = parse_fps_limit(v);
+        } else if a == "--fps-limit" {
+            cli.fps_limit = args.next().as_deref().and_then(parse_fps_limit);
         }
     }
     cli.title = cli.title.map(|t| t.trim().to_owned()).filter(|t| !t.is_empty());
     cli
+}
+
+fn parse_fps_limit(value: &str) -> Option<u32> {
+    let limit = value.trim().parse::<u32>().ok().filter(|fps| (1..=500).contains(fps));
+    if limit.is_none() {
+        eprintln!("--fps-limit requires a value between 1 and 500");
+    }
+    limit
 }
 
 /// The window title, ending with the build profile ("(Dev)", "(Release)",
@@ -109,5 +124,15 @@ mod tests {
         assert_eq!(cli.title.as_deref(), Some("Sons"));
         let cli = parse(["--title", "   "].map(String::from).into_iter());
         assert_eq!(cli.title, None);
+    }
+
+    #[test]
+    fn process_fps_limit_forms_and_invalid_values() {
+        for args in [vec!["--fps-limit", "60"], vec!["--fps-limit=60"]] {
+            assert_eq!(parse(args.into_iter().map(String::from)).fps_limit, Some(60));
+        }
+        for value in ["0", "501", "-1", "nan"] {
+            assert_eq!(parse_fps_limit(value), None);
+        }
     }
 }
