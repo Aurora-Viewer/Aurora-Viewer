@@ -294,7 +294,8 @@ Légende : ✅ fait (et vérifié sur Agni quand ça dépend de la grille) · �
 - ✅ « Tout réinitialiser » dans les préférences (garde le compte, la grille et la taille de fenêtre)
 - ✅ Fenêtre du viewer : position, taille et état agrandi retenus d'un lancement à l'autre (position ignorée si l'écran n'est plus branché)
 - ✅ Disposition de l'interface retenue : position, taille et état réduit des fenêtres (ui_layout.ron), panneaux ouverts (conversations, personnes, inventaire, mini-carte, performances)
-- ✅ Limite d'images/s réglable (désactivée par défaut), limite hors focus (désactivée par défaut), synchronisation verticale désactivée par défaut
+- ✅ Limite d'images/s réglable (désactivée par défaut), limite hors focus, synchronisation verticale désactivée par défaut
+- 🔧 Images/s hors du monde et en arrière-plan : l'écran de connexion ne dépasse plus la fréquence de l'écran (scène vide : sans limite il tournait à des milliers d'images/s et faisait saccader tout le bureau sur certaines machines) ; « Limiter hors focus » activé par défaut (15 img/s, Firestorm cède aussi du temps en arrière-plan avec BackgroundYieldTime), réglages existants basculés une fois ; en monde, toujours sans limite par défaut ; les captures et le profil (`AURORA_CAPTURE`, `AURORA_PROFILE`) ignorent la limite hors focus
 - ✅ Icônes devant les sections des préférences
 - ✅ Barre de navigation : clic = SLURL de la position (sélectionnée, prête à copier) ; coller / taper une SLURL, Région/x/y/z, « Région (x, y, z) » ou un nom de région + Entrée = téléportation ; Échap ou clic ailleurs = annule
 - ✅ Écran de téléportation et de chargement : dernière vue floutée (prise au TP, à la déconnexion et à la fermeture, gardée sur disque), fondu à la fin, option « Fond des chargements » (activée par défaut), repli sur le fond habituel

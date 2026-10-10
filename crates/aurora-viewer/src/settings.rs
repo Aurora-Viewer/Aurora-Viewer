@@ -162,7 +162,8 @@ pub struct Settings {
     /// Frame rate cap (off by default) and its value (images per second).
     pub fps_cap: bool,
     pub fps_limit: u32,
-    /// Lower cap while the window is not focused (off by default).
+    /// Lower cap while the window is not focused (on by default, as
+    /// Firestorm yields BackgroundYieldTime every frame in the background).
     pub background_fps_cap: bool,
     pub background_fps_limit: u32,
     /// Maximum live particles (0 = particles off).
@@ -233,7 +234,7 @@ pub struct Settings {
     pub settings_version: u32,
 }
 
-const SETTINGS_VERSION: u32 = 8;
+const SETTINGS_VERSION: u32 = 9;
 
 /// RGBA color (sRGB, straight alpha).
 pub type Rgba = [u8; 4];
@@ -474,7 +475,7 @@ impl Default for Settings {
             tonemapper: 0,
             fps_cap: false,
             fps_limit: 60,
-            background_fps_cap: false,
+            background_fps_cap: true,
             background_fps_limit: 15,
             max_particles: 4096,
             max_avatars: 16,
@@ -629,6 +630,11 @@ impl Settings {
         if self.settings_version < 8 && self.colors.chat_slurl == hex(0x6F7BA0) {
             // new default: SL links (places, avatars, groups) in the link teal
             self.colors.chat_slurl = ColorSettings::default().chat_slurl;
+        }
+        if self.settings_version < 9 {
+            // new default: the background cap is on (a window left behind no
+            // longer keeps the GPU and the desktop busy)
+            self.background_fps_cap = true;
         }
         if self.settings_version < 4 {
             // walking: arrow keys only (no more WASD / ZQSD by default)
@@ -936,5 +942,22 @@ mod tests {
         let mut on = Settings::default();
         on.audio.music_autoplay = true;
         assert!(on.sanitized().audio.music_autoplay);
+    }
+
+    #[test]
+    fn background_cap_is_on_by_default() {
+        assert!(Settings::default().sanitized().background_fps_cap);
+        let old = Settings {
+            settings_version: 8,
+            background_fps_cap: false,
+            ..Settings::default()
+        };
+        assert!(old.sanitized().background_fps_cap);
+        // switched off after the migration: kept
+        let off = Settings {
+            background_fps_cap: false,
+            ..Settings::default()
+        };
+        assert!(!off.sanitized().background_fps_cap);
     }
 }
