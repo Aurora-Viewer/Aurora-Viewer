@@ -41,6 +41,16 @@ impl ThumbnailUi {
         self.error.clear();
         actions.push(InvAction::Thumbnail { request, item, input });
     }
+    /// LLFloaterSimpleSnapshot::onSend closes the snapshot once upload starts.
+    /// Firestorm indra/newview/llfloatersimplesnapshot.cpp (LGPL 2.1).
+    pub(crate) fn save_photo(&mut self, actions: &mut Vec<InvAction>) {
+        if let Some(item) = self.item
+            && let Some(pixels) = self.pixels.clone()
+        {
+            self.request(item, Input::Photo(pixels), actions);
+            self.photo_open = false;
+        }
+    }
     pub(super) fn show(
         &mut self,
         ctx: &egui::Context,
@@ -169,16 +179,15 @@ impl ThumbnailUi {
                     if ui
                         .add_enabled(ready && self.pixels.is_some(), egui::Button::new("Enregistrer"))
                         .clicked()
-                        && let Some(pixels) = &self.pixels
                     {
-                        self.request(item, Input::Photo(pixels.clone()), actions);
+                        self.save_photo(actions);
                     }
                     if flat_button(ui, p, "Annuler").clicked() {
                         cancel = true;
                     }
                 });
             });
-            self.photo_open = photo_open && !cancel;
+            self.photo_open &= photo_open && !cancel;
         }
         if self.picker_open {
             let mut picker_open = true;
@@ -424,4 +433,85 @@ fn toolbar_button(ui: &mut egui::Ui, p: &Palette, name: &str, tip: &str, enabled
         caption.clone_from(&tip.to_owned());
     }
     response.on_hover_text(tip).clicked() && enabled
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clicking_save_uploads_the_photo_and_closes_only_the_snapshot_window() {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let p = crate::theme::Theme::default().palette();
+        let mut world = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        crate::world::inventory::demo::seed(&mut world.inventory, Uuid::from_u128(2));
+        let item = Uuid::from_u128(8101);
+        let pixels = Arc::new(vec![128; 256 * 256 * 4]);
+        let mut st = ThumbnailUi {
+            item: Some(item),
+            photo_open: true,
+            pixels: Some(pixels.clone()),
+            ..Default::default()
+        };
+        let mut actions = Vec::new();
+        let mut frame = |events| {
+            ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 800.0))),
+                    events,
+                    ..Default::default()
+                },
+                |_ui| {
+                    st.show(
+                        &ctx,
+                        &p,
+                        &Icons::default(),
+                        &mut world,
+                        &InventoryPreferences::default(),
+                        Uuid::nil(),
+                        &HashMap::new(),
+                        &mut HashSet::new(),
+                        false,
+                        &mut actions,
+                    );
+                },
+            )
+        };
+        for _ in 0..4 {
+            frame(Vec::new());
+        }
+        let output = frame(Vec::new());
+        let pos = output
+            .shapes
+            .iter()
+            .find_map(|s| match &s.shape {
+                egui::epaint::Shape::Text(t) if t.galley.text() == "Enregistrer" => Some(t.pos + egui::vec2(4.0, 4.0)),
+                _ => None,
+            })
+            .expect("save button");
+        for pressed in [true, false] {
+            frame(vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]);
+        }
+        let output = frame(Vec::new());
+        assert!(
+            matches!(&actions[..], [InvAction::Thumbnail { item: target, input: Input::Photo(photo), .. }]
+            if *target == item && Arc::ptr_eq(photo, &pixels))
+        );
+        assert!(!st.photo_open);
+        assert_eq!(st.item, Some(item));
+        assert!(st.pending.is_some());
+        assert!(output.shapes.iter().any(|s| matches!(&s.shape, egui::epaint::Shape::Text(t)
+            if t.galley.text() == "Modifier l’image de l’objet")));
+        assert!(!output.shapes.iter().any(|s| matches!(&s.shape, egui::epaint::Shape::Text(t)
+            if t.galley.text() == "Photo de l’objet")));
+    }
 }

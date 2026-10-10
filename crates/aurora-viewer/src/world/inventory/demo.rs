@@ -125,7 +125,16 @@ pub fn seed(inv: &mut Inventory, agent: Uuid) {
 
 pub fn target(view: &str) -> Option<Uuid> {
     Some(Uuid::from_u128(match view {
-        "folder" | "clothes" | "body" | "settings" | "uploads" | "new-folder" | "new-script" | "new-note" => 8000,
+        "folder"
+        | "clothes"
+        | "body"
+        | "settings"
+        | "uploads"
+        | "new-folder"
+        | "new-script"
+        | "new-note"
+        | "folder-window"
+        | "folder-window-search" => 8000,
         "object" | "properties" | "rename" | "multi-add" | "multi-detach" | "delete" => 8100,
         "animation" | "animation-open" | "animation-properties" | "image" | "image-photo" | "image-picker" | "image-photo-save" => 8101,
         "script" => 8102,

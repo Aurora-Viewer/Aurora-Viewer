@@ -3834,14 +3834,12 @@ impl App {
             self.inventory_ui.thumbnail.pending = Some(request);
             self.inventory_image_action(request, item, ui::inventory::thumbnail::Input::Capture);
         }
-        if self.demo
-            && self.frame_count == 2100
-            && std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|v| v == "image-photo-save")
-            && let Some(pixels) = self.inventory_ui.thumbnail.pixels.clone()
-        {
-            let request = uuid::Uuid::new_v4();
-            self.inventory_ui.thumbnail.pending = Some(request);
-            self.inventory_image_action(request, uuid::Uuid::from_u128(8101), ui::inventory::thumbnail::Input::Photo(pixels));
+        if self.demo && self.frame_count == 2100 && std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|v| v == "image-photo-save") {
+            let mut actions = Vec::new();
+            self.inventory_ui.thumbnail.save_photo(&mut actions);
+            for action in actions {
+                self.apply_inventory_action(action);
+            }
         }
         if self.demo && std::env::var_os("AURORA_DEMO_ANIM_LOOP").is_some() {
             for event in crate::demo::loop_animation_events(self.frame_count) {
@@ -5559,6 +5557,13 @@ impl ApplicationHandler for App {
                             },
                             name: if view == "new-script" { "Nouveau script" } else { "Nouvelle note" }.into(),
                         });
+                    } else if matches!(view.as_str(), "folder-window" | "folder-window-search") {
+                        self.inventory_ui.open_folder_window(id);
+                        if view == "folder-window-search"
+                            && let Some(window) = self.inventory_ui.windows.last_mut()
+                        {
+                            window.state.search = "démonstration".into();
+                        }
                     } else if view == "rename" {
                         self.inventory_ui.begin_rename(&self.world.inventory, id);
                     } else if matches!(view.as_str(), "multi-add" | "multi-detach" | "delete") {

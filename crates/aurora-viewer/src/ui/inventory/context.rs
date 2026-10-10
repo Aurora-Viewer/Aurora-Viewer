@@ -327,24 +327,11 @@ pub(super) fn show(
                     actions.push(InvAction::Preview(id));
                 }
                 if menu::item_if(ui, p, "arrow-square-out", "Afficher dans une nouvelle fenêtre", single) {
-                    st.windows.push(InventoryWindow {
-                        id: Uuid::new_v4(),
-                        root: if f.library { inv.lib_root } else { inv.root },
-                        state: Box::new(InventoryUi::default()),
-                        open: true,
-                    });
-                    if let Some(w) = st.windows.last_mut() {
-                        w.state.show_original(inv, id);
-                    }
+                    st.open_folder_window(id);
                 }
                 menu::separator(ui, p);
                 if menu::item_if(ui, p, "folder-open", "Ouvrir dans une nouvelle fenêtre", single) {
-                    st.windows.push(InventoryWindow {
-                        id: Uuid::new_v4(),
-                        root: id,
-                        state: Box::new(InventoryUi::default()),
-                        open: true,
-                    });
+                    st.open_folder_window(id);
                 }
             } else if let Some(it) = item {
                 let knowable = !matches!(kind, 6 | 10 | 11 | 22 | 49)
@@ -657,14 +644,24 @@ mod tests {
         }
     }
     fn frame(ctx: &egui::Context, inv: &Inventory, target: Uuid) -> egui::FullOutput {
-        let p = crate::theme::Theme::default().palette();
         let mut state = InventoryUi {
             merchant: true,
             ..Default::default()
         };
+        menu_frame(ctx, inv, target, &mut state, Vec::new())
+    }
+    fn menu_frame(
+        ctx: &egui::Context,
+        inv: &Inventory,
+        target: Uuid,
+        state: &mut InventoryUi,
+        events: Vec<egui::Event>,
+    ) -> egui::FullOutput {
+        let p = crate::theme::Theme::default().palette();
         ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(1600.0, 900.0))),
+                events,
                 ..Default::default()
             },
             |ui| {
@@ -680,7 +677,7 @@ mod tests {
                             &p,
                             inv,
                             target,
-                            &mut state,
+                            state,
                             &mut InventoryPreferences::default(),
                             &Facts {
                                 worn: HashSet::new(),
@@ -694,6 +691,51 @@ mod tests {
                 );
             },
         )
+    }
+    #[test]
+    fn folder_window_menu_targets_the_clicked_folder_including_the_library() {
+        for target in [8000, 8003] {
+            let ctx = egui::Context::default();
+            crate::theme::Theme::default().apply(&ctx, 1.0);
+            let mut inv = Inventory::default();
+            crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+            let target = Uuid::from_u128(target);
+            let mut st = InventoryUi {
+                search: "main inventory filter".into(),
+                ..Default::default()
+            };
+            for _ in 0..4 {
+                menu_frame(&ctx, &inv, target, &mut st, Vec::new());
+            }
+            let output = menu_frame(&ctx, &inv, target, &mut st, Vec::new());
+            let pos = output
+                .shapes
+                .iter()
+                .find_map(|s| text_position(&s.shape, "Afficher dans une nouvelle fenêtre"))
+                .expect("folder window option")
+                + egui::vec2(4.0, 4.0);
+            for pressed in [true, false] {
+                menu_frame(
+                    &ctx,
+                    &inv,
+                    target,
+                    &mut st,
+                    vec![
+                        egui::Event::PointerMoved(pos),
+                        egui::Event::PointerButton {
+                            pos,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                );
+            }
+            assert_eq!(st.windows.len(), 1);
+            assert_eq!(st.windows[0].root, target);
+            assert!(st.windows[0].state.search.is_empty());
+            assert_eq!(st.search, "main inventory filter");
+        }
     }
     #[test]
     fn the_entire_folder_menu_is_visible_including_the_last_marketplace_row() {
