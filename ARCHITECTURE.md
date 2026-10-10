@@ -65,7 +65,7 @@ commande en une ligne (`scripts/setup.ps1`, puis les outils) :
 | `aurora-llsd` | Type LLSD et ses formats XML / binaire / notation |
 | `aurora-prim` | Modèle des prims : paramètres de volume, faces, paramètres étendus, génération de la géométrie (port de `llvolume`) |
 | `aurora-assets` | Décodeurs d'assets : JPEG2000, mesh, animations, matériaux, maillages d'avatar `.llm`, squelette |
-| `aurora-render` | Moteur de rendu wgpu / Vulkan : textures bindless regroupées en pages (texture arrays), géométrie sous-allouée, multi-draw-indirect, ombres, reflets, post-traitement ; animations de texture (`tex_anim.rs` : référence CPU et paramètres des enregistrements, évaluées par les vertex shaders) ; listes de dessin pilotées par le GPU (`gpu_cull.rs`, `shaders/cull.wgsl` : tables des faces et des objets tenues par la scène, culling et compactage en compute pour chaque vue, dessin par `multi_draw_indexed_indirect_count`) ; occlusion Hi-Z en deux phases (`occlusion.rs`, `shaders/occlusion.wgsl`, test commun `shaders/hiz_test.wgsl`) |
+| `aurora-render` | Moteur de rendu wgpu / Vulkan : textures bindless regroupées en pages (texture arrays), géométrie sous-allouée, multi-draw-indirect, ombres, reflets, post-traitement ; animations de texture (`tex_anim.rs` : référence CPU et paramètres des enregistrements, évaluées par les vertex shaders) ; listes de dessin pilotées par le GPU (`gpu_cull.rs`, `shaders/cull.wgsl` : tables des faces et des objets tenues par la scène, culling et compactage en compute pour chaque vue, dessin par `multi_draw_indexed_indirect_count`) ; occlusion Hi-Z en deux phases (`occlusion.rs`, `shaders/occlusion.wgsl`, test commun `shaders/hiz_test.wgsl`) ; envois du streaming sans copie sur le thread principal (`upload.rs` : mémoire de transit mappée où écrivent les tâches de fond, copies GPU enregistrées dans un encodeur soumis en tête de l'image) |
 | `aurora-audio` | Sortie audio : mixeur avec les canaux de volume SL, streams de musique, sons du monde |
 | `aurora-voice` | Voix SL en WebRTC (réception et émission) |
 | `aurora-media` | Hôte des plugins médias SLPlugin (CEF pour le web, LibVLC pour la vidéo) |
@@ -96,7 +96,7 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
 | `app/object_actions.rs` | Déclenchement des actions, toucher maintenu, déplacement physique, lecture de parcelle, ouverture de média et cadrage de caméra |
 | `scene/picking.rs` | Rayons contre les triangles partagés avec la géométrie affichée (prims, sculpts, meshes) ; prim réellement visée au survol et au clic gauche malgré des boîtes recouvrantes, IGNORE traverse la géométrie hors construction, informations de surface pour les scripts de toucher |
 | `media/` | Médias des prims et des parcelles (objets à médias tenus à jour par le flux de changements de l'`ObjectStore`, sans passe sur tous les objets), cookie OpenID des pages web de la grille (`openid.rs`) |
-| `demo.rs`, `demo_land.rs`, `demo_place.rs`, `demo_eep.rs`, `demo_env.rs` | Le mode démo : une scène locale qui simule un serveur (et ses réponses à « À propos du terrain », aux profils de lieux, repères et historique de « Lieux » et à ExtEnvironment, une bibliothèque d'environnements pour le sélecteur) |
+| `demo.rs`, `demo_land.rs`, `demo_place.rs`, `demo_eep.rs`, `demo_env.rs`, `demo_stream.rs` | Le mode démo : une scène locale qui simule un serveur (et ses réponses à « À propos du terrain », aux profils de lieux, repères et historique de « Lieux » et à ExtEnvironment, une bibliothèque d'environnements pour le sélecteur) ; `demo_stream.rs` : objets et textures qui arrivent par vagues (test des à-coups du streaming, AURORA_DEMO_STREAM) |
 | `settings.rs`, `keybinds.rs`, `keybinds/layout.rs`, `theme.rs` | Réglages enregistrés, raccourcis, disposition Windows et touches de déplacement par défaut, palette |
 | `ui_sound.rs` | Catalogue des sons de l'interface (UISnd* de Firestorm), réglages par son |
 | `ui/appearance.rs`, `ui/appearance/items.rs`, `ui/appearance/gallery.rs`, `world/appearance.rs` | Fenêtre Apparence, galerie / tenues / portés, édition et dialogue Enregistrer sous ; menus des éléments et de la galerie, confirmation de sauvegarde / suppression, choix d’image, renommage ; points d’attachement / HUD, profil et original ; règles de changement du COF, sauvegarde par liens, protection des parties du corps, scénario hors ligne |
@@ -107,7 +107,7 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
 | `aurora-net/src/inventory/operations.rs`, `aurora-net/src/inventory/thumbnail.rs`, `aurora-net/src/session/inventory_upload.rs` | Mutations AIS avec relecture, remappage des UUID attribués par le serveur, créations / copies UDP et accusés avec expiration, sauvegarde des documents par capabilities ; chargement AssetUpload / Xfer des vêtements avant création de l’élément ; vignettes gratuites par InventoryThumbnailUpload, POST JPEG2000 puis AIS et relecture |
 | `aurora-assets/src/j2k/encode.rs` | Encodeur OpenJPEG borné en mémoire, vignettes RGB / RGBA carrées de 64 à 256 pixels et conservation de l’alpha |
 | `logging.rs`, `cache.rs`, `credentials.rs` | Logs, cache disque, mot de passe retenu (coffre de l'OS) |
-| `frame_profile.rs` | Profil des images (AURORA_PROFILE) : temps de chaque étape de l'image, ligne de synthèse par seconde dans le log (moyenne et maximum de chaque étape, nombre d'images lentes) |
+| `frame_profile.rs` | Profil des images (AURORA_PROFILE) : temps de chaque étape de l'image, ligne de synthèse par seconde dans le log (moyenne et maximum de chaque étape, nombre d'images lentes ; détail du streaming sur le thread principal, `s_*`) |
 | `scene/animesh.rs` | Squelettes autonomes des objets animés, animations du linkset, limites des poses pour le culling et les ombres, scénario de démo |
 | `scene/sync_sets.rs` | Objets que la synchro de la scène visite à chaque image, tenus à jour par événements (objets modifiés notés par `ObjectStore`, ensemble des objets qui bougent d'eux-mêmes et de ce qui les suit, géométries en attente, tranche de LOD) au lieu d'un parcours de tous les objets |
 | `scene/sync_plan.rs` | Placement en parallèle (rayon) des objets de l'image, niveau par niveau des chaînes de parents : transformation, LOD, limites ; mise à jour de la seule matrice ou synchro complète |
@@ -138,7 +138,12 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
 5. **Interface.** egui dessine les fenêtres par-dessus.
 
 Les traitements lourds (décodage d'images, maillage, sons) passent par des
-tâches en arrière-plan (`scene/jobs.rs`, rayon) pour garder l'image fluide.
+tâches en arrière-plan (`scene/jobs.rs`, rayon, en priorité basse) pour
+garder l'image fluide. Ce qu'elles produisent pour le GPU (chaînes de mips,
+sommets et indices), elles l'écrivent elles-mêmes dans la mémoire de transit
+du rendu (`aurora-render/src/upload.rs`) : le thread principal n'enregistre
+que les copies, les plus visibles d'abord, dans un budget d'environ 1 ms par
+image (`scene/textures.rs`, `Scene::process_results`).
 
 ## Données sur la machine
 

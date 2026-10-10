@@ -126,6 +126,7 @@ settings and cache (`…\config\demo`, `…\cache\demo`).
 | `AURORA_DEMO_TEXTURES=<n>` | Texture stress test: n small cubes (9000 for a non-number), each with its own texture of several sizes (one not a power of two), streamed low resolution first then full, as in a busy region |
 | `AURORA_DEMO_CROWD=<n>` | Scene sync stress test: n extra avatars (40 for a non-number) playing the idle animation, each wearing eight attachment linksets of seven prims on bones all over the body (with `AURORA_DEMO_ANIMESH`, also the rigged demo mesh), as in a busy shop |
 | `AURORA_DEMO_TEXTURES_CHURN=1` | With `AURORA_DEMO_TEXTURES`: a third of the cubes removed at frame 300 (their textures evicted 2 s later: freed layers, page compaction), then back at frame 700 with new textures (freed slots reused, streamed again); capture after frame ~1000 |
+| `AURORA_DEMO_STREAM=<n>[,<wave>]` | Streaming hitch test: n textured objects (2000 for a non-number) arriving in waves after the loading fade, `wave` every 250 ms (100 by default, ~400 a second as on the grid; `wave` = n sends everything at once, as a teleport arrival). Each object has its own shape and its own texture, of the sizes of a grid region (mostly 512 and 1024), decoded on the background jobs at a quarter of its size, then at full size 1.5 s later. The log gives the end of the loading (`demo stream: fully loaded in … s`, with the uploads staged by the jobs / written by the main thread); with `AURORA_PROFILE=1`, read `stream`, `results` and the `s_*` parts in `max:` |
 | `AURORA_DEMO_PLANAR=1` | Floor slabs with planar texture mapping (tiles must line up across slabs) |
 | `AURORA_DEMO_PBR_OVERRIDE=1` | Two PBR slabs, one with a GLTF material override (4 × 4 repeats, tint) |
 | `AURORA_DEMO_TEXANIM=1` | Texture animations (llSetTextureAnim) on two rows of panels in place of the alpha panels: smooth scrolling, 4 × 4 frame grid, ping-pong, rotation, scale (alpha masked: prepass and shadows), a cube animated on one face only, a legacy material (normal map follows) and a PBR face |
@@ -182,11 +183,18 @@ With `AURORA_PROFILE=1`, each `perf summary` line covers one second:
 - the average CPU time of each step of the frame (`events`, `social`,
   `sync`, `media`, `lists`, `stream`, `params`, `ui`, `render`…);
 - `max:` the steps whose longest single-frame time reached 1 ms in that
-  second, longest first, renderer steps included (`r_*`), or `-` when none
-  did. A periodic slow frame shows up here with the step that caused it,
-  e.g. `max: media=6.10 render=2.31`, while its average stays tiny;
+  second, longest first, renderer steps (`r_*`) and streaming parts (`s_*`)
+  included, or `-` when none did. A periodic slow frame shows up here with
+  the step that caused it, e.g. `max: media=6.10 render=2.31`, while its
+  average stays tiny;
 - the renderer steps (`r_*`: passes, egui, `finish`, `submit`, `present`,
-  `acquire`, the wait for the swapchain image), the GPU time by element
+  `acquire`, the wait for the swapchain image), the parts of the streaming
+  work on the main thread (`s_*`, inside `results` and `stream`: `fetched`
+  downloads handed to the streamers, `geometry` built geometry put in the
+  arena, `decoded` other finished jobs, `tex_update` fetches and decodes
+  started, `assets` meshes / animations / sounds / materials, `skin` skin
+  bindings, `upload` textures sent to the GPU, of which `pages` new texture
+  pages, `maintain` eviction and cache writes, `diag`), the GPU time by element
   (`g_*`), draws and draw commands, synced / rebuilt objects, posed
   avatars, bytes of records and palettes sent to the GPU, texture memory
   (live textures, texture pages and their allocated memory) and geometry
