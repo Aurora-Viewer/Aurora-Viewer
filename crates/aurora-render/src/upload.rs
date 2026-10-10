@@ -18,9 +18,10 @@
 //! The chunks are all created with the renderer, on the main thread: a job
 //! never allocates GPU memory (wgpu's allocator lock held by a job creating
 //! a chunk made a page creation on the main thread wait 35 ms). When they
-//! are all in use, or for data larger than a chunk, [`StagingPool::stage`]
-//! returns None and the caller keeps its data for a `write_*` by the main
-//! thread, within its time budget.
+//! are all in use, a job waits for one to come back (a fraction of a
+//! second at most); after that, or for data larger than a chunk,
+//! [`StagingPool::stage`] returns None and the caller keeps its data for a
+//! `write_*` by the main thread, within its time budget.
 //!
 //! Chunk life: open (jobs allocate and write) → closed at the next
 //! [`UploadQueue::prepare`] → unmapped when no job writes in it any more
@@ -29,12 +30,19 @@
 
 use crate::types::{SkinVertex, Vertex};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::{Duration, Instant};
 
 /// Chunks of the pool and their size: 8 × 32 MB (a 2048² texture with its
 /// mips is 22 MB), or 4 × 16 MB on a GPU with little memory.
 const CHUNKS: (usize, u64) = (8, 32 << 20);
 const CHUNKS_SMALL: (usize, u64) = (4, 16 << 20);
+/// When every chunk is in use, a job waits this long for one to come back
+/// (they do within a few frames) before keeping its data for a main-thread
+/// write: under a burst (thousands of textures decoded at once) the jobs
+/// follow the pace of the GPU copies instead of leaving their memcpy to
+/// the main thread. The wait ends by itself when nothing is being drawn.
+const STAGE_WAIT: Duration = Duration::from_millis(100);
 /// A chunk with data stays open at most this many frames.
 const OPEN_FRAMES: u32 = 8;
 /// Offsets inside a chunk (and rows of texture levels) are aligned to this:
@@ -87,7 +95,7 @@ pub struct StagingPool {
     chunk_bytes: u64,
     /// Chunks mapped again (pushed by the `map_async` callbacks, which
     /// take no other lock).
-    returned: Arc<Mutex<Vec<(Arc<Chunk>, bool)>>>,
+    returned: Arc<(Mutex<Vec<(Arc<Chunk>, bool)>>, Condvar)>,
     /// Held by the job writing into staging memory (see `stage`).
     write_turn: Mutex<()>,
 }
@@ -177,7 +185,7 @@ impl StagingPool {
 
     /// Take back the chunks whose mapping completed.
     fn receive(&self, s: &mut PoolState) {
-        let returned = std::mem::take(&mut *self.returned.lock().unwrap_or_else(|e| e.into_inner()));
+        let returned = std::mem::take(&mut *self.returned.0.lock().unwrap_or_else(|e| e.into_inner()));
         for (chunk, ok) in returned {
             if ok {
                 chunk.unmapped.store(false, Ordering::Release);
@@ -190,8 +198,9 @@ impl StagingPool {
     }
 
     /// Reserve `size` bytes, write them with `fill` (from any thread) and
-    /// return the region; None when every chunk is in use or `size` exceeds
-    /// a chunk (the caller then keeps its data for a main-thread write).
+    /// return the region. Waits up to [`STAGE_WAIT`] for a chunk when all
+    /// are in use; None after that or when `size` exceeds a chunk (the
+    /// caller then keeps its data for a main-thread write).
     pub fn stage(&self, size: u64, fill: impl FnOnce(&mut wgpu::WriteOnly<'_, [u8]>)) -> Option<Staged> {
         let size = align(size.max(4));
         let (chunk, offset) = self.allocate(size)?;
@@ -222,21 +231,38 @@ impl StagingPool {
         if size > self.chunk_bytes {
             return None;
         }
-        let mut s = self.lock();
-        self.receive(&mut s);
-        if !s.open.as_ref().is_some_and(|o| o.offset + size <= o.chunk.size()) {
-            // the next free chunk first: with none, the open one stays
-            // open for smaller requests
-            let chunk = s.free.pop()?;
-            if let Some(o) = s.open.replace(Open {
-                chunk,
-                offset: 0,
-                frames: 0,
-            }) {
-                s.closed.push(o.chunk);
+        let deadline = Instant::now() + STAGE_WAIT;
+        loop {
+            {
+                let mut s = self.lock();
+                self.receive(&mut s);
+                if s.open.as_ref().is_some_and(|o| o.offset + size <= o.chunk.size()) {
+                    return Self::bump(&mut s, size);
+                }
+                // the next free chunk; with none, the open one stays open
+                // for smaller requests
+                if let Some(chunk) = s.free.pop() {
+                    if let Some(o) = s.open.replace(Open {
+                        chunk,
+                        offset: 0,
+                        frames: 0,
+                    }) {
+                        s.closed.push(o.chunk);
+                    }
+                    return Self::bump(&mut s, size);
+                }
+            }
+            // every chunk is in use: wait for one to come back
+            let (returned, came_back) = &*self.returned;
+            let list = returned.lock().unwrap_or_else(|e| e.into_inner());
+            if list.is_empty() {
+                let left = deadline.checked_duration_since(Instant::now())?;
+                let (list, _) = came_back.wait_timeout(list, left).unwrap_or_else(|e| e.into_inner());
+                if list.is_empty() && Instant::now() >= deadline {
+                    return None;
+                }
             }
         }
-        Self::bump(&mut s, size)
     }
 
     /// A region of the open chunk (which has room for it).
@@ -292,7 +318,8 @@ impl StagingPool {
                 let returned = self.returned.clone();
                 let back = chunk.clone();
                 chunk.buffer.map_async(wgpu::MapMode::Write, .., move |r| {
-                    returned.lock().unwrap_or_else(|e| e.into_inner()).push((back, r.is_ok()));
+                    returned.0.lock().unwrap_or_else(|e| e.into_inner()).push((back, r.is_ok()));
+                    returned.1.notify_all();
                 });
             } else {
                 i += 1;

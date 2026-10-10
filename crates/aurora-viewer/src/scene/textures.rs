@@ -939,8 +939,10 @@ impl TextureStreamer {
                 && t0.elapsed() > budget.time / 4
                 && size.is_some_and(|(w, h, levels)| renderer.textures.needs_page(e.slot, w, h, levels as u32))
             {
+                // (the uploads behind it wait too: thousands may need
+                // that same page)
                 waiting.push(u);
-                continue;
+                break;
             }
             let (accepted, level0, levels) = match &u.staged {
                 Some(staged) => (

@@ -127,10 +127,10 @@ fn wave_events(n: u32, first: u32, count: u32) -> Vec<NetEvent> {
     vec![NetEvent::ObjectUpdates { handle: HANDLE, objects }]
 }
 
-/// Decode of texture `i` at a discard level, on the background pool: it
-/// comes back as a finished job, staged like a JPEG 2000 decode.
-fn spawn_decode(jobs: &Jobs, pool: Option<Arc<StagingPool>>, i: u32, discard: u8) {
-    jobs.spawn(move || {
+/// Decodes of textures at a discard level, on the background pool: they
+/// come back as finished jobs, staged like JPEG 2000 decodes.
+fn spawn_decodes(jobs: &Jobs, pool: Option<Arc<StagingPool>>, textures: Vec<u32>, discard: u8) {
+    jobs.spawn_many(textures, move |i| {
         texture_result(
             texture(i),
             discard,
@@ -188,9 +188,9 @@ impl StreamDemo {
             // (never evicted: the scenario holds them)
             for i in self.next..self.next + count {
                 let _ = textures.acquire(renderer, texture(i), TexSource::Asset);
-                spawn_decode(jobs, textures.staging.clone(), i, 2);
                 self.upgrades.push_back((now + UPGRADE_AFTER, i));
             }
+            spawn_decodes(jobs, textures.staging.clone(), (self.next..self.next + count).collect(), 2);
             for ev in wave_events(self.n, self.next, count) {
                 world.apply(ev);
             }
@@ -203,11 +203,11 @@ impl StreamDemo {
                 );
             }
         }
-        while self.upgrades.front().is_some_and(|(due, _)| *due <= now) {
-            if let Some((_, i)) = self.upgrades.pop_front() {
-                spawn_decode(jobs, textures.staging.clone(), i, 0);
-            }
+        let mut due = Vec::new();
+        while self.upgrades.front().is_some_and(|(at, _)| *at <= now) {
+            due.extend(self.upgrades.pop_front().map(|(_, i)| i));
         }
+        spawn_decodes(jobs, textures.staging.clone(), due, 0);
         if self.next == self.n && self.upgrades.is_empty() && frame.is_multiple_of(10) {
             let full = (0..self.n).filter(|&i| textures.decoded_level(&texture(i)) == Some(0)).count();
             if full == self.n as usize && geom_pending == 0 {
