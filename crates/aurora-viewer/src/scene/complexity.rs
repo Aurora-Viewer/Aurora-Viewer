@@ -27,6 +27,8 @@ const ARC_LIGHT_COST: f32 = 500.0;
 const ARC_MEDIA_FACE_COST: f32 = 1500.0;
 const ARC_GLOW_MULT: f32 = 1.5;
 const ARC_BUMP_MULT: f32 = 1.25;
+/// Frames the periodic complexity refresh is spread over.
+const COMPLEXITY_SLICES: usize = 16;
 const ARC_FLEXI_MULT: f32 = 5.0;
 const ARC_SHINY_MULT: f32 = 1.6;
 const ARC_WEIGHTED_MESH: f32 = 1.2;
@@ -291,31 +293,58 @@ impl Scene {
     /// Refresh every avatar's complexity (every 2 s, at once when a rule
     /// changes) and the set of avatars shown as grey silhouettes
     /// (LLVOAvatar::isTooComplex).
+    ///
+    /// The periodic refresh is spread over [`COMPLEXITY_SLICES`] frames: with
+    /// a crowd, walking every attachment prim of every avatar in one frame
+    /// made a slow frame every 2 s. A rule change still refreshes them all
+    /// at once (the silhouettes follow the setting immediately).
     pub fn update_complexity(&mut self, world: &World, rules: &Rules) {
         let key = rules.key();
-        if self.complexity_at.is_some_and(|t| t.elapsed().as_secs_f32() < 2.0) && self.complexity_rules == key {
-            return;
+        let rules_changed = self.complexity_rules != key;
+        let due = self.complexity_at.is_none_or(|t| t.elapsed().as_secs_f32() >= 2.0);
+        if rules_changed || (due && self.complexity_round.is_empty()) {
+            self.complexity_at = Some(std::time::Instant::now());
+            self.complexity_rules = key;
+            self.complexity_max = rules.max;
+            // the avatars of this round; those gone since the last one are dropped
+            let round: Vec<(usize, Uuid)> = world
+                .objects
+                .iter()
+                .filter(|(_, o)| o.is_avatar())
+                .map(|(idx, o)| (idx, o.full_id))
+                .collect();
+            let ids: HashSet<Uuid> = round.iter().map(|&(_, id)| id).collect();
+            let idxs: HashSet<usize> = round.iter().map(|&(idx, _)| idx).collect();
+            self.avatar_complexity.retain(|id, _| ids.contains(id));
+            self.avatar_area.retain(|id, _| ids.contains(id));
+            self.too_complex.retain(|idx| idxs.contains(idx));
+            self.complexity_round = round;
+            // pop() takes from the end: keep the slab order
+            self.complexity_round.reverse();
+            self.complexity_slice = self.complexity_round.len().div_ceil(COMPLEXITY_SLICES);
         }
-        self.complexity_at = Some(std::time::Instant::now());
-        self.complexity_rules = key;
-        self.complexity_max = rules.max;
-        let mut values = HashMap::new();
-        let mut areas = HashMap::new();
-        let mut too_complex = HashSet::new();
-        for (idx, o) in world.objects.iter() {
-            if !o.is_avatar() {
+        let n = if rules_changed {
+            self.complexity_round.len()
+        } else {
+            self.complexity_slice.min(self.complexity_round.len())
+        };
+        for _ in 0..n {
+            let Some((idx, id)) = self.complexity_round.pop() else {
+                break;
+            };
+            // the slot may hold another object since the round started
+            if world.objects.get(idx).is_none_or(|o| o.full_id != id) {
                 continue;
             }
             let (c, area) = self.avatar_complexity(world, idx);
-            values.insert(o.full_id, c);
-            areas.insert(o.full_id, area);
-            if rules.too_complex(&o.full_id, o.full_id == world.agent_id, c, area) {
-                too_complex.insert(idx);
+            self.avatar_complexity.insert(id, c);
+            self.avatar_area.insert(id, area);
+            if rules.too_complex(&id, id == world.agent_id, c, area) {
+                self.too_complex.insert(idx);
+            } else {
+                self.too_complex.remove(&idx);
             }
         }
-        self.avatar_complexity = values;
-        self.avatar_area = areas;
-        self.too_complex = too_complex;
     }
 }
 
@@ -334,6 +363,46 @@ mod tests {
         for p in 1..=100 {
             assert_eq!(slider::from_limit(slider::to_limit(p)), p);
         }
+    }
+
+    #[test]
+    fn periodic_refresh_is_spread_over_frames() {
+        let mut world = World::new(std::sync::Arc::new(avatar::AvatarLibrary::load()));
+        for ev in crate::demo::events().into_iter().chain(crate::demo::crowd_events(40, false)) {
+            world.apply(ev);
+        }
+        let mut scene = Scene::new(std::path::PathBuf::new(), world.avatar_lib.clone());
+        let (exceptions, friends) = (HashMap::new(), HashSet::new());
+        let rules = Rules {
+            max: 1,
+            max_area: 0.0,
+            mode: 0,
+            exceptions: &exceptions,
+            friends: &friends,
+        };
+        let avatars = world.objects.iter().filter(|(_, o)| o.is_avatar()).count();
+        assert!(avatars >= 40);
+        // first call (new rules): every avatar at once
+        scene.update_complexity(&world, &rules);
+        assert_eq!(scene.avatar_complexity.len(), avatars);
+        assert!(scene.complexity_round.is_empty());
+        let silhouettes = scene.too_complex.clone();
+        assert!(!silhouettes.is_empty());
+        // nothing until the next round is due
+        scene.avatar_complexity.clear();
+        scene.update_complexity(&world, &rules);
+        assert!(scene.avatar_complexity.is_empty());
+        // then a slice per frame
+        scene.complexity_at = Some(std::time::Instant::now() - std::time::Duration::from_secs(3));
+        let slice = avatars.div_ceil(COMPLEXITY_SLICES);
+        scene.update_complexity(&world, &rules);
+        assert_eq!(scene.avatar_complexity.len(), slice);
+        for _ in 1..COMPLEXITY_SLICES {
+            scene.update_complexity(&world, &rules);
+        }
+        assert_eq!(scene.avatar_complexity.len(), avatars);
+        assert!(scene.complexity_round.is_empty());
+        assert_eq!(scene.too_complex, silhouettes);
     }
 
     #[test]

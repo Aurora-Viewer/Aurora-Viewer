@@ -57,69 +57,152 @@ impl MediaManager {
         });
     }
 
+    fn scan_objects(&mut self, world: &mut World, scene: &Scene, now: Instant) {
+        self.track_objects(world, &|idx| scene.gpu.get(idx).is_some_and(|g| g.hud), now);
+    }
+
     /// Objects with media faces, their media version, and the objects
-    /// showing the parcel placeholder (twice a second).
-    fn scan_objects(&mut self, world: &World, scene: &Scene, now: Instant) {
-        if now.duration_since(self.last_scan) < Duration::from_millis(500) {
-            return;
-        }
-        self.last_scan = now;
-        for o in self.objects.values_mut() {
-            o.alive = false;
-        }
-        self.parcel_objects.clear();
+    /// showing the parcel placeholder, kept up to date from the store's
+    /// media change feed: only the objects changed, added or removed since
+    /// the last frame are visited (a pass over every object twice a second
+    /// made a slow frame every 500 ms in big regions). Every object is
+    /// visited only at the start, after `clear`, and the parcel list is
+    /// rebuilt when the parcel's placeholder texture changes.
+    ///
+    /// Twice a second the media objects alone are visited again: what they
+    /// derive from other objects or from the region (attached to another
+    /// avatar or a HUD once their parents arrive, the ObjectMedia
+    /// capability once the region has it) is refreshed as with the old scan.
+    fn track_objects(&mut self, world: &mut World, hud: &dyn Fn(usize) -> bool, now: Instant) {
+        let mut changes = std::mem::take(&mut self.changes);
+        world.objects.take_media_changes(&mut changes);
         let parcel_tex = world.parcel.as_ref().map(|p| p.media.media_id).filter(|id| !id.is_nil());
-        for (idx, o) in world.objects.iter() {
-            let Some(te) = o.te.as_ref() else {
-                continue;
-            };
-            if let Some(pt) = parcel_tex
-                && te.faces.iter().any(|f| f.texture == pt)
-            {
-                self.parcel_objects.push(idx);
-            }
-            let local = self.local_entries.get(&o.full_id);
-            if local.is_none() && !te.faces.iter().any(|f| f.media_flags & 1 != 0) {
-                continue;
-            }
-            let on_other_avatar = attachment_avatar(world, idx).is_some_and(|a| a != world.agent_id);
-            let e = self.objects.entry(o.full_id).or_default();
-            e.alive = true;
-            e.idx = idx;
-            e.owner = o.owner_id;
-            e.hud = scene.gpu.get(idx).is_some_and(|g| g.hud);
-            e.on_other_avatar = on_other_avatar;
-            e.changed_by = entry::media_version_agent(&o.media_url);
-            if let Some(local) = local {
-                if e.data.is_none() {
-                    e.fetched_version = Some(local.version);
-                    e.data = Some(local.clone());
+        let rescan = std::mem::take(&mut self.rescan);
+        if rescan || parcel_tex != self.parcel_tex {
+            self.parcel_tex = parcel_tex;
+            self.parcel_objects = IndexSet::default();
+            if let Some(pt) = parcel_tex {
+                for (idx, o) in world.objects.iter() {
+                    if o.te.as_ref().is_some_and(|te| te.faces.iter().any(|f| f.texture == pt)) {
+                        self.parcel_objects.insert(idx);
+                    }
                 }
-                continue;
-            }
-            // LLVOVolume::processUpdateMessage: fetch when the media version
-            // grew (or never fetched)
-            let version = entry::media_version(&o.media_url);
-            let need = match (e.fetched_version, version) {
-                (None, _) => true,
-                (Some(have), Some(v)) => v > have,
-                (Some(_), None) => false,
-            };
-            if need
-                && !self.client.is_queued(&o.full_id)
-                && let Some(cap) = world.regions.get(&o.key.region).and_then(|r| r.caps.get("ObjectMedia"))
-            {
-                self.client.request(o.full_id, cap);
             }
         }
-        self.objects.retain(|_, o| o.alive);
-        if std::env::var_os("AURORA_MEDIA_DEBUG").is_some() {
+        if rescan {
+            changes.extend(world.objects.iter().map(|(idx, _)| idx));
+        }
+        for id in self.local_dirty.drain(..) {
+            changes.extend(world.objects.index_of_uuid(&id));
+        }
+        let refresh = now.duration_since(self.last_refresh) >= Duration::from_millis(500);
+        if refresh {
+            self.last_refresh = now;
+            // media objects by id, wherever they are now (a safety net for
+            // the slot links)
+            let mut gone = Vec::new();
+            for id in self.objects.keys() {
+                match world.objects.index_of_uuid(id) {
+                    Some(idx) => changes.push(idx),
+                    None => gone.push(*id),
+                }
+            }
+            for id in gone {
+                if let Some(e) = self.objects.remove(&id) {
+                    forget_slot(&mut self.slot_ids, e.idx, &id);
+                }
+            }
+        }
+        for &idx in &changes {
+            self.visit(world, idx, hud);
+        }
+        changes.clear();
+        self.changes = changes;
+        if refresh && std::env::var_os("AURORA_MEDIA_DEBUG").is_some() {
             log::info!(
-                "media scan: {} objects, {} with media, {} local entries",
+                "media objects: {} objects, {} with media, {} showing the parcel media, {} local entries",
                 world.objects.len(),
                 self.objects.len(),
+                self.parcel_objects.len(),
                 self.local_entries.len()
             );
+        }
+    }
+
+    /// One slot of the store: what it held is forgotten if the object is
+    /// gone, its media state is read again if it is (still) a media object.
+    fn visit(&mut self, world: &World, idx: usize, hud: &dyn Fn(usize) -> bool) {
+        let obj = world.objects.get(idx);
+        if let Some(old) = self.slot_ids.get(&idx).copied()
+            && obj.is_none_or(|o| o.full_id != old)
+        {
+            self.slot_ids.remove(&idx);
+            // an object moved to another slot (region crossing) keeps its
+            // media data: that slot is in the feed too
+            match world.objects.index_of_uuid(&old) {
+                Some(moved) => {
+                    if let Some(e) = self.objects.get_mut(&old) {
+                        e.idx = moved;
+                    }
+                }
+                None => {
+                    self.objects.remove(&old);
+                }
+            }
+        }
+        let shows_parcel = obj
+            .and_then(|o| o.te.as_ref())
+            .is_some_and(|te| self.parcel_tex.is_some_and(|pt| te.faces.iter().any(|f| f.texture == pt)));
+        if shows_parcel {
+            self.parcel_objects.insert(idx);
+        } else {
+            self.parcel_objects.remove(idx);
+        }
+        let Some(o) = obj else {
+            return;
+        };
+        let local = self.local_entries.get(&o.full_id);
+        let has_media =
+            o.te.as_ref()
+                .is_some_and(|te| local.is_some() || te.faces.iter().any(|f| f.media_flags & 1 != 0));
+        if !has_media {
+            if let Some(e) = self.objects.remove(&o.full_id) {
+                forget_slot(&mut self.slot_ids, e.idx, &o.full_id);
+            }
+            forget_slot(&mut self.slot_ids, idx, &o.full_id);
+            return;
+        }
+        let on_other_avatar = attachment_avatar(world, idx).is_some_and(|a| a != world.agent_id);
+        let e = self.objects.entry(o.full_id).or_default();
+        if e.idx != idx {
+            forget_slot(&mut self.slot_ids, e.idx, &o.full_id);
+            e.idx = idx;
+        }
+        self.slot_ids.insert(idx, o.full_id);
+        e.owner = o.owner_id;
+        e.hud = hud(idx);
+        e.on_other_avatar = on_other_avatar;
+        e.changed_by = entry::media_version_agent(&o.media_url);
+        if let Some(local) = local {
+            if e.data.is_none() {
+                e.fetched_version = Some(local.version);
+                e.data = Some(local.clone());
+            }
+            return;
+        }
+        // LLVOVolume::processUpdateMessage: fetch when the media version
+        // grew (or never fetched)
+        let version = entry::media_version(&o.media_url);
+        let need = match (e.fetched_version, version) {
+            (None, _) => true,
+            (Some(have), Some(v)) => v > have,
+            (Some(_), None) => false,
+        };
+        if need
+            && !self.client.is_queued(&o.full_id)
+            && let Some(cap) = world.regions.get(&o.key.region).and_then(|r| r.caps.get("ObjectMedia"))
+        {
+            self.client.request(o.full_id, cap);
         }
     }
 
@@ -231,7 +314,7 @@ impl MediaManager {
     /// distance to the camera.
     fn compute_interest(&mut self, world: &World, scene: &Scene, f: &MediaFrame) {
         self.parcel_bounds.clear();
-        for &idx in &self.parcel_objects {
+        for &idx in self.parcel_objects.as_slice() {
             if let Some(g) = scene.gpu.get(idx)
                 && g.radius > 0.0
                 && !g.hud
@@ -697,24 +780,35 @@ impl MediaManager {
         if dirty_tex.is_empty() && dirty_obj.is_empty() {
             return;
         }
-        // through `get_mut`: the scene sync visits the objects it marks
-        let marked: Vec<usize> = world
-            .objects
-            .iter()
-            .filter(|(_, o)| {
-                let uses_tex = !dirty_tex.is_empty()
-                    && o.te
-                        .as_ref()
-                        .is_some_and(|te| te.faces.iter().any(|f| dirty_tex.contains(&f.texture)));
-                uses_tex || dirty_obj.contains(&o.full_id)
-            })
-            .map(|(i, _)| i)
-            .collect();
+        // through `get_mut`: the scene sync visits the objects it marks; the
+        // prim media objects by id, the users of a parcel placeholder (old
+        // or new, so not only those of the parcel list) by a pass over every
+        // object, done only when the parcel media starts, stops or changes
+        let mut marked: Vec<usize> = dirty_obj.iter().filter_map(|id| world.objects.index_of_uuid(id)).collect();
+        if !dirty_tex.is_empty() {
+            marked.extend(
+                world
+                    .objects
+                    .iter()
+                    .filter(|(_, o)| {
+                        o.te.as_ref()
+                            .is_some_and(|te| te.faces.iter().any(|f| dirty_tex.contains(&f.texture)))
+                    })
+                    .map(|(i, _)| i),
+            );
+        }
         for i in marked {
             if let Some(o) = world.objects.get_mut(i) {
                 o.material_dirty = true;
             }
         }
+    }
+}
+
+/// Drop the slot → object link if the slot still names that object.
+fn forget_slot(slot_ids: &mut HashMap<usize, Uuid>, idx: usize, id: &Uuid) {
+    if slot_ids.get(&idx) == Some(id) {
+        slot_ids.remove(&idx);
     }
 }
 
@@ -752,4 +846,242 @@ fn probe_mime(rt: &tokio::runtime::Handle, http: reqwest::Client, url: String) -
         let _ = tx.send(t);
     });
     rx
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    /// The demo place, its media screen, and an ObjectMedia capability.
+    fn world() -> (World, Uuid) {
+        let mut w = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for ev in crate::demo::events() {
+            w.apply(ev);
+        }
+        let (ev, screen, _) = crate::demo::media_screen();
+        w.apply(ev);
+        let main = w.main_region.expect("demo region");
+        let r = w.regions.get_mut(&main).expect("demo region");
+        Arc::make_mut(&mut r.caps).insert("ObjectMedia".into(), "http://example.invalid/media".into());
+        (w, screen)
+    }
+
+    fn track(m: &mut MediaManager, w: &mut World) {
+        m.track_objects(w, &|_| false, m.last_refresh);
+    }
+
+    /// A demo object without media faces.
+    fn plain(w: &World) -> (usize, Uuid) {
+        w.objects
+            .iter()
+            .find(|(_, o)| !o.is_avatar() && o.te.as_ref().is_some_and(|te| te.faces.iter().all(|f| f.media_flags & 1 == 0)))
+            .map(|(i, o)| (i, o.full_id))
+            .expect("plain object")
+    }
+
+    fn set_media_flag(w: &mut World, idx: usize, on: bool, tracked: bool) {
+        let o = if tracked {
+            w.objects.get_mut(idx)
+        } else {
+            w.objects.slots.get_mut(idx).and_then(|o| o.as_mut())
+        }
+        .expect("object");
+        let te = Arc::make_mut(o.te.as_mut().expect("texture entry"));
+        te.faces[0].media_flags = u8::from(on);
+    }
+
+    #[test]
+    fn media_objects_follow_the_change_feed() {
+        let (mut w, screen) = world();
+        let mut m = MediaManager::default();
+        // first update: every object, the screen's data is asked for
+        track(&mut m, &mut w);
+        assert!(m.objects.contains_key(&screen));
+        assert!(m.client.is_queued(&screen));
+        let (idx, id) = plain(&w);
+        assert!(!m.objects.contains_key(&id));
+        // an object gains media
+        set_media_flag(&mut w, idx, true, true);
+        track(&mut m, &mut w);
+        assert_eq!(m.objects.get(&id).map(|e| e.idx), Some(idx));
+        assert!(m.client.is_queued(&id));
+        // and loses it
+        set_media_flag(&mut w, idx, false, true);
+        track(&mut m, &mut w);
+        assert!(!m.objects.contains_key(&id));
+        assert!(!m.slot_ids.contains_key(&idx));
+        // a change behind the store's back is not visited: no full pass
+        set_media_flag(&mut w, idx, true, false);
+        track(&mut m, &mut w);
+        assert!(!m.objects.contains_key(&id));
+        // ...except after `clear`
+        m.clear();
+        track(&mut m, &mut w);
+        assert!(m.objects.contains_key(&id) && m.objects.contains_key(&screen));
+    }
+
+    #[test]
+    fn removed_media_objects_are_forgotten_even_when_the_slot_is_reused() {
+        let (mut w, screen) = world();
+        let mut m = MediaManager::default();
+        track(&mut m, &mut w);
+        let idx = w.objects.index_of_uuid(&screen).expect("screen");
+        w.objects.remove_idx(idx);
+        // the freed slot takes another object before the media update
+        let (ev, _, _) = crate::demo::media_screen();
+        let aurora_net::NetEvent::ObjectUpdates { handle, mut objects } = ev else {
+            panic!("object update");
+        };
+        let mut other = objects.remove(0);
+        other.full_id = Uuid::from_u128(0xfeed);
+        other.local_id += 1000;
+        if let Some(te) = other.texture_entry.as_mut() {
+            Arc::make_mut(te).faces.iter_mut().for_each(|f| f.media_flags = 0);
+        }
+        let reused = w.objects.upsert(handle, other);
+        assert_eq!(reused, idx);
+        track(&mut m, &mut w);
+        assert!(!m.objects.contains_key(&screen));
+        assert!(!m.objects.contains_key(&Uuid::from_u128(0xfeed)));
+        assert!(m.slot_ids.is_empty(), "{:?}", m.slot_ids);
+    }
+
+    #[test]
+    fn fetch_follows_the_media_version() {
+        let (mut w, screen) = world();
+        let mut m = MediaManager::default();
+        track(&mut m, &mut w);
+        // as if the data of version 5 had arrived
+        m.client.clear();
+        if let Some(e) = m.objects.get_mut(&screen) {
+            e.fetched_version = Some(5);
+        }
+        let idx = w.objects.index_of_uuid(&screen).expect("screen");
+        let agent = Uuid::from_u128(7);
+        let set_url = |w: &mut World, v: u32| {
+            if let Some(o) = w.objects.get_mut(idx) {
+                o.media_url = format!("x-mv:{v:010}/{agent}");
+            }
+        };
+        set_url(&mut w, 5);
+        track(&mut m, &mut w);
+        assert!(!m.client.is_queued(&screen), "same version: no fetch");
+        assert_eq!(m.objects.get(&screen).map(|e| e.changed_by), Some(agent));
+        set_url(&mut w, 6);
+        track(&mut m, &mut w);
+        assert!(m.client.is_queued(&screen), "newer version: fetched");
+    }
+
+    #[test]
+    fn fetch_waits_for_the_capability_without_a_full_pass() {
+        let (mut w, screen) = world();
+        let main = w.main_region.expect("demo region");
+        if let Some(r) = w.regions.get_mut(&main) {
+            r.caps = Arc::default();
+        }
+        let mut m = MediaManager::default();
+        track(&mut m, &mut w);
+        assert!(m.objects.contains_key(&screen) && !m.client.is_queued(&screen));
+        if let Some(r) = w.regions.get_mut(&main) {
+            Arc::make_mut(&mut r.caps).insert("ObjectMedia".into(), "http://example.invalid/media".into());
+        }
+        track(&mut m, &mut w);
+        assert!(!m.client.is_queued(&screen), "not before the refresh");
+        let later = m.last_refresh + Duration::from_millis(600);
+        m.track_objects(&mut w, &|_| false, later);
+        assert!(m.client.is_queued(&screen));
+    }
+
+    #[test]
+    fn media_on_another_avatar_is_seen_once_its_parents_arrive() {
+        let (mut w, screen) = world();
+        let mut m = MediaManager::default();
+        track(&mut m, &mut w);
+        assert_eq!(m.objects.get(&screen).map(|e| e.on_other_avatar), Some(false));
+        // the screen becomes the child of an avatar not known yet
+        let idx = w.objects.index_of_uuid(&screen).expect("screen");
+        let (ev, _, _) = crate::demo::media_screen();
+        let aurora_net::NetEvent::ObjectUpdates { handle, mut objects } = ev else {
+            panic!("object update");
+        };
+        let mut avatar = objects.remove(0);
+        avatar.pcode = aurora_prim::params::LL_PCODE_LEGACY_AVATAR;
+        avatar.texture_entry = None;
+        avatar.full_id = Uuid::from_u128(0xa1);
+        avatar.local_id = 0xa1a1;
+        if let Some(o) = w.objects.get_mut(idx) {
+            o.parent_id = avatar.local_id;
+        }
+        track(&mut m, &mut w);
+        assert_eq!(m.objects.get(&screen).map(|e| e.on_other_avatar), Some(false));
+        // the avatar arrives: seen at the next refresh, without the screen changing
+        w.objects.upsert(handle, avatar);
+        let later = m.last_refresh + Duration::from_millis(600);
+        m.track_objects(&mut w, &|_| false, later);
+        assert_eq!(m.objects.get(&screen).map(|e| e.on_other_avatar), Some(true));
+    }
+
+    #[test]
+    fn parcel_list_follows_objects_and_the_parcel_texture() {
+        let (mut w, _) = world();
+        let mut m = MediaManager::default();
+        let tex = crate::demo::parcel_media_texture();
+        let users = |w: &World, t: Uuid| -> Vec<usize> {
+            let mut v: Vec<usize> = w
+                .objects
+                .iter()
+                .filter(|(_, o)| o.te.as_ref().is_some_and(|te| te.faces.iter().any(|f| f.texture == t)))
+                .map(|(i, _)| i)
+                .collect();
+            v.sort();
+            v
+        };
+        let listed = |m: &MediaManager| -> Vec<usize> {
+            let mut v = m.parcel_objects.as_slice().to_vec();
+            v.sort();
+            v
+        };
+        Arc::make_mut(w.parcel.as_mut().expect("demo parcel")).media.media_id = Uuid::nil();
+        track(&mut m, &mut w);
+        assert!(listed(&m).is_empty(), "no parcel media");
+        Arc::make_mut(w.parcel.as_mut().expect("demo parcel")).media.media_id = tex;
+        track(&mut m, &mut w);
+        assert!(!users(&w, tex).is_empty());
+        assert_eq!(listed(&m), users(&w, tex));
+        // an object starts showing the placeholder, another one is removed
+        let (idx, _) = plain(&w);
+        if let Some(o) = w.objects.get_mut(idx) {
+            Arc::make_mut(o.te.as_mut().expect("texture entry")).faces[0].texture = tex;
+        }
+        let gone = users(&w, tex).into_iter().find(|&i| i != idx).expect("another user");
+        w.objects.remove_idx(gone);
+        track(&mut m, &mut w);
+        assert!(listed(&m).contains(&idx) && !listed(&m).contains(&gone));
+        assert_eq!(listed(&m), users(&w, tex));
+        // another placeholder: the list is rebuilt
+        let other = w
+            .objects
+            .get(idx)
+            .and_then(|o| o.te.as_ref())
+            .map(|te| te.faces[1].texture)
+            .expect("face 1");
+        Arc::make_mut(w.parcel.as_mut().expect("demo parcel")).media.media_id = other;
+        track(&mut m, &mut w);
+        assert_eq!(listed(&m), users(&w, other));
+    }
+
+    #[test]
+    fn local_entries_count_as_media() {
+        let (mut w, _) = world();
+        let mut m = MediaManager::default();
+        track(&mut m, &mut w);
+        let (_, id) = plain(&w);
+        m.demo_entry(id, 0, "https://example.invalid/page");
+        track(&mut m, &mut w);
+        let e = m.objects.get(&id).expect("local media object");
+        assert_eq!(e.fetched_version, Some(1));
+        assert!(e.data.as_ref().is_some_and(|d| d.faces[0].is_some()));
+        assert!(!m.client.is_queued(&id), "local data is not fetched");
+    }
 }

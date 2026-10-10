@@ -11,6 +11,9 @@
 //!   origin at the objects' bounds center, raised over the ground.
 //! - Manual probes: prims with reflection probe parameters (sphere or box).
 //!
+//! Candidates are found again every 500 ms by a pass over every object,
+//! spread over several frames (`ScanPass`) so that no frame pays for all of it.
+//!
 //! The closest probes get the cube slots; one cube face is captured per frame,
 //! the probe needing it most first (never captured, then the oldest).
 
@@ -39,6 +42,11 @@ const CELL: f32 = 16.0;
 const AUTO_RANGE: f32 = 96.0;
 const DEFAULT_PERIOD: Duration = Duration::from_secs(2);
 const SCAN_PERIOD: Duration = Duration::from_millis(500);
+/// The candidate scan visits every object of the scene and of the world: it
+/// is spread over this many frames (in one frame it made a slow frame every
+/// 500 ms in big regions), at least [`SCAN_MIN_SLICE`] slots per frame.
+const SCAN_SLICES: usize = 8;
+const SCAN_MIN_SLICE: usize = 512;
 /// LL_PROBE flags (llprimitive.h LLReflectionProbeParams).
 const FLAG_BOX: u8 = 0x01;
 
@@ -65,6 +73,18 @@ struct Probe {
     distance: f32,
 }
 
+/// A candidate scan in progress: the next slots to visit and what the
+/// visited ones gave.
+#[derive(Default)]
+struct ScanPass {
+    next_gpu: usize,
+    next_obj: usize,
+    /// Object bounds per 16 m cell (automatic probes).
+    cells: HashMap<IVec3, (Vec3, Vec3)>,
+    /// Manual probes.
+    found: HashMap<Key, Probe>,
+}
+
 /// Probe currently being captured (one face per frame).
 #[derive(Debug, Clone, Copy)]
 struct Updating {
@@ -82,6 +102,7 @@ pub struct ProbeManager {
     default_last: Option<Instant>,
     updating: Option<Updating>,
     last_scan: Option<Instant>,
+    pass: Option<ScanPass>,
     last_frame: Option<Instant>,
 }
 
@@ -95,6 +116,7 @@ impl Default for ProbeManager {
             default_last: None,
             updating: None,
             last_scan: None,
+            pass: None,
             last_frame: None,
         }
     }
@@ -108,6 +130,7 @@ impl ProbeManager {
         self.default_last = None;
         self.updating = None;
         self.last_scan = None;
+        self.pass = None;
     }
 
     /// Probes for the debug overlay: (origin, radius, kind: 0 automatic,
@@ -134,9 +157,16 @@ impl ProbeManager {
             .unwrap_or(0.0)
             .min(0.25);
         self.last_frame = Some(now);
-        if self.last_scan.is_none_or(|t| now.duration_since(t) >= SCAN_PERIOD) {
+        if self.pass.is_none() && self.last_scan.is_none_or(|t| now.duration_since(t) >= SCAN_PERIOD) {
             self.last_scan = Some(now);
-            self.scan(scene, world, eye, now);
+            self.pass = Some(ScanPass::default());
+        }
+        if let Some(mut pass) = self.pass.take() {
+            if self.scan_step(&mut pass, scene, world, eye, now) {
+                self.commit(pass, world);
+            } else {
+                self.pass = Some(pass);
+            }
         }
         // distances, then cube slots for the closest probes (slot 0 = default)
         for p in self.probes.values_mut() {
@@ -283,20 +313,21 @@ impl ProbeManager {
         capture
     }
 
-    /// Rebuild the candidate probes from the scene.
-    fn scan(&mut self, scene: &Scene, world: &World, eye: Vec3, now: Instant) {
-        let mut found: HashMap<Key, Probe> = HashMap::new();
+    /// One slice of the candidate scan; true when the pass has covered every
+    /// object of the scene and of the world.
+    fn scan_step(&self, pass: &mut ScanPass, scene: &Scene, world: &World, eye: Vec3, now: Instant) -> bool {
+        let n = scene.gpu.len();
         if self.level >= level::FULL {
             // object bounds per 16 m cell (objects that fit in a 16 m node)
-            let mut cells: HashMap<IVec3, (Vec3, Vec3)> = HashMap::new();
-            for g in scene.gpu.iter() {
+            let end = (pass.next_gpu + n.div_ceil(SCAN_SLICES).max(SCAN_MIN_SLICE)).min(n);
+            for g in scene.gpu.get(pass.next_gpu..end).unwrap_or_default() {
                 if !auto_candidate(g) || (g.center - eye).length() > AUTO_RANGE + g.radius {
                     continue;
                 }
                 let cell = (g.center / CELL).floor().as_ivec3();
                 let lo = g.center - Vec3::splat(g.radius);
                 let hi = g.center + Vec3::splat(g.radius);
-                cells
+                pass.cells
                     .entry(cell)
                     .and_modify(|(a, b)| {
                         *a = a.min(lo);
@@ -304,34 +335,17 @@ impl ProbeManager {
                     })
                     .or_insert((lo, hi));
             }
-            for (cell, (lo, hi)) in cells {
-                let mut origin = (lo + hi) * 0.5;
-                let half = (hi - lo) * 0.5;
-                // radius encompasses all objects, at least 8 m
-                let radius = half.length().max(8.0);
-                // over the ground, and the near clip (half the radius) too
-                let ground = world.ground_height(origin).unwrap_or(f32::MIN) + 2.0;
-                origin.z = origin.z.max(ground).max(ground + radius * 0.5);
-                found.insert(
-                    Key::Cell(cell),
-                    Probe {
-                        origin,
-                        radius,
-                        kind: 0.0,
-                        box_inv: Mat4::IDENTITY,
-                        ambiance: 0.0,
-                        near: (radius * 0.5).max(0.1),
-                        slot: None,
-                        complete: false,
-                        last_update: None,
-                        fade: 0.0,
-                        distance: 0.0,
-                    },
-                );
-            }
+            pass.next_gpu = end;
+        } else {
+            pass.next_gpu = n;
         }
+        let slots = world.objects.slots.len();
         if self.level >= level::MANUAL {
-            for (idx, o) in world.objects.iter() {
+            let end = (pass.next_obj + slots.div_ceil(SCAN_SLICES).max(SCAN_MIN_SLICE)).min(slots);
+            for idx in pass.next_obj..end {
+                let Some(o) = world.objects.get(idx) else {
+                    continue;
+                };
                 let Some(rp) = o.extra.reflection_probe else {
                     continue;
                 };
@@ -349,7 +363,7 @@ impl ProbeManager {
                 } else {
                     (o.scale.x * 0.5, 1.0, Mat4::IDENTITY)
                 };
-                found.insert(
+                pass.found.insert(
                     Key::Object(o.full_id),
                     Probe {
                         origin: pos,
@@ -366,6 +380,40 @@ impl ProbeManager {
                     },
                 );
             }
+            pass.next_obj = end;
+        } else {
+            pass.next_obj = slots;
+        }
+        pass.next_gpu >= scene.gpu.len() && pass.next_obj >= world.objects.slots.len()
+    }
+
+    /// A finished pass becomes the candidate probes.
+    fn commit(&mut self, pass: ScanPass, world: &World) {
+        let ScanPass { cells, mut found, .. } = pass;
+        for (cell, (lo, hi)) in cells {
+            let mut origin = (lo + hi) * 0.5;
+            let half = (hi - lo) * 0.5;
+            // radius encompasses all objects, at least 8 m
+            let radius = half.length().max(8.0);
+            // over the ground, and the near clip (half the radius) too
+            let ground = world.ground_height(origin).unwrap_or(f32::MIN) + 2.0;
+            origin.z = origin.z.max(ground).max(ground + radius * 0.5);
+            found.insert(
+                Key::Cell(cell),
+                Probe {
+                    origin,
+                    radius,
+                    kind: 0.0,
+                    box_inv: Mat4::IDENTITY,
+                    ambiance: 0.0,
+                    near: (radius * 0.5).max(0.1),
+                    slot: None,
+                    complete: false,
+                    last_update: None,
+                    fade: 0.0,
+                    distance: 0.0,
+                },
+            );
         }
         // keep the state of known probes; manual probes track their object
         let mut next = HashMap::with_capacity(found.len());
@@ -386,4 +434,42 @@ impl ProbeManager {
 /// Static, non-avatar, in-world objects that fit in a 16 m octree node.
 fn auto_candidate(g: &ObjGpu) -> bool {
     !g.faces.is_empty() && !g.is_avatar && g.owner_avatar.is_none() && !g.hud && g.radius <= CELL * 0.5
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    #[test]
+    fn candidate_scan_is_spread_over_frames() {
+        let mut world = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for ev in crate::demo::events().into_iter().chain(crate::demo::texture_stress_events(3000)) {
+            world.apply(ev);
+        }
+        let scene = Scene::new(std::path::PathBuf::new(), world.avatar_lib.clone());
+        let (probe, eye) = world
+            .objects
+            .iter()
+            .find(|(_, o)| o.extra.reflection_probe.is_some() && o.parent_id == 0)
+            .map(|(_, o)| (o.full_id, o.position))
+            .expect("demo reflection probe");
+        let slots = world.objects.slots.len();
+        let steps = slots.div_ceil(slots.div_ceil(SCAN_SLICES).max(SCAN_MIN_SLICE));
+        assert!(steps > 1, "{slots} slots");
+        let mut m = ProbeManager::default();
+        let now = Instant::now();
+        for _ in 1..steps {
+            m.update(&scene, &world, eye, 0.0, now);
+            assert!(!m.probes.contains_key(&Key::Object(probe)), "pass finished too early");
+        }
+        m.update(&scene, &world, eye, 0.0, now);
+        assert!(m.probes.contains_key(&Key::Object(probe)));
+        // the next pass waits for the scan period
+        assert!(m.pass.is_none());
+        m.update(&scene, &world, eye, 0.0, now);
+        assert!(m.pass.is_none());
+        m.update(&scene, &world, eye, 0.0, now + SCAN_PERIOD);
+        assert!(m.pass.is_some());
+    }
 }

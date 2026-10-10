@@ -326,12 +326,42 @@ impl Object {
     }
 }
 
+/// Object indices noted once each until taken: a change feed.
+#[derive(Default)]
+struct ChangeFeed {
+    list: Vec<usize>,
+    mark: Vec<bool>,
+}
+
+impl ChangeFeed {
+    fn note(&mut self, idx: usize) {
+        if self.mark.len() <= idx {
+            self.mark.resize(idx + 1, false);
+        }
+        if !self.mark[idx] {
+            self.mark[idx] = true;
+            self.list.push(idx);
+        }
+    }
+
+    fn take(&mut self, out: &mut Vec<usize>) {
+        for &i in &self.list {
+            self.mark[i] = false;
+        }
+        out.append(&mut self.list);
+    }
+}
+
 /// Slab of objects with lookup maps.
 ///
 /// Changes go through `upsert` and `get_mut`, which note the object for the
 /// scene sync (`take_touched`): the sync visits the changed objects instead
 /// of every object each frame. Code changing sync state (flags, motion,
 /// links) through `slots` directly is only seen by the periodic LOD pass.
+///
+/// The media manager runs after the sync has taken those changes, so it has
+/// its own feed (`take_media_changes`): the same objects, plus the slots of
+/// removed objects.
 #[derive(Default)]
 pub struct ObjectStore {
     pub slots: Vec<Option<Object>>,
@@ -346,8 +376,10 @@ pub struct ObjectStore {
     /// Their slot indices, in removal order (a slot may be reused since).
     pub removed_slots: Vec<usize>,
     /// Objects changed since the scene last took them, each once.
-    touched: Vec<usize>,
-    touched_mark: Vec<bool>,
+    touched: ChangeFeed,
+    /// Objects changed, added or removed since the media manager last took
+    /// them (a slot may hold another object since, or none).
+    media_changes: ChangeFeed,
 }
 
 impl ObjectStore {
@@ -376,26 +408,24 @@ impl ObjectStore {
         if self.slots.get(idx).is_none_or(|o| o.is_none()) {
             return;
         }
-        if self.touched_mark.len() <= idx {
-            self.touched_mark.resize(idx + 1, false);
-        }
-        if !self.touched_mark[idx] {
-            self.touched_mark[idx] = true;
-            self.touched.push(idx);
-        }
+        self.touched.note(idx);
+        self.media_changes.note(idx);
     }
 
     /// The objects changed since the scene sync last took them.
     pub fn touched(&self) -> &[usize] {
-        &self.touched
+        &self.touched.list
     }
 
     /// The objects changed since the last call (appended to `out`).
     pub fn take_touched(&mut self, out: &mut Vec<usize>) {
-        for &i in &self.touched {
-            self.touched_mark[i] = false;
-        }
-        out.append(&mut self.touched);
+        self.touched.take(out);
+    }
+
+    /// The slots changed, filled or emptied since the last call (appended to
+    /// `out`), for the media manager.
+    pub fn take_media_changes(&mut self, out: &mut Vec<usize>) {
+        self.media_changes.take(out);
     }
 
     pub fn index_of(&self, key: &ObjKey) -> Option<usize> {
@@ -530,6 +560,7 @@ impl ObjectStore {
         }
         self.free.push(idx);
         self.removed_slots.push(idx);
+        self.media_changes.note(idx);
         self.count -= 1;
         // Children of a removed object are removed too (linkset / attachments).
         let kids = self.children.remove(&obj.key).unwrap_or_default();
