@@ -127,7 +127,7 @@ struct PendingUpload {
 /// Upload order: textures still showing their placeholder first, then the
 /// largest on screen (Firestorm's decode priority is the on-screen pixel
 /// area), then the oldest.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct UploadPriority {
     pub first: bool,
     pub pixels: f32,
@@ -182,9 +182,68 @@ pub struct UploadBudget {
 impl Default for UploadBudget {
     fn default() -> Self {
         UploadBudget {
-            time: Duration::from_micros(1000),
+            time: Duration::from_micros(800),
             bytes: 24 << 20,
         }
+    }
+}
+
+impl UploadBudget {
+    /// Whether another upload may start after `done` uploads of `bytes`
+    /// in `elapsed`: always the first of the frame (a texture larger than
+    /// the budget still goes), then while both budgets hold.
+    pub fn allows(&self, done: usize, bytes: u64, elapsed: Duration) -> bool {
+        done == 0 || (bytes < self.bytes && elapsed < self.time)
+    }
+}
+
+/// Decoded textures waiting for the GPU, most urgent first.
+#[derive(Default)]
+struct PendingUploads {
+    heap: BinaryHeap<PendingUpload>,
+    /// Finest discard level waiting, per texture: a coarser one still in
+    /// the queue is dropped when its turn comes (the finer one replaces it).
+    finest: HashMap<Uuid, u8>,
+    seq: u64,
+}
+
+impl PendingUploads {
+    fn len(&self) -> usize {
+        self.heap.len()
+    }
+
+    /// Queue an upload; `first`: the texture still shows its placeholder,
+    /// `pixels`: its size on screen.
+    fn push(&mut self, mut u: PendingUpload, first: bool, pixels: f32) {
+        self.seq += 1;
+        u.priority = UploadPriority {
+            first,
+            pixels,
+            seq: self.seq,
+        };
+        self.requeue(u);
+    }
+
+    /// Put back an upload that cannot go yet, at its place.
+    fn requeue(&mut self, u: PendingUpload) {
+        let finest = self.finest.entry(u.id).or_insert(u.discard);
+        *finest = (*finest).min(u.discard);
+        self.heap.push(u);
+    }
+
+    /// The most urgent upload that is still the finest of its texture.
+    fn pop(&mut self) -> Option<PendingUpload> {
+        while let Some(u) = self.heap.pop() {
+            match self.finest.get(&u.id) {
+                Some(&f) if f < u.discard => continue,
+                Some(_) => {
+                    self.finest.remove(&u.id);
+                }
+                None => {}
+            }
+            return Some(u);
+        }
+        None
     }
 }
 
@@ -221,11 +280,7 @@ pub struct TextureStreamer {
     entries: HashMap<Uuid, Entry>,
     by_fetch_key: HashMap<u64, Uuid>,
     next_key: u64,
-    uploads: BinaryHeap<PendingUpload>,
-    /// Finest discard level pending upload, per texture: a coarser one
-    /// still in the queue is skipped.
-    best_pending: HashMap<Uuid, u8>,
-    upload_seq: u64,
+    uploads: PendingUploads,
     /// Staging memory of the renderer, given to the decode jobs.
     pub staging: Option<Arc<StagingPool>>,
     /// Alpha class by bindless slot (fast lookup during list building).
@@ -260,9 +315,7 @@ impl TextureStreamer {
             entries: HashMap::new(),
             by_fetch_key: HashMap::new(),
             next_key: 1,
-            uploads: BinaryHeap::new(),
-            best_pending: HashMap::new(),
-            upload_seq: 0,
+            uploads: PendingUploads::default(),
             staging: None,
             // built-in slots: the transparent texture has no visible pixel
             alpha_by_slot: {
@@ -588,6 +641,8 @@ impl TextureStreamer {
             staging,
             ..
         } = self;
+        // first disk reads of the new textures, queued in one go
+        let mut cache_reads = Vec::new();
         for (&id, e) in entries.iter_mut() {
             if e.decoded.is_some() {
                 loaded += 1;
@@ -607,29 +662,7 @@ impl TextureStreamer {
             // 1. disk cache
             if e.cache_state == 0 {
                 e.cache_state = 1;
-                let cache_complete_path = Self::cache_path(cache_dir, &id, true);
-                let cache_part_path = Self::cache_path(cache_dir, &id, false);
-                jobs.spawn(move || {
-                    if let Ok(d) = crate::cache::read_touch(&cache_complete_path) {
-                        return JobResult::TextureCache {
-                            id,
-                            data: Some(d),
-                            complete: true,
-                        };
-                    }
-                    if let Ok(d) = crate::cache::read_touch(&cache_part_path) {
-                        return JobResult::TextureCache {
-                            id,
-                            data: Some(d),
-                            complete: false,
-                        };
-                    }
-                    JobResult::TextureCache {
-                        id,
-                        data: None,
-                        complete: false,
-                    }
-                });
+                cache_reads.push(id);
                 continue;
             }
             if e.cache_state == 1 || e.decoding || e.fetching {
@@ -691,6 +724,23 @@ impl TextureStreamer {
                 accept: "image/x-j2c",
             });
         }
+        let dir = cache_dir.clone();
+        jobs.spawn_many(cache_reads, move |id| {
+            for complete in [true, false] {
+                if let Ok(d) = crate::cache::read_touch(Self::cache_path(&dir, &id, complete)) {
+                    return JobResult::TextureCache {
+                        id,
+                        data: Some(d),
+                        complete,
+                    };
+                }
+            }
+            JobResult::TextureCache {
+                id,
+                data: None,
+                complete: false,
+            }
+        });
         self.stats.total = self.entries.len();
         self.stats.loaded = loaded;
         self.stats.fetching = fetching;
@@ -803,23 +853,19 @@ impl TextureStreamer {
                     e.sculpt = sculpt;
                     self.generation += 1;
                 }
-                self.upload_seq += 1;
-                let priority = UploadPriority {
-                    first: e.decoded.is_none(),
-                    pixels: e.need_px,
-                    seq: self.upload_seq,
-                };
-                let best = self.best_pending.entry(id).or_insert(discard);
-                *best = (*best).min(discard);
-                self.uploads.push(PendingUpload {
-                    id,
-                    discard,
-                    staged,
-                    mips,
-                    alpha,
-                    alpha_channel,
-                    priority,
-                });
+                self.uploads.push(
+                    PendingUpload {
+                        id,
+                        discard,
+                        staged,
+                        mips,
+                        alpha,
+                        alpha_channel,
+                        priority: UploadPriority::default(),
+                    },
+                    e.decoded.is_none(),
+                    e.need_px,
+                );
             }
             JobResult::TextureFailed { id } => {
                 self.decodes = self.decodes.saturating_sub(1);
@@ -864,34 +910,35 @@ impl TextureStreamer {
     /// Send decoded textures to the GPU, most visible first, within the
     /// frame's budget (at least one a frame, so a slow one still goes).
     pub fn upload(&mut self, renderer: &mut Renderer, budget: UploadBudget) {
-        renderer.prepare_uploads();
         let t0 = Instant::now();
         let mut spent = 0u64;
         let mut done = 0usize;
         // staged by a job still writing in the same chunk: next frame
         let mut waiting = Vec::new();
-        while let Some(u) = self.uploads.pop() {
-            if done > 0 && (spent >= budget.bytes || t0.elapsed() >= budget.time) {
-                self.uploads.push(u);
+        while budget.allows(done, spent, t0.elapsed()) {
+            let Some(u) = self.uploads.pop() else {
                 break;
-            }
+            };
             let Some(e) = self.entries.get_mut(&u.id) else {
-                self.best_pending.remove(&u.id);
                 continue;
             };
-            let best = self.best_pending.get(&u.id).copied();
-            if best.is_some_and(|b| b < u.discard) {
-                // a finer level of this texture is on its way
-                continue;
-            }
-            if best == Some(u.discard) {
-                self.best_pending.remove(&u.id);
-            }
             if e.decoded.is_some_and(|d| d <= u.discard) {
                 continue;
             }
             if u.staged.as_ref().is_some_and(|s| !s.data.ready()) {
-                self.best_pending.insert(u.id, u.discard);
+                waiting.push(u);
+                continue;
+            }
+            // a new texture page (up to ~1 ms to create) only while most of
+            // the frame's budget is left: next frame, it goes first
+            let size = match &u.staged {
+                Some(staged) => staged.levels.first().map(|l| (l.width, l.height, staged.levels.len())),
+                None => u.mips.first().map(|m| (m.0, m.1, u.mips.len())),
+            };
+            if done > 0
+                && t0.elapsed() > budget.time / 4
+                && size.is_some_and(|(w, h, levels)| renderer.textures.needs_page(e.slot, w, h, levels as u32))
+            {
                 waiting.push(u);
                 continue;
             }
@@ -962,7 +1009,9 @@ impl TextureStreamer {
                 self.generation += 1;
             }
         }
-        self.uploads.extend(waiting);
+        for u in waiting {
+            self.uploads.requeue(u);
+        }
         self.stats.uploaded_bytes_frame = spent;
         self.stats.uploads_frame = done;
     }
@@ -975,32 +1024,29 @@ impl TextureStreamer {
         self.last_maintenance = Instant::now();
         let now = Instant::now();
         let mut evict = Vec::new();
+        // downloaded data to persist: shared, not copied, and queued in one go
+        let mut writes = Vec::new();
         for (id, e) in self.entries.iter_mut() {
             if e.dirty_cache && !e.fetching && !e.data.is_empty() {
                 e.dirty_cache = false;
-                let complete = e.complete;
-                let path = self
-                    .cache_dir
-                    .join("tex")
-                    .join(format!("{id}.{}", if complete { "j2c" } else { "part" }));
-                let part = self.cache_dir.join("tex").join(format!("{id}.part"));
-                let data = e.data.clone();
-                let id = *id;
-                jobs.spawn(move || {
-                    let tmp = path.with_extension("tmp");
-                    if crate::cache::write(&tmp, &data).is_ok() {
-                        let _ = std::fs::rename(&tmp, &path);
-                    }
-                    if complete {
-                        let _ = std::fs::remove_file(part);
-                    }
-                    JobResult::TextureCache { id, data: None, complete }
-                });
+                writes.push((*id, e.complete, e.data.clone()));
             }
             if e.refs == 0 && e.unused_since.is_some_and(|t| now.duration_since(t) > self.evict_after) && !e.fetching && !e.decoding {
                 evict.push(*id);
             }
         }
+        let dir = self.cache_dir.clone();
+        jobs.spawn_many(writes, move |(id, complete, data)| {
+            let path = Self::cache_path(&dir, &id, complete);
+            let tmp = path.with_extension("tmp");
+            if crate::cache::write(&tmp, &data).is_ok() {
+                let _ = std::fs::rename(&tmp, &path);
+            }
+            if complete {
+                let _ = std::fs::remove_file(Self::cache_path(&dir, &id, false));
+            }
+            JobResult::TextureCache { id, data: None, complete }
+        });
         for id in evict {
             if let Some(e) = self.entries.remove(&id) {
                 renderer.free_texture(e.slot);
@@ -1081,6 +1127,78 @@ fn decode_job(id: Uuid, data: &[u8], discard: u8, keep_pixels: bool, pool: Optio
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn pending(id: u128, discard: u8) -> PendingUpload {
+        PendingUpload {
+            id: Uuid::from_u128(id),
+            discard,
+            staged: None,
+            mips: Vec::new(),
+            alpha: AlphaKind::Opaque,
+            alpha_channel: false,
+            priority: UploadPriority::default(),
+        }
+    }
+
+    #[test]
+    fn placeholders_then_largest_on_screen_then_oldest() {
+        let mut q = PendingUploads::default();
+        q.push(pending(1, 0), false, 900.0); // upgrade, large
+        q.push(pending(2, 2), true, 10.0); // first texels, small
+        q.push(pending(3, 2), true, 400.0); // first texels, large
+        q.push(pending(4, 0), false, 50.0); // upgrade, small
+        q.push(pending(5, 2), true, 400.0); // same as 3, queued later
+        assert_eq!(q.len(), 5);
+        let order: Vec<u128> = std::iter::from_fn(|| q.pop()).map(|u| u.id.as_u128()).collect();
+        assert_eq!(order, [3, 5, 2, 1, 4]);
+    }
+
+    #[test]
+    fn coarser_level_is_dropped_when_a_finer_one_waits() {
+        let mut q = PendingUploads::default();
+        q.push(pending(1, 2), true, 100.0);
+        q.push(pending(2, 2), true, 50.0);
+        // the full resolution of texture 1 arrives before its level 2 went
+        q.push(pending(1, 0), true, 100.0);
+        let got: Vec<(u128, u8)> = std::iter::from_fn(|| q.pop()).map(|u| (u.id.as_u128(), u.discard)).collect();
+        assert_eq!(got, [(1, 0), (2, 2)]);
+        assert!(q.finest.is_empty());
+        // a coarser level queued after a finer one comes after it (the
+        // caller drops it: the texture is finer by then)
+        q.push(pending(3, 0), true, 1.0);
+        q.push(pending(3, 2), true, 1.0);
+        assert_eq!(q.pop().map(|u| u.discard), Some(0));
+        assert_eq!(q.pop().map(|u| u.discard), Some(2));
+        assert!(q.pop().is_none() && q.finest.is_empty());
+    }
+
+    #[test]
+    fn requeued_upload_keeps_its_place() {
+        let mut q = PendingUploads::default();
+        q.push(pending(1, 0), true, 100.0);
+        q.push(pending(2, 0), true, 50.0);
+        // texture 1 is not ready (its staging chunk is still written)
+        let first = q.pop().expect("upload");
+        assert_eq!(first.id.as_u128(), 1);
+        q.requeue(first);
+        q.push(pending(3, 0), true, 75.0);
+        let order: Vec<u128> = std::iter::from_fn(|| q.pop()).map(|u| u.id.as_u128()).collect();
+        assert_eq!(order, [1, 3, 2]);
+    }
+
+    #[test]
+    fn budget_always_lets_one_upload_through() {
+        let b = UploadBudget {
+            time: Duration::from_millis(1),
+            bytes: 1000,
+        };
+        // nothing done yet: even over time (a slow frame start)
+        assert!(b.allows(0, 0, Duration::from_millis(5)));
+        assert!(b.allows(3, 999, Duration::from_micros(999)));
+        // either budget spent stops the frame's uploads
+        assert!(!b.allows(1, 1000, Duration::ZERO));
+        assert!(!b.allows(1, 10, Duration::from_millis(1)));
+    }
 
     #[test]
     fn first_request_starts_at_zero() {

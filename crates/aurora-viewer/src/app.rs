@@ -3157,7 +3157,11 @@ impl App {
                 d if d.show_alpha => Some(d.show_alpha_rigged),
                 _ => None,
             };
-            self.scene.process_results(&mut gfx.renderer, &self.net, Duration::from_millis(6));
+            // finished jobs only leave cheap work to the main thread (their
+            // data is staged for the GPU by the jobs): a short budget is
+            // enough, and keeps a burst of results from stretching a frame
+            self.scene
+                .process_results(&mut gfx.renderer, &self.net, Duration::from_micros(1000));
             self.frame_profile.lap(Lap::Results);
             // poses first: attachments follow their bone in the same frame
             let completed = self

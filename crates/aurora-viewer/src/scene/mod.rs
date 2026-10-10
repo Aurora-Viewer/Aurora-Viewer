@@ -463,6 +463,10 @@ pub struct Scene {
     last_palette_gc: Instant,
     /// Periodic streaming summary in the log.
     last_diag: Instant,
+    /// The renderer's staging memory, given to the geometry jobs.
+    staging: Option<Arc<aurora_render::StagingPool>>,
+    /// Geometry whose staged data is not copyable yet (next frame).
+    geom_waiting: Vec<(GeomKey, jobs::PreparedGeom, f32)>,
     /// Streaming time of the frame by part (AURORA_PROFILE `s_*`), taken by
     /// the frame profile at the end of the frame.
     pub parts: crate::frame_profile::Parts,
@@ -713,6 +717,8 @@ impl Scene {
             palettes: Vec::new(),
             last_palette_gc: Instant::now(),
             last_diag: Instant::now(),
+            staging: None,
+            geom_waiting: Vec::new(),
             parts: Default::default(),
             skeletons: HashMap::new(),
             skeleton_member_of: HashMap::new(),
@@ -813,16 +819,10 @@ impl Scene {
             GeomKey::Prim { lod, .. } => {
                 let params = obj.volume;
                 let detail = aurora_prim::volume::DETAIL_SCALES[lod as usize % 4];
+                let pool = self.staging.clone();
                 self.jobs.spawn(move || {
                     let mesh = aurora_prim::generate_volume(&params, detail);
-                    let (faces, min, max) = jobs::volume_to_faces(&mesh);
-                    JobResult::Geometry {
-                        key,
-                        faces,
-                        min,
-                        max,
-                        area: 1.0,
-                    }
+                    JobResult::geometry(key, jobs::volume_to_faces(&mesh), 1.0, pool.as_deref())
                 });
             }
             GeomKey::Sculpt { lod, .. } => {
@@ -834,17 +834,10 @@ impl Scene {
                 let Some(map) = self.textures.sculpt_map(&tex) else {
                     return false; // wait for the sculpt texture
                 };
+                let pool = self.staging.clone();
                 self.jobs.spawn(move || {
                     let mesh = aurora_prim::generate_sculpt(&params, detail, map.width, map.height, map.components, &map.pixels);
-                    let (faces, min, max) = jobs::volume_to_faces(&mesh);
-                    let area = mesh.surface_area;
-                    JobResult::Geometry {
-                        key,
-                        faces,
-                        min,
-                        max,
-                        area,
-                    }
+                    JobResult::geometry(key, jobs::volume_to_faces(&mesh), mesh.surface_area, pool.as_deref())
                 });
             }
             GeomKey::Mesh { id, lod } => {
@@ -856,55 +849,26 @@ impl Scene {
         false
     }
 
-    fn upload_geom(&mut self, renderer: &mut Renderer, key: GeomKey, faces: Vec<jobs::FaceData>, min: Vec3, max: Vec3) {
-        let pick_faces = if matches!(key, GeomKey::AvatarPart(_)) {
-            Vec::new()
-        } else {
-            faces
-                .iter()
-                .map(|f| {
-                    f.as_ref().map(|f| picking::PickFace {
-                        positions: f.vertices.iter().map(|v| v.pos).collect(),
-                        uvs: f.vertices.iter().map(|v| v.uv).collect(),
-                        indices: f.indices.clone(),
-                    })
-                })
-                .collect()
-        };
-        let mut boxes = HashMap::<u8, (Vec3, Vec3)>::new();
-        for f in faces.iter().flatten() {
-            if let Some(skin) = &f.skin {
-                for (v, s) in f.vertices.iter().zip(skin) {
-                    let p = Vec3::from_array(v.pos);
-                    for (&j, &w) in s.joints.iter().zip(&s.weights) {
-                        if w != 0 {
-                            let b = boxes.entry(j).or_insert((p, p));
-                            b.0 = b.0.min(p);
-                            b.1 = b.1.max(p);
-                        }
-                    }
-                }
-            }
-        }
-        let joint_bounds = boxes
+    /// Put a prepared geometry in the arena: staged faces are copied by the
+    /// GPU (their regions must be ready), the others written from here.
+    fn upload_geom(&mut self, renderer: &mut Renderer, key: GeomKey, geom: jobs::PreparedGeom) {
+        let gfaces = geom
+            .faces
             .into_iter()
-            .map(|(joint, (min, max))| animesh::JointBounds { joint, min, max })
-            .collect();
-        let gfaces = faces
-            .into_iter()
-            .map(|f| {
-                f.and_then(|g| match &g.skin {
+            .map(|f| match f? {
+                jobs::FaceUpload::Staged(staged) => renderer.upload_mesh_staged(&staged),
+                jobs::FaceUpload::Memory(g) => match &g.skin {
                     Some(sk) => renderer.upload_skinned_mesh(&g.vertices, sk, &g.indices),
                     None => renderer.upload_mesh(&g.vertices, &g.indices),
-                })
+                },
             })
             .collect();
         let g = Arc::new(GpuGeom {
             faces: gfaces,
-            min,
-            max,
-            joint_bounds,
-            pick_faces,
+            min: geom.min,
+            max: geom.max,
+            joint_bounds: geom.joint_bounds,
+            pick_faces: geom.pick_faces,
         });
         match self.geoms.get_mut(&key) {
             Some(e) => match std::mem::replace(&mut e.state, GeomState::Ready(g)) {
@@ -935,17 +899,12 @@ impl Scene {
                 max = max.max(p);
             }
             let skin = (part.skin.len() == part.vertices.len()).then(|| part.skin.clone());
-            self.upload_geom(
-                renderer,
-                key,
-                vec![Some(jobs::FaceGeom {
-                    vertices: part.vertices.clone(),
-                    indices: part.indices.clone(),
-                    skin,
-                })],
-                min,
-                max,
-            );
+            let faces = vec![Some(jobs::FaceGeom {
+                vertices: part.vertices.clone(),
+                indices: part.indices.clone(),
+                skin,
+            })];
+            self.upload_geom(renderer, key, jobs::PreparedGeom::new(faces, min, max, false, None));
             if let Some(e) = self.geoms.get_mut(&key) {
                 e.refs = u32::MAX / 2; // permanent
             }
@@ -957,6 +916,20 @@ impl Scene {
     pub fn process_results(&mut self, renderer: &mut Renderer, net: &NetClient, budget: std::time::Duration) {
         use crate::frame_profile::Part;
         let t0 = Instant::now();
+        // what the jobs staged so far becomes copyable (once a frame, before
+        // the geometry here and the textures in `stream`)
+        renderer.prepare_uploads();
+        if self.staging.is_none() {
+            let pool = renderer.staging_pool();
+            self.textures.staging = Some(pool.clone());
+            self.meshes.staging = Some(pool.clone());
+            self.staging = Some(pool);
+        }
+        // geometry staged in a chunk another job was still writing in
+        for (key, geom, area) in std::mem::take(&mut self.geom_waiting) {
+            self.finish_geometry(renderer, key, geom, area);
+        }
+        let t = self.parts.lap(Part::Geometry, t0);
         while let Ok(r) = net.fetch_results.try_recv() {
             let kind = r.key & (0xF << 60);
             if kind == textures::FETCH_KIND_TEXTURE {
@@ -976,7 +949,7 @@ impl Scene {
                 self.landmark_results.push(r);
             }
         }
-        let mut t = self.parts.lap(Part::Fetched, t0);
+        let mut t = self.parts.lap(Part::Fetched, t);
         while t0.elapsed() < budget {
             let Ok(r) = self.job_rx.try_recv() else {
                 break;
@@ -987,21 +960,7 @@ impl Scene {
                 Part::Decoded
             };
             match r {
-                JobResult::Geometry {
-                    key,
-                    faces,
-                    min,
-                    max,
-                    area,
-                } => {
-                    if let GeomKey::Mesh { id, lod } = key {
-                        self.meshes.on_geometry_done(&id, lod);
-                    }
-                    if matches!(key, GeomKey::Sculpt { .. }) {
-                        self.sculpt_area.insert(key, area);
-                    }
-                    self.upload_geom(renderer, key, faces, min, max);
-                }
+                JobResult::Geometry { key, geom, area } => self.finish_geometry(renderer, key, geom, area),
                 JobResult::GeometryFailed { key } => {
                     if let GeomKey::Mesh { id, lod } = key {
                         self.meshes.on_geometry_done(&id, lod);
@@ -1019,6 +978,22 @@ impl Scene {
             }
             t = self.parts.lap(part, t);
         }
+    }
+
+    /// A geometry built by a job goes to the GPU, or waits for the next
+    /// frame while another job still writes in its staging chunk.
+    fn finish_geometry(&mut self, renderer: &mut Renderer, key: GeomKey, geom: jobs::PreparedGeom, area: f32) {
+        if !geom.ready() {
+            self.geom_waiting.push((key, geom, area));
+            return;
+        }
+        if let GeomKey::Mesh { id, lod } = key {
+            self.meshes.on_geometry_done(&id, lod);
+        }
+        if matches!(key, GeomKey::Sculpt { .. }) {
+            self.sculpt_area.insert(key, area);
+        }
+        self.upload_geom(renderer, key, geom);
     }
 
     // ------------------------------------------------------------ objects
@@ -2618,9 +2593,6 @@ impl Scene {
     pub fn stream(&mut self, renderer: &mut Renderer, net: &NetClient, world: &World, texture_budget: u64) {
         use crate::frame_profile::Part;
         let t = Instant::now();
-        if self.textures.staging.is_none() {
-            self.textures.staging = Some(renderer.staging_pool());
-        }
         let va = world.viewer_asset_url();
         let va = va.as_deref();
         self.textures.update(&self.jobs, &net.fetcher, va);

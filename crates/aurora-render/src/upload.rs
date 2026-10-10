@@ -15,19 +15,28 @@
 //! submitted and nothing staged in them still pending, they are mapped
 //! again (`map_async`) and come back empty.
 //!
+//! The chunks are all created with the renderer, on the main thread: a job
+//! never allocates GPU memory (wgpu's allocator lock held by a job creating
+//! a chunk made a page creation on the main thread wait 35 ms). When they
+//! are all in use, or for data larger than a chunk, [`StagingPool::stage`]
+//! returns None and the caller keeps its data for a `write_*` by the main
+//! thread, within its time budget.
+//!
 //! Chunk life: open (jobs allocate and write) → closed at the next
 //! [`UploadQueue::prepare`] → unmapped when no job writes in it any more
 //! (its staged data can be copied from then on) → mapping again after the
 //! submit that follows the drop of its last [`Staged`] region → free.
 
+use crate::types::{SkinVertex, Vertex};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
-/// Size of a regular chunk; a larger request gets a chunk of its own size.
-const CHUNK_BYTES: u64 = 16 << 20;
-/// Staging memory cap (host memory the GPU reads). Past it, `stage` returns
-/// None and the caller keeps its data for the main thread's `write_*`.
-const POOL_MAX_BYTES: u64 = 256 << 20;
+/// Chunks of the pool and their size: 8 × 32 MB (a 2048² texture with its
+/// mips is 22 MB), or 4 × 16 MB on a GPU with little memory.
+const CHUNKS: (usize, u64) = (8, 32 << 20);
+const CHUNKS_SMALL: (usize, u64) = (4, 16 << 20);
+/// A chunk with data stays open at most this many frames.
+const OPEN_FRAMES: u32 = 8;
 /// Offsets inside a chunk (and rows of texture levels) are aligned to this:
 /// wgpu's `COPY_BYTES_PER_ROW_ALIGNMENT`, also enough for buffer copies.
 pub const STAGING_ALIGN: u64 = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as u64;
@@ -57,6 +66,8 @@ impl Chunk {
 struct Open {
     chunk: Arc<Chunk>,
     offset: u64,
+    /// Frames (`prepare` calls) since it was opened.
+    frames: u32,
 }
 
 #[derive(Default)]
@@ -66,14 +77,14 @@ struct PoolState {
     free: Vec<Arc<Chunk>>,
     /// Closed: waiting to be unmapped, then recycled.
     closed: Vec<Arc<Chunk>>,
-    /// Memory of every chunk alive (free, open, closed or mapping).
-    total: u64,
 }
 
 /// Mapped staging memory shared by the background jobs and the renderer.
 pub struct StagingPool {
-    device: wgpu::Device,
     state: Mutex<PoolState>,
+    /// Memory of the pool (bytes) and size of its chunks.
+    total: u64,
+    chunk_bytes: u64,
     /// Chunks mapped again (pushed by the `map_async` callbacks, which
     /// take no other lock).
     returned: Arc<Mutex<Vec<(Arc<Chunk>, bool)>>>,
@@ -117,10 +128,32 @@ impl std::fmt::Debug for Staged {
 }
 
 impl StagingPool {
-    pub fn new(device: &wgpu::Device) -> Arc<Self> {
+    /// `small`: a GPU with little memory (integrated, or under 4 GB).
+    pub fn new(device: &wgpu::Device, small: bool) -> Arc<Self> {
+        let (count, chunk_bytes) = if small { CHUNKS_SMALL } else { CHUNKS };
+        let free = (0..count)
+            .map(|_| {
+                Arc::new(Chunk {
+                    buffer: device.create_buffer(&wgpu::BufferDescriptor {
+                        label: Some("streaming staging"),
+                        size: chunk_bytes,
+                        usage: wgpu::BufferUsages::MAP_WRITE | wgpu::BufferUsages::COPY_SRC,
+                        mapped_at_creation: true,
+                    }),
+                    writers: AtomicU32::new(0),
+                    staged: AtomicU32::new(0),
+                    unmapped: AtomicBool::new(false),
+                })
+            })
+            .collect();
         Arc::new(StagingPool {
-            device: device.clone(),
-            state: Mutex::new(PoolState::default()),
+            state: Mutex::new(PoolState {
+                open: None,
+                free,
+                closed: Vec::new(),
+            }),
+            total: count as u64 * chunk_bytes,
+            chunk_bytes,
             returned: Default::default(),
             write_turn: Mutex::new(()),
         })
@@ -139,14 +172,15 @@ impl StagingPool {
                 chunk.unmapped.store(false, Ordering::Release);
                 s.free.push(chunk);
             } else {
-                s.total = s.total.saturating_sub(chunk.size());
+                // never expected; the pool goes on with one chunk less
+                log::warn!("staging: a chunk could not be mapped again");
             }
         }
     }
 
     /// Reserve `size` bytes, write them with `fill` (from any thread) and
-    /// return the region; None when the pool is at its cap (the caller then
-    /// keeps its data for a main-thread write).
+    /// return the region; None when every chunk is in use or `size` exceeds
+    /// a chunk (the caller then keeps its data for a main-thread write).
     pub fn stage(&self, size: u64, fill: impl FnOnce(&mut wgpu::WriteOnly<'_, [u8]>)) -> Option<Staged> {
         let size = align(size.max(4));
         let (chunk, offset) = self.allocate(size)?;
@@ -174,52 +208,22 @@ impl StagingPool {
     }
 
     fn allocate(&self, size: u64) -> Option<(Arc<Chunk>, u64)> {
+        if size > self.chunk_bytes {
+            return None;
+        }
         let mut s = self.lock();
         self.receive(&mut s);
         if !s.open.as_ref().is_some_and(|o| o.offset + size <= o.chunk.size()) {
-            if let Some(o) = s.open.take() {
+            // the next free chunk first: with none, the open one stays
+            // open for smaller requests
+            let chunk = s.free.pop()?;
+            if let Some(o) = s.open.replace(Open {
+                chunk,
+                offset: 0,
+                frames: 0,
+            }) {
                 s.closed.push(o.chunk);
             }
-            let chunk = match s.free.iter().position(|c| c.size() >= size) {
-                Some(i) => s.free.swap_remove(i),
-                None => {
-                    let bytes = size.max(CHUNK_BYTES);
-                    // drop free chunks too small for this request to make
-                    // room, else give up
-                    while s.total + bytes > POOL_MAX_BYTES {
-                        let c = s.free.pop()?;
-                        s.total -= c.size();
-                    }
-                    s.total += bytes;
-                    // created without the lock: the main thread's
-                    // `prepare` must not wait behind an allocation
-                    drop(s);
-                    let chunk = Arc::new(Chunk {
-                        buffer: self.device.create_buffer(&wgpu::BufferDescriptor {
-                            label: Some("streaming staging"),
-                            size: bytes,
-                            usage: wgpu::BufferUsages::MAP_WRITE | wgpu::BufferUsages::COPY_SRC,
-                            mapped_at_creation: true,
-                        }),
-                        writers: AtomicU32::new(0),
-                        staged: AtomicU32::new(0),
-                        unmapped: AtomicBool::new(false),
-                    });
-                    s = self.lock();
-                    // another job may have opened a chunk meanwhile: this
-                    // one waits in the free list
-                    if s.open.as_ref().is_some_and(|o| o.offset + size <= o.chunk.size()) {
-                        s.free.push(chunk);
-                    } else {
-                        if let Some(o) = s.open.take() {
-                            s.closed.push(o.chunk);
-                        }
-                        s.open = Some(Open { chunk, offset: 0 });
-                    }
-                    return Self::bump(&mut s, size);
-                }
-            };
-            s.open = Some(Open { chunk, offset: 0 });
         }
         Self::bump(&mut s, size)
     }
@@ -236,10 +240,21 @@ impl StagingPool {
 
     /// Main thread, before copying: close the open chunk (what the jobs
     /// staged so far becomes copyable once they are done writing) and
-    /// unmap the closed chunks nobody writes in any more.
+    /// unmap the closed chunks nobody writes in any more. While closed
+    /// chunks still hold data to copy, the open one is left to fill up to
+    /// half (a chunk closed every frame with little in it would exhaust
+    /// the pool), a few frames at most.
     fn prepare(&self) {
         let mut s = self.lock();
-        if let Some(o) = s.open.take_if(|o| o.offset > 0) {
+        let busy = s.closed.iter().any(|c| c.staged.load(Ordering::Acquire) > 0);
+        let chunk_bytes = self.chunk_bytes;
+        if let Some(o) = s.open.as_mut() {
+            o.frames += 1;
+        }
+        if let Some(o) = s
+            .open
+            .take_if(|o| o.offset > 0 && (!busy || o.offset >= chunk_bytes / 2 || o.frames > OPEN_FRAMES))
+        {
             s.closed.push(o.chunk);
         }
         for c in &s.closed {
@@ -270,9 +285,9 @@ impl StagingPool {
         }
     }
 
-    /// Staging memory allocated (bytes).
+    /// Staging memory of the pool (bytes).
     pub fn bytes(&self) -> u64 {
-        self.lock().total
+        self.total
     }
 }
 
@@ -349,6 +364,66 @@ impl StagedTexture {
     }
 }
 
+/// A mesh staged by a background job: its vertices, its skin stream when
+/// rigged, and its u16 indices padded to an even count (as the arena
+/// allocates them), ready for [`crate::Renderer::upload_mesh_staged`].
+#[derive(Debug)]
+pub struct StagedMesh {
+    pub vertex_count: u32,
+    pub index_count: u32,
+    pub skinned: bool,
+    pub data: Staged,
+}
+
+impl StagedMesh {
+    /// Stage a mesh; None when the pool is full or the mesh is empty (the
+    /// caller keeps its data for `upload_mesh`).
+    pub fn new(pool: &StagingPool, vertices: &[Vertex], skin: Option<&[SkinVertex]>, indices: &[u16]) -> Option<Self> {
+        if vertices.is_empty() || indices.is_empty() || vertices.len() > u32::MAX as usize / 2 {
+            return None;
+        }
+        let skin = skin.filter(|s| s.len() == vertices.len());
+        let v: &[u8] = bytemuck::cast_slice(vertices);
+        let sk: &[u8] = skin.map(bytemuck::cast_slice).unwrap_or_default();
+        let i: &[u8] = bytemuck::cast_slice(indices);
+        let odd = indices.len() % 2 == 1;
+        let size = (v.len() + sk.len() + i.len() + if odd { 2 } else { 0 }) as u64;
+        let data = pool.stage(size, |dst| {
+            dst.slice(..v.len()).copy_from_slice(v);
+            dst.slice(v.len()..v.len() + sk.len()).copy_from_slice(sk);
+            let at = v.len() + sk.len();
+            dst.slice(at..at + i.len()).copy_from_slice(i);
+            if odd {
+                // the padding repeats the last index
+                dst.slice(at + i.len()..at + i.len() + 2).copy_from_slice(&i[i.len() - 2..]);
+            }
+        })?;
+        Some(StagedMesh {
+            vertex_count: vertices.len() as u32,
+            index_count: indices.len() as u32,
+            skinned: skin.is_some(),
+            data,
+        })
+    }
+
+    /// Byte ranges (offset, size) of the vertices, the skin stream and the
+    /// padded indices inside the staged region.
+    pub(crate) fn ranges(&self) -> [(u64, u64); 3] {
+        mesh_ranges(self.vertex_count, self.index_count, self.skinned)
+    }
+}
+
+fn mesh_ranges(vertex_count: u32, index_count: u32, skinned: bool) -> [(u64, u64); 3] {
+    let v = vertex_count as u64 * std::mem::size_of::<Vertex>() as u64;
+    let sk = if skinned {
+        vertex_count as u64 * std::mem::size_of::<SkinVertex>() as u64
+    } else {
+        0
+    };
+    let i = ((index_count as u64 + 1) & !1) * 2;
+    [(0, v), (v, sk), (v + sk, i)]
+}
+
 /// Per-frame copies of the staged data, recorded by the main thread and
 /// submitted first in the frame's submit.
 pub struct UploadQueue {
@@ -357,9 +432,9 @@ pub struct UploadQueue {
 }
 
 impl UploadQueue {
-    pub fn new(device: &wgpu::Device) -> Self {
+    pub fn new(device: &wgpu::Device, small: bool) -> Self {
         UploadQueue {
-            pool: StagingPool::new(device),
+            pool: StagingPool::new(device, small),
             encoder: None,
         }
     }
@@ -382,10 +457,14 @@ impl UploadQueue {
         })
     }
 
-    /// Copy a staged region into a buffer (4-byte aligned offset and size).
-    pub fn copy_to_buffer(&mut self, device: &wgpu::Device, staged: &Staged, dst: &wgpu::Buffer, dst_offset: u64, size: u64) {
+    /// Copy `size` bytes at `at` of a staged region into a buffer (offsets
+    /// and size multiples of 4).
+    pub fn copy_to_buffer(&mut self, device: &wgpu::Device, staged: &Staged, (at, size): (u64, u64), dst: &wgpu::Buffer, dst_offset: u64) {
+        if size == 0 {
+            return;
+        }
         let src = staged.buffer().clone();
-        let offset = staged.offset;
+        let offset = staged.offset + at;
         self.encoder(device).copy_buffer_to_buffer(&src, offset, dst, dst_offset, size);
     }
 
@@ -443,6 +522,89 @@ impl UploadQueue {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// GPU round trip of the staging pool: regions staged from several
+    /// threads at once, copied into a buffer and read back, over enough
+    /// rounds that every chunk is closed, unmapped, recycled and written
+    /// again. Needs a GPU, so not run by check.ps1:
+    /// `cargo test -p aurora-render staging_round_trip -- --ignored`.
+    #[test]
+    #[ignore]
+    fn staging_round_trip_on_the_gpu() {
+        let instance = wgpu::Instance::default();
+        let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())) else {
+            eprintln!("no GPU adapter: skipped");
+            return;
+        };
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).expect("GPU device");
+        let mut uploads = UploadQueue::new(&device, true);
+        let pool = uploads.pool().clone();
+        assert_eq!(pool.bytes(), 4 * (16 << 20));
+        // larger than a chunk: the caller keeps its data
+        assert!(pool.stage((16 << 20) + 4, |_| {}).is_none());
+        const REGION: usize = 3 << 20;
+        const PER_ROUND: usize = 8;
+        let dst = device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: (REGION * PER_ROUND) as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let pattern = |round: usize, i: usize| -> Vec<u8> { (0..REGION).map(|b| (b * 7 + i * 31 + round * 101) as u8).collect() };
+        // 12 rounds of 24 MB through a 64 MB pool: chunks must come back
+        for round in 0..12 {
+            let staged: Vec<Staged> = std::thread::scope(|s| {
+                let jobs: Vec<_> = (0..PER_ROUND)
+                    .map(|i| {
+                        let pool = &pool;
+                        s.spawn(move || {
+                            let data = pattern(round, i);
+                            pool.stage(REGION as u64, |dst| dst.copy_from_slice(&data))
+                                .expect("room in the pool")
+                        })
+                    })
+                    .collect();
+                jobs.into_iter().map(|j| j.join().expect("job")).collect()
+            });
+            uploads.prepare();
+            if staged.iter().any(|r| !r.ready()) {
+                // a chunk left open while others hold data: closed next frame
+                for _ in 0..=OPEN_FRAMES {
+                    uploads.prepare();
+                }
+            }
+            for (i, region) in staged.iter().enumerate() {
+                assert!(region.ready(), "round {round} region {i}");
+                uploads.copy_to_buffer(&device, region, (0, REGION as u64), &dst, (i * REGION) as u64);
+            }
+            drop(staged);
+            uploads.flush(&queue, None);
+            uploads.recycle();
+            dst.map_async(wgpu::MapMode::Read, .., |r| r.expect("map"));
+            device.poll(wgpu::PollType::wait_indefinitely()).expect("poll");
+            {
+                let got = dst.get_mapped_range(..).expect("mapped");
+                for i in 0..PER_ROUND {
+                    assert!(
+                        got[i * REGION..(i + 1) * REGION] == pattern(round, i)[..],
+                        "round {round} region {i}"
+                    );
+                }
+            }
+            dst.unmap();
+        }
+    }
+
+    #[test]
+    fn mesh_ranges_follow_each_other() {
+        // 3 vertices of 24 bytes, a skin stream of 8, 5 indices padded to 6
+        assert_eq!(mesh_ranges(3, 5, true), [(0, 72), (72, 24), (96, 12)]);
+        assert_eq!(mesh_ranges(3, 6, false), [(0, 72), (72, 0), (72, 12)]);
+        // every offset and size suits a buffer copy
+        for r in mesh_ranges(7, 9, true) {
+            assert!(r.0 % wgpu::COPY_BUFFER_ALIGNMENT == 0 && r.1 % wgpu::COPY_BUFFER_ALIGNMENT == 0);
+        }
+    }
 
     #[test]
     fn levels_are_aligned() {

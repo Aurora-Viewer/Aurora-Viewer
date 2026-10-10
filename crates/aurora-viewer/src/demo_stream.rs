@@ -1,7 +1,9 @@
-//! AURORA_DEMO_STREAM=<n>: streaming hitch test. As when arriving in a busy
-//! region or turning the camera toward a full shop, `n` textured objects
-//! keep arriving in waves (100 every 250 ms, ~400 a second as measured on
-//! Agni), each with its own texture and its own shape. Each texture is
+//! AURORA_DEMO_STREAM=<n>[,<wave>]: streaming hitch test. As when arriving
+//! in a busy region or turning the camera toward a full shop, `n` textured
+//! objects keep arriving in waves (`wave` every 250 ms; 100 by default,
+//! ~400 a second as measured on Agni; `wave` = `n` sends everything at
+//! once, as a teleport arrival), each with its own texture and its own
+//! shape. Each texture is
 //! decoded on the background pool at a quarter of its size right after
 //! its object arrives, then at full size 1.5 s later (a discard upgrade),
 //! and goes through the real path from there: finished job, upload queue,
@@ -24,7 +26,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
-/// Objects per wave and time between waves.
+/// Default objects per wave, and time between waves.
 const WAVE: u32 = 100;
 const WAVE_EVERY: Duration = Duration::from_millis(250);
 /// First wave once the loading fade is over.
@@ -46,10 +48,13 @@ const SIZES: [(u32, u32); 8] = [
     (384, 384),
 ];
 
-/// Object count from the variable (2000 for a value that is not a number).
-pub fn count() -> Option<u32> {
-    let v = std::env::var("AURORA_DEMO_STREAM").ok()?;
-    Some(v.trim().parse().unwrap_or(2000).clamp(1, 20_000))
+/// Object count and objects per wave from the variable's value (2000
+/// objects for a count that is not a number, 100 per wave by default).
+fn parse(value: &str) -> (u32, u32) {
+    let mut parts = value.split(',').map(|p| p.trim().parse::<u32>().ok());
+    let n = parts.next().flatten().unwrap_or(2000).clamp(1, 20_000);
+    let wave = parts.next().flatten().unwrap_or(WAVE).clamp(1, n);
+    (n, wave)
 }
 
 pub fn texture(i: u32) -> Uuid {
@@ -140,6 +145,7 @@ fn spawn_decode(jobs: &Jobs, pool: Option<Arc<StagingPool>>, i: u32, discard: u8
 /// The scenario, driven once a frame.
 pub struct StreamDemo {
     n: u32,
+    wave: u32,
     next: u32,
     started: Option<Instant>,
     last_wave: Option<Instant>,
@@ -149,8 +155,10 @@ pub struct StreamDemo {
 
 impl StreamDemo {
     pub fn from_env() -> Option<Self> {
+        let (n, wave) = parse(&std::env::var("AURORA_DEMO_STREAM").ok()?);
         Some(StreamDemo {
-            n: count()?,
+            n,
+            wave,
             next: 0,
             started: None,
             last_wave: None,
@@ -175,7 +183,7 @@ impl StreamDemo {
         let started = *self.started.get_or_insert(now);
         if self.next < self.n && self.last_wave.is_none_or(|t| now.duration_since(t) >= WAVE_EVERY) {
             self.last_wave = Some(now);
-            let count = WAVE.min(self.n - self.next);
+            let count = self.wave.min(self.n - self.next);
             // the textures are referenced before their objects are synced
             // (never evicted: the scenario holds them)
             for i in self.next..self.next + count {
@@ -233,6 +241,16 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn variable_gives_count_and_wave() {
+        assert_eq!(parse("3000"), (3000, 100));
+        assert_eq!(parse("1"), (1, 1));
+        assert_eq!(parse("oui"), (2000, 100));
+        assert_eq!(parse("500, 500"), (500, 500));
+        // a wave larger than the count is the whole count
+        assert_eq!(parse("50,9999"), (50, 50));
     }
 
     #[test]

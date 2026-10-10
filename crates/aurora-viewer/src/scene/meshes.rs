@@ -5,6 +5,7 @@ use super::jobs::{JobResult, Jobs, mesh_to_faces};
 use aurora_assets::material::PbrOverride;
 use aurora_assets::{MeshHeader, PbrMaterial, SkinInfo};
 use aurora_net::{FetchRequest, FetchResult, Fetcher};
+use aurora_render::StagingPool;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -45,6 +46,8 @@ pub struct MeshStreamer {
     /// Bumped whenever a mesh's metadata (header, skin) arrives: skeletons
     /// using worn meshes check their joint offsets again.
     pub meta_generation: u64,
+    /// The renderer's staging memory, given to the LOD jobs.
+    pub staging: Option<Arc<StagingPool>>,
 }
 
 impl MeshStreamer {
@@ -58,6 +61,7 @@ impl MeshStreamer {
             fetching: 0,
             logged_failures: 0,
             meta_generation: 0,
+            staging: None,
         }
     }
 
@@ -164,7 +168,8 @@ impl MeshStreamer {
                     let header = header.clone();
                     let data = data.clone();
                     let rig = rig.clone();
-                    jobs.spawn(move || build_mesh_lod(id, lod, &data, &header, skin, &rig));
+                    let pool = self.staging.clone();
+                    jobs.spawn(move || build_mesh_lod(id, lod, &data, &header, skin, &rig, pool.as_deref()));
                 }
             }
         }
@@ -284,7 +289,15 @@ impl MeshStreamer {
     }
 }
 
-fn build_mesh_lod(id: Uuid, lod: u8, data: &[u8], header: &MeshHeader, skin: Option<Arc<SkinInfo>>, rig: &super::anim::Rig) -> JobResult {
+fn build_mesh_lod(
+    id: Uuid,
+    lod: u8,
+    data: &[u8],
+    header: &MeshHeader,
+    skin: Option<Arc<SkinInfo>>,
+    rig: &super::anim::Rig,
+    pool: Option<&StagingPool>,
+) -> JobResult {
     let key = GeomKey::Mesh { id, lod };
     let Some(actual) = header.actual_lod(lod as usize) else {
         return JobResult::GeometryFailed { key };
@@ -307,14 +320,7 @@ fn build_mesh_lod(id: Uuid, lod: u8, data: &[u8], header: &MeshHeader, skin: Opt
                 .as_ref()
                 .filter(|s| !s.joint_names.is_empty())
                 .map(|s| (0..s.joint_names.len()).map(|i| i.min(255) as u8).collect());
-            let (faces, min, max) = mesh_to_faces(&faces, xform, map.as_deref());
-            JobResult::Geometry {
-                key,
-                faces,
-                min,
-                max,
-                area: 1.0,
-            }
+            JobResult::geometry(key, mesh_to_faces(&faces, xform, map.as_deref()), 1.0, pool)
         }
         Err(e) => {
             log::debug!("mesh {id} lod {lod}: {e}");

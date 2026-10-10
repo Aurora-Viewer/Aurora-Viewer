@@ -16,7 +16,7 @@ use crate::gpu_cull::{
 };
 use crate::textures::{MipLevel, TextureTable};
 use crate::types::*;
-use crate::upload::{StagedTexture, StagingPool, UploadQueue};
+use crate::upload::{StagedMesh, StagedTexture, StagingPool, UploadQueue};
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3, Vec4};
 use std::sync::Arc;
@@ -1815,7 +1815,6 @@ impl Renderer {
 
         let textures = TextureTable::new(&device, &queue, max_textures, 8);
         let geometry = GeometryArena::new(&device, alim.max_buffer_size.min(1 << 31));
-        let uploads = UploadQueue::new(&device);
         let records = RecordStore::new(&device);
 
         let mk_frame_buffer = |label| {
@@ -2030,6 +2029,8 @@ impl Renderer {
             vram_mb,
             integrated: ainfo.device_type == wgpu::DeviceType::IntegratedGpu,
         };
+        // staging memory of the streamed uploads, created once here
+        let uploads = UploadQueue::new(&device, info.integrated || info.vram_mb.is_some_and(|mb| mb < 4096));
         let mut r = Renderer {
             device,
             queue,
@@ -3291,6 +3292,12 @@ impl Renderer {
     pub fn upload_skinned_mesh(&mut self, vertices: &[Vertex], skin: &[SkinVertex], indices: &[u16]) -> Option<MeshAlloc> {
         self.geometry
             .alloc(&self.device, &self.queue, &mut self.uploads, vertices, Some(skin), indices)
+    }
+
+    /// Upload a mesh staged by a background job (`mesh.data.ready()` must
+    /// hold): the main thread only records the copies.
+    pub fn upload_mesh_staged(&mut self, mesh: &StagedMesh) -> Option<MeshAlloc> {
+        self.geometry.alloc_staged(&self.device, &self.queue, &mut self.uploads, mesh)
     }
 
     pub fn free_mesh(&mut self, m: MeshAlloc) {

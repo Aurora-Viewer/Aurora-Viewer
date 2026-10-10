@@ -352,7 +352,18 @@ impl PageStore {
             dimension: Some(wgpu::TextureViewDimension::D2Array),
             ..Default::default()
         });
-        self.create_ms += t0.elapsed().as_secs_f32() * 1000.0;
+        let ms = t0.elapsed().as_secs_f32() * 1000.0;
+        self.create_ms += ms;
+        if ms > 4.0 {
+            // a hitch worth explaining (video memory under pressure?)
+            log::info!(
+                "texture page {}×{} ({} layers, {} MB) created in {ms:.1} ms",
+                key.width,
+                key.height,
+                layers,
+                (layers as u64 * key.layer_bytes()) >> 20
+            );
+        }
         self.page_bytes += layers as u64 * key.layer_bytes();
         self.pages[index as usize] = Some(Page {
             key,
@@ -770,6 +781,28 @@ impl TextureTable {
 
     pub fn capacity(&self) -> u32 {
         self.store.capacity
+    }
+
+    /// Whether new texels of this size for `slot` would need a new page
+    /// (none of that size has a free layer, and the slot is not already of
+    /// that size). `levels`: length of the mip chain, as uploaded.
+    pub fn needs_page(&self, slot: u32, width: u32, height: u32, levels: u32) -> bool {
+        // the chain kept by `chain_key` for a regular chain
+        let mips = levels.min(32 - width.max(height).max(1).leading_zeros());
+        let key = PageKey { width, height, mips };
+        if self
+            .store
+            .slots
+            .get(slot as usize)
+            .and_then(Option::as_ref)
+            .is_some_and(|s| s.key == key)
+        {
+            return false;
+        }
+        !self.store.by_key.get(&key).is_some_and(|ids| {
+            ids.iter()
+                .any(|&p| self.store.page(p).is_some_and(|pg| pg.layers.used() < pg.layers.len))
+        })
     }
 
     /// CPU time spent creating pages since the start (ms; AURORA_PROFILE).
@@ -1278,7 +1311,7 @@ mod tests {
         }
         let before = store.page(3).map(|p| p.layers.used());
         assert!(before.is_some_and(|u| u * 4 <= 256), "{before:?}");
-        let mut uploads = UploadQueue::new(&device);
+        let mut uploads = UploadQueue::new(&device, true);
         store.compact(&device, &mut uploads);
         uploads.flush(&queue, None);
         assert!(store.page(3).is_none(), "page 3 emptied and dropped");
@@ -1308,7 +1341,7 @@ mod tests {
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).expect("GPU device");
         // small pages so that sizes spread over several pages and compact
         let mut store = PageStore::new(4096, 512, 16, 4096);
-        let mut uploads = UploadQueue::new(&device);
+        let mut uploads = UploadQueue::new(&device, true);
         for _ in 0..RESERVED {
             store.create(
                 &device,
@@ -1328,7 +1361,7 @@ mod tests {
             seed ^= seed << 17;
             (seed % n as u64) as usize
         };
-        let upload = |store: &mut PageStore, id: u32, (w, h): (u32, u32), slot: Option<u32>| {
+        let upload = |store: &mut PageStore, uploads: &mut UploadQueue, id: u32, (w, h): (u32, u32), slot: Option<u32>| {
             let count = 32 - w.max(h).leading_zeros();
             let levels: Vec<Vec<u8>> = (0..count).map(|l| texels(id, w, h, l)).collect();
             let mips: Vec<MipLevel> = levels
@@ -1341,6 +1374,21 @@ mod tests {
                 })
                 .collect();
             match slot {
+                // every other upgrade staged as a decode job does: copies
+                // in the upload encoder, submitted with the frame
+                Some(s) if id.is_multiple_of(2) => {
+                    let staged_levels: Vec<(u32, u32, &[u8])> = mips.iter().map(|m| (m.width, m.height, m.data)).collect();
+                    let staged = StagedTexture::new(uploads.pool(), &staged_levels).expect("staging room");
+                    uploads.prepare();
+                    assert!(staged.data.ready());
+                    let done = store.replace_staged(&device, uploads, s, &staged);
+                    drop(staged);
+                    uploads.flush(&queue, None);
+                    uploads.recycle();
+                    // wait for the GPU: the chunks are mapped again
+                    device.poll(wgpu::PollType::wait_indefinitely()).expect("poll");
+                    done.then_some(s)
+                }
                 Some(s) => store.replace(&device, &queue, s, &mips).then_some(s),
                 None => store.create(&device, &queue, &mips),
             }
@@ -1352,7 +1400,7 @@ mod tests {
             match rand(10) {
                 0..=3 => {
                     // a new texture starts as a 1×1 placeholder
-                    let slot = upload(&mut store, next_id, (1, 1), None).expect("slot");
+                    let slot = upload(&mut store, &mut uploads, next_id, (1, 1), None).expect("slot");
                     assert!(!live.contains_key(&slot), "slot {slot} handed out twice");
                     live.insert(slot, (next_id, (1, 1)));
                     next_id += 1;
@@ -1361,7 +1409,7 @@ mod tests {
                     // upgrade (sometimes to the same size: in place)
                     let slot = *live.keys().nth(rand(live.len())).expect("slot");
                     let size = sizes[rand(sizes.len())];
-                    assert_eq!(upload(&mut store, next_id, size, Some(slot)), Some(slot));
+                    assert_eq!(upload(&mut store, &mut uploads, next_id, size, Some(slot)), Some(slot));
                     live.insert(slot, (next_id, size));
                     next_id += 1;
                 }
@@ -1421,7 +1469,7 @@ mod tests {
         .expect("GPU device");
         const SLOTS: u32 = 512;
         let mut table = TextureTable::new(&device, &queue, SLOTS, 8);
-        let mut uploads = UploadQueue::new(&device);
+        let mut uploads = UploadQueue::new(&device, true);
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: None,
             source: wgpu::ShaderSource::Wgsl(

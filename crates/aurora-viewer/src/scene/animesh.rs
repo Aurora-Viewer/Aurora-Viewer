@@ -235,19 +235,18 @@ impl super::Scene {
             }
         }
         for lod in 0..4 {
+            let faces = vec![Some(FaceGeom {
+                vertices: face.vertices.clone(),
+                indices: face.indices.clone(),
+                skin: face.skin.clone(),
+            })];
             self.upload_geom(
                 renderer,
                 super::GeomKey::Mesh {
                     id: crate::demo::ANIMESH_MESH,
                     lod,
                 },
-                vec![Some(FaceGeom {
-                    vertices: face.vertices.clone(),
-                    indices: face.indices.clone(),
-                    skin: face.skin.clone(),
-                })],
-                Vec3::splat(-2.0),
-                Vec3::splat(2.0),
+                super::jobs::PreparedGeom::new(faces, Vec3::splat(-2.0), Vec3::splat(2.0), true, None),
             );
         }
         self.anims.insert(

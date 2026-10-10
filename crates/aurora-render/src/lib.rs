@@ -16,7 +16,7 @@ pub use arena::MeshAlloc;
 pub use renderer::{CASCADES, EguiFrame, GpuInfo, RenderError, Renderer};
 pub use textures::{MipLevel, build_mips};
 pub use types::*;
-pub use upload::{StagedTexture, StagingPool};
+pub use upload::{StagedMesh, StagedTexture, StagingPool};
 
 pub use egui;
 pub use egui_wgpu;

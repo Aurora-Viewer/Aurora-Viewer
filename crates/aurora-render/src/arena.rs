@@ -3,7 +3,7 @@
 
 use crate::gpu_cull::{CullFace, GpuTable};
 use crate::types::{DrawRecord, SkinVertex, Vertex};
-use crate::upload::UploadQueue;
+use crate::upload::{StagedMesh, UploadQueue};
 use std::collections::BTreeMap;
 
 /// First-fit range allocator with coalescing (units are elements).
@@ -189,21 +189,15 @@ impl GeometryArena {
         true
     }
 
-    /// Upload a mesh. Indices are relative to the mesh's first vertex.
-    pub fn alloc(
+    /// Vertex and index ranges for a mesh, growing the arena when full.
+    fn reserve(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         uploads: &mut UploadQueue,
-        vertices: &[Vertex],
-        skin: Option<&[SkinVertex]>,
-        indices: &[u16],
+        vcount: u32,
+        icount: u32,
     ) -> Option<MeshAlloc> {
-        if vertices.is_empty() || indices.is_empty() || vertices.len() > u32::MAX as usize / 2 {
-            return None;
-        }
-        let vcount = vertices.len() as u32;
-        let icount = indices.len() as u32;
         let ialloc = (icount + 1) & !1;
         let voff = match self.vertices.alloc(vcount) {
             Some(o) => o,
@@ -230,6 +224,30 @@ impl GeometryArena {
                 }
             }
         };
+        Some(MeshAlloc {
+            vertex_offset: voff,
+            vertex_count: vcount,
+            index_offset: ioff,
+            index_count: icount,
+        })
+    }
+
+    /// Upload a mesh. Indices are relative to the mesh's first vertex.
+    pub fn alloc(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        uploads: &mut UploadQueue,
+        vertices: &[Vertex],
+        skin: Option<&[SkinVertex]>,
+        indices: &[u16],
+    ) -> Option<MeshAlloc> {
+        if vertices.is_empty() || indices.is_empty() || vertices.len() > u32::MAX as usize / 2 {
+            return None;
+        }
+        let icount = indices.len() as u32;
+        let m = self.reserve(device, queue, uploads, vertices.len() as u32, icount)?;
+        let (voff, ioff) = (m.vertex_offset, m.index_offset);
         queue.write_buffer(&self.vertex_buffer, voff as u64 * VERTEX_SIZE, bytemuck::cast_slice(vertices));
         if let Some(sk) = skin
             && sk.len() == vertices.len()
@@ -237,19 +255,32 @@ impl GeometryArena {
             queue.write_buffer(&self.skin_buffer, voff as u64 * SKIN_SIZE, bytemuck::cast_slice(sk));
         }
         if icount % 2 == 1 {
-            let mut padded = Vec::with_capacity(ialloc as usize);
+            let mut padded = Vec::with_capacity(m.index_alloc_len() as usize);
             padded.extend_from_slice(indices);
             padded.push(*indices.last().unwrap_or(&0));
             queue.write_buffer(&self.index_buffer, ioff as u64 * 2, bytemuck::cast_slice(&padded));
         } else {
             queue.write_buffer(&self.index_buffer, ioff as u64 * 2, bytemuck::cast_slice(indices));
         }
-        Some(MeshAlloc {
-            vertex_offset: voff,
-            vertex_count: vcount,
-            index_offset: ioff,
-            index_count: icount,
-        })
+        Some(m)
+    }
+
+    /// Upload a mesh staged by a background job (its region must be
+    /// ready): the copies are recorded in the frame's upload encoder.
+    pub fn alloc_staged(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        uploads: &mut UploadQueue,
+        mesh: &StagedMesh,
+    ) -> Option<MeshAlloc> {
+        let m = self.reserve(device, queue, uploads, mesh.vertex_count, mesh.index_count)?;
+        let [vertices, skin, indices] = mesh.ranges();
+        let voff = m.vertex_offset as u64;
+        uploads.copy_to_buffer(device, &mesh.data, vertices, &self.vertex_buffer, voff * VERTEX_SIZE);
+        uploads.copy_to_buffer(device, &mesh.data, skin, &self.skin_buffer, voff * SKIN_SIZE);
+        uploads.copy_to_buffer(device, &mesh.data, indices, &self.index_buffer, m.index_offset as u64 * 2);
+        Some(m)
     }
 
     pub fn free(&mut self, m: MeshAlloc) {
@@ -423,6 +454,98 @@ impl RecordStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// GPU round trip of the geometry arena: meshes written by the main
+    /// thread and meshes staged as by a job, across a growth of both
+    /// arenas (the copies recorded before it must land first), read back
+    /// from the arena buffers. Needs a GPU, so not run by check.ps1:
+    /// `cargo test -p aurora-render arena_round_trip -- --ignored`.
+    #[test]
+    #[ignore]
+    fn arena_round_trip_on_the_gpu() {
+        let instance = wgpu::Instance::default();
+        let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())) else {
+            eprintln!("no GPU adapter: skipped");
+            return;
+        };
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).expect("GPU device");
+        let mut uploads = UploadQueue::new(&device, true);
+        let mut arena = GeometryArena::new(&device, 1 << 30);
+        let mesh = |i: u32, vcount: u32, icount: u32| {
+            let v: Vec<Vertex> = (0..vcount)
+                .map(|k| Vertex::new([i as f32, k as f32, 0.5], [0.0, 0.0, 1.0], [k as f32, i as f32]))
+                .collect();
+            let sk: Vec<SkinVertex> = (0..vcount)
+                .map(|k| SkinVertex {
+                    joints: [i as u8, k as u8, 0, 0],
+                    weights: [255, 0, 0, 0],
+                })
+                .collect();
+            let idx: Vec<u16> = (0..icount).map(|k| (k % vcount) as u16).collect();
+            (v, sk, idx)
+        };
+        // enough vertices and indices to outgrow both arenas (2 M / 8 M)
+        let mut live = Vec::new();
+        for i in 0..80u32 {
+            let (vcount, icount) = (60_000, 300_001 + (i % 2));
+            let (v, sk, idx) = mesh(i, vcount, icount);
+            let skinned = i % 3 == 0;
+            let alloc = if i % 2 == 0 {
+                let staged = StagedMesh::new(uploads.pool(), &v, skinned.then_some(&sk[..]), &idx).expect("staging room");
+                uploads.prepare();
+                assert!(staged.data.ready());
+                arena.alloc_staged(&device, &queue, &mut uploads, &staged)
+            } else {
+                arena.alloc(&device, &queue, &mut uploads, &v, skinned.then_some(&sk[..]), &idx)
+            }
+            .expect("room in the arena");
+            live.push((i, alloc, skinned));
+            if i % 2 == 1 {
+                // a frame: the copies are submitted, the chunks come back
+                uploads.flush(&queue, None);
+                uploads.recycle();
+                device.poll(wgpu::PollType::wait_indefinitely()).expect("poll");
+            }
+        }
+        uploads.flush(&queue, None);
+        assert!(arena.vertices.capacity() > 2 * 1024 * 1024 && arena.indices.capacity() > 8 * 1024 * 1024);
+        let read = |buffer: &wgpu::Buffer, offset: u64, size: u64| -> Vec<u8> {
+            let out = device.create_buffer(&wgpu::BufferDescriptor {
+                label: None,
+                size,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+            let mut enc = device.create_command_encoder(&Default::default());
+            enc.copy_buffer_to_buffer(buffer, offset, &out, 0, size);
+            queue.submit([enc.finish()]);
+            out.map_async(wgpu::MapMode::Read, .., |r| r.expect("map"));
+            device.poll(wgpu::PollType::wait_indefinitely()).expect("poll");
+            out.get_mapped_range(..).expect("mapped").to_vec()
+        };
+        for (i, m, skinned) in live {
+            let (v, sk, idx) = mesh(i, m.vertex_count, m.index_count);
+            let got = read(
+                &arena.vertex_buffer,
+                m.vertex_offset as u64 * VERTEX_SIZE,
+                m.vertex_count as u64 * VERTEX_SIZE,
+            );
+            assert!(got == bytemuck::cast_slice::<_, u8>(&v), "mesh {i} vertices");
+            if skinned {
+                let got = read(
+                    &arena.skin_buffer,
+                    m.vertex_offset as u64 * SKIN_SIZE,
+                    m.vertex_count as u64 * SKIN_SIZE,
+                );
+                assert!(got == bytemuck::cast_slice::<_, u8>(&sk), "mesh {i} skin");
+            }
+            // the padded allocation: an odd count repeats its last index
+            let got = read(&arena.index_buffer, m.index_offset as u64 * 2, m.index_alloc_len() as u64 * 2);
+            let mut padded = idx.clone();
+            padded.resize(m.index_alloc_len() as usize, idx[idx.len() - 1]);
+            assert!(got == bytemuck::cast_slice::<_, u8>(&padded), "mesh {i} indices");
+        }
+    }
 
     #[test]
     fn allocator_coalesces() {
