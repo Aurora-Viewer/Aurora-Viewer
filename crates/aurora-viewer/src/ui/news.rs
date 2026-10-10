@@ -94,7 +94,7 @@ impl LoginInfo {
         info.rx = Some(rx);
         rt.spawn(async move {
             let Ok(http) = reqwest::Client::builder()
-                .user_agent(concat!("AuroraViewer/", env!("CARGO_PKG_VERSION")))
+                .user_agent(aurora_version::user_agent())
                 .timeout(Duration::from_secs(8))
                 .build()
             else {
@@ -126,7 +126,7 @@ impl LoginInfo {
                         Some(v) => {
                             let tag = v["tag_name"].as_str().unwrap_or_default().to_owned();
                             let url = v["html_url"].as_str().unwrap_or_default().to_owned();
-                            if is_newer(&tag, env!("CARGO_PKG_VERSION")) {
+                            if is_newer(&tag, aurora_version::version()) {
                                 VersionState::Available {
                                     version: tag.trim_start_matches('v').to_owned(),
                                     url,
@@ -172,6 +172,8 @@ mod tests {
         assert!(!is_newer("v0.1.0", "0.1.0"));
         assert!(!is_newer("0.1.0-beta", "0.1.0"));
         assert!(!is_newer("", "0.1.0"));
+        assert!(is_newer("v0.2.1", "0.2.0+7.gabcdef123"));
+        assert!(!is_newer("v0.2.0", "0.2.0+7.gabcdef123"));
         let n: Vec<NewsItem> = serde_json::from_str(BUILTIN_NEWS).expect("built-in news");
         assert!(!n.is_empty());
     }

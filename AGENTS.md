@@ -137,7 +137,7 @@ cargo run -p aurora-viewer -- --title "Test regard-avatars"
 ```
 
 - **Toujours `--title "Test <tâche>"`** : la fenêtre s'appelle
-  « Aurora Viewer - Test <tâche> (Dev) » (le profil de compilation termine
+  « Aurora Viewer <version> - Test <tâche> (Dev) » (le profil de compilation termine
   le titre : Dev, Release ou Debug) et le log est
   `%LOCALAPPDATA%\Aurora\AuroraViewer\data\logs\aurora-demo-test-<tâche>.log`.
   Les fenêtres et logs des agents ne se mélangent pas.
@@ -397,6 +397,16 @@ commentaire de relecture.
 
 ## 13. Versions et releases
 
+- **Le tag Git fait foi** : `aurora-version::version()` est la source commune
+  du numéro affiché et utilisé par le viewer. `v0.2.0` donne `0.2.0` ; entre
+  deux tags, `0.2.0+7.gabcdef123` indique 7 commits après le tag et leur
+  identifiant court. `Cargo.toml` conserve les versions des crates internes,
+  sans servir de numéro au viewer. Ne remets pas `CARGO_PKG_VERSION` dans
+  l'interface, les journaux ou les clients réseau.
+- Le workflow Release fournit `AURORA_VERSION_TAG` à la compilation puis
+  vérifie l'exe avec `scripts/verify-version.ps1` et `--version`, avant de
+  publier. Une archive sans Git peut recevoir la même variable ; sans Git ni
+  tag fourni, le build s'identifie comme `0.0.0+0.gunknown`.
 - **SemVer** : `vMAJEUR.MINEUR.CORRECTIF`. Avant la 1.0 : une nouveauté
   augmente MINEUR, un correctif augmente CORRECTIF.
 - L'humain peut publier ou supprimer une release lui-même, avec le choix

@@ -16,6 +16,7 @@ aurora-net = { version = "0.1.0", path = "../aurora-net" }
 aurora-prim = { version = "0.1.0", path = "../aurora-prim" }
 aurora-render = { version = "0.1.0", path = "../aurora-render" }
 aurora-voice = { version = "0.1.0", path = "../aurora-voice" }
+aurora-version = { version = "0.1.0", path = "../aurora-version" }
 crossbeam-channel = "0.5.17"
 directories = "6.0.0"
 egui = { version = "0.36.2", features = ["persistence"] }

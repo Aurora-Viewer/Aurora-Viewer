@@ -62,7 +62,7 @@ impl NetClient {
         // Login (public host): standard verification, plus Linden Lab's own CA.
         let ll_ca = reqwest::Certificate::from_pem_bundle(include_bytes!("../lindenlab.pem")).unwrap_or_default();
         let http = reqwest::Client::builder()
-            .user_agent(concat!("AuroraViewer/", env!("CARGO_PKG_VERSION")))
+            .user_agent(aurora_version::user_agent())
             .connect_timeout(std::time::Duration::from_secs(15))
             .tls_certs_merge(ll_ca.clone())
             .build()
@@ -76,7 +76,7 @@ impl NetClient {
             .collect();
         roots.extend(ll_ca);
         let caps_http = reqwest::Client::builder()
-            .user_agent(concat!("AuroraViewer/", env!("CARGO_PKG_VERSION")))
+            .user_agent(aurora_version::user_agent())
             .pool_max_idle_per_host(32)
             .connect_timeout(std::time::Duration::from_secs(15))
             .tls_certs_only(roots.clone())
@@ -95,7 +95,7 @@ impl NetClient {
         // assets are served with an odd Content-Encoding that must not
         // make the fetch fail.
         let asset_http = reqwest::Client::builder()
-            .user_agent(concat!("AuroraViewer/", env!("CARGO_PKG_VERSION")))
+            .user_agent(aurora_version::user_agent())
             .pool_max_idle_per_host(32)
             .connect_timeout(std::time::Duration::from_secs(30))
             .gzip(false)

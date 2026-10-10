@@ -14,11 +14,18 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - name: Rust stable
         run: rustup update stable
       - uses: Swatinem/rust-cache@v2
       - name: Build
+        env:
+          AURORA_VERSION_TAG: ${{ github.ref_name }}
         run: cargo build --release --locked -p aurora-viewer
+      - name: Verify compiled version
+        shell: pwsh
+        run: ./scripts/verify-version.ps1 -Exe target/release/aurora-viewer.exe -Tag "${{ github.ref_name }}"
       - name: Emoji font
         shell: pwsh
         run: ./scripts/fetch-assets.ps1 -Repo "${{ github.repository }}"

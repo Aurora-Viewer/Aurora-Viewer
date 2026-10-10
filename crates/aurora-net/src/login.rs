@@ -11,7 +11,6 @@ pub const SL_MAIN_GRID: &str = "https://login.agni.lindenlab.com/cgi-bin/login.c
 pub const SL_BETA_GRID: &str = "https://login.aditi.lindenlab.com/cgi-bin/login.cgi";
 
 pub const CHANNEL: &str = "Aurora Viewer";
-pub const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), ".0");
 
 #[derive(Debug, Clone)]
 pub enum StartLocation {
@@ -141,7 +140,7 @@ fn build_params(req: &LoginRequest) -> Llsd {
     p.insert("passwd".into(), hash_password(&req.password, is_linden_grid(&req.login_uri)).into());
     p.insert("start".into(), req.start.to_login_string().into());
     p.insert("channel".into(), CHANNEL.into());
-    p.insert("version".into(), VERSION.into());
+    p.insert("version".into(), aurora_version::login_version().into());
     p.insert(
         "platform".into(),
         if cfg!(windows) {

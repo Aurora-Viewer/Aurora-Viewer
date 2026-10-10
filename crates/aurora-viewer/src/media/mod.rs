@@ -475,7 +475,7 @@ pub fn browser_settings(cache_dir: &std::path::Path, language: &str) -> BrowserS
         username: "aurora".into(),
         cef_log_file: cache_dir.join("cef.log").display().to_string(),
         language: language.to_string(),
-        user_agent: concat!("SecondLife (Aurora Viewer ", env!("CARGO_PKG_VERSION"), ")").to_string(),
+        user_agent: format!("SecondLife (Aurora Viewer {})", aurora_version::version()),
         cookies_enabled: true,
         javascript_enabled: true,
         zoom_factor: 1.0,

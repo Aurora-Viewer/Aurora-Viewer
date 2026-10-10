@@ -8,7 +8,8 @@
     changements non commités ni les commits non poussés n'y entrent.
     ..\RELEASE\src est un worktree réservé, remis à chaque fois sur le commit
     demandé ; son target\ est gardé d'un build à l'autre (seul ce qui a
-    changé est recompilé). version.txt dit quel commit a été compilé.
+    changé est recompilé). version.txt donne la version annoncée par le
+    viewer et le commit compilé ; le tag git fait foi.
     Le premier lancement crée ..\RELEASE\build-release.bat (double-clic).
 
 .EXAMPLE
@@ -45,11 +46,11 @@ if (Test-InUse $out) { throw "Le viewer de $out est ouvert : ferme-le, puis rela
 
 # the commit to build, straight from GitHub
 if ($Pr) {
-    Invoke-Checked 'git fetch' { git -C $p.Main fetch origin "pull/$Pr/head" --quiet }
+    Invoke-Checked 'git fetch' { git -C $p.Main fetch origin "pull/$Pr/head" --tags --quiet }
     $sha = (git -C $p.Main rev-parse FETCH_HEAD).Trim()
     $what = "PR #$Pr"
 } else {
-    Invoke-Checked 'git fetch' { git -C $p.Main fetch origin main --quiet }
+    Invoke-Checked 'git fetch' { git -C $p.Main fetch origin main --tags --quiet }
     $sha = (git -C $p.Main rev-parse origin/main).Trim()
     $what = 'main'
 }
@@ -75,10 +76,30 @@ if (-not (Test-Path -LiteralPath (Join-Path $src $font))) {
 Write-Host "Compilation de $what ($($sha.Substring(0, 9))) en --release…" -ForegroundColor Cyan
 $sw = [Diagnostics.Stopwatch]::StartNew()
 Push-Location $src
+# A shell inherited from a release job must not stamp another commit with
+# its tag. The local build resolves the version from this checkout's Git.
+$previousVersionTag = [Environment]::GetEnvironmentVariable('AURORA_VERSION_TAG', 'Process')
 try {
+    [Environment]::SetEnvironmentVariable('AURORA_VERSION_TAG', $null, 'Process')
     Invoke-Checked 'cargo build' { cargo build --release --locked -p aurora-viewer }
 } finally {
+    [Environment]::SetEnvironmentVariable('AURORA_VERSION_TAG', $previousVersionTag, 'Process')
     Pop-Location
+}
+
+# Use the built commit's verifier when available, just like package.ps1.
+# Older revisions do not understand --version: invoking it would open a
+# viewer, so keep their existing packaging path without querying the exe.
+$builtExe = Join-Path $src 'target\release\aurora-viewer.exe'
+$reportedVersion = $null
+$verifyVersion = Join-Path $src 'scripts\verify-version.ps1'
+if (Test-Path -LiteralPath $verifyVersion) {
+    $reportedVersion = (& $builtExe --version | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or $reportedVersion -notmatch '^Aurora Viewer (\S+)$') {
+        throw "Le viewer compilé n'a pas annoncé une version valide : '$reportedVersion'."
+    }
+    $exactTag = git -C $src describe --tags --match 'v[0-9]*.[0-9]*.[0-9]*' --exact-match 2>$null
+    if ($LASTEXITCODE -eq 0) { & $verifyVersion -Exe $builtExe -Tag $exactTag.Trim() }
 }
 
 # package.ps1 of the built commit when it has one (older PR branches do not)
@@ -87,6 +108,7 @@ if (-not (Test-Path -LiteralPath $package)) { $package = Join-Path $PSScriptRoot
 if (Test-Path -LiteralPath $out) { Remove-Item -LiteralPath $out -Recurse -Force -ErrorAction Stop }
 & $package -Exe (Join-Path $src 'target\release\aurora-viewer.exe') -Out $out -Source $src
 @(
+    if ($reportedVersion) { $reportedVersion }
     "$what : $((git -C $src log -1 --format='%h %s (%ci)').Trim())"
     "compilé le $(Get-Date -Format 'dd/MM/yyyy HH:mm')"
 ) | Set-Content -LiteralPath (Join-Path $out 'version.txt') -Encoding UTF8 -ErrorAction Stop

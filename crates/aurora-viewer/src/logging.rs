@@ -112,7 +112,7 @@ pub fn init() {
     }));
     log::info!(
         "Aurora Viewer {} starting ({} {}), log: {}",
-        env!("CARGO_PKG_VERSION"),
+        aurora_version::version(),
         std::env::consts::OS,
         std::env::consts::ARCH,
         path.display()
