@@ -40,19 +40,18 @@ Sommaire : [Général](#général) · [Captures](#captures) ·
 | `AURORA_DEMO=1` | Mode démo hors ligne |
 | `AURORA_DEMO_POS="x,y"` | Position de départ |
 | `AURORA_DEMO_TOD=0..4` | Heure du jour |
-| `AURORA_FPS_LIMIT=<n>` | Plafond d'images/s pour les essais (10–60) |
+| `AURORA_FPS_LIMIT=<n>` | Plafond d'images/s pour les essais (10–500) |
 | `AURORA_LOG_NAME=<nom>` | Nom du fichier journal |
 | `AURORA_EMOJI_FONT=<chemin>` | Utilise une autre police emoji |
 | `AURORA_MAX_AVATARS`, `AURORA_MAX_COMPLEXITY`, `AURORA_AA`, `AURORA_SHADOWS` | Remplacent ces réglages |
 
-Le viewer est plafonné à **60 images/s** dans tous les profils, en démo, en
-capture et en ligne. Préférences › Graphismes permet de choisir un plafond
-inférieur ; les anciens réglages illimités sont migrés automatiquement.
+Le limiteur d'images/s est activé à **120 images/s par défaut**. Il peut
+être désactivé ou réglé dans Préférences › Graphismes › Fluidité ; les
+préférences déjà enregistrées sont conservées.
 
-`AURORA_FPS_LIMIT` : plafond utilisateur pour les essais (10–60 images/s ;
+`AURORA_FPS_LIMIT` : plafond utilisateur pour les essais (10–500 images/s ;
 les valeurs positives sont ramenées à cette plage, une valeur invalide est
-ignorée). Le plafond commun de 60 s'applique toujours ; le plafond inférieur
-en arrière-plan reste applicable hors captures.
+ignorée). Le plafond inférieur en arrière-plan reste applicable hors captures.
 
 ## Captures
 

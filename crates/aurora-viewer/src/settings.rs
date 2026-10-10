@@ -45,8 +45,6 @@ impl DebugView {
 
 /// Look-at range slider maximum: no limit.
 pub const LOOK_AT_UNLIMITED: f32 = 64.0;
-/// Common ceiling for local demos, captures and grid sessions.
-pub const MAX_FPS: u32 = 60;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -163,7 +161,7 @@ pub struct Settings {
     pub antialiasing: u8,
     /// 0 Khronos PBR Neutral, 1 ACES
     pub tonemapper: u8,
-    /// Frame rate cap, always enabled, and its value (at most MAX_FPS).
+    /// Optional frame rate cap (on by default at 120 images per second).
     pub fps_cap: bool,
     pub fps_limit: u32,
     /// Lower cap while the window is not focused (on by default, as
@@ -482,7 +480,7 @@ impl Default for Settings {
             antialiasing: 3,
             tonemapper: 0,
             fps_cap: true,
-            fps_limit: 60,
+            fps_limit: 120,
             background_fps_cap: true,
             background_fps_limit: 15,
             max_particles: 4096,
@@ -620,15 +618,11 @@ impl Settings {
             self.vsync = false;
             self.fps_cap = self.fps_limit >= 2;
             if !self.fps_cap {
-                self.fps_limit = 60;
+                self.fps_limit = 120;
             }
         }
-        if !self.fps_cap {
-            self.fps_limit = MAX_FPS;
-        }
-        self.fps_cap = true;
-        self.fps_limit = self.fps_limit.clamp(10, MAX_FPS);
-        self.background_fps_limit = self.background_fps_limit.clamp(1, MAX_FPS);
+        self.fps_limit = self.fps_limit.clamp(10, 500);
+        self.background_fps_limit = self.background_fps_limit.clamp(1, 120);
         if self.settings_version < 6 {
             // new defaults: texture memory from the detected VRAM, 20 GB disk cache
             self.texture_budget_auto = true;
@@ -906,32 +900,36 @@ impl Default for MapSettings {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn fps_ceiling_migrates_unlimited_and_high_caps_and_keeps_lower_caps() {
-        use super::*;
-        for enabled in [false, true] {
-            let settings = Settings {
-                fps_cap: enabled,
-                fps_limit: 500,
-                background_fps_limit: 120,
-                ..Settings::default()
-            }
-            .sanitized();
-            assert!(settings.fps_cap);
-            assert_eq!(settings.fps_limit, 60);
-            assert_eq!(settings.background_fps_limit, 60);
-        }
-        let lower = Settings {
-            fps_limit: 30,
-            ..Settings::default()
-        }
-        .sanitized();
-        assert_eq!(lower.fps_limit, 30);
-        assert!(Settings::default().fps_cap);
-    }
     use super::*;
     use crate::keybinds::{Action, Input};
     use winit::keyboard::KeyCode;
+
+    #[test]
+    fn fps_defaults_and_saved_preferences() {
+        let defaults = Settings::default().sanitized();
+        assert!(defaults.fps_cap);
+        assert_eq!(defaults.fps_limit, 120);
+        let missing: Settings = serde_json::from_str("{}").expect("synthetic settings without FPS preferences");
+        let missing = missing.sanitized();
+        assert!(missing.fps_cap);
+        assert_eq!(missing.fps_limit, 120);
+        for enabled in [false, true] {
+            for limit in [30, 60, 144, 500] {
+                let original = Settings {
+                    fps_cap: enabled,
+                    fps_limit: limit,
+                    background_fps_limit: 120,
+                    ..Settings::default()
+                };
+                let bytes = serde_json::to_vec(&original).expect("serialize synthetic settings");
+                let saved: Settings = serde_json::from_slice(&bytes).expect("read synthetic settings");
+                let saved = saved.sanitized();
+                assert_eq!(saved.fps_cap, enabled);
+                assert_eq!(saved.fps_limit, limit);
+                assert_eq!(saved.background_fps_limit, 120);
+            }
+        }
+    }
 
     #[test]
     fn hud_drag_key_defaults_for_old_files_and_keeps_the_saved_choice() {

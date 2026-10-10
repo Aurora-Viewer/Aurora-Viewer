@@ -188,17 +188,17 @@ builds GitHub's latest `main` with `--release` into `..\RELEASE\`.
 | Argument | Effect |
 |---|---|
 | `--title <text>` | Names the window "Aurora Viewer - <text> (Dev)" and its log file |
-| `--fps-limit <fps>` | Lowers the frame cap of this instance (1–60 fps) without saving it |
+| `--fps-limit <fps>` | Caps this instance at 1–500 fps without changing saved preferences |
 | `-h`, `--help` | Shows the help |
 
 - `--title`: the build profile ends the title (Dev, Release, Debug); the log
   file is `aurora-<text>.log` (`aurora-demo-<text>.log` in demo mode).
-- `--fps-limit`: older values up to 500 are brought down to 60; captures and
-  online sessions follow the same cap.
+- `--fps-limit`: applies an extra limit to this process, including captures
+  and online sessions; a lower user preference remains effective.
 
-The viewer is capped at **60 fps** in every profile: demo, capture and
-online. Préférences › Graphismes can set a lower cap; older unlimited
-settings are migrated automatically.
+The frame limiter is enabled at **120 fps by default** and can be disabled
+or adjusted in Préférences › Graphismes › Fluidité. Saved preferences are
+preserved.
 
 ### Test switches
 

@@ -19,7 +19,7 @@ Usage: aurora-viewer [--title <text>] [--fps-limit <fps>]
 
   --title <text>   Name this window (\"Aurora Viewer - <text>\") and its log
                    file (aurora-<text>.log, aurora-demo-<text>.log in demo mode)
-  --fps-limit <fps>  Lower this process cap (1..60 FPS) without saving preferences
+  --fps-limit <fps>  Cap this process at 1..500 FPS without saving preferences
   -h, --help       Show this help
 
 Test switches are environment variables (AURORA_DEMO=1, AURORA_CAPTURE=...):
@@ -58,7 +58,7 @@ fn parse_fps_limit(value: &str) -> Option<u32> {
     if limit.is_none() {
         eprintln!("--fps-limit requires a value between 1 and 500");
     }
-    limit.map(|fps| fps.min(crate::settings::MAX_FPS))
+    limit
 }
 
 /// The window title, ending with the build profile ("(Dev)", "(Release)",
@@ -128,7 +128,7 @@ mod tests {
 
     #[test]
     fn process_fps_limit_forms_and_invalid_values() {
-        assert_eq!(parse_fps_limit("500"), Some(60));
+        assert_eq!(parse_fps_limit("500"), Some(500));
         assert_eq!(parse_fps_limit("30"), Some(30));
         for args in [vec!["--fps-limit", "60"], vec!["--fps-limit=60"]] {
             assert_eq!(parse(args.into_iter().map(String::from)).fps_limit, Some(60));
