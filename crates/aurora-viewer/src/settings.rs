@@ -49,6 +49,10 @@ pub const LOOK_AT_UNLIMITED: f32 = 64.0;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
+    /// Firestorm Language: default follows the OS.
+    pub language: String,
+    /// Firestorm LanguageIsPublic, exposed through llGetAgentLanguage.
+    pub language_is_public: bool,
     /// ShowHUDAttachments, enabled by default in Firestorm.
     pub show_huds: bool,
     /// Debug overlays (not saved).
@@ -349,7 +353,17 @@ impl Default for ColorSettings {
 
 /// Audio channels in Firestorm's order: Principal, Interface, Ambiance, Sons,
 /// Musique, Multimédia, Voix.
-pub const AUDIO_CHANNELS: [&str; 7] = ["Principal", "Interface", "Ambiance", "Sons", "Musique", "Multimédia", "Voix"];
+pub fn audio_channels() -> [&'static str; 7] {
+    [
+        aurora_i18n::tr!("settings-main"),
+        aurora_i18n::tr!("common-interface"),
+        aurora_i18n::tr!("common-ambient"),
+        aurora_i18n::tr!("common-sounds"),
+        aurora_i18n::tr!("common-music"),
+        aurora_i18n::tr!("settings-multimedia"),
+        aurora_i18n::tr!("common-voice"),
+    ]
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
@@ -414,6 +428,8 @@ impl Default for AudioSettings {
 impl Default for Settings {
     fn default() -> Self {
         Settings {
+            language: "default".into(),
+            language_is_public: true,
             show_huds: true,
             debug: DebugView::default(),
             build: Default::default(),
@@ -590,7 +606,16 @@ impl Settings {
     pub fn load() -> Settings {
         let s = std::fs::read(Self::path())
             .ok()
-            .and_then(|b| serde_json::from_slice::<Settings>(&b).ok())
+            .and_then(|b| {
+                let value: serde_json::Value = serde_json::from_slice(&b).ok()?;
+                // Select before serde fills missing fields: default auto-replies
+                // must use the saved locale too, without replacing custom text.
+                aurora_i18n::select(
+                    value["language"].as_str().unwrap_or("default"),
+                    crate::cli::get().language.as_deref(),
+                );
+                serde_json::from_value::<Settings>(value).ok()
+            })
             .unwrap_or_default();
         s.sanitized()
     }
@@ -903,6 +928,27 @@ mod tests {
     use super::*;
     use crate::keybinds::{Action, Input};
     use winit::keyboard::KeyCode;
+
+    #[test]
+    fn old_settings_follow_the_os_and_saved_language_and_privacy_survive() {
+        let old: Settings = serde_json::from_str("{}").expect("synthetic old settings");
+        assert_eq!(old.language, "default");
+        assert!(old.language_is_public);
+        for language in ["default", "en", "fr", "pt-BR"] {
+            for public in [false, true] {
+                let original = Settings {
+                    language: language.into(),
+                    language_is_public: public,
+                    ..Settings::default()
+                };
+                let bytes = serde_json::to_vec(&original).expect("serialize synthetic language settings");
+                let saved: Settings = serde_json::from_slice(&bytes).expect("read synthetic language settings");
+                let saved = saved.sanitized();
+                assert_eq!(saved.language, language);
+                assert_eq!(saved.language_is_public, public);
+            }
+        }
+    }
 
     #[test]
     fn fps_defaults_and_saved_preferences() {

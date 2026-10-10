@@ -232,17 +232,19 @@ impl HistoryStorage {
 }
 
 /// Accordion sections of the history (panel_teleport_history.xml).
-pub const HISTORY_SECTIONS: [&str; 9] = [
-    "Aujourd'hui",
-    "Hier",
-    "Il y a 2 jours",
-    "Il y a 3 jours",
-    "Il y a 4 jours",
-    "Il y a 5 jours",
-    "Il y a 6 jours et plus",
-    "Il y a 1 mois et plus",
-    "Il y a 6 mois et plus",
-];
+pub fn history_sections() -> [&'static str; 9] {
+    [
+        aurora_i18n::tr!("world-tphistory-today"),
+        aurora_i18n::tr!("world-tphistory-yesterday"),
+        aurora_i18n::tr!("extra-2-days-ago"),
+        aurora_i18n::tr!("extra-3-days-ago"),
+        aurora_i18n::tr!("extra-4-days-ago"),
+        aurora_i18n::tr!("extra-5-days-ago"),
+        aurora_i18n::tr!("world-tphistory-6-days-ago-or-earlier"),
+        aurora_i18n::tr!("world-tphistory-1-month-ago-or-earlier"),
+        aurora_i18n::tr!("world-tphistory-6-months-ago-or-earlier"),
+    ]
+}
 
 /// LLTeleportHistoryPanel::getNextTab with FSTPHistoryTZ "utc" (the
 /// default): the first six sections are days starting at midnight UTC,
@@ -260,7 +262,7 @@ pub fn history_section(date: f64, now: f64) -> usize {
         let total = y * 12 + (m as i64 - 1) - n;
         days_from_civil(total.div_euclid(12), (total.rem_euclid(12) + 1) as u32, d) as f64 * DAY
     };
-    for i in 0..HISTORY_SECTIONS.len() - 1 {
+    for i in 0..history_sections().len() - 1 {
         let lower = match i {
             0..=5 => (today - i as f64) * DAY,
             6 => months_back(1),
@@ -270,7 +272,7 @@ pub fn history_section(date: f64, now: f64) -> usize {
             return i;
         }
     }
-    HISTORY_SECTIONS.len() - 1
+    history_sections().len() - 1
 }
 
 /// LLAgentUI::buildLocationString(LOCATION_FORMAT_NORMAL): "Parcel, Region",

@@ -11,25 +11,30 @@ use uuid::Uuid;
 
 pub const FT_OUTFIT: i32 = 47;
 pub const FT_MY_OUTFITS: i32 = 48;
-pub const WEARABLES: &[&str] = &[
-    "Silhouette",
-    "Peau",
-    "Cheveux",
-    "Yeux",
-    "Chemise",
-    "Pantalon",
-    "Chaussures",
-    "Chaussettes",
-    "Veste",
-    "Gants",
-    "Débardeur",
-    "Caleçon",
-    "Jupe",
-    "Alpha",
-    "Tatouage",
-    "Propriétés physiques",
-    "Universel",
-];
+pub fn wearables() -> &'static Vec<&'static str> {
+    static TABLE: aurora_i18n::Localized<Vec<&'static str>> = aurora_i18n::Localized::new();
+    TABLE.get(|| {
+        vec![
+            aurora_i18n::tr!("world-appearance-silhouette"),
+            aurora_i18n::tr!("world-appearance-skin"),
+            aurora_i18n::tr!("world-appearance-hair"),
+            aurora_i18n::tr!("world-appearance-eyes"),
+            aurora_i18n::tr!("world-appearance-shirt"),
+            aurora_i18n::tr!("world-appearance-pants"),
+            aurora_i18n::tr!("world-appearance-shoes"),
+            aurora_i18n::tr!("world-appearance-socks"),
+            aurora_i18n::tr!("world-appearance-jacket"),
+            aurora_i18n::tr!("world-appearance-gloves"),
+            aurora_i18n::tr!("world-appearance-tank-top"),
+            aurora_i18n::tr!("world-appearance-underpants"),
+            aurora_i18n::tr!("world-appearance-skirt"),
+            aurora_i18n::tr!("common-alpha"),
+            aurora_i18n::tr!("world-appearance-tattoo"),
+            aurora_i18n::tr!("world-appearance-physics-properties"),
+            aurora_i18n::tr!("world-appearance-universal"),
+        ]
+    })
+}
 
 #[derive(Clone, Copy, Debug)]
 pub enum WearMode {
@@ -182,15 +187,15 @@ pub fn wearable_contents(inv: &Inventory, folder: Uuid) -> Result<Vec<OutfitLink
     let mut links = Vec::new();
     while let Some(id) = pending.pop() {
         if !seen.insert(id) {
-            return Err("Cycle dans les dossiers de la tenue.".into());
+            return Err(aurora_i18n::tr!("world-appearance-cycle-in-outfit-folders").into());
         }
-        let f = inv.folders.get(&id).ok_or("Dossier introuvable.")?;
+        let f = inv.folders.get(&id).ok_or(aurora_i18n::tr!("common-folder-not-found"))?;
         require_complete(inv, id)?;
         for link in folder_links(inv, id).into_iter().filter(|l| !l.folder) {
             let item = inv
                 .items
                 .get(&link.target)
-                .ok_or("Un lien de la tenue est cassé ou encore en cours de chargement.")?;
+                .ok_or(aurora_i18n::tr!("world-appearance-an-outfit-link-is-broken-or-still-loading"))?;
             if matches!(item.asset_type, 5 | 6 | 13 | 21) {
                 links.push(link);
             }
@@ -206,7 +211,7 @@ fn require_complete(inv: &Inventory, folder: Uuid) -> Result<(), String> {
     if complete(inv, folder) {
         Ok(())
     } else {
-        Err("L’inventaire de cette tenue est encore en cours de chargement.".into())
+        Err(aurora_i18n::tr!("world-appearance-this-outfit-s-inventory-is-still-loading").into())
     }
 }
 
@@ -230,7 +235,7 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
             .is_some_and(|f| f.info.type_default == FT_OUTFIT && !f.library)
             || !loaded(inv, folder)
         {
-            return Err("Le dossier de tenue n’est pas disponible.".into());
+            return Err(aurora_i18n::tr!("world-appearance-the-outfit-folder-is-unavailable").into());
         }
         return Ok((
             OutfitMutation {
@@ -242,7 +247,7 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
             false,
         ));
     }
-    let cof = cof(inv).ok_or("Le dossier Tenue actuelle n’est pas disponible.")?;
+    let cof = cof(inv).ok_or(aurora_i18n::tr!("world-appearance-the-current-outfit-folder-is-unavailable"))?;
     require_complete(inv, cof)?;
     let mut current = folder_links(inv, cof);
     if matches!(
@@ -257,7 +262,10 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
     ) {
         for id in worn.keys() {
             if !current.iter().any(|l| l.target == *id) {
-                let it = inv.items.get(id).ok_or("Un objet porté est encore en cours de chargement.")?;
+                let it = inv
+                    .items
+                    .get(id)
+                    .ok_or(aurora_i18n::tr!("world-appearance-a-worn-object-is-still-loading"))?;
                 current.push(item_link(it));
             }
         }
@@ -286,7 +294,7 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
                     let it = inv
                         .items
                         .get(id)
-                        .ok_or("Un objet porté n’est pas encore chargé dans l’inventaire.")?;
+                        .ok_or(aurora_i18n::tr!("world-appearance-a-worn-object-is-not-yet-loaded-in-inventory"))?;
                     current.push(item_link(it));
                 }
             }
@@ -294,9 +302,10 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
             if let Some(name) = name {
                 let name = name.trim();
                 if name.is_empty() || name.chars().count() > 63 {
-                    return Err("Choisissez un nom de 1 à 63 caractères.".into());
+                    return Err(aurora_i18n::tr!("world-appearance-choose-a-name-of-1-to-63-characters").into());
                 }
-                let parent = system_folder(inv, FT_MY_OUTFITS).ok_or("Le dossier Mes tenues n’est pas disponible.")?;
+                let parent =
+                    system_folder(inv, FT_MY_OUTFITS).ok_or(aurora_i18n::tr!("world-appearance-the-my-outfits-folder-is-unavailable"))?;
                 let id = Uuid::new_v4();
                 change.folder = id;
                 change.create = Some(InvFolder {
@@ -318,7 +327,7 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
                 });
                 change.cof = Some((cof, cof_links));
             } else {
-                change.folder = destination.ok_or("Enregistrez d’abord la tenue avec « Enregistrer sous… ».")?;
+                change.folder = destination.ok_or(aurora_i18n::tr!("world-appearance-save-the-outfit-with-save-as-first"))?;
                 require_complete(inv, change.folder)?;
                 change.links = links;
                 change.links.extend(
@@ -361,7 +370,7 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
                 .iter()
                 .any(|l| inv.items.get(&l.target).is_none_or(|it| !matches!(it.asset_type, 5 | 6 | 13 | 21)))
             {
-                return Err("Cette tenue contient un lien qui ne peut pas être porté.".into());
+                return Err(aurora_i18n::tr!("world-appearance-this-outfit-contains-a-link-that-cannot-be-worn").into());
             }
             for old in current.iter().filter(|l| !l.folder) {
                 let preserve = (append
@@ -408,7 +417,10 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
         Action::Revert => {
             return plan(
                 inv,
-                Action::Wear(base(inv).ok_or("Aucune tenue enregistrée à rétablir.")?, false),
+                Action::Wear(
+                    base(inv).ok_or(aurora_i18n::tr!("world-appearance-no-saved-outfit-to-restore"))?,
+                    false,
+                ),
                 worn,
             );
         }
@@ -420,13 +432,17 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
             };
             let mut removable = HashSet::new();
             for id in ids {
-                let id = super::inventory::actions::original(inv, id).ok_or("Cet élément n’est pas encore chargé.")?;
-                let it = inv.items.get(&id).ok_or("Cet élément n’est pas encore chargé.")?;
+                let id = super::inventory::actions::original(inv, id)
+                    .ok_or(aurora_i18n::tr!("world-appearance-this-item-has-not-loaded-yet"))?;
+                let it = inv
+                    .items
+                    .get(&id)
+                    .ok_or(aurora_i18n::tr!("world-appearance-this-item-has-not-loaded-yet"))?;
                 if it.asset_type == 13 {
-                    return Err("Une partie du corps doit être remplacée, elle ne peut pas être enlevée.".into());
+                    return Err(aurora_i18n::tr!("world-appearance-a-body-part-must-be-replaced-it-cannot-be").into());
                 }
                 if !matches!(it.asset_type, 5 | 6 | 21) {
-                    return Err("Cet élément ne peut pas être enlevé de la tenue.".into());
+                    return Err(aurora_i18n::tr!("world-appearance-this-item-cannot-be-taken-off").into());
                 }
                 removable.insert(id);
             }
@@ -455,16 +471,20 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
             };
             let mut seen = HashSet::new();
             for id in ids {
-                let id = super::inventory::actions::original(inv, id).ok_or("Cet élément n’est pas encore chargé.")?;
+                let id = super::inventory::actions::original(inv, id)
+                    .ok_or(aurora_i18n::tr!("world-appearance-this-item-has-not-loaded-yet"))?;
                 if !seen.insert(id) {
                     continue;
                 }
-                let it = inv.items.get(&id).ok_or("Cet élément n’est pas encore chargé.")?;
+                let it = inv
+                    .items
+                    .get(&id)
+                    .ok_or(aurora_i18n::tr!("world-appearance-this-item-has-not-loaded-yet"))?;
                 if !matches!(it.asset_type, 5 | 6 | 13)
                     || super::inventory::actions::library(inv, id)
                     || super::inventory::actions::in_type(inv, id, 14)
                 {
-                    return Err("Cet élément ne peut pas être porté.".into());
+                    return Err(aurora_i18n::tr!("world-appearance-this-item-cannot-be-worn").into());
                 }
                 if it.asset_type == 13 || (replace && it.asset_type == 5) {
                     current.retain(|l| {
@@ -495,9 +515,12 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
             change.links = current;
         }
         Action::MoveLayer(id, up) => {
-            let it = inv.items.get(&id).ok_or("Cet élément n’est pas encore chargé.")?;
+            let it = inv
+                .items
+                .get(&id)
+                .ok_or(aurora_i18n::tr!("world-appearance-this-item-has-not-loaded-yet"))?;
             if it.asset_type != 5 {
-                return Err("Seuls les calques de vêtements peuvent être réordonnés.".into());
+                return Err(aurora_i18n::tr!("world-appearance-only-clothing-layers-can-be-reordered").into());
             }
             let mut layers: Vec<_> = current
                 .iter()
@@ -526,7 +549,7 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
             change.links = current;
         }
         Action::ShowOriginal(_) | Action::Favorite(_) | Action::Category(..) | Action::DeleteFromOutfit { .. } => {
-            return Err("Cette action ne modifie pas la tenue actuelle.".into());
+            return Err(aurora_i18n::tr!("world-appearance-this-action-does-not-change-the-current-outfit").into());
         }
     }
     normalize_layers(inv, &mut change.links);
@@ -549,7 +572,7 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
         .filter(|l| !l.folder && inv.items.get(&l.target).is_some_and(|it| it.asset_type == 6))
         .count();
     if sync && count > 38 {
-        return Err("La tenue dépasse la limite de 38 attachements.".into());
+        return Err(aurora_i18n::tr!("world-appearance-the-outfit-exceeds-the-38-attachment-limit").into());
     }
     for kind in 4..=16 {
         if sync
@@ -566,7 +589,7 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
                 .count()
                 > 60
         {
-            return Err("La tenue dépasse la limite de 60 calques par type de vêtement.".into());
+            return Err(aurora_i18n::tr!("world-appearance-the-outfit-exceeds-the-limit-of-60-layers-per").into());
         }
     }
     Ok((change, sync))
@@ -580,7 +603,7 @@ fn require_outfit(inv: &Inventory, id: Uuid) -> Result<(), String> {
     {
         Ok(())
     } else {
-        Err("Ce dossier de tenue ne peut pas être modifié.".into())
+        Err(aurora_i18n::tr!("world-appearance-this-outfit-folder-cannot-be-modified").into())
     }
 }
 
@@ -595,17 +618,17 @@ pub fn category_plan(
         Update::Rename(name) => {
             *name = name.trim().into();
             if name.is_empty() || name.chars().count() > 63 || name.chars().any(char::is_control) {
-                return Err("Choisissez un nom de 1 à 63 caractères.".into());
+                return Err(aurora_i18n::tr!("world-appearance-choose-a-name-of-1-to-63-characters").into());
             }
         }
         Update::Trash(parent) => {
-            let cof = cof(inv).ok_or("Le dossier Tenue actuelle n’est pas disponible.")?;
+            let cof = cof(inv).ok_or(aurora_i18n::tr!("world-appearance-the-current-outfit-folder-is-unavailable"))?;
             require_complete(inv, cof)?;
             if base(inv) == Some(id) {
-                return Err("La tenue actuelle ne peut pas être supprimée.".into());
+                return Err(aurora_i18n::tr!("world-appearance-the-current-outfit-cannot-be-deleted").into());
             }
             if Some(*parent) != system_folder(inv, 14) {
-                return Err("Le dossier Corbeille n’est pas disponible.".into());
+                return Err(aurora_i18n::tr!("world-appearance-the-trash-folder-is-unavailable").into());
             }
         }
         _ => {}
@@ -755,11 +778,19 @@ pub fn seed_demo(inv: &mut Inventory, agent: Uuid) {
         state: FetchState::Fetched,
         library: false,
     };
-    inv.folders.insert(my, folder(my, inv.root, "Mes tenues", FT_MY_OUTFITS));
-    inv.folders.insert(cof, folder(cof, inv.root, "Tenue actuelle", 46));
+    inv.folders
+        .insert(my, folder(my, inv.root, aurora_i18n::tr!("common-my-outfits"), FT_MY_OUTFITS));
+    inv.folders
+        .insert(cof, folder(cof, inv.root, aurora_i18n::tr!("common-current-outfit"), 46));
     let trash = system_folder(inv, 14).unwrap_or_else(|| Uuid::from_u128(706));
-    inv.folders.insert(trash, folder(trash, inv.root, "Corbeille", 14));
-    for (id, name) in outfits.iter().zip(["Empty", "Flic", "Neurolab", "Veste Cuir"]) {
+    inv.folders
+        .insert(trash, folder(trash, inv.root, aurora_i18n::tr!("common-trash"), 14));
+    for (id, name) in outfits.iter().zip([
+        aurora_i18n::tr!("world-appearance-empty"),
+        aurora_i18n::tr!("world-appearance-cop"),
+        "Neurolab",
+        aurora_i18n::tr!("world-appearance-leather-jacket"),
+    ]) {
         inv.folders.insert(*id, folder(*id, my, name, FT_OUTFIT));
     }
     if let Some(f) = inv.folders.get_mut(&my) {
@@ -767,20 +798,20 @@ pub fn seed_demo(inv: &mut Inventory, agent: Uuid) {
     }
     let mut items = Vec::new();
     for (i, (name, kind, flags)) in [
-        ("Silhouette Aurora", 13, 0),
-        ("Peau Aurora", 13, 1),
-        ("Cheveux Aurora", 13, 2),
-        ("Yeux Aurora", 13, 3),
-        ("Tatouage des étoiles", 5, 14),
-        ("Veste en cuir", 5, 8),
-        ("Pantalon noir", 5, 5),
-        ("Cheveux mesh", 6, 2),
-        ("Boucles d’oreilles", 6, 13),
-        ("Bague argentée", 6, 41),
-        ("Bottes", 6, 7),
-        ("HUD de démo", 6, 32),
-        ("Chemise de rechange", 5, 4),
-        ("Accessoire de rechange", 6, 5),
+        (aurora_i18n::tr!("world-appearance-aurora-silhouette"), 13, 0),
+        (aurora_i18n::tr!("world-appearance-aurora-skin"), 13, 1),
+        (aurora_i18n::tr!("world-appearance-aurora-hair"), 13, 2),
+        (aurora_i18n::tr!("world-appearance-aurora-eyes"), 13, 3),
+        (aurora_i18n::tr!("world-appearance-star-tattoo"), 5, 14),
+        (aurora_i18n::tr!("world-appearance-leather-jacket-2"), 5, 8),
+        (aurora_i18n::tr!("world-appearance-black-pants"), 5, 5),
+        (aurora_i18n::tr!("world-appearance-mesh-hair"), 6, 2),
+        (aurora_i18n::tr!("world-appearance-earrings"), 6, 13),
+        (aurora_i18n::tr!("world-appearance-silver-ring"), 6, 41),
+        (aurora_i18n::tr!("world-appearance-boots"), 6, 7),
+        (aurora_i18n::tr!("common-demo-hud"), 6, 32),
+        (aurora_i18n::tr!("world-appearance-spare-shirt"), 5, 4),
+        (aurora_i18n::tr!("world-appearance-spare-attachment"), 6, 5),
     ]
     .into_iter()
     .enumerate()
@@ -938,7 +969,10 @@ pub fn demo_category(
     agent: Uuid,
     change: &aurora_net::outfits::categories::Mutation,
 ) -> Result<Vec<aurora_net::inventory::FolderContents>, String> {
-    let folder = inv.folders.get_mut(&change.folder).ok_or("Tenue introuvable.")?;
+    let folder = inv
+        .folders
+        .get_mut(&change.folder)
+        .ok_or(aurora_i18n::tr!("world-appearance-outfit-not-found"))?;
     change.update.apply(&mut folder.info);
     let mut parents = vec![change.parent];
     if folder.info.parent != change.parent {
@@ -1033,7 +1067,14 @@ mod tests {
         let trash = system_folder(&inv, 14).expect("Trash");
         let current = base(&inv).expect("base");
         assert!(category_plan(&inv, current, Update::Trash(trash)).is_err());
-        assert!(category_plan(&inv, cof(&inv).expect("COF"), Update::Rename("Nom".into())).is_err());
+        assert!(
+            category_plan(
+                &inv,
+                cof(&inv).expect("COF"),
+                Update::Rename(aurora_i18n::tr!("common-name").into())
+            )
+            .is_err()
+        );
         assert!(category_plan(&inv, Uuid::from_u128(704), Update::Rename("  ".into())).is_err());
         let selected = Uuid::from_u128(704);
         let links = folder_links(&inv, selected);

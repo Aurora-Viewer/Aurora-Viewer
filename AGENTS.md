@@ -33,7 +33,10 @@ casse le travail des autres.
    la protection de `main` ; jamais la PR de quelqu'un d'autre (ni celle de
    Dependabot) sans l'accord explicite de ton humain.
 6. **Réponds à l'humain en français.** Code, commentaires et noms en anglais ;
-   documentation et textes de l'interface en français.
+   documentation en français. Les textes de l'interface et les messages réseau
+   destinés à l'utilisateur passent par `aurora_i18n::tr!` : ajoute la clé et
+   ses versions française et anglaise dans la même PR, jamais un libellé en
+   dur. Variables et pluriels suivent [docs/TRANSLATING.md](docs/TRANSLATING.md).
 
 ## 2. Comportement de référence : Firestorm
 

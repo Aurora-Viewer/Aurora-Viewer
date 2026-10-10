@@ -47,7 +47,9 @@ impl Session<'_> {
         if kind >= 17 || data.is_empty() || data.len() > 64 * 1024 || self.inventory_uploads.assets.len() >= 8 {
             emit(
                 self.sh,
-                NetEvent::InventoryOperationFailed("Création refusée : type, taille ou nombre de chargements invalide.".into()),
+                NetEvent::InventoryOperationFailed(
+                    aurora_i18n::tr!("session-inventory-upload-creation-denied-invalid-type-size-or-upload-count").into(),
+                ),
             );
             return;
         }
@@ -149,7 +151,9 @@ impl Session<'_> {
             if !m.asset_block.success {
                 emit(
                     self.sh,
-                    NetEvent::InventoryOperationFailed("Le serveur a refusé le nouvel asset de vêtement.".into()),
+                    NetEvent::InventoryOperationFailed(
+                        aurora_i18n::tr!("session-inventory-upload-the-server-rejected-the-new-clothing-asset").into(),
+                    ),
                 );
                 return Ok(true);
             }
@@ -178,7 +182,9 @@ impl Session<'_> {
                 self.inventory_uploads.assets.remove(&asset);
                 emit(
                     self.sh,
-                    NetEvent::InventoryOperationFailed("Le chargement du vêtement a été interrompu.".into()),
+                    NetEvent::InventoryOperationFailed(
+                        aurora_i18n::tr!("session-inventory-upload-the-clothing-upload-was-interrupted").into(),
+                    ),
                 );
                 return Ok(true);
             }
@@ -214,7 +220,9 @@ impl Session<'_> {
         if failed {
             emit(
                 self.sh,
-                NetEvent::InventoryOperationFailed("Le chargement du vêtement a expiré. Rechargez l’inventaire avant de réessayer.".into()),
+                NetEvent::InventoryOperationFailed(
+                    aurora_i18n::tr!("session-inventory-upload-the-clothing-upload-timed-out-reload-inventory-before-trying").into(),
+                ),
             );
         }
     }

@@ -21,19 +21,27 @@ const GP_OBJECT_SET_SALE: u64 = 1 << 39;
 const SALE_COPY: u8 = 2;
 
 /// "clickaction" combo, in its display order (CLICK_ACTION_* codes).
-const CLICK_ACTIONS: [(&str, u8); 8] = [
-    ("Toucher (par défaut)", 0),
-    ("S'asseoir sur l'objet", 1),
-    ("Acheter l'objet", 2),
-    ("Payer l'objet", 3),
-    ("Ouvrir", 4),
-    ("Zoomer", 7),
-    ("Ignorer l'objet", 9),
-    ("Aucun", 8),
-];
+fn click_actions() -> [(&'static str, u8); 8] {
+    [
+        (aurora_i18n::tr!("build-ui-general-touch-default"), 0),
+        (aurora_i18n::tr!("build-ui-general-sit-on-object"), 1),
+        (aurora_i18n::tr!("common-buy-object"), 2),
+        (aurora_i18n::tr!("common-pay-object"), 3),
+        (aurora_i18n::tr!("common-open"), 4),
+        (aurora_i18n::tr!("common-zoom-2"), 7),
+        (aurora_i18n::tr!("build-ui-general-ignore-object"), 9),
+        (aurora_i18n::tr!("common-none"), 8),
+    ]
+}
 
 /// "sale type" combo: Copie, Contenus, Original.
-const SALE_TYPES: [(&str, u8); 3] = [("Copie", 2), ("Contenus", 3), ("Original", 1)];
+fn sale_types() -> [(&'static str, u8); 3] {
+    [
+        (aurora_i18n::tr!("common-copy"), 2),
+        (aurora_i18n::tr!("build-ui-general-contents"), 3),
+        (aurora_i18n::tr!("common-original"), 1),
+    ]
+}
 
 /// LLSelectMgr::selectGetPerm over the roots: (all set, all clear) bits.
 fn perm_state(list: &[&ObjectProps], mask: impl Fn(&ObjectProps) -> u32) -> (u32, u32) {
@@ -61,7 +69,7 @@ fn bit(state: (u32, u32), b: u32) -> (bool, bool) {
 /// A clickable name (agent or group SLURL of the panel).
 fn name_link(ui: &mut egui::Ui, p: &Palette, name: &str) -> bool {
     ui.add(egui::Label::new(RichText::new(name).size(12.0).color(p.violet_light)).sense(egui::Sense::click()))
-        .on_hover_text("Ouvrir le profil")
+        .on_hover_text(aurora_i18n::tr!("build-ui-general-open-profile"))
         .clicked()
 }
 
@@ -79,7 +87,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
     let ids: Vec<Uuid> = targets.iter().filter_map(|&i| world.objects.get(i).map(|o| o.full_id)).collect();
     let props: Vec<ObjectProps> = ids.iter().filter_map(|id| tool.props.get(id).cloned()).collect();
     if props.len() != ids.len() || props.is_empty() {
-        small(ui, p, "Propriétés en attente du simulateur…");
+        small(ui, p, aurora_i18n::tr!("build-ui-general-waiting-for-simulator-properties"));
         return;
     }
     let refs: Vec<&ObjectProps> = props.iter().collect();
@@ -96,7 +104,10 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
     let modify = props.iter().all(|x| x.owner_mask & perm::MODIFY != 0) && can_manipulate;
 
     // ---- name, description
-    for (field, title, limit, description) in [("name", "Nom :", 63, false), ("desc", "Description :", 127, true)] {
+    for (field, title, limit, description) in [
+        ("name", aurora_i18n::tr!("common-name-2"), 63, false),
+        ("desc", aurora_i18n::tr!("common-description"), 127, true),
+    ] {
         let current = if count == 1 {
             if description {
                 first.description.clone()
@@ -113,12 +124,17 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                 egui::TextEdit::singleline(&mut v)
                     .desired_width(ui.available_width())
                     .char_limit(limit)
-                    .hint_text(if count > 1 { "Sélection multiple" } else { "" }),
+                    .hint_text(if count > 1 {
+                        aurora_i18n::tr!("build-ui-general-multiple-selection")
+                    } else {
+                        ""
+                    }),
             );
             if description {
-                r.clone().on_hover_text("127 octets au plus.");
+                r.clone().on_hover_text(aurora_i18n::tr!("build-ui-general-127-bytes-maximum"));
             } else {
-                r.clone().on_hover_text("63 caractères au plus, ASCII imprimable, sans « | ».");
+                r.clone()
+                    .on_hover_text(aurora_i18n::tr!("build-ui-general-63-characters-maximum-printable-ascii-excluding"));
             }
             if r.changed() {
                 // validateASCIIPrintableNoPipe
@@ -141,16 +157,16 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
             world.social.want_name(id);
         }
     }
-    row(ui, p, "Créateur :", LABEL_W, |ui| {
+    row(ui, p, aurora_i18n::tr!("common-creator-2"), LABEL_W, |ui| {
         if !same(&|x| x.creator_id) {
-            text(ui, p, "(multiple)");
+            text(ui, p, aurora_i18n::tr!("status-multiple"));
         } else if first.creator_id.is_nil() {
-            text(ui, p, "(personne)");
+            text(ui, p, aurora_i18n::tr!("status-nobody"));
         } else if name_link(ui, p, &world.social.name_of(&first.creator_id)) {
             tool.ui.requests.push(Request::Profile(first.creator_id));
         }
     });
-    row(ui, p, "Propriétaire :", LABEL_W, |ui| {
+    row(ui, p, aurora_i18n::tr!("common-owner-2"), LABEL_W, |ui| {
         if !owners_identical {
             text(ui, p, "(multiple)");
         } else if group_owned {
@@ -158,7 +174,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                 .groups
                 .group(&first.group_id)
                 .map(|g| g.name.clone())
-                .unwrap_or_else(|| "Groupe".into());
+                .unwrap_or_else(|| aurora_i18n::tr!("common-group").into());
             if name_link(ui, p, &name) {
                 tool.ui.requests.push(Request::GroupProfile(first.group_id));
             }
@@ -166,12 +182,12 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
             tool.ui.requests.push(Request::Profile(first.owner_id));
         }
     });
-    row(ui, p, "Propriétaire précédent :", LABEL_W, |ui| {
+    row(ui, p, aurora_i18n::tr!("build-ui-general-previous-owner"), LABEL_W, |ui| {
         if same(&|x| x.last_owner_id) && !first.last_owner_id.is_nil() && name_link(ui, p, &world.social.name_of(&first.last_owner_id)) {
             tool.ui.requests.push(Request::Profile(first.last_owner_id));
         }
     });
-    row(ui, p, "Groupe :", LABEL_W, |ui| {
+    row(ui, p, aurora_i18n::tr!("common-group-2"), LABEL_W, |ui| {
         if same(&|x| x.group_id) && !first.group_id.is_nil() {
             let name = world
                 .groups
@@ -186,7 +202,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let can_set_group = root_selected && owners_identical && first.owner_id == me;
-            if super::common::icon_button(ui, p, "wrench", "Définir le groupe…", can_set_group) {
+            if super::common::icon_button(ui, p, "wrench", aurora_i18n::tr!("build-ui-general-set-group"), can_set_group) {
                 tool.ui.group_picker_open = true;
             }
         });
@@ -207,7 +223,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
     let can_transfer = owner.0 & perm::TRANSFER != 0;
     ui.horizontal(|ui| {
         ui.add_space(LABEL_W);
-        if let Some(v) = check(ui, share, share_tentative, "Partager", can_manipulate) {
+        if let Some(v) = check(ui, share, share_tentative, aurora_i18n::tr!("common-share"), can_manipulate) {
             tool.set_perm(world, perm_field::GROUP, v, share_bits);
         }
         let deed_ok = !first.group_id.is_nil()
@@ -216,8 +232,11 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
             && !group_owned
             && (share && !share_tentative || group.0 & perm::MOVE != 0);
         if ui
-            .add_enabled(deed_ok, egui::Button::new(RichText::new("Céder").size(12.0)))
-            .on_hover_text("Céder cet objet au groupe")
+            .add_enabled(
+                deed_ok,
+                egui::Button::new(RichText::new(aurora_i18n::tr!("common-deed")).size(12.0)),
+            )
+            .on_hover_text(aurora_i18n::tr!("build-ui-general-deed-this-object-to-group"))
             .clicked()
         {
             tool.ui.confirm = Some(Confirm::Deed(first.group_id));
@@ -228,12 +247,12 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
     let prims = tool.sel_prims(world);
     let (click, _) = super::common::same(prims.iter().filter_map(|&i| world.objects.get(i).map(|o| o.click_action)));
     // PLAY / OPEN_MEDIA show as « Toucher »
-    let click = click.map(|c| if CLICK_ACTIONS.iter().any(|(_, v)| *v == c) { c } else { 0 });
-    row(ui, p, "Cliquer pour :", LABEL_W, |ui| {
-        if let Some(a) = combo(ui, "click_action", click, &CLICK_ACTIONS, 150.0, modify) {
+    let click = click.map(|c| if click_actions().iter().any(|(_, v)| *v == c) { c } else { 0 });
+    row(ui, p, aurora_i18n::tr!("build-ui-general-click-to"), LABEL_W, |ui| {
+        if let Some(a) = combo(ui, "click_action", click, &click_actions(), 150.0, modify) {
             if a == CLICK_ACTION_BUY && !props.iter().all(|x| x.sale_type != 0) {
                 // CantSetBuyObject
-                tool.status = "Cet objet n'est pas à vendre : impossible de choisir « Acheter l'objet ».".into();
+                tool.status = aurora_i18n::tr!("build-ui-general-this-object-is-not-for-sale-buy-object-cannot").into();
             } else {
                 tool.set_click_action(world, a);
             }
@@ -261,7 +280,13 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         .inner_margin(4)
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                if let Some(v) = check(ui, for_sale, sale_mixed, "À vendre :", sale_ok && (can_transfer || for_sale_n > 0)) {
+                if let Some(v) = check(
+                    ui,
+                    for_sale,
+                    sale_mixed,
+                    aurora_i18n::tr!("common-for-sale"),
+                    sale_ok && (can_transfer || for_sale_n > 0),
+                ) {
                     for_sale = v;
                     draft_changed = true;
                     // unticking commits at once (onCommitSaleInfo)
@@ -271,7 +296,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                     ui,
                     "sale_type",
                     Some(sale_type),
-                    &SALE_TYPES,
+                    &sale_types(),
                     110.0,
                     sale_ok && for_sale && !price_mixed,
                 ) {
@@ -294,7 +319,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                 if ui
                     .add_enabled(
                         tool.ui.sale_draft.is_some() || draft_changed,
-                        egui::Button::new(RichText::new("Appliquer").size(12.0)),
+                        egui::Button::new(RichText::new(aurora_i18n::tr!("common-apply")).size(12.0)),
                     )
                     .clicked()
                 {
@@ -326,8 +351,8 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
     // ---- key, search
     ui.horizontal(|ui| {
         if ui
-            .button(RichText::new("Copier l'UUID").size(12.0))
-            .on_hover_text("Copier la clé des objets (Maj : de toutes les parties)")
+            .button(RichText::new(aurora_i18n::tr!("build-ui-general-copy-uuid")).size(12.0))
+            .on_hover_text(aurora_i18n::tr!("build-ui-general-copy-object-keys-shift-all-parts"))
             .clicked()
         {
             let shift = ui.input(|i| i.modifiers.shift);
@@ -340,20 +365,26 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                 .iter()
                 .filter_map(|&r| world.objects.get(r).map(|o| o.update_flags & FLAGS_INCLUDE_IN_SEARCH != 0)),
         );
-        if let Some(v) = check(ui, search.unwrap_or(false), search_mixed, "Afficher dans la recherche", can_sell) {
+        if let Some(v) = check(
+            ui,
+            search.unwrap_or(false),
+            search_mixed,
+            aurora_i18n::tr!("common-show-in-search"),
+            can_sell,
+        ) {
             tool.set_include_in_search(world, v);
         }
     });
 
     // ---- modify info (text modify info 1..6)
     let info = if !can_manipulate && !root_selected {
-        "Sélectionnez l'objet en entier"
+        aurora_i18n::tr!("build-ui-general-select-the-whole-object")
     } else {
         match (modify, count == 1) {
-            (true, true) => "Vous pouvez modifier cet objet",
-            (true, false) => "Vous pouvez modifier ces objets",
-            (false, true) => "Vous ne pouvez pas modifier cet objet",
-            (false, false) => "Vous ne pouvez pas modifier ces objets",
+            (true, true) => aurora_i18n::tr!("build-ui-general-you-can-edit-this-object"),
+            (true, false) => aurora_i18n::tr!("build-ui-general-you-can-edit-these-objects"),
+            (false, true) => aurora_i18n::tr!("build-ui-general-you-cannot-edit-this-object"),
+            (false, false) => aurora_i18n::tr!("build-ui-general-you-cannot-edit-these-objects"),
         }
     };
     ui.label(RichText::new(info).size(12.0).color(if modify { p.violet_light } else { p.muted }));
@@ -361,41 +392,65 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
     // ---- everyone / next owner
     let everyone = perm_state(&refs, |x| x.everyone_mask);
     let next = perm_state(&refs, |x| x.next_owner_mask);
-    label(ui, p, "N'importe qui :");
+    label(ui, p, aurora_i18n::tr!("build-ui-general-anyone"));
     ui.horizontal(|ui| {
         ui.add_space(12.0);
         let (v, t) = bit(everyone, perm::MOVE);
-        if let Some(n) = check(ui, v, t, "Bouger", can_manipulate && owner.0 & perm::MOVE != 0) {
+        if let Some(n) = check(
+            ui,
+            v,
+            t,
+            aurora_i18n::tr!("common-move"),
+            can_manipulate && owner.0 & perm::MOVE != 0,
+        ) {
             tool.set_perm(world, perm_field::EVERYONE, n, perm::MOVE);
         }
         let (v, t) = bit(everyone, perm::COPY);
         let copy_ok = owner.0 & perm::COPY != 0 && owner.0 & perm::TRANSFER != 0;
-        if let Some(n) = check(ui, v, t || !copy_ok, "Copier", can_manipulate && copy_ok) {
+        if let Some(n) = check(ui, v, t || !copy_ok, aurora_i18n::tr!("common-copy-2"), can_manipulate && copy_ok) {
             tool.set_perm(world, perm_field::EVERYONE, n, perm::COPY);
         }
     });
-    label(ui, p, "Le prochain propriétaire :");
+    label(ui, p, aurora_i18n::tr!("build-ui-general-next-owner"));
     ui.horizontal(|ui| {
         ui.add_space(12.0);
         let next_ok = can_sell && owner.0 & perm::TRANSFER != 0;
         let (v, t) = bit(next, perm::MODIFY);
-        if let Some(n) = check(ui, v, t, "Modifier", next_ok && base.0 & perm::MODIFY != 0) {
+        if let Some(n) = check(ui, v, t, aurora_i18n::tr!("common-edit"), next_ok && base.0 & perm::MODIFY != 0) {
             tool.set_perm(world, perm_field::NEXT_OWNER, n, perm::MODIFY);
         }
         let (v, t) = bit(next, perm::COPY);
         let can_copy = owner.0 & perm::COPY != 0;
-        if let Some(n) = check(ui, v, t || !can_copy, "Copier", next_ok && base.0 & perm::COPY != 0) {
+        if let Some(n) = check(
+            ui,
+            v,
+            t || !can_copy,
+            aurora_i18n::tr!("common-copy-2"),
+            next_ok && base.0 & perm::COPY != 0,
+        ) {
             tool.set_perm(world, perm_field::NEXT_OWNER, n, perm::COPY);
         }
         let (v, t) = bit(next, perm::TRANSFER);
         // enabled by the next owner's copy bit (sic, LLPanelPermissions)
-        if let Some(n) = check(ui, v, t || !can_transfer, "Transférer", next_ok && next.0 & perm::COPY != 0) {
+        if let Some(n) = check(
+            ui,
+            v,
+            t || !can_transfer,
+            aurora_i18n::tr!("common-transfer"),
+            next_ok && next.0 & perm::COPY != 0,
+        ) {
             tool.set_perm(world, perm_field::NEXT_OWNER, n, perm::TRANSFER);
         }
     });
-    row(ui, p, "Att. de rche. de chemin :", LABEL_W + 30.0, |ui| {
-        text(ui, p, "Aucun");
-    });
+    row(
+        ui,
+        p,
+        aurora_i18n::tr!("build-ui-general-pathfinding-attributes"),
+        LABEL_W + 30.0,
+        |ui| {
+            text(ui, p, aurora_i18n::tr!("common-none"));
+        },
+    );
 }
 
 #[cfg(test)]

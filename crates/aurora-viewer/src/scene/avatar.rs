@@ -202,7 +202,7 @@ impl AvatarLibrary {
                         let rot = parse_vec3(c.attr("rotation").unwrap_or("0 0 0"));
                         let hud = c.attr("hud").is_some_and(|v| v == "true");
                         if let Some(id) = id {
-                            attach_names.insert(id, c.attr("name").unwrap_or("Attachment").to_owned());
+                            attach_names.insert(id, c.attr("name").unwrap_or(aurora_i18n::tr!("common-attachment")).to_owned());
                             let jp = joint_pos(joint).unwrap_or(pelvis);
                             joint_names.push((id, joint.to_owned()));
                             attach_points.insert(

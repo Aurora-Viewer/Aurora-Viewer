@@ -800,7 +800,7 @@ impl BuildTool {
             && b.center.distance(world.agent.position) > MAX_SELECT_DISTANCE
         {
             self.deselect_all(world);
-            self.status = "Sélection trop loin : désélectionnée".into();
+            self.status = aurora_i18n::tr!("build-mod-selection-too-far-away-deselected").into();
         }
     }
 
@@ -853,9 +853,12 @@ impl BuildTool {
         // LLSelectMgr::confirmDelete
         world.ui_sounds.push(crate::ui_sound::UiSound::ObjectDelete);
         self.status = if not_owned > 0 {
-            format!("Suppression demandée ({not_owned} objet(s) d'autres propriétaires : refus probable)")
+            aurora_i18n::tr!(
+                "build-mod-deletion-requested-object-s-owned-by-others-likely-to",
+                not_owned = format!("{}", not_owned)
+            )
         } else {
-            format!("{} objet(s) envoyé(s) à la corbeille", roots.len())
+            aurora_i18n::tr!("build-mod-object-s-sent-to-trash", value0 = format!("{}", roots.len()))
         };
         self.deselect_all(world);
     }
@@ -878,7 +881,7 @@ impl BuildTool {
         // all in one region (AcquireErrorObjectSpan otherwise): the first one's
         let by_region = self.group_by_region(world, &roots);
         if by_region.len() > 1 {
-            self.status = "Impossible de prendre des objets de plusieurs régions à la fois".into();
+            self.status = aurora_i18n::tr!("build-mod-cannot-take-objects-from-multiple-regions-at-once").into();
             return;
         }
         for (handle, ids) in by_region {
@@ -929,7 +932,7 @@ impl BuildTool {
         }
         let roots = self.roots(world);
         if roots.len() < 2 {
-            self.status = "Sélectionnez au moins deux objets à lier".into();
+            self.status = aurora_i18n::tr!("build-mod-select-at-least-two-objects-to-link").into();
             return;
         }
         let first = world.objects.get(roots[0]).map(|o| (o.key.region, o.owner_id));
@@ -937,18 +940,18 @@ impl BuildTool {
             .iter()
             .all(|&r| world.objects.get(r).map(|o| (o.key.region, o.owner_id)) == first);
         if !same {
-            self.status = "Les objets à lier doivent avoir le même propriétaire et être dans la même région".into();
+            self.status = aurora_i18n::tr!("build-mod-objects-to-link-must-have-the-same-owner-and").into();
             return;
         }
         let total: usize = roots.iter().map(|&r| family(world, r).len()).sum();
         if total > 256 {
-            self.status = format!("Trop de prims pour un seul objet ({total} > 256)");
+            self.status = aurora_i18n::tr!("build-mod-too-many-prims-in-a-single-object-256", total = format!("{}", total));
             return;
         }
         let Some((handle, _)) = first else { return };
         let ids: Vec<u32> = roots.iter().filter_map(|&r| world.objects.get(r).map(|o| o.key.local_id)).collect();
         self.send(BuildCmd::Link { handle, local_ids: ids });
-        self.status = format!("{} objets liés", roots.len());
+        self.status = aurora_i18n::tr!("build-mod-objects-linked", value0 = format!("{}", roots.len()));
         self.costs_stale();
     }
 
@@ -964,7 +967,7 @@ impl BuildTool {
         for (handle, ids) in self.group_by_region(world, &prims) {
             self.send(BuildCmd::Delink { handle, local_ids: ids });
         }
-        self.status = "Objet délié".into();
+        self.status = aurora_i18n::tr!("build-mod-object-unlinked").into();
         self.costs_stale();
     }
 
@@ -1335,7 +1338,7 @@ impl BuildTool {
             return;
         };
         if point.distance(world.agent.position) > MAX_SELECT_DISTANCE {
-            self.status = "Trop loin pour créer un objet ici".into();
+            self.status = aurora_i18n::tr!("build-mod-too-far-away-to-create-an-object-here").into();
             return;
         }
         let Some((handle, off)) = Self::region_at(world, point) else {
@@ -1343,15 +1346,15 @@ impl BuildTool {
         };
         let (ray_start, ray_end, target_id, bypass) = self.placement_ray(world, point, target, cursor, off);
         let random = Uuid::new_v4().as_u128() as u32;
-        let n = shapes::SHAPES.len();
+        let n = shapes::shapes().len();
         let plant = s.create_shape == n || s.create_shape == n + 1;
         let (pcode, shape, rotation, state, scale, flags) = if plant {
             // trees and grass: not created selected (LLToolPlacer)
             let tree = s.create_shape == n;
             let state = if tree {
-                shapes::plant_species(&shapes::TREE_SPECIES, &s.last_tree, random)
+                shapes::plant_species(&shapes::tree_species(), &s.last_tree, random)
             } else {
-                shapes::plant_species(&shapes::GRASS_SPECIES, &s.last_grass, random)
+                shapes::plant_species(&shapes::grass_species(), &s.last_grass, random)
             };
             let scale = if tree {
                 Vec3::from_array(s.new_prim_size)
@@ -1367,7 +1370,7 @@ impl BuildTool {
             };
             (pcode, aurora_prim::RawShape::default(), glam::Quat::IDENTITY, state, scale, 0)
         } else {
-            let sh = &shapes::SHAPES[s.create_shape.min(n - 1)];
+            let sh = &shapes::shapes()[s.create_shape.min(n - 1)];
             (
                 aurora_prim::params::LL_PCODE_VOLUME,
                 sh.raw(),
@@ -1412,7 +1415,7 @@ impl BuildTool {
         let Some(point) = hit else { return };
         let roots = self.roots(world);
         if roots.is_empty() {
-            self.status = "Sélectionnez d'abord les objets à copier.".into();
+            self.status = aurora_i18n::tr!("build-mod-select-the-objects-to-copy-first").into();
             return;
         }
         let Some((_, off)) = Self::region_at(world, point) else { return };

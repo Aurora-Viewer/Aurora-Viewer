@@ -28,7 +28,9 @@ use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 /// LLTrans "LoadingData".
-pub const LOADING: &str = "Chargement...";
+pub fn loading() -> &'static str {
+    aurora_i18n::tr!("common-loading")
+}
 /// "not_available" of both panels.
 const NOT_AVAILABLE: &str = "(N\\A)";
 
@@ -71,14 +73,14 @@ pub struct PlaceDetailsUi {
 pub fn window_title(place: &Place, world: &World) -> String {
     match &place.source {
         Source::Link { .. } => match shown(place, world) {
-            Shown::Parcel(d) => format!("Détails de l'emplacement : {}", d.name),
-            _ => "Détails de l'emplacement".to_owned(),
+            Shown::Parcel(d) => aurora_i18n::tr!("ui-place-details-location-details-2", value0 = d.name.to_string()),
+            _ => aurora_i18n::tr!("ui-place-details-location-details").to_owned(),
         },
         Source::Landmark { item, .. } => match world.inventory.items.get(item) {
-            Some(it) => format!("Repère : {}", it.name),
-            None => "Repère".to_owned(),
+            Some(it) => aurora_i18n::tr!("ui-place-details-landmark", value0 = it.name.to_string()),
+            None => aurora_i18n::tr!("common-landmark").to_owned(),
         },
-        Source::History { title, .. } => format!("Historique de téléportation pour : {title}"),
+        Source::History { title, .. } => aurora_i18n::tr!("ui-place-details-teleport-history-for", title = title.to_string()),
     }
 }
 
@@ -87,9 +89,9 @@ pub fn window_title(place: &Place, world: &World) -> String {
 /// LLPanelLandmarkInfo "title_landmark" / "title_edit_landmark").
 pub fn header_title(place: &Place) -> &'static str {
     match place.source {
-        Source::Link { .. } => "Profil du lieu",
-        Source::History { .. } => "Historique de téléportations",
-        Source::Landmark { .. } => "Repère",
+        Source::Link { .. } => aurora_i18n::tr!("common-place-profile"),
+        Source::History { .. } => aurora_i18n::tr!("ui-place-details-teleport-history"),
+        Source::Landmark { .. } => aurora_i18n::tr!("common-landmark"),
     }
 }
 
@@ -97,11 +99,11 @@ pub fn header_title(place: &Place) -> &'static str {
 /// Flag 0x1 == mature region, otherwise assume PG".
 pub fn maturity(flags: u8) -> &'static str {
     if flags & 0x2 != 0 {
-        "Adulte"
+        aurora_i18n::tr!("common-adult")
     } else if flags & 0x1 != 0 {
-        "Modéré"
+        aurora_i18n::tr!("common-moderate")
     } else {
-        "Général"
+        aurora_i18n::tr!("common-general")
     }
 }
 
@@ -130,20 +132,24 @@ pub fn information(area: i32, dwell: f32) -> (String, String) {
 
 /// "information_text" of the French landmark panel.
 pub fn landmark_information(area: i32, dwell: f32) -> String {
-    format!("Trafic : {} Surface : {area} m²", dwell as i32)
+    aurora_i18n::tr!(
+        "ui-place-details-traffic-area-m2",
+        value0 = format!("{}", dwell as i32),
+        area = format!("{}", area)
+    )
 }
 
 /// "acquired_date" of the French landmark panel, in SLT:
 /// "mar. 02 avr. 2024 07:42:28"; 0 is "(inconnu)".
 pub fn acquired_date(secs: i64) -> String {
     if secs == 0 {
-        return "(inconnu)".to_owned();
+        return aurora_i18n::tr!("status-unknown").to_owned();
     }
     let (y, m, d, w, h, mi, s) = super::land::slt_parts(secs);
     format!(
         "{} {d:02} {} {y} {h:02}:{mi:02}:{s:02}",
-        super::land::WEEKDAYS[w],
-        super::land::MONTHS[m - 1]
+        super::land::weekdays()[w],
+        super::land::months()[m - 1]
     )
 }
 
@@ -154,25 +160,25 @@ pub fn error_text(e: PlaceError, landmark: bool) -> &'static str {
         // LandmarkLocationUnknown: Firestorm opens nothing for an unknown
         // region (the profile only opens once the name is resolved)
         (PlaceError::UnknownRegion, _) => {
-            "Le client n'a pas pu obtenir l'emplacement de la région. La région est peut-être temporairement indisponible ou a été supprimée."
+            aurora_i18n::tr!("ui-place-details-could-not-find-the-region-s-location-it-may")
         }
         (PlaceError::Remote(RemoteParcelError::NoCapability), false) => {
-            "Les informations du terrain ne seront pas disponibles avant le prochain redémarrage de la région."
+            aurora_i18n::tr!("ui-place-details-land-information-will-be-unavailable-until-the-next-region")
         }
         (PlaceError::Remote(RemoteParcelError::NoCapability), true) => {
-            "Les informations sur le lieu ne sont pas disponibles sans mise à jour du serveur."
+            aurora_i18n::tr!("ui-place-details-place-information-requires-a-server-update")
         }
         // HTTP_INTERNAL_ERROR
         (PlaceError::Remote(RemoteParcelError::Status(499)), false) => {
-            "Les informations de ce terrain sont indisponibles en raison de permissions restreintes, veuillez contacter le propriétaire du terrain."
+            aurora_i18n::tr!("ui-place-details-land-information-is-unavailable-because-of-restricted-permissions-contact")
         }
         (PlaceError::Remote(RemoteParcelError::Status(499)), true) => {
-            "Les informations sur ce lieu ne sont pas disponibles car l'accès y est restreint. Veuillez vérifier vos droits avec le propriétaire du terrain."
+            aurora_i18n::tr!("ui-place-details-place-information-is-unavailable-because-access-is-restricted-check")
         }
         // 404, other errors, a null parcel and an unreadable landmark
         // (Firestorm keeps loading for these two)
-        (_, false) => "Les informations de ce terrain sont indisponibles pour le moment, veuillez réessayer ultérieurement.",
-        (_, true) => "Aucune information sur ce lieu n'est disponible actuellement, veuillez réessayer ultérieurement.",
+        (_, false) => aurora_i18n::tr!("ui-place-details-land-information-is-currently-unavailable-please-try-again-later"),
+        (_, true) => aurora_i18n::tr!("ui-place-details-information-about-this-place-is-unavailable-please-try-again"),
     }
 }
 
@@ -223,17 +229,17 @@ pub fn teleport_action(place: &Place, world: &World) -> Option<PlaceAction> {
 /// STORM-411), menu_landmark.xml for a landmark.
 pub fn overflow_menu(ui: &mut egui::Ui, p: &Palette, world: &World, place: &Place) {
     let slurl = slurl_of(place, world);
-    if super::menu::item_if(ui, p, "link", "Copier la SLurl", slurl.is_some())
+    if super::menu::item_if(ui, p, "link", aurora_i18n::tr!("common-copy-slurl"), slurl.is_some())
         && let Some(s) = slurl
     {
         ui.ctx().copy_text(s);
     }
     if matches!(place.source, Source::Landmark { .. }) {
-        super::menu::todo(ui, p, "trash", "Supprimer");
-        super::menu::todo(ui, p, "star", "Créer un favori");
-        super::menu::todo(ui, p, "push-pin", "Ajouter à la barre des favoris");
+        super::menu::todo(ui, p, "trash", aurora_i18n::tr!("common-delete"));
+        super::menu::todo(ui, p, "star", aurora_i18n::tr!("common-create-favorite"));
+        super::menu::todo(ui, p, "push-pin", aurora_i18n::tr!("ui-place-details-add-to-favorites-bar"));
     } else {
-        super::menu::todo(ui, p, "star", "Créer un favori");
+        super::menu::todo(ui, p, "star", aurora_i18n::tr!("common-create-favorite"));
     }
 }
 
@@ -294,8 +300,8 @@ fn window_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, place: &Place, 
         if button(
             ui,
             p,
-            "Téléporter",
-            "Se téléporter à l'emplacement indiqué",
+            aurora_i18n::tr!("common-teleport-3"),
+            aurora_i18n::tr!("ui-place-details-teleport-to-the-specified-location"),
             global.is_some(),
             108.0,
         ) && let Some(a) = teleport_action(place, world)
@@ -305,8 +311,8 @@ fn window_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, place: &Place, 
         if button(
             ui,
             p,
-            "Carte",
-            "Voir l'emplacement correspondant sur la carte",
+            aurora_i18n::tr!("common-map"),
+            aurora_i18n::tr!("ui-place-details-show-the-corresponding-location-on-the-map"),
             global.is_some(),
             85.0,
         ) && let Some(g) = global
@@ -314,11 +320,22 @@ fn window_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, place: &Place, 
             actions.push(PlaceAction::ShowOnMap(g));
         }
         if matches!(place.source, Source::Landmark { .. }) {
-            ui.add_enabled_ui(false, |ui| button(ui, p, "Modifier", "Modifier ce repère", true, 70.0))
-                .response
-                .on_disabled_hover_text(super::menu::NOT_YET);
+            ui.add_enabled_ui(false, |ui| {
+                button(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("common-edit"),
+                    aurora_i18n::tr!("ui-place-details-edit-this-landmark"),
+                    true,
+                    70.0,
+                )
+            })
+            .response
+            .on_disabled_hover_text(super::menu::not_yet());
         }
-        widgets::icon_menu(ui, p, "list", "Afficher plus d'options", |ui| overflow_menu(ui, p, world, place));
+        widgets::icon_menu(ui, p, "list", aurora_i18n::tr!("ui-place-details-show-more-options"), |ui| {
+            overflow_menu(ui, p, world, place)
+        });
     });
 }
 
@@ -391,10 +408,24 @@ fn titles(data: &Shown, place: &Place) -> (String, Option<String>) {
             } else {
                 d.name.clone()
             },
-            (!d.sim_name.is_empty()).then(|| format!("Région : {}", region_name_pos(&d.sim_name, place.region_pos, d.global))),
+            (!d.sim_name.is_empty()).then(|| {
+                aurora_i18n::tr!(
+                    "ui-place-details-region-3",
+                    value0 = region_name_pos(&d.sim_name, place.region_pos, d.global).to_string()
+                )
+            }),
         ),
-        Shown::Loading => (LOADING.to_owned(), Some(format!("Région : {LOADING}"))),
-        Shown::Failed(_) => (NOT_AVAILABLE.to_owned(), Some(format!("Région : {NOT_AVAILABLE}"))),
+        Shown::Loading => (
+            loading().to_owned(),
+            Some(aurora_i18n::tr!("ui-place-details-region", LOADING = loading().to_string())),
+        ),
+        Shown::Failed(_) => (
+            NOT_AVAILABLE.to_owned(),
+            Some(aurora_i18n::tr!(
+                "ui-place-details-region-2",
+                NOT_AVAILABLE = NOT_AVAILABLE.to_string()
+            )),
+        ),
     }
 }
 
@@ -403,7 +434,7 @@ fn titles(data: &Shown, place: &Place) -> (String, Option<String>) {
 fn maturity_row(ui: &mut egui::Ui, p: &Palette, data: &Shown) {
     let (icon, text, known): (Option<&str>, &str, bool) = match data {
         Shown::Parcel(d) => (None, maturity(d.flags), true),
-        Shown::Loading => (Some("question"), LOADING, false),
+        Shown::Loading => (Some("question"), loading(), false),
         Shown::Failed(_) => (Some("question"), NOT_AVAILABLE, false),
     };
     let rtl = ui.layout().prefer_right_to_left();
@@ -455,7 +486,7 @@ fn description(ui: &mut egui::Ui, c: &mut Ctx, place: &Place, data: &Shown, heig
                         ui.label(RichText::new(NOT_AVAILABLE).size(12.5).color(p.muted));
                     }
                     Shown::Loading => {
-                        ui.label(RichText::new(LOADING).size(12.5).color(p.muted));
+                        ui.label(RichText::new(loading()).size(12.5).color(p.muted));
                     }
                     Shown::Failed(e) => {
                         ui.label(RichText::new(error_text(*e, landmark)).size(12.5).color(p.ink));
@@ -480,7 +511,7 @@ fn place_profile(ui: &mut egui::Ui, c: &mut Ctx, place: &Place, data: &Shown) {
                 ui.label(small(&area));
             }
             Shown::Loading => {
-                ui.label(small(LOADING));
+                ui.label(small(loading()));
             }
             Shown::Failed(_) => {
                 ui.label(small(NOT_AVAILABLE));
@@ -512,7 +543,7 @@ fn label(ui: &mut egui::Ui, p: &Palette, text: &str) {
 fn who(ui: &mut egui::Ui, c: &mut Ctx, id: Uuid, group: bool) {
     let p = c.p;
     if id.is_nil() {
-        ui.label(RichText::new("(public)").size(12.0).color(p.muted));
+        ui.label(RichText::new(aurora_i18n::tr!("status-public")).size(12.0).color(p.muted));
         return;
     }
     let name = if group {
@@ -561,11 +592,18 @@ fn landmark_info(ui: &mut egui::Ui, c: &mut Ctx, place: &Place, item: Uuid, data
     ui.horizontal(|ui| {
         // "Owner:" in Firestorm; named apart from the landmark's owner below,
         // on one line (wider than the label column)
-        ui.add(egui::Label::new(RichText::new("Propriétaire du terrain :").size(12.0).color(p.ink)).extend());
+        ui.add(
+            egui::Label::new(
+                RichText::new(aurora_i18n::tr!("ui-place-details-landowner"))
+                    .size(12.0)
+                    .color(p.ink),
+            )
+            .extend(),
+        );
         match data {
             Shown::Parcel(d) => who(ui, c, d.owner, d.flags & 0x4 != 0),
             Shown::Loading => {
-                ui.label(RichText::new(LOADING).size(12.0).color(p.muted));
+                ui.label(RichText::new(loading()).size(12.0).color(p.muted));
             }
             Shown::Failed(_) => {
                 ui.label(RichText::new(NOT_AVAILABLE).size(12.0).color(p.muted));
@@ -578,36 +616,36 @@ fn landmark_info(ui: &mut egui::Ui, c: &mut Ctx, place: &Place, item: Uuid, data
     // landmark_info_panel: the inventory item (displayItemInfo)
     let it = c.world.inventory.items.get(&item).cloned();
     ui.horizontal(|ui| {
-        label(ui, p, "Propriétaire :");
+        label(ui, p, aurora_i18n::tr!("common-owner-2"));
         match &it {
             Some(i) => who(ui, c, i.owner, false),
             None => {
-                ui.label(RichText::new(LOADING).size(12.0).color(p.muted));
+                ui.label(RichText::new(loading()).size(12.0).color(p.muted));
             }
         }
     });
     ui.horizontal(|ui| {
-        label(ui, p, "Créateur :");
+        label(ui, p, aurora_i18n::tr!("common-creator-2"));
         match &it {
             Some(i) if !i.creator.is_nil() => who(ui, c, i.creator, false),
             Some(_) => {
-                ui.label(RichText::new("(inconnu)").size(12.0).color(p.muted));
+                ui.label(RichText::new(aurora_i18n::tr!("status-unknown")).size(12.0).color(p.muted));
             }
             None => {
-                ui.label(RichText::new(LOADING).size(12.0).color(p.muted));
+                ui.label(RichText::new(loading()).size(12.0).color(p.muted));
             }
         }
     });
     ui.horizontal(|ui| {
-        label(ui, p, "Créé le :");
-        let text = it.as_ref().map_or(LOADING.to_owned(), |i| acquired_date(i.created_at));
+        label(ui, p, aurora_i18n::tr!("ui-place-details-created-on"));
+        let text = it.as_ref().map_or(loading().to_owned(), |i| acquired_date(i.created_at));
         ui.label(RichText::new(text).size(12.0).color(p.ink));
     });
     ui.horizontal(|ui| {
-        label(ui, p, "Infos :");
+        label(ui, p, aurora_i18n::tr!("ui-place-details-info"));
         let text = match data {
             Shown::Parcel(d) => landmark_information(d.actual_area, d.dwell),
-            Shown::Loading => LOADING.to_owned(),
+            Shown::Loading => loading().to_owned(),
             Shown::Failed(_) => NOT_AVAILABLE.to_owned(),
         };
         ui.label(RichText::new(text).size(12.0).color(p.ink));
@@ -615,11 +653,11 @@ fn landmark_info(ui: &mut egui::Ui, c: &mut Ctx, place: &Place, item: Uuid, data
     ui.add_space(6.0);
     // landmark_edit_panel, read only until « Modifier » (not ported yet)
     ui.horizontal(|ui| {
-        label(ui, p, "Titre :");
+        label(ui, p, aurora_i18n::tr!("ui-place-details-title"));
         let mut name = it.as_ref().map(|i| i.name.clone()).unwrap_or_default();
         ui.add_enabled(false, egui::TextEdit::singleline(&mut name).desired_width(ui.available_width()));
     });
-    ui.label(RichText::new("Remarques :").size(12.0).color(p.ink));
+    ui.label(RichText::new(aurora_i18n::tr!("ui-place-details-notes")).size(12.0).color(p.ink));
     let mut notes = it.as_ref().map(|i| i.desc.clone()).unwrap_or_default();
     ui.add_enabled(
         false,
@@ -631,10 +669,17 @@ fn landmark_info(ui: &mut egui::Ui, c: &mut Ctx, place: &Place, item: Uuid, data
     ui.add_space(4.0);
     // setCanEdit: an item of our inventory we may modify
     ui.add_enabled_ui(false, |ui| {
-        button(ui, p, "Modifier", "Modifier les informations relatives au repère", true, 100.0)
+        button(
+            ui,
+            p,
+            aurora_i18n::tr!("common-edit"),
+            aurora_i18n::tr!("ui-place-details-edit-landmark-information"),
+            true,
+            100.0,
+        )
     })
     .response
-    .on_disabled_hover_text(super::menu::NOT_YET);
+    .on_disabled_hover_text(super::menu::not_yet());
 }
 
 #[cfg(test)]
@@ -644,12 +689,12 @@ mod tests {
 
     #[test]
     fn maturity_from_flags() {
-        assert_eq!(maturity(0), "Général");
-        assert_eq!(maturity(0x1), "Modéré");
-        assert_eq!(maturity(0x2), "Adulte");
-        assert_eq!(maturity(0x3), "Adulte");
+        assert_eq!(maturity(0), aurora_i18n::tr!("common-general"));
+        assert_eq!(maturity(0x1), aurora_i18n::tr!("common-moderate"));
+        assert_eq!(maturity(0x2), aurora_i18n::tr!("common-adult"));
+        assert_eq!(maturity(0x3), aurora_i18n::tr!("common-adult"));
         // 0x4 is the group-owned flag, not a rating
-        assert_eq!(maturity(0x4), "Général");
+        assert_eq!(maturity(0x4), aurora_i18n::tr!("common-general"));
     }
 
     #[test]
@@ -667,7 +712,10 @@ mod tests {
     fn area_and_traffic() {
         assert_eq!(information(1024, 37.9), ("1024 m² |".to_owned(), "37".to_owned()));
         assert_eq!(information(0, 0.0).1, "0");
-        assert_eq!(landmark_information(12288, 494.6), "Trafic : 494 Surface : 12288 m²");
+        assert_eq!(
+            landmark_information(12288, 494.6),
+            aurora_i18n::tr!("ui-place-details-traffic-area-m2", value0 = "494", area = "12288").as_str()
+        );
     }
 
     #[test]
@@ -675,19 +723,44 @@ mod tests {
         use aurora_net::profile::days_from_civil;
         // 2024-04-02 14:42:28 UTC = 07:42:28 PDT
         let t = days_from_civil(2024, 4, 2) * 86_400 + 14 * 3600 + 42 * 60 + 28;
-        assert_eq!(acquired_date(t), "mar. 02 avr. 2024 07:42:28");
-        assert_eq!(acquired_date(0), "(inconnu)");
+        assert_eq!(
+            acquired_date(t),
+            if aurora_i18n::language() == "fr" {
+                "mar. 02 avr. 2024 07:42:28"
+            } else {
+                "Tue 02 Apr 2024 07:42:28"
+            }
+        );
+        assert_eq!(acquired_date(0), aurora_i18n::tr!("status-unknown"));
     }
 
     #[test]
     fn error_texts() {
         let e = |r| error_text(PlaceError::Remote(r), false);
-        assert!(e(RemoteParcelError::NoCapability).contains("prochain redémarrage"));
-        assert!(e(RemoteParcelError::Status(499)).contains("permissions restreintes"));
-        assert!(e(RemoteParcelError::Status(404)).contains("réessayer ultérieurement"));
+        assert!(
+            e(RemoteParcelError::NoCapability)
+                == aurora_i18n::tr!("ui-place-details-land-information-will-be-unavailable-until-the-next-region")
+        );
+        assert!(
+            e(RemoteParcelError::Status(499))
+                == aurora_i18n::tr!("ui-place-details-land-information-is-unavailable-because-of-restricted-permissions-contact")
+        );
+        assert!(
+            e(RemoteParcelError::Status(404))
+                == aurora_i18n::tr!("ui-place-details-land-information-is-currently-unavailable-please-try-again-later")
+        );
         assert_eq!(e(RemoteParcelError::Failed), e(RemoteParcelError::NoParcel));
-        assert!(error_text(PlaceError::UnknownRegion, false).contains("emplacement de la région"));
-        assert!(error_text(PlaceError::LandmarkUnavailable, true).starts_with("Aucune information"));
-        assert!(error_text(PlaceError::Remote(RemoteParcelError::Status(499)), true).contains("accès y est restreint"));
+        assert!(
+            error_text(PlaceError::UnknownRegion, false)
+                == aurora_i18n::tr!("ui-place-details-could-not-find-the-region-s-location-it-may")
+        );
+        assert!(
+            error_text(PlaceError::LandmarkUnavailable, true)
+                == aurora_i18n::tr!("ui-place-details-information-about-this-place-is-unavailable-please-try-again")
+        );
+        assert!(
+            error_text(PlaceError::Remote(RemoteParcelError::Status(499)), true)
+                == aurora_i18n::tr!("ui-place-details-place-information-is-unavailable-because-access-is-restricted-check")
+        );
     }
 }

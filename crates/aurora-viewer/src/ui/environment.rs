@@ -87,81 +87,121 @@ impl EnvironmentUi {
         let screen = ctx.content_rect();
         // left of the notification toasts (top right)
         let pos = egui::pos2(screen.right() - 740.0, screen.top() + 90.0);
-        Floater::new("environment_selector", "Environnement", pos, Vec2::new(370.0, 230.0))
-            .fixed()
-            .help("Choisissez un ciel, une eau ou un cycle du jour de votre inventaire ou de la bibliothèque : ils ne s'appliquent qu'à votre vue (environnement local). « Environnement partagé » revient à celui de la région ou de la parcelle.")
-            .show(ctx, p, open, |ui| {
-                ui.spacing_mut().item_spacing = Vec2::new(4.0, 6.0);
-                let rows = [
-                    (SettingsKind::Sky, "Env. ciel", "Paramètres atmosphériques", view.sky),
-                    (SettingsKind::Water, "Env. eau", "Paramètres aquatiques", view.water),
-                    (SettingsKind::Day, "Jour/Nuit", "Paramètres du cycle journalier", view.day),
-                ];
-                for (kind, label, tip, shown) in rows {
-                    ui.horizontal(|ui| {
-                        let (rect, resp) = ui.allocate_exact_size(Vec2::new(LABEL_W, 20.0), egui::Sense::hover());
-                        ui.painter()
-                            .text(rect.left_center(), egui::Align2::LEFT_CENTER, label, egui::FontId::proportional(12.5), p.ink);
-                        resp.on_hover_text(tip);
-                        if let Some(a) = self.list_row(ui, p, kind, shown) {
-                            out.push(a);
-                        }
-                    });
-                }
-                ui.add_space(2.0);
+        Floater::new(
+            "environment_selector",
+            aurora_i18n::tr!("common-environment"),
+            pos,
+            Vec2::new(370.0, 230.0),
+        )
+        .fixed()
+        .help(aurora_i18n::tr!("ui-environment-choose-a-sky-water-or-day-cycle-from-your"))
+        .show(ctx, p, open, |ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(4.0, 6.0);
+            let rows = [
+                (
+                    SettingsKind::Sky,
+                    aurora_i18n::tr!("ui-environment-sky-environment"),
+                    aurora_i18n::tr!("ui-environment-sky-settings"),
+                    view.sky,
+                ),
+                (
+                    SettingsKind::Water,
+                    aurora_i18n::tr!("ui-environment-water-environment"),
+                    aurora_i18n::tr!("ui-environment-water-settings"),
+                    view.water,
+                ),
+                (
+                    SettingsKind::Day,
+                    aurora_i18n::tr!("extra-day-night"),
+                    aurora_i18n::tr!("ui-environment-day-cycle-settings"),
+                    view.day,
+                ),
+            ];
+            for (kind, label, tip, shown) in rows {
                 ui.horizontal(|ui| {
-                    ui.add_space(LABEL_W + 4.0);
-                    if widgets::flat_button(ui, p, "Éclairage personnel…")
-                        .on_hover_text("Ajuster le ciel actuel pour votre vue uniquement")
-                        .clicked()
-                    {
-                        *lighting = !*lighting;
-                    }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if widgets::icon_button(ui, p, "arrow-counter-clockwise", "Revenir à l'environnement partagé", true) {
-                            out.push(EnvAction::Shared);
-                        }
-                    });
-                });
-                ui.separator();
-                ui.horizontal(|ui| {
-                    let (rect, _) = ui.allocate_exact_size(Vec2::new(LABEL_W, 20.0), egui::Sense::hover());
+                    let (rect, resp) = ui.allocate_exact_size(Vec2::new(LABEL_W, 20.0), egui::Sense::hover());
                     ui.painter().text(
                         rect.left_center(),
                         egui::Align2::LEFT_CENTER,
-                        "Heure",
+                        label,
                         egui::FontId::proportional(12.5),
                         p.ink,
                     );
-                    for (i, name) in ["Lever", "Midi", "Coucher", "Minuit"].iter().enumerate() {
-                        let preset = i as u8 + 1;
-                        let on = time_of_day == preset;
-                        let text = RichText::new(*name).size(12.0).color(if on { p.ink } else { p.muted });
-                        let b = egui::Button::new(text)
-                            .fill(if on { p.violet } else { p.raised })
-                            .corner_radius(egui::CornerRadius::same(3))
-                            .min_size(Vec2::new(0.0, 20.0));
-                        if ui
-                            .add(b)
-                            .on_hover_text(super::bars::TIME_OF_DAY[preset as usize])
-                            .clicked()
-                        {
-                            // FSRepeatedEnvTogglesShared is off by default: the
-                            // same preset again stays
-                            out.push(EnvAction::Preset(preset));
-                        }
+                    resp.on_hover_text(tip);
+                    if let Some(a) = self.list_row(ui, p, kind, shown) {
+                        out.push(a);
                     }
                 });
-                let status = if self.scan_left > 0 {
-                    format!("Chargement de l'inventaire… ({} dossiers)", self.scan_left)
-                } else if loading {
-                    "Chargement du réglage…".to_owned()
-                } else {
-                    let c = &self.catalog;
-                    format!("{} ciels · {} eaux · {} cycles du jour", c.sky.len(), c.water.len(), c.day.len())
-                };
-                ui.label(RichText::new(status).size(11.0).color(p.muted_dim));
+            }
+            ui.add_space(2.0);
+            ui.horizontal(|ui| {
+                ui.add_space(LABEL_W + 4.0);
+                if widgets::flat_button(ui, p, aurora_i18n::tr!("common-personal-lighting"))
+                    .on_hover_text(aurora_i18n::tr!("ui-environment-adjust-the-current-sky-for-your-view-only"))
+                    .clicked()
+                {
+                    *lighting = !*lighting;
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if widgets::icon_button(
+                        ui,
+                        p,
+                        "arrow-counter-clockwise",
+                        aurora_i18n::tr!("ui-environment-return-to-shared-environment"),
+                        true,
+                    ) {
+                        out.push(EnvAction::Shared);
+                    }
+                });
             });
+            ui.separator();
+            ui.horizontal(|ui| {
+                let (rect, _) = ui.allocate_exact_size(Vec2::new(LABEL_W, 20.0), egui::Sense::hover());
+                ui.painter().text(
+                    rect.left_center(),
+                    egui::Align2::LEFT_CENTER,
+                    aurora_i18n::tr!("ui-environment-time"),
+                    egui::FontId::proportional(12.5),
+                    p.ink,
+                );
+                for (i, name) in [
+                    aurora_i18n::tr!("ui-environment-sunrise"),
+                    aurora_i18n::tr!("common-midday"),
+                    aurora_i18n::tr!("ui-environment-lie-down"),
+                    aurora_i18n::tr!("common-midnight"),
+                ]
+                .iter()
+                .enumerate()
+                {
+                    let preset = i as u8 + 1;
+                    let on = time_of_day == preset;
+                    let text = RichText::new(*name).size(12.0).color(if on { p.ink } else { p.muted });
+                    let b = egui::Button::new(text)
+                        .fill(if on { p.violet } else { p.raised })
+                        .corner_radius(egui::CornerRadius::same(3))
+                        .min_size(Vec2::new(0.0, 20.0));
+                    if ui.add(b).on_hover_text(super::bars::time_of_day()[preset as usize]).clicked() {
+                        // FSRepeatedEnvTogglesShared is off by default: the
+                        // same preset again stays
+                        out.push(EnvAction::Preset(preset));
+                    }
+                }
+            });
+            let status = if self.scan_left > 0 {
+                aurora_i18n::tr!("ui-environment-loading-inventory-folders", value0 = format!("{}", self.scan_left))
+            } else if loading {
+                aurora_i18n::tr!("ui-environment-loading-settings").to_owned()
+            } else {
+                let c = &self.catalog;
+                aurora_i18n::tr!(
+                    "ui-environment-skies-waters-day-cycles",
+                    value0 = format!("{}", c.sky.len()),
+                    value1 = format!("{}", c.water.len()),
+                    value2 = format!("{}", c.day.len())
+                )
+            };
+            ui.label(RichText::new(status).size(11.0).color(p.muted_dim));
+        });
         out
     }
 
@@ -175,23 +215,23 @@ impl EnvironmentUi {
         }
         let list = self.catalog.list(kind);
         let second = if kind == SettingsKind::Day {
-            "Rien"
+            aurora_i18n::tr!("common-nothing")
         } else {
-            "Basé sur le cycle du jour"
+            aurora_i18n::tr!("ui-environment-based-on-day-cycle")
         };
         let text = match shown {
-            Shown::Shared => "Environnement partagé".to_owned(),
+            Shown::Shared => aurora_i18n::tr!("ui-environment-shared-environment").to_owned(),
             Shown::DayBased => second.to_owned(),
             Shown::Item(id) => self
                 .catalog
                 .name_of(kind, id)
-                .map_or_else(|| "Réglage de l'inventaire".to_owned(), str::to_owned),
-            Shown::Preset(n) => super::bars::TIME_OF_DAY
+                .map_or_else(|| aurora_i18n::tr!("ui-environment-inventory-settings").to_owned(), str::to_owned),
+            Shown::Preset(n) => super::bars::time_of_day()
                 .get(n as usize)
                 .copied()
-                .unwrap_or("Heure du jour")
+                .unwrap_or(aurora_i18n::tr!("common-time-of-day"))
                 .to_owned(),
-            Shown::Personal => "Éclairage personnel".to_owned(),
+            Shown::Personal => aurora_i18n::tr!("ui-environment-personal-lighting").to_owned(),
         };
         let mut picked = None;
         egui::ComboBox::from_id_salt(salt)
@@ -202,7 +242,10 @@ impl EnvironmentUi {
             .show_ui(ui, |ui| {
                 // the two fixed entries show the state; they cannot be picked
                 // (setDefaultPresetsEnabled(false))
-                for (i, label) in ["Environnement partagé", second].into_iter().enumerate() {
+                for (i, label) in [aurora_i18n::tr!("ui-environment-shared-environment"), second]
+                    .into_iter()
+                    .enumerate()
+                {
                     let on = env_select::shown_index(list, shown) == i && !matches!(shown, Shown::Preset(_) | Shown::Personal);
                     ui.add_enabled(false, egui::Button::selectable(on, RichText::new(label).size(12.0)));
                 }
@@ -214,10 +257,10 @@ impl EnvironmentUi {
                     }
                 }
             });
-        if widgets::icon_button(ui, p, "caret-left", "Précédent", !list.is_empty()) {
+        if widgets::icon_button(ui, p, "caret-left", aurora_i18n::tr!("common-previous"), !list.is_empty()) {
             picked = env_select::step(list, env_select::shown_index(list, shown), false);
         }
-        if widgets::icon_button(ui, p, "caret-right", "Suivant", !list.is_empty()) {
+        if widgets::icon_button(ui, p, "caret-right", aurora_i18n::tr!("common-next"), !list.is_empty()) {
             picked = env_select::step(list, env_select::shown_index(list, shown), true);
         }
         picked.map(|id| EnvAction::Pick(kind, id))
@@ -230,103 +273,168 @@ impl EnvironmentUi {
         let screen = ctx.content_rect();
         let pos = egui::pos2(screen.right() - 1150.0, screen.top() + 90.0);
         let was_open = *open;
-        Floater::new("personal_lighting", "Éclairage personnel", pos, Vec2::new(360.0, 560.0))
-            .fixed()
-            .help("Ajuste le ciel pour votre vue uniquement ; les autres ne voient pas ces changements.")
-            .show(ctx, p, open, |ui| {
-                let Some(mut s) = eep.personal_sky() else {
-                    ui.label(RichText::new("Aucun ciel local à modifier.").size(12.0).color(p.muted));
-                    return;
-                };
-                let before = s;
-                ui.spacing_mut().item_spacing = Vec2::new(6.0, 5.0);
-                ui.spacing_mut().slider_width = 160.0;
-                section(ui, p, "Ciel");
-                egui::Grid::new("personal_lighting_colors")
-                    .num_columns(4)
-                    .spacing(Vec2::new(8.0, 4.0))
-                    .show(ui, |ui| {
-                        color(ui, p, "Ambiance", &mut s.ambient, SLIDER_SCALE_SUN_AMBIENT);
-                        color(ui, p, "Soleil", &mut s.sunlight, SLIDER_SCALE_SUN_AMBIENT);
-                        ui.end_row();
-                        color(ui, p, "Bleu horizon", &mut s.blue_horizon, SLIDER_SCALE_BLUE_HORIZON_DENSITY);
-                        color(ui, p, "Densité bleu", &mut s.blue_density, SLIDER_SCALE_BLUE_HORIZON_DENSITY);
-                        ui.end_row();
-                        color(ui, p, "Nuages", &mut s.cloud_color, 1.0);
-                        ui.end_row();
-                    });
-                slider(ui, p, "Horizon de la brume", &mut s.haze_horizon, 0.0..=5.0);
-                slider(ui, p, "Densité de la brume", &mut s.haze_density, 0.0..=5.0);
-                slider(ui, p, "Couverture nuageuse", &mut s.cloud_shadow, 0.0..=1.0);
-                slider(ui, p, "Taille des nuages", &mut s.cloud_scale, 0.01..=3.0);
-                let mut ambiance = s.probe_ambiance;
-                if slider(ui, p, "Ambiance de la sonde", &mut ambiance, 0.0..=10.0)
-                    .on_hover_text("L'intensité de l'éclairage indirect basé sur l'environnement. À zéro, l'échelle HDR devient Luminosité")
-                    .changed()
-                {
-                    // setReflectionProbeAmbiance: the sky is no longer « classic »
-                    s.probe_ambiance = ambiance;
-                    s.can_auto_adjust = false;
-                }
-                // updateGammaLabel
-                let hdr = s.probe_ambiance != 0.0;
-                let r = slider(ui, p, if hdr { "Échelle HDR" } else { "Luminosité" }, &mut s.gamma, 0.0..=20.0);
-                if hdr {
-                    r.on_hover_text("Intensité des effets d'éclairage tels que les ciels lumineux réalistes et l'exposition dynamique. 1.0 est la valeur par défaut, 0 correspond à la désactivation, les valeurs entre 0 et 1 mélangent la lumière ambiante et la lumière HDR.");
-                }
-                section(ui, p, "Soleil");
-                let (mut az, mut el) = azimuth_elevation(s.sun_rotation);
-                let a = slider(ui, p, "Azimut", &mut az, 0.0..=359.99).changed();
-                let e = slider(ui, p, "Élévation", &mut el, -90.0..=90.0).changed();
-                if a || e {
-                    s.sun_rotation = rotation_from(az, el);
-                }
-                slider(ui, p, "Échelle", &mut s.sun_scale, 0.25..=20.0);
-                // glow: 40..0.2 shown as 0..1.99 (size), focus scaled by -5
-                let mut focus = s.glow.z / SLIDER_SCALE_GLOW_B;
-                let mut size = 2.0 - s.glow.x / SLIDER_SCALE_GLOW_R;
-                let f = slider(ui, p, "Netteté de l'éclat", &mut focus, -2.0..=2.0).changed();
-                let z = slider(ui, p, "Taille de l'éclat", &mut size, 0.0..=1.99).changed();
-                if f || z {
-                    s.glow = Vec3::new((2.0 - size) * SLIDER_SCALE_GLOW_R, 0.0, focus * SLIDER_SCALE_GLOW_B);
-                }
-                slider(ui, p, "Brillance des étoiles", &mut s.star_brightness, 0.0..=500.0);
-                section(ui, p, "Lune");
-                let (mut az, mut el) = azimuth_elevation(s.moon_rotation);
-                let a = slider(ui, p, "Azimut", &mut az, 0.0..=359.99).changed();
-                let e = slider(ui, p, "Élévation", &mut el, -90.0..=90.0).changed();
-                if a || e {
-                    s.moon_rotation = rotation_from(az, el);
-                }
-                ui.add_space(4.0);
-                ui.horizontal(|ui| {
-                    if self.confirm_reset {
-                        ui.label(
-                            RichText::new("Revenir à l'environnement partagé ?")
-                                .size(12.0)
-                                .color(p.ink),
-                        );
-                        if widgets::flat_button(ui, p, "Oui").clicked() {
-                            self.confirm_reset = false;
-                            out = Some(EnvAction::Shared);
-                        }
-                        if widgets::flat_button(ui, p, "Non").clicked() {
-                            self.confirm_reset = false;
-                        }
-                    } else if widgets::flat_button(ui, p, "Réinitialiser")
-                        .on_hover_text("Fermer et repasser à l'environnement partagé")
-                        .clicked()
-                    {
-                        self.confirm_reset = true;
-                    }
+        Floater::new(
+            "personal_lighting",
+            aurora_i18n::tr!("ui-environment-personal-lighting"),
+            pos,
+            Vec2::new(360.0, 560.0),
+        )
+        .fixed()
+        .help(aurora_i18n::tr!("ui-environment-adjusts-the-sky-for-your-view-only-other-people"))
+        .show(ctx, p, open, |ui| {
+            let Some(mut s) = eep.personal_sky() else {
+                ui.label(
+                    RichText::new(aurora_i18n::tr!("ui-environment-no-local-sky-to-edit"))
+                        .size(12.0)
+                        .color(p.muted),
+                );
+                return;
+            };
+            let before = s;
+            ui.spacing_mut().item_spacing = Vec2::new(6.0, 5.0);
+            ui.spacing_mut().slider_width = 160.0;
+            section(ui, p, aurora_i18n::tr!("ui-environment-sky"));
+            egui::Grid::new("personal_lighting_colors")
+                .num_columns(4)
+                .spacing(Vec2::new(8.0, 4.0))
+                .show(ui, |ui| {
+                    color(ui, p, aurora_i18n::tr!("common-ambient"), &mut s.ambient, SLIDER_SCALE_SUN_AMBIENT);
+                    color(
+                        ui,
+                        p,
+                        aurora_i18n::tr!("ui-environment-sun"),
+                        &mut s.sunlight,
+                        SLIDER_SCALE_SUN_AMBIENT,
+                    );
+                    ui.end_row();
+                    color(
+                        ui,
+                        p,
+                        aurora_i18n::tr!("ui-environment-blue-horizon"),
+                        &mut s.blue_horizon,
+                        SLIDER_SCALE_BLUE_HORIZON_DENSITY,
+                    );
+                    color(
+                        ui,
+                        p,
+                        aurora_i18n::tr!("ui-environment-blue-density"),
+                        &mut s.blue_density,
+                        SLIDER_SCALE_BLUE_HORIZON_DENSITY,
+                    );
+                    ui.end_row();
+                    color(ui, p, aurora_i18n::tr!("ui-environment-clouds"), &mut s.cloud_color, 1.0);
+                    ui.end_row();
                 });
-                if !same_sky(&before, &s) {
-                    eep.edit_personal(|sky| {
-                        *sky = s;
-                        true
-                    });
+            slider(
+                ui,
+                p,
+                aurora_i18n::tr!("ui-environment-haze-horizon"),
+                &mut s.haze_horizon,
+                0.0..=5.0,
+            );
+            slider(
+                ui,
+                p,
+                aurora_i18n::tr!("ui-environment-haze-density"),
+                &mut s.haze_density,
+                0.0..=5.0,
+            );
+            slider(
+                ui,
+                p,
+                aurora_i18n::tr!("ui-environment-cloud-coverage"),
+                &mut s.cloud_shadow,
+                0.0..=1.0,
+            );
+            slider(ui, p, aurora_i18n::tr!("ui-environment-cloud-size"), &mut s.cloud_scale, 0.01..=3.0);
+            let mut ambiance = s.probe_ambiance;
+            if slider(ui, p, aurora_i18n::tr!("ui-environment-probe-ambiance"), &mut ambiance, 0.0..=10.0)
+                .on_hover_text(aurora_i18n::tr!(
+                    "ui-environment-intensity-of-indirect-environment-lighting-at-zero-hdr-scale"
+                ))
+                .changed()
+            {
+                // setReflectionProbeAmbiance: the sky is no longer « classic »
+                s.probe_ambiance = ambiance;
+                s.can_auto_adjust = false;
+            }
+            // updateGammaLabel
+            let hdr = s.probe_ambiance != 0.0;
+            let r = slider(
+                ui,
+                p,
+                if hdr {
+                    aurora_i18n::tr!("ui-environment-hdr-scale")
+                } else {
+                    aurora_i18n::tr!("common-brightness")
+                },
+                &mut s.gamma,
+                0.0..=20.0,
+            );
+            if hdr {
+                r.on_hover_text(aurora_i18n::tr!(
+                    "ui-environment-intensity-of-lighting-effects-such-as-realistic-bright-skies"
+                ));
+            }
+            section(ui, p, aurora_i18n::tr!("ui-environment-sun"));
+            let (mut az, mut el) = azimuth_elevation(s.sun_rotation);
+            let a = slider(ui, p, aurora_i18n::tr!("ui-environment-azimuth"), &mut az, 0.0..=359.99).changed();
+            let e = slider(ui, p, aurora_i18n::tr!("ui-environment-elevation"), &mut el, -90.0..=90.0).changed();
+            if a || e {
+                s.sun_rotation = rotation_from(az, el);
+            }
+            slider(ui, p, aurora_i18n::tr!("common-scale"), &mut s.sun_scale, 0.25..=20.0);
+            // glow: 40..0.2 shown as 0..1.99 (size), focus scaled by -5
+            let mut focus = s.glow.z / SLIDER_SCALE_GLOW_B;
+            let mut size = 2.0 - s.glow.x / SLIDER_SCALE_GLOW_R;
+            let f = slider(ui, p, aurora_i18n::tr!("ui-environment-glare-sharpness"), &mut focus, -2.0..=2.0).changed();
+            let z = slider(ui, p, aurora_i18n::tr!("ui-environment-glow-size"), &mut size, 0.0..=1.99).changed();
+            if f || z {
+                s.glow = Vec3::new((2.0 - size) * SLIDER_SCALE_GLOW_R, 0.0, focus * SLIDER_SCALE_GLOW_B);
+            }
+            slider(
+                ui,
+                p,
+                aurora_i18n::tr!("ui-environment-star-brightness"),
+                &mut s.star_brightness,
+                0.0..=500.0,
+            );
+            section(ui, p, aurora_i18n::tr!("ui-environment-moon"));
+            let (mut az, mut el) = azimuth_elevation(s.moon_rotation);
+            let a = slider(ui, p, aurora_i18n::tr!("ui-environment-azimuth"), &mut az, 0.0..=359.99).changed();
+            let e = slider(ui, p, aurora_i18n::tr!("ui-environment-elevation"), &mut el, -90.0..=90.0).changed();
+            if a || e {
+                s.moon_rotation = rotation_from(az, el);
+            }
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                if self.confirm_reset {
+                    ui.label(
+                        RichText::new(aurora_i18n::tr!("ui-environment-return-to-shared-environment-2"))
+                            .size(12.0)
+                            .color(p.ink),
+                    );
+                    if widgets::flat_button(ui, p, aurora_i18n::tr!("common-yes")).clicked() {
+                        self.confirm_reset = false;
+                        out = Some(EnvAction::Shared);
+                    }
+                    if widgets::flat_button(ui, p, aurora_i18n::tr!("common-no")).clicked() {
+                        self.confirm_reset = false;
+                    }
+                } else if widgets::flat_button(ui, p, aurora_i18n::tr!("common-reset"))
+                    .on_hover_text(aurora_i18n::tr!("ui-environment-close-and-return-to-shared-environment"))
+                    .clicked()
+                {
+                    self.confirm_reset = true;
                 }
             });
+            if !same_sky(&before, &s) {
+                eep.edit_personal(|sky| {
+                    *sky = s;
+                    true
+                });
+            }
+        });
         if out.is_some() {
             *open = false;
         }
@@ -352,7 +460,13 @@ fn slider(ui: &mut egui::Ui, p: &Palette, label: &str, v: &mut f32, range: std::
             egui::FontId::proportional(12.0),
             p.ink,
         );
-        ui.add(egui::Slider::new(v, range).step_by(0.01).max_decimals(2).trailing_fill(true))
+        ui.add(
+            egui::Slider::new(v, range)
+                .custom_parser(aurora_i18n::parse_number)
+                .step_by(0.01)
+                .max_decimals(2)
+                .trailing_fill(true),
+        )
     })
     .inner
 }

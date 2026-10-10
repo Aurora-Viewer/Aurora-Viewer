@@ -245,7 +245,7 @@ impl App {
                     .and_then(|i| self.world.objects.get(linkset_root(&self.world, i)))
                     .map_or(id, |r| r.full_id);
                 let name = if name.is_empty() {
-                    format!("Objet {}", &root.to_string()[..8])
+                    aurora_i18n::tr!("common-object-2", value0 = root.to_string()[..8].to_string())
                 } else {
                     name
                 };
@@ -332,9 +332,9 @@ impl App {
             CtxAction::OfferTeleport(id) => {
                 self.send(NetCommand::OfferTeleport {
                     to: id,
-                    message: "Rejoins-moi !".into(),
+                    message: aurora_i18n::tr!("common-join-me").into(),
                 });
-                self.world.system_message("Offre de téléportation envoyée.");
+                self.world.system_message(aurora_i18n::tr!("common-teleport-offer-sent"));
             }
             CtxAction::OpenPeople(tab) => {
                 self.panels.people = true;

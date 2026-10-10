@@ -83,28 +83,49 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, media: &mut MediaMa
                         ui.spacing_mut().item_spacing.x = 3.0;
                         let time_media = m.is_time_media();
                         if !time_media {
-                            if button(ui, p, icons, "arrow-left", "Précédent", m.can_back && can_control) {
+                            if button(
+                                ui,
+                                p,
+                                icons,
+                                "arrow-left",
+                                aurora_i18n::tr!("common-previous"),
+                                m.can_back && can_control,
+                            ) {
                                 m.back();
                             }
-                            if button(ui, p, icons, "arrow-right", "Suivant", m.can_forward && can_control) {
+                            if button(
+                                ui,
+                                p,
+                                icons,
+                                "arrow-right",
+                                aurora_i18n::tr!("common-next"),
+                                m.can_forward && can_control,
+                            ) {
                                 m.forward();
                             }
                             let has_home = m.entry.as_ref().is_some_and(|e| !e.home_url.trim().is_empty());
-                            if button(ui, p, icons, "house", "Page d'accueil", has_home && can_control) {
+                            if button(
+                                ui,
+                                p,
+                                icons,
+                                "house",
+                                aurora_i18n::tr!("ui-media-home-page"),
+                                has_home && can_control,
+                            ) {
                                 m.home();
                             }
                             if m.status == MediaStatus::Loading {
-                                if button(ui, p, icons, "x", "Arrêter le chargement", true) {
+                                if button(ui, p, icons, "x", aurora_i18n::tr!("ui-media-stop-loading"), true) {
                                     m.stop_loading();
                                 }
-                            } else if button(ui, p, icons, "arrows-clockwise", "Recharger", m.is_loaded()) {
+                            } else if button(ui, p, icons, "arrows-clockwise", aurora_i18n::tr!("ui-media-reload"), m.is_loaded()) {
                                 m.reload();
                             }
                         } else if m.paused {
-                            if button(ui, p, icons, "play", "Lecture", true) {
+                            if button(ui, p, icons, "play", aurora_i18n::tr!("ui-media-playback"), true) {
                                 m.play();
                             }
-                        } else if button(ui, p, icons, "pause", "Pause", true) {
+                        } else if button(ui, p, icons, "pause", aurora_i18n::tr!("ui-media-pause"), true) {
                             m.pause();
                         }
                         // address bar
@@ -132,10 +153,10 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, media: &mut MediaMa
                             );
                         }
                         let status = match m.status {
-                            MediaStatus::Loading => "Chargement…",
-                            MediaStatus::Error => "Erreur",
-                            _ if !m.is_loaded() && m.failed.is_some() => "Indisponible",
-                            _ if !m.is_loaded() => "En attente",
+                            MediaStatus::Loading => aurora_i18n::tr!("common-loading-2"),
+                            MediaStatus::Error => aurora_i18n::tr!("ui-media-error"),
+                            _ if !m.is_loaded() && m.failed.is_some() => aurora_i18n::tr!("ui-media-unavailable"),
+                            _ if !m.is_loaded() => aurora_i18n::tr!("ui-media-pending"),
                             _ => "",
                         };
                         if !status.is_empty() {
@@ -147,19 +168,35 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, media: &mut MediaMa
                         } else {
                             "speaker-high"
                         };
-                        if button(ui, p, icons, icon, if m.muted { "Rétablir le son" } else { "Couper le son" }, true) {
+                        if button(
+                            ui,
+                            p,
+                            icons,
+                            icon,
+                            if m.muted {
+                                aurora_i18n::tr!("common-unmute")
+                            } else {
+                                aurora_i18n::tr!("common-mute")
+                            },
+                            true,
+                        ) {
                             m.muted = !m.muted;
                         }
                         ui.spacing_mut().slider_width = 70.0;
-                        ui.add(egui::Slider::new(&mut m.volume, 0.0..=1.0).trailing_fill(true).show_value(false))
-                            .on_hover_text("Volume de ce média");
-                        if button(ui, p, icons, "x", "Fermer (Échap)", true) {
+                        ui.add(
+                            egui::Slider::new(&mut m.volume, 0.0..=1.0)
+                                .custom_parser(aurora_i18n::parse_number)
+                                .trailing_fill(true)
+                                .show_value(false),
+                        )
+                        .on_hover_text(aurora_i18n::tr!("ui-media-volume-for-this-media"));
+                        if button(ui, p, icons, "x", aurora_i18n::tr!("ui-media-close-esc"), true) {
                             close = true;
                         }
                     });
                     if let Some(err) = m.failed.as_ref() {
                         ui.label(
-                            RichText::new(format!("Lecteur multimédia indisponible : {err}"))
+                            RichText::new(aurora_i18n::tr!("ui-media-media-player-unavailable", err = err.to_string()))
                                 .size(11.0)
                                 .color(p.muted),
                         );

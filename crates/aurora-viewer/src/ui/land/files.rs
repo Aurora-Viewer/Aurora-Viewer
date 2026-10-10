@@ -34,7 +34,7 @@ pub(super) fn save(file_name: &str, text: String) -> Job {
                 Ok(()) => Done::Saved(path.display().to_string()),
                 Err(e) => {
                     log::warn!("access list export to {}: {e}", path.display());
-                    Done::Failed("Impossible d'enregistrer le fichier.".into())
+                    Done::Failed(aurora_i18n::tr!("ui-land-files-could-not-save-the-file").into())
                 }
             },
         };
@@ -49,7 +49,7 @@ pub(super) fn open(kind: u32) -> Job {
     std::thread::spawn(move || {
         let done = match rfd::FileDialog::new()
             .add_filter("CSV", &["csv"])
-            .add_filter("Tous les fichiers", &["*"])
+            .add_filter(aurora_i18n::tr!("ui-land-files-all-files"), &["*"])
             .pick_file()
         {
             None => Done::Cancelled,
@@ -57,7 +57,7 @@ pub(super) fn open(kind: u32) -> Job {
                 Ok(bytes) => Done::Opened(kind, String::from_utf8_lossy(&bytes).into_owned()),
                 Err(e) => {
                     log::warn!("access list import from {}: {e}", path.display());
-                    Done::Failed("Impossible de lire le fichier.".into())
+                    Done::Failed(aurora_i18n::tr!("ui-land-files-could-not-read-the-file").into())
                 }
             },
         };

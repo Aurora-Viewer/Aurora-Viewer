@@ -15,7 +15,8 @@ impl App {
                 if crate::world::appearance::cof(&self.world.inventory).is_some_and(|id| change.refresh.contains(&id))
                     && self.appearance_ui.pending.is_some()
                 {
-                    self.inventory_ui.message = "Attendez la mise à jour de la tenue avant de remplacer ses liens.".into();
+                    self.inventory_ui.message =
+                        aurora_i18n::tr!("app-inventory-wait-for-the-outfit-update-before-replacing-its-links").into();
                     return;
                 }
                 let request = Uuid::new_v4();
@@ -86,7 +87,10 @@ impl App {
                     self.world.inventory.request(id);
                 } else if let Some(it) = self.world.inventory.items.get(&id).cloned() {
                     if matches!(it.asset_type, 7 | 10) && it.owner_mask & rules::COPY == 0 {
-                        self.inventory_preview(id, Err("Vous n’avez pas le droit de lire ce contenu.".into()));
+                        self.inventory_preview(
+                            id,
+                            Err(aurora_i18n::tr!("app-inventory-you-are-not-allowed-to-read-this-content").into()),
+                        );
                     } else if it.asset_id.is_nil() && matches!(it.asset_type, 7 | 10) {
                         self.inventory_preview(
                             id,

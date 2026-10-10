@@ -66,11 +66,11 @@ pub fn parcel_icons(s: &ParcelState) -> Vec<ParcelIcon> {
         "microphone-fill",
         voice,
         if voice {
-            "Voix autorisée"
+            aurora_i18n::tr!("ui-parcel-icons-voice-allowed")
         } else if !region(rf::ALLOW_VOICE) {
-            "Voix interdite dans cette région : vous n'entendrez personne parler."
+            aurora_i18n::tr!("ui-parcel-icons-voice-disabled-in-this-region-you-will-not-hear")
         } else {
-            "Voix interdite sur cette parcelle : vous n'entendrez personne parler."
+            aurora_i18n::tr!("ui-parcel-icons-voice-disabled-on-this-parcel-you-will-not-hear")
         },
     ));
 
@@ -80,11 +80,11 @@ pub fn parcel_icons(s: &ParcelState) -> Vec<ParcelIcon> {
         "airplane-tilt-fill",
         fly,
         if fly {
-            "Vol autorisé"
+            aurora_i18n::tr!("ui-parcel-icons-flight-allowed")
         } else if region(rf::BLOCK_FLY) {
-            "Vol interdit dans cette région : vous ne pouvez pas voler ici."
+            aurora_i18n::tr!("ui-parcel-icons-flight-disabled-in-this-region-you-cannot-fly-here")
         } else {
-            "Vol interdit sur cette parcelle : vous ne pouvez pas voler ici."
+            aurora_i18n::tr!("ui-parcel-icons-flight-disabled-on-this-parcel-you-cannot-fly-here")
         },
     ));
 
@@ -94,9 +94,9 @@ pub fn parcel_icons(s: &ParcelState) -> Vec<ParcelIcon> {
         "hand-palm-fill",
         push,
         if push {
-            "Bousculades autorisées : les scripts des autres peuvent vous pousser."
+            aurora_i18n::tr!("ui-parcel-icons-pushing-allowed-other-people-s-scripts-can-push-you")
         } else {
-            "Bousculades interdites : personne ne peut pousser les autres, sauf le propriétaire du terrain."
+            aurora_i18n::tr!("ui-parcel-icons-pushing-restricted-only-the-landowner-can-push-others")
         },
     ));
 
@@ -110,13 +110,13 @@ pub fn parcel_icons(s: &ParcelState) -> Vec<ParcelIcon> {
         "cube-fill",
         build,
         if build && parcel(pf::CREATE_OBJECTS) {
-            "Construction autorisée à tous : vous pouvez créer et poser des objets."
+            aurora_i18n::tr!("ui-parcel-icons-building-allowed-for-everyone-you-can-create-and-rez")
         } else if build {
-            "Construction autorisée pour vous (propriétaire ou groupe de la parcelle)."
+            aurora_i18n::tr!("ui-parcel-icons-building-allowed-for-you-parcel-owner-or-group")
         } else if parcel(pf::CREATE_GROUP_OBJECTS) {
-            "Construction réservée au groupe de la parcelle : vous ne pouvez pas créer ni poser d'objets ici."
+            aurora_i18n::tr!("ui-parcel-icons-building-restricted-to-the-parcel-group-you-cannot-create")
         } else {
-            "Construction interdite : vous ne pouvez pas créer ni poser d'objets ici."
+            aurora_i18n::tr!("ui-parcel-icons-building-prohibited-you-cannot-create-or-rez-objects-here")
         },
     ));
 
@@ -127,15 +127,15 @@ pub fn parcel_icons(s: &ParcelState) -> Vec<ParcelIcon> {
         "code-fill",
         scripts,
         if scripts {
-            "Scripts autorisés"
+            aurora_i18n::tr!("ui-parcel-icons-scripts-allowed")
         } else if region(rf::ESTATE_SKIP_SCRIPTS) {
-            "Un administrateur a temporairement arrêté les scripts dans cette région."
+            aurora_i18n::tr!("ui-parcel-icons-an-administrator-has-temporarily-stopped-scripts-in-this-region")
         } else if region(rf::SKIP_SCRIPTS) {
-            "Aucun script ne fonctionne dans cette région."
+            aurora_i18n::tr!("ui-parcel-icons-no-scripts-are-running-in-this-region")
         } else if parcel(pf::ALLOW_GROUP_SCRIPTS) {
-            "Scripts des visiteurs désactivés : seuls ceux du propriétaire et du groupe du terrain fonctionnent."
+            aurora_i18n::tr!("ui-parcel-icons-visitor-scripts-disabled-only-the-land-owner-s-and")
         } else {
-            "Scripts des visiteurs désactivés : seuls ceux du propriétaire du terrain fonctionnent."
+            aurora_i18n::tr!("ui-parcel-icons-visitor-scripts-disabled-only-the-land-owner-s-scripts")
         },
     ));
 
@@ -146,12 +146,12 @@ pub fn parcel_icons(s: &ParcelState) -> Vec<ParcelIcon> {
         "heart-fill",
         !damage,
         &if damage {
-            format!(
-                "Dégâts autorisés : vous pouvez être blessé ici (santé {health} %). \
-                 Si vous mourez, vous serez téléporté chez vous."
+            aurora_i18n::tr!(
+                "ui-parcel-icons-damage-allowed-you-can-be-hurt-here-health-if",
+                health = format!("{}", health)
             )
         } else {
-            "Zone sûre : pas de dégâts".to_owned()
+            aurora_i18n::tr!("ui-parcel-icons-safe-zone-no-damage").to_owned()
         },
     );
     d.label = damage.then(|| format!("{health}%"));
@@ -164,10 +164,9 @@ pub fn parcel_icons(s: &ParcelState) -> Vec<ParcelIcon> {
         if see { "eye-fill" } else { "eye-slash-fill" },
         see,
         if see {
-            "Avatars visibles : on vous voit et vous entend depuis les autres parcelles."
+            aurora_i18n::tr!("ui-parcel-icons-avatars-visible-people-on-other-parcels-can-see-and")
         } else {
-            "Parcelle isolée : vous ne voyez pas les résidents des autres parcelles, ils ne vous voient pas \
-             et le chat local ne passe pas."
+            aurora_i18n::tr!("ui-parcel-icons-isolated-parcel-you-cannot-see-residents-on-other-parcels")
         },
     ));
     out
@@ -231,7 +230,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, icons: &Icons, items: &[ParcelIcon],
             let pos = egui::pos2(ir.right() + 2.0, rect.center().y - g.size().y / 2.0);
             ui.painter().galley(pos, g, col);
         }
-        let resp = resp.on_hover_text(format!("{}\nClic : à propos du terrain", it.tip));
+        let resp = resp.on_hover_text(aurora_i18n::tr!("ui-parcel-icons-click-about-land", value0 = it.tip.to_string()));
         if resp.hovered() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
@@ -297,7 +296,7 @@ mod tests {
                 ("eye-fill", true),
             ]
         );
-        assert!(icons[4].tip.contains("administrateur"));
+        assert!(icons[4].tip == aurora_i18n::tr!("ui-parcel-icons-an-administrator-has-temporarily-stopped-scripts-in-this-region"));
         assert_eq!(icons[5].label.as_deref(), Some("100%"));
     }
 

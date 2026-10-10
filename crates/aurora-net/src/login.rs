@@ -287,7 +287,7 @@ pub async fn login(http: &reqwest::Client, req: &LoginRequest) -> Result<LoginRe
             }
         }
     }
-    Err(LoginError::Malformed("too many redirects"))
+    Err(LoginError::Malformed(aurora_i18n::tr!("login-too-many-redirects")))
 }
 
 #[cfg(test)]

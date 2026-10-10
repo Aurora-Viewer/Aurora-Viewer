@@ -28,36 +28,47 @@ pub const DEFAULT_NORMAL: Uuid = Uuid::from_u128(0x85f28839_7a1c_b4e3_d71d_96779
 pub const DEFAULT_SPECULAR: Uuid = Uuid::from_u128(0x87e0e8f7_8729_1ea8_cfc9_8915773009db);
 
 /// « Relief » (bump codes 0..17).
-const BUMPS: [&str; 18] = [
-    "Aucun",
-    "Brillance",
-    "Sombreté",
-    "grain de bois",
-    "écorce",
-    "briques",
-    "damier",
-    "béton",
-    "croûteux",
-    "pierre de taille",
-    "disques",
-    "gravier",
-    "pétrin",
-    "bardage",
-    "carrelage en pierre",
-    "stuc",
-    "aspiration",
-    "trame",
-];
+fn bumps() -> [&'static str; 18] {
+    [
+        aurora_i18n::tr!("common-none"),
+        aurora_i18n::tr!("build-ui-texture-shininess"),
+        aurora_i18n::tr!("build-ui-texture-darkness"),
+        aurora_i18n::tr!("build-ui-texture-wood-grain"),
+        aurora_i18n::tr!("build-ui-texture-bark"),
+        "briques",
+        "damier",
+        aurora_i18n::tr!("build-ui-texture-concrete"),
+        aurora_i18n::tr!("build-ui-texture-crusty"),
+        aurora_i18n::tr!("build-ui-texture-cut-stone"),
+        "disques",
+        "gravier",
+        aurora_i18n::tr!("build-ui-texture-trouble"),
+        "bardage",
+        aurora_i18n::tr!("build-ui-texture-stone-tiles"),
+        "stuc",
+        "aspiration",
+        "trame",
+    ]
+}
 /// Index of « Utiliser la texture » (BUMPY_TEXTURE / SHINY_TEXTURE).
 const BUMPY_TEXTURE: u8 = 18;
 const SHINY_TEXTURE: u8 = 4;
-const SHINES: [&str; 4] = ["Aucune", "Faible", "Moyenne", "Elevée"];
-const ALPHA_MODES: [(&str, u8); 4] = [
-    ("Aucun", alpha_mode::NONE),
-    ("Fusion alpha", alpha_mode::BLEND),
-    ("Masquage alpha", alpha_mode::MASK),
-    ("Masque émissif", alpha_mode::EMISSIVE),
-];
+fn shines() -> [&'static str; 4] {
+    [
+        aurora_i18n::tr!("common-none-2"),
+        aurora_i18n::tr!("build-ui-texture-low"),
+        aurora_i18n::tr!("common-medium"),
+        aurora_i18n::tr!("build-ui-texture-high"),
+    ]
+}
+fn alpha_modes() -> [(&'static str, u8); 4] {
+    [
+        (aurora_i18n::tr!("common-none"), alpha_mode::NONE),
+        (aurora_i18n::tr!("build-ui-texture-alpha-blending"), alpha_mode::BLEND),
+        (aurora_i18n::tr!("build-ui-texture-alpha-masking"), alpha_mode::MASK),
+        (aurora_i18n::tr!("common-emissive-mask"), alpha_mode::EMISSIVE),
+    ]
+}
 
 /// TEM_* bits of the bump / shiny / fullbright byte.
 const TEM_BUMP_MASK: u8 = 0x1f;
@@ -246,19 +257,28 @@ fn selected(tool: &BuildTool, world: &World) -> Vec<Sel> {
 pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings, env: &mut Env) {
     let sel = selected(tool, world);
     if sel.is_empty() {
-        small(ui, p, "Aucune face modifiable sélectionnée.");
+        small(ui, p, aurora_i18n::tr!("build-ui-texture-no-editable-face-selected"));
         return;
     }
     // ---- sub-tabs, copy / paste, glow
     ui.horizontal(|ui| {
         let mut t = tool.ui.tex_tab;
-        tabs(ui, p, &mut t, &[("PBR", true), ("Blinn-Phong", true), ("Media", true)]);
+        tabs(
+            ui,
+            p,
+            &mut t,
+            &[
+                ("PBR", true),
+                (aurora_i18n::tr!("build-ui-texture-blinn-phong"), true),
+                (aurora_i18n::tr!("extra-media"), true),
+            ],
+        );
         tool.ui.tex_tab = t;
     });
     ui.horizontal(|ui| {
         let (glow, glow_mixed) = same(sel.iter().map(|x| x.te.glow));
         let mut g = glow.unwrap_or(0.0);
-        label(ui, p, "Lueur");
+        label(ui, p, aurora_i18n::tr!("build-ui-texture-glow"));
         if spin(ui, &mut g, 0.1, 0.0..=1.0, 3, W, glow_mixed).commit {
             tool.edit_faces(world, |f, _, _| f.glow = g);
         }
@@ -267,13 +287,19 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                 ui,
                 p,
                 "clipboard-text",
-                "Coller les paramètres de texture à partir du presse-papiers",
+                aurora_i18n::tr!("build-ui-texture-paste-texture-settings-from-the-clipboard"),
                 tool.ui.face_clipboard.is_some(),
             ) {
                 paste_faces(tool, world, &sel);
             }
             let one_object = sel.iter().all(|x| x.idx == sel[0].idx);
-            if super::common::icon_button(ui, p, "copy", "Copier les paramètres de texture dans le presse-papiers", one_object) {
+            if super::common::icon_button(
+                ui,
+                p,
+                "copy",
+                aurora_i18n::tr!("build-ui-texture-copy-texture-settings-to-clipboard"),
+                one_object,
+            ) {
                 let clip = sel
                     .iter()
                     .map(|x| FaceClip {
@@ -320,7 +346,7 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
             env.images,
             &mut tool.ui.wanted_images,
             None,
-            "Matériau",
+            aurora_i18n::tr!("build-ui-texture-material"),
             56.0,
             asset_mixed,
             true,
@@ -334,14 +360,24 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
                 p.violet_light,
             );
         }
-        if r.on_hover_text("Choisir un matériau PBR (« Vierge » : aucun)").clicked() {
-            tool.ui.picker.open_materials("Choisir : matériau", asset.unwrap_or_default());
+        if r.on_hover_text(aurora_i18n::tr!("build-ui-texture-choose-a-pbr-material-blank-none"))
+            .clicked()
+        {
+            tool.ui
+                .picker
+                .open_materials(aurora_i18n::tr!("build-ui-texture-choose-material"), asset.unwrap_or_default());
             tool.ui.pick_target = Some(PickTarget::PbrMaterial);
         }
-        let maps: [(Option<Uuid>, &str, usize); 2] = [(mat.base_color_texture, "Couleur", 0), (mat.normal_texture, "Normale", 1)];
+        let maps: [(Option<Uuid>, &str, usize); 2] = [
+            (mat.base_color_texture, aurora_i18n::tr!("common-color"), 0),
+            (mat.normal_texture, aurora_i18n::tr!("build-ui-texture-normal"), 1),
+        ];
         for (id, cap, i) in maps {
             if swatch(ui, p, env.images, &mut tool.ui.wanted_images, id, cap, 56.0, false, editable).clicked() {
-                tool.ui.picker.open(&format!("Choisir : {cap}"), id.unwrap_or_default());
+                tool.ui.picker.open(
+                    &aurora_i18n::tr!("build-ui-texture-choose", cap = cap.to_string()),
+                    id.unwrap_or_default(),
+                );
                 tool.ui.pick_target = Some(PickTarget::PbrMap(i));
             }
         }
@@ -351,7 +387,7 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
             super::common::linear_to_srgb(bc[1]),
             super::common::linear_to_srgb(bc[2]),
         ];
-        if let Some(c) = color_swatch(ui, p, srgb, "Teinte", 40.0, editable) {
+        if let Some(c) = color_swatch(ui, p, srgb, aurora_i18n::tr!("build-ui-texture-tint"), 40.0, editable) {
             let lin = [
                 super::common::srgb_to_linear(c[0]),
                 super::common::srgb_to_linear(c[1]),
@@ -361,16 +397,24 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
         }
     });
     ui.horizontal(|ui| {
-        let maps: [(Option<Uuid>, &str, usize); 2] = [(mat.emissive_texture, "Émissive", 3), (mat.metallic_roughness_texture, "(O)RM", 2)];
+        let maps: [(Option<Uuid>, &str, usize); 2] = [
+            (mat.emissive_texture, aurora_i18n::tr!("build-ui-texture-emissive"), 3),
+            (mat.metallic_roughness_texture, "(O)RM", 2),
+        ];
         for (id, cap, i) in maps {
             let r = swatch(ui, p, env.images, &mut tool.ui.wanted_images, id, cap, 56.0, false, editable);
             let r = if i == 2 {
-                r.on_hover_text("Cliquez pour choisir la carte de rugosité-métallicité, qui peut contenir un canal d'occlusion optionnel.")
+                r.on_hover_text(aurora_i18n::tr!(
+                    "build-ui-texture-click-to-choose-the-metallic-roughness-map-which-may"
+                ))
             } else {
                 r
             };
             if r.clicked() {
-                tool.ui.picker.open(&format!("Choisir : {cap}"), id.unwrap_or_default());
+                tool.ui.picker.open(
+                    &aurora_i18n::tr!("build-ui-texture-choose", cap = cap.to_string()),
+                    id.unwrap_or_default(),
+                );
                 tool.ui.pick_target = Some(PickTarget::PbrMap(i));
             }
         }
@@ -380,7 +424,7 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
             super::common::linear_to_srgb(e[1]),
             super::common::linear_to_srgb(e[2]),
         ];
-        if let Some(c) = color_swatch(ui, p, srgb, "Teinte", 40.0, editable) {
+        if let Some(c) = color_swatch(ui, p, srgb, aurora_i18n::tr!("build-ui-texture-tint"), 40.0, editable) {
             let lin = [
                 super::common::srgb_to_linear(c[0]),
                 super::common::srgb_to_linear(c[1]),
@@ -390,30 +434,30 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
         }
     });
     ui.add_enabled_ui(editable, |ui| {
-        if let Some(v) = check(ui, mat.double_sided, false, "Double face", editable) {
+        if let Some(v) = check(ui, mat.double_sided, false, aurora_i18n::tr!("common-double-sided"), editable) {
             tool.edit_gltf(world, sel, |o| o.double_sided = Some(v));
         }
         let mut alpha = mat.base_color_factor[3];
         let bc = mat.base_color_factor;
-        row(ui, p, "Alpha", 80.0, |ui| {
+        row(ui, p, aurora_i18n::tr!("common-alpha"), 80.0, |ui| {
             if spin(ui, &mut alpha, 0.1, 0.0..=1.0, 3, W, false).commit {
                 tool.edit_gltf(world, sel, |o| o.base_color_factor = Some([bc[0], bc[1], bc[2], alpha]));
             }
         });
         let modes = [
-            ("Opaque", AlphaMode::Opaque),
-            ("Fusion", AlphaMode::Blend),
-            ("Masquage", AlphaMode::Mask),
+            (aurora_i18n::tr!("common-opaque"), AlphaMode::Opaque),
+            (aurora_i18n::tr!("build-ui-texture-blend"), AlphaMode::Blend),
+            (aurora_i18n::tr!("build-ui-texture-masking"), AlphaMode::Mask),
         ];
-        row(ui, p, "Mode", 80.0, |ui| {
+        row(ui, p, aurora_i18n::tr!("build-ui-texture-mode"), 80.0, |ui| {
             if let Some(m) = combo(ui, "pbr_alpha_mode", Some(mat.alpha_mode), &modes, 100.0, editable) {
                 tool.edit_gltf(world, sel, |o| o.alpha_mode = Some(m));
             }
         });
         for (name, v, which) in [
-            ("Coupure", mat.alpha_cutoff, 0),
-            ("Métallicité", mat.metallic_factor, 1),
-            ("Rugosité", mat.roughness_factor, 2),
+            (aurora_i18n::tr!("build-ui-texture-cut"), mat.alpha_cutoff, 0),
+            (aurora_i18n::tr!("build-ui-texture-metallic"), mat.metallic_factor, 1),
+            (aurora_i18n::tr!("build-ui-texture-roughness"), mat.roughness_factor, 2),
         ] {
             let mut x = v;
             row(ui, p, name, 80.0, |ui| {
@@ -431,8 +475,10 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
         }
         // « Enregistrer » (LLMaterialEditor::saveObjectsMaterialAs): needs the
         // material upload to the inventory, not ported yet
-        ui.add_enabled(false, egui::Button::new(RichText::new("Enregistrer").size(12.0)))
-            .on_disabled_hover_text("L'enregistrement du matériau dans l'inventaire n'est pas encore disponible.");
+        ui.add_enabled(false, egui::Button::new(RichText::new(aurora_i18n::tr!("common-save")).size(12.0)))
+            .on_disabled_hover_text(aurora_i18n::tr!(
+                "build-ui-texture-saving-materials-to-inventory-is-not-available-yet"
+            ));
     });
     // texture transforms
     ui.add_space(4.0);
@@ -442,11 +488,11 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
         p,
         &mut ch,
         &[
-            ("Tous", true),
-            ("Couleur", true),
-            ("Normale", true),
+            (aurora_i18n::tr!("common-all"), true),
+            (aurora_i18n::tr!("common-color"), true),
+            (aurora_i18n::tr!("build-ui-texture-normal"), true),
             ("(O)RM", true),
-            ("Émissive", true),
+            (aurora_i18n::tr!("build-ui-texture-emissive"), true),
         ],
     );
     tool.ui.pbr_channel = ch;
@@ -463,23 +509,23 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
     let mut flip = [false; 2];
     ui.add_enabled_ui(editable, |ui| {
         ui.horizontal(|ui| {
-            label(ui, p, "Échelle");
+            label(ui, p, aurora_i18n::tr!("common-scale"));
             for k in 0..2 {
                 ui.label(RichText::new(["U", "V"][k]).size(11.0));
                 e = e.or(spin(ui, &mut nt.scale[k], 0.1, -10000.0..=10000.0, 5, W, mixed));
-                if super::common::icon_button(ui, p, "arrows-left-right", "Pivoter", true) {
+                if super::common::icon_button(ui, p, "arrows-left-right", aurora_i18n::tr!("common-rotate"), true) {
                     flip[k] = true;
                 }
             }
         });
         ui.horizontal(|ui| {
-            label(ui, p, "Décalage");
+            label(ui, p, aurora_i18n::tr!("build-ui-texture-offset"));
             for k in 0..2 {
                 ui.label(RichText::new(["U", "V"][k]).size(11.0));
                 e = e.or(spin(ui, &mut nt.offset[k], 0.01, -1.0..=1.0, 5, W, mixed));
             }
         });
-        row(ui, p, "Rotation", 60.0, |ui| {
+        row(ui, p, aurora_i18n::tr!("build-ui-texture-rotation"), 60.0, |ui| {
             e = e.or(spin(ui, &mut rot, 1.0, -360.0..=360.0, 2, W, mixed))
         });
     });
@@ -520,21 +566,24 @@ fn blinn_phong(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut
             env.images,
             &mut tool.ui.wanted_images,
             tex,
-            "Diffuse",
+            aurora_i18n::tr!("build-ui-texture-diffuse"),
             56.0,
             tex_mixed,
             editable,
         )
         .clicked()
         {
-            tool.ui
-                .picker
-                .open_with_defaults("Choisir : texture", tex.unwrap_or_default(), Some(DEFAULT_TEXTURE), false);
+            tool.ui.picker.open_with_defaults(
+                aurora_i18n::tr!("build-ui-texture-choose-texture"),
+                tex.unwrap_or_default(),
+                Some(DEFAULT_TEXTURE),
+                false,
+            );
             tool.ui.pick_target = Some(PickTarget::Diffuse);
         }
         let (col, _) = same(sel.iter().map(|x| [x.te.color[0], x.te.color[1], x.te.color[2]]));
         let col = col.unwrap_or([1.0; 3]);
-        if let Some(c) = color_swatch(ui, p, col, "Teinte", 40.0, editable) {
+        if let Some(c) = color_swatch(ui, p, col, aurora_i18n::tr!("build-ui-texture-tint"), 40.0, editable) {
             // selectionSetColorOnly: the alpha stays
             tool.edit_faces(world, |f, _, _| {
                 f.color[0] = c[0];
@@ -544,7 +593,13 @@ fn blinn_phong(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut
         }
         ui.vertical(|ui| {
             let (fb, fb_mixed) = same(sel.iter().map(|x| x.te.bump_shiny_fullbright & TEM_FULLBRIGHT != 0));
-            if let Some(v) = check(ui, fb.unwrap_or(false), fb_mixed, "Lumineux", editable) {
+            if let Some(v) = check(
+                ui,
+                fb.unwrap_or(false),
+                fb_mixed,
+                aurora_i18n::tr!("build-ui-texture-fullbright"),
+                editable,
+            ) {
                 tool.edit_faces(world, |f, _, _| {
                     f.bump_shiny_fullbright = if v {
                         f.bump_shiny_fullbright | TEM_FULLBRIGHT
@@ -555,7 +610,7 @@ fn blinn_phong(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut
             }
             let (alpha, alpha_mixed) = same(sel.iter().map(|x| x.te.color[3]));
             let mut transp = (1.0 - alpha.unwrap_or(1.0)) * 100.0;
-            row(ui, p, "Transparence", 80.0, |ui| {
+            row(ui, p, aurora_i18n::tr!("build-ui-texture-transparency"), 80.0, |ui| {
                 if spin(ui, &mut transp, 2.0, 0.0..=100.0, 0, 52.0, alpha_mixed).commit {
                     let a = (100.0 - transp) / 100.0;
                     tool.edit_faces(world, |f, _, _| f.color[3] = a);
@@ -574,13 +629,13 @@ fn blinn_phong(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut
             .map(|m| m.as_ref().map(|m| m.diffuse_alpha_mode).unwrap_or(default_mode)),
     );
     let mode = if !transp_zero { Some(alpha_mode::BLEND) } else { mode };
-    row(ui, p, "Mode alpha", 90.0, |ui| {
+    row(ui, p, aurora_i18n::tr!("build-ui-texture-alpha-mode"), 90.0, |ui| {
         let current = if mode_mixed { None } else { mode };
         if let Some(m) = combo(
             ui,
             "bp_alpha_mode",
             current,
-            &ALPHA_MODES,
+            &alpha_modes(),
             120.0,
             editable && has_alpha && transp_zero,
         ) {
@@ -589,7 +644,7 @@ fn blinn_phong(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut
     });
     let (cut, cut_mixed) = same(legacy.iter().map(|m| m.as_ref().map(|m| m.alpha_cutoff as i32).unwrap_or(127)));
     let mut cut = cut.unwrap_or(127) as f32;
-    row(ui, p, "Coupe masque", 90.0, |ui| {
+    row(ui, p, aurora_i18n::tr!("build-ui-texture-mask-cutoff"), 90.0, |ui| {
         ui.add_enabled_ui(editable && mode == Some(alpha_mode::MASK), |ui| {
             if spin(ui, &mut cut, 1.0, 0.0..=255.0, 0, W, cut_mixed).commit {
                 tool.edit_legacy(env, world, sel, |x| x.alpha_cutoff = cut as u8);
@@ -605,30 +660,33 @@ fn blinn_phong(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut
             env.images,
             &mut tool.ui.wanted_images,
             normal,
-            "Normale",
+            aurora_i18n::tr!("build-ui-texture-normal"),
             56.0,
             normal_mixed,
             editable,
         )
         .clicked()
         {
-            tool.ui
-                .picker
-                .open_with_defaults("Choisir : normale", normal.unwrap_or_default(), Some(DEFAULT_NORMAL), true);
+            tool.ui.picker.open_with_defaults(
+                aurora_i18n::tr!("build-ui-texture-choose-normal-map"),
+                normal.unwrap_or_default(),
+                Some(DEFAULT_NORMAL),
+                true,
+            );
             tool.ui.pick_target = Some(PickTarget::Normal);
         }
         ui.vertical(|ui| {
             let (bump, bump_mixed) = same(sel.iter().map(|x| x.te.bump_shiny_fullbright & TEM_BUMP_MASK));
-            let mut items: Vec<(&str, u8)> = BUMPS.iter().enumerate().map(|(i, n)| (*n, i as u8)).collect();
+            let mut items: Vec<(&str, u8)> = bumps().iter().enumerate().map(|(i, n)| (*n, i as u8)).collect();
             let shown = if normal.is_some() {
-                items.push(("Utiliser la texture", BUMPY_TEXTURE));
+                items.push((aurora_i18n::tr!("build-ui-texture-use-texture"), BUMPY_TEXTURE));
                 Some(BUMPY_TEXTURE)
             } else if bump_mixed {
                 None
             } else {
                 bump
             };
-            row(ui, p, "Relief", 70.0, |ui| {
+            row(ui, p, aurora_i18n::tr!("build-ui-texture-bumpiness"), 70.0, |ui| {
                 if let Some(b) = combo(ui, "bumpiness", shown, &items, 120.0, editable)
                     && b != BUMPY_TEXTURE
                 {
@@ -642,16 +700,16 @@ fn blinn_phong(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut
                 }
             });
             let (shiny, shiny_mixed) = same(sel.iter().map(|x| x.te.bump_shiny_fullbright >> TEM_SHINY_SHIFT));
-            let mut items: Vec<(&str, u8)> = SHINES.iter().enumerate().map(|(i, n)| (*n, i as u8)).collect();
+            let mut items: Vec<(&str, u8)> = shines().iter().enumerate().map(|(i, n)| (*n, i as u8)).collect();
             let shown = if spec.is_some() {
-                items.push(("Utiliser la texture", SHINY_TEXTURE));
+                items.push((aurora_i18n::tr!("build-ui-texture-use-texture"), SHINY_TEXTURE));
                 Some(SHINY_TEXTURE)
             } else if shiny_mixed {
                 None
             } else {
                 shiny
             };
-            row(ui, p, "Luminosité", 70.0, |ui| {
+            row(ui, p, aurora_i18n::tr!("common-brightness"), 70.0, |ui| {
                 if let Some(v) = combo(ui, "shininess", shown, &items, 120.0, editable)
                     && v != SHINY_TEXTURE
                 {
@@ -673,21 +731,31 @@ fn blinn_phong(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut
             env.images,
             &mut tool.ui.wanted_images,
             spec,
-            "Spéculaire",
+            aurora_i18n::tr!("build-ui-texture-specular"),
             56.0,
             spec_mixed,
             editable,
         )
         .clicked()
         {
-            tool.ui
-                .picker
-                .open_with_defaults("Choisir : spéculaire", spec.unwrap_or_default(), Some(DEFAULT_SPECULAR), true);
+            tool.ui.picker.open_with_defaults(
+                aurora_i18n::tr!("build-ui-texture-choose-specular-map"),
+                spec.unwrap_or_default(),
+                Some(DEFAULT_SPECULAR),
+                true,
+            );
             tool.ui.pick_target = Some(PickTarget::Specular);
         }
         let sc = legacy[0].as_ref().map(|m| m.specular_color).unwrap_or([255; 4]);
         let rgb = [sc[0] as f32 / 255.0, sc[1] as f32 / 255.0, sc[2] as f32 / 255.0];
-        if let Some(c) = color_swatch(ui, p, rgb, "Teinte", 40.0, editable && spec.is_some()) {
+        if let Some(c) = color_swatch(
+            ui,
+            p,
+            rgb,
+            aurora_i18n::tr!("build-ui-texture-tint"),
+            40.0,
+            editable && spec.is_some(),
+        ) {
             let b = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
             tool.edit_legacy(env, world, sel, |m| m.specular_color = [b(c[0]), b(c[1]), b(c[2]), sc[3]]);
         }
@@ -697,12 +765,12 @@ fn blinn_phong(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut
             let mut g = gl.unwrap_or(51) as f32;
             let mut en = env_i.unwrap_or(0) as f32;
             ui.add_enabled_ui(editable && spec.is_some(), |ui| {
-                row(ui, p, "Brillance", 90.0, |ui| {
+                row(ui, p, aurora_i18n::tr!("build-ui-texture-shininess"), 90.0, |ui| {
                     if spin(ui, &mut g, 1.0, 0.0..=255.0, 0, W, gl_mixed).commit {
                         tool.edit_legacy(env, world, sel, |m| m.specular_exp = g as u8);
                     }
                 });
-                row(ui, p, "Environnement", 90.0, |ui| {
+                row(ui, p, aurora_i18n::tr!("common-environment"), 90.0, |ui| {
                     if spin(ui, &mut en, 1.0, 0.0..=255.0, 0, W, env_mixed).commit {
                         tool.edit_legacy(env, world, sel, |m| m.env_intensity = en as u8);
                     }
@@ -717,7 +785,11 @@ fn blinn_phong(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut
         ui,
         p,
         &mut ch,
-        &[("Diffuse", true), ("Normale", normal.is_some()), ("Spéculaire", spec.is_some())],
+        &[
+            (aurora_i18n::tr!("build-ui-texture-diffuse"), true),
+            (aurora_i18n::tr!("build-ui-texture-normal"), normal.is_some()),
+            (aurora_i18n::tr!("build-ui-texture-specular"), spec.is_some()),
+        ],
     );
     tool.ui.bp_channel = ch;
     let planar = sel.iter().all(|x| x.te.media_flags & TEM_TEX_GEN_MASK == TEX_GEN_PLANAR);
@@ -753,23 +825,23 @@ fn blinn_phong(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut
     let mut flip = [false; 2];
     ui.add_enabled_ui(editable, |ui| {
         ui.horizontal(|ui| {
-            label(ui, p, "Échelle");
+            label(ui, p, aurora_i18n::tr!("common-scale"));
             for i in 0..2 {
                 ui.label(RichText::new(["H", "V"][i]).size(11.0));
                 e = e.or(spin(ui, &mut v[i], 0.1, -10000.0..=10000.0, decimals, W, mixed(i)));
-                if super::common::icon_button(ui, p, "arrows-left-right", "Pivoter", true) {
+                if super::common::icon_button(ui, p, "arrows-left-right", aurora_i18n::tr!("common-rotate"), true) {
                     flip[i] = true;
                 }
             }
         });
         ui.horizontal(|ui| {
-            label(ui, p, "Décalage");
+            label(ui, p, aurora_i18n::tr!("build-ui-texture-offset"));
             for i in 2..4 {
                 ui.label(RichText::new(["H", "V"][i - 2]).size(11.0));
                 e = e.or(spin(ui, &mut v[i], 0.01, -1.0..=1.0, decimals, W, mixed(i)));
             }
         });
-        row(ui, p, "Rotation", 60.0, |ui| {
+        row(ui, p, aurora_i18n::tr!("build-ui-texture-rotation"), 60.0, |ui| {
             e = e.or(spin(ui, &mut v[4], 1.0, -360.0..=360.0, decimals.min(2), W, mixed(4)))
         });
     });
@@ -847,7 +919,7 @@ fn face_options(
         };
         let (rpm, rpm_mixed) = same(sel.iter().map(|x| (rpm_of(x) * 10.0).round() / 10.0));
         let mut r = rpm.unwrap_or(1.0);
-        label(ui, p, "Répétitions / mètre");
+        label(ui, p, aurora_i18n::tr!("build-ui-texture-repeats-meter"));
         ui.add_enabled_ui(!planar, |ui| {
             if spin(ui, &mut r, 0.1, -100.0..=100.0, 1, W, rpm_mixed).commit {
                 // selectionTexScaleAutofit
@@ -866,7 +938,7 @@ fn face_options(
         });
         let legacy0 = tool.face_legacy(env, world, sel[0].idx, sel[0].face, &sel[0].te);
         let water = sel.iter().all(|x| is_hide_water(&x.te, legacy0.as_ref()));
-        if let Some(v) = check(ui, water, false, "Occulter eau", true) {
+        if let Some(v) = check(ui, water, false, aurora_i18n::tr!("build-ui-texture-occlude-water"), true) {
             if v {
                 tool.ui.confirm = Some(Confirm::HideWater);
             } else {
@@ -875,10 +947,19 @@ fn face_options(
         }
     });
     ui.horizontal(|ui| {
-        if let Some(v) = check(ui, s.sync_materials, false, "Synchroniser les matériaux", true) {
+        if let Some(v) = check(
+            ui,
+            s.sync_materials,
+            false,
+            aurora_i18n::tr!("build-ui-texture-synchronize-materials"),
+            true,
+        ) {
             s.sync_materials = v;
         }
-        let mapping = [("Défaut", 0u8), ("Planaire", TEX_GEN_PLANAR)];
+        let mapping = [
+            (aurora_i18n::tr!("common-default"), 0u8),
+            (aurora_i18n::tr!("build-ui-texture-planar"), TEX_GEN_PLANAR),
+        ];
         let (m, m_mixed) = same(sel.iter().map(|x| x.te.media_flags & TEM_TEX_GEN_MASK));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if let Some(v) = combo(ui, "texgen", if m_mixed { None } else { m }, &mapping, 90.0, true) {
@@ -891,7 +972,10 @@ fn face_options(
         if ui
             .add_enabled(
                 planar,
-                egui::Checkbox::new(&mut align, RichText::new("Aligner les faces planaires").size(12.0)),
+                egui::Checkbox::new(
+                    &mut align,
+                    RichText::new(aurora_i18n::tr!("build-ui-texture-align-planar-faces")).size(12.0),
+                ),
             )
             .changed()
         {
@@ -901,9 +985,9 @@ fn face_options(
         if ui
             .add_enabled(
                 planar && tool.ui.planar_align && objects > 1,
-                egui::Button::new(RichText::new("Aligner").size(12.0)),
+                egui::Button::new(RichText::new(aurora_i18n::tr!("common-align")).size(12.0)),
             )
-            .on_hover_text("Aligne les couches de texture présentes")
+            .on_hover_text(aurora_i18n::tr!("build-ui-texture-aligns-the-available-texture-layers"))
             .clicked()
         {
             tool.align_planar_faces(world, sel.iter().map(|x| (x.idx, x.face)).collect());
@@ -971,7 +1055,7 @@ fn media(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World
         .collect();
     let (url, mixed) = same(entries.iter().map(|e| e.as_ref().map(|e| e.home_url.as_str())));
     let text = if mixed {
-        "Médias multiples".to_owned()
+        aurora_i18n::tr!("build-ui-texture-multiple-media").to_owned()
     } else {
         url.flatten().unwrap_or("").to_owned()
     };
@@ -979,7 +1063,7 @@ fn media(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World
         ui.set_min_width(ui.available_width());
         ui.label(
             RichText::new(if text.is_empty() {
-                "L'URL du média choisi, s'il y en a un, va ici"
+                aurora_i18n::tr!("build-ui-texture-the-selected-media-url-if-any-goes-here")
             } else {
                 &text
             })
@@ -989,19 +1073,28 @@ fn media(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World
     });
     let has_media = entries.iter().any(|e| e.is_some());
     ui.horizontal(|ui| {
-        if ui.button(RichText::new("Choisir...").size(12.0)).clicked() {
+        if ui
+            .button(RichText::new(aurora_i18n::tr!("build-ui-texture-choose-2")).size(12.0))
+            .clicked()
+        {
             let first = entries.iter().flatten().next().cloned();
             tool.ui.media_settings = Some(super::MediaSettingsState::new(first));
         }
         if ui
-            .add_enabled(has_media, egui::Button::new(RichText::new("Supprimer").size(12.0)))
+            .add_enabled(
+                has_media,
+                egui::Button::new(RichText::new(aurora_i18n::tr!("common-delete")).size(12.0)),
+            )
             .clicked()
         {
             tool.ui.confirm = Some(Confirm::DeleteMedia);
         }
         if ui
-            .add_enabled(has_media, egui::Button::new(RichText::new("Aligner").size(12.0)))
-            .on_hover_text("Ajuster la texture du média à la face")
+            .add_enabled(
+                has_media,
+                egui::Button::new(RichText::new(aurora_i18n::tr!("common-align")).size(12.0)),
+            )
+            .on_hover_text(aurora_i18n::tr!("build-ui-texture-fit-media-texture-to-face"))
             .clicked()
         {
             media_autofix(tool, world, env, sel);

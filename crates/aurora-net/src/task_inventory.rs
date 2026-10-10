@@ -241,7 +241,7 @@ pub fn item_crc(i: &TaskItem) -> u32 {
 /// like the viewer does.
 pub fn parse_cap(v: &Llsd) -> Result<Vec<TaskItem>, String> {
     if !matches!(&v["contents"], Llsd::Array(_)) {
-        return Err("Réponse d'inventaire de l'objet invalide.".into());
+        return Err(aurora_i18n::tr!("task-inventory-invalid-object-inventory-response").into());
     }
     Ok(v["contents"].as_array().iter().filter_map(item_from_llsd).take(10_000).collect())
 }
@@ -315,11 +315,11 @@ fn item_from_llsd(v: &Llsd) -> Option<TaskItem> {
 
 /// The legacy file (loadTaskInvFile); an item block left open is an error.
 pub fn parse_legacy(bytes: &[u8]) -> Result<Vec<TaskItem>, String> {
-    let text = std::str::from_utf8(bytes).map_err(|_| "Inventaire de l'objet illisible.".to_string())?;
+    let text = std::str::from_utf8(bytes).map_err(|_| aurora_i18n::tr!("task-inventory-unreadable-object-inventory").to_string())?;
     let opened = text.lines().filter(|l| l.trim() == "{").count();
     let closed = text.lines().filter(|l| l.trim() == "}").count();
     if opened != closed {
-        return Err("Inventaire de l'objet incomplet.".into());
+        return Err(aurora_i18n::tr!("task-inventory-incomplete-object-inventory").into());
     }
     Ok(parse_task_inventory(text))
 }

@@ -5,7 +5,7 @@
 
 use super::common::{check, label, small};
 use super::{Confirm, Env, Request};
-use crate::build::shapes::{GRASS_SPECIES, SHAPES, TREE_SPECIES};
+use crate::build::shapes::{grass_species, shapes, tree_species};
 use crate::build::{BuildSettings, BuildTool, EditMode, FocusMode, GrabMode, Mods, Tool};
 use crate::theme::Palette;
 use crate::world::World;
@@ -13,13 +13,15 @@ use aurora_net::build::land_action;
 use egui::{Color32, RichText, Vec2};
 
 /// The tool buttons (icon, tooltip, tool).
-const TOOLS: [(&str, &str, Tool); 5] = [
-    ("magnifying-glass", "Mise au point (Ctrl+1)", Tool::Focus),
-    ("hand-grabbing", "Déplacer (Ctrl+2)", Tool::Grab),
-    ("cursor", "Modifier (Ctrl+3)", Tool::Edit),
-    ("magic-wand", "Créer (Ctrl+4)", Tool::Create),
-    ("mountains", "Terrain (Ctrl+5)", Tool::Land),
-];
+fn tools() -> [(&'static str, &'static str, Tool); 5] {
+    [
+        ("magnifying-glass", aurora_i18n::tr!("build-ui-tools-focus-ctrl-1"), Tool::Focus),
+        ("hand-grabbing", aurora_i18n::tr!("build-ui-tools-move-ctrl-2"), Tool::Grab),
+        ("cursor", aurora_i18n::tr!("build-ui-tools-edit-ctrl-3"), Tool::Edit),
+        ("magic-wand", aurora_i18n::tr!("build-ui-tools-create-ctrl-4"), Tool::Create),
+        ("mountains", aurora_i18n::tr!("build-ui-tools-land-ctrl-5"), Tool::Land),
+    ]
+}
 
 /// One of the five big tool buttons (35×25 in Firestorm).
 fn tool_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, on: bool) -> bool {
@@ -47,7 +49,7 @@ fn tool_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, on: bool) 
 pub fn tool_row(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
-        for (icon, tip, t) in TOOLS {
+        for (icon, tip, t) in tools() {
             if tool_button(ui, p, icon, tip, tool.tool == t) && tool.tool != t {
                 tool.set_tool(t);
             }
@@ -58,22 +60,22 @@ pub fn tool_row(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool) {
 /// "text status": the hint of the current tool (floater.string status_*).
 pub fn status_text(tool: &BuildTool, s: &BuildSettings, mods: Mods) -> &'static str {
     match tool.tool {
-        Tool::Focus => "Cliquez et faites glisser pour bouger la caméra",
-        Tool::Grab => "Faites glisser pour déplacer, appuyez sur Ctrl pour soulever, Ctrl-Maj pour pivoter",
+        Tool::Focus => aurora_i18n::tr!("build-ui-tools-click-and-drag-to-move-the-camera"),
+        Tool::Grab => aurora_i18n::tr!("build-ui-tools-drag-to-move-ctrl-to-lift-ctrl-shift-to"),
         Tool::Edit => match tool.effective_mode(mods) {
-            EditMode::Rotate => "Pour faire tourner l'objet, faites glisser les bandes de couleur.",
-            EditMode::Stretch => "Pour étirer le côté sélectionné, cliquez et faites glisser.",
-            EditMode::Face => "Cliquez sur une face pour la sélectionner (Maj : ajouter).",
-            EditMode::Align => "Cliquez sur un cône pour aligner (Maj : empiler).",
-            EditMode::Move if tool.cam.hud.is_some() => "Glissez une flèche ou la poignée du plan pour déplacer le HUD.",
-            EditMode::Move => "Glissez pour déplacer, Maj-glissez pour copier.",
+            EditMode::Rotate => aurora_i18n::tr!("build-ui-tools-drag-the-colored-bands-to-rotate-the-object"),
+            EditMode::Stretch => aurora_i18n::tr!("build-ui-tools-click-and-drag-to-stretch-the-selected-side"),
+            EditMode::Face => aurora_i18n::tr!("build-ui-tools-click-a-face-to-select-it-shift-add"),
+            EditMode::Align => aurora_i18n::tr!("build-ui-tools-click-a-cone-to-align-shift-stack"),
+            EditMode::Move if tool.cam.hud.is_some() => aurora_i18n::tr!("build-ui-tools-drag-an-arrow-or-the-plane-handle-to-move"),
+            EditMode::Move => aurora_i18n::tr!("build-ui-tools-drag-to-move-shift-drag-to-copy"),
         },
-        Tool::Create => "Cliquez dans le monde pour construire.",
+        Tool::Create => aurora_i18n::tr!("build-ui-tools-click-in-the-world-to-build"),
         Tool::Land => {
             if s.land_action > land_action::REVERT {
-                "Cliquez et faites glisser pour sélectionner le terrain."
+                aurora_i18n::tr!("build-ui-tools-click-and-drag-to-select-land")
             } else {
-                "Cliquez et maintenez pour modifier le terrain."
+                aurora_i18n::tr!("build-ui-tools-click-and-hold-to-edit-land")
             }
         }
     }
@@ -91,23 +93,30 @@ pub fn focus_panel(ui: &mut egui::Ui, _p: &Palette, tool: &mut BuildTool, mods: 
         _ => tool.focus_mode,
     };
     ui.horizontal(|ui| {
-        if radio(ui, shown == FocusMode::Zoom, "Zoomer") {
+        if radio(ui, shown == FocusMode::Zoom, aurora_i18n::tr!("common-zoom-2")) {
             tool.focus_mode = FocusMode::Zoom;
         }
         // slider zoom: getCameraZoomFraction() * 0.5, 0..0.5
         let mut v = env.zoom_fraction * 0.5;
         let r = ui.add_enabled(
             tool.focus_mode == FocusMode::Zoom,
-            egui::Slider::new(&mut v, 0.0..=0.5).step_by(0.01).show_value(false),
+            egui::Slider::new(&mut v, 0.0..=0.5)
+                .custom_parser(aurora_i18n::parse_number)
+                .step_by(0.01)
+                .show_value(false),
         );
         if r.changed() {
             tool.ui.requests.push(Request::ZoomFraction(v * 2.0));
         }
     });
-    if radio(ui, shown == FocusMode::Orbit, "Faire tourner la caméra (Ctrl)") {
+    if radio(ui, shown == FocusMode::Orbit, aurora_i18n::tr!("build-ui-tools-orbit-camera-ctrl")) {
         tool.focus_mode = FocusMode::Orbit;
     }
-    if radio(ui, shown == FocusMode::Pan, "Faire un panoramique (Ctrl+Maj)") {
+    if radio(
+        ui,
+        shown == FocusMode::Pan,
+        aurora_i18n::tr!("build-ui-tools-pan-camera-ctrl-shift"),
+    ) {
         tool.focus_mode = FocusMode::Pan;
     }
 }
@@ -115,13 +124,13 @@ pub fn focus_panel(ui: &mut egui::Ui, _p: &Palette, tool: &mut BuildTool, mods: 
 /// Grab tool (move_radio_group).
 pub fn grab_panel(ui: &mut egui::Ui, _p: &Palette, tool: &mut BuildTool, mods: Mods) {
     let shown = tool.effective_grab_mode(mods);
-    if radio(ui, shown == GrabMode::Move, "Déplacer") {
+    if radio(ui, shown == GrabMode::Move, aurora_i18n::tr!("build-ui-tools-move")) {
         tool.grab_mode = GrabMode::Move;
     }
-    if radio(ui, shown == GrabMode::Lift, "Soulever (Ctrl)") {
+    if radio(ui, shown == GrabMode::Lift, aurora_i18n::tr!("build-ui-tools-lift-ctrl")) {
         tool.grab_mode = GrabMode::Lift;
     }
-    if radio(ui, shown == GrabMode::Spin, "Faire tourner (Ctrl+Maj)") {
+    if radio(ui, shown == GrabMode::Spin, aurora_i18n::tr!("build-ui-tools-rotate-ctrl-shift")) {
         tool.grab_mode = GrabMode::Spin;
     }
 }
@@ -133,57 +142,102 @@ pub fn edit_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &
         let ui = &mut cols[0];
         ui.spacing_mut().item_spacing.y = 2.0;
         for (m, t) in [
-            (EditMode::Move, "Bouger"),
-            (EditMode::Rotate, "Pivoter (Ctrl)"),
-            (EditMode::Stretch, "Étirer (Ctrl+Maj)"),
-            (EditMode::Face, "Choisir une face"),
-            (EditMode::Align, "Aligner"),
+            (EditMode::Move, aurora_i18n::tr!("common-move")),
+            (EditMode::Rotate, aurora_i18n::tr!("build-ui-tools-rotate-ctrl")),
+            (EditMode::Stretch, aurora_i18n::tr!("build-ui-tools-stretch-ctrl-shift")),
+            (EditMode::Face, aurora_i18n::tr!("build-ui-tools-select-face")),
+            (EditMode::Align, aurora_i18n::tr!("common-align")),
         ] {
             if radio(ui, mode == m, t) && tool.edit_mode != m {
                 tool.set_edit_mode(world, s, m);
             }
         }
-        if let Some(v) = check(ui, s.edit_linked, false, "Modification liée", true) {
+        if let Some(v) = check(ui, s.edit_linked, false, aurora_i18n::tr!("build-ui-tools-linked-edit"), true) {
             tool.set_edit_linked(world, s, v);
         }
         let ui = &mut cols[1];
         ui.spacing_mut().item_spacing.y = 2.0;
-        if let Some(v) = check(ui, s.scale_uniform, false, "Étirer les deux côtés", true) {
+        if let Some(v) = check(
+            ui,
+            s.scale_uniform,
+            false,
+            aurora_i18n::tr!("build-ui-tools-stretch-both-sides"),
+            true,
+        ) {
             s.scale_uniform = v;
         }
-        if let Some(v) = check(ui, s.scale_stretch_textures, false, "Étirer les textures", true) {
+        if let Some(v) = check(
+            ui,
+            s.scale_stretch_textures,
+            false,
+            aurora_i18n::tr!("build-ui-tools-stretch-textures"),
+            true,
+        ) {
             s.scale_stretch_textures = v;
         }
         ui.horizontal(|ui| {
-            if let Some(v) = check(ui, s.snap, false, "Fixer", true) {
+            if let Some(v) = check(ui, s.snap, false, aurora_i18n::tr!("build-ui-tools-set"), true) {
                 s.snap = v;
             }
-            if super::common::icon_button(ui, p, "arrow-right", "Options de la règle (Ctrl+Maj+B)", true) {
+            if super::common::icon_button(
+                ui,
+                p,
+                "arrow-right",
+                aurora_i18n::tr!("build-ui-tools-ruler-options-ctrl-shift-b"),
+                true,
+            ) {
                 tool.ui.grid_options_open = !tool.ui.grid_options_open;
             }
         });
-        if let Some(v) = check(ui, s.actual_root, false, "Axe d'édition à la racine", true) {
+        if let Some(v) = check(ui, s.actual_root, false, aurora_i18n::tr!("build-ui-tools-edit-axis-at-root"), true) {
             s.actual_root = v;
         }
-        if let Some(v) = check(ui, s.show_highlight, false, "Afficher le surlignage", true) {
+        if let Some(v) = check(
+            ui,
+            s.show_highlight,
+            false,
+            aurora_i18n::tr!("build-ui-tools-show-selection-highlighting"),
+            true,
+        ) {
             s.show_highlight = v;
         }
-        if let Some(v) = check(ui, s.select_probes, false, "Sél. les sondes de réfl.", true) {
+        if let Some(v) = check(
+            ui,
+            s.select_probes,
+            false,
+            aurora_i18n::tr!("build-ui-tools-select-reflection-probes"),
+            true,
+        ) {
             s.select_probes = v;
         }
     });
     ui.horizontal(|ui| {
         let parts = !tool.selection.is_empty() && (s.edit_linked || tool.edit_mode == EditMode::Face);
-        if super::common::icon_button(ui, p, "caret-left", "Sélectionner la partie ou face précédente (Ctrl+,)", parts) {
+        if super::common::icon_button(
+            ui,
+            p,
+            "caret-left",
+            aurora_i18n::tr!("build-ui-tools-select-previous-part-or-face-ctrl"),
+            parts,
+        ) {
             tool.select_next_part(world, s, false, mods.shift);
         }
-        if super::common::icon_button(ui, p, "caret-right", "Sélectionner la partie ou face suivante (Ctrl+.)", parts) {
+        if super::common::icon_button(
+            ui,
+            p,
+            "caret-right",
+            aurora_i18n::tr!("build-ui-tools-select-next-part-or-face-ctrl"),
+            parts,
+        ) {
             tool.select_next_part(world, s, true, mods.shift);
         }
         let can_link = !tool.hud_selected(world) && !s.edit_linked && tool.roots(world).len() >= 2;
         if ui
-            .add_enabled(can_link, egui::Button::new(RichText::new("Lien").size(12.0)))
-            .on_hover_text("Lier les objets sélectionnés (Ctrl+L)")
+            .add_enabled(
+                can_link,
+                egui::Button::new(RichText::new(aurora_i18n::tr!("build-ui-tools-link")).size(12.0)),
+            )
+            .on_hover_text(aurora_i18n::tr!("build-ui-tools-link-selected-objects-ctrl-l"))
             .clicked()
         {
             tool.link(world);
@@ -191,14 +245,18 @@ pub fn edit_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &
         if ui
             .add_enabled(
                 !tool.hud_selected(world) && !tool.selection.is_empty(),
-                egui::Button::new(RichText::new("Annuler le lien").size(12.0)),
+                egui::Button::new(RichText::new(aurora_i18n::tr!("build-ui-tools-unlink")).size(12.0)),
             )
-            .on_hover_text("Délier les objets sélectionnés (Ctrl+Maj+L)")
+            .on_hover_text(aurora_i18n::tr!("build-ui-tools-unlink-selected-objects-ctrl-shift-l"))
             .clicked()
         {
             tool.unlink(world);
         }
-        let items = [("Monde", 0u8), ("Local", 1), ("Référence", 2)];
+        let items = [
+            (aurora_i18n::tr!("common-world"), 0u8),
+            (aurora_i18n::tr!("build-ui-tools-local"), 1),
+            (aurora_i18n::tr!("build-ui-tools-reference"), 2),
+        ];
         if let Some(m) = super::common::combo(ui, "grid_mode", Some(s.grid_mode), &items, 82.0, true) {
             s.grid_mode = m;
             if m == 2 && tool.grid_objects.is_empty() {
@@ -217,7 +275,7 @@ pub fn create_panel(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings) {
     ui.horizontal_top(|ui| {
         let cell = Vec2::new(26.0, 26.0);
         egui::Grid::new("shapes").spacing(Vec2::splat(3.0)).show(ui, |ui| {
-            for i in 0..SHAPES.len() + 2 {
+            for i in 0..shapes().len() + 2 {
                 let sel = s.create_shape == i && !s.copy_selection;
                 let (rect, resp) = ui.allocate_exact_size(cell, egui::Sense::click());
                 let fill = if sel {
@@ -230,18 +288,18 @@ pub fn create_panel(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings) {
                 ui.painter().rect_filled(rect, 3.0, fill);
                 let col = if sel { Color32::WHITE } else { p.ink };
                 let name = match i {
-                    i if i < SHAPES.len() => {
-                        let sh = &SHAPES[i];
+                    i if i < shapes().len() => {
+                        let sh = &shapes()[i];
                         super::object::shape_preview(ui, rect.shrink(3.0), &sh.params(), sh.rotation(), col);
                         sh.name
                     }
-                    i if i == SHAPES.len() => {
+                    i if i == shapes().len() => {
                         tree_icon(ui, rect.shrink(4.0), col, true);
-                        "Arbre"
+                        aurora_i18n::tr!("build-ui-tools-tree")
                     }
                     _ => {
                         tree_icon(ui, rect.shrink(4.0), col, false);
-                        "Herbe"
+                        aurora_i18n::tr!("build-ui-tools-grass")
                     }
                 };
                 if resp.on_hover_text(name).clicked() {
@@ -257,34 +315,47 @@ pub fn create_panel(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings) {
         ui.vertical(|ui| {
             ui.spacing_mut().item_spacing.y = 2.0;
             ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
-            if let Some(v) = check(ui, s.keep_tool, false, "Maintenir l'outil sélect.", true) {
+            if let Some(v) = check(ui, s.keep_tool, false, aurora_i18n::tr!("build-ui-tools-keep-selection-tool"), true) {
                 s.keep_tool = v;
             }
-            if let Some(v) = check(ui, s.copy_selection, false, "Copier la sélection", true) {
+            if let Some(v) = check(ui, s.copy_selection, false, aurora_i18n::tr!("build-ui-tools-copy-selection"), true) {
                 s.copy_selection = v;
             }
             ui.indent("copy_opts", |ui| {
-                if let Some(v) = check(ui, s.copy_centers, false, "Centrer", s.copy_selection) {
+                if let Some(v) = check(
+                    ui,
+                    s.copy_centers,
+                    false,
+                    aurora_i18n::tr!("build-ui-tools-center"),
+                    s.copy_selection,
+                ) {
                     s.copy_centers = v;
                 }
-                if let Some(v) = check(ui, s.copy_rotates, false, "Pivoter", s.copy_selection) {
+                if let Some(v) = check(ui, s.copy_rotates, false, aurora_i18n::tr!("common-rotate"), s.copy_selection) {
                     s.copy_rotates = v;
                 }
             });
             // tree_grass_combo (FIRE-7802)
-            let tree = s.create_shape == SHAPES.len();
-            let grass = s.create_shape == SHAPES.len() + 1;
+            let tree = s.create_shape == shapes().len();
+            let grass = s.create_shape == shapes().len() + 1;
             let (list, current): (&[&str], &mut String) = if grass {
-                (&GRASS_SPECIES, &mut s.last_grass)
+                (&grass_species(), &mut s.last_grass)
             } else {
-                (&TREE_SPECIES, &mut s.last_tree)
+                (&tree_species(), &mut s.last_tree)
             };
             ui.add_enabled_ui(tree || grass, |ui| {
                 egui::ComboBox::from_id_salt("tree_grass")
                     .width(120.0)
-                    .selected_text(if current.is_empty() { "Random" } else { current.as_str() })
+                    .selected_text(if current.is_empty() {
+                        aurora_i18n::tr!("build-ui-tools-random")
+                    } else {
+                        current.as_str()
+                    })
                     .show_ui(ui, |ui| {
-                        if ui.selectable_label(current.is_empty(), "Random").clicked() {
+                        if ui
+                            .selectable_label(current.is_empty(), aurora_i18n::tr!("build-ui-tools-random"))
+                            .clicked()
+                        {
                             current.clear();
                         }
                         for n in list {
@@ -330,32 +401,50 @@ pub fn land_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &
     ui.columns(2, |cols| {
         let ui = &mut cols[0];
         ui.spacing_mut().item_spacing.y = 2.0;
-        if radio(ui, s.land_action > land_action::REVERT, "Choisir le terrain") {
+        if radio(
+            ui,
+            s.land_action > land_action::REVERT,
+            aurora_i18n::tr!("build-ui-tools-select-land"),
+        ) {
             s.land_action = 6;
         }
-        for (i, n) in crate::build::land::ACTION_NAMES.iter().enumerate() {
+        for (i, n) in crate::build::land::action_names().iter().enumerate() {
             if radio(ui, s.land_action as usize == i, n) {
                 s.land_action = i as u8;
             }
         }
         let ui = &mut cols[1];
-        label(ui, p, "Bulldozer :");
+        label(ui, p, aurora_i18n::tr!("build-ui-tools-bulldozer"));
         ui.horizontal(|ui| {
-            label(ui, p, "Taille");
-            ui.add(egui::Slider::new(&mut s.land_brush_size, 1.0..=11.0).show_value(false));
+            label(ui, p, aurora_i18n::tr!("build-ui-tools-size"));
+            ui.add(
+                egui::Slider::new(&mut s.land_brush_size, 1.0..=11.0)
+                    .custom_parser(aurora_i18n::parse_number)
+                    .show_value(false),
+            );
         });
         ui.horizontal(|ui| {
-            label(ui, p, "Force");
+            label(ui, p, aurora_i18n::tr!("build-ui-tools-force"));
             // logarithmic: -1..2 = 0.1..100 (LandBrushForce = 10^v)
             let mut lg = s.land_brush_force.clamp(0.1, 100.0).log10();
-            if ui.add(egui::Slider::new(&mut lg, -1.0..=2.0).show_value(false)).changed() {
+            if ui
+                .add(
+                    egui::Slider::new(&mut lg, -1.0..=2.0)
+                        .custom_parser(aurora_i18n::parse_number)
+                        .show_value(false),
+                )
+                .changed()
+            {
                 s.land_brush_force = 10f32.powf(lg);
             }
         });
         let can_apply = s.land_action <= land_action::REVERT && tool.land.selection.is_some();
         if ui
-            .add_enabled(can_apply, egui::Button::new(RichText::new("Appliquer").size(12.0)))
-            .on_hover_text("Modifier le terrain sélectionné")
+            .add_enabled(
+                can_apply,
+                egui::Button::new(RichText::new(aurora_i18n::tr!("common-apply")).size(12.0)),
+            )
+            .on_hover_text(aurora_i18n::tr!("build-ui-tools-edit-selected-land"))
             .clicked()
         {
             let mut cmds = Vec::new();
@@ -382,40 +471,57 @@ const PARCEL_UNIT_AREA: f32 = 16.0;
 pub fn parcel_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings) {
     let parcel = tool.land.parcel.clone().map(|(_, pi)| pi).or_else(|| world.parcel.clone());
     let sel_area = tool.land.selection_area();
-    super::common::section(ui, p, "Informations sur la parcelle");
+    super::common::section(ui, p, aurora_i18n::tr!("build-ui-tools-parcel-information"));
     match parcel.as_ref() {
         Some(pi) => {
             let whole = tool.land.selection.is_none() || (sel_area - pi.area as f32).abs() < 1.0;
             let public = pi.owner_id.is_nil();
             let for_sale = pi.flags & aurora_net::parcel_flags::FOR_SALE != 0;
             if !public && for_sale && whole {
-                label(ui, p, &format!("Prix : {} L$ pour {} m²", pi.sale_price, pi.area));
+                label(
+                    ui,
+                    p,
+                    &aurora_i18n::tr!(
+                        "build-ui-tools-price-l-for-m2",
+                        value0 = format!("{}", pi.sale_price),
+                        value1 = format!("{}", pi.area)
+                    ),
+                );
             } else {
                 let area = if tool.land.selection.is_some() { sel_area as i32 } else { pi.area };
-                label(ui, p, &format!("Surface : {area} m²"));
+                label(ui, p, &aurora_i18n::tr!("build-ui-tools-area-m2", area = format!("{}", area)));
             }
         }
         None => {
-            label(ui, p, "Aucune parcelle sélectionnée.");
+            label(ui, p, aurora_i18n::tr!("common-no-parcel-selected"));
         }
     }
     if ui
-        .add_enabled(parcel.is_some(), egui::Button::new(RichText::new("À propos du terrain").size(12.0)))
+        .add_enabled(
+            parcel.is_some(),
+            egui::Button::new(RichText::new(aurora_i18n::tr!("common-about-land")).size(12.0)),
+        )
         .clicked()
     {
         tool.ui.requests.push(Request::AboutLand);
     }
-    if let Some(v) = check(ui, s.show_parcel_owners, false, "Afficher les propriétaires", true) {
+    if let Some(v) = check(
+        ui,
+        s.show_parcel_owners,
+        false,
+        aurora_i18n::tr!("build-ui-tools-show-owners"),
+        true,
+    ) {
         s.show_parcel_owners = v;
     }
     if s.show_parcel_owners {
         ui.horizontal_wrapped(|ui| {
             for (c, t) in [
-                (Color32::from_rgb(0, 200, 0), "à vous"),
+                (Color32::from_rgb(0, 200, 0), aurora_i18n::tr!("build-ui-tools-yours")),
                 (Color32::from_rgb(0, 200, 200), "groupe"),
                 (Color32::from_rgb(220, 0, 0), "autres"),
-                (Color32::from_rgb(230, 230, 0), "à vendre"),
-                (Color32::from_rgb(170, 60, 220), "enchères"),
+                (Color32::from_rgb(230, 230, 0), aurora_i18n::tr!("build-ui-tools-for-sale")),
+                (Color32::from_rgb(170, 60, 220), aurora_i18n::tr!("build-ui-tools-auctions")),
                 (Color32::from_gray(140), "public"),
             ] {
                 crate::ui::widgets::status_dot(ui, c);
@@ -449,27 +555,33 @@ pub fn parcel_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world:
         .and_then(|r| r.info.as_ref())
         .is_none_or(|i| i.region_flags & REGION_FLAGS_ALLOW_PARCEL_CHANGES != 0);
     let whole = parcel.as_ref().is_some_and(|pi| (sel_area - pi.area as f32).abs() < 1.0);
-    super::common::section(ui, p, "Modifier la parcelle");
+    super::common::section(ui, p, aurora_i18n::tr!("build-ui-tools-edit-parcel"));
     ui.horizontal(|ui| {
         let divide = owner_divide && region_allows && tool.land.selection.is_some() && !whole;
         if ui
-            .add_enabled(divide, egui::Button::new(RichText::new("Sous-diviser").size(12.0)))
+            .add_enabled(
+                divide,
+                egui::Button::new(RichText::new(aurora_i18n::tr!("common-subdivide")).size(12.0)),
+            )
             .clicked()
         {
             tool.ui.confirm = Some(Confirm::Divide);
         }
         let join = sel_area > PARCEL_UNIT_AREA && !whole && owner_divide;
         if ui
-            .add_enabled(join, egui::Button::new(RichText::new("Fusionner").size(12.0)))
+            .add_enabled(join, egui::Button::new(RichText::new(aurora_i18n::tr!("common-join")).size(12.0)))
             .clicked()
         {
             tool.ui.confirm = Some(Confirm::Join);
         }
     });
-    super::common::section(ui, p, "Transactions");
+    super::common::section(ui, p, aurora_i18n::tr!("build-ui-tools-transactions"));
     ui.horizontal(|ui| {
         if ui
-            .add_enabled(can_buy && !mine, egui::Button::new(RichText::new("Acheter du terrain").size(12.0)))
+            .add_enabled(
+                can_buy && !mine,
+                egui::Button::new(RichText::new(aurora_i18n::tr!("build-ui-tools-buy-land")).size(12.0)),
+            )
             .clicked()
         {
             tool.ui.requests.push(Request::BuyLand);
@@ -477,7 +589,7 @@ pub fn parcel_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world:
         if ui
             .add_enabled(
                 owner_release && parcel.is_some(),
-                egui::Button::new(RichText::new("Abandonner le terrain").size(12.0)),
+                egui::Button::new(RichText::new(aurora_i18n::tr!("common-abandon-land")).size(12.0)),
             )
             .clicked()
         {
@@ -491,7 +603,7 @@ pub fn parcel_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world:
 pub fn selection_line(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &World) {
     let roots = tool.roots(world).len();
     if roots == 0 {
-        small(ui, p, "Aucune sélection effectuée.");
+        small(ui, p, aurora_i18n::tr!("build-ui-tools-nothing-selected"));
         return;
     }
     let prims = tool.sel_prims(world).len();
@@ -502,16 +614,33 @@ pub fn selection_line(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, worl
     small(
         ui,
         p,
-        &format!("{roots} objets sélectionnés, impact sur le terrain {impact}, prims {prims}"),
+        &aurora_i18n::tr!(
+            "build-ui-tools-objects-selected-land-impact-prims",
+            roots = format!("{}", roots),
+            impact = impact.to_string(),
+            prims = format!("{}", prims)
+        ),
     );
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         if let Some((_, remaining)) = tool.costs.capacity(world) {
-            small(ui, p, &format!("Capacité restante {remaining}."));
+            small(
+                ui,
+                p,
+                &aurora_i18n::tr!("build-ui-tools-remaining-capacity", remaining = format!("{}", remaining)),
+            );
         }
         if ui
-            .add(egui::Label::new(RichText::new("Plus d'infos").size(11.0).color(p.violet_light).underline()).sense(egui::Sense::click()))
-            .on_hover_text("Poids de la sélection et impact sur le terrain")
+            .add(
+                egui::Label::new(
+                    RichText::new(aurora_i18n::tr!("build-ui-tools-more-info"))
+                        .size(11.0)
+                        .color(p.violet_light)
+                        .underline(),
+                )
+                .sense(egui::Sense::click()),
+            )
+            .on_hover_text(aurora_i18n::tr!("build-ui-tools-selection-weight-and-land-impact"))
             .clicked()
         {
             tool.ui.weights_open = !tool.ui.weights_open;
@@ -561,7 +690,7 @@ impl BuildTool {
                 }
                 _ => "toutes".into(),
             };
-            return Some(format!("Faces : {list}"));
+            return Some(aurora_i18n::tr!("build-ui-tools-faces", list = list.to_string()));
         }
         if s.edit_linked {
             let n = if o.parent_id == 0 {
@@ -574,7 +703,7 @@ impl BuildTool {
                     .map(|i| i + 1)
                     .unwrap_or(0)
             };
-            return Some(format!("Numéro de lien : {n}"));
+            return Some(aurora_i18n::tr!("build-ui-tools-link-number", n = format!("{}", n)));
         }
         None
     }

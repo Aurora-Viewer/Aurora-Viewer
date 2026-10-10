@@ -330,7 +330,7 @@ impl Interactions {
             && (latest.owner_id != p.owner_id
                 || (d.target.action == Action::Buy && (latest.sale_type != p.sale_type || latest.sale_price != p.sale_price)))
         {
-            d.error = Some("L'offre ou le propriétaire a changé. Fermez puis réessayez.".into());
+            d.error = Some(aurora_i18n::tr!("interaction-the-offer-or-owner-has-changed-close-and-try").into());
             return None;
         }
         let price = match d.target.action {
@@ -342,7 +342,7 @@ impl Interactions {
             return None;
         }
         if world.balance.is_none_or(|b| price > b) {
-            d.error = Some("Solde insuffisant ou encore inconnu.".into());
+            d.error = Some(aurora_i18n::tr!("common-insufficient-or-unknown-balance").into());
             return None;
         }
         let out = if d.target.action == Action::Buy {
@@ -369,7 +369,7 @@ impl Interactions {
                     .unwrap_or(world.inventory.root)
             };
             if folder.is_nil() {
-                d.error = Some("Le dossier Objets n'est pas encore disponible.".into());
+                d.error = Some(aurora_i18n::tr!("interaction-the-objects-folder-is-not-available-yet").into());
                 return None;
             }
             NetCommand::BuyObject {
@@ -682,7 +682,7 @@ mod tests {
         }]);
         state.on_purchase_inventory(t.root, &Ok(Vec::new()));
         assert!(state.confirm(&w, None).is_none());
-        state.on_purchase_inventory(t.root, &Err("Indisponible".into()));
+        state.on_purchase_inventory(t.root, &Err(aurora_i18n::tr!("ui-media-unavailable").into()));
         assert!(state.confirm(&w, None).is_none());
     }
     #[test]

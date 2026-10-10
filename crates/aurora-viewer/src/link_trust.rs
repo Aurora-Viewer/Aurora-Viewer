@@ -138,7 +138,7 @@ pub fn classify(url: &str) -> Trust {
         return Trust::Unknown;
     };
     if user_info {
-        return Trust::Dangerous("L'adresse cache sa vraie destination derrière un « @ ».");
+        return Trust::Dangerous(aurora_i18n::tr!("link-trust-the-address-hides-its-real-destination-behind-an"));
     }
     if host.is_empty() {
         return Trust::Unknown;
@@ -147,27 +147,29 @@ pub fn classify(url: &str) -> Trust {
         return Trust::Trusted;
     }
     if !host.is_ascii() || host.split('.').any(|label| label.starts_with("xn--")) {
-        return Trust::Dangerous("Le nom du site contient des caractères qui peuvent en imiter un autre.");
+        return Trust::Dangerous(aurora_i18n::tr!(
+            "link-trust-the-site-name-contains-characters-that-may-imitate-another"
+        ));
     }
     if host.contains(':') || host.split('.').all(|label| label.chars().all(|c| c.is_ascii_digit())) {
-        return Trust::Dangerous("Le lien mène à une adresse IP au lieu d'un nom de site.");
+        return Trust::Dangerous(aurora_i18n::tr!("link-trust-the-link-leads-to-an-ip-address-instead-of"));
     }
     if in_list(&host, HIDDEN_DESTINATION) {
-        return Trust::Dangerous("Raccourcisseur de lien : la vraie destination est cachée.");
+        return Trust::Dangerous(aurora_i18n::tr!("link-trust-shortened-link-the-real-destination-is-hidden"));
     }
     if in_list(&host, THROWAWAY_HOSTING) {
-        return Trust::Dangerous("Hébergement jetable, très utilisé pour les fausses pages de connexion.");
+        return Trust::Dangerous(aurora_i18n::tr!("link-trust-disposable-hosting-often-used-for-fake-login-pages"));
     }
     // "youtube.com.evil.example": a trusted name used as a mere subdomain
     if TRUSTED
         .iter()
         .any(|d| host.starts_with(&format!("{d}.")) || host.contains(&format!(".{d}.")))
     {
-        return Trust::Dangerous("Le nom commence comme un site de confiance, mais le site est un autre.");
+        return Trust::Dangerous(aurora_i18n::tr!("link-trust-the-name-starts-like-a-trusted-site-but-leads"));
     }
     let squashed: String = host.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
     if IMPERSONATED.iter().any(|name| squashed.contains(name)) {
-        return Trust::Dangerous("Ce site reprend le nom d'un site officiel sans en être un.");
+        return Trust::Dangerous(aurora_i18n::tr!("link-trust-this-site-imitates-the-name-of-an-official-site"));
     }
     Trust::Unknown
 }

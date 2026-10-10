@@ -18,7 +18,16 @@ const PARCEL_GRID: f32 = 4.0;
 const POST_HEIGHT: f32 = 0.666;
 
 /// Labels of the land radio (floater_tools.xml, French skin).
-pub const ACTION_NAMES: [&str; 6] = ["Aplatir", "Élever", "Abaisser", "Lisser", "Bosseler", "Annuler modification"];
+pub fn action_names() -> [&'static str; 6] {
+    [
+        aurora_i18n::tr!("build-land-flatten"),
+        aurora_i18n::tr!("build-land-raise"),
+        aurora_i18n::tr!("build-land-lower"),
+        aurora_i18n::tr!("build-land-smooth"),
+        aurora_i18n::tr!("build-land-bump"),
+        aurora_i18n::tr!("build-land-cancel-edit"),
+    ]
+}
 
 /// ParcelPropertiesRequest sequence ids of the land selection (the build
 /// floater's capacity line uses the 1000 before them).
@@ -166,9 +175,9 @@ impl LandTool {
             return true;
         };
         if !can_terraform_region(world, handle) {
-            self.message = Some(format!(
-                "La région {} n'autorise pas la modification du terrain.",
-                region_name(world, handle)
+            self.message = Some(aurora_i18n::tr!(
+                "build-land-region-does-not-allow-terraforming",
+                value0 = region_name(world, handle).to_string()
             ));
             return true;
         }
@@ -176,9 +185,9 @@ impl LandTool {
             && parcel.flags & parcel_flags::ALLOW_TERRAFORM == 0
             && parcel.owner_id != world.agent_id
         {
-            self.message = Some(format!(
-                "Vous n'êtes pas autorisé à modifier le terrain de la parcelle {}.",
-                parcel.name
+            self.message = Some(aurora_i18n::tr!(
+                "build-land-you-are-not-allowed-to-edit-terrain-on-parcel",
+                value0 = parcel.name.to_string()
             ));
         }
         self.brushing = Some(world.ground_height(spot).unwrap_or(p.z));
@@ -247,7 +256,7 @@ impl LandTool {
     /// "Apply" on the selected land (LLToolBrushLand::modifyLandInSelectionGlobal).
     pub fn apply_to_selection(&mut self, world: &World, s: &BuildSettings, out: &mut Vec<BuildCmd>) {
         let Some((lo, hi)) = self.selection else {
-            self.message = Some("Sélectionnez d'abord du terrain (outil « Sélectionner le terrain »).".into());
+            self.message = Some(aurora_i18n::tr!("build-land-select-land-first-the-select-land-tool").into());
             return;
         };
         let action = s.land_action.min(land_action::REVERT);
@@ -274,9 +283,9 @@ impl LandTool {
             }
         }
         if let Some((h, _)) = regions.iter().find(|(h, _)| !can_terraform_region(world, *h)) {
-            self.message = Some(format!(
-                "La région {} n'autorise pas la modification du terrain.",
-                region_name(world, *h)
+            self.message = Some(aurora_i18n::tr!(
+                "build-land-region-does-not-allow-terraforming",
+                value0 = region_name(world, *h).to_string()
             ));
             return;
         }

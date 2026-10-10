@@ -65,7 +65,10 @@ impl App {
                 // Aurora's draw distance range (Firestorm does not clamp here).
                 self.settings.draw_distance = d.clamp(32.0, 512.0);
                 self.net.send(NetCommand::SetDrawDistance(self.settings.draw_distance));
-                self.report_command(format!("Distance d'affichage réglée à {:.0} m.", self.settings.draw_distance));
+                self.report_command(aurora_i18n::tr!(
+                    "app-chat-commands-draw-distance-set-to-m",
+                    value0 = format!("{:.0}", self.settings.draw_distance)
+                ));
             }
             Command::TeleportToCamera => self.teleport_render_pos(self.camera.position),
             Command::Media { url, mime } => {
@@ -93,9 +96,15 @@ impl App {
                 Some(o) => {
                     let local_id = o.key.local_id;
                     self.send(NetCommand::Touch { local_id });
-                    self.report_command(format!("Objet de clé {id} touché."));
+                    self.report_command(aurora_i18n::tr!(
+                        "app-chat-commands-touched-object-with-key",
+                        id = format!("{}", id)
+                    ));
                 }
-                None => self.report_command(format!("Objet de clé {id} introuvable !")),
+                None => self.report_command(aurora_i18n::tr!(
+                    "app-chat-commands-object-with-key-not-found",
+                    id = format!("{}", id)
+                )),
             },
             Command::SitOn(id) => match self.world.objects.index_of_uuid(&id).and_then(|i| self.world.objects.get(i)) {
                 Some(o) => {
@@ -105,22 +114,28 @@ impl App {
                         target: id,
                         offset: Vec3::ZERO,
                     });
-                    self.report_command(format!("Assis sur l'objet de clé {id}."));
+                    self.report_command(aurora_i18n::tr!(
+                        "app-chat-commands-sitting-on-object-with-key",
+                        id = format!("{}", id)
+                    ));
                 }
-                None => self.report_command(format!("Objet de clé {id} introuvable !")),
+                None => self.report_command(aurora_i18n::tr!(
+                    "app-chat-commands-object-with-key-not-found",
+                    id = format!("{}", id)
+                )),
             },
             Command::StandUp => {
                 self.send(NetCommand::OneShotControl(aurora_net::control::STAND_UP));
-                self.report_command("Debout.");
+                self.report_command(aurora_i18n::tr!("app-chat-commands-standing"));
             }
             Command::OfferTeleport(to) => {
                 // "Join me!" stays in English: it is what the other avatar reads.
                 self.send(NetCommand::OfferTeleport {
                     to,
-                    message: "Join me!".into(),
+                    message: aurora_i18n::tr!("extra-join-me").into(),
                 });
                 let name = self.world.person_name(&to).unwrap_or_else(|| to.to_string());
-                self.report_command(format!("Téléportation proposée à {name}."));
+                self.report_command(aurora_i18n::tr!("app-chat-commands-teleport-offered-to", name = name.to_string()));
             }
             Command::Ground { offset } => {
                 let pos = self.world.agent.position;
@@ -133,7 +148,7 @@ impl App {
                 self.teleport_in_region(Vec3::new(pos.x, pos.y, amount.apply(pos.z)));
             }
             Command::TeleportHome => {
-                self.begin_teleport("Domicile".into(), false);
+                self.begin_teleport(aurora_i18n::tr!("common-home").into(), false);
                 self.net.send(NetCommand::TeleportHome);
             }
             Command::RezPlatform(width) => self.rez_platform(width.unwrap_or(self.settings.chat_commands.platform_size)),
@@ -156,7 +171,9 @@ impl App {
                 {
                     if pos.z <= 0.0 {
                         // AVATAR_UNKNOWN_Z_OFFSET: too high for coarse locations.
-                        self.report_command("Impossible de se téléporter vers cet avatar : son altitude est inconnue.");
+                        self.report_command(aurora_i18n::tr!(
+                            "app-chat-commands-cannot-teleport-to-this-avatar-its-altitude-is-unknown"
+                        ));
                     } else {
                         self.teleport_render_pos(pos + Vec3::Z * 2.0);
                     }
@@ -167,7 +184,13 @@ impl App {
                 self.world.map.track_location(x, y, pos.z.round(), false);
                 let region = self.world.region_name();
                 let p = pos.round();
-                self.report_command(format!("Suivi de {region} (<{}, {}, {}>).", p.x, p.y, p.z));
+                self.report_command(aurora_i18n::tr!(
+                    "app-chat-commands-tracking-2",
+                    region = region.to_string(),
+                    value0 = format!("{}", p.x),
+                    value1 = format!("{}", p.y),
+                    value2 = format!("{}", p.z)
+                ));
             }
             Command::TrackAvatar(name) => match self.find_nearby(&name) {
                 // Deviation: LLAvatarActions::track follows the avatar; Aurora
@@ -176,9 +199,12 @@ impl App {
                     let (x, y) = crate::ui::minimap::to_global(&self.world, pos);
                     self.world.map.track_location(x, y, pos.z, false);
                     let name = self.world.person_name(&id).unwrap_or(name);
-                    self.report_command(format!("Suivi de {name}."));
+                    self.report_command(aurora_i18n::tr!("app-chat-commands-tracking", name = name.to_string()));
                 }
-                None => self.report_command(format!("Aucun avatar à proximité ne correspond à « {name} ».")),
+                None => self.report_command(aurora_i18n::tr!(
+                    "app-chat-commands-no-nearby-avatar-matches",
+                    name = name.to_string()
+                )),
             },
             Command::ClearChat => {
                 self.world.chat.clear();
@@ -189,7 +215,10 @@ impl App {
                 let pos = self.camera.position;
                 let text = cmdline::format_camera(pos, pos + self.camera.forward(), 0.0);
                 self.egui_ctx.copy_text(text.clone());
-                self.report_command(format!("Position de la caméra {text} copiée dans le presse-papiers."));
+                self.report_command(aurora_i18n::tr!(
+                    "app-chat-commands-camera-position-copied-to-clipboard",
+                    text = text.to_string()
+                ));
             }
             Command::PasteCamera(spec) => self.paste_camera(spec),
         }
@@ -258,7 +287,7 @@ impl App {
             material: 1,
             // FLAGS_CREATE_SELECTED above 4096 m
             add_flags: if pos.z > 4096.0 { 0x02 } else { 0 },
-            shape: crate::build::shapes::SHAPES[0].raw(),
+            shape: crate::build::shapes::shapes()[0].raw(),
             ray_start: at,
             ray_end: at,
             ray_target: Uuid::nil(),
@@ -275,15 +304,14 @@ impl App {
     fn paste_camera(&mut self, spec: cmdline::CameraSpec) {
         let focus = spec.focus.unwrap_or(spec.pos + (self.camera.target - self.camera.position));
         if self.world.agent.position.distance(spec.pos) > self.settings.draw_distance {
-            self.report_command(
-                "Impossible de restaurer la vue de la caméra parce que la position de la caméra est au-delà de la \
-                 distance d'affichage.",
-            );
+            self.report_command(aurora_i18n::tr!(
+                "app-chat-commands-cannot-restore-the-camera-view-because-its-position-is"
+            ));
             return;
         }
         self.camera.set_view(spec.pos, focus, &mut self.world.agent, &self.settings.camera);
         let text = cmdline::format_camera(spec.pos, focus, spec.roll.unwrap_or(0.0));
-        self.report_command(format!("Caméra restaurée à {text}."));
+        self.report_command(aurora_i18n::tr!("app-chat-commands-camera-restored-to", text = text.to_string()));
     }
 
     /// key2name answers, once the names are known (key_to_name_callback).

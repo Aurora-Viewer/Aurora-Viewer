@@ -22,11 +22,11 @@ fn submit(st: &mut InventoryUi, actions: &mut Vec<InvAction>, plan: Result<Mutat
 }
 pub(super) fn open(inv: &Inventory, id: Uuid, st: &mut InventoryUi, prefs: &InventoryPreferences, actions: &mut Vec<InvAction>) {
     if st.preview_dirty || st.save_pending {
-        st.message = "Enregistrez ou fermez le document ouvert avant d’en ouvrir un autre.".into();
+        st.message = aurora_i18n::tr!("ui-inventory-context-save-or-close-the-open-document-before-opening-another").into();
         return;
     }
     let Some(original) = rules::original(inv, id) else {
-        st.message = "Le lien est cassé.".into();
+        st.message = aurora_i18n::tr!("common-the-link-is-broken").into();
         return;
     };
     if inv.folders.contains_key(&original) {
@@ -67,14 +67,18 @@ fn new_menu(
     prefs: &mut InventoryPreferences,
     actions: &mut Vec<InvAction>,
 ) {
-    if menu::item_if(ui, p, "folder", "Nouveau dossier", enabled) {
-        submit(st, actions, rules::create_folder(id, "Nouveau dossier"));
+    if menu::item_if(ui, p, "folder", aurora_i18n::tr!("common-new-folder"), enabled) {
+        submit(st, actions, rules::create_folder(id, aurora_i18n::tr!("common-new-folder")));
     }
     for (kind, icon, name) in [
-        (NewItem::Script, "code", "Nouveau script"),
-        (NewItem::Note, "note", "Nouvelle note"),
-        (NewItem::Gesture, "hand-waving", "Nouveau geste"),
-        (NewItem::Material, "cube", "Nouveau matériau"),
+        (NewItem::Script, "code", aurora_i18n::tr!("common-new-script")),
+        (NewItem::Note, "note", aurora_i18n::tr!("common-new-notecard")),
+        (
+            NewItem::Gesture,
+            "hand-waving",
+            aurora_i18n::tr!("ui-inventory-context-new-gesture"),
+        ),
+        (NewItem::Material, "cube", aurora_i18n::tr!("ui-inventory-context-new-material")),
     ] {
         entry(
             ui,
@@ -90,61 +94,79 @@ fn new_menu(
             actions,
         );
     }
-    menu::submenu(ui, p, "t-shirt", "Nouveaux habits", enabled, |ui| {
+    menu::submenu(
+        ui,
+        p,
+        "t-shirt",
+        aurora_i18n::tr!("ui-inventory-context-new-clothes"),
+        enabled,
+        |ui| {
+            for (kind, name) in [
+                (4, aurora_i18n::tr!("common-new-shirt")),
+                (5, aurora_i18n::tr!("ui-inventory-context-new-pants")),
+                (6, aurora_i18n::tr!("common-new-shoes")),
+                (7, aurora_i18n::tr!("common-new-socks")),
+                (8, aurora_i18n::tr!("common-new-jacket")),
+                (12, aurora_i18n::tr!("common-new-skirt")),
+                (9, aurora_i18n::tr!("common-new-gloves")),
+                (10, aurora_i18n::tr!("ui-inventory-context-new-tank-top")),
+                (11, aurora_i18n::tr!("ui-inventory-context-new-underpants")),
+                (13, aurora_i18n::tr!("ui-inventory-context-new-alpha-mask")),
+                (14, aurora_i18n::tr!("common-new-tattoo")),
+                (16, aurora_i18n::tr!("ui-inventory-context-new-universal")),
+                (15, aurora_i18n::tr!("ui-inventory-context-new-physics-properties")),
+            ] {
+                entry(
+                    ui,
+                    p,
+                    "t-shirt",
+                    name,
+                    enabled,
+                    InvAction::Create {
+                        parent: id,
+                        kind: NewItem::Wearable(kind),
+                        name: name.into(),
+                    },
+                    actions,
+                );
+            }
+        },
+    );
+    menu::submenu(
+        ui,
+        p,
+        "person",
+        aurora_i18n::tr!("ui-inventory-context-new-body-parts"),
+        enabled,
+        |ui| {
+            for (kind, name) in [
+                (0, aurora_i18n::tr!("common-new-shape")),
+                (1, aurora_i18n::tr!("common-new-skin")),
+                (2, aurora_i18n::tr!("common-new-hair")),
+                (3, aurora_i18n::tr!("common-new-eyes")),
+            ] {
+                entry(
+                    ui,
+                    p,
+                    "person",
+                    name,
+                    enabled,
+                    InvAction::Create {
+                        parent: id,
+                        kind: NewItem::Wearable(kind),
+                        name: name.into(),
+                    },
+                    actions,
+                );
+            }
+        },
+    );
+    menu::submenu(ui, p, "sun", aurora_i18n::tr!("ui-inventory-context-new-settings"), enabled, |ui| {
         for (kind, name) in [
-            (4, "Nouvelle chemise"),
-            (5, "Nouveau pantalon"),
-            (6, "Nouvelles chaussures"),
-            (7, "Nouvelles chaussettes"),
-            (8, "Nouvelle veste"),
-            (12, "Nouvelle jupe"),
-            (9, "Nouveaux gants"),
-            (10, "Nouveau débardeur"),
-            (11, "Nouveau caleçon"),
-            (13, "Nouveau masque alpha"),
-            (14, "Nouveau tatouage"),
-            (16, "Nouvel environnement universel"),
-            (15, "Nouvelles propriétés physiques"),
+            (0, aurora_i18n::tr!("ui-inventory-context-new-sky")),
+            (1, aurora_i18n::tr!("ui-inventory-context-new-water")),
+            (2, aurora_i18n::tr!("ui-inventory-context-new-day-cycle")),
         ] {
-            entry(
-                ui,
-                p,
-                "t-shirt",
-                name,
-                enabled,
-                InvAction::Create {
-                    parent: id,
-                    kind: NewItem::Wearable(kind),
-                    name: name.into(),
-                },
-                actions,
-            );
-        }
-    });
-    menu::submenu(ui, p, "person", "Nouvelles parties du corps", enabled, |ui| {
-        for (kind, name) in [
-            (0, "Nouvelle silhouette"),
-            (1, "Nouvelle peau"),
-            (2, "Nouveaux cheveux"),
-            (3, "Nouveaux yeux"),
-        ] {
-            entry(
-                ui,
-                p,
-                "person",
-                name,
-                enabled,
-                InvAction::Create {
-                    parent: id,
-                    kind: NewItem::Wearable(kind),
-                    name: name.into(),
-                },
-                actions,
-            );
-        }
-    });
-    menu::submenu(ui, p, "sun", "Nouveaux paramètres", enabled, |ui| {
-        for (kind, name) in [(0, "Nouveau ciel"), (1, "Nouvelle eau"), (2, "Nouveau cycle du jour")] {
             entry(
                 ui,
                 p,
@@ -160,22 +182,29 @@ fn new_menu(
             );
         }
     });
-    menu::submenu(ui, p, "arrow-square-out", "Utiliser comme dossier par défaut pour", enabled, |ui| {
-        for (slot, name) in [
-            "Chargements d’images",
-            "Chargements de sons",
-            "Chargements d’animations",
-            "Chargements de modèles",
-            "Chargements de matériaux PBR",
-        ]
-        .iter()
-        .enumerate()
-        {
-            if menu::check(ui, p, "arrow-square-out", name, prefs.upload_folders[slot] == id, enabled) {
-                prefs.upload_folders[slot] = id;
+    menu::submenu(
+        ui,
+        p,
+        "arrow-square-out",
+        aurora_i18n::tr!("ui-inventory-context-use-as-default-folder-for"),
+        enabled,
+        |ui| {
+            for (slot, name) in [
+                aurora_i18n::tr!("ui-inventory-context-image-loads"),
+                aurora_i18n::tr!("ui-inventory-context-sound-loads"),
+                aurora_i18n::tr!("ui-inventory-context-animation-loads"),
+                aurora_i18n::tr!("ui-inventory-context-model-loads"),
+                aurora_i18n::tr!("ui-inventory-context-pbr-material-loads"),
+            ]
+            .iter()
+            .enumerate()
+            {
+                if menu::check(ui, p, "arrow-square-out", name, prefs.upload_folders[slot] == id, enabled) {
+                    prefs.upload_folders[slot] = id;
+                }
             }
-        }
-    });
+        },
+    );
 }
 
 pub(super) fn show(
@@ -213,25 +242,36 @@ pub(super) fn show(
                     ui,
                     p,
                     "trash",
-                    "Vider la corbeille",
+                    aurora_i18n::tr!("common-empty-trash"),
                     ready && folder.is_some_and(|f| f.state == FetchState::Fetched && (!f.items.is_empty() || !f.children.is_empty())),
                 ) {
                     st.dialog = Some(EditDialog::Empty(id));
                 }
             } else {
-                if menu::item_if(ui, p, "arrow-counter-clockwise", "Restaurer l’objet", ready && movable && single)
-                    && let Some(to) = rules::default_folder(inv, id)
+                if menu::item_if(
+                    ui,
+                    p,
+                    "arrow-counter-clockwise",
+                    aurora_i18n::tr!("ui-inventory-context-restore-object"),
+                    ready && movable && single,
+                ) && let Some(to) = rules::default_folder(inv, id)
                 {
                     submit(st, actions, rules::move_selection(inv, &ids, to, &prefs.protected, &facts.worn));
                 }
-                if menu::item_if(ui, p, "trash", "Purger l’objet", ready && movable && !worn) {
+                if menu::item_if(
+                    ui,
+                    p,
+                    "trash",
+                    aurora_i18n::tr!("ui-inventory-context-purge-object"),
+                    ready && movable && !worn,
+                ) {
                     st.dialog = Some(EditDialog::Delete(ids.clone(), true));
                 }
             }
             menu::separator(ui, p);
         } else {
             let share = ready && writable && ids.iter().all(|id| rules::offer(inv, *id, &prefs.protected, &facts.worn).is_ok());
-            if menu::item_if(ui, p, "share-network", "Partager", share) {
+            if menu::item_if(ui, p, "share-network", aurora_i18n::tr!("common-share"), share) {
                 st.share_items = ids.clone();
                 st.share_picker.open(&format!("inventory_share_{}", st.ui_id), false);
             }
@@ -252,7 +292,7 @@ pub(super) fn show(
                     ui,
                     p,
                     "t-shirt",
-                    "Remplacer la tenue actuelle",
+                    aurora_i18n::tr!("ui-inventory-context-replace-current-outfit"),
                     can_wear,
                     InvAction::Appearance(Wear::WearContents {
                         folder: id,
@@ -264,7 +304,7 @@ pub(super) fn show(
                     ui,
                     p,
                     "plus",
-                    "Ajouter à la tenue actuelle",
+                    aurora_i18n::tr!("ui-inventory-context-add-to-current-outfit"),
                     can_wear,
                     InvAction::Appearance(Wear::WearContents {
                         folder: id,
@@ -276,7 +316,7 @@ pub(super) fn show(
                     ui,
                     p,
                     "coat-hanger",
-                    "Porter les objets",
+                    aurora_i18n::tr!("ui-inventory-context-wear-objects"),
                     can_wear,
                     InvAction::Appearance(Wear::WearContents {
                         folder: id,
@@ -288,7 +328,7 @@ pub(super) fn show(
                     ui,
                     p,
                     "x-circle",
-                    "Enlever de la tenue actuelle",
+                    aurora_i18n::tr!("ui-inventory-context-remove-from-current-outfit"),
                     can_wear && content.iter().any(|l| facts.worn.contains(&l.target)),
                     InvAction::Appearance(Wear::RemoveOutfit(id)),
                     actions,
@@ -297,34 +337,55 @@ pub(super) fn show(
             } else {
                 let opens = single && target.is_some() && matches!(kind, 0 | 1 | 2 | 3 | 7 | 10 | 20 | 21 | 56 | 57);
                 let (icon, label) = if kind == 3 {
-                    ("navigation-arrow", "Se téléporter")
+                    ("navigation-arrow", aurora_i18n::tr!("common-teleport"))
                 } else {
-                    ("folder-open", "Ouvrir")
+                    ("folder-open", aurora_i18n::tr!("common-open"))
                 };
                 if menu::item_if(ui, p, icon, label, opens) {
                     open(inv, id, st, prefs, actions);
                 }
                 if let Some(landmark) = original.filter(|it| it.asset_type == 3)
-                    && menu::item_if(ui, p, "info", "À propos du repère", single && !landmark.asset_id.is_nil())
+                    && menu::item_if(
+                        ui,
+                        p,
+                        "info",
+                        aurora_i18n::tr!("ui-inventory-context-about-landmark"),
+                        single && !landmark.asset_id.is_nil(),
+                    )
                 {
                     actions.push(InvAction::AboutLandmark(landmark.id, landmark.asset_id));
                 }
-                if menu::item_if(ui, p, "info", "Propriétés", single) {
+                if menu::item_if(ui, p, "info", aurora_i18n::tr!("common-properties"), single) {
                     st.property_edit = None;
                     st.dialog = Some(EditDialog::Properties(id));
                 }
             }
             let rename = ready && single && rules::renameable(inv, id, &prefs.protected);
-            if menu::item_if(ui, p, "pencil-simple", "Renommer", rename) {
+            if menu::item_if(ui, p, "pencil-simple", aurora_i18n::tr!("common-rename"), rename) {
                 st.begin_rename(inv, id);
             }
-            if menu::item_if(ui, p, "image", "Image…", ready && single && writable && !linked) {
+            if menu::item_if(
+                ui,
+                p,
+                "image",
+                aurora_i18n::tr!("common-image-2"),
+                ready && single && writable && !linked,
+            ) {
                 st.thumbnail.open(id);
             }
             if let Some(f) = folder {
                 if matches!(f.info.type_default, -1 | 47) && !f.library {
                     let protected = prefs.protected.contains(&id);
-                    if menu::item(ui, p, "lock-simple", if protected { "Déprotéger" } else { "Protéger" }) {
+                    if menu::item(
+                        ui,
+                        p,
+                        "lock-simple",
+                        if protected {
+                            aurora_i18n::tr!("ui-inventory-context-unlock")
+                        } else {
+                            aurora_i18n::tr!("ui-inventory-context-lock")
+                        },
+                    ) {
                         if protected {
                             prefs.protected.remove(&id);
                         } else {
@@ -336,17 +397,29 @@ pub(super) fn show(
                     ui,
                     p,
                     "arrows-clockwise",
-                    "Recharger le dossier",
+                    aurora_i18n::tr!("ui-inventory-context-reload-folder"),
                     single && id != inv.root && id != inv.lib_root,
                 ) {
                     st.message.clear();
                     actions.push(InvAction::Preview(id));
                 }
-                if menu::item_if(ui, p, "arrow-square-out", "Afficher dans une nouvelle fenêtre", single) {
+                if menu::item_if(
+                    ui,
+                    p,
+                    "arrow-square-out",
+                    aurora_i18n::tr!("ui-inventory-context-show-in-a-new-window"),
+                    single,
+                ) {
                     st.open_folder_window(id);
                 }
                 menu::separator(ui, p);
-                if menu::item_if(ui, p, "folder-open", "Ouvrir dans une nouvelle fenêtre", single) {
+                if menu::item_if(
+                    ui,
+                    p,
+                    "folder-open",
+                    aurora_i18n::tr!("ui-inventory-context-open-in-a-new-window"),
+                    single,
+                ) {
                     st.open_folder_window(id);
                 }
             } else if let Some(it) = item {
@@ -356,7 +429,7 @@ pub(super) fn show(
                     ui,
                     p,
                     "copy",
-                    "Copier l’UUID de l’objet",
+                    aurora_i18n::tr!("ui-inventory-context-copy-object-uuid"),
                     single && knowable && !it.asset_id.is_nil(),
                 ) {
                     ui.ctx().copy_text(it.asset_id.to_string());
@@ -366,7 +439,7 @@ pub(super) fn show(
                         ui,
                         p,
                         "arrow-counter-clockwise",
-                        "Remettre à la dernière position",
+                        aurora_i18n::tr!("ui-inventory-context-return-to-last-location"),
                         single && writable && !worn,
                         InvAction::Restore(target.unwrap_or(id)),
                         actions,
@@ -382,14 +455,14 @@ pub(super) fn show(
                     .get(id)
                     .is_some_and(|it| it.owner_mask & rules::COPY != 0 || !matches!(it.asset_type, 2 | 49))
         });
-        if menu::item_if(ui, p, "copy", "Copier", ready && copyable) {
+        if menu::item_if(ui, p, "copy", aurora_i18n::tr!("common-copy-2"), ready && copyable) {
             st.clipboard = ids.clone();
             st.cut = false;
             if let Some(id) = ids.first() {
                 ui.ctx().copy_text(id.to_string());
             }
         }
-        if menu::item_if(ui, p, "arrow-u-up-left", "Couper", ready && movable) {
+        if menu::item_if(ui, p, "arrow-u-up-left", aurora_i18n::tr!("common-cut"), ready && movable) {
             st.clipboard = ids.clone();
             st.cut = true;
             if let Some(id) = ids.first() {
@@ -404,7 +477,7 @@ pub(super) fn show(
             && single
             && to.is_some_and(|to| rules::paste_allowed(inv, &st.clipboard, to, false, true, &prefs.protected, &facts.worn))
             && !st.cut;
-        if menu::item_if(ui, p, "clipboard-text", "Coller", paste)
+        if menu::item_if(ui, p, "clipboard-text", aurora_i18n::tr!("common-paste"), paste)
             && let Some(to) = to
         {
             st.consume_clipboard = st.cut;
@@ -414,7 +487,7 @@ pub(super) fn show(
                 rules::paste(inv, &st.clipboard, to, st.cut, false, &prefs.protected, &facts.worn),
             );
         }
-        if menu::item_if(ui, p, "link", "Coller comme lien", paste_links)
+        if menu::item_if(ui, p, "link", aurora_i18n::tr!("ui-inventory-context-paste-as-link"), paste_links)
             && let Some(to) = to
         {
             submit(
@@ -424,12 +497,17 @@ pub(super) fn show(
             );
         }
         if linked {
-            if menu::item_if(ui, p, "arrow-square-out", "Trouver l’original", single && target.is_some())
-                && let Some(target) = target
+            if menu::item_if(
+                ui,
+                p,
+                "arrow-square-out",
+                aurora_i18n::tr!("ui-inventory-context-find-original"),
+                single && target.is_some(),
+            ) && let Some(target) = target
             {
                 st.show_original(inv, target);
             }
-        } else if menu::item_if(ui, p, "link", "Trouver tous les liens", single) {
+        } else if menu::item_if(ui, p, "link", aurora_i18n::tr!("ui-inventory-context-find-all-links"), single) {
             st.search.clear();
             if st.saved_filters.is_none() {
                 st.saved_filters = Some(st.filters.clone());
@@ -446,7 +524,7 @@ pub(super) fn show(
                 ui,
                 p,
                 "link",
-                "Remplacer les liens",
+                aurora_i18n::tr!("common-replace-links"),
                 single && ready && target.is_some() && !rules::library(inv, id),
             )
         {
@@ -457,17 +535,29 @@ pub(super) fn show(
             menu::separator(ui, p);
             let removable =
                 movable && ids.iter().all(|id| !facts.worn.iter().any(|w| rules::under(inv, *w, *id))) && !rules::in_type(inv, id, 46);
-            if menu::item_if(ui, p, "trash", "Supprimer", ready && removable) {
+            if menu::item_if(ui, p, "trash", aurora_i18n::tr!("common-delete"), ready && removable) {
                 st.dialog = Some(EditDialog::Delete(ids.clone(), false));
             }
             if folder.is_none()
-                && menu::item_if(ui, p, "folder", "Déplacer vers le dossier par défaut", ready && movable && single)
+                && menu::item_if(
+                    ui,
+                    p,
+                    "folder",
+                    aurora_i18n::tr!("ui-inventory-context-move-to-default-folder"),
+                    ready && movable && single,
+                )
                 && let Some(to) = rules::default_folder(inv, id)
             {
                 submit(st, actions, rules::move_selection(inv, &ids, to, &prefs.protected, &facts.worn));
             }
             menu::separator(ui, p);
-            if menu::item_if(ui, p, "folder", "Créer un dossier à partir de la sélection", ready && movable) {
+            if menu::item_if(
+                ui,
+                p,
+                "folder",
+                aurora_i18n::tr!("ui-inventory-context-create-folder-from-selection"),
+                ready && movable,
+            ) {
                 submit(st, actions, rules::group(inv, &ids, &prefs.protected, &facts.worn));
             }
             if let Some(f) = folder
@@ -475,7 +565,7 @@ pub(super) fn show(
                     ui,
                     p,
                     "arrows-out",
-                    "Dégrouper les éléments du dossier",
+                    aurora_i18n::tr!("ui-inventory-context-ungroup-folder-items"),
                     ready
                         && movable
                         && single
@@ -491,7 +581,11 @@ pub(super) fn show(
                 ui,
                 p,
                 "star",
-                if favorite { "Supprimer des favoris" } else { "Ajouter aux favoris" },
+                if favorite {
+                    aurora_i18n::tr!("common-remove-from-favorites")
+                } else {
+                    aurora_i18n::tr!("common-add-to-favorites")
+                },
                 ready && single && !rules::library(inv, id) && id != inv.root,
             ) {
                 submit(st, actions, rules::patch(inv, id, metadata_favorite(!favorite)));
@@ -504,7 +598,7 @@ pub(super) fn show(
                         ui,
                         p,
                         "play",
-                        "Jouer dans Second Life",
+                        aurora_i18n::tr!("ui-inventory-context-play-in-second-life"),
                         single && !asset.is_nil(),
                         InvAction::Animation {
                             asset,
@@ -517,7 +611,7 @@ pub(super) fn show(
                         ui,
                         p,
                         "play",
-                        "Jouer localement",
+                        aurora_i18n::tr!("common-play-locally"),
                         single && !asset.is_nil(),
                         InvAction::Animation {
                             asset,
@@ -532,7 +626,7 @@ pub(super) fn show(
                         ui,
                         p,
                         "speaker-high",
-                        "Jouer",
+                        aurora_i18n::tr!("common-play"),
                         single && original.is_some_and(|it| !it.asset_id.is_nil()),
                         InvAction::Sound(original.map(|it| it.asset_id).unwrap_or_default()),
                         actions,
@@ -559,7 +653,7 @@ pub(super) fn show(
                     ui,
                     p,
                     "t-shirt",
-                    "Porter",
+                    aurora_i18n::tr!("common-wear"),
                     wear && single,
                     InvAction::Appearance(Wear::WearItem {
                         item: target.unwrap_or(id),
@@ -572,7 +666,7 @@ pub(super) fn show(
                     ui,
                     p,
                     "plus",
-                    "Ajouter",
+                    aurora_i18n::tr!("common-add"),
                     add,
                     InvAction::Appearance(Wear::WearItems {
                         items: selected_items.clone(),
@@ -586,7 +680,11 @@ pub(super) fn show(
                         ui,
                         p,
                         if hud { "monitor" } else { "person" },
-                        if hud { "Attacher au HUD" } else { "Attacher à" },
+                        if hud {
+                            aurora_i18n::tr!("common-attach-to-hud")
+                        } else {
+                            aurora_i18n::tr!("common-attach-to")
+                        },
                         wear && objects,
                         |ui| {
                             egui::ScrollArea::vertical().max_height(450.0).show(ui, |ui| {
@@ -615,7 +713,11 @@ pub(super) fn show(
                         ui,
                         p,
                         "x-circle",
-                        if kind == 6 { "Détacher de vous" } else { "Enlever" },
+                        if kind == 6 {
+                            aurora_i18n::tr!("ui-inventory-context-detach-from-yourself")
+                        } else {
+                            aurora_i18n::tr!("common-remove")
+                        },
                         ready
                             && !facts.appearance_busy
                             && selected_items.len() == ids.len()
@@ -634,7 +736,7 @@ pub(super) fn show(
                     ui,
                     p,
                     "sun",
-                    "Appliquer uniquement à moi-même",
+                    aurora_i18n::tr!("common-apply-to-myself-only"),
                     single && !it.asset_id.is_nil(),
                     InvAction::Environment(it.asset_id, it.flags),
                     actions,
@@ -642,8 +744,8 @@ pub(super) fn show(
             }
             menu::separator(ui, p);
             for (copy, label) in [
-                (true, "Copier dans les annonces Place du marché"),
-                (false, "Déplacer dans les annonces Place du marché"),
+                (true, aurora_i18n::tr!("ui-inventory-context-copy-to-marketplace-listings")),
+                (false, aurora_i18n::tr!("ui-inventory-context-move-to-marketplace-listings")),
             ] {
                 let plan = rules::marketplace(inv, &ids, copy, &prefs.protected, &facts.worn);
                 if menu::item_if(ui, p, "tag", label, ready && st.merchant && plan.is_ok()) {
@@ -731,7 +833,13 @@ mod tests {
             frame(&ctx, &inv, Uuid::from_u128(8201));
         }
         let output = frame(&ctx, &inv, Uuid::from_u128(8201));
-        for label in ["Se téléporter", "À propos du repère", "Propriétés", "Renommer", "Supprimer"] {
+        for label in [
+            aurora_i18n::tr!("common-teleport"),
+            aurora_i18n::tr!("ui-inventory-context-about-landmark"),
+            aurora_i18n::tr!("common-properties"),
+            aurora_i18n::tr!("common-rename"),
+            aurora_i18n::tr!("common-delete"),
+        ] {
             assert!(
                 output.shapes.iter().any(|s| text_position(&s.shape, label).is_some()),
                 "missing {label}"
@@ -757,7 +865,7 @@ mod tests {
             let pos = output
                 .shapes
                 .iter()
-                .find_map(|s| text_position(&s.shape, "Afficher dans une nouvelle fenêtre"))
+                .find_map(|s| text_position(&s.shape, aurora_i18n::tr!("ui-inventory-context-show-in-a-new-window")))
                 .expect("folder window option")
                 + egui::vec2(4.0, 4.0);
             for pressed in [true, false] {
@@ -794,15 +902,15 @@ mod tests {
         }
         let output = frame(&ctx, &inv, Uuid::from_u128(8000));
         for label in [
-            "Nouveau script",
-            "Nouveaux habits",
-            "Nouvelles parties du corps",
-            "Nouveaux paramètres",
-            "Renommer",
-            "Recharger le dossier",
-            "Couper",
-            "Créer un dossier à partir de la sélection",
-            "Déplacer dans les annonces Place du marché",
+            aurora_i18n::tr!("common-new-script"),
+            aurora_i18n::tr!("ui-inventory-context-new-clothes"),
+            aurora_i18n::tr!("ui-inventory-context-new-body-parts"),
+            aurora_i18n::tr!("ui-inventory-context-new-settings"),
+            aurora_i18n::tr!("common-rename"),
+            aurora_i18n::tr!("ui-inventory-context-reload-folder"),
+            aurora_i18n::tr!("common-cut"),
+            aurora_i18n::tr!("ui-inventory-context-create-folder-from-selection"),
+            aurora_i18n::tr!("ui-inventory-context-move-to-marketplace-listings"),
         ] {
             let (position, clip) = output
                 .shapes
@@ -824,12 +932,12 @@ mod tests {
         }
         let output = frame(&ctx, &inv, Uuid::from_u128(8101));
         for label in [
-            "Ouvrir",
-            "Propriétés",
-            "Jouer dans Second Life",
-            "Jouer localement",
-            "Attacher à",
-            "Attacher au HUD",
+            aurora_i18n::tr!("common-open"),
+            aurora_i18n::tr!("common-properties"),
+            aurora_i18n::tr!("ui-inventory-context-play-in-second-life"),
+            aurora_i18n::tr!("common-play-locally"),
+            aurora_i18n::tr!("common-attach-to"),
+            aurora_i18n::tr!("common-attach-to-hud"),
         ] {
             assert!(
                 output.shapes.iter().any(|s| text_position(&s.shape, label).is_some()),
@@ -895,7 +1003,11 @@ mod tests {
                 let _ = frame(Vec::new());
             }
             let output = frame(Vec::new());
-            let label = if detach { "Détacher de vous" } else { "Ajouter" };
+            let label = if detach {
+                aurora_i18n::tr!("ui-inventory-context-detach-from-yourself")
+            } else {
+                aurora_i18n::tr!("common-add")
+            };
             let pos = output
                 .shapes
                 .iter()

@@ -30,72 +30,150 @@ const fn shape(name: &'static str, profile: u8, path: u8, scale: (u8, u8)) -> Sh
     }
 }
 
-pub const SHAPES: [Shape; 13] = [
-    shape("Cube", LL_PCODE_PROFILE_SQUARE, LL_PCODE_PATH_LINE, (100, 100)),
-    Shape {
-        shear_x: -50,
-        ..shape("Prisme droit", LL_PCODE_PROFILE_SQUARE, LL_PCODE_PATH_LINE, (200, 100))
-    },
-    shape("Pyramide", LL_PCODE_PROFILE_SQUARE, LL_PCODE_PATH_LINE, (200, 200)),
-    shape("Tétraèdre", LL_PCODE_PROFILE_EQUALTRI, LL_PCODE_PATH_LINE, (200, 200)),
-    shape("Cylindre", LL_PCODE_PROFILE_CIRCLE, LL_PCODE_PATH_LINE, (100, 100)),
-    Shape {
-        profile_cut: (12500, 12500),
-        ..shape("Demi-cylindre", LL_PCODE_PROFILE_CIRCLE, LL_PCODE_PATH_LINE, (100, 100))
-    },
-    shape("Cône", LL_PCODE_PROFILE_CIRCLE, LL_PCODE_PATH_LINE, (200, 200)),
-    Shape {
-        profile_cut: (12500, 12500),
-        ..shape("Demi-cône", LL_PCODE_PROFILE_CIRCLE, LL_PCODE_PATH_LINE, (200, 200))
-    },
-    Shape {
-        turned: true,
-        ..shape("Sphère", LL_PCODE_PROFILE_CIRCLE_HALF, LL_PCODE_PATH_CIRCLE, (100, 100))
-    },
-    Shape {
-        path_end: 25000,
-        ..shape("Demi-sphère", LL_PCODE_PROFILE_CIRCLE_HALF, LL_PCODE_PATH_CIRCLE, (100, 100))
-    },
-    Shape {
-        turned: true,
-        ..shape("Tore", LL_PCODE_PROFILE_CIRCLE, LL_PCODE_PATH_CIRCLE, (100, 175))
-    },
-    Shape {
-        turned: true,
-        ..shape("Tube", LL_PCODE_PROFILE_SQUARE, LL_PCODE_PATH_CIRCLE, (100, 175))
-    },
-    Shape {
-        turned: true,
-        ..shape("Anneau", LL_PCODE_PROFILE_EQUALTRI, LL_PCODE_PATH_CIRCLE, (100, 175))
-    },
-];
+pub fn shapes() -> [Shape; 13] {
+    [
+        shape(
+            aurora_i18n::tr!("build-shapes-cube"),
+            LL_PCODE_PROFILE_SQUARE,
+            LL_PCODE_PATH_LINE,
+            (100, 100),
+        ),
+        Shape {
+            shear_x: -50,
+            ..shape(
+                aurora_i18n::tr!("build-shapes-right-prism"),
+                LL_PCODE_PROFILE_SQUARE,
+                LL_PCODE_PATH_LINE,
+                (200, 100),
+            )
+        },
+        shape(
+            aurora_i18n::tr!("build-shapes-pyramid"),
+            LL_PCODE_PROFILE_SQUARE,
+            LL_PCODE_PATH_LINE,
+            (200, 200),
+        ),
+        shape(
+            aurora_i18n::tr!("build-shapes-tetrahedron"),
+            LL_PCODE_PROFILE_EQUALTRI,
+            LL_PCODE_PATH_LINE,
+            (200, 200),
+        ),
+        shape(
+            aurora_i18n::tr!("common-cylinder"),
+            LL_PCODE_PROFILE_CIRCLE,
+            LL_PCODE_PATH_LINE,
+            (100, 100),
+        ),
+        Shape {
+            profile_cut: (12500, 12500),
+            ..shape(
+                aurora_i18n::tr!("build-shapes-half-cylinder"),
+                LL_PCODE_PROFILE_CIRCLE,
+                LL_PCODE_PATH_LINE,
+                (100, 100),
+            )
+        },
+        shape(
+            aurora_i18n::tr!("build-shapes-cone"),
+            LL_PCODE_PROFILE_CIRCLE,
+            LL_PCODE_PATH_LINE,
+            (200, 200),
+        ),
+        Shape {
+            profile_cut: (12500, 12500),
+            ..shape(
+                aurora_i18n::tr!("build-shapes-half-cone"),
+                LL_PCODE_PROFILE_CIRCLE,
+                LL_PCODE_PATH_LINE,
+                (200, 200),
+            )
+        },
+        Shape {
+            turned: true,
+            ..shape(
+                aurora_i18n::tr!("common-sphere"),
+                LL_PCODE_PROFILE_CIRCLE_HALF,
+                LL_PCODE_PATH_CIRCLE,
+                (100, 100),
+            )
+        },
+        Shape {
+            path_end: 25000,
+            ..shape(
+                aurora_i18n::tr!("build-shapes-half-sphere"),
+                LL_PCODE_PROFILE_CIRCLE_HALF,
+                LL_PCODE_PATH_CIRCLE,
+                (100, 100),
+            )
+        },
+        Shape {
+            turned: true,
+            ..shape(
+                aurora_i18n::tr!("common-torus"),
+                LL_PCODE_PROFILE_CIRCLE,
+                LL_PCODE_PATH_CIRCLE,
+                (100, 175),
+            )
+        },
+        Shape {
+            turned: true,
+            ..shape(
+                aurora_i18n::tr!("common-tube"),
+                LL_PCODE_PROFILE_SQUARE,
+                LL_PCODE_PATH_CIRCLE,
+                (100, 175),
+            )
+        },
+        Shape {
+            turned: true,
+            ..shape(
+                aurora_i18n::tr!("common-ring"),
+                LL_PCODE_PROFILE_EQUALTRI,
+                LL_PCODE_PATH_CIRCLE,
+                (100, 175),
+            )
+        },
+    ]
+}
 
 /// Species of trees.xml / grass.xml, in species id order: the Create
 /// tool's tree / grass combo (FIRE-7802), the id goes in ObjectAdd State.
-pub const TREE_SPECIES: [&str; 21] = [
-    "Pine 1",
-    "Oak",
-    "Tropical Bush 1",
-    "Palm 1",
-    "Dogwood",
-    "Tropical Bush 2",
-    "Palm 2",
-    "Cypress 1",
-    "Cypress 2",
-    "Pine 2",
-    "Plumeria",
-    "Winter Pine 1",
-    "Winter Aspen",
-    "Winter Pine 2",
-    "Eucalyptus",
-    "Fern",
-    "Eelgrass",
-    "Sea Sword",
-    "Kelp 1",
-    "Beach Grass 1",
-    "Kelp 2",
-];
-pub const GRASS_SPECIES: [&str; 6] = ["Grass 0", "Grass 1", "Grass 2", "Grass 3", "Grass 4", "undergrowth_1"];
+pub fn tree_species() -> [&'static str; 21] {
+    [
+        aurora_i18n::tr!("extra-pine-1"),
+        aurora_i18n::tr!("extra-oak"),
+        aurora_i18n::tr!("extra-tropical-bush-1"),
+        aurora_i18n::tr!("extra-palm-1"),
+        aurora_i18n::tr!("extra-dogwood"),
+        aurora_i18n::tr!("extra-tropical-bush-2"),
+        aurora_i18n::tr!("extra-palm-2"),
+        aurora_i18n::tr!("extra-cypress-1"),
+        aurora_i18n::tr!("extra-cypress-2"),
+        aurora_i18n::tr!("extra-pine-2"),
+        aurora_i18n::tr!("extra-plumeria"),
+        aurora_i18n::tr!("extra-winter-pine-1"),
+        aurora_i18n::tr!("extra-winter-aspen"),
+        aurora_i18n::tr!("extra-winter-pine-2"),
+        aurora_i18n::tr!("extra-eucalyptus"),
+        aurora_i18n::tr!("extra-fern"),
+        aurora_i18n::tr!("extra-eelgrass"),
+        aurora_i18n::tr!("extra-sea-sword"),
+        aurora_i18n::tr!("extra-kelp-1"),
+        aurora_i18n::tr!("extra-beach-grass-1"),
+        aurora_i18n::tr!("extra-kelp-2"),
+    ]
+}
+pub fn grass_species() -> [&'static str; 6] {
+    [
+        aurora_i18n::tr!("extra-grass-0"),
+        aurora_i18n::tr!("extra-grass-1"),
+        aurora_i18n::tr!("extra-grass-2"),
+        aurora_i18n::tr!("extra-grass-3"),
+        aurora_i18n::tr!("extra-grass-4"),
+        "undergrowth_1",
+    ]
+}
 
 /// get_selected_plant (lltoolplacer.cpp): the named species, else a random one.
 pub fn plant_species(list: &[&str], name: &str, random: u32) -> u8 {
@@ -137,15 +215,15 @@ mod tests {
 
     #[test]
     fn prism_and_hemi_shapes() {
-        let prism = SHAPES[1].params();
+        let prism = shapes()[1].params();
         assert!((prism.path.scale[0] - 0.0).abs() < 1e-5);
         assert!((prism.path.shear[0] + 0.5).abs() < 1e-5);
-        let hemi = SHAPES[5].params();
+        let hemi = shapes()[5].params();
         assert!((hemi.profile.begin - 0.25).abs() < 1e-5);
         assert!((hemi.profile.end - 0.75).abs() < 1e-5);
-        let hs = SHAPES[9].params();
+        let hs = shapes()[9].params();
         assert!((hs.path.end - 0.5).abs() < 1e-5);
-        let torus = SHAPES[10].params();
+        let torus = shapes()[10].params();
         assert!((torus.path.scale[1] - 0.25).abs() < 1e-5);
     }
 }

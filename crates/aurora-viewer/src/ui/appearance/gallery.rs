@@ -43,26 +43,41 @@ pub(super) fn context_menu(
             ui,
             p,
             "t-shirt",
-            "Remplacer votre tenue",
+            aurora_i18n::tr!("ui-appearance-gallery-replace-your-outfit"),
             idle && ready && nonempty && (!current || model::dirty(inv)),
         ) {
             actions.push(Action::Wear(id, false));
         }
         let can_add = links.iter().any(|l| !l.folder && !worn.contains(&l.target));
-        if menu::item_if(ui, p, "plus", "Ajouter à votre tenue", idle && ready && can_add) {
+        if menu::item_if(
+            ui,
+            p,
+            "plus",
+            aurora_i18n::tr!("ui-appearance-gallery-add-to-your-outfit"),
+            idle && ready && can_add,
+        ) {
             actions.push(Action::Wear(id, true));
         }
         let can_remove = links
             .iter()
             .any(|l| worn.contains(&l.target) && inv.items.get(&l.target).is_some_and(|it| it.asset_type != 13));
-        if menu::item_if(ui, p, "minus", "Retirer de votre tenue", idle && ready && can_remove) {
+        if menu::item_if(
+            ui,
+            p,
+            "minus",
+            aurora_i18n::tr!("ui-appearance-gallery-take-off"),
+            idle && ready && can_remove,
+        ) {
             actions.push(Action::RemoveOutfit(id));
         }
         menu::separator(ui, p);
-        if menu::item_if(ui, p, "image", "Image…", idle) {
-            st.gallery
-                .picker
-                .open_with_defaults("Image de la tenue", folder.info.thumbnail, None, true);
+        if menu::item_if(ui, p, "image", aurora_i18n::tr!("common-image-2"), idle) {
+            st.gallery.picker.open_with_defaults(
+                aurora_i18n::tr!("ui-appearance-gallery-outfit-picture"),
+                folder.info.thumbnail,
+                None,
+                true,
+            );
             st.gallery.image_for = Some(id);
         }
         if menu::item_if(
@@ -70,22 +85,34 @@ pub(super) fn context_menu(
             p,
             "star",
             if folder.info.favorite {
-                "Retirer des favoris"
+                aurora_i18n::tr!("ui-appearance-gallery-remove-from-favorites")
             } else {
-                "Ajouter aux favoris"
+                aurora_i18n::tr!("common-add-to-favorites")
             },
             idle,
         ) {
             actions.push(Action::Category(id, Update::Favorite(!folder.info.favorite)));
         }
-        if current && menu::item_if(ui, p, "wrench", "Modifier votre tenue", idle) {
+        if current && menu::item_if(ui, p, "wrench", aurora_i18n::tr!("ui-appearance-gallery-edit-your-outfit"), idle) {
             st.open(0, true);
         }
-        if menu::item_if(ui, p, "pencil-simple", "Renommer votre tenue", idle) {
+        if menu::item_if(
+            ui,
+            p,
+            "pencil-simple",
+            aurora_i18n::tr!("ui-appearance-gallery-rename-your-outfit"),
+            idle,
+        ) {
             st.gallery.rename = Some((id, folder.info.name.clone()));
             st.gallery.focus = true;
         }
-        if menu::item_if(ui, p, "floppy-disk", "Enregistrer dans cette tenue", idle && ready) {
+        if menu::item_if(
+            ui,
+            p,
+            "floppy-disk",
+            aurora_i18n::tr!("ui-appearance-gallery-save-to-this-outfit"),
+            idle && ready,
+        ) {
             st.gallery.confirm = Some((id, false));
         }
         menu::separator(ui, p);
@@ -93,35 +120,54 @@ pub(super) fn context_menu(
             ui,
             p,
             "trash",
-            "Supprimer la tenue",
+            aurora_i18n::tr!("ui-appearance-gallery-delete-outfit"),
             idle && ready && !current && model::system_folder(inv, 14).is_some(),
         ) {
             st.gallery.confirm = Some((id, true));
         }
         menu::separator(ui, p);
-        menu::submenu(ui, p, "t-shirt", "Nouveau vêtement", true, |ui| {
-            for label in [
-                "Nouvelle chemise",
-                "Nouveaux pantalons",
-                "Nouvelles chaussures",
-                "Nouvelles chaussettes",
-                "Nouvelle veste",
-                "Nouvelle jupe",
-                "Nouveaux gants",
-                "Nouveau T-shirt",
-                "Nouveau sous-vêtement",
-                "Nouvelle couche alpha",
-                "Nouveau physique",
-                "Nouveau tatouage",
-            ] {
-                menu::todo(ui, p, "t-shirt", label);
-            }
-        });
-        menu::submenu(ui, p, "person", "Nouvelle partie du corps", true, |ui| {
-            for label in ["Nouvelle silhouette", "Nouvelle peau", "Nouveaux cheveux", "Nouveaux yeux"] {
-                menu::todo(ui, p, "person", label);
-            }
-        });
+        menu::submenu(
+            ui,
+            p,
+            "t-shirt",
+            aurora_i18n::tr!("ui-appearance-gallery-new-clothing"),
+            true,
+            |ui| {
+                for label in [
+                    aurora_i18n::tr!("common-new-shirt"),
+                    aurora_i18n::tr!("ui-appearance-gallery-new-pants"),
+                    aurora_i18n::tr!("common-new-shoes"),
+                    aurora_i18n::tr!("common-new-socks"),
+                    aurora_i18n::tr!("common-new-jacket"),
+                    aurora_i18n::tr!("common-new-skirt"),
+                    aurora_i18n::tr!("common-new-gloves"),
+                    aurora_i18n::tr!("ui-appearance-gallery-new-t-shirt"),
+                    aurora_i18n::tr!("ui-appearance-gallery-new-underwear"),
+                    aurora_i18n::tr!("ui-appearance-gallery-new-alpha-layer"),
+                    aurora_i18n::tr!("ui-appearance-gallery-new-physics"),
+                    aurora_i18n::tr!("common-new-tattoo"),
+                ] {
+                    menu::todo(ui, p, "t-shirt", label);
+                }
+            },
+        );
+        menu::submenu(
+            ui,
+            p,
+            "person",
+            aurora_i18n::tr!("ui-appearance-gallery-new-body-part"),
+            true,
+            |ui| {
+                for label in [
+                    aurora_i18n::tr!("common-new-shape"),
+                    aurora_i18n::tr!("common-new-skin"),
+                    aurora_i18n::tr!("common-new-hair"),
+                    aurora_i18n::tr!("common-new-eyes"),
+                ] {
+                    menu::todo(ui, p, "person", label);
+                }
+            },
+        );
     });
 }
 
@@ -137,7 +183,11 @@ pub(super) fn dialogs(
         let mut close = false;
         let response = egui::Modal::new(egui::Id::new("outfit_rename")).show(ctx, |ui| {
             ui.set_width(340.0);
-            ui.label(RichText::new("Renommer votre tenue").size(17.0).color(p.ink));
+            ui.label(
+                RichText::new(aurora_i18n::tr!("ui-appearance-gallery-rename-your-outfit"))
+                    .size(17.0)
+                    .color(p.ink),
+            );
             ui.add_space(8.0);
             let r = ui.add(egui::TextEdit::singleline(&mut name).char_limit(63).desired_width(f32::INFINITY));
             if st.gallery.focus {
@@ -160,7 +210,7 @@ pub(super) fn dialogs(
                     actions.push(Action::Category(id, Update::Rename(name.trim().into())));
                     close = true;
                 }
-                if widgets::flat_button(ui, p, "Annuler").clicked() {
+                if widgets::flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked() {
                     close = true;
                 }
             });
@@ -174,25 +224,33 @@ pub(super) fn dialogs(
             ui.set_width(350.0);
             ui.label(
                 RichText::new(if delete {
-                    "Supprimer la tenue"
+                    aurora_i18n::tr!("ui-appearance-gallery-delete-outfit")
                 } else {
-                    "Enregistrer dans cette tenue"
+                    aurora_i18n::tr!("ui-appearance-gallery-save-to-this-outfit")
                 })
                 .size(17.0)
                 .color(p.ink),
             );
             ui.add_space(8.0);
             ui.label(if delete {
-                format!("Déplacer « {name} » dans la corbeille ?")
+                aurora_i18n::tr!("ui-appearance-gallery-move-to-trash", name = name.to_string())
             } else {
-                format!("Remplacer le contenu de « {name} » par ce que vous portez actuellement ?")
+                aurora_i18n::tr!(
+                    "ui-appearance-gallery-replace-contents-with-what-you-are-currently-wearing",
+                    name = name.to_string()
+                )
             });
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 if ui
                     .add_enabled(
                         st.pending.is_none(),
-                        egui::Button::new(if delete { "Supprimer" } else { "Enregistrer" }).fill(p.violet),
+                        egui::Button::new(if delete {
+                            aurora_i18n::tr!("common-delete")
+                        } else {
+                            aurora_i18n::tr!("common-save")
+                        })
+                        .fill(p.violet),
                     )
                     .clicked()
                 {
@@ -205,7 +263,7 @@ pub(super) fn dialogs(
                     }
                     close = true;
                 }
-                if widgets::flat_button(ui, p, "Annuler").clicked() {
+                if widgets::flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked() {
                     close = true;
                 }
             });
@@ -306,29 +364,32 @@ mod tests {
         for _ in 0..4 {
             frame(&ctx, &mut world, &mut st, vec![]);
         }
-        assert!(click(&ctx, &mut world, &mut st, egui::pos2(295.0, 300.0), PointerButton::Secondary).is_empty());
+        let label = world.inventory.folders[&Uuid::from_u128(703)].info.name.clone();
+        let shapes = frame(&ctx, &mut world, &mut st, vec![]).1;
+        let pos = shapes.iter().find_map(|s| text_position(&s.shape, &label)).expect("outfit tile") + egui::vec2(10.0, -50.0);
+        assert!(click(&ctx, &mut world, &mut st, pos, PointerButton::Secondary).is_empty());
         assert_eq!(st.selected_outfit, Some(Uuid::from_u128(703)));
         let mut shapes = Vec::new();
         for _ in 0..4 {
             shapes = frame(&ctx, &mut world, &mut st, vec![]).1;
         }
         for label in [
-            "Remplacer votre tenue",
-            "Ajouter à votre tenue",
-            "Retirer de votre tenue",
+            aurora_i18n::tr!("ui-appearance-gallery-replace-your-outfit"),
+            aurora_i18n::tr!("ui-appearance-gallery-add-to-your-outfit"),
+            aurora_i18n::tr!("ui-appearance-gallery-take-off"),
             "Image…",
-            "Ajouter aux favoris",
-            "Renommer votre tenue",
-            "Enregistrer dans cette tenue",
-            "Supprimer la tenue",
-            "Nouveau vêtement",
-            "Nouvelle partie du corps",
+            aurora_i18n::tr!("common-add-to-favorites"),
+            aurora_i18n::tr!("ui-appearance-gallery-rename-your-outfit"),
+            aurora_i18n::tr!("ui-appearance-gallery-save-to-this-outfit"),
+            aurora_i18n::tr!("ui-appearance-gallery-delete-outfit"),
+            aurora_i18n::tr!("ui-appearance-gallery-new-clothing"),
+            aurora_i18n::tr!("ui-appearance-gallery-new-body-part"),
         ] {
             assert!(shapes.iter().any(|s| text_position(&s.shape, label).is_some()), "missing {label}");
         }
         let pos = shapes
             .iter()
-            .find_map(|s| text_position(&s.shape, "Ajouter aux favoris"))
+            .find_map(|s| text_position(&s.shape, aurora_i18n::tr!("common-add-to-favorites")))
             .expect("favorite option");
         let actions = click(&ctx, &mut world, &mut st, pos, PointerButton::Primary);
         assert!(

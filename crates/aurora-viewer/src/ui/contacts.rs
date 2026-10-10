@@ -278,9 +278,13 @@ fn group_limit(world: &World) -> usize {
 /// FSCommon::populateGroupCount (strings.xml groupcountstring).
 fn group_count_text(count: usize, limit: usize) -> String {
     if limit > 0 {
-        format!("Vous faites partie de {count} groupes ({} restant).", limit.saturating_sub(count))
+        aurora_i18n::tr!(
+            "ui-contacts-you-belong-to-groups-remaining",
+            count = format!("{}", count),
+            value0 = format!("{}", limit.saturating_sub(count))
+        )
     } else {
-        format!("Vous faites partie de {count} groupes.")
+        aurora_i18n::tr!("ui-contacts-you-belong-to-groups", count = format!("{}", count))
     }
 }
 
@@ -427,7 +431,16 @@ pub fn panel(
 ) -> Vec<ContactsAction> {
     let mut actions = Vec::new();
     let mut tab = settings.tab.min(2) as usize;
-    widgets::tabs(ui, p, &mut tab, &[("Amis", true), ("Groupes", true), ("Cercles", true)]);
+    widgets::tabs(
+        ui,
+        p,
+        &mut tab,
+        &[
+            (aurora_i18n::tr!("common-friends"), true),
+            (aurora_i18n::tr!("common-groups"), true),
+            (aurora_i18n::tr!("ui-contacts-contact-sets"), true),
+        ],
+    );
     settings.tab = tab as u8;
     ui.add_space(4.0);
     match tab {
@@ -463,11 +476,15 @@ pub fn window(
     let screen = ctx.content_rect();
     let mut actions = widgets::Floater::new(
         "contacts",
-        "Contacts",
+        aurora_i18n::tr!("common-contacts"),
         egui::pos2(screen.left() + 40.0, screen.bottom() - 460.0),
         Vec2::new(430.0, 390.0),
     )
-    .action("arrow-square-in", "Rattacher à Conversations", &mut dock)
+    .action(
+        "arrow-square-in",
+        aurora_i18n::tr!("ui-contacts-attach-to-conversations"),
+        &mut dock,
+    )
     .show(ctx, p, open, |ui| panel(ui, p, world, st, settings, pics))
     .unwrap_or_default();
     if dock {
@@ -498,13 +515,13 @@ fn picked(world: &mut World, st: &mut ContactsUi, what: PickFor, ids: Vec<Uuid>)
                 Some(to) => {
                     st.dialog = Some(Dialog::Friendship {
                         to: *to,
-                        message: "Voulez-vous être mon ami(e) ?".into(),
+                        message: aurora_i18n::tr!("ui-contacts-would-you-like-to-be-my-friend").into(),
                     })
                 }
                 None => {
                     if let Some(id) = ids.first() {
                         let name = world.social.name_of(id);
-                        world.system_message(format!("{name} fait déjà partie de vos amis."));
+                        world.system_message(aurora_i18n::tr!("ui-contacts-is-already-your-friend", name = name.to_string()));
                     }
                 }
             }
@@ -601,7 +618,7 @@ fn friends_tab(
         ui.vertical(|ui| {
             ui.set_width(list_w);
             if settings.show_search {
-                widgets::search_field(ui, &mut st.friend_filter, "Filtrer les amis", list_w);
+                widgets::search_field(ui, &mut st.friend_filter, aurora_i18n::tr!("ui-contacts-filter-friends"), list_w);
                 ui.add_space(3.0);
             }
             friend_table(ui, p, world, st, settings, &rows, &order, list_w, actions);
@@ -630,26 +647,36 @@ fn friend_table(
     let names: Vec<(&str, &str, u8)> = [
         (
             settings.column_username,
-            "Nom d'utilisateur",
-            "Le nom d'utilisateur du contact.",
+            aurora_i18n::tr!("common-username"),
+            aurora_i18n::tr!("ui-contacts-the-contact-s-username"),
             0u8,
         ),
-        (settings.column_display_name, "Nom d'affichage", "Le nom d'affichage du contact.", 1),
-        (settings.column_full_name, "Nom", "Le nom choisi pour cette personne.", 2),
+        (
+            settings.column_display_name,
+            aurora_i18n::tr!("common-display-name"),
+            aurora_i18n::tr!("ui-contacts-the-contact-s-display-name"),
+            1,
+        ),
+        (
+            settings.column_full_name,
+            aurora_i18n::tr!("common-name"),
+            aurora_i18n::tr!("ui-contacts-your-chosen-name-for-this-person"),
+            2,
+        ),
     ]
     .into_iter()
     .filter(|c| c.0)
     .map(|c| (c.1, c.2, c.3))
     .collect();
     let rights_cols: [(&str, &str); 5] = [
-        ("eye", "La personne peut savoir lorsque vous êtes connecté"),
-        ("map-pin", "La personne peut vous localiser"),
-        ("cube", "La personne peut modifier, supprimer ou s'approprier vos objets"),
-        ("map-pin", "Vous pouvez localiser cette personne"),
+        ("eye", aurora_i18n::tr!("ui-contacts-this-person-can-see-when-you-are-online")),
+        ("map-pin", aurora_i18n::tr!("ui-contacts-this-person-can-locate-you")),
         (
             "cube",
-            "Vous pouvez modifier, supprimer ou vous approprier les objets de cette personne",
+            aurora_i18n::tr!("ui-contacts-this-person-can-modify-delete-or-take-your-objects"),
         ),
+        ("map-pin", aurora_i18n::tr!("ui-contacts-you-can-locate-this-person")),
+        ("cube", aurora_i18n::tr!("ui-contacts-you-can-edit-delete-or-take-this-person-s")),
     ];
     let status_w = 20.0;
     let right_w = 18.0;
@@ -661,7 +688,8 @@ fn friend_table(
     let mut x = hrect.left();
     let hcell = egui::Rect::from_min_size(egui::pos2(x, hrect.top()), Vec2::new(status_w, 20.0));
     ui.painter().circle_filled(hcell.center(), 3.5, p.success.gamma_multiply(0.7));
-    ui.interact(hcell, ui.id().with("h_status"), Sense::hover()).on_hover_text("Statut");
+    ui.interact(hcell, ui.id().with("h_status"), Sense::hover())
+        .on_hover_text(aurora_i18n::tr!("ui-contacts-status"));
     x += status_w;
     for (i, (label, tip, _)) in names.iter().enumerate() {
         let cell = egui::Rect::from_min_size(egui::pos2(x, hrect.top()), Vec2::new(name_w, 20.0));
@@ -704,7 +732,7 @@ fn friend_table(
             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
                 if rows.is_empty() {
-                    ui.label(RichText::new("Aucun ami").size(12.0).color(p.muted));
+                    ui.label(RichText::new(aurora_i18n::tr!("ui-contacts-no-friends")).size(12.0).color(p.muted));
                 }
                 for r in rows {
                     let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, ROW_H), Sense::click());
@@ -798,17 +826,22 @@ fn friend_menu(
     } else {
         vec![id]
     };
-    if menu::item(ui, p, "user-circle", "Voir le profil") {
+    if menu::item(ui, p, "user-circle", aurora_i18n::tr!("common-view-profile")) {
         actions.push(ContactsAction::Profile(id));
     }
-    if menu::item(ui, p, "chat-text", "Envoyer un IM...") {
+    if menu::item(ui, p, "chat-text", aurora_i18n::tr!("ui-contacts-send-im")) {
         actions.push(ContactsAction::Im(id));
     }
-    menu::todo(ui, p, "clock-counter-clockwise", "Voir l'historique de conversations");
+    menu::todo(
+        ui,
+        p,
+        "clock-counter-clockwise",
+        aurora_i18n::tr!("common-view-conversation-history"),
+    );
     let sets = world.contact_sets.set_names();
-    menu::submenu(ui, p, "users-three", "Ajouter au cercle", true, |ui| {
+    menu::submenu(ui, p, "users-three", aurora_i18n::tr!("common-add-to-contact-set"), true, |ui| {
         if sets.is_empty() {
-            menu::item_if(ui, p, "users-three", "Aucun cercle", false);
+            menu::item_if(ui, p, "users-three", aurora_i18n::tr!("ui-contacts-no-contact-sets"), false);
         }
         for set in sets {
             if menu::item(ui, p, "users-three", &set) {
@@ -816,40 +849,49 @@ fn friend_menu(
             }
         }
     });
-    if menu::item_if(ui, p, "magnifying-glass-plus", "Zoomer", here) {
+    if menu::item_if(ui, p, "magnifying-glass-plus", aurora_i18n::tr!("common-zoom-2"), here) {
         context::request(ui.ctx(), CtxAction::ZoomAvatar(id));
     }
-    if menu::item_if(ui, p, "navigation-arrow", "Se téléporter vers", here) {
+    if menu::item_if(ui, p, "navigation-arrow", aurora_i18n::tr!("common-teleport-to"), here) {
         context::request(ui.ctx(), CtxAction::TeleportToAvatar(id));
     }
-    if menu::item_if(ui, p, "paper-plane-tilt", "Proposer une téléportation", online) {
+    if menu::item_if(ui, p, "paper-plane-tilt", aurora_i18n::tr!("common-offer-teleport"), online) {
         actions.push(ContactsAction::OfferTeleport(id));
     }
-    if menu::item(ui, p, "airplane-landing", "Demander une téléportation") {
+    if menu::item(ui, p, "airplane-landing", aurora_i18n::tr!("common-request-teleport")) {
         st.ask_teleport_request(id);
     }
-    menu::todo(ui, p, "currency-circle-dollar", "Payer");
-    menu::todo(ui, p, "crosshair", "Suivre");
-    if menu::item(ui, p, "user-minus", "Supprimer cet ami") {
+    menu::todo(ui, p, "currency-circle-dollar", aurora_i18n::tr!("common-pay"));
+    menu::todo(ui, p, "crosshair", aurora_i18n::tr!("common-follow"));
+    if menu::item(ui, p, "user-minus", aurora_i18n::tr!("common-remove-this-friend")) {
         st.dialog = Some(Dialog::RemoveFriends(ids.clone()));
     }
     menu::separator(ui, p);
-    if menu::item(ui, p, "copy", "Copier le nom") {
+    if menu::item(ui, p, "copy", aurora_i18n::tr!("common-copy-name")) {
         ui.ctx().copy_text(world.social.name_of(&id));
     }
-    if menu::item(ui, p, "link", "Copier l'URL") {
+    if menu::item(ui, p, "link", aurora_i18n::tr!("common-copy-url")) {
         ui.ctx().copy_text(format!("secondlife:///app/agent/{id}/about"));
     }
-    if menu::item(ui, p, "at", "Copier l'URI de la mention") {
+    if menu::item(ui, p, "at", aurora_i18n::tr!("common-copy-mention-uri")) {
         ui.ctx().copy_text(format!("secondlife:///app/agent/{id}/mention"));
     }
     menu::separator(ui, p);
-    menu::submenu(ui, p, "sliders", "Options...", true, |ui| options_menu(ui, p, settings));
+    menu::submenu(ui, p, "sliders", aurora_i18n::tr!("ui-contacts-options"), true, |ui| {
+        options_menu(ui, p, settings)
+    });
     if let Some(f) = friend {
         menu::separator(ui, p);
         // GlobalOnlineStatusToggle: the online status right we give
         let on = f.rights_given & rights::ONLINE_STATUS != 0;
-        if menu::check(ui, p, "eye", "Statut connecté visible pour cet ami", on, true) {
+        if menu::check(
+            ui,
+            p,
+            "eye",
+            aurora_i18n::tr!("common-online-status-visible-to-this-friend"),
+            on,
+            true,
+        ) {
             actions.push(ContactsAction::Net(NetCommand::GrantUserRights {
                 friend: id,
                 rights: rights_after(f.rights_given, rights::ONLINE_STATUS, !on),
@@ -862,24 +904,56 @@ fn friend_menu(
 /// search filter (onColumnDisplayModeChanged keeps one name column).
 fn options_menu(ui: &mut egui::Ui, p: &Palette, s: &mut ContactsSettings) {
     let before = (s.column_username, s.column_display_name, s.column_full_name);
-    menu::toggle(ui, p, "user", "Afficher la colonne Nom d'utilisateur", &mut s.column_username);
+    menu::toggle(
+        ui,
+        p,
+        "user",
+        aurora_i18n::tr!("ui-contacts-show-username-column"),
+        &mut s.column_username,
+    );
     menu::toggle(
         ui,
         p,
         "identification-card",
-        "Afficher la colonne Nom d'affichage",
+        aurora_i18n::tr!("ui-contacts-show-display-name-column"),
         &mut s.column_display_name,
     );
-    menu::toggle(ui, p, "text-aa", "Afficher la colonne Nom complet", &mut s.column_full_name);
+    menu::toggle(
+        ui,
+        p,
+        "text-aa",
+        aurora_i18n::tr!("ui-contacts-show-full-name-column"),
+        &mut s.column_full_name,
+    );
     if !s.column_username && !s.column_display_name && !s.column_full_name {
         (s.column_username, s.column_display_name, s.column_full_name) = before;
     }
-    menu::toggle(ui, p, "key", "Afficher les colonnes de permissions", &mut s.column_permissions);
+    menu::toggle(
+        ui,
+        p,
+        "key",
+        aurora_i18n::tr!("ui-contacts-show-permission-columns"),
+        &mut s.column_permissions,
+    );
     menu::separator(ui, p);
-    if menu::check(ui, p, "list", "Trier par nom d'utilisateur", !s.sort_by_display_name, true) {
+    if menu::check(
+        ui,
+        p,
+        "list",
+        aurora_i18n::tr!("ui-contacts-sort-by-username"),
+        !s.sort_by_display_name,
+        true,
+    ) {
         s.sort_by_display_name = false;
     }
-    if menu::check(ui, p, "list", "Trier par nom d'affichage", s.sort_by_display_name, true) {
+    if menu::check(
+        ui,
+        p,
+        "list",
+        aurora_i18n::tr!("ui-contacts-sort-by-display-name"),
+        s.sort_by_display_name,
+        true,
+    ) {
         s.sort_by_display_name = true;
     }
     menu::separator(ui, p);
@@ -887,7 +961,7 @@ fn options_menu(ui: &mut egui::Ui, p: &Palette, s: &mut ContactsSettings) {
         ui,
         p,
         "text-t",
-        "Format du nom complet : Nom d'utilisateur (Nom d'affichage)",
+        aurora_i18n::tr!("ui-contacts-full-name-format-username-display-name"),
         !s.full_name_display_first,
         true,
     ) {
@@ -897,14 +971,20 @@ fn options_menu(ui: &mut egui::Ui, p: &Palette, s: &mut ContactsSettings) {
         ui,
         p,
         "text-t",
-        "Format du nom complet : Nom d'affichage (Nom d'utilisateur)",
+        aurora_i18n::tr!("ui-contacts-full-name-format-display-name-username"),
         s.full_name_display_first,
         true,
     ) {
         s.full_name_display_first = true;
     }
     menu::separator(ui, p);
-    menu::toggle(ui, p, "magnifying-glass", "Afficher la recherche", &mut s.show_search);
+    menu::toggle(
+        ui,
+        p,
+        "magnifying-glass",
+        aurora_i18n::tr!("ui-contacts-show-search"),
+        &mut s.show_search,
+    );
 }
 
 /// Buttons of the friend list (refreshUI / refreshRightsChangeList).
@@ -912,20 +992,20 @@ fn friend_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut Contac
     let sel = &st.friends_sel;
     let n = sel.len();
     let all_online = sel.iter().all(|id| world.social.friends.iter().any(|f| f.id == *id && f.online));
-    let soon = "À venir dans Aurora";
+    let soon = aurora_i18n::tr!("ui-contacts-coming-soon-in-aurora");
     let im_tip = if n > 1 {
-        "Conférence à plusieurs : à venir dans Aurora"
+        aurora_i18n::tr!("ui-contacts-multi-person-conference-coming-soon-in-aurora")
     } else {
-        "Ouvrir une fenêtre de conversation privée"
+        aurora_i18n::tr!("ui-contacts-open-private-conversation-window")
     };
-    if side_button(ui, p, "IM/Appel", im_tip, n == 1) {
+    if side_button(ui, p, aurora_i18n::tr!("status-im-call"), im_tip, n == 1) {
         actions.push(ContactsAction::Im(sel[0]));
     }
     if side_button(
         ui,
         p,
-        "Profil",
-        "Affiche sa photo, ses groupes et d'autres informations utiles",
+        aurora_i18n::tr!("common-profile"),
+        aurora_i18n::tr!("ui-contacts-show-their-picture-groups-and-other-useful-information"),
         n == 1,
     ) {
         actions.push(ContactsAction::Profile(sel[0]));
@@ -933,27 +1013,42 @@ fn friend_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut Contac
     if side_button(
         ui,
         p,
-        "Téléporter...",
-        "Proposer à cet ami de se téléporter à votre emplacement actuel",
+        aurora_i18n::tr!("ui-contacts-teleport"),
+        aurora_i18n::tr!("ui-contacts-offer-this-friend-a-teleport-to-your-current-location"),
         n >= 1 && all_online,
     ) {
         for id in sel {
             actions.push(ContactsAction::OfferTeleport(*id));
         }
     }
-    side_button(ui, p, "Carte...", soon, false);
-    side_button(ui, p, "Payer...", soon, false);
-    if side_button(ui, p, "Supprimer...", "Supprimer cette personne de vos amis", n >= 1) {
+    side_button(ui, p, aurora_i18n::tr!("ui-contacts-map"), soon, false);
+    side_button(ui, p, aurora_i18n::tr!("ui-contacts-pay"), soon, false);
+    if side_button(
+        ui,
+        p,
+        aurora_i18n::tr!("common-delete-2"),
+        aurora_i18n::tr!("ui-contacts-remove-this-person-from-your-friends"),
+        n >= 1,
+    ) {
         st.dialog = Some(Dialog::RemoveFriends(sel.clone()));
     }
-    if side_button(ui, p, "Ajouter...", "Proposer à une personne de devenir ami", true) {
+    if side_button(
+        ui,
+        p,
+        aurora_i18n::tr!("common-add-2"),
+        aurora_i18n::tr!("ui-contacts-offer-friendship"),
+        true,
+    ) {
         st.pick_new_friend();
     }
     ui.add_space(8.0);
     ui.label(
-        RichText::new(format!("Amis : {}", world.social.friends.len()))
-            .size(12.0)
-            .color(p.muted),
+        RichText::new(aurora_i18n::tr!(
+            "ui-contacts-friends",
+            value0 = format!("{}", world.social.friends.len())
+        ))
+        .size(12.0)
+        .color(p.muted),
     );
 }
 
@@ -974,7 +1069,7 @@ fn groups_tab(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut Contac
         let list_w = (ui.available_width() - BUTTONS_W - 8.0).max(120.0);
         ui.vertical(|ui| {
             ui.set_width(list_w);
-            widgets::search_field(ui, &mut st.group_filter, "Filtrer les groupes", list_w);
+            widgets::search_field(ui, &mut st.group_filter, aurora_i18n::tr!("ui-contacts-filter-groups"), list_w);
             ui.add_space(3.0);
             let list_h = (fill_height(ui, DEFAULT_TAB_H - 30.0) - footer_or_default(st.groups_footer)).max(60.0);
             let list = group_list(ui, p, world, st, pics, &groups, &filter, list_w, list_h, actions);
@@ -1024,15 +1119,18 @@ fn group_list(
                         .collect();
                     if groups.is_empty() {
                         ui.label(
-                            RichText::new("Vous cherchez à rejoindre un groupe ? Essayez la recherche.")
+                            RichText::new(aurora_i18n::tr!("ui-contacts-looking-for-a-group-to-join-try-search"))
                                 .size(12.0)
                                 .color(p.muted),
                         );
                     } else if shown.is_empty() {
                         ui.label(
-                            RichText::new(format!("Aucun groupe contenant « {} » n'a été trouvé.", st.group_filter.trim()))
-                                .size(12.0)
-                                .color(p.muted),
+                            RichText::new(aurora_i18n::tr!(
+                                "ui-contacts-no-group-containing-was-found",
+                                value0 = st.group_filter.trim().to_string()
+                            ))
+                            .size(12.0)
+                            .color(p.muted),
                         );
                     }
                     // « aucun » on top when not filtering (LLGroupList::refresh)
@@ -1085,7 +1183,7 @@ fn group_row(
     row_icon(ui, p, icon, insignia.and_then(|i| pics.images.get(&i)), "users-three");
     // active group in bold; hidden from the profile: GroupHiddenInProfile
     let active = world.groups.active == id;
-    let name = g.map(|g| g.name.clone()).unwrap_or_else(|| "aucun".into());
+    let name = g.map(|g| g.name.clone()).unwrap_or_else(|| aurora_i18n::tr!("extra-none").into());
     let col = match g {
         Some(g) if g.list_in_profile => p.indigo_light,
         _ => p.ink,
@@ -1114,29 +1212,29 @@ fn group_row(
 /// Right-click menu of a group (menu_people_groups.xml).
 fn group_menu(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut ContactsUi, id: Uuid, actions: &mut Vec<ContactsAction>) {
     let real = !id.is_nil();
-    if menu::item_if(ui, p, "check-circle", "Activer", world.groups.active != id) {
+    if menu::item_if(ui, p, "check-circle", aurora_i18n::tr!("common-enable"), world.groups.active != id) {
         actions.push(ContactsAction::Net(NetCommand::ActivateGroup(id)));
     }
-    menu::todo(ui, p, "info", "Voir les infos");
-    if menu::item_if(ui, p, "link", "Copier le SLurl", real) {
+    menu::todo(ui, p, "info", aurora_i18n::tr!("common-view-info"));
+    if menu::item_if(ui, p, "link", aurora_i18n::tr!("common-copy-slurl-2"), real) {
         ui.ctx().copy_text(format!("secondlife:///app/group/{id}/about"));
     }
-    if menu::item_if(ui, p, "chat-text", "Chat", real) {
+    if menu::item_if(ui, p, "chat-text", aurora_i18n::tr!("common-chat"), real) {
         actions.push(ContactsAction::GroupChat(id));
     }
-    menu::todo(ui, p, "phone", "Appel vocal");
+    menu::todo(ui, p, "phone", aurora_i18n::tr!("common-voice-call"));
     if real {
         let label = if world.groups.favorites.contains(&id) {
-            "Désépingler le groupe"
+            aurora_i18n::tr!("common-unpin-group")
         } else {
-            "Épingler le groupe"
+            aurora_i18n::tr!("common-pin-group")
         };
         if menu::item(ui, p, "push-pin", label) {
             world.groups.toggle_favorite(id);
         }
     }
     menu::separator(ui, p);
-    if menu::item_if(ui, p, "sign-out", "Quitter", real) {
+    if menu::item_if(ui, p, "sign-out", aurora_i18n::tr!("common-quit"), real) {
         st.ask_leave_group(id);
     }
 }
@@ -1146,38 +1244,42 @@ fn group_buttons(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut Con
     let sel = st.group_sel.unwrap_or_default();
     let real = !sel.is_nil();
     let powers = world.groups.group(&sel).map(|g| g.powers).unwrap_or(0);
-    let soon = "À venir dans Aurora";
+    let soon = aurora_i18n::tr!("ui-contacts-coming-soon-in-aurora");
     if side_button(
         ui,
         p,
-        "IM/Appel",
-        "Ouvrir une fenêtre de conversation",
+        aurora_i18n::tr!("status-im-call"),
+        aurora_i18n::tr!("ui-contacts-open-conversation-window"),
         real && powers & GP_SESSION_JOIN != 0,
     ) {
         actions.push(ContactsAction::GroupChat(sel));
     }
-    side_button(ui, p, "Informations", soon, false);
-    side_button(ui, p, "Titres", soon, false);
-    if side_button(ui, p, "Activer", "", sel != world.groups.active) {
+    side_button(ui, p, aurora_i18n::tr!("ui-contacts-information"), soon, false);
+    side_button(ui, p, aurora_i18n::tr!("ui-contacts-titles"), soon, false);
+    if side_button(ui, p, aurora_i18n::tr!("common-enable"), "", sel != world.groups.active) {
         actions.push(ContactsAction::Net(NetCommand::ActivateGroup(sel)));
     }
     let pinned = world.groups.favorites.contains(&sel);
     if side_button(
         ui,
         p,
-        if pinned { "Désépingler" } else { "Épingler" },
-        "Ajouter ou supprimer un groupe des favoris",
+        if pinned {
+            aurora_i18n::tr!("ui-contacts-unpin")
+        } else {
+            aurora_i18n::tr!("ui-contacts-pin")
+        },
+        aurora_i18n::tr!("ui-contacts-add-or-remove-a-group-from-favorites"),
         real,
     ) {
         world.groups.toggle_favorite(sel);
     }
-    if side_button(ui, p, "Quitter", "", real) {
+    if side_button(ui, p, aurora_i18n::tr!("common-quit"), "", real) {
         st.dialog = Some(Dialog::LeaveGroup(sel));
     }
     ui.add_space(6.0);
-    side_button(ui, p, "Créer...", soon, false);
-    side_button(ui, p, "Rechercher...", soon, false);
-    side_button(ui, p, "Inviter...", soon, false);
+    side_button(ui, p, aurora_i18n::tr!("ui-contacts-create-2"), soon, false);
+    side_button(ui, p, aurora_i18n::tr!("ui-contacts-search"), soon, false);
+    side_button(ui, p, aurora_i18n::tr!("ui-contacts-invite"), soon, false);
 }
 
 // ------------------------------------------------------------- contact sets
@@ -1185,10 +1287,10 @@ fn group_buttons(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut Con
 /// Label of a combo choice (internal names are translated).
 fn set_label(choice: &str) -> String {
     match choice {
-        contact_sets::ALL_SETS => "Tous".into(),
-        contact_sets::NO_SETS => "Sans cercle".into(),
-        contact_sets::PSEUDONYM => "Avec un surnom".into(),
-        contact_sets::EXTRA_AVS => "Non-amis".into(),
+        contact_sets::ALL_SETS => aurora_i18n::tr!("common-all").into(),
+        contact_sets::NO_SETS => aurora_i18n::tr!("ui-contacts-no-contact-set").into(),
+        contact_sets::PSEUDONYM => aurora_i18n::tr!("ui-contacts-with-a-nickname").into(),
+        contact_sets::EXTRA_AVS => aurora_i18n::tr!("ui-contacts-non-friends").into(),
         name => name.into(),
     }
 }
@@ -1276,19 +1378,28 @@ fn sets_tab(
                             }
                         }
                     });
-                if icon_button(ui, p, "gear-six", "Configurer le cercle sélectionné", mutable).clicked() && mutable {
+                if icon_button(
+                    ui,
+                    p,
+                    "gear-six",
+                    aurora_i18n::tr!("ui-contacts-configure-selected-contact-set"),
+                    mutable,
+                )
+                .clicked()
+                    && mutable
+                {
                     st.rename = choice.clone();
                     st.config = Some(choice.clone());
                 }
-                if icon_button(ui, p, "plus", "Ajouter un nouveau cercle", true).clicked() {
-                    st.dialog = Some(Dialog::AddSet("Nouveau cercle de contacts".into()));
+                if icon_button(ui, p, "plus", aurora_i18n::tr!("ui-contacts-add-a-new-contact-set"), true).clicked() {
+                    st.dialog = Some(Dialog::AddSet(aurora_i18n::tr!("ui-contacts-new-contact-set-2").into()));
                 }
-                if icon_button(ui, p, "trash", "Supprimer le cercle sélectionné", mutable).clicked() && mutable {
+                if icon_button(ui, p, "trash", aurora_i18n::tr!("ui-contacts-delete-selected-contact-set"), mutable).clicked() && mutable {
                     st.dialog = Some(Dialog::RemoveSet(choice.clone()));
                 }
             });
             ui.add_space(3.0);
-            widgets::search_field(ui, &mut st.set_filter, "Filtrer les personnes", list_w);
+            widgets::search_field(ui, &mut st.set_filter, aurora_i18n::tr!("ui-contacts-filter-people"), list_w);
             ui.add_space(3.0);
             let list_h = (fill_height(ui, DEFAULT_TAB_H - 60.0) - footer_or_default(st.sets_footer)).max(60.0);
             let list = egui::Frame::new().fill(p.field.gamma_multiply(0.6)).show(ui, |ui| {
@@ -1301,7 +1412,11 @@ fn sets_tab(
                     .show(ui, |ui| {
                         ui.spacing_mut().item_spacing.y = 0.0;
                         if rows.is_empty() {
-                            ui.label(RichText::new("Ce cercle est vide.").size(12.0).color(p.muted));
+                            ui.label(
+                                RichText::new(aurora_i18n::tr!("ui-contacts-this-contact-set-is-empty"))
+                                    .size(12.0)
+                                    .color(p.muted),
+                            );
                         }
                         let row_h = if settings.set_list_icons { 22.0 } else { ROW_H };
                         for (id, name, on, color) in &rows {
@@ -1344,13 +1459,13 @@ fn sets_tab(
                             }
                             // the member part of menu_fs_contacts_friends.xml
                             menu::context_menu(&resp, p, |ui| {
-                                if menu::item(ui, p, "user-circle", "Voir le profil") {
+                                if menu::item(ui, p, "user-circle", aurora_i18n::tr!("common-view-profile")) {
                                     actions.push(ContactsAction::Profile(*id));
                                 }
-                                if menu::item(ui, p, "chat-text", "Envoyer un IM...") {
+                                if menu::item(ui, p, "chat-text", aurora_i18n::tr!("ui-contacts-send-im")) {
                                     actions.push(ContactsAction::Im(*id));
                                 }
-                                if menu::item_if(ui, p, "paper-plane-tilt", "Proposer une téléportation", *on) {
+                                if menu::item_if(ui, p, "paper-plane-tilt", aurora_i18n::tr!("common-offer-teleport"), *on) {
                                     actions.push(ContactsAction::OfferTeleport(*id));
                                 }
                             });
@@ -1358,7 +1473,11 @@ fn sets_tab(
                     });
             });
             ui.add_space(3.0);
-            let c = ui.label(RichText::new(format!("Membres : {count}")).size(12.0).color(p.muted));
+            let c = ui.label(
+                RichText::new(aurora_i18n::tr!("ui-contacts-members", count = format!("{}", count)))
+                    .size(12.0)
+                    .color(p.muted),
+            );
             st.sets_footer = c.rect.bottom() - list.response.rect.bottom();
         });
         ui.vertical(|ui| {
@@ -1385,18 +1504,19 @@ fn set_buttons(
     if side_button(
         ui,
         p,
-        "Ajouter...",
-        "Ajouter un résident au cercle actuellement sélectionné",
+        aurora_i18n::tr!("common-add-2"),
+        aurora_i18n::tr!("ui-contacts-add-a-resident-to-the-selected-contact-set"),
         mutable,
     ) {
         st.pick_for = Some(PickFor::Set(choice.to_owned()));
         st.picker.open(PICKER_ID, true);
     }
-    let move_btn = side_button_resp(ui, p, "Déplacer...", mutable && has_sel).on_hover_text("Déplacer ce résident vers un autre cercle");
+    let move_btn = side_button_resp(ui, p, aurora_i18n::tr!("ui-contacts-move"), mutable && has_sel)
+        .on_hover_text(aurora_i18n::tr!("ui-contacts-move-this-resident-to-another-contact-set"));
     egui::Popup::menu(&move_btn).show(|ui| {
         let others: Vec<&String> = set_names.iter().filter(|s| s.as_str() != choice).collect();
         if others.is_empty() {
-            ui.add_enabled(false, egui::Button::new("Aucun autre cercle"));
+            ui.add_enabled(false, egui::Button::new(aurora_i18n::tr!("ui-contacts-no-other-contact-sets")));
         }
         for to in others {
             if ui.button(to).clicked() {
@@ -1409,8 +1529,8 @@ fn set_buttons(
     if side_button(
         ui,
         p,
-        "Supprimer...",
-        "Supprimer ce résident du cercle actuellement sélectionné",
+        aurora_i18n::tr!("common-delete-2"),
+        aurora_i18n::tr!("ui-contacts-remove-this-resident-from-the-selected-contact-set"),
         mutable && has_sel,
     ) {
         st.dialog = Some(Dialog::RemoveFromSet {
@@ -1418,15 +1538,21 @@ fn set_buttons(
             ids: sel.clone(),
         });
     }
-    if side_button(ui, p, "Profil...", "Afficher le profil du résident", has_sel) {
+    if side_button(
+        ui,
+        p,
+        aurora_i18n::tr!("common-profile-2"),
+        aurora_i18n::tr!("ui-contacts-show-resident-profile"),
+        has_sel,
+    ) {
         for id in &sel {
             actions.push(ContactsAction::Profile(*id));
         }
     }
     let im_tip = if sel.len() > 1 {
-        "Conférence à plusieurs : à venir dans Aurora"
+        aurora_i18n::tr!("ui-contacts-multi-person-conference-coming-soon-in-aurora")
     } else {
-        "Ouvrir une fenêtre de conversation privée"
+        aurora_i18n::tr!("ui-contacts-open-private-conversation-window")
     };
     if side_button(ui, p, "IM...", im_tip, sel.len() == 1) {
         actions.push(ContactsAction::Im(sel[0]));
@@ -1434,8 +1560,8 @@ fn set_buttons(
     if side_button(
         ui,
         p,
-        "Téléporter...",
-        "Proposer une téléportation à votre emplacement actuel",
+        aurora_i18n::tr!("ui-contacts-teleport"),
+        aurora_i18n::tr!("ui-contacts-offer-teleport-to-your-current-location"),
         has_sel,
     ) {
         for id in &sel {
@@ -1443,7 +1569,13 @@ fn set_buttons(
         }
     }
     ui.add_space(6.0);
-    if side_button(ui, p, "Surnommer...", "Donner un surnom à ce résident", has_sel) {
+    if side_button(
+        ui,
+        p,
+        aurora_i18n::tr!("ui-contacts-set-nickname"),
+        aurora_i18n::tr!("ui-contacts-give-this-resident-a-nickname"),
+        has_sel,
+    ) {
         let alias = sel
             .first()
             .and_then(|id| world.contact_sets.pseudonym(id))
@@ -1453,7 +1585,13 @@ fn set_buttons(
         st.dialog = Some(Dialog::SetAlias { ids: sel.clone(), alias });
     }
     let any_alias = sel.iter().any(|id| world.contact_sets.pseudonym(id).is_some());
-    if side_button(ui, p, "Suppr Surnom", "Supprimer le surnom de ce résident", has_sel && any_alias) {
+    if side_button(
+        ui,
+        p,
+        aurora_i18n::tr!("ui-contacts-remove-nickname"),
+        aurora_i18n::tr!("ui-contacts-remove-this-resident-s-nickname"),
+        has_sel && any_alias,
+    ) {
         let social = &world.social;
         world.contact_sets.clear_pseudonym(&sel, |id| social.is_friend(id));
     }
@@ -1461,8 +1599,8 @@ fn set_buttons(
     if side_button(
         ui,
         p,
-        "Suppr. DN",
-        "Supprime le nom d'affichage de ce résident",
+        aurora_i18n::tr!("ui-contacts-remove-display-name"),
+        aurora_i18n::tr!("ui-contacts-remove-this-resident-s-display-name"),
         has_sel && !any_dn_removed,
     ) {
         let social = &world.social;
@@ -1483,7 +1621,7 @@ fn set_config_window(ctx: &egui::Context, p: &Palette, world: &mut World, st: &m
     let mut open = true;
     widgets::Floater::new(
         "contact_set_config",
-        format!("Configurer : {set}"),
+        aurora_i18n::tr!("ui-contacts-configure", set = set.to_string()),
         ctx.content_rect().center() - Vec2::new(160.0, 140.0),
         Vec2::new(320.0, 280.0),
     )
@@ -1491,7 +1629,7 @@ fn set_config_window(ctx: &egui::Context, p: &Palette, world: &mut World, st: &m
     .show(ctx, p, &mut open, |ui| {
         ui.horizontal(|ui| {
             ui.add(egui::TextEdit::singleline(&mut st.rename).desired_width(200.0));
-            if widgets::flat_button(ui, p, "Renommer").clicked() {
+            if widgets::flat_button(ui, p, aurora_i18n::tr!("common-rename")).clicked() {
                 let new = st.rename.trim().to_owned();
                 if new != set {
                     if world.contact_sets.rename_set(&set, &new) {
@@ -1500,8 +1638,10 @@ fn set_config_window(ctx: &egui::Context, p: &Palette, world: &mut World, st: &m
                             st.set_choice = Some(new);
                         }
                     } else {
-                        world.system_message(format!(
-                            "Impossible de renommer le groupe '{set}' en '{new}' car un groupe portant le même nom existe déjà ou le nouveau nom n'est pas valide."
+                        world.system_message(aurora_i18n::tr!(
+                            "ui-contacts-cannot-rename-contact-set-to-the-new-name-is",
+                            set = set.to_string(),
+                            new = new.to_string()
                         ));
                     }
                 }
@@ -1513,23 +1653,37 @@ fn set_config_window(ctx: &egui::Context, p: &Palette, world: &mut World, st: &m
             if ui.color_edit_button_rgba_unmultiplied(&mut c).changed() {
                 world.contact_sets.set_color(&set, c);
             }
-            ui.label(RichText::new("Couleur").size(12.5).color(p.ink));
+            ui.label(RichText::new(aurora_i18n::tr!("common-color")).size(12.5).color(p.ink));
         });
         let mut sort = cfg.sort_by_online;
-        if ui.checkbox(&mut sort, "Trier par statut en ligne").changed() {
+        if ui
+            .checkbox(&mut sort, aurora_i18n::tr!("ui-contacts-sort-by-online-status"))
+            .changed()
+        {
             world.contact_sets.set_sort_by_online(&set, sort);
         }
         ui.separator();
-        ui.label(RichText::new("Tous les cercles").size(12.5).strong().color(p.ink));
+        ui.label(
+            RichText::new(aurora_i18n::tr!("ui-contacts-all-contact-sets"))
+                .size(12.5)
+                .strong()
+                .color(p.ink),
+        );
         ui.horizontal(|ui| {
             let mut c = world.contact_sets.default_color;
             if ui.color_edit_button_rgba_unmultiplied(&mut c).changed() {
                 world.contact_sets.set_default_color(c);
             }
-            ui.label(RichText::new("Couleur par défaut").size(12.5).color(p.ink));
+            ui.label(RichText::new(aurora_i18n::tr!("ui-contacts-default-color")).size(12.5).color(p.ink));
         });
-        ui.checkbox(&mut settings.set_list_icons, "Afficher les icônes de profil dans les listes des cercles");
-        ui.checkbox(&mut settings.colorize_friends, "Couleur de la liste d'amis basée sur le cercle");
+        ui.checkbox(
+            &mut settings.set_list_icons,
+            aurora_i18n::tr!("ui-contacts-show-profile-pictures-in-contact-set-lists"),
+        );
+        ui.checkbox(
+            &mut settings.colorize_friends,
+            aurora_i18n::tr!("ui-contacts-friend-list-color-based-on-contact-set"),
+        );
     });
     if !open {
         st.config = None;
@@ -1546,82 +1700,103 @@ fn dialogs(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut Contact
     let name = |id: &Uuid| world.social.name_of(id);
     let (title, text, ok, has_input) = match d {
         Dialog::RemoveFriends(ids) if ids.len() == 1 => (
-            "Supprimer un ami",
-            format!("Voulez-vous supprimer {} de votre liste d'amis ?", name(&ids[0])),
+            aurora_i18n::tr!("ui-contacts-remove-a-friend"),
+            aurora_i18n::tr!(
+                "ui-contacts-do-you-want-to-remove-from-your-friends-list",
+                value0 = name(&ids[0]).to_string()
+            ),
             "OK",
             false,
         ),
         Dialog::RemoveFriends(_) => (
-            "Supprimer des amis",
-            "Voulez-vous supprimer plusieurs résidents de votre liste d'amis ?".into(),
+            aurora_i18n::tr!("ui-contacts-remove-from-friends"),
+            aurora_i18n::tr!("ui-contacts-do-you-want-to-remove-multiple-residents-from-your").into(),
             "OK",
             false,
         ),
         Dialog::ModifyRights { friend, grant: true, .. } => (
-            "Droits de modification",
-            format!(
-                "Lorsque vous accordez des droits de modification à un autre résident, vous lui permettez de changer, \
-                 supprimer ou prendre n'importe lequel de vos objets dans Second Life. Réfléchissez bien avant d'accorder \
-                 ces droits.\nVoulez-vous vraiment accorder des droits de modification à {} ?",
-                name(friend)
+            aurora_i18n::tr!("ui-contacts-modify-rights"),
+            aurora_i18n::tr!(
+                "ui-contacts-granting-modify-rights-lets-another-resident-change-delete-or",
+                value0 = name(friend).to_string()
             ),
-            "Oui",
+            aurora_i18n::tr!("common-yes"),
             false,
         ),
         Dialog::ModifyRights { friend, .. } => (
-            "Droits de modification",
-            format!("Voulez-vous retirer les droits de modification à {} ?", name(friend)),
-            "Oui",
+            aurora_i18n::tr!("ui-contacts-modify-rights"),
+            aurora_i18n::tr!(
+                "ui-contacts-do-you-want-to-revoke-s-edit-permissions",
+                value0 = name(friend).to_string()
+            ),
+            aurora_i18n::tr!("common-yes"),
             false,
         ),
         Dialog::LeaveGroup(g) => {
             let n = world.groups.group(g).map(|g| g.name.clone()).unwrap_or_default();
-            ("Quitter le groupe", format!("Quitter le groupe '{n}' ?"), "Quitter", false)
+            (
+                aurora_i18n::tr!("ui-contacts-leave-group"),
+                aurora_i18n::tr!("ui-contacts-leave-group-2", n = n.to_string()),
+                aurora_i18n::tr!("common-quit"),
+                false,
+            )
         }
         Dialog::Friendship { to, .. } => (
-            "Devenir amis",
-            format!(
-                "Vous pouvez suivre les déplacements de vos amis sur la carte et voir lorsqu'ils se connectent.\n\n\
-                 Proposer à {} de devenir votre ami(e) ?",
-                name(to)
+            aurora_i18n::tr!("common-become-friends"),
+            aurora_i18n::tr!(
+                "ui-contacts-you-can-track-your-friends-on-the-map-and",
+                value0 = name(to).to_string()
             ),
             "OK",
             true,
         ),
         Dialog::TeleportRequest { to, .. } => (
-            "Demander une téléportation",
-            format!("Demander à {} de vous téléporter ?", name(to)),
-            "Envoyer",
+            aurora_i18n::tr!("common-request-teleport"),
+            aurora_i18n::tr!("ui-contacts-ask-to-teleport-you", value0 = name(to).to_string()),
+            aurora_i18n::tr!("common-send"),
             true,
         ),
         Dialog::AddSet(_) => (
-            "Nouveau cercle",
-            "Créer un nouveau groupe de contacts avec le nom :".into(),
-            "Créer",
+            aurora_i18n::tr!("ui-contacts-new-contact-set"),
+            aurora_i18n::tr!("ui-contacts-create-a-new-contact-set-named").into(),
+            aurora_i18n::tr!("ui-contacts-create"),
             true,
         ),
         Dialog::RemoveSet(s) => (
-            "Supprimer un cercle",
-            format!("Êtes-vous sûr de vouloir supprimer {s} ? Vous ne pourrez pas le restaurer."),
+            aurora_i18n::tr!("ui-contacts-delete-a-contact-set"),
+            aurora_i18n::tr!("ui-contacts-are-you-sure-you-want-to-delete-you-cannot", s = s.to_string()),
             "OK",
             false,
         ),
         Dialog::RemoveFromSet { set, ids } => {
             let target = if ids.len() > 1 { ids.len().to_string() } else { name(&ids[0]) };
             let text = if ids.len() > 1 {
-                format!("Êtes-vous sûr de vouloir supprimer ces avatars {target} de {set} ?")
+                aurora_i18n::tr!(
+                    "ui-contacts-are-you-sure-you-want-to-remove-these-avatars",
+                    target = target.to_string(),
+                    set = set.to_string()
+                )
             } else {
-                format!("Êtes-vous sûr de vouloir supprimer {target} de {set} ?")
+                aurora_i18n::tr!(
+                    "ui-contacts-are-you-sure-you-want-to-remove-from",
+                    target = target.to_string(),
+                    set = set.to_string()
+                )
             };
-            ("Retirer du cercle", text, "OK", false)
+            (aurora_i18n::tr!("ui-contacts-remove-from-contact-set"), text, "OK", false)
         }
         Dialog::SetAlias { ids, .. } => {
             let text = if ids.len() > 1 {
-                format!("Entrez un alias pour {} avatars :", ids.len())
+                aurora_i18n::tr!("ui-contacts-enter-an-alias-for-avatars", value0 = format!("{}", ids.len()))
             } else {
-                format!("Entrez un alias pour {} :", name(&ids[0]))
+                aurora_i18n::tr!("ui-contacts-enter-an-alias-for", value0 = name(&ids[0]).to_string())
             };
-            ("Surnom", text, "Créer", true)
+            (
+                aurora_i18n::tr!("ui-contacts-nickname"),
+                text,
+                aurora_i18n::tr!("ui-contacts-create"),
+                true,
+            )
         }
     };
     let mut done: Option<bool> = None;
@@ -1653,7 +1828,7 @@ fn dialogs(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut Contact
             if yes.clicked() {
                 done = Some(true);
             }
-            if widgets::flat_button(ui, p, "Annuler").clicked() {
+            if widgets::flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked() {
                 done = Some(false);
             }
         });
@@ -1777,7 +1952,13 @@ mod tests {
 
     #[test]
     fn group_count() {
-        assert_eq!(group_count_text(11, 50), "Vous faites partie de 11 groupes (39 restant).");
-        assert_eq!(group_count_text(3, 0), "Vous faites partie de 3 groupes.");
+        assert_eq!(
+            group_count_text(11, 50),
+            aurora_i18n::tr!("ui-contacts-you-belong-to-groups-remaining", count = "11", value0 = "39").as_str()
+        );
+        assert_eq!(
+            group_count_text(3, 0),
+            aurora_i18n::tr!("ui-contacts-you-belong-to-groups", count = "3").as_str()
+        );
     }
 }

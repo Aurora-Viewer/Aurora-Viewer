@@ -12,13 +12,15 @@ use uuid::Uuid;
 
 /// Widget sets in the combo's order (sorted by name, "none" last), with
 /// their label, default type, allow_resize and allow_looping.
-const WIDGETS: [(&str, &str, &str, bool, bool); 5] = [
-    ("audio", "Son", "audio/*", false, true),
-    ("image", "Image", "image/*", false, false),
-    ("movie", "Film", "video/*", false, true),
-    ("web", "Navigateur Web", "text/html", true, false),
-    ("none", "Aucun contenu", "none/none", false, false),
-];
+fn widgets() -> [(&'static str, &'static str, &'static str, bool, bool); 5] {
+    [
+        ("audio", aurora_i18n::tr!("common-sound"), "audio/*", false, true),
+        ("image", aurora_i18n::tr!("common-image"), "image/*", false, false),
+        ("movie", aurora_i18n::tr!("ui-land-media-movie"), "video/*", false, true),
+        ("web", aurora_i18n::tr!("ui-land-media-web-browser"), "text/html", true, false),
+        ("none", aurora_i18n::tr!("ui-land-media-no-contents"), "none/none", false, false),
+    ]
+}
 
 /// LLMIMETypes::widgetType: exact match in mime_types.xml, else "none".
 pub(super) fn widget_type(mime: &str) -> &'static str {
@@ -52,9 +54,9 @@ pub(super) fn widget_type(mime: &str) -> &'static str {
     }
 }
 
-fn widget(mime: &str) -> Option<&'static (&'static str, &'static str, &'static str, bool, bool)> {
+fn widget(mime: &str) -> Option<(&'static str, &'static str, &'static str, bool, bool)> {
     let w = widget_type(mime);
-    WIDGETS.iter().find(|x| x.0 == w)
+    widgets().into_iter().find(|x| x.0 == w)
 }
 
 pub(super) fn show(
@@ -78,14 +80,14 @@ pub(super) fn show(
     let w = widget(&parcel.media.mime);
     let allow_resize = w.is_some_and(|w| w.3);
     let allow_loop = w.is_some_and(|w| w.4);
-    super::row(ui, p, "Type :", |ui| {
+    super::row(ui, p, aurora_i18n::tr!("common-type-2"), |ui| {
         let current = w.map_or("", |w| w.1);
         ui.add_enabled_ui(can, |ui| {
             egui::ComboBox::from_id_salt("land_media_type")
                 .selected_text(current)
                 .width(150.0)
                 .show_ui(ui, |ui| {
-                    for (key, label, default_type, _, _) in WIDGETS {
+                    for (key, label, default_type, _, _) in widgets() {
                         if ui.selectable_label(w.is_some_and(|w| w.0 == key), label).clicked() && w.is_none_or(|w| w.0 != key) {
                             // onCommitType: the widget's default type
                             world.land.update(|u| u.media_type = default_type.to_owned());
@@ -93,31 +95,31 @@ pub(super) fn show(
                     }
                 })
                 .response
-                .on_hover_text("Indiquez s'il s'agit de l'URL d'un film, d'une page web ou autre");
+                .on_hover_text(aurora_i18n::tr!("ui-land-media-specify-whether-the-url-points-to-a-movie-web"));
         });
         text(ui, p, mime);
     });
-    super::row(ui, p, "Page d'accueil :", |ui| {
+    super::row(ui, p, aurora_i18n::tr!("common-home-page"), |ui| {
         let mut url = parcel.media_url.clone();
         ui.add_enabled(
             false,
             egui::TextEdit::singleline(&mut url).desired_width(ui.available_width() - 80.0),
         );
-        if super::button(ui, p, "Choisir", can).clicked() {
+        if super::button(ui, p, aurora_i18n::tr!("common-choose"), can).clicked() {
             world.land.media_type = None;
             s.dialog = Some(Dialog::MediaUrl(parcel.media_url.clone()));
         }
     });
-    super::row(ui, p, "Description :", |ui| {
+    super::row(ui, p, aurora_i18n::tr!("common-description"), |ui| {
         s.media_desc.sync(&parcel.media.desc);
         let r = ui.add_enabled(can, egui::TextEdit::singleline(&mut s.media_desc.text).desired_width(f32::INFINITY));
-        let r = r.on_hover_text("Texte affiché à côté du bouton Jouer/Charger");
+        let r = r.on_hover_text(aurora_i18n::tr!("ui-land-media-text-displayed-beside-the-play-load-button"));
         if let Some(d) = s.media_desc.after(&r) {
             world.land.update(|u| u.media_desc = d);
         }
     });
     ui.horizontal_top(|ui| {
-        super::key(ui, p, "Remplacer la texture :");
+        super::key(ui, p, aurora_i18n::tr!("ui-land-media-replace-texture"));
         let size = Vec2::new(64.0, 80.0);
         let (rect, r) = ui.allocate_exact_size(size, if can { egui::Sense::click() } else { egui::Sense::hover() });
         ui.painter().rect_filled(rect, 2.0, p.field);
@@ -125,49 +127,66 @@ pub(super) fn show(
         if !id.is_nil() {
             s.wanted_images.insert(id);
             if let Some(t) = images.get(&id) {
-                ui.painter()
-                    .image(t.id(), rect, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE);
+                ui.painter().image(
+                    t.id(),
+                    rect,
+                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                    egui::Color32::WHITE,
+                );
             }
         }
-        if r.on_hover_text("Cliquez pour sélectionner une image").clicked() {
+        if r.on_hover_text(aurora_i18n::tr!("common-click-to-select-an-image")).clicked() {
             s.texture_snapshot = false;
-            s.texture.open("Texture du média", id);
+            s.texture.open(aurora_i18n::tr!("ui-land-media-media-texture"), id);
         }
         ui.add_space(8.0);
         ui.add(
             egui::Label::new(
-                RichText::new(
-                    "Les objets avec cette texture affichent le film ou la page web quand vous cliquez sur la flèche Jouer. Sélectionnez l'image miniature pour choisir une texture différente.",
-                )
-                .size(12.0)
-                .color(p.muted),
+                RichText::new(aurora_i18n::tr!("ui-land-media-objects-using-this-texture-show-the-movie-or-web"))
+                    .size(12.0)
+                    .color(p.muted),
             )
             .wrap(),
         );
     });
     ui.horizontal(|ui| {
         ui.add_space(super::KEY_W);
-        let (r, on) = check(ui, can, parcel.media.auto_scale, "Échelle automatique");
-        r.clone().on_hover_text(
-            "Si vous sélectionnez cette option, le contenu de cette parcelle sera automatiquement mis à l'échelle. La qualité visuelle sera peut-être amoindrie mais vous n'aurez à faire aucune autre mise à l'échelle ou alignement.",
+        let (r, on) = check(
+            ui,
+            can,
+            parcel.media.auto_scale,
+            aurora_i18n::tr!("ui-land-media-automatic-scaling"),
         );
+        r.clone().on_hover_text(aurora_i18n::tr!(
+            "ui-land-media-selecting-this-option-automatically-scales-the-content-of-this"
+        ));
         if r.changed() {
             world.land.update(|u| u.media_auto_scale = on);
         }
     });
-    super::row(ui, p, "Taille :", |ui| {
+    super::row(ui, p, aurora_i18n::tr!("common-size"), |ui| {
         // disallowed sizes show 0 (findAllowResize)
         let (mut width, mut height) = if allow_resize {
             (parcel.media.width, parcel.media.height)
         } else {
             (0, 0)
         };
-        let tip = "Taille du média Web, laisser 0 pour la valeur par défaut.";
+        let tip = aurora_i18n::tr!("ui-land-media-web-media-size-leave-0-for-the-default");
         let rw = ui
-            .add_enabled(can && allow_resize, egui::DragValue::new(&mut width).range(0..=1024))
+            .add_enabled(
+                can && allow_resize,
+                egui::DragValue::new(&mut width)
+                    .custom_parser(aurora_i18n::parse_number)
+                    .range(0..=1024),
+            )
             .on_hover_text(tip);
         let rh = ui
-            .add_enabled(can && allow_resize, egui::DragValue::new(&mut height).range(0..=1024))
+            .add_enabled(
+                can && allow_resize,
+                egui::DragValue::new(&mut height)
+                    .custom_parser(aurora_i18n::parse_number)
+                    .range(0..=1024),
+            )
             .on_hover_text(tip);
         dim(ui, p, "pixels");
         let commit = |r: &egui::Response| (r.changed() && !r.dragged()) || r.drag_stopped();
@@ -178,11 +197,16 @@ pub(super) fn show(
             });
         }
     });
-    super::row(ui, p, "Options :", |ui| {
+    super::row(ui, p, aurora_i18n::tr!("ui-land-media-options"), |ui| {
         // DEV-10042: no looping for static types
-        let (r, on) = check(ui, can && allow_loop, allow_loop && parcel.media.looping, "En boucle");
+        let (r, on) = check(
+            ui,
+            can && allow_loop,
+            allow_loop && parcel.media.looping,
+            aurora_i18n::tr!("ui-land-media-looping"),
+        );
         r.clone()
-            .on_hover_text("Jouer le média en boucle. Lorsque le média aura fini de jouer, il recommencera.");
+            .on_hover_text(aurora_i18n::tr!("ui-land-media-loop-media-when-playback-ends-it-starts-again"));
         if r.changed() {
             world.land.update(|u| u.media_loop = on);
         }

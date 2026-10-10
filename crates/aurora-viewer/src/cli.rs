@@ -9,28 +9,35 @@ pub struct Cli {
     /// `--title <text>`: shown after the viewer's name and version
     /// and used to name the log, so parallel test windows can be told apart.
     pub title: Option<String>,
+    /// Process-only language override for demos and captures.
+    pub language: Option<String>,
     /// Additional cap for this process only, including captures and online tests.
     pub fps_limit: Option<u32>,
+    help: bool,
+    version: bool,
 }
-
-const HELP: &str = "Aurora Viewer
-
-Usage: aurora-viewer [--title <text>] [--fps-limit <fps>] [--version]
-
-  --title <text>   Name this window (\"Aurora Viewer <version> - <text>\") and its log
-                   file (aurora-<text>.log, aurora-demo-<text>.log in demo mode)
-  --fps-limit <fps>  Cap this process at 1..500 FPS without saving preferences
-  -V, --version   Show the compiled viewer version without starting it
-  -h, --help       Show this help
-
-Test switches are environment variables (AURORA_DEMO=1, AURORA_CAPTURE=...):
-see README.md.";
 
 static CLI: OnceLock<Cli> = OnceLock::new();
 
 /// The parsed arguments (parsed on first use).
 pub fn get() -> &'static Cli {
-    CLI.get_or_init(|| parse(std::env::args().skip(1)))
+    CLI.get_or_init(|| {
+        let cli = parse(std::env::args().skip(1));
+        aurora_i18n::select("default", cli.language.as_deref());
+        if cli.help {
+            let languages = aurora_i18n::available_languages()
+                .map(|(code, _)| code)
+                .collect::<Vec<_>>()
+                .join(", ");
+            println!("{}", aurora_i18n::tr!("cli-help", languages = languages));
+            std::process::exit(0);
+        }
+        if cli.version {
+            println!("{}", aurora_i18n::tr!("common-aurora-viewer", value0 = aurora_version::version()));
+            std::process::exit(0);
+        }
+        cli
+    })
 }
 
 fn parse(args: impl Iterator<Item = String>) -> Cli {
@@ -38,11 +45,15 @@ fn parse(args: impl Iterator<Item = String>) -> Cli {
     let mut args = args.peekable();
     while let Some(a) = args.next() {
         if a == "-h" || a == "--help" {
-            println!("{HELP}");
-            std::process::exit(0);
+            cli.help = true;
         } else if a == "-V" || a == "--version" {
-            println!("Aurora Viewer {}", aurora_version::version());
-            std::process::exit(0);
+            cli.version = true;
+        } else if let Some(value) = a.strip_prefix("--language=") {
+            cli.language = Some(value.to_owned());
+        } else if a == "--language" {
+            if args.peek().is_some_and(|value| !value.starts_with('-')) {
+                cli.language = args.next();
+            }
         } else if let Some(v) = a.strip_prefix("--title=") {
             cli.title = Some(v.to_owned());
         } else if a == "--title" {
@@ -54,13 +65,17 @@ fn parse(args: impl Iterator<Item = String>) -> Cli {
         }
     }
     cli.title = cli.title.map(|t| t.trim().to_owned()).filter(|t| !t.is_empty());
+    cli.language = cli.language.map(|value| value.trim().to_owned()).filter(|value| !value.is_empty());
     cli
 }
 
 fn parse_fps_limit(value: &str) -> Option<u32> {
     let limit = value.trim().parse::<u32>().ok().filter(|fps| (1..=500).contains(fps));
     if limit.is_none() {
-        eprintln!("--fps-limit requires a value between 1 and 500");
+        eprintln!(
+            "{}",
+            aurora_i18n::tr!("cli-fps-limit-requires-a-value-between-1-and-500").to_owned()
+        );
     }
     limit
 }
@@ -73,8 +88,8 @@ pub fn window_title() -> String {
 
 fn title_with(title: Option<&str>, profile_dir: &str, version: &str) -> String {
     let base = match title {
-        Some(t) => format!("Aurora Viewer {version} - {t}"),
-        None => format!("Aurora Viewer {version}"),
+        Some(t) => aurora_i18n::tr!("cli-aurora-viewer-2", version = version.to_string(), t = t.to_string()),
+        None => aurora_i18n::tr!("cli-aurora-viewer", version = version.to_string()),
     };
     match profile_label(profile_dir) {
         Some(p) => format!("{base} ({p})"),
@@ -88,7 +103,7 @@ fn profile_label(dir: &str) -> Option<&'static str> {
     match dir {
         "release" => Some("Release"),
         "debug" => Some("Dev"),
-        "debugging" => Some("Debug"),
+        "debugging" => Some(aurora_i18n::tr!("common-debug")),
         "ci" => Some("CI"),
         _ => None,
     }
@@ -113,17 +128,42 @@ mod tests {
     use super::*;
 
     #[test]
+    fn language_forms_and_help_preserve_the_process_override() {
+        for arguments in [
+            vec!["--language", "en"],
+            vec!["--language=en"],
+            vec!["--help", "--language", " en "],
+        ] {
+            let cli = parse(arguments.into_iter().map(String::from));
+            assert_eq!(cli.language.as_deref(), Some("en"));
+        }
+        let cli = parse(["--language", "--title", "Translation test"].into_iter().map(String::from));
+        assert_eq!(cli.language, None);
+        assert_eq!(cli.title.as_deref(), Some("Translation test"));
+        assert_eq!(parse(["--language="].into_iter().map(String::from)).language, None);
+    }
+
+    #[test]
     fn title_ends_with_the_build_profile() {
         assert_eq!(
             title_with(Some("Test ombres"), "debug", "0.2.0"),
-            "Aurora Viewer 0.2.0 - Test ombres (Dev)"
+            aurora_i18n::tr!("cli-aurora-viewer", version = "0.2.0 - Test ombres (Dev)").as_str()
         );
-        assert_eq!(title_with(None, "release", "0.2.0"), "Aurora Viewer 0.2.0 (Release)");
-        assert_eq!(title_with(None, "debugging", "0.2.0"), "Aurora Viewer 0.2.0 (Debug)");
-        assert_eq!(title_with(Some("X"), "unknown", "0.2.0"), "Aurora Viewer 0.2.0 - X");
+        assert_eq!(
+            title_with(None, "release", "0.2.0"),
+            aurora_i18n::tr!("cli-aurora-viewer", version = "0.2.0 (Release)").as_str()
+        );
+        assert_eq!(
+            title_with(None, "debugging", "0.2.0"),
+            aurora_i18n::tr!("cli-aurora-viewer", version = "0.2.0 (Debug)").as_str()
+        );
+        assert_eq!(
+            title_with(Some("X"), "unknown", "0.2.0"),
+            aurora_i18n::tr!("cli-aurora-viewer", version = "0.2.0 - X").as_str()
+        );
         assert_eq!(
             title_with(None, "debug", "0.2.0+7.gabcdef123"),
-            "Aurora Viewer 0.2.0+7.gabcdef123 (Dev)"
+            aurora_i18n::tr!("cli-aurora-viewer", version = "0.2.0+7.gabcdef123 (Dev)").as_str()
         );
     }
 

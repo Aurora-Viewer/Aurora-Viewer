@@ -159,10 +159,13 @@ impl BuildTool {
                 }
             }
             (CapPurpose::GltfMaterials, Ok(v)) if v.has("success") && !v.get("success").as_bool() => {
-                self.status = format!("Matériau refusé : {}", v.get("message").to_string_value());
+                self.status = aurora_i18n::tr!(
+                    "build-materials-material-rejected",
+                    value0 = v.get("message").to_string_value().to_string()
+                );
             }
             (CapPurpose::MediaUpdate | CapPurpose::GltfMaterials | CapPurpose::LegacyMaterials, Err(e)) => {
-                self.status = format!("Échec de l'envoi : {e}");
+                self.status = aurora_i18n::tr!("build-materials-send-failed", e = e.to_string());
             }
             _ => {}
         }

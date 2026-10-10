@@ -280,7 +280,7 @@ impl PlacesUi {
         // floater_places.xml: 333 x 588 (200 x 200 at least)
         let size = Vec2::new(333.0, 588.0);
         let pos = screen.center() - size * 0.5 + Vec2::new(120.0, 0.0);
-        let mut floater = Floater::new("places", "Lieux", pos, size);
+        let mut floater = Floater::new("places", aurora_i18n::tr!("common-places"), pos, size);
         floater.min_size = Vec2::new(260.0, 300.0);
         floater.show(ctx, c.p, open, |ui| {
             let body = egui::Rect::from_min_max(ui.cursor().min, ui.max_rect().max);
@@ -306,14 +306,18 @@ impl PlacesUi {
         };
         let (title, text, yes) = match confirm {
             Confirm::Landmark { name, .. } => (
-                "Téléportation",
-                format!("Souhaitez-vous vraiment vous téléporter vers {name} ?"),
-                "Téléporter",
+                aurora_i18n::tr!("common-teleport-2"),
+                aurora_i18n::tr!("ui-places-do-you-really-want-to-teleport-to", name = name.to_string()),
+                aurora_i18n::tr!("common-teleport-3"),
             ),
-            Confirm::History { title, .. } => ("Téléportation", format!("Vous téléporter vers {title} ?"), "Téléporter"),
+            Confirm::History { title, .. } => (
+                aurora_i18n::tr!("common-teleport-2"),
+                aurora_i18n::tr!("ui-places-teleport-to", title = title.to_string()),
+                aurora_i18n::tr!("common-teleport-3"),
+            ),
             Confirm::Clear => (
-                "Historique de téléportation",
-                "Voulez-vous vraiment supprimer votre historique des téléportations ?".to_owned(),
+                aurora_i18n::tr!("common-teleport-history"),
+                aurora_i18n::tr!("ui-places-do-you-really-want-to-clear-your-teleport-history").to_owned(),
                 "OK",
             ),
         };
@@ -328,7 +332,7 @@ impl PlacesUi {
                 if widgets::flat_button(ui, p, yes).clicked() {
                     answer = Some(true);
                 }
-                if widgets::flat_button(ui, p, "Annuler").clicked() {
+                if widgets::flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked() {
                     answer = Some(false);
                 }
             });
@@ -362,17 +366,17 @@ impl PlacesUi {
             let w = (ui.available_width() - buttons * 25.0).max(60.0);
             ui.add(
                 egui::TextEdit::singleline(&mut self.filter)
-                    .hint_text("Filtrer les lieux")
+                    .hint_text(aurora_i18n::tr!("ui-places-filter-places"))
                     .desired_width(w),
             );
-            widgets::icon_menu(ui, p, "gear-six", "Afficher les options", |ui| {
+            widgets::icon_menu(ui, p, "gear-six", aurora_i18n::tr!("ui-places-show-options"), |ui| {
                 if history {
                     self.history_item_menu(ui, p, world, actions);
                 } else {
                     self.landmark_gear_menu(ui, p, world, by_date, actions);
                 }
             });
-            widgets::icon_menu(ui, p, "sort-ascending", "Afficher les options de tri", |ui| {
+            widgets::icon_menu(ui, p, "sort-ascending", aurora_i18n::tr!("ui-places-show-sorting-options"), |ui| {
                 if history {
                     self.history_gear_menu(ui, p, world);
                 } else {
@@ -380,11 +384,11 @@ impl PlacesUi {
                 }
             });
             if !history {
-                widgets::icon_menu(ui, p, "plus", "Ajouter un nouveau point de repère ou un nouveau dossier", |ui| {
-                    super::menu::todo(ui, p, "folder", "Ajouter un dossier");
-                    super::menu::todo(ui, p, "map-pin", "Ajouter un repère");
+                widgets::icon_menu(ui, p, "plus", aurora_i18n::tr!("ui-places-add-a-new-landmark-or-folder"), |ui| {
+                    super::menu::todo(ui, p, "folder", aurora_i18n::tr!("ui-places-add-folder"));
+                    super::menu::todo(ui, p, "map-pin", aurora_i18n::tr!("ui-places-add-landmark"));
                 });
-                widgets::icon_button(ui, p, "trash", super::menu::NOT_YET, false);
+                widgets::icon_button(ui, p, "trash", super::menu::not_yet(), false);
             }
         });
         ui.add_space(4.0);
@@ -393,7 +397,11 @@ impl PlacesUi {
             ui,
             p,
             &mut self.tab,
-            &[("Favoris", true), ("Repères", true), ("Historique de teleport.", true)],
+            &[
+                (aurora_i18n::tr!("common-favorites"), true),
+                (aurora_i18n::tr!("common-landmarks"), true),
+                (aurora_i18n::tr!("ui-places-teleport-history"), true),
+            ],
         );
         if before != self.tab {
             self.selected = None;
@@ -432,7 +440,7 @@ impl PlacesUi {
             FOLDER_LANDMARKS
         };
         let Some(root) = system_folder(&world.inventory, kind) else {
-            ui.label(RichText::new(place_details::LOADING).size(12.0).color(p.muted));
+            ui.label(RichText::new(place_details::loading()).size(12.0).color(p.muted));
             return;
         };
         // fetch what is shown (and everything while filtering)
@@ -450,13 +458,13 @@ impl PlacesUi {
         if rows.is_empty() {
             let fetching = world.inventory.folders.get(&root).is_some_and(|f| f.state != FetchState::Fetched);
             let text = if fetching {
-                place_details::LOADING
+                place_details::loading()
             } else if self.tab == TAB_FAVORITES {
                 // FavoritesNoMatchingItems
-                "Faites glisser un repère ici pour l'ajouter à vos Favoris."
+                aurora_i18n::tr!("ui-places-drag-a-landmark-here-to-add-it-to-your")
             } else {
                 // PlacesNoMatchingItems (the search is not ported yet)
-                "Vous n'avez pas trouvé ce que vous cherchiez ? Essayez Rechercher."
+                aurora_i18n::tr!("ui-places-did-not-find-what-you-were-looking-for-try-2")
             };
             ui.add(egui::Label::new(RichText::new(text).size(12.0).color(p.muted)).wrap());
             return;
@@ -561,14 +569,33 @@ impl PlacesUi {
         let folders = Self::all_folders(world, self.current_root(world));
         let any_closed = folders.iter().any(|f| !self.open_folders.contains(f));
         let any_open = folders.iter().any(|f| self.open_folders.contains(f));
-        if super::menu::item_if(ui, p, "arrows-out-simple", "Développer tous les dossiers", any_closed) {
+        if super::menu::item_if(
+            ui,
+            p,
+            "arrows-out-simple",
+            aurora_i18n::tr!("ui-places-expand-all-folders"),
+            any_closed,
+        ) {
             self.open_folders.extend(folders.iter().copied());
         }
-        if super::menu::item_if(ui, p, "arrows-in-simple", "Réduire tous les dossiers", any_open) {
+        if super::menu::item_if(
+            ui,
+            p,
+            "arrows-in-simple",
+            aurora_i18n::tr!("ui-places-collapse-all-folders"),
+            any_open,
+        ) {
             self.open_folders.clear();
         }
         // disabled for Favorites: they keep their own order (EXT-1758)
-        if super::menu::check(ui, p, "calendar-dots", "Trier par date", by_date, self.tab == TAB_LANDMARKS) {
+        if super::menu::check(
+            ui,
+            p,
+            "calendar-dots",
+            aurora_i18n::tr!("ui-places-sort-by-date"),
+            by_date,
+            self.tab == TAB_LANDMARKS,
+        ) {
             actions.push(PlacesAction::SortByDate(!by_date));
         }
     }
@@ -596,70 +623,70 @@ impl PlacesUi {
             Resolved::Ready { global, .. } => Some(global),
             _ => None,
         };
-        if super::menu::item(ui, p, "navigation-arrow", "Téléporter") {
+        if super::menu::item(ui, p, "navigation-arrow", aurora_i18n::tr!("common-teleport-3")) {
             self.confirm = Some(Confirm::Landmark {
                 asset: it.asset_id,
                 name: it.name.clone(),
             });
         }
-        if super::menu::item_if(ui, p, "map-trifold", "Afficher sur la carte", resolved.is_some())
+        if super::menu::item_if(ui, p, "map-trifold", aurora_i18n::tr!("common-show-on-map"), resolved.is_some())
             && let Some(g) = resolved
         {
             actions.push(PlacesAction::ShowOnMap(g));
         }
-        super::menu::todo(ui, p, "share-network", "Partager");
-        if super::menu::item(ui, p, "info", "Plus d'informations") {
+        super::menu::todo(ui, p, "share-network", aurora_i18n::tr!("common-share"));
+        if super::menu::item(ui, p, "info", aurora_i18n::tr!("ui-places-more-information")) {
             actions.push(landmark_profile(&it));
         }
         let in_favorites = system_folder(&world.inventory, FOLDER_FAVORITES).is_some_and(|f| it.parent == f);
         if in_favorites {
-            super::menu::todo(ui, p, "map-pin", "Déplacer vers Repères");
+            super::menu::todo(ui, p, "map-pin", aurora_i18n::tr!("ui-places-move-to-landmarks"));
         } else {
-            super::menu::todo(ui, p, "star", "Déplacer vers Favoris");
+            super::menu::todo(ui, p, "star", aurora_i18n::tr!("ui-places-move-to-favorites"));
         }
         super::menu::separator(ui, p);
-        super::menu::todo(ui, p, "map-pin", "Créer un repère");
-        super::menu::todo(ui, p, "folder", "Créer un dossier");
+        super::menu::todo(ui, p, "map-pin", aurora_i18n::tr!("ui-places-create-landmark"));
+        super::menu::todo(ui, p, "folder", aurora_i18n::tr!("ui-places-create-folder"));
         super::menu::separator(ui, p);
-        super::menu::todo(ui, p, "scissors", "Couper");
-        super::menu::todo(ui, p, "copy", "Copier le repère");
+        super::menu::todo(ui, p, "scissors", aurora_i18n::tr!("common-cut"));
+        super::menu::todo(ui, p, "copy", aurora_i18n::tr!("ui-places-copy-landmark"));
         let slurl = resolved.and_then(|g| slurl_at(world, g, ""));
-        if super::menu::item_if(ui, p, "link", "Copier la SLurl", slurl.is_some())
+        if super::menu::item_if(ui, p, "link", aurora_i18n::tr!("common-copy-slurl"), slurl.is_some())
             && let Some(s) = slurl
         {
             ui.ctx().copy_text(s);
         }
-        super::menu::todo(ui, p, "clipboard-text", "Coller");
-        super::menu::todo(ui, p, "pencil-simple", "Renommer");
-        super::menu::todo(ui, p, "trash", "Supprimer");
+        super::menu::todo(ui, p, "clipboard-text", aurora_i18n::tr!("common-paste"));
+        super::menu::todo(ui, p, "pencil-simple", aurora_i18n::tr!("common-rename"));
+        super::menu::todo(ui, p, "trash", aurora_i18n::tr!("common-delete"));
         super::menu::separator(ui, p);
         self.expand_collapse_sort(ui, p, world, by_date, actions);
         super::menu::separator(ui, p);
-        super::menu::todo(ui, p, "star", "Créer un favori");
+        super::menu::todo(ui, p, "star", aurora_i18n::tr!("common-create-favorite"));
     }
 
     /// menu_places_gear_folder.xml.
     fn folder_menu(&mut self, ui: &mut egui::Ui, p: &Palette, world: &World, by_date: bool, actions: &mut Vec<PlacesAction>) {
-        super::menu::todo(ui, p, "map-pin", "Ajouter un repère");
-        super::menu::todo(ui, p, "folder", "Ajouter un dossier");
+        super::menu::todo(ui, p, "map-pin", aurora_i18n::tr!("ui-places-add-landmark"));
+        super::menu::todo(ui, p, "folder", aurora_i18n::tr!("ui-places-add-folder"));
         super::menu::separator(ui, p);
-        super::menu::todo(ui, p, "scissors", "Couper");
-        super::menu::todo(ui, p, "copy", "Copier");
-        super::menu::todo(ui, p, "clipboard-text", "Coller");
-        super::menu::todo(ui, p, "pencil-simple", "Renommer");
-        super::menu::todo(ui, p, "trash", "Supprimer");
+        super::menu::todo(ui, p, "scissors", aurora_i18n::tr!("common-cut"));
+        super::menu::todo(ui, p, "copy", aurora_i18n::tr!("common-copy-2"));
+        super::menu::todo(ui, p, "clipboard-text", aurora_i18n::tr!("common-paste"));
+        super::menu::todo(ui, p, "pencil-simple", aurora_i18n::tr!("common-rename"));
+        super::menu::todo(ui, p, "trash", aurora_i18n::tr!("common-delete"));
         super::menu::separator(ui, p);
         let folder = match self.selected {
             Some(Sel::Folder(f)) => Some(f),
             _ => None,
         };
         let open = folder.is_some_and(|f| self.open_folders.contains(&f));
-        if super::menu::item_if(ui, p, "caret-down", "Développer", folder.is_some() && !open)
+        if super::menu::item_if(ui, p, "caret-down", aurora_i18n::tr!("common-expand"), folder.is_some() && !open)
             && let Some(f) = folder
         {
             self.open_folders.insert(f);
         }
-        if super::menu::item_if(ui, p, "caret-right", "Réduire", open)
+        if super::menu::item_if(ui, p, "caret-right", aurora_i18n::tr!("common-collapse"), open)
             && let Some(f) = folder
         {
             self.open_folders.remove(&f);
@@ -675,9 +702,9 @@ impl PlacesUi {
             // no_teleports_msg / no_matched_teleports_msg (the search is not
             // ported yet)
             let text = if filter.is_empty() {
-                "L'historique de téléportation est vide. Essayez La recherche."
+                aurora_i18n::tr!("ui-places-teleport-history-is-empty-try-search")
             } else {
-                "Vous n'avez pas trouvé ce que vous cherchiez ? Essayez La recherche."
+                aurora_i18n::tr!("ui-places-did-not-find-what-you-were-looking-for-try")
             };
             ui.add(egui::Label::new(RichText::new(text).size(12.0).color(p.muted)).wrap());
             return;
@@ -685,7 +712,7 @@ impl PlacesUi {
         for (section, indices) in sections {
             // every section opens while filtering
             let open = !filter.is_empty() || !self.collapsed.contains(&section);
-            if section_header(ui, p, tphistory::HISTORY_SECTIONS[section], open).clicked() && filter.is_empty() {
+            if section_header(ui, p, tphistory::history_sections()[section], open).clicked() && filter.is_empty() {
                 if open {
                     self.collapsed.insert(section);
                 } else {
@@ -727,7 +754,7 @@ impl PlacesUi {
     fn history_item_menu(&mut self, ui: &mut egui::Ui, p: &Palette, world: &World, actions: &mut Vec<PlacesAction>) {
         let sel = self.selected_history(world).map(|(i, it)| (i, it.clone()));
         let some = sel.is_some();
-        if super::menu::item_if(ui, p, "navigation-arrow", "Téléporter", some)
+        if super::menu::item_if(ui, p, "navigation-arrow", aurora_i18n::tr!("common-teleport-3"), some)
             && let Some((_, it)) = &sel
         {
             self.confirm = Some(Confirm::History {
@@ -735,23 +762,23 @@ impl PlacesUi {
                 title: it.title.clone(),
             });
         }
-        if super::menu::item_if(ui, p, "info", "Plus d'informations", some)
+        if super::menu::item_if(ui, p, "info", aurora_i18n::tr!("ui-places-more-information"), some)
             && let Some((_, it)) = &sel
         {
             actions.push(history_profile(it));
         }
-        if super::menu::item_if(ui, p, "map-trifold", "Afficher sur la carte", some)
+        if super::menu::item_if(ui, p, "map-trifold", aurora_i18n::tr!("common-show-on-map"), some)
             && let Some((_, it)) = &sel
         {
             actions.push(PlacesAction::ShowOnMap(it.global));
         }
         let slurl = sel.as_ref().and_then(|(_, it)| slurl_at(world, it.global, &it.title));
-        if super::menu::item_if(ui, p, "link", "Copier la SLurl", slurl.is_some())
+        if super::menu::item_if(ui, p, "link", aurora_i18n::tr!("common-copy-slurl"), slurl.is_some())
             && let Some(s) = slurl
         {
             ui.ctx().copy_text(s);
         }
-        if super::menu::item_if(ui, p, "trash", "Supprimer de l'historique", some)
+        if super::menu::item_if(ui, p, "trash", aurora_i18n::tr!("ui-places-remove-from-history"), some)
             && let Some((i, _)) = sel
         {
             actions.push(PlacesAction::RemoveHistory(i));
@@ -767,11 +794,23 @@ impl PlacesUi {
             .collect();
         let any_closed = present.iter().any(|s| self.collapsed.contains(s));
         let any_open = present.iter().any(|s| !self.collapsed.contains(s));
-        if super::menu::item_if(ui, p, "arrows-out-simple", "Développer tous les dossiers", any_closed) {
+        if super::menu::item_if(
+            ui,
+            p,
+            "arrows-out-simple",
+            aurora_i18n::tr!("ui-places-expand-all-folders"),
+            any_closed,
+        ) {
             self.collapsed.clear();
         }
-        if super::menu::item_if(ui, p, "arrows-in-simple", "Réduire tous les dossiers", any_open) {
-            self.collapsed.extend(0..tphistory::HISTORY_SECTIONS.len());
+        if super::menu::item_if(
+            ui,
+            p,
+            "arrows-in-simple",
+            aurora_i18n::tr!("ui-places-collapse-all-folders"),
+            any_open,
+        ) {
+            self.collapsed.extend(0..tphistory::history_sections().len());
             self.selected = None;
         }
         // FIRE-31025
@@ -779,7 +818,7 @@ impl PlacesUi {
             ui,
             p,
             "trash",
-            "Effacer l'historique des téléportations",
+            aurora_i18n::tr!("ui-places-clear-teleport-history"),
             !world.tp_storage.items.is_empty(),
         ) {
             self.confirm = Some(Confirm::Clear);
@@ -802,7 +841,14 @@ impl PlacesUi {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 3.0;
             let w = ((ui.available_width() - 6.0) / 3.0).max(60.0);
-            if place_details::button(ui, p, "Se téléporter", "Se téléporter à l'endroit de son choix", any, w) {
+            if place_details::button(
+                ui,
+                p,
+                aurora_i18n::tr!("common-teleport"),
+                aurora_i18n::tr!("ui-places-teleport-to-a-location-of-your-choice"),
+                any,
+                w,
+            ) {
                 self.confirm = match (&landmark, &history) {
                     (Some(it), _) => Some(Confirm::Landmark {
                         asset: it.asset_id,
@@ -818,15 +864,22 @@ impl PlacesUi {
             if place_details::button(
                 ui,
                 p,
-                "Carte",
-                "Afficher l'emplacement correspondant sur la carte",
+                aurora_i18n::tr!("common-map"),
+                aurora_i18n::tr!("ui-places-show-the-corresponding-location-on-the-map"),
                 map_target.is_some(),
                 w,
             ) && let Some(g) = map_target
             {
                 actions.push(PlacesAction::ShowOnMap(g));
             }
-            if place_details::button(ui, p, "Profil", "Afficher le profil du lieu", any, w) {
+            if place_details::button(
+                ui,
+                p,
+                aurora_i18n::tr!("common-profile"),
+                aurora_i18n::tr!("ui-places-show-place-profile"),
+                any,
+                w,
+            ) {
                 match (&landmark, &history) {
                     (Some(it), _) => actions.push(landmark_profile(it)),
                     (_, Some(h)) => actions.push(history_profile(h)),
@@ -849,7 +902,7 @@ impl PlacesUi {
         let world = c.world;
         // header_container: back arrow and title
         ui.horizontal(|ui| {
-            if widgets::icon_button(ui, p, "caret-left", "Retour", true) {
+            if widgets::icon_button(ui, p, "caret-left", aurora_i18n::tr!("common-back"), true) {
                 actions.push(PlacesAction::CloseProfile);
             }
             ui.label(RichText::new(place_details::header_title(place)).size(16.0).strong().color(p.ink));
@@ -871,8 +924,8 @@ impl PlacesUi {
             if place_details::button(
                 ui,
                 p,
-                "Se téléporter",
-                "Se téléporter à l'endroit de son choix",
+                aurora_i18n::tr!("common-teleport"),
+                aurora_i18n::tr!("ui-places-teleport-to-a-location-of-your-choice"),
                 place.global.is_some(),
                 w,
             ) && let Some(a) = place_details::teleport_action(place, world)
@@ -888,15 +941,15 @@ impl PlacesUi {
             if place_details::button(
                 ui,
                 p,
-                "Carte",
-                "Afficher l'emplacement correspondant sur la carte",
+                aurora_i18n::tr!("common-map"),
+                aurora_i18n::tr!("ui-places-show-the-corresponding-location-on-the-map"),
                 place.global.is_some(),
                 w,
             ) && let Some(g) = place.global
             {
                 actions.push(PlacesAction::ShowOnMap(g));
             }
-            widgets::icon_menu(ui, p, "caret-up", "Afficher les options supplémentaires", |ui| {
+            widgets::icon_menu(ui, p, "caret-up", aurora_i18n::tr!("ui-places-show-more-options"), |ui| {
                 place_details::overflow_menu(ui, p, world, place);
             });
         });
@@ -1067,9 +1120,9 @@ mod tests {
             folders,
             items,
         };
-        let root = folder(1, 0, "Mon inventaire", 8);
-        let lms = folder(10, 1, "Repères", 3);
-        let shops = folder(20, 10, "Boutiques", -1);
+        let root = folder(1, 0, aurora_i18n::tr!("common-my-inventory"), 8);
+        let lms = folder(10, 1, aurora_i18n::tr!("common-landmarks"), 3);
+        let shops = folder(20, 10, aurora_i18n::tr!("common-shopping"), -1);
         let empty = folder(21, 10, "Vide", -1);
         inv.apply(vec![contents(root, vec![lms.clone()], Vec::new())]);
         inv.apply(vec![contents(
@@ -1097,16 +1150,29 @@ mod tests {
         let none = HashSet::new();
         // folders first by name, then the newest landmark first
         let rows = landmark_rows(&inv, root, "", true, &none, true);
-        assert_eq!(names(&rows), ["Boutiques", "Vide", "Plage", "Musée", "Arbre"]);
+        assert_eq!(
+            names(&rows),
+            [aurora_i18n::tr!("common-shopping"), "Vide", "Plage", "Musée", "Arbre"]
+        );
         assert_eq!(rows[0].folder, Some(false));
         // by name, and an opened folder shows its landmarks one level down
         let open: HashSet<Uuid> = [Uuid::from_u128(20)].into();
         let rows = landmark_rows(&inv, root, "", false, &open, true);
-        assert_eq!(names(&rows), ["Boutiques", "Boutique du Loup", "Vide", "Arbre", "Musée", "Plage"]);
+        assert_eq!(
+            names(&rows),
+            [
+                aurora_i18n::tr!("common-shopping"),
+                "Boutique du Loup",
+                "Vide",
+                "Arbre",
+                "Musée",
+                "Plage"
+            ]
+        );
         assert_eq!(rows[1].depth, 1);
         // Favorites-style: empty folders are not shown
         let rows = landmark_rows(&inv, root, "", true, &none, false);
-        assert_eq!(names(&rows), ["Boutiques", "Plage", "Musée", "Arbre"]);
+        assert_eq!(names(&rows), [aurora_i18n::tr!("common-shopping"), "Plage", "Musée", "Arbre"]);
     }
 
     #[test]
@@ -1114,7 +1180,7 @@ mod tests {
         let inv = inventory();
         let root = system_folder(&inv, FOLDER_LANDMARKS).expect("landmarks folder");
         let rows = landmark_rows(&inv, root, "LOUP", true, &HashSet::new(), true);
-        assert_eq!(names(&rows), ["Boutiques", "Boutique du Loup"]);
+        assert_eq!(names(&rows), [aurora_i18n::tr!("common-shopping"), "Boutique du Loup"]);
         assert_eq!(rows[0].folder, Some(true), "opened while filtering");
         assert!(landmark_rows(&inv, root, "nulle part", true, &HashSet::new(), true).is_empty());
     }
@@ -1131,9 +1197,9 @@ mod tests {
         let items = vec![
             item("Ancien", now - 400.0 * DAY),
             item("Avant-hier", now - 2.0 * DAY),
-            item("Hier", now - DAY),
+            item(aurora_i18n::tr!("world-tphistory-yesterday"), now - DAY),
             item("Matin", now - 2.0 * 3600.0),
-            item("Midi", now - 60.0),
+            item(aurora_i18n::tr!("common-midday"), now - 60.0),
         ];
         let s = history_sections(&items, "", now);
         assert_eq!(s, vec![(0, vec![4, 3]), (1, vec![2]), (2, vec![1]), (8, vec![0])]);
@@ -1143,7 +1209,7 @@ mod tests {
 
     #[test]
     fn tab_names() {
-        assert_eq!(tab_from_name("Favoris"), Some(TAB_FAVORITES));
+        assert_eq!(tab_from_name("favoris"), Some(TAB_FAVORITES));
         assert_eq!(tab_from_name("reperes"), Some(TAB_LANDMARKS));
         assert_eq!(tab_from_name("historique"), Some(TAB_HISTORY));
         assert_eq!(tab_from_name("autre"), None);

@@ -43,7 +43,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
         s.last_music_url = None;
     }
     let mut commit: Option<String> = None;
-    super::row(ui, p, "URL de la musique :", |ui| {
+    super::row(ui, p, aurora_i18n::tr!("ui-land-sound-music-url"), |ui| {
         s.music_url.sync(&parcel.music_url);
         let r = ui.add_enabled(
             can_media,
@@ -76,7 +76,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
         });
         let current = s.music_url.text.trim().to_owned();
         if super::icon_button(ui, p, "plus", can_media)
-            .on_hover_text("Ajouter l'URL du flux de musique à la liste des flux enregistrés")
+            .on_hover_text(aurora_i18n::tr!("ui-land-sound-add-the-music-stream-url-to-the-saved-streams"))
             .clicked()
             && !current.is_empty()
         {
@@ -88,7 +88,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
             }
         }
         if super::icon_button(ui, p, "minus", can_media)
-            .on_hover_text("Supprimer l'URL du flux de musique de la liste des flux enregistrés")
+            .on_hover_text(aurora_i18n::tr!("ui-land-sound-remove-the-music-stream-url-from-the-saved-stream"))
             .clicked()
         {
             let before = streams.len();
@@ -97,7 +97,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
             streams_changed |= streams.len() != before;
         }
         if super::icon_button(ui, p, "copy", true)
-            .on_hover_text("Copier l'URL du flux de musique dans le presse-papiers")
+            .on_hover_text(aurora_i18n::tr!("ui-land-sound-copy-music-stream-url-to-clipboard"))
             .clicked()
             && !current.is_empty()
         {
@@ -109,34 +109,39 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
     let mut group_av = parcel.group_av_sounds || parcel.any_av_sounds;
     let mut obscure = parcel.media.obscure_moap;
     let before = (flags, any_av, group_av, obscure);
-    super::row(ui, p, "Son :", |ui| {
+    super::row(ui, p, aurora_i18n::tr!("ui-land-sound-sound"), |ui| {
         let (_, on) = check(
             ui,
             can_media,
             flags & pf::SOUND_LOCAL != 0,
-            "Limiter les sons des gestes et des objets à cette parcelle",
+            aurora_i18n::tr!("ui-land-sound-restrict-gesture-and-object-sounds-to-this-parcel"),
         );
         flags = set(flags, pf::SOUND_LOCAL, on);
     });
-    super::row(ui, p, "Sons d'avatar :", |ui| {
+    super::row(ui, p, aurora_i18n::tr!("ui-land-sound-avatar-sounds"), |ui| {
         let can_av = v.can(powers::LAND_OPTIONS) && parcel.have_new_parcel_limit_data;
         super::fixed(ui, 130.0, |ui| {
-            let (_, on) = check(ui, can_av, any_av, "Tout le monde");
+            let (_, on) = check(ui, can_av, any_av, aurora_i18n::tr!("common-everyone"));
             any_av = on;
         });
         // on (and greyed) while "everyone" is
-        let (_, on) = check(ui, can_av && !parcel.any_av_sounds, group_av, "Groupe");
+        let (_, on) = check(ui, can_av && !parcel.any_av_sounds, group_av, aurora_i18n::tr!("common-group"));
         group_av = on;
     });
     let voice_region = v.region_flag(rf::ALLOW_VOICE);
     let allow_voice = flags & pf::ALLOW_VOICE_CHAT != 0;
-    super::row(ui, p, "Voix :", |ui| {
+    super::row(ui, p, aurora_i18n::tr!("ui-land-sound-voice"), |ui| {
         if voice_region {
-            let (_, on) = check(ui, can_media, allow_voice, "Activer le chat vocal");
+            let (_, on) = check(ui, can_media, allow_voice, aurora_i18n::tr!("ui-land-sound-enable-voice-chat"));
             flags = set(flags, pf::ALLOW_VOICE_CHAT, on);
         } else {
             // voice off for the estate: a disabled box says so
-            check(ui, false, false, "Activer la voix (contrôlé par le domaine)");
+            check(
+                ui,
+                false,
+                false,
+                aurora_i18n::tr!("ui-land-sound-enable-voice-controlled-by-estate"),
+            );
         }
     });
     ui.horizontal(|ui| {
@@ -145,15 +150,13 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
             ui,
             voice_region && can_media && allow_voice,
             parcel.flags & pf::USE_ESTATE_VOICE_CHAN == 0,
-            "Limiter le chat vocal à cette parcelle",
+            aurora_i18n::tr!("ui-land-sound-restrict-voice-chat-to-this-parcel"),
         );
         flags = set(flags, pf::USE_ESTATE_VOICE_CHAN, !on);
     });
-    super::row(ui, p, "Média :", |ui| {
-        let (r, on) = check(ui, can_media, obscure, "Masquer MOAP");
-        r.on_hover_text(
-            "Les médias d'un prim situé en dehors de la parcelle ne doivent pas être lus automatiquement par un agent situé dans cette parcelle et vice versa.",
-        );
+    super::row(ui, p, aurora_i18n::tr!("ui-land-sound-media"), |ui| {
+        let (r, on) = check(ui, can_media, obscure, aurora_i18n::tr!("ui-land-sound-hide-moap"));
+        r.on_hover_text(aurora_i18n::tr!("ui-land-sound-media-on-prims-outside-a-parcel-must-not-auto"));
         obscure = on;
     });
     if commit.is_some() || before != (flags, any_av, group_av, obscure) {

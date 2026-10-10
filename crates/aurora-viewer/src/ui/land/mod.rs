@@ -48,15 +48,15 @@ enum Tab {
 impl Tab {
     fn label(self) -> &'static str {
         match self {
-            Tab::General => "Général",
-            Tab::Covenant => "Règlement",
-            Tab::Objects => "Objets",
-            Tab::Options => "Options",
-            Tab::Media => "Médias",
-            Tab::Sound => "Son",
-            Tab::Access => "Accès",
-            Tab::Experiences => "Expériences",
-            Tab::Environment => "Environnement",
+            Tab::General => aurora_i18n::tr!("common-general"),
+            Tab::Covenant => aurora_i18n::tr!("ui-land-mod-rules"),
+            Tab::Objects => aurora_i18n::tr!("common-objects"),
+            Tab::Options => aurora_i18n::tr!("ui-land-mod-options"),
+            Tab::Media => aurora_i18n::tr!("ui-land-mod-media"),
+            Tab::Sound => aurora_i18n::tr!("common-sound"),
+            Tab::Access => aurora_i18n::tr!("ui-land-mod-access"),
+            Tab::Experiences => aurora_i18n::tr!("ui-land-mod-experiences"),
+            Tab::Environment => aurora_i18n::tr!("common-environment"),
         }
     }
 }
@@ -299,11 +299,11 @@ impl LandUi {
         let size = Vec2::new(620.0, 560.0);
         let mut floater = Floater::new(
             "about_land",
-            "À propos du terrain",
+            aurora_i18n::tr!("common-about-land"),
             egui::pos2(screen.center().x - size.x / 2.0, 80.0),
             size,
         )
-        .help("Informations et réglages de la parcelle sélectionnée");
+        .help(aurora_i18n::tr!("ui-land-mod-information-and-settings-for-the-selected-parcel"));
         floater.min_size = Vec2::new(580.0, 500.0);
         floater.show(ctx, p, open, |ui| {
             // FIRE-17280: no experiences tab where the region has none
@@ -435,7 +435,11 @@ fn now_secs() -> i64 {
 /// "Aucune parcelle sélectionnée." (no_selection_text) while waiting.
 fn no_selection(ui: &mut egui::Ui, p: &Palette) {
     ui.add_space(8.0);
-    ui.label(RichText::new("Aucune parcelle sélectionnée.").size(12.0).color(p.muted));
+    ui.label(
+        RichText::new(aurora_i18n::tr!("common-no-parcel-selected"))
+            .size(12.0)
+            .color(p.muted),
+    );
 }
 
 /// The label of a row, in the left column.
@@ -478,7 +482,7 @@ fn agent_link(ui: &mut egui::Ui, p: &Palette, world: &mut World, id: Uuid) {
     let name = world.social.name_of(&id);
     if ui
         .add(egui::Label::new(RichText::new(name).size(12.0).color(p.violet_light)).sense(egui::Sense::click()))
-        .on_hover_text("Voir le profil")
+        .on_hover_text(aurora_i18n::tr!("common-view-profile"))
         .clicked()
     {
         super::profile::request_open(ui.ctx(), id);
@@ -518,16 +522,18 @@ fn check(ui: &mut egui::Ui, enabled: bool, mut value: bool, label: &str) -> (egu
 }
 
 /// "Pas encore disponible dans Aurora" for the few Firestorm floaters not ported yet.
-const NOT_YET: &str = "Pas encore disponible dans Aurora";
+fn not_yet() -> &'static str {
+    aurora_i18n::tr!("common-not-available-in-aurora-yet")
+}
 
 /// Region type in French (LLViewerRegion::getLocalizedSimProductName).
 fn product_name(product: &str) -> String {
     match product {
-        "Estate / Full Region" => "Domaine / Région entière",
-        "Estate / Homestead" => "Domaine / Homestead",
-        "Mainland / Homestead" => "Continent / Homestead",
-        "Mainland / Full Region" => "Continent / Région entière",
-        "Linden Homes / Full Region" => "Maisons Linden / Région entière",
+        "Estate / Full Region" => aurora_i18n::tr!("ui-land-mod-estate-full-region"),
+        "Estate / Homestead" => aurora_i18n::tr!("extra-estate-homestead"),
+        "Mainland / Homestead" => aurora_i18n::tr!("extra-mainland-homestead"),
+        "Mainland / Full Region" => aurora_i18n::tr!("ui-land-mod-mainland-full-region"),
+        "Linden Homes / Full Region" => aurora_i18n::tr!("ui-land-mod-linden-homes-full-region"),
         other => other,
     }
     .to_owned()
@@ -564,35 +570,50 @@ pub(crate) fn slt_parts(secs: i64) -> (i64, usize, i64, usize, i64, i64, i64) {
     (y, m as usize, d, wday, tod / 3600, (tod / 60) % 60, tod % 60)
 }
 
-pub(crate) const WEEKDAYS: [&str; 7] = ["dim.", "lun.", "mar.", "mer.", "jeu.", "ven.", "sam."];
-pub(crate) const MONTHS: [&str; 12] = [
-    "janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc.",
-];
+pub(crate) fn weekdays() -> [&'static str; 7] {
+    [
+        aurora_i18n::tr!("extra-sun"),
+        aurora_i18n::tr!("extra-mon"),
+        aurora_i18n::tr!("extra-tue"),
+        aurora_i18n::tr!("extra-wed"),
+        aurora_i18n::tr!("extra-thu"),
+        aurora_i18n::tr!("extra-fri"),
+        aurora_i18n::tr!("extra-sat"),
+    ]
+}
+pub(crate) fn months() -> [&'static str; 12] {
+    [
+        aurora_i18n::tr!("extra-jan"),
+        aurora_i18n::tr!("ui-land-mod-feb"),
+        aurora_i18n::tr!("extra-mar"),
+        aurora_i18n::tr!("extra-apr"),
+        aurora_i18n::tr!("extra-may"),
+        aurora_i18n::tr!("extra-jun"),
+        aurora_i18n::tr!("extra-jul"),
+        aurora_i18n::tr!("ui-land-mod-aug"),
+        aurora_i18n::tr!("extra-sep"),
+        aurora_i18n::tr!("extra-oct"),
+        aurora_i18n::tr!("extra-nov"),
+        aurora_i18n::tr!("ui-land-mod-dec"),
+    ]
+}
 
 /// time_stamp_template of the French skin: "sam. 18 juin 2022 11:19:10".
 fn claim_date(secs: i64) -> String {
     let (y, m, d, w, h, mi, s) = slt_parts(secs);
-    format!("{} {d} {} {y} {h:02}:{mi:02}:{s:02}", WEEKDAYS[w], MONTHS[m - 1])
+    format!("{} {d} {} {y} {h:02}:{mi:02}:{s:02}", weekdays()[w], months()[m - 1])
 }
 
 /// process_covenant_reply with the French LTime strings:
 /// "mer. juin 05 21:18:48 2024".
 fn covenant_date(secs: i64) -> String {
     let (y, m, d, w, h, mi, s) = slt_parts(secs);
-    format!("{} {} {d:02} {h:02}:{mi:02}:{s:02} {y}", WEEKDAYS[w], MONTHS[m - 1])
+    format!("{} {} {d:02} {h:02}:{mi:02}:{s:02} {y}", weekdays()[w], months()[m - 1])
 }
 
-/// LLResMgr::getMonetaryString for French: thousands with a space.
+/// LLResMgr::getMonetaryString with the selected thousands separator.
 fn money(v: i32) -> String {
-    let s = v.unsigned_abs().to_string();
-    let mut out = String::new();
-    for (i, c) in s.chars().enumerate() {
-        if i > 0 && (s.len() - i).is_multiple_of(3) {
-            out.push('\u{a0}');
-        }
-        out.push(c);
-    }
-    if v < 0 { format!("-{out}") } else { out }
+    aurora_i18n::integer(i64::from(v))
 }
 
 #[cfg(test)]
@@ -602,21 +623,45 @@ mod tests {
     #[test]
     fn dates_like_the_french_skin() {
         // 2022-06-18 18:19:10 UTC = 11:19:10 PDT, a Saturday
-        assert_eq!(claim_date(1_655_576_350), "sam. 18 juin 2022 11:19:10");
+        assert_eq!(
+            claim_date(1_655_576_350),
+            if aurora_i18n::language() == "fr" {
+                "sam. 18 juin 2022 11:19:10"
+            } else {
+                "Sat 18 Jun 2022 11:19:10"
+            }
+        );
         // 2024-06-06 04:18:48 UTC = Wed 5 June 21:18:48 PDT
-        assert_eq!(covenant_date(1_717_647_528), "mer. juin 05 21:18:48 2024");
+        assert_eq!(
+            covenant_date(1_717_647_528),
+            if aurora_i18n::language() == "fr" {
+                "mer. juin 05 21:18:48 2024"
+            } else {
+                "Wed Jun 05 21:18:48 2024"
+            }
+        );
     }
 
     #[test]
     fn money_groups_thousands() {
-        assert_eq!(money(88000), "88\u{a0}000");
+        assert_eq!(money(88000), if aurora_i18n::language() == "fr" { "88\u{a0}000" } else { "88,000" });
         assert_eq!(money(500), "500");
-        assert_eq!(money(1_234_567), "1\u{a0}234\u{a0}567");
+        assert_eq!(
+            money(1_234_567),
+            if aurora_i18n::language() == "fr" {
+                "1\u{a0}234\u{a0}567"
+            } else {
+                "1,234,567"
+            }
+        );
     }
 
     #[test]
     fn product_names_in_french() {
-        assert_eq!(product_name("Mainland / Full Region"), "Continent / Région entière");
+        assert_eq!(
+            product_name("Mainland / Full Region"),
+            aurora_i18n::tr!("ui-land-mod-mainland-full-region")
+        );
         assert_eq!(product_name("Estate / Openspace"), "Estate / Openspace");
     }
 }

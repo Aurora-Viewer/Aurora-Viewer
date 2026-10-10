@@ -48,12 +48,12 @@ impl DemoSim {
                 .and_then(|i| world.objects.get(i))
                 .map(|o| {
                     if o.text.is_empty() {
-                        format!("Objet {}", o.key.local_id)
+                        aurora_i18n::tr!("common-object-2", value0 = format!("{}", o.key.local_id))
                     } else {
                         o.text.lines().next().unwrap_or("").to_owned()
                     }
                 })
-                .unwrap_or_else(|| "Objet".into());
+                .unwrap_or_else(|| aurora_i18n::tr!("common-object").into());
             ObjectProps {
                 object_id: id,
                 full: true,
@@ -84,9 +84,9 @@ impl DemoSim {
             (
                 1,
                 vec![
-                    demo_item(id, 1, "Porte (script)", 10, 10),
-                    demo_item(id, 2, "Mode d'emploi", 7, 7),
-                    demo_item(id, 3, "Bois clair", 0, 0),
+                    demo_item(id, 1, aurora_i18n::tr!("build-demo-sim-door-script"), 10, 10),
+                    demo_item(id, 2, aurora_i18n::tr!("build-demo-sim-instructions"), 7, 7),
+                    demo_item(id, 3, aurora_i18n::tr!("build-demo-sim-light-wood"), 0, 0),
                 ],
             )
         })

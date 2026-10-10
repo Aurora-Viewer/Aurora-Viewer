@@ -8,18 +8,18 @@ use egui::RichText;
 
 pub(super) fn show(ui: &mut egui::Ui, p: &Palette, v: &View, world: &mut World) {
     let covenant = world.land.covenant.clone().filter(|c| c.handle == v.handle);
-    row(ui, p, "Domaine :", |ui| {
+    row(ui, p, aurora_i18n::tr!("ui-land-covenant-estate"), |ui| {
         text(ui, p, covenant.as_ref().map_or("", |c| c.estate_name.as_str()));
     });
-    row(ui, p, "Propriétaire :", |ui| match &covenant {
+    row(ui, p, aurora_i18n::tr!("common-owner-2"), |ui| match &covenant {
         Some(c) if !c.estate_owner.is_nil() => super::agent_link(ui, p, world, c.estate_owner),
         _ => {
-            dim(ui, p, "(aucun)");
+            dim(ui, p, aurora_i18n::tr!("status-none"));
         }
     });
     let body = match &covenant {
-        Some(c) => c.text.clone().unwrap_or_else(|| "Chargement...".into()),
-        None => "Chargement...".into(),
+        Some(c) => c.text.clone().unwrap_or_else(|| aurora_i18n::tr!("common-loading").into()),
+        None => aurora_i18n::tr!("common-loading").into(),
     };
     egui::Frame::new()
         .fill(p.field)
@@ -46,40 +46,40 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, v: &View, world: &mut World) 
         let w = ui.available_width();
         ui.allocate_ui_with_layout(egui::vec2(w, 18.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let when = if c.timestamp == 0 {
-                " (jamais)".to_owned()
+                aurora_i18n::tr!("status-never").to_owned()
             } else {
                 super::covenant_date(c.timestamp as i64)
             };
-            dim(ui, p, format!("Dernière modification :{when}"));
+            dim(ui, p, aurora_i18n::tr!("ui-land-covenant-last-modified", when = when.to_string()));
         });
     }
     let region = v.region.as_ref();
-    row(ui, p, "Région :", |ui| {
-        text(ui, p, region.map_or("Chargement...", |r| r.name.as_str()));
+    row(ui, p, aurora_i18n::tr!("ui-land-covenant-region"), |ui| {
+        text(ui, p, region.map_or(aurora_i18n::tr!("common-loading"), |r| r.name.as_str()));
     });
-    row(ui, p, "Type :", |ui| {
+    row(ui, p, aurora_i18n::tr!("common-type-2"), |ui| {
         text(ui, p, super::product_name(region.map_or("", |r| r.product.as_str())));
     });
-    row(ui, p, "Catégorie :", |ui| super::maturity(ui, p, v));
-    row(ui, p, "Revendre :", |ui| {
+    row(ui, p, aurora_i18n::tr!("common-category"), |ui| super::maturity(ui, p, v));
+    row(ui, p, aurora_i18n::tr!("ui-land-covenant-resell"), |ui| {
         text(
             ui,
             p,
             if v.region_flag(rf::BLOCK_LAND_RESELL) {
-                "Le terrain acheté dans cette région ne peut pas être revendu."
+                aurora_i18n::tr!("ui-land-covenant-land-bought-in-this-region-cannot-be-resold")
             } else {
-                "Le terrain acheté dans cette région peut être revendu."
+                aurora_i18n::tr!("ui-land-covenant-land-bought-in-this-region-can-be-resold")
             },
         );
     });
-    row(ui, p, "Sous-diviser :", |ui| {
+    row(ui, p, aurora_i18n::tr!("ui-land-covenant-subdivide"), |ui| {
         text(
             ui,
             p,
             if v.region_flag(rf::ALLOW_PARCEL_CHANGES) {
-                "Le terrain acheté dans cette région peut être fusionné ou divisé."
+                aurora_i18n::tr!("ui-land-covenant-land-bought-in-this-region-can-be-joined-or")
             } else {
-                "Le terrain acheté dans cette région ne peut pas être fusionné ou divisé."
+                aurora_i18n::tr!("ui-land-covenant-land-bought-in-this-region-cannot-be-joined-or")
             },
         );
     });

@@ -40,7 +40,14 @@ fn slt_datetime(secs: f64) -> String {
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = yoe + era * 400 + i64::from(m <= 2);
-    format!("{d:02}/{m:02}/{y} à {:02}:{:02} SLT", tod / 3600, (tod / 60) % 60)
+    aurora_i18n::tr!(
+        "ui-display-name-at-slt",
+        d = format!("{:02}", d),
+        m = format!("{:02}", m),
+        y = format!("{}", y),
+        value0 = format!("{:02}", tod / 3600),
+        value1 = format!("{:02}", (tod / 60) % 60)
+    )
 }
 
 fn now() -> f64 {
@@ -65,7 +72,7 @@ impl DisplayNameUi {
         let mut open = self.open;
         Floater::new(
             "display_name",
-            "Définir le nom d'affichage",
+            aurora_i18n::tr!("common-set-display-name"),
             egui::pos2(screen.center().x - 200.0, screen.center().y - 150.0),
             Vec2::new(400.0, 300.0),
         )
@@ -76,39 +83,52 @@ impl DisplayNameUi {
             ui.add_space(4.0);
             ui.add(
                 egui::Label::new(
-                    RichText::new(
-                        "Le nom que vous choisissez d'utiliser pour votre avatar est appelé le nom d'affichage. Vous pouvez le changer une fois par semaine.",
-                    )
-                    .size(12.0)
-                    .color(p.ink),
+                    RichText::new(aurora_i18n::tr!("ui-display-name-the-name-you-choose-for-your-avatar-is-your"))
+                        .size(12.0)
+                        .color(p.ink),
                 )
                 .wrap(),
             );
             ui.add_space(6.0);
             let Some(me) = me else {
-                ui.label(RichText::new("Votre nom n'est pas encore connu…").size(12.0).color(p.muted));
+                ui.label(
+                    RichText::new(aurora_i18n::tr!("ui-display-name-your-name-is-not-yet-known"))
+                        .size(12.0)
+                        .color(p.muted),
+                );
                 return;
             };
             ui.label(
-                RichText::new(format!("Nom actuel : {}  ({})", me.display_name, me.username))
-                    .size(12.0)
-                    .color(p.muted),
+                RichText::new(aurora_i18n::tr!(
+                    "ui-display-name-current-name",
+                    value0 = me.display_name.to_string(),
+                    value1 = me.username.to_string()
+                ))
+                .size(12.0)
+                .color(p.muted),
             );
             let locked = now() < me.next_update;
             if locked {
                 ui.add_space(4.0);
                 ui.label(
-                    RichText::new(format!("Vous ne pouvez changer votre nom avant le {}.", slt_datetime(me.next_update)))
-                        .size(12.0)
-                        .color(p.danger),
+                    RichText::new(aurora_i18n::tr!(
+                        "ui-display-name-you-cannot-change-your-name-before",
+                        value0 = slt_datetime(me.next_update).to_string()
+                    ))
+                    .size(12.0)
+                    .color(p.danger),
                 );
             }
             ui.add_space(8.0);
             ui.add_enabled_ui(!locked, |ui| {
-                ui.label(RichText::new("Nouveau nom :").size(12.0).color(p.ink));
+                ui.label(RichText::new(aurora_i18n::tr!("ui-display-name-new-name")).size(12.0).color(p.ink));
                 ui.add(egui::TextEdit::singleline(&mut self.name).desired_width(f32::INFINITY));
                 ui.add_space(4.0);
-                ui.label(RichText::new("Réécrivez le nom :").size(12.0).color(p.ink));
+                ui.label(
+                    RichText::new(aurora_i18n::tr!("ui-display-name-retype-the-name"))
+                        .size(12.0)
+                        .color(p.ink),
+                );
                 ui.add(egui::TextEdit::singleline(&mut self.confirm).desired_width(f32::INFINITY));
             });
             if let Some(e) = &self.error {
@@ -118,17 +138,22 @@ impl DisplayNameUi {
             ui.add_space(10.0);
             ui.horizontal(|ui| {
                 // FIRE-33330: the reset is allowed during the lock-out week
-                if flat_button(ui, p, "Réinitialiser")
-                    .on_hover_text("Utiliser le nom d'utilisateur comme nom d'affichage")
+                if flat_button(ui, p, aurora_i18n::tr!("common-reset"))
+                    .on_hover_text(aurora_i18n::tr!("ui-display-name-use-username-as-display-name"))
                     .clicked()
                 {
                     out = Some((me.display_name.clone(), String::new()));
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if flat_button(ui, p, "Annuler").clicked() {
+                    if flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked() {
                         self.open = false;
                     }
-                    let save = ui.add_enabled_ui(!locked, |ui| flat_button(ui, p, "Enregistrer").on_hover_text("Enregistre votre nouveau nom")).inner;
+                    let save = ui
+                        .add_enabled_ui(!locked, |ui| {
+                            flat_button(ui, p, aurora_i18n::tr!("common-save"))
+                                .on_hover_text(aurora_i18n::tr!("ui-display-name-saves-your-new-name"))
+                        })
+                        .inner;
                     if save.clicked() {
                         // onSave
                         let name = self.name.trim().to_owned();
@@ -138,15 +163,16 @@ impl DisplayNameUi {
                             format!("{} {}", me.legacy_first, me.legacy_last)
                         };
                         if name != self.confirm.trim() {
-                            self.error = Some("Non-concordance des noms d'affichage saisis. Effectuez une nouvelle saisie.".into());
+                            self.error = Some(aurora_i18n::tr!("ui-display-name-the-display-names-do-not-match-please-enter-them").into());
                         } else if name.is_empty() {
-                            self.error = Some("Saisissez un nom.".into());
+                            self.error = Some(aurora_i18n::tr!("ui-display-name-enter-a-name").into());
                         } else if name == user_name {
                             // a reset
                             out = Some((me.display_name.clone(), String::new()));
                         } else if name.chars().count() > DISPLAY_NAME_MAX_LENGTH {
-                            self.error = Some(format!(
-                                "Le nom saisi est trop long. Le nombre de caractères maximum est de {DISPLAY_NAME_MAX_LENGTH}.\n\nVeuillez essayer avec un nom plus court."
+                            self.error = Some(aurora_i18n::tr!(
+                                "ui-display-name-the-name-is-too-long-the-maximum-length-is",
+                                DISPLAY_NAME_MAX_LENGTH = format!("{}", DISPLAY_NAME_MAX_LENGTH)
                             ));
                         } else {
                             out = Some((me.display_name.clone(), name));
@@ -168,41 +194,44 @@ impl DisplayNameUi {
 pub fn reply_message(status: i32, content: &aurora_llsd::Llsd) -> Result<String, String> {
     if status == 200 {
         let name = content["display_name"].to_string_value();
-        return Ok(format!(
-            "Bonjour {name},\n\nComme dans la vie réelle, il faut quelque temps aux gens pour qu'ils se familiarisent avec un nouveau nom. Veuillez compter quelques jours avant la mise à jour de votre nom au niveau des objets, scripts, recherches, etc."
+        return Ok(aurora_i18n::tr!(
+            "ui-display-name-hello-as-in-real-life-people-need-some-time",
+            name = name.to_string()
         ));
     }
     // known error tags (notifications.xml)
     let tag = content["error_tag"].to_string_value();
     let known = match tag.as_str() {
-        "SetDisplayNameBlocked" => {
-            Some("Impossible de changer de nom d'affichage. Si vous pensez qu'il s'agit d'une erreur, contactez l'Assistance du réseau.")
+        "SetDisplayNameBlocked" => Some(aurora_i18n::tr!(
+            "ui-display-name-cannot-change-your-display-name-if-you-think-this"
+        )),
+        "SetDisplayNameMismatch" => Some(aurora_i18n::tr!("ui-display-name-the-display-names-do-not-match-please-enter-them")),
+        "AgentDisplayNameUpdateThresholdExceeded" => {
+            Some(aurora_i18n::tr!("ui-display-name-you-cannot-change-your-display-name-yet-see-http"))
         }
-        "SetDisplayNameMismatch" => Some("Non-concordance des noms d'affichage saisis. Effectuez une nouvelle saisie."),
-        "AgentDisplayNameUpdateThresholdExceeded" => Some(
-            "Le délai au bout duquel vous pouvez changer de nom d'affichage n'est pas encore écoulé.\n\nVoir http://wiki.secondlife.com/wiki/Setting_your_display_name",
-        ),
-        "AgentDisplayNameSetBlocked" => {
-            Some("Impossible de définir le nom demandé car il contient un terme interdit.\n\nVeuillez essayer avec un nom différent.")
-        }
-        "AgentDisplayNameSetInvalidUnicode" => Some("Le nom d'affichage que vous souhaitez définir contient des caractères non valides."),
-        "AgentDisplayNameSetOnlyPunctuation" => {
-            Some("Votre nom d'affichage doit contenir des lettres autres que des signes de ponctuation.")
-        }
+        "AgentDisplayNameSetBlocked" => Some(aurora_i18n::tr!(
+            "ui-display-name-cannot-set-this-name-because-it-contains-a-prohibited"
+        )),
+        "AgentDisplayNameSetInvalidUnicode" => Some(aurora_i18n::tr!(
+            "ui-display-name-your-requested-display-name-contains-invalid-characters"
+        )),
+        "AgentDisplayNameSetOnlyPunctuation" => Some(aurora_i18n::tr!(
+            "ui-display-name-your-display-name-must-contain-characters-other-than-punctuation"
+        )),
         _ => None,
     };
     if let Some(m) = known {
         return Err(m.to_owned());
     }
-    // the server's own message, in French when it has one
+    // Prefer the viewer language when the server has a localized message.
     let desc = &content["error_description"];
-    for lang in ["fr", "en"] {
+    for lang in [aurora_i18n::language(), "en"] {
         let m = desc[lang].to_string_value();
         if !m.is_empty() {
             return Err(m);
         }
     }
-    Err("Impossible de définir votre nom d'affichage. Veuillez réessayer ultérieurement.".into())
+    Err(aurora_i18n::tr!("ui-display-name-could-not-set-your-display-name-please-try-again").into())
 }
 
 #[cfg(test)]
@@ -212,6 +241,17 @@ mod tests {
     #[test]
     fn lockout_date_in_slt() {
         // 2026-10-15 21:30 UTC = 14:30 PDT
-        assert_eq!(slt_datetime(1_792_099_800.0), "15/10/2026 à 14:30 SLT");
+        assert_eq!(
+            slt_datetime(1_792_099_800.0),
+            aurora_i18n::tr!(
+                "ui-display-name-at-slt",
+                d = "15",
+                m = "10",
+                y = "2026",
+                value0 = "14",
+                value1 = "30"
+            )
+            .as_str()
+        );
     }
 }

@@ -11,22 +11,27 @@ use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
-pub const TYPES: &[(i32, &str)] = &[
-    (19, "Animations"),
-    (2, "Cartes de visite"),
-    (18, "Vêtements et corps"),
-    (20, "Gestes"),
-    (3, "Repères"),
-    (26, "Matériaux"),
-    (7, "Notes"),
-    (6, "Objets"),
-    (10, "Scripts"),
-    (1, "Sons"),
-    (0, "Textures"),
-    (15, "Photos"),
-    (25, "Paramètres EEP"),
-    (22, "Maillages"),
-];
+pub fn types() -> &'static Vec<(i32, &'static str)> {
+    static TABLE: aurora_i18n::Localized<Vec<(i32, &'static str)>> = aurora_i18n::Localized::new();
+    TABLE.get(|| {
+        vec![
+            (19, aurora_i18n::tr!("common-animations")),
+            (2, aurora_i18n::tr!("ui-inventory-view-calling-cards")),
+            (18, aurora_i18n::tr!("ui-inventory-view-clothing-and-body")),
+            (20, aurora_i18n::tr!("ui-inventory-view-gestures")),
+            (3, aurora_i18n::tr!("common-landmarks")),
+            (26, aurora_i18n::tr!("ui-inventory-view-materials")),
+            (7, aurora_i18n::tr!("common-notes")),
+            (6, aurora_i18n::tr!("common-objects")),
+            (10, aurora_i18n::tr!("common-scripts")),
+            (1, aurora_i18n::tr!("common-sounds")),
+            (0, aurora_i18n::tr!("common-textures")),
+            (15, aurora_i18n::tr!("ui-inventory-view-snapshots")),
+            (25, aurora_i18n::tr!("ui-inventory-view-eep-settings")),
+            (22, aurora_i18n::tr!("ui-inventory-view-meshes")),
+        ]
+    })
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]

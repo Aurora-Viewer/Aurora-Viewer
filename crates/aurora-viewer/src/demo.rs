@@ -266,26 +266,31 @@ fn demo_raw() -> Llsd {
         llsd_map! {"folder_id" => u(id), "parent_id" => u(parent), "name" => name, "type_default" => t, "version" => 1}
     };
     let mut skel = Vec::new();
-    skel.push(folder(1, 0, "Mon inventaire", 8));
+    skel.push(folder(1, 0, aurora_i18n::tr!("common-my-inventory"), 8));
     for (i, (name, t)) in [
-        ("Animations", 20),
-        ("Habits", 5),
-        ("Repères", 3),
-        ("Notes", 7),
-        ("Objets", 6),
-        ("Scripts", 10),
-        ("Textures", 0),
-        ("Corbeille", 14),
-        ("Mes tenues", 48),
+        (aurora_i18n::tr!("common-animations"), 20),
+        (aurora_i18n::tr!("demo-clothes"), 5),
+        (aurora_i18n::tr!("common-landmarks"), 3),
+        (aurora_i18n::tr!("common-notes"), 7),
+        (aurora_i18n::tr!("common-objects"), 6),
+        (aurora_i18n::tr!("common-scripts"), 10),
+        (aurora_i18n::tr!("common-textures"), 0),
+        (aurora_i18n::tr!("common-trash"), 14),
+        (aurora_i18n::tr!("common-my-outfits"), 48),
         ("Materials", 57),
-        ("Favoris", 23),
+        (aurora_i18n::tr!("common-favorites"), 23),
     ]
     .iter()
     .enumerate()
     {
         skel.push(folder(10 + i as u128, 1, name, *t));
     }
-    skel.push(folder(place::SHOPS_FOLDER, place::LANDMARKS_FOLDER, "Boutiques", -1));
+    skel.push(folder(
+        place::SHOPS_FOLDER,
+        place::LANDMARKS_FOLDER,
+        aurora_i18n::tr!("common-shopping"),
+        -1,
+    ));
     if env::enabled() {
         skel.push(env::settings_folder(u(1)));
     }
@@ -297,7 +302,7 @@ fn demo_raw() -> Llsd {
         "inventory-skeleton" => Llsd::Array(skel),
         "buddy-list" => Llsd::Array(buddies),
         "classified_categories" => Llsd::Array(
-            [(1, "Shopping"), (2, "Land Rental"), (3, "Property Rental"), (4, "Special Attraction")]
+            [(1, aurora_i18n::tr!("common-shopping-2")), (2, "Land Rental"), (3, "Property Rental"), (4, aurora_i18n::tr!("demo-special-attraction"))]
                 .into_iter()
                 .map(|(id, name)| llsd_map! {"category_id" => id, "category_name" => name})
                 .collect(),
@@ -334,13 +339,13 @@ fn demo_profile(id: Uuid) -> aurora_net::AvatarProfile {
         },
         aurora_net::ProfileGroup {
             id: DEMO_GROUP2,
-            name: "Loups du Nord".into(),
+            name: aurora_i18n::tr!("demo-northern-wolves").into(),
             insignia: Uuid::nil(),
         },
     ];
     let mut p = aurora_net::AvatarProfile {
         id,
-        sl_about: "Résident de la démo hors-ligne d'Aurora Viewer 🐺✨".into(),
+        sl_about: aurora_i18n::tr!("demo-resident-in-aurora-viewer-s-offline-demo").into(),
         born: date(2019, 4, 2),
         hide_age: Some(false),
         online: Some(true),
@@ -349,34 +354,29 @@ fn demo_profile(id: Uuid) -> aurora_net::AvatarProfile {
         ..Default::default()
     };
     if id == DEMO_AGENT {
-        p.sl_about = "Mon profil de démonstration.
-Il se modifie ici, l'enregistrement reste local."
-            .into();
-        p.fl_about = "Développeur d'Aurora Viewer.".into();
+        p.sl_about = aurora_i18n::tr!("demo-my-demo-profile-it-can-be-edited-here-saving").into();
+        p.fl_about = aurora_i18n::tr!("demo-aurora-viewer-developer").into();
         p.born = date(2012, 3, 14);
         p.flags = flags::TRANSACTED | flags::ALLOW_PUBLISH;
-        p.customer_type = "Premium".into();
+        p.customer_type = aurora_i18n::tr!("demo-premium").into();
         p.groups = groups;
-        p.picks = vec![(Uuid::from_u128(0x91C0_0001), "La plage d'Aurora".into())];
+        p.picks = vec![(Uuid::from_u128(0x91C0_0001), aurora_i18n::tr!("demo-aurora-beach").into())];
     } else if id == DEMO_LOUP {
-        p.sl_about = format!(
-            "Loup solitaire, bâtisseur du dimanche.
-
-Ma partenaire : secondlife:///app/agent/{DEMO_NOVA}/about
-Mon site : https://example.com/loup 🐺
-Ma maison : http://maps.secondlife.com/secondlife/Aurora%20D%C3%A9mo/140/120/25"
+        p.sl_about = aurora_i18n::tr!(
+            "demo-lone-wolf-weekend-builder-my-partner-secondlife-app-agent",
+            DEMO_NOVA = format!("{}", DEMO_NOVA)
         );
-        p.fl_about = "Passionné de montagne.".into();
+        p.fl_about = aurora_i18n::tr!("demo-mountain-enthusiast").into();
         p.partner = DEMO_NOVA;
         p.born = date(2007, 5, 12);
         p.flags = flags::TRANSACTED;
         p.customer_type = "Lifetime".into();
         p.groups = groups;
         p.picks = vec![
-            (Uuid::from_u128(0x91C0_0001), "La plage d'Aurora".into()),
-            (Uuid::from_u128(0x91C0_0002), "Mon atelier".into()),
+            (Uuid::from_u128(0x91C0_0001), aurora_i18n::tr!("demo-aurora-beach").into()),
+            (Uuid::from_u128(0x91C0_0002), aurora_i18n::tr!("demo-my-workshop").into()),
         ];
-        p.notes = Some("Rencontré à la plage, très sympa.".into());
+        p.notes = Some(aurora_i18n::tr!("demo-met-at-the-beach-very-friendly").into());
     } else if id == DEMO_NOVA {
         p.partner = DEMO_LOUP;
         p.hide_age = Some(true);
@@ -395,13 +395,13 @@ pub fn seed_contact_sets(world: &mut crate::world::World) {
     let friends: Vec<Uuid> = world.social.friends.iter().map(|f| f.id).collect();
     let is_friend = |id: &Uuid| friends.contains(id);
     let cs = &mut world.contact_sets;
-    cs.add_set("Famille");
-    cs.set_color("Famille", [0.72, 0.52, 1.0, 1.0]);
-    cs.add_to_set(&[u(100), u(102), DEMO_LOUP], "Famille", is_friend);
-    cs.add_set("Travail");
-    cs.set_color("Travail", [0.35, 0.85, 0.8, 1.0]);
-    cs.add_to_set(&[u(101), u(102)], "Travail", is_friend);
-    cs.set_pseudonym(&[u(102)], "Orion le Grand", is_friend);
+    cs.add_set(aurora_i18n::tr!("demo-family"));
+    cs.set_color(aurora_i18n::tr!("demo-family"), [0.72, 0.52, 1.0, 1.0]);
+    cs.add_to_set(&[u(100), u(102), DEMO_LOUP], aurora_i18n::tr!("demo-family"), is_friend);
+    cs.add_set(aurora_i18n::tr!("demo-work"));
+    cs.set_color(aurora_i18n::tr!("demo-work"), [0.35, 0.85, 0.8, 1.0]);
+    cs.add_to_set(&[u(101), u(102)], aurora_i18n::tr!("demo-work"), is_friend);
+    cs.set_pseudonym(&[u(102)], aurora_i18n::tr!("demo-orion-the-great"), is_friend);
     cs.remove_display_name(&[u(103)], is_friend);
 }
 
@@ -420,7 +420,12 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
         }
         aurora_net::NetCommand::Land(l) => land::reply(l),
         aurora_net::NetCommand::RequestNames(ids) => {
-            let names = ["Nova Exemple", "Pixel Boutique", "Orion Exemple", "Tess Touch"];
+            let names = [
+                aurora_i18n::tr!("demo-nova-example"),
+                "Pixel Boutique",
+                aurora_i18n::tr!("demo-orion-example"),
+                "Tess Touch",
+            ];
             vec![NetEvent::Names(
                 ids.iter()
                     .map(|id| {
@@ -434,9 +439,9 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
         // People API names: half of them with a chosen display name
         aurora_net::NetCommand::RequestDisplayNames(ids) => {
             let names = [
-                ("Nova", "Exemple", "Nova ♪"),
+                ("Nova", aurora_i18n::tr!("demo-example"), "Nova ♪"),
                 ("pixelboutique", "Resident", ""),
-                ("Orion", "Exemple", ""),
+                ("Orion", aurora_i18n::tr!("demo-example"), ""),
                 ("tesstouch", "Resident", "Tess ✨"),
             ];
             vec![NetEvent::DisplayNames {
@@ -528,7 +533,7 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                     .map(|i| InvItem {
                         id: Uuid::from_u128(f.as_u128() ^ (0xABC0 + i)),
                         parent: *f,
-                        name: format!("Objet de démo {}", i + 1),
+                        name: aurora_i18n::tr!("demo-demo-object", value0 = format!("{}", i + 1)),
                         desc: String::new(),
                         asset_type: [6, 3, 7, 0, 10][i as usize],
                         inv_type: [6, 3, 7, 0, 10][i as usize],
@@ -571,13 +576,13 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
         }
         // block list: Loup Violet, an object, a name and the chat of group 2
         aurora_net::NetCommand::RequestMuteList { .. } => {
-            let text = format!(
-                "1 {} Loup Violet|0\n2 {} Boîte à spam|0\n0 {} Panneau publicitaire|\n0 {} Group:{}|\n",
-                DEMO_LOUP,
-                Uuid::from_u128(0xB10C_0000_0000_0000_0000_0000_0000_0001),
-                Uuid::nil(),
-                Uuid::nil(),
-                DEMO_GROUP2,
+            let text = aurora_i18n::tr!(
+                "demo-1-violet-wolf-0-2-spam-box-0-0",
+                value0 = format!("{}", DEMO_LOUP),
+                value1 = format!("{}", Uuid::from_u128(0xB10C_0000_0000_0000_0000_0000_0000_0001)),
+                value2 = format!("{}", Uuid::nil()),
+                value3 = format!("{}", Uuid::nil()),
+                value4 = format!("{}", DEMO_GROUP2)
             );
             // The animesh fixture needs its wearer visible in full.
             let text = if std::env::var_os("AURORA_DEMO_ANIMESH").is_some() {
@@ -602,22 +607,22 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
             vec![
                 NetEvent::Groups(vec![
                     g(DEMO_GROUP1, "Aurora Builders", true),
-                    g(DEMO_GROUP2, "Loups du Nord", false),
+                    g(DEMO_GROUP2, aurora_i18n::tr!("demo-northern-wolves"), false),
                     aurora_net::GroupMembership {
                         list_in_profile: false,
-                        ..g(DEMO_GROUP3, "Marché de la Place", true)
+                        ..g(DEMO_GROUP3, aurora_i18n::tr!("common-plaza-market"), true)
                     },
                 ]),
                 NetEvent::ActiveGroup {
                     id: DEMO_GROUP1,
                     name: "Aurora Builders".into(),
-                    title: "Bâtisseuse".into(),
+                    title: aurora_i18n::tr!("demo-builder").into(),
                 },
                 NetEvent::SessionInvite(aurora_net::SessionInvite {
                     session: DEMO_GROUP1,
                     from: DEMO_NOVA,
-                    from_name: "Nova Exemple".into(),
-                    message: "Salut le groupe ! On construit la place ce soir 🐺".into(),
+                    from_name: aurora_i18n::tr!("demo-nova-example").into(),
+                    message: aurora_i18n::tr!("demo-hi-everyone-we-re-building-the-plaza-tonight").into(),
                     session_name: "Aurora Builders".into(),
                     offline: false,
                     timestamp: 0,
@@ -656,11 +661,11 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                     // the blocked member's message must not show
                     ev.push(NetEvent::InstantMessage(aurora_net::InstantMessage {
                         from_agent_id: DEMO_LOUP,
-                        from_name: "Loup Violet".into(),
+                        from_name: aurora_i18n::tr!("demo-violet-wolf").into(),
                         to_agent_id: me,
                         dialog: 17,
                         session_id: *session,
-                        message: "(message d'un résident bloqué)".into(),
+                        message: aurora_i18n::tr!("demo-message-from-a-blocked-resident").into(),
                         offline: false,
                         from_group: false,
                         binary_bucket: b"Aurora Builders\0".to_vec(),
@@ -671,7 +676,7 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                         to_agent_id: me,
                         dialog: 17,
                         session_id: *session,
-                        message: "J'arrive avec les textures ✨".into(),
+                        message: aurora_i18n::tr!("demo-arriving-with-textures").into(),
                         offline: false,
                         from_group: false,
                         binary_bucket: b"Aurora Builders\0".to_vec(),
@@ -688,9 +693,24 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                         aurora_llsd::llsd_map! { "from_id" => from, "from" => name, "message" => text, "time" => t as f64 }
                     };
                     let history = aurora_llsd::Llsd::Array(vec![
-                        line(DEMO_TESS, "Tess Touch", "Quelqu'un a vu le nouveau ciel EEP ?", 3600),
-                        line(DEMO_LOUP, "Loup Violet", "(historique d'un résident bloqué)", 3000),
-                        line(DEMO_NOVA, "Nova Exemple", "Oui, magnifique au coucher du soleil", 2400),
+                        line(
+                            DEMO_TESS,
+                            "Tess Touch",
+                            aurora_i18n::tr!("demo-has-anyone-seen-the-new-eep-sky"),
+                            3600,
+                        ),
+                        line(
+                            DEMO_LOUP,
+                            aurora_i18n::tr!("demo-violet-wolf"),
+                            aurora_i18n::tr!("demo-history-from-a-blocked-resident"),
+                            3000,
+                        ),
+                        line(
+                            DEMO_NOVA,
+                            aurora_i18n::tr!("demo-nova-example"),
+                            aurora_i18n::tr!("demo-yes-beautiful-at-sunset"),
+                            2400,
+                        ),
                     ]);
                     vec![NetEvent::ChatSessionReply {
                         method: *method,
@@ -726,15 +746,15 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
         })],
         aurora_net::NetCommand::RequestProfile(id) => vec![NetEvent::AvatarProfile(Box::new(demo_profile(*id)))],
         aurora_net::NetCommand::PickInfoRequest { creator, pick } => {
-            let names = ["La plage d'Aurora", "Mon atelier"];
+            let names = [aurora_i18n::tr!("demo-aurora-beach"), aurora_i18n::tr!("demo-my-workshop")];
             let n = ((pick.as_u128() & 0xF) as usize + 1) % names.len();
             vec![NetEvent::PickInfo(Box::new(aurora_net::PickInfo {
                 id: *pick,
                 creator: *creator,
                 parcel: Uuid::from_u128(0x9A2C_E100 + n as u128),
                 name: names[n].into(),
-                desc: "Un coin tranquille au bord de l'eau, idéal pour regarder le coucher du soleil 🌅".into(),
-                sim_name: "Aurora Démo".into(),
+                desc: aurora_i18n::tr!("demo-a-quiet-spot-by-the-water-perfect-for-watching").into(),
+                sim_name: aurora_i18n::tr!("common-aurora-demo").into(),
                 pos_global: glam::DVec3::new(256_000.0 + 140.0, 256_000.0 + 120.0, 25.0),
                 enabled: true,
                 ..Default::default()
@@ -747,24 +767,27 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
             // the parcels of the profile picks
             None => vec![NetEvent::ParcelInfo(Box::new(aurora_net::ParcelSummary {
                 id: *id,
-                name: "Place d'Aurora".into(),
-                sim_name: "Aurora Démo".into(),
+                name: aurora_i18n::tr!("common-aurora-plaza").into(),
+                sim_name: aurora_i18n::tr!("common-aurora-demo").into(),
                 ..Default::default()
             }))],
         },
         aurora_net::NetCommand::ClassifiedsRequest(id) if *id == DEMO_LOUP => vec![NetEvent::AvatarClassifieds {
             target: *id,
-            list: vec![(Uuid::from_u128(0xC1A5_0001), "Atelier du Loup : meubles en mesh".into())],
+            list: vec![(
+                Uuid::from_u128(0xC1A5_0001),
+                aurora_i18n::tr!("demo-wolf-s-workshop-mesh-furniture").into(),
+            )],
         }],
         aurora_net::NetCommand::ClassifiedInfoRequest(id) => vec![NetEvent::ClassifiedInfo(Box::new(aurora_net::ClassifiedInfo {
             id: *id,
             creator: DEMO_LOUP,
             creation_date: 1_759_000_000,
             category: 2,
-            name: "Atelier du Loup : meubles en mesh".into(),
-            desc: "Meubles en mesh légers, copiables et modifiables. Venez visiter la boutique !".into(),
-            sim_name: "Aurora Démo".into(),
-            parcel_name: "Place d'Aurora".into(),
+            name: aurora_i18n::tr!("demo-wolf-s-workshop-mesh-furniture").into(),
+            desc: aurora_i18n::tr!("demo-lightweight-mesh-furniture-copyable-and-modifiable-come-visit-the").into(),
+            sim_name: aurora_i18n::tr!("common-aurora-demo").into(),
+            parcel_name: aurora_i18n::tr!("common-aurora-plaza").into(),
             pos_global: glam::DVec3::new(256_000.0 + 128.0, 256_000.0 + 128.0, 30.0),
             flags: aurora_net::profile::classified_flags::AUTO_RENEW,
             price: 50,
@@ -777,7 +800,7 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
             max_y,
             null_sims,
         } => {
-            let mut blocks: Vec<aurora_net::MapBlock> = DEMO_SIMS
+            let mut blocks: Vec<aurora_net::MapBlock> = demo_sims()
                 .iter()
                 .filter(|s| (*min_x..=*max_x).contains(&s.0) && (*min_y..=*max_y).contains(&s.1))
                 .map(|s| map_block(s.0, s.1, s.2, s.3))
@@ -792,7 +815,7 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
         }
         aurora_net::NetCommand::MapNameRequest { name } => {
             let n = name.trim_end_matches('#').to_lowercase();
-            let mut blocks: Vec<aurora_net::MapBlock> = DEMO_SIMS
+            let mut blocks: Vec<aurora_net::MapBlock> = demo_sims()
                 .iter()
                 .filter(|s| s.2.to_lowercase().starts_with(&n))
                 .map(|s| map_block(s.0, s.1, s.2, s.3))
@@ -814,11 +837,11 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 map_item::AGENT_LOCATIONS if *handle == HANDLE => vec![item(132, 126, 2, 0, ""), item(60, 200, 1, 0, "")],
                 map_item::AGENT_LOCATIONS if *handle == (256256u64 << 32) | 256000 => vec![item(300, 80, 3, 0, "")],
                 map_item::TELEHUB => vec![
-                    item(128, 40, 0, 1, "Infohub de la place"),
-                    item(400, 128, 0, 0, "Telehub de la lagune"),
+                    item(128, 40, 0, 1, aurora_i18n::tr!("demo-plaza-infohub")),
+                    item(400, 128, 0, 0, aurora_i18n::tr!("demo-lagoon-telehub")),
                 ],
-                map_item::LAND_FOR_SALE => vec![item(220, 30, 1024, 2500, "Parcelle au bord de l'eau")],
-                map_item::PG_EVENT => vec![item(90, 300, 1_791_475_200, 25, "Soirée aurores boréales")],
+                map_item::LAND_FOR_SALE => vec![item(220, 30, 1024, 2500, aurora_i18n::tr!("demo-waterfront-parcel"))],
+                map_item::PG_EVENT => vec![item(90, 300, 1_791_475_200, 25, aurora_i18n::tr!("demo-northern-lights-party"))],
                 _ => Vec::new(),
             };
             vec![NetEvent::MapItems {
@@ -857,12 +880,12 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 next_owner_mask: aurora_net::build::perm::TRANSFER,
                 sale_price: 10,
                 name: if *object == action_id(971) {
-                    "Cube à acheter"
+                    aurora_i18n::tr!("demo-cube-for-sale")
                 } else {
-                    "Objet de démonstration"
+                    aurora_i18n::tr!("common-demo-object")
                 }
                 .into(),
-                description: "Démo hors ligne : aucun L$ réel n'est dépensé.".into(),
+                description: aurora_i18n::tr!("demo-offline-demo-no-real-l-is-spent").into(),
                 ..Default::default()
             }])]
         }
@@ -883,8 +906,8 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
             use aurora_net::build::{TaskItem, perm};
             let empty = std::env::var("AURORA_DEMO_ACTIONS").is_ok_and(|m| m == "buy-empty");
             let items = [
-                (7, "Règles du jeu – Français", perm::COPY | perm::TRANSFER),
-                (6, "Jeu de cartes", perm::TRANSFER),
+                (7, aurora_i18n::tr!("demo-game-rules-french"), perm::COPY | perm::TRANSFER),
+                (6, aurora_i18n::tr!("demo-card-game"), perm::TRANSFER),
             ]
             .into_iter()
             .enumerate()
@@ -907,14 +930,18 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
             }]
         }
         aurora_net::NetCommand::RequestTaskInventory { object, .. } if *object == action_id(976) => {
-            let contents = [(7, "Carte de bienvenue"), (10, "Script de démonstration"), (6, "Cube de réserve")]
-                .into_iter()
-                .enumerate()
-                .map(|(i, (ty, name))| {
-                    aurora_llsd::llsd_map!("item_id" => action_id(990+i as u32),"parent_id" => *object,
-                    "type" => ty,"inv_type" => ty,"name" => name,"desc" => "Contenu simulé hors ligne.")
-                })
-                .collect();
+            let contents = [
+                (7, aurora_i18n::tr!("demo-welcome-card")),
+                (10, aurora_i18n::tr!("common-demo-script")),
+                (6, aurora_i18n::tr!("demo-spare-cube")),
+            ]
+            .into_iter()
+            .enumerate()
+            .map(|(i, (ty, name))| {
+                aurora_llsd::llsd_map!("item_id" => action_id(990+i as u32),"parent_id" => *object,
+                    "type" => ty,"inv_type" => ty,"name" => name,"desc" => aurora_i18n::tr!("demo-contents-simulated-offline"))
+            })
+            .collect();
             let reply = aurora_llsd::llsd_map!("contents" => Llsd::Array(contents));
             vec![NetEvent::TaskInventory {
                 object: *object,
@@ -923,7 +950,7 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
             }]
         }
         aurora_net::NetCommand::ObjectGrabUpdate { object, position, .. } if *object == action_id(982) => {
-            let mut o = action_object(982, 0, 138.0, 126.0, [0.8, 0.6, 0.3, 1.0], "Grab : déplacer");
+            let mut o = action_object(982, 0, 138.0, 126.0, [0.8, 0.6, 0.3, 1.0], aurora_i18n::tr!("demo-grab-move"));
             o.position = *position;
             vec![NetEvent::ObjectUpdates {
                 handle: HANDLE,
@@ -1041,9 +1068,9 @@ pub fn action_overlay(id: u32, pos: Vec3, rotation: Quat) -> NetEvent {
         126.0,
         [0.75, 0.3, 0.35, 1.0],
         if id == 981 {
-            "IGNORE : cliquer à travers"
+            aurora_i18n::tr!("demo-ignore-click-through")
         } else {
-            "DISABLED : aucun clic"
+            aurora_i18n::tr!("demo-disabled-no-click")
         },
     );
     o.position = pos;
@@ -1062,12 +1089,19 @@ pub fn action_events() -> Vec<NetEvent> {
     if mode.starts_with("linked-") {
         // The root's hollow geometry encloses a larger child's seat: its
         // smaller bounding box must not steal hits on the seat inside it.
-        let mut table = action_object(985, 0, 138.0, 126.0, [0.7, 0.55, 0.8, 1.0], "Racine : Touch");
+        let mut table = action_object(985, 0, 138.0, 126.0, [0.7, 0.55, 0.8, 1.0], aurora_i18n::tr!("demo-root-touch"));
         table.scale = Vec3::new(2.4, 2.4, 1.4);
         table.position.z = floor_at(138.0, 126.0) + 0.7;
         table.volume = shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE, 100, 35000, 0);
         table.update_flags = 1 << 7;
-        let mut chair = action_object(986, 1, 138.0, 126.0, [0.3, 0.75, 0.55, 1.0], "Enfant lié : Sit");
+        let mut chair = action_object(
+            986,
+            1,
+            138.0,
+            126.0,
+            [0.3, 0.75, 0.55, 1.0],
+            aurora_i18n::tr!("demo-linked-child-sit"),
+        );
         chair.parent_id = table.local_id;
         chair.position = Vec3::ZERO;
         chair.scale = Vec3::new(3.0, 3.0, 1.2);
@@ -1079,17 +1113,73 @@ pub fn action_events() -> Vec<NetEvent> {
     let boxp = shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE, 100, 0, 0);
     let mut objects = Vec::new();
     for (id, action, x, y, color, label) in [
-        (970, 1, 138.0, 122.0, [0.48, 0.3, 0.75, 1.0], "Sit : s'asseoir"),
-        (971, 2, 138.0, 126.0, [0.35, 0.65, 0.8, 1.0], "Buy : copie à L$ 10"),
-        (972, 3, 135.0, 130.0, [0.3, 0.75, 0.55, 1.0], "Pay : payer l'objet"),
-        (975, 0, 139.0, 132.0, [0.7, 0.55, 0.8, 1.0], "NONE / TOUCH : toucher"),
-        (976, 4, 138.0, 134.0, [0.8, 0.7, 0.4, 1.0], "Open : contenu"),
-        (977, 5, 142.0, 122.0, [0.3, 0.65, 0.7, 1.0], "Play : lecture / pause"),
-        (978, 6, 142.0, 126.0, [0.35, 0.65, 0.8, 1.0], "Open Media : média de parcelle"),
-        (979, 7, 142.0, 130.0, [0.6, 0.65, 0.85, 1.0], "Zoom : cadrer l'objet"),
-        (980, 8, 142.0, 134.0, [0.75, 0.3, 0.35, 1.0], "DISABLED : aucun clic"),
-        (981, 9, 136.5, 125.8, [0.75, 0.3, 0.35, 1.0], "IGNORE : cliquer à travers"),
-        (982, 0, 139.0, 138.0, [0.8, 0.6, 0.3, 1.0], "Grab : déplacer"),
+        (970, 1, 138.0, 122.0, [0.48, 0.3, 0.75, 1.0], aurora_i18n::tr!("demo-sit-sit-down")),
+        (
+            971,
+            2,
+            138.0,
+            126.0,
+            [0.35, 0.65, 0.8, 1.0],
+            aurora_i18n::tr!("demo-buy-copy-for-l-10"),
+        ),
+        (
+            972,
+            3,
+            135.0,
+            130.0,
+            [0.3, 0.75, 0.55, 1.0],
+            aurora_i18n::tr!("demo-pay-pay-object"),
+        ),
+        (
+            975,
+            0,
+            139.0,
+            132.0,
+            [0.7, 0.55, 0.8, 1.0],
+            aurora_i18n::tr!("status-none-touch-touch"),
+        ),
+        (976, 4, 138.0, 134.0, [0.8, 0.7, 0.4, 1.0], aurora_i18n::tr!("demo-open-contents")),
+        (
+            977,
+            5,
+            142.0,
+            122.0,
+            [0.3, 0.65, 0.7, 1.0],
+            aurora_i18n::tr!("extra-play-play-pause"),
+        ),
+        (
+            978,
+            6,
+            142.0,
+            126.0,
+            [0.35, 0.65, 0.8, 1.0],
+            aurora_i18n::tr!("demo-open-media-parcel-media"),
+        ),
+        (
+            979,
+            7,
+            142.0,
+            130.0,
+            [0.6, 0.65, 0.85, 1.0],
+            aurora_i18n::tr!("demo-zoom-frame-object"),
+        ),
+        (
+            980,
+            8,
+            142.0,
+            134.0,
+            [0.75, 0.3, 0.35, 1.0],
+            aurora_i18n::tr!("demo-disabled-no-click"),
+        ),
+        (
+            981,
+            9,
+            136.5,
+            125.8,
+            [0.75, 0.3, 0.35, 1.0],
+            aurora_i18n::tr!("demo-ignore-click-through"),
+        ),
+        (982, 0, 139.0, 138.0, [0.8, 0.6, 0.3, 1.0], aurora_i18n::tr!("demo-grab-move")),
     ] {
         objects.push(action_object(id, action, x, y, color, label));
     }
@@ -1101,7 +1191,7 @@ pub fn action_events() -> Vec<NetEvent> {
         boxp,
         te([0.7, 0.7, 0.9, 1.0], 0, false, 0.0),
         ExtraParams::default(),
-        "Buy hérité",
+        aurora_i18n::tr!("demo-inherited-buy"),
     );
     child.parent_id = 971;
     objects.push(child);
@@ -1144,14 +1234,19 @@ pub fn ban_collision() -> NetEvent {
 }
 
 /// Offline world map: (grid x, grid y, name, access).
-const DEMO_SIMS: &[(u16, u16, &str, u8)] = &[
-    (1000, 1000, "Aurora Démo", 13),
-    (1001, 1000, "Lagune Boréale", 21),
-    (999, 1000, "Pinède", 13),
-    (1000, 1001, "Nordheim", 42),
-    (1001, 1001, "Faille", 254),
-    (999, 999, "Sablière", 13),
-];
+fn demo_sims() -> &'static Vec<(u16, u16, &'static str, u8)> {
+    static TABLE: aurora_i18n::Localized<Vec<(u16, u16, &'static str, u8)>> = aurora_i18n::Localized::new();
+    TABLE.get(|| {
+        vec![
+            (1000, 1000, aurora_i18n::tr!("common-aurora-demo"), 13),
+            (1001, 1000, aurora_i18n::tr!("common-boreal-lagoon"), 21),
+            (999, 1000, aurora_i18n::tr!("common-pine-grove"), 13),
+            (1000, 1001, "Nordheim", 42),
+            (1001, 1001, aurora_i18n::tr!("common-flaw"), 254),
+            (999, 999, aurora_i18n::tr!("common-sandbox"), 13),
+        ]
+    })
+}
 
 fn map_block(x: u16, y: u16, name: &str, access: u8) -> aurora_net::MapBlock {
     aurora_net::MapBlock {
@@ -1185,7 +1280,7 @@ pub fn events() -> Vec<NetEvent> {
         region_size_y: 256,
         seed_capability: String::new(),
         look_at: Vec3::new(1.0, 0.3, 0.0),
-        message: "Mode démo hors-ligne : aucune connexion réseau.".into(),
+        message: aurora_i18n::tr!("demo-offline-demo-mode-no-network-connection").into(),
         agent_appearance_service: String::new(),
         inventory_root: Uuid::nil(),
         mfa_hash: None,
@@ -1201,7 +1296,7 @@ pub fn events() -> Vec<NetEvent> {
         },
         NetEvent::RegionHandshake(Arc::new(RegionInfo {
             handle: HANDLE,
-            name: "Aurora Démo".into(),
+            name: aurora_i18n::tr!("common-aurora-demo").into(),
             region_id: Uuid::nil(),
             water_height: 20.0,
             sim_access: 13,
@@ -1336,7 +1431,7 @@ pub fn events() -> Vec<NetEvent> {
         torus,
         te(violet, 3, false, 0.0),
         ExtraParams::default(),
-        "Aurora Viewer\nRust · Vulkan",
+        aurora_i18n::tr!("demo-aurora-viewer-rust-vulkan"),
     ));
     id += 1;
     add(prim(
@@ -1371,7 +1466,7 @@ pub fn events() -> Vec<NetEvent> {
         let across = Vec3::new(-yaw.sin(), yaw.cos(), 0.0);
         let center = Vec3::new(138.5, 125.5, 0.0);
         let floor = height(cx, cy) + 0.35;
-        for (k, (tex, mat, label)) in ALPHA_PANELS.iter().enumerate() {
+        for (k, (tex, mat, label)) in alpha_panels().iter().enumerate() {
             let p = center + across * ((k as f32 - 2.5) * 2.1);
             let mut t = TextureEntry::default();
             for f in t.faces.iter_mut() {
@@ -1392,7 +1487,7 @@ pub fn events() -> Vec<NetEvent> {
             id += 1;
         }
     } else {
-        id += ALPHA_PANELS.len() as u32;
+        id += alpha_panels().len() as u32;
     }
     // a little city of boxes
     for i in 0..6 {
@@ -1533,7 +1628,7 @@ pub fn events() -> Vec<NetEvent> {
                         sides,
                     });
                 }
-                o.text = "Override : 4 × 4, teinte".into();
+                o.text = aurora_i18n::tr!("demo-override-4-4-tint").into();
             }
             add(o);
             id += 1;
@@ -1561,49 +1656,49 @@ pub fn events() -> Vec<NetEvent> {
                 Uuid::nil(),
                 false,
                 anim(smooth, -1, (1, 1), 0.0, 1.0, 0.25),
-                "Défilement (SMOOTH)",
+                aurora_i18n::tr!("demo-scrolling-smooth"),
             ),
             (
                 TEX_FRAMES,
                 Uuid::nil(),
                 false,
                 anim(Ta::LOOP, -1, (4, 4), 0.0, 0.0, 4.0),
-                "Grille 4 × 4 (LOOP)",
+                aurora_i18n::tr!("demo-4-4-grid-loop"),
             ),
             (
                 TEX_FRAMES,
                 Uuid::nil(),
                 false,
                 anim(Ta::LOOP | Ta::PING_PONG, -1, (4, 4), 0.0, 4.0, 2.0),
-                "Aller-retour (PING_PONG)",
+                aurora_i18n::tr!("extra-back-and-forth-ping-pong"),
             ),
             (
                 TEX_TILES,
                 Uuid::nil(),
                 false,
                 anim(smooth | Ta::ROTATE, -1, (1, 1), 0.0, std::f32::consts::TAU, 1.0),
-                "Rotation (ROTATE)",
+                aurora_i18n::tr!("demo-rotation-rotate"),
             ),
             (
                 TEX_HOLES,
                 Uuid::nil(),
                 false,
                 anim(smooth | Ta::PING_PONG | Ta::SCALE, -1, (1, 1), 1.0, 2.0, 0.5),
-                "Échelle (SCALE), masque alpha",
+                aurora_i18n::tr!("demo-scale-scale-alpha-mask"),
             ),
             (
                 TEX_FRAMES,
                 Uuid::nil(),
                 false,
                 anim(Ta::LOOP, 3, (4, 4), 0.0, 0.0, 4.0),
-                "Une seule face (face 3)",
+                aurora_i18n::tr!("demo-one-face-face-3"),
             ),
             (
                 TEX_TILES,
                 MAT_BUMPY,
                 false,
                 anim(smooth, -1, (1, 1), 0.0, 1.0, -0.25),
-                "Matériau : normales suivent",
+                aurora_i18n::tr!("demo-material-normals-follow"),
             ),
             (BLANK_TEXTURE, Uuid::nil(), true, anim(smooth, -1, (1, 1), 0.0, 1.0, 0.25), "PBR"),
         ];
@@ -1656,7 +1751,10 @@ pub fn events() -> Vec<NetEvent> {
             "",
         ));
         id += 1;
-        for (wind, y, label) in [(true, 126.0, "Vent"), (false, 130.0, "Fumée")] {
+        for (wind, y, label) in [
+            (true, 126.0, aurora_i18n::tr!("common-wind")),
+            (false, 130.0, aurora_i18n::tr!("demo-smoke")),
+        ] {
             if (mode == "wind" && !wind) || (mode == "smoke" && wind) || (mode == "legacy" && !wind) {
                 continue;
             }
@@ -1739,7 +1837,11 @@ pub fn events() -> Vec<NetEvent> {
     let mut avatars = Vec::new();
     for (k, (pos, first, last)) in [
         (Vec3::new(132.0, 126.0, 0.0), "Aurora", "Demo"),
-        (Vec3::new(136.0, 128.5, 0.0), "Loup", "Violet"),
+        (
+            Vec3::new(136.0, 128.5, 0.0),
+            aurora_i18n::tr!("demo-wolf"),
+            aurora_i18n::tr!("demo-purple"),
+        ),
     ]
     .into_iter()
     .enumerate()
@@ -1825,8 +1927,8 @@ pub fn events() -> Vec<NetEvent> {
         };
         ev.push(NetEvent::AgentParcel(Arc::new(aurora_net::ParcelInfo {
             local_id: 1,
-            name: "Place d'Aurora".into(),
-            desc: "Parcelle de démonstration hors-ligne d'Aurora Viewer.".into(),
+            name: aurora_i18n::tr!("common-aurora-plaza").into(),
+            desc: aurora_i18n::tr!("demo-aurora-viewer-s-offline-demo-parcel").into(),
             owner_id: u(100),
             area: 16384,
             max_prims: 3750,
@@ -1871,28 +1973,28 @@ pub fn events() -> Vec<NetEvent> {
         online: true,
     });
     ev.push(NetEvent::Chat(aurora_net::ChatMessage {
-        from_name: "Loup Violet".into(),
+        from_name: aurora_i18n::tr!("demo-violet-wolf").into(),
         source_id: Uuid::from_u128(2),
         owner_id: Uuid::nil(),
         source_type: aurora_net::ChatSourceType::Agent,
         chat_type: aurora_net::ChatType::Normal,
         position: Vec3::ZERO,
-        message: "Bienvenue dans la démo d'Aurora Viewer ! 🐺✨❤️".into(),
+        message: aurora_i18n::tr!("demo-welcome-to-the-aurora-viewer-demo").into(),
     }));
     // AURORA_DEMO_LSL_BRIDGE=1: a worn Firestorm bridge talking to the viewer
     // (all hidden from chat) between two ordinary llOwnerSay lines (shown)
     if std::env::var_os("AURORA_DEMO_LSL_BRIDGE").is_some() {
         let bridge = Uuid::from_u128(0xB81D_6E00_0000_0000_0000_0000_0000_0001);
-        let (hud, bridge_name) = ("HUD de démo", "#Firestorm LSL Bridge v2.32");
+        let (hud, bridge_name) = (aurora_i18n::tr!("common-demo-hud"), "#Firestorm LSL Bridge v2.32");
         for (from, name, text) in [
-            (u(200), hud, "Démo : la ligne suivante du bridge doit rester cachée."),
+            (u(200), hud, aurora_i18n::tr!("demo-demo-the-next-bridge-line-must-stay-hidden")),
             (
                 bridge,
                 bridge_name,
                 "<bridgeURL>https://sim.example.invalid:12043/cap/demo</bridgeURL><bridgeAuth>demo</bridgeAuth><bridgeVer>2.32</bridgeVer>",
             ),
             (bridge, bridge_name, "<bridgeMovelock state=0>"),
-            (u(200), hud, "Démo : fin du test du bridge."),
+            (u(200), hud, aurora_i18n::tr!("demo-demo-end-of-bridge-test")),
         ] {
             ev.push(NetEvent::Chat(aurora_net::ChatMessage {
                 from_name: name.into(),
@@ -1909,7 +2011,7 @@ pub fn events() -> Vec<NetEvent> {
     let im = |dialog: u8, message: &str, bucket: Vec<u8>| {
         NetEvent::InstantMessage(aurora_net::InstantMessage {
             from_agent_id: Uuid::from_u128(2),
-            from_name: "Loup Violet".into(),
+            from_name: aurora_i18n::tr!("demo-violet-wolf").into(),
             to_agent_id: Uuid::nil(),
             dialog,
             session_id: Uuid::new_v4(),
@@ -1919,13 +2021,13 @@ pub fn events() -> Vec<NetEvent> {
             binary_bucket: bucket,
         })
     };
-    ev.push(im(22, "Viens voir le lagon au coucher du soleil !", Vec::new()));
-    ev.push(im(4, "Lanterne aurorale", vec![6]));
+    ev.push(im(22, aurora_i18n::tr!("demo-come-see-the-lagoon-at-sunset"), Vec::new()));
+    ev.push(im(4, aurora_i18n::tr!("demo-aurora-lantern"), vec![6]));
     let menu = std::env::var("AURORA_DEMO_DIALOG").unwrap_or_default();
     let (object_name, message, buttons) = if !menu.is_empty() {
         let mut buttons = [
-            "× Close",
-            "« Back",
+            aurora_i18n::tr!("status-close"),
+            aurora_i18n::tr!("status-back"),
             "▶▶",
             "Threshold",
             "Triplex*",
@@ -1944,24 +2046,28 @@ pub fn events() -> Vec<NetEvent> {
             buttons.truncate(4);
         }
         if menu == "long" {
-            buttons[9] = "Un libellé de bouton très long".into();
+            buttons[9] = aurora_i18n::tr!("demo-a-very-long-button-label").into();
         }
         (
-            "Table de jeux",
-            "==== Table de jeux ====\n\nCurrent game category: \"8 Players\"\n\nSelect a game",
+            aurora_i18n::tr!("demo-game-table"),
+            aurora_i18n::tr!("demo-game-table-current-game-category-8-players-select-a"),
             buttons,
         )
     } else {
         (
-            "Fontaine",
-            "Choisis une couleur pour l'eau :",
-            vec!["Violet".into(), "Turquoise".into(), "Ambre".into()],
+            aurora_i18n::tr!("demo-fountain"),
+            aurora_i18n::tr!("demo-choose-a-color-for-the-water"),
+            vec![
+                aurora_i18n::tr!("demo-purple").into(),
+                aurora_i18n::tr!("demo-turquoise").into(),
+                aurora_i18n::tr!("demo-amber").into(),
+            ],
         )
     };
     ev.push(NetEvent::ScriptDialog {
         object_id: Uuid::from_u128(0xF0),
         object_name: object_name.into(),
-        owner_name: "Loup Violet".into(),
+        owner_name: aurora_i18n::tr!("demo-violet-wolf").into(),
         message: message.into(),
         channel: -4242,
         buttons,
@@ -2010,7 +2116,9 @@ pub fn ui_sound(id: Uuid) -> aurora_audio::SoundClip {
 
 /// Default page of AURORA_DEMO_MEDIA: animated (frame updates), a button
 /// (clicks) and a text field (keyboard).
-pub const DEMO_MEDIA_PAGE: &str = "data:text/html;charset=utf-8,<html><body style='margin:0;height:100vh;background:linear-gradient(135deg,%232a1f4a,%230f6d6d);color:white;font:56px sans-serif;text-align:center'><h1 style='margin:40px 0 10px'>Aurora media</h1><p id='t' style='font-size:90px;margin:10px'>--</p><button onclick=\"document.body.style.background='%237a3b9c';this.textContent='Cliqu%C3%A9 !'\" style='font-size:48px;padding:10px 40px'>Cliquer</button><br><input placeholder='Taper ici' style='font-size:44px;margin-top:30px;width:70%'><script>setInterval(function(){document.getElementById('t').textContent=new Date().toLocaleTimeString()},250)</script></body></html>";
+pub fn demo_media_page() -> &'static str {
+    aurora_i18n::tr!("demo-media-page")
+}
 
 /// AURORA_DEMO_MEDIA: a 4 × 2.25 m screen ahead-left of the start position whose
 /// west face (towards the avatar) carries media. Returns the update, the
@@ -2066,7 +2174,7 @@ pub fn media_screen() -> (NetEvent, Uuid, u8) {
 /// AURORA_DEMO_PARCEL_MEDIA: placeholder texture of the parcel media (the
 /// first alpha test panel's texture).
 pub fn parcel_media_texture() -> Uuid {
-    ALPHA_PANELS[0].0
+    alpha_panels()[0].0
 }
 
 /// A pillar of the plaza loops the chime; another one is triggered once.
@@ -2591,14 +2699,16 @@ const MAT_EMISSIVE: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_
 const MAT_BUMPY: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0004);
 
 /// (texture, legacy material, hover text) of the test panels.
-const ALPHA_PANELS: [(Uuid, Option<Uuid>, &str); 6] = [
-    (TEX_GRADIENT, None, "Auto : fondu"),
-    (TEX_GRADIENT, Some(MAT_NONE), "Mode alpha : aucun"),
-    (TEX_GRADIENT, Some(MAT_MASK), "Masque (seuil 50 %)"),
-    (TEX_GRADIENT, Some(MAT_EMISSIVE), "Masque émissif"),
-    (TEX_HOLES, None, "Auto : masque"),
-    (BLANK_TEXTURE, Some(MAT_BUMPY), "Normales + spéculaire"),
-];
+fn alpha_panels() -> [(Uuid, Option<Uuid>, &'static str); 6] {
+    [
+        (TEX_GRADIENT, None, aurora_i18n::tr!("demo-auto-blend")),
+        (TEX_GRADIENT, Some(MAT_NONE), aurora_i18n::tr!("demo-alpha-mode-none")),
+        (TEX_GRADIENT, Some(MAT_MASK), aurora_i18n::tr!("demo-mask-50-cutoff")),
+        (TEX_GRADIENT, Some(MAT_EMISSIVE), aurora_i18n::tr!("common-emissive-mask")),
+        (TEX_HOLES, None, aurora_i18n::tr!("demo-auto-mask")),
+        (BLANK_TEXTURE, Some(MAT_BUMPY), aurora_i18n::tr!("demo-normal-specular")),
+    ]
+}
 
 /// Pixels of a procedural demo texture (RGBA8, 64×64).
 pub fn local_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
@@ -2774,7 +2884,7 @@ pub fn sit_events(frame: u64) -> Vec<NetEvent> {
             boxp,
             te([0.48, 0.3, 0.75, 1.0], 0, false, 0.0),
             ExtraParams::default(),
-            "Siège (caméra de siège)",
+            aurora_i18n::tr!("demo-seat-seat-camera"),
         )
     };
     let me = |parent: u32, pos: Vec3| {

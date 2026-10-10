@@ -27,9 +27,9 @@ impl Input {
     pub fn mouse(b: MouseButton) -> Option<Input> {
         match b {
             MouseButton::Left | MouseButton::Right => None,
-            MouseButton::Middle => Some(Input::Mouse("Middle".into())),
-            MouseButton::Back => Some(Input::Mouse("Back".into())),
-            MouseButton::Forward => Some(Input::Mouse("Forward".into())),
+            MouseButton::Middle => Some(Input::Mouse(aurora_i18n::tr!("keybinds-middle").into())),
+            MouseButton::Back => Some(Input::Mouse(aurora_i18n::tr!("keybinds-back").into())),
+            MouseButton::Forward => Some(Input::Mouse(aurora_i18n::tr!("keybinds-forward").into())),
             MouseButton::Other(n) => Some(Input::Mouse(format!("Other{n}"))),
         }
     }
@@ -52,10 +52,10 @@ impl Input {
     pub fn label(&self) -> String {
         match self {
             Input::Mouse(m) => match m.as_str() {
-                "Middle" => "Clic molette".into(),
-                "Back" => "Souris précédent".into(),
-                "Forward" => "Souris suivant".into(),
-                other => format!("Souris {}", other.trim_start_matches("Other")),
+                "Middle" => aurora_i18n::tr!("keybinds-middle-click").into(),
+                "Back" => aurora_i18n::tr!("keybinds-mouse-back").into(),
+                "Forward" => aurora_i18n::tr!("keybinds-mouse-forward").into(),
+                other => aurora_i18n::tr!("keybinds-mouse", value0 = other.trim_start_matches("Other").to_string()),
             },
             Input::Key(k) => key_label(k),
         }
@@ -82,7 +82,7 @@ fn learned(k: &str) -> Option<String> {
 }
 
 fn key_label(k: &str) -> String {
-    if !k.starts_with("Numpad")
+    if !k.starts_with(aurora_i18n::tr!("common-numpad"))
         && let Some(l) = learned(k)
     {
         return l;
@@ -91,23 +91,23 @@ fn key_label(k: &str) -> String {
         return l;
     }
     let fixed = match k {
-        "ArrowUp" => "Flèche haut",
-        "ArrowDown" => "Flèche bas",
-        "ArrowLeft" => "Flèche gauche",
-        "ArrowRight" => "Flèche droite",
-        "PageUp" => "Page préc.",
-        "PageDown" => "Page suiv.",
-        "Home" => "Origine",
-        "End" => "Fin",
-        "Insert" => "Inser",
-        "Delete" => "Suppr",
-        "Backspace" => "Retour arrière",
-        "Enter" => "Entrée",
-        "NumpadEnter" => "Entrée (pavé)",
-        "Escape" => "Échap",
-        "Space" => "Espace",
-        "Tab" => "Tab",
-        "CapsLock" => "Verr. maj",
+        "ArrowUp" => aurora_i18n::tr!("keybinds-up-arrow"),
+        "ArrowDown" => aurora_i18n::tr!("keybinds-down-arrow"),
+        "ArrowLeft" => aurora_i18n::tr!("keybinds-left-arrow"),
+        "ArrowRight" => aurora_i18n::tr!("keybinds-right-arrow"),
+        "PageUp" => aurora_i18n::tr!("keybinds-previous-page"),
+        "PageDown" => aurora_i18n::tr!("keybinds-next-page"),
+        "Home" => aurora_i18n::tr!("keybinds-origin"),
+        "End" => aurora_i18n::tr!("keybinds-end-2"),
+        "Insert" => aurora_i18n::tr!("keybinds-insert"),
+        "Delete" => aurora_i18n::tr!("keybinds-delete-2"),
+        "Backspace" => aurora_i18n::tr!("keybinds-backspace-2"),
+        "Enter" => aurora_i18n::tr!("keybinds-enter-2"),
+        "NumpadEnter" => aurora_i18n::tr!("keybinds-enter-numpad"),
+        "Escape" => aurora_i18n::tr!("keybinds-esc"),
+        "Space" => aurora_i18n::tr!("keybinds-space"),
+        "Tab" => aurora_i18n::tr!("keybinds-tab"),
+        "CapsLock" => aurora_i18n::tr!("keybinds-caps-lock"),
         "Backquote" => "`",
         "Minus" => "-",
         "Equal" => "=",
@@ -120,11 +120,11 @@ fn key_label(k: &str) -> String {
         "Period" => ".",
         "Slash" => "/",
         "IntlBackslash" => "<",
-        "NumpadAdd" => "+ (pavé)",
-        "NumpadSubtract" => "- (pavé)",
-        "NumpadMultiply" => "* (pavé)",
-        "NumpadDivide" => "/ (pavé)",
-        "NumpadDecimal" => ". (pavé)",
+        "NumpadAdd" => aurora_i18n::tr!("keybinds-numpad-2"),
+        "NumpadSubtract" => aurora_i18n::tr!("keybinds-numpad-3"),
+        "NumpadMultiply" => aurora_i18n::tr!("keybinds-numpad"),
+        "NumpadDivide" => aurora_i18n::tr!("keybinds-numpad-5"),
+        "NumpadDecimal" => aurora_i18n::tr!("keybinds-numpad-4"),
         _ => "",
     };
     if !fixed.is_empty() {
@@ -136,8 +136,8 @@ fn key_label(k: &str) -> String {
     if let Some(d) = k.strip_prefix("Digit") {
         return d.into();
     }
-    if let Some(d) = k.strip_prefix("Numpad") {
-        return format!("Pavé {d}");
+    if let Some(d) = k.strip_prefix(aurora_i18n::tr!("common-numpad")) {
+        return aurora_i18n::tr!("keybinds-numpad-6", d = d.to_string());
     }
     k.into()
 }
@@ -172,7 +172,7 @@ impl Binding {
             s.push_str("Alt+");
         }
         if self.shift {
-            s.push_str("Maj+");
+            s.push_str(aurora_i18n::tr!("keybinds-shift-2"));
         }
         s.push_str(&self.input.label());
         s
@@ -249,66 +249,74 @@ pub fn is_held(a: Action) -> bool {
 }
 
 /// Actions by section, with their French labels (preferences table order).
-pub const SECTIONS: &[(&str, &[(Action, &str)])] = &[
-    (
-        "Déplacements",
-        &[
-            (Action::Forward, "Avancer"),
-            (Action::Back, "Reculer"),
-            (Action::Left, "Tourner à gauche"),
-            (Action::Right, "Tourner à droite"),
-            (Action::StrafeLeft, "Pas latéral gauche"),
-            (Action::StrafeRight, "Pas latéral droit"),
-            (Action::Up, "Sauter / monter"),
-            (Action::Down, "S'accroupir / descendre"),
-            (Action::Fly, "Voler / atterrir"),
-            (Action::AlwaysRun, "Toujours courir"),
-        ],
-    ),
-    (
-        "Caméra",
-        &[
-            (Action::Mouselook, "Vue subjective"),
-            (Action::ResetCamera, "Revenir à l'avatar"),
-            (Action::CamOrbitCw, "Tourner autour (sens horaire)"),
-            (Action::CamOrbitCcw, "Tourner autour (sens inverse)"),
-            (Action::CamOrbitOver, "Passer au-dessus"),
-            (Action::CamOrbitUnder, "Passer en dessous"),
-            (Action::CamZoomIn, "Rapprocher la caméra"),
-            (Action::CamZoomOut, "Éloigner la caméra"),
-            (Action::CamPanLeft, "Décaler la vue à gauche"),
-            (Action::CamPanRight, "Décaler la vue à droite"),
-            (Action::CamPanUp, "Décaler la vue en haut"),
-            (Action::CamPanDown, "Décaler la vue en bas"),
-        ],
-    ),
-    (
-        "Communication",
-        &[
-            (Action::Chat, "Écrire dans le chat"),
-            (Action::PushToTalk, "Parler (push-to-talk)"),
-            (Action::ToggleMic, "Activer / couper le micro"),
-        ],
-    ),
-    (
-        "Fenêtres",
-        &[
-            (Action::Conversations, "Conversations"),
-            (Action::People, "Personnes"),
-            (Action::Inventory, "Inventaire"),
-            (Action::Minimap, "Mini-carte"),
-            (Action::WorldMap, "Carte du monde"),
-            (Action::TeleportHistory, "Historique de téléportation"),
-            (Action::Performance, "Performances"),
-            (Action::Preferences, "Préférences"),
-        ],
-    ),
-    ("Débogage", &[(Action::ShowTransparency, "Afficher la transparence")]),
-];
+pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
+    static TABLE: aurora_i18n::Localized<Vec<(&'static str, Vec<(Action, &'static str)>)>> = aurora_i18n::Localized::new();
+    TABLE.get(|| {
+        vec![
+            (
+                aurora_i18n::tr!("common-movement"),
+                vec![
+                    (Action::Forward, aurora_i18n::tr!("keybinds-move-forward")),
+                    (Action::Back, aurora_i18n::tr!("keybinds-move-backward")),
+                    (Action::Left, aurora_i18n::tr!("keybinds-turn-left")),
+                    (Action::Right, aurora_i18n::tr!("keybinds-turn-right")),
+                    (Action::StrafeLeft, aurora_i18n::tr!("keybinds-strafe-left")),
+                    (Action::StrafeRight, aurora_i18n::tr!("keybinds-strafe-right")),
+                    (Action::Up, aurora_i18n::tr!("extra-jump-ascend")),
+                    (Action::Down, aurora_i18n::tr!("status-crouch-descend")),
+                    (Action::Fly, aurora_i18n::tr!("extra-fly-land")),
+                    (Action::AlwaysRun, aurora_i18n::tr!("keybinds-always-run")),
+                ],
+            ),
+            (
+                aurora_i18n::tr!("common-camera"),
+                vec![
+                    (Action::Mouselook, aurora_i18n::tr!("common-mouselook")),
+                    (Action::ResetCamera, aurora_i18n::tr!("keybinds-return-to-avatar")),
+                    (Action::CamOrbitCw, aurora_i18n::tr!("keybinds-orbit-clockwise")),
+                    (Action::CamOrbitCcw, aurora_i18n::tr!("keybinds-orbit-counterclockwise")),
+                    (Action::CamOrbitOver, aurora_i18n::tr!("keybinds-move-above")),
+                    (Action::CamOrbitUnder, aurora_i18n::tr!("keybinds-move-below")),
+                    (Action::CamZoomIn, aurora_i18n::tr!("keybinds-zoom-camera-in")),
+                    (Action::CamZoomOut, aurora_i18n::tr!("keybinds-move-camera-farther-away")),
+                    (Action::CamPanLeft, aurora_i18n::tr!("keybinds-pan-view-left")),
+                    (Action::CamPanRight, aurora_i18n::tr!("keybinds-pan-view-right")),
+                    (Action::CamPanUp, aurora_i18n::tr!("keybinds-pan-view-up")),
+                    (Action::CamPanDown, aurora_i18n::tr!("keybinds-pan-view-down")),
+                ],
+            ),
+            (
+                aurora_i18n::tr!("common-communication"),
+                vec![
+                    (Action::Chat, aurora_i18n::tr!("keybinds-type-in-chat")),
+                    (Action::PushToTalk, aurora_i18n::tr!("keybinds-speak-push-to-talk")),
+                    (Action::ToggleMic, aurora_i18n::tr!("extra-enable-mute-microphone")),
+                ],
+            ),
+            (
+                aurora_i18n::tr!("common-windows"),
+                vec![
+                    (Action::Conversations, aurora_i18n::tr!("common-conversations")),
+                    (Action::People, aurora_i18n::tr!("common-people")),
+                    (Action::Inventory, aurora_i18n::tr!("common-inventory")),
+                    (Action::Minimap, aurora_i18n::tr!("common-mini-map")),
+                    (Action::WorldMap, aurora_i18n::tr!("common-world-map")),
+                    (Action::TeleportHistory, aurora_i18n::tr!("common-teleport-history")),
+                    (Action::Performance, aurora_i18n::tr!("common-performance")),
+                    (Action::Preferences, aurora_i18n::tr!("common-preferences")),
+                ],
+            ),
+            (
+                aurora_i18n::tr!("keybinds-debug"),
+                vec![(Action::ShowTransparency, aurora_i18n::tr!("common-show-transparency"))],
+            ),
+        ]
+    })
+}
 
 /// French label of an action.
 pub fn label(a: Action) -> &'static str {
-    SECTIONS
+    sections()
         .iter()
         .flat_map(|(_, list)| list.iter())
         .find(|(x, _)| *x == a)
@@ -318,7 +326,7 @@ pub fn label(a: Action) -> &'static str {
 
 #[cfg(test)]
 pub fn all_actions() -> impl Iterator<Item = Action> {
-    SECTIONS.iter().flat_map(|(_, list)| list.iter().map(|(a, _)| *a))
+    sections().iter().flat_map(|(_, list)| list.iter().map(|(a, _)| *a))
 }
 
 /// Up to two bindings per action (primary, secondary), as in Firestorm.
@@ -389,7 +397,10 @@ impl KeyBindings {
             (Action::CamPanDown, [kalt(K::ArrowDown, true, true), None]),
             (Action::Chat, [k(K::Enter), k(K::NumpadEnter)]),
             // SL default push-to-talk: middle mouse button
-            (Action::PushToTalk, [Some(Binding::plain(Input::Mouse("Middle".into()))), None]),
+            (
+                Action::PushToTalk,
+                [Some(Binding::plain(Input::Mouse(aurora_i18n::tr!("keybinds-middle").into()))), None],
+            ),
             (Action::ToggleMic, [None, None]),
             (Action::Conversations, [kmod(K::KeyT, true, false), None]),
             (Action::People, [kmod(K::KeyA, true, true), None]),
@@ -488,7 +499,7 @@ impl HoldKey {
         match self {
             Self::Alt => "ALT".into(),
             Self::Ctrl => "Ctrl".into(),
-            Self::Shift => "Maj".into(),
+            Self::Shift => aurora_i18n::tr!("keybinds-shift").into(),
             Self::Key(code) => key_label(code),
         }
     }

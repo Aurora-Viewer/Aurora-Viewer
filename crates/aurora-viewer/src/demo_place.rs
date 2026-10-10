@@ -6,7 +6,7 @@
 //! with the parcel of "À propos du terrain"; Faille answers HTTP 404
 //! (LLPanelPlaceInfo::setErrorStatus).
 
-use super::{DEMO_LOUP, DEMO_SIMS, TEX_SNAPSHOT, u};
+use super::{DEMO_LOUP, TEX_SNAPSHOT, demo_sims, u};
 use crate::world::tphistory::HistoryItem;
 use aurora_net::inventory::{FolderContents, InvFolder, InvItem};
 use aurora_net::land::RemoteParcelError;
@@ -32,35 +32,40 @@ struct DemoParcel {
     flags: u8,
 }
 
-const PARCELS: &[DemoParcel] = &[
-    DemoParcel {
-        grid: (1001, 1000),
-        id: Uuid::from_u128(0xDE40_91AC_0000_0000_0000_0000_0000_0002),
-        name: "Lagune des aurores",
-        desc: "Ponton, feu de camp et vue sur les aurores boréales.\nMusique douce le soir, venez comme vous êtes !",
-        area: 4096,
-        dwell: 312.6,
-        flags: 0x1,
-    },
-    DemoParcel {
-        grid: (1000, 1001),
-        id: Uuid::from_u128(0xDE40_91AC_0000_0000_0000_0000_0000_0003),
-        name: "Halle de Nordheim",
-        desc: "Grande halle viking : banquets, combats et contes au coin du feu.",
-        area: 8192,
-        dwell: 1288.0,
-        flags: 0x2 | 0x4,
-    },
-    DemoParcel {
-        grid: (999, 1000),
-        id: Uuid::from_u128(0xDE40_91AC_0000_0000_0000_0000_0000_0004),
-        name: "",
-        desc: "",
-        area: 512,
-        dwell: 0.0,
-        flags: 0,
-    },
-];
+fn parcels() -> &'static Vec<DemoParcel> {
+    static TABLE: aurora_i18n::Localized<Vec<DemoParcel>> = aurora_i18n::Localized::new();
+    TABLE.get(|| {
+        vec![
+            DemoParcel {
+                grid: (1001, 1000),
+                id: Uuid::from_u128(0xDE40_91AC_0000_0000_0000_0000_0000_0002),
+                name: aurora_i18n::tr!("demo-place-aurora-lagoon"),
+                desc: aurora_i18n::tr!("demo-place-pier-campfire-and-a-view-of-the-northern-lights"),
+                area: 4096,
+                dwell: 312.6,
+                flags: 0x1,
+            },
+            DemoParcel {
+                grid: (1000, 1001),
+                id: Uuid::from_u128(0xDE40_91AC_0000_0000_0000_0000_0000_0003),
+                name: aurora_i18n::tr!("demo-place-nordheim-hall"),
+                desc: aurora_i18n::tr!("demo-place-great-viking-hall-feasts-combat-and-fireside-tales"),
+                area: 8192,
+                dwell: 1288.0,
+                flags: 0x2 | 0x4,
+            },
+            DemoParcel {
+                grid: (999, 1000),
+                id: Uuid::from_u128(0xDE40_91AC_0000_0000_0000_0000_0000_0004),
+                name: "",
+                desc: "",
+                area: 512,
+                dwell: 0.0,
+                flags: 0,
+            },
+        ]
+    })
+}
 
 /// Grid position of Faille, the region whose parcel requests fail.
 const FAILING: (u32, u32) = (1001, 1001);
@@ -76,14 +81,14 @@ fn region_id(grid: (u32, u32)) -> Uuid {
 pub fn scenario() -> Option<(&'static str, Vec3)> {
     let v = std::env::var("AURORA_DEMO_PLACE").ok()?;
     Some(match v.to_lowercase().as_str() {
-        "lagune" => ("Lagune Boréale", Vec3::new(60.0, 200.0, 22.0)),
+        "lagune" => (aurora_i18n::tr!("common-boreal-lagoon"), Vec3::new(60.0, 200.0, 22.0)),
         "nordheim" => ("Nordheim", Vec3::new(128.0, 64.0, 40.0)),
-        "pinede" => ("Pinède", Vec3::new(200.0, 30.0, 24.0)),
-        "faille" => ("Faille", Vec3::new(128.0, 128.0, 30.0)),
-        "inconnue" => ("Atlantide", Vec3::new(128.0, 128.0, 20.0)),
+        "pinede" => (aurora_i18n::tr!("common-pine-grove"), Vec3::new(200.0, 30.0, 24.0)),
+        "faille" => (aurora_i18n::tr!("common-flaw"), Vec3::new(128.0, 128.0, 30.0)),
+        "inconnue" => (aurora_i18n::tr!("demo-place-atlantis"), Vec3::new(128.0, 128.0, 20.0)),
         "repere" | "historique" => return None,
         // Loup Violet's home (the link of his profile)
-        _ => ("Aurora Démo", Vec3::new(140.0, 120.0, 25.0)),
+        _ => (aurora_i18n::tr!("common-aurora-demo"), Vec3::new(140.0, 120.0, 25.0)),
     })
 }
 
@@ -114,7 +119,7 @@ pub fn remote_parcel(handle: RegionHandle, position: Vec3) -> Vec<NetEvent> {
     } else if grid == FAILING {
         Err(RemoteParcelError::Status(404))
     } else {
-        PARCELS
+        parcels()
             .iter()
             .find(|p| p.grid == grid)
             .map(|p| p.id)
@@ -125,7 +130,7 @@ pub fn remote_parcel(handle: RegionHandle, position: Vec3) -> Vec<NetEvent> {
 
 /// RegionHandleRequest for one of the demo regions.
 pub fn region_handle(id: Uuid) -> Vec<NetEvent> {
-    DEMO_SIMS
+    demo_sims()
         .iter()
         .find(|s| region_id((s.0 as u32, s.1 as u32)) == id)
         .map(|s| NetEvent::RegionIdHandle {
@@ -149,7 +154,7 @@ pub fn parcel_info(id: Uuid) -> Option<NetEvent> {
             actual_area: l.area,
             billable_area: l.area,
             flags: 0,
-            sim_name: "Aurora Démo".into(),
+            sim_name: aurora_i18n::tr!("common-aurora-demo").into(),
             global: DVec3::new(256_000.0 + 128.0, 256_000.0 + 128.0, 25.0),
             snapshot: TEX_SNAPSHOT,
             dwell: 145.0,
@@ -157,8 +162,8 @@ pub fn parcel_info(id: Uuid) -> Option<NetEvent> {
             auction_id: 0,
         }
     } else {
-        let d = PARCELS.iter().find(|p| p.id == id)?;
-        let name = DEMO_SIMS.iter().find(|s| (s.0 as u32, s.1 as u32) == d.grid).map_or("", |s| s.2);
+        let d = parcels().iter().find(|p| p.id == id)?;
+        let name = demo_sims().iter().find(|s| (s.0 as u32, s.1 as u32) == d.grid).map_or("", |s| s.2);
         ParcelSummary {
             id,
             // a group-owned parcel names its group
@@ -180,52 +185,69 @@ pub fn parcel_info(id: Uuid) -> Option<NetEvent> {
 }
 
 /// The demo landmarks: (folder, name, region grid, position, created at).
-const LANDMARKS: &[(u128, &str, (u32, u32), [f32; 3], i64)] = &[
-    (
-        LANDMARKS_FOLDER,
-        "Plage d'Aurora",
-        (1000, 1000),
-        [140.0, 120.0, 25.0],
-        1_712_068_948,
-    ),
-    (
-        LANDMARKS_FOLDER,
-        "Lagune des aurores",
-        (1001, 1000),
-        [60.0, 200.0, 22.0],
-        1_740_000_000,
-    ),
-    (
-        LANDMARKS_FOLDER,
-        "Halle de Nordheim",
-        (1000, 1001),
-        [128.0, 64.0, 40.0],
-        1_759_900_000,
-    ),
-    (LANDMARKS_FOLDER, "Pinède", (999, 1000), [200.0, 30.0, 24.0], 1_700_000_000),
-    (SHOPS_FOLDER, "Atelier du Loup", (1000, 1000), [60.0, 200.0, 22.0], 1_750_000_000),
-    (
-        SHOPS_FOLDER,
-        "Marché de la Place",
-        (1000, 1000),
-        [128.0, 128.0, 25.0],
-        1_745_000_000,
-    ),
-    (
-        FAVORITES_FOLDER,
-        "Place d'Aurora",
-        (1000, 1000),
-        [128.0, 128.0, 25.0],
-        1_712_068_948,
-    ),
-    (
-        FAVORITES_FOLDER,
-        "Lagune des aurores",
-        (1001, 1000),
-        [60.0, 200.0, 22.0],
-        1_740_000_000,
-    ),
-];
+fn landmarks() -> &'static Vec<(u128, &'static str, (u32, u32), [f32; 3], i64)> {
+    static TABLE: aurora_i18n::Localized<Vec<(u128, &'static str, (u32, u32), [f32; 3], i64)>> = aurora_i18n::Localized::new();
+    TABLE.get(|| {
+        vec![
+            (
+                LANDMARKS_FOLDER,
+                aurora_i18n::tr!("demo-place-aurora-beach"),
+                (1000, 1000),
+                [140.0, 120.0, 25.0],
+                1_712_068_948,
+            ),
+            (
+                LANDMARKS_FOLDER,
+                aurora_i18n::tr!("demo-place-aurora-lagoon"),
+                (1001, 1000),
+                [60.0, 200.0, 22.0],
+                1_740_000_000,
+            ),
+            (
+                LANDMARKS_FOLDER,
+                aurora_i18n::tr!("demo-place-nordheim-hall"),
+                (1000, 1001),
+                [128.0, 64.0, 40.0],
+                1_759_900_000,
+            ),
+            (
+                LANDMARKS_FOLDER,
+                aurora_i18n::tr!("common-pine-grove"),
+                (999, 1000),
+                [200.0, 30.0, 24.0],
+                1_700_000_000,
+            ),
+            (
+                SHOPS_FOLDER,
+                aurora_i18n::tr!("demo-place-wolf-s-workshop"),
+                (1000, 1000),
+                [60.0, 200.0, 22.0],
+                1_750_000_000,
+            ),
+            (
+                SHOPS_FOLDER,
+                aurora_i18n::tr!("common-plaza-market"),
+                (1000, 1000),
+                [128.0, 128.0, 25.0],
+                1_745_000_000,
+            ),
+            (
+                FAVORITES_FOLDER,
+                aurora_i18n::tr!("common-aurora-plaza"),
+                (1000, 1000),
+                [128.0, 128.0, 25.0],
+                1_712_068_948,
+            ),
+            (
+                FAVORITES_FOLDER,
+                aurora_i18n::tr!("demo-place-aurora-lagoon"),
+                (1001, 1000),
+                [60.0, 200.0, 22.0],
+                1_740_000_000,
+            ),
+        ]
+    })
+}
 
 /// Item and asset ids of the n-th demo landmark.
 fn landmark_ids(n: usize) -> (Uuid, Uuid) {
@@ -234,7 +256,7 @@ fn landmark_ids(n: usize) -> (Uuid, Uuid) {
 
 /// The landmark asset text (LLLandmark version 2) of a demo landmark.
 pub fn landmark_asset(asset: Uuid) -> Option<String> {
-    let (_, _, grid, pos, _) = LANDMARKS.iter().enumerate().find(|(n, _)| landmark_ids(*n).1 == asset)?.1;
+    let (_, _, grid, pos, _) = landmarks().iter().enumerate().find(|(n, _)| landmark_ids(*n).1 == asset)?.1;
     Some(format!(
         "Landmark version 2\nregion_id {}\nlocal_pos {} {} {}\n",
         region_id(*grid),
@@ -253,7 +275,7 @@ pub fn folder_contents(folder_id: Uuid, owner: Uuid) -> Option<FolderContents> {
         vec![InvFolder {
             id: u(SHOPS_FOLDER),
             parent: folder_id,
-            name: "Boutiques".into(),
+            name: aurora_i18n::tr!("common-shopping").into(),
             type_default: -1,
             version: 2,
             ..Default::default()
@@ -261,7 +283,7 @@ pub fn folder_contents(folder_id: Uuid, owner: Uuid) -> Option<FolderContents> {
     } else {
         Vec::new()
     };
-    let items = LANDMARKS
+    let items = landmarks()
         .iter()
         .enumerate()
         .filter(|(_, l)| l.0 == n)
@@ -272,7 +294,7 @@ pub fn folder_contents(folder_id: Uuid, owner: Uuid) -> Option<FolderContents> {
                 parent: folder_id,
                 name: (*name).into(),
                 desc: if i == 0 {
-                    "Le coucher de soleil depuis le ponton".into()
+                    aurora_i18n::tr!("demo-place-sunset-from-the-pier").into()
                 } else {
                     String::new()
                 },
@@ -317,12 +339,20 @@ pub fn history() -> Vec<HistoryItem> {
     };
     vec![
         item("Ahern", DVec3::new(254_208.0 + 128.0, 256_256.0 + 128.0, 30.0), 240.0 * DAY),
-        item("Sablière", at((999, 999), 128.0, 128.0, 25.0), 40.0 * DAY),
-        item("Atelier du Loup, Aurora Démo", at((1000, 1000), 60.0, 200.0, 22.0), 12.0 * DAY),
-        item("Pinède", at((999, 1000), 200.0, 30.0, 24.0), 3.2 * DAY),
-        item("Halle de Nordheim, Nordheim", at((1000, 1001), 128.0, 64.0, 40.0), 1.1 * DAY),
+        item(aurora_i18n::tr!("common-sandbox"), at((999, 999), 128.0, 128.0, 25.0), 40.0 * DAY),
         item(
-            "Lagune des aurores, Lagune Boréale",
+            aurora_i18n::tr!("demo-place-wolf-s-workshop-aurora-demo"),
+            at((1000, 1000), 60.0, 200.0, 22.0),
+            12.0 * DAY,
+        ),
+        item(aurora_i18n::tr!("common-pine-grove"), at((999, 1000), 200.0, 30.0, 24.0), 3.2 * DAY),
+        item(
+            aurora_i18n::tr!("demo-place-nordheim-hall-nordheim"),
+            at((1000, 1001), 128.0, 64.0, 40.0),
+            1.1 * DAY,
+        ),
+        item(
+            aurora_i18n::tr!("demo-place-aurora-lagoon-boreal-lagoon"),
             at((1001, 1000), 60.0, 200.0, 22.0),
             3.0 * 3600.0,
         ),

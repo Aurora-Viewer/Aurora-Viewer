@@ -168,9 +168,9 @@ pub fn draw(ctx: &egui::Context, world: &World, scene: &Scene, proj: &Projector,
                     if d - g.radius > scene.draw_distance && !g.is_avatar {
                         (ORANGE, "distance")
                     } else if !v.sphere_visible(g.center, g.radius) {
-                        (RED, "hors champ")
+                        (RED, aurora_i18n::tr!("ui-debug-overlay-outside-view"))
                     } else if v.pixel_size(g.center, g.radius) < 1.5 && !g.is_avatar {
-                        (GREY, "trop petit")
+                        (GREY, aurora_i18n::tr!("ui-debug-overlay-too-small"))
                     } else {
                         (GREEN, "")
                     }
@@ -203,7 +203,15 @@ pub fn draw(ctx: &egui::Context, world: &World, scene: &Scene, proj: &Projector,
             lines.cross(g.center, 6.0, c);
             lines.sphere(g.center, l.radius, c.gamma_multiply(0.7));
             if g.center.distance(eye) < 24.0 {
-                lines.label(g.center, &format!("{:.1} m, chute {:.2}", l.radius, l.falloff), c);
+                lines.label(
+                    g.center,
+                    &aurora_i18n::tr!(
+                        "status-m-falling",
+                        value0 = aurora_i18n::number_text(&format!("{:.1}", l.radius)),
+                        value1 = aurora_i18n::number_text(&format!("{:.2}", l.falloff))
+                    ),
+                    c,
+                );
             }
         }
     }

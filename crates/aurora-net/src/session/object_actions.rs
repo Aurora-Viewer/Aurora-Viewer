@@ -78,7 +78,7 @@ impl Session<'_> {
                 NetEvent::TaskInventory {
                     object,
                     serial: None,
-                    result: Err("Le simulateur n'a pas répondu à temps.".into()),
+                    result: Err(aurora_i18n::tr!("session-object-actions-the-simulator-did-not-respond-in-time").into()),
                 },
             );
         }
@@ -165,7 +165,8 @@ impl Session<'_> {
             let events = self.sh.events.clone();
             tokio::spawn(async move {
                 let result = async {
-                    let mut url = reqwest::Url::parse(&url).map_err(|_| "Capability d'inventaire invalide.".to_string())?;
+                    let mut url = reqwest::Url::parse(&url)
+                        .map_err(|_| aurora_i18n::tr!("session-object-actions-invalid-inventory-capability").to_string())?;
                     url.query_pairs_mut().append_pair("task_id", &object.to_string());
                     let mut response = http
                         .get(url)
@@ -173,21 +174,29 @@ impl Session<'_> {
                         .header("Accept", "application/llsd+xml")
                         .send()
                         .await
-                        .map_err(|_| "Impossible de charger l'inventaire de l'objet.".to_string())?;
+                        .map_err(|_| aurora_i18n::tr!("session-object-actions-could-not-load-the-object-s-inventory").to_string())?;
                     if !response.status().is_success() {
-                        return Err(format!("Inventaire refusé (HTTP {}).", response.status().as_u16()));
+                        return Err(aurora_i18n::tr!(
+                            "session-object-actions-inventory-rejected-http",
+                            value0 = format!("{}", response.status().as_u16())
+                        ));
                     }
                     if response.content_length().is_some_and(|n| n > MAX_FILE as u64) {
-                        return Err("Inventaire trop volumineux.".into());
+                        return Err(aurora_i18n::tr!("session-object-actions-inventory-too-large").into());
                     }
                     let mut data = Vec::new();
-                    while let Some(chunk) = response.chunk().await.map_err(|_| "Réponse d'inventaire illisible.".to_string())? {
+                    while let Some(chunk) = response
+                        .chunk()
+                        .await
+                        .map_err(|_| aurora_i18n::tr!("session-object-actions-unreadable-inventory-response").to_string())?
+                    {
                         if data.len() + chunk.len() > MAX_FILE {
-                            return Err("Inventaire trop volumineux.".into());
+                            return Err(aurora_i18n::tr!("session-object-actions-inventory-too-large").into());
                         }
                         data.extend_from_slice(&chunk);
                     }
-                    let doc = aurora_llsd::from_xml(&data).map_err(|_| "Réponse d'inventaire invalide.".to_string())?;
+                    let doc = aurora_llsd::from_xml(&data)
+                        .map_err(|_| aurora_i18n::tr!("session-object-actions-invalid-inventory-response").to_string())?;
                     Ok((task_inventory::cap_serial(&doc), task_inventory::parse_cap(&doc)?))
                 }
                 .await;
@@ -204,7 +213,7 @@ impl Session<'_> {
                     NetEvent::TaskInventory {
                         object,
                         serial: None,
-                        result: Err("Trop de requêtes d'inventaire en cours.".into()),
+                        result: Err(aurora_i18n::tr!("session-object-actions-too-many-inventory-requests-in-progress").into()),
                     },
                 );
                 return;
@@ -264,7 +273,7 @@ impl Session<'_> {
                     NetEvent::TaskInventory {
                         object,
                         serial: None,
-                        result: Err("Trop de transferts d'inventaire en cours.".into()),
+                        result: Err(aurora_i18n::tr!("session-object-actions-too-many-inventory-transfers-in-progress").into()),
                     },
                 );
             }
@@ -289,7 +298,7 @@ impl Session<'_> {
                 let result = if result.is_ok() && x.data.len() == x.size {
                     task_inventory::parse_legacy(&x.data)
                 } else {
-                    Err("Transfert d'inventaire incomplet ou invalide.".into())
+                    Err(aurora_i18n::tr!("session-object-actions-incomplete-or-invalid-inventory-transfer").into())
                 };
                 emit(
                     self.sh,
@@ -312,7 +321,7 @@ impl Session<'_> {
                     NetEvent::TaskInventory {
                         object: x.object,
                         serial: None,
-                        result: Err("Transfert d'inventaire annulé par le simulateur.".into()),
+                        result: Err(aurora_i18n::tr!("session-object-actions-inventory-transfer-canceled-by-the-simulator").into()),
                     },
                 );
                 return Ok(true);

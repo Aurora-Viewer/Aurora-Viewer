@@ -204,17 +204,17 @@ fn describe_transport_error(e: &reqwest::Error) -> String {
     let kind = if e.is_timeout() {
         "timeout"
     } else if e.is_connect() {
-        "connection failed"
+        aurora_i18n::tr!("fetch-connection-failed")
     } else if e.is_redirect() {
-        "redirect failed"
+        aurora_i18n::tr!("fetch-redirect-failed")
     } else if e.is_body() || e.is_decode() {
         // content decoding is off: reqwest reports short or broken bodies
         // as decode errors
         "body read failed"
     } else if e.is_request() {
-        "request failed"
+        aurora_i18n::tr!("fetch-request-failed")
     } else {
-        "transport error"
+        aurora_i18n::tr!("fetch-transport-error")
     };
     let mut text = kind.to_string();
     let mut source = std::error::Error::source(e);

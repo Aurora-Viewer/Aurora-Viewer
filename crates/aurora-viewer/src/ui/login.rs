@@ -114,11 +114,11 @@ fn field(
                     let col = if !remembered && eye.hovered() { p.ink } else { p.muted };
                     img(ui, icons, if *show && !remembered { "eye-slash" } else { "eye" }, r, col);
                     let tip = if remembered {
-                        "Mot de passe retenu. Saisissez-en un nouveau pour le remplacer."
+                        aurora_i18n::tr!("ui-login-password-remembered-enter-a-new-one-to-replace-it")
                     } else if *show {
-                        "Masquer"
+                        aurora_i18n::tr!("ui-login-hide")
                     } else {
-                        "Afficher"
+                        aurora_i18n::tr!("common-show")
                     };
                     if eye.on_hover_text(tip).clicked() && !remembered {
                         *show = !*show;
@@ -163,7 +163,7 @@ fn link_button(ui: &mut egui::Ui, p: &Palette, icons: &Icons, icon: &str, name: 
     let tip = if enabled {
         name.to_owned()
     } else {
-        format!("{name} (lien à venir)")
+        aurora_i18n::tr!("ui-login-pending-link", name = name.to_string())
     };
     if resp.on_hover_text(tip).clicked() && enabled {
         ui.ctx().open_url(egui::OpenUrl::new_tab(url));
@@ -207,24 +207,28 @@ fn panel_title(ui: &mut egui::Ui, p: &Palette, icons: &Icons, icon: &str, title:
 fn version_panel(ui: &mut egui::Ui, p: &Palette, icons: &Icons, info: &LoginInfo) {
     glass(p, 10, 16).show(ui, |ui| {
         ui.set_width(ui.available_width());
-        panel_title(ui, p, icons, "tag", "Version");
+        panel_title(ui, p, icons, "tag", aurora_i18n::tr!("ui-login-version"));
         let current = aurora_version::version();
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Installée").size(12.5).color(p.muted));
+            ui.label(RichText::new(aurora_i18n::tr!("ui-login-installed")).size(12.5).color(p.muted));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(RichText::new(format!("v{current}")).size(13.0).strong().color(p.ink));
             });
         });
         ui.add_space(2.0);
         let (icon, text, col) = match &info.version {
-            VersionState::UpToDate => ("check-circle", "À jour".to_owned(), p.success),
-            VersionState::Available { version, .. } => ("sparkle", format!("v{version} disponible"), p.amber),
-            VersionState::Checking => ("arrows-clockwise", "Vérification…".to_owned(), p.muted),
-            VersionState::Failed => ("arrows-clockwise", "Vérification impossible".to_owned(), p.muted),
-            VersionState::NotConfigured => ("check-circle", "Version de développement".to_owned(), p.muted),
+            VersionState::UpToDate => ("check-circle", aurora_i18n::tr!("ui-login-up-to-date").to_owned(), p.success),
+            VersionState::Available { version, .. } => (
+                "sparkle",
+                aurora_i18n::tr!("status-v-version-available", version = version.to_string()),
+                p.amber,
+            ),
+            VersionState::Checking => ("arrows-clockwise", aurora_i18n::tr!("ui-login-checking").to_owned(), p.muted),
+            VersionState::Failed => ("arrows-clockwise", aurora_i18n::tr!("ui-login-unable-to-check").to_owned(), p.muted),
+            VersionState::NotConfigured => ("check-circle", aurora_i18n::tr!("ui-login-development-version").to_owned(), p.muted),
         };
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Dernière").size(12.5).color(p.muted));
+            ui.label(RichText::new(aurora_i18n::tr!("ui-login-latest")).size(12.5).color(p.muted));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(RichText::new(text).size(12.5).color(col));
                 let (r, _) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
@@ -233,10 +237,14 @@ fn version_panel(ui: &mut egui::Ui, p: &Palette, icons: &Icons, info: &LoginInfo
         });
         if let VersionState::Available { url, .. } = &info.version {
             ui.add_space(8.0);
-            let b = egui::Button::new(RichText::new("Télécharger la mise à jour").size(13.0).color(Color32::WHITE))
-                .fill(p.violet)
-                .corner_radius(CornerRadius::same(6))
-                .min_size(Vec2::new(ui.available_width(), 30.0));
+            let b = egui::Button::new(
+                RichText::new(aurora_i18n::tr!("ui-login-download-update"))
+                    .size(13.0)
+                    .color(Color32::WHITE),
+            )
+            .fill(p.violet)
+            .corner_radius(CornerRadius::same(6))
+            .min_size(Vec2::new(ui.available_width(), 30.0));
             if ui.add(b).clicked() && !url.is_empty() {
                 ui.ctx().open_url(egui::OpenUrl::new_tab(url));
             }
@@ -247,7 +255,7 @@ fn version_panel(ui: &mut egui::Ui, p: &Palette, icons: &Icons, info: &LoginInfo
 fn news_panel(ui: &mut egui::Ui, p: &Palette, icons: &Icons, info: &LoginInfo, max_h: f32) {
     glass(p, 10, 16).show(ui, |ui| {
         ui.set_width(ui.available_width());
-        panel_title(ui, p, icons, "newspaper", "Actualités");
+        panel_title(ui, p, icons, "newspaper", aurora_i18n::tr!("ui-login-news"));
         egui::ScrollArea::vertical()
             .max_height(max_h)
             .min_scrolled_height(max_h)
@@ -326,7 +334,11 @@ pub fn show(
                 }
                 ui.add_space(2.0);
                 ui.label(RichText::new("Aurora Viewer").size(34.0).strong().color(p.ink));
-                ui.label(RichText::new("Client Second Life  ·  Rust  ·  Vulkan").size(13.0).color(p.violet_pale));
+                ui.label(
+                    RichText::new(aurora_i18n::tr!("ui-login-second-life-client-rust-vulkan"))
+                        .size(13.0)
+                        .color(p.violet_pale),
+                );
                 ui.add_space(18.0);
             });
             glass(p, 12, 24).show(ui, |ui| {
@@ -334,72 +346,122 @@ pub fn show(
                 ui.spacing_mut().item_spacing.y = 6.0;
                 let enabled = !form.busy;
                 ui.add_enabled_ui(enabled, |ui| {
-                    ui.label(RichText::new("Connexion").size(18.0).strong().color(p.ink));
+                    ui.label(RichText::new(aurora_i18n::tr!("ui-login-login")).size(18.0).strong().color(p.ink));
                     ui.add_space(6.0);
-                    caption(ui, p, "Nom d'utilisateur");
-                    let user = field(ui, p, icons, "login_user", "user", "prenom.nom ou nom d'utilisateur", &mut settings.username, None);
+                    caption(ui, p, aurora_i18n::tr!("common-username"));
+                    let user = field(
+                        ui,
+                        p,
+                        icons,
+                        "login_user",
+                        "user",
+                        aurora_i18n::tr!("extra-first-last-or-username"),
+                        &mut settings.username,
+                        None,
+                    );
                     ui.add_space(4.0);
-                    caption(ui, p, "Mot de passe");
+                    caption(ui, p, aurora_i18n::tr!("ui-login-password"));
                     // LLPanelLogin::setFields (indra/newview/llpanellogin.cpp,
                     // originally LGPL 2.1): show 16 masked filler characters.
                     // Keep the marker out of the input so login still uses the
                     // saved hash, and typing replaces it without editing filler.
                     let hint = if form.stored.is_some() { REMEMBERED_PASSWORD_MASK } else { "" };
-                    let pass = field(ui, p, icons, "login_pass", "lock-key", hint, &mut form.password, Some(&mut form.show_password));
+                    let pass = field(
+                        ui,
+                        p,
+                        icons,
+                        "login_pass",
+                        "lock-key",
+                        hint,
+                        &mut form.password,
+                        Some(&mut form.show_password),
+                    );
                     let mut mfa = None;
                     if form.show_mfa {
                         ui.add_space(4.0);
-                        ui.label(RichText::new("Code d'authentification (2FA)").size(11.5).color(p.amber));
+                        ui.label(
+                            RichText::new(aurora_i18n::tr!("ui-login-authentication-code-2fa"))
+                                .size(11.5)
+                                .color(p.amber),
+                        );
                         mfa = Some(field(ui, p, icons, "login_mfa", "lock-key", "000000", &mut form.mfa_token, None));
                     }
 
                     ui.add_space(6.0);
                     // grid and start location side by side
                     ui.columns(2, |cols| {
-                        caption(&mut cols[0], p, "Grille");
+                        caption(&mut cols[0], p, aurora_i18n::tr!("ui-login-grid"));
                         egui::ComboBox::from_id_salt("grid")
                             .width(cols[0].available_width())
                             .selected_text(match settings.grid {
                                 GridChoice::SecondLife => "Second Life",
-                                GridChoice::SecondLifeBeta => "Aditi (bêta)",
-                                GridChoice::Custom => "Autre grille…",
+                                GridChoice::SecondLifeBeta => aurora_i18n::tr!("ui-login-aditi-beta"),
+                                GridChoice::Custom => aurora_i18n::tr!("ui-login-other-grid"),
                             })
                             .show_ui(&mut cols[0], |ui| {
                                 ui.selectable_value(&mut settings.grid, GridChoice::SecondLife, "Second Life");
-                                ui.selectable_value(&mut settings.grid, GridChoice::SecondLifeBeta, "Second Life Beta (Aditi)");
-                                ui.selectable_value(&mut settings.grid, GridChoice::Custom, "Autre grille…");
+                                ui.selectable_value(
+                                    &mut settings.grid,
+                                    GridChoice::SecondLifeBeta,
+                                    aurora_i18n::tr!("status-second-life-beta-aditi"),
+                                );
+                                ui.selectable_value(&mut settings.grid, GridChoice::Custom, aurora_i18n::tr!("ui-login-other-grid"));
                             });
-                        caption(&mut cols[1], p, "Départ");
+                        caption(&mut cols[1], p, aurora_i18n::tr!("ui-login-start"));
                         egui::ComboBox::from_id_salt("start")
                             .width(cols[1].available_width())
                             .selected_text(match settings.start_location.as_str() {
-                                "home" => "Domicile",
-                                "region" => "Région…",
-                                _ => "Dernière position",
+                                "home" => aurora_i18n::tr!("common-home"),
+                                "region" => aurora_i18n::tr!("ui-login-region"),
+                                _ => aurora_i18n::tr!("ui-login-last-location"),
                             })
                             .show_ui(&mut cols[1], |ui| {
-                                ui.selectable_value(&mut settings.start_location, "last".into(), "Dernière position");
-                                ui.selectable_value(&mut settings.start_location, "home".into(), "Domicile");
-                                ui.selectable_value(&mut settings.start_location, "region".into(), "Région…");
+                                ui.selectable_value(
+                                    &mut settings.start_location,
+                                    "last".into(),
+                                    aurora_i18n::tr!("ui-login-last-location"),
+                                );
+                                ui.selectable_value(&mut settings.start_location, "home".into(), aurora_i18n::tr!("common-home"));
+                                ui.selectable_value(&mut settings.start_location, "region".into(), aurora_i18n::tr!("ui-login-region"));
                             });
                     });
                     if settings.grid == GridChoice::Custom {
-                        field(ui, p, icons, "login_grid", "globe-simple", "http://grille.exemple:8002/", &mut settings.custom_login_uri, None);
+                        field(
+                            ui,
+                            p,
+                            icons,
+                            "login_grid",
+                            "globe-simple",
+                            "http://grille.exemple:8002/",
+                            &mut settings.custom_login_uri,
+                            None,
+                        );
                     }
                     if settings.start_location == "region" {
-                        field(ui, p, icons, "login_region", "map-pin", "Nom de la région", &mut settings.start_region, None);
+                        field(
+                            ui,
+                            p,
+                            icons,
+                            "login_region",
+                            "map-pin",
+                            aurora_i18n::tr!("ui-login-region-name"),
+                            &mut settings.start_region,
+                            None,
+                        );
                     }
                     ui.add_space(2.0);
                     ui.horizontal(|ui| {
                         super::widgets::switch(ui, p, &mut settings.remember_username);
-                        ui.label(RichText::new("Se souvenir de moi").size(12.5).color(p.muted));
+                        ui.label(RichText::new(aurora_i18n::tr!("ui-login-remember-me")).size(12.5).color(p.muted));
                     });
                     ui.horizontal(|ui| {
                         super::widgets::switch(ui, p, &mut settings.remember_password);
-                        ui.label(RichText::new("Retenir le mot de passe").size(12.5).color(p.muted)).on_hover_text(
-                            "Gardé dans le Gestionnaire d'identification de Windows, sous la forme chiffrée envoyée à la connexion (jamais en clair) ; \
-                             toute personne ouvrant votre session Windows pourra se connecter",
-                        );
+                        ui.label(
+                            RichText::new(aurora_i18n::tr!("ui-login-remember-password"))
+                                .size(12.5)
+                                .color(p.muted),
+                        )
+                        .on_hover_text(aurora_i18n::tr!("ui-login-stored-in-windows-credential-manager-as-the-hash-sent"));
                     });
                     ui.add_space(10.0);
                     let can = !settings.username.trim().is_empty() && (!form.password.is_empty() || form.stored.is_some());
@@ -426,18 +488,39 @@ pub fn show(
                     };
                     ui.painter().rect_filled(r, CornerRadius::same(8), fill);
                     if hot {
-                        ui.painter().rect_stroke(r.expand(2.0), CornerRadius::same(10), Stroke::new(2.0, p.violet.gamma_multiply(0.35)), egui::StrokeKind::Outside);
+                        ui.painter().rect_stroke(
+                            r.expand(2.0),
+                            CornerRadius::same(10),
+                            Stroke::new(2.0, p.violet.gamma_multiply(0.35)),
+                            egui::StrokeKind::Outside,
+                        );
                     }
                     let txt_col = if can { Color32::WHITE } else { Color32::WHITE.gamma_multiply(0.5) };
-                    let galley = ui.painter().layout_no_wrap("Se connecter".to_owned(), egui::FontId::proportional(16.0), txt_col);
+                    let galley = ui.painter().layout_no_wrap(
+                        aurora_i18n::tr!("ui-login-log-in").to_owned(),
+                        egui::FontId::proportional(16.0),
+                        txt_col,
+                    );
                     let total = galley.size().x + 26.0;
                     let x0 = r.center().x - total * 0.5;
-                    img(ui, icons, "sign-in", egui::Rect::from_center_size(egui::pos2(x0 + 9.0, r.center().y), Vec2::splat(18.0)), txt_col);
-                    super::widgets::paint_ink_centered(ui.painter(), galley, egui::pos2(x0 + 26.0 + (total - 26.0) * 0.5, r.center().y), txt_col);
+                    img(
+                        ui,
+                        icons,
+                        "sign-in",
+                        egui::Rect::from_center_size(egui::pos2(x0 + 9.0, r.center().y), Vec2::splat(18.0)),
+                        txt_col,
+                    );
+                    super::widgets::paint_ink_centered(
+                        ui.painter(),
+                        galley,
+                        egui::pos2(x0 + 26.0 + (total - 26.0) * 0.5, r.center().y),
+                        txt_col,
+                    );
                     if hot {
                         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                     }
-                    let enter = (user.lost_focus() || pass.lost_focus() || resp.has_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    let enter =
+                        (user.lost_focus() || pass.lost_focus() || resp.has_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter));
                     if (resp.clicked() || enter) && can && !form.busy {
                         action = LoginAction::Login;
                     }
@@ -445,11 +528,14 @@ pub fn show(
                 if let Some(msg) = form.tos_message.clone() {
                     ui.add_space(8.0);
                     ui.separator();
-                    ui.label(RichText::new("Conditions d'utilisation").strong().color(p.amber));
+                    ui.label(RichText::new(aurora_i18n::tr!("ui-login-terms-of-service")).strong().color(p.amber));
                     egui::ScrollArea::vertical().max_height(120.0).show(ui, |ui| {
                         ui.label(RichText::new(msg).size(12.0).color(p.muted));
                     });
-                    if ui.button("J'accepte les conditions et je me connecte").clicked() {
+                    if ui
+                        .button(aurora_i18n::tr!("ui-login-i-accept-the-terms-and-want-to-log-in"))
+                        .clicked()
+                    {
                         form.agree_tos = true;
                         form.tos_message = None;
                         action = LoginAction::Login;
@@ -484,13 +570,24 @@ pub fn show(
     egui::Area::new(egui::Id::new("login_links"))
         .anchor(egui::Align2::LEFT_BOTTOM, Vec2::new(32.0, -28.0))
         .show(&ctx, |ui| {
-            ui.label(RichText::new("Rejoignez la communauté").size(11.5).color(p.muted));
+            ui.label(
+                RichText::new(aurora_i18n::tr!("ui-login-join-the-community"))
+                    .size(11.5)
+                    .color(p.muted),
+            );
             ui.add_space(4.0);
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 10.0;
                 link_button(ui, p, icons, "github-logo", "GitHub", crate::links::GITHUB);
                 link_button(ui, p, icons, "discord-logo", "Discord", crate::links::DISCORD);
-                link_button(ui, p, icons, "globe-simple", "Site web", crate::links::WEBSITE);
+                link_button(
+                    ui,
+                    p,
+                    icons,
+                    "globe-simple",
+                    aurora_i18n::tr!("ui-login-website"),
+                    crate::links::WEBSITE,
+                );
             });
         });
 
@@ -501,9 +598,12 @@ pub fn show(
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 14.0;
                 ui.label(
-                    RichText::new(format!("Aurora Viewer v{}", aurora_version::version()))
-                        .size(11.5)
-                        .color(p.muted_dim),
+                    RichText::new(aurora_i18n::tr!(
+                        "ui-login-aurora-viewer-v",
+                        value0 = aurora_version::version().to_string()
+                    ))
+                    .size(11.5)
+                    .color(p.muted_dim),
                 );
                 let (r, resp) = ui.allocate_exact_size(Vec2::new(92.0, 30.0), Sense::click());
                 let hot = resp.hovered();
@@ -532,7 +632,7 @@ pub fn show(
                 );
                 let galley = ui
                     .painter()
-                    .layout_no_wrap("Quitter".to_owned(), egui::FontId::proportional(13.0), col);
+                    .layout_no_wrap(aurora_i18n::tr!("common-quit").to_owned(), egui::FontId::proportional(13.0), col);
                 super::widgets::paint_ink_centered(ui.painter(), galley, egui::pos2(r.left() + 56.0, r.center().y), col);
                 if resp.clicked() {
                     action = LoginAction::Quit;

@@ -1,0 +1,151 @@
+use aurora_i18n::{SOURCES, resolve_language};
+use fluent_syntax::ast;
+use std::collections::{BTreeMap, BTreeSet};
+
+fn inline(value: &ast::InlineExpression<&str>, variables: &mut BTreeSet<String>) {
+    match value {
+        ast::InlineExpression::VariableReference { id } => {
+            variables.insert(id.name.to_owned());
+        }
+        ast::InlineExpression::FunctionReference { arguments, .. } => {
+            for value in &arguments.positional {
+                inline(value, variables);
+            }
+            for value in &arguments.named {
+                inline(&value.value, variables);
+            }
+        }
+        ast::InlineExpression::TermReference {
+            arguments: Some(arguments),
+            ..
+        } => {
+            for value in &arguments.positional {
+                inline(value, variables);
+            }
+            for value in &arguments.named {
+                inline(&value.value, variables);
+            }
+        }
+        ast::InlineExpression::Placeable { expression: value } => expression(value, variables),
+        _ => {}
+    }
+}
+
+fn expression(value: &ast::Expression<&str>, variables: &mut BTreeSet<String>) {
+    match value {
+        ast::Expression::Inline(value) => inline(value, variables),
+        ast::Expression::Select { selector, variants } => {
+            inline(selector, variables);
+            for variant in variants {
+                pattern(&variant.value, variables);
+            }
+        }
+    }
+}
+
+fn pattern(value: &ast::Pattern<&str>, variables: &mut BTreeSet<String>) {
+    for element in &value.elements {
+        if let ast::PatternElement::Placeable { expression: value } = element {
+            expression(value, variables);
+        }
+    }
+}
+
+#[test]
+fn every_language_has_english_keys_and_variables() {
+    let mut catalogs = BTreeMap::new();
+    for &(language, source) in SOURCES {
+        let resource = fluent_syntax::parser::parse(source).unwrap_or_else(|errors| panic!("{language}: {errors:?}"));
+        let mut messages = BTreeMap::new();
+        for entry in resource.body {
+            if let ast::Entry::Message(message) = entry {
+                let mut variables = BTreeSet::new();
+                if let Some(value) = &message.value {
+                    pattern(value, &mut variables);
+                }
+                for attribute in &message.attributes {
+                    pattern(&attribute.value, &mut variables);
+                }
+                assert!(
+                    messages.insert(message.id.name, variables).is_none(),
+                    "duplicate {language} key {}",
+                    message.id.name
+                );
+            }
+        }
+        catalogs.insert(language, messages);
+    }
+    let english = catalogs.get("en").expect("English fallback");
+    assert!(english.contains_key("language-name"));
+    for (language, messages) in &catalogs {
+        assert_eq!(messages, english, "{language}: keys or variables differ");
+    }
+}
+
+#[test]
+fn saved_choice_system_locale_and_english_fallback() {
+    let languages = ["en", "fr"];
+    assert_eq!(resolve_language("en", "fr-FR", &languages), "en");
+    assert_eq!(resolve_language("default", "fr-FR", &languages), "fr");
+    assert_eq!(resolve_language("", "FR_fr", &languages), "fr");
+    assert_eq!(resolve_language("fr", "en-US", &languages), "fr");
+    assert_eq!(resolve_language("default", "de-DE", &languages), "en");
+    assert_eq!(resolve_language("unknown", "fr", &languages), "en");
+    assert_eq!(resolve_language("default", "", &languages), "en");
+    assert_eq!(resolve_language("pt-BR", "fr", &["en", "pt-BR", "pt"]), "pt-BR");
+}
+
+#[test]
+fn fluent_renders_english_and_french_plural_rules() {
+    use fluent_bundle::{FluentArgs, FluentBundle, FluentResource};
+    for &(code, source) in SOURCES.iter().filter(|&&(code, _)| code == "en" || code == "fr") {
+        let mut bundle = FluentBundle::new(vec![code.parse().unwrap()]);
+        bundle.set_use_isolating(false);
+        bundle.add_resource(FluentResource::try_new(source.to_owned()).unwrap()).unwrap();
+        for count in [0, 1, 2] {
+            let mut args = FluentArgs::new();
+            args.set("count", count);
+            let pattern = bundle.get_message("language-item-count").unwrap().value().unwrap();
+            let mut errors = Vec::new();
+            let actual = bundle.format_pattern(pattern, Some(&args), &mut errors);
+            assert!(errors.is_empty(), "{errors:?}");
+            let word = match (code, count) {
+                ("en", 1) => "item",
+                ("en", _) => "items",
+                ("fr", 0 | 1) => "élément",
+                _ => "éléments",
+            };
+            assert_eq!(actual, format!("{count} {word}"));
+        }
+    }
+}
+
+#[test]
+fn every_bundled_message_formats_with_its_declared_variables() {
+    use fluent_bundle::{FluentArgs, FluentBundle, FluentResource};
+    for &(code, source) in SOURCES {
+        let parsed = fluent_syntax::parser::parse(source).expect("Fluent syntax");
+        let mut bundle = FluentBundle::new(vec![code.parse().expect("locale")]);
+        bundle.set_use_isolating(false);
+        bundle
+            .add_resource(FluentResource::try_new(source.to_owned()).expect("catalog"))
+            .expect("unique keys");
+        for entry in parsed.body {
+            let ast::Entry::Message(message) = entry else { continue };
+            let mut variables = BTreeSet::new();
+            pattern(message.value.as_ref().expect("message value"), &mut variables);
+            let mut args = FluentArgs::new();
+            for variable in variables {
+                if variable == "count" {
+                    args.set(variable, 2);
+                } else {
+                    args.set(variable, "Zoé");
+                }
+            }
+            let value = bundle.get_message(message.id.name).expect("message").value().expect("pattern");
+            let mut errors = Vec::new();
+            let _ = bundle.format_pattern(value, Some(&args), &mut errors);
+            assert!(errors.is_empty(), "{code}/{}: {errors:?}", message.id.name);
+        }
+    }
+}

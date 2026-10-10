@@ -52,12 +52,12 @@ pub enum UiSound {
     WindowOpen,
 }
 
-/// Catalog entry: Firestorm setting name (without `UISnd`), French label,
+/// Catalog entry: Firestorm setting name (without `UISnd`), localized label,
 /// default UUID and default `PlayModeUISnd<name>`.
 pub struct Entry {
     pub sound: UiSound,
     pub name: &'static str,
-    pub label: &'static str,
+    pub label: fn() -> &'static str,
     pub uuid: Uuid,
     pub play: bool,
 }
@@ -75,11 +75,11 @@ const WINDOW_CLOSE: Uuid = u(0x2c346eda_b60c_ab33_1119_b8941916a499);
 const PIE_SLICE_0: Uuid = u(0xd9f73cf8_17b4_6f7a_1565_7951226c305d);
 
 macro_rules! e {
-    ($s:expr, $n:literal, $l:literal, $u:expr, $p:literal) => {
+    ($s:expr, $n:literal, $l:expr, $u:expr, $p:literal) => {
         Entry {
             sound: $s,
             name: $n,
-            label: $l,
+            label: || $l,
             uuid: $u,
             play: $p,
         }
@@ -91,46 +91,46 @@ use UiSound as S;
 /// Every interface sound, in the order of the preferences list.
 #[rustfmt::skip]
 pub const CATALOG: [Entry; 40] = [
-    e!(S::Click, "Click", "Clic (bouton enfoncé)", CLICK, true),
-    e!(S::ClickRelease, "ClickRelease", "Clic (bouton relâché)", CLICK, true),
-    e!(S::BadKeystroke, "BadKeystroke", "Touche refusée", u(0x2ca849ba_2885_4bc3_90ef_d4987a5b983a), true),
-    e!(S::WindowOpen, "WindowOpen", "Fenêtre ouverte", WINDOW_OPEN, true),
-    e!(S::WindowClose, "WindowClose", "Fenêtre fermée", WINDOW_CLOSE, true),
-    e!(S::ScriptFloaterOpen, "ScriptFloaterOpen", "Dialogue de script ouvert", WINDOW_OPEN, true),
-    e!(S::ScriptFloaterClose, "ScriptFloaterClose", "Dialogue de script fermé", WINDOW_CLOSE, true),
-    e!(S::PieMenuAppear, "PieMenuAppear", "Menu clic droit ouvert", u(0x8eaed61f_92ff_6485_de83_4dcc938a478e), true),
-    e!(S::PieMenuHide, "PieMenuHide", "Menu clic droit fermé", Uuid::nil(), true),
-    e!(S::PieMenuSlice(0), "PieMenuSliceHighlight0", "Menu : choix 1 survolé", PIE_SLICE_0, true),
-    e!(S::PieMenuSlice(1), "PieMenuSliceHighlight1", "Menu : choix 2 survolé", u(0xf6ba9816_dcaf_f755_7b67_51b31b6233e5), true),
-    e!(S::PieMenuSlice(2), "PieMenuSliceHighlight2", "Menu : choix 3 survolé", u(0x7aff2265_d05b_8b72_63c7_dbf96dc2f21f), true),
-    e!(S::PieMenuSlice(3), "PieMenuSliceHighlight3", "Menu : choix 4 survolé", u(0x09b2184e_8601_44e2_afbb_ce37434b8ba1), true),
-    e!(S::PieMenuSlice(4), "PieMenuSliceHighlight4", "Menu : choix 5 survolé", u(0xbbe4c7fc_7044_b05e_7b89_36924a67593c), true),
-    e!(S::PieMenuSlice(5), "PieMenuSliceHighlight5", "Menu : choix 6 survolé", u(0xd166039b_b4f5_c2ec_4911_c85c727b016c), true),
-    e!(S::PieMenuSlice(6), "PieMenuSliceHighlight6", "Menu : choix 7 survolé", u(0x242af82b_43c2_9a3b_e108_3b0c7e384981), true),
-    e!(S::PieMenuSlice(7), "PieMenuSliceHighlight7", "Menu : choix 8 survolé", u(0xc1f334fb_a5be_8fe7_22b3_29631c21cf0b), true),
-    e!(S::Alert, "Alert", "Alerte", ALERT, true),
-    e!(S::Restart, "Restart", "Redémarrage de la région", u(0xb92a0f64_7709_8811_40c5_16afd624a45f), true),
-    e!(S::TeleportOut, "TeleportOut", "Téléportation", u(0xd7a9a565_a013_2a69_797d_5332baa1a947), true),
-    e!(S::MoneyChangeUp, "MoneyChangeUp", "L$ reçus", u(0x77a018af_098e_c037_51a6_178f05877c6f), true),
-    e!(S::MoneyChangeDown, "MoneyChangeDown", "L$ dépensés", u(0x104974e3_dfda_428b_99ee_b0d4e748d3a3), true),
-    e!(S::StartIm, "StartIM", "Démarrer une conversation", START_IM, true),
-    e!(S::NewIncomingImSession, "NewIncomingIMSession", "Message privé reçu", NEW_SESSION, true),
-    e!(S::NewIncomingGroupImSession, "NewIncomingGroupIMSession", "Message de groupe reçu", NEW_SESSION, true),
-    e!(S::NewIncomingConfImSession, "NewIncomingConfIMSession", "Message de conférence reçu", NEW_SESSION, true),
-    e!(S::NearbyChat, "NearbyChat", "Chat local reçu", u(0xa3f48b85_c29f_1f97_ebb6_644b7c053512), false),
-    e!(S::Typing, "Typing", "Avatars qui écrivent", u(0x5e191c7b_8996_9ced_a177_b2ac32bfea06), true),
-    e!(S::FriendOnline, "FriendOnline", "Ami en ligne", ALERT, false),
-    e!(S::FriendOffline, "FriendOffline", "Ami hors ligne", ALERT, false),
-    e!(S::FriendshipOffer, "FriendshipOffer", "Offre d'amitié", NEW_SESSION, false),
-    e!(S::TeleportOffer, "TeleportOffer", "Offre de téléportation", NEW_SESSION, false),
-    e!(S::InventoryOffer, "InventoryOffer", "Objet offert", NEW_SESSION, false),
-    e!(S::GroupInvitation, "GroupInvitation", "Invitation dans un groupe", START_IM, false),
-    e!(S::GroupNotice, "GroupNotice", "Avis de groupe", START_IM, false),
-    e!(S::ObjectCreate, "ObjectCreate", "Création d'un objet", u(0xf4a0660f_5446_dea2_80b7_6482a082803c), true),
-    e!(S::ObjectDelete, "ObjectDelete", "Suppression d'un objet", u(0x0cb7b00a_4c10_6948_84de_a93c09af2ba9), false),
-    e!(S::ObjectRezOut, "ObjectRezOut", "Objet pris", Uuid::nil(), true),
-    e!(S::MicToggle, "MicToggle", "Micro activé / coupé", PIE_SLICE_0, false),
-    e!(S::TrackerBeacon, "TrackerBeacon", "Balise de destination", ALERT, false),
+    e!(S::Click, "Click", aurora_i18n::tr!("ui-sound-click-button-pressed"), CLICK, true),
+    e!(S::ClickRelease, "ClickRelease", aurora_i18n::tr!("ui-sound-click-button-released"), CLICK, true),
+    e!(S::BadKeystroke, "BadKeystroke", aurora_i18n::tr!("ui-sound-key-rejected"), u(0x2ca849ba_2885_4bc3_90ef_d4987a5b983a), true),
+    e!(S::WindowOpen, "WindowOpen", aurora_i18n::tr!("ui-sound-window-opened"), WINDOW_OPEN, true),
+    e!(S::WindowClose, "WindowClose", aurora_i18n::tr!("ui-sound-window-closed"), WINDOW_CLOSE, true),
+    e!(S::ScriptFloaterOpen, "ScriptFloaterOpen", aurora_i18n::tr!("ui-sound-script-dialog-opened"), WINDOW_OPEN, true),
+    e!(S::ScriptFloaterClose, "ScriptFloaterClose", aurora_i18n::tr!("ui-sound-script-dialog-closed"), WINDOW_CLOSE, true),
+    e!(S::PieMenuAppear, "PieMenuAppear", aurora_i18n::tr!("ui-sound-context-menu-opened"), u(0x8eaed61f_92ff_6485_de83_4dcc938a478e), true),
+    e!(S::PieMenuHide, "PieMenuHide", aurora_i18n::tr!("ui-sound-context-menu-closed"), Uuid::nil(), true),
+    e!(S::PieMenuSlice(0), "PieMenuSliceHighlight0", aurora_i18n::tr!("ui-sound-menu-option-1-hovered"), PIE_SLICE_0, true),
+    e!(S::PieMenuSlice(1), "PieMenuSliceHighlight1", aurora_i18n::tr!("ui-sound-menu-option-2-hovered"), u(0xf6ba9816_dcaf_f755_7b67_51b31b6233e5), true),
+    e!(S::PieMenuSlice(2), "PieMenuSliceHighlight2", aurora_i18n::tr!("ui-sound-menu-option-3-hovered"), u(0x7aff2265_d05b_8b72_63c7_dbf96dc2f21f), true),
+    e!(S::PieMenuSlice(3), "PieMenuSliceHighlight3", aurora_i18n::tr!("ui-sound-menu-option-4-hovered"), u(0x09b2184e_8601_44e2_afbb_ce37434b8ba1), true),
+    e!(S::PieMenuSlice(4), "PieMenuSliceHighlight4", aurora_i18n::tr!("ui-sound-menu-option-5-hovered"), u(0xbbe4c7fc_7044_b05e_7b89_36924a67593c), true),
+    e!(S::PieMenuSlice(5), "PieMenuSliceHighlight5", aurora_i18n::tr!("ui-sound-menu-option-6-hovered"), u(0xd166039b_b4f5_c2ec_4911_c85c727b016c), true),
+    e!(S::PieMenuSlice(6), "PieMenuSliceHighlight6", aurora_i18n::tr!("ui-sound-menu-option-7-hovered"), u(0x242af82b_43c2_9a3b_e108_3b0c7e384981), true),
+    e!(S::PieMenuSlice(7), "PieMenuSliceHighlight7", aurora_i18n::tr!("ui-sound-menu-option-8-hovered"), u(0xc1f334fb_a5be_8fe7_22b3_29631c21cf0b), true),
+    e!(S::Alert, "Alert", aurora_i18n::tr!("ui-sound-alert"), ALERT, true),
+    e!(S::Restart, "Restart", aurora_i18n::tr!("ui-sound-region-restart"), u(0xb92a0f64_7709_8811_40c5_16afd624a45f), true),
+    e!(S::TeleportOut, "TeleportOut", aurora_i18n::tr!("common-teleport-2"), u(0xd7a9a565_a013_2a69_797d_5332baa1a947), true),
+    e!(S::MoneyChangeUp, "MoneyChangeUp", aurora_i18n::tr!("ui-sound-l-received"), u(0x77a018af_098e_c037_51a6_178f05877c6f), true),
+    e!(S::MoneyChangeDown, "MoneyChangeDown", aurora_i18n::tr!("ui-sound-l-spent"), u(0x104974e3_dfda_428b_99ee_b0d4e748d3a3), true),
+    e!(S::StartIm, "StartIM", aurora_i18n::tr!("ui-sound-start-conversation"), START_IM, true),
+    e!(S::NewIncomingImSession, "NewIncomingIMSession", aurora_i18n::tr!("ui-sound-private-message-received"), NEW_SESSION, true),
+    e!(S::NewIncomingGroupImSession, "NewIncomingGroupIMSession", aurora_i18n::tr!("ui-sound-group-message-received"), NEW_SESSION, true),
+    e!(S::NewIncomingConfImSession, "NewIncomingConfIMSession", aurora_i18n::tr!("ui-sound-conference-message-received"), NEW_SESSION, true),
+    e!(S::NearbyChat, "NearbyChat", aurora_i18n::tr!("ui-sound-nearby-chat-received"), u(0xa3f48b85_c29f_1f97_ebb6_644b7c053512), false),
+    e!(S::Typing, "Typing", aurora_i18n::tr!("ui-sound-typing-avatars"), u(0x5e191c7b_8996_9ced_a177_b2ac32bfea06), true),
+    e!(S::FriendOnline, "FriendOnline", aurora_i18n::tr!("ui-sound-friend-online"), ALERT, false),
+    e!(S::FriendOffline, "FriendOffline", aurora_i18n::tr!("ui-sound-friend-offline"), ALERT, false),
+    e!(S::FriendshipOffer, "FriendshipOffer", aurora_i18n::tr!("ui-sound-friendship-offer"), NEW_SESSION, false),
+    e!(S::TeleportOffer, "TeleportOffer", aurora_i18n::tr!("ui-sound-teleport-offer"), NEW_SESSION, false),
+    e!(S::InventoryOffer, "InventoryOffer", aurora_i18n::tr!("ui-sound-object-offered"), NEW_SESSION, false),
+    e!(S::GroupInvitation, "GroupInvitation", aurora_i18n::tr!("ui-sound-group-invitation"), START_IM, false),
+    e!(S::GroupNotice, "GroupNotice", aurora_i18n::tr!("common-group-notice"), START_IM, false),
+    e!(S::ObjectCreate, "ObjectCreate", aurora_i18n::tr!("ui-sound-object-creation"), u(0xf4a0660f_5446_dea2_80b7_6482a082803c), true),
+    e!(S::ObjectDelete, "ObjectDelete", aurora_i18n::tr!("ui-sound-object-deletion"), u(0x0cb7b00a_4c10_6948_84de_a93c09af2ba9), false),
+    e!(S::ObjectRezOut, "ObjectRezOut", aurora_i18n::tr!("ui-sound-object-taken"), Uuid::nil(), true),
+    e!(S::MicToggle, "MicToggle", aurora_i18n::tr!("ui-sound-microphone-on-off"), PIE_SLICE_0, false),
+    e!(S::TrackerBeacon, "TrackerBeacon", aurora_i18n::tr!("ui-sound-destination-beacon"), ALERT, false),
 ];
 
 impl UiSound {
@@ -169,10 +169,10 @@ impl ImSoundMode {
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::Mute => "Jamais",
-            Self::NewSession => "Nouvelle conversation",
-            Self::EveryMessage => "Chaque message",
-            Self::NotFocused => "Si la conversation n'est pas au premier plan",
+            Self::Mute => aurora_i18n::tr!("ui-sound-never"),
+            Self::NewSession => aurora_i18n::tr!("ui-sound-new-conversation"),
+            Self::EveryMessage => aurora_i18n::tr!("ui-sound-every-message"),
+            Self::NotFocused => aurora_i18n::tr!("ui-sound-when-the-conversation-is-not-in-the-foreground"),
         }
     }
 

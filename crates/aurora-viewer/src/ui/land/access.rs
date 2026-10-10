@@ -16,11 +16,11 @@ use uuid::Uuid;
 /// Ban list duration column (parent floater strings Hours / Minutes...).
 pub(super) fn ban_duration(time: i32, now: i64) -> String {
     if time == 0 {
-        return "Toujours".into();
+        return aurora_i18n::tr!("common-always").into();
     }
     let s = (time as i64 - now).max(0);
     if s >= 7200 {
-        format!("{} hrs.", s / 3600)
+        aurora_i18n::tr!("status-hrs", value0 = format!("{}", s / 3600))
     } else if s >= 3600 {
         "1 hr.".into()
     } else if s >= 120 {
@@ -45,7 +45,7 @@ pub(super) fn access_prefix(time: i32, now: i64) -> String {
     } else {
         format!("{s} s")
     };
-    format!(" ({left} restantes) ")
+    aurora_i18n::tr!("status-left-remaining", left = left.to_string())
 }
 
 /// callbackAvatarCBAccess: add one resident (and take them off the ban list).
@@ -131,9 +131,9 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
     };
     let before = now;
 
-    let estate = " (défini par le domaine)";
-    let (r, on) = check(ui, can_allowed, now.public, "Tout le monde peut rendre visite");
-    r.on_hover_text("Des lignes d'interdiction seront créées si cette case n'est pas cochée");
+    let estate = aurora_i18n::tr!("ui-land-access-set-by-the-estate");
+    let (r, on) = check(ui, can_allowed, now.public, aurora_i18n::tr!("ui-land-access-anyone-can-visit"));
+    r.on_hover_text(aurora_i18n::tr!("ui-land-access-ban-lines-will-appear-if-this-box-is-not"));
     if on != now.public {
         now.public = on;
         // FIRE-12551: allow the group when public access goes, or we may ban ourselves
@@ -146,23 +146,25 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
             ui,
             now.public && can_allowed && !parcel.region_deny_age_unverified,
             now.age,
-            &format!(
-                "Doit avoir plus de 18 ans{}",
-                if parcel.region_deny_age_unverified { estate } else { "" }
+            &aurora_i18n::tr!(
+                "ui-land-access-must-be-over-18",
+                value0 = (if parcel.region_deny_age_unverified { estate } else { "" }).to_string()
             ),
         );
-        r.on_hover_text("Pour accéder à cette parcelle, les résidents doivent avoir au moins 18 ans.");
+        r.on_hover_text(aurora_i18n::tr!("ui-land-access-residents-must-be-at-least-18-to-access-this"));
         now.age = on;
         let (r, on) = check(
             ui,
             now.public && can_allowed && !parcel.region_deny_anonymous,
             now.payment,
-            &format!(
-                "Les infos de paiement doivent être enregistrées dans le dossier{}",
-                if parcel.region_deny_anonymous { estate } else { "" }
+            &aurora_i18n::tr!(
+                "ui-land-access-payment-info-must-be-on-file",
+                value0 = (if parcel.region_deny_anonymous { estate } else { "" }).to_string()
             ),
         );
-        r.on_hover_text("Pour pouvoir accéder à cette parcelle, les résidents doivent avoir enregistré des informations de paiement.");
+        r.on_hover_text(aurora_i18n::tr!(
+            "ui-land-access-residents-must-have-payment-info-on-file-to-access"
+        ));
         now.payment = on;
     });
     let can_allow_group = !now.public || (now.payment ^ now.age);
@@ -170,9 +172,12 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
         ui,
         group_name.is_some() && can_allowed && can_allow_group,
         now.group,
-        &format!("Autoriser le groupe {} sans restrictions", group_name.clone().unwrap_or_default()),
+        &aurora_i18n::tr!(
+            "ui-land-access-allow-group-without-restrictions",
+            value0 = group_name.clone().unwrap_or_default().to_string()
+        ),
     );
-    r.on_hover_text("Définir le groupe à l'onglet Général.");
+    r.on_hover_text(aurora_i18n::tr!("ui-land-access-set-the-group-on-the-general-tab"));
     if on != now.group {
         now.group = on;
         // onCommitGroupCheck: passes "to the group" make no sense with group access
@@ -181,19 +186,28 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
         }
     }
     ui.horizontal(|ui| {
-        let (r, on) = check(ui, !now.public && can_allowed, now.pass, "Vendre des pass à :");
-        r.on_hover_text("Autoriser un accès temporaire à cette parcelle");
+        let (r, on) = check(
+            ui,
+            !now.public && can_allowed,
+            now.pass,
+            aurora_i18n::tr!("ui-land-access-sell-passes-to"),
+        );
+        r.on_hover_text(aurora_i18n::tr!("ui-land-access-allow-temporary-access-to-this-parcel"));
         now.pass = on;
         let pass_on = !now.public && now.pass && can_allowed;
         ui.add_enabled_ui(pass_on, |ui| {
             egui::ComboBox::from_id_salt("land_pass_to")
-                .selected_text(if now.pass_group { "Groupe" } else { "Tout le monde" })
+                .selected_text(if now.pass_group {
+                    aurora_i18n::tr!("common-group")
+                } else {
+                    aurora_i18n::tr!("common-everyone")
+                })
                 .width(120.0)
                 .show_ui(ui, |ui| {
-                    if ui.selectable_label(!now.pass_group, "Tout le monde").clicked() {
+                    if ui.selectable_label(!now.pass_group, aurora_i18n::tr!("common-everyone")).clicked() {
                         now.pass_group = false;
                     }
-                    if ui.selectable_label(now.pass_group, "Groupe").clicked() {
+                    if ui.selectable_label(now.pass_group, aurora_i18n::tr!("common-group")).clicked() {
                         now.pass_group = true;
                     }
                 });
@@ -206,13 +220,22 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
         // them to the group check by mistake: they only went out with
         // another change)
         let (mut price, mut hours) = s.pass_edit.unwrap_or((now.price, now.hours));
-        dim(ui, p, "Prix en L$ :");
-        let r = ui.add_enabled(pass_on, egui::DragValue::new(&mut price).range(0..=500));
+        dim(ui, p, aurora_i18n::tr!("ui-land-access-price-in-l"));
+        let r = ui.add_enabled(
+            pass_on,
+            egui::DragValue::new(&mut price)
+                .custom_parser(aurora_i18n::parse_number)
+                .range(0..=500),
+        );
         ui.add_space(16.0);
-        dim(ui, p, "Durée en heures :");
+        dim(ui, p, aurora_i18n::tr!("ui-land-access-duration-in-hours"));
         let r2 = ui.add_enabled(
             pass_on,
-            egui::DragValue::new(&mut hours).range(0.0..=24.0).speed(0.1).fixed_decimals(2),
+            egui::DragValue::new(&mut hours)
+                .custom_parser(aurora_i18n::parse_number)
+                .range(0.0..=24.0)
+                .speed(0.1)
+                .fixed_decimals(2),
         );
         let active = r.dragged() || r.has_focus() || r2.dragged() || r2.has_focus();
         if active {
@@ -222,7 +245,11 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
             now.hours = hours;
         }
     });
-    dim(ui, p, "(Le propriétaire de domaine peut avoir limité ces choix)");
+    dim(
+        ui,
+        p,
+        aurora_i18n::tr!("ui-land-access-the-estate-owner-may-have-restricted-these-choices"),
+    );
     s.pass_to_group = now.pass_group;
     if now != before {
         commit(world, &parcel, &now, group_name.is_some());
@@ -250,9 +277,17 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
                 egui::Layout::top_down(egui::Align::Min),
                 |ui| {
                     let title = if kind == AL_ACCESS {
-                        format!("Toujours autorisé ({}, max. {PARCEL_MAX_ACCESS_LIST})", list.len())
+                        aurora_i18n::tr!(
+                            "ui-land-access-always-allowed-max",
+                            value0 = format!("{}", list.len()),
+                            PARCEL_MAX_ACCESS_LIST = format!("{}", PARCEL_MAX_ACCESS_LIST)
+                        )
                     } else {
-                        format!("Interdits ({}, max. {PARCEL_MAX_ACCESS_LIST})", list.len())
+                        aurora_i18n::tr!(
+                            "extra-banned-max",
+                            value0 = format!("{}", list.len()),
+                            PARCEL_MAX_ACCESS_LIST = format!("{}", PARCEL_MAX_ACCESS_LIST)
+                        )
                     };
                     ui.label(RichText::new(title).size(12.0).color(p.ink));
                     let list_h = (ui.available_height() - 60.0).max(80.0);
@@ -323,24 +358,29 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
                             });
                     });
                     ui.horizontal(|ui| {
-                        if super::button(ui, p, "Ajouter", can && list.len() < PARCEL_MAX_ACCESS_LIST).clicked() {
+                        if super::button(ui, p, aurora_i18n::tr!("common-add"), can && list.len() < PARCEL_MAX_ACCESS_LIST).clicked() {
                             if kind == AL_ACCESS {
                                 add_access = true;
                             } else {
                                 add_ban = true;
                             }
                         }
-                        if super::button(ui, p, "Supprimer", can && !sel_set.is_empty()).clicked() {
+                        if super::button(ui, p, aurora_i18n::tr!("common-delete"), can && !sel_set.is_empty()).clicked() {
                             remove = Some((kind, sel_set.clone()));
                         }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if super::button(ui, p, "Importer", can && list.len() < PARCEL_MAX_ACCESS_LIST)
-                                .on_hover_text("Importer un fichier CSV contenant uniquement des UUID valides, un par ligne.")
-                                .clicked()
+                            if super::button(
+                                ui,
+                                p,
+                                aurora_i18n::tr!("ui-land-access-import"),
+                                can && list.len() < PARCEL_MAX_ACCESS_LIST,
+                            )
+                            .on_hover_text(aurora_i18n::tr!("ui-land-access-import-a-csv-file-containing-only-valid-uuids-one"))
+                            .clicked()
                             {
                                 import = Some(kind);
                             }
-                            if super::button(ui, p, "Exporter", can && !list.is_empty()).clicked() {
+                            if super::button(ui, p, aurora_i18n::tr!("ui-land-access-export"), can && !list.is_empty()).clicked() {
                                 let file = if kind == AL_ACCESS {
                                     "land_access_list.csv"
                                 } else {
@@ -387,7 +427,10 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
         s.file_job = None;
         match done {
             super::files::Done::Saved(path) => {
-                s.dialog = Some(Dialog::Message(format!("Exportation terminée et sauvegardée dans {path}.")));
+                s.dialog = Some(Dialog::Message(aurora_i18n::tr!(
+                    "ui-land-access-export-completed-and-saved-to",
+                    path = path.to_string()
+                )));
             }
             super::files::Done::Opened(kind, text) => import_list(s, world, kind, &text),
             super::files::Done::Failed(e) => s.dialog = Some(Dialog::Message(e)),
@@ -468,7 +511,9 @@ pub(super) fn import_csv(text: &str) -> Vec<Uuid> {
 fn import_list(s: &mut LandUi, world: &mut World, kind: u32, text: &str) {
     let ids = import_csv(text);
     if ids.is_empty() {
-        s.dialog = Some(Dialog::Message("Aucun UUID valide trouvé dans le fichier.".into()));
+        s.dialog = Some(Dialog::Message(
+            aurora_i18n::tr!("ui-land-access-no-valid-uuid-found-in-the-file").into(),
+        ));
         return;
     }
     let Some(sel) = world.land.sel.as_mut() else {
@@ -480,9 +525,10 @@ fn import_list(s: &mut LandUi, world: &mut World, kind: u32, text: &str) {
     let list = if kind == AL_BAN { &mut sel.bans } else { &mut sel.access };
     let available = PARCEL_MAX_ACCESS_LIST.saturating_sub(list.len());
     if ids.len() > available {
-        s.dialog = Some(Dialog::Message(format!(
-            "La liste importée contient {} entrées, mais seules {available} places sont disponibles.",
-            ids.len()
+        s.dialog = Some(Dialog::Message(aurora_i18n::tr!(
+            "ui-land-access-the-imported-list-contains-entries-but-only-slots-are",
+            value0 = format!("{}", ids.len()),
+            available = format!("{}", available)
         )));
         return;
     }
@@ -491,7 +537,10 @@ fn import_list(s: &mut LandUi, world: &mut World, kind: u32, text: &str) {
     }
     sel.revision += 1;
     world.land.send_lists(kind);
-    s.dialog = Some(Dialog::Message(format!("{} entrées importées.", ids.len())));
+    s.dialog = Some(Dialog::Message(aurora_i18n::tr!(
+        "ui-land-access-entries-imported",
+        value0 = format!("{}", ids.len())
+    )));
 }
 
 #[cfg(test)]
@@ -500,13 +549,13 @@ mod tests {
 
     #[test]
     fn durations_like_the_floater() {
-        assert_eq!(ban_duration(0, 0), "Toujours");
+        assert_eq!(ban_duration(0, 0), aurora_i18n::tr!("common-always"));
         assert_eq!(ban_duration(3 * 3600 + 5, 0), "3 hrs.");
         assert_eq!(ban_duration(3700, 0), "1 hr.");
         assert_eq!(ban_duration(600, 0), "10 min");
         assert_eq!(ban_duration(30, 0), "30 s");
         assert_eq!(ban_duration(10, 100), "0 s");
-        assert_eq!(access_prefix(300, 0), " (5 min restantes) ");
+        assert_eq!(access_prefix(300, 0), aurora_i18n::tr!("status-left-remaining", left = "5 min"));
     }
 
     #[test]

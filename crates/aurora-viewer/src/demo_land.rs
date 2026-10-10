@@ -42,8 +42,8 @@ fn initial(owner: bool) -> ParcelInfo {
     ParcelInfo {
         local_id: 1,
         sequence_id: aurora_net::land::SELECTED_PARCEL_SEQ_ID,
-        name: "Place d'Aurora (démo hors ligne)".into(),
-        desc: "Parcelle de démonstration hors ligne d'Aurora Viewer.\nVisitez la fontaine, la plage et la colline.".into(),
+        name: aurora_i18n::tr!("demo-land-aurora-plaza-offline-demo").into(),
+        desc: aurora_i18n::tr!("demo-land-aurora-viewer-s-offline-demo-parcel-visit-the-fountain").into(),
         owner_id: if owner { DEMO_AGENT } else { DEMO_GROUP1 },
         group_id: DEMO_GROUP1,
         is_group_owned: !owner,
@@ -195,15 +195,12 @@ pub fn reply(c: &LandCommand) -> Vec<NetEvent> {
                 handle: super::HANDLE,
                 covenant_id: COVENANT,
                 timestamp: 1_717_647_528,
-                estate_name: "Aurora Démo".into(),
+                estate_name: aurora_i18n::tr!("common-aurora-demo").into(),
                 estate_owner: DEMO_LOUP,
             }),
             ev(LandEvent::CovenantText {
                 covenant_id: COVENANT,
-                text: Some(
-                    "Bienvenue sur le domaine Aurora Démo.\n\nEn achetant un terrain sur ce domaine, vous acceptez les règles suivantes :\n\n1. Les constructions restent dans le thème nordique du domaine.\n2. Pas de panneaux publicitaires visibles depuis les parcelles voisines.\n3. Les bruits de fond (radios, scripts sonores) sont limités à votre parcelle.\n4. Les parcelles inoccupées pendant 90 jours peuvent être reprises.\n\nMerci de garder la place d'Aurora accueillante pour tout le monde."
-                        .into(),
-                ),
+                text: Some(aurora_i18n::tr!("demo-land-welcome-to-the-aurora-demo-estate-by-buying-land").into()),
             }),
         ],
         LandCommand::ParcelIdRequest { local_id, .. } => vec![ev(LandEvent::ParcelId {
@@ -226,17 +223,19 @@ pub fn reply(c: &LandCommand) -> Vec<NetEvent> {
             ids.iter()
                 .map(|id| {
                     let name = match *id {
-                        XP_AURORA => "Expérience Aurora",
+                        XP_AURORA => aurora_i18n::tr!("demo-land-aurora-experience"),
                         XP_SITTER => "AVSitter",
-                        XP_INTERACT => "Interactions (General)",
-                        _ => "Expérience inconnue",
+                        XP_INTERACT => aurora_i18n::tr!("demo-land-interactions-general"),
+                        _ => aurora_i18n::tr!("demo-land-unknown-experience"),
                     };
                     (*id, name.to_owned())
                 })
                 .collect(),
         ))],
         LandCommand::GroupNames(ids) => vec![ev(LandEvent::GroupNames(
-            ids.iter().map(|id| (*id, "Groupe de démonstration".to_owned())).collect(),
+            ids.iter()
+                .map(|id| (*id, aurora_i18n::tr!("demo-land-demo-group").to_owned()))
+                .collect(),
         ))],
         LandCommand::AvatarSearch { query } => vec![ev(LandEvent::AvatarSearch {
             query: query.clone(),

@@ -67,7 +67,7 @@ pub fn metadata_thumbnail(id: Uuid) -> Llsd {
 /// for new folders are replaced with the UUIDs actually assigned by AIS.
 pub async fn mutate(http: &reqwest::Client, cap: &str, fetch_cap: &str, owner: Uuid, change: Mutation) -> Result<Reply, String> {
     if change.operations.len() > 2048 || change.copies.len() > 2048 || change.refresh.is_empty() {
-        return Err("La sélection est vide ou trop volumineuse.".into());
+        return Err(aurora_i18n::tr!("inventory-operations-the-selection-is-empty-or-too-large").into());
     }
     let cap = cap.trim_end_matches('/');
     let mut created = HashMap::new();
@@ -87,7 +87,7 @@ pub async fn mutate(http: &reqwest::Client, cap: &str, fetch_cap: &str, owner: U
                 let reply = crate::outfits::send(http.post(format!("{cap}/category/{parent}?tid={}", Uuid::new_v4())), &body).await?;
                 let actual = reply["_created_categories"].at(0).as_uuid();
                 if actual.is_nil() {
-                    return Err("Le serveur n’a pas confirmé le nouveau dossier. Rechargez avant de réessayer.".into());
+                    return Err(aurora_i18n::tr!("inventory-operations-the-server-did-not-confirm-the-new-folder-reload").into());
                 }
                 created.insert(*id, actual);
             }
@@ -107,7 +107,7 @@ pub async fn mutate(http: &reqwest::Client, cap: &str, fetch_cap: &str, owner: U
                 if response["_created_items"].as_array().len() < links.len()
                     || response["_created_items"].as_array().iter().any(|id| id.as_uuid().is_nil())
                 {
-                    return Err("Le serveur n’a pas confirmé la création des liens. Aucun ancien lien ne sera supprimé.".into());
+                    return Err(aurora_i18n::tr!("inventory-operations-the-server-did-not-confirm-link-creation-no-old").into());
                 }
             }
             Operation::Delete { id, folder } => {
@@ -126,15 +126,15 @@ pub async fn mutate(http: &reqwest::Client, cap: &str, fetch_cap: &str, owner: U
     for chunk in refresh.chunks(16) {
         let doc = crate::caps::post_llsd(http, fetch_cap, &super::fetch_request_body(chunk, owner))
             .await
-            .map_err(|_| "Modification envoyée, mais relecture impossible. Rechargez l’inventaire.".to_owned())?;
+            .map_err(|_| aurora_i18n::tr!("inventory-operations-change-sent-but-could-not-read-it-back-reload").to_owned())?;
         let fetched = super::parse_fetch_response(&doc);
         if chunk.iter().any(|id| !fetched.iter().any(|c| c.folder_id == *id && c.version >= 0)) {
-            return Err("Relecture incomplète. Rechargez l’inventaire avant de réessayer.".into());
+            return Err(aurora_i18n::tr!("inventory-operations-read-back-incomplete-reload-inventory-before-trying-again").into());
         }
         contents.extend(fetched);
     }
     if !confirmed(&change.operations, &created, &contents) {
-        return Err("Le serveur n’a pas confirmé toutes les modifications. Les dossiers seront rechargés.".into());
+        return Err(aurora_i18n::tr!("inventory-operations-the-server-did-not-confirm-every-change-the-folders").into());
     }
     // Parent metadata must precede its descendants (including new folders).
     contents.sort_by_key(|c| created.values().any(|id| *id == c.folder_id));
@@ -333,7 +333,7 @@ pub fn checksum(it: &InvItem) -> u32 {
 
 pub async fn preview(http: &reqwest::Client, cap: &str, kind: &str, asset: Uuid) -> Result<Vec<u8>, String> {
     if kind.is_empty() || asset.is_nil() {
-        return Err("Cet élément n’a pas de contenu consultable.".into());
+        return Err(aurora_i18n::tr!("inventory-operations-this-item-has-no-viewable-contents").into());
     }
     let url = format!("{cap}{}{kind}={asset}", if cap.contains('?') { "&" } else { "?" });
     let mut response = http
@@ -341,14 +341,21 @@ pub async fn preview(http: &reqwest::Client, cap: &str, kind: &str, asset: Uuid)
         .timeout(std::time::Duration::from_secs(30))
         .send()
         .await
-        .map_err(|_| "Le contenu n’a pas pu être chargé.".to_owned())?;
+        .map_err(|_| aurora_i18n::tr!("inventory-operations-could-not-load-contents").to_owned())?;
     if !response.status().is_success() {
-        return Err(format!("Le contenu est indisponible (HTTP {}).", response.status().as_u16()));
+        return Err(aurora_i18n::tr!(
+            "inventory-operations-contents-unavailable-http",
+            value0 = format!("{}", response.status().as_u16())
+        ));
     }
     let mut bytes = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(|_| "Lecture interrompue.".to_owned())? {
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| aurora_i18n::tr!("inventory-operations-read-interrupted").to_owned())?
+    {
         if bytes.len() + chunk.len() > 4 * 1024 * 1024 {
-            return Err("Le contenu dépasse la taille maximale de prévisualisation.".into());
+            return Err(aurora_i18n::tr!("inventory-operations-the-contents-exceed-the-maximum-preview-size").into());
         }
         bytes.extend_from_slice(&chunk);
     }
@@ -367,7 +374,7 @@ pub async fn save_content(
     data: Vec<u8>,
 ) -> Result<InvItem, String> {
     if data.len() > 1024 * 1024 {
-        return Err("Le document est trop volumineux.".into());
+        return Err(aurora_i18n::tr!("inventory-operations-the-document-is-too-large").into());
     }
     let mut body = llsd_map! { "item_id" => item };
     if kind == 10 {
@@ -375,9 +382,9 @@ pub async fn save_content(
     }
     let answer = crate::caps::post_llsd(http, cap, &body)
         .await
-        .map_err(|_| "L’enregistrement a été refusé.".to_owned())?;
+        .map_err(|_| aurora_i18n::tr!("inventory-operations-the-save-was-rejected").to_owned())?;
     if answer["state"].as_str() != "upload" {
-        return Err("Le serveur n’a pas proposé de chargement.".into());
+        return Err(aurora_i18n::tr!("inventory-operations-the-server-did-not-offer-an-upload").into());
     }
     let url = answer["uploader"].to_string_value();
     let response = http
@@ -387,25 +394,31 @@ pub async fn save_content(
         .timeout(std::time::Duration::from_secs(30))
         .send()
         .await
-        .map_err(|_| "Enregistrement interrompu.".to_owned())?;
+        .map_err(|_| aurora_i18n::tr!("inventory-operations-save-interrupted").to_owned())?;
     if !response.status().is_success() {
-        return Err(format!("Enregistrement refusé (HTTP {}).", response.status().as_u16()));
+        return Err(aurora_i18n::tr!(
+            "inventory-operations-save-rejected-http",
+            value0 = format!("{}", response.status().as_u16())
+        ));
     }
-    let bytes = response.bytes().await.map_err(|_| "Réponse interrompue.".to_owned())?;
-    let ack = aurora_llsd::from_xml(&bytes).map_err(|_| "Réponse illisible.".to_owned())?;
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|_| aurora_i18n::tr!("common-interrupted-response").to_owned())?;
+    let ack = aurora_llsd::from_xml(&bytes).map_err(|_| aurora_i18n::tr!("inventory-operations-unreadable-response").to_owned())?;
     if ack["state"].as_str() != "complete" {
-        return Err("Le serveur n’a pas confirmé l’enregistrement.".into());
+        return Err(aurora_i18n::tr!("inventory-operations-the-server-did-not-confirm-the-save").into());
     }
     if kind == 10 && !ack["compiled"].as_bool() {
-        return Err("Le script contient des erreurs de compilation. Vérifiez le code et réessayez.".into());
+        return Err(aurora_i18n::tr!("inventory-operations-the-script-contains-compilation-errors-check-the-code-and").into());
     }
     let doc = crate::caps::post_llsd(http, fetch, &super::fetch_items_body(&[item], owner))
         .await
-        .map_err(|_| "Enregistré, mais relecture impossible. Rechargez l’inventaire.".to_owned())?;
+        .map_err(|_| aurora_i18n::tr!("inventory-operations-saved-but-could-not-read-it-back-reload-inventory").to_owned())?;
     super::parse_items_response(&doc)
         .into_iter()
         .find(|it| it.id == item)
-        .ok_or_else(|| "L’élément enregistré n’a pas été retrouvé.".into())
+        .ok_or_else(|| aurora_i18n::tr!("inventory-operations-the-saved-item-could-not-be-found").into())
 }
 
 #[cfg(test)]

@@ -16,7 +16,7 @@ pub(super) fn show(
     actions: &mut Vec<InvAction>,
 ) -> bool {
     let Some(it) = inv.items.get(&id) else {
-        ui.label("L’élément n’existe plus.");
+        ui.label(aurora_i18n::tr!("ui-inventory-properties-the-item-no-longer-exists"));
         return false;
     };
     if st.property_edit.as_ref().is_none_or(|(item, _)| *item != id) {
@@ -40,30 +40,30 @@ pub(super) fn show(
         ui.horizontal_top(|ui| {
             thumbnail::picture(ui, p, it.thumbnail, 128.0, images, &mut st.wanted_images);
             ui.vertical(|ui| {
-                for (label, resident) in [("Propriétaire :", it.owner), ("Créateur :", it.creator)] {
+                for (label, resident) in [(aurora_i18n::tr!("common-owner-2"), it.owner), (aurora_i18n::tr!("common-creator-2"), it.creator)] {
                     ui.label(RichText::new(label).size(12.0).color(p.muted));
-                    let name = facts.names.get(&resident).map(String::as_str).unwrap_or("Inconnu");
+                    let name = facts.names.get(&resident).map(String::as_str).unwrap_or(aurora_i18n::tr!("common-unknown"));
                     if ui.link(RichText::new(name).size(12.0).color(p.violet_light)).on_hover_text(resident.to_string()).clicked() && !resident.is_nil() {
                         actions.push(InvAction::Profile(resident));
                     }
                 }
-                ui.label(RichText::new("Acquis le :").size(12.0).color(p.muted));
+                ui.label(RichText::new(aurora_i18n::tr!("ui-inventory-properties-acquired-on")).size(12.0).color(p.muted));
                 ui.label(RichText::new(acquired(it.created_at)).size(12.0));
-                if ui.add_enabled(can_edit, egui::Button::new("Photo…")).clicked() { st.thumbnail.open(id); }
+                if ui.add_enabled(can_edit, egui::Button::new(aurora_i18n::tr!("ui-inventory-properties-picture"))).clicked() { st.thumbnail.open(id); }
             });
         });
-        ui.label("Description :");
+        ui.label(aurora_i18n::tr!("common-description"));
         ui.add_enabled(can_describe, egui::TextEdit::multiline(&mut edit.desc).char_limit(127).desired_rows(2).desired_width(ui.available_width()));
-        ui.label(RichText::new("Expérience :").color(p.muted));
-        ui.separator(); ui.label("Autorisations"); ui.label("Vous pouvez :");
+        ui.label(RichText::new(aurora_i18n::tr!("ui-inventory-properties-experience")).color(p.muted));
+        ui.separator(); ui.label(aurora_i18n::tr!("ui-inventory-properties-permissions")); ui.label(aurora_i18n::tr!("ui-inventory-properties-you-can"));
         ui.horizontal(|ui| { for (mask, label) in rights() { let mut on = it.owner_mask & mask != 0; ui.add_enabled(false, egui::Checkbox::new(&mut on, label)); } });
         let may_share = can_edit && it.owner_mask & (rules::COPY | rules::TRANSFER) == rules::COPY | rules::TRANSFER;
-        ui.horizontal(|ui| { ui.label("N’importe qui :"); check_mask(ui, may_share, &mut edit.everyone, rules::COPY, "Copier"); });
-        ui.horizontal(|ui| { ui.label("Groupe :");
+        ui.horizontal(|ui| { ui.label(aurora_i18n::tr!("ui-inventory-properties-anyone")); check_mask(ui, may_share, &mut edit.everyone, rules::COPY, aurora_i18n::tr!("common-copy-2")); });
+        ui.horizontal(|ui| { ui.label(aurora_i18n::tr!("common-group-2"));
             let group_share = rules::MODIFY | rules::MOVE | rules::COPY;
-            check_mask(ui, may_share, &mut edit.group, group_share, "Partager");
+            check_mask(ui, may_share, &mut edit.group, group_share, aurora_i18n::tr!("common-share"));
         });
-        ui.label("Prochain propriétaire :");
+        ui.label(aurora_i18n::tr!("ui-inventory-properties-next-owner"));
         ui.horizontal(|ui| { for (mask, label) in rights() {
             check_mask(ui, can_edit && it.base_mask & mask != 0 && (mask != rules::TRANSFER || edit.next & rules::COPY != 0), &mut edit.next, mask, label);
             if edit.next & rules::COPY == 0 { edit.next |= rules::TRANSFER; }
@@ -71,7 +71,7 @@ pub(super) fn show(
         ui.separator();
         let mut for_sale = edit.sale_type != 0;
         ui.horizontal(|ui| {
-            if ui.add_enabled(can_edit && it.owner_mask & rules::TRANSFER != 0, egui::Checkbox::new(&mut for_sale, "À vendre")).changed() {
+            if ui.add_enabled(can_edit && it.owner_mask & rules::TRANSFER != 0, egui::Checkbox::new(&mut for_sale, aurora_i18n::tr!("ui-inventory-properties-for-sale"))).changed() {
                 edit.sale_type = if for_sale { if it.owner_mask & rules::COPY != 0 { 2 } else { 1 } } else { 0 };
             }
             ui.add_enabled_ui(for_sale && can_edit, |ui| {
@@ -80,16 +80,16 @@ pub(super) fn show(
                 });
             });
         });
-        ui.horizontal(|ui| { ui.label("Prix : L$"); ui.add_enabled(for_sale && can_edit, egui::DragValue::new(&mut edit.price).range(0..=i32::MAX)); });
+        ui.horizontal(|ui| { ui.label(aurora_i18n::tr!("ui-inventory-properties-price-l")); ui.add_enabled(for_sale && can_edit, egui::DragValue::new(&mut edit.price).custom_parser(aurora_i18n::parse_number).range(0..=i32::MAX)); });
         ui.add_space(6.0);
         ui.horizontal(|ui| {
             for (label, mask) in [("B", it.base_mask), ("O", it.owner_mask), ("G", edit.group), ("E", edit.everyone), ("N", edit.next)] {
-                ui.label(RichText::new(format!("{label}: {}", mask_text(mask))).size(11.0)).on_hover_text("B : base · O : propriétaire · G : groupe · E : tous · N : prochain propriétaire\nV : déplacer · M : modifier · C : copier · T : transférer");
+                ui.label(RichText::new(format!("{label}: {}", mask_text(mask))).size(11.0)).on_hover_text(aurora_i18n::tr!("ui-inventory-properties-b-base-o-owner-g-group-e-everyone-n"));
             }
         });
         let modified = edit.name != it.name || edit.desc != it.desc || edit.next != it.next_owner_mask || edit.group != it.group_mask
             || edit.everyone != it.everyone_mask || edit.sale_type != it.sale_type || edit.price != it.sale_price;
-        if ui.add_enabled(can_edit && modified && rules::clean_name(&edit.name).is_ok(), egui::Button::new("Enregistrer")).clicked() {
+        if ui.add_enabled(can_edit && modified && rules::clean_name(&edit.name).is_ok(), egui::Button::new(aurora_i18n::tr!("common-save"))).clicked() {
             let body = llsd_map! { "name" => rules::clean_name(&edit.name).unwrap_or_else(|_| it.name.clone()), "desc" => edit.desc.clone(),
                 "permissions" => llsd_map! { "next_owner_mask" => edit.next as i32, "group_mask" => edit.group as i32, "everyone_mask" => edit.everyone as i32 },
                 "sale_info" => llsd_map! { "sale_type" => i32::from(edit.sale_type), "sale_price" => edit.price } };
@@ -100,9 +100,9 @@ pub(super) fn show(
 }
 fn rights() -> [(u32, &'static str); 3] {
     [
-        (rules::MODIFY, "Modifier"),
-        (rules::COPY, "Copier"),
-        (rules::TRANSFER, "Transférer"),
+        (rules::MODIFY, aurora_i18n::tr!("common-edit")),
+        (rules::COPY, aurora_i18n::tr!("common-copy-2")),
+        (rules::TRANSFER, aurora_i18n::tr!("common-transfer")),
     ]
 }
 fn check_mask(ui: &mut egui::Ui, enabled: bool, value: &mut u32, mask: u32, label: &str) {
@@ -117,9 +117,9 @@ fn check_mask(ui: &mut egui::Ui, enabled: bool, value: &mut u32, mask: u32, labe
 }
 fn sale_name(value: u8) -> &'static str {
     match value {
-        1 => "Original",
-        3 => "Contenu",
-        _ => "Copie",
+        1 => aurora_i18n::tr!("common-original"),
+        3 => aurora_i18n::tr!("common-contents"),
+        _ => aurora_i18n::tr!("common-copy"),
     }
 }
 fn mask_text(mask: u32) -> String {
@@ -130,7 +130,7 @@ fn mask_text(mask: u32) -> String {
 }
 fn acquired(timestamp: i64) -> String {
     if timestamp <= 0 {
-        return "Inconnue".into();
+        return aurora_i18n::tr!("ui-inventory-properties-unknown").into();
     }
     let seconds = timestamp.rem_euclid(86400);
     format!(

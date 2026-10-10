@@ -60,21 +60,23 @@ pub struct OptionsResult {
 }
 
 /// Category tabs (index = `OptionsUi::tab`).
-const CATEGORIES: [(&str, &str); 13] = [
-    ("Graphismes", "Command_Environments_Icon"),
-    ("Interface", "Command_Appearance_Icon"),
-    ("Polices", "Command_Chat_Icon"),
-    ("Chat", "nearbychat_18"),
-    ("Contrôles", "Command_Move_Icon"),
-    ("Couleurs", "drop"),
-    ("Réseau et cache", "Command_Inventory_Icon"),
-    ("Son et voix", "speaker-high"),
-    ("Raccourcis", "keyboard"),
-    ("Debug", "code"),
-    ("Caméra", "camera"),
-    ("Commandes", "terminal-window"),
-    ("Pratique", "hand-grabbing"),
-];
+fn categories() -> [(&'static str, &'static str); 13] {
+    [
+        (aurora_i18n::tr!("ui-options-graphics"), "Command_Environments_Icon"),
+        (aurora_i18n::tr!("common-interface"), "Command_Appearance_Icon"),
+        (aurora_i18n::tr!("ui-options-fonts"), "Command_Chat_Icon"),
+        (aurora_i18n::tr!("common-chat"), "nearbychat_18"),
+        (aurora_i18n::tr!("ui-options-controls"), "Command_Move_Icon"),
+        (aurora_i18n::tr!("ui-options-colors"), "drop"),
+        (aurora_i18n::tr!("ui-options-network-and-cache"), "Command_Inventory_Icon"),
+        (aurora_i18n::tr!("ui-options-sound-and-voice"), "speaker-high"),
+        (aurora_i18n::tr!("ui-options-shortcuts"), "keyboard"),
+        (aurora_i18n::tr!("common-debug"), "code"),
+        (aurora_i18n::tr!("common-camera"), "camera"),
+        (aurora_i18n::tr!("ui-options-commands"), "terminal-window"),
+        (aurora_i18n::tr!("ui-options-practical"), "hand-grabbing"),
+    ]
+}
 
 /// Order of the tabs in the sidebar.
 const ORDER: [usize; 13] = [0, 1, 2, 3, TAB_COMMANDS, 7, 4, TAB_CAMERA, TAB_PRACTICAL, 8, 5, 6, 9];
@@ -124,45 +126,47 @@ fn category(ui: &mut egui::Ui, p: &Palette, icons: &Icons, label: &str, icon: &s
 /// Phosphor icon of a settings group (by its title).
 fn group_icon(title: &str) -> Option<&'static str> {
     Some(match title {
-        "Qualité" => "sliders",
-        "Lumière" => "sun",
-        "Reflets" => "drop",
-        "Image" => "image",
-        "Fluidité" => "speedometer",
-        "Disposition" => "layout",
-        "Skin" => "palette",
-        "Taille et aperçu" => "text-aa",
-        "Polices intégrées" => "text-t",
-        "Polices du système" => "monitor",
-        "Chat local" => "chat-circle-dots",
-        "Messages" => "chat-text",
-        "Émetteur" => "user-circle",
-        "Mentions dans le chat" => "at",
-        "Souris" => "mouse",
-        "HUDs" => "hand-grabbing",
-        "Clavier" => "keyboard",
-        "Couleur des étiquettes" => "tag",
-        "Repères sur la mini-carte" => "map-trifold",
-        "Cache disque" => "hard-drives",
-        "Périphériques" => "speaker-hifi",
-        "Volumes" => "speaker-high",
-        "Voix" => "waveform",
-        "Push-to-talk" => "microphone",
-        "Déplacements" => "person-simple-walk",
-        "Caméra" | "Point de vue" => "camera",
-        "Mouvements de la caméra" => "sliders",
-        "Comportement" => "arrows-clockwise",
-        "Limites" => "prohibit",
-        "Vue subjective" => "crosshair",
-        "Regard" => "eye",
-        "Communication" => "chats-circle",
-        "Groupes et blocage" => "prohibit",
-        "Réponses automatiques" => "paper-plane-tilt",
-        "Refus automatiques" => "hand-waving",
-        "Ligne de commande" | "Autres commandes" => "terminal-window",
-        "Commandes de téléportation" => "map-pin",
-        "Commandes de caméra et d'affichage" => "camera",
-        "Fenêtres" => "squares-four",
+        value if value == aurora_i18n::text("ui-options-quality") => "sliders",
+        value if value == aurora_i18n::text("common-light") => "sun",
+        value if value == aurora_i18n::text("ui-options-reflections") => "drop",
+        value if value == aurora_i18n::text("common-image") => "image",
+        value if value == aurora_i18n::text("ui-options-smoothness") => "speedometer",
+        value if value == aurora_i18n::text("ui-options-layout") => "layout",
+        value if value == aurora_i18n::text("preferences-group-skin") => "palette",
+        value if value == aurora_i18n::text("ui-options-size-and-preview") => "text-aa",
+        value if value == aurora_i18n::text("ui-options-bundled-fonts") => "text-t",
+        value if value == aurora_i18n::text("ui-options-system-fonts") => "monitor",
+        value if value == aurora_i18n::text("common-nearby-chat") => "chat-circle-dots",
+        value if value == aurora_i18n::text("ui-options-messages") => "chat-text",
+        value if value == aurora_i18n::text("ui-options-emitter") => "user-circle",
+        value if value == aurora_i18n::text("ui-options-chat-mentions") => "at",
+        value if value == aurora_i18n::text("ui-options-mouse") => "mouse",
+        value if value == aurora_i18n::text("preferences-group-huds") => "hand-grabbing",
+        value if value == aurora_i18n::text("ui-options-keyboard") => "keyboard",
+        value if value == aurora_i18n::text("ui-options-name-tag-color") => "tag",
+        value if value == aurora_i18n::text("ui-options-mini-map-markers") => "map-trifold",
+        value if value == aurora_i18n::text("ui-options-disk-cache") => "hard-drives",
+        value if value == aurora_i18n::text("ui-options-devices") => "speaker-hifi",
+        value if value == aurora_i18n::text("ui-options-volumes") => "speaker-high",
+        value if value == aurora_i18n::text("common-voice") => "waveform",
+        value if value == aurora_i18n::text("ui-options-push-to-talk") => "microphone",
+        value if value == aurora_i18n::text("common-movement") => "person-simple-walk",
+        value if value == aurora_i18n::text("common-camera") || value == aurora_i18n::text("common-viewpoint") => "camera",
+        value if value == aurora_i18n::text("common-camera-movement") => "sliders",
+        value if value == aurora_i18n::text("common-behavior") => "arrows-clockwise",
+        value if value == aurora_i18n::text("common-limits") => "prohibit",
+        value if value == aurora_i18n::text("common-mouselook") => "crosshair",
+        value if value == aurora_i18n::text("ui-options-look-at") => "eye",
+        value if value == aurora_i18n::text("common-communication") => "chats-circle",
+        value if value == aurora_i18n::text("ui-options-groups-and-blocking") => "prohibit",
+        value if value == aurora_i18n::text("ui-options-auto-replies") => "paper-plane-tilt",
+        value if value == aurora_i18n::text("ui-options-automatic-rejections") => "hand-waving",
+        value if value == aurora_i18n::text("common-command-line") || value == aurora_i18n::text("common-other-commands") => {
+            "terminal-window"
+        }
+        value if value == aurora_i18n::text("common-teleport-commands") => "map-pin",
+        value if value == aurora_i18n::text("common-camera-and-display-commands") => "camera",
+        value if value == aurora_i18n::text("common-windows") => "squares-four",
         _ => return None,
     })
 }
@@ -218,14 +222,26 @@ const SLIDER_W: f32 = 230.0;
 
 fn slider<T: egui::emath::Numeric>(ui: &mut egui::Ui, v: &mut T, range: std::ops::RangeInclusive<T>, suffix: &str) -> bool {
     ui.spacing_mut().slider_width = SLIDER_W;
-    ui.add(egui::Slider::new(v, range).suffix(suffix).trailing_fill(true)).changed()
+    ui.add(
+        egui::Slider::new(v, range)
+            .suffix(suffix)
+            .custom_parser(aurora_i18n::parse_number)
+            .trailing_fill(true),
+    )
+    .changed()
 }
 
 /// Stepped slider with a named level shown next to it.
 fn stepped(ui: &mut egui::Ui, p: &Palette, v: &mut u8, labels: &[&str]) -> bool {
     ui.spacing_mut().slider_width = SLIDER_W;
     let max = labels.len().saturating_sub(1) as u8;
-    let r = ui.add(egui::Slider::new(v, 0..=max).step_by(1.0).trailing_fill(true).show_value(false));
+    let r = ui.add(
+        egui::Slider::new(v, 0..=max)
+            .custom_parser(aurora_i18n::parse_number)
+            .step_by(1.0)
+            .trailing_fill(true)
+            .show_value(false),
+    );
     let label = labels.get((*v).min(max) as usize).copied().unwrap_or("");
     ui.label(RichText::new(label).size(12.0).color(p.violet_pale));
     r.changed()
@@ -263,9 +279,9 @@ fn swatches(ui: &mut egui::Ui, id: &str, items: &mut [(&str, &mut crate::setting
 fn format_bytes(b: u64) -> String {
     let mb = b as f64 / (1024.0 * 1024.0);
     if mb >= 1024.0 {
-        format!("{:.1} Go", mb / 1024.0)
+        aurora_i18n::tr!("memory-gb", value = aurora_i18n::number(mb / 1024.0, 1))
     } else {
-        format!("{mb:.0} Mo")
+        aurora_i18n::tr!("memory-mb", value = aurora_i18n::number(mb, 0))
     }
 }
 
@@ -274,82 +290,100 @@ fn debug_page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings) -> bool {
     let mut c = false;
     let d = &mut s.debug;
     ui.label(
-        RichText::new("Outils de diagnostic affichés par-dessus la vue ; ils se coupent au prochain lancement.")
-            .size(12.0)
-            .color(p.muted),
+        RichText::new(aurora_i18n::tr!(
+            "ui-options-diagnostic-tools-drawn-over-the-view-disabled-next-time"
+        ))
+        .size(12.0)
+        .color(p.muted),
     );
     ui.add_space(6.0);
-    group(ui, p, "Avatars", |ui| {
+    group(ui, p, aurora_i18n::tr!("ui-options-avatars"), |ui| {
         c |= row(
             ui,
             p,
-            "Complexité dans les étiquettes",
-            "Sous le nom, du vert au rouge selon la limite de complexité (comme Firestorm) ; gris pour soi",
+            aurora_i18n::tr!("ui-options-complexity-in-name-tags"),
+            aurora_i18n::tr!("ui-options-below-the-name-from-green-to-red-based-on-2"),
             |ui| toggle(ui, p, &mut d.complexity_tags),
         );
-        c |= row(ui, p, "Squelettes", "Os des avatars proches (32 m), après animation", |ui| {
-            toggle(ui, p, &mut d.skeletons)
-        });
-    });
-    group(ui, p, "Rendu", |ui| {
         c |= row(
             ui,
             p,
-            "Afficher la transparence",
-            "Ctrl+Alt+T : faces transparentes, masquées et invisibles en rouge, masques de matériaux en bleu (retrouver les objets invisibles)",
+            aurora_i18n::tr!("ui-options-skeletons"),
+            aurora_i18n::tr!("ui-options-nearby-avatar-bones-32-m-after-animation"),
+            |ui| toggle(ui, p, &mut d.skeletons),
+        );
+    });
+    group(ui, p, aurora_i18n::tr!("common-rendering"), |ui| {
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("common-show-transparency"),
+            aurora_i18n::tr!("ui-options-ctrl-alt-t-transparent-masked-and-invisible-faces-in"),
             |ui| toggle(ui, p, &mut d.show_alpha),
         );
         c |= row(
             ui,
             p,
-            "… objets riggés aussi",
-            "Inclut les corps, vêtements et objets portés riggés",
+            aurora_i18n::tr!("ui-options-rigged-objects-too"),
+            aurora_i18n::tr!("ui-options-includes-rigged-bodies-clothes-and-attachments"),
             |ui| toggle(ui, p, &mut d.show_alpha_rigged),
         );
-        c |= row(ui, p, "Fil de fer", "Arêtes des triangles par-dessus la scène", |ui| {
-            toggle(ui, p, &mut d.wireframe)
-        });
         c |= row(
             ui,
             p,
-            "Visualiser le glow",
-            "Quantité de glow à la place de l'image (rouge = glow × 10, vert = × 2)",
+            aurora_i18n::tr!("ui-options-wireframe"),
+            aurora_i18n::tr!("ui-options-triangle-edges-over-the-scene"),
+            |ui| toggle(ui, p, &mut d.wireframe),
+        );
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-show-glow"),
+            aurora_i18n::tr!("ui-options-glow-amount-instead-of-the-image-red-glow-10"),
             |ui| toggle(ui, p, &mut d.glow_view),
         );
         c |= row(
             ui,
             p,
-            "Objets avec glow",
-            "Encadre en orange les objets qui ont des faces avec glow",
+            aurora_i18n::tr!("ui-options-objects-with-glow"),
+            aurora_i18n::tr!("ui-options-outlines-objects-with-glowing-faces-in-orange"),
             |ui| toggle(ui, p, &mut d.glow_objects),
         );
-        c |= row(ui, p, "Lumières", "Position et rayon des lumières (dans leur couleur)", |ui| {
-            toggle(ui, p, &mut d.lights)
-        });
         c |= row(
             ui,
             p,
-            "Sondes de réflexion",
-            "Influence des sondes : turquoise automatiques, violet manuelles, gris pas encore capturées",
+            aurora_i18n::tr!("ui-options-lights"),
+            aurora_i18n::tr!("ui-options-light-positions-and-radii-in-their-colors"),
+            |ui| toggle(ui, p, &mut d.lights),
+        );
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("common-reflection-probes"),
+            aurora_i18n::tr!("ui-options-probe-influence-turquoise-for-automatic-purple-for-manual-gray"),
             |ui| toggle(ui, p, &mut d.probes),
         );
     });
-    group(ui, p, "Objets et culling", |ui| {
-        c |= row(ui, p, "Boîtes englobantes", "Boîte de chaque objet à moins de 96 m", |ui| {
-            toggle(ui, p, &mut d.bounds)
-        });
+    group(ui, p, aurora_i18n::tr!("ui-options-objects-and-culling"), |ui| {
         c |= row(
             ui,
             p,
-            "Culling",
-            "Sphère testée de chaque objet : vert dessiné, rouge hors champ, orange trop loin, gris trop petit",
+            aurora_i18n::tr!("ui-options-bounding-boxes"),
+            aurora_i18n::tr!("ui-options-bounding-box-of-each-object-within-96-m"),
+            |ui| toggle(ui, p, &mut d.bounds),
+        );
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("common-culling"),
+            aurora_i18n::tr!("ui-options-each-object-s-tested-sphere-green-drawn-red-outside"),
             |ui| toggle(ui, p, &mut d.culling),
         );
         c |= row(
             ui,
             p,
-            "Figer le culling",
-            "Garde la vue de culling actuelle : déplacez la caméra pour voir ce qui n'est pas dessiné",
+            aurora_i18n::tr!("ui-options-freeze-culling"),
+            aurora_i18n::tr!("ui-options-keep-the-current-culling-view-move-the-camera-to"),
             |ui| toggle(ui, p, &mut d.freeze_culling),
         );
     });
@@ -372,11 +406,11 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
     let screen = ctx.content_rect();
     Floater::new(
         "options",
-        "Préférences",
+        aurora_i18n::tr!("common-preferences"),
         egui::pos2(screen.center().x - 330.0, 80.0),
         Vec2::new(660.0, 470.0),
     )
-    .help("Les changements sont appliqués immédiatement et enregistrés à la fermeture")
+    .help(aurora_i18n::tr!("ui-options-changes-apply-immediately-and-are-saved-on-closing"))
     .show(ctx, p, open, |ui| {
         let h = (ui.available_height() - 4.0).max(200.0);
         ui.horizontal_top(|ui| {
@@ -385,7 +419,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
                 ui.set_min_height(h);
                 ui.spacing_mut().item_spacing.y = 2.0;
                 for i in ORDER {
-                    let (label, icon) = CATEGORIES[i];
+                    let (label, icon) = categories()[i];
                     if category(ui, p, icons, label, icon, st.tab == i) {
                         st.capture = None;
                         st.tab = i;
@@ -394,8 +428,15 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
                 // reset everything, at the bottom of the column
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
                     ui.add_space(4.0);
-                    let b = ui.add(egui::Button::new(RichText::new("Tout réinitialiser…").size(12.0).color(p.muted)).frame(false));
-                    if b.on_hover_text("Remettre tous les réglages par défaut").clicked() {
+                    let b = ui.add(
+                        egui::Button::new(
+                            RichText::new(aurora_i18n::tr!("ui-options-reset-everything-2"))
+                                .size(12.0)
+                                .color(p.muted),
+                        )
+                        .frame(false),
+                    );
+                    if b.on_hover_text(aurora_i18n::tr!("ui-options-reset-all-settings")).clicked() {
                         st.confirm_reset = true;
                     }
                 });
@@ -404,7 +445,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
             // ---- content
             ui.vertical(|ui| {
                 ui.label(
-                    RichText::new(CATEGORIES[st.tab.min(CATEGORIES.len() - 1)].0)
+                    RichText::new(categories()[st.tab.min(categories().len() - 1)].0)
                         .size(17.0)
                         .color(p.ink),
                 );
@@ -431,21 +472,24 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
     if st.confirm_reset && *open {
         let modal = egui::Modal::new(egui::Id::new("options_reset")).show(ctx, |ui| {
             ui.set_width(340.0);
-            ui.label(RichText::new("Tout réinitialiser ?").size(15.0).strong().color(p.ink));
+            ui.label(
+                RichText::new(aurora_i18n::tr!("ui-options-reset-everything"))
+                    .size(15.0)
+                    .strong()
+                    .color(p.ink),
+            );
             ui.add_space(6.0);
             ui.label(
-                RichText::new(
-                    "Tous les réglages (graphismes, interface, polices, chat, son et voix, contrôles, \
-                     raccourcis, couleurs, cache) reprennent leur valeur par défaut. \
-                     Le nom d'utilisateur, la grille et la taille de la fenêtre sont conservés.",
-                )
+                RichText::new(aurora_i18n::tr!(
+                    "ui-options-all-settings-graphics-interface-fonts-chat-sound-and-voice"
+                ))
                 .size(12.5)
                 .color(p.muted),
             );
             ui.add_space(10.0);
             ui.horizontal(|ui| {
                 let yes = ui.add(
-                    egui::Button::new(RichText::new("Réinitialiser").color(Color32::WHITE))
+                    egui::Button::new(RichText::new(aurora_i18n::tr!("common-reset")).color(Color32::WHITE))
                         .fill(p.danger)
                         .corner_radius(CornerRadius::same(2)),
                 );
@@ -458,7 +502,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
                     r.reset = true;
                     st.confirm_reset = false;
                 }
-                if super::widgets::flat_button(ui, p, "Annuler").clicked() {
+                if super::widgets::flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked() {
                     st.confirm_reset = false;
                 }
             });
@@ -474,37 +518,42 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
     let mut c = false;
     match st.tab {
         0 => {
-            group(ui, p, "Qualité", |ui| {
+            group(ui, p, aurora_i18n::tr!("ui-options-quality"), |ui| {
                 c |= row(
                     ui,
                     p,
-                    "Distance d'affichage",
-                    "Au-delà, les objets ne sont pas dessinés (96 m par défaut)",
+                    aurora_i18n::tr!("common-draw-distance"),
+                    aurora_i18n::tr!("ui-options-objects-beyond-this-distance-are-not-drawn-96-m"),
                     |ui| slider(ui, &mut s.draw_distance, 32.0..=512.0, " m"),
                 );
                 c |= row(
                     ui,
                     p,
-                    "Niveau de détail (LOD)",
-                    "Facteur LOD des objets et mesh de SL (2 par défaut, 4 = max)",
+                    aurora_i18n::tr!("ui-options-level-of-detail-lod"),
+                    aurora_i18n::tr!("ui-options-lod-factor-for-sl-objects-and-meshes-2-by"),
                     |ui| {
                         ui.spacing_mut().slider_width = SLIDER_W;
-                        ui.add(egui::Slider::new(&mut s.lod_factor, 0.5..=4.0).step_by(0.125).trailing_fill(true))
-                            .changed()
+                        ui.add(
+                            egui::Slider::new(&mut s.lod_factor, 0.5..=4.0)
+                                .custom_parser(aurora_i18n::parse_number)
+                                .step_by(0.125)
+                                .trailing_fill(true),
+                        )
+                        .changed()
                     },
                 );
                 c |= row(
                     ui,
                     p,
-                    "Avatars en entier",
-                    "Les plus proches sont dessinés en entier, les autres en imposteurs : une image d'eux rafraîchie de temps en temps (RenderAvatarMaxNonImpostors, comme Firestorm)",
+                    aurora_i18n::tr!("ui-options-fully-rendered-avatars"),
+                    aurora_i18n::tr!("ui-options-nearest-avatars-are-fully-rendered-others-use-impostors-periodically"),
                     |ui| slider(ui, &mut s.max_avatars, 1..=100, ""),
                 );
                 c |= row(
                     ui,
                     p,
-                    "Complexité max. des avatars",
-                    "Au-delà, un avatar s'affiche en silhouette grise sans ses objets (comme Firestorm ; tout à droite : sans limite)",
+                    aurora_i18n::tr!("ui-options-maximum-avatar-complexity"),
+                    aurora_i18n::tr!("ui-options-above-this-limit-the-avatar-appears-as-a-gray"),
                     |ui| {
                         use crate::scene::complexity::slider;
                         ui.spacing_mut().slider_width = SLIDER_W;
@@ -512,13 +561,14 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                         let text = |v: f64| {
                             let limit = slider::to_limit(v.round() as u32);
                             if limit == 0 {
-                                "Sans limite".to_owned()
+                                aurora_i18n::tr!("ui-options-unlimited").to_owned()
                             } else {
                                 format!("{} k", limit / 1000)
                             }
                         };
                         let r = ui.add(
                             egui::Slider::new(&mut pos, 1..=slider::OFF)
+                                .custom_parser(aurora_i18n::parse_number)
                                 .custom_formatter(move |v, _| text(v))
                                 .trailing_fill(true),
                         );
@@ -531,15 +581,22 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                 c |= row(
                     ui,
                     p,
-                    "Surface max. des objets portés",
-                    "Au-delà, l'avatar s'affiche aussi en silhouette (1000 m² comme Firestorm ; 0 = sans limite ; ignorée sans limite de complexité)",
+                    aurora_i18n::tr!("ui-options-maximum-worn-surface-area"),
+                    aurora_i18n::tr!("ui-options-above-this-limit-the-avatar-also-appears-as-a"),
                     |ui| {
                         ui.spacing_mut().slider_width = SLIDER_W;
                         ui.add(
                             egui::Slider::new(&mut s.max_attachment_area, 0.0..=10_000.0)
+                                .custom_parser(aurora_i18n::parse_number)
                                 .logarithmic(true)
                                 .step_by(10.0)
-                                .custom_formatter(|v, _| if v < 1.0 { "Sans limite".to_owned() } else { format!("{v:.0} m²") })
+                                .custom_formatter(|v, _| {
+                                    if v < 1.0 {
+                                        aurora_i18n::tr!("ui-options-unlimited").to_owned()
+                                    } else {
+                                        format!("{v:.0} m²")
+                                    }
+                                })
                                 .trailing_fill(true),
                         )
                         .changed()
@@ -548,100 +605,178 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                 c |= row(
                     ui,
                     p,
-                    "Avatars en chargement",
-                    "Nuage de particules jusqu'à ce que l'avatar et ses objets soient chargés (comme Firestorm), ou affichés au fur et à mesure ; barre de progression sous le nom",
-                    |ui| stepped(ui, p, &mut s.loading_avatars, &["Nuage + barre", "Barre seule", "Rien"]),
+                    aurora_i18n::tr!("ui-options-loading-avatars"),
+                    aurora_i18n::tr!("ui-options-particle-cloud-until-the-avatar-and-its-attachments-load"),
+                    |ui| {
+                        stepped(
+                            ui,
+                            p,
+                            &mut s.loading_avatars,
+                            &[
+                                aurora_i18n::tr!("ui-options-cloud-bar"),
+                                aurora_i18n::tr!("ui-options-bar-only"),
+                                aurora_i18n::tr!("common-nothing"),
+                            ],
+                        )
+                    },
                 );
                 c |= row(
                     ui,
                     p,
-                    "Limite appliquée",
-                    "Les amis peuvent toujours être affichés en entier, ou seuls les amis le sont (RenderAvatarComplexityMode)",
-                    |ui| stepped(ui, p, &mut s.complexity_mode, &["À tous", "Sauf aux amis", "Amis seulement"]),
+                    aurora_i18n::tr!("ui-options-limit-applied"),
+                    aurora_i18n::tr!("ui-options-always-fully-render-friends-or-fully-render-only-friends"),
+                    |ui| {
+                        stepped(
+                            ui,
+                            p,
+                            &mut s.complexity_mode,
+                            &[
+                                aurora_i18n::tr!("ui-options-to-everyone"),
+                                aurora_i18n::tr!("ui-options-except-friends"),
+                                aurora_i18n::tr!("ui-options-friends-only"),
+                            ],
+                        )
+                    },
                 );
                 c |= row(
                     ui,
                     p,
-                    "Occlusion",
-                    "Les objets cachés derrière d'autres (murs, sols) ne sont pas dessinés ; test sur la carte graphique",
+                    aurora_i18n::tr!("ui-options-occlusion"),
+                    aurora_i18n::tr!("ui-options-objects-hidden-behind-others-walls-floors-are-not-drawn"),
                     |ui| toggle(ui, p, &mut s.occlusion_culling),
                 );
-                c |= row(ui, p, "Particules", "Nombre maximal de particules (0 = désactivées)", |ui| {
-                    ui.spacing_mut().slider_width = SLIDER_W;
-                    let r = ui.add(egui::Slider::new(&mut s.max_particles, 0..=8192).step_by(256.0).trailing_fill(true));
-                    r.changed()
-                });
-                c |= row(ui, p, "Mémoire textures auto", "Selon la mémoire vidéo détectée", |ui| {
-                    toggle(ui, p, &mut s.texture_budget_auto)
-                });
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("common-particles"),
+                    aurora_i18n::tr!("ui-options-maximum-particles-0-disabled"),
+                    |ui| {
+                        ui.spacing_mut().slider_width = SLIDER_W;
+                        let r = ui.add(
+                            egui::Slider::new(&mut s.max_particles, 0..=8192)
+                                .custom_parser(aurora_i18n::parse_number)
+                                .step_by(256.0)
+                                .trailing_fill(true),
+                        );
+                        r.changed()
+                    },
+                );
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-auto-texture-memory"),
+                    aurora_i18n::tr!("ui-options-based-on-detected-video-memory"),
+                    |ui| toggle(ui, p, &mut s.texture_budget_auto),
+                );
                 if s.texture_budget_auto {
                     let (vram, integrated) = st.vram;
                     let budget = crate::settings::auto_texture_budget(vram, integrated);
                     let gpu = match vram {
-                        Some(v) if !integrated => format!("{} Mo de mémoire vidéo détectés", v),
-                        _ if integrated => "Carte graphique intégrée".to_owned(),
-                        _ => "Mémoire vidéo non détectée".to_owned(),
+                        Some(v) if !integrated => aurora_i18n::tr!("ui-options-mb-of-video-memory-detected", value0 = format!("{}", v)),
+                        _ if integrated => aurora_i18n::tr!("ui-options-integrated-graphics").to_owned(),
+                        _ => aurora_i18n::tr!("ui-options-video-memory-not-detected").to_owned(),
                     };
-                    row(ui, p, "Mémoire textures", &gpu, |ui| {
-                        ui.label(RichText::new(format!("{budget} Mo")).color(p.ink));
+                    row(ui, p, aurora_i18n::tr!("ui-options-texture-memory"), &gpu, |ui| {
+                        ui.label(RichText::new(aurora_i18n::tr!("status-budget-mb", budget = format!("{}", budget))).color(p.ink));
                         false
                     });
                 } else {
                     c |= row(
                         ui,
                         p,
-                        "Mémoire textures",
-                        "Au-delà, les textures lointaines sont réduites",
+                        aurora_i18n::tr!("ui-options-texture-memory"),
+                        aurora_i18n::tr!("ui-options-textures-beyond-this-distance-use-a-lower-resolution"),
                         |ui| {
                             ui.spacing_mut().slider_width = SLIDER_W;
                             ui.add(
                                 egui::Slider::new(&mut s.texture_budget_mb, 256..=32768)
+                                    .custom_parser(aurora_i18n::parse_number)
                                     .logarithmic(true)
-                                    .suffix(" Mo")
+                                    .suffix(aurora_i18n::tr!("memory-mb-suffix"))
                                     .trailing_fill(true),
                             )
                             .changed()
                         },
                     );
                 }
-                c |= row(ui, p, "Filtrage anisotrope", "Textures nettes vues de biais", |ui| {
-                    let label = |v: u16| if v <= 1 { "Désactivé".to_owned() } else { format!("{v}×") };
-                    let mut changed = false;
-                    egui::ComboBox::from_id_salt("aniso")
-                        .width(SLIDER_W)
-                        .selected_text(label(s.anisotropy))
-                        .show_ui(ui, |ui| {
-                            for v in [1u16, 2, 4, 8, 16] {
-                                changed |= ui.selectable_value(&mut s.anisotropy, v, label(v)).changed();
-                            }
-                        });
-                    changed
-                });
-            });
-            group(ui, p, "Lumière", |ui| {
-                c |= row(ui, p, "Qualité des ombres", "Résolution et distance des ombres en cascade", |ui| {
-                    ui.spacing_mut().slider_width = SLIDER_W;
-                    let r = ui.add(
-                        egui::Slider::new(&mut s.shadow_quality, 0..=4)
-                            .step_by(1.0)
-                            .trailing_fill(true)
-                            .show_value(false),
-                    );
-                    let label = ["Désactivées", "Basse", "Moyenne", "Haute", "Ultra"][s.shadow_quality.min(4) as usize];
-                    ui.label(RichText::new(label).size(12.0).color(p.violet_pale));
-                    s.shadows = s.shadow_quality > 0;
-                    r.changed()
-                });
-                c |= row(ui, p, "Occlusion ambiante", "Assombrit les recoins et les contacts (SSAO)", |ui| {
-                    stepped(ui, p, &mut s.ssao, &["Désactivée", "Basse", "Haute"])
-                });
                 c |= row(
                     ui,
                     p,
-                    "Heure du jour",
-                    "Environnement partagé = cycle EEP de la région / parcelle",
+                    aurora_i18n::tr!("ui-options-anisotropic-filtering"),
+                    aurora_i18n::tr!("ui-options-sharp-textures-viewed-at-an-angle"),
                     |ui| {
-                        let names = super::bars::TIME_OF_DAY;
+                        let label = |v: u16| {
+                            if v <= 1 {
+                                aurora_i18n::tr!("common-disabled").to_owned()
+                            } else {
+                                format!("{v}×")
+                            }
+                        };
+                        let mut changed = false;
+                        egui::ComboBox::from_id_salt("aniso")
+                            .width(SLIDER_W)
+                            .selected_text(label(s.anisotropy))
+                            .show_ui(ui, |ui| {
+                                for v in [1u16, 2, 4, 8, 16] {
+                                    changed |= ui.selectable_value(&mut s.anisotropy, v, label(v)).changed();
+                                }
+                            });
+                        changed
+                    },
+                );
+            });
+            group(ui, p, aurora_i18n::tr!("common-light"), |ui| {
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-shadow-quality"),
+                    aurora_i18n::tr!("ui-options-cascaded-shadow-resolution-and-distance"),
+                    |ui| {
+                        ui.spacing_mut().slider_width = SLIDER_W;
+                        let r = ui.add(
+                            egui::Slider::new(&mut s.shadow_quality, 0..=4)
+                                .custom_parser(aurora_i18n::parse_number)
+                                .step_by(1.0)
+                                .trailing_fill(true)
+                                .show_value(false),
+                        );
+                        let label = [
+                            aurora_i18n::tr!("ui-options-disabled-2"),
+                            aurora_i18n::tr!("ui-options-low"),
+                            aurora_i18n::tr!("common-medium"),
+                            aurora_i18n::tr!("ui-options-high"),
+                            aurora_i18n::tr!("ui-options-ultra"),
+                        ][s.shadow_quality.min(4) as usize];
+                        ui.label(RichText::new(label).size(12.0).color(p.violet_pale));
+                        s.shadows = s.shadow_quality > 0;
+                        r.changed()
+                    },
+                );
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-ambient-occlusion"),
+                    aurora_i18n::tr!("ui-options-darkens-corners-and-contact-areas-ssao"),
+                    |ui| {
+                        stepped(
+                            ui,
+                            p,
+                            &mut s.ssao,
+                            &[
+                                aurora_i18n::tr!("ui-options-disabled"),
+                                aurora_i18n::tr!("ui-options-low"),
+                                aurora_i18n::tr!("ui-options-high"),
+                            ],
+                        )
+                    },
+                );
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("common-time-of-day"),
+                    aurora_i18n::tr!("ui-options-shared-environment-region-parcel-eep-day-cycle"),
+                    |ui| {
+                        let names = super::bars::time_of_day();
                         let mut changed = false;
                         egui::ComboBox::from_id_salt("tod")
                             .width(SLIDER_W)
@@ -657,12 +792,13 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                 c |= row(
                     ui,
                     p,
-                    "Fondu de l'environnement",
-                    "Durée du fondu quand vous changez l'environnement vous-même (sélecteur, heure du jour) ; 0 = immédiat, comme Firestorm",
+                    aurora_i18n::tr!("ui-options-environment-fade"),
+                    aurora_i18n::tr!("ui-options-fade-duration-when-you-change-the-environment-yourself-selector"),
                     |ui| {
                         ui.spacing_mut().slider_width = SLIDER_W;
                         ui.add(
                             egui::Slider::new(&mut s.env_manual_transition, 0.0..=60.0)
+                                .custom_parser(aurora_i18n::parse_number)
                                 .step_by(0.5)
                                 .suffix(" s")
                                 .trailing_fill(true),
@@ -673,81 +809,125 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                 c |= row(
                     ui,
                     p,
-                    "Garder l'environnement",
-                    "Rétablit l'environnement local (ciel, eau, cycle du jour choisis) à la prochaine connexion",
+                    aurora_i18n::tr!("ui-options-keep-environment"),
+                    aurora_i18n::tr!("ui-options-restore-the-local-environment-selected-sky-water-and-day"),
                     |ui| toggle(ui, p, &mut s.env_persist),
                 );
-                c |= row(ui, p, "Exposition", "", |ui| {
+                c |= row(ui, p, aurora_i18n::tr!("ui-options-exposure"), "", |ui| {
                     ui.spacing_mut().slider_width = SLIDER_W;
-                    ui.add(egui::Slider::new(&mut s.exposure, 0.25..=4.0).logarithmic(true).trailing_fill(true))
-                        .changed()
+                    ui.add(
+                        egui::Slider::new(&mut s.exposure, 0.25..=4.0)
+                            .custom_parser(aurora_i18n::parse_number)
+                            .logarithmic(true)
+                            .trailing_fill(true),
+                    )
+                    .changed()
                 });
                 c |= row(
                     ui,
                     p,
-                    "Netteté",
-                    "Renforce les détails fins (AMD CAS, 0,4 comme Firestorm ; 0 = désactivée)",
+                    aurora_i18n::tr!("ui-options-sharpness"),
+                    aurora_i18n::tr!("ui-options-enhances-fine-details-amd-cas-0-4-as-in"),
                     |ui| {
                         ui.spacing_mut().slider_width = SLIDER_W;
-                        ui.add(egui::Slider::new(&mut s.sharpen, 0.0..=1.0).step_by(0.05).trailing_fill(true))
-                            .changed()
+                        ui.add(
+                            egui::Slider::new(&mut s.sharpen, 0.0..=1.0)
+                                .custom_parser(aurora_i18n::parse_number)
+                                .step_by(0.05)
+                                .trailing_fill(true),
+                        )
+                        .changed()
                     },
                 );
-                c |= row(ui, p, "Glow", "Halo lumineux des faces avec du glow (comme Firestorm)", |ui| {
-                    toggle(ui, p, &mut s.glow)
-                });
-            });
-            group(ui, p, "Reflets", |ui| {
-                let levels = ["Désactivés", "Basse (¼)", "Moyenne (½)", "Haute (¾)", "Ultra (pleine)"];
                 c |= row(
                     ui,
                     p,
-                    "Reflets de l'eau",
-                    "Reflet plan du décor ; Haute et Ultra coûtent cher",
+                    aurora_i18n::tr!("ui-options-glow"),
+                    aurora_i18n::tr!("ui-options-glow-around-glowing-faces-as-in-firestorm"),
+                    |ui| toggle(ui, p, &mut s.glow),
+                );
+            });
+            group(ui, p, aurora_i18n::tr!("ui-options-reflections"), |ui| {
+                let levels = [
+                    aurora_i18n::tr!("ui-options-disabled-3"),
+                    aurora_i18n::tr!("ui-options-low-14"),
+                    aurora_i18n::tr!("ui-options-medium-12"),
+                    aurora_i18n::tr!("ui-options-high-34"),
+                    aurora_i18n::tr!("ui-options-ultra-full"),
+                ];
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-water-reflections"),
+                    aurora_i18n::tr!("ui-options-planar-scene-reflection-high-and-ultra-are-costly"),
                     |ui| stepped(ui, p, &mut s.water_reflections, &levels),
                 );
                 c |= row(
                     ui,
                     p,
-                    "Miroirs",
-                    "Sondes miroir de SL ; résolution du rendu (Basse par défaut)",
+                    aurora_i18n::tr!("ui-options-mirrors"),
+                    aurora_i18n::tr!("ui-options-sl-mirror-probes-render-resolution-low-by-default"),
                     |ui| stepped(ui, p, &mut s.mirrors, &levels),
                 );
                 c |= row(
                     ui,
                     p,
-                    "Reflets écran (SSR)",
-                    "Surfaces brillantes ; coûteux, désactivé par défaut",
+                    aurora_i18n::tr!("ui-options-screen-space-reflections-ssr"),
+                    aurora_i18n::tr!("ui-options-shiny-surfaces-expensive-disabled-by-default"),
                     |ui| toggle(ui, p, &mut s.ssr),
                 );
                 c |= row(
                     ui,
                     p,
-                    "Sondes de réflexion",
-                    "Ce que reflètent les surfaces brillantes (comme Firestorm)",
+                    aurora_i18n::tr!("common-reflection-probes"),
+                    aurora_i18n::tr!("ui-options-what-shiny-surfaces-reflect-as-in-firestorm"),
                     |ui| {
                         stepped(
                             ui,
                             p,
                             &mut s.reflection_probes,
-                            &["Ciel seul", "Manuelles", "Manuelles + terrain", "Scène complète"],
+                            &[
+                                aurora_i18n::tr!("ui-options-sky-only"),
+                                aurora_i18n::tr!("ui-options-manual"),
+                                aurora_i18n::tr!("ui-options-manual-terrain"),
+                                aurora_i18n::tr!("ui-options-entire-scene"),
+                            ],
                         )
                     },
                 );
-                c |= row(ui, p, "Nombre de sondes", "Sondes actives autour de vous (mémoire vidéo)", |ui| {
-                    ui.spacing_mut().slider_width = SLIDER_W;
-                    ui.add(egui::Slider::new(&mut s.probe_count, 8..=64).step_by(8.0).trailing_fill(true))
-                        .changed()
-                });
-            });
-            group(ui, p, "Image", |ui| {
                 c |= row(
                     ui,
                     p,
-                    "Anticrénelage",
-                    "MSAA : net mais coûteux · FXAA : léger · SMAA : léger et net · TAA : le plus lisse",
+                    aurora_i18n::tr!("ui-options-probe-count"),
+                    aurora_i18n::tr!("ui-options-active-probes-around-you-video-memory"),
                     |ui| {
-                        let names = ["Aucun", "FXAA", "MSAA 2×", "MSAA 4×", "MSAA 8×", "TAA", "SMAA"];
+                        ui.spacing_mut().slider_width = SLIDER_W;
+                        ui.add(
+                            egui::Slider::new(&mut s.probe_count, 8..=64)
+                                .custom_parser(aurora_i18n::parse_number)
+                                .step_by(8.0)
+                                .trailing_fill(true),
+                        )
+                        .changed()
+                    },
+                );
+            });
+            group(ui, p, aurora_i18n::tr!("common-image"), |ui| {
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-anti-aliasing"),
+                    aurora_i18n::tr!("ui-options-msaa-sharp-but-costly-fxaa-lightweight-smaa-lightweight-and"),
+                    |ui| {
+                        let names = [
+                            aurora_i18n::tr!("common-none"),
+                            "FXAA",
+                            "MSAA 2×",
+                            "MSAA 4×",
+                            "MSAA 8×",
+                            "TAA",
+                            "SMAA",
+                        ];
                         let mut changed = false;
                         egui::ComboBox::from_id_salt("aa")
                             .width(SLIDER_W)
@@ -760,38 +940,49 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                         changed
                     },
                 );
-                c |= row(ui, p, "Tone mapping", "Khronos PBR Neutral est celui de Second Life", |ui| {
-                    let names = ["Khronos PBR Neutral", "ACES"];
-                    let mut changed = false;
-                    egui::ComboBox::from_id_salt("tonemap")
-                        .width(SLIDER_W)
-                        .selected_text(names[s.tonemapper.min(1) as usize])
-                        .show_ui(ui, |ui| {
-                            changed |= ui.selectable_value(&mut s.tonemapper, 0, names[0]).changed();
-                            changed |= ui.selectable_value(&mut s.tonemapper, 1, names[1]).changed();
-                        });
-                    changed
-                });
-            });
-            group(ui, p, "Fluidité", |ui| {
                 c |= row(
                     ui,
                     p,
-                    "Synchronisation verticale",
-                    "Aligne les images sur la fréquence de l'écran (pas de déchirement, un peu plus de latence). Désactivée par défaut",
+                    aurora_i18n::tr!("ui-options-tone-mapping"),
+                    aurora_i18n::tr!("ui-options-khronos-pbr-neutral-is-used-by-second-life"),
+                    |ui| {
+                        let names = [aurora_i18n::tr!("ui-options-khronos-pbr-neutral"), "ACES"];
+                        let mut changed = false;
+                        egui::ComboBox::from_id_salt("tonemap")
+                            .width(SLIDER_W)
+                            .selected_text(names[s.tonemapper.min(1) as usize])
+                            .show_ui(ui, |ui| {
+                                changed |= ui.selectable_value(&mut s.tonemapper, 0, names[0]).changed();
+                                changed |= ui.selectable_value(&mut s.tonemapper, 1, names[1]).changed();
+                            });
+                        changed
+                    },
+                );
+            });
+            group(ui, p, aurora_i18n::tr!("ui-options-smoothness"), |ui| {
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-vertical-synchronization"),
+                    aurora_i18n::tr!("ui-options-synchronizes-frames-with-the-monitor-refresh-rate-no-tearing"),
                     |ui| toggle(ui, p, &mut s.vsync),
                 );
                 c |= row(
                     ui,
                     p,
-                    "Limiter les images/s",
-                    "Plafonne le nombre d'images par seconde (moins de chauffe et de bruit). Activé par défaut à 120 img/s",
+                    aurora_i18n::tr!("extra-limit-frame-rate"),
+                    aurora_i18n::tr!("ui-options-caps-frames-per-second-less-heat-and-noise-enabled"),
                     |ui| {
                         let mut ch = toggle(ui, p, &mut s.fps_cap);
                         ui.add_enabled_ui(s.fps_cap, |ui| {
                             ui.spacing_mut().slider_width = SLIDER_W - 50.0;
                             ch |= ui
-                                .add(egui::Slider::new(&mut s.fps_limit, 10..=360).suffix(" img/s").trailing_fill(true))
+                                .add(
+                                    egui::Slider::new(&mut s.fps_limit, 10..=360)
+                                        .custom_parser(aurora_i18n::parse_number)
+                                        .suffix(aurora_i18n::tr!("status-fps"))
+                                        .trailing_fill(true),
+                                )
                                 .changed();
                         });
                         ch
@@ -800,8 +991,8 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                 c |= row(
                     ui,
                     p,
-                    "Limiter hors focus",
-                    "Quand la fenêtre n'est pas au premier plan, le viewer ralentit pour libérer la machine. Activé par défaut",
+                    aurora_i18n::tr!("ui-options-limit-when-unfocused"),
+                    aurora_i18n::tr!("ui-options-when-the-window-is-not-in-the-foreground-the"),
                     |ui| {
                         let mut ch = toggle(ui, p, &mut s.background_fps_cap);
                         ui.add_enabled_ui(s.background_fps_cap, |ui| {
@@ -809,7 +1000,8 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                             ch |= ui
                                 .add(
                                     egui::Slider::new(&mut s.background_fps_limit, 1..=120)
-                                        .suffix(" img/s")
+                                        .custom_parser(aurora_i18n::parse_number)
+                                        .suffix(aurora_i18n::tr!("status-fps"))
                                         .trailing_fill(true),
                                 )
                                 .changed();
@@ -820,111 +1012,163 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
             });
         }
         1 => {
-            group(ui, p, "Disposition", |ui| {
-                c |= row(ui, p, "Échelle de l'interface", "", |ui| {
+            group(ui, p, aurora_i18n::tr!("language-choice"), |ui| {
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("language-choice"),
+                    aurora_i18n::tr!("language-help"),
+                    |ui| {
+                        let selected = if s.language == "default" {
+                            aurora_i18n::tr!("language-system")
+                        } else {
+                            aurora_i18n::available_languages()
+                                .find(|&(code, _)| code == s.language)
+                                .map_or_else(|| aurora_i18n::text_in("en", "language-name"), |(_, name)| name)
+                        };
+                        let mut changed = false;
+                        egui::ComboBox::from_id_salt("ui-language")
+                            .selected_text(selected)
+                            .show_ui(ui, |ui| {
+                                changed |= ui
+                                    .selectable_value(&mut s.language, "default".to_owned(), aurora_i18n::tr!("language-system"))
+                                    .changed();
+                                for (code, name) in aurora_i18n::available_languages() {
+                                    changed |= ui.selectable_value(&mut s.language, code.to_owned(), name).changed();
+                                }
+                            });
+                        changed
+                    },
+                );
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("language-share"),
+                    aurora_i18n::tr!("language-share-help"),
+                    |ui| toggle(ui, p, &mut s.language_is_public),
+                );
+            });
+            group(ui, p, aurora_i18n::tr!("ui-options-layout"), |ui| {
+                c |= row(ui, p, aurora_i18n::tr!("ui-options-interface-scale"), "", |ui| {
                     slider(ui, &mut s.ui_scale, 0.75..=2.0, "×")
                 });
                 c |= row(
                     ui,
                     p,
-                    "Fond des chargements",
-                    "Les écrans de chargement et de téléportation montrent votre dernière vue, floutée (prise en vous téléportant ou en quittant)",
+                    aurora_i18n::tr!("ui-options-loading-backdrop"),
+                    aurora_i18n::tr!("ui-options-loading-and-teleport-screens-show-your-last-view-blurred"),
                     |ui| toggle(ui, p, &mut s.loading_backdrop),
                 );
-                c |= row(ui, p, "Distance des noms", "0 = masquer les noms des avatars", |ui| {
-                    slider(ui, &mut s.name_tag_distance, 0.0..=128.0, " m")
-                });
                 c |= row(
                     ui,
                     p,
-                    "Complexité dans les étiquettes",
-                    "Sous le nom, du vert au rouge selon la limite de complexité (comme Firestorm)",
+                    aurora_i18n::tr!("ui-options-name-distance"),
+                    aurora_i18n::tr!("ui-options-0-hide-avatar-names"),
+                    |ui| slider(ui, &mut s.name_tag_distance, 0.0..=128.0, " m"),
+                );
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-complexity-in-name-tags"),
+                    aurora_i18n::tr!("ui-options-below-the-name-from-green-to-red-based-on"),
                     |ui| toggle(ui, p, &mut s.tag_complexity),
                 );
                 if s.tag_complexity {
                     c |= row(
                         ui,
                         p,
-                        "… seulement les silhouettes",
-                        "Seulement pour les avatars au-delà de la limite (affichés en silhouette)",
+                        aurora_i18n::tr!("ui-options-silhouettes-only"),
+                        aurora_i18n::tr!("ui-options-only-avatars-above-the-limit-shown-as-silhouettes"),
                         |ui| toggle(ui, p, &mut s.tag_complexity_too_complex_only),
                     );
-                    c |= row(ui, p, "… la mienne aussi", "Votre complexité sous votre nom", |ui| {
-                        toggle(ui, p, &mut s.tag_complexity_own)
-                    });
+                    c |= row(
+                        ui,
+                        p,
+                        aurora_i18n::tr!("ui-options-mine-too"),
+                        aurora_i18n::tr!("ui-options-your-complexity-below-your-name"),
+                        |ui| toggle(ui, p, &mut s.tag_complexity_own),
+                    );
                 }
-                c |= row(ui, p, "Performances au démarrage", "", |ui| toggle(ui, p, &mut s.show_perf));
-                c |= row(ui, p, "Mini-carte au démarrage", "", |ui| toggle(ui, p, &mut s.show_minimap));
+                c |= row(ui, p, aurora_i18n::tr!("ui-options-performance-at-startup"), "", |ui| {
+                    toggle(ui, p, &mut s.show_perf)
+                });
+                c |= row(ui, p, aurora_i18n::tr!("ui-options-mini-map-at-startup"), "", |ui| {
+                    toggle(ui, p, &mut s.show_minimap)
+                });
             });
             // panel_preferences_UI.xml « Utiliser des fenêtres distinctes pour : »
-            group(ui, p, "Fenêtres", |ui| {
+            group(ui, p, aurora_i18n::tr!("common-windows"), |ui| {
                 c |= row(
                     ui,
                     p,
-                    "Repères et profils de lieux",
-                    "Fenêtres distinctes pour les repères, détails de l'historique de TP & profil du lieu (sinon dans la fenêtre Lieux)",
+                    aurora_i18n::tr!("ui-options-landmarks-and-place-profiles"),
+                    aurora_i18n::tr!("ui-options-separate-windows-for-landmarks-teleport-history-details-place-profiles"),
                     |ui| toggle(ui, p, &mut s.standalone_place_details),
                 );
             });
-            group(ui, p, "Inventaire", |ui| {
+            group(ui, p, aurora_i18n::tr!("common-inventory"), |ui| {
                 c |= super::inventory::preferences(ui, p, &mut s.inventory);
             });
-            group(ui, p, "Noms", |ui| {
+            group(ui, p, aurora_i18n::tr!("ui-options-names"), |ui| {
                 c |= row(
                     ui,
                     p,
-                    "Noms d'affichage",
-                    "Les noms choisis par les résidents (sinon les noms de compte)",
+                    aurora_i18n::tr!("ui-options-display-names"),
+                    aurora_i18n::tr!("ui-options-names-chosen-by-residents-otherwise-account-names"),
                     |ui| toggle(ui, p, &mut s.use_display_names),
                 );
                 if s.use_display_names {
                     c |= row(
                         ui,
                         p,
-                        "… avec le nom d'utilisateur",
-                        "Sous le nom dans les étiquettes, à côté dans le chat",
+                        aurora_i18n::tr!("ui-options-with-username"),
+                        aurora_i18n::tr!("ui-options-below-the-name-in-name-tags-beside-it-in"),
                         |ui| toggle(ui, p, &mut s.show_usernames),
                     );
                     c |= row(
                         ui,
                         p,
-                        "… au format Prénom Nom",
-                        "« Jane (Jane Doe) » plutôt que « Jane (jane.doe) »",
+                        aurora_i18n::tr!("ui-options-in-first-last-format"),
+                        aurora_i18n::tr!("ui-options-jane-jane-doe-instead-of-jane-jane-doe"),
                         |ui| toggle(ui, p, &mut s.legacy_username_format),
                     );
                     c |= row(
                         ui,
                         p,
-                        "Annoncer les changements de nom",
-                        "Dans le chat, quand un résident change de nom d'affichage",
+                        aurora_i18n::tr!("ui-options-announce-name-changes"),
+                        aurora_i18n::tr!("ui-options-in-chat-when-a-resident-changes-their-display-name"),
                         |ui| toggle(ui, p, &mut s.display_name_notices),
                     );
                 }
-                c |= row(ui, p, "Masquer « Resident »", "Nom de famille des comptes récents", |ui| {
-                    toggle(ui, p, &mut s.trim_resident)
-                });
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-hide-resident"),
+                    aurora_i18n::tr!("ui-options-last-name-for-recent-accounts"),
+                    |ui| toggle(ui, p, &mut s.trim_resident),
+                );
             });
-            group(ui, p, "Skin", |ui| {
+            group(ui, p, aurora_i18n::tr!("extra-skin"), |ui| {
                 ui.label(
-                    RichText::new("Couleurs, icônes et barre d'outils se personnalisent dans :")
+                    RichText::new(aurora_i18n::tr!("ui-options-customize-colors-icons-and-the-toolbar-in"))
                         .size(12.0)
                         .color(p.muted),
                 );
                 let dir = crate::settings::config_dir().join("skins").join("aurora");
                 ui.label(RichText::new(dir.display().to_string()).size(12.0).monospace().color(p.teal));
                 ui.label(
-                    RichText::new("theme.json · layout.json · icons/  — rechargés à chaud")
+                    RichText::new(aurora_i18n::tr!("ui-options-theme-json-layout-json-icons-reloaded-automatically"))
                         .size(11.0)
                         .color(p.muted_dim),
                 );
             });
         }
         2 => {
-            group(ui, p, "Polices intégrées", |ui| {
+            group(ui, p, aurora_i18n::tr!("ui-options-bundled-fonts"), |ui| {
                 for builtin in [fonts::NOTO, fonts::INTER, fonts::ROBOTO] {
                     let sel = s.font == builtin || (s.font.is_empty() && builtin == fonts::NOTO);
                     let label = if builtin == fonts::NOTO {
-                        format!("{builtin}  (par défaut)")
+                        aurora_i18n::tr!("ui-options-default", builtin = builtin.to_string())
                     } else {
                         builtin.to_owned()
                     };
@@ -935,10 +1179,10 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     }
                 }
             });
-            group(ui, p, "Polices du système", |ui| {
+            group(ui, p, aurora_i18n::tr!("ui-options-system-fonts"), |ui| {
                 ui.add(
                     egui::TextEdit::singleline(&mut st.font_filter)
-                        .hint_text("Rechercher une police")
+                        .hint_text(aurora_i18n::tr!("ui-options-search-fonts"))
                         .desired_width(ui.available_width()),
                 );
                 let list = st.system_fonts.get_or_insert_with(fonts::system_fonts);
@@ -956,136 +1200,176 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     }
                 });
             });
-            group(ui, p, "Taille et aperçu", |ui| {
-                c |= row(ui, p, "Taille du texte", "", |ui| slider(ui, &mut s.font_scale, 0.8..=1.4, "×"));
+            group(ui, p, aurora_i18n::tr!("ui-options-size-and-preview"), |ui| {
+                c |= row(ui, p, aurora_i18n::tr!("ui-options-text-size"), "", |ui| {
+                    slider(ui, &mut s.font_scale, 0.8..=1.4, "×")
+                });
                 ui.add_space(4.0);
-                ui.label(RichText::new("Le loup violet hurle sous l'aurore boréale.").size(15.0).color(p.ink));
                 ui.label(
-                    RichText::new("0123456789 · éèàçù · ÆŒ · « guillemets » · L$ 1 250")
-                        .size(12.0)
-                        .color(p.muted),
+                    RichText::new(aurora_i18n::tr!("ui-options-the-violet-wolf-howls-under-the-northern-lights"))
+                        .size(15.0)
+                        .color(p.ink),
                 );
+                ui.label(RichText::new(aurora_i18n::tr!("font-sample")).size(12.0).color(p.muted));
             });
         }
         3 => {
-            group(ui, p, "Chat local", |ui| {
-                c |= row(ui, p, "Afficher l'heure", "", |ui| toggle(ui, p, &mut s.chat_timestamps));
-                c |= row(ui, p, "Durée des bulles", "0 = pas de bulles au-dessus de la barre de chat", |ui| {
-                    slider(ui, &mut s.chat_toast_seconds, 0.0..=60.0, " s")
+            group(ui, p, aurora_i18n::tr!("common-nearby-chat"), |ui| {
+                c |= row(ui, p, aurora_i18n::tr!("ui-options-show-time"), "", |ui| {
+                    toggle(ui, p, &mut s.chat_timestamps)
                 });
                 c |= row(
                     ui,
                     p,
-                    "Prévenir avant un lien externe",
-                    "Avertissement avant d'ouvrir un lien qui ne mène pas à un site de confiance (coche verte). Les liens dangereux (croix rouge) avertissent toujours",
-                    |ui| toggle(ui, p, &mut s.warn_external_links),
+                    aurora_i18n::tr!("ui-options-chat-bubble-duration"),
+                    aurora_i18n::tr!("ui-options-0-no-chat-bubbles-above-the-chat-bar"),
+                    |ui| slider(ui, &mut s.chat_toast_seconds, 0.0..=60.0, " s"),
                 );
-                c |= row(ui, p, "Conversations au démarrage", "", |ui| toggle(ui, p, &mut s.show_chat));
-            });
-            group(ui, p, "Groupes et blocage", |ui| {
                 c |= row(
                     ui,
                     p,
-                    "Aucun chat de groupe",
-                    "Refuser tous les chats de groupe (FSMuteAllGroups)",
+                    aurora_i18n::tr!("ui-options-warn-before-external-links"),
+                    aurora_i18n::tr!("ui-options-warn-before-opening-a-link-to-a-site-that"),
+                    |ui| toggle(ui, p, &mut s.warn_external_links),
+                );
+                c |= row(ui, p, aurora_i18n::tr!("ui-options-conversations-at-startup"), "", |ui| {
+                    toggle(ui, p, &mut s.show_chat)
+                });
+            });
+            group(ui, p, aurora_i18n::tr!("ui-options-groups-and-blocking"), |ui| {
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-no-group-chats"),
+                    aurora_i18n::tr!("extra-reject-all-group-chats-fsmuteallgroups"),
                     |ui| toggle(ui, p, &mut s.mute_all_groups),
                 );
                 c |= row(
                     ui,
                     p,
-                    "Groupes sans avis",
-                    "Refuser le chat des groupes dont vous ne recevez pas les avis",
+                    aurora_i18n::tr!("ui-options-groups-without-notices"),
+                    aurora_i18n::tr!("ui-options-reject-chat-from-groups-whose-notices-you-do-not"),
                     |ui| toggle(ui, p, &mut s.mute_groups_without_notices),
                 );
                 c |= row(
                     ui,
                     p,
-                    "Signaler dans le chat",
-                    "Annoncer dans le chat local les ajouts et retraits de la liste de blocage",
+                    aurora_i18n::tr!("ui-options-report-in-chat"),
+                    aurora_i18n::tr!("ui-options-announce-additions-to-and-removals-from-the-block-list"),
                     |ui| toggle(ui, p, &mut s.report_blocks),
                 );
             });
             // Firestorm: Préférences > Confidentialité > Réponses auto. 1 et 2
             let a = &mut s.autoresponse;
-            group(ui, p, "Réponses automatiques", |ui| {
+            group(ui, p, aurora_i18n::tr!("ui-options-auto-replies"), |ui| {
                 ui.label(
-                    RichText::new("Les modes s'activent dans Communiquer > Statut de connexion.")
+                    RichText::new(aurora_i18n::tr!("ui-options-enable-these-modes-in-communicate-online-status"))
                         .size(11.5)
                         .color(p.muted),
                 );
-                c |= response_text(ui, p, "En mode « Ne pas déranger » :", &mut a.dnd_text);
-                c |= response_text(ui, p, "À tous, en mode « Réponse automatique » :", &mut a.autorespond_text);
-                c |= response_text(ui, p, "En mode « Réponse automatique aux non-amis » :", &mut a.nonfriends_text);
+                c |= response_text(ui, p, aurora_i18n::tr!("ui-options-in-do-not-disturb-mode"), &mut a.dnd_text);
+                c |= response_text(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-to-everyone-in-auto-reply-mode"),
+                    &mut a.autorespond_text,
+                );
+                c |= response_text(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-in-auto-respond-to-non-friends-mode"),
+                    &mut a.nonfriends_text,
+                );
                 c |= row(
                     ui,
                     p,
-                    "Répondre si absent",
-                    "Envoyer le texte ci-dessous quand je suis absent",
+                    aurora_i18n::tr!("ui-options-reply-when-away"),
+                    aurora_i18n::tr!("ui-options-send-the-text-below-when-i-am-away"),
                     |ui| toggle(ui, p, &mut a.send_away),
                 );
-                c |= response_text(ui, p, "Quand je suis absent :", &mut a.away_text);
+                c |= response_text(ui, p, aurora_i18n::tr!("ui-options-when-i-am-away"), &mut a.away_text);
                 c |= row(
                     ui,
                     p,
-                    "Répondre aux bloqués",
-                    "Envoyer le texte ci-dessous aux personnes bloquées (leur IM reste masqué)",
+                    aurora_i18n::tr!("ui-options-reply-to-blocked-residents"),
+                    aurora_i18n::tr!("ui-options-send-the-text-below-to-blocked-people-their-im"),
                     |ui| toggle(ui, p, &mut a.send_muted),
                 );
-                c |= response_text(ui, p, "Aux personnes bloquées :", &mut a.muted_text);
+                c |= response_text(ui, p, aurora_i18n::tr!("ui-options-to-blocked-people"), &mut a.muted_text);
                 c |= row(
                     ui,
                     p,
-                    "Absent après",
-                    "Passer en absent après cette durée sans clavier ni souris (0 = jamais)",
+                    aurora_i18n::tr!("ui-options-away-after"),
+                    aurora_i18n::tr!("ui-options-become-away-after-this-time-without-keyboard-or-mouse"),
                     |ui| slider(ui, &mut a.away_after_minutes, 0..=60, " min"),
                 );
             });
-            group(ui, p, "Refus automatiques", |ui| {
-                c |= response_text(ui, p, "En mode « Rejeter les téléportations » :", &mut a.reject_teleports_text);
+            group(ui, p, aurora_i18n::tr!("ui-options-automatic-rejections"), |ui| {
+                c |= response_text(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-in-reject-teleports-mode"),
+                    &mut a.reject_teleports_text,
+                );
                 c |= row(
                     ui,
                     p,
-                    "Sauf mes amis",
-                    "Ne pas rejeter les téléportations de mes amis ni leur répondre",
+                    aurora_i18n::tr!("ui-options-except-my-friends"),
+                    aurora_i18n::tr!("ui-options-do-not-reject-or-auto-respond-to-my-friends"),
                     |ui| toggle(ui, p, &mut a.dont_reject_friends_teleports),
                 );
-                c |= response_text(ui, p, "En mode « Rejeter les demandes d'amitié » :", &mut a.reject_friendship_text);
+                c |= response_text(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-in-reject-friendship-requests-mode"),
+                    &mut a.reject_friendship_text,
+                );
             });
         }
         4 => {
-            group(ui, p, "Souris", |ui| {
-                c |= row(ui, p, "Sensibilité", "", |ui| slider(ui, &mut s.mouse_sensitivity, 0.1..=5.0, "×"));
-                c |= row(ui, p, "Inverser l'axe vertical", "", |ui| toggle(ui, p, &mut s.invert_mouse));
-            });
-            group(ui, p, "Clavier", |ui| {
-                c |= row(
-                    ui,
-                    p,
-                    "Flèches : pas latéraux",
-                    "Gauche/droite déplacent latéralement au lieu de tourner (Maj inverse)",
-                    |ui| toggle(ui, p, &mut s.arrows_strafe),
-                );
-                row(ui, p, "Raccourcis", "Touches et boutons de souris de chaque action", |ui| {
-                    if super::widgets::flat_button(ui, p, "Modifier les raccourcis…").clicked() {
-                        st.tab = 8;
-                    }
-                    false
+            group(ui, p, aurora_i18n::tr!("ui-options-mouse"), |ui| {
+                c |= row(ui, p, aurora_i18n::tr!("ui-options-sensitivity"), "", |ui| {
+                    slider(ui, &mut s.mouse_sensitivity, 0.1..=5.0, "×")
+                });
+                c |= row(ui, p, aurora_i18n::tr!("ui-options-invert-vertical-axis"), "", |ui| {
+                    toggle(ui, p, &mut s.invert_mouse)
                 });
             });
-            group(ui, p, "Regard", |ui| {
+            group(ui, p, aurora_i18n::tr!("ui-options-keyboard"), |ui| {
                 c |= row(
                     ui,
                     p,
-                    "Suivi du regard",
-                    "La tête et les yeux de votre avatar suivent le curseur et ce que vous visez, et les autres voient où vous regardez",
+                    aurora_i18n::tr!("ui-options-arrows-strafe"),
+                    aurora_i18n::tr!("ui-options-left-right-strafe-instead-of-turning-shift-reverses-this"),
+                    |ui| toggle(ui, p, &mut s.arrows_strafe),
+                );
+                row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-shortcuts"),
+                    aurora_i18n::tr!("ui-options-keys-and-mouse-buttons-for-each-action"),
+                    |ui| {
+                        if super::widgets::flat_button(ui, p, aurora_i18n::tr!("ui-options-edit-shortcuts")).clicked() {
+                            st.tab = 8;
+                        }
+                        false
+                    },
+                );
+            });
+            group(ui, p, aurora_i18n::tr!("ui-options-look-at"), |ui| {
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-look-at-tracking"),
+                    aurora_i18n::tr!("ui-options-your-avatar-s-head-and-eyes-follow-the-cursor"),
                     |ui| toggle(ui, p, &mut s.look_at),
                 );
                 if s.look_at {
                     c |= row(
                         ui,
                         p,
-                        "Portée du regard",
-                        "Une cible plus lointaine est ramenée à cette distance de la tête : les autres ne voient pas ce que vous regardez au loin",
+                        aurora_i18n::tr!("ui-options-look-at-range"),
+                        aurora_i18n::tr!("ui-options-more-distant-targets-are-limited-to-this-distance-from"),
                         |ui| {
                             let unlimited = s.look_at_range >= crate::settings::LOOK_AT_UNLIMITED;
 
@@ -1093,7 +1377,11 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                                 ui,
                                 &mut s.look_at_range,
                                 1.0..=crate::settings::LOOK_AT_UNLIMITED,
-                                if unlimited { " m (illimitée)" } else { " m" },
+                                if unlimited {
+                                    aurora_i18n::tr!("ui-options-m-unlimited")
+                                } else {
+                                    " m"
+                                },
                             )
                         },
                     );
@@ -1102,37 +1390,37 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
         }
         5 => {
             let k = &mut s.colors;
-            group(ui, p, "Couleur des étiquettes", |ui| {
+            group(ui, p, aurora_i18n::tr!("ui-options-name-tag-color"), |ui| {
                 c |= swatches(
                     ui,
                     "tags",
                     &mut [
-                        ("Mon nom", &mut k.tag_me),
-                        ("Amis", &mut k.tag_friend),
-                        ("Ignorés", &mut k.tag_muted),
+                        (aurora_i18n::tr!("ui-options-my-name"), &mut k.tag_me),
+                        (aurora_i18n::tr!("common-friends"), &mut k.tag_friend),
+                        (aurora_i18n::tr!("ui-options-ignored"), &mut k.tag_muted),
                         ("Linden Lab", &mut k.tag_linden),
-                        ("Correspondances", &mut k.tag_match),
-                        ("Non-correspondances", &mut k.tag_mismatch),
+                        (aurora_i18n::tr!("ui-options-matches"), &mut k.tag_match),
+                        (aurora_i18n::tr!("ui-options-non-matches"), &mut k.tag_mismatch),
                     ],
                 );
             });
-            group(ui, p, "Repères sur la mini-carte", |ui| {
+            group(ui, p, aurora_i18n::tr!("ui-options-mini-map-markers"), |ui| {
                 c |= swatches(
                     ui,
                     "map",
                     &mut [
-                        ("Moi", &mut k.map_me),
-                        ("Autres", &mut k.map_other),
-                        ("Amis", &mut k.map_friend),
+                        (aurora_i18n::tr!("common-me"), &mut k.map_me),
+                        (aurora_i18n::tr!("common-others"), &mut k.map_other),
+                        (aurora_i18n::tr!("common-friends"), &mut k.map_friend),
                         ("Linden Lab", &mut k.map_linden),
-                        ("Ignorés", &mut k.map_muted),
+                        (aurora_i18n::tr!("ui-options-ignored"), &mut k.map_muted),
                     ],
                 );
                 ui.add_space(4.0);
                 c |= ui
                     .checkbox(
                         &mut k.map_ranges,
-                        RichText::new("Afficher les portées de murmure, voix normale et cri sur la mini-carte")
+                        RichText::new(aurora_i18n::tr!("ui-options-show-whisper-normal-chat-and-shout-ranges-on-the"))
                             .size(12.5)
                             .color(p.ink),
                     )
@@ -1140,9 +1428,9 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                 ui.add_enabled_ui(k.map_ranges, |ui| {
                     egui::Grid::new("ranges").num_columns(3).spacing([24.0, 6.0]).show(ui, |ui| {
                         for (label, on, col) in [
-                            ("Murmure", &mut k.map_whisper_on, &mut k.map_whisper),
-                            ("Voix normale", &mut k.map_say_on, &mut k.map_say),
-                            ("Cri", &mut k.map_shout_on, &mut k.map_shout),
+                            (aurora_i18n::tr!("ui-options-whisper"), &mut k.map_whisper_on, &mut k.map_whisper),
+                            (aurora_i18n::tr!("ui-options-normal-voice"), &mut k.map_say_on, &mut k.map_say),
+                            (aurora_i18n::tr!("ui-options-shout"), &mut k.map_shout_on, &mut k.map_shout),
                         ] {
                             ui.horizontal(|ui| {
                                 c |= ui.checkbox(on, "").changed();
@@ -1154,64 +1442,71 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     });
                 });
             });
-            group(ui, p, "Messages", |ui| {
+            group(ui, p, aurora_i18n::tr!("ui-options-messages"), |ui| {
                 c |= swatches(
                     ui,
                     "msgs",
                     &mut [
-                        ("Mes messages", &mut k.chat_mine),
-                        ("Autres", &mut k.chat_others),
-                        ("Objets", &mut k.chat_objects),
-                        ("Amis", &mut k.chat_friends),
+                        (aurora_i18n::tr!("ui-options-my-messages"), &mut k.chat_mine),
+                        (aurora_i18n::tr!("common-others"), &mut k.chat_others),
+                        (aurora_i18n::tr!("common-objects"), &mut k.chat_objects),
+                        (aurora_i18n::tr!("common-friends"), &mut k.chat_friends),
                         ("Linden Lab", &mut k.chat_linden),
-                        ("Ignorés", &mut k.chat_muted),
-                        ("Système", &mut k.chat_system),
-                        ("Erreurs", &mut k.chat_errors),
-                        ("IMs des objets", &mut k.chat_object_im),
-                        ("Propriétaire", &mut k.chat_owner),
-                        ("URLs", &mut k.chat_urls),
-                        ("Chemin d'URL", &mut k.chat_slurl),
-                        ("Direct", &mut k.chat_direct),
+                        (aurora_i18n::tr!("ui-options-ignored"), &mut k.chat_muted),
+                        (aurora_i18n::tr!("common-system"), &mut k.chat_system),
+                        (aurora_i18n::tr!("ui-options-errors"), &mut k.chat_errors),
+                        (aurora_i18n::tr!("ui-options-object-ims"), &mut k.chat_object_im),
+                        (aurora_i18n::tr!("common-owner"), &mut k.chat_owner),
+                        (aurora_i18n::tr!("status-urls"), &mut k.chat_urls),
+                        (aurora_i18n::tr!("ui-options-url-path"), &mut k.chat_slurl),
+                        (aurora_i18n::tr!("ui-options-direct"), &mut k.chat_direct),
                     ],
                 );
             });
-            group(ui, p, "Émetteur", |ui| {
+            group(ui, p, aurora_i18n::tr!("ui-options-emitter"), |ui| {
                 c |= swatches(
                     ui,
                     "sender",
-                    &mut [("Avatars", &mut k.sender_avatar), ("Objets", &mut k.sender_object)],
+                    &mut [
+                        (aurora_i18n::tr!("ui-options-avatars"), &mut k.sender_avatar),
+                        (aurora_i18n::tr!("common-objects"), &mut k.sender_object),
+                    ],
                 );
             });
-            group(ui, p, "Mentions dans le chat", |ui| {
+            group(ui, p, aurora_i18n::tr!("ui-options-chat-mentions"), |ui| {
                 c |= swatches(
                     ui,
                     "mentions",
                     &mut [
-                        ("Police", &mut k.mention_text),
-                        ("Résidents", &mut k.mention_residents),
-                        ("Moi", &mut k.mention_me),
+                        (aurora_i18n::tr!("ui-options-font"), &mut k.mention_text),
+                        (aurora_i18n::tr!("ui-options-residents"), &mut k.mention_residents),
+                        (aurora_i18n::tr!("common-me"), &mut k.mention_me),
                     ],
                 );
             });
             ui.add_space(6.0);
-            if ui.button(RichText::new("Couleurs par défaut").size(12.5)).clicked() {
+            if ui
+                .button(RichText::new(aurora_i18n::tr!("ui-options-default-colors")).size(12.5))
+                .clicked()
+            {
                 *k = crate::settings::ColorSettings::default();
                 c = true;
             }
         }
         _ => {
-            group(ui, p, "Cache disque", |ui| {
+            group(ui, p, aurora_i18n::tr!("ui-options-disk-cache"), |ui| {
                 c |= row(
                     ui,
                     p,
-                    "Taille maximale",
-                    "Textures, mesh, animations (partagés entre régions), objets par région, inventaire",
+                    aurora_i18n::tr!("ui-options-maximum-size"),
+                    aurora_i18n::tr!("ui-options-textures-meshes-animations-shared-across-regions-objects-per-region"),
                     |ui| {
                         ui.spacing_mut().slider_width = SLIDER_W;
                         ui.add(
                             egui::Slider::new(&mut s.cache_size_mb, 512..=65536)
+                                .custom_parser(aurora_i18n::parse_number)
                                 .logarithmic(true)
-                                .suffix(" Mo")
+                                .suffix(aurora_i18n::tr!("memory-mb-suffix"))
                                 .trailing_fill(true),
                         )
                         .changed()
@@ -1220,8 +1515,8 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                 row(
                     ui,
                     p,
-                    "Utilisation",
-                    "Les fichiers les moins récemment utilisés sont supprimés au-delà de la limite",
+                    aurora_i18n::tr!("ui-options-usage"),
+                    aurora_i18n::tr!("ui-options-least-recently-used-files-are-removed-when-the-limit"),
                     |ui| {
                         let used = st.cache_usage;
                         let limit = s.cache_size_mb as u64 * 1024 * 1024;
@@ -1234,23 +1529,36 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                         false
                     },
                 );
-                row(ui, p, "Vider le cache", "Tout sera retéléchargé au besoin", |ui| {
-                    let label = if st.cache_clearing { "Suppression…" } else { "Vider le cache" };
-                    let b = ui.add_enabled(!st.cache_clearing, egui::Button::new(RichText::new(label).color(p.ink)));
-                    if b.clicked() {
-                        *clear_cache = true;
-                    }
-                    false
-                });
-            });
-            group(ui, p, "Journaux", |ui| {
                 row(
                     ui,
                     p,
-                    "Journal de la session",
-                    "aurora.log (la session précédente : aurora.previous.log)",
+                    aurora_i18n::tr!("ui-options-clear-cache"),
+                    aurora_i18n::tr!("ui-options-everything-will-be-downloaded-again-as-needed"),
                     |ui| {
-                        if ui.button(RichText::new("Ouvrir le dossier").color(p.ink)).clicked() {
+                        let label = if st.cache_clearing {
+                            aurora_i18n::tr!("ui-options-deleting")
+                        } else {
+                            aurora_i18n::tr!("ui-options-clear-cache")
+                        };
+                        let b = ui.add_enabled(!st.cache_clearing, egui::Button::new(RichText::new(label).color(p.ink)));
+                        if b.clicked() {
+                            *clear_cache = true;
+                        }
+                        false
+                    },
+                );
+            });
+            group(ui, p, aurora_i18n::tr!("ui-options-logs"), |ui| {
+                row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-session-log"),
+                    aurora_i18n::tr!("ui-options-aurora-log-previous-session-aurora-previous-log"),
+                    |ui| {
+                        if ui
+                            .button(RichText::new(aurora_i18n::tr!("ui-options-open-folder")).color(p.ink))
+                            .clicked()
+                        {
                             crate::logging::open_logs_dir();
                         }
                         false
@@ -1259,10 +1567,13 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                 row(
                     ui,
                     p,
-                    "Objets proches",
-                    "Écrit les faces, lumières et matériaux à moins de 12 m dans le journal",
+                    aurora_i18n::tr!("ui-options-nearby-objects"),
+                    aurora_i18n::tr!("ui-options-write-faces-lights-and-materials-within-12-m-to"),
                     |ui| {
-                        if ui.button(RichText::new("Décrire").color(p.ink)).clicked() {
+                        if ui
+                            .button(RichText::new(aurora_i18n::tr!("ui-options-describe")).color(p.ink))
+                            .clicked()
+                        {
                             st.describe_nearby = true;
                         }
                         false
@@ -1278,7 +1589,7 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
 fn device_combo(ui: &mut egui::Ui, id: &str, value: &mut String, devices: &[String]) -> bool {
     let mut changed = false;
     let shown = if value.is_empty() {
-        "Par défaut du système".to_owned()
+        aurora_i18n::tr!("ui-options-system-default").to_owned()
     } else {
         value.clone()
     };
@@ -1287,12 +1598,18 @@ fn device_combo(ui: &mut egui::Ui, id: &str, value: &mut String, devices: &[Stri
         .selected_text(shown)
         .truncate()
         .show_ui(ui, |ui| {
-            changed |= ui.selectable_value(value, String::new(), "Par défaut du système").changed();
+            changed |= ui
+                .selectable_value(value, String::new(), aurora_i18n::tr!("ui-options-system-default"))
+                .changed();
             for d in devices {
                 changed |= ui.selectable_value(value, d.clone(), d).changed();
             }
             if !value.is_empty() && !devices.contains(value) {
-                ui.label(RichText::new(format!("{value} (absent)")).size(12.0).weak());
+                ui.label(
+                    RichText::new(aurora_i18n::tr!("status-value-missing", value = value.to_string()))
+                        .size(12.0)
+                        .weak(),
+                );
             }
         });
     changed
@@ -1303,120 +1620,162 @@ fn device_combo(ui: &mut egui::Ui, id: &str, value: &mut String, devices: &[Stri
 fn audio_page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi, audio_changed: &mut bool, refresh: &mut bool) -> bool {
     let mut c = false;
     let a = &mut s.audio;
-    group(ui, p, "Périphériques", |ui| {
-        let out = row(ui, p, "Sortie audio", "Haut-parleurs ou casque utilisés par le viewer", |ui| {
-            device_combo(ui, "audio_out", &mut a.output_device, &st.output_devices)
-        });
-        let inp = row(ui, p, "Microphone", "Entrée utilisée pour la voix", |ui| {
-            device_combo(ui, "audio_in", &mut a.input_device, &st.input_devices)
-        });
+    group(ui, p, aurora_i18n::tr!("ui-options-devices"), |ui| {
+        let out = row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-audio-output"),
+            aurora_i18n::tr!("ui-options-speakers-or-headset-used-by-the-viewer"),
+            |ui| device_combo(ui, "audio_out", &mut a.output_device, &st.output_devices),
+        );
+        let inp = row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-microphone"),
+            aurora_i18n::tr!("ui-options-input-used-for-voice"),
+            |ui| device_combo(ui, "audio_in", &mut a.input_device, &st.input_devices),
+        );
         c |= out | inp;
         *audio_changed |= out | inp;
         row(ui, p, "", "", |ui| {
-            if super::widgets::flat_button(ui, p, "Actualiser la liste").clicked() {
+            if super::widgets::flat_button(ui, p, aurora_i18n::tr!("ui-options-refresh-list")).clicked() {
                 *refresh = true;
             }
             false
         });
     });
-    group(ui, p, "Volumes", |ui| {
-        for (i, name) in crate::settings::AUDIO_CHANNELS.iter().enumerate() {
+    group(ui, p, aurora_i18n::tr!("ui-options-volumes"), |ui| {
+        for (i, name) in crate::settings::audio_channels().iter().enumerate() {
             let changed = row(ui, p, name, "", |ui| {
                 let mut ch = false;
                 ui.spacing_mut().slider_width = SLIDER_W - 40.0;
                 ch |= ui
                     .add_enabled(
                         !a.muted[i] && a.enabled[i],
-                        egui::Slider::new(&mut a.volume[i], 0.0..=1.0).trailing_fill(true).show_value(false),
+                        egui::Slider::new(&mut a.volume[i], 0.0..=1.0)
+                            .custom_parser(aurora_i18n::parse_number)
+                            .trailing_fill(true)
+                            .show_value(false),
                     )
                     .changed();
                 ui.label(RichText::new(format!("{:>3.0} %", a.volume[i] * 100.0)).size(12.0).color(p.muted));
                 let mut on = !a.muted[i];
                 if super::widgets::switch(ui, p, &mut on)
-                    .on_hover_text(if on { "Couper" } else { "Rétablir" })
+                    .on_hover_text(if on {
+                        aurora_i18n::tr!("common-cut")
+                    } else {
+                        aurora_i18n::tr!("ui-options-restore")
+                    })
                     .changed()
                 {
                     a.muted[i] = !on;
                     ch = true;
                 }
                 if i > 0 {
-                    ch |= ui.checkbox(&mut a.enabled[i], "").on_hover_text("Activer ce canal").changed();
+                    ch |= ui
+                        .checkbox(&mut a.enabled[i], "")
+                        .on_hover_text(aurora_i18n::tr!("ui-options-enable-this-channel"))
+                        .changed();
                 }
                 ch
             });
             c |= changed;
             *audio_changed |= changed;
         }
-        c |= row(ui, p, "Musique auto.", "Lire la musique de la parcelle en y entrant", |ui| {
-            toggle(ui, p, &mut a.music_autoplay)
-        });
         c |= row(
             ui,
             p,
-            "Sons de collision",
-            "Chocs entre objets et avatars (comme Firestorm, activés par défaut)",
+            aurora_i18n::tr!("ui-options-auto-music"),
+            aurora_i18n::tr!("ui-options-play-parcel-music-when-entering"),
+            |ui| toggle(ui, p, &mut a.music_autoplay),
+        );
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-collision-sounds"),
+            aurora_i18n::tr!("ui-options-collisions-between-objects-and-avatars-as-in-firestorm-enabled"),
             |ui| toggle(ui, p, &mut a.collision_sounds),
         );
-        c |= row(ui, p, "Sons des gestes", "Sons joués par les gestes des autres avatars", |ui| {
-            toggle(ui, p, &mut a.gesture_sounds)
-        });
         c |= row(
             ui,
             p,
-            "Sons de l'interface",
-            "Tous les sons de l'interface : clics, fenêtres, conversations, L$, téléportation, menus, alertes… (réglage par son plus bas)",
+            aurora_i18n::tr!("ui-options-gesture-sounds"),
+            aurora_i18n::tr!("ui-options-sounds-played-by-other-avatars-gestures"),
+            |ui| toggle(ui, p, &mut a.gesture_sounds),
+        );
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-interface-sounds"),
+            aurora_i18n::tr!("ui-options-all-interface-sounds-clicks-windows-conversations-l-teleportation-menus"),
             |ui| toggle(ui, p, &mut a.ui_sounds),
         );
         c |= row(
             ui,
             p,
-            "Média auto.",
-            "Lire automatiquement le média de la parcelle (après 5 s immobile) et les médias sur prims réglés en lecture auto. (ParcelMediaAutoPlayEnable, désactivé par défaut)",
+            aurora_i18n::tr!("ui-options-auto-media"),
+            aurora_i18n::tr!("ui-options-auto-play-parcel-media-after-standing-still-for-5"),
             |ui| toggle(ui, p, &mut a.media_autoplay),
         );
     });
     c |= ui_sounds_group(ui, p, a, st);
-    group(ui, p, "Voix", |ui| {
-        let v = row(ui, p, "Activer la voix", "Connexion au chat vocal (WebRTC) des régions", |ui| {
-            toggle(ui, p, &mut a.voice_enabled)
-        });
+    group(ui, p, aurora_i18n::tr!("common-voice"), |ui| {
+        let v = row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-enable-voice"),
+            aurora_i18n::tr!("ui-options-connect-to-regional-voice-chat-webrtc"),
+            |ui| toggle(ui, p, &mut a.voice_enabled),
+        );
         c |= v;
         *audio_changed |= v;
         c |= row(
             ui,
             p,
-            "Bouton du micro",
-            "Basculer : un clic active, un clic coupe · Maintenir : parler tant que le bouton ou la touche est enfoncé",
+            aurora_i18n::tr!("ui-options-microphone-button"),
+            aurora_i18n::tr!("ui-options-toggle-click-once-to-enable-again-to-disable-hold"),
             |ui| {
                 let mut ch = false;
-                ch |= ui.selectable_value(&mut a.mic_hold, false, "Basculer").changed();
-                ch |= ui.selectable_value(&mut a.mic_hold, true, "Maintenir pour parler").changed();
+                ch |= ui
+                    .selectable_value(&mut a.mic_hold, false, aurora_i18n::tr!("ui-options-toggle"))
+                    .changed();
+                ch |= ui
+                    .selectable_value(&mut a.mic_hold, true, aurora_i18n::tr!("common-hold-to-talk"))
+                    .changed();
                 ch
             },
         );
-        let g = row(ui, p, "Gain du micro", "", |ui| slider(ui, &mut a.mic_gain, 0.0..=2.0, "×"));
+        let g = row(ui, p, aurora_i18n::tr!("ui-options-microphone-gain"), "", |ui| {
+            slider(ui, &mut a.mic_gain, 0.0..=2.0, "×")
+        });
         c |= g;
         *audio_changed |= g;
-        row(ui, p, "Niveau du micro", "Parlez pour tester", |ui| {
-            let lvl = st.mic_level.clamp(0.0, 1.0);
-            let col = if lvl > 0.85 {
-                p.danger
-            } else if lvl > 0.6 {
-                p.amber
-            } else {
-                p.teal
-            };
-            ui.add(egui::ProgressBar::new(lvl).desired_width(SLIDER_W).desired_height(8.0).fill(col));
-            false
-        });
+        row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-microphone-level"),
+            aurora_i18n::tr!("ui-options-speak-to-test"),
+            |ui| {
+                let lvl = st.mic_level.clamp(0.0, 1.0);
+                let col = if lvl > 0.85 {
+                    p.danger
+                } else if lvl > 0.6 {
+                    p.amber
+                } else {
+                    p.teal
+                };
+                ui.add(egui::ProgressBar::new(lvl).desired_width(SLIDER_W).desired_height(8.0).fill(col));
+                false
+            },
+        );
     });
-    group(ui, p, "Push-to-talk", |ui| {
+    group(ui, p, aurora_i18n::tr!("ui-options-push-to-talk"), |ui| {
         let kb = s.keybinds.clone();
         row(
             ui,
             p,
-            "Touche pour parler",
-            "Touche ou bouton de souris (clic molette par défaut) ; aussi dans Raccourcis",
+            aurora_i18n::tr!("ui-options-push-to-talk-key"),
+            aurora_i18n::tr!("ui-options-key-or-mouse-button-middle-click-by-default-also"),
             |ui| {
                 for slot in 0..2 {
                     binding_cell(ui, p, &kb, st, crate::keybinds::Action::PushToTalk, slot);
@@ -1426,58 +1785,64 @@ fn audio_page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut Options
         );
     });
     let m = &mut s.media;
-    group(ui, p, "Média (web et vidéo)", |ui| {
+    group(ui, p, aurora_i18n::tr!("ui-options-media-web-and-video"), |ui| {
         c |= row(
             ui,
             p,
-            "Activer les médias",
-            "Pages web et vidéos de la parcelle et des prims (AudioStreamingMedia)",
+            aurora_i18n::tr!("ui-options-enable-media"),
+            aurora_i18n::tr!("ui-options-parcel-and-prim-web-pages-and-videos-audiostreamingmedia"),
             |ui| toggle(ui, p, &mut m.enabled),
         );
         c |= row(
             ui,
             p,
-            "Médias sur prims",
-            "Médias partagés affichés sur les faces des objets (PrimMediaMasterEnabled)",
+            aurora_i18n::tr!("ui-options-prim-media"),
+            aurora_i18n::tr!("ui-options-shared-media-displayed-on-object-faces-primmediamasterenabled"),
             |ui| toggle(ui, p, &mut m.prim_media),
         );
         c |= row(
             ui,
             p,
-            "Sur les autres avatars",
-            "Médias des objets portés par les autres (MediaShowOnOthers, désactivé par défaut)",
+            aurora_i18n::tr!("ui-options-on-other-avatars"),
+            aurora_i18n::tr!("ui-options-media-on-other-people-s-attachments-mediashowonothers-disabled-by"),
             |ui| toggle(ui, p, &mut m.show_on_others),
         );
         c |= row(
             ui,
             p,
-            "Interaction au 1er clic",
-            "Le premier clic va directement à la page quand l'objet l'autorise (MediaFirstClickInteract)",
+            aurora_i18n::tr!("ui-options-first-click-interaction"),
+            aurora_i18n::tr!("ui-options-the-first-click-goes-directly-to-the-page-when"),
             |ui| toggle(ui, p, &mut m.first_click_interact),
         );
         c |= row(
             ui,
             p,
-            "Médias des HUD",
-            "Lire automatiquement les médias des HUD (MediaAutoPlayHuds)",
+            aurora_i18n::tr!("ui-options-hud-media"),
+            aurora_i18n::tr!("ui-options-auto-play-hud-media-mediaautoplayhuds"),
             |ui| toggle(ui, p, &mut m.autoplay_huds),
         );
         c |= row(
             ui,
             p,
-            "Médias par script",
-            "Laisser les scripts démarrer le média de la parcelle (PermAllowScriptedMedia, désactivé par défaut comme Firestorm)",
+            aurora_i18n::tr!("ui-options-scripted-media"),
+            aurora_i18n::tr!("ui-options-allow-scripts-to-start-parcel-media-permallowscriptedmedia-disabled-by"),
             |ui| toggle(ui, p, &mut m.allow_scripted),
         );
         c |= row(
             ui,
             p,
-            "Lecteurs simultanés",
-            "Nombre maximal de pages / vidéos chargées en même temps (PluginInstancesTotal)",
+            aurora_i18n::tr!("ui-options-simultaneous-players"),
+            aurora_i18n::tr!("ui-options-maximum-pages-videos-loaded-at-once-plugininstancestotal"),
             |ui| {
                 ui.spacing_mut().slider_width = SLIDER_W - 40.0;
                 let mut n = m.max_instances as u32;
-                let ch = ui.add(egui::Slider::new(&mut n, 1..=16).trailing_fill(true)).changed();
+                let ch = ui
+                    .add(
+                        egui::Slider::new(&mut n, 1..=16)
+                            .custom_parser(aurora_i18n::parse_number)
+                            .trailing_fill(true),
+                    )
+                    .changed();
                 m.max_instances = n as usize;
                 ch
             },
@@ -1485,8 +1850,8 @@ fn audio_page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut Options
         c |= row(
             ui,
             p,
-            "Dossier des plugins",
-            "Dossier contenant SLPlugin et llplugin\\ (vide : le viewer, puis Firestorm / Second Life installés)",
+            aurora_i18n::tr!("ui-options-plugins-folder"),
+            aurora_i18n::tr!("ui-options-folder-containing-slplugin-and-llplugin-blank-the-viewer-then"),
             |ui| {
                 ui.add(
                     egui::TextEdit::singleline(&mut m.plugin_dir)
@@ -1497,11 +1862,15 @@ fn audio_page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut Options
             },
         );
         let status = if st.media_plugins.is_empty() {
-            "Introuvables : installez Firestorm ou copiez son dossier llplugin et SLPlugin.exe à côté du viewer".to_string()
+            aurora_i18n::tr!("ui-options-not-found-install-firestorm-or-copy-its-llplugin-folder").to_string()
         } else {
-            format!("{} · {} lecteur(s) actif(s)", st.media_plugins, st.media_running)
+            aurora_i18n::tr!(
+                "status-active-player-s",
+                value0 = st.media_plugins.to_string(),
+                value1 = format!("{}", st.media_running)
+            )
         };
-        row(ui, p, "Plugins", "", |ui| {
+        row(ui, p, aurora_i18n::tr!("ui-options-plugins"), "", |ui| {
             ui.label(RichText::new(status).size(12.0).color(p.muted));
             false
         });
@@ -1525,7 +1894,7 @@ fn binding_cell(
     let capturing = st.capture == Some(Capture::Binding(a, slot));
     let b = kb.get(a)[slot].clone();
     let (text, col) = if capturing {
-        ("Appuyez sur une touche…".to_owned(), Color32::WHITE)
+        (aurora_i18n::tr!("common-press-a-key").to_owned(), Color32::WHITE)
     } else if let Some(b) = &b {
         (b.label(), p.ink)
     } else {
@@ -1549,11 +1918,14 @@ fn binding_cell(
         .map(|b| kb.users(b).into_iter().filter(|x| *x != a).map(crate::keybinds::label).collect())
         .unwrap_or_default();
     let tip = if capturing {
-        "Touche, combinaison (Ctrl, Maj, Alt) ou bouton de souris (molette, côtés) · Échap ou clic : annuler".to_owned()
+        aurora_i18n::tr!("ui-options-key-combination-ctrl-shift-alt-or-mouse-button-wheel").to_owned()
     } else if others.is_empty() {
-        "Clic : changer · Clic droit : effacer".to_owned()
+        aurora_i18n::tr!("ui-options-click-change-right-click-clear").to_owned()
     } else {
-        format!("Clic : changer · Clic droit : effacer\nAussi utilisé par : {}", others.join(", "))
+        aurora_i18n::tr!(
+            "ui-options-click-change-right-click-clear-also-used-by",
+            value0 = others.join(", ").to_string()
+        )
     };
     // conflict marker
     if !capturing && !others.is_empty() {
@@ -1567,13 +1939,13 @@ fn binding_cell(
 fn keys_page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi) -> bool {
     let mut c = false;
     ui.label(
-        RichText::new("Cliquez sur un raccourci puis appuyez sur la touche ou le bouton de souris voulu. Clic droit pour effacer.")
+        RichText::new(aurora_i18n::tr!("ui-options-click-a-shortcut-then-press-the-desired-key-or"))
             .size(12.0)
             .color(p.muted),
     );
     ui.add_space(6.0);
     let kb = s.keybinds.clone();
-    for (section, actions) in crate::keybinds::SECTIONS {
+    for (section, actions) in crate::keybinds::sections() {
         group(ui, p, section, |ui| {
             for (a, label) in actions.iter() {
                 ui.horizontal(|ui| {
@@ -1592,7 +1964,7 @@ fn keys_page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsU
             }
         });
     }
-    if super::widgets::flat_button(ui, p, "Rétablir les raccourcis par défaut").clicked() {
+    if super::widgets::flat_button(ui, p, aurora_i18n::tr!("ui-options-restore-default-shortcuts")).clicked() {
         s.keybinds = Default::default();
         st.capture = None;
         c = true;
@@ -1610,11 +1982,11 @@ fn keys_page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsU
 fn ui_sounds_group(ui: &mut egui::Ui, p: &Palette, a: &mut crate::settings::AudioSettings, st: &mut OptionsUi) -> bool {
     use crate::ui_sound::{CATALOG, ImSoundMode, UiSound};
     let mut c = false;
-    group(ui, p, "Sons de l'interface", |ui| {
+    group(ui, p, aurora_i18n::tr!("ui-options-interface-sounds"), |ui| {
         ui.label(
-            RichText::new(
-                "Mêmes sons et mêmes choix par défaut que Firestorm. Ce sont des sons de Second Life : ils se chargent une fois connecté.",
-            )
+            RichText::new(aurora_i18n::tr!(
+                "ui-options-same-sounds-and-defaults-as-firestorm-these-are-second"
+            ))
             .size(12.0)
             .color(p.muted),
         );
@@ -1622,19 +1994,19 @@ fn ui_sounds_group(ui: &mut egui::Ui, p: &Palette, a: &mut crate::settings::Audi
         let u = &mut a.ui;
         let modes = [
             (
-                "Messages privés",
+                aurora_i18n::tr!("ui-options-private-messages"),
                 "PlayModeUISndNewIncomingIMSession",
                 &mut u.im_mode,
                 UiSound::NewIncomingImSession,
             ),
             (
-                "Messages de groupe",
+                aurora_i18n::tr!("ui-options-group-messages"),
                 "PlayModeUISndNewIncomingGroupIMSession",
                 &mut u.group_mode,
                 UiSound::NewIncomingGroupImSession,
             ),
             (
-                "Conférences",
+                aurora_i18n::tr!("ui-options-conferences"),
                 "PlayModeUISndNewIncomingConfIMSession",
                 &mut u.conf_mode,
                 UiSound::NewIncomingConfImSession,
@@ -1652,7 +2024,7 @@ fn ui_sounds_group(ui: &mut egui::Ui, p: &Palette, a: &mut crate::settings::Audi
                             ch |= ui.selectable_value(mode, m, m.label()).changed();
                         }
                     });
-                if super::widgets::flat_button(ui, p, "Écouter").clicked() {
+                if super::widgets::flat_button(ui, p, aurora_i18n::tr!("ui-options-listen")).clicked() {
                     previews.push(sound);
                 }
                 ch
@@ -1661,11 +2033,12 @@ fn ui_sounds_group(ui: &mut egui::Ui, p: &Palette, a: &mut crate::settings::Audi
         c |= row(
             ui,
             p,
-            "Seuil des sons L$",
-            "Écart de solde au-delà duquel les sons L$ reçus / dépensés sont joués (UISndMoneyChangeThreshold)",
+            aurora_i18n::tr!("ui-options-l-sound-threshold"),
+            aurora_i18n::tr!("ui-options-balance-change-above-which-received-spent-l-sounds-are"),
             |ui| {
                 ui.add(
                     egui::DragValue::new(&mut u.money_threshold)
+                        .custom_parser(aurora_i18n::parse_number)
                         .range(0.0..=100_000.0)
                         .speed(1.0)
                         .suffix(" L$"),
@@ -1673,47 +2046,55 @@ fn ui_sounds_group(ui: &mut egui::Ui, p: &Palette, a: &mut crate::settings::Audi
                 .changed()
             },
         );
-        egui::CollapsingHeader::new(RichText::new("Choix par son").size(13.0).color(p.ink))
-            .id_salt("ui_sounds_each")
-            .show(ui, |ui| {
-                for e in CATALOG
-                    .iter()
-                    .filter(|e| !e.sound.caller_gated() || e.sound == UiSound::TrackerBeacon)
-                {
-                    let hint = format!("UISnd{} : asset du son (vide = aucun son) · PlayModeUISnd{}", e.name, e.name);
-                    c |= row(ui, p, e.label, &hint, |ui| {
-                        let mut on = u.plays(e.sound);
-                        let mut ch = super::widgets::switch(ui, p, &mut on).changed();
-                        if ch {
-                            u.set_plays(e.sound, on);
-                        }
-                        let text = st.ui_sound_text.entry(e.name).or_insert_with(|| uuid_text(u.uuid(e.sound)));
-                        let parsed = parse_uuid_text(text);
-                        let edit = ui.add(
-                            egui::TextEdit::singleline(text)
-                                .desired_width(290.0)
-                                .font(egui::TextStyle::Monospace)
-                                .text_color(if parsed.is_some() { p.ink } else { p.danger })
-                                .hint_text("aucun son"),
-                        );
-                        if edit.changed()
-                            && let Some(id) = parse_uuid_text(text)
-                        {
-                            u.set_uuid(e.sound, id);
-                            ch = true;
-                        }
-                        if super::widgets::flat_button(ui, p, "Écouter").clicked() {
-                            previews.push(e.sound);
-                        }
-                        if u.uuid(e.sound) != e.uuid && super::widgets::flat_button(ui, p, "Défaut").clicked() {
-                            u.set_uuid(e.sound, e.uuid);
-                            *text = uuid_text(e.uuid);
-                            ch = true;
-                        }
-                        ch
-                    });
-                }
-            });
+        egui::CollapsingHeader::new(
+            RichText::new(aurora_i18n::tr!("ui-options-per-sound-choices"))
+                .size(13.0)
+                .color(p.ink),
+        )
+        .id_salt("ui_sounds_each")
+        .show(ui, |ui| {
+            for e in CATALOG
+                .iter()
+                .filter(|e| !e.sound.caller_gated() || e.sound == UiSound::TrackerBeacon)
+            {
+                let hint = aurora_i18n::tr!(
+                    "extra-uisnd-sound-asset-empty-no-sound-playmodeuisnd",
+                    value0 = e.name.to_string(),
+                    value1 = e.name.to_string()
+                );
+                c |= row(ui, p, (e.label)(), &hint, |ui| {
+                    let mut on = u.plays(e.sound);
+                    let mut ch = super::widgets::switch(ui, p, &mut on).changed();
+                    if ch {
+                        u.set_plays(e.sound, on);
+                    }
+                    let text = st.ui_sound_text.entry(e.name).or_insert_with(|| uuid_text(u.uuid(e.sound)));
+                    let parsed = parse_uuid_text(text);
+                    let edit = ui.add(
+                        egui::TextEdit::singleline(text)
+                            .desired_width(290.0)
+                            .font(egui::TextStyle::Monospace)
+                            .text_color(if parsed.is_some() { p.ink } else { p.danger })
+                            .hint_text(aurora_i18n::tr!("ui-options-no-sound")),
+                    );
+                    if edit.changed()
+                        && let Some(id) = parse_uuid_text(text)
+                    {
+                        u.set_uuid(e.sound, id);
+                        ch = true;
+                    }
+                    if super::widgets::flat_button(ui, p, aurora_i18n::tr!("ui-options-listen")).clicked() {
+                        previews.push(e.sound);
+                    }
+                    if u.uuid(e.sound) != e.uuid && super::widgets::flat_button(ui, p, aurora_i18n::tr!("common-default")).clicked() {
+                        u.set_uuid(e.sound, e.uuid);
+                        *text = uuid_text(e.uuid);
+                        ch = true;
+                    }
+                    ch
+                });
+            }
+        });
         // force_sound: heard even when switched off
         for s in previews {
             if let Some(id) = u.resolve(s, true) {

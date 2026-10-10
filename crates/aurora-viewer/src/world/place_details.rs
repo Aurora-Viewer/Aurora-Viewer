@@ -414,9 +414,14 @@ mod tests {
             Some(Stage::Failed(PlaceError::UnknownRegion))
         );
 
-        let map = map_with("Faille", 1001, 1001);
+        let map = map_with(aurora_i18n::tr!("common-flaw"), 1001, 1001);
         let mut d = PlaceDetails::default();
-        d.open_window(link("Faille", Vec3::new(128.0, 128.0, 30.0)), &map, &mut lm, now);
+        d.open_window(
+            link(aurora_i18n::tr!("common-flaw"), Vec3::new(128.0, 128.0, 30.0)),
+            &map,
+            &mut lm,
+            now,
+        );
         let Some(NetCommand::RemoteParcelRequest { handle, position, .. }) = d.take_commands().pop() else {
             panic!("no request");
         };
@@ -437,7 +442,7 @@ mod tests {
         let mut d = PlaceDetails::default();
         let global = DVec3::new(256_316.4, 256_200.0, 22.0);
         let source = Source::History {
-            title: "Lagune des aurores, Lagune Boréale".into(),
+            title: aurora_i18n::tr!("demo-place-aurora-lagoon-boreal-lagoon").into(),
             global,
         };
         d.open_panel(source, &WorldMap::default(), &mut lm, Instant::now());

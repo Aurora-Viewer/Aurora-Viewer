@@ -26,9 +26,9 @@ pub fn seed(inv: &mut Inventory, agent: Uuid) {
     }
     let personal = Uuid::from_u128(8000);
     for (number, parent, name, kind) in [
-        (8000, inv.root, "Essais du clic droit", -1),
-        (8001, personal, "Sous-dossier", -1),
-        (8002, inv.root, "Annonces Place du marché", 53),
+        (8000, inv.root, aurora_i18n::tr!("world-inventory-demo-right-click-tests"), -1),
+        (8001, personal, aurora_i18n::tr!("world-inventory-demo-subfolder"), -1),
+        (8002, inv.root, aurora_i18n::tr!("common-marketplace-listings"), 53),
     ] {
         let id = Uuid::from_u128(number);
         inv.folders.insert(
@@ -64,19 +64,19 @@ pub fn seed(inv: &mut Inventory, agent: Uuid) {
         .map_or(0, |d| d.as_secs() as i64);
     inv.add_items(
         [
-            (8100, "Objet de démonstration", 6, 6, 0),
-            (8101, "Animation de démonstration", 20, 19, 0),
-            (8102, "Script de démonstration", 10, 10, 0),
-            (8103, "Instructions", 7, 7, 0),
-            (8104, "Texture de démonstration", 0, 0, 0),
-            (8105, "Son de démonstration", 1, 1, 0),
-            (8106, "Geste de démonstration", 21, 20, 0),
-            (8107, "Ciel de démonstration", 56, 25, 0),
-            (8108, "Matériau de démonstration", 57, 26, 0),
-            (8109, "Objet non copiable", 6, 6, 0),
-            (8110, "Objet non transférable", 6, 6, 0),
-            (8111, "Chemise de démonstration", 5, 18, 4),
-            (8112, "Silhouette de démonstration", 13, 18, 0),
+            (8100, aurora_i18n::tr!("common-demo-object"), 6, 6, 0),
+            (8101, aurora_i18n::tr!("world-inventory-demo-demo-animation"), 20, 19, 0),
+            (8102, aurora_i18n::tr!("common-demo-script"), 10, 10, 0),
+            (8103, aurora_i18n::tr!("world-inventory-demo-instructions"), 7, 7, 0),
+            (8104, aurora_i18n::tr!("world-inventory-demo-demo-texture"), 0, 0, 0),
+            (8105, aurora_i18n::tr!("world-inventory-demo-demo-sound"), 1, 1, 0),
+            (8106, aurora_i18n::tr!("world-inventory-demo-demo-gesture"), 21, 20, 0),
+            (8107, aurora_i18n::tr!("world-inventory-demo-demo-sky"), 56, 25, 0),
+            (8108, aurora_i18n::tr!("world-inventory-demo-demo-material"), 57, 26, 0),
+            (8109, aurora_i18n::tr!("world-inventory-demo-no-copy-object"), 6, 6, 0),
+            (8110, aurora_i18n::tr!("world-inventory-demo-non-transferable-object"), 6, 6, 0),
+            (8111, aurora_i18n::tr!("world-inventory-demo-demo-shirt"), 5, 18, 4),
+            (8112, aurora_i18n::tr!("world-inventory-demo-demo-silhouette"), 13, 18, 0),
         ]
         .into_iter()
         .map(|(id, name, asset_type, inv_type, flags)| InvItem {
@@ -110,7 +110,7 @@ pub fn seed(inv: &mut Inventory, agent: Uuid) {
     inv.add_items(vec![InvItem {
         id: Uuid::from_u128(8113),
         parent: personal,
-        name: "Lien vers l’objet".into(),
+        name: aurora_i18n::tr!("world-inventory-demo-link-to-object").into(),
         asset_type: 24,
         inv_type: 6,
         asset_id: original,
@@ -151,11 +151,11 @@ pub fn seed_view(inv: &mut Inventory, agent: Uuid, large: bool) {
     let root = inv.root;
     let personal = Uuid::from_u128(8200);
     for (n, parent, name, kind) in [
-        (8200, root, "A — Dossier personnel", -1),
-        (8201, root, "Textures", 0),
-        (8202, personal, "Accessoires", -1),
-        (8203, personal, "Vêtements", -1),
-        (8204, personal, "Corps", -1),
+        (8200, root, aurora_i18n::tr!("world-inventory-demo-a-personal-folder"), -1),
+        (8201, root, aurora_i18n::tr!("common-textures"), 0),
+        (8202, personal, aurora_i18n::tr!("world-inventory-demo-attachments"), -1),
+        (8203, personal, aurora_i18n::tr!("common-clothing"), -1),
+        (8204, personal, aurora_i18n::tr!("common-body"), -1),
     ] {
         if kind >= 0 && actions::system(inv, kind).is_some() {
             continue;
@@ -194,7 +194,7 @@ pub fn seed_view(inv: &mut Inventory, agent: Uuid, large: bool) {
         .collect();
     for it in &mut items {
         it.created_at = time - (it.id.as_u128() as i64 - 8100) * 3600;
-        it.desc = "Élément de démonstration pour les filtres d'inventaire".into();
+        it.desc = aurora_i18n::tr!("world-inventory-demo-demo-item-for-inventory-filters").into();
         if it.id == Uuid::from_u128(8109) {
             it.creator = Uuid::from_u128(100);
             it.flags |= 0x200000;
@@ -218,7 +218,7 @@ pub fn seed_view(inv: &mut Inventory, agent: Uuid, large: bool) {
         items.extend((0..1500).map(|n| InvItem {
             id: Uuid::from_u128(10000 + n),
             parent,
-            name: format!("Élément {n}"),
+            name: aurora_i18n::tr!("world-inventory-demo-item", n = format!("{}", n)),
             asset_type: 6,
             inv_type: 6,
             created_at: time - n as i64 * 60,
@@ -237,9 +237,9 @@ pub fn seed_long_names(inv: &mut Inventory) {
     for (id, name) in [
         (
             8200,
-            "Collection de démonstration — JEANS_SUBSTANCE (matières, textures et accessoires)",
+            aurora_i18n::tr!("world-inventory-demo-demo-collection-jeans-substance-materials-textures-and-attachments"),
         ),
-        (8202, "JEANS_SUBSTANCE — Textures et accessoires dans leur dossier d'origine"),
+        (8202, aurora_i18n::tr!("status-jeans-substance-textures-and-accessories-in")),
     ] {
         if let Some(folder) = inv.folders.get_mut(&Uuid::from_u128(id)) {
             folder.info.name = name.into();
@@ -248,11 +248,11 @@ pub fn seed_long_names(inv: &mut Inventory) {
     for (id, name) in [
         (
             8100,
-            "JEANS_SUBSTANCE_CUIR (JEANS) : JEANS_SUBSTANCE_CUIR (Normal) — Version de démonstration",
+            aurora_i18n::tr!("world-inventory-demo-jeans-substance-cuir-jeans-jeans-substance-cuir-normal-demo"),
         ),
         (
             710,
-            "JEANS_SUBSTANCE — Élément porté avec un nom très long dans un dossier imbriqué",
+            aurora_i18n::tr!("world-inventory-demo-jeans-substance-worn-item-with-a-very-long-name"),
         ),
     ] {
         if let Some(item) = inv.items.get_mut(&Uuid::from_u128(id)) {

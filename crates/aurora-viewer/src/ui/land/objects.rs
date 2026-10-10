@@ -2,7 +2,7 @@
 //! and the object owners list (ParcelObjectOwnersRequest).
 
 use super::dialogs::Confirm;
-use super::{Dialog, LandUi, NOT_YET, View, button, row, text};
+use super::{Dialog, LandUi, View, button, not_yet, row, text};
 use crate::theme::Palette;
 use crate::world::World;
 use crate::world::land::{OwnerList, powers};
@@ -24,9 +24,12 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
     }
     if parcel.prim_bonus != 1.0 {
         ui.label(
-            RichText::new(format!("Facteur Bonus objets : {:.2}", parcel.prim_bonus))
-                .size(12.0)
-                .color(p.ink),
+            RichText::new(aurora_i18n::tr!(
+                "ui-land-objects-object-bonus-factor",
+                value0 = aurora_i18n::number_text(&format!("{:.2}", parcel.prim_bonus))
+            ))
+            .size(12.0)
+            .color(p.ink),
         );
     }
     let wide = 210.0;
@@ -40,24 +43,53 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
     };
     line(
         ui,
-        "Capacité de la région :",
+        aurora_i18n::tr!("ui-land-objects-region-capacity"),
         if sw_total > sw_max {
-            format!("{sw_total} sur {sw_max} ({} seront supprimés)", sw_total - sw_max)
+            aurora_i18n::tr!(
+                "ui-land-objects-of-will-be-removed",
+                sw_total = format!("{}", sw_total),
+                sw_max = format!("{}", sw_max),
+                value0 = format!("{}", sw_total - sw_max)
+            )
         } else {
-            format!("{sw_total} sur {sw_max} ({} disponibles)", sw_max - sw_total)
+            aurora_i18n::tr!(
+                "status-sw-total-of-sw-max-available",
+                sw_total = format!("{}", sw_total),
+                sw_max = format!("{}", sw_max),
+                value0 = format!("{}", sw_max - sw_total)
+            )
         },
     );
-    line(ui, "Capacité de la parcelle :", max.to_string());
-    line(ui, "Impact sur la parcelle :", parcel.total_prims.to_string());
+    line(ui, aurora_i18n::tr!("ui-land-objects-parcel-capacity"), max.to_string());
+    line(
+        ui,
+        aurora_i18n::tr!("ui-land-objects-parcel-impact"),
+        parcel.total_prims.to_string(),
+    );
 
     let can_owned = v.can(powers::LAND_RETURN_GROUP_OWNED);
     let can_group = v.can(powers::LAND_RETURN_GROUP_SET);
     let can_other = v.can(powers::LAND_RETURN_NON_GROUP);
     let any = can_owned || can_group || can_other;
     for (label, count, can, confirm) in [
-        ("Appartenant au propriétaire :", parcel.owner_prims, can_owned, Confirm::ReturnOwner),
-        ("Données au groupe :", parcel.group_prims, can_group, Confirm::ReturnGroup),
-        ("Appartenant à d'autres :", parcel.other_prims, can_other, Confirm::ReturnOther),
+        (
+            aurora_i18n::tr!("ui-land-objects-owned-by-parcel-owner"),
+            parcel.owner_prims,
+            can_owned,
+            Confirm::ReturnOwner,
+        ),
+        (
+            aurora_i18n::tr!("ui-land-objects-deeded-to-group"),
+            parcel.group_prims,
+            can_group,
+            Confirm::ReturnGroup,
+        ),
+        (
+            aurora_i18n::tr!("ui-land-objects-owned-by-others"),
+            parcel.other_prims,
+            can_other,
+            Confirm::ReturnOther,
+        ),
     ] {
         ui.horizontal(|ui| {
             ui.add_space(18.0);
@@ -69,29 +101,35 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let enabled = any && can && count > 0;
-                if button(ui, p, "Retour", enabled)
-                    .on_hover_text("Renvoyer les objets à leurs propriétaires.")
+                if button(ui, p, aurora_i18n::tr!("common-back"), enabled)
+                    .on_hover_text(aurora_i18n::tr!("ui-land-objects-return-objects-to-their-owners"))
                     .clicked()
                 {
                     s.dialog = Some(Dialog::Confirm(confirm));
                 }
                 // the highlight of the objects (ParcelSelectObjects) is not drawn yet
-                button(ui, p, "Afficher", false).on_disabled_hover_text(NOT_YET);
+                button(ui, p, aurora_i18n::tr!("common-show"), false).on_disabled_hover_text(not_yet());
             });
         });
     }
     ui.horizontal(|ui| {
         ui.add_space(18.0);
         super::fixed(ui, wide - 26.0, |ui| {
-            ui.label(RichText::new("Sélectionnées/où quelqu'un est assis :").size(12.0).color(p.muted));
+            ui.label(
+                RichText::new(aurora_i18n::tr!("ui-land-objects-selected-sat-upon"))
+                    .size(12.0)
+                    .color(p.muted),
+            );
         });
         text(ui, p, parcel.selected_prims.to_string());
     });
     ui.horizontal(|ui| {
         ui.label(
-            RichText::new("Renvoi automatique des objets d'autres résidents (minutes, 0 pour désactiver) :")
-                .size(12.0)
-                .color(p.muted),
+            RichText::new(aurora_i18n::tr!(
+                "ui-land-objects-auto-return-other-residents-objects-minutes-0-to-disable"
+            ))
+            .size(12.0)
+            .color(p.muted),
         );
         s.clean_time.sync(&parcel.other_clean_time.to_string());
         let r = ui.add_enabled(any, egui::TextEdit::singleline(&mut s.clean_time.text).desired_width(46.0));
@@ -114,17 +152,17 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
         OwnerList::Rows(rows) => s.owner_sel.and_then(|id| rows.iter().find(|r| r.id == id).cloned()),
         _ => None,
     };
-    row(ui, p, "Propriétaires :", |ui| {
+    row(ui, p, aurora_i18n::tr!("ui-land-objects-owners"), |ui| {
         let searching = matches!(owners, OwnerList::Searching);
         if super::icon_button(ui, p, "arrows-clockwise", any && !searching)
-            .on_hover_text("Actualiser la liste des objets")
+            .on_hover_text(aurora_i18n::tr!("ui-land-objects-refresh-object-list"))
             .clicked()
         {
             s.owner_sel = None;
             world.land.refresh_owners();
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if button(ui, p, "Renvoi des objets", any && selected.is_some()).clicked()
+            if button(ui, p, aurora_i18n::tr!("ui-land-objects-object-return"), any && selected.is_some()).clicked()
                 && let Some(o) = &selected
             {
                 s.dialog = Some(Dialog::Confirm(Confirm::ReturnList(o.clone())));
@@ -139,7 +177,12 @@ const DEFAULT_SORT: (usize, bool) = (2, false);
 
 /// The owners list: Type | Nom | Nbre | Plus récents, sorted by count first.
 fn owners_list(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, world: &mut World, owners: &OwnerList, _now: i64) {
-    let cols: [(&str, f32); 4] = [("Type", 46.0), ("Nom", 0.0), ("Nbre", 60.0), ("Plus récents", 150.0)];
+    let cols: [(&str, f32); 4] = [
+        (aurora_i18n::tr!("common-type"), 46.0),
+        (aurora_i18n::tr!("common-name"), 0.0),
+        (aurora_i18n::tr!("ui-land-objects-count"), 60.0),
+        (aurora_i18n::tr!("ui-land-objects-newest"), 150.0),
+    ];
     let width = ui.available_width();
     let name_w = width - cols.iter().map(|c| c.1).sum::<f32>() - 12.0;
     // header: click to sort (LLScrollListCtrl columns)
@@ -180,10 +223,10 @@ fn owners_list(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, world: &mut World
             .show(ui, |ui| match owners {
                 OwnerList::Idle => {}
                 OwnerList::Searching => {
-                    ui.label(RichText::new("Recherche...").size(12.0).color(p.muted));
+                    ui.label(RichText::new(aurora_i18n::tr!("common-search")).size(12.0).color(p.muted));
                 }
                 OwnerList::Rows(rows) if rows.is_empty() => {
-                    ui.label(RichText::new("Aucun résultat.").size(12.0).color(p.muted));
+                    ui.label(RichText::new(aurora_i18n::tr!("common-no-results")).size(12.0).color(p.muted));
                 }
                 OwnerList::Rows(rows) => {
                     let mut rows: Vec<(ObjectOwner, String)> = rows
@@ -191,7 +234,10 @@ fn owners_list(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, world: &mut World
                         .map(|o| {
                             let name = if o.is_group {
                                 let groups = world.groups.groups.clone();
-                                world.land.group_name(&o.id, &groups).unwrap_or_else(|| "(Chargement...)".into())
+                                world
+                                    .land
+                                    .group_name(&o.id, &groups)
+                                    .unwrap_or_else(|| aurora_i18n::tr!("status-loading-4").into())
                             } else {
                                 world.social.want_name(o.id);
                                 world.social.name_of(&o.id)

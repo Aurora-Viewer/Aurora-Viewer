@@ -79,30 +79,16 @@ impl Default for AutoResponse {
             ignore_adhoc: false,
             report_ignored_adhoc: false,
             adhoc_from_friends: false,
-            dnd_text: "Ce résident a activé Ne pas déranger et verra votre message plus tard.".into(),
-            autorespond_text: "Le résident auquel vous avez envoyé un message a activé le mode réponse automatique du client \
-                Aurora Viewer, ce qui signifie qu'il a demandé à ne pas être dérangé. Votre message sera quand même affiché \
-                dans la fenêtre de messagerie instantanée pour être consulté ultérieurement."
-                .into(),
-            nonfriends_text: "Le résident auquel vous avez envoyé un message a activé le mode réponse automatique du client \
-                Aurora Viewer, ce qui signifie qu'il a demandé à ne pas être dérangé. Votre message sera quand même affiché \
-                dans la fenêtre de messagerie instantanée pour être consulté ultérieurement."
-                .into(),
+            dnd_text: aurora_i18n::tr!("world-status-this-resident-has-enabled-do-not-disturb-and-will").into(),
+            autorespond_text: aurora_i18n::tr!("world-status-the-resident-you-messaged-has-enabled-aurora-viewer-s-3").into(),
+            nonfriends_text: aurora_i18n::tr!("world-status-the-resident-you-messaged-has-enabled-aurora-viewer-s-3").into(),
             send_away: false,
-            away_text: "Le résident auquel vous avez envoyé un message est actuellement absent. Votre message sera affiché \
-                dans la fenêtre de messagerie instantanée pour être consulté ultérieurement."
-                .into(),
+            away_text: aurora_i18n::tr!("world-status-the-resident-you-messaged-is-away-your-message-will").into(),
             send_muted: false,
-            muted_text: "Le résident à qui vous avez envoyé un message a bloqué l'envoi de tout message de votre part.".into(),
-            reject_teleports_text: "Le résident auquel vous avez envoyé un message a activé le mode rejet de toutes les offres \
-                ou demandes de téléportation du client Aurora Viewer, ce qui signifie qu'il a demandé à ne pas être dérangé \
-                par les offres ou demandes de téléportation. Vous pouvez quand même lui envoyer un message privé."
-                .into(),
+            muted_text: aurora_i18n::tr!("world-status-the-resident-you-messaged-has-blocked-all-messages-from").into(),
+            reject_teleports_text: aurora_i18n::tr!("world-status-the-resident-you-messaged-has-enabled-aurora-viewer-s-2").into(),
             dont_reject_friends_teleports: false,
-            reject_friendship_text: "Le résident auquel vous avez envoyé un message a activé le mode rejet de toutes les \
-                demandes d'amitié du client Aurora Viewer, ce qui signifie qu'il a demandé à ne pas être dérangé par les \
-                demandes d'amitié. Vous pouvez quand même lui envoyer un message privé."
-                .into(),
+            reject_friendship_text: aurora_i18n::tr!("world-status-the-resident-you-messaged-has-enabled-aurora-viewer-s").into(),
             away_after_minutes: 0,
         }
     }
@@ -245,7 +231,7 @@ impl World {
                     s.lines.push(ChatLine {
                         time: SystemTime::now(),
                         from: im.from_name.clone(),
-                        text: format!("(réponse automatique) {}", im.message),
+                        text: aurora_i18n::tr!("world-status-auto-response", value0 = im.message.to_string()),
                         kind: ChatKind::Im,
                         source: from,
                     });
@@ -280,7 +266,7 @@ impl World {
         s.lines.push(ChatLine {
             time: SystemTime::now(),
             from: String::new(),
-            text: format!("Réponse automatique envoyée : {text}"),
+            text: aurora_i18n::tr!("world-status-auto-reply-sent", text = text.to_string()),
             kind: ChatKind::System,
             source: Uuid::nil(),
         });

@@ -318,6 +318,7 @@ pub struct App {
 impl App {
     pub fn new() -> anyhow::Result<App> {
         let mut settings = Settings::load();
+        aurora_i18n::select(&settings.language, crate::cli::get().language.as_deref());
         if std::env::var_os("AURORA_DEMO").is_some() && std::env::var_os("AURORA_DEMO_KEYBOARD").is_some() {
             // Exercise a first launch without changing the user's bindings.
             settings.keybinds = Default::default();
@@ -347,6 +348,7 @@ impl App {
             settings.occlusion_culling = v != "0";
         }
         let net = NetClient::new()?;
+        net.set_agent_language(aurora_i18n::language(), settings.language_is_public);
         let voice_http = net.caps_http();
         let login_info = ui::news::LoginInfo::start(net.runtime());
         let out_device = (!settings.audio.output_device.is_empty()).then(|| settings.audio.output_device.clone());
@@ -601,14 +603,14 @@ impl App {
                 }
                 NetCommand::ObjectGrab { local_id, surface, .. } => {
                     log::info!("demo touch_start: prim={local_id}, face={}, uv={:?}", surface.face, surface.uv);
-                    self.world.system_message("Démo : touch_start simulé.");
+                    self.world.system_message(aurora_i18n::tr!("app-demo-touch-start-simulated"));
                 }
                 NetCommand::ObjectGrabUpdate { surface, .. } => {
                     log::info!("demo touch / grab update: face={}, uv={:?}", surface.face, surface.uv);
                 }
                 NetCommand::ObjectRelease { local_id, surface, .. } => {
                     log::info!("demo touch_end: prim={local_id}, face={}", surface.face);
-                    self.world.system_message("Démo : touch_end simulé.");
+                    self.world.system_message(aurora_i18n::tr!("app-demo-touch-end-simulated"));
                 }
                 _ => {}
             }
@@ -621,7 +623,11 @@ impl App {
                 log::info!("demo action: {kind} L$ {amount}");
                 let balance = self.world.balance.unwrap_or(250).saturating_sub(amount);
                 self.world.apply(NetEvent::Balance(balance));
-                self.world.system_message(format!("Démo : {kind} de L$ {amount} simulé."));
+                self.world.system_message(aurora_i18n::tr!(
+                    "app-demo-of-l-simulated",
+                    kind = kind.to_string(),
+                    amount = format!("{}", amount)
+                ));
             }
             if matches!(&cmd, NetCommand::OneShotControl(f) if f & control::STAND_UP != 0)
                 && std::env::var_os("AURORA_DEMO_ACTIONS").is_some()
@@ -699,7 +705,7 @@ impl App {
                     .items
                     .get(item)
                     .cloned()
-                    .ok_or_else(|| "Élément introuvable.".to_owned());
+                    .ok_or_else(|| aurora_i18n::tr!("common-item-not-found").to_owned());
                 self.on_app_event(NetEvent::InventoryContentSaved { item: *item, result });
                 return;
             }
@@ -728,7 +734,7 @@ impl App {
                     57 => aurora_llsd::to_binary(
                         &aurora_llsd::llsd_map! { "version" => "1.1", "type" => "GLTF 2.0", "data" => "{\"asset\":{\"version\":\"2.0\"},\"materials\":[{}]}" },
                     ),
-                    _ => format!("Contenu de démonstration : {}", it.name).into_bytes(),
+                    _ => aurora_i18n::tr!("app-demo-content", value0 = it.name.to_string()).into_bytes(),
                 };
                 self.inventory_preview(it.id, Ok(bytes));
                 return;
@@ -749,7 +755,7 @@ impl App {
                         it.favorite = *favorite;
                         it
                     })
-                    .ok_or_else(|| "Élément introuvable.".into());
+                    .ok_or_else(|| aurora_i18n::tr!("common-item-not-found").into());
                 self.on_app_event(NetEvent::InventoryFavoriteUpdated { item: *item, result });
                 return;
             }
@@ -818,7 +824,7 @@ impl App {
 
     fn start_login(&mut self) {
         if self.demo {
-            self.login_form.error = Some("Mode démo : aucune connexion à une grille.".into());
+            self.login_form.error = Some(aurora_i18n::tr!("app-demo-mode-no-grid-connection").into());
             return;
         }
         let start = match self.settings.start_location.as_str() {
@@ -851,7 +857,7 @@ impl App {
         };
         self.login_form.busy = true;
         self.login_form.error = None;
-        self.login_progress = Some(("Connexion…".into(), 0.05));
+        self.login_progress = Some((aurora_i18n::tr!("app-connecting").into(), 0.05));
         self.settings.save();
         self.net.send(NetCommand::Login(Box::new(req)));
     }
@@ -913,7 +919,7 @@ impl App {
                     if self.inventory_ui.preview == Some(item) {
                         self.inventory_ui.preview_dirty = false;
                     }
-                    self.inventory_ui.message = "Document enregistré.".into();
+                    self.inventory_ui.message = aurora_i18n::tr!("app-document-saved").into();
                 }
                 Err(reason) => self.inventory_ui.message = reason,
             }
@@ -1050,7 +1056,7 @@ impl App {
                 }
                 if mfa_required {
                     self.login_form.show_mfa = true;
-                    self.login_form.error = Some("Saisissez le code de votre application d'authentification.".into());
+                    self.login_form.error = Some(aurora_i18n::tr!("app-enter-the-code-from-your-authenticator-app").into());
                 } else if tos_required {
                     self.login_form.tos_message = Some(error);
                 } else {
@@ -1103,11 +1109,15 @@ impl App {
                 self.screen = Screen::Loading { since: Instant::now() };
                 self.loading_frac = 0.0;
                 self.loading_target = 0.0;
-                self.loading_stage = "Connexion à la région…".into();
+                self.loading_stage = aurora_i18n::tr!("common-connecting-to-region").into();
                 if !l.message.trim().is_empty() {
                     self.world.system_message(l.message.trim().to_owned());
                 }
-                self.world.system_message(format!("Bienvenue, {} {}.", l.first_name, l.last_name));
+                self.world.system_message(aurora_i18n::tr!(
+                    "app-welcome-2",
+                    value0 = l.first_name.to_string(),
+                    value1 = l.last_name.to_string()
+                ));
                 self.restore_local_environment();
             }
             NetEvent::TeleportFinished { .. } => {
@@ -1122,7 +1132,7 @@ impl App {
                 self.move_complete_at = Some(Instant::now());
                 self.tp_checks = vec![10.0, 3.0];
                 self.camera.on_teleport_arrival(&self.settings.camera);
-                self.loading_stage = "Chargement de la scène…".into();
+                self.loading_stage = aurora_i18n::tr!("app-loading-scene").into();
             }
             NetEvent::SitResponse {
                 object,
@@ -1132,7 +1142,7 @@ impl App {
             } => self.camera.on_sit_response(object, camera_eye, camera_at, force_mouselook),
             NetEvent::CameraConstraint(plane) => self.camera.set_collide_plane(plane, &self.settings.camera),
             NetEvent::Disconnected { reason } => {
-                self.back_to_login(Some(format!("Déconnecté : {reason}")));
+                self.back_to_login(Some(aurora_i18n::tr!("app-disconnected", reason = reason.to_string())));
             }
             // ---- sounds (process_sound_trigger, setAttachedSound)
             NetEvent::SoundTrigger {
@@ -1196,8 +1206,12 @@ impl App {
                     self.world.social.avatar_names.refetch(&me);
                 }
                 let (kind, title, body) = match ui::display_name::reply_message(status, &content) {
-                    Ok(m) => (crate::world::notifications::Kind::Info, "Nom d'affichage changé", m),
-                    Err(m) => (crate::world::notifications::Kind::Alert, "Nom d'affichage", m),
+                    Ok(m) => (
+                        crate::world::notifications::Kind::Info,
+                        aurora_i18n::tr!("app-display-name-changed"),
+                        m,
+                    ),
+                    Err(m) => (crate::world::notifications::Kind::Alert, aurora_i18n::tr!("common-display-name"), m),
                 };
                 self.world
                     .notifications
@@ -1468,9 +1482,9 @@ impl App {
                 self.always_run = !self.always_run;
                 self.send(NetCommand::SetAlwaysRun(self.always_run || self.temp_run.is_some()));
                 self.world.system_message(if self.always_run {
-                    "Toujours courir : activé"
+                    aurora_i18n::tr!("app-always-run-enabled")
                 } else {
-                    "Toujours courir : désactivé"
+                    aurora_i18n::tr!("app-always-run-disabled")
                 });
             }
             Action::Mouselook => self.toggle_mouselook(),
@@ -1492,9 +1506,9 @@ impl App {
                 let d = &mut self.settings.debug;
                 d.show_alpha = !d.show_alpha;
                 self.world.system_message(if d.show_alpha {
-                    "Afficher la transparence : activé (Ctrl+Alt+T pour couper)"
+                    aurora_i18n::tr!("app-show-transparency-enabled-ctrl-alt-t-to-disable")
                 } else {
-                    "Afficher la transparence : désactivé"
+                    aurora_i18n::tr!("app-show-transparency-disabled")
                 });
             }
             // held actions are read every frame
@@ -2126,12 +2140,15 @@ impl App {
     /// a map lookup by name.
     fn teleport_to_text(&mut self, text: &str) {
         let Some(l) = crate::slurl::parse(text) else {
-            self.world.system_message("Destination non reconnue.");
+            self.world.system_message(aurora_i18n::tr!("app-destination-not-recognized"));
             return;
         };
-        self.world.system_message(format!(
-            "Téléportation vers {} ({:.0}, {:.0}, {:.0})…",
-            l.region, l.pos.x, l.pos.y, l.pos.z
+        self.world.system_message(aurora_i18n::tr!(
+            "app-teleporting-to",
+            value0 = l.region.to_string(),
+            value1 = format!("{:.0}", l.pos.x),
+            value2 = format!("{:.0}", l.pos.y),
+            value3 = format!("{:.0}", l.pos.z)
         ));
         self.teleport_to_location(l.region, l.pos);
     }
@@ -2250,11 +2267,11 @@ impl App {
             Request::AboutLand => self.panels.about_land = true,
             Request::BuyLand => self
                 .world
-                .system_message("L'achat de terrain n'est pas encore disponible dans Aurora."),
+                .system_message(aurora_i18n::tr!("app-land-purchase-is-not-available-in-aurora-yet")),
             Request::Profile(id) => self.profile_ui.open(&mut self.world, id),
             Request::GroupProfile(_) => self
                 .world
-                .system_message("Le profil des groupes n'est pas encore disponible dans Aurora."),
+                .system_message(aurora_i18n::tr!("app-group-profiles-are-not-available-in-aurora-yet")),
             Request::PasteVector(which) => {
                 let text = self.gfx.as_mut().and_then(|g| g.egui_state.clipboard_text()).unwrap_or_default();
                 self.build.paste_vector(&mut self.world, &self.settings.build, which, &text);
@@ -2515,7 +2532,8 @@ impl App {
             self.world.tp_history.go_forward()
         };
         if let Some(e) = dest {
-            self.world.system_message(format!("Téléportation vers {}…", e.region));
+            self.world
+                .system_message(aurora_i18n::tr!("app-teleporting-to-2", value0 = e.region.to_string()));
             self.begin_teleport(e.region.clone(), Some(e.handle) != self.world.main_region);
             self.send(NetCommand::TeleportTo {
                 handle: e.handle,
@@ -3153,8 +3171,9 @@ impl App {
                 .iter()
                 .find_map(|k| self.env_ui.catalog().name_of(*k, id).map(str::to_owned))
                 .unwrap_or_else(|| id.to_string());
-                self.world.system_message(format!(
-                    "Impossible de charger les paramètres de {name} à partir de la base de données."
+                self.world.system_message(aurora_i18n::tr!(
+                    "app-could-not-load-settings-from-the-database",
+                    name = name.to_string()
                 ));
             }
             let queue: Vec<(uuid::Uuid, bool)> = std::mem::take(&mut self.world.inventory.queue);
@@ -3338,7 +3357,7 @@ impl App {
                     window_focused: self.focused,
                     net: (!self.demo).then(|| (self.net.runtime(), self.net.caps_http())),
                     cache_dir: &cache_dir,
-                    language: "fr",
+                    language: aurora_i18n::language(),
                 };
                 self.media.update(&mut self.world, &mut self.scene, &mut gfx.renderer, &frame);
                 self.options_ui.media_plugins = self
@@ -3519,7 +3538,7 @@ impl App {
             if e >= 3.2 {
                 self.demo_tp_start = None;
                 w.tp_progress = 0.6;
-                w.tp_status = "Chargement de la région…".into();
+                w.tp_status = aurora_i18n::tr!("common-loading-region").into();
                 if let (Some(position), Some(handle)) = (self.demo_tp_dest.take(), w.main_region) {
                     let ev = NetEvent::AgentMovementComplete {
                         handle,
@@ -3534,18 +3553,18 @@ impl App {
                 w.teleporting = false;
             } else if e >= 2.4 {
                 w.tp_progress = w.tp_progress.max(0.5);
-                w.tp_status = "Connexion à la région…".into();
+                w.tp_status = aurora_i18n::tr!("common-connecting-to-region").into();
             } else if e >= 0.9 {
                 w.tp_progress = (0.15 + (e - 0.9) * 0.18).min(0.42);
                 w.tp_status = if e < 1.6 {
-                    "Envoi vers la destination…"
+                    aurora_i18n::tr!("common-sending-to-destination")
                 } else {
-                    "Contact avec la nouvelle région…"
+                    aurora_i18n::tr!("common-contacting-the-new-region")
                 }
                 .into();
             } else if e >= 0.35 {
                 w.tp_progress = w.tp_progress.max(0.10);
-                w.tp_status = "Téléportation acceptée…".into();
+                w.tp_status = aurora_i18n::tr!("common-teleport-accepted").into();
             }
         }
         // TeleportLocal can also resolve an initially unknown destination.
@@ -3857,7 +3876,7 @@ impl App {
         if let Some(url) = self.interactions.media_url.take() {
             if self.demo {
                 log::info!("demo open media: external browser request simulated");
-                self.world.system_message("Démo : ouverture de l'URL du média simulée.");
+                self.world.system_message(aurora_i18n::tr!("app-demo-opening-media-url-simulated"));
             } else {
                 full.platform_output
                     .commands
@@ -3939,6 +3958,9 @@ impl App {
             ui::fonts::apply(&self.egui_ctx, &self.settings.font);
         }
         if actions.settings_changed {
+            aurora_i18n::select(&self.settings.language, crate::cli::get().language.as_deref());
+            self.net
+                .set_agent_language(aurora_i18n::language(), self.settings.language_is_public);
             if self.settings.vsync != vsync {
                 gfx.renderer.set_vsync(self.settings.vsync);
             }
@@ -4255,7 +4277,11 @@ impl App {
             if let Ok(v) = std::env::var("AURORA_DEMO_TP") {
                 let c: Vec<f32> = v.split(',').filter_map(|s| s.trim().parse().ok()).collect();
                 let (x, y, z) = if c.len() == 3 { (c[0], c[1], c[2]) } else { (128.0, 128.0, 30.0) };
-                let region = if v == "remote" { "Aurora Ailleurs" } else { "Aurora Démo" };
+                let region = if v == "remote" {
+                    aurora_i18n::tr!("app-aurora-elsewhere")
+                } else {
+                    aurora_i18n::tr!("common-aurora-demo")
+                };
                 self.teleport_to_location(region.into(), Vec3::new(x, y, z));
                 log::info!(
                     "demo teleport: frame {}, showing progress {}, position {:.1?}",
@@ -4543,8 +4569,10 @@ impl App {
             if self.world.mutes.is_muted_id(&to) {
                 let name = self.world.legacy_name(&to).unwrap_or_else(|| self.world.social.name_of(&to));
                 self.world.unblock(to, &name, 0);
-                self.world
-                    .system_message(format!("{name} a été débloqué(e) parce que vous lui avez envoyé un IM."));
+                self.world.system_message(aurora_i18n::tr!(
+                    "app-was-unblocked-because-you-sent-them-an-im",
+                    name = name.to_string()
+                ));
             }
             self.world.own_im(to, &text);
             self.send(NetCommand::SendIm { to, message: text });
@@ -4567,17 +4595,17 @@ impl App {
         for to in a.offer_tp {
             self.net.send(NetCommand::OfferTeleport {
                 to,
-                message: "Rejoins-moi !".into(),
+                message: aurora_i18n::tr!("common-join-me").into(),
             });
-            self.world.system_message("Offre de téléportation envoyée.");
+            self.world.system_message(aurora_i18n::tr!("common-teleport-offer-sent"));
         }
         if let Some(asset) = a.landmark {
-            self.begin_teleport("Repère".into(), false);
+            self.begin_teleport(aurora_i18n::tr!("common-landmark").into(), false);
             self.net.send(NetCommand::TeleportLandmark(asset));
         }
         if a.cancel_loading {
             self.net.send(NetCommand::Logout);
-            self.back_to_login(Some("Connexion annulée.".into()));
+            self.back_to_login(Some(aurora_i18n::tr!("app-login-canceled").into()));
         }
         match a.audio.unwrap_or(ui::audio::AudioAction::None) {
             ui::audio::AudioAction::None => {}
@@ -4627,7 +4655,7 @@ impl App {
                     self.want_scene_capture = true;
                 }
                 self.net.send(NetCommand::Logout);
-                self.world.system_message("Déconnexion…");
+                self.world.system_message(aurora_i18n::tr!("app-logging-out"));
             }
             BarAction::Quit => {
                 if self.in_world() {
@@ -4640,7 +4668,7 @@ impl App {
                 self.quit_at = Some(Instant::now() + Duration::from_millis(400));
             }
             BarAction::TeleportHome => {
-                self.begin_teleport("Domicile".into(), false);
+                self.begin_teleport(aurora_i18n::tr!("common-home").into(), false);
                 self.net.send(NetCommand::TeleportHome);
             }
             BarAction::TeleportBack => self.teleport_history(true),
@@ -5210,7 +5238,7 @@ impl App {
                 }
                 // the "Flux" tab: a browser on the grid's web profiles
                 let paths = self.media.plugins(&self.settings.media).cloned();
-                let browser = crate::media::browser_settings(&crate::settings::cache_dir(), "fr");
+                let browser = crate::media::browser_settings(&crate::settings::cache_dir(), aurora_i18n::language());
                 let cookie = self.media.openid.cookie();
                 let profile_base = match self.settings.grid {
                     // AURORA_DEMO_FEED=<page>: the feed browser on a local page
@@ -5445,7 +5473,7 @@ impl App {
                     // the panels must not write the old time of day back
                     self.panels.time_of_day = self.settings.time_of_day;
                     self.settings.save();
-                    self.world.system_message("Tous les réglages ont été réinitialisés.");
+                    self.world.system_message(aurora_i18n::tr!("app-all-settings-have-been-reset"));
                     ui::layout::forget(&ctx);
                 }
                 if self.panels.settings && !open {
@@ -5476,7 +5504,7 @@ impl App {
                     let fade_out = o.end.map_or(1.0, |e| 1.0 - e.elapsed().as_secs_f32() / ui::loading::FADE_SECONDS);
                     let alpha = fade_in.min(fade_out).clamp(0.0, 1.0);
                     let (title, sub, detail) = if o.loading_end {
-                        ("Chargement du monde", self.world.region_name(), String::new())
+                        (aurora_i18n::tr!("common-loading-world"), self.world.region_name(), String::new())
                     } else {
                         let sub = if o.dest.is_empty() {
                             self.world.region_name()
@@ -5484,11 +5512,11 @@ impl App {
                             o.dest.clone()
                         };
                         let detail = if o.shown >= 0.985 {
-                            "Bienvenue !".to_owned()
+                            aurora_i18n::tr!("app-welcome").to_owned()
                         } else {
                             self.world.tp_status.clone()
                         };
-                        ("Téléportation", sub, detail)
+                        (aurora_i18n::tr!("common-teleport-2"), sub, detail)
                     };
                     ui::loading::teleport_overlay(
                         &ctx,
@@ -5592,7 +5620,10 @@ impl ApplicationHandler for App {
             Ok(r) => r,
             Err(e) => {
                 log::error!("renderer initialisation failed: {e}");
-                eprintln!("Aurora Viewer: impossible d'initialiser Vulkan : {e}");
+                eprintln!(
+                    "{}",
+                    aurora_i18n::tr!("app-aurora-viewer-unable-to-initialize-vulkan", e = format!("{}", e))
+                );
                 event_loop.exit();
                 return;
             }
@@ -5867,7 +5898,7 @@ impl ApplicationHandler for App {
                         self.inventory_ui.filters_open = true;
                     }
                     if view == "large" {
-                        self.inventory_ui.search = "Élément".into();
+                        self.inventory_ui.search = aurora_i18n::tr!("app-item").into();
                     }
                     if matches!(view.as_str(), "long" | "long-filtered" | "resize-left" | "resize-right") {
                         crate::world::inventory::demo::seed_long_names(&mut self.world.inventory);
@@ -5887,7 +5918,7 @@ impl ApplicationHandler for App {
                 if let Some(id) = crate::world::inventory::demo::target(&view) {
                     self.inventory_ui.show_original(&self.world.inventory, id);
                     if view == "new-folder" {
-                        if let Ok(change) = crate::world::inventory::actions::create_folder(id, "Nouveau dossier") {
+                        if let Ok(change) = crate::world::inventory::actions::create_folder(id, aurora_i18n::tr!("common-new-folder")) {
                             self.apply_inventory_action(ui::inventory::InvAction::Edit(change));
                         }
                     } else if matches!(view.as_str(), "new-script" | "new-note") {
@@ -5898,14 +5929,19 @@ impl ApplicationHandler for App {
                             } else {
                                 aurora_net::inventory::operations::NewItem::Note
                             },
-                            name: if view == "new-script" { "Nouveau script" } else { "Nouvelle note" }.into(),
+                            name: if view == "new-script" {
+                                aurora_i18n::tr!("common-new-script")
+                            } else {
+                                aurora_i18n::tr!("common-new-notecard")
+                            }
+                            .into(),
                         });
                     } else if matches!(view.as_str(), "folder-window" | "folder-window-search") {
                         self.inventory_ui.open_folder_window(id);
                         if view == "folder-window-search"
                             && let Some(window) = self.inventory_ui.windows.last_mut()
                         {
-                            window.state.search = "démonstration".into();
+                            window.state.search = aurora_i18n::tr!("app-demo").into();
                         }
                     } else if view == "rename" {
                         self.inventory_ui.begin_rename(&self.world.inventory, id);
@@ -5952,7 +5988,7 @@ impl ApplicationHandler for App {
                 if let Some(parcel) = self.world.parcel.as_mut() {
                     let p = Arc::make_mut(parcel);
                     p.media_url = "https://example.invalid/aurora-media".into();
-                    p.media.current_url = crate::demo::DEMO_MEDIA_PAGE.into();
+                    p.media.current_url = crate::demo::demo_media_page().into();
                     p.media.mime = "text/html".into();
                     p.media.media_id = crate::demo::ACTION_MEDIA_TEX;
                     p.media.auto_scale = true;
@@ -6002,7 +6038,7 @@ impl ApplicationHandler for App {
             if let Some(v) = std::env::var_os("AURORA_DEMO_MEDIA") {
                 let v = v.to_string_lossy().into_owned();
                 let url = if v == "1" || v.is_empty() {
-                    crate::demo::DEMO_MEDIA_PAGE.to_string()
+                    crate::demo::demo_media_page().to_string()
                 } else {
                     v
                 };
@@ -6070,7 +6106,7 @@ impl ApplicationHandler for App {
                         tf.scale_t = 576.0 / 1024.0;
                         tf.offset_t = -(1.0 - tf.scale_t) * 0.5;
                     }
-                    self.media.demo_entry(hud.full_id, face, crate::demo::DEMO_MEDIA_PAGE);
+                    self.media.demo_entry(hud.full_id, face, crate::demo::demo_media_page());
                     self.world.apply(NetEvent::ObjectUpdates {
                         handle: self.world.main_region.unwrap_or_default(),
                         objects: vec![hud],
@@ -6082,7 +6118,7 @@ impl ApplicationHandler for App {
             if let Some(v) = std::env::var_os("AURORA_DEMO_PARCEL_MEDIA") {
                 let v = v.to_string_lossy().into_owned();
                 let url = if v == "1" || v.is_empty() {
-                    crate::demo::DEMO_MEDIA_PAGE.to_string()
+                    crate::demo::demo_media_page().to_string()
                 } else {
                     v
                 };
@@ -6151,7 +6187,7 @@ impl ApplicationHandler for App {
                         && !self.alt
                         && let winit::keyboard::Key::Character(s) = &ke.logical_key
                         && !format!("{code:?}").starts_with("Digit")
-                        && !format!("{code:?}").starts_with("Numpad")
+                        && !format!("{code:?}").starts_with(aurora_i18n::tr!("common-numpad"))
                     {
                         crate::keybinds::learn(code, s);
                     }
