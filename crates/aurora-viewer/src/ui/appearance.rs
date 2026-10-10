@@ -254,17 +254,25 @@ fn gallery(
 
 fn outfit_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceUi, outfits: &[Uuid], actions: &mut Vec<Action>) {
     let worn = items::worn_labels(world);
+    let current = model::base(&world.inventory);
     for id in outfits {
         let Some(f) = world.inventory.folders.get(id) else {
             continue;
         };
-        let label = if model::base(&world.inventory) == Some(*id) {
+        let is_current = current == Some(*id);
+        let label = if is_current {
             format!("{} (portée)", f.info.name)
         } else {
             f.info.name.clone()
         };
+        let galley = egui::WidgetText::from(RichText::new(label).color(p.ink)).into_galley(
+            ui,
+            Some(egui::TextWrapMode::Extend),
+            ui.available_width() - ui.spacing().indent,
+            egui::TextStyle::Button,
+        );
         let reveal = st.reveal_outfit == Some(*id);
-        let response = egui::CollapsingHeader::new(RichText::new(label).color(p.ink))
+        let response = egui::CollapsingHeader::new(galley.clone())
             .id_salt(("outfit", id))
             .default_open(st.selected_outfit == Some(*id))
             .open(reveal.then_some(true))
@@ -317,6 +325,14 @@ fn outfit_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut Appearanc
                     }
                 });
             });
+        if is_current && ui.is_rect_visible(response.header_response.rect) {
+            // LLOutfitsList::onHighlightBaseOutfit marks the current title BOLD.
+            // Match the item rows' LLFontGL offset: egui's strong is only a color.
+            let rect = response.header_response.rect;
+            let ppp = ui.ctx().pixels_per_point();
+            let pos = egui::pos2(rect.left() + ui.spacing().indent, rect.center().y - galley.size().y * 0.5);
+            ui.painter().galley(pos + Vec2::new(ppp.round().max(1.0) / ppp, 0.0), galley, p.ink);
+        }
         if reveal && response.body_response.is_some() {
             response.header_response.scroll_to_me(Some(egui::Align::Min));
             st.reveal_outfit = None;
