@@ -130,6 +130,9 @@ The texture memory budget is set automatically from the detected VRAM.
 
 **Planned**
 
+- English interface (the viewer is in French today), with the language
+  picked from the operating system and English as the fallback: top
+  priority.
 - NVIDIA DLSS upscaling and DLAA anti-aliasing.
 - Frame Generation (under investigation).
 - Faster texture loading: a GPU-compressed texture cache, so revisited
