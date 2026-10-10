@@ -20,7 +20,7 @@ const READ_POLL: Duration = Duration::from_millis(250);
 const STALL_TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_REDIRECTS: usize = 5;
 const MAX_HEADER_BYTES: usize = 32 * 1024;
-const USER_AGENT: &str = concat!("AuroraViewer/", env!("CARGO_PKG_VERSION"));
+const USER_AGENT: &str = aurora_version::user_agent();
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum HttpError {

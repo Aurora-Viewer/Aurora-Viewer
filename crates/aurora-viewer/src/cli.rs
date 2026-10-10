@@ -6,7 +6,7 @@ use std::sync::OnceLock;
 
 #[derive(Debug, Default)]
 pub struct Cli {
-    /// `--title <text>`: shown in the window title ("Aurora Viewer - <text>")
+    /// `--title <text>`: shown after the viewer's name and version
     /// and used to name the log, so parallel test windows can be told apart.
     pub title: Option<String>,
     /// Additional cap for this process only, including captures and online tests.
@@ -15,11 +15,12 @@ pub struct Cli {
 
 const HELP: &str = "Aurora Viewer
 
-Usage: aurora-viewer [--title <text>] [--fps-limit <fps>]
+Usage: aurora-viewer [--title <text>] [--fps-limit <fps>] [--version]
 
-  --title <text>   Name this window (\"Aurora Viewer - <text>\") and its log
+  --title <text>   Name this window (\"Aurora Viewer <version> - <text>\") and its log
                    file (aurora-<text>.log, aurora-demo-<text>.log in demo mode)
   --fps-limit <fps>  Cap this process at 1..500 FPS without saving preferences
+  -V, --version   Show the compiled viewer version without starting it
   -h, --help       Show this help
 
 Test switches are environment variables (AURORA_DEMO=1, AURORA_CAPTURE=...):
@@ -38,6 +39,9 @@ fn parse(args: impl Iterator<Item = String>) -> Cli {
     while let Some(a) = args.next() {
         if a == "-h" || a == "--help" {
             println!("{HELP}");
+            std::process::exit(0);
+        } else if a == "-V" || a == "--version" {
+            println!("Aurora Viewer {}", aurora_version::version());
             std::process::exit(0);
         } else if let Some(v) = a.strip_prefix("--title=") {
             cli.title = Some(v.to_owned());
@@ -64,13 +68,13 @@ fn parse_fps_limit(value: &str) -> Option<u32> {
 /// The window title, ending with the build profile ("(Dev)", "(Release)",
 /// "(Debug)"): test windows of different builds can be told apart.
 pub fn window_title() -> String {
-    title_with(get().title.as_deref(), env!("AURORA_BUILD_PROFILE"))
+    title_with(get().title.as_deref(), env!("AURORA_BUILD_PROFILE"), aurora_version::version())
 }
 
-fn title_with(title: Option<&str>, profile_dir: &str) -> String {
+fn title_with(title: Option<&str>, profile_dir: &str, version: &str) -> String {
     let base = match title {
-        Some(t) => format!("Aurora Viewer - {t}"),
-        None => "Aurora Viewer".to_owned(),
+        Some(t) => format!("Aurora Viewer {version} - {t}"),
+        None => format!("Aurora Viewer {version}"),
     };
     match profile_label(profile_dir) {
         Some(p) => format!("{base} ({p})"),
@@ -110,10 +114,17 @@ mod tests {
 
     #[test]
     fn title_ends_with_the_build_profile() {
-        assert_eq!(title_with(Some("Test ombres"), "debug"), "Aurora Viewer - Test ombres (Dev)");
-        assert_eq!(title_with(None, "release"), "Aurora Viewer (Release)");
-        assert_eq!(title_with(None, "debugging"), "Aurora Viewer (Debug)");
-        assert_eq!(title_with(Some("X"), "unknown"), "Aurora Viewer - X");
+        assert_eq!(
+            title_with(Some("Test ombres"), "debug", "0.2.0"),
+            "Aurora Viewer 0.2.0 - Test ombres (Dev)"
+        );
+        assert_eq!(title_with(None, "release", "0.2.0"), "Aurora Viewer 0.2.0 (Release)");
+        assert_eq!(title_with(None, "debugging", "0.2.0"), "Aurora Viewer 0.2.0 (Debug)");
+        assert_eq!(title_with(Some("X"), "unknown", "0.2.0"), "Aurora Viewer 0.2.0 - X");
+        assert_eq!(
+            title_with(None, "debug", "0.2.0+7.gabcdef123"),
+            "Aurora Viewer 0.2.0+7.gabcdef123 (Dev)"
+        );
     }
 
     #[test]

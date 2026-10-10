@@ -28,7 +28,7 @@ ce que l'agent te montre, et de te connecter à la grille quand il le faut.
 2. L'agent crée son dossier de travail `..\work\<tâche>` sur une branche à lui :
    il ne voit pas le code en cours des autres agents, et réciproquement.
 3. Il code, teste en démo, puis **compile et te lance le viewer** avec une
-   fenêtre nommée « Aurora Viewer - Test <tâche> (Dev) » ; le titre se
+   fenêtre nommée « Aurora Viewer <version> - Test <tâche> (Dev) » ; le titre se
    termine par le profil de compilation : (Dev), (Release) ou (Debug).
 4. **Tu testes** ce qu'il te demande (en démo ou sur la grille : c'est toi qui
    te connectes) et tu lui dis si c'est bon. Pour une PR sans effet sur le
@@ -85,6 +85,13 @@ PR sans relecture ou sorties de la file.
 On suit [SemVer](https://semver.org/lang/fr/) : `vMAJEUR.MINEUR.CORRECTIF`.
 Avant la 1.0, une nouveauté fait `v0.3.0 → v0.4.0`, un correctif
 `v0.4.0 → v0.4.1`.
+
+Le tag est la référence du numéro du viewer : `v0.2.0` produit `0.2.0`,
+affiché dans le titre, la connexion et le menu Aide. Entre deux tags, un
+build indique aussi le nombre de commits et l'identifiant court, par
+exemple `0.2.0+7.gabcdef123`. Il n'y a pas de numéro à modifier dans
+`Cargo.toml` avant de publier. Le workflow vérifie le numéro annoncé par
+l'exe avec `--version` et refuse une release incohérente.
 
 Le plus simple : choix **Gérer les releases** des outils Aurora (section
 plus bas). Ils vérifient que `main` est vert, proposent le numéro d'après les
@@ -202,7 +209,8 @@ Chaque choix existe aussi sans menu, pour un script :
 Choix **Viewer release** des outils, ou double-clic sur
 `RELEASE\build-release.bat` dans le dossier du projet. L'exe prêt à lancer
 est dans `RELEASE\Aurora-Viewer\` (avec ses assets, comme le zip des
-releases), et `version.txt` dit quel commit a été compilé.
+releases), et `version.txt` donne la version annoncée par le viewer et le
+commit compilé.
 
 - Le code vient **toujours de GitHub** : tes changements locaux et tes
   commits non poussés n'y entrent pas.

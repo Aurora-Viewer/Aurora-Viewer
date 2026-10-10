@@ -10,6 +10,7 @@ publish.workspace = true
 aurora-llsd = { version = "0.1.0", path = "../aurora-llsd" }
 aurora-msg = { version = "0.1.0", path = "../aurora-msg" }
 aurora-prim = { version = "0.1.0", path = "../aurora-prim" }
+aurora-version = { version = "0.1.0", path = "../aurora-version" }
 base64 = "0.23.1"
 bitflags = "2.13.2"
 crossbeam-channel = "0.5.17"

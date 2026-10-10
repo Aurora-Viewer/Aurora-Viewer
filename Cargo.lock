@@ -504,6 +504,7 @@ dependencies = [
 name = "aurora-audio"
 version = "0.1.0"
 dependencies = [
+ "aurora-version",
  "cpal",
  "crossbeam-channel",
  "log",
@@ -553,6 +554,7 @@ dependencies = [
  "aurora-llsd",
  "aurora-msg",
  "aurora-prim",
+ "aurora-version",
  "base64 0.23.1",
  "bitflags 2.13.2",
  "crossbeam-channel",
@@ -595,6 +597,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "aurora-version"
+version = "0.1.0"
+dependencies = [
+ "semver",
+]
+
+[[package]]
 name = "aurora-viewer"
 version = "0.1.0"
 dependencies = [
@@ -606,6 +615,7 @@ dependencies = [
  "aurora-net",
  "aurora-prim",
  "aurora-render",
+ "aurora-version",
  "aurora-voice",
  "crossbeam-channel",
  "directories",

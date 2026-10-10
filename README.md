@@ -186,13 +186,23 @@ profile (`cargo run -p aurora-viewer`): it behaves like the release build
 without its slow link-time optimization. `./scripts/build-release.ps1`
 builds GitHub's latest `main` with `--release` into `..\RELEASE\`.
 
+Le **tag Git est la référence de la version du viewer** : `v0.2.0` donne
+`0.2.0` partout (titre, interface, journaux et clients réseau). Entre deux
+tags, `0.2.0+7.gabcdef123` indique le nombre de commits et l'identifiant
+court. La version des crates dans `Cargo.toml` ne sert pas de numéro au
+viewer. Une archive de sources sans Git peut être compilée avec
+`AURORA_VERSION_TAG=v0.2.0` ; sinon elle s'identifie comme
+`0.0.0+0.gunknown`. Le workflow Release contrôle la version annoncée par
+l'exe avant publication ; le build local la note aussi dans `version.txt`.
+
 ### Command line
 
 | Argument | Effect |
 |---|---|
-| `--title <text>` | Names the window "Aurora Viewer - <text> (Dev)" and its log file |
+| `--title <text>` | Names the window "Aurora Viewer <version> - <text> (Dev)" and its log file |
 | `--fps-limit <fps>` | Caps this instance at 1–500 fps without changing saved preferences |
 | `-h`, `--help` | Shows the help |
+| `-V`, `--version` | Affiche la version compilée puis quitte, sans fenêtre, journal ni réseau |
 
 - `--title`: the build profile ends the title (Dev, Release, Debug); the log
   file is `aurora-<text>.log` (`aurora-demo-<text>.log` in demo mode).

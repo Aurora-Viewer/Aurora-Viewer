@@ -1,0 +1,16 @@
+[package]
+name = "aurora-version"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[build-dependencies]
+semver = "1"
+
+[dev-dependencies]
+semver = "1"
+
+[lints]
+workspace = true

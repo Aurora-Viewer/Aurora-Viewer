@@ -466,7 +466,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         });
     }
     ui.menu_button(small("Aide", p.ink), |ui| {
-        ui.label(small(format!("Aurora Viewer {}", env!("CARGO_PKG_VERSION")), p.muted));
+        ui.label(small(format!("Aurora Viewer {}", aurora_version::version()), p.muted));
         ui.separator();
         ui.label(small("Marcher : flèches (double appui = courir)", p.ink));
         ui.label(small(

@@ -208,7 +208,7 @@ fn version_panel(ui: &mut egui::Ui, p: &Palette, icons: &Icons, info: &LoginInfo
     glass(p, 10, 16).show(ui, |ui| {
         ui.set_width(ui.available_width());
         panel_title(ui, p, icons, "tag", "Version");
-        let current = env!("CARGO_PKG_VERSION");
+        let current = aurora_version::version();
         ui.horizontal(|ui| {
             ui.label(RichText::new("Installée").size(12.5).color(p.muted));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -501,7 +501,7 @@ pub fn show(
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 14.0;
                 ui.label(
-                    RichText::new(format!("Aurora Viewer v{}", env!("CARGO_PKG_VERSION")))
+                    RichText::new(format!("Aurora Viewer v{}", aurora_version::version()))
                         .size(11.5)
                         .color(p.muted_dim),
                 );
