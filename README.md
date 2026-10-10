@@ -56,12 +56,26 @@ same rules, same defaults — while rethinking the user interface.
 
 **Performance**
 
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <img src="docs/screenshots/compare-firestorm.png" alt="Firestorm statistics window in a busy store: 68 fps" width="100%"><br>
+      <b>Firestorm</b> · 68 fps
+    </td>
+    <td width="50%" align="center">
+      <img src="docs/screenshots/compare-aurora.png" alt="Aurora Viewer performance window in the same store: 386 fps" width="100%"><br>
+      <b>Aurora Viewer</b> · 386 fps
+    </td>
+  </tr>
+</table>
+
 Measured on 10 October 2026 with the frame cap off, on one PC (RTX 4090), in
 one busy store of about 16,000 objects. This is an informal test, not a
 benchmark:
 
 - 138 fps where Firestorm gave 68 fps at the same spot;
-- about 343 fps at that spot once the render thread landed.
+- about 343 fps at that spot (median) once the render thread landed, 386 fps
+  in the capture above.
 
 Current builds cap the frame rate at 60 fps. The texture memory budget is
 set automatically from the detected VRAM.
