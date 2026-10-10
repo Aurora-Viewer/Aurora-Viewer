@@ -8,6 +8,7 @@
 pub mod arena;
 pub mod gpu_cull;
 mod helpers;
+pub mod hud;
 pub mod main_thread;
 mod occlusion;
 mod packet;
@@ -22,6 +23,7 @@ pub mod upload;
 pub mod writes;
 
 pub use arena::MeshAlloc;
+pub use hud::HudView;
 pub use main_thread::{GpuInfo, Renderer};
 pub use packet::EguiFrame;
 pub use renderer::{CASCADES, RenderError};

@@ -20,6 +20,8 @@ pub mod eep;
 /// Environment selector library and script (AURORA_DEMO_ENV_SELECT).
 #[path = "demo_env.rs"]
 pub mod env;
+#[path = "demo_hud.rs"]
+pub mod hud;
 /// About Land answers (AURORA_DEMO_LAND).
 #[path = "demo_land.rs"]
 pub mod land;
@@ -404,6 +406,9 @@ pub fn seed_contact_sets(world: &mut crate::world::World) {
 }
 
 pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
+    if let Some(events) = hud::reply(cmd) {
+        return events;
+    }
     use aurora_net::inventory::{FolderContents, InvItem};
     match cmd {
         aurora_net::NetCommand::AgentAnimation { anim, start: false } if *anim == SEAT_ANIM => {

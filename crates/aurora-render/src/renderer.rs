@@ -602,6 +602,8 @@ struct Targets {
 }
 
 struct Pipelines {
+    hud_opaque: wgpu::RenderPipeline,
+    hud_blend: wgpu::RenderPipeline,
     sky: wgpu::RenderPipeline,
     terrain: wgpu::RenderPipeline,
     opaque: wgpu::RenderPipeline,
@@ -655,7 +657,7 @@ struct GpuTimer {
     last_elements: Option<[f32; GpuElement::ALL.len()]>,
 }
 
-/// Timestamps of a frame: 0 first pass, 1 end of post, then the marks.
+/// Timestamps of a frame: 0 first pass, 1 end of post / HUDs, then the marks.
 const GPU_TIMESTAMPS: u32 = 2 + GPU_MARKS;
 const GPU_MARKS: u32 = 15;
 /// Mark indices, in frame order. Those inside the scene passes split them
@@ -709,7 +711,7 @@ const GPU_ELEMENTS: [&[(u32, u32)]; GpuElement::ALL.len()] = [
     &[(MARK_SSR_END, MARK_WATER_END)],
     // blended faces and particles
     &[(MARK_GLOW_END, MARK_BLEND_END), (MARK_BLEND_END, MARK_SCENE_END)],
-    // post: glow, TAA, tonemap, SMAA
+    // post: glow, TAA, tonemap, SMAA and screen-space HUDs
     &[(MARK_WATER_END, MARK_GLOW_END), (MARK_SCENE_END, 1)],
 ];
 
@@ -828,7 +830,7 @@ struct FrameGroups {
     /// Water and mirror reflection passes (own uniform buffers).
     /// Water reflection, mirror and reflection probe capture passes.
     /// [3], [4]: impostor pictures.
-    refl: [wgpu::BindGroup; 5],
+    refl: [wgpu::BindGroup; 6],
 }
 
 /// The passes of a frame and all they own. Lives on the render thread, or
@@ -850,7 +852,8 @@ pub(crate) struct Backend {
     pipelines: Pipelines,
     ssao: Ssao,
     frame_buffer: wgpu::Buffer,
-    refl_buffers: [wgpu::Buffer; 5],
+    refl_buffers: [wgpu::Buffer; 6],
+    hud_depth: Option<(u32, u32, wgpu::TextureView)>,
     probes: crate::probes::Probes,
     groups: FrameGroups,
     gbuf_group: Option<wgpu::BindGroup>,
@@ -1760,6 +1763,7 @@ impl Backend {
             mk_frame_buffer("probe capture uniforms"),
             mk_frame_buffer("impostor uniforms 0"),
             mk_frame_buffer("impostor uniforms 1"),
+            mk_frame_buffer("HUD uniforms"),
         ];
         let probes = crate::probes::Probes::new(&device, RenderSettings::default().probe_slots);
 
@@ -1946,6 +1950,7 @@ impl Backend {
             ssao,
             frame_buffer,
             refl_buffers,
+            hud_depth: None,
             probes,
             groups,
             gbuf_group: None,
@@ -2109,6 +2114,20 @@ impl Backend {
         };
         let g = |fs: &'static str, fs_g: &'static str| if ssr { fs_g } else { fs };
         let pipe = |d: PipeDesc| make_pipeline(device, &module, &scene_layout, d);
+        let hud_constants = [("HUD_SRGB_TARGET", if surface_format.is_srgb() { 1.0 } else { 0.0 })];
+        let hud_desc = |label, blend, depth_write| PipeDesc {
+            format: Some(surface_format),
+            samples: 1,
+            gbuf: false,
+            cull: None,
+            blend,
+            depth_write,
+            write_mask: wgpu::ColorWrites::ALL,
+            constants: &hud_constants,
+            ..base(label, "vs_main", "fs_hud")
+        };
+        let hud_opaque = pipe(hud_desc("HUD opaque", None, true));
+        let hud_blend = pipe(hud_desc("HUD blended", Some(wgpu::BlendState::ALPHA_BLENDING), false));
         let sky = pipe(PipeDesc {
             vb: Vb::None,
             cull: None,
@@ -2418,6 +2437,8 @@ impl Backend {
             },
         );
         Pipelines {
+            hud_opaque,
+            hud_blend,
             sky,
             terrain,
             opaque,
@@ -2610,7 +2631,7 @@ impl Backend {
         device: &wgpu::Device,
         layout: &wgpu::BindGroupLayout,
         frame_buffer: &wgpu::Buffer,
-        refl_buffers: &[wgpu::Buffer; 5],
+        refl_buffers: &[wgpu::Buffer; 6],
         shadow_view: &wgpu::TextureView,
         shadow_sampler: &wgpu::Sampler,
         lin_clamp: &wgpu::Sampler,
@@ -2730,6 +2751,15 @@ impl Backend {
                 mk(
                     "frame impostor 1",
                     &refl_buffers[4],
+                    &dummies.white,
+                    &dummies.black,
+                    &dummies.black,
+                    &dummies.black,
+                    &dummies.depth,
+                ),
+                mk(
+                    "frame HUD",
+                    &refl_buffers[5],
                     &dummies.white,
                     &dummies.black,
                     &dummies.black,
@@ -3359,6 +3389,32 @@ impl Backend {
             main.mirror_box = m.world_to_box.to_cols_array_2d();
         }
         self.queue.write_buffer(&self.frame_buffer, 0, bytemuck::bytes_of(&main));
+        if let Some(view) = lists.hud_view {
+            let mut hud = main;
+            hud.view_proj = view.matrix().to_cols_array_2d();
+            self.queue.write_buffer(&self.refl_buffers[5], 0, bytemuck::bytes_of(&hud));
+            if self
+                .hud_depth
+                .as_ref()
+                .is_none_or(|(w, h, _)| *w != self.config.width || *h != self.config.height)
+            {
+                let depth = self.device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("HUD depth"),
+                    size: wgpu::Extent3d {
+                        width: self.config.width,
+                        height: self.config.height,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: DEPTH_FORMAT,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                    view_formats: &[],
+                });
+                self.hud_depth = Some((self.config.width, self.config.height, depth.create_view(&Default::default())));
+            }
+        }
         let refl_frame = |this: &Self, n: Vec3, d: f32, keep_offset: f32| {
             let m = reflection_matrix(n, d);
             let mut rf = f.clone();
@@ -3600,6 +3656,8 @@ impl Backend {
                 .prepare(&self.device, &self.queue, scene.face_count, scene.object_count, frame);
         }
         let cpu = &mut self.indirect_cpu;
+        let hud_opaque_range = push(cpu, &lists.hud_opaque);
+        let hud_blend_range = push(cpu, &lists.hud_blend);
         rg.debug_red = push(cpu, &lists.debug_red);
         rg.debug_blue = push(cpu, &lists.debug_blue);
         rg.select_root = push(cpu, &lists.select_root);
@@ -4360,10 +4418,11 @@ impl Backend {
             self.glow.encode(&mut encoder, post_bg);
         }
 
+        let draw_huds = lists.hud_view.is_some() && self.hud_depth.is_some();
         // ---- post (tonemap) to the swapchain
         {
             let ts = match (&self.timer, timer_slot) {
-                (Some(t), Some(_)) => Some(wgpu::RenderPassTimestampWrites {
+                (Some(t), Some(_)) if !draw_huds => Some(wgpu::RenderPassTimestampWrites {
                     query_set: &t.query_set,
                     beginning_of_pass_write_index: None,
                     end_of_pass_write_index: Some(1),
@@ -4401,11 +4460,6 @@ impl Backend {
             }
         }
 
-        if let (Some(t), Some(slot)) = (&self.timer, timer_slot) {
-            encoder.resolve_query_set(&t.query_set, 0..GPU_TIMESTAMPS, &t.resolve, 0);
-            encoder.copy_buffer_to_buffer(&t.resolve, 0, &t.readback[slot].0, 0, GPU_TIMESTAMPS as u64 * 8);
-        }
-
         // scene only (no interface): copied before egui draws on top
         let mut capture = None;
         if wanted == Some(Capture::Scene) {
@@ -4413,6 +4467,47 @@ impl Backend {
         }
 
         prof.push(("post", Instant::now()));
+        // HUDs retain their original texture colors and never inherit world
+        // depth, fog, shadows, exposure or post effects (render_hud_attachments).
+        if draw_huds && let Some((_, _, depth)) = &self.hud_depth {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("HUD attachments"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &surface_view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: depth,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(0.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: match (&self.timer, timer_slot) {
+                    (Some(t), Some(_)) => Some(wgpu::RenderPassTimestampWrites {
+                        query_set: &t.query_set,
+                        beginning_of_pass_write_index: None,
+                        end_of_pass_write_index: Some(1),
+                    }),
+                    _ => None,
+                },
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            bind_mesh(&mut pass, &self.groups.refl[5]);
+            draw(&mut pass, &self.pipelines.hud_opaque, hud_opaque_range);
+            draw(&mut pass, &self.pipelines.hud_blend, hud_blend_range);
+        }
+        if let (Some(t), Some(slot)) = (&self.timer, timer_slot) {
+            encoder.resolve_query_set(&t.query_set, 0..GPU_TIMESTAMPS, &t.resolve, 0);
+            encoder.copy_buffer_to_buffer(&t.resolve, 0, &t.readback[slot].0, 0, GPU_TIMESTAMPS as u64 * 8);
+        }
         // ---- egui
         let mut extra_cmds = Vec::new();
         if let Some(ui) = &ui {

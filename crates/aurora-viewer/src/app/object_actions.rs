@@ -109,9 +109,16 @@ impl App {
                 .is_some_and(|o| o.full_id == h.target.object)
         {
             let surface = self
-                .gfx
-                .as_ref()
-                .and_then(|g| g.renderer.cursor_ray(self.cursor_pos.0, self.cursor_pos.1))
+                .world
+                .objects
+                .index_of(&h.target.key)
+                .and_then(|idx| {
+                    let ray = self
+                        .gfx
+                        .as_ref()
+                        .and_then(|g| g.renderer.cursor_ray(self.cursor_pos.0, self.cursor_pos.1));
+                    self.scene.object_cursor_ray(idx, self.cursor_pos, ray)
+                })
                 .map(|ray| {
                     self.world
                         .objects
@@ -146,15 +153,16 @@ impl App {
         if h.last.elapsed() < Duration::from_millis(100) {
             return;
         }
-        let surface = renderer
-            .cursor_ray(self.cursor_pos.0, self.cursor_pos.1)
+        let surface = self
+            .scene
+            .object_cursor_ray(idx, self.cursor_pos, renderer.cursor_ray(self.cursor_pos.0, self.cursor_pos.1))
             .and_then(|ray| self.scene.touch_surface(&self.world, idx, ray))
             .unwrap_or_default();
         if self.cursor_pos == h.cursor && surface == h.surface {
             return;
         }
         let Some(h) = self.interactions.held.as_mut() else { return };
-        {
+        if !self.scene.gpu.get(idx).is_some_and(|g| g.hud) {
             let forward = self.camera.forward();
             let left = Vec3::Z.cross(forward).normalize_or(Vec3::Y);
             let vertical = forward.cross(left).normalize_or(Vec3::Z);
@@ -176,7 +184,12 @@ impl App {
             handle: h.target.key.region,
             object: h.target.object,
             offset: h.offset,
-            position: h.position - region,
+            position: h.position
+                - if self.scene.gpu.get(idx).is_some_and(|g| g.hud) {
+                    Vec3::ZERO
+                } else {
+                    region
+                },
             elapsed_ms: h.last.elapsed().as_millis().min(u32::MAX as u128) as u32,
             surface,
         };

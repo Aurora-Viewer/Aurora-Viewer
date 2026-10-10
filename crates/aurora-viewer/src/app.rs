@@ -1558,6 +1558,27 @@ impl App {
             return;
         };
         let (x, y) = self.cursor_pos;
+        if let Some((idx, point, hud_ray)) = self.scene.hud_pick(&self.world, (x, y), true) {
+            self.media.build_mode = self.build.open;
+            if !self.alt && !self.ctrl && !self.shift && !self.build.open {
+                let mods = aurora_media::Modifiers {
+                    control: false,
+                    alt: false,
+                    shift: false,
+                };
+                let distance = (point - hud_ray.0).dot(hud_ray.1);
+                if self
+                    .media
+                    .on_click(&self.world, &self.scene, hud_ray, Some(distance), &self.settings.media, mods, true)
+                {
+                    return;
+                }
+                if let Some(target) = crate::interaction::target(&self.world, idx, &self.interactions.props) {
+                    self.activate_object_action(target, idx, point, Some(hud_ray));
+                }
+            }
+            return;
+        }
         let ray = g.renderer.cursor_ray(x, y);
         let hit = self.scene.action_point(
             &self.world,
@@ -1595,7 +1616,7 @@ impl App {
                 };
                 if self
                     .media
-                    .on_click(&self.world, &self.scene, ray, depth_t, &self.settings.media, mods)
+                    .on_click(&self.world, &self.scene, ray, depth_t, &self.settings.media, mods, false)
                 {
                     return;
                 }
@@ -3206,6 +3227,8 @@ impl App {
                 },
             );
             self.frame_profile.lap(Lap::Complexity);
+            let hud_size = gfx.window.inner_size();
+            self.world.hud_aspect = hud_size.width as f32 / hud_size.height.max(1) as f32;
             self.scene.sync(&mut gfx.renderer, &mut self.world, &cull);
             self.frame_profile.lap(Lap::Sync);
             {
@@ -3260,7 +3283,11 @@ impl App {
                         self.settings.draw_distance,
                     );
                     let depth = point.map(|p| (p - ray.0).dot(ray.1));
-                    if let Some(c) = self.media.on_hover(&self.world, &self.scene, ray, depth, mods) {
+                    let (ray, depth, hud) = self
+                        .scene
+                        .hud_pick(&self.world, self.cursor_pos, true)
+                        .map_or((ray, depth, false), |(_, p, r)| (r, Some((p - r.0).dot(r.1)), true));
+                    if let Some(c) = self.media.on_hover(&self.world, &self.scene, ray, depth, mods, hud) {
                         self.media_cursor = Some(match c.as_str() {
                             "UI_CURSOR_HAND" | "hand" => egui::CursorIcon::PointingHand,
                             "UI_CURSOR_IBEAM" | "ibeam" => egui::CursorIcon::Text,
@@ -3293,6 +3320,8 @@ impl App {
                 .update(&mut gfx.renderer, &self.world, self.settings.maps.ban_lines, self.camera.position);
             self.frame_profile.lap(Lap::Extras);
             self.scene.build_lists(&mut gfx.renderer, &cull, self.settings.shadows);
+            self.scene
+                .build_huds(&self.world, [hud_size.width, hud_size.height], self.settings.show_huds);
             self.frame_profile.lap(Lap::Lists);
             if self.demo && std::env::var_os("AURORA_DEMO_ANIMESH").is_some() && self.frame_count.is_multiple_of(120) {
                 self.scene.log_demo_animesh(&self.world);
@@ -3723,14 +3752,19 @@ impl App {
             && self.media_cursor.is_none()
             && !ctx.is_pointer_over_egui()
             && !ctx.egui_wants_pointer_input()
-            // (searched again only when the cursor, the camera or the scene
-            // under the cursor changed: scene/hover.rs)
-            && let Some(idx) = self.scene.hover_object(
-                &self.world,
-                gfx.renderer.cursor_ray(self.cursor_pos.0, self.cursor_pos.1),
-                gfx.renderer.hover_pick(self.cursor_pos.0, self.cursor_pos.1),
-                self.settings.draw_distance,
-            )
+            && let Some(idx) = self
+                .scene
+                .hud_pick(&self.world, self.cursor_pos, false)
+                .map(|(idx, _, _)| idx)
+                .or_else(|| {
+                    // Preserve the world hover cache (scene/hover.rs).
+                    self.scene.hover_object(
+                        &self.world,
+                        gfx.renderer.cursor_ray(self.cursor_pos.0, self.cursor_pos.1),
+                        gfx.renderer.hover_pick(self.cursor_pos.0, self.cursor_pos.1),
+                        self.settings.draw_distance,
+                    )
+                })
             && let Some(target) = crate::interaction::target(&self.world, idx, &std::collections::HashMap::new())
         {
             if let Some(cmd) = self.interactions.hover_request(target) {
@@ -3917,6 +3951,18 @@ impl App {
         self.end_profile_frame(w, h);
         self.gfx = Some(gfx);
         self.demo_action_steps();
+        if self.demo && std::env::var("AURORA_DEMO_HUDS").is_ok_and(|m| m == "touch") {
+            if self.frame_count == 720
+                && let Some(view) = self.scene.lists.hud_view
+            {
+                self.cursor_pos = (view.width * 0.5 - 0.18 * view.height, view.height * 0.5 - 0.028 * view.height);
+                self.on_left_press();
+            } else if self.frame_count == 800 {
+                self.cursor_pos.0 += 12.0;
+            } else if self.frame_count == 900 {
+                self.on_left_release();
+            }
+        }
         // closing the window: leave once the last view is kept (or after 1 s)
         if let Some(t) = self.closing
             && ((!self.scene_capture_pending && !self.want_scene_capture) || t.elapsed() > Duration::from_secs(1))
@@ -4141,12 +4187,16 @@ impl App {
         }
         // AURORA_DEMO_MEDIA_CLICK="x,y[,x2,y2]": clicks on a media face at
         // frames 700 (focus) and 760, a click at (x2, y2) at 820, then types
-        // "aurora" (media focus and input test)
+        // "aurora". The optional start frame allows slow plugins to load.
         if self.demo
             && let Ok(v) = std::env::var("AURORA_DEMO_MEDIA_CLICK")
         {
             let c: Vec<f32> = v.split(',').filter_map(|s| s.trim().parse().ok()).collect();
-            let f = self.frame_count;
+            let start = std::env::var("AURORA_DEMO_MEDIA_CLICK_FRAME")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(700);
+            let f = self.frame_count.checked_sub(start).map_or(0, |delta| delta.saturating_add(700));
             let at = match f {
                 700 | 760 if c.len() >= 2 => Some((c[0], c[1])),
                 820 if c.len() >= 4 => Some((c[2], c[3])),
@@ -4156,7 +4206,11 @@ impl App {
                 self.cursor_pos = pos;
                 self.on_left_press();
                 self.on_left_release();
-                log::info!("demo media click at {pos:?} (frame {f}): focus {:?}", self.media.focus);
+                log::info!(
+                    "demo media click at {pos:?} (frame {}): focus {:?}",
+                    self.frame_count,
+                    self.media.focus
+                );
             }
             if (850..862).contains(&f) {
                 let k = (f - 850) as usize;
@@ -4351,6 +4405,16 @@ impl App {
             }
         }
         match a.bar {
+            BarAction::ShowHuds(visible) => {
+                self.release_object_hold();
+                self.settings.show_huds = visible;
+                self.settings.save();
+                if !visible {
+                    self.scene.lists.hud_view = None;
+                    self.media.unfocus();
+                }
+            }
+            BarAction::HudZoom(zoom) => self.world.hud_zoom = zoom.clamp(0.1, 1.0),
             BarAction::None => {}
             BarAction::Build(t) => {
                 match t {
@@ -4531,6 +4595,8 @@ impl App {
                     .map(|i| ui::bars::maturity_name(i.sim_access))
                     .unwrap_or("");
                 let status = ui::bars::StatusInfo {
+                    show_huds: self.settings.show_huds,
+                    hud_zoom: self.world.hud_zoom,
                     ban_lines: self.settings.maps.ban_lines,
                     region: &self.world.region_name(),
                     parcel: &self.world.parcel_name,
@@ -4654,6 +4720,7 @@ impl App {
                 if !self.camera.mouselook() {
                     ui::minimap::draw_beacon(&ctx, &self.world, projector);
                 }
+                ui::hud::draw_attachments(&ctx, &self.world, &self.scene);
                 {
                     let mods = crate::build::Mods {
                         shift: self.shift,
@@ -5698,8 +5765,43 @@ impl ApplicationHandler for App {
                 }
                 self.media.demo_entry(object, face, &url);
             }
+            // HUD fixtures exercise screen-space rendering and the same
+            // linked-object touch / inventory paths as real attachments.
+            if let Ok(mode) = std::env::var("AURORA_DEMO_HUDS") {
+                for ev in crate::demo::hud::events() {
+                    self.world.apply(ev);
+                }
+                self.settings.show_huds = mode != "hidden";
+                self.panels.inventory = false;
+                self.panels.perf = false;
+                self.panels.chat = false;
+                self.panels.appearance = false;
+                self.panels.settings = false;
+                self.world.notifications.list.clear();
+                crate::demo::hud::seed_inventory(&mut self.world);
+                if mode == "zoom" {
+                    self.world.hud_zoom = 0.5;
+                }
+                if mode == "media" {
+                    let mut hud = crate::demo::hud::object(35, false);
+                    let face = crate::demo::media_screen().2;
+                    hud.scale = Vec3::new(0.012, 0.7, 0.394);
+                    if let Some(te) = hud.texture_entry.as_mut() {
+                        let tf = &mut Arc::make_mut(te).faces[face as usize];
+                        tf.texture = aurora_prim::te::BLANK_TEXTURE;
+                        tf.color = [1.0; 4];
+                        tf.scale_t = 576.0 / 1024.0;
+                        tf.offset_t = -(1.0 - tf.scale_t) * 0.5;
+                    }
+                    self.media.demo_entry(hud.full_id, face, crate::demo::DEMO_MEDIA_PAGE);
+                    self.world.apply(NetEvent::ObjectUpdates {
+                        handle: self.world.main_region.unwrap_or_default(),
+                        objects: vec![hud],
+                    });
+                }
+            }
             // AURORA_DEMO_PARCEL_MEDIA=<url> (1: the test page): parcel media
-            // on the first test panel's texture, started at once
+            // on the first test panel's texture, started at once.
             if let Some(v) = std::env::var_os("AURORA_DEMO_PARCEL_MEDIA") {
                 let v = v.to_string_lossy().into_owned();
                 let url = if v == "1" || v.is_empty() {
@@ -5874,7 +5976,13 @@ impl ApplicationHandler for App {
                     None
                 };
                 let on_media = match ray {
-                    Some(ray) => self.media.on_scroll(&self.world, &self.scene, ray, None, steps, mods),
+                    Some(ray) => {
+                        let (ray, depth, hud) = self
+                            .scene
+                            .hud_pick(&self.world, self.cursor_pos, true)
+                            .map_or((ray, None, false), |(_, p, r)| (r, Some((p - r.0).dot(r.1)), true));
+                        self.media.on_scroll(&self.world, &self.scene, ray, depth, steps, mods, hud)
+                    }
                     None => false,
                 };
                 if !on_media {

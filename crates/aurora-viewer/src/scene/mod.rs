@@ -7,6 +7,7 @@ pub mod avatar;
 pub mod banlines;
 pub mod complexity;
 pub mod hover;
+pub mod hud;
 pub mod impostors;
 pub mod jobs;
 pub mod legacy_mat;
@@ -1357,6 +1358,10 @@ impl Scene {
             let ap = lib.attach_points.get(&point).copied();
             let hud = ap.is_some_and(|a| a.hud) || (31..=38).contains(&point);
             let (mut apos, mut arot) = ap.map(|a| (a.position, a.rotation)).unwrap_or((Vec3::ZERO, Quat::IDENTITY));
+            if hud {
+                apos.y *= world.hud_aspect;
+                return Some((apos + arot * p, arot * r, true));
+            }
             // follow the animated bone (LLViewerJointAttachment under its joint)
             if let Some((a, j)) = ap.and_then(|a| Some((a, a.joint?)))
                 && let Some(m) = world.avatar_poses.get(&parent.full_id).and_then(|p| p.get(j))

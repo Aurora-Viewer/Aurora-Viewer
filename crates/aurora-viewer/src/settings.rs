@@ -49,6 +49,8 @@ pub const LOOK_AT_UNLIMITED: f32 = 64.0;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
+    /// ShowHUDAttachments, enabled by default in Firestorm.
+    pub show_huds: bool,
     /// Debug overlays (not saved).
     #[serde(skip)]
     pub debug: DebugView,
@@ -409,6 +411,7 @@ impl Default for AudioSettings {
 impl Default for Settings {
     fn default() -> Self {
         Settings {
+            show_huds: true,
             debug: DebugView::default(),
             build: Default::default(),
             camera: Default::default(),

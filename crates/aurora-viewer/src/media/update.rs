@@ -246,7 +246,7 @@ impl MediaManager {
             let Some(data) = om.data.as_ref() else {
                 continue;
             };
-            if !allowed || (om.on_other_avatar && !f.settings.show_on_others) {
+            if !allowed || (om.on_other_avatar && (!f.settings.show_on_others || om.hud)) {
                 continue;
             }
             let from_self = om.changed_by == world.agent_id && !om.changed_by.is_nil();

@@ -63,6 +63,7 @@ pub struct ContextMenu {
 /// llviewermenu.cpp), worked out every frame while the menu is open.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ObjectFacts {
+    pub attachment_item: Option<Uuid>,
     /// enable_object_touch: the prim or its parent handles touches.
     pub touch: bool,
     /// enable_object_sit: not already sitting on it.
@@ -96,6 +97,7 @@ impl ObjectFacts {
         let has = |f: u32, bit: u32| f & bit != 0;
         let you_own = has(root, flags::OBJECT_YOU_OWNER);
         ObjectFacts {
+            attachment_item: None,
             touch: has(clicked, flags::HANDLE_TOUCH) || has(parent, flags::HANDLE_TOUCH),
             sit: !sitting_on,
             stand: sitting_on,
@@ -133,6 +135,8 @@ pub struct Facts {
 
 #[derive(Debug, Clone)]
 pub enum CtxAction {
+    Detach(ObjKey),
+    AttachmentInventory(Uuid),
     Touch(u32),
     Sit {
         target: Uuid,
@@ -390,10 +394,16 @@ fn attachment_self_menu(ui: &mut egui::Ui, p: &Palette, f: &Facts, key: ObjKey, 
     if menu::item_if(ui, p, "hand-pointing", "Toucher", f.object.touch) {
         act(CtxAction::Touch(key.local_id));
     }
-    menu::todo(ui, p, "backpack", "Voir dans l'inventaire");
+    if menu::item_if(ui, p, "backpack", "Voir dans l'inventaire", f.object.attachment_item.is_some())
+        && let Some(item) = f.object.attachment_item
+    {
+        act(CtxAction::AttachmentInventory(item));
+    }
     menu::todo(ui, p, "pencil-simple", "Modifier");
     menu::todo(ui, p, "paint-brush", "Modifier le matériau PBR");
-    menu::todo(ui, p, "paperclip", "Détacher");
+    if menu::item_if(ui, p, "paperclip", "Détacher", f.object.attachment_item.is_some()) {
+        act(CtxAction::Detach(key));
+    }
     menu::todo(ui, p, "floppy-disk", "Enregistrer sous");
     menu::separator(ui, p);
     sit_stand(ui, p, f, act);
