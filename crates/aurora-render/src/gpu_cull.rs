@@ -13,6 +13,11 @@
 //!
 //! The CPU path (all lists built by `Scene::build_lists`) remains when the
 //! device lacks `MULTI_DRAW_INDIRECT_COUNT`, and with AURORA_CPU_CULL=1.
+//!
+//! Two owners: the tables are the scene's, kept by the main thread
+//! ([`GpuTable`], [`CullTables`]) and written through the frame's journal;
+//! the compute culling and its bins ([`GpuCull`]) are the render thread's,
+//! which gets the tables' buffers and sizes with each frame packet.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -21,6 +26,7 @@ use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3, Vec4};
 
 use crate::types::DrawIndexedIndirect;
+use crate::writes::GpuWrites;
 
 /// `CullFace::object` / `CullObject::avatar` of nothing.
 pub const NO_OBJECT: u32 = u32::MAX;
@@ -474,7 +480,8 @@ impl<T: Pod + PartialEq> GpuTable<T> {
         }
     }
 
-    pub fn flush(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+    /// Record the upload of the changed chunks in the frame's journal.
+    pub fn flush(&mut self, device: &wgpu::Device, writes: &mut GpuWrites) {
         let size = std::mem::size_of::<T>();
         self.uploaded = 0;
         let needed = (self.mirror.len() * size) as u64;
@@ -482,13 +489,13 @@ impl<T: Pod + PartialEq> GpuTable<T> {
             let cap = self.mirror.len().next_power_of_two();
             self.buffer = Self::make(device, self.label, cap);
             self.generation += 1;
-            queue.write_buffer(&self.buffer, 0, bytemuck::cast_slice(&self.mirror));
+            writes.write_buffer(&self.buffer, 0, bytemuck::cast_slice(&self.mirror));
             self.uploaded = needed;
             self.dirty.clear();
             return;
         }
         for r in self.dirty.take_ranges(self.mirror.len()) {
-            queue.write_buffer(&self.buffer, (r.start * size) as u64, bytemuck::cast_slice(&self.mirror[r.clone()]));
+            writes.write_buffer(&self.buffer, (r.start * size) as u64, bytemuck::cast_slice(&self.mirror[r.clone()]));
             self.uploaded += (r.len() * size) as u64;
         }
     }
@@ -547,9 +554,24 @@ fn entry(binding: u32, b: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
     }
 }
 
-pub struct GpuCull {
+/// The scene's side of the GPU culling, on the main thread.
+pub struct CullTables {
     /// Objects table (indexed like the scene's object slab).
     pub objects: GpuTable<CullObject>,
+    /// Last counts read back by the render thread (a few frames old).
+    pub last: CullCounts,
+}
+
+impl CullTables {
+    pub fn new(device: &wgpu::Device) -> Self {
+        CullTables {
+            objects: GpuTable::new(device, "cull objects", 4096, CullObject::NONE),
+            last: CullCounts::default(),
+        }
+    }
+}
+
+pub struct GpuCull {
     lists_layout: wgpu::BindGroupLayout,
     occlude_layout: wgpu::BindGroupLayout,
     classify: wgpu::ComputePipeline,
@@ -661,7 +683,6 @@ impl GpuCull {
         });
         let cap = 4096;
         let mut s = GpuCull {
-            objects: GpuTable::new(device, "cull objects", 4096, CullObject::NONE),
             lists_layout,
             occlude_layout,
             classify,
@@ -715,8 +736,9 @@ impl GpuCull {
     }
 
     /// Size the buffers for `faces` face slots and upload the frame
-    /// parameters (`frame.sizes` and `groups` are filled in here).
-    pub fn prepare(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, faces: usize, mut frame: CullFrame) {
+    /// parameters (`frame.sizes` and `groups` are filled in here); `objects`:
+    /// entries of the scene's object table this frame.
+    pub fn prepare(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, faces: usize, objects: usize, mut frame: CullFrame) {
         let faces = (faces as u32).min(self.max_groups.saturating_mul(CLASSIFY_GROUP));
         if faces > self.cap {
             self.cap = faces.next_power_of_two();
@@ -728,7 +750,7 @@ impl GpuCull {
         self.faces = faces;
         self.groups = faces.div_ceil(CLASSIFY_GROUP).max(1);
         frame.sizes[0] = faces;
-        frame.sizes[1] = self.objects.len() as u32;
+        frame.sizes[1] = objects as u32;
         frame.sizes[2] = self.cap;
         frame.groups = [self.groups, 0, 0, 0];
         queue.write_buffer(&self.frame, 0, bytemuck::bytes_of(&frame));
@@ -740,6 +762,7 @@ impl GpuCull {
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         faces: &wgpu::Buffer,
+        objects: &wgpu::Buffer,
         visibility: &wgpu::Buffer,
         timestamps: Option<wgpu::ComputePassTimestampWrites>,
     ) {
@@ -749,7 +772,7 @@ impl GpuCull {
             entries: &[
                 entry(0, &self.frame),
                 entry(1, faces),
-                entry(2, self.objects.buffer()),
+                entry(2, objects),
                 entry(3, visibility),
                 entry(4, &self.masks),
                 entry(5, &self.group_data),
@@ -779,6 +802,7 @@ impl GpuCull {
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         faces: &wgpu::Buffer,
+        objects: &wgpu::Buffer,
         visibility: &wgpu::Buffer,
         occl_params: &wgpu::Buffer,
         hiz: &wgpu::TextureView,
@@ -789,7 +813,7 @@ impl GpuCull {
             entries: &[
                 entry(0, &self.frame),
                 entry(1, faces),
-                entry(2, self.objects.buffer()),
+                entry(2, objects),
                 entry(3, visibility),
                 entry(6, &self.counts),
                 entry(7, &self.args),
@@ -1108,6 +1132,7 @@ mod tests {
             (seed % n as u64) as u32
         };
         let mut cull = GpuCull::new(&device);
+        let mut tables = CullTables::new(&device);
         let n_obj = 3000u32;
         let mut objects = Vec::new();
         for i in 0..n_obj {
@@ -1134,7 +1159,7 @@ mod tests {
                 state: rand(8),
                 _pad: 0,
             };
-            cull.objects.set(i as usize, o);
+            tables.objects.set(i as usize, o);
             objects.push(o);
         }
         let n_faces = 70_000usize;
@@ -1157,8 +1182,10 @@ mod tests {
         for (i, f) in faces.iter().enumerate() {
             table.set(i, *f);
         }
-        table.flush(&device, &queue);
-        cull.objects.flush(&device, &queue);
+        let mut writes = GpuWrites::default();
+        table.flush(&device, &mut writes);
+        tables.objects.flush(&device, &mut writes);
+        writes.replay(&mut crate::writes::QueueSink(&queue));
         // visible last frame (occlusion phase 1 list)
         let was: Vec<u32> = (0..n_faces).map(|_| rand(2)).collect();
         let visibility = device.create_buffer(&wgpu::BufferDescriptor {
@@ -1175,12 +1202,12 @@ mod tests {
                 * glam::camera::rh::view::look_at_mat4(Vec3::ZERO, Vec3::Y, Vec3::Z),
         )
         .map(|p| p.to_array());
-        cull.prepare(&device, &queue, n_faces, frame);
+        cull.prepare(&device, &queue, n_faces, tables.objects.len(), frame);
         let mut f = frame;
         f.sizes[0] = n_faces as u32;
         f.sizes[1] = n_obj;
         let mut encoder = device.create_command_encoder(&Default::default());
-        cull.encode(&device, &mut encoder, table.buffer(), &visibility, None);
+        cull.encode(&device, &mut encoder, table.buffer(), tables.objects.buffer(), &visibility, None);
         let size = cull.args().size();
         let read = |label| {
             device.create_buffer(&wgpu::BufferDescriptor {

@@ -65,7 +65,7 @@ commande en une ligne (`scripts/setup.ps1`, puis les outils) :
 | `aurora-llsd` | Type LLSD et ses formats XML / binaire / notation |
 | `aurora-prim` | Modèle des prims : paramètres de volume, faces, paramètres étendus, génération de la géométrie (port de `llvolume`) |
 | `aurora-assets` | Décodeurs d'assets : JPEG2000, mesh, animations, matériaux, maillages d'avatar `.llm`, squelette |
-| `aurora-render` | Moteur de rendu wgpu / Vulkan : textures bindless regroupées en pages (texture arrays), géométrie sous-allouée, multi-draw-indirect, ombres, reflets, post-traitement ; animations de texture (`tex_anim.rs` : référence CPU et paramètres des enregistrements, évaluées par les vertex shaders) ; listes de dessin pilotées par le GPU (`gpu_cull.rs`, `shaders/cull.wgsl` : tables des faces et des objets tenues par la scène, culling et compactage en compute pour chaque vue, dessin par `multi_draw_indexed_indirect_count`) ; occlusion Hi-Z en deux phases (`occlusion.rs`, `shaders/occlusion.wgsl`, test commun `shaders/hiz_test.wgsl`) ; envois du streaming sans copie sur le thread principal (`upload.rs` : mémoire de transit mappée où écrivent les tâches de fond, copies GPU enregistrées dans un encodeur soumis en tête de l'image) ; rien qui grandisse ou se libère d'un coup dans une image (`arena.rs` : plages de géométrie allouées au meilleur ajustement par un index des tailles, enregistrements de dessin gardés par blocs et tampon GPU agrandi par une copie GPU ; `textures.rs` : substitut gris partagé par les textures en attente, pages vidées détruites quelques-unes par image par un thread à part) |
+| `aurora-render` | Moteur de rendu wgpu / Vulkan : textures bindless regroupées en pages (texture arrays), géométrie sous-allouée, multi-draw-indirect, ombres, reflets, post-traitement ; animations de texture (`tex_anim.rs` : référence CPU et paramètres des enregistrements, évaluées par les vertex shaders) ; listes de dessin pilotées par le GPU (`gpu_cull.rs`, `shaders/cull.wgsl` : tables des faces et des objets tenues par la scène, culling et compactage en compute pour chaque vue, dessin par `multi_draw_indexed_indirect_count`) ; occlusion Hi-Z en deux phases (`occlusion.rs`, `shaders/occlusion.wgsl`, test commun `shaders/hiz_test.wgsl`) ; envois du streaming sans copie sur le thread principal (`upload.rs` : mémoire de transit mappée où écrivent les tâches de fond, copies GPU enregistrées dans un encodeur soumis en tête de l'image) ; rien qui grandisse ou se libère d'un coup dans une image (`arena.rs` : plages de géométrie allouées au meilleur ajustement par un index des tailles, enregistrements de dessin gardés par blocs et tampon GPU agrandi par une copie GPU ; `textures.rs` : substitut gris partagé par les textures en attente, pages vidées détruites quelques-unes par image par un thread à part) ; deux moitiés, voir « Threads et propriété des données » : `main_thread.rs` (le `Renderer` vu par la scène : ses stores, la clôture de l'image), `writes.rs` (journal des écritures GPU de l'image), `packet.rs` (paquet d'image et résultat), `render_thread.rs` (thread de rendu, remise des paquets en rendez-vous), `renderer.rs` (`Backend` : surface, pipelines, cibles, passes), `helpers.rs` (threads auxiliaires de `finish`) |
 | `aurora-audio` | Sortie audio : mixeur avec les canaux de volume SL, streams de musique, sons du monde |
 | `aurora-voice` | Voix SL en WebRTC (réception et émission) |
 | `aurora-media` | Hôte des plugins médias SLPlugin (CEF pour le web, LibVLC pour la vidéo) |
@@ -108,7 +108,7 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
 | `aurora-net/src/inventory/operations.rs`, `aurora-net/src/inventory/thumbnail.rs`, `aurora-net/src/session/inventory_upload.rs` | Mutations AIS avec relecture, remappage des UUID attribués par le serveur, créations / copies UDP et accusés avec expiration, sauvegarde des documents par capabilities ; chargement AssetUpload / Xfer des vêtements avant création de l’élément ; vignettes gratuites par InventoryThumbnailUpload, POST JPEG2000 puis AIS et relecture |
 | `aurora-assets/src/j2k/encode.rs` | Encodeur OpenJPEG borné en mémoire, vignettes RGB / RGBA carrées de 64 à 256 pixels et conservation de l’alpha |
 | `logging.rs`, `cache.rs`, `credentials.rs` | Logs, cache disque, mot de passe retenu (coffre de l'OS) |
-| `frame_profile.rs` | Profil des images (AURORA_PROFILE) : temps de chaque étape de l'image, ligne de synthèse par seconde dans le log (moyenne et maximum de chaque étape, nombre d'images lentes ; détail du streaming sur le thread principal, `s_*`) |
+| `frame_profile.rs` | Profil des images (AURORA_PROFILE) : temps de chaque étape de l'image, ligne de synthèse par seconde dans le log (moyenne et maximum de chaque étape, nombre d'images lentes ; détail du streaming sur le thread principal, `s_*` ; rencontre du thread principal et du thread de rendu, segment `thread`) |
 | `scene/animesh.rs` | Squelettes autonomes des objets animés, animations du linkset, limites des poses pour le culling et les ombres, scénario de démo |
 | `scene/sync_sets.rs` | Objets que la synchro de la scène visite à chaque image, tenus à jour par événements (objets modifiés notés par `ObjectStore`, ensemble des objets qui bougent d'eux-mêmes et de ce qui les suit, géométries en attente, tranche de LOD) au lieu d'un parcours de tous les objets ; file d'attente des synchros complètes qui n'ont pas tenu dans le budget de temps de l'image, servie du plus proche au plus lointain (`Backlog`, `FullSyncBudget`) |
 | `scene/sync_plan.rs` | Placement en parallèle (rayon) des objets de l'image, niveau par niveau des chaînes de parents : transformation, LOD, limites ; mise à jour de la seule matrice ou synchro complète |
@@ -139,7 +139,11 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
    encode les passes (ombres, prépasse, scène, eau, reflets,
    post-traitement) avec des draws indirects dont le nombre est écrit par le
    GPU. Sans `MULTI_DRAW_INDIRECT_COUNT` (ou avec `AURORA_CPU_CULL=1`),
-   `build_lists` prépare toutes les listes sur le CPU comme avant.
+   `build_lists` prépare toutes les listes sur le CPU comme avant. Le thread
+   principal s'arrête à la clôture de l'image (`Renderer::render`) : le
+   reste de cette étape est fait par le thread de rendu à partir du paquet
+   d'image, pendant que l'image suivante commence (voir « Threads et
+   propriété des données »).
 5. **Interface.** egui dessine les fenêtres par-dessus.
 
 Les traitements lourds (décodage d'images, maillage, sons) passent par des
@@ -155,6 +159,55 @@ notées à leur arrivée), et la mémoire que le thread principal rend (niveaux
 décodés, données J2C, triangles de picking) est libérée par un thread à
 part (`Jobs::discard`) : pendant que les tâches allouent sur tous les
 cœurs, la libérer sur place coûtait plusieurs millisecondes.
+
+## Threads et propriété des données
+
+Une image coûte le plus long des deux threads, pas leur somme : le thread
+principal simule et prépare l'image N+1 pendant que le thread de rendu
+dessine l'image N. `AURORA_RENDER_THREAD=0` exécute le même paquet sur le
+thread principal (comparaison, débogage).
+
+| Thread | Ce qu'il possède |
+|---|---|
+| **Principal** (boucle winit, `App::frame`) | Le monde, la scène, l'interface egui (jusqu'à la tessellation), la fenêtre. Dans `aurora-render`, le `Renderer` (`main_thread.rs`) : *quoi* dessiner — enregistrements de dessin et table des faces (`RecordStore`), table des objets du culling (`CullTables`), allocateurs de l'arène de géométrie, pages, emplacements et positions des textures (`TextureTable`), palettes d'os et liaisons de skin, mémoire de transit et copies en transit (`UploadQueue`), réglages et taille de la fenêtre. Il crée des ressources GPU (la création n'a pas d'ordre) mais **n'écrit jamais dans la file GPU et ne soumet rien** |
+| **Rendu** (`aurora-render`, `render_thread.rs`) | Le `Backend` (`renderer.rs`) : *comment* dessiner — surface et swapchain, pipelines, cibles de rendu, uniformes de l'image, renderer egui, culling compute et ses cases, occlusion, sondes, atlas des imposteurs, relectures (profondeur sous le curseur, compteurs du culling, chronos GPU, captures). **Seul utilisateur de la file** (`write_*`, `submit`, `present`) ; deux threads auxiliaires finissent les encodeurs en parallèle (`helpers.rs`) |
+| Tâches de fond (`scene/jobs.rs`, priorité basse) | Décodages, maillages ; écrivent dans la mémoire de transit mappée, jamais dans la file |
+| Libérations (`aurora-trash` : `Jobs::discard` ; `aurora-pages` : pages de textures vidées, `textures.rs`) | Libèrent hors du thread principal la mémoire et les pages de textures que plus rien n'utilise. Une page n'est remise à `aurora-pages` qu'après la reconstruction du groupe de textures qui la contenait ; les poignées étant comptées, une image encore en cours sur le thread de rendu (son paquet tient l'ancien groupe) la garde en vie jusqu'à sa fin, et ces threads ne touchent jamais la file |
+| Réseau (`aurora-net`, runtime tokio) | Circuits, capabilities, téléchargements |
+
+Ce qui passe d'un thread à l'autre :
+
+- **Journal d'écritures** (`writes.rs`). `Queue::write_*` prend effet au
+  prochain `submit`, quel que soit le thread qui l'appelle : une écriture
+  faite directement par le thread principal pour l'image N+1 partirait avec
+  l'image N encore en cours. Tout ce que les stores de la scène veulent
+  écrire (plages modifiées des miroirs CPU, géométrie, texels, copies à
+  soumettre en cours d'image comme l'agrandissement d'une arène) est donc
+  enregistré, dans l'ordre, dans le journal de l'image en construction ; le
+  thread de rendu rejoue le journal de l'image N juste avant d'encoder
+  l'image N. Une image est toujours dessinée avec les données d'une seule
+  image, entières, et les envois gardent leur ordre par rapport aux dessins.
+- **Paquet d'image** (`packet.rs`), un par image, autonome : le journal,
+  l'encodeur des copies en transit et les morceaux de mémoire de transit à
+  remapper après la soumission, les poignées des tampons de la scène tels
+  qu'ils sont pour cette image (le thread principal peut les remplacer
+  ensuite), caméra et environnement (`FrameParams`), listes de dessin CPU
+  (`DrawLists`, copiées) et vue du culling GPU, primitives et textures
+  egui, taille de la fenêtre / vsync / réglages à appliquer, demandes de
+  relecture (pixel survolé, capture).
+- **Remise en rendez-vous** (`render_thread::handoff`) : le thread de rendu tient au plus un
+  paquet, aucun n'attend derrière. Si le rendu est en retard, le thread
+  principal attend (contre-pression) au lieu d'empiler des images ; chaque
+  côté mesure son attente (`wait_render`, `rt_idle` du profil).
+- **Résultat d'image**, rendu à la remise suivante : statistiques du rendu,
+  réponse au survol (gardée avec la caméra de l'image qui l'a demandée),
+  compteurs du culling, capture, tampons du paquet à réutiliser.
+
+Deux choses attendent le thread de rendu : l'image qui porte une capture
+(même image capturée qu'avant, lue juste après) et la profondeur sous un
+clic (`Renderer::pick_world`, exécutée après l'image en cours). Si le thread
+de rendu disparaît (panique), toute attente se termine et le viewer se
+ferme proprement.
 
 ## Données sur la machine
 

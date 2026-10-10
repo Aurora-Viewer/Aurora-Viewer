@@ -266,6 +266,33 @@ pub struct ImpostorSprite {
 }
 
 impl DrawLists {
+    /// Make `self` a copy of `src`, keeping the memory `self` already has:
+    /// the lists of a frame packet, filled again every frame.
+    pub fn copy_from(&mut self, src: &DrawLists) {
+        self.terrain.clone_from(&src.terrain);
+        self.opaque.clone_from(&src.opaque);
+        self.opaque_two_sided.clone_from(&src.opaque_two_sided);
+        self.mask.clone_from(&src.mask);
+        self.mask_two_sided.clone_from(&src.mask_two_sided);
+        self.water.clone_from(&src.water);
+        self.blend.clone_from(&src.blend);
+        self.blend_glow.clone_from(&src.blend_glow);
+        self.shadow_casters.clone_from(&src.shadow_casters);
+        self.reflection.clone_from(&src.reflection);
+        self.probe.clone_from(&src.probe);
+        self.reflection_terrain.clone_from(&src.reflection_terrain);
+        self.particles.clone_from(&src.particles);
+        self.glow.clone_from(&src.glow);
+        self.glow_alpha.clone_from(&src.glow_alpha);
+        self.debug_red.clone_from(&src.debug_red);
+        self.debug_blue.clone_from(&src.debug_blue);
+        self.select_root.clone_from(&src.select_root);
+        self.select_child.clone_from(&src.select_child);
+        self.impostor_captures.clone_from(&src.impostor_captures);
+        self.impostor_sprites.clone_from(&src.impostor_sprites);
+        self.gpu = src.gpu;
+    }
+
     pub fn clear(&mut self) {
         self.terrain.clear();
         self.opaque.clear();
@@ -637,6 +664,9 @@ pub struct RenderStats {
     pub index_used: u64,
     pub records: u32,
     pub gpu_ms: Option<f32>,
+    /// CPU time the main thread spent on the frame's rendering (ms): the
+    /// whole encoding when the renderer runs on it, only the frame packet
+    /// with a render thread.
     pub cpu_encode_ms: f32,
     pub particles: u32,
     pub water_reflection: bool,
@@ -650,17 +680,37 @@ pub struct RenderStats {
     /// GPU time by kind of element (ms), in [`GpuElement::ALL`] order;
     /// None without in-pass timestamps.
     pub gpu_elements: Option<[f32; GpuElement::ALL.len()]>,
-    /// CPU time of each step of `Renderer::render` (ms), in
+    /// CPU time of each step of the renderer's frame (ms), in
     /// [`RENDER_PHASES`] order; "acquire" is the wait for the swapchain.
+    /// Spent on the render thread when there is one (then they are those
+    /// of the frame before: its result comes back with the next hand-over).
     pub cpu_phases: [f32; RENDER_PHASES.len()],
     /// Draw commands recorded (multi-draws, fullscreen and sprite draws).
     pub draw_calls: u32,
     /// Bytes of draw records and joint palettes sent to the GPU this frame.
     pub records_uploaded: u64,
     pub palettes_uploaded: u64,
+    /// The frame was drawn by the render thread (render_thread.rs); false
+    /// with AURORA_RENDER_THREAD=0.
+    pub render_thread: bool,
+    /// Main thread: time to build the frame packet and hand it over (ms),
+    /// without the wait below.
+    pub packet_ms: f32,
+    /// Main thread: time waited for the render thread to finish the frame
+    /// before (back-pressure, ms); also the whole wait of a frame that
+    /// carries a capture.
+    pub wait_render_ms: f32,
+    /// Render thread: its whole time on the frame (ms), from the packet to
+    /// the end of the presentation, swapchain wait included.
+    pub thread_ms: f32,
+    /// Render thread: time it waited for the main thread's packet (ms).
+    pub thread_idle_ms: f32,
+    /// Bytes of the frame's write journal (writes.rs).
+    pub journal_bytes: u64,
 }
 
-/// Steps of `Renderer::render`, in frame order (AURORA_PROFILE).
+/// Steps of the renderer's frame (`Backend::render`), in frame order
+/// (AURORA_PROFILE).
 pub const RENDER_PHASES: [&str; 16] = [
     "acquire",
     "resources",
@@ -727,6 +777,76 @@ impl GpuElement {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn cmd(record: u32) -> DrawCmd {
+        DrawCmd {
+            index_count: 6,
+            first_index: record * 6,
+            base_vertex: 0,
+            record,
+            bounds: [0.0; 4],
+        }
+    }
+
+    /// The lists of a frame packet: a full copy of the scene's lists, which
+    /// the main thread rebuilds for the next frame while the render thread
+    /// still reads the copy.
+    #[test]
+    fn packet_lists_are_a_copy_that_keeps_its_memory() {
+        let mut scene = DrawLists::default();
+        scene.terrain.push(cmd(1));
+        scene.blend.extend([cmd(7), cmd(8), cmd(9)]);
+        scene.blend_glow.extend([false, true, false]);
+        scene.glow.push(cmd(4));
+        scene.select_root.push(cmd(5));
+        scene.particles.push(ParticleInstance::default());
+        scene.impostor_sprites.push(ImpostorSprite {
+            center: [1.0, 2.0, 3.0],
+            tile: 3,
+            right: [1.0, 0.0, 0.0],
+            up: [0.0, 0.0, 1.0],
+        });
+        scene.impostor_captures.push(ImpostorCapture {
+            tile: 3,
+            eye: Vec3::ZERO,
+            view: Mat4::IDENTITY,
+            half: 1.0,
+            depth: 4.0,
+            opaque: vec![cmd(11)],
+            blend: vec![cmd(12)],
+        });
+        scene.gpu = Some(crate::gpu_cull::GpuCullView {
+            planes: [Vec4::ZERO; 6],
+            eye: Vec3::ONE,
+            draw_distance: 128.0,
+            shadow_distance: 64.0,
+            reflection_distance: 128.0,
+            pixel_scale: 900.0,
+            shadows: true,
+            reflections: false,
+        });
+        // a packet buffer coming back from an earlier, larger frame
+        let mut packet = DrawLists::default();
+        packet.blend.extend((0..64).map(cmd));
+        packet.opaque.push(cmd(99));
+        let (blend_memory, blend_room) = (packet.blend.as_ptr(), packet.blend.capacity());
+        packet.copy_from(&scene);
+        assert_eq!(packet.total(), scene.total());
+        assert_eq!(packet.blend.iter().map(|c| c.record).collect::<Vec<_>>(), [7, 8, 9]);
+        assert_eq!(packet.blend_glow, [false, true, false]);
+        assert_eq!((packet.terrain.len(), packet.glow.len(), packet.select_root.len()), (1, 1, 1));
+        assert_eq!((packet.particles.len(), packet.impostor_sprites.len()), (1, 1));
+        assert_eq!(packet.impostor_captures[0].blend[0].record, 12);
+        assert_eq!(packet.gpu.map(|g| g.draw_distance), Some(128.0));
+        // what the earlier frame held is gone, its memory is reused
+        assert!(packet.opaque.is_empty());
+        assert_eq!((packet.blend.as_ptr(), packet.blend.capacity()), (blend_memory, blend_room));
+        // the scene builds the next frame: the packet does not follow
+        scene.clear();
+        scene.blend.push(cmd(1));
+        assert_eq!(packet.blend.len(), 3);
+        assert!(packet.gpu.is_some());
+    }
 
     /// `DrawRecord` must match the WGSL struct (std430: 4 × 4 floats for the
     /// matrix, then one 16-byte vector per field).

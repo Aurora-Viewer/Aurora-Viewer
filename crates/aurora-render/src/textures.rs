@@ -19,6 +19,7 @@
 //! same implicit derivatives.
 
 use crate::upload::{StagedTexture, UploadQueue};
+use crate::writes::{GpuWrites, TexelDst};
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 use std::num::{NonZeroU32, NonZeroU64};
@@ -73,6 +74,11 @@ const COMPACT_MAX_BYTES: u64 = 16 << 20;
 /// level), and the ~300 pages of a region left by teleport made one
 /// submit of 18 to 50 ms. Paced, because the render thread meets the
 /// reaper on the device's memory allocator at each queue write.
+/// With the frames drawn by the render thread (render_thread.rs), the frame
+/// in flight still holds the bind group of before the rebuild in its
+/// packet: handles are reference counted, so a page handed to the reaper
+/// meanwhile lives until that frame ends (it is then freed there, by the
+/// render thread, never under a draw that reads it).
 const PAGE_DESTROY_INTERVAL: Duration = Duration::from_millis(4);
 const PAGES_DESTROYED_PER_FRAME: usize = 8;
 
@@ -470,36 +476,25 @@ impl PageStore {
         self.dropped = true;
     }
 
-    fn upload(&self, queue: &wgpu::Queue, page: u32, layer: u32, mips: &[MipLevel], count: u32) {
+    fn upload(&self, writes: &mut GpuWrites, page: u32, layer: u32, mips: &[MipLevel], count: u32) {
         let Some(p) = self.page(page) else {
             return;
         };
         // `page_key` checked every level kept: sizes and data lengths
         for (i, m) in mips.iter().take(count as usize).enumerate() {
-            let len = m.width as usize * m.height as usize * 4;
-            queue.write_texture(
-                wgpu::TexelCopyTextureInfo {
-                    texture: &p.texture,
-                    mip_level: i as u32,
-                    origin: wgpu::Origin3d { x: 0, y: 0, z: layer },
-                    aspect: wgpu::TextureAspect::All,
-                },
-                &m.data[..len],
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(m.width * 4),
-                    rows_per_image: Some(m.height),
-                },
-                wgpu::Extent3d {
-                    width: m.width,
-                    height: m.height,
-                    depth_or_array_layers: 1,
-                },
-            );
+            let dst = TexelDst {
+                mip: i as u32,
+                x: 0,
+                y: 0,
+                layer,
+                width: m.width,
+                height: m.height,
+            };
+            writes.write_texture(&p.texture, dst, m.data);
         }
     }
 
-    fn create(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, mips: &[MipLevel]) -> Option<u32> {
+    fn create(&mut self, device: &wgpu::Device, writes: &mut GpuWrites, mips: &[MipLevel]) -> Option<u32> {
         let key = page_key(mips, self.max_dim)?;
         let slot = match self.free_slots.pop() {
             Some(Reverse(s)) => s,
@@ -515,7 +510,7 @@ impl PageStore {
             self.free_slots.push(Reverse(slot));
             return None;
         };
-        self.upload(queue, page, layer, mips, key.mips);
+        self.upload(writes, page, layer, mips, key.mips);
         self.slots[slot as usize] = Some(Slot {
             key,
             page,
@@ -558,14 +553,14 @@ impl PageStore {
         Some(slot)
     }
 
-    fn replace(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, slot: u32, mips: &[MipLevel]) -> bool {
+    fn replace(&mut self, device: &wgpu::Device, writes: &mut GpuWrites, slot: u32, mips: &[MipLevel]) -> bool {
         let Some(key) = page_key(mips, self.max_dim) else {
             return false;
         };
         let Some((page, layer)) = self.target(device, slot, key) else {
             return false;
         };
-        self.upload(queue, page, layer, mips, key.mips);
+        self.upload(writes, page, layer, mips, key.mips);
         true
     }
 
@@ -586,8 +581,8 @@ impl PageStore {
     }
 
     /// The layer that receives `slot`'s new texels of size `key`. Same size:
-    /// the slot's layer, overwritten in place (queue order keeps the frames
-    /// already submitted on the old texels). Another size (higher
+    /// the slot's layer, overwritten in place (the write is replayed with
+    /// this frame: the frames before it keep the old texels). Another size (higher
     /// resolution): a layer of a page of the new size, then the old layer
     /// is freed.
     fn target(&mut self, device: &wgpu::Device, slot: u32, key: PageKey) -> Option<(u32, u32)> {
@@ -756,7 +751,7 @@ pub struct TextureTable {
 }
 
 impl TextureTable {
-    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, capacity: u32, anisotropy: u16) -> Self {
+    pub fn new(device: &wgpu::Device, writes: &mut GpuWrites, capacity: u32, anisotropy: u16) -> Self {
         let partial = device.features().contains(wgpu::Features::PARTIALLY_BOUND_BINDING_ARRAY);
         let limits = device.limits();
         let capacity = capacity.max(RESERVED + 1);
@@ -809,7 +804,7 @@ impl TextureTable {
         ] {
             let created = store.create(
                 device,
-                queue,
+                writes,
                 &[MipLevel {
                     width: 1,
                     height: 1,
@@ -824,7 +819,7 @@ impl TextureTable {
         store.bytes = 0;
         store.loc_dirty = None;
         store.created = false;
-        queue.write_buffer(&loc_buffer, 0, bytemuck::cast_slice(&store.loc));
+        writes.write_buffer(&loc_buffer, 0, bytemuck::cast_slice(&store.loc));
         let sampler = Self::make_sampler(device, anisotropy);
         let bound = bound_len(&store, partial);
         let bind_group = Self::build(device, &layout, &sampler, &loc_buffer, &store, bound);
@@ -941,8 +936,8 @@ impl TextureTable {
     }
 
     /// Create a texture from a full mip chain (level 0 first). Returns the slot.
-    pub fn create(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, mips: &[MipLevel]) -> Option<u32> {
-        self.store.create(device, queue, mips)
+    pub fn create(&mut self, device: &wgpu::Device, writes: &mut GpuWrites, mips: &[MipLevel]) -> Option<u32> {
+        self.store.create(device, writes, mips)
     }
 
     /// A slot for a texture still loading: it shows the shared grey
@@ -953,8 +948,8 @@ impl TextureTable {
     }
 
     /// Replace the contents of an existing slot (e.g. higher resolution).
-    pub fn replace(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, slot: u32, mips: &[MipLevel]) -> bool {
-        self.store.replace(device, queue, slot, mips)
+    pub fn replace(&mut self, device: &wgpu::Device, writes: &mut GpuWrites, slot: u32, mips: &[MipLevel]) -> bool {
+        self.store.replace(device, writes, slot, mips)
     }
 
     /// Replace the contents of a slot from a staged mip chain (its region
@@ -992,7 +987,8 @@ impl TextureTable {
     /// Overwrite a rectangle of level 0 in place (media textures updated
     /// every frame: no new texture, no bind group rebuild). `data` holds
     /// `h` rows of `w` RGBA8 pixels.
-    pub fn write_region(&self, queue: &wgpu::Queue, slot: u32, x: u32, y: u32, w: u32, h: u32, data: &[u8]) -> bool {
+    #[allow(clippy::too_many_arguments)]
+    pub fn write_region(&self, writes: &mut GpuWrites, slot: u32, x: u32, y: u32, w: u32, h: u32, data: &[u8]) -> bool {
         let Some(Some(s)) = self.store.slots.get(slot as usize) else {
             return false;
         };
@@ -1010,25 +1006,15 @@ impl TextureTable {
         {
             return false;
         }
-        queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &page.texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d { x, y, z: s.layer },
-                aspect: wgpu::TextureAspect::All,
-            },
-            &data[..need],
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(w * 4),
-                rows_per_image: Some(h),
-            },
-            wgpu::Extent3d {
-                width: w,
-                height: h,
-                depth_or_array_layers: 1,
-            },
-        );
+        let dst = TexelDst {
+            mip: 0,
+            x,
+            y,
+            layer: s.layer,
+            width: w,
+            height: h,
+        };
+        writes.write_texture(&page.texture, dst, &data[..need]);
         true
     }
 
@@ -1036,16 +1022,17 @@ impl TextureTable {
         self.store.free(slot);
     }
 
-    /// Once a frame before drawing: compact (throttled), upload the changed
-    /// locations, and rebuild the bind group when pages changed (at once for
-    /// a new page, throttled for dropped ones).
-    pub fn maintain(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, uploads: &mut UploadQueue, force: bool) {
+    /// Once a frame, when it is handed to the render thread: compact
+    /// (throttled), record the upload of the changed locations, and rebuild
+    /// the bind group when pages changed (at once for a new page, throttled
+    /// for dropped ones).
+    pub fn maintain(&mut self, device: &wgpu::Device, writes: &mut GpuWrites, uploads: &mut UploadQueue, force: bool) {
         if self.last_compact.elapsed() >= COMPACT_INTERVAL {
             self.last_compact = Instant::now();
             self.store.compact(device, uploads);
         }
         if let Some((lo, hi)) = self.store.loc_dirty.take() {
-            queue.write_buffer(&self.loc_buffer, lo as u64 * 4, bytemuck::cast_slice(&self.store.loc[lo..hi]));
+            writes.write_buffer(&self.loc_buffer, lo as u64 * 4, bytemuck::cast_slice(&self.store.loc[lo..hi]));
         }
         if std::mem::take(&mut self.store.created) {
             self.dirty = true;
@@ -1137,6 +1124,8 @@ pub fn build_mips(width: u32, height: u32, data: Vec<u8>, max_levels: u32) -> Ve
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::writes::QueueSink;
+    use std::cell::RefCell;
 
     fn chain<'a>(data: &'a [u8], dims: &[(u32, u32)]) -> Vec<MipLevel<'a>> {
         dims.iter()
@@ -1337,6 +1326,15 @@ mod tests {
             .collect()
     }
 
+    /// What the render thread does with a frame: the journal in order, then
+    /// the frame's copies, then the emptied staging chunks mapped again.
+    fn run_frame(queue: &wgpu::Queue, writes: &RefCell<GpuWrites>, uploads: &mut UploadQueue) {
+        writes.borrow_mut().replay(&mut QueueSink(queue));
+        let mut frame = uploads.take_frame();
+        queue.submit(frame.take_commands());
+        frame.after_submit();
+    }
+
     /// Read every level of a slot back from its page.
     fn read_back(device: &wgpu::Device, queue: &wgpu::Queue, store: &PageStore, slot: u32) -> Vec<Vec<u8>> {
         let s = store.slots[slot as usize].as_ref().expect("live slot");
@@ -1413,10 +1411,11 @@ mod tests {
         let max_layers = device.limits().max_texture_array_layers.min(MAX_LAYERS);
         assert_eq!(max_layers, 256);
         let mut store = PageStore::new(4096, 64, max_layers, 4096);
+        let writes = RefCell::new(GpuWrites::default());
         for _ in 0..RESERVED {
             store.create(
                 &device,
-                &queue,
+                &mut writes.borrow_mut(),
                 &[MipLevel {
                     width: 1,
                     height: 1,
@@ -1437,10 +1436,10 @@ mod tests {
                 .collect();
             match slot {
                 Some(s) => {
-                    assert!(store.replace(&device, &queue, s, &mips));
+                    assert!(store.replace(&device, &mut writes.borrow_mut(), s, &mips));
                     s
                 }
-                None => store.create(&device, &queue, &mips).expect("slot"),
+                None => store.create(&device, &mut writes.borrow_mut(), &mips).expect("slot"),
             }
         };
         // 600 textures of 16×16 (5 levels): pages 1, 2 (256 each) and 3
@@ -1467,7 +1466,7 @@ mod tests {
         assert!(before.is_some_and(|u| u * 4 <= 256), "{before:?}");
         let mut uploads = UploadQueue::new(&device, true);
         store.compact(&device, &mut uploads);
-        uploads.flush(&queue, None);
+        run_frame(&queue, &writes, &mut uploads);
         assert!(store.page(3).is_none(), "page 3 emptied and dropped");
         assert!(store.dropped);
         for &(slot, i, size) in &live {
@@ -1495,12 +1494,14 @@ mod tests {
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).expect("GPU device");
         let max_layers = device.limits().max_texture_array_layers.min(MAX_LAYERS);
         let mut store = PageStore::new(4096, 64, max_layers, 4096);
+        // the journal of the frame, replayed before each read-back
+        let mut writes = GpuWrites::default();
         const GREY: [u8; 4] = [148, 148, 156, 255];
         for slot in 0..RESERVED {
             let texel = if slot == PLACEHOLDER { GREY } else { [slot as u8; 4] };
             let created = store.create(
                 &device,
-                &queue,
+                &mut writes,
                 &[MipLevel {
                     width: 1,
                     height: 1,
@@ -1517,6 +1518,9 @@ mod tests {
         assert_eq!(store.live, RESERVED + 300);
         assert!(waiting.iter().all(|&s| store.loc[s as usize] == grey_loc));
         assert_eq!(store.page(0).map(|p| p.layers.used()), Some(RESERVED));
+        // (placeholders recorded nothing: the journal only holds the reserved texels)
+        writes.replay(&mut QueueSink(&queue));
+        assert!(writes.is_empty());
         assert_eq!(read_back(&device, &queue, &store, waiting[7]), vec![GREY.to_vec()]);
         // first texels of a texture: a layer of its own
         let levels: Vec<Vec<u8>> = (0..5).map(|l| texels(42, 16, 16, l)).collect();
@@ -1530,7 +1534,8 @@ mod tests {
             })
             .collect();
         assert!(store.needs_page(waiting[0], 16, 16, 5));
-        assert!(store.replace(&device, &queue, waiting[0], &mips));
+        assert!(store.replace(&device, &mut writes, waiting[0], &mips));
+        writes.replay(&mut QueueSink(&queue));
         assert_ne!(store.loc[waiting[0] as usize], grey_loc);
         assert_eq!(read_back(&device, &queue, &store, waiting[0]), levels);
         // a 1×1 texture has the placeholder's size: not written over it
@@ -1540,7 +1545,8 @@ mod tests {
             data: &[9, 8, 7, 6],
         }];
         assert!(store.needs_page(waiting[1], 1, 1, 1) || store.page(0).is_some_and(|p| p.layers.used() < p.layers.len));
-        assert!(store.replace(&device, &queue, waiting[1], &one));
+        assert!(store.replace(&device, &mut writes, waiting[1], &one));
+        writes.replay(&mut QueueSink(&queue));
         assert_ne!(store.loc[waiting[1] as usize], grey_loc);
         assert_eq!(read_back(&device, &queue, &store, waiting[1]), vec![vec![9, 8, 7, 6]]);
         assert_eq!(read_back(&device, &queue, &store, PLACEHOLDER), vec![GREY.to_vec()]);
@@ -1578,10 +1584,11 @@ mod tests {
         // small pages so that sizes spread over several pages and compact
         let mut store = PageStore::new(4096, 512, 16, 4096);
         let mut uploads = UploadQueue::new(&device, true);
+        let writes = RefCell::new(GpuWrites::default());
         for _ in 0..RESERVED {
             store.create(
                 &device,
-                &queue,
+                &mut writes.borrow_mut(),
                 &[MipLevel {
                     width: 1,
                     height: 1,
@@ -1619,14 +1626,13 @@ mod tests {
                     assert!(staged.data.ready());
                     let done = store.replace_staged(&device, uploads, s, &staged);
                     drop(staged);
-                    uploads.flush(&queue, None);
-                    uploads.recycle();
+                    run_frame(&queue, &writes, uploads);
                     // wait for the GPU: the chunks are mapped again
                     device.poll(wgpu::PollType::wait_indefinitely()).expect("poll");
                     done.then_some(s)
                 }
-                Some(s) => store.replace(&device, &queue, s, &mips).then_some(s),
-                None => store.create(&device, &queue, &mips),
+                Some(s) => store.replace(&device, &mut writes.borrow_mut(), s, &mips).then_some(s),
+                None => store.create(&device, &mut writes.borrow_mut(), &mips),
             }
         };
         // slot -> (texture id, size)
@@ -1656,10 +1662,13 @@ mod tests {
                 }
                 _ => {
                     store.compact(&device, &mut uploads);
-                    uploads.flush(&queue, None);
+                    // a submit in the middle of a frame, kept in its place
+                    // by the journal
+                    uploads.flush(&mut writes.borrow_mut(), None);
                 }
             }
             if step % 250 == 249 {
+                run_frame(&queue, &writes, &mut uploads);
                 for (&slot, &(id, (w, h))) in &live {
                     let got = read_back(&device, &queue, &store, slot);
                     for (l, level) in got.iter().enumerate() {
@@ -1704,7 +1713,8 @@ mod tests {
         }))
         .expect("GPU device");
         const SLOTS: u32 = 512;
-        let mut table = TextureTable::new(&device, &queue, SLOTS, 8);
+        let writes = RefCell::new(GpuWrites::default());
+        let mut table = TextureTable::new(&device, &mut writes.borrow_mut(), SLOTS, 8);
         let mut uploads = UploadQueue::new(&device, true);
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: None,
@@ -1852,8 +1862,8 @@ mod tests {
                 })
                 .collect();
             match slot {
-                Some(s) => table.replace(&device, &queue, s, &mips).then_some(s),
-                None => table.create(&device, &queue, &mips),
+                Some(s) => table.replace(&device, &mut writes.borrow_mut(), s, &mips).then_some(s),
+                None => table.create(&device, &mut writes.borrow_mut(), &mips),
             }
         };
         let mut live: std::collections::BTreeMap<u32, (u32, (u32, u32))> = Default::default();
@@ -1885,8 +1895,8 @@ mod tests {
                 // let the throttled compaction run this frame
                 table.last_compact = Instant::now() - COMPACT_INTERVAL;
             }
-            table.maintain(&device, &queue, &mut uploads, false);
-            uploads.flush(&queue, None);
+            table.maintain(&device, &mut writes.borrow_mut(), &mut uploads, false);
+            run_frame(&queue, &writes, &mut uploads);
             let px = sample_all(&table);
             for (&slot, &(id, (w, h))) in &live {
                 let at = |row: u32| &px[(row * SLOTS + slot) as usize * 4..][..4];

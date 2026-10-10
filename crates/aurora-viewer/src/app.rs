@@ -3800,19 +3800,29 @@ impl App {
             self.scene_capture_pending = true;
         }
         self.frame_profile.lap(Lap::Actions);
-        // ---- render
+        // ---- render: the frame is closed and leaves as a packet for the
+        // render thread (aurora-render, main_thread.rs), which draws it
+        // while this thread goes on with the next frame. The statistics
+        // returned are those of the frame before; a frame that carries a
+        // capture is waited for, its pixels are read in the tail below.
         let lists = if self.in_world() { &self.scene.lists } else { &self.empty_lists };
         let stats = gfx.renderer.render(
-            &fp,
+            fp,
             lists,
             Some(EguiFrame {
-                primitives: &prims,
-                textures_delta: &full.textures_delta,
+                primitives: prims,
+                textures_delta: std::mem::take(&mut full.textures_delta),
                 pixels_per_point: ppp,
             }),
         );
-        full.textures_delta.clear();
         self.last_render = stats;
+        if gfx.renderer.failed() {
+            // the render thread is gone (its panic is in the log): nothing
+            // more can be shown, leave cleanly
+            self.gfx = Some(gfx);
+            self.shutdown(event_loop);
+            return;
+        }
         self.frame_profile.lap(Lap::Render);
         // frame limiter; vsync already paces at the screen rate
         let timed = self.capture.is_some() || self.frame_profile.enabled();

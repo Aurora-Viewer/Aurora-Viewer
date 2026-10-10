@@ -15,6 +15,12 @@
 //! submitted and nothing staged in them still pending, they are mapped
 //! again (`map_async`) and come back empty.
 //!
+//! The submit is the render thread's (render_thread.rs): the main thread
+//! hands the frame's encoder over with the chunks that hold nothing more to
+//! copy ([`UploadQueue::take_frame`]); they are mapped again only after
+//! that frame is submitted ([`FrameUploads::after_submit`]), never while a
+//! recorded copy still reads them.
+//!
 //! The chunks are all created with the renderer, on the main thread: a job
 //! never allocates GPU memory (wgpu's allocator lock held by a job creating
 //! a chunk made a page creation on the main thread wait 35 ms). When they
@@ -25,10 +31,12 @@
 //!
 //! Chunk life: open (jobs allocate and write) → closed at the next
 //! [`UploadQueue::prepare`] → unmapped when no job writes in it any more
-//! (its staged data can be copied from then on) → mapping again after the
-//! submit that follows the drop of its last [`Staged`] region → free.
+//! (its staged data can be copied from then on) → taken out with the frame
+//! that follows the drop of its last [`Staged`] region, mapping again
+//! after that frame's submit → free.
 
 use crate::types::{SkinVertex, Vertex};
+use crate::writes::GpuWrites;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
@@ -87,6 +95,10 @@ struct PoolState {
     closed: Vec<Arc<Chunk>>,
 }
 
+/// Chunks whose mapping completed (and whether it succeeded), and the
+/// signal for the jobs waiting for one.
+type Returned = Arc<(Mutex<Vec<(Arc<Chunk>, bool)>>, Condvar)>;
+
 /// Mapped staging memory shared by the background jobs and the renderer.
 pub struct StagingPool {
     state: Mutex<PoolState>,
@@ -95,7 +107,7 @@ pub struct StagingPool {
     chunk_bytes: u64,
     /// Chunks mapped again (pushed by the `map_async` callbacks, which
     /// take no other lock).
-    returned: Arc<(Mutex<Vec<(Arc<Chunk>, bool)>>, Condvar)>,
+    returned: Returned,
     /// Held by the job writing into staging memory (see `stage`).
     write_turn: Mutex<()>,
 }
@@ -173,8 +185,8 @@ impl StagingPool {
     }
 
     /// The main thread never waits for the pool: a job (which runs at a
-    /// lower priority) may hold the lock; what `prepare` or `recycle` would
-    /// have done is done at the next frame.
+    /// lower priority) may hold the lock; what `prepare` or
+    /// `take_recyclable` would have done is done at the next frame.
     fn try_lock(&self) -> Option<std::sync::MutexGuard<'_, PoolState>> {
         match self.state.try_lock() {
             Ok(s) => Some(s),
@@ -304,27 +316,36 @@ impl StagingPool {
         }
     }
 
-    /// Main thread, right after a submit that consumed every recorded copy:
-    /// map again the unmapped chunks with no region left.
-    fn recycle(&self) {
+    /// Main thread, when the frame's copies are handed over: the unmapped
+    /// chunks with no region left. Every copy out of them is recorded by
+    /// now (a copy needs a live region, and a closed chunk gets no new
+    /// one), in this frame's encoders or earlier ones; they are mapped
+    /// again by [`FrameUploads::after_submit`], once those are submitted.
+    fn take_recyclable(&self) -> Vec<Arc<Chunk>> {
         let Some(mut s) = self.try_lock() else {
-            return;
+            return Vec::new();
         };
+        let mut out = Vec::new();
         let mut i = 0;
         while i < s.closed.len() {
             let c = &s.closed[i];
             if c.unmapped.load(Ordering::Acquire) && c.staged.load(Ordering::Acquire) == 0 {
-                let chunk = s.closed.swap_remove(i);
-                let returned = self.returned.clone();
-                let back = chunk.clone();
-                chunk.buffer.map_async(wgpu::MapMode::Write, .., move |r| {
-                    returned.0.lock().unwrap_or_else(|e| e.into_inner()).push((back, r.is_ok()));
-                    returned.1.notify_all();
-                });
+                out.push(s.closed.swap_remove(i));
             } else {
                 i += 1;
             }
         }
+        out
+    }
+
+    /// Map a recyclable chunk again; it comes back free through `returned`.
+    fn map_again(returned: &Returned, chunk: Arc<Chunk>) {
+        let returned = returned.clone();
+        let back = chunk.clone();
+        chunk.buffer.map_async(wgpu::MapMode::Write, .., move |r| {
+            returned.0.lock().unwrap_or_else(|e| e.into_inner()).push((back, r.is_ok()));
+            returned.1.notify_all();
+        });
     }
 
     /// Staging memory of the pool (bytes).
@@ -541,23 +562,46 @@ impl UploadQueue {
         }
     }
 
-    /// The recorded copies, to submit before anything that reads them.
-    pub fn finish(&mut self) -> Option<wgpu::CommandBuffer> {
+    /// Submit the recorded copies at this point of the frame, followed by
+    /// `then` (an arena growth or another copy that must see them): recorded
+    /// in the frame's journal, after the writes made so far.
+    pub fn flush(&mut self, writes: &mut GpuWrites, then: Option<wgpu::CommandEncoder>) {
+        writes.submit(self.encoder.take().into_iter().chain(then).collect());
+    }
+
+    /// End of the frame on the main thread: the copies recorded since the
+    /// last flush, to submit before the passes that read them, and the
+    /// staging chunks to map again once they are submitted.
+    pub fn take_frame(&mut self) -> FrameUploads {
+        FrameUploads {
+            encoder: self.encoder.take(),
+            recycle: self.pool.take_recyclable(),
+            returned: self.pool.returned.clone(),
+        }
+    }
+}
+
+/// The streamed copies of one frame, handed to whoever submits the frame.
+pub struct FrameUploads {
+    encoder: Option<wgpu::CommandEncoder>,
+    recycle: Vec<Arc<Chunk>>,
+    returned: Returned,
+}
+
+impl FrameUploads {
+    /// The recorded copies: first command buffer of the frame's submit.
+    pub fn take_commands(&mut self) -> Option<wgpu::CommandBuffer> {
         self.encoder.take().map(|e| e.finish())
     }
 
-    /// Submit the recorded copies now, followed by `then` (an arena growth
-    /// or another copy that must see them).
-    pub fn flush(&mut self, queue: &wgpu::Queue, then: Option<wgpu::CommandBuffer>) {
-        let cmds: Vec<wgpu::CommandBuffer> = self.finish().into_iter().chain(then).collect();
-        if !cmds.is_empty() {
-            queue.submit(cmds);
+    /// After the submit that consumed [`Self::take_commands`] (and the
+    /// journal's own submits before it): the emptied chunks are mapped
+    /// again and come back to the pool.
+    pub fn after_submit(self) {
+        debug_assert!(self.encoder.is_none(), "staged copies dropped without a submit");
+        for chunk in self.recycle {
+            StagingPool::map_again(&self.returned, chunk);
         }
-    }
-
-    /// After the frame's submit (which consumed every recorded copy).
-    pub fn recycle(&self) {
-        self.pool.recycle();
     }
 }
 
@@ -620,8 +664,10 @@ mod tests {
                 uploads.copy_to_buffer(&device, region, (0, REGION as u64), &dst, (i * REGION) as u64);
             }
             drop(staged);
-            uploads.flush(&queue, None);
-            uploads.recycle();
+            // a frame: the copies are submitted, the emptied chunks mapped again
+            let mut frame = uploads.take_frame();
+            queue.submit(frame.take_commands());
+            frame.after_submit();
             dst.map_async(wgpu::MapMode::Read, .., |r| r.expect("map"));
             device.poll(wgpu::PollType::wait_indefinitely()).expect("poll");
             {
