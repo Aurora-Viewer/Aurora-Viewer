@@ -375,7 +375,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
     // ---- position, size, rotation | shape
     ui.columns(2, |cols| {
         let ui = &mut cols[0];
-        let can_move = props.as_ref().is_none_or(|pr| pr.owner_mask & perm::MOVE != 0) && (hud || editable);
+        let can_move = props.as_ref().is_none_or(|pr| pr.owner_mask & perm::MOVE != 0) && ((hud && !s.edit_linked) || editable);
         let mut pos = if hud { local_pos } else { wp - off }.to_array();
         let region = world
             .regions

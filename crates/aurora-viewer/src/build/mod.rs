@@ -123,6 +123,36 @@ mod hud_tests {
     }
 
     #[test]
+    fn typed_hud_moves_allow_no_modify_root_but_reject_no_modify_linked_part() {
+        use crate::ui::context::flags::{OBJECT_MODIFY, OBJECT_MOVE};
+        let mut world = world();
+        let root = world.objects.index_of_uuid(&crate::demo::hud::object(31, false).full_id).unwrap();
+        let child = family(&world, root)[1];
+        for idx in [root, child] {
+            world.objects.get_mut(idx).unwrap().update_flags = OBJECT_MOVE;
+        }
+        let mut tool = BuildTool::default();
+        let mut settings = BuildSettings::default();
+        tool.click_select(&mut world, &settings, Some(root), false);
+        tool.out.clear();
+        let position = Vec3::new(0.0, 0.22, 0.16);
+        tool.set_transform(&mut world, &settings, Some(position), None, None, true);
+        assert_eq!(world.objects.get(root).unwrap().position, position);
+        assert_eq!(tool.out.len(), 1);
+        settings.edit_linked = true;
+        tool.click_select(&mut world, &settings, Some(child), false);
+        tool.out.clear();
+        let before = world.objects.get(child).unwrap().position;
+        tool.set_transform(&mut world, &settings, Some(position), None, None, true);
+        assert_eq!(world.objects.get(child).unwrap().position, before);
+        assert!(tool.out.is_empty());
+        world.objects.get_mut(child).unwrap().update_flags |= OBJECT_MODIFY;
+        tool.set_transform(&mut world, &settings, Some(position), None, None, true);
+        assert!(world.objects.get(child).unwrap().position.abs_diff_eq(position, 1e-5));
+        assert_eq!(tool.out.len(), 1);
+    }
+
+    #[test]
     fn hud_selection_uses_linkset_root_and_survives_avatar_distance() {
         let mut world = world();
         let root = world.objects.index_of_uuid(&crate::demo::hud::object(31, false).full_id).unwrap();
@@ -1495,7 +1525,7 @@ impl BuildTool {
         if hud {
             let flags = world.objects.get(root_of(world, idx)).map_or(0, |o| o.update_flags);
             if flags & crate::ui::context::flags::OBJECT_MOVE == 0
-                || (size.is_some() && o.update_flags & crate::ui::context::flags::OBJECT_MODIFY == 0)
+                || ((s.edit_linked || size.is_some()) && o.update_flags & crate::ui::context::flags::OBJECT_MODIFY == 0)
             {
                 return;
             }
