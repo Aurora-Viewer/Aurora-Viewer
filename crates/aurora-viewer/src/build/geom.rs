@@ -8,6 +8,7 @@ use glam::{Mat4, Vec3, Vec4};
 /// What the manipulators need to know about the camera this frame.
 #[derive(Debug, Clone, Copy)]
 pub struct Cam {
+    pub hud: Option<aurora_render::HudView>,
     pub eye: Vec3,
     pub at: Vec3,
     pub left: Vec3,
@@ -25,6 +26,7 @@ pub struct Cam {
 impl Default for Cam {
     fn default() -> Self {
         Cam {
+            hud: None,
             eye: Vec3::ZERO,
             at: Vec3::X,
             left: Vec3::Y,
@@ -45,6 +47,7 @@ impl Cam {
         let left = Vec3::Z.cross(at).try_normalize().unwrap_or(Vec3::Y);
         let up = at.cross(left);
         Cam {
+            hud: None,
             eye,
             at,
             left,
@@ -58,14 +61,44 @@ impl Cam {
         }
     }
 
+    /// LLManip's SELECT_TYPE_HUD projection: orthographic, with the same
+    /// zoom and viewport as the HUD renderer and triangle picking.
+    pub fn for_hud(view: aurora_render::HudView, ppp: f32) -> Self {
+        let view_proj = view.matrix();
+        Self {
+            hud: Some(view),
+            eye: Vec3::new(view.min_x - 1.0, 0.0, 0.0),
+            view_proj,
+            inv_view_proj: view_proj.inverse(),
+            width: view.width,
+            height: view.height,
+            ppp: ppp.max(0.1),
+            ..Self::default()
+        }
+    }
+
+    pub fn direction_to(&self, p: Vec3) -> Vec3 {
+        if self.hud.is_some() {
+            self.at
+        } else {
+            (p - self.eye).normalize_or_zero()
+        }
+    }
+
     /// LLViewerCamera::getPixelMeterRatio: pixels per meter at 1 m.
     pub fn pixel_meter_ratio(&self) -> f32 {
+        if let Some(view) = self.hud {
+            return self.height * view.zoom;
+        }
         self.height / (2.0 * (self.fov_y * 0.5).tan())
     }
 
     /// World size of `px` screen pixels at `p` (LLManip: range * tan(px / view
     /// height * fov)).
     pub fn meters_for_pixels(&self, p: Vec3, px: f32) -> f32 {
+        if self.hud.is_some() {
+            return px / self.pixel_meter_ratio();
+        }
         let range = (p - self.eye).length();
         if range < 0.001 {
             return 1.0;
@@ -80,6 +113,10 @@ impl Cam {
 
     /// Mouse ray through a cursor position in physical pixels.
     pub fn ray(&self, x: f32, y: f32) -> (Vec3, Vec3) {
+        if let Some(view) = self.hud {
+            let (origin, dir) = view.ray(x, y);
+            return (origin - Vec3::X, dir);
+        }
         let ndc = |z: f32| Vec4::new(x / self.width * 2.0 - 1.0, 1.0 - y / self.height * 2.0, z, 1.0);
         let un = |v: Vec4| {
             let p = self.inv_view_proj * v;
@@ -145,6 +182,10 @@ pub fn nearest_on_line(o: Vec3, d: Vec3, a: Vec3, b: Vec3) -> Option<f32> {
 /// that a step is at least `min_px` pixels on screen (powers of two, from
 /// 1/32 up to `max_sub`).
 pub fn subdivision_level(cam: &Cam, p: Vec3, axis: Vec3, grid_scale: f32, min_px: f32, max_sub: f32) -> f32 {
+    if cam.hud.is_some() {
+        let sub = axis.cross(cam.at).length() * grid_scale * cam.pixel_meter_ratio() / min_px.max(1.0);
+        return 2f32.powf(sub.max(f32::MIN_POSITIVE).log2().floor()).clamp(1.0 / 32.0, max_sub);
+    }
     let d = p - cam.eye;
     let range = d.length();
     if range < 1e-4 {
@@ -178,6 +219,23 @@ pub fn seg_distance(m: Pos2, a: Pos2, b: Pos2) -> (f32, f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hud_handles_keep_pixel_size_and_parallel_rays_after_zoom_and_resize() {
+        for size in [[1280, 720], [720, 1280]] {
+            for zoom in [1.0, 0.5, 0.1] {
+                let cam = Cam::for_hud(aurora_render::HudView::new(size, zoom, -3.0, 7.0), 2.0);
+                for p in [Vec3::ZERO, Vec3::new(5.0, 0.3, -0.4)] {
+                    let a = cam.project_px(p).unwrap();
+                    let b = cam.project_px(p + Vec3::Y * cam.meters_for_pixels(p, 50.0)).unwrap();
+                    assert!((a.0 - b.0 - 50.0).abs() < 1e-3);
+                    let (o, d) = cam.ray(a.0, a.1);
+                    assert_eq!(d, Vec3::X);
+                    assert!((o.y - p.y).abs() < 1e-5 && (o.z - p.z).abs() < 1e-5);
+                }
+            }
+        }
+    }
 
     #[test]
     fn nearest_point_on_axis() {

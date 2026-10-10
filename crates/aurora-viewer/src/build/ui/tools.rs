@@ -65,6 +65,7 @@ pub fn status_text(tool: &BuildTool, s: &BuildSettings, mods: Mods) -> &'static 
             EditMode::Stretch => "Pour étirer le côté sélectionné, cliquez et faites glisser.",
             EditMode::Face => "Cliquez sur une face pour la sélectionner (Maj : ajouter).",
             EditMode::Align => "Cliquez sur un cône pour aligner (Maj : empiler).",
+            EditMode::Move if tool.cam.hud.is_some() => "Glissez une flèche ou la poignée du plan pour déplacer le HUD.",
             EditMode::Move => "Glissez pour déplacer, Maj-glissez pour copier.",
         },
         Tool::Create => "Cliquez dans le monde pour construire.",
@@ -179,7 +180,7 @@ pub fn edit_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &
         if super::common::icon_button(ui, p, "caret-right", "Sélectionner la partie ou face suivante (Ctrl+.)", parts) {
             tool.select_next_part(world, s, true, mods.shift);
         }
-        let can_link = !s.edit_linked && tool.roots(world).len() >= 2;
+        let can_link = !tool.hud_selected(world) && !s.edit_linked && tool.roots(world).len() >= 2;
         if ui
             .add_enabled(can_link, egui::Button::new(RichText::new("Lien").size(12.0)))
             .on_hover_text("Lier les objets sélectionnés (Ctrl+L)")
@@ -189,7 +190,7 @@ pub fn edit_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &
         }
         if ui
             .add_enabled(
-                !tool.selection.is_empty(),
+                !tool.hud_selected(world) && !tool.selection.is_empty(),
                 egui::Button::new(RichText::new("Annuler le lien").size(12.0)),
             )
             .on_hover_text("Délier les objets sélectionnés (Ctrl+Maj+L)")

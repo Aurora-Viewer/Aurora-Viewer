@@ -63,6 +63,7 @@ pub struct ContextMenu {
 /// llviewermenu.cpp), worked out every frame while the menu is open.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ObjectFacts {
+    pub edit_hud: bool,
     pub attachment_item: Option<Uuid>,
     /// enable_object_touch: the prim or its parent handles touches.
     pub touch: bool,
@@ -137,6 +138,7 @@ pub struct Facts {
 pub enum CtxAction {
     Detach(ObjKey),
     AttachmentInventory(Uuid),
+    EditAttachment(ObjKey),
     Touch(u32),
     Sit {
         target: Uuid,
@@ -399,7 +401,9 @@ fn attachment_self_menu(ui: &mut egui::Ui, p: &Palette, f: &Facts, key: ObjKey, 
     {
         act(CtxAction::AttachmentInventory(item));
     }
-    menu::todo(ui, p, "pencil-simple", "Modifier");
+    if menu::item_if(ui, p, "pencil-simple", "Modifier", f.object.edit_hud) {
+        act(CtxAction::EditAttachment(key));
+    }
     menu::todo(ui, p, "paint-brush", "Modifier le matériau PBR");
     if menu::item_if(ui, p, "paperclip", "Détacher", f.object.attachment_item.is_some()) {
         act(CtxAction::Detach(key));
@@ -985,6 +989,69 @@ pub fn external_link_confirm(ctx: &egui::Context, p: &Palette, url: &str, dont_w
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn modifier_click_opens_hud_editing_but_other_attachments_stay_disabled() {
+        fn label_pos(shape: &egui::epaint::Shape) -> Option<egui::Pos2> {
+            match shape {
+                egui::epaint::Shape::Text(t) if t.galley.text() == "Modifier" => Some(t.pos + egui::vec2(4.0, 4.0)),
+                egui::epaint::Shape::Vec(v) => v.iter().find_map(label_pos),
+                _ => None,
+            }
+        }
+        for edit_hud in [true, false] {
+            let ctx = egui::Context::default();
+            let theme = crate::theme::Theme::default();
+            theme.apply(&ctx, 1.0);
+            let key = ObjKey { region: 1, local_id: 42 };
+            let facts = Facts {
+                object: ObjectFacts {
+                    edit_hud,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let mut current = Some(ContextMenu {
+                pos: egui::pos2(200.0, 80.0),
+                point: Vec3::ZERO,
+                target: Target::Attachment { key },
+            });
+            let mut frame = |events: Vec<egui::Event>| {
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 900.0))),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| show(ui.ctx(), &theme.palette(), &mut current, &facts),
+                );
+                output.textures_delta.clear();
+                output
+            };
+            for _ in 0..3 {
+                frame(Vec::new());
+            }
+            let output = frame(Vec::new());
+            let pos = output.shapes.iter().find_map(|s| label_pos(&s.shape)).expect("Modifier menu row");
+            for pressed in [true, false] {
+                frame(vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ]);
+            }
+            let requests = take_requests(&ctx);
+            if edit_hud {
+                assert!(matches!(&requests[..], [CtxAction::EditAttachment(k)] if *k == key));
+            } else {
+                assert!(requests.is_empty());
+            }
+        }
+    }
 
     const MINE: u32 = flags::OBJECT_YOU_OWNER | flags::OBJECT_ANY_OWNER | flags::OBJECT_MODIFY | flags::OBJECT_COPY;
     const THEIRS: u32 = flags::OBJECT_ANY_OWNER;

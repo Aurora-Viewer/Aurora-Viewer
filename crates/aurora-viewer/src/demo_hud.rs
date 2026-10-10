@@ -1,5 +1,6 @@
 //! Offline HUD fixtures use the same ObjectUpdate and touch path as the grid.
 use super::*;
+use std::time::Instant;
 
 pub const FIRST: u32 = 8231;
 pub const CHILD: u32 = 8240;
@@ -39,7 +40,7 @@ pub fn object(point: u8, active: bool) -> ObjectUpdate {
     o.parent_id = 9000;
     o.state = point.rotate_left(4);
     o.owner_id = DEMO_AGENT;
-    o.update_flags = (1 << 7) | (1 << 5) | (1 << 2);
+    o.update_flags = (1 << 8) | (1 << 7) | (1 << 5) | (1 << 2);
     o.name_values = format!("AttachItemID STRING RW SV {}", o.full_id);
     o
 }
@@ -85,6 +86,21 @@ pub fn reply(cmd: &aurora_net::NetCommand) -> Option<Vec<NetEvent>> {
     })
 }
 
+/// A scripted color change must not reset a HUD repositioned in the demo.
+pub fn preserve_touch_transform(world: &crate::world::World, event: &mut NetEvent) {
+    let NetEvent::ObjectUpdates { objects, .. } = event else { return };
+    for update in objects {
+        if let Some(idx) = world.objects.index_of_uuid(&update.full_id)
+            && crate::scene::Scene::object_transform(world, idx, Instant::now(), 0).is_some_and(|(_, _, hud)| hud)
+            && let Some(current) = world.objects.get(idx)
+        {
+            update.position = current.position;
+            update.rotation = current.rotation;
+            update.scale = current.scale;
+        }
+    }
+}
+
 pub fn seed_inventory(world: &mut crate::world::World) {
     use crate::world::appearance::{self, Action};
     let inv = &mut world.inventory;
@@ -128,6 +144,37 @@ pub fn seed_inventory(world: &mut crate::world::World) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn touch_color_change_keeps_the_edited_hud_transform() {
+        let mut world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for ev in super::super::events().into_iter().chain(events()) {
+            world.apply(ev);
+        }
+        let idx = world.objects.index_of_uuid(&object(31, false).full_id).unwrap();
+        let pos = Vec3::new(0.01, -0.12, 0.18);
+        let rot = Quat::from_rotation_x(0.3);
+        let scale = Vec3::new(0.02, 0.3, 0.15);
+        let o = world.objects.get_mut(idx).unwrap();
+        o.position = pos;
+        o.rotation = rot;
+        o.scale = scale;
+        let mut replies = reply(&aurora_net::NetCommand::ObjectRelease {
+            handle: HANDLE,
+            local_id: CHILD,
+            surface: Default::default(),
+        })
+        .unwrap();
+        for ev in &mut replies {
+            preserve_touch_transform(&world, ev);
+        }
+        for ev in replies {
+            world.apply(ev);
+        }
+        let o = world.objects.get(idx).unwrap();
+        assert_eq!((o.position, o.rotation, o.scale), (pos, rot, scale));
+        assert!(o.text.contains("Touché"));
+    }
 
     #[test]
     fn hud_detach_removes_only_its_current_outfit_link_and_keeps_inventory() {

@@ -70,6 +70,9 @@ impl BuildTool {
         let mut total = 0.0;
         for r in self.roots(world) {
             let o = world.objects.get(r)?;
+            if o.parent_id != 0 {
+                continue;
+            }
             total += self.costs.objects.get(&o.full_id)?.linked_set;
         }
         Some(total)
@@ -137,6 +140,7 @@ impl BuildTool {
         // the parcel under the first object, unless the selection spans
         // several regions (LLCrossParcelFunctor, coarse version)
         if by_region_count(&roots) == 1
+            && !self.hud_selected(world)
             && let Some(off) = world.region_offset(first_region)
         {
             let l = first_pos - off;

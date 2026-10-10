@@ -303,11 +303,12 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
     let Some(key) = tool.selection.first().copied() else { return };
     let Some(idx) = world.objects.index_of(&key) else { return };
     let now = Instant::now();
-    let Some((wp, wr, _)) = Scene::object_transform(world, idx, now, 0) else {
+    let Some((wp, wr, hud)) = Scene::object_transform(world, idx, now, 0) else {
         return;
     };
     let Some(off) = world.region_offset(key.region) else { return };
     let Some(o) = world.objects.get(idx) else { return };
+    let (local_pos, local_rot) = (o.position, o.rotation);
     let (flags, scale, volume, is_root, full_id) = (o.update_flags, o.scale, o.volume, o.parent_id == 0, o.full_id);
     let flexible = o.extra.flexible.is_some();
     let props = tool.props.get(&full_id).cloned();
@@ -374,8 +375,8 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
     // ---- position, size, rotation | shape
     ui.columns(2, |cols| {
         let ui = &mut cols[0];
-        let can_move = props.as_ref().is_none_or(|pr| pr.owner_mask & perm::MOVE != 0) && editable;
-        let mut pos = (wp - off).to_array();
+        let can_move = props.as_ref().is_none_or(|pr| pr.owner_mask & perm::MOVE != 0) && (hud || editable);
+        let mut pos = if hud { local_pos } else { wp - off }.to_array();
         let region = world
             .regions
             .get(&key.region)
@@ -389,7 +390,11 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
             "Position (mètres)",
             &mut pos,
             0.01,
-            [0.0..=region.0, 0.0..=region.1, 0.0..=4096.0],
+            if hud {
+                [-64.0..=64.0, -64.0..=64.0, -64.0..=64.0]
+            } else {
+                [0.0..=region.0, 0.0..=region.1, 0.0..=4096.0]
+            },
             decimals,
             can_move,
         );
@@ -397,7 +402,11 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
             copy_vector(ui, tool, 0, Vec3::from_array(pos), decimals);
         }
         if let Some(v) = paste {
-            let v = Vec3::new(v.x.clamp(0.0, region.0), v.y.clamp(0.0, region.1), v.z);
+            let v = if hud {
+                v.clamp(Vec3::splat(-64.0), Vec3::splat(64.0))
+            } else {
+                Vec3::new(v.x.clamp(0.0, region.0), v.y.clamp(0.0, region.1), v.z)
+            };
             tool.set_transform(world, s, Some(v), None, None, true);
         } else if e.changed {
             tool.set_transform(world, s, Some(Vec3::from_array(pos)), None, None, e.commit);
@@ -430,7 +439,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         }
         ui.add_space(4.0);
         // Euler degrees rounded to 0.05, wrapped into 0..360
-        let (z, y, x) = wr.to_euler(EulerRot::ZYX);
+        let (z, y, x) = if hud { local_rot } else { wr }.to_euler(EulerRot::ZYX);
         let wrap = |a: f32| {
             let d = (a.to_degrees() / 0.05).round() * 0.05;
             if d < 0.0 { d + 360.0 } else { d }
