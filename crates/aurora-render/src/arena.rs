@@ -4,6 +4,7 @@
 use crate::gpu_cull::{CullFace, GpuTable};
 use crate::types::{DrawRecord, SkinVertex, Vertex};
 use crate::upload::{StagedMesh, UploadQueue};
+use crate::writes::GpuWrites;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Best-fit range allocator with coalescing (units are elements): the
@@ -163,7 +164,7 @@ impl GeometryArena {
         (self.vertices.used() as u64, self.indices.used() as u64)
     }
 
-    fn grow_vertices(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, uploads: &mut UploadQueue, need: u32) -> bool {
+    fn grow_vertices(&mut self, device: &wgpu::Device, writes: &mut GpuWrites, uploads: &mut UploadQueue, need: u32) -> bool {
         let old = self.vertices.capacity();
         let mut new_cap = old.saturating_mul(2);
         while new_cap - old < need {
@@ -180,8 +181,9 @@ impl GeometryArena {
         let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("grow vb") });
         enc.copy_buffer_to_buffer(&self.vertex_buffer, 0, &nb, 0, old as u64 * VERTEX_SIZE);
         enc.copy_buffer_to_buffer(&self.skin_buffer, 0, &ns, 0, old as u64 * SKIN_SIZE);
-        // the copies already recorded into the old buffers come first
-        uploads.flush(queue, Some(enc.finish()));
+        // the writes and the copies already recorded into the old buffers
+        // come first: the journal keeps the growth at this point of the frame
+        uploads.flush(writes, Some(enc));
         self.vertex_buffer = nb;
         self.skin_buffer = ns;
         self.vertices.grow(new_cap);
@@ -189,7 +191,7 @@ impl GeometryArena {
         true
     }
 
-    fn grow_indices(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, uploads: &mut UploadQueue, need: u32) -> bool {
+    fn grow_indices(&mut self, device: &wgpu::Device, writes: &mut GpuWrites, uploads: &mut UploadQueue, need: u32) -> bool {
         let old = self.indices.capacity();
         let mut new_cap = old.saturating_mul(2);
         while new_cap - old < need {
@@ -204,7 +206,7 @@ impl GeometryArena {
         let nb = Self::make(device, "index arena", new_cap as u64 * 2, wgpu::BufferUsages::INDEX);
         let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("grow ib") });
         enc.copy_buffer_to_buffer(&self.index_buffer, 0, &nb, 0, old as u64 * 2);
-        uploads.flush(queue, Some(enc.finish()));
+        uploads.flush(writes, Some(enc));
         self.index_buffer = nb;
         self.indices.grow(new_cap);
         log::info!("index arena grown to {} MB", new_cap as u64 * 2 / (1024 * 1024));
@@ -215,7 +217,7 @@ impl GeometryArena {
     fn reserve(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        writes: &mut GpuWrites,
         uploads: &mut UploadQueue,
         vcount: u32,
         icount: u32,
@@ -224,7 +226,7 @@ impl GeometryArena {
         let voff = match self.vertices.alloc(vcount) {
             Some(o) => o,
             None => {
-                if !self.grow_vertices(device, queue, uploads, vcount) {
+                if !self.grow_vertices(device, writes, uploads, vcount) {
                     return None;
                 }
                 self.vertices.alloc(vcount)?
@@ -233,7 +235,7 @@ impl GeometryArena {
         let ioff = match self.indices.alloc(ialloc) {
             Some(o) => o,
             None => {
-                if !self.grow_indices(device, queue, uploads, ialloc) {
+                if !self.grow_indices(device, writes, uploads, ialloc) {
                     self.vertices.free(voff, vcount);
                     return None;
                 }
@@ -258,7 +260,7 @@ impl GeometryArena {
     pub fn alloc(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        writes: &mut GpuWrites,
         uploads: &mut UploadQueue,
         vertices: &[Vertex],
         skin: Option<&[SkinVertex]>,
@@ -268,21 +270,21 @@ impl GeometryArena {
             return None;
         }
         let icount = indices.len() as u32;
-        let m = self.reserve(device, queue, uploads, vertices.len() as u32, icount)?;
+        let m = self.reserve(device, writes, uploads, vertices.len() as u32, icount)?;
         let (voff, ioff) = (m.vertex_offset, m.index_offset);
-        queue.write_buffer(&self.vertex_buffer, voff as u64 * VERTEX_SIZE, bytemuck::cast_slice(vertices));
+        writes.write_buffer(&self.vertex_buffer, voff as u64 * VERTEX_SIZE, bytemuck::cast_slice(vertices));
         if let Some(sk) = skin
             && sk.len() == vertices.len()
         {
-            queue.write_buffer(&self.skin_buffer, voff as u64 * SKIN_SIZE, bytemuck::cast_slice(sk));
+            writes.write_buffer(&self.skin_buffer, voff as u64 * SKIN_SIZE, bytemuck::cast_slice(sk));
         }
         if icount % 2 == 1 {
             let mut padded = Vec::with_capacity(m.index_alloc_len() as usize);
             padded.extend_from_slice(indices);
             padded.push(*indices.last().unwrap_or(&0));
-            queue.write_buffer(&self.index_buffer, ioff as u64 * 2, bytemuck::cast_slice(&padded));
+            writes.write_buffer(&self.index_buffer, ioff as u64 * 2, bytemuck::cast_slice(&padded));
         } else {
-            queue.write_buffer(&self.index_buffer, ioff as u64 * 2, bytemuck::cast_slice(indices));
+            writes.write_buffer(&self.index_buffer, ioff as u64 * 2, bytemuck::cast_slice(indices));
         }
         Some(m)
     }
@@ -292,11 +294,11 @@ impl GeometryArena {
     pub fn alloc_staged(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        writes: &mut GpuWrites,
         uploads: &mut UploadQueue,
         mesh: &StagedMesh,
     ) -> Option<MeshAlloc> {
-        let m = self.reserve(device, queue, uploads, mesh.vertex_count, mesh.index_count)?;
+        let m = self.reserve(device, writes, uploads, mesh.vertex_count, mesh.index_count)?;
         let [vertices, skin, indices] = mesh.ranges();
         let voff = m.vertex_offset as u64;
         uploads.copy_to_buffer(device, &mesh.data, vertices, &self.vertex_buffer, voff * VERTEX_SIZE);
@@ -490,9 +492,10 @@ impl RecordStore {
         }
     }
 
-    /// Upload dirty chunks; reallocates the buffer when it is too small.
-    pub fn flush(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
-        self.faces.flush(device, queue);
+    /// Record the upload of the dirty chunks in the frame's journal;
+    /// reallocates the buffer when it is too small.
+    pub fn flush(&mut self, device: &wgpu::Device, writes: &mut GpuWrites) {
+        self.faces.flush(device, writes);
         let rec_size = std::mem::size_of::<DrawRecord>();
         self.uploaded = 0;
         let needed = self.mirror.len() * rec_size;
@@ -502,18 +505,19 @@ impl RecordStore {
             while cap * rec_size < needed {
                 cap *= 2;
             }
-            // The records the old buffer holds move on the GPU, submitted
-            // now so that this frame's writes (below, applied at the next
-            // submit) land after them; the new records are all dirty.
-            // Writing the whole mirror again through the queue copied
-            // 8 to 32 MB on the main thread each time a region outgrew
-            // the buffer.
+            // The records the old buffer holds move on the GPU: a submit
+            // recorded at this point of the frame's journal, so that the
+            // writes of the frames before it are in the old buffer when it
+            // is copied, and this frame's writes (recorded below) land
+            // after the copy; the new records are all dirty. Writing the
+            // whole mirror again through the queue copied 8 to 32 MB on
+            // the main thread each time a region outgrew the buffer.
             let grown = Self::make(device, cap);
             let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("grow draw records"),
             });
             enc.copy_buffer_to_buffer(&self.buffer, 0, &grown, 0, old_size);
-            queue.submit([enc.finish()]);
+            writes.submit(vec![enc]);
             self.buffer = grown;
             self.generation += 1;
         }
@@ -533,7 +537,7 @@ impl RecordStore {
                 c += 1;
             }
             for (first, records) in self.mirror.runs(start * CHUNK, c * CHUNK) {
-                queue.write_buffer(&self.buffer, (first * rec_size) as u64, bytemuck::cast_slice(records));
+                writes.write_buffer(&self.buffer, (first * rec_size) as u64, bytemuck::cast_slice(records));
                 self.uploaded += std::mem::size_of_val(records) as u64;
             }
         }
@@ -597,7 +601,16 @@ mod tests {
         };
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).expect("GPU device");
         let mut uploads = UploadQueue::new(&device, true);
+        let mut writes = GpuWrites::default();
         let mut arena = GeometryArena::new(&device, 1 << 30);
+        // a frame as the render thread runs it: the journal in order, then
+        // the frame's copies, then the emptied staging chunks mapped again
+        let frame = |writes: &mut GpuWrites, uploads: &mut UploadQueue| {
+            writes.replay(&mut crate::writes::QueueSink(&queue));
+            let mut frame = uploads.take_frame();
+            queue.submit(frame.take_commands());
+            frame.after_submit();
+        };
         let mesh = |i: u32, vcount: u32, icount: u32| {
             let v: Vec<Vertex> = (0..vcount)
                 .map(|k| Vertex::new([i as f32, k as f32, 0.5], [0.0, 0.0, 1.0], [k as f32, i as f32]))
@@ -621,20 +634,19 @@ mod tests {
                 let staged = StagedMesh::new(uploads.pool(), &v, skinned.then_some(&sk[..]), &idx).expect("staging room");
                 uploads.prepare();
                 assert!(staged.data.ready());
-                arena.alloc_staged(&device, &queue, &mut uploads, &staged)
+                arena.alloc_staged(&device, &mut writes, &mut uploads, &staged)
             } else {
-                arena.alloc(&device, &queue, &mut uploads, &v, skinned.then_some(&sk[..]), &idx)
+                arena.alloc(&device, &mut writes, &mut uploads, &v, skinned.then_some(&sk[..]), &idx)
             }
             .expect("room in the arena");
             live.push((i, alloc, skinned));
             if i % 2 == 1 {
                 // a frame: the copies are submitted, the chunks come back
-                uploads.flush(&queue, None);
-                uploads.recycle();
+                frame(&mut writes, &mut uploads);
                 device.poll(wgpu::PollType::wait_indefinitely()).expect("poll");
             }
         }
-        uploads.flush(&queue, None);
+        frame(&mut writes, &mut uploads);
         assert!(arena.vertices.capacity() > 2 * 1024 * 1024 && arena.indices.capacity() > 8 * 1024 * 1024);
         let read = |buffer: &wgpu::Buffer, offset: u64, size: u64| -> Vec<u8> {
             let out = device.create_buffer(&wgpu::BufferDescriptor {
@@ -689,6 +701,7 @@ mod tests {
         };
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).expect("GPU device");
         let mut store = RecordStore::new(&device);
+        let mut writes = GpuWrites::default();
         let record = |i: u32| DrawRecord {
             base_color: [i as f32, 1.0, 2.0, 3.0],
             tex: [i, i + 1, i + 2, i + 3],
@@ -706,7 +719,10 @@ mod tests {
                 let i = ids.len() as u32;
                 ids.push(store.alloc(record(i)));
             }
-            store.flush(&device, &queue);
+            // a frame: the journal replayed in order (the growth copy
+            // between the writes before it and those after), then a submit
+            store.flush(&device, &mut writes);
+            writes.replay(&mut crate::writes::QueueSink(&queue));
             queue.submit([]);
         }
         assert!(store.buffer.size() >= first_size * 4 && store.generation == 2);

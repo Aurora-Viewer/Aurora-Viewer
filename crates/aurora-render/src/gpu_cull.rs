@@ -21,6 +21,7 @@ use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3, Vec4};
 
 use crate::types::DrawIndexedIndirect;
+use crate::writes::GpuWrites;
 
 /// `CullFace::object` / `CullObject::avatar` of nothing.
 pub const NO_OBJECT: u32 = u32::MAX;
@@ -474,7 +475,8 @@ impl<T: Pod + PartialEq> GpuTable<T> {
         }
     }
 
-    pub fn flush(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+    /// Record the upload of the changed chunks in the frame's journal.
+    pub fn flush(&mut self, device: &wgpu::Device, writes: &mut GpuWrites) {
         let size = std::mem::size_of::<T>();
         self.uploaded = 0;
         let needed = (self.mirror.len() * size) as u64;
@@ -482,13 +484,13 @@ impl<T: Pod + PartialEq> GpuTable<T> {
             let cap = self.mirror.len().next_power_of_two();
             self.buffer = Self::make(device, self.label, cap);
             self.generation += 1;
-            queue.write_buffer(&self.buffer, 0, bytemuck::cast_slice(&self.mirror));
+            writes.write_buffer(&self.buffer, 0, bytemuck::cast_slice(&self.mirror));
             self.uploaded = needed;
             self.dirty.clear();
             return;
         }
         for r in self.dirty.take_ranges(self.mirror.len()) {
-            queue.write_buffer(&self.buffer, (r.start * size) as u64, bytemuck::cast_slice(&self.mirror[r.clone()]));
+            writes.write_buffer(&self.buffer, (r.start * size) as u64, bytemuck::cast_slice(&self.mirror[r.clone()]));
             self.uploaded += (r.len() * size) as u64;
         }
     }
@@ -1157,8 +1159,10 @@ mod tests {
         for (i, f) in faces.iter().enumerate() {
             table.set(i, *f);
         }
-        table.flush(&device, &queue);
-        cull.objects.flush(&device, &queue);
+        let mut writes = GpuWrites::default();
+        table.flush(&device, &mut writes);
+        cull.objects.flush(&device, &mut writes);
+        writes.replay(&mut crate::writes::QueueSink(&queue));
         // visible last frame (occlusion phase 1 list)
         let was: Vec<u32> = (0..n_faces).map(|_| rand(2)).collect();
         let visibility = device.create_buffer(&wgpu::BufferDescriptor {

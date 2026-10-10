@@ -11,6 +11,7 @@ pub mod tex_anim;
 pub mod textures;
 pub mod types;
 pub mod upload;
+pub mod writes;
 
 pub use arena::MeshAlloc;
 pub use renderer::{CASCADES, EguiFrame, GpuInfo, RenderError, Renderer};

@@ -17,6 +17,7 @@ use crate::gpu_cull::{
 use crate::textures::{MipLevel, TextureTable};
 use crate::types::*;
 use crate::upload::{StagedMesh, StagedTexture, StagingPool, UploadQueue};
+use crate::writes::{GpuWrites, QueueSink};
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3, Vec4};
 use std::sync::Arc;
@@ -851,6 +852,9 @@ pub struct Renderer {
     /// Copies of the streamed data staged by background jobs (upload.rs),
     /// submitted first in the frame's submit.
     pub uploads: UploadQueue,
+    /// Queue writes of the frame being built (writes.rs), replayed in
+    /// order before the frame is encoded.
+    writes: GpuWrites,
     pub records: RecordStore,
     pub textures: TextureTable,
     pub egui: egui_wgpu::Renderer,
@@ -1821,7 +1825,8 @@ impl Renderer {
             entries: &[float_tex(0)],
         });
 
-        let textures = TextureTable::new(&device, &queue, max_textures, 8);
+        let mut writes = GpuWrites::default();
+        let textures = TextureTable::new(&device, &mut writes, max_textures, 8);
         let geometry = GeometryArena::new(&device, alim.max_buffer_size.min(1 << 31));
         let records = RecordStore::new(&device);
 
@@ -2048,6 +2053,7 @@ impl Renderer {
             info,
             geometry,
             uploads,
+            writes,
             records,
             textures,
             egui,
@@ -2187,7 +2193,7 @@ impl Renderer {
             from = 0;
         }
         if from < binds.len() {
-            self.queue
+            self.writes
                 .write_buffer(&self.skin_bind_buffer, (from * size) as u64, bytemuck::cast_slice(&binds[from..]));
         }
         self.skin_binds_sent = binds.len();
@@ -2250,7 +2256,7 @@ impl Renderer {
                 &self.skin_bind_buffer,
             );
         }
-        self.queue.write_buffer(&self.palette_buffer, 0, bytemuck::cast_slice(mats));
+        self.writes.write_buffer(&self.palette_buffer, 0, bytemuck::cast_slice(mats));
         self.palettes_uploaded += bytes;
     }
 
@@ -2276,7 +2282,7 @@ impl Renderer {
             i += 1;
             let (a, b) = (first * per, ((last + 1) * per).min(mats.len()));
             if a < b {
-                self.queue
+                self.writes
                     .write_buffer(&self.palette_buffer, (a * 64) as u64, bytemuck::cast_slice(&mats[a..b]));
                 self.palettes_uploaded += ((b - a) * 64) as u64;
             }
@@ -3305,18 +3311,19 @@ impl Renderer {
 
     pub fn upload_mesh(&mut self, vertices: &[Vertex], indices: &[u16]) -> Option<MeshAlloc> {
         self.geometry
-            .alloc(&self.device, &self.queue, &mut self.uploads, vertices, None, indices)
+            .alloc(&self.device, &mut self.writes, &mut self.uploads, vertices, None, indices)
     }
 
     pub fn upload_skinned_mesh(&mut self, vertices: &[Vertex], skin: &[SkinVertex], indices: &[u16]) -> Option<MeshAlloc> {
         self.geometry
-            .alloc(&self.device, &self.queue, &mut self.uploads, vertices, Some(skin), indices)
+            .alloc(&self.device, &mut self.writes, &mut self.uploads, vertices, Some(skin), indices)
     }
 
     /// Upload a mesh staged by a background job (`mesh.data.ready()` must
     /// hold): the main thread only records the copies.
     pub fn upload_mesh_staged(&mut self, mesh: &StagedMesh) -> Option<MeshAlloc> {
-        self.geometry.alloc_staged(&self.device, &self.queue, &mut self.uploads, mesh)
+        self.geometry
+            .alloc_staged(&self.device, &mut self.writes, &mut self.uploads, mesh)
     }
 
     pub fn free_mesh(&mut self, m: MeshAlloc) {
@@ -3324,11 +3331,11 @@ impl Renderer {
     }
 
     pub fn create_texture(&mut self, mips: &[MipLevel]) -> Option<u32> {
-        self.textures.create(&self.device, &self.queue, mips)
+        self.textures.create(&self.device, &mut self.writes, mips)
     }
 
     pub fn replace_texture(&mut self, slot: u32, mips: &[MipLevel]) -> bool {
-        self.textures.replace(&self.device, &self.queue, slot, mips)
+        self.textures.replace(&self.device, &mut self.writes, slot, mips)
     }
 
     /// Staging memory shared with the background jobs (upload.rs).
@@ -3351,7 +3358,7 @@ impl Renderer {
 
     /// Overwrite part of a texture's level 0 in place (media frames).
     pub fn update_texture_region(&mut self, slot: u32, x: u32, y: u32, w: u32, h: u32, rgba: &[u8]) -> bool {
-        self.textures.write_region(&self.queue, slot, x, y, w, h, rgba)
+        self.textures.write_region(&mut self.writes, slot, x, y, w, h, rgba)
     }
 
     pub fn free_texture(&mut self, slot: u32) {
@@ -3540,8 +3547,8 @@ impl Renderer {
         let mut prof: Vec<(&str, Instant)> = vec![("acquire", t0)];
 
         // ---- resources
-        self.records.flush(&self.device, &self.queue);
-        self.cull.objects.flush(&self.device, &self.queue);
+        self.records.flush(&self.device, &mut self.writes);
+        self.cull.objects.flush(&self.device, &mut self.writes);
         if self.records.generation != self.records_generation {
             self.records_bind_group = Self::make_records_bg(
                 &self.device,
@@ -3552,9 +3559,14 @@ impl Renderer {
             );
             self.records_generation = self.records.generation;
         }
-        self.textures.maintain(&self.device, &self.queue, &mut self.uploads, false);
+        self.textures
+            .maintain(&self.device, &mut self.writes, &mut self.uploads, false);
+        // what the scene wrote for this frame, in order, before the frame's
+        // own uniforms
+        self.writes.replay(&mut QueueSink(&self.queue));
         // streamed textures and geometry: copied before every pass
-        let upload_cmds = self.uploads.finish();
+        let mut frame_uploads = self.uploads.take_frame();
+        let upload_cmds = frame_uploads.take_commands();
         prof.push(("resources", Instant::now()));
 
         // one texture animation time for every pass of the frame
@@ -4698,7 +4710,7 @@ impl Renderer {
         prof.push(("finish", Instant::now()));
         self.queue.submit(upload_cmds.into_iter().chain(extra_cmds));
         // staging chunks whose copies are now submitted are mapped again
-        self.uploads.recycle();
+        frame_uploads.after_submit();
         if let Some((buf, w, h, row)) = capture {
             self.capture_request = false;
             self.capture_scene = false;
