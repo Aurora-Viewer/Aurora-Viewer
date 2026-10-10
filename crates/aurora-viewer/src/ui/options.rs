@@ -784,17 +784,17 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                 c |= row(
                     ui,
                     p,
-                    "Limiter les images/s",
-                    "Plafonne le nombre d'images par seconde (moins de chauffe et de bruit). Désactivé par défaut",
+                    "Plafond d'images/s",
+                    "60 images/s maximum, en démo et en ligne. Un plafond inférieur réduit la chauffe et le bruit",
                     |ui| {
-                        let mut ch = toggle(ui, p, &mut s.fps_cap);
-                        ui.add_enabled_ui(s.fps_cap, |ui| {
-                            ui.spacing_mut().slider_width = SLIDER_W - 50.0;
-                            ch |= ui
-                                .add(egui::Slider::new(&mut s.fps_limit, 10..=360).suffix(" img/s").trailing_fill(true))
-                                .changed();
-                        });
-                        ch
+                        s.fps_cap = true;
+                        ui.spacing_mut().slider_width = SLIDER_W;
+                        ui.add(
+                            egui::Slider::new(&mut s.fps_limit, 10..=crate::settings::MAX_FPS)
+                                .suffix(" img/s")
+                                .trailing_fill(true),
+                        )
+                        .changed()
                     },
                 );
                 c |= row(
@@ -808,7 +808,7 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                             ui.spacing_mut().slider_width = SLIDER_W - 50.0;
                             ch |= ui
                                 .add(
-                                    egui::Slider::new(&mut s.background_fps_limit, 1..=120)
+                                    egui::Slider::new(&mut s.background_fps_limit, 1..=crate::settings::MAX_FPS)
                                         .suffix(" img/s")
                                         .trailing_fill(true),
                                 )
@@ -865,6 +865,9 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     "Fenêtres distinctes pour les repères, détails de l'historique de TP & profil du lieu (sinon dans la fenêtre Lieux)",
                     |ui| toggle(ui, p, &mut s.standalone_place_details),
                 );
+            });
+            group(ui, p, "Inventaire", |ui| {
+                c |= super::inventory::preferences(ui, p, &mut s.inventory);
             });
             group(ui, p, "Noms", |ui| {
                 c |= row(

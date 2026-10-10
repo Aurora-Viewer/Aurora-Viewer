@@ -145,3 +145,68 @@ pub fn target(view: &str) -> Option<Uuid> {
         _ => return None,
     }))
 }
+
+/// Sorting/filter fixtures with distinct ages, owners, permissions and paths.
+pub fn seed_view(inv: &mut Inventory, agent: Uuid, large: bool) {
+    let root = inv.root;
+    for (n, name, kind) in [(8200, "A — Dossier personnel", -1), (8201, "Textures", 0)] {
+        if kind >= 0 && actions::system(inv, kind).is_some() {
+            continue;
+        }
+        let id = Uuid::from_u128(n);
+        inv.folders.insert(
+            id,
+            Folder {
+                info: InvFolder {
+                    id,
+                    parent: root,
+                    name: name.into(),
+                    type_default: kind,
+                    version: 1,
+                    ..Default::default()
+                },
+                children: Vec::new(),
+                items: Vec::new(),
+                state: FetchState::Fetched,
+                library: false,
+            },
+        );
+        if let Some(folder) = inv.folders.get_mut(&root) {
+            folder.children.push(id);
+        }
+    }
+    let time = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64);
+    let parent = Uuid::from_u128(8000);
+    let mut items: Vec<_> = inv
+        .items
+        .values()
+        .filter(|it| it.parent == parent && !matches!(it.asset_type, 24 | 25))
+        .cloned()
+        .collect();
+    for it in &mut items {
+        it.created_at = time - (it.id.as_u128() as i64 - 8100) * 3600;
+        it.desc = "Élément de démonstration pour les filtres d'inventaire".into();
+        if it.id == Uuid::from_u128(8109) {
+            it.creator = Uuid::from_u128(100);
+            it.flags |= 0x200000;
+        }
+    }
+    if large {
+        items.extend((0..1500).map(|n| InvItem {
+            id: Uuid::from_u128(10000 + n),
+            parent,
+            name: format!("Élément {n}"),
+            asset_type: 6,
+            inv_type: 6,
+            created_at: time - n as i64 * 60,
+            owner: agent,
+            creator: agent,
+            owner_mask: actions::COPY | actions::MODIFY | actions::TRANSFER,
+            ..Default::default()
+        }));
+    }
+    inv.add_items(items);
+    inv.sort_all();
+}

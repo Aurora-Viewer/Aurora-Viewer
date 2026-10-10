@@ -20,7 +20,7 @@ fn submit(st: &mut InventoryUi, actions: &mut Vec<InvAction>, plan: Result<Mutat
         }
     }
 }
-pub(super) fn open(inv: &Inventory, id: Uuid, st: &mut InventoryUi, actions: &mut Vec<InvAction>) {
+pub(super) fn open(inv: &Inventory, id: Uuid, st: &mut InventoryUi, prefs: &InventoryPreferences, actions: &mut Vec<InvAction>) {
     if st.preview_dirty || st.save_pending {
         st.message = "Enregistrez ou fermez le document ouvert avant d’en ouvrir un autre.".into();
         return;
@@ -43,7 +43,13 @@ pub(super) fn open(inv: &Inventory, id: Uuid, st: &mut InventoryUi, actions: &mu
     } else if matches!(it.asset_type, 5 | 6 | 13) {
         actions.push(InvAction::Appearance(Wear::WearItem {
             item: original,
-            replace: true,
+            replace: match it.asset_type {
+                6 => !prefs.double_click_add_objects,
+                // Physics and body parts remain replacements, like
+                // LLWearableBridge::performAction / LLInvFVBridgeAction.
+                5 if it.flags & 0xff != 15 => !prefs.double_click_add_clothes,
+                _ => true,
+            },
             point: 0,
         }));
     } else {
@@ -296,7 +302,7 @@ pub(super) fn show(
                     ("folder-open", "Ouvrir")
                 };
                 if menu::item_if(ui, p, icon, label, opens) {
-                    open(inv, id, st, actions);
+                    open(inv, id, st, prefs, actions);
                 }
                 if let Some(landmark) = original.filter(|it| it.asset_type == 3)
                     && menu::item_if(ui, p, "info", "À propos du repère", single && !landmark.asset_id.is_nil())
@@ -425,6 +431,12 @@ pub(super) fn show(
             }
         } else if menu::item_if(ui, p, "link", "Trouver tous les liens", single) {
             st.search.clear();
+            if st.saved_filters.is_none() {
+                st.saved_filters = Some(st.filters.clone());
+            }
+            st.filters.links = super::view::Links::Only;
+            st.filters.always_folders = false;
+            st.filters_initialized = true;
             st.links_filter = Some(id);
             st.fetch_all = true;
             st.tab = 0;
@@ -690,6 +702,7 @@ mod tests {
                             state,
                             &mut InventoryPreferences::default(),
                             &Facts {
+                                agent: Uuid::nil(),
                                 worn: HashSet::new(),
                                 points: Vec::new(),
                                 appearance_busy: false,
@@ -838,6 +851,7 @@ mod tests {
                 ..Default::default()
             };
             let facts = Facts {
+                agent: Uuid::nil(),
                 worn: if detach { ids.iter().copied().collect() } else { HashSet::new() },
                 points: Vec::new(),
                 appearance_busy: false,

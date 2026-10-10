@@ -90,8 +90,23 @@ builds GitHub's latest `main` with `--release` into `..\RELEASE\`.
 | Argument | Effect |
 |---|---|
 | `--title <text>` | Window title "Aurora Viewer - <text> (Dev)" (the build profile ends the title: Dev, Release, Debug); log file `aurora-<text>.log` (`aurora-demo-<text>.log` in demo mode) |
-| `--fps-limit <fps>` | Plafond supplémentaire pour cette instance (1–500 images/s), sans enregistrer les préférences. `--fps-limit 60` limite aussi les captures et les essais en ligne ; un plafond utilisateur plus bas reste prioritaire. |
+| `--fps-limit <fps>` | Abaisse le plafond de cette instance (1–60 images/s), sans enregistrer les préférences. Les anciennes valeurs jusqu'à 500 sont ramenées à 60 ; les captures et les sessions en ligne respectent le même plafond. |
 | `-h`, `--help` | Show the help |
+
+Le viewer est plafonné à **60 images/s** dans tous les profils, en démo,
+en capture et en ligne. Préférences › Graphismes permet de choisir un plafond
+inférieur ; les anciens réglages illimités sont migrés automatiquement.
+
+Dans l'inventaire, **Filtres** sélectionne les types, permissions, liens,
+créateur et ancienneté ; **Préférences** règle le tri, les onglets, les dossiers
+inclus dans la recherche et le double-clic. Les dossiers système viennent
+en premier ; les éléments sont triés du plus récent au plus ancien et les
+dossiers par nom. Ces options sont aussi dans Préférences › Interface.
+La recherche peut porter sur le nom, la description, le créateur ou l'UUID ;
+`+` combine des termes, `"mot"` cherche un mot exact. Les résultats conservent
+leur chemin et leur date en info-bulle. Récent part de la dernière déconnexion
+(24 h au premier lancement). Les filtres restent propres à chaque fenêtre ;
+« Garder par défaut » les mémorise pour les prochaines ouvertures.
 
 ### Test switches
 
@@ -102,6 +117,7 @@ settings and cache (`…\config\demo`, `…\cache\demo`).
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO=1` | Offline demo mode |
+| `AURORA_DEMO_INVENTORY=sort\|filters\|preferences\|recent\|large` | Tri système / date et dates distinctes, fenêtre de filtres, préférences, onglet Récent ou recherche de 1 500 éléments. Données synthétiques uniquement ; aucun benchmark de rendu. |
 | `AURORA_CAPTURE=<file.png>` | Save a capture of the frame (`AURORA_CAPTURE_FRAMES`, default 240; ~620 to pass the loading fade). Several frames separated by commas (`2500,2600`) save one file each, `<file>-<frame>.png`. The background frame cap ("Limiter hors focus") is ignored |
 | `AURORA_CAPTURE_EXIT=1` | Quit after the capture |
 | `AURORA_DEMO_CAM="yaw,pitch,dist"` | Camera heading offset and pitch around the avatar (radians, positive pitch looks down) and distance (meters) |
@@ -121,7 +137,7 @@ settings and cache (`…\config\demo`, `…\cache\demo`).
 | `AURORA_DEMO_RCLICK="x,y"\|tag` | Right click (context menu) at (x, y) at frame 225, or on the name tag of the nearest other avatar at frame 600 |
 | `AURORA_DEMO_POINTER="x,y[,r][;x,y…]"` | Move the interface pointer to these window pixels from frame 300, one point every 60 frames (hover states, sub-menus); `,r` right-clicks the interface there (menus of lists and names) |
 | `AURORA_DEMO_HUDS=1\|touch\|zoom\|hidden\|media\|menu\|edit\|edit-zoom\|drag\|drag-zoom\|drag-ignore\|drag-ctrl\|drag-key` | Huit HUDs texturés sur les points 31–38, avec texte flottant et bouton enfant translucide ; HUD d’un autre avatar caché. `touch` simule appui, déplacement et relâché sur l’enfant (images 720–900), puis change la couleur du HUD ; `zoom` réduit à 50 %, `hidden` masque les HUDs, `media` affiche la page locale de test sur le HUD central. `drag` saisit l’enfant avec ALT (image 720), déplace tout le HUD, relâche ALT avant le clic (image 800), puis enregistre la position au relâchement gauche (image 840) sans toucher de script ; `drag-zoom` fait de même à 50 %, `drag-ignore` sur un enfant avec action IGNORE ; `drag-ctrl` utilise Ctrl et `drag-key` la touche B à la place de ALT. Les scénarios menu, edit et edit-zoom vérifient le clic droit sur l’enfant, Modifier et le déplacement du linkset par la poignée Y, aussi à 50 %. ALT + clic gauche maintenu sur la géométrie visible déplace le HUD sans ouvrir les outils ; main de saisie au survol et pendant le déplacement. Préférences › Pratique › HUDs : touche configurable (ALT par défaut), clic sur la touche puis saisie au clavier, Échap pour annuler et bouton Rétablir ALT ; choix enregistré et appliqué au survol comme au déplacement. Le droit Déplacer suffit, y compris sans droit Modifier. Inventaire de démo lié à la tenue actuelle pour tester le détachement et l’affichage dans l’inventaire. Menu Monde › HUDs : afficher / masquer, réduire / agrandir et taille normale. Aucun accès à une grille. |
-| `AURORA_FPS_LIMIT=<n>` | Limite les images/s pour les essais locaux (10–500, valeur positive ; ignoré si invalide). Utiliser `60` pour les essais HUD et les captures ; le plafond inférieur en arrière-plan reste applicable hors captures. |
+| `AURORA_FPS_LIMIT=<n>` | Plafond utilisateur pour les essais (10–60 images/s ; valeurs positives ramenées à cette plage, valeur invalide ignorée). Le plafond commun de 60 s'applique toujours ; le plafond inférieur en arrière-plan reste applicable hors captures. |
 | `AURORA_DEMO_HUDS=faces\|faces-turned` | Neuf panneaux HUD à une seule face visible : colonnes avant / arrière / matériau PBR explicitement double face, lignes opaque / translucide / masqué. La colonne arrière doit rester vide ; `faces-turned` retourne tous les panneaux de 180° : la colonne avant devient vide, l’arrière apparaît, le double face reste visible. Les libellés flottants restent visibles dans les deux sens. |
 | `AURORA_DEMO_LOOKAT=1` | Eye tracking on (in memory only) and a remote look-at |
 | `AURORA_DEMO_SOUND=1` | Audible world sounds (looped chime) and interface sounds (from the real sound cache when present, else a short tick per sound) |
