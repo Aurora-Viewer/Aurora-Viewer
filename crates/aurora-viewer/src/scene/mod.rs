@@ -463,6 +463,9 @@ pub struct Scene {
     last_palette_gc: Instant,
     /// Periodic streaming summary in the log.
     last_diag: Instant,
+    /// Streaming time of the frame by part (AURORA_PROFILE `s_*`), taken by
+    /// the frame profile at the end of the frame.
+    pub parts: crate::frame_profile::Parts,
     /// Rest skeleton (shape + joint offsets of worn meshes) per skeleton owner.
     skeletons: HashMap<Uuid, AvatarSkeleton>,
     /// Skeleton owner of each object listed in a cached skeleton's members.
@@ -710,6 +713,7 @@ impl Scene {
             palettes: Vec::new(),
             last_palette_gc: Instant::now(),
             last_diag: Instant::now(),
+            parts: Default::default(),
             skeletons: HashMap::new(),
             skeleton_member_of: HashMap::new(),
             skeleton_meta_gen: 0,
@@ -951,6 +955,7 @@ impl Scene {
     // ------------------------------------------------------------ results
 
     pub fn process_results(&mut self, renderer: &mut Renderer, net: &NetClient, budget: std::time::Duration) {
+        use crate::frame_profile::Part;
         let t0 = Instant::now();
         while let Ok(r) = net.fetch_results.try_recv() {
             let kind = r.key & (0xF << 60);
@@ -971,9 +976,15 @@ impl Scene {
                 self.landmark_results.push(r);
             }
         }
+        let mut t = self.parts.lap(Part::Fetched, t0);
         while t0.elapsed() < budget {
             let Ok(r) = self.job_rx.try_recv() else {
                 break;
+            };
+            let part = if matches!(r, JobResult::Geometry { .. }) {
+                Part::Geometry
+            } else {
+                Part::Decoded
             };
             match r {
                 JobResult::Geometry {
@@ -1006,6 +1017,7 @@ impl Scene {
                 JobResult::Done => {}
                 other => self.textures.on_job(other),
             }
+            t = self.parts.lap(part, t);
         }
     }
 
@@ -2604,9 +2616,12 @@ impl Scene {
 
     /// Per-frame streaming work.
     pub fn stream(&mut self, renderer: &mut Renderer, net: &NetClient, world: &World, texture_budget: u64) {
+        use crate::frame_profile::Part;
+        let t = Instant::now();
         let va = world.viewer_asset_url();
         let va = va.as_deref();
         self.textures.update(&self.jobs, &net.fetcher, va);
+        let t = self.parts.lap(Part::TexUpdate, t);
         let rig = self.avatar_lib.rig.clone();
         self.meshes.update(&self.jobs, &net.fetcher, va, &rig);
         self.anims.update(&self.jobs, &net.fetcher, va, &rig);
@@ -2617,12 +2632,18 @@ impl Scene {
             // objects using materials are rebuilt on a new generation
             self.materials.generation += 1;
         }
+        let t = self.parts.lap(Part::Assets, t);
         if self.skin_binds_dirty {
             self.skin_binds_dirty = false;
             renderer.set_skin_binds(&self.skin_binds);
         }
+        let t = self.parts.lap(Part::Skin, t);
+        let pages_before = renderer.textures.page_create_ms();
         self.textures.upload(renderer, 24 * 1024 * 1024);
+        self.parts.add(Part::Pages, renderer.textures.page_create_ms() - pages_before);
+        let t = self.parts.lap(Part::Upload, t);
         self.textures.maintain(renderer, &self.jobs, texture_budget);
+        let t = self.parts.lap(Part::Maintain, t);
         if self.last_diag.elapsed() > std::time::Duration::from_secs(30) {
             self.last_diag = std::time::Instant::now();
             let (ready, fetching, failed) = self.meshes.counts();
@@ -2643,6 +2664,7 @@ impl Scene {
                 log::info!("  texture {id} not loaded: {state}");
             }
         }
+        self.parts.lap(Part::Diag, t);
     }
 }
 

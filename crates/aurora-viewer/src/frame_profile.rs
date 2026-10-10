@@ -112,6 +112,83 @@ impl Lap {
     }
 }
 
+/// Sub-steps of the streaming work on the main thread (`s_*` in the
+/// summary): what `Results` and `Stream` spend their time on, so that a
+/// slow streaming frame names its cause.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Part {
+    /// Downloads handed to the streamers (`Results`).
+    Fetched,
+    /// Finished geometry put in the arena (`Results`).
+    Geometry,
+    /// Other finished jobs: decoded textures queued, cache reads (`Results`).
+    Decoded,
+    /// `TextureStreamer::update`: fetches and decodes started.
+    TexUpdate,
+    /// Mesh, animation, sound, material and settings streamers.
+    Assets,
+    /// Skin bind matrices sent to the GPU.
+    Skin,
+    /// Decoded textures sent to the GPU, texture pages included.
+    Upload,
+    /// Texture pages created during the uploads (part of `Upload`).
+    Pages,
+    /// Texture eviction, cache writes, memory budget.
+    Maintain,
+    /// Streaming diagnostics in the log.
+    Diag,
+}
+
+impl Part {
+    pub const ALL: [Part; 10] = [
+        Part::Fetched,
+        Part::Geometry,
+        Part::Decoded,
+        Part::TexUpdate,
+        Part::Assets,
+        Part::Skin,
+        Part::Upload,
+        Part::Pages,
+        Part::Maintain,
+        Part::Diag,
+    ];
+
+    fn key(self) -> &'static str {
+        match self {
+            Part::Fetched => "fetched",
+            Part::Geometry => "geometry",
+            Part::Decoded => "decoded",
+            Part::TexUpdate => "tex_update",
+            Part::Assets => "assets",
+            Part::Skin => "skin",
+            Part::Upload => "upload",
+            Part::Pages => "pages",
+            Part::Maintain => "maintain",
+            Part::Diag => "diag",
+        }
+    }
+}
+
+const PARTS: usize = Part::ALL.len();
+
+/// Time of each [`Part`] in the current frame (ms), filled by the scene and
+/// taken by [`FrameProfile::end_frame`].
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Parts([f32; PARTS]);
+
+impl Parts {
+    pub fn add(&mut self, part: Part, ms: f32) {
+        self.0[part as usize] += ms;
+    }
+
+    /// Add the time since `since` to `part`; returns now (for the next one).
+    pub fn lap(&mut self, part: Part, since: Instant) -> Instant {
+        let now = Instant::now();
+        self.add(part, (now - since).as_secs_f32() * 1000.0);
+        now
+    }
+}
+
 const LAPS: usize = Lap::ALL.len();
 const GPU: usize = GpuElement::ALL.len();
 const PHASES: usize = RENDER_PHASES.len();
@@ -151,6 +228,8 @@ struct Period {
     /// Longest time of each step in a single frame.
     laps_max: [f32; LAPS],
     phases_max: [f32; PHASES],
+    parts: [f32; PARTS],
+    parts_max: [f32; PARTS],
     gpu: [f32; GPU],
     gpu_frames: u32,
     draws: u64,
@@ -231,15 +310,15 @@ impl FrameProfile {
     }
 
     /// End the frame (after the `Tail` lap); logs the summary once a second.
-    pub fn end_frame(&mut self, render: &RenderStats, scene: &SceneCounts) {
+    pub fn end_frame(&mut self, render: &RenderStats, scene: &SceneCounts, parts: &Parts) {
         if self.enabled
-            && let Some(line) = self.end_frame_at(render, scene, Instant::now())
+            && let Some(line) = self.end_frame_at(render, scene, parts, Instant::now())
         {
             log::info!("perf summary: {line}");
         }
     }
 
-    fn end_frame_at(&mut self, render: &RenderStats, scene: &SceneCounts, now: Instant) -> Option<String> {
+    fn end_frame_at(&mut self, render: &RenderStats, scene: &SceneCounts, parts: &Parts, now: Instant) -> Option<String> {
         let started = *self.started.get_or_insert(now);
         let frame = std::mem::replace(&mut self.frame, [0.0; LAPS]);
         let p = &mut self.period;
@@ -249,6 +328,8 @@ impl FrameProfile {
         add(&mut p.phases, &render.cpu_phases);
         keep_max(&mut p.laps_max, &frame);
         keep_max(&mut p.phases_max, &render.cpu_phases);
+        add(&mut p.parts, &parts.0);
+        keep_max(&mut p.parts_max, &parts.0);
         if let Some(g) = render.gpu_elements {
             add(&mut p.gpu, &g);
             p.gpu_frames += 1;
@@ -330,8 +411,9 @@ fn slow_frames(frames: &[f32]) -> usize {
 }
 
 /// One line: averages per frame over the period (times in ms); renderer
-/// steps prefixed with `r_`, GPU elements with `g_`. The `max:` segment
-/// lists the steps (`r_*` included) whose longest single-frame time reached
+/// steps prefixed with `r_`, streaming parts with `s_`, GPU elements with
+/// `g_`. The `max:` segment lists the steps (`r_*` and `s_*` included)
+/// whose longest single-frame time reached
 /// [`MAX_SHOWN_MS`], longest first (`-` when none did).
 fn summary(p: &Period, elapsed: Duration) -> String {
     let n = p.frames.max(1) as f32;
@@ -354,6 +436,7 @@ fn summary(p: &Period, elapsed: Duration) -> String {
         .zip(p.laps_max)
         .map(|(lap, ms)| ("", lap.key(), ms))
         .chain(RENDER_PHASES.iter().zip(p.phases_max).map(|(key, ms)| ("r_", *key, ms)))
+        .chain(Part::ALL.iter().zip(p.parts_max).map(|(part, ms)| ("s_", part.key(), ms)))
         .filter(|(_, _, ms)| *ms >= MAX_SHOWN_MS)
         .collect();
     slow.sort_by(|a, b| b.2.total_cmp(&a.2));
@@ -366,6 +449,10 @@ fn summary(p: &Period, elapsed: Duration) -> String {
     out.push_str(" |");
     for (key, ms) in RENDER_PHASES.iter().zip(p.phases) {
         let _ = write!(out, " r_{key}={:.2}", avg(ms));
+    }
+    out.push_str(" |");
+    for (part, ms) in Part::ALL.iter().zip(p.parts) {
+        let _ = write!(out, " s_{}={:.2}", part.key(), avg(ms));
     }
     let gpu_n = p.gpu_frames.max(1) as f32;
     let _ = write!(out, " | gpu={:.2}", p.gpu.iter().sum::<f32>() / gpu_n);
@@ -423,7 +510,10 @@ mod tests {
         p.lap_at(Lap::Sync, t + ms(5));
         p.lap_at(Lap::Render, t + ms(12));
         p.lap_at(Lap::Tail, t + ms(20));
-        assert_eq!(p.end_frame_at(&RenderStats::default(), &SceneCounts::default(), t + ms(20)), None);
+        assert_eq!(
+            p.end_frame_at(&RenderStats::default(), &SceneCounts::default(), &Parts::default(), t + ms(20)),
+            None
+        );
         let f = &p.period.frame_ms;
         assert_eq!(f.len(), 1);
         assert!((f[0] - 20.0).abs() < 0.01, "{f:?}");
@@ -452,7 +542,7 @@ mod tests {
         let mut lines = Vec::new();
         for i in 0..=50u64 {
             p.lap_at(Lap::Sync, t + ms(i * 20));
-            if let Some(l) = p.end_frame_at(&render, &scene, t + ms(i * 20)) {
+            if let Some(l) = p.end_frame_at(&render, &scene, &Parts::default(), t + ms(i * 20)) {
                 lines.push(l);
             }
         }
@@ -483,7 +573,9 @@ mod tests {
             at += ms(20);
             p.lap_at(Lap::Render, at);
             render.cpu_phases[1] = if i == 10 { 1.5 } else { 0.2 };
-            if let Some(l) = p.end_frame_at(&render, &SceneCounts::default(), at) {
+            let mut parts = Parts::default();
+            parts.add(Part::Upload, if i == 30 { 1.25 } else { 0.1 });
+            if let Some(l) = p.end_frame_at(&render, &SceneCounts::default(), &parts, at) {
                 lines.push(l);
             }
         }
@@ -492,7 +584,8 @@ mod tests {
         let key = format!("r_{}", RENDER_PHASES[1]);
         let max = l.split(" | max: ").nth(1).and_then(|s| s.split(" |").next()).unwrap_or_default();
         assert!(max.starts_with("render=20.00 media=6.10 "), "{max}");
-        assert!(max.ends_with(&format!(" {key}=1.50")), "{max}");
+        assert!(max.ends_with(&format!(" {key}=1.50 s_upload=1.25")), "{max}");
+        assert!(l.contains(" s_upload=0.12 "), "{l}");
         assert!(!max.contains("sync="), "{max}");
         // nothing over 1 ms
         let quiet = summary(&Period::default(), PERIOD);
@@ -521,7 +614,7 @@ mod tests {
     fn disabled_profile_records_nothing() {
         let mut p = FrameProfile::new(false);
         p.lap(Lap::Sync);
-        p.end_frame(&RenderStats::default(), &SceneCounts::default());
+        p.end_frame(&RenderStats::default(), &SceneCounts::default(), &Parts::default());
         assert!(p.last.is_none());
         assert_eq!(p.period.frames, 0);
     }

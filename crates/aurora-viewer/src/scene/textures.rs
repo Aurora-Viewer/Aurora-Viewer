@@ -422,6 +422,11 @@ impl TextureStreamer {
         self.entries.contains_key(id)
     }
 
+    /// Discard level on the GPU (None until the first upload).
+    pub fn decoded_level(&self, id: &Uuid) -> Option<u8> {
+        self.entries.get(id)?.decoded
+    }
+
     pub fn is_loaded(&self, id: &Uuid) -> bool {
         self.entries.get(id).is_some_and(|e| e.decoded.is_some())
     }

@@ -237,6 +237,8 @@ struct PageStore {
     dropped: bool,
     freed: bool,
     warned_full: bool,
+    /// CPU time spent creating pages, accumulated (AURORA_PROFILE).
+    create_ms: f32,
 }
 
 impl PageStore {
@@ -260,6 +262,7 @@ impl PageStore {
             dropped: false,
             freed: false,
             warned_full: false,
+            create_ms: 0.0,
         }
     }
 
@@ -323,6 +326,7 @@ impl PageStore {
                 .sum()
         });
         let layers = page_layers(key.layer_bytes(), allocated, self.max_layers);
+        let t0 = Instant::now();
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("texture page"),
             size: wgpu::Extent3d {
@@ -343,6 +347,7 @@ impl PageStore {
             dimension: Some(wgpu::TextureViewDimension::D2Array),
             ..Default::default()
         });
+        self.create_ms += t0.elapsed().as_secs_f32() * 1000.0;
         self.page_bytes += layers as u64 * key.layer_bytes();
         self.pages[index as usize] = Some(Page {
             key,
@@ -740,6 +745,11 @@ impl TextureTable {
 
     pub fn capacity(&self) -> u32 {
         self.store.capacity
+    }
+
+    /// CPU time spent creating pages since the start (ms; AURORA_PROFILE).
+    pub fn page_create_ms(&self) -> f32 {
+        self.store.create_ms
     }
 
     pub fn is_full(&self) -> bool {

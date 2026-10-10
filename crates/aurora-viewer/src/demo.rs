@@ -26,6 +26,10 @@ pub mod land;
 /// Place details of place links (AURORA_DEMO_PLACE).
 #[path = "demo_place.rs"]
 pub mod place;
+/// Streaming hitch test: objects and textures arriving in waves
+/// (AURORA_DEMO_STREAM).
+#[path = "demo_stream.rs"]
+pub mod stream;
 
 /// Walkable floor of the demo (plaza top, else the terrain), for the
 /// offline movement stand-in.
