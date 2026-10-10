@@ -778,6 +778,76 @@ impl GpuElement {
 mod tests {
     use super::*;
 
+    fn cmd(record: u32) -> DrawCmd {
+        DrawCmd {
+            index_count: 6,
+            first_index: record * 6,
+            base_vertex: 0,
+            record,
+            bounds: [0.0; 4],
+        }
+    }
+
+    /// The lists of a frame packet: a full copy of the scene's lists, which
+    /// the main thread rebuilds for the next frame while the render thread
+    /// still reads the copy.
+    #[test]
+    fn packet_lists_are_a_copy_that_keeps_its_memory() {
+        let mut scene = DrawLists::default();
+        scene.terrain.push(cmd(1));
+        scene.blend.extend([cmd(7), cmd(8), cmd(9)]);
+        scene.blend_glow.extend([false, true, false]);
+        scene.glow.push(cmd(4));
+        scene.select_root.push(cmd(5));
+        scene.particles.push(ParticleInstance::default());
+        scene.impostor_sprites.push(ImpostorSprite {
+            center: [1.0, 2.0, 3.0],
+            tile: 3,
+            right: [1.0, 0.0, 0.0],
+            up: [0.0, 0.0, 1.0],
+        });
+        scene.impostor_captures.push(ImpostorCapture {
+            tile: 3,
+            eye: Vec3::ZERO,
+            view: Mat4::IDENTITY,
+            half: 1.0,
+            depth: 4.0,
+            opaque: vec![cmd(11)],
+            blend: vec![cmd(12)],
+        });
+        scene.gpu = Some(crate::gpu_cull::GpuCullView {
+            planes: [Vec4::ZERO; 6],
+            eye: Vec3::ONE,
+            draw_distance: 128.0,
+            shadow_distance: 64.0,
+            reflection_distance: 128.0,
+            pixel_scale: 900.0,
+            shadows: true,
+            reflections: false,
+        });
+        // a packet buffer coming back from an earlier, larger frame
+        let mut packet = DrawLists::default();
+        packet.blend.extend((0..64).map(cmd));
+        packet.opaque.push(cmd(99));
+        let (blend_memory, blend_room) = (packet.blend.as_ptr(), packet.blend.capacity());
+        packet.copy_from(&scene);
+        assert_eq!(packet.total(), scene.total());
+        assert_eq!(packet.blend.iter().map(|c| c.record).collect::<Vec<_>>(), [7, 8, 9]);
+        assert_eq!(packet.blend_glow, [false, true, false]);
+        assert_eq!((packet.terrain.len(), packet.glow.len(), packet.select_root.len()), (1, 1, 1));
+        assert_eq!((packet.particles.len(), packet.impostor_sprites.len()), (1, 1));
+        assert_eq!(packet.impostor_captures[0].blend[0].record, 12);
+        assert_eq!(packet.gpu.map(|g| g.draw_distance), Some(128.0));
+        // what the earlier frame held is gone, its memory is reused
+        assert!(packet.opaque.is_empty());
+        assert_eq!((packet.blend.as_ptr(), packet.blend.capacity()), (blend_memory, blend_room));
+        // the scene builds the next frame: the packet does not follow
+        scene.clear();
+        scene.blend.push(cmd(1));
+        assert_eq!(packet.blend.len(), 3);
+        assert!(packet.gpu.is_some());
+    }
+
     /// `DrawRecord` must match the WGSL struct (std430: 4 × 4 floats for the
     /// matrix, then one 16-byte vector per field).
     #[test]

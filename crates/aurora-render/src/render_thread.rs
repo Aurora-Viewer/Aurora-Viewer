@@ -5,12 +5,13 @@
 //! pass encoding, `finish`, `submit`, `present`. A frame then costs the
 //! longer of the two, not their sum.
 //!
-//! [`Handoff`] is a rendezvous, not a queue: the worker holds at most one
-//! job and nothing waits behind it. When the main thread comes with frame
-//! N+1 while frame N is still being drawn, it waits (back-pressure) until
-//! N is presented, then hands N+1 over. A queued frame would only add a
-//! frame of latency: the rate is bounded by the slower thread either way.
-//! Each side measures its wait, reported by the frame profile.
+//! The hand-off ([`handoff`]) is a rendezvous, not a queue: the worker
+//! holds at most one job and nothing waits behind it. When the main thread
+//! comes with frame N+1 while frame N is still being drawn, it waits
+//! (back-pressure) until N is presented, then hands N+1 over. A queued
+//! frame would only add a frame of latency: the rate is bounded by the
+//! slower thread either way. Each side measures its wait, reported by the
+//! frame profile.
 //!
 //! Nothing here can block for ever: when the worker goes away (it
 //! returned, or it panicked and its guard is dropped), every wait of the
@@ -27,7 +28,7 @@ use parking_lot::{Condvar, Mutex};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-/// The worker of a [`Handoff`] is gone: it returned or panicked.
+/// The worker of a hand-off is gone: it returned or panicked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WorkerGone;
 
@@ -51,24 +52,19 @@ struct Shared<J, R> {
 
 /// A rendezvous between the thread that makes jobs (owner) and the one
 /// that runs them (worker): one job at a time, none queued.
-pub struct Handoff;
-
-impl Handoff {
-    #[allow(clippy::new_ret_no_self)]
-    pub fn new<J, R>() -> (Owner<J, R>, Worker<J, R>) {
-        let shared = Arc::new(Shared {
-            state: Mutex::new(State {
-                job: None,
-                busy: false,
-                result: None,
-                closed: false,
-                worker_gone: false,
-            }),
-            to_worker: Condvar::new(),
-            to_owner: Condvar::new(),
-        });
-        (Owner(shared.clone()), Worker(shared))
-    }
+pub fn handoff<J, R>() -> (Owner<J, R>, Worker<J, R>) {
+    let shared = Arc::new(Shared {
+        state: Mutex::new(State {
+            job: None,
+            busy: false,
+            result: None,
+            closed: false,
+            worker_gone: false,
+        }),
+        to_worker: Condvar::new(),
+        to_owner: Condvar::new(),
+    });
+    (Owner(shared.clone()), Worker(shared))
 }
 
 /// What a `submit` returns.
@@ -210,7 +206,7 @@ impl Host {
         if !threaded {
             return Host::Inline(Box::new(backend));
         }
-        let (owner, worker) = Handoff::new();
+        let (owner, worker) = handoff();
         // the backend goes to the thread; it comes back only if the thread
         // cannot be started
         let slot = Arc::new(Mutex::new(Some(backend)));
@@ -296,7 +292,7 @@ mod tests {
 
     #[test]
     fn results_come_back_in_order_one_frame_late() {
-        let (owner, worker) = Handoff::new::<u32, u32>();
+        let (owner, worker) = handoff::<u32, u32>();
         let t = std::thread::spawn(move || {
             while let Some((job, _)) = worker.next() {
                 worker.complete(job * 10);
@@ -318,7 +314,7 @@ mod tests {
 
     #[test]
     fn the_owner_waits_while_the_worker_is_busy() {
-        let (owner, worker) = Handoff::new::<u32, u32>();
+        let (owner, worker) = handoff::<u32, u32>();
         let (release, gate) = mpsc::channel::<()>();
         let in_hand = Arc::new(AtomicUsize::new(0));
         let most = Arc::new(AtomicUsize::new(0));
@@ -361,7 +357,7 @@ mod tests {
 
     #[test]
     fn the_worker_measures_its_wait_for_the_owner() {
-        let (owner, worker) = Handoff::new::<u32, Duration>();
+        let (owner, worker) = handoff::<u32, Duration>();
         let t = std::thread::spawn(move || {
             while let Some((_, idle)) = worker.next() {
                 worker.complete(idle);
@@ -377,7 +373,7 @@ mod tests {
 
     #[test]
     fn a_dead_worker_never_blocks_the_owner() {
-        let (owner, worker) = Handoff::new::<u32, u32>();
+        let (owner, worker) = handoff::<u32, u32>();
         let t = std::thread::spawn(move || {
             let (job, _) = worker.next().expect("job");
             // the frame fails for good (device lost, a bug): the thread
@@ -396,7 +392,7 @@ mod tests {
 
     #[test]
     fn a_worker_that_leaves_while_the_owner_waits_wakes_it() {
-        let (owner, worker) = Handoff::new::<u32, u32>();
+        let (owner, worker) = handoff::<u32, u32>();
         let t = std::thread::spawn(move || {
             let _job = worker.next();
             std::thread::sleep(TICK);
@@ -409,7 +405,7 @@ mod tests {
 
     #[test]
     fn closing_ends_the_worker_loop() {
-        let (owner, worker) = Handoff::new::<u32, u32>();
+        let (owner, worker) = handoff::<u32, u32>();
         let done = Arc::new(AtomicUsize::new(0));
         let d = done.clone();
         let t = std::thread::spawn(move || {
@@ -429,7 +425,7 @@ mod tests {
 
     #[test]
     fn closing_while_a_job_is_in_hand_lets_it_finish() {
-        let (owner, worker) = Handoff::new::<u32, u32>();
+        let (owner, worker) = handoff::<u32, u32>();
         let (release, gate) = mpsc::channel::<()>();
         let finished = Arc::new(AtomicBool::new(false));
         let f = finished.clone();

@@ -3800,7 +3800,11 @@ impl App {
             self.scene_capture_pending = true;
         }
         self.frame_profile.lap(Lap::Actions);
-        // ---- render
+        // ---- render: the frame is closed and leaves as a packet for the
+        // render thread (aurora-render, main_thread.rs), which draws it
+        // while this thread goes on with the next frame. The statistics
+        // returned are those of the frame before; a frame that carries a
+        // capture is waited for, its pixels are read in the tail below.
         let lists = if self.in_world() { &self.scene.lists } else { &self.empty_lists };
         let stats = gfx.renderer.render(
             fp,

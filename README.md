@@ -165,6 +165,7 @@ settings and cache (`…\config\demo`, `…\cache\demo`).
 | `AURORA_OCCLUSION=0\|1` | Override the « Occlusion » setting (Graphismes › Qualité) |
 | `AURORA_NO_OCCLUSION=1`, `AURORA_NOVSYNC=1` | Turn GPU occlusion / vsync off |
 | `AURORA_CPU_CULL=1` | Build every draw list on the CPU (the fallback when the GPU lacks `MULTI_DRAW_INDIRECT_COUNT`) instead of culling them on the GPU, for comparison; `cull=cpu\|gpu` in the `perf summary` line |
+| `AURORA_RENDER_THREAD=0` | Draw the frames on the main thread, as before the render thread, for comparison and debugging. By default the main thread hands each frame over to the render thread as a self-contained packet and goes on with the next frame; with `0` the same packet is executed in place. `thread=on\|off` in the `perf summary` line, and a log line at start (`renderer: frames drawn by…`) |
 | `AURORA_PROFILE=1` | Profiling in the log: once a second a `perf summary` line, plus a `perf settings` line when the settings change (see [Profiling](#profiling)). The background frame cap ("Limiter hors focus") is ignored, so a window without the focus is still measured at full speed |
 | `AURORA_PROFILE_FRAMES=1` | Also one `render profile` and one `gpu profile` line per frame (renderer steps and GPU time by element of every frame) |
 | `AURORA_GPU_VALIDATION=1` | wgpu validation layers |
@@ -177,21 +178,52 @@ Logs are in `%LOCALAPPDATA%\Aurora\AuroraViewer\data\logs\`.
 
 ### Profiling
 
-With `AURORA_PROFILE=1`, each `perf summary` line covers one second:
+With `AURORA_PROFILE=1`, each `perf summary` line covers one second. Two
+threads share a frame: the **main thread** runs the simulation and the
+interface and closes the frame as a packet; the **render thread** turns the
+packet into GPU work while the main thread is already on the next frame.
+With `AURORA_RENDER_THREAD=0` everything below runs on the main thread.
 
 - `fps`, `frame` (average frame time, ms), `p95`, `max`, and `slow`: the
   number of frames over 1.5 × the median of that second (the hitches the
-  frame graph shows);
-- the average CPU time of each step of the frame (`events`, `social`,
-  `sync`, `media`, `lists`, `stream`, `params`, `ui`, `render`…);
+  frame graph shows). The frame is the main thread's: the time between two
+  turns of its loop, waits included;
+- **main thread**: the average CPU time of each step of the frame (`events`,
+  `social`, `sync`, `media`, `lists`, `stream`, `params`, `ui`, `render`…),
+  which add up to `frame`. `render` is what rendering costs the main
+  thread: the frame packet and the wait for the render thread to take it
+  (the whole encoding, swapchain wait included, with
+  `AURORA_RENDER_THREAD=0`);
 - `max:` the steps whose longest single-frame time reached 1 ms in that
-  second, longest first, renderer steps (`r_*`) and streaming and sync
-  parts (`s_*`) included, or `-` when none did. A periodic slow frame shows up here with
-  the step that caused it, e.g. `max: media=6.10 render=2.31`, while its
-  average stays tiny;
-- the renderer steps (`r_*`: passes, egui, `finish`, `submit`, `present`,
-  `acquire`, the wait for the swapchain image), the parts of the streaming
-  work on the main thread (`s_*`, inside `results` and `stream`: `fetched`
+  second, longest first, renderer steps (`r_*`), streaming and sync parts
+  (`s_*`) and the `thread` fields included, or `-` when none did. A
+  periodic slow frame shows up here with the step that caused it, e.g.
+  `max: media=6.10 render=2.31`, while its average stays tiny;
+- `thread=on|off`, then how the two threads meet:
+  - `packet` (main thread, inside `render`): closing the frame — the
+    changed ranges of the scene's tables into the frame's write journal, a
+    copy of the CPU draw lists — and handing it over;
+  - `wait_render` (main thread, inside `render`): time waited for the
+    render thread to finish the frame before (back-pressure: at most one
+    packet is in the render thread's hands, none is queued). A frame that
+    carries a capture is waited for entirely;
+  - `rt_frame` (render thread): its whole time on a frame, from the packet
+    to the end of the presentation, swapchain wait included (0 with
+    `thread=off`);
+  - `rt_idle` (render thread): time waited for the main thread's packet.
+
+  A frame costs about the longer of the main thread's work (`frame` minus
+  `wait_render` and `limiter`) and `rt_frame`. `rt_idle` above 0 with
+  `wait_render` near 0: the main thread is the limit; the opposite: the
+  render thread is, or the GPU / vsync behind it when `r_acquire` or
+  `r_present` hold most of `rt_frame`;
+- **render thread** (main thread with `thread=off`): the renderer steps
+  (`r_*`: `resources` — the replay of the write journal —, passes, egui,
+  `finish`, `submit`, `present`, `acquire`, the wait for the swapchain
+  image). With the render thread they are those of the frame before: a
+  frame's result comes back with the next hand-over;
+- main thread again: the parts of the streaming
+  work (`s_*`, inside `results` and `stream`: `fetched`
   downloads handed to the streamers, `geometry` built geometry put in the
   arena, `decoded` other finished jobs, `tex_update` fetches and decodes
   started, `assets` meshes / animations / sounds / materials, `skin` skin
@@ -202,9 +234,10 @@ With `AURORA_PROFILE=1`, each `perf summary` line covers one second:
   that fit the frame's time budget, `sync_alpha` faces classified again
   after a texture changed alpha class), the GPU time by element
   (`g_*`), draws and draw commands, synced / rebuilt objects, posed
-  avatars, bytes of records and palettes sent to the GPU, texture memory
-  (live textures, texture pages and their allocated memory), geometry
-  memory, and the objects whose full sync waits for a frame with time left
+  avatars, bytes of records and palettes sent to the GPU and of the whole
+  write journal of the frame (`journal_kb`), texture memory (live textures,
+  texture pages and their allocated memory), geometry memory, and the
+  objects whose full sync waits for a frame with time left
   (`sync_backlog`).
 
 ## Contributing

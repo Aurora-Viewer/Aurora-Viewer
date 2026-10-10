@@ -21,6 +21,7 @@ use crate::gpu_cull::{
     BIN_PROBE, BIN_REFL_MIRROR, BIN_REFL_WATER, BIN_SHADOW, COUNT_PRE1, COUNT_PRE2, CullFrame, GpuCull, MAIN_BINS, REGION_PRE1,
     REGION_PRE2, frame_flags,
 };
+use crate::helpers::Helpers;
 use crate::packet::{Capture, FramePacket, FrameResult, SceneGpu, Spent, SurfaceState};
 use crate::types::*;
 use crate::upload::FrameUploads;
@@ -541,6 +542,11 @@ struct Taa {
     reset: bool,
 }
 
+/// Work of the helper threads (`Backend::finishers`).
+fn finish_encoder(encoder: wgpu::CommandEncoder) -> wgpu::CommandBuffer {
+    encoder.finish()
+}
+
 /// Halton(2,3) jitter sequence in [-0.5, 0.5].
 fn halton(i: u64, base: u64) -> f32 {
     let mut f = 1.0f32;
@@ -878,6 +884,8 @@ pub(crate) struct Backend {
     cull_cpu: Vec<crate::occlusion::CullDraw>,
     particle_buffer: wgpu::Buffer,
     timer: Option<GpuTimer>,
+    /// Two threads that finish command encoders beside this one.
+    finishers: Helpers<wgpu::CommandEncoder, wgpu::CommandBuffer>,
     msaa_samples: u32,
     vsync: bool,
     settings: RenderSettings,
@@ -1964,6 +1972,7 @@ impl Backend {
             cull_cpu: Vec::new(),
             particle_buffer,
             timer,
+            finishers: Helpers::new(2, "aurora-render-finish", finish_encoder),
             msaa_samples,
             vsync,
             settings,
@@ -4424,15 +4433,11 @@ impl Backend {
         }
         // finish() validates, tracks and encodes every command of its
         // encoder: the three run at once (wgpu-core only takes a shared
-        // lock there), then are submitted in frame order
-        let (pre, scene) = std::thread::scope(|s| {
-            let pre = s.spawn(move || enc_pre.finish());
-            let scene = s.spawn(move || enc_scene.finish());
-            (pre.join(), scene.join())
-        });
-        let post = encoder.finish();
+        // lock there), two on the helper threads and the last one here,
+        // then are submitted in frame order
+        let (pre, scene, post) = self.finishers.pair(enc_pre, enc_scene, move || encoder.finish());
         match (pre, scene) {
-            (Ok(pre), Ok(scene)) => extra_cmds.extend([pre, scene, post]),
+            (Some(pre), Some(scene)) => extra_cmds.extend([pre, scene, post]),
             _ => {
                 log::error!("render: a command encoder thread panicked");
                 let spent = Spent { writes, lists: draw_lists };

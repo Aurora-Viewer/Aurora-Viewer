@@ -7,6 +7,7 @@
 
 pub mod arena;
 pub mod gpu_cull;
+mod helpers;
 pub mod main_thread;
 mod occlusion;
 mod packet;
