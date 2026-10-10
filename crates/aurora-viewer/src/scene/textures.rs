@@ -8,13 +8,19 @@
 //! staging memory (aurora_render::upload), so the main thread only records
 //! the GPU copies, the most visible textures first (first texels before
 //! upgrades, then by on-screen size), within a time and a byte budget.
+//!
+//! Nothing here walks every texture at intervals: unused textures wait in
+//! a queue in the order they were released and are evicted a few per
+//! frame, downloaded data to persist is listed when it arrives, and what
+//! the main thread no longer needs (decoded levels, the J2C data of
+//! evicted textures) is freed by the trash thread (`Jobs::discard`).
 
-use super::jobs::{AlphaKind, JobResult, Jobs, SculptMap, classify_alpha, to_rgba};
+use super::jobs::{AlphaKind, JobResult, Jobs, SculptMap, Trash, classify_alpha, to_rgba};
 use aurora_assets::J2kInfo;
 use aurora_net::fetch::ByteRange;
 use aurora_net::{FetchRequest, FetchResult, Fetcher};
 use aurora_render::{MipLevel, Renderer, StagedTexture, StagingPool, build_mips};
-use std::collections::{BinaryHeap, HashMap};
+use std::collections::{BinaryHeap, HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -34,6 +40,14 @@ pub fn asset_url(base: &str, kind: &str, id: &Uuid) -> String {
 }
 const INITIAL_BYTES: usize = 16 * 1024;
 const UNUSED_EVICT: Duration = Duration::from_secs(45);
+/// Unused textures evicted per frame at most, and queue entries looked at
+/// (those used again since are only skipped): the textures of a region
+/// left by teleport go in about a second instead of in one frame.
+const EVICT_PER_FRAME: usize = 64;
+const EVICT_LOOKS_PER_FRAME: usize = 512;
+/// Downloaded data is written to the disk cache, and the memory budget
+/// checked, this often.
+const HOUSEKEEPING_EVERY: Duration = Duration::from_secs(2);
 /// Firestorm asks for MAX_IMAGE_DATA_SIZE (indra/llimage/llimage.h) when it
 /// wants the whole file.
 const MAX_IMAGE_DATA_SIZE: u64 = 4096 * 4096 * 8;
@@ -122,6 +136,9 @@ struct PendingUpload {
     alpha: AlphaKind,
     alpha_channel: bool,
     priority: UploadPriority,
+    /// Tests: as if staged in a chunk a job still writes in.
+    #[cfg(test)]
+    held: bool,
 }
 
 /// Upload order: textures still showing their placeholder first, then the
@@ -207,10 +224,38 @@ impl UploadBudget {
     }
 }
 
+impl PendingUpload {
+    /// Its staged data can be copied (or it has none: a main-thread write).
+    fn ready(&self) -> bool {
+        #[cfg(test)]
+        if self.held {
+            return false;
+        }
+        self.staged.as_ref().is_none_or(|s| s.data.ready())
+    }
+
+    /// Done with this upload. Its staging region is released here (the
+    /// chunk is recycled once its last region is gone, which must not wait
+    /// for another thread); its levels in memory are left to the trash
+    /// thread: freeing them here took 1–3 ms a frame while the decode jobs
+    /// allocate on every core, unseen by the time budget.
+    fn retire(self, trash: &mut Trash<Vec<u8>>) {
+        for (_, _, pixels) in self.mips {
+            if !pixels.is_empty() {
+                trash.push(pixels);
+            }
+        }
+    }
+}
+
 /// Decoded textures waiting for the GPU, most urgent first.
 #[derive(Default)]
 struct PendingUploads {
     heap: BinaryHeap<PendingUpload>,
+    /// Staged in a chunk a job still writes in: not copyable yet. Kept out
+    /// of the heap, so a frame does not pop and push back each of them on
+    /// its way to the uploads that can go.
+    unready: Vec<PendingUpload>,
     /// Finest discard level waiting, per texture: a coarser one still in
     /// the queue is dropped when its turn comes (the finer one replaces it).
     finest: HashMap<Uuid, u8>,
@@ -219,7 +264,7 @@ struct PendingUploads {
 
 impl PendingUploads {
     fn len(&self) -> usize {
-        self.heap.len()
+        self.heap.len() + self.unready.len()
     }
 
     /// Queue an upload; `first`: the texture still shows its placeholder,
@@ -238,14 +283,36 @@ impl PendingUploads {
     fn requeue(&mut self, u: PendingUpload) {
         let finest = self.finest.entry(u.id).or_insert(u.discard);
         *finest = (*finest).min(u.discard);
-        self.heap.push(u);
+        if u.ready() {
+            self.heap.push(u);
+        } else {
+            self.unready.push(u);
+        }
     }
 
-    /// The most urgent upload that is still the finest of its texture.
-    fn pop(&mut self) -> Option<PendingUpload> {
+    /// Once a frame: the uploads whose staging chunk became copyable join
+    /// the others (one flag read per waiting upload).
+    fn promote_ready(&mut self) {
+        let mut i = 0;
+        while i < self.unready.len() {
+            if self.unready[i].ready() {
+                let u = self.unready.swap_remove(i);
+                self.heap.push(u);
+            } else {
+                i += 1;
+            }
+        }
+    }
+
+    /// The most urgent copyable upload that is still the finest of its
+    /// texture; the coarser ones met on the way are retired.
+    fn pop(&mut self, trash: &mut Trash<Vec<u8>>) -> Option<PendingUpload> {
         while let Some(u) = self.heap.pop() {
             match self.finest.get(&u.id) {
-                Some(&f) if f < u.discard => continue,
+                Some(&f) if f < u.discard => {
+                    u.retire(trash);
+                    continue;
+                }
                 Some(_) => {
                     self.finest.remove(&u.id);
                 }
@@ -274,8 +341,9 @@ pub struct TextureStats {
     pub failing: usize,
 }
 
-/// Alpha class of a bindless slot; a change bumps `generation`.
-fn set_slot_alpha(alpha: &mut Vec<AlphaKind>, generation: &mut u64, slot: u32, a: AlphaKind) {
+/// Alpha class of a bindless slot; a change bumps `generation` and is
+/// listed in `changes` (`TextureStreamer::take_alpha_changes`).
+fn set_slot_alpha(alpha: &mut Vec<AlphaKind>, generation: &mut u64, changes: &mut Vec<u32>, slot: u32, a: AlphaKind) {
     let i = slot as usize;
     if i >= alpha.len() {
         alpha.resize(i + 1024, AlphaKind::Opaque);
@@ -283,6 +351,7 @@ fn set_slot_alpha(alpha: &mut Vec<AlphaKind>, generation: &mut u64, slot: u32, a
     if alpha[i] != a {
         alpha[i] = a;
         *generation += 1;
+        changes.push(slot);
     }
 }
 
@@ -302,9 +371,12 @@ pub struct TextureStreamer {
     /// Procedural demo textures: id -> slot.
     local_slots: HashMap<Uuid, u32>,
     /// Bumped whenever a slot's alpha class or alpha channel, or a sculpt
-    /// map, changes: the scene classifies its faces again (the faces'
-    /// pass is cached, and the GPU lists read it).
+    /// map, changes.
     pub generation: u64,
+    /// Slots whose alpha class or alpha channel changed since the scene
+    /// last took them: it classifies the faces using them again (their
+    /// pass is cached, and the GPU lists read it).
+    alpha_changes: Vec<u32>,
     max_decodes: usize,
     decodes: usize,
     pub discard_bias: u8,
@@ -316,13 +388,24 @@ pub struct TextureStreamer {
     /// Unused textures are evicted after this long (shortened by the
     /// AURORA_DEMO_TEXTURES_CHURN test).
     pub evict_after: Duration,
+    /// Textures whose last reference went away, oldest first, with the
+    /// time it did (an entry used again since has another `unused_since`).
+    unused: VecDeque<(Instant, Uuid)>,
+    /// Textures with downloaded data not written to the disk cache yet
+    /// (`Entry::dirty_cache`), each once.
+    dirty: Vec<Uuid>,
+    /// Decoded levels the uploads are done with and download bodies once
+    /// merged, freed off this thread.
+    trash: Trash<Vec<u8>>,
 }
 
 impl TextureStreamer {
     pub fn new(cache_dir: PathBuf) -> Self {
         let _ = std::fs::create_dir_all(cache_dir.join("tex"));
         TextureStreamer {
-            entries: HashMap::new(),
+            // (room for a busy region, ~14,000 textures at BackBone: a
+            // table of that size growing moves every entry in one frame)
+            entries: HashMap::with_capacity(28_000),
             by_fetch_key: HashMap::new(),
             next_key: 1,
             uploads: PendingUploads::default(),
@@ -345,7 +428,17 @@ impl TextureStreamer {
             stats: TextureStats::default(),
             last_maintenance: Instant::now(),
             evict_after: UNUSED_EVICT,
+            unused: VecDeque::new(),
+            dirty: Vec::new(),
+            trash: Trash::default(),
+            alpha_changes: Vec::new(),
         }
+    }
+
+    /// The slots whose alpha class or alpha channel changed since the last
+    /// call (a slot may be listed more than once).
+    pub fn take_alpha_changes(&mut self, out: &mut Vec<u32>) {
+        out.append(&mut self.alpha_changes);
     }
 
     fn cache_path(cache_dir: &std::path::Path, id: &Uuid, complete: bool) -> PathBuf {
@@ -468,21 +561,23 @@ impl TextureStreamer {
             set_slot_alpha(
                 &mut self.alpha_by_slot,
                 &mut self.generation,
+                &mut self.alpha_changes,
                 slot,
                 super::jobs::classify_alpha(&px),
             );
             self.local_slots.insert(id, slot);
             return slot;
         }
-        let placeholder = [148u8, 148, 156, 255];
-        let slot = renderer
-            .create_texture(&[MipLevel {
-                width: 1,
-                height: 1,
-                data: &placeholder,
-            }])
-            .unwrap_or(aurora_render::textures::WHITE);
-        set_slot_alpha(&mut self.alpha_by_slot, &mut self.generation, slot, AlphaKind::Opaque);
+        // the shared grey placeholder until the first texels arrive: no
+        // GPU work for a texture met for the first time
+        let slot = renderer.textures.create_placeholder().unwrap_or(aurora_render::textures::WHITE);
+        set_slot_alpha(
+            &mut self.alpha_by_slot,
+            &mut self.generation,
+            &mut self.alpha_changes,
+            slot,
+            AlphaKind::Opaque,
+        );
         self.entries.insert(
             id,
             Entry {
@@ -515,12 +610,19 @@ impl TextureStreamer {
 
     /// A texture drawn by the viewer itself (media): `acquire` returns its slot.
     pub fn register_local(&mut self, id: Uuid, slot: u32) {
-        set_slot_alpha(&mut self.alpha_by_slot, &mut self.generation, slot, AlphaKind::Opaque);
+        set_slot_alpha(
+            &mut self.alpha_by_slot,
+            &mut self.generation,
+            &mut self.alpha_changes,
+            slot,
+            AlphaKind::Opaque,
+        );
         if let Some(c) = self.alpha_channel_by_slot.get_mut(slot as usize)
             && *c
         {
             *c = false;
             self.generation += 1;
+            self.alpha_changes.push(slot);
         }
         self.local_slots.insert(id, slot);
     }
@@ -531,9 +633,13 @@ impl TextureStreamer {
 
     pub fn release(&mut self, id: &Uuid) {
         if let Some(e) = self.entries.get_mut(id) {
+            let held = e.refs > 0;
             e.refs = e.refs.saturating_sub(1);
-            if e.refs == 0 {
-                e.unused_since = Some(Instant::now());
+            if e.refs == 0 && (held || e.unused_since.is_none()) {
+                // queued for eviction, in release order
+                let now = Instant::now();
+                e.unused_since = Some(now);
+                self.unused.push_back((now, *id));
             }
         }
     }
@@ -782,19 +888,28 @@ impl TextureStreamer {
                 }
             }
             Ok(bytes) if r.status != 206 => {
-                e.data = Arc::new(bytes);
+                // (what it replaces is freed off this thread, as the body
+                // of a merged reply below)
+                let old = std::mem::replace(&mut e.data, Arc::new(bytes));
+                if let Ok(old) = Arc::try_unwrap(old)
+                    && !old.is_empty()
+                {
+                    self.trash.push(old);
+                }
                 e.complete = true;
                 Ok(())
             }
             Ok(bytes) => {
-                if merge_reply(Arc::make_mut(&mut e.data), r.offset, &bytes) {
+                let merged = merge_reply(Arc::make_mut(&mut e.data), r.offset, &bytes);
+                let len = bytes.len();
+                self.trash.push(bytes);
+                if merged {
                     e.complete |= r.complete;
                     Ok(())
                 } else {
                     Err(format!(
-                        "status 206 at byte {} ({} bytes) does not continue our {} bytes",
+                        "status 206 at byte {} ({len} bytes) does not continue our {} bytes",
                         r.offset,
-                        bytes.len(),
                         e.data.len()
                     ))
                 }
@@ -807,7 +922,10 @@ impl TextureStreamer {
                     e.info = aurora_assets::j2k_info(&e.data);
                 }
                 e.failures = 0;
-                e.dirty_cache = true;
+                if !e.dirty_cache {
+                    e.dirty_cache = true;
+                    self.dirty.push(id);
+                }
                 e.last_error = None;
                 e.error_logged = false;
             }
@@ -874,6 +992,8 @@ impl TextureStreamer {
                         alpha,
                         alpha_channel,
                         priority: UploadPriority::default(),
+                        #[cfg(test)]
+                        held: false,
                     },
                     e.decoded.is_none(),
                     e.need_px,
@@ -919,26 +1039,39 @@ impl TextureStreamer {
         }
     }
 
+    /// AURORA_DEMO_STREAM: the downloaded data a texture loaded at full
+    /// resolution holds (the demo textures arrive decoded, without any).
+    pub fn demo_attach_data(&mut self, id: &Uuid, data: Vec<u8>) {
+        if let Some(e) = self.entries.get_mut(id)
+            && e.decoded == Some(0)
+        {
+            e.data = Arc::new(data);
+            e.complete = true;
+        }
+    }
+
     /// Send decoded textures to the GPU, most visible first, within the
     /// frame's budget (at least one a frame, so a slow one still goes).
-    pub fn upload(&mut self, renderer: &mut Renderer, budget: UploadBudget) {
+    pub fn upload(&mut self, renderer: &mut Renderer, jobs: &Jobs, budget: UploadBudget) {
         let t0 = Instant::now();
         let mut spent = 0u64;
         let mut done = 0usize;
-        // staged by a job still writing in the same chunk: next frame
-        let mut waiting = Vec::new();
+        self.uploads.promote_ready();
         while budget.allows(done, spent, t0.elapsed()) {
-            let Some(u) = self.uploads.pop() else {
+            let Some(mut u) = self.uploads.pop(&mut self.trash) else {
                 break;
             };
             let Some(e) = self.entries.get_mut(&u.id) else {
+                u.retire(&mut self.trash);
                 continue;
             };
             if e.decoded.is_some_and(|d| d <= u.discard) {
+                u.retire(&mut self.trash);
                 continue;
             }
-            if u.staged.as_ref().is_some_and(|s| !s.data.ready()) {
-                waiting.push(u);
+            if !u.ready() {
+                // (never expected: only copyable uploads are in the heap)
+                self.uploads.requeue(u);
                 continue;
             }
             // a new texture page (up to ~1 ms to create) only while most of
@@ -953,7 +1086,7 @@ impl TextureStreamer {
             {
                 // (the uploads behind it wait too: thousands may need
                 // that same page)
-                waiting.push(u);
+                self.uploads.requeue(u);
                 break;
             }
             let (accepted, level0, levels) = match &u.staged {
@@ -990,6 +1123,7 @@ impl TextureStreamer {
                 );
                 e.decoded = Some(u.discard);
                 e.failures += 1;
+                u.retire(&mut self.trash);
                 continue;
             }
             spent += match &u.staged {
@@ -1003,17 +1137,24 @@ impl TextureStreamer {
                 }
             };
             if self.ui_wanted.contains(&u.id) {
-                // largest level that fits 256 px for the UI copy
-                if let Some((w, h, d)) = u.mips.iter().find(|m| m.0.max(m.1) <= 256).or(u.mips.last()) {
-                    let better = self.ui_ready.get(&u.id).is_none_or(|r| r.0 < *w);
-                    if better {
-                        self.ui_ready.insert(u.id, (*w, *h, d.clone()));
-                    }
+                // largest level that fits 256 px for the UI copy (taken
+                // from the upload, which is done with it)
+                let at = u.mips.iter().position(|m| m.0.max(m.1) <= 256).or(u.mips.len().checked_sub(1));
+                if let Some((w, h, d)) = at.and_then(|i| u.mips.get_mut(i))
+                    && self.ui_ready.get(&u.id).is_none_or(|r| r.0 < *w)
+                {
+                    self.ui_ready.insert(u.id, (*w, *h, std::mem::take(d)));
                 }
             }
             e.decoded = Some(u.discard);
             e.alpha = u.alpha;
-            set_slot_alpha(&mut self.alpha_by_slot, &mut self.generation, e.slot, u.alpha);
+            set_slot_alpha(
+                &mut self.alpha_by_slot,
+                &mut self.generation,
+                &mut self.alpha_changes,
+                e.slot,
+                u.alpha,
+            );
             let slot = e.slot as usize;
             if slot >= self.alpha_channel_by_slot.len() {
                 self.alpha_channel_by_slot.resize(slot + 1024, false);
@@ -1021,34 +1162,79 @@ impl TextureStreamer {
             if self.alpha_channel_by_slot[slot] != u.alpha_channel {
                 self.alpha_channel_by_slot[slot] = u.alpha_channel;
                 self.generation += 1;
+                self.alpha_changes.push(e.slot);
             }
+            u.retire(&mut self.trash);
         }
-        for u in waiting {
-            self.uploads.requeue(u);
-        }
+        self.trash.empty(jobs);
         self.stats.uploaded_bytes_frame = spent;
         self.stats.uploads_frame = done;
     }
 
-    /// Evict unused textures and persist downloaded data.
+    /// Evict unused textures and persist downloaded data. Every frame: a
+    /// few of the textures unused for `evict_after`, taken from the front
+    /// of the release queue; every two seconds: the data downloaded since,
+    /// written to the disk cache by the jobs, and the memory budget. No
+    /// pass over every texture (with ~9,000 of them, and a region's worth
+    /// evicted at once 45 s after a teleport, that pass took 5 to 65 ms).
     pub fn maintain(&mut self, renderer: &mut Renderer, jobs: &Jobs, budget_bytes: u64) {
-        if self.last_maintenance.elapsed() < Duration::from_secs(2) {
+        let now = Instant::now();
+        let entries = &self.entries;
+        let evict = eviction_round(&mut self.unused, now, self.evict_after, |id, since| match entries.get(id) {
+            Some(e) if e.refs == 0 && e.unused_since == Some(since) => {
+                if e.fetching || e.decoding {
+                    Evictable::Busy
+                } else {
+                    Evictable::Yes
+                }
+            }
+            // used again since (a later release queues it again), or gone
+            _ => Evictable::No,
+        });
+        if !evict.is_empty() {
+            // the J2C data and sculpt maps go with the entries: freed off
+            // this thread
+            let mut gone = Vec::with_capacity(evict.len());
+            for id in evict {
+                if let Some(e) = self.entries.remove(&id) {
+                    renderer.free_texture(e.slot);
+                    set_slot_alpha(
+                        &mut self.alpha_by_slot,
+                        &mut self.generation,
+                        &mut self.alpha_changes,
+                        e.slot,
+                        AlphaKind::Opaque,
+                    );
+                    gone.push((e.data, e.sculpt, e.last_error));
+                }
+            }
+            jobs.discard(gone);
+        }
+        if now.duration_since(self.last_maintenance) < HOUSEKEEPING_EVERY {
             return;
         }
-        self.last_maintenance = Instant::now();
-        let now = Instant::now();
-        let mut evict = Vec::new();
+        self.last_maintenance = now;
         // downloaded data to persist: shared, not copied, and queued in one go
         let mut writes = Vec::new();
-        for (id, e) in self.entries.iter_mut() {
-            if e.dirty_cache && !e.fetching && !e.data.is_empty() {
-                e.dirty_cache = false;
-                writes.push((*id, e.complete, e.data.clone()));
+        let mut later = Vec::new();
+        for id in std::mem::take(&mut self.dirty) {
+            let Some(e) = self.entries.get_mut(&id) else {
+                continue;
+            };
+            if !e.dirty_cache {
+                continue;
             }
-            if e.refs == 0 && e.unused_since.is_some_and(|t| now.duration_since(t) > self.evict_after) && !e.fetching && !e.decoding {
-                evict.push(*id);
+            if e.fetching {
+                // more bytes are on their way: written with them
+                later.push(id);
+            } else {
+                e.dirty_cache = false;
+                if !e.data.is_empty() {
+                    writes.push((id, e.complete, e.data.clone()));
+                }
             }
         }
+        self.dirty = later;
         let dir = self.cache_dir.clone();
         jobs.spawn_many(writes, move |(id, complete, data)| {
             let path = Self::cache_path(&dir, &id, complete);
@@ -1061,12 +1247,6 @@ impl TextureStreamer {
             }
             JobResult::TextureCache { id, data: None, complete }
         });
-        for id in evict {
-            if let Some(e) = self.entries.remove(&id) {
-                renderer.free_texture(e.slot);
-                set_slot_alpha(&mut self.alpha_by_slot, &mut self.generation, e.slot, AlphaKind::Opaque);
-            }
-        }
         // Memory budget: raise the global discard bias when above budget.
         let used = renderer.textures.bytes();
         if used > budget_bytes && self.discard_bias < 2 {
@@ -1076,6 +1256,48 @@ impl TextureStreamer {
             self.discard_bias -= 1;
         }
     }
+}
+
+/// Whether the texture at the front of the unused queue can be evicted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Evictable {
+    Yes,
+    /// Still unused but a fetch or a decode is in flight: asked again later.
+    Busy,
+    /// Used again since it was queued, or already gone.
+    No,
+}
+
+/// One frame of eviction: the textures at the front of `unused` (oldest
+/// release first) whose time has come, at most [`EVICT_PER_FRAME`] of them
+/// and [`EVICT_LOOKS_PER_FRAME`] queue entries looked at. `state` tells
+/// what became of each entry; busy ones go back to the end of the queue.
+fn eviction_round(
+    unused: &mut VecDeque<(Instant, Uuid)>,
+    now: Instant,
+    evict_after: Duration,
+    mut state: impl FnMut(&Uuid, Instant) -> Evictable,
+) -> Vec<Uuid> {
+    let mut evict = Vec::new();
+    let mut busy = Vec::new();
+    let mut looks = 0;
+    while evict.len() < EVICT_PER_FRAME && looks < EVICT_LOOKS_PER_FRAME {
+        let Some(&(since, id)) = unused.front() else {
+            break;
+        };
+        if now.saturating_duration_since(since) <= evict_after {
+            break;
+        }
+        unused.pop_front();
+        looks += 1;
+        match state(&id, since) {
+            Evictable::Yes => evict.push(id),
+            Evictable::Busy => busy.push((since, id)),
+            Evictable::No => {}
+        }
+    }
+    unused.extend(busy);
+    evict
 }
 
 /// A decoded mip chain as a finished job. When the renderer's staging
@@ -1147,11 +1369,133 @@ mod tests {
             id: Uuid::from_u128(id),
             discard,
             staged: None,
-            mips: Vec::new(),
+            mips: vec![(1, 1, vec![0; 4])],
             alpha: AlphaKind::Opaque,
             alpha_channel: false,
             priority: UploadPriority::default(),
+            held: false,
         }
+    }
+
+    #[test]
+    fn uploads_not_copyable_yet_wait_apart() {
+        let mut q = PendingUploads::default();
+        let mut trash = Trash::default();
+        // texture 1 is the most urgent, but a job still writes in its chunk
+        let mut held = pending(1, 0);
+        held.held = true;
+        q.push(held, true, 900.0);
+        q.push(pending(2, 0), true, 50.0);
+        q.push(pending(3, 0), false, 400.0);
+        assert_eq!(q.len(), 3);
+        q.promote_ready();
+        // the copyable ones go, in their order, without meeting the other
+        assert_eq!(q.pop(&mut trash).map(|u| u.id.as_u128()), Some(2));
+        assert_eq!(q.pop(&mut trash).map(|u| u.id.as_u128()), Some(3));
+        assert!(q.pop(&mut trash).is_none());
+        assert_eq!(q.len(), 1);
+        // its chunk is closed: it takes its place among the newer ones
+        q.push(pending(4, 0), true, 100.0);
+        q.unready[0].held = false;
+        q.promote_ready();
+        assert!(q.unready.is_empty());
+        let order: Vec<u128> = std::iter::from_fn(|| q.pop(&mut trash)).map(|u| u.id.as_u128()).collect();
+        assert_eq!(order, [1, 4]);
+        // a coarser level waiting apart is dropped for a finer one in the heap
+        let mut coarse = pending(5, 2);
+        coarse.held = true;
+        q.push(coarse, true, 10.0);
+        q.push(pending(5, 0), true, 10.0);
+        q.unready[0].held = false;
+        q.promote_ready();
+        let got: Vec<u8> = std::iter::from_fn(|| q.pop(&mut trash)).map(|u| u.discard).collect();
+        assert_eq!(got, [0]);
+        assert!(q.finest.is_empty() && q.len() == 0);
+    }
+
+    #[test]
+    fn retired_uploads_leave_their_pixels_to_the_trash() {
+        let mut trash = Trash::default();
+        let mut u = pending(1, 0);
+        u.mips = vec![(2, 2, vec![0; 16]), (1, 1, vec![0; 4]), (1, 1, Vec::new())];
+        u.retire(&mut trash);
+        // (a level taken for the UI copy left an empty one behind)
+        assert_eq!(trash.len(), 2);
+    }
+
+    fn id(n: u128) -> Uuid {
+        Uuid::from_u128(n)
+    }
+
+    #[test]
+    fn eviction_takes_the_oldest_unused_textures_first() {
+        let t0 = Instant::now();
+        let s = Duration::from_secs;
+        let mut unused: VecDeque<(Instant, Uuid)> = (0..5).map(|i| (t0 + s(i), id(i as u128))).collect();
+        // at 47.5 s with 45 s of grace: released at 0, 1 and 2 s
+        let evict = eviction_round(&mut unused, t0 + Duration::from_millis(47_500), s(45), |_, _| Evictable::Yes);
+        assert_eq!(evict, [id(0), id(1), id(2)]);
+        assert_eq!(unused.len(), 2);
+        // nothing is due before its time
+        assert!(eviction_round(&mut unused, t0 + s(48), s(45), |_, _| Evictable::Yes).is_empty());
+        assert_eq!(unused.front().map(|u| u.1), Some(id(3)));
+    }
+
+    #[test]
+    fn eviction_skips_textures_used_again_and_retries_busy_ones() {
+        let t0 = Instant::now();
+        let s = Duration::from_secs;
+        let mut unused: VecDeque<(Instant, Uuid)> = (0..6).map(|i| (t0 + s(i), id(i as u128))).collect();
+        let mut asked = Vec::new();
+        let evict = eviction_round(&mut unused, t0 + s(100), s(45), |id, since| {
+            asked.push((*id, since));
+            match id.as_u128() {
+                // acquired again since, or already gone
+                1 | 4 => Evictable::No,
+                // a fetch still in flight
+                2 => Evictable::Busy,
+                _ => Evictable::Yes,
+            }
+        });
+        assert_eq!(evict, [id(0), id(3), id(5)]);
+        // each entry was asked once, with the time it was released
+        assert_eq!(asked.len(), 6);
+        assert_eq!(asked[3], (id(3), t0 + s(3)));
+        // the busy one waits at the end with its release time
+        assert_eq!(unused, [(t0 + s(2), id(2))]);
+        let evict = eviction_round(&mut unused, t0 + s(101), s(45), |_, _| Evictable::Yes);
+        assert_eq!(evict, [id(2)]);
+        assert!(unused.is_empty());
+    }
+
+    #[test]
+    fn eviction_is_spread_over_frames() {
+        let t0 = Instant::now();
+        let n = 5 * EVICT_PER_FRAME + 7;
+        let mut unused: VecDeque<(Instant, Uuid)> = (0..n).map(|i| (t0, id(i as u128))).collect();
+        let now = t0 + Duration::from_secs(60);
+        let mut frames = 0;
+        let mut total = 0;
+        while !unused.is_empty() {
+            let evict = eviction_round(&mut unused, now, UNUSED_EVICT, |_, _| Evictable::Yes);
+            assert!(!evict.is_empty() && evict.len() <= EVICT_PER_FRAME);
+            total += evict.len();
+            frames += 1;
+        }
+        assert_eq!((total, frames), (n, 6));
+        // entries used again since are only looked at, a bounded number a frame
+        let mut unused: VecDeque<(Instant, Uuid)> = (0..3 * EVICT_LOOKS_PER_FRAME).map(|i| (t0, id(i as u128))).collect();
+        assert!(eviction_round(&mut unused, now, UNUSED_EVICT, |_, _| Evictable::No).is_empty());
+        assert_eq!(unused.len(), 2 * EVICT_LOOKS_PER_FRAME);
+        // all busy: they are not asked twice in the same frame
+        let mut unused: VecDeque<(Instant, Uuid)> = (0..10).map(|i| (t0, id(i as u128))).collect();
+        let mut asked = 0;
+        let evict = eviction_round(&mut unused, now, UNUSED_EVICT, |_, _| {
+            asked += 1;
+            Evictable::Busy
+        });
+        assert!(evict.is_empty());
+        assert_eq!((asked, unused.len()), (10, 10));
     }
 
     #[test]
@@ -1163,7 +1507,8 @@ mod tests {
         q.push(pending(4, 0), false, 50.0); // upgrade, small
         q.push(pending(5, 2), true, 400.0); // same as 3, queued later
         assert_eq!(q.len(), 5);
-        let order: Vec<u128> = std::iter::from_fn(|| q.pop()).map(|u| u.id.as_u128()).collect();
+        let mut trash = Trash::default();
+        let order: Vec<u128> = std::iter::from_fn(|| q.pop(&mut trash)).map(|u| u.id.as_u128()).collect();
         assert_eq!(order, [3, 5, 2, 1, 4]);
     }
 
@@ -1174,16 +1519,21 @@ mod tests {
         q.push(pending(2, 2), true, 50.0);
         // the full resolution of texture 1 arrives before its level 2 went
         q.push(pending(1, 0), true, 100.0);
-        let got: Vec<(u128, u8)> = std::iter::from_fn(|| q.pop()).map(|u| (u.id.as_u128(), u.discard)).collect();
+        let mut trash = Trash::default();
+        let got: Vec<(u128, u8)> = std::iter::from_fn(|| q.pop(&mut trash))
+            .map(|u| (u.id.as_u128(), u.discard))
+            .collect();
         assert_eq!(got, [(1, 0), (2, 2)]);
         assert!(q.finest.is_empty());
+        // the pixels of the level dropped on the way are left to the trash
+        assert_eq!(trash.len(), 1);
         // a coarser level queued after a finer one comes after it (the
         // caller drops it: the texture is finer by then)
         q.push(pending(3, 0), true, 1.0);
         q.push(pending(3, 2), true, 1.0);
-        assert_eq!(q.pop().map(|u| u.discard), Some(0));
-        assert_eq!(q.pop().map(|u| u.discard), Some(2));
-        assert!(q.pop().is_none() && q.finest.is_empty());
+        assert_eq!(q.pop(&mut trash).map(|u| u.discard), Some(0));
+        assert_eq!(q.pop(&mut trash).map(|u| u.discard), Some(2));
+        assert!(q.pop(&mut trash).is_none() && q.finest.is_empty());
     }
 
     #[test]
@@ -1192,11 +1542,12 @@ mod tests {
         q.push(pending(1, 0), true, 100.0);
         q.push(pending(2, 0), true, 50.0);
         // texture 1 is not ready (its staging chunk is still written)
-        let first = q.pop().expect("upload");
+        let mut trash = Trash::default();
+        let first = q.pop(&mut trash).expect("upload");
         assert_eq!(first.id.as_u128(), 1);
         q.requeue(first);
         q.push(pending(3, 0), true, 75.0);
-        let order: Vec<u128> = std::iter::from_fn(|| q.pop()).map(|u| u.id.as_u128()).collect();
+        let order: Vec<u128> = std::iter::from_fn(|| q.pop(&mut trash)).map(|u| u.id.as_u128()).collect();
         assert_eq!(order, [1, 3, 2]);
     }
 

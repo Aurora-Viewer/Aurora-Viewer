@@ -6,6 +6,7 @@ pub mod animesh;
 pub mod avatar;
 pub mod banlines;
 pub mod complexity;
+pub mod hover;
 pub mod impostors;
 pub mod jobs;
 pub mod legacy_mat;
@@ -38,7 +39,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::Instant;
 use sync_plan::{FrameState, MoveSync, Placement, Plan};
-use sync_sets::{SyncSets, Xf, XfCache};
+use sync_sets::{FullSyncBudget, SyncSets, Xf, XfCache};
 use textures::{TexSource, TextureStreamer};
 use uuid::Uuid;
 
@@ -74,6 +75,8 @@ struct GeomEntry {
 
 /// Frames an unused geometry is kept (an object may want it back soon).
 const GEOM_KEEP_FRAMES: u32 = 600;
+/// Unused geometries looked at per frame once their time has come.
+const GEOM_FREED_PER_FRAME: usize = 256;
 
 /// Pass a face is drawn in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -357,6 +360,8 @@ pub struct SceneStats {
     /// Objects updated by the last sync, and those whose faces were rebuilt.
     pub synced: usize,
     pub rebuilt: usize,
+    /// Objects whose full sync waits for a frame with time left.
+    pub sync_backlog: usize,
     /// Skeleton owners posed this frame.
     pub posed: usize,
 }
@@ -390,10 +395,26 @@ pub struct Scene {
     geom_zero: VecDeque<(GeomKey, u32)>,
     /// Geometries still being built or downloaded.
     geom_pending: usize,
-    /// Texture generation of the last face alpha re-classification: faces
-    /// are classified when built, and all again only when a texture
-    /// changes alpha class.
-    alpha_seen_gen: u64,
+    /// Objects by base texture slot of their faces, as (slot, object):
+    /// faces are classified when built, and when a slot changes alpha
+    /// class only the faces using it are classified again.
+    slot_users: std::collections::BTreeSet<(u32, u32)>,
+    alpha_changes_tmp: Vec<u32>,
+    /// Main-thread time a frame gives to the full syncs that can wait
+    /// (new objects, geometry bound, faces rebuilt); the others wait in
+    /// the backlog (sync_sets.rs). Set by the app from the frame time.
+    pub sync_budget: std::time::Duration,
+    /// Geometries freed this frame: their picking triangles are released
+    /// off the main thread.
+    geom_trash: jobs::Trash<Arc<GpuGeom>>,
+    /// Bounds of the objects for the hover search, and its kept answer
+    /// (hover.rs).
+    pick: hover::PickIndex,
+    pub hover: hover::HoverCache,
+    /// Slots of removed objects whose GPU state is still to be released,
+    /// oldest first, and whether a slot is among them.
+    removals: VecDeque<usize>,
+    removal_pending: Vec<bool>,
     /// Joint boxes of the system avatar meshes, all parts merged (posed
     /// avatar spheres).
     system_bounds: Vec<animesh::JointBounds>,
@@ -666,7 +687,9 @@ impl Scene {
             materials: MaterialStreamer::new(cache_dir),
             legacy_mats: Default::default(),
             avatar_lib,
-            gpu: Vec::new(),
+            // (room for a busy region: the first doublings of a growing
+            // `Vec` would copy megabytes in the middle of an arrival)
+            gpu: Vec::with_capacity(32_768),
             regions: HashMap::new(),
             water: water::WaterGpu::default(),
             banlines: banlines::BanLines::default(),
@@ -678,7 +701,14 @@ impl Scene {
             touched_tmp: Vec::new(),
             geom_zero: VecDeque::new(),
             geom_pending: 0,
-            alpha_seen_gen: u64::MAX,
+            slot_users: Default::default(),
+            alpha_changes_tmp: Vec::new(),
+            sync_budget: std::time::Duration::from_millis(1),
+            geom_trash: Default::default(),
+            pick: Default::default(),
+            hover: Default::default(),
+            removals: VecDeque::new(),
+            removal_pending: Vec::new(),
             system_bounds: Vec::new(),
             visit_tmp: Vec::new(),
             light_objects: Default::default(),
@@ -785,12 +815,15 @@ impl Scene {
 
     /// Free the geometries nobody used for `GEOM_KEEP_FRAMES` frames: only
     /// the entries whose last reference went away that long ago are looked
-    /// at, not every geometry.
+    /// at, not every geometry, and at most `GEOM_FREED_PER_FRAME` a frame
+    /// (those of a region left by teleport all come due in the same frame).
     fn geom_gc(&mut self, renderer: &mut Renderer) {
+        let mut looked = 0;
         while let Some(&(key, since)) = self.geom_zero.front() {
-            if self.frame.wrapping_sub(since) <= GEOM_KEEP_FRAMES {
+            if self.frame.wrapping_sub(since) <= GEOM_KEEP_FRAMES || looked >= GEOM_FREED_PER_FRAME {
                 break;
             }
+            looked += 1;
             self.geom_zero.pop_front();
             // referenced again since (or released again later: a later entry)
             if !self.geoms.get(&key).is_some_and(|e| e.refs == 0 && e.zero_since == since) {
@@ -801,11 +834,13 @@ impl Scene {
                     for f in g.faces.iter().flatten() {
                         renderer.free_mesh(*f);
                     }
+                    self.geom_trash.push(g);
                 }
                 Some(GeomState::Pending) => self.geom_pending = self.geom_pending.saturating_sub(1),
                 _ => {}
             }
         }
+        self.geom_trash.empty(&self.jobs);
         debug_assert!(
             !self.frame.is_multiple_of(600)
                 || self.geom_pending == self.geoms.values().filter(|e| matches!(e.state, GeomState::Pending)).count(),
@@ -879,6 +914,7 @@ impl Scene {
                     for f in old.faces.iter().flatten() {
                         renderer.free_mesh(*f);
                     }
+                    self.geom_trash.push(old);
                 }
                 GeomState::Pending => self.geom_pending = self.geom_pending.saturating_sub(1),
                 GeomState::Failed => {}
@@ -928,12 +964,28 @@ impl Scene {
             self.meshes.staging = Some(pool.clone());
             self.staging = Some(pool);
         }
-        // geometry staged in a chunk another job was still writing in
+        // Three kinds of results share the budget, each with a part of it so
+        // that none starves the others, and each at least one a frame:
+        // geometry whose staging chunk became copyable (the first half),
+        // downloads (up to three quarters), finished jobs (the rest).
+        // Before, only the jobs were bounded: a chunk that became copyable
+        // put all its geometry in the arena in the same frame.
+        let mut placed = 0;
         for (key, geom, area) in std::mem::take(&mut self.geom_waiting) {
-            self.finish_geometry(renderer, key, geom, area);
+            if geom.ready() && (placed == 0 || t0.elapsed() < budget / 2) {
+                placed += 1;
+                self.place_geometry(renderer, key, geom, area);
+            } else {
+                self.geom_waiting.push((key, geom, area));
+            }
         }
         let t = self.parts.lap(Part::Geometry, t0);
-        while let Ok(r) = net.fetch_results.try_recv() {
+        let mut fetched = 0;
+        while fetched == 0 || t0.elapsed() < budget * 3 / 4 {
+            let Ok(r) = net.fetch_results.try_recv() else {
+                break;
+            };
+            fetched += 1;
             let kind = r.key & (0xF << 60);
             if kind == textures::FETCH_KIND_TEXTURE {
                 self.textures.on_fetch(r);
@@ -953,10 +1005,12 @@ impl Scene {
             }
         }
         let mut t = self.parts.lap(Part::Fetched, t);
-        while t0.elapsed() < budget {
+        let mut jobs_done = 0;
+        while jobs_done == 0 || t0.elapsed() < budget {
             let Ok(r) = self.job_rx.try_recv() else {
                 break;
             };
+            jobs_done += 1;
             let part = if matches!(r, JobResult::Geometry { .. }) {
                 Part::Geometry
             } else {
@@ -981,15 +1035,21 @@ impl Scene {
             }
             t = self.parts.lap(part, t);
         }
+        self.geom_trash.empty(&self.jobs);
     }
 
-    /// A geometry built by a job goes to the GPU, or waits for the next
+    /// A geometry built by a job goes to the GPU, or waits for a coming
     /// frame while another job still writes in its staging chunk.
     fn finish_geometry(&mut self, renderer: &mut Renderer, key: GeomKey, geom: jobs::PreparedGeom, area: f32) {
-        if !geom.ready() {
+        if geom.ready() {
+            self.place_geometry(renderer, key, geom, area);
+        } else {
             self.geom_waiting.push((key, geom, area));
-            return;
         }
+    }
+
+    /// Put a geometry whose staged data is copyable in the arena.
+    fn place_geometry(&mut self, renderer: &mut Renderer, key: GeomKey, geom: jobs::PreparedGeom, area: f32) {
         if let GeomKey::Mesh { id, lod } = key {
             self.meshes.on_geometry_done(&id, lod);
         }
@@ -1001,10 +1061,16 @@ impl Scene {
 
     // ------------------------------------------------------------ objects
 
-    fn release_obj(&mut self, renderer: &mut Renderer, g: &mut ObjGpu) {
+    /// Free the draw records of an object's faces.
+    fn drop_faces(&mut self, renderer: &mut Renderer, idx: usize, g: &mut ObjGpu) {
         for f in g.faces.drain(..) {
             renderer.records.free(f.record);
+            self.slot_users.remove(&(f.base_slot, idx as u32));
         }
+    }
+
+    fn release_obj(&mut self, renderer: &mut Renderer, idx: usize, g: &mut ObjGpu) {
+        self.drop_faces(renderer, idx, g);
         for t in g.tex_ids.drain(..) {
             self.textures.release(&t);
         }
@@ -1016,25 +1082,66 @@ impl Scene {
     }
 
     /// Free GPU state for removed objects.
-    pub fn collect_garbage(&mut self, renderer: &mut Renderer, store: &mut ObjectStore) {
+    ///
+    /// Within `budget`: a region going away removes thousands of objects in
+    /// one frame (2.7 ms for 6,000). The rest waits its turn, still drawn
+    /// for a few frames; a slot taken again by a new object is released
+    /// before that object is synced (`release_slot`).
+    pub fn collect_garbage(&mut self, renderer: &mut Renderer, store: &mut ObjectStore, budget: std::time::Duration) {
         store.graveyard.clear();
-        // the slots of the removed objects (one reused since still holds the
-        // old object's state: the new object is built from scratch)
         for i in std::mem::take(&mut store.removed_slots) {
-            self.sets.forget(i);
-            if let Some(mut g) = self.gpu.get_mut(i).map(std::mem::take) {
-                self.release_obj(renderer, &mut g);
+            if self.removal_pending.len() <= i {
+                self.removal_pending.resize(i + 1, false);
             }
-            renderer.cull.objects.set(i, CullObject::NONE);
+            // (removed, taken again and removed again before its turn: once)
+            if !std::mem::replace(&mut self.removal_pending[i], true) {
+                self.removals.push_back(i);
+            }
         }
+        if self.removals.is_empty() {
+            return;
+        }
+        let deadline = Instant::now() + budget;
+        let mut done = 0u32;
+        while let Some(i) = self.removals.pop_front() {
+            self.release_slot(renderer, i);
+            done += 1;
+            // (the clock read every few objects: each costs under a microsecond)
+            if done.is_multiple_of(16) && Instant::now() >= deadline {
+                break;
+            }
+        }
+    }
+
+    /// Release the GPU state left in slot `i` by a removed object, if it
+    /// still waits for it: a slot reused since holds the old object's
+    /// state, and the new object is built from scratch.
+    fn release_slot(&mut self, renderer: &mut Renderer, i: usize) {
+        if !self.removal_pending.get(i).copied().unwrap_or(false) {
+            return;
+        }
+        self.removal_pending[i] = false;
+        self.sets.forget(i);
+        self.pick.remove(i);
+        if let Some(mut g) = self.gpu.get_mut(i).map(std::mem::take) {
+            self.release_obj(renderer, i, &mut g);
+        }
+        renderer.cull.objects.set(i, CullObject::NONE);
     }
 
     /// Release everything (logout / teleport cleanup).
     pub fn clear(&mut self, renderer: &mut Renderer) {
         let mut gpus = std::mem::take(&mut self.gpu);
-        for g in gpus.iter_mut() {
-            self.release_obj(renderer, g);
+        for (idx, g) in gpus.iter_mut().enumerate() {
+            self.release_obj(renderer, idx, g);
         }
+        // (emptied, with the room it had)
+        gpus.clear();
+        self.gpu = gpus;
+        self.removals.clear();
+        self.removal_pending.clear();
+        self.slot_users.clear();
+        self.pick.reset();
         renderer.cull.objects.reset();
         for (_, r) in self.regions.drain() {
             for (_, c) in r.chunks {
@@ -1273,10 +1380,11 @@ impl Scene {
     /// (unchanged records are not uploaded again), the rest goes through the
     /// full `sync_object`.
     pub fn sync(&mut self, renderer: &mut Renderer, world: &mut World, view: &CullView) {
+        use crate::frame_profile::Part;
         let t0 = Instant::now();
         self.frame = self.frame.wrapping_add(1);
         self.ensure_avatar_parts(renderer);
-        self.collect_garbage(renderer, &mut world.objects);
+        self.collect_garbage(renderer, &mut world.objects, self.sync_budget / 2);
         // settings assets the environment waits for (the default day, the
         // environment selector's items)
         for id in world.eep.wanted_settings() {
@@ -1325,8 +1433,12 @@ impl Scene {
         let mut touched = std::mem::take(&mut self.touched_tmp);
         world.objects.take_touched(&mut touched);
         for &idx in &touched {
+            // a new object in the slot of a removed one not released yet
+            self.release_slot(renderer, idx);
             let rigged = self.gpu.get(idx).is_some_and(|g| g.rigged);
             self.sets.touched(&world.objects, agent, idx, rigged);
+            // (its click action or flags may have changed)
+            self.pick.changed(idx);
         }
         touched.clear();
         self.touched_tmp = touched;
@@ -1350,6 +1462,7 @@ impl Scene {
         };
         self.stats.synced = list.items.len();
         self.stats.rebuilt = 0;
+        let t_part = self.parts.lap(Part::SyncList, t0);
 
         // placement in parallel, one level of the parent chains at a time
         self.xf_cache.next_frame(n);
@@ -1371,81 +1484,139 @@ impl Scene {
             }
             plans.extend(planned);
         }
-        let synced: Vec<usize> = plans.iter().map(|(idx, _)| *idx).collect();
+        let t_part = self.parts.lap(Part::SyncPlan, t_part);
+        let mut synced: Vec<usize> = plans.iter().map(|(idx, _)| *idx).collect();
+        // Moves and avatars are applied whatever they cost. The other full
+        // syncs (new objects, geometry bound, faces rebuilt) only while the
+        // frame's budget lasts: the rest waits in the backlog, served
+        // nearest first, and the faces a waiting object already has keep
+        // following it.
+        let mut budget = FullSyncBudget::new(self.sync_budget);
         for (idx, plan) in plans {
             match plan {
                 Plan::Move(m) => self.apply_move(renderer, world, idx, m),
-                Plan::Full(xf) => {
-                    self.sync_object(renderer, world, idx, now, view, xf);
-                    self.after_full_sync(world, idx, mat_gen);
+                Plan::Full { xf, interim } => {
+                    let avatar = self.gpu.get(idx).is_some_and(|g| g.is_avatar) || world.objects.get(idx).is_some_and(|o| o.is_avatar());
+                    // (without a transform the sync only notes that the
+                    // object still waits for its parent)
+                    let now_or_never = avatar || xf.is_none();
+                    if now_or_never || (self.sets.backlog.is_empty() && budget.allows()) {
+                        let started = Instant::now();
+                        self.sets.backlog.remove(idx);
+                        self.sync_object(renderer, world, idx, now, view, xf);
+                        self.after_full_sync(world, idx, mat_gen);
+                        if !now_or_never {
+                            budget.spend(started.elapsed());
+                        }
+                    } else {
+                        if let Some(m) = interim {
+                            self.apply_move(renderer, world, idx, m);
+                        }
+                        let distance = xf.map_or(0.0, |(pos, _, _)| pos.distance(view.eye));
+                        self.sets.backlog.push(idx, distance);
+                    }
                 }
             }
         }
+        while budget.allows() {
+            let Some(idx) = self.sets.backlog.pop() else {
+                break;
+            };
+            let started = Instant::now();
+            self.sync_object(renderer, world, idx, now, view, None);
+            self.after_full_sync(world, idx, mat_gen);
+            synced.push(idx);
+            budget.spend(started.elapsed());
+        }
+        self.stats.sync_backlog = self.sets.backlog.len();
         // GPU object table: bounds and flags of what was synced (unchanged
-        // entries are not uploaded)
+        // entries are not uploaded); the same bounds for the hover search
         for idx in synced {
             if let Some(g) = self.gpu.get(idx) {
                 renderer.cull.objects.set(idx, g.cull_object(idx));
+                self.pick.set(idx, hover::PickEntry::of(g));
             }
         }
 
         self.geom_gc(renderer);
+        let t_part = self.parts.lap(Part::SyncApply, t_part);
         self.stats.objects = world.objects.len();
         self.stats.geometries = self.geoms.len();
         self.stats.geom_pending = self.geom_pending;
         self.stats.jobs = self.jobs.pending();
         self.stats.sync_ms = t0.elapsed().as_secs_f32() * 1000.0;
-        // A texture changed alpha class (generation bump): faces built
-        // before are classified again (new faces are classified when built).
-        if self.textures.generation != self.alpha_seen_gen {
-            self.alpha_seen_gen = self.textures.generation;
-            self.reclassify_faces(renderer);
+        // Textures changed alpha class (first texels, a finer level): the
+        // faces using their slots are classified again (new faces are
+        // classified when built).
+        let mut changed = std::mem::take(&mut self.alpha_changes_tmp);
+        self.textures.take_alpha_changes(&mut changed);
+        if !changed.is_empty() {
+            self.reclassify_slots(renderer, &changed);
+            changed.clear();
         }
+        self.alpha_changes_tmp = changed;
+        self.parts.lap(Part::SyncAlpha, t_part);
     }
 
-    /// Classify every face again (in parallel); the changed ones update
-    /// their record's alpha mode, their GPU face entry and their object's
-    /// `special` flag. Shadow shaders use the same face mode as the lists.
-    fn reclassify_faces(&mut self, renderer: &mut Renderer) {
+    /// Classify again the faces whose base texture is in one of `slots`
+    /// (found through `slot_users`, not by a pass over every face of the
+    /// scene, which ran in most frames while textures arrive); the changed
+    /// ones update their record's alpha mode, their GPU face entry and
+    /// their object's `special` flag. Shadow shaders use the same face
+    /// mode as the lists.
+    fn reclassify_slots(&mut self, renderer: &mut Renderer, slots: &[u32]) {
         let alpha = &self.textures.alpha_by_slot;
         let channel = &self.textures.alpha_channel_by_slot;
-        let changes: Vec<(usize, usize, Pass, bool)> = self
-            .gpu
-            .par_iter()
-            .enumerate()
-            .flat_map_iter(|(idx, g)| {
-                g.faces.iter().enumerate().filter_map(move |(fi, f)| {
+        for &slot in slots {
+            for &(_, idx) in self.slot_users.range((slot, 0)..=(slot, u32::MAX)) {
+                let idx = idx as usize;
+                let Some(g) = self.gpu.get_mut(idx) else {
+                    continue;
+                };
+                let mut any = false;
+                for (fi, f) in g.faces.iter_mut().enumerate() {
+                    if f.base_slot != slot {
+                        continue;
+                    }
                     let (pass, pool) = face_mode(f, alpha, channel);
-                    (pass != f.pass || pool != f.glow_pool).then_some((idx, fi, pass, pool))
-                })
-            })
-            .collect();
-        let mut last = usize::MAX;
-        for (idx, fi, pass, pool) in changes {
-            let g = &mut self.gpu[idx];
-            let f = &mut g.faces[fi];
-            let mode_changed = f.pass.record_flags() != pass.record_flags();
-            f.pass = pass;
-            f.glow_pool = pool;
-            let (record, face) = (f.record, cull_face(f, idx, fi == 0));
-            if mode_changed && let Some(mut r) = renderer.records.get(record).copied() {
-                r.flags[0] = (r.flags[0] & !(flags::ALPHA_BLEND | flags::ALPHA_MASK)) | pass.record_flags();
-                renderer.records.set(record, r);
-            }
-            renderer.records.set_face(record, face);
-            if idx != last {
-                last = idx;
-                g.special = is_special(&g.faces);
+                    if pass == f.pass && pool == f.glow_pool {
+                        continue;
+                    }
+                    any = true;
+                    let mode_changed = f.pass.record_flags() != pass.record_flags();
+                    f.pass = pass;
+                    f.glow_pool = pool;
+                    let (record, face) = (f.record, cull_face(f, idx, fi == 0));
+                    if mode_changed && let Some(mut r) = renderer.records.get(record).copied() {
+                        r.flags[0] = (r.flags[0] & !(flags::ALPHA_BLEND | flags::ALPHA_MASK)) | pass.record_flags();
+                        renderer.records.set(record, r);
+                    }
+                    renderer.records.set_face(record, face);
+                }
+                if any {
+                    g.special = is_special(&g.faces);
+                    // (a face that became see-through, or stopped being)
+                    self.pick.changed(idx);
+                }
             }
         }
     }
 
     /// Classify freshly built faces of object `idx`: pass, record alpha
-    /// mode, GPU face entries, `special`.
-    fn finish_faces(&self, renderer: &mut Renderer, idx: usize, g: &mut ObjGpu) {
+    /// mode, GPU face entries, `special`; and note the object as a user of
+    /// their texture slots.
+    fn finish_faces(&mut self, renderer: &mut Renderer, idx: usize, g: &mut ObjGpu) {
+        // (new faces: what the cursor is over may have changed)
+        self.pick.changed(idx);
         let alpha = &self.textures.alpha_by_slot;
         let channel = &self.textures.alpha_channel_by_slot;
+        let mut last_slot = None;
         for (fi, f) in g.faces.iter_mut().enumerate() {
+            // (faces of an object mostly share their texture: one entry)
+            if last_slot != Some(f.base_slot) {
+                last_slot = Some(f.base_slot);
+                self.slot_users.insert((f.base_slot, idx as u32));
+            }
             let (pass, pool) = face_mode(f, alpha, channel);
             f.pass = pass;
             f.glow_pool = pool;
@@ -1703,9 +1874,7 @@ impl Scene {
         };
         // release previous records/textures
         let mut g = std::mem::take(&mut self.gpu[idx]);
-        for f in g.faces.drain(..) {
-            renderer.records.free(f.record);
-        }
+        self.drop_faces(renderer, idx, &mut g);
         let old_tex: Vec<Uuid> = std::mem::take(&mut g.tex_ids);
         g.material_ids.clear();
         let te = o.te.clone();
@@ -1996,9 +2165,7 @@ impl Scene {
             || g.jelly != jelly;
         if needs_full {
             let mut g = std::mem::take(&mut self.gpu[idx]);
-            for f in g.faces.drain(..) {
-                renderer.records.free(f.record);
-            }
+            self.drop_faces(renderer, idx, &mut g);
             let old_tex: Vec<Uuid> = std::mem::take(&mut g.tex_ids);
             for (pi, part) in lib.parts.iter().enumerate() {
                 let Some(geom) = self.geom_ready(&GeomKey::AvatarPart(pi as u8)) else {
@@ -2617,7 +2784,7 @@ impl Scene {
         }
         let t = self.parts.lap(Part::Skin, t);
         let pages_before = renderer.textures.page_create_ms();
-        self.textures.upload(renderer, textures::UploadBudget::for_frame(frame));
+        self.textures.upload(renderer, &self.jobs, textures::UploadBudget::for_frame(frame));
         self.parts.add(Part::Pages, renderer.textures.page_create_ms() - pages_before);
         let t = self.parts.lap(Part::Upload, t);
         self.textures.maintain(renderer, &self.jobs, texture_budget);

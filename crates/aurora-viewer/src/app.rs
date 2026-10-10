@@ -2196,6 +2196,12 @@ impl App {
         if !self.demo {
             return;
         }
+        // AURORA_DEMO_HOVER=1: the cursor swept over the scene, then still
+        if let Some(g) = &self.gfx
+            && let Some(cursor) = crate::demo::hover_sweep(self.frame_count, g.renderer.size())
+        {
+            self.cursor_pos = cursor;
+        }
         let Ok(mode) = std::env::var("AURORA_DEMO_ACTIONS") else {
             return;
         };
@@ -3162,6 +3168,10 @@ impl App {
             // enough, and keeps a burst of results from stretching a frame
             let frame_time = Duration::from_secs_f32(dt);
             let results_budget = crate::scene::textures::frame_share(frame_time, Duration::from_millis(1));
+            // the full syncs of arriving objects get the same share; more
+            // behind a loading or teleport screen, whose frames show nothing
+            let covered = matches!(self.screen, Screen::Loading { .. }) || self.tp_overlay.as_ref().is_some_and(|o| o.end.is_none());
+            self.scene.sync_budget = if covered { Duration::from_millis(8) } else { results_budget };
             self.scene.process_results(&mut gfx.renderer, &self.net, results_budget);
             self.frame_profile.lap(Lap::Results);
             // poses first: attachments follow their bone in the same frame
@@ -3713,15 +3723,14 @@ impl App {
             && self.media_cursor.is_none()
             && !ctx.is_pointer_over_egui()
             && !ctx.egui_wants_pointer_input()
-            && let Some(point) = self.scene.interaction_point(
+            // (searched again only when the cursor, the camera or the scene
+            // under the cursor changed: scene/hover.rs)
+            && let Some(idx) = self.scene.hover_object(
                 &self.world,
                 gfx.renderer.cursor_ray(self.cursor_pos.0, self.cursor_pos.1),
                 gfx.renderer.hover_pick(self.cursor_pos.0, self.cursor_pos.1),
-                false,
                 self.settings.draw_distance,
             )
-            && let Some(ray) = gfx.renderer.cursor_ray(self.cursor_pos.0, self.cursor_pos.1)
-            && let Some(idx) = self.scene.interaction_at_ray(&self.world, point, ray, false)
             && let Some(target) = crate::interaction::target(&self.world, idx, &std::collections::HashMap::new())
         {
             if let Some(cmd) = self.interactions.hover_request(target) {
@@ -4240,6 +4249,7 @@ impl App {
             glow_alpha: lists.glow_alpha.len(),
             jobs: st.jobs,
             geom_pending: st.geom_pending,
+            sync_backlog: if in_world { st.sync_backlog } else { 0 },
         };
         let parts = std::mem::take(&mut self.scene.parts);
         self.frame_profile.end_frame(&self.last_render, &counts, &parts);
