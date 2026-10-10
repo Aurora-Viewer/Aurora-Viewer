@@ -704,6 +704,7 @@ mod tests {
                             &Facts {
                                 agent: Uuid::nil(),
                                 worn: HashSet::new(),
+                                worn_labels: Default::default(),
                                 points: Vec::new(),
                                 appearance_busy: false,
                                 names: Default::default(),
@@ -853,6 +854,7 @@ mod tests {
             let facts = Facts {
                 agent: Uuid::nil(),
                 worn: if detach { ids.iter().copied().collect() } else { HashSet::new() },
+                worn_labels: Default::default(),
                 points: Vec::new(),
                 appearance_busy: false,
                 names: Default::default(),
