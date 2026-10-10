@@ -202,6 +202,25 @@ pub struct Jobs {
     /// (`par_iter` of culling and poses): a frame never waits behind a
     /// JPEG 2000 decode or a disk read.
     pool: Arc<rayon::ThreadPool>,
+    /// What the main thread hands over to be freed (`discard`).
+    trash: Sender<Box<dyn Send>>,
+}
+
+/// The thread that frees what `Jobs::discard` receives, until every `Jobs`
+/// is gone. If it cannot start, `discard` frees in place.
+fn start_trash_thread() -> Sender<Box<dyn Send>> {
+    let (tx, rx) = crossbeam_channel::unbounded::<Box<dyn Send>>();
+    // (normal priority: behind the decode jobs it could fall behind what the
+    // main thread hands over)
+    let spawned = std::thread::Builder::new().name("aurora-trash".into()).spawn(move || {
+        for garbage in rx {
+            drop(garbage);
+        }
+    });
+    if let Err(e) = spawned {
+        log::warn!("trash thread: {e}; freeing on the calling thread");
+    }
+    tx
 }
 
 impl Jobs {
@@ -224,6 +243,7 @@ impl Jobs {
                 tx,
                 in_flight: Arc::new(AtomicUsize::new(0)),
                 pool,
+                trash: start_trash_thread(),
             },
             rx,
         )
@@ -260,8 +280,49 @@ impl Jobs {
         });
     }
 
+    /// Free `value` on the trash thread. Releasing decoded pixels, J2C data
+    /// or picking triangles on the main thread costs it far more than the
+    /// work itself while the jobs allocate on every core: the heap
+    /// serializes large blocks, so a handful of frees of 16–256 KB waited
+    /// 1–3 ms behind them (measured in `TextureStreamer::upload`, where the
+    /// time budget could not see it). A thread of its own rather than the
+    /// pool: behind a long queue of jobs the garbage would pile up.
+    pub fn discard<T: Send + 'static>(&self, value: T) {
+        // (without the thread, the value comes back in the error and is
+        // freed here, as before)
+        let _ = self.trash.send(Box::new(value));
+    }
+
     pub fn pending(&self) -> usize {
         self.in_flight.load(Ordering::Relaxed)
+    }
+}
+
+/// Values to free off the main thread, gathered over a step and handed to
+/// the trash thread in one go ([`Jobs::discard`]).
+pub struct Trash<T: Send + 'static>(Vec<T>);
+
+impl<T: Send + 'static> Default for Trash<T> {
+    fn default() -> Self {
+        Trash(Vec::new())
+    }
+}
+
+impl<T: Send + 'static> Trash<T> {
+    pub fn push(&mut self, value: T) {
+        self.0.push(value);
+    }
+
+    #[cfg(test)]
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Hand what was gathered to the trash thread (nothing when empty).
+    pub fn empty(&mut self, jobs: &Jobs) {
+        if !self.0.is_empty() {
+            jobs.discard(std::mem::take(&mut self.0));
+        }
     }
 }
 
@@ -436,5 +497,34 @@ mod tests {
     fn rgba_expand() {
         assert_eq!(to_rgba(1, &[10, 20], 2), vec![10, 10, 10, 255, 20, 20, 20, 255]);
         assert_eq!(to_rgba(3, &[1, 2, 3], 1), vec![1, 2, 3, 255]);
+    }
+
+    /// Tells on which thread it is dropped.
+    struct Probe(std::sync::mpsc::Sender<std::thread::ThreadId>);
+
+    impl Drop for Probe {
+        fn drop(&mut self) {
+            let _ = self.0.send(std::thread::current().id());
+        }
+    }
+
+    #[test]
+    fn discarded_values_are_freed_on_another_thread() {
+        let (jobs, _results) = Jobs::new();
+        let (tx, rx) = std::sync::mpsc::channel();
+        // one value, then a gathered batch
+        jobs.discard(Probe(tx.clone()));
+        let mut trash = Trash::default();
+        trash.empty(&jobs);
+        trash.push(Probe(tx.clone()));
+        trash.push(Probe(tx));
+        assert_eq!(trash.len(), 2);
+        trash.empty(&jobs);
+        assert_eq!(trash.len(), 0);
+        let here = std::thread::current().id();
+        for _ in 0..3 {
+            let dropped_on = rx.recv_timeout(std::time::Duration::from_secs(10)).expect("value freed");
+            assert_ne!(dropped_on, here);
+        }
     }
 }
