@@ -16,6 +16,7 @@ use crate::gpu_cull::{
 };
 use crate::textures::{MipLevel, TextureTable};
 use crate::types::*;
+use crate::upload::{StagedTexture, StagingPool, UploadQueue};
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3, Vec4};
 use std::sync::Arc;
@@ -841,6 +842,9 @@ pub struct Renderer {
     surface_srgb: bool,
     pub info: GpuInfo,
     pub geometry: GeometryArena,
+    /// Copies of the streamed data staged by background jobs (upload.rs),
+    /// submitted first in the frame's submit.
+    pub uploads: UploadQueue,
     pub records: RecordStore,
     pub textures: TextureTable,
     pub egui: egui_wgpu::Renderer,
@@ -1811,6 +1815,7 @@ impl Renderer {
 
         let textures = TextureTable::new(&device, &queue, max_textures, 8);
         let geometry = GeometryArena::new(&device, alim.max_buffer_size.min(1 << 31));
+        let uploads = UploadQueue::new(&device);
         let records = RecordStore::new(&device);
 
         let mk_frame_buffer = |label| {
@@ -2033,6 +2038,7 @@ impl Renderer {
             surface_srgb,
             info,
             geometry,
+            uploads,
             records,
             textures,
             egui,
@@ -3278,11 +3284,13 @@ impl Renderer {
     // ------------------------------------------------------------ resources
 
     pub fn upload_mesh(&mut self, vertices: &[Vertex], indices: &[u16]) -> Option<MeshAlloc> {
-        self.geometry.alloc(&self.device, &self.queue, vertices, None, indices)
+        self.geometry
+            .alloc(&self.device, &self.queue, &mut self.uploads, vertices, None, indices)
     }
 
     pub fn upload_skinned_mesh(&mut self, vertices: &[Vertex], skin: &[SkinVertex], indices: &[u16]) -> Option<MeshAlloc> {
-        self.geometry.alloc(&self.device, &self.queue, vertices, Some(skin), indices)
+        self.geometry
+            .alloc(&self.device, &self.queue, &mut self.uploads, vertices, Some(skin), indices)
     }
 
     pub fn free_mesh(&mut self, m: MeshAlloc) {
@@ -3295,6 +3303,24 @@ impl Renderer {
 
     pub fn replace_texture(&mut self, slot: u32, mips: &[MipLevel]) -> bool {
         self.textures.replace(&self.device, &self.queue, slot, mips)
+    }
+
+    /// Staging memory shared with the background jobs (upload.rs).
+    pub fn staging_pool(&self) -> Arc<StagingPool> {
+        self.uploads.pool().clone()
+    }
+
+    /// Once a frame before the streamed copies: what the jobs staged so far
+    /// becomes copyable as soon as they are done writing.
+    pub fn prepare_uploads(&self) {
+        self.uploads.prepare();
+    }
+
+    /// Replace a slot's texels with a mip chain staged by a background job
+    /// (`staged.data.ready()` must hold): the main thread only records the
+    /// copies. False when refused (size), as `replace_texture`.
+    pub fn replace_texture_staged(&mut self, slot: u32, staged: &StagedTexture) -> bool {
+        self.textures.replace_staged(&self.device, &mut self.uploads, slot, staged)
     }
 
     /// Overwrite part of a texture's level 0 in place (media frames).
@@ -3500,7 +3526,9 @@ impl Renderer {
             );
             self.records_generation = self.records.generation;
         }
-        self.textures.maintain(&self.device, &self.queue, false);
+        self.textures.maintain(&self.device, &self.queue, &mut self.uploads, false);
+        // streamed textures and geometry: copied before every pass
+        let upload_cmds = self.uploads.finish();
         prof.push(("resources", Instant::now()));
 
         // one texture animation time for every pass of the frame
@@ -4642,7 +4670,9 @@ impl Renderer {
             }
         }
         prof.push(("finish", Instant::now()));
-        self.queue.submit(extra_cmds);
+        self.queue.submit(upload_cmds.into_iter().chain(extra_cmds));
+        // staging chunks whose copies are now submitted are mapped again
+        self.uploads.recycle();
         if let Some((buf, w, h, row)) = capture {
             self.capture_request = false;
             self.capture_scene = false;

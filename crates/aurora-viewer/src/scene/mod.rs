@@ -2618,6 +2618,9 @@ impl Scene {
     pub fn stream(&mut self, renderer: &mut Renderer, net: &NetClient, world: &World, texture_budget: u64) {
         use crate::frame_profile::Part;
         let t = Instant::now();
+        if self.textures.staging.is_none() {
+            self.textures.staging = Some(renderer.staging_pool());
+        }
         let va = world.viewer_asset_url();
         let va = va.as_deref();
         self.textures.update(&self.jobs, &net.fetcher, va);
@@ -2639,7 +2642,7 @@ impl Scene {
         }
         let t = self.parts.lap(Part::Skin, t);
         let pages_before = renderer.textures.page_create_ms();
-        self.textures.upload(renderer, 24 * 1024 * 1024);
+        self.textures.upload(renderer, textures::UploadBudget::default());
         self.parts.add(Part::Pages, renderer.textures.page_create_ms() - pages_before);
         let t = self.parts.lap(Part::Upload, t);
         self.textures.maintain(renderer, &self.jobs, texture_budget);
@@ -2651,12 +2654,14 @@ impl Scene {
             let (lm_ready, lm_wait, lm_unknown) = self.legacy_mats.counts();
             let (gm_ready, gm_wait, gm_missing) = self.materials.counts();
             log::info!(
-                "streaming: {} objects, meshes {ready} ready / {fetching} downloading / {failed} failed, textures {}/{} ({} downloading, {} failing), legacy materials {lm_ready} ready / {lm_wait} pending / {lm_unknown} unknown, glTF materials {gm_ready} ready / {gm_wait} pending / {gm_missing} missing, viewer asset cap {}",
+                "streaming: {} objects, meshes {ready} ready / {fetching} downloading / {failed} failed, textures {}/{} ({} downloading, {} failing, uploads {} staged / {} direct), legacy materials {lm_ready} ready / {lm_wait} pending / {lm_unknown} unknown, glTF materials {gm_ready} ready / {gm_wait} pending / {gm_missing} missing, viewer asset cap {}",
                 world.objects.len(),
                 t.loaded,
                 t.total,
                 t.fetching,
                 t.failing,
+                t.uploads_staged,
+                t.uploads_direct,
                 if va.is_some() { "ok" } else { "MISSING" }
             );
             // textures in use that never loaded (they show the placeholder)

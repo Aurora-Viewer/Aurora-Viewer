@@ -18,6 +18,7 @@
 //! the standalone texture did, and is sampled with the same sampler and the
 //! same implicit derivatives.
 
+use crate::upload::{StagedTexture, UploadQueue};
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 use std::num::{NonZeroU32, NonZeroU64};
@@ -94,22 +95,26 @@ fn level_dim(size: u32, level: u32) -> u32 {
 /// data long enough), as the standalone textures did. A short level 0 is
 /// refused: in a shared page its layer would show the previous texels.
 fn page_key(mips: &[MipLevel], max_dim: u32) -> Option<PageKey> {
-    let first = mips.first()?;
-    let (w, h) = (first.width, first.height);
-    if w == 0 || h == 0 || w > max_dim || h > max_dim {
+    chain_key(
+        mips.iter()
+            .map(|m| (m.width, m.height, m.data.len() >= m.width as usize * m.height as usize * 4)),
+        max_dim,
+    )
+}
+
+/// Page key of a chain given as (width, height, data complete) per level.
+fn chain_key(mut levels: impl Iterator<Item = (u32, u32, bool)>, max_dim: u32) -> Option<PageKey> {
+    let (w, h, complete) = levels.next()?;
+    if w == 0 || h == 0 || w > max_dim || h > max_dim || !complete {
         return None;
     }
     // a longer chain is invalid for the device (1×1 is the last level)
     let max_levels = 32 - w.max(h).leading_zeros();
-    let count = mips
-        .iter()
-        .zip(0..max_levels)
-        .take_while(|(m, i)| {
-            let (ew, eh) = (level_dim(w, *i), level_dim(h, *i));
-            m.width == ew && m.height == eh && m.data.len() >= ew as usize * eh as usize * 4
-        })
+    let count = 1 + levels
+        .zip(1..max_levels)
+        .take_while(|&((lw, lh, complete), i)| lw == level_dim(w, i) && lh == level_dim(h, i) && complete)
         .count() as u32;
-    (count > 0).then_some(PageKey {
+    Some(PageKey {
         width: w,
         height: h,
         mips: count,
@@ -442,26 +447,47 @@ impl PageStore {
     }
 
     fn replace(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, slot: u32, mips: &[MipLevel]) -> bool {
-        if slot < RESERVED || slot as usize >= self.slots.len() {
-            return false;
-        }
         let Some(key) = page_key(mips, self.max_dim) else {
             return false;
         };
-        // Same size: overwrite the layer in place. Queue order keeps the
-        // frames already submitted on the old texels.
-        if let Some(s) = &self.slots[slot as usize]
-            && s.key == key
-        {
-            self.upload(queue, s.page, s.layer, mips, key.mips);
-            return true;
-        }
-        // Higher resolution: a layer of the page of the new size, then the
-        // old layer is freed.
-        let Some((page, layer)) = self.place(device, key, slot) else {
+        let Some((page, layer)) = self.target(device, slot, key) else {
             return false;
         };
         self.upload(queue, page, layer, mips, key.mips);
+        true
+    }
+
+    /// Like `replace`, from a mip chain staged by a background job: the
+    /// copies are recorded in the frame's upload encoder.
+    fn replace_staged(&mut self, device: &wgpu::Device, uploads: &mut UploadQueue, slot: u32, staged: &StagedTexture) -> bool {
+        let Some(key) = chain_key(staged.levels.iter().map(|l| (l.width, l.height, true)), self.max_dim) else {
+            return false;
+        };
+        let Some((page, layer)) = self.target(device, slot, key) else {
+            return false;
+        };
+        let Some(p) = self.page(page) else {
+            return false;
+        };
+        uploads.copy_to_layer(device, staged, &p.texture, layer, key.mips);
+        true
+    }
+
+    /// The layer that receives `slot`'s new texels of size `key`. Same size:
+    /// the slot's layer, overwritten in place (queue order keeps the frames
+    /// already submitted on the old texels). Another size (higher
+    /// resolution): a layer of a page of the new size, then the old layer
+    /// is freed.
+    fn target(&mut self, device: &wgpu::Device, slot: u32, key: PageKey) -> Option<(u32, u32)> {
+        if slot < RESERVED || slot as usize >= self.slots.len() {
+            return None;
+        }
+        if let Some(s) = &self.slots[slot as usize]
+            && s.key == key
+        {
+            return Some((s.page, s.layer));
+        }
+        let (page, layer) = self.place(device, key, slot)?;
         match self.slots[slot as usize].replace(Slot { key, page, layer }) {
             Some(old) => {
                 self.release(old.page, old.layer);
@@ -475,7 +501,7 @@ impl PageStore {
         }
         self.bytes += key.layer_bytes();
         self.set_loc(slot, pack(page, layer));
-        true
+        Some((page, layer))
     }
 
     fn free(&mut self, slot: u32) {
@@ -494,7 +520,7 @@ impl PageStore {
 
     /// Empty one sparse page into the other pages of its size (GPU copies of
     /// every level, submitted before the frame that sees the new locations).
-    fn compact(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+    fn compact(&mut self, device: &wgpu::Device, uploads: &mut UploadQueue) {
         if !std::mem::take(&mut self.freed) {
             return;
         }
@@ -518,9 +544,9 @@ impl PageStore {
         }) else {
             return;
         };
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("texture page compaction"),
-        });
+        // in the upload encoder: after the copies of this frame's uploads
+        // (a moved layer may just have been written), before the passes
+        let encoder = uploads.encoder(device);
         for (src_layer, slot) in moves {
             let Some((dst, dst_layer)) = self.find_layer(key, slot, Some(src)) else {
                 break;
@@ -556,7 +582,6 @@ impl PageStore {
             // the last one drops the page; the encoder keeps it alive
             self.release(src, src_layer);
         }
-        queue.submit(std::iter::once(encoder.finish()));
         // other pages may qualify: look again at the next interval
         self.freed = true;
     }
@@ -766,6 +791,12 @@ impl TextureTable {
         self.store.replace(device, queue, slot, mips)
     }
 
+    /// Replace the contents of a slot from a staged mip chain (its region
+    /// must be ready); the copies go to the frame's upload encoder.
+    pub fn replace_staged(&mut self, device: &wgpu::Device, uploads: &mut UploadQueue, slot: u32, staged: &StagedTexture) -> bool {
+        self.store.replace_staged(device, uploads, slot, staged)
+    }
+
     /// Size of the texture in a slot (level 0).
     pub fn size_of(&self, slot: u32) -> Option<(u32, u32)> {
         let s = self.store.slots.get(slot as usize)?.as_ref()?;
@@ -841,10 +872,10 @@ impl TextureTable {
     /// Once a frame before drawing: compact (throttled), upload the changed
     /// locations, and rebuild the bind group when pages changed (at once for
     /// a new page, throttled for dropped ones).
-    pub fn maintain(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, force: bool) {
+    pub fn maintain(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, uploads: &mut UploadQueue, force: bool) {
         if self.last_compact.elapsed() >= COMPACT_INTERVAL {
             self.last_compact = Instant::now();
-            self.store.compact(device, queue);
+            self.store.compact(device, uploads);
         }
         if let Some((lo, hi)) = self.store.loc_dirty.take() {
             queue.write_buffer(&self.loc_buffer, lo as u64 * 4, bytemuck::cast_slice(&self.store.loc[lo..hi]));
@@ -1247,7 +1278,9 @@ mod tests {
         }
         let before = store.page(3).map(|p| p.layers.used());
         assert!(before.is_some_and(|u| u * 4 <= 256), "{before:?}");
-        store.compact(&device, &queue);
+        let mut uploads = UploadQueue::new(&device);
+        store.compact(&device, &mut uploads);
+        uploads.flush(&queue, None);
         assert!(store.page(3).is_none(), "page 3 emptied and dropped");
         assert!(store.dropped);
         for &(slot, i, size) in &live {
@@ -1275,6 +1308,7 @@ mod tests {
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).expect("GPU device");
         // small pages so that sizes spread over several pages and compact
         let mut store = PageStore::new(4096, 512, 16, 4096);
+        let mut uploads = UploadQueue::new(&device);
         for _ in 0..RESERVED {
             store.create(
                 &device,
@@ -1336,7 +1370,10 @@ mod tests {
                     store.free(slot);
                     live.remove(&slot);
                 }
-                _ => store.compact(&device, &queue),
+                _ => {
+                    store.compact(&device, &mut uploads);
+                    uploads.flush(&queue, None);
+                }
             }
             if step % 250 == 249 {
                 for (&slot, &(id, (w, h))) in &live {
@@ -1384,6 +1421,7 @@ mod tests {
         .expect("GPU device");
         const SLOTS: u32 = 512;
         let mut table = TextureTable::new(&device, &queue, SLOTS, 8);
+        let mut uploads = UploadQueue::new(&device);
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: None,
             source: wgpu::ShaderSource::Wgsl(
@@ -1563,7 +1601,8 @@ mod tests {
                 // let the throttled compaction run this frame
                 table.last_compact = Instant::now() - COMPACT_INTERVAL;
             }
-            table.maintain(&device, &queue, false);
+            table.maintain(&device, &queue, &mut uploads, false);
+            uploads.flush(&queue, None);
             let px = sample_all(&table);
             for (&slot, &(id, (w, h))) in &live {
                 let at = |row: u32| &px[(row * SLOTS + slot) as usize * 4..][..4];

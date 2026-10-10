@@ -46,7 +46,10 @@ pub enum JobResult {
     Texture {
         id: Uuid,
         discard: u8,
+        /// Levels kept in memory (all of them unless `staged`).
         mips: Vec<(u32, u32, Vec<u8>)>,
+        /// The chain written into the renderer's staging memory by the job.
+        staged: Option<aurora_render::StagedTexture>,
         alpha: AlphaKind,
         /// The image has an alpha channel (2 or 4 components), whatever its values.
         alpha_channel: bool,
@@ -72,6 +75,24 @@ pub enum JobResult {
     Done,
 }
 
+/// Background jobs give way to the frame: while decodes keep every core
+/// busy (arrival in a region), the main thread, its `par_iter` workers and
+/// the encoder threads would otherwise wait for a core behind them (frames
+/// of 2.4 ms stretched to 5–8 ms in AURORA_DEMO_STREAM). Idle cores still go
+/// to the jobs, so loading is not slower.
+fn below_normal_priority() {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::System::Threading::{GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_BELOW_NORMAL};
+        // SAFETY: `GetCurrentThread` returns the calling thread's
+        // pseudo-handle, always valid for it; `SetThreadPriority` only
+        // reads that handle and an integer.
+        unsafe {
+            SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct Jobs {
     tx: Sender<JobResult>,
@@ -89,6 +110,7 @@ impl Jobs {
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(threads.saturating_sub(2).max(1))
             .thread_name(|i| format!("aurora-jobs-{i}"))
+            .start_handler(|_| below_normal_priority())
             .build()
             .map(Arc::new)
             .unwrap_or_else(|e| {

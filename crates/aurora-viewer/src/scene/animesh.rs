@@ -273,6 +273,7 @@ impl super::Scene {
             id: crate::demo::ANIMESH_TEXTURE,
             discard: 0,
             mips: vec![(32, 32, rgba)],
+            staged: None,
             alpha: super::jobs::AlphaKind::Blend,
             alpha_channel: true,
             sculpt: None,

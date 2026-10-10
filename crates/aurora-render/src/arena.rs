@@ -3,6 +3,7 @@
 
 use crate::gpu_cull::{CullFace, GpuTable};
 use crate::types::{DrawRecord, SkinVertex, Vertex};
+use crate::upload::UploadQueue;
 use std::collections::BTreeMap;
 
 /// First-fit range allocator with coalescing (units are elements).
@@ -140,7 +141,7 @@ impl GeometryArena {
         (self.vertices.used() as u64, self.indices.used() as u64)
     }
 
-    fn grow_vertices(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, need: u32) -> bool {
+    fn grow_vertices(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, uploads: &mut UploadQueue, need: u32) -> bool {
         let old = self.vertices.capacity();
         let mut new_cap = old.saturating_mul(2);
         while new_cap - old < need {
@@ -157,7 +158,8 @@ impl GeometryArena {
         let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("grow vb") });
         enc.copy_buffer_to_buffer(&self.vertex_buffer, 0, &nb, 0, old as u64 * VERTEX_SIZE);
         enc.copy_buffer_to_buffer(&self.skin_buffer, 0, &ns, 0, old as u64 * SKIN_SIZE);
-        queue.submit([enc.finish()]);
+        // the copies already recorded into the old buffers come first
+        uploads.flush(queue, Some(enc.finish()));
         self.vertex_buffer = nb;
         self.skin_buffer = ns;
         self.vertices.grow(new_cap);
@@ -165,7 +167,7 @@ impl GeometryArena {
         true
     }
 
-    fn grow_indices(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, need: u32) -> bool {
+    fn grow_indices(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, uploads: &mut UploadQueue, need: u32) -> bool {
         let old = self.indices.capacity();
         let mut new_cap = old.saturating_mul(2);
         while new_cap - old < need {
@@ -180,7 +182,7 @@ impl GeometryArena {
         let nb = Self::make(device, "index arena", new_cap as u64 * 2, wgpu::BufferUsages::INDEX);
         let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("grow ib") });
         enc.copy_buffer_to_buffer(&self.index_buffer, 0, &nb, 0, old as u64 * 2);
-        queue.submit([enc.finish()]);
+        uploads.flush(queue, Some(enc.finish()));
         self.index_buffer = nb;
         self.indices.grow(new_cap);
         log::info!("index arena grown to {} MB", new_cap as u64 * 2 / (1024 * 1024));
@@ -192,6 +194,7 @@ impl GeometryArena {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
+        uploads: &mut UploadQueue,
         vertices: &[Vertex],
         skin: Option<&[SkinVertex]>,
         indices: &[u16],
@@ -205,7 +208,7 @@ impl GeometryArena {
         let voff = match self.vertices.alloc(vcount) {
             Some(o) => o,
             None => {
-                if !self.grow_vertices(device, queue, vcount) {
+                if !self.grow_vertices(device, queue, uploads, vcount) {
                     return None;
                 }
                 self.vertices.alloc(vcount)?
@@ -214,7 +217,7 @@ impl GeometryArena {
         let ioff = match self.indices.alloc(ialloc) {
             Some(o) => o,
             None => {
-                if !self.grow_indices(device, queue, ialloc) {
+                if !self.grow_indices(device, queue, uploads, ialloc) {
                     self.vertices.free(voff, vcount);
                     return None;
                 }

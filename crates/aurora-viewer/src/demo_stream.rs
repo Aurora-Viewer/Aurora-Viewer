@@ -12,12 +12,12 @@
 //! not slow loading down.
 
 use super::{HANDLE, height, prim, shape, te};
-use crate::scene::jobs::{AlphaKind, JobResult, Jobs};
-use crate::scene::textures::{TexSource, TextureStreamer};
+use crate::scene::jobs::{AlphaKind, Jobs};
+use crate::scene::textures::{TexSource, TextureStreamer, texture_result};
 use aurora_net::NetEvent;
 use aurora_prim::ExtraParams;
 use aurora_prim::params::*;
-use aurora_render::Renderer;
+use aurora_render::{Renderer, StagingPool};
 use glam::{Quat, Vec3};
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -123,15 +123,17 @@ fn wave_events(n: u32, first: u32, count: u32) -> Vec<NetEvent> {
 }
 
 /// Decode of texture `i` at a discard level, on the background pool: it
-/// comes back as a finished job, like a JPEG 2000 decode.
-fn spawn_decode(jobs: &Jobs, i: u32, discard: u8) {
-    jobs.spawn(move || JobResult::Texture {
-        id: texture(i),
-        discard,
-        mips: texture_mips(i, discard as u32),
-        alpha: AlphaKind::Opaque,
-        alpha_channel: false,
-        sculpt: None,
+/// comes back as a finished job, staged like a JPEG 2000 decode.
+fn spawn_decode(jobs: &Jobs, pool: Option<Arc<StagingPool>>, i: u32, discard: u8) {
+    jobs.spawn(move || {
+        texture_result(
+            texture(i),
+            discard,
+            texture_mips(i, discard as u32),
+            (AlphaKind::Opaque, false),
+            None,
+            pool.as_deref(),
+        )
     });
 }
 
@@ -178,7 +180,7 @@ impl StreamDemo {
             // (never evicted: the scenario holds them)
             for i in self.next..self.next + count {
                 let _ = textures.acquire(renderer, texture(i), TexSource::Asset);
-                spawn_decode(jobs, i, 2);
+                spawn_decode(jobs, textures.staging.clone(), i, 2);
                 self.upgrades.push_back((now + UPGRADE_AFTER, i));
             }
             for ev in wave_events(self.n, self.next, count) {
@@ -195,7 +197,7 @@ impl StreamDemo {
         }
         while self.upgrades.front().is_some_and(|(due, _)| *due <= now) {
             if let Some((_, i)) = self.upgrades.pop_front() {
-                spawn_decode(jobs, i, 0);
+                spawn_decode(jobs, textures.staging.clone(), i, 0);
             }
         }
         if self.next == self.n && self.upgrades.is_empty() && frame.is_multiple_of(10) {
@@ -203,9 +205,11 @@ impl StreamDemo {
             if full == self.n as usize && geom_pending == 0 {
                 self.loaded_logged = true;
                 log::info!(
-                    "demo stream: fully loaded in {:.2} s ({} textures at full resolution, geometry built)",
+                    "demo stream: fully loaded in {:.2} s ({} textures at full resolution, geometry built; uploads {} staged / {} direct)",
                     now.duration_since(started).as_secs_f32(),
-                    self.n
+                    self.n,
+                    textures.stats.uploads_staged,
+                    textures.stats.uploads_direct,
                 );
             }
         }

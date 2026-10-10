@@ -1,13 +1,20 @@
 //! Texture streaming: progressive JPEG2000 fetch by byte ranges, disk cache,
 //! parallel decode at the discard level matching on-screen size, bindless
 //! slot management and GPU upload budgeting.
+//!
+//! Uploads keep the frame smooth (Firestorm creates its GL textures within
+//! 2–5 ms a frame, LLViewerTextureList::updateImagesCreateTextures; here the
+//! budget is ~1 ms): the decode job also writes the mip chain into mapped
+//! staging memory (aurora_render::upload), so the main thread only records
+//! the GPU copies, the most visible textures first (first texels before
+//! upgrades, then by on-screen size), within a time and a byte budget.
 
 use super::jobs::{AlphaKind, JobResult, Jobs, SculptMap, classify_alpha, to_rgba};
 use aurora_assets::J2kInfo;
 use aurora_net::fetch::ByteRange;
 use aurora_net::{FetchRequest, FetchResult, Fetcher};
-use aurora_render::{MipLevel, Renderer, build_mips};
-use std::collections::{HashMap, VecDeque};
+use aurora_render::{MipLevel, Renderer, StagedTexture, StagingPool, build_mips};
+use std::collections::{BinaryHeap, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -79,7 +86,9 @@ struct Entry {
     slot: u32,
     refs: u32,
     source: TexSource,
-    data: Vec<u8>,
+    /// The J2C bytes so far; shared with decode jobs and cache writes
+    /// (cloned only if a job still holds it when more bytes arrive).
+    data: Arc<Vec<u8>>,
     complete: bool,
     info: Option<J2kInfo>,
     decoded: Option<u8>,
@@ -105,9 +114,78 @@ struct Entry {
 struct PendingUpload {
     id: Uuid,
     discard: u8,
+    /// Staged by the decode job: only the copies are left to record.
+    staged: Option<StagedTexture>,
+    /// The levels in memory: the whole chain when not staged (written by
+    /// the main thread), else only those up to 256 px (UI copies).
     mips: Vec<(u32, u32, Vec<u8>)>,
     alpha: AlphaKind,
     alpha_channel: bool,
+    priority: UploadPriority,
+}
+
+/// Upload order: textures still showing their placeholder first, then the
+/// largest on screen (Firestorm's decode priority is the on-screen pixel
+/// area), then the oldest.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct UploadPriority {
+    pub first: bool,
+    pub pixels: f32,
+    pub seq: u64,
+}
+
+impl Eq for UploadPriority {}
+
+impl Ord for UploadPriority {
+    fn cmp(&self, o: &Self) -> std::cmp::Ordering {
+        self.first
+            .cmp(&o.first)
+            .then(self.pixels.total_cmp(&o.pixels))
+            .then(o.seq.cmp(&self.seq))
+    }
+}
+
+impl PartialOrd for UploadPriority {
+    fn partial_cmp(&self, o: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(o))
+    }
+}
+
+impl PartialEq for PendingUpload {
+    fn eq(&self, o: &Self) -> bool {
+        self.priority == o.priority
+    }
+}
+
+impl Eq for PendingUpload {}
+
+impl Ord for PendingUpload {
+    fn cmp(&self, o: &Self) -> std::cmp::Ordering {
+        self.priority.cmp(&o.priority)
+    }
+}
+
+impl PartialOrd for PendingUpload {
+    fn partial_cmp(&self, o: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(o))
+    }
+}
+
+/// What one frame may spend on uploads: main-thread time, and bytes copied
+/// by the GPU (a copy is ~1 ms of GPU per 24 MB).
+#[derive(Clone, Copy, Debug)]
+pub struct UploadBudget {
+    pub time: Duration,
+    pub bytes: u64,
+}
+
+impl Default for UploadBudget {
+    fn default() -> Self {
+        UploadBudget {
+            time: Duration::from_micros(1000),
+            bytes: 24 << 20,
+        }
+    }
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -118,6 +196,11 @@ pub struct TextureStats {
     pub decoding: usize,
     pub pending_upload: usize,
     pub uploaded_bytes_frame: u64,
+    pub uploads_frame: usize,
+    /// Uploads since the start: staged by the decode job (the main thread
+    /// recorded copies) and direct (written by the main thread).
+    pub uploads_staged: u64,
+    pub uploads_direct: u64,
     /// In use, never loaded, and the last fetch failed.
     pub failing: usize,
 }
@@ -138,7 +221,13 @@ pub struct TextureStreamer {
     entries: HashMap<Uuid, Entry>,
     by_fetch_key: HashMap<u64, Uuid>,
     next_key: u64,
-    uploads: VecDeque<PendingUpload>,
+    uploads: BinaryHeap<PendingUpload>,
+    /// Finest discard level pending upload, per texture: a coarser one
+    /// still in the queue is skipped.
+    best_pending: HashMap<Uuid, u8>,
+    upload_seq: u64,
+    /// Staging memory of the renderer, given to the decode jobs.
+    pub staging: Option<Arc<StagingPool>>,
     /// Alpha class by bindless slot (fast lookup during list building).
     pub alpha_by_slot: Vec<AlphaKind>,
     /// Per slot: the decoded image has an alpha channel (LL sends such
@@ -171,7 +260,10 @@ impl TextureStreamer {
             entries: HashMap::new(),
             by_fetch_key: HashMap::new(),
             next_key: 1,
-            uploads: VecDeque::new(),
+            uploads: BinaryHeap::new(),
+            best_pending: HashMap::new(),
+            upload_seq: 0,
+            staging: None,
             // built-in slots: the transparent texture has no visible pixel
             alpha_by_slot: {
                 let mut a = vec![AlphaKind::Opaque; 16];
@@ -334,7 +426,7 @@ impl TextureStreamer {
                 slot,
                 refs: 1,
                 source,
-                data: Vec::new(),
+                data: Arc::default(),
                 complete: false,
                 info: None,
                 decoded: None,
@@ -493,6 +585,7 @@ impl TextureStreamer {
             cache_dir,
             decodes,
             max_decodes,
+            staging,
             ..
         } = self;
         for (&id, e) in entries.iter_mut() {
@@ -572,7 +665,8 @@ impl TextureStreamer {
                 *decodes += 1;
                 let data = e.data.clone();
                 let keep = e.keep_pixels;
-                jobs.spawn(move || decode_job(id, data, discard, keep));
+                let pool = staging.clone();
+                jobs.spawn(move || decode_job(id, &data, discard, keep, pool.as_deref()));
                 continue;
             }
             // 2. fetch more
@@ -626,12 +720,12 @@ impl TextureStreamer {
                 }
             }
             Ok(bytes) if r.status != 206 => {
-                e.data = bytes;
+                e.data = Arc::new(bytes);
                 e.complete = true;
                 Ok(())
             }
             Ok(bytes) => {
-                if merge_reply(&mut e.data, r.offset, &bytes) {
+                if merge_reply(Arc::make_mut(&mut e.data), r.offset, &bytes) {
                     e.complete |= r.complete;
                     Ok(())
                 } else {
@@ -686,7 +780,7 @@ impl TextureStreamer {
                         && d.len() > e.data.len()
                     {
                         e.info = aurora_assets::j2k_info(&d);
-                        e.data = d;
+                        e.data = Arc::new(d);
                         e.complete = complete;
                     }
                 }
@@ -695,24 +789,36 @@ impl TextureStreamer {
                 id,
                 discard,
                 mips,
+                staged,
                 alpha,
                 alpha_channel,
                 sculpt,
             } => {
                 self.decodes = self.decodes.saturating_sub(1);
-                if let Some(e) = self.entries.get_mut(&id) {
-                    e.decoding = false;
-                    if sculpt.is_some() {
-                        e.sculpt = sculpt;
-                        self.generation += 1;
-                    }
+                let Some(e) = self.entries.get_mut(&id) else {
+                    return;
+                };
+                e.decoding = false;
+                if sculpt.is_some() {
+                    e.sculpt = sculpt;
+                    self.generation += 1;
                 }
-                self.uploads.push_back(PendingUpload {
+                self.upload_seq += 1;
+                let priority = UploadPriority {
+                    first: e.decoded.is_none(),
+                    pixels: e.need_px,
+                    seq: self.upload_seq,
+                };
+                let best = self.best_pending.entry(id).or_insert(discard);
+                *best = (*best).min(discard);
+                self.uploads.push(PendingUpload {
                     id,
                     discard,
+                    staged,
                     mips,
                     alpha,
                     alpha_channel,
+                    priority,
                 });
             }
             JobResult::TextureFailed { id } => {
@@ -722,7 +828,7 @@ impl TextureStreamer {
                     e.failures += 1;
                     // Corrupt cached data: drop it and refetch.
                     if e.failures >= 2 {
-                        e.data.clear();
+                        e.data = Arc::default();
                         e.complete = false;
                         e.info = None;
                         let _ = std::fs::remove_file(self.cache_dir.join("tex").join(format!("{id}.j2c")));
@@ -743,79 +849,122 @@ impl TextureStreamer {
             let id = crate::demo::stress_texture(i);
             let _ = self.acquire(renderer, id, TexSource::Asset);
             for discard in [2, 0] {
-                self.on_job(JobResult::Texture {
+                self.on_job(texture_result(
                     id,
-                    discard: discard as u8,
-                    mips: crate::demo::stress_texture_mips(i, discard),
-                    alpha: AlphaKind::Opaque,
-                    alpha_channel: false,
-                    sculpt: None,
-                });
+                    discard as u8,
+                    crate::demo::stress_texture_mips(i, discard),
+                    (AlphaKind::Opaque, false),
+                    None,
+                    self.staging.as_deref(),
+                ));
             }
         }
     }
 
-    /// Upload decoded textures within a byte budget.
-    pub fn upload(&mut self, renderer: &mut Renderer, budget_bytes: u64) {
+    /// Send decoded textures to the GPU, most visible first, within the
+    /// frame's budget (at least one a frame, so a slow one still goes).
+    pub fn upload(&mut self, renderer: &mut Renderer, budget: UploadBudget) {
+        renderer.prepare_uploads();
+        let t0 = Instant::now();
         let mut spent = 0u64;
-        while spent < budget_bytes {
-            let Some(u) = self.uploads.pop_front() else {
+        let mut done = 0usize;
+        // staged by a job still writing in the same chunk: next frame
+        let mut waiting = Vec::new();
+        while let Some(u) = self.uploads.pop() {
+            if done > 0 && (spent >= budget.bytes || t0.elapsed() >= budget.time) {
+                self.uploads.push(u);
                 break;
-            };
+            }
             let Some(e) = self.entries.get_mut(&u.id) else {
+                self.best_pending.remove(&u.id);
                 continue;
             };
+            let best = self.best_pending.get(&u.id).copied();
+            if best.is_some_and(|b| b < u.discard) {
+                // a finer level of this texture is on its way
+                continue;
+            }
+            if best == Some(u.discard) {
+                self.best_pending.remove(&u.id);
+            }
             if e.decoded.is_some_and(|d| d <= u.discard) {
                 continue;
             }
-            let levels: Vec<MipLevel> = u
-                .mips
-                .iter()
-                .map(|(w, h, d)| MipLevel {
-                    width: *w,
-                    height: *h,
-                    data: d,
-                })
-                .collect();
-            let accepted = renderer.replace_texture(e.slot, &levels);
+            if u.staged.as_ref().is_some_and(|s| !s.data.ready()) {
+                self.best_pending.insert(u.id, u.discard);
+                waiting.push(u);
+                continue;
+            }
+            let (accepted, level0, levels) = match &u.staged {
+                Some(staged) => (
+                    renderer.replace_texture_staged(e.slot, staged),
+                    staged.levels.first().map(|l| (l.width, l.height)),
+                    staged.levels.len(),
+                ),
+                None => {
+                    let levels: Vec<MipLevel> = u
+                        .mips
+                        .iter()
+                        .map(|(w, h, d)| MipLevel {
+                            width: *w,
+                            height: *h,
+                            data: d,
+                        })
+                        .collect();
+                    (
+                        renderer.replace_texture(e.slot, &levels),
+                        levels.first().map(|l| (l.width, l.height)),
+                        levels.len(),
+                    )
+                }
+            };
+            done += 1;
             if !accepted {
                 // keep the current texels, and do not decode it again in a loop
                 log::warn!(
-                    "texture {}: upload refused by the renderer (slot {}, {} levels, level 0 {:?}, {} bytes)",
+                    "texture {}: upload refused by the renderer (slot {}, {levels} levels, level 0 {level0:?}, staged {})",
                     u.id,
                     e.slot,
-                    levels.len(),
-                    levels.first().map(|l| (l.width, l.height)),
-                    levels.first().map_or(0, |l| l.data.len())
+                    u.staged.is_some(),
                 );
                 e.decoded = Some(u.discard);
                 e.failures += 1;
+                continue;
             }
-            if accepted {
-                spent += u.mips.iter().map(|m| m.2.len() as u64).sum::<u64>();
-                if self.ui_wanted.contains(&u.id) {
-                    // largest level that fits 256 px for the UI copy
-                    if let Some((w, h, d)) = u.mips.iter().find(|m| m.0.max(m.1) <= 256).or(u.mips.last()) {
-                        let better = self.ui_ready.get(&u.id).is_none_or(|r| r.0 < *w);
-                        if better {
-                            self.ui_ready.insert(u.id, (*w, *h, d.clone()));
-                        }
+            spent += match &u.staged {
+                Some(staged) => {
+                    self.stats.uploads_staged += 1;
+                    staged.bytes()
+                }
+                None => {
+                    self.stats.uploads_direct += 1;
+                    u.mips.iter().map(|m| m.2.len() as u64).sum::<u64>()
+                }
+            };
+            if self.ui_wanted.contains(&u.id) {
+                // largest level that fits 256 px for the UI copy
+                if let Some((w, h, d)) = u.mips.iter().find(|m| m.0.max(m.1) <= 256).or(u.mips.last()) {
+                    let better = self.ui_ready.get(&u.id).is_none_or(|r| r.0 < *w);
+                    if better {
+                        self.ui_ready.insert(u.id, (*w, *h, d.clone()));
                     }
                 }
-                e.decoded = Some(u.discard);
-                e.alpha = u.alpha;
-                set_slot_alpha(&mut self.alpha_by_slot, &mut self.generation, e.slot, u.alpha);
-                let slot = e.slot as usize;
-                if slot >= self.alpha_channel_by_slot.len() {
-                    self.alpha_channel_by_slot.resize(slot + 1024, false);
-                }
-                if self.alpha_channel_by_slot[slot] != u.alpha_channel {
-                    self.alpha_channel_by_slot[slot] = u.alpha_channel;
-                    self.generation += 1;
-                }
+            }
+            e.decoded = Some(u.discard);
+            e.alpha = u.alpha;
+            set_slot_alpha(&mut self.alpha_by_slot, &mut self.generation, e.slot, u.alpha);
+            let slot = e.slot as usize;
+            if slot >= self.alpha_channel_by_slot.len() {
+                self.alpha_channel_by_slot.resize(slot + 1024, false);
+            }
+            if self.alpha_channel_by_slot[slot] != u.alpha_channel {
+                self.alpha_channel_by_slot[slot] = u.alpha_channel;
+                self.generation += 1;
             }
         }
+        self.uploads.extend(waiting);
         self.stats.uploaded_bytes_frame = spent;
+        self.stats.uploads_frame = done;
     }
 
     /// Evict unused textures and persist downloaded data.
@@ -869,8 +1018,39 @@ impl TextureStreamer {
     }
 }
 
-fn decode_job(id: Uuid, data: Vec<u8>, discard: u8, keep_pixels: bool) -> JobResult {
-    match aurora_assets::decode_j2k(&data, discard) {
+/// A decoded mip chain as a finished job. When the renderer's staging
+/// memory has room, the job writes the chain there itself (the main thread
+/// then only records the GPU copies) and keeps only the levels up to 256 px
+/// (UI copies); else the whole chain stays in memory for a main-thread
+/// write.
+pub fn texture_result(
+    id: Uuid,
+    discard: u8,
+    mut mips: Vec<(u32, u32, Vec<u8>)>,
+    (alpha, alpha_channel): (AlphaKind, bool),
+    sculpt: Option<Arc<SculptMap>>,
+    pool: Option<&StagingPool>,
+) -> JobResult {
+    let staged = pool.and_then(|pool| {
+        let levels: Vec<(u32, u32, &[u8])> = mips.iter().map(|(w, h, d)| (*w, *h, d.as_slice())).collect();
+        StagedTexture::new(pool, &levels)
+    });
+    if staged.is_some() {
+        mips.retain(|m| m.0.max(m.1) <= 256);
+    }
+    JobResult::Texture {
+        id,
+        discard,
+        mips,
+        staged,
+        alpha,
+        alpha_channel,
+        sculpt,
+    }
+}
+
+fn decode_job(id: Uuid, data: &[u8], discard: u8, keep_pixels: bool, pool: Option<&StagingPool>) -> JobResult {
+    match aurora_assets::decode_j2k(data, discard) {
         Ok(img) => {
             let pixels = (img.width * img.height) as usize;
             let rgba = if img.components == 4 {
@@ -889,14 +1069,7 @@ fn decode_job(id: Uuid, data: Vec<u8>, discard: u8, keep_pixels: bool) -> JobRes
                 })
             });
             let mips = build_mips(img.width, img.height, rgba, 16);
-            JobResult::Texture {
-                id,
-                discard: img.discard,
-                mips,
-                alpha,
-                alpha_channel,
-                sculpt,
-            }
+            texture_result(id, img.discard, mips, (alpha, alpha_channel), sculpt, pool)
         }
         Err(e) => {
             log::debug!("texture {id} decode failed at discard {discard}: {e}");
