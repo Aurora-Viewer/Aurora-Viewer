@@ -1,5 +1,6 @@
 //! Offline HUD fixtures use the same ObjectUpdate and touch path as the grid.
 use super::*;
+use std::time::Instant;
 
 pub const FIRST: u32 = 8231;
 pub const CHILD: u32 = 8240;
@@ -39,7 +40,7 @@ pub fn object(point: u8, active: bool) -> ObjectUpdate {
     o.parent_id = 9000;
     o.state = point.rotate_left(4);
     o.owner_id = DEMO_AGENT;
-    o.update_flags = (1 << 7) | (1 << 5) | (1 << 2);
+    o.update_flags = (1 << 8) | (1 << 7) | (1 << 5) | (1 << 2);
     o.name_values = format!("AttachItemID STRING RW SV {}", o.full_id);
     o
 }
@@ -68,6 +69,72 @@ pub fn events() -> Vec<NetEvent> {
     vec![NetEvent::ObjectUpdates { handle: HANDLE, objects }]
 }
 
+const MAT_DOUBLE_OPAQUE: Uuid = Uuid::from_u128(8260);
+const MAT_DOUBLE_BLEND: Uuid = Uuid::from_u128(8261);
+const MAT_DOUBLE_MASK: Uuid = Uuid::from_u128(8262);
+const MAT_SINGLE_MASK: Uuid = Uuid::from_u128(8263);
+
+/// Front / back / explicitly double-sided panels, also after a half turn.
+/// All other box faces are transparent, as in a folding scripted HUD.
+pub fn face_events(turned: bool) -> Vec<NetEvent> {
+    let mut objects = Vec::new();
+    for row in 0..3 {
+        for col in 0..3 {
+            let id = 8270 + row * 3 + col;
+            let mut o = object(31, false);
+            o.local_id = id;
+            o.full_id = u(id as u128);
+            o.name_values = format!("AttachItemID STRING RW SV {}", o.full_id);
+            o.position = Vec3::new(0.0, 0.33 - col as f32 * 0.33, 0.25 - row as f32 * 0.25);
+            o.scale = Vec3::new(0.012, 0.24, 0.13);
+            o.rotation = Quat::from_rotation_z(if (col != 0) ^ turned { std::f32::consts::PI } else { 0.0 });
+            let kind = ["Opaque", "Translucide", "Masqué"][row as usize];
+            let side = ["Avant", "Arrière", "Double face"][col as usize];
+            o.text = format!("{kind} · {side}");
+            o.texture_entry = Some(te([0.0; 4], 0, true, 0.0));
+            let face = &mut Arc::make_mut(o.texture_entry.as_mut().expect("fixture texture")).faces[4];
+            face.color = [0.35, 0.65, 1.0, if row == 1 { 0.45 } else { 1.0 }];
+            face.texture = TEX_TILES;
+            let mat = match (row, col) {
+                (0, 2) => Some(MAT_DOUBLE_OPAQUE),
+                (1, 2) => Some(MAT_DOUBLE_BLEND),
+                (2, 2) => Some(MAT_DOUBLE_MASK),
+                (2, _) => Some(MAT_SINGLE_MASK),
+                _ => None,
+            };
+            if let Some(mat) = mat {
+                o.extra.render_materials = vec![(4, mat)];
+            }
+            objects.push(o);
+        }
+    }
+    vec![NetEvent::ObjectUpdates { handle: HANDLE, objects }]
+}
+
+pub fn face_materials() -> Vec<(Uuid, aurora_assets::PbrMaterial)> {
+    use aurora_assets::{AlphaMode, PbrMaterial};
+    [
+        (MAT_DOUBLE_OPAQUE, AlphaMode::Opaque, true),
+        (MAT_DOUBLE_BLEND, AlphaMode::Blend, true),
+        (MAT_DOUBLE_MASK, AlphaMode::Mask, true),
+        (MAT_SINGLE_MASK, AlphaMode::Mask, false),
+    ]
+    .into_iter()
+    .map(|(id, alpha_mode, double_sided)| {
+        (
+            id,
+            PbrMaterial {
+                base_color_texture: Some(TEX_TILES),
+                base_color_factor: [0.35, 0.9, 0.65, if alpha_mode == AlphaMode::Blend { 0.45 } else { 1.0 }],
+                alpha_mode,
+                double_sided,
+                ..Default::default()
+            },
+        )
+    })
+    .collect()
+}
+
 pub fn reply(cmd: &aurora_net::NetCommand) -> Option<Vec<NetEvent>> {
     let aurora_net::NetCommand::ObjectRelease { local_id, .. } = cmd else {
         return None;
@@ -83,6 +150,21 @@ pub fn reply(cmd: &aurora_net::NetCommand) -> Option<Vec<NetEvent>> {
             objects: vec![object(point, true)],
         }]
     })
+}
+
+/// A scripted color change must not reset a HUD repositioned in the demo.
+pub fn preserve_touch_transform(world: &crate::world::World, event: &mut NetEvent) {
+    let NetEvent::ObjectUpdates { objects, .. } = event else { return };
+    for update in objects {
+        if let Some(idx) = world.objects.index_of_uuid(&update.full_id)
+            && crate::scene::Scene::object_transform(world, idx, Instant::now(), 0).is_some_and(|(_, _, hud)| hud)
+            && let Some(current) = world.objects.get(idx)
+        {
+            update.position = current.position;
+            update.rotation = current.rotation;
+            update.scale = current.scale;
+        }
+    }
 }
 
 pub fn seed_inventory(world: &mut crate::world::World) {
@@ -128,6 +210,57 @@ pub fn seed_inventory(world: &mut crate::world::World) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn folding_panels_have_only_one_visible_face_and_opposite_orientations() {
+        let NetEvent::ObjectUpdates { objects, .. } = face_events(false).remove(0) else {
+            panic!("fixture update")
+        };
+        let mesh = aurora_prim::generate_volume(&objects[0].volume, 1.0);
+        let f = &mesh.faces[4];
+        let [a, b, c] = [f.indices[0], f.indices[1], f.indices[2]].map(|i| Vec3::from_array(f.positions[i as usize]));
+        let normal = (b - a).cross(c - a).normalize();
+        assert!(normal.dot(-Vec3::X) > 0.99);
+        for (i, o) in objects.iter().enumerate() {
+            let col = i % 3;
+            assert_eq!(
+                o.texture_entry.as_ref().unwrap().faces.iter().filter(|f| f.color[3] > 0.0).count(),
+                1
+            );
+            assert!((o.rotation * normal).dot(Vec3::X) * if col == 0 { -1.0 } else { 1.0 } > 0.99);
+        }
+    }
+
+    #[test]
+    fn touch_color_change_keeps_the_edited_hud_transform() {
+        let mut world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for ev in super::super::events().into_iter().chain(events()) {
+            world.apply(ev);
+        }
+        let idx = world.objects.index_of_uuid(&object(31, false).full_id).unwrap();
+        let pos = Vec3::new(0.01, -0.12, 0.18);
+        let rot = Quat::from_rotation_x(0.3);
+        let scale = Vec3::new(0.02, 0.3, 0.15);
+        let o = world.objects.get_mut(idx).unwrap();
+        o.position = pos;
+        o.rotation = rot;
+        o.scale = scale;
+        let mut replies = reply(&aurora_net::NetCommand::ObjectRelease {
+            handle: HANDLE,
+            local_id: CHILD,
+            surface: Default::default(),
+        })
+        .unwrap();
+        for ev in &mut replies {
+            preserve_touch_transform(&world, ev);
+        }
+        for ev in replies {
+            world.apply(ev);
+        }
+        let o = world.objects.get(idx).unwrap();
+        assert_eq!((o.position, o.rotation, o.scale), (pos, rot, scale));
+        assert!(o.text.contains("Touché"));
+    }
 
     #[test]
     fn hud_detach_removes_only_its_current_outfit_link_and_keeps_inventory() {

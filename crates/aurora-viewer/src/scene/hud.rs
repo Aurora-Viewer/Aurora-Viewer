@@ -46,6 +46,16 @@ impl Scene {
     }
 
     pub fn hud_pick(&self, world: &World, cursor: (f32, f32), include_hidden: bool) -> Option<(usize, Vec3, (Vec3, Vec3))> {
+        self.hud_pick_in(world, cursor, include_hidden, false)
+    }
+
+    /// Editing and right-click selection also reach CLICK_ACTION_IGNORE
+    /// prims, as LLViewerWindow::cursorIntersect does in build mode.
+    pub fn hud_edit_pick(&self, world: &World, cursor: (f32, f32)) -> Option<(usize, Vec3, (Vec3, Vec3))> {
+        self.hud_pick_in(world, cursor, true, true)
+    }
+
+    fn hud_pick_in(&self, world: &World, cursor: (f32, f32), include_hidden: bool, editing: bool) -> Option<(usize, Vec3, (Vec3, Vec3))> {
         let view = self.lists.hud_view?;
         let ray = view.ray(cursor.0, cursor.1);
         let own = world.objects.index_of_uuid(&world.agent_id)?;
@@ -54,7 +64,10 @@ impl Scene {
         let mut found = None;
         for (idx, g) in self.gpu.iter().enumerate() {
             let Some(o) = world.objects.get(idx) else { continue };
-            if !g.hud || g.owner_avatar != Some(own) || o.click_action == crate::interaction::code::IGNORE || !picking::ray_may_hit(g, ray)
+            if !g.hud
+                || g.owner_avatar != Some(own)
+                || (!editing && o.click_action == crate::interaction::code::IGNORE)
+                || !picking::ray_may_hit(g, ray)
             {
                 continue;
             }

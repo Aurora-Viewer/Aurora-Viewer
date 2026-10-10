@@ -245,8 +245,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
     let sale_mixed = for_sale_n != 0 && for_sale_n != count;
     let price_mixed = !props.iter().all(|x| x.sale_price == first.sale_price);
     let sale_type_now = props.iter().find(|x| x.sale_type != 0).map(|x| x.sale_type).unwrap_or(SALE_COPY);
-    // attachments are never in the build selection here
-    let sale_ok = can_sell && owner.0 & perm::TRANSFER != 0;
+    let sale_ok = !tool.hud_selected(world) && can_sell && owner.0 & perm::TRANSFER != 0;
     let (mut for_sale, mut sale_type, mut price) = tool
         .ui
         .sale_draft

@@ -128,12 +128,12 @@ impl Cache {
             let (Some(o), Some((pos, rot, hud))) = (world.objects.get(idx), Scene::object_transform(world, idx, now, 0)) else {
                 continue;
             };
-            if hud || o.volume.sculpt.is_some() {
+            if hud != p.cam.hud.is_some() || (!hud && o.volume.sculpt.is_some()) {
                 continue; // sculpts and meshes: renderer wireframe (Scene::selection_wire)
             }
             let c = color(root);
             let scale = o.scale.max(Vec3::splat(0.001));
-            if o.is_tree() {
+            if o.is_tree() || (hud && o.volume.sculpt.is_some()) {
                 obb(p, pos, rot, scale * 0.5, c);
                 continue;
             }
@@ -142,12 +142,17 @@ impl Cache {
             // the camera in the prim's unit space: facing signs are kept by the
             // (orientation preserving) object transform
             let cam = (rot.inverse() * (eye - pos)) / scale;
-            let facing: Vec<bool> = topo.tris.iter().map(|(v, n)| n.dot(cam - *v) > 0.0).collect();
+            let hud_dir = (rot.inverse() * -p.cam.at) / scale;
+            let facing: Vec<bool> = topo
+                .tris
+                .iter()
+                .map(|(v, n)| n.dot(if hud { hud_dir } else { cam - *v }) > 0.0)
+                .collect();
             let inv_scale = Vec3::ONE / scale;
             for e in &topo.border {
                 let (a, b) = (world_pt(e.a), world_pt(e.b));
                 let n = rot * (e.n * inv_scale);
-                if n.dot(eye - (a + b) * 0.5) < 0.0 {
+                if n.dot(if hud { -p.cam.at } else { eye - (a + b) * 0.5 }) < 0.0 {
                     continue; // back side: hidden (RenderHiddenSelections off)
                 }
                 p.line(a, b, c, 2.0);

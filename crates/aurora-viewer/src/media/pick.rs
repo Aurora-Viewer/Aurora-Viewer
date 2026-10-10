@@ -26,11 +26,24 @@ pub struct FaceHit {
 
 /// Nearest intersection of a world ray with the faces (two-sided).
 pub fn ray_faces<'a>(faces: impl Iterator<Item = FaceTris<'a>>, model: Mat4, origin: Vec3, dir: Vec3) -> Option<FaceHit> {
+    ray_faces_with_sidedness(faces, model, origin, dir, |_| true)
+}
+
+/// As `ray_faces`, with each face's back-face policy. HUDs use the same
+/// winding as the rasterizer; invisible backs must not intercept buttons.
+pub fn ray_faces_with_sidedness<'a>(
+    faces: impl Iterator<Item = FaceTris<'a>>,
+    model: Mat4,
+    origin: Vec3,
+    dir: Vec3,
+    two_sided: impl Fn(usize) -> bool,
+) -> Option<FaceHit> {
     let inv = model.inverse();
     let o = inv.transform_point3(origin);
     let d = inv.transform_vector3(dir);
     let mut best: Option<FaceHit> = None;
     for f in faces {
+        let two = two_sided(f.face);
         for tri in f.indices.as_chunks::<3>().0 {
             let (i0, i1, i2) = (tri[0] as usize, tri[1] as usize, tri[2] as usize);
             let (Some(p0), Some(p1), Some(p2)) = (f.positions.get(i0), f.positions.get(i1), f.positions.get(i2)) else {
@@ -42,7 +55,7 @@ pub fn ray_faces<'a>(faces: impl Iterator<Item = FaceTris<'a>>, model: Mat4, ori
             let e2 = p2 - p0;
             let pv = d.cross(e2);
             let det = e1.dot(pv);
-            if det.abs() < 1e-12 {
+            if det.abs() < 1e-12 || (!two && det < 0.0) {
                 continue;
             }
             let inv_det = 1.0 / det;
@@ -110,6 +123,60 @@ pub fn media_pixel(st: Vec2, texture: (i32, i32), media: (i32, i32)) -> (i32, i3
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sidedness_follows_triangle_winding_after_rotation_and_scale() {
+        let positions = [[-0.5, -0.5, 0.0], [0.5, -0.5, 0.0], [0.5, 0.5, 0.0], [-0.5, 0.5, 0.0]];
+        let indices = [0, 1, 2, 0, 2, 3];
+        let faces = || {
+            std::iter::once(FaceTris {
+                face: 2,
+                positions: &positions,
+                uvs: &[],
+                indices: &indices,
+            })
+        };
+        for angle in [0.0, 0.7, std::f32::consts::PI] {
+            let model = Mat4::from_scale_rotation_translation(
+                Vec3::new(2.0, 0.5, 1.5),
+                glam::Quat::from_rotation_y(angle),
+                Vec3::new(3.0, 4.0, 5.0),
+            );
+            let normal = model.transform_vector3(Vec3::Z).normalize();
+            let center = model.transform_point3(Vec3::ZERO);
+            for side in [-1.0, 1.0] {
+                let origin = center + normal * side * 2.0;
+                let direction = -normal * side;
+                let single = ray_faces_with_sidedness(faces(), model, origin, direction, |_| false);
+                assert_eq!(single.is_some(), side > 0.0);
+                let double = ray_faces_with_sidedness(faces(), model, origin, direction, |face| face == 2).unwrap();
+                assert!((double.t - 2.0).abs() < 1e-5);
+            }
+        }
+    }
+
+    #[test]
+    fn backward_face_does_not_hide_a_visible_face_further_away() {
+        let positions = [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [0.0, 1.0, 0.0]];
+        let further = positions.map(|p| [p[0], p[1], 1.0]);
+        let faces = [
+            FaceTris {
+                face: 0,
+                positions: &positions,
+                uvs: &[],
+                indices: &[0, 1, 2],
+            },
+            FaceTris {
+                face: 1,
+                positions: &further,
+                uvs: &[],
+                indices: &[0, 2, 1],
+            },
+        ];
+        let hit = ray_faces_with_sidedness(faces.into_iter(), Mat4::IDENTITY, -Vec3::Z, Vec3::Z, |_| false).unwrap();
+        assert_eq!(hit.face, 1);
+        assert_eq!(hit.t, 2.0);
+    }
 
     #[test]
     fn hits_quad() {

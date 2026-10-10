@@ -23,7 +23,7 @@ impl App {
         // an avatar name tag opens its avatar's menu, as a click on the
         // avatar; its point is the avatar, not the air at the tag ("Zoomer"
         // frames the avatar, like handle_look_at_selection)
-        let (picked, point) = if let Some((idx, point, _)) = self.scene.hud_pick(&self.world, (x, y), true) {
+        let (picked, point) = if let Some((idx, point, _)) = self.scene.hud_edit_pick(&self.world, (x, y)) {
             (Some(idx), point)
         } else {
             match self.pick_name_tag(hit, ray) {
@@ -51,7 +51,11 @@ impl App {
             Some((idx, o)) => {
                 let (key, full_id) = (o.key, o.full_id);
                 match ui::context::wearer(&self.world, idx) {
-                    Some(w) if w == me => Target::Attachment { key },
+                    Some(w) if w == me => {
+                        self.build.select_for_menu(&mut self.world, &self.settings.build, idx);
+                        self.flush_build();
+                        Target::Attachment { key }
+                    }
                     // someone's attachment: their avatar's menu (menu_attachment_other.xml)
                     Some(w) => Target::Avatar {
                         id: w,
@@ -143,6 +147,7 @@ impl App {
             for_sale,
         );
         f.open = interaction::allow_open(w, idx);
+        f.edit_hud = crate::build::selectable(w, idx) && Scene::object_transform(w, idx, Instant::now(), 0).is_some_and(|(_, _, hud)| hud);
         f.attachment_item = w.objects.get(root).and_then(|o| o.attachment_item_id());
         f.blocked = w.mutes.is_muted_id(&root_id);
         f.name = props.map(|p| p.name.clone()).unwrap_or_default();
@@ -167,6 +172,15 @@ impl App {
 
     pub(super) fn on_ctx_action(&mut self, act: CtxAction) {
         match act {
+            CtxAction::EditAttachment(key) => {
+                if let Some(idx) = self.world.objects.index_of(&key)
+                    && crate::build::selectable(&self.world, idx)
+                    && let Some(id) = self.world.objects.get(idx).map(|o| o.full_id)
+                {
+                    self.release_object_hold();
+                    self.on_ctx_action(CtxAction::Edit(id));
+                }
+            }
             CtxAction::AttachmentInventory(item) => self.apply_appearance_action(crate::world::appearance::Action::ShowOriginal(item)),
             CtxAction::Detach(key) => {
                 if let Some(idx) = self.world.objects.index_of(&key)
