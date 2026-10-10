@@ -25,7 +25,7 @@ aurora-viewer/                  dépôt git (GitHub : Aurora-Viewer/Aurora-Viewe
 ├─ Cargo.toml                   workspace : version, édition, licence, lints communs
 ├─ rust-toolchain.toml          Rust stable (toujours la dernière version)
 ├─ rustfmt.toml                 formatage (lignes de 140 caractères)
-├─ README.md                    présentation, compilation, options de test
+├─ README.md                    présentation, différences avec Firestorm, compilation
 ├─ AGENTS.md                    règles des agents IA (Claude, Codex…)
 ├─ CLAUDE.md                    renvoie vers AGENTS.md
 ├─ HUMANS.md                    guide des humains : PR, fusion, compilation
@@ -38,7 +38,7 @@ aurora-viewer/                  dépôt git (GitHub : Aurora-Viewer/Aurora-Viewe
 │  ├─ phosphor-icons/           bibliothèque Phosphor complète (SVG, 6 graisses)
 │  └─ emoji/                    police emoji (téléchargée, hors git)
 ├─ crates/                      le code (voir ci-dessous)
-├─ docs/                        BRANDING.md et autres documents
+├─ docs/                        BRANDING.md, TESTING.md (options de test `AURORA_*`, profilage), captures du README
 ├─ scripts/                     outils des agents et des humains (PowerShell)
 │  └─ tools/                    aurora-tools : menu, interface (ui), vérifications et réparation (checks), actions, PR en direct (prs), releases, réinitialisation (reset), permissions de Claude Code (claude)
 └─ .github/                     CI (workflows/, actions/), release, modèle de PR, Dependabot

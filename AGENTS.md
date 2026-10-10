@@ -144,9 +144,14 @@ cargo run -p aurora-viewer -- --title "Test regard-avatars"
 - Captures automatiques : `AURORA_CAPTURE=<fichier.png>`,
   `AURORA_CAPTURE_EXIT=1`, `AURORA_CAPTURE_FRAMES=620` (après le fondu de
   chargement). Regarde tes captures : c'est ta vérification visuelle.
-- La liste complète des variables `AURORA_*` est dans le
-  [README](README.md#test-switches). **Si tu ajoutes, modifies ou supprimes une
-  variable ou un argument, mets le README à jour dans la même PR.**
+- La liste complète des variables `AURORA_*` est dans
+  [docs/TESTING.md](docs/TESTING.md) ; les arguments de ligne de commande
+  sont dans le [README](README.md#command-line). **Si tu ajoutes, modifies
+  ou supprimes une variable ou un argument, mets le fichier concerné à jour
+  dans la même PR.** Pour une variable : une ligne courte dans le tableau de
+  son thème, et les détails (modes, images, ce qu'il faut voir) dans le
+  paragraphe « Détails » en dessous, jamais dans le tableau ni dans le
+  README.
 - Pour une nouvelle fonctionnalité, ajoute si possible un scénario de démo
   (`AURORA_DEMO_<NOM>`) qui la montre et la rend testable sans grille.
 - Certaines choses ne se testent que sur la grille (réseau réel, voix,
@@ -186,7 +191,8 @@ Avant chaque commit significatif et obligatoirement avant la PR :
   - n'hésite pas à optimiser ou à réécrire proprement et de façon moderne
     ce qui en a besoin, dès que ça fait gagner des performances ou de la
     fluidité, sans régression fonctionnelle ni visuelle ;
-  - mesure avant et après (`AURORA_PROFILE=1`, voir le README) et donne les
+  - mesure avant et après (`AURORA_PROFILE=1`, voir
+    [docs/TESTING.md](docs/TESTING.md#profilage)) et donne les
     chiffres dans la PR.
 - **Pas de régression de la réécriture** : si tu modifies un comportement porté
   de Firestorm, revérifie-le contre les sources de Firestorm (le comportement
