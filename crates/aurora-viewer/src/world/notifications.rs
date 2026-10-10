@@ -30,22 +30,27 @@ pub mod im {
 }
 
 /// LSL permission bits (llRequestPermissions) with their French wording.
-const PERMISSIONS: &[(i32, &str)] = &[
-    (0x2, "Prendre des L$ de votre compte"),
-    (0x4, "Prendre le contrôle de vos touches"),
-    (0x10, "Animer votre avatar"),
-    (0x20, "S'attacher à votre avatar"),
-    (0x80, "Lier et délier des objets"),
-    (0x400, "Suivre votre caméra"),
-    (0x800, "Contrôler votre caméra"),
-    (0x1000, "Vous téléporter"),
-    (0x4000, "Gérer le domaine en silence"),
-    (0x8000, "Remplacer vos animations"),
-    (0x10000, "Renvoyer des objets"),
-];
+fn permissions() -> &'static Vec<(i32, &'static str)> {
+    static TABLE: aurora_i18n::Localized<Vec<(i32, &'static str)>> = aurora_i18n::Localized::new();
+    TABLE.get(|| {
+        vec![
+            (0x2, aurora_i18n::tr!("world-notifications-take-l-from-your-account")),
+            (0x4, aurora_i18n::tr!("world-notifications-take-control-of-your-keys")),
+            (0x10, aurora_i18n::tr!("world-notifications-animate-your-avatar")),
+            (0x20, aurora_i18n::tr!("world-notifications-attach-to-your-avatar")),
+            (0x80, aurora_i18n::tr!("world-notifications-link-and-unlink-objects")),
+            (0x400, aurora_i18n::tr!("world-notifications-follow-your-camera")),
+            (0x800, aurora_i18n::tr!("world-notifications-control-your-camera")),
+            (0x1000, aurora_i18n::tr!("world-notifications-teleport")),
+            (0x4000, aurora_i18n::tr!("world-notifications-manage-estate-silently")),
+            (0x8000, aurora_i18n::tr!("world-notifications-override-your-animations")),
+            (0x10000, aurora_i18n::tr!("world-notifications-return-objects")),
+        ]
+    })
+}
 
 pub fn permission_lines(questions: i32) -> Vec<&'static str> {
-    PERMISSIONS.iter().filter(|(b, _)| questions & b != 0).map(|(_, t)| *t).collect()
+    permissions().iter().filter(|(b, _)| questions & b != 0).map(|(_, t)| *t).collect()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -339,12 +344,14 @@ mod tests {
                 object_name: "Menu".into(),
                 own_object: false,
                 channel: -42,
-                buttons: vec!["Oui".into(), "Non".into()],
+                buttons: vec![aurora_i18n::tr!("common-yes").into(), aurora_i18n::tr!("common-no").into()],
             },
         );
         assert_eq!(n.unread(), 1);
         let (cmds, _) = n.respond(id, Response::Button(1), |_| Uuid::nil(), Uuid::nil());
-        assert!(matches!(&cmds[..], [NetCommand::ScriptDialogReply { channel: -42, index: 1, label, .. }] if label == "Non"));
+        assert!(
+            matches!(&cmds[..], [NetCommand::ScriptDialogReply { channel: -42, index: 1, label, .. }] if label == aurora_i18n::tr!("common-no"))
+        );
         assert!(n.list.is_empty());
     }
 
@@ -354,7 +361,7 @@ mod tests {
         let (from, tx, folder) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
         let id = n.push(
             Kind::Inventory,
-            "Objet",
+            aurora_i18n::tr!("common-object"),
             "",
             Data::Inventory {
                 from,
@@ -386,7 +393,10 @@ mod tests {
         assert!(matches!(&cmds[..], [NetCommand::ScriptAnswer { questions: 0, .. }]));
         assert_eq!(
             permission_lines(0x10 | 0x20),
-            vec!["Animer votre avatar", "S'attacher à votre avatar"]
+            vec![
+                aurora_i18n::tr!("world-notifications-animate-your-avatar"),
+                aurora_i18n::tr!("world-notifications-attach-to-your-avatar")
+            ]
         );
     }
 }

@@ -14,7 +14,13 @@ fn offset(ui: &mut egui::Ui, v: &mut [f32; 3]) -> bool {
     for (axis, value) in ["X", "Y", "Z"].iter().zip(v.iter_mut()) {
         ui.label(RichText::new(*axis).size(12.0));
         changed |= ui
-            .add(egui::DragValue::new(value).range(-10.0..=10.0).speed(0.02).max_decimals(2))
+            .add(
+                egui::DragValue::new(value)
+                    .custom_parser(aurora_i18n::parse_number)
+                    .range(-10.0..=10.0)
+                    .speed(0.02)
+                    .max_decimals(2),
+            )
             .changed();
     }
     changed
@@ -24,31 +30,34 @@ pub(super) fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings) -> bool {
     let c = &mut s.camera;
     let mut changed = false;
     ui.label(
-        RichText::new(
-            "Alt + clic : viser un point · Alt + glisser : zoomer · Ctrl + Alt + glisser : tourner autour · \
-             Ctrl + Alt + Maj + glisser : décaler · Échap : revenir derrière l'avatar",
-        )
-        .size(12.0)
-        .color(p.muted),
+        RichText::new(aurora_i18n::tr!("ui-options-camera-alt-click-focus-on-a-point-alt-drag-zoom"))
+            .size(12.0)
+            .color(p.muted),
     );
     ui.add_space(8.0);
-    group(ui, p, "Point de vue", |ui| {
-        changed |= row(ui, p, "Préréglage", "Les vues de Firestorm (Caméra › Préréglages)", |ui| {
-            let mut ch = false;
-            let mut preset = c.preset;
-            egui::ComboBox::from_id_salt("camera_preset")
-                .width(SLIDER_W)
-                .selected_text(preset.label())
-                .show_ui(ui, |ui| {
-                    for v in CameraPreset::ALL {
-                        ch |= ui.selectable_value(&mut preset, v, v.label()).changed();
-                    }
-                });
-            if ch {
-                c.apply_preset(preset);
-            }
-            ch
-        });
+    group(ui, p, aurora_i18n::tr!("common-viewpoint"), |ui| {
+        changed |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-camera-preset"),
+            aurora_i18n::tr!("ui-options-camera-firestorm-views-camera-presets"),
+            |ui| {
+                let mut ch = false;
+                let mut preset = c.preset;
+                egui::ComboBox::from_id_salt("camera_preset")
+                    .width(SLIDER_W)
+                    .selected_text(preset.label())
+                    .show_ui(ui, |ui| {
+                        for v in CameraPreset::ALL {
+                            ch |= ui.selectable_value(&mut preset, v, v.label()).changed();
+                        }
+                    });
+                if ch {
+                    c.apply_preset(preset);
+                }
+                ch
+            },
+        );
         let custom = |ch: bool, c: &mut CameraSettings| {
             if ch {
                 c.preset = CameraPreset::Custom;
@@ -58,8 +67,8 @@ pub(super) fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings) -> bool {
         changed |= row(
             ui,
             p,
-            "Position de la caméra",
-            "Décalage depuis l'avatar, en mètres : X devant, Y à gauche, Z en haut (Ctrl + molette monte la caméra)",
+            aurora_i18n::tr!("ui-options-camera-camera-position"),
+            aurora_i18n::tr!("ui-options-camera-offset-from-the-avatar-in-meters-x-forward-y"),
             |ui| {
                 let ch = offset(ui, &mut c.camera_offset);
                 custom(ch, c)
@@ -68,16 +77,18 @@ pub(super) fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings) -> bool {
         changed |= row(
             ui,
             p,
-            "Point visé",
-            "Point regardé, depuis l'avatar (Maj + molette le monte ou le descend)",
+            aurora_i18n::tr!("ui-options-camera-focus-point"),
+            aurora_i18n::tr!("ui-options-camera-focus-point-relative-to-the-avatar-shift-wheel-moves"),
             |ui| {
                 let ch = offset(ui, &mut c.focus_offset);
                 custom(ch, c)
             },
         );
         changed |= row(ui, p, "", "", |ui| {
-            let reset = crate::ui::widgets::flat_button(ui, p, "Réinitialiser les angles")
-                .on_hover_text("Remet la position de la caméra et le point visé du préréglage")
+            let reset = crate::ui::widgets::flat_button(ui, p, aurora_i18n::tr!("ui-options-camera-reset-angles"))
+                .on_hover_text(aurora_i18n::tr!(
+                    "ui-options-camera-restores-the-preset-s-camera-position-and-focus-point"
+                ))
                 .clicked();
             if reset {
                 let preset = if c.preset == CameraPreset::Custom {
@@ -90,19 +101,23 @@ pub(super) fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings) -> bool {
             reset
         });
     });
-    group(ui, p, "Mouvements de la caméra", |ui| {
+    group(ui, p, aurora_i18n::tr!("common-camera-movement"), |ui| {
         changed |= row(
             ui,
             p,
-            "Angle de vue",
-            "Champ de vision vertical (60° par défaut), comme Ctrl+0 / Ctrl+8 dans Firestorm",
+            aurora_i18n::tr!("ui-options-camera-viewing-angle"),
+            aurora_i18n::tr!("ui-options-camera-vertical-field-of-view-60-by-default-as-with"),
             |ui| {
                 let mut deg = c.fov.to_degrees();
                 let ch = slider(ui, &mut deg, FOV_RANGE.start().to_degrees()..=FOV_RANGE.end().to_degrees(), "°");
                 if ch {
                     c.fov = deg.to_radians();
                 }
-                if ui.small_button("D").on_hover_text("Valeur par défaut").clicked() {
+                if ui
+                    .small_button("D")
+                    .on_hover_text(aurora_i18n::tr!("ui-options-camera-default-value"))
+                    .clicked()
+                {
                     c.fov = DEFAULT_FOV;
                     return true;
                 }
@@ -112,112 +127,112 @@ pub(super) fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings) -> bool {
         changed |= row(
             ui,
             p,
-            "Distance",
-            "Éloignement de la caméra derrière l'avatar (1 par défaut)",
+            aurora_i18n::tr!("common-distance"),
+            aurora_i18n::tr!("ui-options-camera-camera-distance-behind-avatar-1-by-default"),
             |ui| slider(ui, &mut c.offset_scale, 0.5..=3.0, "×"),
         );
         changed |= row(
             ui,
             p,
-            "Durée des transitions",
-            "Temps du passage d'une vue à l'autre : vue subjective, retour derrière l'avatar, point visé (0,4 s par défaut)",
+            aurora_i18n::tr!("ui-options-camera-transition-duration"),
+            aurora_i18n::tr!("ui-options-camera-transition-time-between-views-mouselook-return-behind-avatar-targeted"),
             |ui| slider(ui, &mut c.zoom_time, 0.0..=4.0, " s"),
         );
         changed |= row(
             ui,
             p,
-            "Lissage",
-            "La caméra suit l'avatar avec un léger retard (1 par défaut, 0 = aucun)",
+            aurora_i18n::tr!("ui-options-camera-smoothing"),
+            aurora_i18n::tr!("ui-options-camera-the-camera-follows-your-avatar-with-a-slight-lag"),
             |ui| slider(ui, &mut c.smoothing, 0.0..=9.0, ""),
         );
         changed |= row(
             ui,
             p,
-            "Recul en vol",
-            "En l'air, la caméra prend du retard selon la vitesse (2 par défaut, 0 = aucun, 30 = vitesse de l'avatar)",
+            aurora_i18n::tr!("ui-options-camera-flying-camera-lag"),
+            aurora_i18n::tr!("ui-options-camera-while-airborne-the-camera-lags-according-to-speed-2"),
             |ui| slider(ui, &mut c.dynamic_strength, 0.0..=30.0, ""),
         );
     });
-    group(ui, p, "Comportement", |ui| {
+    group(ui, p, aurora_i18n::tr!("common-behavior"), |ui| {
         changed |= row(
             ui,
             p,
-            "Revenir en bougeant",
-            "Bouger l'avatar ramène la caméra derrière lui après l'avoir déplacée",
+            aurora_i18n::tr!("ui-options-camera-return-when-moving"),
+            aurora_i18n::tr!("ui-options-camera-moving-your-avatar-returns-the-camera-behind-it-after"),
             |ui| toggle(ui, p, &mut c.reset_on_movement),
         );
         changed |= row(
             ui,
             p,
-            "Revenir après une téléportation",
-            "La caméra se replace derrière l'avatar à l'arrivée",
+            aurora_i18n::tr!("ui-options-camera-return-after-teleporting"),
+            aurora_i18n::tr!("ui-options-camera-the-camera-returns-behind-your-avatar-on-arrival"),
             |ui| toggle(ui, p, &mut c.reset_on_teleport),
         );
         changed |= row(
             ui,
             p,
-            "Échap tourne l'avatar",
-            "Échap garde la direction de la caméra et tourne l'avatar vers elle",
+            aurora_i18n::tr!("ui-options-camera-esc-turns-avatar"),
+            aurora_i18n::tr!("ui-options-camera-esc-keeps-the-camera-direction-and-turns-the-avatar"),
             |ui| toggle(ui, p, &mut c.reset_view_turns_avatar),
         );
         changed |= row(
             ui,
             p,
-            "Clic sur mon avatar : garder la caméra",
-            "Cliquer sur son avatar ne ramène pas la caméra derrière lui",
+            aurora_i18n::tr!("ui-options-camera-click-my-avatar-keep-camera"),
+            aurora_i18n::tr!("ui-options-camera-clicking-your-avatar-does-not-return-the-camera-behind"),
             |ui| toggle(ui, p, &mut c.click_avatar_keeps_camera),
         );
         changed |= row(
             ui,
             p,
-            "Suivre l'objet visé",
-            "La caméra suit l'objet sur lequel elle est fixée quand il bouge",
+            aurora_i18n::tr!("ui-options-camera-follow-the-targeted-object"),
+            aurora_i18n::tr!("ui-options-camera-the-camera-follows-the-object-it-is-focused-on"),
             |ui| toggle(ui, p, &mut c.track_focus_object),
         );
         changed |= row(
             ui,
             p,
-            "Suivre la hauteur de survol",
-            "La hauteur de survol de l'avatar déplace aussi la caméra",
+            aurora_i18n::tr!("ui-options-camera-follow-hover-height"),
+            aurora_i18n::tr!("ui-options-camera-avatar-hover-height-also-moves-the-camera"),
             |ui| toggle(ui, p, &mut c.hover_affects_camera),
         );
         changed |= row(
             ui,
             p,
-            "Pas de zoom à la molette",
-            "La molette ne rapproche ni n'éloigne la caméra",
+            aurora_i18n::tr!("ui-options-camera-no-mouse-wheel-zoom"),
+            aurora_i18n::tr!("ui-options-camera-the-mouse-wheel-does-not-move-the-camera-closer"),
             |ui| toggle(ui, p, &mut c.disable_wheel_zoom),
         );
     });
-    group(ui, p, "Limites", |ui| {
+    group(ui, p, aurora_i18n::tr!("common-limits"), |ui| {
         changed |= row(
             ui,
             p,
-            "Caméra sans limites",
-            "La caméra peut aller au-delà de la distance d'affichage, sous le sol et plus près des objets",
+            aurora_i18n::tr!("ui-options-camera-unrestricted-camera"),
+            aurora_i18n::tr!("ui-options-camera-the-camera-can-move-beyond-the-draw-distance-below"),
             |ui| toggle(ui, p, &mut c.disable_constraints),
         );
         changed |= row(
             ui,
             p,
-            "Traverser les objets",
-            "Ignorer le simulateur qui repousse la caméra devant les murs et les objets",
+            aurora_i18n::tr!("ui-options-camera-walk-through-objects"),
+            aurora_i18n::tr!("ui-options-camera-ignore-the-simulator-pushing-the-camera-in-front-of"),
             |ui| toggle(ui, p, &mut c.ignore_sim_constraints),
         );
     });
-    group(ui, p, "Vue subjective", |ui| {
+    group(ui, p, aurora_i18n::tr!("common-mouselook"), |ui| {
         changed |= row(
             ui,
             p,
-            "Activer la vue subjective",
-            "Touche M, ou zoomer jusque dans la tête de l'avatar",
+            aurora_i18n::tr!("ui-options-camera-enable-first-person-view"),
+            aurora_i18n::tr!("ui-options-camera-press-m-or-zoom-into-your-avatar-s-head"),
             |ui| toggle(ui, p, &mut c.enable_mouselook),
         );
         changed |= row(
             ui,
             p,
-            "Quitter avec la molette",
-            "Tourner la molette vers soi quitte la vue subjective",
+            aurora_i18n::tr!("ui-options-camera-exit-with-mouse-wheel"),
+            aurora_i18n::tr!("ui-options-camera-scroll-toward-yourself-to-leave-mouselook"),
             |ui| toggle(ui, p, &mut c.wheel_exits_mouselook),
         );
     });

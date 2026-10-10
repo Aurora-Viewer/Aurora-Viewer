@@ -113,9 +113,9 @@ impl Profiles {
 pub fn classified_maturity(flags: u8) -> &'static str {
     use aurora_net::profile::classified_flags::{MATURE, QUERY_INC_MATURE};
     if flags & (MATURE | QUERY_INC_MATURE) != 0 {
-        "Modéré"
+        aurora_i18n::tr!("common-moderate")
     } else {
-        "Contenu Général"
+        aurora_i18n::tr!("world-profiles-general-content")
     }
 }
 
@@ -126,12 +126,12 @@ pub fn slt_date(secs: u32) -> String {
     let year_day = (secs / 86_400).rem_euclid(365);
     let off = if (68..=307).contains(&year_day) { -7 } else { -8 };
     let (y, m, d) = civil_from_days((secs + off * 3600).div_euclid(86_400));
-    format!("{m:02}/{d:02}/{y}")
-}
-
-/// French plural of LLTrans::getCountString ("fr": 0 and 1 are singular).
-fn count(n: i64, one: &str, many: &str) -> String {
-    format!("{n} {}", if n == 0 || n == 1 { one } else { many })
+    aurora_i18n::tr!(
+        "profile-date",
+        month = format!("{m:02}"),
+        day = format!("{d:02}"),
+        year = y.to_string()
+    )
 }
 
 fn days_in_month(y: i64, m: u32) -> i64 {
@@ -145,7 +145,7 @@ fn split(secs: f64) -> (i64, u32, u32) {
 
 /// LLDateUtil::ageFromDate with Firestorm's total days ("TotalDaysOld"):
 /// "17 ans 4 mois; 6350 jours", "3 semaines; 23 jours", "5 jours".
-pub fn age_from_date(born: f64, now: f64) -> String {
+fn age_from_date(language: &str, born: f64, now: f64) -> String {
     let (by, bm, bd) = split(born);
     let (mut ny, mut nm, nd) = split(now);
     // grade-school subtraction, borrowing from the left
@@ -166,37 +166,57 @@ pub fn age_from_date(born: f64, now: f64) -> String {
     }
     let years = ny - by;
     let total = ((now - born) / 86_400.0) as i64;
-    let total = format!("; {}", count(total, "jour", "jours"));
+    let total = aurora_i18n::tr_in!(language, "profile-age-days", count = total);
     if months > 0 || years > 0 {
-        let y = count(years, "an", "ans");
-        let m = count(months, "mois", "mois");
-        return match (years > 0, months > 0) {
-            (true, true) => format!("{y} {m}{total}"),
-            (true, false) => format!("{y}{total}"),
-            _ => format!("{m}{total}"),
+        let y = aurora_i18n::tr_in!(language, "profile-age-years", count = years);
+        let m = aurora_i18n::tr_in!(language, "profile-age-months", count = months);
+        let age = match (years > 0, months > 0) {
+            (true, true) => aurora_i18n::tr_in!(language, "profile-age-parts", years = y, months = m),
+            (true, false) => y,
+            _ => m,
         };
+        return aurora_i18n::tr_in!(language, "profile-age-total", age = age, days = total);
     }
     let weeks = days / 7;
     if weeks > 0 {
-        return format!("{}{total}", count(weeks, "semaine", "semaines"));
+        let age = aurora_i18n::tr_in!(language, "profile-age-weeks", count = weeks);
+        return aurora_i18n::tr_in!(language, "profile-age-total", age = age, days = total);
     }
     if days % 7 > 0 {
-        return count(days % 7, "jour", "jours");
+        return aurora_i18n::tr_in!(language, "profile-age-days", count = days % 7);
     }
-    "Inscrit aujourd'hui".to_owned()
+    aurora_i18n::tr_in!(language, "world-profiles-joined-today").to_owned()
 }
 
-/// "Date de naissance" (fillAgeData): "dd/mm/yyyy\n(age)", or only "dd/mm"
-/// when someone else hides their age. Firestorm's French skin has no
-/// AvatarBirthDateFormatFull and falls back to the US month/day order;
-/// Aurora keeps the French AvatarBirthDateFormat (day first).
+/// fillAgeData: localized birth date and age; omit year when someone hides age.
 pub fn birth_text(p: &AvatarProfile, own: bool, now: f64) -> Option<String> {
+    birth_text_in(aurora_i18n::language(), p, own, now)
+}
+
+fn birth_text_in(language: &str, p: &AvatarProfile, own: bool, now: f64) -> Option<String> {
     let born = p.born?;
     let (y, m, d) = split(born);
     if !own && p.hide_age == Some(true) {
-        return Some(format!("{d:02}/{m:02}"));
+        return Some(aurora_i18n::tr_in!(
+            language,
+            "profile-date-hidden",
+            day = format!("{d:02}"),
+            month = format!("{m:02}")
+        ));
     }
-    Some(format!("{d:02}/{m:02}/{y}\n({})", age_from_date(born, now)))
+    let date = aurora_i18n::tr_in!(
+        language,
+        "profile-date",
+        day = format!("{d:02}"),
+        month = format!("{m:02}"),
+        year = y.to_string()
+    );
+    Some(aurora_i18n::tr_in!(
+        language,
+        "profile-birth-age",
+        date = date,
+        age = age_from_date(language, born, now)
+    ))
 }
 
 /// "Compte" (CaptionTextAcctInfo): account type, then the payment info.
@@ -205,16 +225,21 @@ pub fn account_text(p: &AvatarProfile) -> String {
         // special accounts (M Linden) show their caption, without payment info
         return p.caption_text.clone();
     }
-    let kind = ["Résident", "Essai", "Membre originaire", "Employé(e) de Linden Lab"][p.caption_index.min(3) as usize];
+    let kind = [
+        aurora_i18n::tr!("common-resident"),
+        aurora_i18n::tr!("world-profiles-test"),
+        aurora_i18n::tr!("world-profiles-charter-member"),
+        aurora_i18n::tr!("world-profiles-linden-lab-employee"),
+    ][p.caption_index.min(3) as usize];
     if p.caption_index >= 3 {
         return kind.to_owned();
     }
     let payment = if p.flags & flags::TRANSACTED != 0 {
-        "Infos de paiement utilisées"
+        aurora_i18n::tr!("world-profiles-payment-info-used")
     } else if p.flags & flags::IDENTIFIED != 0 {
-        "Infos de paiement enregistrées"
+        aurora_i18n::tr!("world-profiles-payment-info-on-file")
     } else {
-        "Aucune info de paiement enregistrée"
+        aurora_i18n::tr!("world-profiles-no-payment-info-on-file")
     };
     format!("{kind}\n{payment}")
 }
@@ -225,16 +250,16 @@ pub fn badge(p: &AvatarProfile) -> Option<&'static str> {
     // the original beta testers registered before 2003-06-23
     let beta_end = (days_from_civil(2003, 6, 23) * 86_400) as f64;
     if p.caption_index == 3 {
-        return Some("Employé(e) de Linden Lab");
+        return Some(aurora_i18n::tr!("world-profiles-linden-lab-employee"));
     }
     if p.born.is_some_and(|b| b < beta_end) {
-        return Some("Bêta-testeur originel");
+        return Some(aurora_i18n::tr!("world-profiles-original-beta-tester"));
     }
     match p.customer_type.to_lowercase().as_str() {
-        "beta_lifetime" => Some("Membre Beta à vie"),
-        "lifetime" => Some("Membre à vie"),
-        "secondlifetime_premium" => Some("Premium à vie"),
-        "secondlifetime_premium_plus" => Some("Premium Plus à vie"),
+        "beta_lifetime" => Some(aurora_i18n::tr!("world-profiles-lifetime-beta-member")),
+        "lifetime" => Some(aurora_i18n::tr!("world-profiles-lifetime-member")),
+        "secondlifetime_premium" => Some(aurora_i18n::tr!("world-profiles-lifetime-premium")),
+        "secondlifetime_premium_plus" => Some(aurora_i18n::tr!("world-profiles-lifetime-premium-plus")),
         _ => None,
     }
 }
@@ -287,18 +312,22 @@ mod tests {
     fn age_strings() {
         let now = date(2024, 9, 15) + 3600.0;
         assert_eq!(
-            age_from_date(date(2007, 5, 12), now),
+            age_from_date("fr", date(2007, 5, 12), now),
             format!(
                 "17 ans 4 mois; {} jours",
                 days_from_civil(2024, 9, 15) - days_from_civil(2007, 5, 12)
             )
         );
-        assert_eq!(age_from_date(date(2023, 9, 15), now), "1 an; 366 jours");
-        assert_eq!(age_from_date(date(2024, 7, 20), now), "1 mois; 57 jours");
+        assert_eq!(age_from_date("fr", date(2023, 9, 15), now), "1 an; 366 jours");
+        assert_eq!(age_from_date("fr", date(2024, 7, 20), now), "1 mois; 57 jours");
         // borrowing a month: 20 Aug → 15 Sep is 26 days
-        assert_eq!(age_from_date(date(2024, 8, 20), now), "3 semaines; 26 jours");
-        assert_eq!(age_from_date(date(2024, 9, 14), now), "1 jour");
-        assert_eq!(age_from_date(date(2024, 9, 15), now), "Inscrit aujourd'hui");
+        assert_eq!(age_from_date("fr", date(2024, 8, 20), now), "3 semaines; 26 jours");
+        assert_eq!(age_from_date("fr", date(2024, 9, 14), now), "1 jour");
+        assert_eq!(age_from_date("fr", date(2024, 9, 15), now), "Inscrit aujourd'hui");
+        assert_eq!(age_from_date("en", date(2023, 9, 15), now), "1 year; 366 days");
+        assert_eq!(age_from_date("en", date(2024, 7, 20), now), "1 month; 57 days");
+        assert_eq!(age_from_date("en", date(2024, 8, 20), now), "3 weeks; 26 days");
+        assert_eq!(age_from_date("en", date(2024, 9, 14), now), "1 day");
     }
 
     #[test]
@@ -308,11 +337,13 @@ mod tests {
             ..Default::default()
         };
         let now = date(2024, 9, 15);
-        assert!(birth_text(&p, false, now).is_some_and(|t| t.starts_with("12/05/2007\n(17 ans 4 mois")));
+        assert!(birth_text_in("fr", &p, false, now).is_some_and(|t| t.starts_with("12/05/2007\n(17 ans 4 mois")));
         p.hide_age = Some(true);
-        assert_eq!(birth_text(&p, false, now).as_deref(), Some("12/05"));
+        assert_eq!(birth_text_in("fr", &p, false, now).as_deref(), Some("12/05"));
         // our own profile always shows the full date
-        assert!(birth_text(&p, true, now).is_some_and(|t| t.starts_with("12/05/2007")));
+        assert!(birth_text_in("fr", &p, true, now).is_some_and(|t| t.starts_with("12/05/2007")));
+        assert_eq!(birth_text_in("en", &p, false, now).as_deref(), Some("05/12"));
+        assert!(birth_text_in("en", &p, true, now).is_some_and(|t| t.starts_with("05/12/2007\n(17 years 4 months")));
     }
 
     #[test]
@@ -322,14 +353,21 @@ mod tests {
             born: Some(date(2010, 1, 1)),
             ..Default::default()
         };
-        assert_eq!(account_text(&p), "Résident\nInfos de paiement utilisées");
+        assert_eq!(
+            account_text(&p),
+            format!(
+                "{}\n{}",
+                aurora_i18n::tr!("common-resident"),
+                aurora_i18n::tr!("world-profiles-payment-info-used")
+            )
+        );
         assert_eq!(badge(&p), None);
         p.customer_type = "Lifetime".into();
-        assert_eq!(badge(&p), Some("Membre à vie"));
+        assert_eq!(badge(&p), Some(aurora_i18n::tr!("world-profiles-lifetime-member")));
         p.born = Some(date(2003, 1, 1));
-        assert_eq!(badge(&p), Some("Bêta-testeur originel"));
+        assert_eq!(badge(&p), Some(aurora_i18n::tr!("world-profiles-original-beta-tester")));
         p.caption_index = 3;
-        assert_eq!(account_text(&p), "Employé(e) de Linden Lab");
+        assert_eq!(account_text(&p), aurora_i18n::tr!("world-profiles-linden-lab-employee"));
         p.caption_text = "El Jefe!".into();
         assert_eq!(account_text(&p), "El Jefe!");
     }

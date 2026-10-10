@@ -8,17 +8,9 @@ use glam::{Mat4, Vec3};
 use std::collections::HashMap;
 use std::time::Instant;
 
-/// 12345 -> "12 345" (French thousands separator).
+/// Format complexity with the selected thousands separator.
 pub fn group_digits(n: u32) -> String {
-    let s = n.to_string();
-    let mut out = String::new();
-    for (i, ch) in s.chars().enumerate() {
-        if i > 0 && (s.len() - i).is_multiple_of(3) {
-            out.push('\u{202F}');
-        }
-        out.push(ch);
-    }
-    out
+    aurora_i18n::integer(i64::from(n))
 }
 
 /// Complexity lines of the name tags.
@@ -155,13 +147,13 @@ pub fn draw(
                 let playing = |id: uuid::Uuid| anims.iter().any(|a| a.id == id);
                 let mut status = Vec::new();
                 if playing(ANIM_AWAY) {
-                    status.push("Absent");
+                    status.push(aurora_i18n::tr!("common-away"));
                 }
                 if playing(ANIM_DO_NOT_DISTURB) {
-                    status.push("Ne pas déranger");
+                    status.push(aurora_i18n::tr!("common-do-not-disturb"));
                 }
                 if world.is_avatar_blocked(&o.full_id) {
-                    status.push("Bloqué(e)");
+                    status.push(aurora_i18n::tr!("ui-hud-blocked"));
                 }
                 if !status.is_empty() {
                     lines.push((format!("({})", status.join(", ")), p.muted, 11.0));
@@ -181,7 +173,7 @@ pub fn draw(
                     (main, user, custom, n.user_name_for_display(&names.options))
                 }
                 None => {
-                    let legacy = o.display_name().unwrap_or_else(|| "(chargement…)".into());
+                    let legacy = o.display_name().unwrap_or_else(|| aurora_i18n::tr!("status-loading-2").into());
                     (legacy.clone(), None, false, legacy)
                 }
             };
@@ -214,11 +206,15 @@ pub fn draw(
                     } else {
                         ratio_color(c as f32, tc.max as f32)
                     };
-                    lines.push((format!("Complexité : {}", group_digits(c)), col, 11.0));
+                    lines.push((
+                        aurora_i18n::tr!("common-complexity", value0 = group_digits(c).to_string()),
+                        col,
+                        11.0,
+                    ));
                     let area = tc.areas.get(&o.full_id).copied().unwrap_or(0.0);
                     if tc.max > 0 && tc.max_area > 0.0 && area > tc.max_area {
                         lines.push((
-                            format!("Surface : {} m²", group_digits(area as u32)),
+                            aurora_i18n::tr!("ui-hud-area-m2", value0 = group_digits(area as u32).to_string()),
                             ratio_color(area, tc.max_area),
                             11.0,
                         ));

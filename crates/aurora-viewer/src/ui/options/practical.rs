@@ -9,12 +9,12 @@ pub(super) fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut Op
         changed |= row(
             ui,
             p,
-            "Touche de déplacement",
-            "Maintenez cette touche puis glissez un HUD avec le clic gauche. ALT par défaut.",
+            aurora_i18n::tr!("ui-options-practical-movement-key"),
+            aurora_i18n::tr!("ui-options-practical-hold-this-key-then-left-drag-a-hud-alt"),
             |ui| {
                 let capturing = st.capture == Some(Capture::HudDrag);
                 let text = if capturing {
-                    "Appuyez sur une touche…".into()
+                    aurora_i18n::tr!("common-press-a-key").into()
                 } else {
                     s.hud_drag_key.label()
                 };
@@ -27,8 +27,8 @@ pub(super) fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut Op
                 if button.clicked() {
                     st.capture = if capturing { None } else { Some(Capture::HudDrag) };
                 }
-                button.on_hover_text("Cliquez puis appuyez sur une touche (ALT, Ctrl et Maj sont acceptés). Échap pour annuler.");
-                if crate::ui::widgets::flat_button(ui, p, "Rétablir ALT").clicked() {
+                button.on_hover_text(aurora_i18n::tr!("ui-options-practical-click-then-press-a-key-alt-ctrl-and-shift"));
+                if crate::ui::widgets::flat_button(ui, p, aurora_i18n::tr!("ui-options-practical-restore-alt")).clicked() {
                     s.hud_drag_key = HoldKey::default();
                     st.capture = None;
                     return true;
@@ -37,9 +37,9 @@ pub(super) fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut Op
             },
         );
         ui.label(
-            RichText::new(format!(
-                "Maintenez {} et glissez un élément visible du HUD avec le clic gauche. La position est enregistrée au relâchement du clic.",
-                s.hud_drag_key.label()
+            RichText::new(aurora_i18n::tr!(
+                "ui-options-practical-hold-and-left-drag-a-visible-hud-element-the",
+                value0 = s.hud_drag_key.label().to_string()
             ))
             .size(12.0)
             .color(p.muted),

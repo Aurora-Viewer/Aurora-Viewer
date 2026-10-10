@@ -41,6 +41,7 @@ pub struct NetClient {
     pub fetcher: Fetcher,
     pub fetch_results: crossbeam_channel::Receiver<FetchResult>,
     object_cache_dir: Arc<Mutex<Option<std::path::PathBuf>>>,
+    agent_language: Arc<Mutex<(String, bool)>>,
     caps_http: reqwest::Client,
 }
 
@@ -88,6 +89,7 @@ impl NetClient {
         let controls = Arc::new(Mutex::new(AgentControls::default()));
         let stats = Arc::new(NetStats::default());
         let object_cache_dir = Arc::new(Mutex::new(None));
+        let agent_language = Arc::new(Mutex::new((aurora_i18n::language().to_owned(), true)));
         // Asset GETs (ViewerAsset, bake service): same trust as the caps,
         // but like Firestorm's llcorehttp GET (curl without
         // CURLOPT_ENCODING): no Accept-Encoding and no transparent
@@ -114,6 +116,7 @@ impl NetClient {
             controls: controls.clone(),
             stats: stats.clone(),
             object_cache_dir: object_cache_dir.clone(),
+            agent_language: agent_language.clone(),
         };
         rt.spawn(async move {
             while let Some(cmd) = cmd_rx.recv().await {
@@ -135,6 +138,7 @@ impl NetClient {
             fetcher,
             fetch_results,
             object_cache_dir,
+            agent_language,
             caps_http: shared_caps_http,
         })
     }
@@ -143,6 +147,17 @@ impl NetClient {
     /// applies to the next session.
     pub fn set_object_cache_dir(&self, dir: Option<std::path::PathBuf>) {
         *self.object_cache_dir.lock() = dir;
+    }
+
+    /// LLAgentLanguage::update: keep the choice offline and refresh the sim.
+    pub fn set_agent_language(&self, language: &str, public: bool) {
+        let next = (language.to_owned(), public);
+        let mut saved = self.agent_language.lock();
+        if *saved != next {
+            *saved = next;
+            drop(saved);
+            self.send(NetCommand::UpdateAgentLanguage);
+        }
     }
 
     pub fn send(&self, cmd: NetCommand) {

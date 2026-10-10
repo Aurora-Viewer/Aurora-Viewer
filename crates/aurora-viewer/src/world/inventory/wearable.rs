@@ -26,11 +26,12 @@ const TYPES: [&str; 17] = [
 
 pub fn create(kind: u8, name: &str, owner: Uuid) -> Result<Vec<u8>, String> {
     let Some(kind_name) = TYPES.get(kind as usize) else {
-        return Err("Type de vêtement inconnu.".into());
+        return Err(aurora_i18n::tr!("world-inventory-wearable-unknown-clothing-type").into());
     };
     let data = std::fs::read(crate::scene::avatar::AvatarLibrary::data_dir().join("avatar_lad.xml"))
-        .map_err(|_| "Les définitions de l’avatar sont indisponibles.".to_owned())?;
-    let xml = aurora_llsd::xml::parse(&data).map_err(|_| "Les définitions de l’avatar sont illisibles.".to_owned())?;
+        .map_err(|_| aurora_i18n::tr!("world-inventory-wearable-avatar-definitions-are-unavailable").to_owned())?;
+    let xml = aurora_llsd::xml::parse(&data)
+        .map_err(|_| aurora_i18n::tr!("world-inventory-wearable-avatar-definitions-are-unreadable").to_owned())?;
     let mut params = BTreeMap::<i32, f32>::new();
     let mut stack = vec![&xml];
     while let Some(el) = stack.pop() {
@@ -95,7 +96,7 @@ mod tests {
     #[test]
     fn every_create_submenu_type_has_a_valid_default_asset() {
         for kind in 0..17 {
-            let bytes = create(kind, "Nouveau vêtement", Uuid::from_u128(1)).expect("default wearable");
+            let bytes = create(kind, aurora_i18n::tr!("ui-appearance-gallery-new-clothing"), Uuid::from_u128(1)).expect("default wearable");
             let text = String::from_utf8(bytes).expect("UTF-8");
             assert!(text.starts_with("LLWearable version 22\n"));
             assert!(text.contains(&format!("\ntype {kind}\n")));

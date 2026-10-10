@@ -16,6 +16,12 @@ cargo run -p aurora-viewer -- --title "Test ma-tâche"
 
 Les journaux sont dans `%LOCALAPPDATA%\Aurora\AuroraViewer\data\logs\`.
 
+Pour la localisation, lancer le même scénario avec `--language en`, puis
+`--language fr`. `AURORA_DEMO_OPTIONS=1` ouvre les préférences d'interface,
+avec le sélecteur de langue. Retirer l'argument pour vérifier le changement
+immédiat et le choix enregistré au prochain lancement. Le détail des
+catalogues, dates et pluriels est dans [TRANSLATING.md](TRANSLATING.md).
+
 **Pour ajouter une variable** : une ligne courte dans le tableau de son
 thème (le nom seul dans la première colonne, une phrase dans la seconde) ;
 s'il faut plus d'une phrase, ou s'il y a plusieurs modes, un paragraphe

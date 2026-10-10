@@ -341,7 +341,7 @@ impl World {
         self.tp_show_progress = show_progress;
         self.tp_failed = false;
         self.tp_progress = 0.05;
-        self.tp_status = "Demande de téléportation…".into();
+        self.tp_status = aurora_i18n::tr!("world-mod-requesting-teleport").into();
         if show_progress {
             self.ui_sounds.push(UiSound::TeleportOut);
         }
@@ -761,7 +761,7 @@ impl World {
                 }
                 if self.teleporting {
                     self.tp_progress = 0.6;
-                    self.tp_status = "Chargement de la région…".into();
+                    self.tp_status = aurora_i18n::tr!("common-loading-region").into();
                 }
                 self.arrived_once = true;
                 self.teleporting = false;
@@ -933,15 +933,15 @@ impl World {
                 }
                 // LL teleport_strings.xml "progress" keys
                 let text = match message.as_str() {
-                    "sending_dest" | "sending_home" | "sending_landmark" => "Envoi vers la destination…",
-                    "redirecting" | "relaying" => "Redirection vers un autre emplacement…",
-                    "resolving" => "Recherche de la destination…",
-                    "contacting" => "Contact avec la nouvelle région…",
-                    "requesting" => "Demande de téléportation…",
-                    "completing" | "completed_from" => "Fin de la téléportation…",
-                    "arriving" => "Arrivée…",
-                    "pending" => "En attente du serveur…",
-                    _ => "Téléportation en cours…",
+                    "sending_dest" | "sending_home" | "sending_landmark" => aurora_i18n::tr!("common-sending-to-destination"),
+                    "redirecting" | "relaying" => aurora_i18n::tr!("world-mod-redirecting-to-another-location"),
+                    "resolving" => aurora_i18n::tr!("world-mod-searching-for-destination"),
+                    "contacting" => aurora_i18n::tr!("common-contacting-the-new-region"),
+                    "requesting" => aurora_i18n::tr!("world-mod-requesting-teleport"),
+                    "completing" | "completed_from" => aurora_i18n::tr!("world-mod-finishing-teleport"),
+                    "arriving" => aurora_i18n::tr!("world-mod-arriving"),
+                    "pending" => aurora_i18n::tr!("world-mod-waiting-for-server"),
+                    _ => aurora_i18n::tr!("world-mod-teleporting"),
                 };
                 self.teleporting = true;
                 self.tp_progress = (self.tp_progress + 0.06).clamp(0.15, 0.42);
@@ -960,7 +960,7 @@ impl World {
                 }
                 self.tp_show_progress = remote;
                 self.tp_progress = self.tp_progress.max(0.5);
-                self.tp_status = "Connexion à la région…".into();
+                self.tp_status = aurora_i18n::tr!("common-connecting-to-region").into();
                 Some(NetEvent::TeleportFinished { handle })
             }
             NetEvent::TeleportLocal { flying } => {
@@ -980,15 +980,15 @@ impl World {
                 self.teleporting = true;
                 self.tp_failed = false;
                 self.tp_progress = self.tp_progress.max(0.10);
-                self.tp_status = "Téléportation acceptée…".into();
-                self.system_message("Téléportation en cours…");
+                self.tp_status = aurora_i18n::tr!("common-teleport-accepted").into();
+                self.system_message(aurora_i18n::tr!("world-mod-teleporting"));
                 None
             }
             NetEvent::TeleportFailed { reason } => {
                 self.tp_history.failed();
                 self.teleporting = false;
                 self.tp_failed = true;
-                self.system_message(format!("Échec de la téléportation : {reason}"));
+                self.system_message(aurora_i18n::tr!("world-mod-teleport-failed", reason = reason.to_string()));
                 None
             }
             NetEvent::Alert { message } => {
@@ -998,7 +998,7 @@ impl World {
                 self.system_message(message.clone());
                 self.notifications.push(
                     notifications::Kind::Alert,
-                    "Alerte du simulateur",
+                    aurora_i18n::tr!("world-mod-simulator-alert"),
                     message.clone(),
                     notifications::Data::None,
                 );
@@ -1056,13 +1056,15 @@ impl World {
                 // process_script_question
                 self.ui_sounds.push(UiSound::ScriptFloaterOpen);
                 let lines = notifications::permission_lines(questions);
-                let body = format!(
-                    "L'objet « {object_name} » de {owner_name} demande l'autorisation de :\n• {}",
-                    lines.join("\n• ")
+                let body = aurora_i18n::tr!(
+                    "extra-object-owned-by-requests-permission-to",
+                    object_name = object_name.to_string(),
+                    owner_name = owner_name.to_string(),
+                    value0 = lines.join("\n• ").to_string()
                 );
                 self.notifications.push(
                     notifications::Kind::Permissions,
-                    "Autorisations demandées",
+                    aurora_i18n::tr!("world-mod-requested-permissions"),
                     body,
                     notifications::Data::Permissions {
                         task: task_id,
@@ -1078,7 +1080,7 @@ impl World {
                 let body = format!("{message}\n{url}");
                 self.notifications.push(
                     notifications::Kind::Url,
-                    format!("« {object_name} » propose un lien"),
+                    aurora_i18n::tr!("extra-offers-a-link", object_name = object_name.to_string()),
                     body,
                     notifications::Data::Url(url),
                 );
@@ -1325,7 +1327,10 @@ impl World {
                 None
             }
             NetEvent::ProfileSaveFailed { target, reason } => {
-                self.system_message(format!("Le profil n'a pas pu être enregistré ({reason})."));
+                self.system_message(aurora_i18n::tr!(
+                    "world-mod-could-not-save-the-profile",
+                    reason = reason.to_string()
+                ));
                 // show what the server really has
                 self.profiles.refresh(target);
                 None
@@ -1500,7 +1505,7 @@ impl World {
         // dialog 19 = MessageFromObject
         let kind = if im.dialog == 19 { ChatKind::ObjectIm } else { ChatKind::Im };
         let from = if im.from_name.is_empty() {
-            "Système".to_owned()
+            aurora_i18n::tr!("common-system").to_owned()
         } else {
             im.from_name
         };
@@ -1518,7 +1523,7 @@ impl World {
     fn on_im_offer(&mut self, im: &InstantMessage) -> bool {
         use notifications::{Data, Kind, im as d};
         let from = if im.from_name.is_empty() {
-            "Quelqu'un".to_owned()
+            aurora_i18n::tr!("world-mod-someone").to_owned()
         } else {
             im.from_name.clone()
         };
@@ -1528,7 +1533,7 @@ impl World {
                 self.ui_sounds.push(UiSound::TeleportOffer);
                 n.push(
                     Kind::Teleport,
-                    format!("{from} vous propose une téléportation"),
+                    aurora_i18n::tr!("world-mod-offers-you-a-teleport", from = from.to_string()),
                     im.message.clone(),
                     Data::Lure {
                         from: im.from_agent_id,
@@ -1540,7 +1545,7 @@ impl World {
                 self.ui_sounds.push(UiSound::FriendshipOffer);
                 n.push(
                     Kind::Friendship,
-                    format!("{from} vous propose son amitié"),
+                    aurora_i18n::tr!("world-mod-offers-you-friendship", from = from.to_string()),
                     im.message.clone(),
                     Data::Friend {
                         from: im.from_agent_id,
@@ -1552,13 +1557,13 @@ impl World {
                 self.ui_sounds.push(UiSound::InventoryOffer);
                 let asset_type = im.binary_bucket.first().map(|b| *b as i8).unwrap_or(-1);
                 let what = if im.message.is_empty() {
-                    "un objet".to_owned()
+                    aurora_i18n::tr!("world-mod-an-object").to_owned()
                 } else {
                     format!("« {} »", im.message)
                 };
                 n.push(
                     Kind::Inventory,
-                    format!("{from} vous donne {what}"),
+                    aurora_i18n::tr!("world-mod-gives-you", from = from.to_string(), what = what.to_string()),
                     String::new(),
                     Data::Inventory {
                         from: im.from_agent_id,
@@ -1572,7 +1577,7 @@ impl World {
                 self.ui_sounds.push(UiSound::GroupInvitation);
                 n.push(
                     Kind::Group,
-                    "Invitation à rejoindre un groupe",
+                    aurora_i18n::tr!("world-mod-invitation-to-join-a-group"),
                     im.message.clone(),
                     Data::Group {
                         group: im.from_agent_id,
@@ -1583,13 +1588,16 @@ impl World {
             d::GROUP_NOTICE => {
                 self.ui_sounds.push(UiSound::GroupNotice);
                 // "subject|message"
-                let (subject, body) = im.message.split_once('|').unwrap_or(("Avis de groupe", im.message.as_str()));
+                let (subject, body) = im
+                    .message
+                    .split_once('|')
+                    .unwrap_or((aurora_i18n::tr!("common-group-notice"), im.message.as_str()));
                 n.push(Kind::Group, format!("{from} : {subject}"), body.to_owned(), Data::None);
             }
             d::LURE_ACCEPTED => {
                 n.push(
                     Kind::Info,
-                    format!("{from} a accepté votre téléportation"),
+                    aurora_i18n::tr!("world-mod-accepted-your-teleport-offer", from = from.to_string()),
                     String::new(),
                     Data::None,
                 );
@@ -1597,7 +1605,7 @@ impl World {
             d::LURE_DECLINED => {
                 n.push(
                     Kind::Info,
-                    format!("{from} a refusé votre téléportation"),
+                    aurora_i18n::tr!("world-mod-declined-your-teleport-offer", from = from.to_string()),
                     im.message.clone(),
                     Data::None,
                 );
@@ -1606,18 +1614,23 @@ impl World {
                 self.social.form_friendship(im.from_agent_id);
                 n.push(
                     Kind::Friendship,
-                    format!("{from} a accepté votre amitié"),
+                    aurora_i18n::tr!("world-mod-accepted-your-friendship", from = from.to_string()),
                     String::new(),
                     Data::None,
                 );
             }
             d::INVENTORY_ACCEPTED | d::INVENTORY_DECLINED => {
                 let verb = if im.dialog == d::INVENTORY_ACCEPTED {
-                    "accepté"
+                    aurora_i18n::tr!("world-mod-accepted")
                 } else {
-                    "refusé"
+                    aurora_i18n::tr!("world-mod-declined")
                 };
-                n.push(Kind::Inventory, format!("{from} a {verb} votre objet"), String::new(), Data::None);
+                n.push(
+                    Kind::Inventory,
+                    aurora_i18n::tr!("world-mod-has-your-object", from = from.to_string(), verb = verb.to_string()),
+                    String::new(),
+                    Data::None,
+                );
             }
             d::MESSAGEBOX | d::FROM_TASK_AS_ALERT => {
                 n.push(Kind::Alert, from, im.message.clone(), Data::None);
@@ -1939,7 +1952,7 @@ mod motion_tests {
             position: Vec3::new(40.0, 50.0, 30.0),
             look_at: Vec3::X,
         });
-        world.parcel_name = "Parcelle de démo".into();
+        world.parcel_name = aurora_i18n::tr!("world-mod-demo-parcel").into();
         (world, handle)
     }
 
@@ -2107,7 +2120,7 @@ mod motion_tests {
         assert!(!world.teleporting && !world.tp_show_progress);
         assert_eq!(world.agent.position, position);
         assert!(world.agent.flying);
-        assert_eq!(world.parcel_name, "Parcelle de démo");
+        assert_eq!(world.parcel_name, aurora_i18n::tr!("world-mod-demo-parcel"));
         assert_eq!(world.tp_history.previous().expect("previous arrival").position, previous);
         // Late progress packets must never bring back a local loading screen.
         world.apply(NetEvent::TeleportStarted);
@@ -2170,7 +2183,7 @@ mod motion_tests {
         });
         assert_eq!(world.ui_sounds.iter().filter(|s| **s == UiSound::TeleportOut).count(), 1);
         world.apply(NetEvent::TeleportFailed {
-            reason: "Destination indisponible".into(),
+            reason: aurora_i18n::tr!("world-mod-destination-unavailable").into(),
         });
         assert!(!world.teleporting && world.tp_failed);
         // The screen remains eligible for its failure fade-out.
@@ -2303,11 +2316,11 @@ mod motion_tests {
         let object_id = Uuid::from_u128(0x4321);
         let menu = || NetEvent::ScriptDialog {
             object_id,
-            object_name: "Menu de test".into(),
-            owner_name: "Vendeur de test".into(),
-            message: "Choisissez".into(),
+            object_name: aurora_i18n::tr!("world-mod-test-menu").into(),
+            owner_name: aurora_i18n::tr!("world-mod-test-seller").into(),
+            message: aurora_i18n::tr!("world-mod-choose").into(),
             channel: -42,
-            buttons: vec!["Oui".into(), "Non".into()],
+            buttons: vec![aurora_i18n::tr!("common-yes").into(), aurora_i18n::tr!("common-no").into()],
         };
         world.apply(menu());
         let id = world.notifications.list.last().unwrap().id;

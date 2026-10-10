@@ -116,6 +116,7 @@ pub(crate) struct Shared {
     pub stats: Arc<NetStats>,
     /// Directory of the per-region object caches (None = disabled).
     pub object_cache_dir: Arc<Mutex<Option<std::path::PathBuf>>>,
+    pub agent_language: Arc<Mutex<(String, bool)>>,
 }
 
 struct Session<'a> {
@@ -174,7 +175,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
     emit(
         sh,
         NetEvent::LoginProgress {
-            message: "Connexion au serveur de login…".into(),
+            message: aurora_i18n::tr!("session-connecting-to-login-server").into(),
             fraction: 0.1,
         },
     );
@@ -199,7 +200,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
     emit(
         sh,
         NetEvent::LoginProgress {
-            message: "Connexion à la région…".into(),
+            message: aurora_i18n::tr!("common-connecting-to-region").into(),
             fraction: 0.3,
         },
     );
@@ -210,7 +211,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
             emit(
                 sh,
                 NetEvent::LoginFailed {
-                    error: format!("UDP bind failed: {e}"),
+                    error: aurora_i18n::tr!("session-udp-bind-failed", e = format!("{}", e)),
                     mfa_required: false,
                     tos_required: false,
                     bad_credentials: false,
@@ -343,6 +344,7 @@ impl Session<'_> {
             self.agent_parcel = None;
             // capabilities of a neighbour we already know: no new caps event
             if self.sims.get(&addr).is_some_and(|s| !s.caps.is_empty()) {
+                self.update_agent_language();
                 self.request_environment(None);
             }
         }
@@ -422,8 +424,9 @@ impl Session<'_> {
                     emit(
                         self.sh,
                         NetEvent::Alert {
-                            message: format!(
-                                "Les capacités de la région sont indisponibles ({e}) : textures, inventaire et téléportations seront limités."
+                            message: aurora_i18n::tr!(
+                                "session-region-capabilities-are-unavailable-textures-inventory-and-teleports-will",
+                                e = e.to_string()
                             ),
                         },
                     );
@@ -454,6 +457,7 @@ impl Session<'_> {
             self.request_features(handle, url);
         }
         if self.main == Some(addr) {
+            self.update_agent_language();
             // LLEnvironment::onRegionChange -> requestRegion once caps arrive
             self.request_environment(None);
             if self.inventory_merchant_pending {
@@ -661,9 +665,7 @@ impl Session<'_> {
         if before != self.inventory_callbacks.len() {
             emit(
                 self.sh,
-                NetEvent::InventoryOperationFailed(
-                    "Une création ou copie n’a pas été confirmée. Rechargez le dossier avant de réessayer.".into(),
-                ),
+                NetEvent::InventoryOperationFailed(aurora_i18n::tr!("session-a-creation-or-copy-was-not-confirmed-reload-the").into()),
             );
         }
         let now = Instant::now();
@@ -701,7 +703,7 @@ impl Session<'_> {
             emit(
                 self.sh,
                 NetEvent::Disconnected {
-                    reason: "Nous avons des difficultés à vous connecter. Il y a peut-être un problème avec votre connexion Internet ou la grille. Vérifiez votre connexion Internet et réessayez dans quelques minutes.".into(),
+                    reason: aurora_i18n::tr!("session-we-are-having-trouble-connecting-you-there-may-be").into(),
                 },
             );
             self.finished = true;
@@ -724,7 +726,7 @@ impl Session<'_> {
                 emit(
                     self.sh,
                     NetEvent::Disconnected {
-                        reason: "La région n'a pas répondu à temps (AgentMovementComplete).".into(),
+                        reason: aurora_i18n::tr!("session-the-region-did-not-respond-in-time-agentmovementcomplete").into(),
                     },
                 );
                 self.finished = true;
@@ -763,7 +765,7 @@ impl Session<'_> {
                 emit(
                     self.sh,
                     NetEvent::Disconnected {
-                        reason: "La connexion avec la région a été perdue.".into(),
+                        reason: aurora_i18n::tr!("session-connection-to-the-region-was-lost").into(),
                     },
                 );
                 self.finished = true;
@@ -844,6 +846,7 @@ impl Session<'_> {
             return;
         }
         match c {
+            NetCommand::UpdateAgentLanguage => self.update_agent_language(),
             NetCommand::Login(_) => log::warn!("already logged in"),
             NetCommand::Logout => {
                 if self.logout_started.is_none() {
@@ -1276,7 +1279,7 @@ impl Session<'_> {
                         self.sh,
                         NetEvent::InventoryEdited {
                             request,
-                            result: Err("Le serveur d’inventaire n’est pas encore disponible.".into()),
+                            result: Err(aurora_i18n::tr!("session-the-inventory-server-is-not-available-yet").into()),
                         },
                     );
                     return;
@@ -1305,8 +1308,8 @@ impl Session<'_> {
                 let owner = self.agent_id();
                 tokio::spawn(async move {
                     let result = async {
-                        let ((upload, ais), fetch) =
-                            caps.ok_or_else(|| "Le serveur ne permet pas le chargement des images d’inventaire.".to_owned())?;
+                        let ((upload, ais), fetch) = caps
+                            .ok_or_else(|| aurora_i18n::tr!("session-the-server-does-not-support-uploading-inventory-images").to_owned())?;
                         let asset = crate::inventory::thumbnail::upload(&http, &upload, item, folder, data).await?;
                         crate::inventory::operations::mutate(
                             &http,
@@ -1329,7 +1332,7 @@ impl Session<'_> {
                     let result = if let Some(cap) = cap {
                         crate::inventory::operations::preview(&http, &cap, "texture_id", asset).await
                     } else {
-                        Err("La région ne permet pas de charger cette image.".into())
+                        Err(aurora_i18n::tr!("session-this-region-does-not-support-uploading-this-image").into())
                     };
                     let _ = events.send(NetEvent::InventoryThumbnailSource {
                         request,
@@ -1357,7 +1360,7 @@ impl Session<'_> {
                         {
                             Ok(r) if r.status().is_success() => Ok(true),
                             Ok(r) if matches!(r.status().as_u16(), 404 | 503) => Ok(false),
-                            _ => Err("Le service de la Place du marché est indisponible.".into()),
+                            _ => Err(aurora_i18n::tr!("session-the-marketplace-service-is-unavailable").into()),
                         }
                     } else {
                         Ok(false)
@@ -1371,7 +1374,7 @@ impl Session<'_> {
                         self.sh,
                         NetEvent::InventoryPreview {
                             item: it.id,
-                            result: Err("La région ne permet pas de charger ce contenu.".into()),
+                            result: Err(aurora_i18n::tr!("session-this-region-does-not-support-uploading-this-content").into()),
                         },
                     );
                     return;
@@ -1429,7 +1432,7 @@ impl Session<'_> {
                         self.sh,
                         NetEvent::InventoryContentSaved {
                             item,
-                            result: Err("L’enregistrement n’est pas disponible dans cette région.".into()),
+                            result: Err(aurora_i18n::tr!("session-saving-is-unavailable-in-this-region").into()),
                         },
                     );
                     return;
@@ -1510,7 +1513,7 @@ impl Session<'_> {
                         self.sh,
                         NetEvent::InventoryFavoriteUpdated {
                             item,
-                            result: Err("Le serveur d’inventaire n’est pas encore disponible.".into()),
+                            result: Err(aurora_i18n::tr!("session-the-inventory-server-is-not-available-yet").into()),
                         },
                     );
                     return;
@@ -1530,7 +1533,7 @@ impl Session<'_> {
                         self.sh,
                         NetEvent::OutfitUpdated {
                             request,
-                            result: Err("Le serveur d’inventaire n’est pas encore disponible.".into()),
+                            result: Err(aurora_i18n::tr!("session-the-inventory-server-is-not-available-yet").into()),
                         },
                     );
                     return;
@@ -1550,7 +1553,7 @@ impl Session<'_> {
                         self.sh,
                         NetEvent::OutfitUpdated {
                             request,
-                            result: Err("Le serveur d’inventaire n’est pas encore disponible.".into()),
+                            result: Err(aurora_i18n::tr!("session-the-inventory-server-is-not-available-yet").into()),
                         },
                     );
                     return;
@@ -1712,7 +1715,7 @@ impl Session<'_> {
                 .post(&url)
                 .header("Content-Type", "application/llsd+xml")
                 .header("Accept", "application/llsd+xml")
-                .header("Accept-Language", "fr")
+                .header("Accept-Language", aurora_i18n::language())
                 .body(aurora_llsd::to_xml(&body))
                 .send()
                 .await;
@@ -1753,7 +1756,7 @@ impl Session<'_> {
                     self.sh,
                     NetEvent::ProfileSaveFailed {
                         target,
-                        reason: "la région n'a pas la capability AgentProfile".into(),
+                        reason: aurora_i18n::tr!("session-the-region-does-not-provide-the-agentprofile-capability").into(),
                     },
                 );
             }
@@ -1847,6 +1850,20 @@ impl Session<'_> {
                         let _ = events.send(NetEvent::InventoryFetchFailed { folders: chunk.to_vec() });
                     }
                 }
+            }
+        });
+    }
+
+    /// LLAgentLanguage::update (indra/newview/llagentlanguage.cpp).
+    /// Repeat after entering a region and after language/privacy changes.
+    fn update_agent_language(&self) {
+        let Some(url) = self.main_cap("UpdateAgentLanguage") else { return };
+        let (language, public) = self.sh.agent_language.lock().clone();
+        let body = caps::agent_language_body(&language, public);
+        let http = self.sh.caps_http.clone();
+        tokio::spawn(async move {
+            if caps::post_llsd(&http, &url, &body).await.is_err() {
+                log::warn!("Could not update agent language");
             }
         });
     }
@@ -2679,7 +2696,7 @@ impl Session<'_> {
                 emit(
                     self.sh,
                     NetEvent::Disconnected {
-                        reason: "La région a fermé la connexion.".into(),
+                        reason: aurora_i18n::tr!("session-the-region-closed-the-connection").into(),
                     },
                 );
                 self.finished = true;
@@ -2725,7 +2742,7 @@ impl Session<'_> {
                         emit(
                             self.sh,
                             NetEvent::TeleportFailed {
-                                reason: format!("Région introuvable : {want}"),
+                                reason: aurora_i18n::tr!("session-region-not-found", want = want.to_string()),
                             },
                         );
                     }
@@ -3092,7 +3109,7 @@ impl Session<'_> {
             emit(
                 self.sh,
                 NetEvent::LoginProgress {
-                    message: format!("Région {} rejointe", field_str(&r.sim_name)),
+                    message: aurora_i18n::tr!("session-joined-region", value0 = field_str(&r.sim_name).to_string()),
                     fraction: 0.6,
                 },
             );

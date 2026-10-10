@@ -82,6 +82,7 @@ pub fn spin(
     let mut dv = egui::DragValue::new(v)
         .speed(speed)
         .range(range)
+        .custom_parser(aurora_i18n::parse_number)
         .max_decimals(decimals)
         .min_decimals(decimals.min(5));
     if tentative {
@@ -103,7 +104,13 @@ pub fn spin(
 
 /// Integer spinner.
 pub fn spin_i(ui: &mut egui::Ui, v: &mut i32, range: std::ops::RangeInclusive<i32>, width: f32) -> Edit {
-    let r = ui.add_sized([width, 19.0], egui::DragValue::new(v).speed(0.25).range(range));
+    let r = ui.add_sized(
+        [width, 19.0],
+        egui::DragValue::new(v)
+            .custom_parser(aurora_i18n::parse_number)
+            .speed(0.25)
+            .range(range),
+    );
     Edit {
         changed: r.changed(),
         commit: (r.changed() && !r.dragged()) || r.drag_stopped(),
@@ -201,7 +208,7 @@ pub fn swatch(
             painter.text(
                 rect.center(),
                 egui::Align2::CENTER_CENTER,
-                "Multiples",
+                aurora_i18n::tr!("build-ui-common-multiple"),
                 egui::FontId::proportional(11.0),
                 p.ink,
             );

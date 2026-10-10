@@ -49,153 +49,177 @@ impl AvatarPicker {
         let mut open = true;
         let screen = ctx.content_rect();
         let size = Vec2::new(380.0, 400.0);
-        Floater::new(&self.id, "Choisissez un Résident", screen.center() - size * 0.5, size)
-            .fixed()
-            .show(ctx, p, &mut open, |ui| {
-                let before = self.tab;
-                widgets::tabs(
-                    ui,
-                    p,
-                    &mut self.tab,
-                    &[("Recherche", true), ("Amis", true), ("À proximité", true), ("Par UUID", true)],
-                );
-                if before != self.tab {
-                    self.selected.clear();
+        Floater::new(
+            &self.id,
+            aurora_i18n::tr!("ui-avatar-picker-choose-a-resident"),
+            screen.center() - size * 0.5,
+            size,
+        )
+        .fixed()
+        .show(ctx, p, &mut open, |ui| {
+            let before = self.tab;
+            widgets::tabs(
+                ui,
+                p,
+                &mut self.tab,
+                &[
+                    (aurora_i18n::tr!("ui-avatar-picker-search"), true),
+                    (aurora_i18n::tr!("common-friends"), true),
+                    (aurora_i18n::tr!("common-nearby"), true),
+                    (aurora_i18n::tr!("ui-avatar-picker-by-uuid"), true),
+                ],
+            );
+            if before != self.tab {
+                self.selected.clear();
+            }
+            ui.add_space(6.0);
+            let rows: Vec<(Uuid, String, String)> = match self.tab {
+                TAB_FRIENDS => {
+                    let mut v: Vec<_> = world
+                        .social
+                        .friends
+                        .iter()
+                        .map(|f| (f.id, world.social.name_of(&f.id), String::new()))
+                        .collect();
+                    v.sort_by_key(|r| r.1.to_lowercase());
+                    v
                 }
-                ui.add_space(6.0);
-                let rows: Vec<(Uuid, String, String)> = match self.tab {
-                    TAB_FRIENDS => {
-                        let mut v: Vec<_> = world
-                            .social
-                            .friends
-                            .iter()
-                            .map(|f| (f.id, world.social.name_of(&f.id), String::new()))
-                            .collect();
-                        v.sort_by_key(|r| r.1.to_lowercase());
-                        v
-                    }
-                    TAB_NEAR => super::people::nearby(world)
-                        .into_iter()
-                        .filter(|n| n.3 <= NEAR_ME_RANGE)
-                        .map(|n| (n.0, n.1, format!("{:.0} m", n.3)))
-                        .collect(),
-                    TAB_UUID => {
-                        ui.label(RichText::new("Saisissez l'UUID d'une personne :").size(12.0).color(p.muted));
-                        ui.add(egui::TextEdit::singleline(&mut self.uuid_text).desired_width(f32::INFINITY));
-                        match Uuid::parse_str(self.uuid_text.trim()) {
-                            Ok(id) if !id.is_nil() => {
-                                world.social.want_name(id);
-                                vec![(id, world.social.name_of(&id), String::new())]
-                            }
-                            _ => Vec::new(),
+                TAB_NEAR => super::people::nearby(world)
+                    .into_iter()
+                    .filter(|n| n.3 <= NEAR_ME_RANGE)
+                    .map(|n| (n.0, n.1, format!("{:.0} m", n.3)))
+                    .collect(),
+                TAB_UUID => {
+                    ui.label(
+                        RichText::new(aurora_i18n::tr!("ui-avatar-picker-enter-a-person-s-uuid"))
+                            .size(12.0)
+                            .color(p.muted),
+                    );
+                    ui.add(egui::TextEdit::singleline(&mut self.uuid_text).desired_width(f32::INFINITY));
+                    match Uuid::parse_str(self.uuid_text.trim()) {
+                        Ok(id) if !id.is_nil() => {
+                            world.social.want_name(id);
+                            vec![(id, world.social.name_of(&id), String::new())]
                         }
+                        _ => Vec::new(),
                     }
-                    _ => {
-                        ui.label(
-                            RichText::new("Saisissez une partie du nom d'une personne :")
-                                .size(12.0)
-                                .color(p.muted),
-                        );
-                        ui.horizontal(|ui| {
-                            let r = ui.add(egui::TextEdit::singleline(&mut self.query).desired_width(ui.available_width() - 60.0));
-                            let go = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                            // LLFloaterAvatarPicker::onBtnFind: at least 3 characters
-                            ui.add_enabled_ui(self.query.trim().chars().count() >= 3, |ui| {
-                                if (flat_button(ui, p, "Aller").clicked() || go) && self.query.trim().chars().count() >= 3 {
-                                    world.land.search_avatars(&self.query);
+                }
+                _ => {
+                    ui.label(
+                        RichText::new(aurora_i18n::tr!("ui-avatar-picker-enter-part-of-a-person-s-name"))
+                            .size(12.0)
+                            .color(p.muted),
+                    );
+                    ui.horizontal(|ui| {
+                        let r = ui.add(egui::TextEdit::singleline(&mut self.query).desired_width(ui.available_width() - 60.0));
+                        let go = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                        // LLFloaterAvatarPicker::onBtnFind: at least 3 characters
+                        ui.add_enabled_ui(self.query.trim().chars().count() >= 3, |ui| {
+                            if (flat_button(ui, p, aurora_i18n::tr!("ui-avatar-picker-go")).clicked() || go)
+                                && self.query.trim().chars().count() >= 3
+                            {
+                                world.land.search_avatars(&self.query);
+                                self.selected.clear();
+                            }
+                        });
+                    });
+                    match &world.land.avatar_search {
+                        Some((_, None)) => {
+                            ui.label(RichText::new(aurora_i18n::tr!("common-search")).size(12.0).color(p.muted));
+                            Vec::new()
+                        }
+                        Some((q, Some(list))) if list.is_empty() => {
+                            ui.label(
+                                RichText::new(aurora_i18n::tr!("ui-avatar-picker-not-found", q = q.to_string()))
+                                    .size(12.0)
+                                    .color(p.muted),
+                            );
+                            Vec::new()
+                        }
+                        Some((_, Some(list))) => list.iter().map(|a| (a.id, a.display_name.clone(), a.username.clone())).collect(),
+                        None => Vec::new(),
+                    }
+                }
+            };
+            ui.add_space(4.0);
+            // fixed like the window: the available height of a window
+            // sized from its content is the whole screen
+            let list_h = LIST_H;
+            egui::Frame::new().fill(p.field).show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.set_min_height(list_h);
+                egui::ScrollArea::vertical()
+                    .id_salt((&self.id, self.tab))
+                    .max_height(list_h)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        if rows.is_empty() && self.tab == TAB_NEAR {
+                            ui.label(
+                                RichText::new(aurora_i18n::tr!("ui-avatar-picker-nobody-nearby"))
+                                    .size(12.0)
+                                    .color(p.muted),
+                            );
+                        }
+                        ui.spacing_mut().item_spacing.y = 0.0;
+                        let w = ui.available_width();
+                        for (id, name, extra) in &rows {
+                            let sel = self.selected.contains(id);
+                            // the whole row is selected, like LLScrollListCtrl
+                            let (rect, r) = ui.allocate_exact_size(Vec2::new(w, 20.0), egui::Sense::click());
+                            if sel {
+                                ui.painter().rect_filled(rect, 0.0, p.violet.gamma_multiply(0.35));
+                            } else if r.hovered() {
+                                ui.painter().rect_filled(rect, 0.0, p.raised.gamma_multiply(0.6));
+                            }
+                            // the extra column (username, distance) keeps its room
+                            let extra_w = if extra.is_empty() {
+                                0.0
+                            } else {
+                                let g = ui
+                                    .painter()
+                                    .layout_no_wrap(extra.clone(), egui::FontId::proportional(11.0), p.muted);
+                                let x = rect.right() - 6.0 - g.size().x;
+                                ui.painter()
+                                    .galley(egui::pos2(x, rect.center().y - g.size().y * 0.5), g.clone(), p.muted);
+                                g.size().x + 12.0
+                            };
+                            let g = egui::WidgetText::from(RichText::new(name).size(12.0).color(p.ink)).into_galley(
+                                ui,
+                                Some(egui::TextWrapMode::Truncate),
+                                (w - 12.0 - extra_w).max(20.0),
+                                egui::TextStyle::Body,
+                            );
+                            ui.painter()
+                                .galley(egui::pos2(rect.left() + 6.0, rect.center().y - g.size().y * 0.5), g, p.ink);
+                            if r.clicked() {
+                                let add = ui.input(|i| i.modifiers.ctrl || i.modifiers.command) && self.multiple;
+                                if !add {
                                     self.selected.clear();
                                 }
-                            });
-                        });
-                        match &world.land.avatar_search {
-                            Some((_, None)) => {
-                                ui.label(RichText::new("Recherche...").size(12.0).color(p.muted));
-                                Vec::new()
-                            }
-                            Some((q, Some(list))) if list.is_empty() => {
-                                ui.label(RichText::new(format!("'{q}' pas trouvé")).size(12.0).color(p.muted));
-                                Vec::new()
-                            }
-                            Some((_, Some(list))) => list.iter().map(|a| (a.id, a.display_name.clone(), a.username.clone())).collect(),
-                            None => Vec::new(),
-                        }
-                    }
-                };
-                ui.add_space(4.0);
-                // fixed like the window: the available height of a window
-                // sized from its content is the whole screen
-                let list_h = LIST_H;
-                egui::Frame::new().fill(p.field).show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.set_min_height(list_h);
-                    egui::ScrollArea::vertical()
-                        .id_salt((&self.id, self.tab))
-                        .max_height(list_h)
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| {
-                            if rows.is_empty() && self.tab == TAB_NEAR {
-                                ui.label(RichText::new("Personne à proximité").size(12.0).color(p.muted));
-                            }
-                            ui.spacing_mut().item_spacing.y = 0.0;
-                            let w = ui.available_width();
-                            for (id, name, extra) in &rows {
-                                let sel = self.selected.contains(id);
-                                // the whole row is selected, like LLScrollListCtrl
-                                let (rect, r) = ui.allocate_exact_size(Vec2::new(w, 20.0), egui::Sense::click());
-                                if sel {
-                                    ui.painter().rect_filled(rect, 0.0, p.violet.gamma_multiply(0.35));
-                                } else if r.hovered() {
-                                    ui.painter().rect_filled(rect, 0.0, p.raised.gamma_multiply(0.6));
-                                }
-                                // the extra column (username, distance) keeps its room
-                                let extra_w = if extra.is_empty() {
-                                    0.0
+                                if sel && add {
+                                    self.selected.retain(|x| x != id);
                                 } else {
-                                    let g = ui
-                                        .painter()
-                                        .layout_no_wrap(extra.clone(), egui::FontId::proportional(11.0), p.muted);
-                                    let x = rect.right() - 6.0 - g.size().x;
-                                    ui.painter()
-                                        .galley(egui::pos2(x, rect.center().y - g.size().y * 0.5), g.clone(), p.muted);
-                                    g.size().x + 12.0
-                                };
-                                let g = egui::WidgetText::from(RichText::new(name).size(12.0).color(p.ink)).into_galley(
-                                    ui,
-                                    Some(egui::TextWrapMode::Truncate),
-                                    (w - 12.0 - extra_w).max(20.0),
-                                    egui::TextStyle::Body,
-                                );
-                                ui.painter()
-                                    .galley(egui::pos2(rect.left() + 6.0, rect.center().y - g.size().y * 0.5), g, p.ink);
-                                if r.clicked() {
-                                    let add = ui.input(|i| i.modifiers.ctrl || i.modifiers.command) && self.multiple;
-                                    if !add {
-                                        self.selected.clear();
-                                    }
-                                    if sel && add {
-                                        self.selected.retain(|x| x != id);
-                                    } else {
-                                        self.selected.push(*id);
-                                    }
-                                }
-                                if r.double_clicked() {
-                                    chosen = Some(vec![*id]);
+                                    self.selected.push(*id);
                                 }
                             }
-                        });
-                });
-                ui.add_space(6.0);
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if flat_button(ui, p, "Fermer").clicked() {
-                        self.open = false;
-                    }
-                    ui.add_enabled_ui(!self.selected.is_empty(), |ui| {
-                        if flat_button(ui, p, "Sélectionner").clicked() {
-                            chosen = Some(self.selected.clone());
+                            if r.double_clicked() {
+                                chosen = Some(vec![*id]);
+                            }
                         }
                     });
+            });
+            ui.add_space(6.0);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if flat_button(ui, p, aurora_i18n::tr!("common-close")).clicked() {
+                    self.open = false;
+                }
+                ui.add_enabled_ui(!self.selected.is_empty(), |ui| {
+                    if flat_button(ui, p, aurora_i18n::tr!("ui-avatar-picker-select")).clicked() {
+                        chosen = Some(self.selected.clone());
+                    }
                 });
             });
+        });
         if !open || chosen.is_some() {
             self.open = false;
         }

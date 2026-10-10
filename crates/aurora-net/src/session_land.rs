@@ -380,7 +380,7 @@ impl Session<'_> {
     /// coroResetEnvironment on `ExtEnvironment?parcelid=N` of the agent region.
     fn parcel_environment(&mut self, local_id: i32, verb: EnvVerb) {
         let Some(url) = self.main_cap("ExtEnvironment") else {
-            let result = Err("la région n'a pas la capability ExtEnvironment".to_owned());
+            let result = Err(aurora_i18n::tr!("session-land-the-region-does-not-provide-the-extenvironment-capability").to_owned());
             emit(self.sh, NetEvent::Land(LandEvent::Environment { local_id, result }));
             return;
         };
@@ -401,7 +401,7 @@ impl Session<'_> {
                     // a refused change comes back as success = false with a message
                     Some(v) if v.has("success") && !v["success"].as_bool() => Err(v["message"].to_string_value()),
                     Some(v) => Ok(v["environment"].clone()),
-                    None => Err("réponse illisible".to_owned()),
+                    None => Err(aurora_i18n::tr!("session-land-unreadable-response").to_owned()),
                 },
                 Ok(r) => Err(format!("HTTP {}", r.status().as_u16())),
                 Err(e) => Err(e.to_string()),

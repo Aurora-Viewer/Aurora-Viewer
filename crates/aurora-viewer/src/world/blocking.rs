@@ -128,7 +128,10 @@ impl World {
             });
         }
         if self.groups.report_blocks {
-            self.system_message(format!("{name} a été ajouté(e) à la liste de blocage."));
+            self.system_message(aurora_i18n::tr!(
+                "world-blocking-was-added-to-the-block-list",
+                name = name.to_string()
+            ));
         }
         Ok(())
     }
@@ -139,7 +142,10 @@ impl World {
         if let Some(cmd) = self.mutes.remove(&id, name, flags) {
             self.groups.out.push(cmd);
             if self.groups.report_blocks && !self.mutes.is_muted(&id, name, 0) {
-                self.system_message(format!("{shown} a été retiré(e) de la liste de blocage."));
+                self.system_message(aurora_i18n::tr!(
+                    "world-blocking-was-removed-from-the-block-list",
+                    shown = shown.to_string()
+                ));
             }
         }
     }

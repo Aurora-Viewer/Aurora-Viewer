@@ -835,6 +835,8 @@ impl Default for TouchSurface {
 }
 #[derive(Debug, Clone)]
 pub enum NetCommand {
+    /// Send the current language and visibility through its capability.
+    UpdateAgentLanguage,
     /// Ask for the mute list (MuteListRequest; CRC of our cached copy, 0 if none).
     RequestMuteList {
         crc: u32,

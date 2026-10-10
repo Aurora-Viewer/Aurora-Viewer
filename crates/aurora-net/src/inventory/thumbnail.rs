@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 pub async fn upload(http: &reqwest::Client, cap: &str, item: Uuid, folder: bool, data: Vec<u8>) -> Result<Uuid, String> {
     if item.is_nil() || data.is_empty() || data.len() > 2 * 1024 * 1024 {
-        return Err("L’image est vide ou trop volumineuse.".into());
+        return Err(aurora_i18n::tr!("inventory-thumbnail-the-image-is-empty-or-too-large").into());
     }
     let body = if folder {
         llsd_map! { "category_id" => item }
@@ -23,11 +23,11 @@ pub async fn upload(http: &reqwest::Client, cap: &str, item: Uuid, folder: bool,
             .timeout(std::time::Duration::from_secs(30))
             .send()
             .await
-            .map_err(|_| "Le service de vignettes ne répond pas.".to_owned())?;
+            .map_err(|_| aurora_i18n::tr!("inventory-thumbnail-the-thumbnail-service-is-not-responding").to_owned())?;
         let response = read_reply(response).await?;
         let url = response["uploader"].as_str();
         if url.is_empty() {
-            return Err("Le serveur n’a pas fourni de destination pour l’image.".into());
+            return Err(aurora_i18n::tr!("inventory-thumbnail-the-server-did-not-provide-an-upload-destination-for").into());
         }
         // Capability URLs are never included in diagnostics.
         let response = http
@@ -45,30 +45,34 @@ pub async fn upload(http: &reqwest::Client, cap: &str, item: Uuid, folder: bool,
             if reply["state"].as_str() == "complete" && !asset.is_nil() {
                 return Ok(asset);
             }
-            return Err("Le serveur n’a pas confirmé le chargement de l’image.".into());
+            return Err(aurora_i18n::tr!("inventory-thumbnail-the-server-did-not-confirm-the-image-upload").into());
         }
         if attempt < 2 {
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         }
     }
-    Err("L’image n’a pas pu être chargée après trois tentatives.".into())
+    Err(aurora_i18n::tr!("inventory-thumbnail-could-not-load-the-image-after-three-attempts").into())
 }
 
 async fn read_reply(mut response: reqwest::Response) -> Result<aurora_llsd::Llsd, String> {
     if !response.status().is_success() {
-        return Err(format!(
-            "Le service de vignettes a refusé l’opération (HTTP {}).",
-            response.status().as_u16()
+        return Err(aurora_i18n::tr!(
+            "inventory-thumbnail-the-thumbnail-service-rejected-the-operation-http",
+            value0 = format!("{}", response.status().as_u16())
         ));
     }
     let mut bytes = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(|_| "Réponse interrompue.".to_owned())? {
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| aurora_i18n::tr!("common-interrupted-response").to_owned())?
+    {
         if bytes.len() + chunk.len() > 64 * 1024 {
-            return Err("Réponse de chargement trop volumineuse.".into());
+            return Err(aurora_i18n::tr!("inventory-thumbnail-upload-response-is-too-large").into());
         }
         bytes.extend_from_slice(&chunk);
     }
-    aurora_llsd::from_xml(&bytes).map_err(|_| "Réponse de chargement invalide.".into())
+    aurora_llsd::from_xml(&bytes).map_err(|_| aurora_i18n::tr!("inventory-thumbnail-invalid-upload-response").into())
 }
 
 pub fn patch(item: Uuid, folder: bool, parent: Uuid, asset: Uuid) -> Mutation {

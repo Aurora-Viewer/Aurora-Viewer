@@ -228,12 +228,16 @@ impl EnvSummary {
     /// LLPanelEnvironmentInfo::getNameForTrackIndex for a parcel.
     pub fn track_name(&self, index: i32) -> String {
         if !(0..5).contains(&index) {
-            return "(vide)".into();
+            return aurora_i18n::tr!("status-empty").into();
         }
         let i = index as usize;
         let mut name = if self.day_name.is_empty() {
             let n = self.names[i].clone();
-            if n.is_empty() && i <= 1 { "(envt de la région)".into() } else { n }
+            if n.is_empty() && i <= 1 {
+                aurora_i18n::tr!("world-land-region-environment").into()
+            } else {
+                n
+            }
         } else if self.tracks_set[i] {
             self.day_name.clone()
         } else {
@@ -389,7 +393,7 @@ impl Land {
     /// null group is "(aucun)"), else asked and None.
     pub fn group_name(&mut self, id: &Uuid, ours: &[GroupMembership]) -> Option<String> {
         if id.is_nil() {
-            return Some("(aucun)".into());
+            return Some(aurora_i18n::tr!("status-none").into());
         }
         if let Some(g) = ours.iter().find(|g| g.id == *id) {
             return Some(g.name.clone());
@@ -499,9 +503,9 @@ impl Land {
                     Some(c) if c.id == covenant_id && !covenant_id.is_nil() => c.text.clone(),
                     _ if covenant_id.is_nil() => Some(
                         if estate_owner.is_nil() {
-                            "Il n'y a aucun règlement pour ce domaine."
+                            aurora_i18n::tr!("world-land-this-estate-has-no-covenant")
                         } else {
-                            "Il n'y a aucun règlement pour ce domaine. Le terrain sur ce domaine est vendu par le propriétaire.  Pour en savoir plus, veuillez contacter le propriétaire."
+                            aurora_i18n::tr!("world-land-this-estate-has-no-covenant-land-here-is-sold")
                         }
                         .into(),
                     ),
@@ -518,7 +522,7 @@ impl Land {
             }
             LandEvent::CovenantText { covenant_id, text } => {
                 if let Some(c) = self.covenant.as_mut().filter(|c| c.id == covenant_id) {
-                    c.text = Some(text.unwrap_or_else(|| "Impossible de charger le règlement de ce domaine.".into()));
+                    c.text = Some(text.unwrap_or_else(|| aurora_i18n::tr!("world-land-could-not-load-this-estate-s-covenant").into()));
                 }
             }
             LandEvent::ParcelId { local_id, id } => {
@@ -718,7 +722,7 @@ mod tests {
     fn group(id: u128, powers: u64) -> GroupMembership {
         GroupMembership {
             id: Uuid::from_u128(id),
-            name: "Groupe".into(),
+            name: aurora_i18n::tr!("common-group").into(),
             insignia: Uuid::nil(),
             powers,
             accept_notices: true,
@@ -798,15 +802,15 @@ mod tests {
         let mut e = EnvSummary::default();
         // no names at all: ground and water say "region environment",
         // skies take the track below in parentheses
-        assert_eq!(e.track_name(1), "(envt de la région)");
-        assert_eq!(e.track_name(2), "(envt de la région)");
+        assert_eq!(e.track_name(1), aurora_i18n::tr!("world-land-region-environment"));
+        assert_eq!(e.track_name(2), aurora_i18n::tr!("world-land-region-environment"));
         e.names[2] = "Ciel bleu".into();
         assert_eq!(e.track_name(3), "(Ciel bleu)");
         e.day_name = "Ma journée".into();
         e.tracks_set = [true, true, false, false, false];
         assert_eq!(e.track_name(1), "Ma journée");
         assert_eq!(e.track_name(3), "(Ma journée)");
-        assert_eq!(e.track_name(-1), "(vide)");
+        assert_eq!(e.track_name(-1), aurora_i18n::tr!("status-empty"));
     }
 
     #[test]

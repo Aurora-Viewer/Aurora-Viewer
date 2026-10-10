@@ -179,7 +179,7 @@ impl World {
     pub fn session_title(&self, session: &Uuid) -> String {
         match self.groups.sessions.get(session) {
             Some(s) if !s.name.is_empty() => s.name.clone(),
-            Some(_) => "Conférence".to_owned(),
+            Some(_) => aurora_i18n::tr!("world-groups-conference").to_owned(),
             None => self.social.name_of(session),
         }
     }
@@ -278,7 +278,7 @@ impl World {
         {
             self.session_system(
                 session,
-                "Cette session a été fermée par le serveur : le message n'a peut-être pas été reçu.",
+                aurora_i18n::tr!("world-groups-the-server-closed-this-session-the-message-may-not"),
             );
         }
     }
@@ -380,7 +380,7 @@ impl World {
             NetEvent::GroupDropped(id) => {
                 self.groups.groups.retain(|g| g.id != id);
                 if self.groups.sessions.contains_key(&id) {
-                    self.session_system(id, "Vous ne faites plus partie de ce groupe.");
+                    self.session_system(id, aurora_i18n::tr!("world-groups-you-no-longer-belong-to-this-group"));
                     if let Some(s) = self.groups.sessions.get_mut(&id) {
                         s.closed = true;
                     }
@@ -401,7 +401,10 @@ impl World {
                     } else {
                         session
                     };
-                    self.session_system(id, format!("Impossible de rejoindre la session{}", reason(&error)));
+                    self.session_system(
+                        id,
+                        aurora_i18n::tr!("world-groups-could-not-join-the-session", value0 = reason(&error).to_string()),
+                    );
                     if let Some(s) = self.groups.sessions.get_mut(&id) {
                         s.closed = true;
                     }
@@ -441,9 +444,9 @@ impl World {
                     s.text_muted = muted;
                     if changed {
                         let text = if muted {
-                            "Un modérateur a coupé votre chat dans cette session."
+                            aurora_i18n::tr!("world-groups-a-moderator-has-muted-your-chat-in-this-session")
                         } else {
-                            "Un modérateur vous a rendu la parole."
+                            aurora_i18n::tr!("world-groups-a-moderator-has-unmuted-you")
                         };
                         self.session_system(session, text);
                     }
@@ -452,9 +455,9 @@ impl World {
             NetEvent::SessionError { session, event, error } => {
                 // LLIMMgr::showSessionEventError
                 let what = if event == "message" {
-                    "Message non envoyé"
+                    aurora_i18n::tr!("world-groups-message-not-sent")
                 } else {
-                    "Action refusée"
+                    aurora_i18n::tr!("world-groups-action-denied")
                 };
                 self.session_system(session, format!("{what}{}", reason(&error)));
             }
@@ -463,7 +466,10 @@ impl World {
                 if let Some(s) = self.groups.sessions.get_mut(&session) {
                     s.closed = true;
                     s.active = false;
-                    self.session_system(session, format!("La session a été fermée{}", reason(&r)));
+                    self.session_system(
+                        session,
+                        aurora_i18n::tr!("world-groups-the-session-was-closed", value0 = reason(&r).to_string()),
+                    );
                 }
             }
             NetEvent::ChatSessionReply { method, session, result } => match method {
@@ -477,7 +483,7 @@ impl World {
                     }
                     None => self.session_system(
                         session,
-                        "Impossible de rejoindre la session (le serveur n'a pas accepté l'invitation).",
+                        aurora_i18n::tr!("world-groups-could-not-join-the-session-the-server-declined-the"),
                     ),
                 },
                 SessionMethod::FetchHistory => {
@@ -526,9 +532,9 @@ impl World {
                 log::info!("ignoring conference (ad-hoc) chat from {}", inv.from_name);
                 self.groups.im(inv.from, dialog::SESSION_LEAVE, session, String::new());
                 if report {
-                    self.system_message(format!(
-                        "Vous avez été invité à une conférence (ad hoc) par {}, mais elle a été ignorée automatiquement à cause de vos réglages.",
-                        inv.from_name
+                    self.system_message(aurora_i18n::tr!(
+                        "world-groups-you-were-invited-to-an-ad-hoc-conference-by",
+                        value0 = inv.from_name.to_string()
                     ));
                 }
                 return;
@@ -670,7 +676,7 @@ fn saved_prefix(offline: bool, timestamp: u32) -> String {
         return String::new();
     }
     let t = SystemTime::UNIX_EPOCH + Duration::from_secs(timestamp as u64);
-    format!("(Enregistré à {}) ", crate::ui::chat::hhmm(t))
+    aurora_i18n::tr!("world-groups-saved-at", value0 = crate::ui::chat::hhmm(t).to_string())
 }
 
 #[cfg(test)]

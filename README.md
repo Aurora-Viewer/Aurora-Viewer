@@ -88,6 +88,9 @@ The texture memory budget is set automatically from the detected VRAM.
   step-by-step progress.
 - Teleports within the same region are instant, with no loading screen.
 - Movement keys adapt to the keyboard layout on first launch (WASD or ZQSD).
+- Interface en français et en anglais : détection du système, choix enregistré
+  dans les Préférences et changement immédiat. Les catalogues Fluent permettent
+  d'ajouter une langue ; voir [le guide de traduction](docs/TRANSLATING.md).
 
 **Things Firestorm doesn't have**
 
@@ -130,9 +133,6 @@ The texture memory budget is set automatically from the detected VRAM.
 
 **Planned**
 
-- English interface (the viewer is in French today), with the language
-  picked from the operating system and English as the fallback: top
-  priority.
 - NVIDIA DLSS upscaling and DLAA anti-aliasing.
 - Frame Generation (under investigation).
 - Faster texture loading: a GPU-compressed texture cache, so revisited
@@ -201,6 +201,7 @@ l'exe avant publication ; le build local la note aussi dans `version.txt`.
 |---|---|
 | `--title <text>` | Names the window "Aurora Viewer <version> - <text> (Dev)" and its log file |
 | `--fps-limit <fps>` | Caps this instance at 1–500 fps without changing saved preferences |
+| `--language <code>` | Force la langue de cette instance (`en`, `fr`, ou une autre langue ajoutée aux catalogues), sans modifier le choix enregistré |
 | `-h`, `--help` | Shows the help |
 | `-V`, `--version` | Affiche la version compilée puis quitte, sans fenêtre, journal ni réseau |
 
@@ -208,6 +209,15 @@ l'exe avant publication ; le build local la note aussi dans `version.txt`.
   file is `aurora-<text>.log` (`aurora-demo-<text>.log` in demo mode).
 - `--fps-limit`: applies an extra limit to this process, including captures
   and online sessions; a lower user preference remains effective.
+- `--language` : accepte aussi `--language=fr`. Une langue non disponible
+  utilise l'anglais ; l'argument est destiné aux démos et aux captures.
+
+Le viewer suit d'abord la langue enregistrée dans **Préférences › Interface ›
+Langue**, puis celle du système si « Langue du système » est sélectionné.
+L'anglais sert de repli. Le changement s'applique immédiatement ; le réglage
+« Langue visible aux scripts » est activé par défaut, comme Firestorm.
+Les traductions se trouvent dans `crates/aurora-i18n/locales/` :
+[guide de traduction](docs/TRANSLATING.md).
 
 The frame limiter is enabled at **120 fps by default** and can be disabled
 or adjusted in Préférences › Graphismes › Fluidité. Saved preferences are

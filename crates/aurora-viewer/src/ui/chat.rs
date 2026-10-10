@@ -95,13 +95,17 @@ fn pieces(text: &str, mut name_of: impl FnMut(uuid::Uuid) -> String) -> Vec<(Str
 fn link_badge_look(p: &Palette, url: &str) -> (&'static str, Color32, String) {
     use crate::link_trust::Trust;
     match crate::link_trust::classify(url) {
-        Trust::Trusted => ("check-circle-fill", p.success, "Site de confiance".into()),
+        Trust::Trusted => ("check-circle-fill", p.success, aurora_i18n::tr!("ui-chat-trusted-site").into()),
         Trust::Unknown => (
             "warning-fill",
             p.amber,
-            "Lien externe : vérifiez l'adresse avant de l'ouvrir".into(),
+            aurora_i18n::tr!("ui-chat-external-link-check-the-address-before-opening-it").into(),
         ),
-        Trust::Dangerous(why) => ("x-circle-fill", p.danger, format!("Lien dangereux : {why}")),
+        Trust::Dangerous(why) => (
+            "x-circle-fill",
+            p.danger,
+            aurora_i18n::tr!("ui-chat-dangerous-link", why = why.to_string()),
+        ),
     }
 }
 
@@ -185,8 +189,8 @@ fn line_job(
         ChatKind::System => ("", "", &line.text[..]),
         _ if emote => ("", "", &line.text[3..]),
         ChatKind::Im => ("[IM] ", ": ", &line.text[..]),
-        ChatKind::Local(ChatType::Shout) => ("", " crie : ", &line.text[..]),
-        ChatKind::Local(ChatType::Whisper) => ("", " murmure : ", &line.text[..]),
+        ChatKind::Local(ChatType::Shout) => ("", aurora_i18n::tr!("status-shouts"), &line.text[..]),
+        ChatKind::Local(ChatType::Whisper) => ("", aurora_i18n::tr!("status-whispers"), &line.text[..]),
         _ => ("", ": ", &line.text[..]),
     };
     let mut sender = None;
@@ -407,14 +411,14 @@ fn place_menu(r: &egui::Response, p: &Palette, url: &str, place: &crate::slurl::
     super::menu::context_menu(r, p, |ui| {
         let l = &place.location;
         let teleport = |ui: &mut egui::Ui| {
-            if super::menu::item(ui, p, "navigation-arrow", "Se téléporter à cet emplacement") {
+            if super::menu::item(ui, p, "navigation-arrow", aurora_i18n::tr!("ui-chat-teleport-to-this-location")) {
                 super::context::request(ui.ctx(), CtxAction::TeleportToPlace(l.region.clone(), l.pos));
             }
         };
         let map_label = if place.teleport {
-            "Afficher sur la carte"
+            aurora_i18n::tr!("common-show-on-map")
         } else {
-            "Voir sur la carte"
+            aurora_i18n::tr!("common-show-on-map-2")
         };
         let map = |ui: &mut egui::Ui| {
             if super::menu::item(ui, p, "map-trifold", map_label) {
@@ -426,7 +430,7 @@ fn place_menu(r: &egui::Response, p: &Palette, url: &str, place: &crate::slurl::
             super::menu::separator(ui, p);
             map(ui);
         } else {
-            if super::menu::item(ui, p, "info", "Afficher les informations sur ce lieu") {
+            if super::menu::item(ui, p, "info", aurora_i18n::tr!("ui-chat-show-information-about-this-place")) {
                 super::context::request(ui.ctx(), CtxAction::ShowPlaceInfo(l.region.clone(), l.pos));
             }
             super::menu::separator(ui, p);
@@ -434,7 +438,7 @@ fn place_menu(r: &egui::Response, p: &Palette, url: &str, place: &crate::slurl::
             teleport(ui);
         }
         super::menu::separator(ui, p);
-        if super::menu::item(ui, p, "link", "Copier la SLurl") {
+        if super::menu::item(ui, p, "link", aurora_i18n::tr!("common-copy-slurl")) {
             ui.ctx().copy_text(url.to_owned());
         }
     });
@@ -485,9 +489,9 @@ pub(crate) fn chat_text(
                     // details (LLURLDispatcherImpl::regionHandleCallback,
                     // SLURLTeleportDirectly off: FSFloaterPlaceDetails)
                     let tip = if place.teleport {
-                        "Cliquez pour vous téléporter à cet endroit"
+                        aurora_i18n::tr!("ui-chat-click-to-teleport-to-this-place")
                     } else {
-                        "Cliquez pour en savoir plus sur cet endroit"
+                        aurora_i18n::tr!("ui-chat-click-to-learn-more-about-this-place")
                     };
                     if r.on_hover_text(format!("{tip}\n{u}")).clicked() {
                         let l = place.location;
@@ -532,7 +536,7 @@ pub(crate) fn chat_text(
                     );
                     name_menu(&r, p, world, id);
                     if r.on_hover_cursor(egui::CursorIcon::PointingHand)
-                        .on_hover_text("Voir le profil")
+                        .on_hover_text(aurora_i18n::tr!("common-view-profile"))
                         .clicked()
                     {
                         super::profile::request_open(ui.ctx(), id);
@@ -656,7 +660,7 @@ fn conversation(
                         if !object
                             && !avatar.is_nil()
                             && r.on_hover_cursor(egui::CursorIcon::PointingHand)
-                                .on_hover_text("Voir le profil")
+                                .on_hover_text(aurora_i18n::tr!("common-view-profile"))
                                 .clicked()
                         {
                             super::profile::request_open(ui.ctx(), avatar);
@@ -677,8 +681,8 @@ fn conversation(
             (format!("{}{}", name, &line.text[3..]), true)
         } else {
             let prefix = match line.kind {
-                ChatKind::Local(ChatType::Shout) => "(crie) ",
-                ChatKind::Local(ChatType::Whisper) => "(murmure) ",
+                ChatKind::Local(ChatType::Shout) => aurora_i18n::tr!("status-shouts-2"),
+                ChatKind::Local(ChatType::Whisper) => aurora_i18n::tr!("status-whispers-2"),
                 _ => "",
             };
             (format!("{prefix}{}", line.text), false)
@@ -735,9 +739,9 @@ pub fn show(
         st.contacts = false;
     }
     let title = match st.selected {
-        _ if st.contacts => "Conversations - Contacts".to_owned(),
-        None => "Conversations - Chat local".to_owned(),
-        Some(id) => format!("Conversations - {}", world.session_title(&id)),
+        _ if st.contacts => aurora_i18n::tr!("ui-chat-conversations-contacts").to_owned(),
+        None => aurora_i18n::tr!("ui-chat-conversations-nearby-chat").to_owned(),
+        Some(id) => aurora_i18n::tr!("ui-chat-conversations", value0 = world.session_title(&id).to_string()),
     };
     let own_name = world.own_name();
     let mut tear_off = false;
@@ -749,7 +753,7 @@ pub fn show(
     );
     if st.contacts {
         // the tear-off button of the multi-floater, for the Contacts tab
-        floater = floater.action("arrow-square-out", "Détacher", &mut tear_off);
+        floater = floater.action("arrow-square-out", aurora_i18n::tr!("common-detach"), &mut tear_off);
     }
     floater.show(ctx, p, open, |ui| {
         let h = (ui.available_height() - 6.0).max(140.0);
@@ -814,7 +818,7 @@ pub fn show(
                 // Contacts first (addFloater at START); once torn off the
                 // entry brings its own window up (Firestorm has the toolbar
                 // button for that)
-                if entry(ui, "Contacts", None, st.contacts, 0) {
+                if entry(ui, aurora_i18n::tr!("common-contacts"), None, st.contacts, 0) {
                     if docked {
                         st.contacts = true;
                     } else {
@@ -822,7 +826,13 @@ pub fn show(
                     }
                 }
                 let local_shown = st.selected.is_none() && !st.contacts;
-                if entry(ui, "Chat local", None, local_shown, if local_shown { 0 } else { world.chat_unread }) {
+                if entry(
+                    ui,
+                    aurora_i18n::tr!("common-nearby-chat"),
+                    None,
+                    local_shown,
+                    if local_shown { 0 } else { world.chat_unread },
+                ) {
                     st.selected = None;
                     st.show_profile = false;
                     st.contacts = false;
@@ -865,7 +875,15 @@ pub fn show(
                         Some(other) if world.is_group_session(&other) => {
                             // group / conference: participants, block the group's chat, leave
                             let n = world.groups.sessions.get(&other).map(|s| s.participants.len()).unwrap_or(0);
-                            if tool(ui, p, icons, "users-three", &format!("Participants ({n})"), true, st.show_profile) {
+                            if tool(
+                                ui,
+                                p,
+                                icons,
+                                "users-three",
+                                &aurora_i18n::tr!("ui-chat-participants", n = format!("{}", n)),
+                                true,
+                                st.show_profile,
+                            ) {
                                 st.show_profile = !st.show_profile;
                             }
                             if world.groups.is_member(&other)
@@ -874,46 +892,102 @@ pub fn show(
                                     p,
                                     icons,
                                     "chat-teardrop-slash",
-                                    "Ne plus recevoir le chat de ce groupe",
+                                    aurora_i18n::tr!("common-stop-receiving-this-group-s-chat"),
                                     true,
                                     false,
                                 )
                             {
                                 actions.push(ConvAction::BlockGroupChat(other));
                             }
-                            if tool(ui, p, icons, "sign-out", "Quitter la session", true, false) {
+                            if tool(ui, p, icons, "sign-out", aurora_i18n::tr!("ui-chat-leave-session"), true, false) {
                                 actions.push(ConvAction::LeaveSession(other));
                             }
                         }
                         Some(other) => {
-                            if tool(ui, p, icons, "user-circle", "Profil", true, false) {
+                            if tool(ui, p, icons, "user-circle", aurora_i18n::tr!("common-profile"), true, false) {
                                 actions.push(ConvAction::Profile(other));
                             }
-                            tool(ui, p, icons, "user-plus", "Ajouter en ami (à venir)", false, false);
-                            if tool(ui, p, icons, "airplane-takeoff", "Proposer une téléportation", true, false) {
+                            tool(
+                                ui,
+                                p,
+                                icons,
+                                "user-plus",
+                                aurora_i18n::tr!("ui-chat-add-friend-coming-soon"),
+                                false,
+                                false,
+                            );
+                            if tool(
+                                ui,
+                                p,
+                                icons,
+                                "airplane-takeoff",
+                                aurora_i18n::tr!("common-offer-teleport"),
+                                true,
+                                false,
+                            ) {
                                 actions.push(ConvAction::OfferTeleport(other));
                             }
-                            tool(ui, p, icons, "gift", "Donner un objet (à venir)", false, false);
-                            tool(ui, p, icons, "currency-circle-dollar", "Payer (à venir)", false, false);
-                            tool(ui, p, icons, "phone", "Appel vocal (à venir)", false, false);
+                            tool(
+                                ui,
+                                p,
+                                icons,
+                                "gift",
+                                aurora_i18n::tr!("ui-chat-give-object-coming-soon"),
+                                false,
+                                false,
+                            );
+                            tool(
+                                ui,
+                                p,
+                                icons,
+                                "currency-circle-dollar",
+                                aurora_i18n::tr!("ui-chat-pay-coming-soon"),
+                                false,
+                                false,
+                            );
+                            tool(
+                                ui,
+                                p,
+                                icons,
+                                "phone",
+                                aurora_i18n::tr!("ui-chat-voice-call-coming-soon"),
+                                false,
+                                false,
+                            );
                             let blocked = world.is_avatar_blocked(&other);
-                            let tip = if blocked { "Débloquer" } else { "Bloquer" };
+                            let tip = if blocked {
+                                aurora_i18n::tr!("common-unblock")
+                            } else {
+                                aurora_i18n::tr!("common-block")
+                            };
                             if tool(ui, p, icons, "prohibit", tip, true, blocked) {
                                 actions.push(ConvAction::ToggleBlock(other));
                             }
                         }
                         None => {
-                            if tool(ui, p, icons, "users", "Personnes à proximité", true, false) {
+                            if tool(ui, p, icons, "users", aurora_i18n::tr!("common-nearby-people"), true, false) {
                                 actions.push(ConvAction::OpenPeople(0));
                             }
                         }
                     }
                     let searching = st.search.is_some();
-                    if tool(ui, p, icons, "magnifying-glass", "Rechercher dans la conversation", true, searching) {
+                    if tool(
+                        ui,
+                        p,
+                        icons,
+                        "magnifying-glass",
+                        aurora_i18n::tr!("ui-chat-search-conversation"),
+                        true,
+                        searching,
+                    ) {
                         st.search = if searching { None } else { Some(String::new()) };
                     }
                     if let Some(q) = st.search.as_mut() {
-                        ui.add(egui::TextEdit::singleline(q).hint_text("Rechercher…").desired_width(160.0));
+                        ui.add(
+                            egui::TextEdit::singleline(q)
+                                .hint_text(aurora_i18n::tr!("ui-chat-search"))
+                                .desired_width(160.0),
+                        );
                     }
                 });
                 ui.add_space(2.0);
@@ -936,7 +1010,11 @@ pub fn show(
                                 .collect();
                             names.sort_by_key(|(_, n, _)| n.to_lowercase());
                             if names.is_empty() {
-                                ui.label(RichText::new("Participants en cours de chargement…").size(11.5).color(p.muted));
+                                ui.label(
+                                    RichText::new(aurora_i18n::tr!("ui-chat-loading-participants"))
+                                        .size(11.5)
+                                        .color(p.muted),
+                                );
                             }
                             egui::ScrollArea::vertical().max_height(90.0).show(ui, |ui| {
                                 ui.horizontal_wrapped(|ui| {
@@ -945,9 +1023,9 @@ pub fn show(
                                         let r = ui.add(egui::Label::new(t).sense(egui::Sense::click()));
                                         name_menu(&r, p, world, id);
                                         let tip = if moderator {
-                                            "Modérateur · clic : profil"
+                                            aurora_i18n::tr!("ui-chat-moderator-click-profile")
                                         } else {
-                                            "Clic : profil"
+                                            aurora_i18n::tr!("ui-chat-click-profile")
                                         };
                                         if r.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(tip).clicked() {
                                             actions.push(ConvAction::Profile(id));
@@ -1022,8 +1100,8 @@ pub fn show(
                 ui.add_space(4.0);
                 // input + emoji
                 let hint = match st.selected {
-                    None => "Au chat local".to_owned(),
-                    Some(id) => format!("À {}", world.session_title(&id)),
+                    None => aurora_i18n::tr!("ui-chat-to-local-chat").to_owned(),
+                    Some(id) => aurora_i18n::tr!("ui-chat-at", value0 = world.session_title(&id).to_string()),
                 };
                 let mut emoji_btn = None;
                 let resp = ui
@@ -1039,7 +1117,7 @@ pub fn show(
                         );
                         let b = tool_resp(ui, p, icons, "smiley", st.emoji_open);
                         emoji_btn = Some(b.rect);
-                        if b.on_hover_text("Emoji").clicked() {
+                        if b.on_hover_text(aurora_i18n::tr!("ui-chat-emoji")).clicked() {
                             st.emoji_open = !st.emoji_open;
                         }
                         r
@@ -1303,9 +1381,9 @@ fn bubble_link(ctx: &egui::Context, p: &Palette, world: &World, k: usize, rect: 
                 Link::Place(u, place) => {
                     place_menu(&resp, p, u, place);
                     let tip = if place.teleport {
-                        "Cliquez pour vous téléporter à cet endroit"
+                        aurora_i18n::tr!("ui-chat-click-to-teleport-to-this-place")
                     } else {
-                        "Cliquez pour en savoir plus sur cet endroit"
+                        aurora_i18n::tr!("ui-chat-click-to-learn-more-about-this-place")
                     };
                     if resp.on_hover_text(format!("{tip}\n{u}")).clicked() {
                         let l = &place.location;
@@ -1321,7 +1399,7 @@ fn bubble_link(ctx: &egui::Context, p: &Palette, world: &World, k: usize, rect: 
                 }
                 Link::Agent(id) => {
                     name_menu(&resp, p, world, *id);
-                    if resp.on_hover_text("Voir le profil").clicked() {
+                    if resp.on_hover_text(aurora_i18n::tr!("common-view-profile")).clicked() {
                         super::profile::request_open(ui.ctx(), *id);
                     }
                 }
@@ -1332,10 +1410,10 @@ fn bubble_link(ctx: &egui::Context, p: &Palette, world: &World, k: usize, rect: 
 /// The "Chat local" input bar; returns a message to send.
 pub fn bar(ui: &mut egui::Ui, p: &Palette, st: &mut ChatUi, width: f32) -> Option<OutgoingChat> {
     let mut out = None;
-    ui.label(RichText::new("Chat local").size(12.0).color(p.muted));
+    ui.label(RichText::new(aurora_i18n::tr!("common-nearby-chat")).size(12.0).color(p.muted));
     let resp = ui.add(
         egui::TextEdit::singleline(&mut st.input)
-            .hint_text("Entrée pour parler · Ctrl+Entrée crier · Maj+Entrée murmurer · /5 canal")
+            .hint_text(aurora_i18n::tr!("ui-chat-enter-to-talk-ctrl-enter-to-shout-shift-enter"))
             .desired_width(width),
     );
     if st.focus_request {

@@ -232,12 +232,21 @@ pub enum Command {
     PasteCamera(CameraSpec),
 }
 
-const AO_UNAVAILABLE: &str = "Aurora n'a pas encore d'animation overrider (AO).";
-const BANDWIDTH_UNAVAILABLE: &str = "Aurora ne règle pas encore la bande passante maximale.";
-const HOVER_UNAVAILABLE: &str = "Aurora ne règle pas encore la hauteur de survol de l'avatar.";
-const CAMERA_PARSE_ERROR: &str =
-    "Position de la caméra incorrecte. Attendu : <x, y, z> ou <x, y, z>|<fx, fy, fz>|roll (coordonnées de la région).";
-const TRACK_USAGE: &str = "Suivre une position ou un avatar sur la carte du monde (utilisation : cmd <x, y, z> ou cmd nom).";
+fn ao_unavailable() -> &'static str {
+    aurora_i18n::tr!("cmdline-mod-aurora-does-not-have-an-animation-overrider-ao-yet")
+}
+fn bandwidth_unavailable() -> &'static str {
+    aurora_i18n::tr!("cmdline-mod-aurora-does-not-support-setting-the-maximum-bandwidth-yet")
+}
+fn hover_unavailable() -> &'static str {
+    aurora_i18n::tr!("cmdline-mod-aurora-does-not-support-adjusting-avatar-hover-height-yet")
+}
+fn camera_parse_error() -> &'static str {
+    aurora_i18n::tr!("cmdline-mod-invalid-camera-position-expected-x-y-z-or-x")
+}
+fn track_usage() -> &'static str {
+    aurora_i18n::tr!("cmdline-mod-track-a-position-or-avatar-on-the-world-map")
+}
 
 /// The command typed in `text` (local chat, already trimmed), or `None` when
 /// the line must be sent as chat. `roll(n)` returns a random number in
@@ -273,10 +282,10 @@ pub fn parse(text: &str, s: &ChatCommandSettings, mut roll: impl FnMut(u32) -> u
         return i.word().map(|url| Command::Music(url.into()));
     }
     if is(&s.bandwidth) {
-        return i.int().map(|_| Command::Unavailable(BANDWIDTH_UNAVAILABLE));
+        return i.int().map(|_| Command::Unavailable(bandwidth_unavailable()));
     }
     if is(&s.ao) {
-        return Some(Command::Unavailable(AO_UNAVAILABLE));
+        return Some(Command::Unavailable(ao_unavailable()));
     }
     if is(&s.key_to_name) {
         return Some(i.uuid().map_or(Command::Report(Vec::new()), Command::KeyToName));
@@ -285,7 +294,7 @@ pub fn parse(text: &str, s: &ChatCommandSettings, mut roll: impl FnMut(u32) -> u
         "/touch" => return Some(i.uuid().map_or(Command::Report(Vec::new()), Command::Touch)),
         "/siton" => return Some(i.uuid().map_or(Command::Report(Vec::new()), Command::SitOn)),
         "/standup" => return Some(Command::StandUp),
-        "/zoffset_up" | "/zoffset_down" | "/zoffset_reset" | "/zoffset" => return Some(Command::Unavailable(HOVER_UNAVAILABLE)),
+        "/zoffset_up" | "/zoffset_down" | "/zoffset_reset" | "/zoffset" => return Some(Command::Unavailable(hover_unavailable())),
         _ => {}
     }
     if is(&s.offer_tp) {
@@ -333,16 +342,11 @@ pub fn parse(text: &str, s: &ChatCommandSettings, mut roll: impl FnMut(u32) -> u
         let (expanded, errors) = calc::expand_rand(&expr, &mut roll);
         let mut out: Vec<String> = errors
             .into_iter()
-            .map(|r| {
-                format!(
-                    "'{r}' n'est pas une expression valable pour RAND(min,max). MAX doit être supérieur à MIN, \
-                     les deux dans une fourchette de -10000 à 10000."
-                )
-            })
+            .map(|r| aurora_i18n::tr!("cmdline-mod-is-not-a-valid-rand-min-max-expression-max", r = r.to_string()))
             .collect();
         out.push(match calc::eval(&expanded) {
             Some(v) => format!("{expr} = {}", calc::format_result(v)),
-            None => "Échec du calcul".into(),
+            None => aurora_i18n::tr!("cmdline-mod-calculation-failed").into(),
         });
         return Some(Command::Report(out));
     }
@@ -352,12 +356,12 @@ pub fn parse(text: &str, s: &ChatCommandSettings, mut roll: impl FnMut(u32) -> u
     if is(&s.track_pos) {
         let arg = rest().map(str::trim).unwrap_or_default();
         return Some(if arg.is_empty() {
-            Command::Report(vec![TRACK_USAGE.into()])
+            Command::Report(vec![track_usage().into()])
         } else if arg.starts_with('<') {
             parse_camera(arg).map_or_else(
                 || {
                     Command::Report(vec![
-                        "Position incorrecte. Utilisez le format de cpcampos : <x, y, z> ou <x, y, z>|<fx, fy, fz>|roll.".into(),
+                        aurora_i18n::tr!("cmdline-mod-invalid-position-use-cpcampos-format-x-y-z-or").into(),
                     ])
                 },
                 |spec| Command::TrackPosition(spec.pos),
@@ -374,7 +378,7 @@ pub fn parse(text: &str, s: &ChatCommandSettings, mut roll: impl FnMut(u32) -> u
     }
     if is(&s.paste_cam) {
         let spec = rest().map(str::trim).and_then(parse_camera);
-        return Some(spec.map_or_else(|| Command::Report(vec![CAMERA_PARSE_ERROR.into()]), Command::PasteCamera));
+        return Some(spec.map_or_else(|| Command::Report(vec![camera_parse_error().into()]), Command::PasteCamera));
     }
     if is(&s.roll_dice) {
         return Some(Command::Report(dice::roll_dice(command, rest().unwrap_or_default(), roll)));
@@ -482,9 +486,9 @@ mod tests {
             96.0
         );
         assert_eq!(cmd("dd far"), None);
-        assert_eq!(cmd("bw 500"), Some(Command::Unavailable(BANDWIDTH_UNAVAILABLE)));
+        assert_eq!(cmd("bw 500"), Some(Command::Unavailable(bandwidth_unavailable())));
         assert_eq!(cmd("bw"), None);
-        assert_eq!(cmd("cao on"), Some(Command::Unavailable(AO_UNAVAILABLE)));
+        assert_eq!(cmd("cao on"), Some(Command::Unavailable(ao_unavailable())));
         assert_eq!(cmd("rezplat"), Some(Command::RezPlatform(None)));
         assert_eq!(cmd("rezplat 12"), Some(Command::RezPlatform(Some(12.0))));
         assert_eq!(
@@ -511,7 +515,10 @@ mod tests {
     #[test]
     fn calc_reports() {
         assert_eq!(cmd("calc sin(2+2)"), Some(Command::Report(vec!["SIN(2+2) = 0.0697565".into()])));
-        assert_eq!(cmd("calc 2+"), Some(Command::Report(vec!["Échec du calcul".into()])));
+        assert_eq!(
+            cmd("calc 2+"),
+            Some(Command::Report(vec![aurora_i18n::tr!("cmdline-mod-calculation-failed").into()]))
+        );
         assert_eq!(cmd("calc rand(1,6)*2"), Some(Command::Report(vec!["RAND(1,6)*2 = 2".into()])));
         assert_eq!(cmd("calc"), None);
     }

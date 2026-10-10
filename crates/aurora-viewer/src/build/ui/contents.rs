@@ -16,29 +16,25 @@ use egui::{RichText, Vec2};
 /// (LLTaskInvFVBridge::getLabelSuffix).
 fn display_name(i: &TaskItem) -> String {
     let mut n = if i.asset_type == AT_LSL_TEXT && i.name.starts_with("New Script") {
-        i.name.replacen("New Script", "Nouveau script", 1)
+        i.name.replacen("New Script", aurora_i18n::tr!("common-new-script"), 1)
     } else {
         i.name.clone()
     };
     if i.owner_mask & perm::COPY == 0 {
-        n.push_str(" (pas de copie)");
+        n.push_str(aurora_i18n::tr!("build-ui-contents-no-copy"));
     }
     if i.owner_mask & perm::MODIFY == 0 {
-        n.push_str(" (pas de modification)");
+        n.push_str(aurora_i18n::tr!("build-ui-contents-no-modify"));
     }
     if i.owner_mask & perm::TRANSFER == 0 {
-        n.push_str(" (pas de transfert)");
+        n.push_str(aurora_i18n::tr!("build-ui-contents-no-transfer"));
     }
     n
 }
 
 /// "Contenus (N éléments)".
 fn root_label(n: usize) -> String {
-    match n {
-        0 => "Contenus (Aucun élément)".into(),
-        1 => "Contenus (1 élément)".into(),
-        n => format!("Contenus ({n} éléments)"),
-    }
+    aurora_i18n::tr!("contents-count", count = n)
 }
 
 pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World) {
@@ -52,26 +48,29 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
 
     ui.horizontal(|ui| {
         if ui
-            .add_enabled(editable && single, egui::Button::new(RichText::new("Nouveau script").size(12.0)))
+            .add_enabled(
+                editable && single,
+                egui::Button::new(RichText::new(aurora_i18n::tr!("common-new-script")).size(12.0)),
+            )
             .clicked()
         {
             tool.new_script(world, idx);
         }
         if ui
-            .button(RichText::new("Droits").size(12.0))
-            .on_hover_text("Changer les droits du contenu")
+            .button(RichText::new(aurora_i18n::tr!("common-rights")).size(12.0))
+            .on_hover_text(aurora_i18n::tr!("build-ui-contents-change-content-permissions"))
             .clicked()
         {
             tool.ui.bulk_perms_open = !tool.ui.bulk_perms_open;
         }
         ui.vertical(|ui| {
-            if ui.small_button("Rafraîchir").clicked() {
+            if ui.small_button(aurora_i18n::tr!("build-ui-contents-refresh")).clicked() {
                 tool.request_contents(world, idx, true);
             }
             if ui
                 .add_enabled(
                     editable && single,
-                    egui::Button::new(RichText::new("Réinit. scripts").size(11.0)).small(),
+                    egui::Button::new(RichText::new(aurora_i18n::tr!("build-ui-contents-reset-scripts")).size(11.0)).small(),
                 )
                 .clicked()
             {
@@ -81,7 +80,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
     });
     ui.add(
         egui::TextEdit::singleline(&mut tool.ui.contents_filter)
-            .hint_text("Saisir le texte du filtre")
+            .hint_text(aurora_i18n::tr!("build-ui-contents-enter-filter-text"))
             .desired_width(ui.available_width()),
     );
     let inv = tool.contents.objects.get(&object_id).cloned().unwrap_or_default();
@@ -97,12 +96,12 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                 ui.add(egui::Image::new(&t).fit_to_exact_size(Vec2::splat(15.0)).tint(p.violet_light));
             }
             let title = if inv.loading && inv.items.is_empty() {
-                "chargement des contenus en cours...".to_owned()
+                aurora_i18n::tr!("build-ui-contents-loading-contents").to_owned()
             } else {
                 root_label(items.len())
             };
             ui.label(RichText::new(title).size(12.0).color(p.ink))
-                .on_hover_text("Contenu de l'objet");
+                .on_hover_text(aurora_i18n::tr!("common-object-contents"));
         });
         let mut list: Vec<&TaskItem> = items
             .iter()
@@ -120,14 +119,14 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
             let ctrl = ui.input(|i| i.modifiers.ctrl);
             tool.drop_inventory_item(world, idx, &item, ctrl);
         } else {
-            tool.status = "Vous ne pouvez pas modifier le contenu de cet objet.".into();
+            tool.status = aurora_i18n::tr!("build-ui-contents-you-cannot-edit-this-object-s-contents").into();
         }
     }
     if !editable {
         small(
             ui,
             p,
-            "Glissez des éléments de l'inventaire ici pour les ajouter (objet modifiable).",
+            aurora_i18n::tr!("build-ui-contents-drag-inventory-items-here-to-add-them-modifiable-object"),
         );
     }
 }
@@ -165,7 +164,7 @@ fn item_row(
         let running = tool.contents.running.get(&(object_id, item.item_id)).copied();
         let mut name = display_name(item);
         if item.asset_type == AT_LSL_TEXT && running.is_some_and(|r| !r.0) {
-            name.push_str(" (arrêté)");
+            name.push_str(aurora_i18n::tr!("build-ui-contents-stopped"));
         }
         let r = ui.add(egui::Label::new(RichText::new(name).size(12.0).color(p.ink)).sense(egui::Sense::click()));
         let r = if item.description.is_empty() {
@@ -178,27 +177,35 @@ fn item_row(
             || tool.props.get(&object_id).is_some_and(|pr| pr.owner_id == world.agent_id);
         r.context_menu(|ui| {
             if ui
-                .add_enabled(false, egui::Button::new("Ouvrir"))
-                .on_disabled_hover_text("L'ouverture des éléments d'un objet n'est pas encore disponible.")
+                .add_enabled(false, egui::Button::new(aurora_i18n::tr!("common-open")))
+                .on_disabled_hover_text(aurora_i18n::tr!(
+                    "build-ui-contents-opening-items-inside-an-object-is-not-available-yet"
+                ))
                 .clicked()
             {
                 ui.close();
             }
-            if ui.button("Propriétés").clicked() {
+            if ui.button(aurora_i18n::tr!("common-properties")).clicked() {
                 tool.ui.item_properties = Some(item.clone());
                 ui.close();
             }
-            if ui.add_enabled(editable && item_modify, egui::Button::new("Renommer")).clicked() {
+            if ui
+                .add_enabled(editable && item_modify, egui::Button::new(aurora_i18n::tr!("common-rename")))
+                .clicked()
+            {
                 tool.ui.rename = Some((item.item_id, item.name.clone()));
                 ui.close();
             }
-            if ui.add_enabled(editable, egui::Button::new("Supprimer")).clicked() {
+            if ui
+                .add_enabled(editable, egui::Button::new(aurora_i18n::tr!("common-delete")))
+                .clicked()
+            {
                 tool.remove_item(world, idx, item.item_id);
                 ui.close();
             }
             if ui
-                .add_enabled(can_take, egui::Button::new("Copier dans l'inventaire"))
-                .on_hover_text("Comme glisser l'élément vers l'inventaire")
+                .add_enabled(can_take, egui::Button::new(aurora_i18n::tr!("build-ui-contents-copy-to-inventory")))
+                .on_hover_text(aurora_i18n::tr!("build-ui-contents-like-dragging-the-item-to-inventory"))
                 .clicked()
             {
                 tool.copy_item_to_inventory(world, idx, item, uuid::Uuid::nil());
@@ -208,7 +215,14 @@ fn item_row(
                 ui.separator();
                 let on = running.map(|r| r.0).unwrap_or(true);
                 if ui
-                    .add_enabled(editable, egui::Button::new(if on { "Arrêter" } else { "Exécuter" }))
+                    .add_enabled(
+                        editable,
+                        egui::Button::new(if on {
+                            aurora_i18n::tr!("common-stop")
+                        } else {
+                            aurora_i18n::tr!("build-ui-contents-run")
+                        }),
+                    )
                     .clicked()
                 {
                     tool.set_script_running(world, idx, item.item_id, !on);
@@ -228,14 +242,21 @@ mod tests {
 
     #[test]
     fn labels() {
-        assert_eq!(root_label(0), "Contenus (Aucun élément)");
-        assert_eq!(root_label(3), "Contenus (3 éléments)");
+        assert_eq!(root_label(0), aurora_i18n::tr!("contents-count", count = 0));
+        assert_eq!(root_label(3), aurora_i18n::tr!("contents-count", count = 3));
         let i = TaskItem {
             name: "New Script".into(),
             asset_type: AT_LSL_TEXT,
             owner_mask: perm::COPY | perm::MODIFY,
             ..Default::default()
         };
-        assert_eq!(display_name(&i), "Nouveau script (pas de transfert)");
+        assert_eq!(
+            display_name(&i),
+            format!(
+                "{}{}",
+                aurora_i18n::tr!("common-new-script"),
+                aurora_i18n::tr!("build-ui-contents-no-transfer")
+            )
+        );
     }
 }

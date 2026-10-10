@@ -4,7 +4,7 @@
 //! altitudes shown read-only for a parcel).
 
 use super::dialogs::Confirm;
-use super::{Dialog, LandUi, NOT_YET, View, dim, text};
+use super::{Dialog, LandUi, View, dim, not_yet, text};
 use crate::theme::Palette;
 use crate::world::World;
 use crate::world::land::{EnvState, EnvSummary, MIN_PARCEL_AREA, powers};
@@ -22,16 +22,22 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
     let unavailable = match (&parcel, &env) {
         (_, EnvState::Failed(e)) => {
             log::debug!("parcel environment unavailable: {e}");
-            Some("Les paramètres environnementaux ne sont pas disponibles dans cette région.")
+            Some(aurora_i18n::tr!(
+                "ui-land-environment-environment-settings-are-unavailable-in-this-region"
+            ))
         }
-        (None, _) => Some("Aucune parcelle n'est sélectionnée. Les paramètres environnementaux sont désactivés."),
-        _ if !v.same_region => Some("Les paramètres environnementaux ne sont pas disponibles dans les limites des régions."),
-        (Some(pa), _) if !pa.region_allow_env_override => {
-            Some("Le gérant du domaine n'autorise pas la modification de l'environnement des parcelles dans cette région.")
-        }
-        (Some(pa), _) if pa.area < MIN_PARCEL_AREA => {
-            Some("La parcelle doit faire au moins 128 mètres carrés pour supporter un environnement.")
-        }
+        (None, _) => Some(aurora_i18n::tr!(
+            "ui-land-environment-no-parcel-is-selected-environment-settings-are-disabled"
+        )),
+        _ if !v.same_region => Some(aurora_i18n::tr!(
+            "ui-land-environment-environment-settings-are-unavailable-at-region-boundaries"
+        )),
+        (Some(pa), _) if !pa.region_allow_env_override => Some(aurora_i18n::tr!(
+            "ui-land-environment-the-estate-manager-does-not-allow-parcel-environment-changes"
+        )),
+        (Some(pa), _) if pa.area < MIN_PARCEL_AREA => Some(aurora_i18n::tr!(
+            "ui-land-environment-the-parcel-must-be-at-least-128-square-meters"
+        )),
         _ => None,
     };
     if let Some(why) = unavailable {
@@ -53,21 +59,35 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
     let can_enable = can_edit && summary.as_ref().is_some_and(|e| e.has_day);
     ui.columns(2, |cols| {
         let ui = &mut cols[0];
-        ui.label(RichText::new("Sélectionner l'environnement").size(12.5).color(p.ink));
+        ui.label(
+            RichText::new(aurora_i18n::tr!("ui-land-environment-select-environment"))
+                .size(12.5)
+                .color(p.ink),
+        );
         ui.add_space(2.0);
         let w = Vec2::new(ui.available_width() - 20.0, 22.0);
         if ui
-            .add_enabled(can_enable, egui::Button::new("Utiliser les réglages de la région").min_size(w))
+            .add_enabled(
+                can_enable,
+                egui::Button::new(aurora_i18n::tr!("ui-land-environment-use-region-settings")).min_size(w),
+            )
             .clicked()
         {
             s.dialog = Some(Dialog::Confirm(Confirm::ResetEnvironment));
         }
-        ui.add_enabled(false, egui::Button::new("Utiliser l'inventaire").min_size(w))
-            .on_disabled_hover_text(NOT_YET);
-        ui.add_enabled(false, egui::Button::new("Personnaliser").min_size(w))
-            .on_disabled_hover_text(NOT_YET);
+        ui.add_enabled(
+            false,
+            egui::Button::new(aurora_i18n::tr!("ui-land-environment-use-inventory")).min_size(w),
+        )
+        .on_disabled_hover_text(not_yet());
+        ui.add_enabled(false, egui::Button::new(aurora_i18n::tr!("common-customize")).min_size(w))
+            .on_disabled_hover_text(not_yet());
         ui.add_space(10.0);
-        ui.label(RichText::new("Réglages de la journée").size(12.5).color(p.ink));
+        ui.label(
+            RichText::new(aurora_i18n::tr!("ui-land-environment-day-settings"))
+                .size(12.5)
+                .color(p.ink),
+        );
         let (mut length_h, mut offset_h) = match (&summary, s.env_drag) {
             (_, Some(d)) => d,
             (Some(e), None) if e.day_length > 0 => {
@@ -79,15 +99,21 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
             }
             _ => (4.0, -8.0),
         };
-        dim(ui, p, "Durée de la journée (heures)");
+        dim(ui, p, aurora_i18n::tr!("ui-land-environment-day-length-hours"));
         let r1 = ui.add_enabled(
             can_enable,
-            egui::Slider::new(&mut length_h, 4.0..=168.0).step_by(0.5).fixed_decimals(1),
+            egui::Slider::new(&mut length_h, 4.0..=168.0)
+                .custom_parser(aurora_i18n::parse_number)
+                .step_by(0.5)
+                .fixed_decimals(1),
         );
-        dim(ui, p, "Décalage horaire (heures)");
+        dim(ui, p, aurora_i18n::tr!("ui-land-environment-time-offset-hours"));
         let r2 = ui.add_enabled(
             can_enable,
-            egui::Slider::new(&mut offset_h, -11.5..=12.0).step_by(0.5).fixed_decimals(1),
+            egui::Slider::new(&mut offset_h, -11.5..=12.0)
+                .custom_parser(aurora_i18n::parse_number)
+                .step_by(0.5)
+                .fixed_decimals(1),
         );
         let dragging = r1.dragged() || r2.dragged() || r1.has_focus() || r2.has_focus();
         if dragging || r1.changed() || r2.changed() {
@@ -117,15 +143,19 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
             ..e.clone()
         });
         if let Some((h, m, pct)) = shown.as_ref().and_then(|e| e.apparent_time(v.now)) {
-            dim(ui, p, "Heure apparente de la journée :");
+            dim(ui, p, aurora_i18n::tr!("ui-land-environment-apparent-time-of-day"));
             text(ui, p, format!("{h}:{m:02} ({pct}%)"));
         }
         if matches!(env, EnvState::Loading) {
-            dim(ui, p, "Chargement...");
+            dim(ui, p, aurora_i18n::tr!("common-loading"));
         }
 
         let ui = &mut cols[1];
-        ui.label(RichText::new("Altitudes du ciel").size(12.5).color(p.ink));
+        ui.label(
+            RichText::new(aurora_i18n::tr!("ui-land-environment-sky-altitudes"))
+                .size(12.5)
+                .color(p.ink),
+        );
         altitudes(ui, p, summary.as_ref());
     });
 }
@@ -133,7 +163,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
 /// The altitude column: a bar from ground to 4000 m with the starts of
 /// skies 2, 3 and 4 (not editable for a parcel), then ground and water.
 fn altitudes(ui: &mut egui::Ui, p: &Palette, e: Option<&EnvSummary>) {
-    let name = |i: i32| e.map_or_else(|| "(vide)".to_owned(), |e| e.track_name(i));
+    let name = |i: i32| e.map_or_else(|| aurora_i18n::tr!("status-empty").to_owned(), |e| e.track_name(i));
     let h = (ui.available_height() - 60.0).max(160.0);
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), h), egui::Sense::hover());
     let bar_x = rect.left() + 26.0;
@@ -166,7 +196,11 @@ fn altitudes(ui: &mut egui::Ui, p: &Palette, e: Option<&EnvSummary>) {
         painter.text(
             egui::pos2(bar_x + 16.0, ly - 7.0),
             egui::Align2::LEFT_CENTER,
-            format!("Ciel {sky}   {alt:.0} m"),
+            aurora_i18n::tr!(
+                "ui-land-environment-sky-m",
+                sky = format!("{}", sky),
+                alt = aurora_i18n::number_text(&format!("{:.0}", alt))
+            ),
             egui::FontId::proportional(11.5),
             p.ink,
         );
@@ -180,12 +214,12 @@ fn altitudes(ui: &mut egui::Ui, p: &Palette, e: Option<&EnvSummary>) {
     }
     ui.horizontal(|ui| {
         ui.add_space(14.0);
-        dim(ui, p, "Sol");
+        dim(ui, p, aurora_i18n::tr!("ui-land-environment-ground"));
         text(ui, p, name(1));
     });
     ui.horizontal(|ui| {
         ui.add_space(14.0);
-        dim(ui, p, "Eau");
+        dim(ui, p, aurora_i18n::tr!("common-water"));
         text(ui, p, name(0));
     });
 }

@@ -213,12 +213,17 @@ mod tests {
                     ..Default::default()
                 },
                 |ui| {
-                    Floater::new("resize_fixture", "Inventaire", egui::pos2(300.0, 200.0), egui::vec2(440.0, 300.0))
-                        .silent()
-                        .show(ui.ctx(), &palette, &mut true, |ui| {
-                            ui.set_min_size(egui::vec2(self.content_width, 40.0));
-                            ui.set_min_height(ui.available_height());
-                        });
+                    Floater::new(
+                        "resize_fixture",
+                        aurora_i18n::tr!("common-inventory"),
+                        egui::pos2(300.0, 200.0),
+                        egui::vec2(440.0, 300.0),
+                    )
+                    .silent()
+                    .show(ui.ctx(), &palette, &mut true, |ui| {
+                        ui.set_min_size(egui::vec2(self.content_width, 40.0));
+                        ui.set_min_height(ui.available_height());
+                    });
                 },
             );
             output.textures_delta.clear();
@@ -338,14 +343,19 @@ mod tests {
                     ..Default::default()
                 },
                 |ui| {
-                    Floater::new("button_fixture", "Inventaire", egui::pos2(300.0, 200.0), egui::vec2(440.0, 300.0))
-                        .silent()
-                        .show(ui.ctx(), &crate::theme::Theme::default().palette(), &mut true, |ui| {
-                            let response = ui.button("Une action");
-                            center = response.rect.center();
-                            hovered = response.hovered();
-                            clicks += usize::from(response.clicked());
-                        });
+                    Floater::new(
+                        "button_fixture",
+                        aurora_i18n::tr!("common-inventory"),
+                        egui::pos2(300.0, 200.0),
+                        egui::vec2(440.0, 300.0),
+                    )
+                    .silent()
+                    .show(ui.ctx(), &crate::theme::Theme::default().palette(), &mut true, |ui| {
+                        let response = ui.button("Une action");
+                        center = response.rect.center();
+                        hovered = response.hovered();
+                        clicks += usize::from(response.clicked());
+                    });
                 },
             );
             output.textures_delta.clear();

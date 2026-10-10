@@ -273,12 +273,12 @@ impl ProfileUi {
                     p,
                     &mut w.tab,
                     &[
-                        ("Vie SL", true),
-                        ("Flux", web.profile_base.is_some()),
-                        ("Favoris", true),
-                        ("Annonces", true),
-                        ("Vie RL", true),
-                        ("Notes", true),
+                        (aurora_i18n::tr!("ui-profile-second-life"), true),
+                        (aurora_i18n::tr!("ui-profile-feed"), web.profile_base.is_some()),
+                        (aurora_i18n::tr!("common-favorites"), true),
+                        (aurora_i18n::tr!("ui-profile-classifieds"), true),
+                        (aurora_i18n::tr!("ui-profile-real-life"), true),
+                        (aurora_i18n::tr!("common-notes"), true),
                     ],
                 );
                 if before == TAB_FEED && w.tab != TAB_FEED {
@@ -351,8 +351,8 @@ impl ProfileUi {
         self.windows.retain(|w| w.open);
         if let Some((slot, current)) = pick_picture {
             let title = match slot {
-                PictureSlot::SecondLife => "Photo du profil",
-                PictureSlot::FirstLife => "Photo RL",
+                PictureSlot::SecondLife => aurora_i18n::tr!("ui-profile-profile-picture"),
+                PictureSlot::FirstLife => aurora_i18n::tr!("ui-profile-rl-picture"),
             };
             self.picker.open(title, current);
             self.picker_slot = Some(slot);
@@ -391,15 +391,19 @@ fn unsaved_bar(ui: &mut egui::Ui, p: &Palette, w: &mut Window, actions: &mut Vec
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Des modifications ne sont pas enregistrées.").size(12.0).color(p.ink));
+                ui.label(
+                    RichText::new(aurora_i18n::tr!("ui-profile-there-are-unsaved-changes"))
+                        .size(12.0)
+                        .color(p.ink),
+                );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if flat_button(ui, p, "Annuler").clicked() {
+                    if flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked() {
                         w.confirm_close = false;
                     }
-                    if flat_button(ui, p, "Ignorer").clicked() {
+                    if flat_button(ui, p, aurora_i18n::tr!("common-ignore")).clicked() {
                         w.open = false;
                     }
-                    if flat_button(ui, p, "Enregistrer").clicked() {
+                    if flat_button(ui, p, aurora_i18n::tr!("common-save")).clicked() {
                         save_all(w, actions);
                         w.open = false;
                     }
@@ -464,7 +468,7 @@ fn inset<R>(ui: &mut egui::Ui, p: &Palette, width: f32, height: f32, body: impl 
 }
 
 fn loading(ui: &mut egui::Ui, p: &Palette) {
-    ui.label(RichText::new("(en cours de chargement...)").size(12.0).color(p.muted));
+    ui.label(RichText::new(aurora_i18n::tr!("ui-profile-loading")).size(12.0).color(p.muted));
 }
 
 /// Text with emoji and clickable links, line by line.
@@ -522,10 +526,10 @@ fn save_buttons(ui: &mut egui::Ui, p: &Palette, edit: &mut Edit) -> bool {
     let mut save = false;
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         ui.add_enabled_ui(edit.dirty(), |ui| {
-            if flat_button(ui, p, "Annuler").clicked() {
+            if flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked() {
                 edit.text = edit.base.clone();
             }
-            save = flat_button(ui, p, "Enregistrer").clicked();
+            save = flat_button(ui, p, aurora_i18n::tr!("common-save")).clicked();
         });
     });
     if save {
@@ -567,7 +571,11 @@ fn preview_toggle(ui: &mut egui::Ui, p: &Palette, on: &mut bool) {
         );
     }
     if resp
-        .on_hover_text(if *on { "Modifier le texte" } else { "Aperçu avec les liens" })
+        .on_hover_text(if *on {
+            aurora_i18n::tr!("ui-profile-edit-text")
+        } else {
+            aurora_i18n::tr!("ui-profile-preview-with-links")
+        })
         .clicked()
     {
         *on = !*on;
@@ -594,8 +602,17 @@ fn rights_icon(ui: &mut egui::Ui, p: &Palette, icon: &str, granted: bool, tip: &
             egui::Stroke::new(1.5, p.danger),
         );
     }
-    let state = if granted { "autorisé" } else { "non autorisé" };
-    resp.on_hover_text(format!("{tip} : {state}\nClic : modifier les droits")).clicked()
+    let state = if granted {
+        aurora_i18n::tr!("ui-profile-allowed")
+    } else {
+        aurora_i18n::tr!("ui-profile-not-allowed")
+    };
+    resp.on_hover_text(aurora_i18n::tr!(
+        "ui-profile-click-change-permissions",
+        tip = tip.to_string(),
+        state = state.to_string()
+    ))
+    .clicked()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -621,7 +638,7 @@ fn second_life_tab(
     ui.spacing_mut().item_spacing.y = 4.0;
     // name row: name field (copy menu inside), display name (own), friend rights
     ui.horizontal(|ui| {
-        label(ui, p, "Nom :");
+        label(ui, p, aurora_i18n::tr!("common-name-2"));
         let rights_w = if friend.is_some() { 3.0 * 26.0 } else { 0.0 };
         let field_w = (ui.available_width() - rights_w - if own { 36.0 } else { 8.0 }).max(80.0);
         inset(ui, p, field_w, 22.0, |ui| {
@@ -632,7 +649,7 @@ fn second_life_tab(
         });
         if own
             && icon(ui, p, "sliders", 20.0, p.muted)
-                .on_hover_text("Définir le nom d'affichage")
+                .on_hover_text(aurora_i18n::tr!("common-set-display-name"))
                 .clicked()
         {
             actions.push(ProfileAction::DisplayName);
@@ -640,9 +657,27 @@ fn second_life_tab(
         if let Some(f) = friend {
             ui.spacing_mut().item_spacing.x = 4.0;
             let mut clicked = false;
-            clicked |= rights_icon(ui, p, "eye", f.rights_given & 1 != 0, "Voir quand je suis en ligne");
-            clicked |= rights_icon(ui, p, "map-pin", f.rights_given & 2 != 0, "Me trouver sur la carte");
-            clicked |= rights_icon(ui, p, "cube", f.rights_given & 4 != 0, "Modifier, supprimer ou prendre mes objets");
+            clicked |= rights_icon(
+                ui,
+                p,
+                "eye",
+                f.rights_given & 1 != 0,
+                aurora_i18n::tr!("ui-profile-see-when-i-am-online"),
+            );
+            clicked |= rights_icon(
+                ui,
+                p,
+                "map-pin",
+                f.rights_given & 2 != 0,
+                aurora_i18n::tr!("ui-profile-find-me-on-map"),
+            );
+            clicked |= rights_icon(
+                ui,
+                p,
+                "cube",
+                f.rights_given & 4 != 0,
+                aurora_i18n::tr!("ui-profile-modify-delete-or-take-my-objects"),
+            );
             if clicked {
                 w.rights_edit = Some(f.rights_given);
             }
@@ -650,7 +685,7 @@ fn second_life_tab(
     });
     // key row: the UUID, then the online status of the others
     ui.horizontal(|ui| {
-        label(ui, p, "Clé :");
+        label(ui, p, aurora_i18n::tr!("ui-profile-key"));
         let key_w = (ui.available_width() - if own { 8.0 } else { 100.0 }).max(80.0);
         inset(ui, p, key_w, 20.0, |ui| {
             ui.add(egui::Label::new(RichText::new(id.to_string()).size(11.5).monospace().color(p.ink)).selectable(true));
@@ -658,9 +693,9 @@ fn second_life_tab(
         if !own {
             let status = profiles::online_status(profile, own, friend.map(|f| (f.online, f.rights_has & 1 != 0)));
             let (text, col) = match status {
-                Online::Yes => ("Connecté", p.success),
-                Online::No => ("Déconnecté", p.muted),
-                Online::Unknown => ("Inconnu", p.warn),
+                Online::Yes => (aurora_i18n::tr!("ui-profile-connected"), p.success),
+                Online::No => (aurora_i18n::tr!("ui-profile-disconnected"), p.muted),
+                Online::Unknown => (aurora_i18n::tr!("common-unknown"), p.warn),
             };
             ui.add_sized([80.0, 18.0], egui::Label::new(RichText::new(text).size(12.0).color(col)));
         }
@@ -675,15 +710,18 @@ fn second_life_tab(
         ui.allocate_ui_with_layout(Vec2::new(52.0, 162.0), egui::Layout::top_down(egui::Align::Max), |ui| {
             if own && let Some(pr) = profile {
                 // menu_fs_profile_image_actions.xml
-                widgets::icon_menu(ui, p, "gear-six", "Photo du profil", |ui| {
-                    ui.add_enabled(false, egui::Button::new("Charger une photo"))
-                        .on_disabled_hover_text("À venir");
-                    if ui.button("Changer la photo").clicked() {
+                widgets::icon_menu(ui, p, "gear-six", aurora_i18n::tr!("ui-profile-profile-picture"), |ui| {
+                    ui.add_enabled(false, egui::Button::new(aurora_i18n::tr!("ui-profile-upload-picture")))
+                        .on_disabled_hover_text(aurora_i18n::tr!("ui-profile-coming-soon"));
+                    if ui.button(aurora_i18n::tr!("ui-profile-change-picture")).clicked() {
                         *pick_picture = Some((PictureSlot::SecondLife, pr.sl_image));
                         ui.close();
                     }
                     if ui
-                        .add_enabled(!pr.sl_image.is_nil(), egui::Button::new("Supprimer la photo"))
+                        .add_enabled(
+                            !pr.sl_image.is_nil(),
+                            egui::Button::new(aurora_i18n::tr!("ui-profile-delete-photo")),
+                        )
                         .clicked()
                     {
                         actions.push(ProfileAction::Save {
@@ -695,10 +733,17 @@ fn second_life_tab(
                 });
             }
         });
-        let r = widgets::picture(ui, p, pics.get(&id), Vec2::splat(162.0), "user-circle", "Photo du profil");
+        let r = widgets::picture(
+            ui,
+            p,
+            pics.get(&id),
+            Vec2::splat(162.0),
+            "user-circle",
+            aurora_i18n::tr!("ui-profile-profile-picture"),
+        );
         if own
             && let Some(pr) = profile
-            && r.on_hover_text("Clic : changer la photo").clicked()
+            && r.on_hover_text(aurora_i18n::tr!("ui-profile-click-change-picture")).clicked()
         {
             *pick_picture = Some((PictureSlot::SecondLife, pr.sl_image));
         }
@@ -706,7 +751,7 @@ fn second_life_tab(
         ui.vertical(|ui| {
             ui.spacing_mut().item_spacing.y = 2.0;
             let col_w = ui.available_width() - 4.0;
-            ui.label(RichText::new("Date de naissance:").size(12.0).color(p.muted));
+            ui.label(RichText::new(aurora_i18n::tr!("ui-profile-birth-date")).size(12.0).color(p.muted));
             inset(ui, p, col_w, 38.0, |ui| {
                 match profile.and_then(|pr| profiles::birth_text(pr, own, now)) {
                     Some(t) => {
@@ -716,7 +761,7 @@ fn second_life_tab(
                 }
             });
             ui.add_space(3.0);
-            ui.label(RichText::new("Compte :").size(12.0).color(p.muted));
+            ui.label(RichText::new(aurora_i18n::tr!("ui-profile-account")).size(12.0).color(p.muted));
             inset(ui, p, col_w, 52.0, |ui| match profile {
                 Some(pr) => {
                     ui.horizontal_top(|ui| {
@@ -729,7 +774,7 @@ fn second_life_tab(
                 None => loading(ui, p),
             });
             ui.add_space(3.0);
-            ui.label(RichText::new("Partenaire :").size(12.0).color(p.muted));
+            ui.label(RichText::new(aurora_i18n::tr!("ui-profile-partner")).size(12.0).color(p.muted));
             inset(ui, p, col_w, 22.0, |ui| match profile.map(|pr| pr.partner) {
                 Some(partner) if !partner.is_nil() => {
                     world.social.avatar_names.want(&partner);
@@ -742,14 +787,14 @@ fn second_life_tab(
                         .sense(egui::Sense::click()),
                     );
                     if r.on_hover_cursor(egui::CursorIcon::PointingHand)
-                        .on_hover_text("Voir le profil")
+                        .on_hover_text(aurora_i18n::tr!("common-view-profile"))
                         .clicked()
                     {
                         request_open(ui.ctx(), partner);
                     }
                 }
                 Some(_) => {
-                    ui.label(RichText::new("Aucun").size(12.0).color(p.ink));
+                    ui.label(RichText::new(aurora_i18n::tr!("common-none")).size(12.0).color(p.ink));
                 }
                 None => loading(ui, p),
             });
@@ -763,7 +808,7 @@ fn second_life_tab(
     let info_h = (ui.available_height() - w.bottom_h - 8.0).max(103.0);
     ui.horizontal_top(|ui| {
         ui.vertical(|ui| {
-            label(ui, p, "Info :");
+            label(ui, p, aurora_i18n::tr!("ui-profile-info"));
             if own {
                 ui.horizontal(|ui| {
                     ui.add_space(LABEL_W - 22.0);
@@ -792,12 +837,12 @@ fn second_life_tab(
         ui.add_space(4.0);
         ui.horizontal_top(|ui| {
             ui.vertical(|ui| {
-                label(ui, p, "Groupes :");
+                label(ui, p, aurora_i18n::tr!("ui-profile-groups"));
                 if !own {
                     ui.horizontal(|ui| {
                         ui.add_space(LABEL_W - 22.0);
                         ui.add_enabled(false, egui::Button::new("+").min_size(Vec2::splat(20.0)))
-                            .on_disabled_hover_text("Inviter dans un groupe (à venir)");
+                            .on_disabled_hover_text(aurora_i18n::tr!("ui-profile-invite-to-group-coming-soon"));
                     });
                 }
             });
@@ -811,11 +856,15 @@ fn second_life_tab(
         });
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            label(ui, p, "Donner :");
+            label(ui, p, aurora_i18n::tr!("ui-profile-give"));
             inset(ui, p, field_w, 20.0, |ui| {
                 ui.vertical_centered(|ui| {
-                    ui.label(RichText::new("Déposez l'objet ici.").size(11.5).color(p.muted_dim))
-                        .on_hover_text("Donner un objet de l'inventaire (à venir)");
+                    ui.label(
+                        RichText::new(aurora_i18n::tr!("ui-profile-drop-the-object-here"))
+                            .size(11.5)
+                            .color(p.muted_dim),
+                    )
+                    .on_hover_text(aurora_i18n::tr!("ui-profile-give-inventory-object-coming-soon"));
                 });
             });
         });
@@ -846,7 +895,7 @@ fn groups_list(
     if pr.groups.is_empty() {
         // our own list does not say "None"
         if !own {
-            ui.label(RichText::new("Aucun").size(12.0).color(p.ink));
+            ui.label(RichText::new(aurora_i18n::tr!("common-none")).size(12.0).color(p.ink));
         }
         return;
     }
@@ -857,9 +906,9 @@ fn groups_list(
         let member = world.groups.is_member(&g.id);
         let r = ui.add(egui::Label::new(RichText::new(&g.name).size(12.5).color(p.indigo_light)).sense(egui::Sense::click()));
         let tip = if member {
-            "Double-clic : chat du groupe"
+            aurora_i18n::tr!("ui-profile-double-click-group-chat")
         } else {
-            "Profil du groupe (à venir)"
+            aurora_i18n::tr!("ui-profile-group-profile-coming-soon")
         };
         if r.on_hover_text(tip).double_clicked() && member {
             actions.push(ProfileAction::GroupChat(g.id));
@@ -874,7 +923,7 @@ fn own_bottom(ui: &mut egui::Ui, p: &Palette, w: &mut Window, profile: Option<&A
         ui.spacing_mut().item_spacing.x = 12.0;
         if let Some(pr) = profile {
             let mut publish = pr.allow_publish();
-            if ui.checkbox(&mut publish, "Afficher dans la recherche").changed() {
+            if ui.checkbox(&mut publish, aurora_i18n::tr!("common-show-in-search")).changed() {
                 actions.push(ProfileAction::Save {
                     target: w.id,
                     data: llsd_map! { "allow_publish" => publish },
@@ -885,7 +934,10 @@ fn own_bottom(ui: &mut egui::Ui, p: &Palette, w: &mut Window, profile: Option<&A
                 && now - born > 365.0 * 86_400.0
             {
                 let mut full = !hide;
-                if ui.checkbox(&mut full, "Afficher la date de naissance complète").changed() {
+                if ui
+                    .checkbox(&mut full, aurora_i18n::tr!("ui-profile-show-full-birth-date"))
+                    .changed()
+                {
                     actions.push(ProfileAction::Save {
                         target: w.id,
                         data: llsd_map! { "hide_age" => !full },
@@ -914,28 +966,48 @@ fn action_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, w: &Window, is_
     ui.horizontal_top(|ui| {
         ui.spacing_mut().item_spacing = Vec2::new(4.0, 2.0);
         ui.vertical(|ui| {
-            ui.add_enabled(false, egui::Button::new("Situer sur la carte").min_size(size))
-                .on_disabled_hover_text("À venir");
-            ui.add_enabled(false, egui::Button::new("Payer").min_size(size))
-                .on_disabled_hover_text("À venir");
+            ui.add_enabled(
+                false,
+                egui::Button::new(aurora_i18n::tr!("ui-profile-show-on-map-2")).min_size(size),
+            )
+            .on_disabled_hover_text(aurora_i18n::tr!("ui-profile-coming-soon"));
+            ui.add_enabled(false, egui::Button::new(aurora_i18n::tr!("common-pay")).min_size(size))
+                .on_disabled_hover_text(aurora_i18n::tr!("ui-profile-coming-soon"));
         });
         ui.vertical(|ui| {
-            if ui.add(egui::Button::new("Proposer de téléporter").min_size(size)).clicked() {
+            if ui
+                .add(egui::Button::new(aurora_i18n::tr!("ui-profile-offer-teleport")).min_size(size))
+                .clicked()
+            {
                 actions.push(ProfileAction::OfferTeleport(id));
             }
-            if ui.add(egui::Button::new("Message instantané").min_size(size)).clicked() {
+            if ui
+                .add(egui::Button::new(aurora_i18n::tr!("ui-profile-instant-message")).min_size(size))
+                .clicked()
+            {
                 actions.push(ProfileAction::Im(id));
             }
         });
         ui.vertical(|ui| {
-            let friend_label = if is_friend { "Supprimer l'ami" } else { "Ajouter un ami" };
+            let friend_label = if is_friend {
+                aurora_i18n::tr!("ui-profile-remove-friend")
+            } else {
+                aurora_i18n::tr!("ui-profile-add-friend")
+            };
             ui.add_enabled(false, egui::Button::new(friend_label).min_size(size))
-                .on_disabled_hover_text("À venir");
+                .on_disabled_hover_text(aurora_i18n::tr!("ui-profile-coming-soon"));
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
                 let bw = Vec2::new(col_w - 34.0, 20.0);
                 if ui
-                    .add(egui::Button::new(if blocked { "Débloquer" } else { "Bloquer" }).min_size(bw))
+                    .add(
+                        egui::Button::new(if blocked {
+                            aurora_i18n::tr!("common-unblock")
+                        } else {
+                            aurora_i18n::tr!("common-block")
+                        })
+                        .min_size(bw),
+                    )
                     .clicked()
                 {
                     actions.push(ProfileAction::ToggleBlock(id));
@@ -948,30 +1020,43 @@ fn action_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, w: &Window, is_
 
 /// menu_fs_profile_overflow.xml.
 fn overflow_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid, blocked: bool, actions: &mut Vec<ProfileAction>) {
-    widgets::icon_menu(ui, p, "list", "Plus", |ui| {
-        for label in ["Carte", "Payer", "Partager", "Appeler"] {
-            ui.add_enabled(false, egui::Button::new(label)).on_disabled_hover_text("À venir");
+    widgets::icon_menu(ui, p, "list", aurora_i18n::tr!("ui-profile-more"), |ui| {
+        for label in [
+            aurora_i18n::tr!("common-map"),
+            aurora_i18n::tr!("common-pay"),
+            aurora_i18n::tr!("common-share"),
+            aurora_i18n::tr!("ui-profile-call"),
+        ] {
+            ui.add_enabled(false, egui::Button::new(label))
+                .on_disabled_hover_text(aurora_i18n::tr!("ui-profile-coming-soon"));
         }
-        if ui.button(if blocked { "Débloquer" } else { "Bloquer" }).clicked() {
+        if ui
+            .button(if blocked {
+                aurora_i18n::tr!("common-unblock")
+            } else {
+                aurora_i18n::tr!("common-block")
+            })
+            .clicked()
+        {
             actions.push(ProfileAction::ToggleBlock(id));
             ui.close();
         }
         ui.separator();
-        if ui.button("Copier le nom").clicked() {
+        if ui.button(aurora_i18n::tr!("common-copy-name")).clicked() {
             ui.ctx().copy_text(world.social.name_of(&id));
             ui.close();
         }
-        if ui.button("Copier l'URI").clicked() {
+        if ui.button(aurora_i18n::tr!("ui-profile-copy-uri")).clicked() {
             ui.ctx().copy_text(format!("secondlife:///app/agent/{id}/about"));
             ui.close();
         }
-        if ui.button("Copier l'UUID / clé de l'agent").clicked() {
+        if ui.button(aurora_i18n::tr!("ui-profile-copy-agent-uuid-key")).clicked() {
             ui.ctx().copy_text(id.to_string());
             ui.close();
         }
         ui.separator();
-        ui.add_enabled(false, egui::Button::new("Signaler"))
-            .on_disabled_hover_text("À venir");
+        ui.add_enabled(false, egui::Button::new(aurora_i18n::tr!("common-report")))
+            .on_disabled_hover_text(aurora_i18n::tr!("ui-profile-coming-soon"));
     });
 }
 
@@ -980,23 +1065,29 @@ fn copy_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid) {
     let names = &world.social.avatar_names;
     let display = names.get(&id).map(|n| n.display(&names.options));
     let legacy = world.legacy_name(&id);
-    widgets::icon_menu(ui, p, "link", "Copier", |ui| {
+    widgets::icon_menu(ui, p, "link", aurora_i18n::tr!("common-copy-2"), |ui| {
         if ui
-            .add_enabled(display.is_some(), egui::Button::new("Copier le nom d'affichage"))
+            .add_enabled(
+                display.is_some(),
+                egui::Button::new(aurora_i18n::tr!("ui-profile-copy-display-name")),
+            )
             .clicked()
         {
             ui.ctx().copy_text(display.clone().unwrap_or_default());
             ui.close();
         }
-        if ui.add_enabled(legacy.is_some(), egui::Button::new("Copier le nom")).clicked() {
+        if ui
+            .add_enabled(legacy.is_some(), egui::Button::new(aurora_i18n::tr!("common-copy-name")))
+            .clicked()
+        {
             ui.ctx().copy_text(legacy.clone().unwrap_or_default());
             ui.close();
         }
-        if ui.button("Copier l'UUID / clé de l'agent").clicked() {
+        if ui.button(aurora_i18n::tr!("ui-profile-copy-agent-uuid-key")).clicked() {
             ui.ctx().copy_text(id.to_string());
             ui.close();
         }
-        if ui.button("Copier l'URI").clicked() {
+        if ui.button(aurora_i18n::tr!("ui-profile-copy-uri")).clicked() {
             ui.ctx().copy_text(format!("secondlife:///app/agent/{id}/about"));
             ui.close();
         }
@@ -1010,40 +1101,53 @@ fn rights_dialog(ctx: &egui::Context, p: &Palette, w: &mut Window, name: &str, r
     let mut done = false;
     let screen = ctx.content_rect();
     let win_id = format!("profile-rights-{}", w.id);
-    Floater::new(&win_id, "Droits", screen.center() - Vec2::new(150.0, 70.0), Vec2::new(300.0, 140.0))
-        .fixed()
-        .show(ctx, p, &mut open, |ui| {
-            ui.label(RichText::new(format!("Autoriser {name} à :")).size(12.5).color(p.ink));
-            for (bit, label) in [
-                (1, "Voir quand je suis en ligne"),
-                (2, "Me trouver sur la carte"),
-                (4, "Modifier, supprimer ou prendre mes objets"),
-            ] {
-                let mut on = r & bit != 0;
-                if ui.checkbox(&mut on, label).changed() {
-                    r = if on { r | bit } else { r & !bit };
-                }
+    Floater::new(
+        &win_id,
+        aurora_i18n::tr!("common-rights"),
+        screen.center() - Vec2::new(150.0, 70.0),
+        Vec2::new(300.0, 140.0),
+    )
+    .fixed()
+    .show(ctx, p, &mut open, |ui| {
+        ui.label(
+            RichText::new(aurora_i18n::tr!("ui-profile-allow-to", name = name.to_string()))
+                .size(12.5)
+                .color(p.ink),
+        );
+        for (bit, label) in [
+            (1, aurora_i18n::tr!("ui-profile-see-when-i-am-online")),
+            (2, aurora_i18n::tr!("ui-profile-find-me-on-map")),
+            (4, aurora_i18n::tr!("ui-profile-modify-delete-or-take-my-objects")),
+        ] {
+            let mut on = r & bit != 0;
+            if ui.checkbox(&mut on, label).changed() {
+                r = if on { r | bit } else { r & !bit };
             }
-            ui.add_space(4.0);
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if flat_button(ui, p, "Annuler").clicked() {
-                    done = true;
+        }
+        ui.add_space(4.0);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked() {
+                done = true;
+            }
+            if flat_button(ui, p, "OK").clicked() {
+                if r != rights {
+                    actions.push(ProfileAction::Net(NetCommand::GrantUserRights { friend: w.id, rights: r }));
                 }
-                if flat_button(ui, p, "OK").clicked() {
-                    if r != rights {
-                        actions.push(ProfileAction::Net(NetCommand::GrantUserRights { friend: w.id, rights: r }));
-                    }
-                    done = true;
-                }
-            });
+                done = true;
+            }
         });
+    });
     w.rights_edit = if done || !open { None } else { Some(r) };
 }
 
 /// LLPanelProfileWeb: [WEB_PROFILE_URL]<username>/?feed_only=true.
 fn feed_tab(ui: &mut egui::Ui, c: &TabCtx, w: &mut Window, web: &WebContext) {
     let Some(base) = web.profile_base else {
-        ui.label(RichText::new("Pas de profil web sur cette grille.").size(12.0).color(c.p.muted));
+        ui.label(
+            RichText::new(aurora_i18n::tr!("ui-profile-no-web-profile-on-this-grid"))
+                .size(12.0)
+                .color(c.p.muted),
+        );
         return;
     };
     let Some(username) = web_username(c.world, &w.id) else {
@@ -1055,8 +1159,8 @@ fn feed_tab(ui: &mut egui::Ui, c: &TabCtx, w: &mut Window, web: &WebContext) {
     w.web.show(ui, c.p, web.paths, web.browser, web.cookie, size);
     ui.vertical_centered(|ui| {
         let text = match w.web.load_secs {
-            Some(s) => format!("Heure de chargement : {s:.2} secondes"),
-            None => "Chargement…".to_owned(),
+            Some(s) => aurora_i18n::tr!("ui-profile-load-time-seconds", s = aurora_i18n::number_text(&format!("{:.2}", s))),
+            None => aurora_i18n::tr!("common-loading-2").to_owned(),
         };
         ui.label(RichText::new(text).size(11.5).color(c.p.muted));
     });
@@ -1099,7 +1203,11 @@ fn side_list(ui: &mut egui::Ui, p: &Palette, items: &[(Uuid, String)], selected:
                         p.field
                     };
                     ui.painter().rect_filled(rect, 0.0, fill);
-                    let label = if name.is_empty() { "(sans nom)" } else { name.as_str() };
+                    let label = if name.is_empty() {
+                        aurora_i18n::tr!("common-unnamed")
+                    } else {
+                        name.as_str()
+                    };
                     // one line, cut with "…" (tab use_ellipses)
                     let mut job = egui::text::LayoutJob::simple_singleline(
                         label.to_owned(),
@@ -1153,24 +1261,36 @@ fn picks_tab(
     if own {
         ui.vertical_centered(|ui| {
             ui.label(
-                RichText::new("Faites connaître aux autres résidents vos endroits favoris dans Second Life.")
-                    .size(12.0)
-                    .color(p.muted),
+                RichText::new(aurora_i18n::tr!(
+                    "ui-profile-let-other-residents-know-your-favorite-places-in-second"
+                ))
+                .size(12.0)
+                .color(p.muted),
             );
         });
         ui.horizontal(|ui| {
             let creating = w.pick_edit.as_ref().is_some_and(|(e, _)| e.id.is_nil());
             let can_add = pr.picks.len() < picks_limit(world) && !creating;
-            if ui.add_enabled(can_add, egui::Button::new("Nouveau...")).clicked() {
+            if ui
+                .add_enabled(can_add, egui::Button::new(aurora_i18n::tr!("ui-profile-new")))
+                .clicked()
+            {
                 w.pick_edit = Some((new_pick(world), PickEdit::default()));
                 w.pick_sel = Some(Uuid::nil());
             }
-            if ui.add_enabled(w.pick_sel.is_some(), egui::Button::new("Supprimer...")).clicked() {
+            if ui
+                .add_enabled(w.pick_sel.is_some(), egui::Button::new(aurora_i18n::tr!("common-delete-2")))
+                .clicked()
+            {
                 w.confirm_delete = true;
             }
             if w.confirm_delete {
-                ui.label(RichText::new("Supprimer ce favori ?").size(12.0).color(p.warn));
-                if flat_button(ui, p, "Oui").clicked() {
+                ui.label(
+                    RichText::new(aurora_i18n::tr!("ui-profile-delete-this-favorite"))
+                        .size(12.0)
+                        .color(p.warn),
+                );
+                if flat_button(ui, p, aurora_i18n::tr!("common-yes")).clicked() {
                     if let Some(id) = w.pick_sel.filter(|id| !id.is_nil()) {
                         actions.push(ProfileAction::Net(NetCommand::PickDelete(id)));
                     }
@@ -1178,7 +1298,7 @@ fn picks_tab(
                     w.pick_sel = None;
                     w.confirm_delete = false;
                 }
-                if flat_button(ui, p, "Non").clicked() {
+                if flat_button(ui, p, aurora_i18n::tr!("common-no")).clicked() {
                     w.confirm_delete = false;
                 }
             }
@@ -1189,9 +1309,9 @@ fn picks_tab(
         ui.add_space(120.0);
         ui.vertical_centered(|ui| {
             let t = if own {
-                "Vous n'avez pas créé de favoris.\nCliquez sur le bouton Nouveau pour créer un favori."
+                aurora_i18n::tr!("ui-profile-you-have-not-created-any-picks-click-new-to")
             } else {
-                "L'utilisateur n'a pas de favoris"
+                aurora_i18n::tr!("ui-profile-this-user-has-no-picks")
             };
             ui.label(RichText::new(t).size(12.0).color(p.muted));
         });
@@ -1241,7 +1361,10 @@ fn new_pick(world: &World) -> PickEdit {
         desc,
         snapshot,
         pos,
-        location: Some(location_text(&["(mise à jour après enregistrement)", &parcel_name, &region], pos)),
+        location: Some(location_text(
+            &[aurora_i18n::tr!("ui-profile-updated-after-saving"), &parcel_name, &region],
+            pos,
+        )),
     }
 }
 
@@ -1301,7 +1424,7 @@ fn pick_detail(
         "user-circle",
         "",
     );
-    ui.label(RichText::new("Nom :").size(12.0).strong().color(p.ink));
+    ui.label(RichText::new(aurora_i18n::tr!("common-name-2")).size(12.0).strong().color(p.ink));
     if let (true, Some((e, _))) = (own, w.pick_edit.as_mut()) {
         ui.add(egui::TextEdit::singleline(&mut e.name).desired_width(width).char_limit(63));
     } else {
@@ -1309,7 +1432,12 @@ fn pick_detail(
             ui.label(RichText::new(&name).size(12.5).color(p.ink));
         });
     }
-    ui.label(RichText::new("Description :").size(12.0).strong().color(p.ink));
+    ui.label(
+        RichText::new(aurora_i18n::tr!("common-description"))
+            .size(12.0)
+            .strong()
+            .color(p.ink),
+    );
     // a fixed height: sizes taken from the space left would grow the window
     let desc_h = 80.0;
     if let (true, Some((e, _))) = (own, w.pick_edit.as_mut()) {
@@ -1331,14 +1459,19 @@ fn pick_detail(
                 .show(ui, |ui| rich(ui, p, emoji, world, want_names, &desc));
         });
     }
-    ui.label(RichText::new("Lieu :").size(12.0).strong().color(p.ink));
+    ui.label(
+        RichText::new(aurora_i18n::tr!("ui-profile-location-2"))
+            .size(12.0)
+            .strong()
+            .color(p.ink),
+    );
     let location = match (&w.pick_edit, info) {
         (Some((e, _)), _) if own && e.location.is_some() => e.location.clone().unwrap_or_default(),
         (_, Some(i)) if !i.parcel.is_nil() => match world.profiles.parcels.get(&i.parcel) {
             Some(pa) => location_text(&["", &pa.name, &pa.sim_name], pos),
             None => {
                 w.ask(i.parcel, NetCommand::ParcelInfoRequest(i.parcel), actions);
-                "Chargement en cours...".to_owned()
+                aurora_i18n::tr!("ui-profile-loading-2").to_owned()
             }
         },
         (_, Some(i)) => location_text(&["", &i.sim_name], pos),
@@ -1350,13 +1483,19 @@ fn pick_detail(
     ui.add_space(4.0);
     ui.horizontal_wrapped(|ui| {
         let has_pos = pos != DVec3::ZERO;
-        if ui.add_enabled(has_pos, egui::Button::new("Montrer sur carte")).clicked() {
+        if ui
+            .add_enabled(has_pos, egui::Button::new(aurora_i18n::tr!("ui-profile-show-on-map")))
+            .clicked()
+        {
             actions.push(ProfileAction::ShowOnMap(pos));
         }
-        if ui.add_enabled(has_pos, egui::Button::new("Téléportation")).clicked() {
+        if ui
+            .add_enabled(has_pos, egui::Button::new(aurora_i18n::tr!("common-teleport-2")))
+            .clicked()
+        {
             actions.push(ProfileAction::Teleport(pos));
         }
-        if own && ui.button("Définir le lieu").clicked() {
+        if own && ui.button(aurora_i18n::tr!("ui-profile-set-location")).clicked() {
             // onClickSetLocation: our position, parcel and region now
             let here = new_pick(world);
             if let Some((e, _)) = w.pick_edit.as_mut() {
@@ -1370,16 +1509,22 @@ fn pick_detail(
         ui.separator();
         ui.horizontal(|ui| {
             if e.id.is_nil() {
-                if ui.button("Créer un lieu").clicked() {
+                if ui.button(aurora_i18n::tr!("ui-profile-create-place")).clicked() {
                     created = Some(pick_of(e));
                 }
             } else {
                 let dirty = e != base;
-                if ui.add_enabled(dirty, egui::Button::new("Enregistrer le lieu")).clicked() {
+                if ui
+                    .add_enabled(dirty, egui::Button::new(aurora_i18n::tr!("ui-profile-save-location")))
+                    .clicked()
+                {
                     *base = e.clone();
                     actions.push(ProfileAction::Net(NetCommand::PickUpdate(Box::new(pick_of(e)))));
                 }
-                if ui.add_enabled(dirty, egui::Button::new("Annuler")).clicked() {
+                if ui
+                    .add_enabled(dirty, egui::Button::new(aurora_i18n::tr!("common-cancel")))
+                    .clicked()
+                {
                     *e = base.clone();
                 }
             }
@@ -1409,23 +1554,27 @@ fn classifieds_tab(
     }
     if own {
         ui.horizontal(|ui| {
-            ui.add_enabled(false, egui::Button::new("Nouvelle..."))
-                .on_disabled_hover_text("Publier une petite annonce (payante) : à venir");
+            ui.add_enabled(false, egui::Button::new(aurora_i18n::tr!("ui-profile-new-2")))
+                .on_disabled_hover_text(aurora_i18n::tr!("ui-profile-publish-a-classified-listing-paid-coming-soon"));
             if ui
-                .add_enabled(w.classified_sel.is_some(), egui::Button::new("Supprimer..."))
+                .add_enabled(w.classified_sel.is_some(), egui::Button::new(aurora_i18n::tr!("common-delete-2")))
                 .clicked()
             {
                 w.confirm_delete = true;
             }
             if w.confirm_delete {
-                ui.label(RichText::new("Supprimer cette annonce ?").size(12.0).color(p.warn));
-                if flat_button(ui, p, "Oui").clicked() {
+                ui.label(
+                    RichText::new(aurora_i18n::tr!("ui-profile-delete-this-classified"))
+                        .size(12.0)
+                        .color(p.warn),
+                );
+                if flat_button(ui, p, aurora_i18n::tr!("common-yes")).clicked() {
                     if let Some(id) = w.classified_sel.take() {
                         actions.push(ProfileAction::Net(NetCommand::ClassifiedDelete(id)));
                     }
                     w.confirm_delete = false;
                 }
-                if flat_button(ui, p, "Non").clicked() {
+                if flat_button(ui, p, aurora_i18n::tr!("common-no")).clicked() {
                     w.confirm_delete = false;
                 }
             }
@@ -1437,9 +1586,9 @@ fn classifieds_tab(
         ui.add_space(160.0);
         ui.vertical_centered(|ui| {
             let t = if own {
-                "Vous n'avez pas créé de petites annonces.\nCliquez sur le bouton Nouvelle pour créer une petite annonce."
+                aurora_i18n::tr!("ui-profile-you-have-not-created-any-classifieds-click-new-to")
             } else {
-                "L'utilisateur n'a pas de petites annonces"
+                aurora_i18n::tr!("ui-profile-this-user-has-no-classified-listings")
             };
             ui.label(RichText::new(t).size(12.0).color(p.muted));
         });
@@ -1502,30 +1651,46 @@ fn classified_detail(
     };
     row(
         ui,
-        "Endroit :",
+        aurora_i18n::tr!("ui-profile-location"),
         &location_text(&[&info.parcel_name, &info.sim_name], info.pos_global),
     );
-    row(ui, "Type de contenu :", profiles::classified_maturity(info.flags));
-    row(ui, "Catégorie :", &world.classified_category(info.category));
-    row(ui, "Date de création :", &profiles::slt_date(info.creation_date));
-    row(ui, "Coût de l'annonce :", &format!("L${}", info.price));
+    row(
+        ui,
+        aurora_i18n::tr!("ui-profile-content-type"),
+        profiles::classified_maturity(info.flags),
+    );
+    row(ui, aurora_i18n::tr!("common-category"), &world.classified_category(info.category));
+    row(
+        ui,
+        aurora_i18n::tr!("ui-profile-creation-date"),
+        &profiles::slt_date(info.creation_date),
+    );
+    row(ui, aurora_i18n::tr!("ui-profile-listing-cost"), &format!("L${}", info.price));
     if c.own {
         let renew = info.flags & aurora_net::profile::classified_flags::AUTO_RENEW != 0;
-        row(ui, "Renouv. auto :", if renew { "Activé" } else { "Désactivé" });
+        row(
+            ui,
+            aurora_i18n::tr!("ui-profile-auto-renew"),
+            if renew {
+                aurora_i18n::tr!("ui-profile-enabled")
+            } else {
+                aurora_i18n::tr!("common-disabled")
+            },
+        );
     }
-    ui.label(RichText::new("Description :").size(12.0).color(p.muted));
+    ui.label(RichText::new(aurora_i18n::tr!("common-description")).size(12.0).color(p.muted));
     rich(ui, p, emoji, world, want_names, &info.desc);
     ui.add_space(4.0);
     ui.horizontal(|ui| {
-        if ui.button("Téléportation").clicked() {
+        if ui.button(aurora_i18n::tr!("common-teleport-2")).clicked() {
             actions.push(ProfileAction::Teleport(info.pos_global));
         }
-        if ui.button("Carte").clicked() {
+        if ui.button(aurora_i18n::tr!("common-map")).clicked() {
             actions.push(ProfileAction::ShowOnMap(info.pos_global));
         }
         if c.own {
-            ui.add_enabled(false, egui::Button::new("Modifier"))
-                .on_disabled_hover_text("À venir");
+            ui.add_enabled(false, egui::Button::new(aurora_i18n::tr!("common-edit")))
+                .on_disabled_hover_text(aurora_i18n::tr!("ui-profile-coming-soon"));
         }
     });
 }
@@ -1552,8 +1717,15 @@ fn first_life_tab(
         wanted_images.insert(pr.fl_image);
     }
     ui.horizontal_top(|ui| {
-        let r = widgets::picture(ui, p, c.images.get(&pr.fl_image), Vec2::splat(200.0), "user-circle", "Photo RL");
-        if c.own && r.on_hover_text("Clic : changer l'image").clicked() {
+        let r = widgets::picture(
+            ui,
+            p,
+            c.images.get(&pr.fl_image),
+            Vec2::splat(200.0),
+            "user-circle",
+            aurora_i18n::tr!("ui-profile-rl-picture"),
+        );
+        if c.own && r.on_hover_text(aurora_i18n::tr!("ui-profile-click-change-image")).clicked() {
             *pick_picture = Some((PictureSlot::FirstLife, pr.fl_image));
         }
         if c.own {
@@ -1561,13 +1733,19 @@ fn first_life_tab(
             ui.vertical(|ui| {
                 ui.add_space(45.0);
                 let size = Vec2::new(120.0, 20.0);
-                ui.add_enabled(false, egui::Button::new("Charger une image").min_size(size))
-                    .on_disabled_hover_text("À venir");
-                if ui.add(egui::Button::new("Changer l'image").min_size(size)).clicked() {
+                ui.add_enabled(false, egui::Button::new(aurora_i18n::tr!("ui-profile-load-image")).min_size(size))
+                    .on_disabled_hover_text(aurora_i18n::tr!("ui-profile-coming-soon"));
+                if ui
+                    .add(egui::Button::new(aurora_i18n::tr!("ui-profile-change-image")).min_size(size))
+                    .clicked()
+                {
                     *pick_picture = Some((PictureSlot::FirstLife, pr.fl_image));
                 }
                 if ui
-                    .add_enabled(!pr.fl_image.is_nil(), egui::Button::new("Supprimer l'image").min_size(size))
+                    .add_enabled(
+                        !pr.fl_image.is_nil(),
+                        egui::Button::new(aurora_i18n::tr!("ui-profile-remove-image")).min_size(size),
+                    )
                     .clicked()
                 {
                     actions.push(ProfileAction::Save {
@@ -1614,7 +1792,7 @@ fn first_life_tab(
 fn notes_tab(ui: &mut egui::Ui, c: &TabCtx, w: &mut Window, profile: Option<&AvatarProfile>, actions: &mut Vec<ProfileAction>) {
     let p = c.p;
     ui.label(
-        RichText::new("Prenez des notes sur cette personne. Personne ne peut les voir.")
+        RichText::new(aurora_i18n::tr!("ui-profile-take-notes-about-this-person-nobody-else-can-see"))
             .size(12.0)
             .strong()
             .color(p.ink),

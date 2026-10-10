@@ -163,13 +163,13 @@ pub fn show(
     let detail = if info.region.is_empty() {
         String::new()
     } else {
-        format!(
-            "{}  ·  terrain {:.0} %  ·  {} objets  ·  textures {}/{}",
-            info.stage,
-            info.terrain * 100.0,
-            info.objects,
-            info.textures.0,
-            info.textures.1
+        aurora_i18n::tr!(
+            "status-terrain-objects-textures",
+            value0 = info.stage.to_string(),
+            value1 = aurora_i18n::number_text(&format!("{:.0}", info.terrain * 100.0)),
+            value2 = format!("{}", info.objects),
+            value3 = format!("{}", info.textures.0),
+            value4 = format!("{}", info.textures.1)
         )
     };
     let below = splash(
@@ -177,7 +177,7 @@ pub fn show(
         p,
         screen,
         logo,
-        "Chargement du monde",
+        aurora_i18n::tr!("common-loading-world"),
         &subtitle,
         Some(info.fraction),
         &detail,
@@ -190,7 +190,7 @@ pub fn show(
         egui::Area::new(egui::Id::new("loading_cancel"))
             .fixed_pos(below - Vec2::new(30.0, 0.0))
             .show(&ctx, |ui| {
-                if ui.link(RichText::new("Annuler").color(p.muted)).clicked() {
+                if ui.link(RichText::new(aurora_i18n::tr!("common-cancel")).color(p.muted)).clicked() {
                     cancel = true;
                 }
             });

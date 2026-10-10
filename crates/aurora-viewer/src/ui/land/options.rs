@@ -16,24 +16,32 @@ use uuid::Uuid;
 const DIRECTORY_FEE: i32 = 30;
 
 /// Categories of the combo, in its order (LLParcel::ECategory, French skin).
-const CATEGORIES: [(i32, &str); 13] = [
-    (0, "Toutes catégories"),
-    (1, "Appartenant aux Lindens"),
-    (3, "Art et Culture"),
-    (4, "Affaires"),
-    (5, "Éducation"),
-    (6, "Jeux"),
-    (7, "Favoris"),
-    (8, "Accueil pour les nouveaux"),
-    (9, "Parcs et Nature"),
-    (10, "Résidentiel"),
-    (11, "Shopping"),
-    (14, "Location"),
-    (13, "Autre"),
-];
+fn categories() -> [(i32, &'static str); 13] {
+    [
+        (0, aurora_i18n::tr!("ui-land-options-all-categories")),
+        (1, aurora_i18n::tr!("ui-land-options-linden-owned")),
+        (3, aurora_i18n::tr!("ui-land-options-arts-and-culture")),
+        (4, aurora_i18n::tr!("ui-land-options-business")),
+        (5, aurora_i18n::tr!("ui-land-options-education")),
+        (6, aurora_i18n::tr!("ui-land-options-games")),
+        (7, aurora_i18n::tr!("common-favorites")),
+        (8, aurora_i18n::tr!("ui-land-options-newcomer-friendly")),
+        (9, aurora_i18n::tr!("ui-land-options-parks-and-nature")),
+        (10, aurora_i18n::tr!("ui-land-options-residential")),
+        (11, aurora_i18n::tr!("common-shopping-2")),
+        (14, aurora_i18n::tr!("extra-location")),
+        (13, aurora_i18n::tr!("ui-land-options-other")),
+    ]
+}
 
 /// Teleport routing (LLParcel::ELandingType).
-const LANDING_TYPES: [&str; 3] = ["Bloqué", "Lieu d'arrivée fixe", "Lieu d'arrivée libre"];
+fn landing_types() -> [&'static str; 3] {
+    [
+        aurora_i18n::tr!("common-blocked"),
+        aurora_i18n::tr!("ui-land-options-fixed-landing-point"),
+        aurora_i18n::tr!("ui-land-options-unrestricted-landing"),
+    ]
+}
 
 /// The options as the panel shows them: group boxes are checked when
 /// "everyone" is (refresh), and onCommitAny derives the flags back.
@@ -122,7 +130,11 @@ pub(super) fn show(
     let mut now = before;
     let mut extra: Option<Box<dyn FnOnce(&mut aurora_net::land::ParcelUpdate)>> = None;
 
-    ui.label(RichText::new("Autoriser les autres résidents à :").size(12.0).color(p.ink));
+    ui.label(
+        RichText::new(aurora_i18n::tr!("ui-land-options-allow-other-residents-to"))
+            .size(12.0)
+            .color(p.ink),
+    );
     let line = |ui: &mut egui::Ui, label: &str, body: &mut dyn FnMut(&mut egui::Ui)| {
         ui.horizontal(|ui| {
             ui.add_space(10.0);
@@ -135,54 +147,79 @@ pub(super) fn show(
     let col = |ui: &mut egui::Ui, w: f32, body: &mut dyn FnMut(&mut egui::Ui)| {
         super::fixed(ui, w, body);
     };
-    line(ui, "Modifier le terrain :", &mut |ui| {
+    line(ui, aurora_i18n::tr!("ui-land-options-edit-land"), &mut |ui| {
         col(ui, 130.0, &mut |ui| {
-            let (r, on) = check(ui, can_terraform, now.terraform, "Tous");
-            r.on_hover_text(
-                "Si cette option est cochée, tout le monde pourra terraformer votre terrain. Mieux vaut la laisser décochée : vous pouvez toujours modifier votre propre terrain.",
-            );
+            let (r, on) = check(ui, can_terraform, now.terraform, aurora_i18n::tr!("common-all"));
+            r.on_hover_text(aurora_i18n::tr!(
+                "ui-land-options-when-checked-everyone-can-terraform-your-land-it-is"
+            ));
             now.terraform = on;
         });
-        dim(ui, p, "(À utiliser prudemment !)");
+        dim(ui, p, aurora_i18n::tr!("ui-land-options-use-with-care"));
     });
-    line(ui, "Voler :", &mut |ui| {
-        let (r, on) = check(ui, can_options, now.fly, "Tous");
-        r.on_hover_text("Si cette option est cochée, les résidents peuvent voler sur votre terrain. Sinon, ils ne peuvent que le survoler ou y arriver en volant.");
+    line(ui, aurora_i18n::tr!("ui-land-options-fly"), &mut |ui| {
+        let (r, on) = check(ui, can_options, now.fly, aurora_i18n::tr!("common-all"));
+        r.on_hover_text(aurora_i18n::tr!(
+            "ui-land-options-when-checked-residents-can-fly-on-your-land-otherwise"
+        ));
         now.fly = on;
     });
-    line(ui, "Construire :", &mut |ui| {
+    line(ui, aurora_i18n::tr!("ui-land-options-build"), &mut |ui| {
         col(ui, 130.0, &mut |ui| {
-            let (r, on) = check(ui, can_options, now.edit_objects, "Tous");
-            r.on_hover_text("Si la case est cochée, les résidents peuvent créer et rezzer des objets sur votre terrain.");
+            let (r, on) = check(ui, can_options, now.edit_objects, aurora_i18n::tr!("common-all"));
+            r.on_hover_text(aurora_i18n::tr!(
+                "ui-land-options-when-checked-residents-can-create-and-rez-objects-on"
+            ));
             now.edit_objects = on;
         });
         // explicitly on (and greyed) while everyone may build
-        let (r, on) = check(ui, can_options && !before.edit_objects, now.edit_group, "Groupe");
-        r.on_hover_text(
-            "Si la case est cochée, les membres du groupe de la parcelle peuvent créer et rezzer des objets sur votre terrain.",
+        let (r, on) = check(
+            ui,
+            can_options && !before.edit_objects,
+            now.edit_group,
+            aurora_i18n::tr!("common-group"),
         );
+        r.on_hover_text(aurora_i18n::tr!(
+            "ui-land-options-when-checked-parcel-group-members-can-create-and-rez"
+        ));
         now.edit_group = on;
     });
-    line(ui, "Laisser entrer des objets :", &mut |ui| {
+    line(ui, aurora_i18n::tr!("ui-land-options-allow-object-entry"), &mut |ui| {
         col(ui, 130.0, &mut |ui| {
-            let (r, on) = check(ui, can_options, now.all_entry, "Tous");
-            r.on_hover_text(
-                "Si la case est cochée, les résidents peuvent déplacer leurs objets depuis d'autres parcelles jusqu'à celle-ci.",
-            );
+            let (r, on) = check(ui, can_options, now.all_entry, aurora_i18n::tr!("common-all"));
+            r.on_hover_text(aurora_i18n::tr!(
+                "ui-land-options-when-checked-residents-can-move-their-objects-from-other"
+            ));
             now.all_entry = on;
         });
-        let (r, on) = check(ui, can_options && !before.all_entry, now.group_entry, "Groupe");
-        r.on_hover_text("Si la case est cochée, les membres du groupe de la parcelle peuvent déplacer leurs objets depuis d'autres parcelles jusqu'à celle-ci.");
+        let (r, on) = check(
+            ui,
+            can_options && !before.all_entry,
+            now.group_entry,
+            aurora_i18n::tr!("common-group"),
+        );
+        r.on_hover_text(aurora_i18n::tr!(
+            "ui-land-options-when-checked-parcel-group-members-can-move-their-objects"
+        ));
         now.group_entry = on;
     });
-    line(ui, "Exécuter des scripts :", &mut |ui| {
+    line(ui, aurora_i18n::tr!("ui-land-options-run-scripts"), &mut |ui| {
         col(ui, 130.0, &mut |ui| {
-            let (r, on) = check(ui, can_options, now.other_scripts, "Tous");
-            r.on_hover_text("Si la case est cochée, les résidents peuvent exécuter des scripts sur votre parcelle, y compris ceux de leurs attachements.");
+            let (r, on) = check(ui, can_options, now.other_scripts, aurora_i18n::tr!("common-all"));
+            r.on_hover_text(aurora_i18n::tr!(
+                "ui-land-options-when-checked-residents-can-run-scripts-on-your-parcel"
+            ));
             now.other_scripts = on;
         });
-        let (r, on) = check(ui, can_options && !before.other_scripts, now.group_scripts, "Groupe");
-        r.on_hover_text("Si la case est cochée, les membres du groupe de la parcelle peuvent exécuter des scripts sur votre parcelle, y compris ceux de leurs attachements.");
+        let (r, on) = check(
+            ui,
+            can_options && !before.other_scripts,
+            now.group_scripts,
+            aurora_i18n::tr!("common-group"),
+        );
+        r.on_hover_text(aurora_i18n::tr!(
+            "ui-land-options-when-checked-parcel-group-members-can-run-scripts-on"
+        ));
         now.group_scripts = on;
     });
     ui.separator();
@@ -192,30 +229,30 @@ pub(super) fn show(
     let (search_on, search_tip) = match (large, can_search) {
         (true, true) => (
             true,
-            "Permettre aux autres résidents de voir cette parcelle dans les résultats de recherche",
+            aurora_i18n::tr!("ui-land-options-let-other-residents-find-this-parcel-in-search-results"),
         ),
         (false, true) if before.directory => (
             true,
-            "Permettre aux autres résidents de voir cette parcelle dans les résultats de recherche",
+            aurora_i18n::tr!("ui-land-options-let-other-residents-find-this-parcel-in-search-results"),
         ),
         (false, true) => (
             false,
-            "Cette option est désactivée car la superficie de cette parcelle est inférieure ou égale à 128 m². Seules les parcelles de grande taille peuvent apparaître dans la recherche.",
+            aurora_i18n::tr!("ui-land-options-this-option-is-disabled-because-the-parcel-is-128"),
         ),
         _ => (
             false,
-            "Cette option est désactivée car vous ne pouvez pas modifier les options de cette parcelle.",
+            aurora_i18n::tr!("ui-land-options-this-option-is-disabled-because-you-cannot-change-this"),
         ),
     };
     ui.columns(2, |cols| {
         let ui = &mut cols[0];
-        let (r, on) = check(ui, can_options, now.safe, "Sécurisé (pas de dégâts)");
-        r.on_hover_text("Si cette option est cochée, le terrain est sécurisé : pas de dégâts lors des combats. Décochée, les dégâts sont possibles.");
+        let (r, on) = check(ui, can_options, now.safe, aurora_i18n::tr!("ui-land-options-safe-no-damage"));
+        r.on_hover_text(aurora_i18n::tr!("ui-land-options-when-checked-the-land-is-safe-no-combat-damage"));
         now.safe = on;
         let label = if DIRECTORY_FEE == 0 {
-            "Lieu dans la recherche".to_owned()
+            aurora_i18n::tr!("ui-land-options-place-in-search").to_owned()
         } else {
-            format!("Lieu dans la recherche ({DIRECTORY_FEE}L$/sem.)")
+            aurora_i18n::tr!("extra-show-place-in-search-l-week", DIRECTORY_FEE = format!("{}", DIRECTORY_FEE))
         };
         let (r, on) = check(ui, search_on, now.directory, &label);
         r.on_hover_text(search_tip).on_disabled_hover_text(search_tip);
@@ -226,22 +263,42 @@ pub(super) fn show(
                 let adult = sim_access == 42;
                 let (r, on) = check(ui, sim_access == 21 && can_identity, now.mature, "");
                 now.mature = on;
-                super::widgets::maturity_badge(ui, p, if adult { "Adulte" } else { "Modéré" }, 14.0);
-                text(ui, p, if adult { "Contenu Adult" } else { "Contenu Modéré" });
+                super::widgets::maturity_badge(
+                    ui,
+                    p,
+                    if adult {
+                        aurora_i18n::tr!("common-adult")
+                    } else {
+                        aurora_i18n::tr!("common-moderate")
+                    },
+                    14.0,
+                );
+                text(
+                    ui,
+                    p,
+                    if adult {
+                        aurora_i18n::tr!("ui-land-options-adult-content")
+                    } else {
+                        aurora_i18n::tr!("ui-land-options-moderate-content")
+                    },
+                );
                 r.on_hover_text(if adult {
-                    "Les informations ou contenu de votre parcelle sont classés Adult."
+                    aurora_i18n::tr!("ui-land-options-your-parcel-information-or-contents-are-rated-adult")
                 } else {
-                    "Les informations ou contenu de votre parcelle sont classés Modéré."
+                    aurora_i18n::tr!("ui-land-options-your-parcel-information-or-contents-are-rated-moderate")
                 });
             });
         }
-        let current = CATEGORIES.iter().find(|c| c.0 == parcel.category).map_or("(autre)", |c| c.1);
+        let current = categories()
+            .iter()
+            .find(|c| c.0 == parcel.category)
+            .map_or(aurora_i18n::tr!("status-other"), |c| c.1);
         ui.add_enabled_ui(search_on, |ui| {
             egui::ComboBox::from_id_salt("land_category")
                 .selected_text(current)
                 .width(190.0)
                 .show_ui(ui, |ui| {
-                    for (id, label) in CATEGORIES {
+                    for (id, label) in categories() {
                         if ui.selectable_label(id == parcel.category, label).clicked() && id != parcel.category {
                             extra = Some(Box::new(move |u| u.category = id as u8));
                         }
@@ -254,25 +311,25 @@ pub(super) fn show(
 
         let ui = &mut cols[1];
         let push_label = if parcel.region_push_override {
-            "Pas de bousculades (les règles de la région priment)"
+            aurora_i18n::tr!("ui-land-options-no-pushing-region-rules-take-precedence")
         } else {
-            "Pas de bousculades"
+            aurora_i18n::tr!("ui-land-options-no-pushing")
         };
         let (r, on) = check(ui, can_options && !parcel.region_push_override, now.push, push_label);
-        r.on_hover_text("Empêche l'utilisation de scripts causant des bousculades. Utile pour éviter les comportements abusifs sur votre terrain.");
+        r.on_hover_text(aurora_i18n::tr!(
+            "ui-land-options-prevents-scripts-from-pushing-people-useful-for-preventing-abusive"
+        ));
         now.push = on;
         ui.horizontal_top(|ui| {
             // the server must know SeeAVs (getHaveNewParcelLimitData)
             let enabled = can_options && parcel.have_new_parcel_limit_data;
             let (r, on) = check(ui, enabled, now.see_avs, "");
-            r.on_hover_text(
-                "Permettre aux avatars présents sur d'autres parcelles de voir et chatter avec les avatars présents sur cette parcelle, et à vous de les voir et de chatter avec eux.",
-            );
+            r.on_hover_text(aurora_i18n::tr!("ui-land-options-allow-avatars-on-other-parcels-to-see-and-chat"));
             now.see_avs = on;
             // toggleSeeAvatars: the label toggles the box too
             let l = ui.add(
                 egui::Label::new(
-                    RichText::new("Les avatars sur d'autres parcelles peuvent voir et chatter avec les avatars sur cette parcelle")
+                    RichText::new(aurora_i18n::tr!("ui-land-options-avatars-on-other-parcels-can-see-and-chat-with"))
                         .size(12.0)
                         .color(if enabled { p.ink } else { p.muted }),
                 )
@@ -287,7 +344,7 @@ pub(super) fn show(
     ui.add_space(4.0);
     ui.horizontal_top(|ui| {
         ui.vertical(|ui| {
-            ui.label(RichText::new("Photo :").size(12.0).color(p.muted));
+            ui.label(RichText::new(aurora_i18n::tr!("ui-land-options-picture")).size(12.0).color(p.muted));
             let size = Vec2::new(195.0, 150.0);
             let (rect, r) = ui.allocate_exact_size(size, if can_identity { egui::Sense::click() } else { egui::Sense::hover() });
             ui.painter().rect_filled(rect, 2.0, p.field);
@@ -295,7 +352,7 @@ pub(super) fn show(
                 ui.painter().text(
                     rect.center(),
                     egui::Align2::CENTER_CENTER,
-                    "(aucune)",
+                    aurora_i18n::tr!("status-none-2"),
                     egui::FontId::proportional(12.0),
                     p.muted,
                 );
@@ -314,16 +371,16 @@ pub(super) fn show(
                         ui.painter().text(
                             rect.center(),
                             egui::Align2::CENTER_CENTER,
-                            "Chargement…",
+                            aurora_i18n::tr!("common-loading-2"),
                             egui::FontId::proportional(12.0),
                             p.muted,
                         );
                     }
                 }
             }
-            if r.on_hover_text("Cliquez pour sélectionner une image").clicked() {
+            if r.on_hover_text(aurora_i18n::tr!("common-click-to-select-an-image")).clicked() {
                 s.texture_snapshot = true;
-                s.texture.open("Photo du terrain", parcel.snapshot_id);
+                s.texture.open(aurora_i18n::tr!("ui-land-options-land-picture"), parcel.snapshot_id);
             }
         });
         ui.add_space(14.0);
@@ -336,12 +393,18 @@ pub(super) fn show(
                 let deg = ((look.y.atan2(-look.x) + std::f32::consts::TAU).to_degrees() + 0.5) as u32;
                 format!("{}, {}, {} ({}°)", lp.x.round(), lp.y.round(), lp.z.round(), (deg - 90) % 360)
             } else {
-                "(aucun)".to_owned()
+                aurora_i18n::tr!("status-none").to_owned()
             };
-            text(ui, p, format!("Lieu d'arrivée : {landing}"));
+            text(
+                ui,
+                p,
+                aurora_i18n::tr!("ui-land-options-landing-point", landing = landing.to_string()),
+            );
             ui.horizontal(|ui| {
-                if super::button(ui, p, "Définir", can_landing)
-                    .on_hover_text("Définit le point d'arrivée des visiteurs à l'emplacement de votre avatar sur ce terrain.")
+                if super::button(ui, p, aurora_i18n::tr!("ui-land-options-set"), can_landing)
+                    .on_hover_text(aurora_i18n::tr!(
+                        "ui-land-options-sets-the-landing-point-for-visitors-to-your-avatar"
+                    ))
                     .clicked()
                 {
                     // onClickSet: only from inside the parcel
@@ -354,12 +417,12 @@ pub(super) fn show(
                         });
                     } else {
                         s.dialog = Some(Dialog::Message(
-                            "Pour définir le point d'atterrissage, vous devez vous trouver à l'intérieur de la parcelle.".into(),
+                            aurora_i18n::tr!("ui-land-options-you-must-be-inside-the-parcel-to-set-its").into(),
                         ));
                     }
                 }
-                if super::button(ui, p, "Annuler", can_landing)
-                    .on_hover_text("Effacer le lieu d'arrivée")
+                if super::button(ui, p, aurora_i18n::tr!("common-cancel"), can_landing)
+                    .on_hover_text(aurora_i18n::tr!("ui-land-options-clear-landing-point"))
                     .clicked()
                 {
                     world.land.update(|u| {
@@ -367,8 +430,8 @@ pub(super) fn show(
                         u.user_look_at = glam::Vec3::ZERO;
                     });
                 }
-                if super::button(ui, p, "Teleport", has_lp)
-                    .on_hover_text("Se téléporter au lieu d'arrivée")
+                if super::button(ui, p, aurora_i18n::tr!("ui-land-options-teleport"), has_lp)
+                    .on_hover_text(aurora_i18n::tr!("ui-land-options-teleport-to-landing-point"))
                     .clicked()
                 {
                     let (ox, oy) = aurora_net::handle_to_origin(v.handle);
@@ -378,21 +441,27 @@ pub(super) fn show(
                 }
             });
             ui.add_space(6.0);
-            ui.label(RichText::new("Règles de téléportation :").size(12.0).color(p.muted));
-            let current = LANDING_TYPES.get(parcel.landing_type as usize).copied().unwrap_or("");
+            ui.label(
+                RichText::new(aurora_i18n::tr!("ui-land-options-teleport-routing"))
+                    .size(12.0)
+                    .color(p.muted),
+            );
+            let current = landing_types().get(parcel.landing_type as usize).copied().unwrap_or("");
             ui.add_enabled_ui(can_landing, |ui| {
                 egui::ComboBox::from_id_salt("landing_type")
                     .selected_text(current)
                     .width(180.0)
                     .show_ui(ui, |ui| {
-                        for (i, label) in LANDING_TYPES.iter().enumerate() {
+                        for (i, label) in landing_types().iter().enumerate() {
                             if ui.selectable_label(i as i32 == parcel.landing_type, *label).clicked() && i as i32 != parcel.landing_type {
                                 extra = Some(Box::new(move |u| u.landing_type = i as u8));
                             }
                         }
                     })
                     .response
-                    .on_hover_text("Règles de téléportation : choisissez comment les téléportations sur votre terrain sont gérées");
+                    .on_hover_text(aurora_i18n::tr!(
+                        "ui-land-options-teleport-routing-choose-how-teleports-to-your-land-are"
+                    ));
             });
         });
     });
@@ -405,8 +474,7 @@ pub(super) fn show(
             || (!(now.group_scripts || now.other_scripts) && parcel.flags & pf::ALLOW_GROUP_SCRIPTS != 0);
         if region_damage && scripts_off {
             s.dialog = Some(Dialog::Message(
-                "Impossible de désactiver les scripts. Les dégâts sont autorisés dans toute la région. Pour que les armes fonctionnent, les scripts doivent être autorisés."
-                    .into(),
+                aurora_i18n::tr!("ui-land-options-cannot-disable-scripts-damage-is-enabled-throughout-the-region").into(),
             ));
             return;
         }

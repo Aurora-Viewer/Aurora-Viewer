@@ -8,16 +8,29 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 /// Picker tabs: (label, Phosphor icon, Unicode group).
-const CATEGORIES: &[(&str, &str, emojis::Group)] = &[
-    ("Smileys", "smiley", emojis::Group::SmileysAndEmotion),
-    ("Personnes", "hand-waving", emojis::Group::PeopleAndBody),
-    ("Animaux et nature", "drop", emojis::Group::AnimalsAndNature),
-    ("Nourriture", "gift", emojis::Group::FoodAndDrink),
-    ("Voyages", "airplane-tilt", emojis::Group::TravelAndPlaces),
-    ("Activités", "person-simple-run", emojis::Group::Activities),
-    ("Objets", "cube", emojis::Group::Objects),
-    ("Symboles", "star", emojis::Group::Symbols),
-];
+fn categories() -> &'static Vec<(&'static str, &'static str, emojis::Group)> {
+    static TABLE: aurora_i18n::Localized<Vec<(&'static str, &'static str, emojis::Group)>> = aurora_i18n::Localized::new();
+    TABLE.get(|| {
+        vec![
+            (aurora_i18n::tr!("ui-emoji-smileys"), "smiley", emojis::Group::SmileysAndEmotion),
+            (aurora_i18n::tr!("common-people"), "hand-waving", emojis::Group::PeopleAndBody),
+            (
+                aurora_i18n::tr!("ui-emoji-animals-and-nature"),
+                "drop",
+                emojis::Group::AnimalsAndNature,
+            ),
+            (aurora_i18n::tr!("ui-emoji-food"), "gift", emojis::Group::FoodAndDrink),
+            (aurora_i18n::tr!("ui-emoji-travel"), "airplane-tilt", emojis::Group::TravelAndPlaces),
+            (
+                aurora_i18n::tr!("ui-emoji-activities"),
+                "person-simple-run",
+                emojis::Group::Activities,
+            ),
+            (aurora_i18n::tr!("common-objects"), "cube", emojis::Group::Objects),
+            (aurora_i18n::tr!("ui-emoji-symbols"), "star", emojis::Group::Symbols),
+        ]
+    })
+}
 
 /// The single code point an emoji is drawn with (variation selector ignored);
 /// multi code point sequences (ZWJ, flags, skin tones) are not drawable yet.
@@ -122,7 +135,7 @@ impl Emoji {
         if face.is_none() {
             log::warn!("no emoji font found (Noto-3D); emoji use the monochrome fallback");
         }
-        let lists = CATEGORIES
+        let lists = categories()
             .iter()
             .map(|(_, _, group)| {
                 group
@@ -232,12 +245,16 @@ impl Emoji {
     /// Emoji picker grid; returns the chosen emoji.
     pub fn picker(&mut self, ui: &mut egui::Ui, p: &Palette, icons: &super::icons::Icons) -> Option<char> {
         if !self.available() {
-            ui.label(egui::RichText::new("Police d'emoji Noto introuvable").size(12.0).color(p.muted));
+            ui.label(
+                egui::RichText::new(aurora_i18n::tr!("ui-emoji-noto-emoji-font-not-found"))
+                    .size(12.0)
+                    .color(p.muted),
+            );
             return None;
         }
         let mut chosen = None;
         ui.horizontal(|ui| {
-            for (i, (label, icon, _)) in CATEGORIES.iter().enumerate() {
+            for (i, (label, icon, _)) in categories().iter().enumerate() {
                 let sel = self.tab == i;
                 let (rect, resp) = ui.allocate_exact_size(egui::vec2(26.0, 24.0), egui::Sense::click());
                 if sel {
@@ -261,7 +278,7 @@ impl Emoji {
         });
         ui.add(
             egui::TextEdit::singleline(&mut self.query)
-                .hint_text("Rechercher un emoji (nom ou :code:)…")
+                .hint_text(aurora_i18n::tr!("ui-emoji-search-emoji-name-or-code"))
                 .desired_width(f32::INFINITY),
         );
         ui.separator();

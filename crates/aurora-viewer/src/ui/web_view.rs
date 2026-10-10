@@ -75,13 +75,13 @@ impl WebView {
                         self.failed = Some(e.to_string());
                     }
                 },
-                None => self.failed = Some("navigateur introuvable (plugins SLPlugin / CEF)".into()),
+                None => self.failed = Some(aurora_i18n::tr!("extra-browser-unavailable-slplugin-cef-plugins").into()),
             }
         }
         let Some(p) = self.plugin.as_mut() else {
             let text = match &self.failed {
-                Some(e) => format!("Page web indisponible : {e}"),
-                None => "Chargement…".to_owned(),
+                Some(e) => aurora_i18n::tr!("ui-web-view-web-page-unavailable", e = e.to_string()),
+                None => aurora_i18n::tr!("common-loading-2").to_owned(),
             };
             ui.painter().text(
                 rect.center(),

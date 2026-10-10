@@ -60,7 +60,7 @@ pub async fn mutate(
         let response = request(http, &url, &body, false).await?;
         let created = response["_created_categories"].at(0).as_uuid();
         if created.is_nil() {
-            return Err("Le serveur n’a pas confirmé la création de la tenue. Actualisez l’inventaire avant de réessayer.".into());
+            return Err(aurora_i18n::tr!("outfits-the-server-did-not-confirm-outfit-creation-refresh-inventory").into());
         }
         // The server assigns the category UUID (asAISCreateCatLLSD).
         let provisional = change.folder;
@@ -82,14 +82,14 @@ pub async fn mutate(
     let body = crate::inventory::fetch_request_body(&refresh, owner);
     let response = crate::caps::post_llsd(http, fetch_cap, &body)
         .await
-        .map_err(|_| "La tenue a été envoyée, mais sa relecture a échoué. Actualisez avant de réessayer.".to_owned())?;
+        .map_err(|_| aurora_i18n::tr!("outfits-the-outfit-was-sent-but-could-not-be-read").to_owned())?;
     let mut contents = crate::inventory::parse_fetch_response(&response);
     contents.sort_by_key(|c| refresh.iter().position(|id| *id == c.folder_id).unwrap_or(usize::MAX));
     if refresh
         .iter()
         .any(|id| !contents.iter().any(|c| c.folder_id == *id && c.version >= 0))
     {
-        return Err("La relecture de la tenue est incomplète. Actualisez avant de réessayer.".into());
+        return Err(aurora_i18n::tr!("outfits-the-outfit-is-incomplete-refresh-before-trying-again").into());
     }
     Ok(contents)
 }
@@ -119,11 +119,11 @@ pub async fn set_favorite(
     send(http.patch(url), &body).await?;
     let response = crate::caps::post_llsd(http, fetch_cap, &crate::inventory::fetch_items_body(&[item], owner))
         .await
-        .map_err(|_| "La relecture du favori a échoué. Actualisez avant de réessayer.".to_owned())?;
+        .map_err(|_| aurora_i18n::tr!("outfits-could-not-read-the-pick-back-refresh-before-trying").to_owned())?;
     crate::inventory::parse_items_response(&response)
         .into_iter()
         .find(|it| it.id == item && it.favorite == favorite)
-        .ok_or_else(|| "Le serveur n’a pas confirmé le changement du favori.".into())
+        .ok_or_else(|| aurora_i18n::tr!("outfits-the-server-did-not-confirm-the-pick-change").into())
 }
 
 pub(crate) async fn send(req: reqwest::RequestBuilder, body: &Llsd) -> Result<Llsd, String> {
@@ -134,12 +134,18 @@ pub(crate) async fn send(req: reqwest::RequestBuilder, body: &Llsd) -> Result<Ll
         .timeout(std::time::Duration::from_secs(30))
         .send()
         .await
-        .map_err(|_| "Le serveur d’inventaire ne répond pas. Actualisez avant de réessayer.".to_owned())?;
+        .map_err(|_| aurora_i18n::tr!("outfits-the-inventory-server-is-not-responding-refresh-before-trying").to_owned())?;
     if !response.status().is_success() {
-        return Err(format!("Le serveur a refusé l’opération (HTTP {}).", response.status().as_u16()));
+        return Err(aurora_i18n::tr!(
+            "outfits-the-server-rejected-the-operation-http",
+            value0 = format!("{}", response.status().as_u16())
+        ));
     }
-    let bytes = response.bytes().await.map_err(|_| "Réponse d’inventaire interrompue.".to_owned())?;
-    aurora_llsd::from_xml(&bytes).map_err(|_| "Réponse d’inventaire illisible.".into())
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|_| aurora_i18n::tr!("outfits-interrupted-inventory-response").to_owned())?;
+    aurora_llsd::from_xml(&bytes).map_err(|_| aurora_i18n::tr!("outfits-unreadable-inventory-response").into())
 }
 
 #[cfg(test)]

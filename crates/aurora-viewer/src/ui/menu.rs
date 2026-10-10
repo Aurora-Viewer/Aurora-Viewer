@@ -21,7 +21,9 @@ const RIGHT: f32 = 22.0;
 const MIN_W: f32 = 180.0;
 
 /// Tooltip of the entries Firestorm has but Aurora does not do yet.
-pub const NOT_YET: &str = "Pas encore disponible dans Aurora";
+pub fn not_yet() -> &'static str {
+    aurora_i18n::tr!("common-not-available-in-aurora-yet")
+}
 
 /// What the right end of a row shows.
 #[derive(Clone, Copy, PartialEq)]
@@ -200,7 +202,7 @@ pub fn item_if(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enabled: bool)
 
 /// Firestorm entry Aurora does not do yet: greyed, with a tooltip.
 pub fn todo(ui: &mut Ui, p: &Palette, icon: &str, label: &str) {
-    row(ui, p, icon, label, false, End::None, false).on_hover_text(NOT_YET);
+    row(ui, p, icon, label, false, End::None, false).on_hover_text(not_yet());
 }
 
 /// Check entry (menu_item_check); true when clicked (the menu closes).

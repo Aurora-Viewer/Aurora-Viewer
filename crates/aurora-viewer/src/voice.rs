@@ -77,32 +77,32 @@ impl Voice {
     /// The channel wanted now, or why there is none.
     fn wanted(v: &VoiceInputs) -> Result<(ChannelKey, String, Option<String>), String> {
         if !v.enabled {
-            return Err("Voix désactivée".into());
+            return Err(aurora_i18n::tr!("common-voice-disabled").into());
         }
         if !v.in_world {
             return Err(String::new());
         }
         if v.offline {
-            return Err("Mode démo : pas de serveur vocal (le micro sert au point de voix)".into());
+            return Err(aurora_i18n::tr!("voice-demo-mode-no-voice-server-the-microphone-drives-the").into());
         }
         if v.engine.is_none() {
-            return Err("Aucune sortie audio".into());
+            return Err(aurora_i18n::tr!("voice-no-audio-output").into());
         }
         let region = v.region.ok_or_else(String::new)?;
-        let caps = v.caps.ok_or_else(|| "En attente de la région".to_owned())?;
+        let caps = v.caps.ok_or_else(|| aurora_i18n::tr!("voice-waiting-for-region").to_owned())?;
         let provision = caps
             .get("ProvisionVoiceAccountRequest")
             .cloned()
-            .ok_or_else(|| "Voix indisponible dans cette région".to_owned())?;
+            .ok_or_else(|| aurora_i18n::tr!("voice-voice-unavailable-in-this-region").to_owned())?;
         if v.voice_server.is_empty() {
-            return Err("En attente de la région".into());
+            return Err(aurora_i18n::tr!("voice-waiting-for-region").into());
         }
         if !aurora_voice::is_webrtc_voice_server(v.voice_server) {
-            return Err("Région Vivox : voix non prise en charge".into());
+            return Err(aurora_i18n::tr!("voice-vivox-region-voice-is-not-supported").into());
         }
-        let parcel = v.parcel.ok_or_else(|| "En attente de la parcelle".to_owned())?;
+        let parcel = v.parcel.ok_or_else(|| aurora_i18n::tr!("voice-waiting-for-parcel").to_owned())?;
         if parcel.flags & parcel_flags::ALLOW_VOICE_CHAT == 0 {
-            return Err("Voix désactivée sur cette parcelle".into());
+            return Err(aurora_i18n::tr!("voice-voice-disabled-on-this-parcel").into());
         }
         let parcel_id = (parcel.flags & parcel_flags::USE_ESTATE_VOICE_CHAN == 0).then_some(parcel.local_id);
         let signaling = caps.get("VoiceSignalingRequest").cloned();
@@ -178,7 +178,11 @@ impl Voice {
                     log::info!("voice: leaving ({why})");
                 }
                 self.light = if v.enabled { VoiceLight::Down } else { VoiceLight::Off };
-                self.status = if why.is_empty() { "Hors ligne".into() } else { why };
+                self.status = if why.is_empty() {
+                    aurora_i18n::tr!("common-offline").into()
+                } else {
+                    why
+                };
                 self.connected = false;
                 self.own_level = 0.0;
                 return;
@@ -198,13 +202,13 @@ impl Voice {
         };
         self.own_level = s.own_level();
         self.status = match status {
-            VoiceStatus::Connecting => "Connexion à la voix…".into(),
-            VoiceStatus::Connected => "Voix connectée".into(),
-            VoiceStatus::Unsupported(m) => format!("Voix non prise en charge : {m}"),
-            VoiceStatus::ChannelFull => "Canal vocal plein".into(),
-            VoiceStatus::ChannelLocked => "Canal vocal verrouillé".into(),
-            VoiceStatus::Error(e) => format!("Erreur de voix : {e}"),
-            VoiceStatus::Disconnected => "Voix déconnectée".into(),
+            VoiceStatus::Connecting => aurora_i18n::tr!("common-connecting-to-voice").into(),
+            VoiceStatus::Connected => aurora_i18n::tr!("common-voice-connected").into(),
+            VoiceStatus::Unsupported(m) => aurora_i18n::tr!("voice-voice-not-supported", m = m.to_string()),
+            VoiceStatus::ChannelFull => aurora_i18n::tr!("voice-voice-channel-full").into(),
+            VoiceStatus::ChannelLocked => aurora_i18n::tr!("voice-voice-channel-locked").into(),
+            VoiceStatus::Error(e) => aurora_i18n::tr!("voice-voice-error", e = e.to_string()),
+            VoiceStatus::Disconnected => aurora_i18n::tr!("voice-voice-disconnected").into(),
         };
     }
 

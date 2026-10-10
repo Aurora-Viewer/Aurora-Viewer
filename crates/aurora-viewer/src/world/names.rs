@@ -385,7 +385,12 @@ impl AvatarNames {
         } else {
             format!("{} {}", n.legacy_first, n.legacy_last)
         };
-        let msg = format!("{old_display_name} ({slid}) a désormais le nom {}.", n.display_name);
+        let msg = aurora_i18n::tr!(
+            "world-names-is-now-named",
+            old_display_name = old_display_name.to_string(),
+            slid = slid.to_string(),
+            value0 = n.display_name.to_string()
+        );
         self.process(d.id, n);
         msg
     }

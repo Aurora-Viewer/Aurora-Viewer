@@ -160,7 +160,7 @@ impl BuildTool {
             asset_type: AT_LSL_TEXT,
             inv_type: IT_LSL,
             sale_price: DEFAULT_PRICE,
-            name: "New Script".into(),
+            name: aurora_i18n::tr!("extra-new-script").into(),
             description: new_script_description(now),
             creation_date: now as i32,
             ..Default::default()

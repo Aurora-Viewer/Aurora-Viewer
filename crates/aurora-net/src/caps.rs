@@ -43,6 +43,7 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "SetDisplayName",
     "SimulatorFeatures",
     "UpdateAvatarAppearance",
+    "UpdateAgentLanguage",
     "UpdateMaterialAgentInventory",
     "UpdateMaterialTaskInventory",
     "UpdateNotecardTaskInventory",
@@ -54,6 +55,31 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "ViewerStats",
     "VoiceSignalingRequest",
 ];
+
+/// LLAgentLanguage::update: exact LLSD fields and boolean visibility.
+pub fn agent_language_body(language: &str, public: bool) -> Llsd {
+    llsd_map! { "language" => language, "language_is_public" => public }
+}
+
+#[cfg(test)]
+mod language_tests {
+    use super::*;
+
+    #[test]
+    fn language_capability_is_requested_and_payload_keeps_protocol_fields() {
+        assert!(REQUESTED_CAPS.contains(&"UpdateAgentLanguage"));
+        for language in ["en", "fr", "pt-BR"] {
+            for public in [false, true] {
+                let body = agent_language_body(language, public);
+                let bytes = aurora_llsd::to_xml(&body);
+                let decoded = aurora_llsd::from_xml(&bytes).expect("synthetic language payload");
+                assert_eq!(decoded["language"].as_str(), language);
+                assert_eq!(decoded["language_is_public"].as_bool(), public);
+                assert_eq!(decoded.as_map().expect("language map").len(), 2);
+            }
+        }
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum CapsError {

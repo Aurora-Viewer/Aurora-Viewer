@@ -4,39 +4,84 @@
 pub fn text(kind: i32, data: &[u8]) -> Result<(String, bool), String> {
     if kind == 56 {
         use crate::world::eep::Settings;
-        let settings = Settings::from_asset(data).ok_or("Les paramètres sont illisibles.")?;
-        return Ok((match settings {
-            Settings::Sky(s) => format!("Ciel\n\nDensité de brume : {:.3}\nCouverture nuageuse : {:.3}\nÉchelle des nuages : {:.3}\nLuminosité des étoiles : {:.3}\nLuminosité de la lune : {:.3}", s.haze_density, s.cloud_shadow, s.cloud_scale, s.star_brightness, s.moon_brightness),
-            Settings::Water(w) => format!("Eau\n\nDensité de brume : {:.3}\nRéfraction : {:.3}\nÉchelle des vagues : {:?}\nTexture des normales : {}", w.fog_density, w.fresnel_scale, w.normal_scale.to_array(), w.normal_map),
-            Settings::Day(_) => "Cycle du jour\n\nCe cycle anime les paramètres du ciel et de l’eau. Utilisez « Appliquer uniquement à moi-même » pour le prévisualiser dans le monde.".into(),
-        }, false));
+        let settings = Settings::from_asset(data).ok_or(aurora_i18n::tr!("world-inventory-preview-the-settings-are-unreadable"))?;
+        return Ok((
+            match settings {
+                Settings::Sky(s) => aurora_i18n::tr!(
+                    "world-inventory-preview-sky-haze-density-cloud-coverage-cloud-scale-star-brightness",
+                    value0 = aurora_i18n::number_text(&format!("{:.3}", s.haze_density)),
+                    value1 = aurora_i18n::number_text(&format!("{:.3}", s.cloud_shadow)),
+                    value2 = aurora_i18n::number_text(&format!("{:.3}", s.cloud_scale)),
+                    value3 = aurora_i18n::number_text(&format!("{:.3}", s.star_brightness)),
+                    value4 = aurora_i18n::number_text(&format!("{:.3}", s.moon_brightness))
+                ),
+                Settings::Water(w) => aurora_i18n::tr!(
+                    "world-inventory-preview-water-haze-density-refraction-wave-scale-normal-texture",
+                    value0 = aurora_i18n::number_text(&format!("{:.3}", w.fog_density)),
+                    value1 = aurora_i18n::number_text(&format!("{:.3}", w.fresnel_scale)),
+                    value2 = format!("{:?}", w.normal_scale.to_array()),
+                    value3 = format!("{}", w.normal_map)
+                ),
+                Settings::Day(_) => aurora_i18n::tr!("world-inventory-preview-day-cycle-this-cycle-animates-sky-and-water-settings").into(),
+            },
+            false,
+        ));
     }
     if kind == 57 {
-        let material = aurora_assets::material::parse_material_asset(data).map_err(|_| "Le matériau est illisible.")?;
+        let material = aurora_assets::material::parse_material_asset(data)
+            .map_err(|_| aurora_i18n::tr!("world-inventory-preview-the-material-is-unreadable"))?;
         return Ok((
-            format!(
-                "Matériau PBR\n\nCouleur : {:?}\nMétal : {:.3}\nRugosité : {:.3}\nDouble face : {}\nTexture de couleur : {}\nTexture des normales : {}\nTexture métal / rugosité : {}\nTexture émissive : {}",
-                material.base_color_factor,
-                material.metallic_factor,
-                material.roughness_factor,
-                if material.double_sided { "Oui" } else { "Non" },
-                material.base_color_texture.map_or_else(|| "Aucune".into(), |id| id.to_string()),
-                material.normal_texture.map_or_else(|| "Aucune".into(), |id| id.to_string()),
-                material
+            aurora_i18n::tr!(
+                "world-inventory-preview-pbr-material-color-metallic-roughness-double-sided-base-color",
+                value0 = format!("{:?}", material.base_color_factor),
+                value1 = aurora_i18n::number_text(&format!("{:.3}", material.metallic_factor)),
+                value2 = aurora_i18n::number_text(&format!("{:.3}", material.roughness_factor)),
+                value3 = (if material.double_sided {
+                    aurora_i18n::tr!("common-yes")
+                } else {
+                    aurora_i18n::tr!("common-no")
+                })
+                .to_string(),
+                value4 = material
+                    .base_color_texture
+                    .map_or_else(|| aurora_i18n::tr!("common-none-2").into(), |id| id.to_string())
+                    .to_string(),
+                value5 = material
+                    .normal_texture
+                    .map_or_else(|| aurora_i18n::tr!("common-none-2").into(), |id| id.to_string())
+                    .to_string(),
+                value6 = material
                     .metallic_roughness_texture
-                    .map_or_else(|| "Aucune".into(), |id| id.to_string()),
-                material.emissive_texture.map_or_else(|| "Aucune".into(), |id| id.to_string())
+                    .map_or_else(|| aurora_i18n::tr!("common-none-2").into(), |id| id.to_string())
+                    .to_string(),
+                value7 = material
+                    .emissive_texture
+                    .map_or_else(|| aurora_i18n::tr!("common-none-2").into(), |id| id.to_string())
+                    .to_string()
             ),
             false,
         ));
     }
-    let text = std::str::from_utf8(data).map_err(|_| "Cet asset n’est pas un document texte.")?;
+    let text = std::str::from_utf8(data).map_err(|_| aurora_i18n::tr!("world-inventory-preview-this-asset-is-not-a-text-document"))?;
     if kind == 7 && text.starts_with("Linden text version") {
-        let pos = text.find("\nText length ").map(|p| p + 1).ok_or("Note invalide.")?;
-        let line_end = text[pos..].find('\n').map(|n| n + pos).ok_or("Note invalide.")?;
-        let len: usize = text[pos + 12..line_end].trim().parse().map_err(|_| "Taille de note invalide.")?;
-        let end = (line_end + 1).checked_add(len).ok_or("Taille de note invalide.")?;
-        let content = text.get(line_end + 1..end).ok_or("Note tronquée.")?;
+        let pos = text
+            .find("\nText length ")
+            .map(|p| p + 1)
+            .ok_or(aurora_i18n::tr!("world-inventory-preview-invalid-notecard"))?;
+        let line_end = text[pos..]
+            .find('\n')
+            .map(|n| n + pos)
+            .ok_or(aurora_i18n::tr!("world-inventory-preview-invalid-notecard"))?;
+        let len: usize = text[pos + 12..line_end]
+            .trim()
+            .parse()
+            .map_err(|_| aurora_i18n::tr!("world-inventory-preview-invalid-notecard-size"))?;
+        let end = (line_end + 1)
+            .checked_add(len)
+            .ok_or(aurora_i18n::tr!("world-inventory-preview-invalid-notecard-size"))?;
+        let content = text
+            .get(line_end + 1..end)
+            .ok_or(aurora_i18n::tr!("world-inventory-preview-truncated-notecard"))?;
         return Ok((content.into(), text.contains("\ncount 0\n")));
     }
     Ok((text.into(), matches!(kind, 7 | 10)))
@@ -57,7 +102,7 @@ mod tests {
     fn settings_preview_decodes_the_same_notation_header_as_the_environment() {
         let data = b"<?llsd/notation?>\n{'type':'sky'}";
         let (description, editable) = text(56, data).expect("sky");
-        assert!(description.starts_with("Ciel\n"));
+        assert!(description.starts_with(&format!("{}\n", aurora_i18n::tr!("ui-environment-sky"))));
         assert!(!editable);
     }
 }

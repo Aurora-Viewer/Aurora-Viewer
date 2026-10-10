@@ -552,7 +552,7 @@ impl MediaManager {
                     }
                     MediaEvent::ClickLinkHref { url, target } => {
                         if target == "_external" {
-                            messages.push(format!("Lien externe : {url}"));
+                            messages.push(aurora_i18n::tr!("media-update-external-link", url = url.to_string()));
                         } else if !url.is_empty() && url != m.location {
                             // in this media (no browser floater here)
                             m.user_nav = true;

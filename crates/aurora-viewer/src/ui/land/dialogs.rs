@@ -53,77 +53,81 @@ fn group_name(world: &mut World, id: &Uuid) -> String {
 }
 
 fn info(world: &mut World, body: String) {
-    world.notifications.push(Kind::Info, "À propos du terrain", body, Data::None);
+    world
+        .notifications
+        .push(Kind::Info, aurora_i18n::tr!("common-about-land"), body, Data::None);
 }
 
 /// The text of a confirmation, and what OK does.
 fn question(c: &Confirm, parcel: &ParcelInfo, world: &mut World) -> String {
     let me = world.agent_id;
     match c {
-        Confirm::Release => format!(
-            "Vous vous apprêtez à libérer {} m² de terrain. Si vous libérez cette parcelle, elle sera supprimée de votre patrimoine, mais vous ne recevrez pas de L$.\n\nLibérer ce terrain ?",
-            parcel.area
+        Confirm::Release => aurora_i18n::tr!(
+            "ui-land-dialogs-you-are-about-to-abandon-m2-of-land-if",
+            value0 = format!("{}", parcel.area)
         ),
         Confirm::Deed => {
             let group = group_name(world, &parcel.group_id);
             let contribution = if parcel.flags & pf::CONTRIBUTE_WITH_DEED != 0 {
-                format!(
-                    " Elle inclura une contribution simultanée au groupe de la part de '{}'.",
-                    world.social.name_of(&parcel.owner_id)
+                aurora_i18n::tr!(
+                    "ui-land-dialogs-it-will-include-a-simultaneous-group-contribution-from",
+                    value0 = world.social.name_of(&parcel.owner_id).to_string()
                 )
             } else {
                 String::new()
             };
-            format!(
-                "La cession de cette parcelle requiert que le groupe dispose en permanence d'un crédit suffisant pour payer les frais d'occupation de terrain.{contribution} Le prix d'achat du terrain n'est pas remboursé au propriétaire. Si une parcelle cédée est vendue, son prix de vente est redistribué à part égale entre les membres du groupe.\n\nCéder ces {} m² de terrain au groupe '{group}' ?",
-                parcel.area
+            aurora_i18n::tr!(
+                "ui-land-dialogs-deeding-this-parcel-requires-the-group-to-permanently-have",
+                contribution = contribution.to_string(),
+                value0 = format!("{}", parcel.area),
+                group = group.to_string()
             )
         }
-        Confirm::BuyPass => format!(
-            "Pour {} L$ vous pouvez pénétrer sur ce terrain ({}) et y rester {:.2} heures.\n\nAcheter un pass ?",
-            parcel.pass_price, parcel.name, parcel.pass_hours
+        Confirm::BuyPass => aurora_i18n::tr!(
+            "ui-land-dialogs-for-l-you-can-enter-this-parcel-and-stay",
+            value0 = format!("{}", parcel.pass_price),
+            value1 = parcel.name.to_string(),
+            value2 = aurora_i18n::number_text(&format!("{:.2}", parcel.pass_hours))
         ),
-        Confirm::ReturnOwner if parcel.owner_id == me => format!(
-            "Êtes-vous certain de vouloir renvoyer tous les objets que vous possédez sur cette parcelle dans votre inventaire ?\n\nObjets : {}",
-            parcel.owner_prims
+        Confirm::ReturnOwner if parcel.owner_id == me => aurora_i18n::tr!(
+            "ui-land-dialogs-are-you-sure-you-want-to-return-all-objects-3",
+            value0 = format!("{}", parcel.owner_prims)
         ),
-        Confirm::ReturnOwner => format!(
-            "Êtes-vous certain de vouloir renvoyer tous les objets que {} possède sur cette parcelle dans son inventaire ?\n\nObjets : {}",
-            world.social.name_of(&parcel.owner_id),
-            parcel.owner_prims
+        Confirm::ReturnOwner => aurora_i18n::tr!(
+            "ui-land-dialogs-are-you-sure-you-want-to-return-all-objects-5",
+            value0 = world.social.name_of(&parcel.owner_id).to_string(),
+            value1 = format!("{}", parcel.owner_prims)
         ),
-        Confirm::ReturnGroup => format!(
-            "Êtes-vous certain de vouloir renvoyer tous les objets partagés par le groupe '{}' sur cette parcelle de terrain dans l'inventaire du propriétaire précédent ?\n\n*AVERTISSEMENT* Cela supprimera les objets non transférables cédés au groupe !\n\nObjets : {}",
-            group_name(world, &parcel.group_id),
-            parcel.group_prims
+        Confirm::ReturnGroup => aurora_i18n::tr!(
+            "ui-land-dialogs-are-you-sure-you-want-to-return-all-objects",
+            value0 = group_name(world, &parcel.group_id).to_string(),
+            value1 = format!("{}", parcel.group_prims)
         ),
-        Confirm::ReturnOther if parcel.is_group_owned => format!(
-            "Renvoyer les objets de cette parcelle qui ne sont PAS partagés avec le groupe {} à leur propriétaire ?\n\nObjets : {}",
-            group_name(world, &parcel.group_id),
-            parcel.other_prims
+        Confirm::ReturnOther if parcel.is_group_owned => aurora_i18n::tr!(
+            "ui-land-dialogs-return-objects-on-this-parcel-that-are-not-shared",
+            value0 = group_name(world, &parcel.group_id).to_string(),
+            value1 = format!("{}", parcel.other_prims)
         ),
-        Confirm::ReturnOther if parcel.owner_id == me => format!(
-            "Êtes-vous certain de vouloir renvoyer tous les objets que vous ne possédez pas sur cette parcelle dans l'inventaire de leur propriétaire ? Les objets transférables cédés à un groupe seront renvoyés aux propriétaires précédents.\n\n*Avertissement* Tous les objets non transférables cédés au groupe seront supprimés !\n\nObjets : {}",
-            parcel.other_prims
+        Confirm::ReturnOther if parcel.owner_id == me => aurora_i18n::tr!(
+            "ui-land-dialogs-are-you-sure-you-want-to-return-all-objects-2",
+            value0 = format!("{}", parcel.other_prims)
         ),
-        Confirm::ReturnOther => format!(
-            "Êtes-vous certain de vouloir renvoyer tous les objets que {} ne possède pas sur cette parcelle dans l'inventaire de leur propriétaire ? Les objets transférables cédés à un groupe seront renvoyés aux propriétaires précédents.\n\n*Avertissement* Tous les objets non transférables cédés au groupe seront supprimés !\n\nObjets : {}",
-            world.social.name_of(&parcel.owner_id),
-            parcel.other_prims
+        Confirm::ReturnOther => aurora_i18n::tr!(
+            "ui-land-dialogs-are-you-sure-you-want-to-return-all-objects-4",
+            value0 = world.social.name_of(&parcel.owner_id).to_string(),
+            value1 = format!("{}", parcel.other_prims)
         ),
-        Confirm::ReturnList(o) if o.is_group => format!(
-            "Êtes-vous certain de vouloir renvoyer tous les objets partagés par le groupe '{}' sur cette parcelle de terrain dans l'inventaire du propriétaire précédent ?\n\n*AVERTISSEMENT* Cela supprimera les objets non transférables cédés au groupe !\n\nObjets : {}",
-            group_name(world, &o.id),
-            o.count
+        Confirm::ReturnList(o) if o.is_group => aurora_i18n::tr!(
+            "ui-land-dialogs-are-you-sure-you-want-to-return-all-objects",
+            value0 = group_name(world, &o.id).to_string(),
+            value1 = format!("{}", o.count)
         ),
-        Confirm::ReturnList(o) => format!(
-            "Êtes-vous certain de vouloir renvoyer tous les objets que {} possède sur cette parcelle dans son inventaire ?\n\nObjets : {}",
-            world.social.name_of(&o.id),
-            o.count
+        Confirm::ReturnList(o) => aurora_i18n::tr!(
+            "ui-land-dialogs-are-you-sure-you-want-to-return-all-objects-5",
+            value0 = world.social.name_of(&o.id).to_string(),
+            value1 = format!("{}", o.count)
         ),
-        Confirm::ResetEnvironment => {
-            "Vous êtes sur le point de supprimer tous les paramètres appliqués. Voulez-vous vraiment continuer ?".into()
-        }
+        Confirm::ResetEnvironment => aurora_i18n::tr!("ui-land-dialogs-you-are-about-to-remove-all-applied-settings-do").into(),
     }
 }
 
@@ -155,20 +159,20 @@ fn accept(c: Confirm, parcel: &ParcelInfo, world: &mut World) {
             .parcel_command(|handle, local_id| LandCommand::BuyPass { handle, local_id }),
         Confirm::ReturnOwner => {
             let body = if parcel.owner_id == me {
-                "Les objets que vous possédez sur la parcelle de terrain sélectionnée ont été renvoyés dans votre inventaire.".to_owned()
+                aurora_i18n::tr!("ui-land-dialogs-your-objects-on-the-selected-parcel-have-been-returned").to_owned()
             } else {
-                format!(
-                    "Les objets de la parcelle de terrain sélectionnée appartenant à {} ont été renvoyés vers son inventaire.",
-                    world.social.name_of(&parcel.owner_id)
+                aurora_i18n::tr!(
+                    "ui-land-dialogs-objects-on-the-selected-parcel-owned-by-have-been",
+                    value0 = world.social.name_of(&parcel.owner_id).to_string()
                 )
             };
             info(world, body);
             returned(world, RT_OWNER, Vec::new());
         }
         Confirm::ReturnGroup => {
-            let body = format!(
-                "Les objets sélectionnés sur la parcelle de terrain partagée avec le groupe {} ont été renvoyés dans l'inventaire de leur propriétaire.",
-                group_name(world, &parcel.group_id)
+            let body = aurora_i18n::tr!(
+                "ui-land-dialogs-selected-objects-on-land-shared-with-group-have-been",
+                value0 = group_name(world, &parcel.group_id).to_string()
             );
             info(world, body);
             returned(world, RT_GROUP, Vec::new());
@@ -176,20 +180,20 @@ fn accept(c: Confirm, parcel: &ParcelInfo, world: &mut World) {
         Confirm::ReturnOther => {
             info(
                 world,
-                "Les objets sélectionnés sur la parcelle et qui ne sont pas à vous ont été rendus à leurs propriétaires.".into(),
+                aurora_i18n::tr!("ui-land-dialogs-selected-objects-on-the-parcel-that-are-not-yours").into(),
             );
             returned(world, RT_OTHER, Vec::new());
         }
         Confirm::ReturnList(o) => {
             let body = if o.is_group {
-                format!(
-                    "Les objets sélectionnés sur la parcelle de terrain partagée avec le groupe {} ont été renvoyés dans l'inventaire de leur propriétaire.",
-                    group_name(world, &o.id)
+                aurora_i18n::tr!(
+                    "ui-land-dialogs-selected-objects-on-land-shared-with-group-have-been",
+                    value0 = group_name(world, &o.id).to_string()
                 )
             } else {
-                format!(
-                    "Les objets sur la parcelle de terrain sélectionnée appartenant au résident {} ont été rendus à leur propriétaire.",
-                    world.social.name_of(&o.id)
+                aurora_i18n::tr!(
+                    "ui-land-dialogs-objects-on-the-selected-parcel-owned-by-resident-have",
+                    value0 = world.social.name_of(&o.id).to_string()
                 )
             };
             info(world, body);
@@ -237,7 +241,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, s: &mut LandUi, v: &View, w
     let next = match dialog {
         Dialog::Message(msg) => {
             let mut done = false;
-            let open = window(ctx, p, "À propos du terrain", 380.0, |ui| {
+            let open = window(ctx, p, aurora_i18n::tr!("common-about-land"), 380.0, |ui| {
                 ui.add(egui::Label::new(RichText::new(&msg).size(12.5).color(p.ink)).wrap());
                 ui.add_space(6.0);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -252,12 +256,12 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, s: &mut LandUi, v: &View, w
             };
             let text = question(&c, &parcel, world);
             let (ok, cancel) = if matches!(c, Confirm::ResetEnvironment) {
-                ("Oui", "Non")
+                (aurora_i18n::tr!("common-yes"), aurora_i18n::tr!("common-no"))
             } else {
-                ("OK", "Annuler")
+                ("OK", aurora_i18n::tr!("common-cancel"))
             };
             let mut answer = None;
-            let open = window(ctx, p, "À propos du terrain", 420.0, |ui| {
+            let open = window(ctx, p, aurora_i18n::tr!("common-about-land"), 420.0, |ui| {
                 ui.add(egui::Label::new(RichText::new(&text).size(12.5).color(p.ink)).wrap());
                 answer = buttons(ui, p, ok, cancel, true);
             });
@@ -272,12 +276,20 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, s: &mut LandUi, v: &View, w
         }
         Dialog::GroupPicker => {
             let mut keep = true;
-            let open = window(ctx, p, "Groupes", 300.0, |ui| {
-                ui.label(RichText::new("Choisissez un groupe :").size(12.0).color(p.muted));
+            let open = window(ctx, p, aurora_i18n::tr!("common-groups"), 300.0, |ui| {
+                ui.label(
+                    RichText::new(aurora_i18n::tr!("ui-land-dialogs-choose-a-group"))
+                        .size(12.0)
+                        .color(p.muted),
+                );
                 let groups = world.groups.sorted();
                 egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
                     if groups.is_empty() {
-                        ui.label(RichText::new("Vous n'êtes membre d'aucun groupe.").size(12.0).color(p.muted));
+                        ui.label(
+                            RichText::new(aurora_i18n::tr!("ui-land-dialogs-you-do-not-belong-to-any-groups"))
+                                .size(12.0)
+                                .color(p.muted),
+                        );
                     }
                     for g in groups {
                         if ui.selectable_label(false, RichText::new(&g.name).size(12.0)).clicked() {
@@ -289,7 +301,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, s: &mut LandUi, v: &View, w
                     }
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if super::super::widgets::flat_button(ui, p, "Annuler").clicked() {
+                    if super::super::widgets::flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked() {
                         keep = false;
                     }
                 });
@@ -302,15 +314,24 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, s: &mut LandUi, v: &View, w
             mut hours,
         } => {
             let mut answer = None;
-            let open = window(ctx, p, "Durée de l'interdiction", 300.0, |ui| {
-                ui.label(RichText::new("Durée de l'interdiction :").size(12.0).color(p.muted));
-                ui.radio_value(&mut temporary, false, "Toujours");
+            let open = window(ctx, p, aurora_i18n::tr!("ui-land-dialogs-ban-duration"), 300.0, |ui| {
+                ui.label(
+                    RichText::new(aurora_i18n::tr!("ui-land-dialogs-ban-duration-2"))
+                        .size(12.0)
+                        .color(p.muted),
+                );
+                ui.radio_value(&mut temporary, false, aurora_i18n::tr!("common-always"));
                 ui.horizontal(|ui| {
-                    ui.radio_value(&mut temporary, true, "Temporaire");
-                    ui.add_enabled(temporary, egui::DragValue::new(&mut hours).range(1..=8766));
+                    ui.radio_value(&mut temporary, true, aurora_i18n::tr!("common-temporary"));
+                    ui.add_enabled(
+                        temporary,
+                        egui::DragValue::new(&mut hours)
+                            .custom_parser(aurora_i18n::parse_number)
+                            .range(1..=8766),
+                    );
                     dim(ui, p, "heures");
                 });
-                answer = buttons(ui, p, "OK", "Annuler", true);
+                answer = buttons(ui, p, "OK", aurora_i18n::tr!("common-cancel"), true);
             });
             match answer {
                 Some(true) => {
@@ -328,7 +349,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, s: &mut LandUi, v: &View, w
                 return;
             };
             let mut close = false;
-            let open = window(ctx, p, "Vendre le terrain", 420.0, |ui| {
+            let open = window(ctx, p, aurora_i18n::tr!("common-sell-land"), 420.0, |ui| {
                 sell_form(ui, p, s, world, &parcel, &mut form, &mut close)
             });
             (open && !close).then_some(Dialog::Sell(form))
@@ -345,20 +366,20 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, s: &mut LandUi, v: &View, w
                 });
                 return;
             }
-            let open = window(ctx, p, "URL du média", 420.0, |ui| {
+            let open = window(ctx, p, aurora_i18n::tr!("ui-land-dialogs-media-url"), 420.0, |ui| {
                 ui.horizontal(|ui| {
-                    dim(ui, p, "URL :");
+                    dim(ui, p, aurora_i18n::tr!("status-url"));
                     ui.add_enabled(!waiting, egui::TextEdit::singleline(&mut url).desired_width(f32::INFINITY));
                 });
                 if waiting {
-                    dim(ui, p, "Chargement...");
+                    dim(ui, p, aurora_i18n::tr!("common-loading"));
                 }
                 ui.add_space(6.0);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if super::button(ui, p, "Annuler", !waiting).clicked() {
+                    if super::button(ui, p, aurora_i18n::tr!("common-cancel"), !waiting).clicked() {
                         close = true;
                     }
-                    if super::button(ui, p, "Effacer", !waiting).clicked() {
+                    if super::button(ui, p, aurora_i18n::tr!("common-clear"), !waiting).clicked() {
                         url.clear();
                     }
                     if super::button(ui, p, "OK", !waiting).clicked() {
@@ -381,23 +402,27 @@ fn sell_form(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, world: &mut World, 
     let buyer_name = f.buyer.map(|id| world.social.name_of(&id));
     if f.confirming {
         let name = if f.to == 1 {
-            "Tout le monde".to_owned()
+            aurora_i18n::tr!("common-everyone").to_owned()
         } else {
             buyer_name.clone().unwrap_or_default()
         };
         let text = if f.to == 1 {
-            format!(
-                "ATTENTION : en cliquant sur Vendre à n'importe qui, vous rendez votre terrain disponible à toute la communauté de Second Life, même aux personnes qui ne sont pas dans cette région.\n\nLe terrain sélectionné, de {} m², est mis en vente. Votre prix de vente sera de {price} L$ et la vente sera disponible à {name}.",
-                parcel.area
+            aurora_i18n::tr!(
+                "ui-land-dialogs-warning-clicking-sell-to-anyone-makes-your-land-available",
+                value0 = format!("{}", parcel.area),
+                price = format!("{}", price),
+                name = name.to_string()
             )
         } else {
-            format!(
-                "Le terrain sélectionné, de {} m², est mis en vente. Votre prix de vente sera de {price} L$ et la vente sera disponible à {name}.",
-                parcel.area
+            aurora_i18n::tr!(
+                "ui-land-dialogs-the-selected-m2-of-land-is-for-sale-your",
+                value0 = format!("{}", parcel.area),
+                price = format!("{}", price),
+                name = name.to_string()
             )
         };
         ui.add(egui::Label::new(RichText::new(text).size(12.5).color(p.ink)).wrap());
-        match buttons(ui, p, "OK", "Annuler", true) {
+        match buttons(ui, p, "OK", aurora_i18n::tr!("common-cancel"), true) {
             Some(true) => {
                 // onConfirmSale
                 let (to_user, buyer, with_objects) = (f.to == 2, f.buyer.unwrap_or_default(), f.with_objects);
@@ -414,54 +439,94 @@ fn sell_form(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, world: &mut World, 
         }
         return;
     }
-    super::row(ui, p, "Terrain :", |ui| super::text(ui, p, parcel.name.clone()));
-    super::row(ui, p, "Surface :", |ui| super::text(ui, p, format!("{} m²", parcel.area)));
+    super::row(ui, p, aurora_i18n::tr!("ui-land-dialogs-land"), |ui| {
+        super::text(ui, p, parcel.name.clone())
+    });
+    super::row(ui, p, aurora_i18n::tr!("common-area"), |ui| {
+        super::text(ui, p, format!("{} m²", parcel.area))
+    });
     ui.add_space(4.0);
-    ui.label(RichText::new("1. Définissez un prix :").size(12.5).color(p.ink));
+    ui.label(
+        RichText::new(aurora_i18n::tr!("ui-land-dialogs-1-set-a-price"))
+            .size(12.5)
+            .color(p.ink),
+    );
     ui.horizontal(|ui| {
         ui.add(egui::TextEdit::singleline(&mut f.price).desired_width(90.0));
         f.price.retain(|c| c.is_ascii_digit());
         dim(ui, p, "L$");
         if price >= 0 && parcel.area > 0 {
-            dim(ui, p, format!("({:.2} L$ par m²)", price as f32 / parcel.area as f32));
+            dim(
+                ui,
+                p,
+                aurora_i18n::tr!(
+                    "status-l-per-m",
+                    value0 = aurora_i18n::number_text(&format!("{:.2}", price as f32 / parcel.area as f32))
+                ),
+            );
         }
     });
-    ui.label(RichText::new("2. Vendez le terrain à :").size(12.5).color(p.ink));
+    ui.label(
+        RichText::new(aurora_i18n::tr!("ui-land-dialogs-2-sell-the-land-to"))
+            .size(12.5)
+            .color(p.ink),
+    );
     ui.horizontal(|ui| {
         let label = match f.to {
-            1 => "Tout le monde",
-            2 => "Personne spécifique :",
-            _ => "- Sélectionnez -",
+            1 => aurora_i18n::tr!("common-everyone"),
+            2 => aurora_i18n::tr!("ui-land-dialogs-specific-person"),
+            _ => aurora_i18n::tr!("ui-land-dialogs-select"),
         };
         egui::ComboBox::from_id_salt("land_sell_to")
             .selected_text(label)
             .width(160.0)
             .show_ui(ui, |ui| {
-                ui.selectable_value(&mut f.to, 1, "Tout le monde");
-                ui.selectable_value(&mut f.to, 2, "Personne spécifique :");
+                ui.selectable_value(&mut f.to, 1, aurora_i18n::tr!("common-everyone"));
+                ui.selectable_value(&mut f.to, 2, aurora_i18n::tr!("ui-land-dialogs-specific-person"));
             });
         if f.to == 2 {
             if let Some(n) = &buyer_name {
                 super::text(ui, p, n.clone());
             }
-            if super::super::widgets::flat_button(ui, p, "Sélectionnez").clicked() {
+            if super::super::widgets::flat_button(ui, p, aurora_i18n::tr!("ui-land-dialogs-select-2")).clicked() {
                 s.pick_for = Some(PickFor::SellTo);
                 s.picker.open("land_avatar_picker", false);
             }
         }
     });
-    ui.label(RichText::new("3. Vendre les objets avec le terrain ?").size(12.5).color(p.ink));
-    ui.radio_value(&mut f.with_objects, false, "Non, garder la propriété des objets");
-    ui.radio_value(&mut f.with_objects, true, "Oui, vendre les objets avec le terrain");
-    ui.label(RichText::new("ATTENTION : Toute vente est définitive.").size(12.0).color(p.warn));
+    ui.label(
+        RichText::new(aurora_i18n::tr!("ui-land-dialogs-3-sell-the-objects-with-the-land"))
+            .size(12.5)
+            .color(p.ink),
+    );
+    ui.radio_value(
+        &mut f.with_objects,
+        false,
+        aurora_i18n::tr!("ui-land-dialogs-no-keep-object-ownership"),
+    );
+    ui.radio_value(
+        &mut f.with_objects,
+        true,
+        aurora_i18n::tr!("ui-land-dialogs-yes-sell-objects-with-land"),
+    );
+    ui.label(
+        RichText::new(aurora_i18n::tr!("ui-land-dialogs-warning-all-sales-are-final"))
+            .size(12.0)
+            .color(p.warn),
+    );
     let ready = price >= 0 && (f.to == 1 || (f.to == 2 && f.buyer.is_some()));
-    match buttons(ui, p, "Mettre ce terrain en vente", "Annuler", ready) {
+    match buttons(
+        ui,
+        p,
+        aurora_i18n::tr!("ui-land-dialogs-offer-this-land-for-sale"),
+        aurora_i18n::tr!("common-cancel"),
+        ready,
+    ) {
         Some(true) => {
             // a sale to anyone needs a price (SalePriceRestriction)
             if parcel.flags & pf::FOR_SALE == 0 && price == 0 && f.to == 1 {
                 s.dialog = Some(Dialog::Message(
-                    "Pour rendre l'annonce disponible à tous, le prix de vente doit être supérieur à 0 L$. Si le prix de vente est de 0 L$, vous devez choisir un acheteur spécifique."
-                        .into(),
+                    aurora_i18n::tr!("ui-land-dialogs-the-asking-price-must-exceed-l-0-to-sell").into(),
                 ));
                 *close = true;
             } else {

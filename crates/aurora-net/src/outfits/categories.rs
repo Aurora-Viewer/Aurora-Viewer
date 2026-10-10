@@ -72,7 +72,7 @@ pub async fn mutate(
     }
     let response = crate::caps::post_llsd(http, fetch_cap, &crate::inventory::fetch_request_body(&parents, owner))
         .await
-        .map_err(|_| "La relecture de la tenue a échoué. Actualisez avant de réessayer.".to_owned())?;
+        .map_err(|_| aurora_i18n::tr!("outfits-categories-could-not-read-the-outfit-back-refresh-before-trying").to_owned())?;
     let mut contents = crate::inventory::parse_fetch_response(&response);
     if parents
         .iter()
@@ -82,7 +82,7 @@ pub async fn mutate(
             .flat_map(|c| &c.folders)
             .any(|f| f.id == change.folder && change.update.confirmed(f))
     {
-        return Err("Le serveur n’a pas confirmé la modification de la tenue. Actualisez avant de réessayer.".into());
+        return Err(aurora_i18n::tr!("outfits-categories-the-server-did-not-confirm-the-outfit-change-refresh").into());
     }
     contents.sort_by_key(|c| parents.iter().position(|id| *id == c.folder_id).unwrap_or(usize::MAX));
     Ok(contents)

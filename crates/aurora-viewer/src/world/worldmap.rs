@@ -61,10 +61,10 @@ impl SimInfo {
     pub fn flag_labels(&self) -> Vec<&'static str> {
         let mut v = Vec::new();
         if self.flags & REGION_FLAGS_SANDBOX != 0 {
-            v.push("Bac à sable");
+            v.push(aurora_i18n::tr!("world-worldmap-sandbox"));
         }
         if self.flags & REGION_FLAGS_ALLOW_DAMAGE != 0 {
-            v.push("Non sécurisé");
+            v.push(aurora_i18n::tr!("world-worldmap-unsecured"));
         }
         v
     }
@@ -72,11 +72,11 @@ impl SimInfo {
 
 pub fn access_label(access: u8) -> &'static str {
     match access {
-        0..=SIM_ACCESS_PG => "Général",
-        SIM_ACCESS_MATURE => "Modéré",
-        SIM_ACCESS_ADULT => "Adulte",
-        SIM_ACCESS_DOWN => "Hors ligne",
-        _ => "Inconnu",
+        0..=SIM_ACCESS_PG => aurora_i18n::tr!("common-general"),
+        SIM_ACCESS_MATURE => aurora_i18n::tr!("common-moderate"),
+        SIM_ACCESS_ADULT => aurora_i18n::tr!("common-adult"),
+        SIM_ACCESS_DOWN => aurora_i18n::tr!("common-offline"),
+        _ => aurora_i18n::tr!("common-unknown"),
     }
 }
 

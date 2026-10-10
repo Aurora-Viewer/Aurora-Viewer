@@ -35,7 +35,14 @@ pub fn object(point: u8, active: bool) -> ObjectUpdate {
         shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE, 100, 0, 0),
         texture,
         ExtraParams::default(),
-        &format!("HUD {point}{}", if active { " · Touché" } else { " · Cliquer" }),
+        &format!(
+            "HUD {point}{}",
+            if active {
+                aurora_i18n::tr!("demo-hud-touched")
+            } else {
+                aurora_i18n::tr!("status-click")
+            }
+        ),
     );
     o.parent_id = 9000;
     o.state = point.rotate_left(4);
@@ -88,8 +95,16 @@ pub fn face_events(turned: bool) -> Vec<NetEvent> {
             o.position = Vec3::new(0.0, 0.33 - col as f32 * 0.33, 0.25 - row as f32 * 0.25);
             o.scale = Vec3::new(0.012, 0.24, 0.13);
             o.rotation = Quat::from_rotation_z(if (col != 0) ^ turned { std::f32::consts::PI } else { 0.0 });
-            let kind = ["Opaque", "Translucide", "Masqué"][row as usize];
-            let side = ["Avant", "Arrière", "Double face"][col as usize];
+            let kind = [
+                aurora_i18n::tr!("common-opaque"),
+                aurora_i18n::tr!("demo-hud-translucent"),
+                aurora_i18n::tr!("demo-hud-masked"),
+            ][row as usize];
+            let side = [
+                aurora_i18n::tr!("demo-hud-front"),
+                aurora_i18n::tr!("demo-hud-back"),
+                aurora_i18n::tr!("common-double-sided"),
+            ][col as usize];
             o.text = format!("{kind} · {side}");
             o.texture_entry = Some(te([0.0; 4], 0, true, 0.0));
             let face = &mut Arc::make_mut(o.texture_entry.as_mut().expect("fixture texture")).faces[4];
@@ -187,7 +202,7 @@ pub fn seed_inventory(world: &mut crate::world::World) {
         .map(|point| {
             let mut item = prototype.clone();
             item.id = object(point, false).full_id;
-            item.name = format!("HUD de démo {point}");
+            item.name = aurora_i18n::tr!("demo-hud-demo-hud", point = format!("{}", point));
             item.flags = point as u32;
             item
         })
@@ -259,7 +274,7 @@ mod tests {
         }
         let o = world.objects.get(idx).unwrap();
         assert_eq!((o.position, o.rotation, o.scale), (pos, rot, scale));
-        assert!(o.text.contains("Touché"));
+        assert!(o.text.contains(aurora_i18n::tr!("demo-hud-touched")));
     }
 
     #[test]

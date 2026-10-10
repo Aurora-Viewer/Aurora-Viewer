@@ -20,7 +20,7 @@ pub fn roll_dice(command: &str, args: &str, mut roll: impl FnMut(u32) -> u32) ->
     let (dice, faces, result, modifier_text);
     if let (Some(d), Some(f)) = (scan.int(), scan.int()) {
         if !(1..=100).contains(&d) || !(1..=1000).contains(&f) {
-            out.push("Vous devez fournir des valeurs positives pour les dés (max 100) et les faces (max 1000).".into());
+            out.push(aurora_i18n::tr!("cmdline-dice-provide-positive-values-for-dice-max-100-and-faces").into());
             return out;
         }
         (dice, faces) = (d, f);
@@ -57,39 +57,35 @@ pub fn roll_dice(command: &str, args: &str, mut roll: impl FnMut(u32) -> u32) ->
             };
             if m == "<" || m == ">" {
                 if (m == "<" && value <= modifier) || (m == ">" && value >= modifier) {
-                    out.push("  ^-- Succès".into());
+                    out.push(aurora_i18n::tr!("cmdline-dice-success").into());
                     successes += 1;
                 } else {
                     total -= value;
                 }
             } else if hit("!", "!>", "!<") {
-                out.push("  ^-- Explosé".into());
+                out.push(aurora_i18n::tr!("cmdline-dice-exploded").into());
                 die_iter -= 1;
             } else if hit("!p", "!p>", "!p<") {
-                out.push("  ^-- Pénétré".into());
+                out.push(aurora_i18n::tr!("cmdline-dice-penetrated").into());
                 penetrated = true;
                 die_iter -= 1;
             } else if hit("r", "r>", "r<") {
                 total -= value;
-                out.push("  ^-- Relancer".into());
+                out.push(aurora_i18n::tr!("status-reroll").into());
                 die_iter -= 1;
             }
 
             freeze_guard += 1;
             if freeze_guard > 1000 {
                 // Probably an endless loop ("rolld 1 6 !> 0").
-                out.push(
-                    "Cette opération ne peut être réalisée car le client se figerait dans une boucle infinie. \
-                     Veuillez modifier les critères."
-                        .into(),
-                );
+                out.push(aurora_i18n::tr!("cmdline-dice-this-operation-would-cause-an-infinite-loop-and-freeze").into());
                 return out;
             }
         }
         match m {
             "+" => total += modifier,
             "-" => total -= modifier,
-            "<" | ">" => out.push(format!("Succès: {successes}")),
+            "<" | ">" => out.push(aurora_i18n::tr!("cmdline-dice-successes", successes = format!("{}", successes))),
             _ => {}
         }
         modifier_text = if m.is_empty() { String::new() } else { format!("{m}{modifier}") };
@@ -99,18 +95,20 @@ pub fn roll_dice(command: &str, args: &str, mut roll: impl FnMut(u32) -> u32) ->
         (dice, faces, modifier_text) = (1, 6, String::new());
         result = die(6);
     }
-    out.push(format!("Résultat total pour {dice}d{faces}{modifier_text}: {result}."));
+    out.push(aurora_i18n::tr!(
+        "cmdline-dice-total-result-for-d",
+        dice = format!("{}", dice),
+        faces = format!("{}", faces),
+        modifier_text = modifier_text.to_string(),
+        result = format!("{}", result)
+    ));
     out
 }
 
 fn invalid_modifiers(command: &str) -> String {
-    format!(
-        "Si vous souhaitez utiliser un modificateur, vous devez fournir un numéro de modificateur valide et le type de \
-         modificateur. Le modificateur doit être compris entre -1000 et 1000. Les types de modificateurs valides sont \
-         \"+\" (bonus), \"-\" (pénalités), \">\", \"<\" (succès), \"r>\", \"r<\", \"r\" (relancer), \"!p>\", \"!p<\", \
-         \"!p\" (pénétrations), \"!>\", \"!<\" and \"!\" (explosions). Vous ne pouvez utiliser qu'un seul type de \
-         modificateur par tirage. Exemples : \"{command} 1 20 + 5\", \"{command} 5 40 > 15\", \"{command} 10 25 ! 25\", \
-         \"{command} 15 25 !< 10\"."
+    aurora_i18n::tr!(
+        "cmdline-dice-to-use-a-modifier-provide-a-valid-number-and",
+        command = command.to_string()
     )
 }
 
@@ -126,12 +124,47 @@ mod tests {
 
     #[test]
     fn default_and_plain_rolls() {
-        assert_eq!(roll_dice("rolld", "", seq(&[3])), vec!["Résultat total pour 1d6: 4."]);
+        assert_eq!(
+            roll_dice("rolld", "", seq(&[3])),
+            vec![
+                aurora_i18n::tr!(
+                    "cmdline-dice-total-result-for-d",
+                    dice = "1",
+                    faces = "",
+                    modifier_text = "6",
+                    result = "4"
+                )
+                .as_str()
+            ]
+        );
         // "2d20" is not "2 20": istream reads 2 then fails on "d20".
-        assert_eq!(roll_dice("rolld", "2d20", seq(&[0])), vec!["Résultat total pour 1d6: 1."]);
+        assert_eq!(
+            roll_dice("rolld", "2d20", seq(&[0])),
+            vec![
+                aurora_i18n::tr!(
+                    "cmdline-dice-total-result-for-d",
+                    dice = "1",
+                    faces = "",
+                    modifier_text = "6",
+                    result = "1"
+                )
+                .as_str()
+            ]
+        );
         assert_eq!(
             roll_dice("rolld", "2 20 + 5", seq(&[9, 14])),
-            vec!["#1 1d20: 10.", "#2 1d20: 15.", "Résultat total pour 2d20+5: 30."]
+            vec![
+                "#1 1d20: 10.",
+                "#2 1d20: 15.",
+                aurora_i18n::tr!(
+                    "cmdline-dice-total-result-for-d",
+                    dice = "2",
+                    faces = "",
+                    modifier_text = "20+5",
+                    result = "30"
+                )
+                .as_str()
+            ]
         );
     }
 
@@ -141,28 +174,63 @@ mod tests {
             roll_dice("rolld", "2 20 > 10", seq(&[14, 2])),
             vec![
                 "#1 1d20: 15.",
-                "  ^-- Succès",
+                aurora_i18n::tr!("cmdline-dice-success"),
                 "#2 1d20: 3.",
-                "Succès: 1",
-                "Résultat total pour 2d20>10: 15."
+                aurora_i18n::tr!("cmdline-dice-successes", successes = "1").as_str(),
+                aurora_i18n::tr!(
+                    "cmdline-dice-total-result-for-d",
+                    dice = "2",
+                    faces = "",
+                    modifier_text = "20>10",
+                    result = "15"
+                )
+                .as_str()
             ]
         );
         assert_eq!(
             roll_dice("rolld", "1 6 r 1", seq(&[0, 4])),
-            vec!["#1 1d6: 1.", "  ^-- Relancer", "#1 1d6: 5.", "Résultat total pour 1d6r1: 5."]
+            vec![
+                "#1 1d6: 1.",
+                aurora_i18n::tr!("status-reroll"),
+                "#1 1d6: 5.",
+                aurora_i18n::tr!(
+                    "cmdline-dice-total-result-for-d",
+                    dice = "1",
+                    faces = "",
+                    modifier_text = "6r1",
+                    result = "5"
+                )
+                .as_str()
+            ]
         );
         assert_eq!(
             roll_dice("rolld", "1 6 !p 6", seq(&[5, 3])),
-            vec!["#1 1d6: 6.", "  ^-- Pénétré", "#1 1d6-1: 3.", "Résultat total pour 1d6!p6: 9."]
+            vec![
+                "#1 1d6: 6.",
+                aurora_i18n::tr!("cmdline-dice-penetrated"),
+                "#1 1d6-1: 3.",
+                aurora_i18n::tr!(
+                    "cmdline-dice-total-result-for-d",
+                    dice = "1",
+                    faces = "",
+                    modifier_text = "6!p6",
+                    result = "9"
+                )
+                .as_str()
+            ]
         );
     }
 
     #[test]
     fn limits_and_errors() {
         assert_eq!(roll_dice("rolld", "0 6", seq(&[0])).len(), 1);
-        assert!(roll_dice("rolld", "1 6 +5", seq(&[0]))[0].starts_with("Si vous souhaitez"));
+        assert!(roll_dice("rolld", "1 6 +5", seq(&[0]))[0] == invalid_modifiers("rolld"));
         assert!(roll_dice("rolld", "1 6 x 5", seq(&[0]))[0].contains("\"rolld 1 20 + 5\""));
         let endless = roll_dice("rolld", "1 6 !> 0", seq(&[0]));
-        assert!(endless.last().is_some_and(|l| l.contains("boucle infinie")));
+        assert!(
+            endless
+                .last()
+                .is_some_and(|l| l == aurora_i18n::tr!("cmdline-dice-this-operation-would-cause-an-infinite-loop-and-freeze"))
+        );
     }
 }

@@ -19,42 +19,97 @@ use std::time::Instant;
 use crate::build::edits::{FLAGS_PHANTOM, FLAGS_TEMPORARY_ON_REZ, FLAGS_USE_PHYSICS};
 
 /// comboBaseType: (label, path, profile). Index 7 is « Sculptie ».
-pub const TYPES: [(&str, u8, u8); 22] = [
-    ("Boîte", LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE),
-    ("Cylindre", LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_CIRCLE),
-    ("Prisme", LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_EQUALTRI),
-    ("Sphère", LL_PCODE_PATH_CIRCLE, LL_PCODE_PROFILE_CIRCLE_HALF),
-    ("Tore", LL_PCODE_PATH_CIRCLE, LL_PCODE_PROFILE_CIRCLE),
-    ("Tube", LL_PCODE_PATH_CIRCLE, LL_PCODE_PROFILE_SQUARE),
-    ("Anneau", LL_PCODE_PATH_CIRCLE, LL_PCODE_PROFILE_EQUALTRI),
-    ("Sculptie", LL_PCODE_PATH_CIRCLE, LL_PCODE_PROFILE_CIRCLE),
-    ("Line->Half-Circle", LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_CIRCLE_HALF),
-    ("Circle->Half-Circle", LL_PCODE_PATH_CIRCLE, LL_PCODE_PROFILE_CIRCLE_HALF),
-    ("Circle2->Square", LL_PCODE_PATH_CIRCLE2, LL_PCODE_PROFILE_SQUARE),
-    ("Circle2->Triangle", LL_PCODE_PATH_CIRCLE2, LL_PCODE_PROFILE_EQUALTRI),
-    ("Circle2->Circle", LL_PCODE_PATH_CIRCLE2, LL_PCODE_PROFILE_CIRCLE),
-    ("Circle2->Half-Circle", LL_PCODE_PATH_CIRCLE2, LL_PCODE_PROFILE_CIRCLE_HALF),
-    ("Test->Square", LL_PCODE_PATH_TEST, LL_PCODE_PROFILE_SQUARE),
-    ("Test->Triangle", LL_PCODE_PATH_TEST, LL_PCODE_PROFILE_EQUALTRI),
-    ("Test->Circle", LL_PCODE_PATH_TEST, LL_PCODE_PROFILE_CIRCLE),
-    ("Test->Half-Circle", LL_PCODE_PATH_TEST, LL_PCODE_PROFILE_CIRCLE_HALF),
-    ("33->Circle", LL_PCODE_PATH_CIRCLE_33, LL_PCODE_PROFILE_CIRCLE),
-    ("33->Square", LL_PCODE_PATH_CIRCLE_33, LL_PCODE_PROFILE_SQUARE),
-    ("33->Triangle", LL_PCODE_PATH_CIRCLE_33, LL_PCODE_PROFILE_ISOTRI),
-    ("33->HalfCircle", LL_PCODE_PATH_CIRCLE_33, LL_PCODE_PROFILE_CIRCLE_HALF),
-];
+pub fn types() -> [(&'static str, u8, u8); 22] {
+    [
+        (aurora_i18n::tr!("common-box"), LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE),
+        (aurora_i18n::tr!("common-cylinder"), LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_CIRCLE),
+        (
+            aurora_i18n::tr!("build-ui-object-prism"),
+            LL_PCODE_PATH_LINE,
+            LL_PCODE_PROFILE_EQUALTRI,
+        ),
+        (
+            aurora_i18n::tr!("common-sphere"),
+            LL_PCODE_PATH_CIRCLE,
+            LL_PCODE_PROFILE_CIRCLE_HALF,
+        ),
+        (aurora_i18n::tr!("common-torus"), LL_PCODE_PATH_CIRCLE, LL_PCODE_PROFILE_CIRCLE),
+        (aurora_i18n::tr!("common-tube"), LL_PCODE_PATH_CIRCLE, LL_PCODE_PROFILE_SQUARE),
+        (aurora_i18n::tr!("common-ring"), LL_PCODE_PATH_CIRCLE, LL_PCODE_PROFILE_EQUALTRI),
+        (
+            aurora_i18n::tr!("build-ui-object-sculptie"),
+            LL_PCODE_PATH_CIRCLE,
+            LL_PCODE_PROFILE_CIRCLE,
+        ),
+        (
+            aurora_i18n::tr!("build-ui-object-line-half-circle"),
+            LL_PCODE_PATH_LINE,
+            LL_PCODE_PROFILE_CIRCLE_HALF,
+        ),
+        (
+            aurora_i18n::tr!("build-ui-object-circle-half-circle"),
+            LL_PCODE_PATH_CIRCLE,
+            LL_PCODE_PROFILE_CIRCLE_HALF,
+        ),
+        (
+            aurora_i18n::tr!("build-ui-object-circle2-square"),
+            LL_PCODE_PATH_CIRCLE2,
+            LL_PCODE_PROFILE_SQUARE,
+        ),
+        (
+            aurora_i18n::tr!("build-ui-object-circle2-triangle"),
+            LL_PCODE_PATH_CIRCLE2,
+            LL_PCODE_PROFILE_EQUALTRI,
+        ),
+        (
+            aurora_i18n::tr!("build-ui-object-circle2-circle"),
+            LL_PCODE_PATH_CIRCLE2,
+            LL_PCODE_PROFILE_CIRCLE,
+        ),
+        (
+            aurora_i18n::tr!("build-ui-object-circle2-half-circle"),
+            LL_PCODE_PATH_CIRCLE2,
+            LL_PCODE_PROFILE_CIRCLE_HALF,
+        ),
+        (aurora_i18n::tr!("extra-test-square"), LL_PCODE_PATH_TEST, LL_PCODE_PROFILE_SQUARE),
+        (
+            aurora_i18n::tr!("extra-test-triangle"),
+            LL_PCODE_PATH_TEST,
+            LL_PCODE_PROFILE_EQUALTRI,
+        ),
+        (aurora_i18n::tr!("extra-test-circle"), LL_PCODE_PATH_TEST, LL_PCODE_PROFILE_CIRCLE),
+        (
+            aurora_i18n::tr!("extra-test-half-circle"),
+            LL_PCODE_PATH_TEST,
+            LL_PCODE_PROFILE_CIRCLE_HALF,
+        ),
+        ("33->Circle", LL_PCODE_PATH_CIRCLE_33, LL_PCODE_PROFILE_CIRCLE),
+        ("33->Square", LL_PCODE_PATH_CIRCLE_33, LL_PCODE_PROFILE_SQUARE),
+        ("33->Triangle", LL_PCODE_PATH_CIRCLE_33, LL_PCODE_PROFILE_ISOTRI),
+        ("33->HalfCircle", LL_PCODE_PATH_CIRCLE_33, LL_PCODE_PROFILE_CIRCLE_HALF),
+    ]
+}
 const SCULPTED: usize = 7;
 
 /// « Forme du creux » (hole type bits).
-const HOLES: [(&str, u8); 4] = [
-    ("Défaut", LL_PCODE_HOLE_SAME),
-    ("Cercle", LL_PCODE_HOLE_CIRCLE),
-    ("Carré", LL_PCODE_HOLE_SQUARE),
-    ("Triangle", LL_PCODE_HOLE_TRIANGLE),
-];
+fn holes() -> [(&'static str, u8); 4] {
+    [
+        (aurora_i18n::tr!("common-default"), LL_PCODE_HOLE_SAME),
+        (aurora_i18n::tr!("build-ui-object-circle"), LL_PCODE_HOLE_CIRCLE),
+        (aurora_i18n::tr!("build-ui-object-square"), LL_PCODE_HOLE_SQUARE),
+        (aurora_i18n::tr!("build-ui-object-triangle"), LL_PCODE_HOLE_TRIANGLE),
+    ]
+}
 
 /// « Type de raccord » (sculpt stitching): Sphère, Tore, Plan, Cylindre.
-const SCULPT_TYPES: [(&str, u8); 4] = [("Sphère", 1), ("Tore", 2), ("Plan", 3), ("Cylindre", 4)];
+fn sculpt_types() -> [(&'static str, u8); 4] {
+    [
+        (aurora_i18n::tr!("common-sphere"), 1),
+        (aurora_i18n::tr!("common-torus"), 2),
+        (aurora_i18n::tr!("build-ui-object-plane"), 3),
+        (aurora_i18n::tr!("common-cylinder"), 4),
+    ]
+}
 
 /// Sphere, torus, tube, ring: the "cut" is the path (T) cut there.
 fn circular_basic(ty: usize) -> bool {
@@ -95,7 +150,7 @@ pub fn detect_type(v: &VolumeParams) -> usize {
     if path == LL_PCODE_PATH_CIRCLE2 && profile == LL_PCODE_PROFILE_CIRCLE {
         return 3;
     }
-    TYPES
+    types()
         .iter()
         .enumerate()
         .skip(8)
@@ -166,7 +221,7 @@ pub fn ui_from_volume(v: &VolumeParams) -> ShapeUi {
 /// is converted with it), `flexible`: a line path stays flexible.
 pub fn volume_from_ui(u: &ShapeUi, prev_ty: usize, flexible: bool) -> VolumeParams {
     let mut v = VolumeParams::default();
-    let (_, mut path, profile) = TYPES[u.ty.min(TYPES.len() - 1)];
+    let (_, mut path, profile) = types()[u.ty.min(types().len() - 1)];
     if path == LL_PCODE_PATH_LINE && flexible {
         path = LL_PCODE_PATH_FLEXIBLE;
     }
@@ -256,7 +311,11 @@ fn vec_block(
         Color32::from_rgb(110, 220, 110),
         Color32::from_rgb(120, 150, 245),
     ];
-    let names = ["la position", "la taille", "la rotation"];
+    let names = [
+        aurora_i18n::tr!("build-ui-object-position"),
+        aurora_i18n::tr!("build-ui-object-size"),
+        aurora_i18n::tr!("build-ui-object-rotation"),
+    ];
     let mut e = Edit::default();
     let mut paste = None;
     let mut copy = false;
@@ -269,7 +328,11 @@ fn vec_block(
                 let n = names[which];
                 match i {
                     0 => {
-                        if ui.small_button("C").on_hover_text(format!("Copie {n}")).clicked() {
+                        if ui
+                            .small_button("C")
+                            .on_hover_text(aurora_i18n::tr!("build-ui-object-copy", n = n.to_string()))
+                            .clicked()
+                        {
                             copy = true;
                         }
                     }
@@ -277,7 +340,7 @@ fn vec_block(
                         let has = tool.ui.vec_clipboard[which].is_some();
                         if ui
                             .add_enabled(has, egui::Button::new("P").small())
-                            .on_hover_text(format!("Colle {n}"))
+                            .on_hover_text(aurora_i18n::tr!("build-ui-object-paste", n = n.to_string()))
                             .clicked()
                         {
                             paste = tool.ui.vec_clipboard[which];
@@ -286,7 +349,7 @@ fn vec_block(
                     _ => {
                         if ui
                             .small_button("p")
-                            .on_hover_text(format!("Essaie de coller {n} depuis le presse-papiers"))
+                            .on_hover_text(aurora_i18n::tr!("build-ui-object-try-pasting-from-clipboard", n = n.to_string()))
                             .clicked()
                         {
                             tool.ui.requests.push(Request::PasteVector(which));
@@ -330,17 +393,41 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                     .and_then(|o| tool.props.get(&o.full_id))
                     .is_some_and(|pr| pr.owner_mask & perm::MOVE == 0)
             }));
-            if let Some(v) = check(ui, locked.unwrap_or(false), locked_mixed, "Verrouillé", self_owned) {
+            if let Some(v) = check(
+                ui,
+                locked.unwrap_or(false),
+                locked_mixed,
+                aurora_i18n::tr!("build-ui-object-locked"),
+                self_owned,
+            ) {
                 tool.set_perm(world, perm_field::OWNER, !v, perm::MOVE | perm::MODIFY);
             }
             let root_ok = editable && is_root;
-            if let Some(v) = check(ui, flags & FLAGS_USE_PHYSICS != 0, false, "Physique", root_ok && !flexible) {
+            if let Some(v) = check(
+                ui,
+                flags & FLAGS_USE_PHYSICS != 0,
+                false,
+                aurora_i18n::tr!("build-ui-object-physics"),
+                root_ok && !flexible,
+            ) {
                 tool.set_flags(world, Some(v), None, None);
             }
-            if let Some(v) = check(ui, flags & FLAGS_TEMPORARY_ON_REZ != 0, false, "Temporaire", root_ok) {
+            if let Some(v) = check(
+                ui,
+                flags & FLAGS_TEMPORARY_ON_REZ != 0,
+                false,
+                aurora_i18n::tr!("common-temporary"),
+                root_ok,
+            ) {
                 tool.set_flags(world, None, Some(v), None);
             }
-            if let Some(v) = check(ui, flags & FLAGS_PHANTOM != 0, false, "Fantôme", root_ok && !flexible) {
+            if let Some(v) = check(
+                ui,
+                flags & FLAGS_PHANTOM != 0,
+                false,
+                aurora_i18n::tr!("build-ui-object-phantom"),
+                root_ok && !flexible,
+            ) {
                 tool.set_flags(world, None, None, Some(v));
             }
         });
@@ -350,7 +437,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                 ui,
                 p,
                 "clipboard-text",
-                "Colle les paramètres de l'objet à partir du presse-papiers",
+                aurora_i18n::tr!("build-ui-object-paste-object-settings-from-the-clipboard"),
                 editable && single && !mesh && tool.ui.shape_clipboard.is_some(),
             ) && let Some(c) = tool.ui.shape_clipboard
             {
@@ -360,7 +447,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                 ui,
                 p,
                 "copy",
-                "Copie les paramètres de l'objet dans le presse-papiers",
+                aurora_i18n::tr!("build-ui-object-copy-object-settings-to-clipboard"),
                 editable && single && !mesh,
             ) {
                 tool.ui.shape_clipboard = Some(ShapeClip {
@@ -387,7 +474,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
             p,
             tool,
             0,
-            "Position (mètres)",
+            aurora_i18n::tr!("build-ui-object-position-meters"),
             &mut pos,
             0.01,
             if hud {
@@ -418,7 +505,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
             p,
             tool,
             1,
-            "Taille (mètres)",
+            aurora_i18n::tr!("build-ui-object-size-meters"),
             &mut size,
             0.01,
             [
@@ -450,7 +537,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
             p,
             tool,
             2,
-            "Rotation (degrés)",
+            aurora_i18n::tr!("build-ui-object-rotation-degrees"),
             &mut rot,
             1.0,
             [-9999.0..=9999.0, -9999.0..=9999.0, -9999.0..=9999.0],
@@ -512,17 +599,17 @@ fn shape_column(
     env: &mut Env,
 ) {
     if volume.is_mesh() {
-        section(ui, p, "Mesh");
-        small(ui, p, "La forme d'un mesh ne se modifie pas ici.");
+        section(ui, p, aurora_i18n::tr!("build-ui-object-mesh"));
+        small(ui, p, aurora_i18n::tr!("build-ui-object-a-mesh-shape-cannot-be-edited-here"));
         if let Some(n) = tool.face_counts.get(&world.objects.get(idx).map(|o| o.full_id).unwrap_or_default()) {
-            small(ui, p, &format!("{n} face(s)"));
+            small(ui, p, &aurora_i18n::tr!("face-count", count = n));
         }
         return;
     }
     let ui_now = ui_from_volume(volume);
     let mut u = ui_now;
     let mut e = Edit::default();
-    let items: Vec<(&str, usize)> = TYPES.iter().enumerate().map(|(i, t)| (t.0, i)).collect();
+    let items: Vec<(&str, usize)> = types().iter().enumerate().map(|(i, t)| (t.0, i)).collect();
     if let Some(t) = combo(ui, "prim_type", Some(u.ty), &items, 128.0, enabled) {
         u.ty = t;
         e = Edit {
@@ -556,7 +643,7 @@ fn shape_column(
         ui.add_enabled_ui(enabled, |ui| {
             e = e.or(pair(
                 ui,
-                "Découpe du tracé (déb./fin)",
+                aurora_i18n::tr!("build-ui-object-path-cut-begin-end"),
                 &mut u.cut.0,
                 &mut u.cut.1,
                 0.025,
@@ -566,16 +653,16 @@ fn shape_column(
             ));
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
-                    label(ui, p, "Creux");
+                    label(ui, p, aurora_i18n::tr!("build-ui-object-hollow"));
                     e = e.or(spin(ui, &mut u.hollow, 5.0, 0.0..=95.0, 1, w, false));
                 });
                 ui.vertical(|ui| {
-                    label(ui, p, "Biais");
+                    label(ui, p, aurora_i18n::tr!("build-ui-object-bias"));
                     e = e.or(spin(ui, &mut u.skew, 0.05, -0.95..=0.95, 2, w, false));
                 });
             });
-            label(ui, p, "Forme du creux");
-            if let Some(h) = combo(ui, "hole_type", Some(u.hole), &HOLES, 120.0, u.hollow > 0.0) {
+            label(ui, p, aurora_i18n::tr!("build-ui-object-hollow-shape"));
+            if let Some(h) = combo(ui, "hole_type", Some(u.hole), &holes(), 120.0, u.hollow > 0.0) {
                 u.hole = h;
                 e = e.or(Edit {
                     changed: true,
@@ -585,7 +672,7 @@ fn shape_column(
             let (tw, ti) = if circular_basic(ty) { (360.0, 18.0) } else { (180.0, 9.0) };
             e = e.or(pair(
                 ui,
-                "Vrille (début/fin)",
+                aurora_i18n::tr!("build-ui-object-twist-begin-end"),
                 &mut u.twist.0,
                 &mut u.twist.1,
                 ti,
@@ -600,14 +687,22 @@ fn shape_column(
                 0..=2 => (-1.0..=1.0, -1.0..=1.0),
                 _ => (0.0..=2.0, 0.0..=2.0),
             };
-            label(ui, p, if hole_label { "Taille du trou" } else { "Biseautage" });
+            label(
+                ui,
+                p,
+                if hole_label {
+                    aurora_i18n::tr!("build-ui-object-hole-size")
+                } else {
+                    aurora_i18n::tr!("build-ui-object-bevel")
+                },
+            );
             ui.horizontal(|ui| {
                 ui.label(RichText::new("X").size(11.0));
                 e = e.or(spin(ui, &mut u.top_size[0], 0.05, rx, 3, w, false));
                 ui.label(RichText::new("Y").size(11.0));
                 e = e.or(spin(ui, &mut u.top_size[1], 0.05, ry, 3, w, false));
             });
-            label(ui, p, "Inclinaison");
+            label(ui, p, aurora_i18n::tr!("build-ui-object-tilt"));
             ui.horizontal(|ui| {
                 ui.label(RichText::new("X").size(11.0));
                 e = e.or(spin(ui, &mut u.shear[0], 0.05, -0.5..=0.5, 3, w, false));
@@ -615,14 +710,14 @@ fn shape_column(
                 e = e.or(spin(ui, &mut u.shear[1], 0.05, -0.5..=0.5, 3, w, false));
             });
             let adv = match ty {
-                3 => "Creux (début/fin)",
-                0..=2 => "Tranche (début/fin)",
-                _ => "Découpe du profilé (début/fin)",
+                3 => aurora_i18n::tr!("build-ui-object-hollow-begin-end"),
+                0..=2 => aurora_i18n::tr!("build-ui-object-slice-begin-end"),
+                _ => aurora_i18n::tr!("build-ui-object-profile-cut-begin-end"),
             };
             e = e.or(pair(ui, adv, &mut u.adv_cut.0, &mut u.adv_cut.1, 0.02, 0.0..=0.98, 0.02..=1.0, 3));
             // « Biseautage » of the path (taper), hidden for the box
             if ty != 0 {
-                label(ui, p, "Biseautage");
+                label(ui, p, aurora_i18n::tr!("build-ui-object-bevel"));
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("X").size(11.0));
                     e = e.or(spin(ui, &mut u.taper[0], 0.05, -1.0..=1.0, 3, w, false));
@@ -632,11 +727,11 @@ fn shape_column(
             }
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
-                    label(ui, p, "Rayon");
+                    label(ui, p, aurora_i18n::tr!("build-ui-object-radius"));
                     e = e.or(spin(ui, &mut u.radius, 0.05, -1.0..=1.0, 3, w, false));
                 });
                 ui.vertical(|ui| {
-                    label(ui, p, "Révolutions");
+                    label(ui, p, aurora_i18n::tr!("build-ui-object-revolutions"));
                     e = e.or(spin(ui, &mut u.revolutions, 0.1, 1.0..=4.0, 2, w, false));
                 });
             });
@@ -672,7 +767,7 @@ fn sculpt_section(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &
     let Some(sc) = world.objects.get(idx).and_then(|o| o.extra.sculpt) else {
         return;
     };
-    label(ui, p, "Texture de la sculptie");
+    label(ui, p, aurora_i18n::tr!("build-ui-object-sculpt-texture"));
     let r = super::common::swatch(
         ui,
         p,
@@ -685,24 +780,38 @@ fn sculpt_section(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &
         enabled,
     );
     if r.clicked() {
-        tool.ui.picker.open("Choisir : texture de la sculptie", sc.texture);
+        tool.ui
+            .picker
+            .open(aurora_i18n::tr!("build-ui-object-choose-sculpt-map"), sc.texture);
         tool.ui.pick_target = Some(super::PickTarget::Sculpt);
     }
     let base = sc.sculpt_type & LL_SCULPT_TYPE_MASK;
     let shown = if base == 0 { 3 } else { base };
     let mut new = sc;
-    label(ui, p, "Type de raccord");
-    if let Some(t) = combo(ui, "sculpt_type", Some(shown), &SCULPT_TYPES, 110.0, enabled) {
+    label(ui, p, aurora_i18n::tr!("build-ui-object-join-type"));
+    if let Some(t) = combo(ui, "sculpt_type", Some(shown), &sculpt_types(), 110.0, enabled) {
         new.sculpt_type = (sc.sculpt_type & !LL_SCULPT_TYPE_MASK) | t;
     }
-    if let Some(v) = check(ui, sc.sculpt_type & LL_SCULPT_FLAG_MIRROR != 0, false, "Mirroir", enabled) {
+    if let Some(v) = check(
+        ui,
+        sc.sculpt_type & LL_SCULPT_FLAG_MIRROR != 0,
+        false,
+        aurora_i18n::tr!("build-ui-object-mirror"),
+        enabled,
+    ) {
         new.sculpt_type = if v {
             new.sculpt_type | LL_SCULPT_FLAG_MIRROR
         } else {
             new.sculpt_type & !LL_SCULPT_FLAG_MIRROR
         };
     }
-    if let Some(v) = check(ui, sc.sculpt_type & LL_SCULPT_FLAG_INVERT != 0, false, "A l'envers", enabled) {
+    if let Some(v) = check(
+        ui,
+        sc.sculpt_type & LL_SCULPT_FLAG_INVERT != 0,
+        false,
+        aurora_i18n::tr!("status-inside-out"),
+        enabled,
+    ) {
         new.sculpt_type = if v {
             new.sculpt_type | LL_SCULPT_FLAG_INVERT
         } else {
@@ -719,7 +828,7 @@ impl BuildTool {
     /// size, rotation), clamped like « P ».
     pub fn paste_vector(&mut self, world: &mut World, s: &BuildSettings, which: usize, text: &str) {
         let Some(v) = parse_vector(text) else {
-            self.status = "Le presse-papiers ne contient pas de vecteur <x, y, z>.".into();
+            self.status = aurora_i18n::tr!("build-ui-object-the-clipboard-does-not-contain-a-vector-x-y").into();
             return;
         };
         match which {

@@ -338,7 +338,7 @@ impl Session<'_> {
                     self.sh,
                     NetEvent::CapReply {
                         tag,
-                        result: Err(format!("{cap}: no region")),
+                        result: Err(aurora_i18n::tr!("session-build-cmds-no-region", cap = cap.to_string())),
                     },
                 );
             }
@@ -742,7 +742,7 @@ impl Session<'_> {
                         self.sh,
                         NetEvent::CapReply {
                             tag,
-                            result: Err(format!("{cap}: capability not granted")),
+                            result: Err(aurora_i18n::tr!("session-build-cmds-capability-not-granted", cap = cap.to_string())),
                         },
                     );
                     return;

@@ -108,9 +108,9 @@ impl Social {
                 let n = self.name_of(&id);
                 out.push((
                     if online {
-                        format!("{n} est en ligne.")
+                        aurora_i18n::tr!("world-social-is-online", n = n.to_string())
                     } else {
-                        format!("{n} est hors ligne.")
+                        aurora_i18n::tr!("world-social-is-offline", n = n.to_string())
                     },
                     online,
                 ));

@@ -54,7 +54,10 @@ impl App {
             || self.inventory_ui.pending.is_some()
             || !rules::mutable(&self.world.inventory, item, &self.settings.inventory.protected)
         {
-            self.finish_inventory_image(request, Some("Une modification est déjà en cours ou l’élément est protégé.".into()));
+            self.finish_inventory_image(
+                request,
+                Some(aurora_i18n::tr!("app-inventory-thumbnail-an-edit-is-already-in-progress-or-the-item").into()),
+            );
             return;
         }
         self.inventory_images.requests.insert(request, item);
@@ -63,8 +66,11 @@ impl App {
             ImageInput::File => {
                 std::thread::spawn(move || {
                     let result = rfd::FileDialog::new()
-                        .set_title("Choisir une image d’inventaire")
-                        .add_filter("Images", &["png", "jpg", "jpeg", "bmp", "tga", "j2c", "j2k", "jp2"])
+                        .set_title(aurora_i18n::tr!("app-inventory-thumbnail-choose-inventory-image"))
+                        .add_filter(
+                            aurora_i18n::tr!("app-inventory-thumbnail-images"),
+                            &["png", "jpg", "jpeg", "bmp", "tga", "j2c", "j2k", "jp2"],
+                        )
                         .pick_file()
                         .map(|path| file_thumbnail(&path).map(Prepared::Upload))
                         .transpose();
@@ -73,7 +79,10 @@ impl App {
             }
             ImageInput::Capture => {
                 if self.inventory_images.capture.is_some() || self.inventory_images.capturing.is_some() {
-                    self.finish_inventory_image(request, Some("Une photo est déjà en cours.".into()));
+                    self.finish_inventory_image(
+                        request,
+                        Some(aurora_i18n::tr!("app-inventory-thumbnail-a-snapshot-is-already-in-progress").into()),
+                    );
                 } else {
                     self.inventory_images.capture = Some(request);
                 }
@@ -82,7 +91,7 @@ impl App {
                 std::thread::spawn(move || {
                     let result = aurora_assets::j2k::encode_thumbnail_j2k(256, 256, 4, &pixels)
                         .map(|data| Some(Prepared::Upload(data)))
-                        .map_err(|_| "La photo n’a pas pu être encodée.".into());
+                        .map_err(|_| aurora_i18n::tr!("app-inventory-thumbnail-could-not-encode-the-picture").into());
                     let _ = tx.send(Reply { request, result });
                 });
             }
@@ -94,7 +103,10 @@ impl App {
         let inv = &self.world.inventory;
         let asset = if let Some(it) = inv.items.get(&asset) {
             if !crate::ui::inventory::thumbnail::usable(inv, it) {
-                self.finish_inventory_image(request, Some("Cette texture doit autoriser la copie et le transfert.".into()));
+                self.finish_inventory_image(
+                    request,
+                    Some(aurora_i18n::tr!("app-inventory-thumbnail-this-texture-must-allow-copying-and-transfer").into()),
+                );
                 return;
             }
             it.asset_id
@@ -103,14 +115,20 @@ impl App {
         };
         let matching: Vec<_> = inv.items.values().filter(|it| it.asset_type == 0 && it.asset_id == asset).collect();
         if asset.is_nil() || (!matching.is_empty() && !matching.iter().any(|it| crate::ui::inventory::thumbnail::usable(inv, it))) {
-            self.finish_inventory_image(request, Some("Cette texture doit autoriser la copie et le transfert.".into()));
+            self.finish_inventory_image(
+                request,
+                Some(aurora_i18n::tr!("app-inventory-thumbnail-this-texture-must-allow-copying-and-transfer").into()),
+            );
             return;
         }
         if self.demo {
             let pixels = vec![128; 256 * 256 * 4];
             match aurora_assets::j2k::encode_thumbnail_j2k(256, 256, 4, &pixels) {
                 Ok(data) => self.inventory_image_source(request, asset, resize, Ok(data)),
-                Err(_) => self.finish_inventory_image(request, Some("Image de démonstration indisponible.".into())),
+                Err(_) => self.finish_inventory_image(
+                    request,
+                    Some(aurora_i18n::tr!("app-inventory-thumbnail-demo-image-unavailable").into()),
+                ),
             }
         } else {
             self.send(NetCommand::FetchInventoryThumbnail { request, asset, resize });
@@ -130,7 +148,7 @@ impl App {
         let tx = self.inventory_images.tx.clone();
         std::thread::spawn(move || {
             let result = image::RgbaImage::from_raw(w, h, pixels)
-                .ok_or_else(|| "La capture est invalide.".to_owned())
+                .ok_or_else(|| aurora_i18n::tr!("app-inventory-thumbnail-invalid-capture").to_owned())
                 .and_then(|image| square(&image))
                 .map(|image| Some(Prepared::Photo(image.into_raw())));
             let _ = tx.send(Reply { request, result });
@@ -148,7 +166,10 @@ impl App {
             let text = self.gfx.as_mut().and_then(|g| g.egui_state.clipboard_text()).unwrap_or_default();
             match Uuid::parse_str(text.trim()) {
                 Ok(asset) => self.fetch_inventory_image(request, asset, false),
-                Err(_) => self.finish_inventory_image(request, Some("Le presse-papiers doit contenir l’UUID d’une image.".into())),
+                Err(_) => self.finish_inventory_image(
+                    request,
+                    Some(aurora_i18n::tr!("app-inventory-thumbnail-the-clipboard-must-contain-an-image-uuid").into()),
+                ),
             }
         }
         while let Ok(reply) = self.inventory_images.rx.try_recv() {
@@ -184,11 +205,17 @@ impl App {
                         break;
                     }
                     if !rules::mutable(&self.world.inventory, item, &self.settings.inventory.protected) {
-                        self.finish_inventory_image(reply.request, Some("Cet élément n’est plus modifiable.".into()));
+                        self.finish_inventory_image(
+                            reply.request,
+                            Some(aurora_i18n::tr!("app-inventory-thumbnail-this-item-can-no-longer-be-modified").into()),
+                        );
                         continue;
                     }
                     let Some(parent) = rules::parent(&self.world.inventory, item).filter(|id| !id.is_nil()) else {
-                        self.finish_inventory_image(reply.request, Some("Dossier parent introuvable.".into()));
+                        self.finish_inventory_image(
+                            reply.request,
+                            Some(aurora_i18n::tr!("app-inventory-thumbnail-parent-folder-not-found").into()),
+                        );
                         continue;
                     };
                     match prepared {
@@ -255,17 +282,19 @@ impl App {
 fn square(image: &image::RgbaImage) -> Result<image::RgbaImage, String> {
     let edge = image.width().min(image.height());
     if edge == 0 {
-        return Err("L’image est vide.".into());
+        return Err(aurora_i18n::tr!("app-inventory-thumbnail-the-image-is-empty").into());
     }
     let crop = image::imageops::crop_imm(image, (image.width() - edge) / 2, (image.height() - edge) / 2, edge, edge).to_image();
     Ok(image::imageops::resize(&crop, 256, 256, image::imageops::FilterType::Lanczos3))
 }
 fn rgba(data: &[u8]) -> Result<image::RgbaImage, String> {
-    let info = aurora_assets::j2k_info(data).ok_or_else(|| "L’image JPEG2000 est invalide.".to_owned())?;
+    let info = aurora_assets::j2k_info(data)
+        .ok_or_else(|| aurora_i18n::tr!("app-inventory-thumbnail-the-jpeg2000-image-is-invalid").to_owned())?;
     if info.width > 4096 || info.height > 4096 {
-        return Err("L’image dépasse 4096 pixels.".into());
+        return Err(aurora_i18n::tr!("app-inventory-thumbnail-the-image-exceeds-4096-pixels").into());
     }
-    let decoded = aurora_assets::decode_j2k(data, 0).map_err(|_| "L’image JPEG2000 n’a pas pu être décodée.".to_owned())?;
+    let decoded = aurora_assets::decode_j2k(data, 0)
+        .map_err(|_| aurora_i18n::tr!("app-inventory-thumbnail-could-not-decode-the-jpeg2000-image").to_owned())?;
     let mut pixels = Vec::with_capacity(decoded.width as usize * decoded.height as usize * 4);
     for pixel in decoded.data.chunks_exact(decoded.components as usize) {
         let color = match pixel {
@@ -273,34 +302,40 @@ fn rgba(data: &[u8]) -> Result<image::RgbaImage, String> {
             [v, a] => [*v, *v, *v, *a],
             [r, g, b] => [*r, *g, *b, 255],
             [r, g, b, a] => [*r, *g, *b, *a],
-            _ => return Err("Format d’image invalide.".into()),
+            _ => return Err(aurora_i18n::tr!("app-inventory-thumbnail-invalid-image-format").into()),
         };
         pixels.extend_from_slice(&color);
     }
-    image::RgbaImage::from_raw(decoded.width, decoded.height, pixels).ok_or_else(|| "Pixels d’image invalides.".into())
+    image::RgbaImage::from_raw(decoded.width, decoded.height, pixels)
+        .ok_or_else(|| aurora_i18n::tr!("app-inventory-thumbnail-invalid-image-pixels").into())
 }
 fn texture_thumbnail(asset: Uuid, resize: bool, bytes: &[u8]) -> Result<Prepared, String> {
-    let info = aurora_assets::j2k_info(bytes).ok_or_else(|| "L’image sélectionnée est invalide.".to_owned())?;
+    let info = aurora_assets::j2k_info(bytes)
+        .ok_or_else(|| aurora_i18n::tr!("app-inventory-thumbnail-the-selected-image-is-invalid").to_owned())?;
     if info.width != info.height || info.width < 64 {
-        return Err("L’image doit être carrée et mesurer au moins 64 pixels.".into());
+        return Err(aurora_i18n::tr!("app-inventory-thumbnail-the-image-must-be-square-and-at-least-64").into());
     }
     if info.width <= 256 {
         rgba(bytes)?;
         return Ok(Prepared::Existing(asset));
     }
     if !resize {
-        return Err("L’image du presse-papiers doit mesurer entre 64 et 256 pixels.".into());
+        return Err(aurora_i18n::tr!("app-inventory-thumbnail-the-clipboard-image-must-be-between-64-and-256").into());
     }
     let image = square(&rgba(bytes)?)?;
     aurora_assets::j2k::encode_thumbnail_j2k(256, 256, 4, image.as_raw())
         .map(Prepared::Upload)
-        .map_err(|_| "L’image n’a pas pu être encodée.".into())
+        .map_err(|_| aurora_i18n::tr!("app-inventory-thumbnail-could-not-encode-the-image").into())
 }
 fn file_thumbnail(path: &std::path::Path) -> Result<Vec<u8>, String> {
-    if std::fs::metadata(path).map_err(|_| "Fichier inaccessible.".to_owned())?.len() > 32 * 1024 * 1024 {
-        return Err("Le fichier dépasse 32 Mo.".into());
+    if std::fs::metadata(path)
+        .map_err(|_| aurora_i18n::tr!("app-inventory-thumbnail-cannot-access-file").to_owned())?
+        .len()
+        > 32 * 1024 * 1024
+    {
+        return Err(aurora_i18n::tr!("app-inventory-thumbnail-the-file-exceeds-32-mb").into());
     }
-    let bytes = std::fs::read(path).map_err(|_| "Le fichier n’a pas pu être lu.".to_owned())?;
+    let bytes = std::fs::read(path).map_err(|_| aurora_i18n::tr!("app-inventory-thumbnail-could-not-read-the-file").to_owned())?;
     let image = if matches!(
         path.extension().and_then(|s| s.to_str()).map(str::to_ascii_lowercase).as_deref(),
         Some("j2c" | "j2k" | "jp2")
@@ -309,7 +344,7 @@ fn file_thumbnail(path: &std::path::Path) -> Result<Vec<u8>, String> {
     } else {
         let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes))
             .with_guessed_format()
-            .map_err(|_| "Format d’image invalide.".to_owned())?;
+            .map_err(|_| aurora_i18n::tr!("app-inventory-thumbnail-invalid-image-format").to_owned())?;
         let mut limits = image::Limits::default();
         limits.max_image_width = Some(4096);
         limits.max_image_height = Some(4096);
@@ -317,11 +352,12 @@ fn file_thumbnail(path: &std::path::Path) -> Result<Vec<u8>, String> {
         reader.limits(limits);
         reader
             .decode()
-            .map_err(|_| "Image invalide ou trop volumineuse.".to_owned())?
+            .map_err(|_| aurora_i18n::tr!("app-inventory-thumbnail-invalid-or-oversized-image").to_owned())?
             .into_rgba8()
     };
     let image = square(&image)?;
-    aurora_assets::j2k::encode_thumbnail_j2k(256, 256, 4, image.as_raw()).map_err(|_| "L’image n’a pas pu être encodée.".into())
+    aurora_assets::j2k::encode_thumbnail_j2k(256, 256, 4, image.as_raw())
+        .map_err(|_| aurora_i18n::tr!("app-inventory-thumbnail-could-not-encode-the-image").into())
 }
 
 #[cfg(test)]

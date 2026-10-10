@@ -30,6 +30,7 @@ mod world;
 
 fn main() -> anyhow::Result<()> {
     cli::get();
+    aurora_i18n::select("default", cli::get().language.as_deref());
     logging::init();
 
     // Leave a core for the render thread; rayon handles decoding/meshing.

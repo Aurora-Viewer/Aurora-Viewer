@@ -94,128 +94,148 @@ pub fn people_window(
 ) -> Vec<PeopleAction> {
     let mut actions = Vec::new();
     let mut open = panels.people;
-    Floater::new("people", "Personnes", egui::pos2(8.0, 70.0), Vec2::new(330.0, 420.0))
-        .help("Avatars à proximité et liste d'amis")
-        .show(ctx, p, &mut open, |ui| {
-            let mut tab = panels.people_tab as usize;
-            widgets::tabs(
-                ui,
-                p,
-                &mut tab,
-                &[
-                    ("Près de vous", true),
-                    ("Amis", true),
-                    ("Groupes", true),
-                    ("Récent", false),
-                    ("Bloqué", true),
-                ],
-            );
-            panels.people_tab = tab as u8;
+    Floater::new(
+        "people",
+        aurora_i18n::tr!("common-people"),
+        egui::pos2(8.0, 70.0),
+        Vec2::new(330.0, 420.0),
+    )
+    .help(aurora_i18n::tr!("ui-people-nearby-avatars-and-friends-list"))
+    .show(ctx, p, &mut open, |ui| {
+        let mut tab = panels.people_tab as usize;
+        widgets::tabs(
+            ui,
+            p,
+            &mut tab,
+            &[
+                (aurora_i18n::tr!("ui-people-near-you"), true),
+                (aurora_i18n::tr!("common-friends"), true),
+                (aurora_i18n::tr!("common-groups"), true),
+                (aurora_i18n::tr!("common-recent"), false),
+                (aurora_i18n::tr!("common-blocked"), true),
+            ],
+        );
+        panels.people_tab = tab as u8;
+        ui.add_space(4.0);
+        widgets::search_field(ui, &mut st.filter, aurora_i18n::tr!("ui-people-filter"), ui.available_width());
+        ui.add_space(4.0);
+        let filter = st.filter.trim().to_lowercase();
+        if panels.people_tab == 0 {
+            ui.vertical_centered(|ui| map(ui, Vec2::new(ui.available_width().min(320.0), 150.0)));
             ui.add_space(4.0);
-            widgets::search_field(ui, &mut st.filter, "Filtrer", ui.available_width());
-            ui.add_space(4.0);
-            let filter = st.filter.trim().to_lowercase();
-            if panels.people_tab == 0 {
-                ui.vertical_centered(|ui| map(ui, Vec2::new(ui.available_width().min(320.0), 150.0)));
-                ui.add_space(4.0);
-                let list: Vec<_> = nearby(world)
-                    .into_iter()
-                    .filter(|e| filter.is_empty() || e.1.to_lowercase().contains(&filter))
-                    .collect();
-                let w = ui.available_width();
-                let title = format!("Nom [{}]", list.len());
-                widgets::header_row(ui, p, &[(&title, w - 70.0), ("Distance", 70.0)]);
-                egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                    for (id, name, _, d) in list.iter().take(200) {
-                        ui.horizontal(|ui| {
-                            ui.set_min_height(18.0);
-                            let r = ui.add(egui::Label::new(RichText::new(name).size(13.0).color(p.ink)).sense(egui::Sense::click()));
-                            // menu_people_nearby.xml
-                            menu::context_menu(&r, p, |ui| context::avatar_list_menu(ui, p, world, *id, AvatarList::Nearby));
-                            if r.double_clicked() {
-                                actions.push(PeopleAction::OpenIm(*id));
-                            }
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                ui.label(RichText::new(format!("{d:.2}")).size(12.0).strong().color(distance_color(p, *d)));
-                            });
+            let list: Vec<_> = nearby(world)
+                .into_iter()
+                .filter(|e| filter.is_empty() || e.1.to_lowercase().contains(&filter))
+                .collect();
+            let w = ui.available_width();
+            let title = aurora_i18n::tr!("ui-people-name", value0 = format!("{}", list.len()));
+            widgets::header_row(ui, p, &[(&title, w - 70.0), (aurora_i18n::tr!("common-distance"), 70.0)]);
+            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                for (id, name, _, d) in list.iter().take(200) {
+                    ui.horizontal(|ui| {
+                        ui.set_min_height(18.0);
+                        let r = ui.add(egui::Label::new(RichText::new(name).size(13.0).color(p.ink)).sense(egui::Sense::click()));
+                        // menu_people_nearby.xml
+                        menu::context_menu(&r, p, |ui| context::avatar_list_menu(ui, p, world, *id, AvatarList::Nearby));
+                        if r.double_clicked() {
+                            actions.push(PeopleAction::OpenIm(*id));
+                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(
+                                RichText::new(aurora_i18n::number(*d as f64, 2))
+                                    .size(12.0)
+                                    .strong()
+                                    .color(distance_color(p, *d)),
+                            );
                         });
-                    }
-                });
-            } else if panels.people_tab == 2 {
-                groups_tab(ui, p, world, &filter, &mut actions);
-            } else if panels.people_tab == 4 {
-                blocked_tab(ui, p, world, st, &filter, &mut actions);
-            } else {
-                let friends = world.social.sorted_friends();
-                let online = friends.iter().filter(|f| f.online).count();
-                let l1 = format!("En ligne ({online})");
-                let l2 = format!("Tous ({})", friends.len());
-                widgets::tabs(ui, p, &mut st.friends_tab, &[(&l1, true), (&l2, true)]);
-                ui.add_space(2.0);
-                egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                    let mut shown = 0;
-                    for f in friends
-                        .iter()
-                        .filter(|f| st.friends_tab == 1 || f.online)
-                        .filter(|f| filter.is_empty() || world.social.name_of(&f.id).to_lowercase().contains(&filter))
-                    {
-                        shown += 1;
-                        ui.horizontal(|ui| {
-                            ui.set_min_height(20.0);
-                            widgets::status_dot(ui, widgets::online_color(p, f.online));
-                            let name = world.social.name_of(&f.id);
-                            let col = if f.online { p.indigo_light } else { p.muted };
-                            // complete names can be long: cut before the rights
-                            // and buttons (full name on hover)
-                            let w = (ui.available_width() - 140.0).max(60.0);
-                            let r = ui
-                                .allocate_ui_with_layout(egui::vec2(w, 20.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                    ui.add(
-                                        egui::Label::new(RichText::new(name).size(13.0).color(col))
-                                            .truncate()
-                                            .sense(egui::Sense::click()),
-                                    )
-                                })
-                                .inner;
-                            if r.double_clicked() {
+                    });
+                }
+            });
+        } else if panels.people_tab == 2 {
+            groups_tab(ui, p, world, &filter, &mut actions);
+        } else if panels.people_tab == 4 {
+            blocked_tab(ui, p, world, st, &filter, &mut actions);
+        } else {
+            let friends = world.social.sorted_friends();
+            let online = friends.iter().filter(|f| f.online).count();
+            let l1 = aurora_i18n::tr!("ui-people-online", online = format!("{}", online));
+            let l2 = aurora_i18n::tr!("ui-people-all", value0 = format!("{}", friends.len()));
+            widgets::tabs(ui, p, &mut st.friends_tab, &[(&l1, true), (&l2, true)]);
+            ui.add_space(2.0);
+            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                let mut shown = 0;
+                for f in friends
+                    .iter()
+                    .filter(|f| st.friends_tab == 1 || f.online)
+                    .filter(|f| filter.is_empty() || world.social.name_of(&f.id).to_lowercase().contains(&filter))
+                {
+                    shown += 1;
+                    ui.horizontal(|ui| {
+                        ui.set_min_height(20.0);
+                        widgets::status_dot(ui, widgets::online_color(p, f.online));
+                        let name = world.social.name_of(&f.id);
+                        let col = if f.online { p.indigo_light } else { p.muted };
+                        // complete names can be long: cut before the rights
+                        // and buttons (full name on hover)
+                        let w = (ui.available_width() - 140.0).max(60.0);
+                        let r = ui
+                            .allocate_ui_with_layout(egui::vec2(w, 20.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                ui.add(
+                                    egui::Label::new(RichText::new(name).size(13.0).color(col))
+                                        .truncate()
+                                        .sense(egui::Sense::click()),
+                                )
+                            })
+                            .inner;
+                        if r.double_clicked() {
+                            actions.push(PeopleAction::OpenIm(f.id));
+                        }
+                        // menu_fs_contacts_friends.xml
+                        menu::context_menu(&r, p, |ui| context::avatar_list_menu(ui, p, world, f.id, AvatarList::Friend));
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.spacing_mut().item_spacing.x = 4.0;
+                            if f.online
+                                && widgets::flat_button(ui, p, "TP")
+                                    .on_hover_text(aurora_i18n::tr!("common-offer-teleport"))
+                                    .clicked()
+                            {
+                                actions.push(PeopleAction::OfferTeleport(f.id));
+                            }
+                            if widgets::flat_button(ui, p, "IM")
+                                .on_hover_text(aurora_i18n::tr!("ui-people-instant-message-im"))
+                                .clicked()
+                            {
                                 actions.push(PeopleAction::OpenIm(f.id));
                             }
-                            // menu_fs_contacts_friends.xml
-                            menu::context_menu(&r, p, |ui| context::avatar_list_menu(ui, p, world, f.id, AvatarList::Friend));
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                ui.spacing_mut().item_spacing.x = 4.0;
-                                if f.online
-                                    && widgets::flat_button(ui, p, "TP")
-                                        .on_hover_text("Proposer une téléportation")
-                                        .clicked()
-                                {
-                                    actions.push(PeopleAction::OfferTeleport(f.id));
-                                }
-                                if widgets::flat_button(ui, p, "IM").on_hover_text("Message instantané (IM)").clicked() {
-                                    actions.push(PeopleAction::OpenIm(f.id));
-                                }
-                                if widgets::flat_button(ui, p, "i").on_hover_text("Voir le profil").clicked() {
-                                    actions.push(PeopleAction::Profile(f.id));
-                                }
-                                // Rights granted to me: 1 online status, 2 map location, 4 modify objects
-                                for (bit, ch, tip) in [
-                                    (4, "M", "Je peux modifier ses objets"),
-                                    (2, "C", "Je le/la vois sur la carte"),
-                                    (1, "E", "Je vois son statut en ligne"),
-                                ] {
-                                    let on = f.rights_has & bit != 0;
-                                    ui.label(RichText::new(ch).size(11.0).color(if on { p.violet_light } else { p.muted_dim }))
-                                        .on_hover_text(tip);
-                                }
-                            });
+                            if widgets::flat_button(ui, p, "i")
+                                .on_hover_text(aurora_i18n::tr!("common-view-profile"))
+                                .clicked()
+                            {
+                                actions.push(PeopleAction::Profile(f.id));
+                            }
+                            // Rights granted to me: 1 online status, 2 map location, 4 modify objects
+                            for (bit, ch, tip) in [
+                                (4, "M", aurora_i18n::tr!("ui-people-i-can-modify-their-objects")),
+                                (2, "C", aurora_i18n::tr!("extra-i-can-see-them-on-the-map")),
+                                (1, "E", aurora_i18n::tr!("ui-people-i-can-see-their-online-status")),
+                            ] {
+                                let on = f.rights_has & bit != 0;
+                                ui.label(RichText::new(ch).size(11.0).color(if on { p.violet_light } else { p.muted_dim }))
+                                    .on_hover_text(tip);
+                            }
                         });
-                    }
-                    if shown == 0 {
-                        ui.label(RichText::new("Personne ici pour l'instant.").size(12.0).color(p.muted));
-                    }
-                });
-            }
-        });
+                    });
+                }
+                if shown == 0 {
+                    ui.label(
+                        RichText::new(aurora_i18n::tr!("ui-people-nobody-here-yet"))
+                            .size(12.0)
+                            .color(p.muted),
+                    );
+                }
+            });
+        }
+    });
     panels.people = open;
     actions
 }
@@ -224,11 +244,11 @@ pub fn people_window(
 fn groups_tab(ui: &mut egui::Ui, p: &Palette, world: &World, filter: &str, actions: &mut Vec<PeopleAction>) {
     let groups = world.groups.sorted();
     let w = ui.available_width();
-    let title = format!("Groupe [{}]", groups.len());
+    let title = aurora_i18n::tr!("ui-people-group", value0 = format!("{}", groups.len()));
     widgets::header_row(ui, p, &[(&title, w - 110.0), ("", 110.0)]);
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         if groups.is_empty() {
-            ui.label(RichText::new("Aucun groupe pour l'instant.").size(12.0).color(p.muted));
+            ui.label(RichText::new(aurora_i18n::tr!("ui-people-no-groups-yet")).size(12.0).color(p.muted));
         }
         for g in groups
             .iter()
@@ -248,7 +268,11 @@ fn groups_tab(ui: &mut egui::Ui, p: &Palette, world: &World, filter: &str, actio
                         )
                     })
                     .inner;
-                let r = if blocked { r.on_hover_text("Chat du groupe bloqué") } else { r };
+                let r = if blocked {
+                    r.on_hover_text(aurora_i18n::tr!("ui-people-group-chat-blocked"))
+                } else {
+                    r
+                };
                 // menu_people_groups.xml
                 menu::context_menu(&r, p, |ui| context::group_menu(ui, p, world, g.id));
                 if r.double_clicked() {
@@ -257,15 +281,21 @@ fn groups_tab(ui: &mut egui::Ui, p: &Palette, world: &World, filter: &str, actio
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
                     let (label, tip) = if blocked {
-                        ("Débloquer", "Recevoir de nouveau le chat de ce groupe")
+                        (
+                            aurora_i18n::tr!("common-unblock"),
+                            aurora_i18n::tr!("ui-people-receive-this-group-s-chat-again"),
+                        )
                     } else {
-                        ("Bloquer", "Ne plus recevoir le chat de ce groupe")
+                        (
+                            aurora_i18n::tr!("common-block"),
+                            aurora_i18n::tr!("common-stop-receiving-this-group-s-chat"),
+                        )
                     };
                     if widgets::flat_button(ui, p, label).on_hover_text(tip).clicked() {
                         actions.push(PeopleAction::GroupChatBlocked(g.id, !blocked));
                     }
-                    if widgets::flat_button(ui, p, "Chat")
-                        .on_hover_text("Ouvrir le chat du groupe")
+                    if widgets::flat_button(ui, p, aurora_i18n::tr!("common-chat"))
+                        .on_hover_text(aurora_i18n::tr!("ui-people-open-group-chat"))
                         .clicked()
                     {
                         actions.push(PeopleAction::GroupChat(g.id));
@@ -281,8 +311,8 @@ fn groups_tab(ui: &mut egui::Ui, p: &Palette, world: &World, filter: &str, actio
 fn blocked_tab(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut PeopleUi, filter: &str, actions: &mut Vec<PeopleAction>) {
     use crate::world::mutes::LoadState;
     let status = match world.mutes.state {
-        LoadState::Initial | LoadState::Requested(_) => Some("Chargement de la liste de blocage…"),
-        LoadState::Degraded => Some("Le serveur n'a pas répondu : copie locale de la liste."),
+        LoadState::Initial | LoadState::Requested(_) => Some(aurora_i18n::tr!("ui-people-loading-block-list")),
+        LoadState::Degraded => Some(aurora_i18n::tr!("ui-people-the-server-did-not-respond-using-the-local-list")),
         LoadState::Loaded => None,
     };
     if let Some(s) = status {
@@ -292,12 +322,12 @@ fn blocked_tab(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut PeopleUi,
         let w = (ui.available_width() - 130.0).max(60.0);
         let r = ui.add(
             egui::TextEdit::singleline(&mut st.block_name)
-                .hint_text("Nom exact d'un objet")
+                .hint_text(aurora_i18n::tr!("ui-people-exact-object-name"))
                 .desired_width(w),
         );
         let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         let ok = !st.block_name.trim().is_empty();
-        if (widgets::flat_button(ui, p, "Bloquer par nom").clicked() || enter) && ok {
+        if (widgets::flat_button(ui, p, aurora_i18n::tr!("ui-people-block-by-name")).clicked() || enter) && ok {
             actions.push(PeopleAction::BlockByName(st.block_name.trim().to_owned()));
             st.block_name.clear();
         }
@@ -305,11 +335,15 @@ fn blocked_tab(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut PeopleUi,
     ui.add_space(4.0);
     let entries = world.mutes.entries();
     let w = ui.available_width();
-    let title = format!("Nom [{}]", entries.len());
-    widgets::header_row(ui, p, &[(&title, w - 160.0), ("Type", 70.0), ("", 90.0)]);
+    let title = aurora_i18n::tr!("ui-people-name", value0 = format!("{}", entries.len()));
+    widgets::header_row(ui, p, &[(&title, w - 160.0), (aurora_i18n::tr!("common-type"), 70.0), ("", 90.0)]);
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         if entries.is_empty() {
-            ui.label(RichText::new("Personne n'est bloqué.").size(12.0).color(p.muted));
+            ui.label(
+                RichText::new(aurora_i18n::tr!("ui-people-nobody-is-blocked"))
+                    .size(12.0)
+                    .color(p.muted),
+            );
         }
         for m in entries
             .iter()
@@ -317,7 +351,11 @@ fn blocked_tab(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut PeopleUi,
         {
             ui.horizontal(|ui| {
                 ui.set_min_height(20.0);
-                let name = if m.name.is_empty() { "(sans nom)" } else { m.name.as_str() };
+                let name = if m.name.is_empty() {
+                    aurora_i18n::tr!("common-unnamed")
+                } else {
+                    m.name.as_str()
+                };
                 let partial = m.kind != MuteType::ByName && m.flags != 0;
                 let name_w = (ui.available_width() - 170.0).max(60.0);
                 let r = ui
@@ -330,21 +368,21 @@ fn blocked_tab(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut PeopleUi,
                     })
                     .inner;
                 let r = if partial {
-                    r.on_hover_text("Blocage partiel (clic droit pour le détail)")
+                    r.on_hover_text(aurora_i18n::tr!("ui-people-partial-block-right-click-for-details"))
                 } else {
                     r
                 };
                 // menu_fs_block_list.xml
                 menu::context_menu(&r, p, |ui| {
-                    if menu::item(ui, p, "check-circle", "Cesser d'ignorer") {
+                    if menu::item(ui, p, "check-circle", aurora_i18n::tr!("common-stop-ignoring")) {
                         actions.push(PeopleAction::Unblock(m.id, m.name.clone()));
                     }
                     if m.kind != MuteType::ByName {
                         for (bit, icon, label) in [
-                            (flag::VOICE_CHAT, "microphone-slash", "Bloquer la voix"),
-                            (flag::TEXT_CHAT, "chat-teardrop-slash", "Bloquer le texte"),
-                            (flag::PARTICLES, "sparkle", "Bloquer les particules"),
-                            (flag::OBJECT_SOUNDS, "speaker-x", "Bloquer les sons des objets"),
+                            (flag::VOICE_CHAT, "microphone-slash", aurora_i18n::tr!("ui-people-block-voice")),
+                            (flag::TEXT_CHAT, "chat-teardrop-slash", aurora_i18n::tr!("ui-people-block-text")),
+                            (flag::PARTICLES, "sparkle", aurora_i18n::tr!("common-block-particles")),
+                            (flag::OBJECT_SOUNDS, "speaker-x", aurora_i18n::tr!("ui-people-block-object-sounds")),
                         ] {
                             // a set flag means « not blocked » (LLMute flags)
                             let mut on = m.flags & bit == 0;
@@ -360,13 +398,13 @@ fn blocked_tab(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut PeopleUi,
                         }
                     }
                     menu::separator(ui, p);
-                    if menu::item_if(ui, p, "user-circle", "Profil", m.kind == MuteType::Agent) {
+                    if menu::item_if(ui, p, "user-circle", aurora_i18n::tr!("common-profile"), m.kind == MuteType::Agent) {
                         actions.push(PeopleAction::Profile(m.id));
                     }
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
-                    if widgets::flat_button(ui, p, "Débloquer").clicked() {
+                    if widgets::flat_button(ui, p, aurora_i18n::tr!("common-unblock")).clicked() {
                         actions.push(PeopleAction::Unblock(m.id, m.name.clone()));
                     }
                     ui.add_sized(

@@ -43,21 +43,31 @@ const LIB_TEXTURES: u128 = 0x106;
 pub const USER_SETTINGS: u128 = 0x110;
 
 /// (folder, item name, settings type, asset).
-const ITEMS: &[(u128, &str, SettingsKind, u128)] = &[
-    (LIB_SKIES, "A-12AM", SettingsKind::Sky, 0x201),
-    (LIB_SKIES, "A-6PM", SettingsKind::Sky, 0x202),
-    (LIB_SKIES, "Midday", SettingsKind::Sky, 0x203),
-    (LIB_SKIES, "Coastal Sunset", SettingsKind::Sky, 0x204),
-    (LIB_SKIES, "Nacon's Natural Sunset", SettingsKind::Sky, 0x205),
-    (LIB_SKIES, "Annan Adored Pink Sky", SettingsKind::Sky, 0x206),
-    (LIB_WATER, "Default Water", SettingsKind::Water, 0x301),
-    (LIB_WATER, "Murky Water", SettingsKind::Water, 0x302),
-    (LIB_WATER, "Clear Water", SettingsKind::Water, 0x303),
-    (LIB_DAYS, "Default Day Cycle", SettingsKind::Day, 0x401),
-    (LIB_DAYS, "Dynamic Day", SettingsKind::Day, 0x402),
-    (USER_SETTINGS, "mon ciel violet", SettingsKind::Sky, 0x501),
-    (USER_SETTINGS, "Eau turquoise", SettingsKind::Water, 0x502),
-];
+fn items() -> &'static Vec<(u128, &'static str, SettingsKind, u128)> {
+    static TABLE: aurora_i18n::Localized<Vec<(u128, &'static str, SettingsKind, u128)>> = aurora_i18n::Localized::new();
+    TABLE.get(|| {
+        vec![
+            (LIB_SKIES, "A-12AM", SettingsKind::Sky, 0x201),
+            (LIB_SKIES, "A-6PM", SettingsKind::Sky, 0x202),
+            (LIB_SKIES, aurora_i18n::tr!("demo-env-midday"), SettingsKind::Sky, 0x203),
+            (LIB_SKIES, "Coastal Sunset", SettingsKind::Sky, 0x204),
+            (LIB_SKIES, "Nacon's Natural Sunset", SettingsKind::Sky, 0x205),
+            (LIB_SKIES, "Annan Adored Pink Sky", SettingsKind::Sky, 0x206),
+            (LIB_WATER, "Default Water", SettingsKind::Water, 0x301),
+            (LIB_WATER, "Murky Water", SettingsKind::Water, 0x302),
+            (LIB_WATER, "Clear Water", SettingsKind::Water, 0x303),
+            (LIB_DAYS, "Default Day Cycle", SettingsKind::Day, 0x401),
+            (LIB_DAYS, "Dynamic Day", SettingsKind::Day, 0x402),
+            (USER_SETTINGS, aurora_i18n::tr!("demo-env-my-purple-sky"), SettingsKind::Sky, 0x501),
+            (
+                USER_SETTINGS,
+                aurora_i18n::tr!("demo-env-turquoise-water"),
+                SettingsKind::Water,
+                0x502,
+            ),
+        ]
+    })
+}
 
 fn folder(id: u128, parent: u128, name: &str, t: i32) -> Llsd {
     let parent = if parent == 0 { Uuid::nil() } else { u(parent) };
@@ -82,14 +92,14 @@ pub fn library_login(raw: &mut aurora_llsd::Map) {
             folder(LIB_SKIES, LIB_ENVIRONMENTS, "Skies", -1),
             folder(LIB_WATER, LIB_ENVIRONMENTS, "Water", -1),
             folder(LIB_DAYS, LIB_ENVIRONMENTS, "Day Cycles", -1),
-            folder(LIB_TEXTURES, LIB_ROOT, "Textures", 0),
+            folder(LIB_TEXTURES, LIB_ROOT, aurora_i18n::tr!("common-textures"), 0),
         ]),
     );
 }
 
 /// The user's Settings folder for the inventory skeleton.
 pub fn settings_folder(root: Uuid) -> Llsd {
-    llsd_map! {"folder_id" => u(USER_SETTINGS), "parent_id" => root, "name" => "Paramètres", "type_default" => 56, "version" => 1}
+    llsd_map! {"folder_id" => u(USER_SETTINGS), "parent_id" => root, "name" => aurora_i18n::tr!("demo-env-settings"), "type_default" => 56, "version" => 1}
 }
 
 /// FetchInventoryDescendents2 answer for the demo's environment folders.
@@ -107,11 +117,14 @@ pub fn folder_contents(folder_id: Uuid, owner: Uuid) -> Option<FolderContents> {
         ..Default::default()
     };
     let folders = match n {
-        LIB_ROOT => vec![sub(LIB_ENVIRONMENTS, "Environments"), sub(LIB_TEXTURES, "Textures")],
+        LIB_ROOT => vec![
+            sub(LIB_ENVIRONMENTS, "Environments"),
+            sub(LIB_TEXTURES, aurora_i18n::tr!("common-textures")),
+        ],
         LIB_ENVIRONMENTS => vec![sub(LIB_SKIES, "Skies"), sub(LIB_WATER, "Water"), sub(LIB_DAYS, "Day Cycles")],
         _ => Vec::new(),
     };
-    let items = ITEMS
+    let items = items()
         .iter()
         .filter(|(f, ..)| *f == n)
         .map(|(_, name, kind, a)| InvItem {
@@ -365,8 +378,8 @@ mod tests {
     #[test]
     fn demo_assets_parse_with_the_right_types() {
         let assets = settings_assets();
-        assert_eq!(assets.len(), ITEMS.len());
-        for (_, _, kind, a) in ITEMS {
+        assert_eq!(assets.len(), items().len());
+        for (_, _, kind, a) in items() {
             let s = assets.iter().find(|(id, _)| *id == u(*a)).map(|(_, s)| s);
             let ok = match (kind, s) {
                 (SettingsKind::Sky, Some(Settings::Sky(_))) | (SettingsKind::Water, Some(Settings::Water(_))) => true,

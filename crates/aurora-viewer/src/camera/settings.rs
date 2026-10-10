@@ -32,11 +32,11 @@ impl CameraPreset {
 
     pub fn label(self) -> &'static str {
         match self {
-            CameraPreset::Rear => "Vue arrière",
-            CameraPreset::Front => "Vue de face",
-            CameraPreset::Side => "Vue de côté",
-            CameraPreset::Shoulder => "Vue épaule",
-            CameraPreset::Custom => "Personnalisée",
+            CameraPreset::Rear => aurora_i18n::tr!("camera-settings-rear-view"),
+            CameraPreset::Front => aurora_i18n::tr!("camera-settings-front-view"),
+            CameraPreset::Side => aurora_i18n::tr!("camera-settings-side-view"),
+            CameraPreset::Shoulder => aurora_i18n::tr!("camera-settings-shoulder-view"),
+            CameraPreset::Custom => aurora_i18n::tr!("camera-settings-custom"),
         }
     }
 

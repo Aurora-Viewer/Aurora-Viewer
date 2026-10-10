@@ -73,7 +73,12 @@ impl Facts {
             .attach_points
             .iter()
             .map(|(id, ap)| {
-                let name = world.avatar_lib.attach_names.get(id).map(String::as_str).unwrap_or("Attachement");
+                let name = world
+                    .avatar_lib
+                    .attach_names
+                    .get(id)
+                    .map(String::as_str)
+                    .unwrap_or(aurora_i18n::tr!("ui-inventory-attachment"));
                 (*id, ap.hud, super::appearance::items::point_name(name).to_owned())
             })
             .collect();
@@ -90,9 +95,12 @@ impl Facts {
 
     fn worn_label(&self, inv: &Inventory, id: Uuid) -> Option<&str> {
         let original = rules::original(inv, id)?;
-        self.worn
-            .contains(&original)
-            .then(|| self.worn_labels.get(&original).map(String::as_str).unwrap_or("Porté"))
+        self.worn.contains(&original).then(|| {
+            self.worn_labels
+                .get(&original)
+                .map(String::as_str)
+                .unwrap_or(aurora_i18n::tr!("common-worn"))
+        })
     }
 }
 
@@ -399,7 +407,7 @@ fn item_row(
         let date = if it.created_at > 0 {
             aurora_net::inventory::created_date(it.created_at)
         } else {
-            "Date inconnue".into()
+            aurora_i18n::tr!("ui-inventory-unknown-date").into()
         };
         let path = inventory_path(inv, it.parent);
         let r = r.on_hover_text(format!("{path}\n{date}\n{}", it.desc));
@@ -496,8 +504,8 @@ fn folder_row(
         }
         icon(ui, icons, folder_icon(folder.info.type_default, *open), p);
         let label = match fetch_state {
-            FetchState::Fetching => format!("{name}  (chargement…)"),
-            FetchState::Failed => format!("{name}  (échec)"),
+            FetchState::Fetching => aurora_i18n::tr!("status-name-loading", name = name.to_string()),
+            FetchState::Failed => aurora_i18n::tr!("ui-inventory-failed-2", name = name.to_string()),
             _ => name.clone(),
         };
         state.visible.push(id);
@@ -530,9 +538,9 @@ fn folder_row(
 
 fn folder_name(inv: &Inventory, id: Uuid) -> String {
     if id == inv.root {
-        "Mon inventaire".to_owned()
+        aurora_i18n::tr!("common-my-inventory").to_owned()
     } else if id == inv.lib_root {
-        "Bibliothèque".to_owned()
+        aurora_i18n::tr!("common-library").to_owned()
     } else {
         rules::name(inv, id)
     }
@@ -580,9 +588,9 @@ fn folder_contents(
     }
     if children.is_empty() {
         let text = if inv.folders.get(&id).is_some_and(|f| f.state == FetchState::Fetched) {
-            "(vide)"
+            aurora_i18n::tr!("status-empty")
         } else {
-            "Chargement du dossier…"
+            aurora_i18n::tr!("ui-inventory-loading-folder")
         };
         ui.label(RichText::new(text).size(12.0).color(p.muted_dim));
     }
@@ -600,7 +608,7 @@ fn folder_window_contents(
     actions: &mut Vec<InvAction>,
 ) {
     controls::toolbar(ui, p, st, prefs);
-    controls::search(ui, st, prefs, "Filtrer le dossier d'inventaire");
+    controls::search(ui, st, prefs, aurora_i18n::tr!("ui-inventory-filter-inventory-folder"));
     ui.add_space(3.0);
     let q = st.search.trim().to_lowercase();
     let filtered = !q.is_empty() || st.links_filter.is_some() || st.filters.active();
@@ -691,9 +699,9 @@ fn status(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, st: &InventoryUi, fil
     let (message, color) = if !st.message.is_empty() {
         (st.message.as_str(), p.warn)
     } else if st.pending.is_some() {
-        ("Modification en cours…", p.muted)
+        (aurora_i18n::tr!("ui-inventory-changing"), p.muted)
     } else if st.fetch_all {
-        ("Recherche : chargement des dossiers…", p.muted)
+        (aurora_i18n::tr!("ui-inventory-search-loading-folders"), p.muted)
     } else {
         ("", p.muted)
     };
@@ -703,9 +711,13 @@ fn status(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, st: &InventoryUi, fil
     )
     .on_hover_text(message);
     let count = if filtered {
-        format!("{} résultats · {} objets chargés", st.view.results.len(), inv.item_count())
+        aurora_i18n::tr!(
+            "ui-inventory-results-objects-loaded",
+            value0 = format!("{}", st.view.results.len()),
+            value1 = format!("{}", inv.item_count())
+        )
     } else {
-        format!("{} objets chargés", inv.item_count())
+        aurora_i18n::tr!("ui-inventory-objects-loaded", value0 = format!("{}", inv.item_count()))
     };
     ui.add_sized(
         [ui.available_width(), 20.0],
@@ -777,7 +789,7 @@ fn search_scroll(
     if total == 0 {
         scroll.show(ui, |ui| {
             ui.label(
-                RichText::new("Aucun résultat parmi les dossiers déjà chargés.")
+                RichText::new(aurora_i18n::tr!("ui-inventory-no-results-in-the-loaded-folders"))
                     .size(12.0)
                     .color(p.muted),
             );
@@ -815,8 +827,8 @@ fn search_rows(
         if row.folder {
             label = folder_name(inv, row.id);
             match inv.folders.get(&row.id).map(|folder| folder.state) {
-                Some(FetchState::Fetching) => label.push_str("  (chargement…)"),
-                Some(FetchState::Failed) => label.push_str("  (échec)"),
+                Some(FetchState::Fetching) => label.push_str(aurora_i18n::tr!("status-loading-3")),
+                Some(FetchState::Failed) => label.push_str(aurora_i18n::tr!("ui-inventory-failed")),
                 _ => {}
             }
         } else if let Some(worn) = facts.worn_label(inv, row.id) {
@@ -922,7 +934,7 @@ fn finish_rename(inv: &Inventory, st: &mut InventoryUi, prefs: &InventoryPrefere
             }
             Err(reason) => st.message = reason,
         },
-        Ok(_) => st.message = "Attendez la modification en cours.".into(),
+        Ok(_) => st.message = aurora_i18n::tr!("ui-inventory-wait-for-the-current-change-to-finish").into(),
         Err(reason) => st.message = reason,
     }
     edit.focus = true;
@@ -948,14 +960,14 @@ fn inventory_contents(
     actions: &mut Vec<InvAction>,
 ) {
     controls::toolbar(ui, p, st, prefs);
-    controls::search(ui, st, prefs, "Filtrer l'inventaire");
+    controls::search(ui, st, prefs, aurora_i18n::tr!("ui-inventory-filter-inventory"));
     ui.add_space(3.0);
     let mut tab_ids = vec![0];
-    let mut labels = vec![("Inventaire", true)];
+    let mut labels = vec![(aurora_i18n::tr!("common-inventory"), true)];
     for (id, label, show) in [
-        (2, "Récent", prefs.show_recent),
-        (3, "Porté", prefs.show_worn),
-        (4, "Favoris", prefs.show_favorites),
+        (2, aurora_i18n::tr!("common-recent"), prefs.show_recent),
+        (3, aurora_i18n::tr!("common-worn"), prefs.show_worn),
+        (4, aurora_i18n::tr!("common-favorites"), prefs.show_favorites),
     ] {
         if show {
             tab_ids.push(id);
@@ -997,7 +1009,7 @@ fn inventory_contents(
         list_scroll(ui, list_h).show(ui, |ui| {
             let root = inv.root;
             if root.is_nil() {
-                ui.label(RichText::new("Inventaire non disponible.").color(p.muted));
+                ui.label(RichText::new(aurora_i18n::tr!("ui-inventory-inventory-unavailable")).color(p.muted));
             } else {
                 let expand = st.expand_all.take();
                 folder_tree(ui, p, icons, inv, root, 0, expand, st, prefs, facts, actions);
@@ -1031,7 +1043,7 @@ pub fn show(
                         .social
                         .avatar_names
                         .complete(&resident)
-                        .unwrap_or_else(|| "Chargement…".into()),
+                        .unwrap_or_else(|| aurora_i18n::tr!("common-loading-2").into()),
                 );
             }
         }
@@ -1073,11 +1085,11 @@ pub fn show(
     let screen = ctx.content_rect();
     super::widgets::Floater::new(
         "inventory",
-        "Inventaire",
+        aurora_i18n::tr!("common-inventory"),
         egui::pos2(screen.right() - 460.0, 56.0),
         Vec2::new(440.0, 550.0),
     )
-    .help("Clic droit : actions de l’élément. Ctrl / Maj : sélection multiple.")
+    .help(aurora_i18n::tr!("ui-inventory-right-click-item-actions-ctrl-shift-multi-select"))
     .show(ctx, p, open, |ui| {
         inventory_contents(ui, p, icons, inv, st, prefs, &facts, &mut actions)
     });
@@ -1118,7 +1130,7 @@ pub fn show(
         w.state.save_pending = st.save_pending;
         w.state.playing = st.playing;
         let before = (w.state.clipboard.clone(), w.state.cut);
-        let title = format!("Inventaire : {}", folder_name(&world.inventory, w.root));
+        let title = aurora_i18n::tr!("ui-inventory-inventory", value0 = folder_name(&world.inventory, w.root).to_string());
         let window_id = format!("inventory_{}", w.id);
         super::widgets::Floater::new(
             &window_id,
@@ -1222,14 +1234,54 @@ mod tests {
         world.objects.upsert(1, attach(8110, 32));
         world.objects.upsert(1, attach(8109, 250));
         let facts = Facts::from_world(&world, false);
-        assert_eq!(facts.worn_label(&world.inventory, object), Some("Porté sur Main droite"));
-        assert_eq!(facts.worn_label(&world.inventory, link), Some("Porté sur Main droite"));
-        assert_eq!(facts.worn_label(&world.inventory, hud), Some("Porté sur HUD : En haut à droite"));
+        assert_eq!(
+            facts.worn_label(&world.inventory, object),
+            Some(
+                aurora_i18n::tr!(
+                    "ui-appearance-items-worn-on",
+                    value0 = "",
+                    name = aurora_i18n::tr!("ui-appearance-items-right-hand")
+                )
+                .as_str()
+            )
+        );
+        assert_eq!(
+            facts.worn_label(&world.inventory, link),
+            Some(
+                aurora_i18n::tr!(
+                    "ui-appearance-items-worn-on",
+                    value0 = "",
+                    name = aurora_i18n::tr!("ui-appearance-items-right-hand")
+                )
+                .as_str()
+            )
+        );
+        assert_eq!(
+            facts.worn_label(&world.inventory, hud),
+            Some(
+                aurora_i18n::tr!(
+                    "ui-appearance-items-worn-on",
+                    value0 = "HUD : ",
+                    name = aurora_i18n::tr!("ui-appearance-items-top-right")
+                )
+                .as_str()
+            )
+        );
         assert_eq!(
             facts.worn_label(&world.inventory, unknown),
-            Some("Porté sur point d’attachement 250")
+            Some(
+                aurora_i18n::tr!(
+                    "ui-appearance-items-worn-on",
+                    value0 = "",
+                    name = aurora_i18n::tr!("attachment-point", point = 250)
+                )
+                .as_str()
+            )
         );
-        assert_eq!(facts.worn_label(&world.inventory, Uuid::from_u128(714)), Some("Porté"));
+        assert_eq!(
+            facts.worn_label(&world.inventory, Uuid::from_u128(714)),
+            Some(aurora_i18n::tr!("common-worn"))
+        );
         assert_eq!(
             facts.worn_label(&world.inventory, Uuid::from_u128(717)),
             None,
@@ -1238,7 +1290,17 @@ mod tests {
         let idx = world.objects.index_of_uuid(&object).expect("attached object");
         world.objects.get_mut(idx).expect("attached object").state = 5_u8.rotate_left(4);
         let facts = Facts::from_world(&world, false);
-        assert_eq!(facts.worn_label(&world.inventory, link), Some("Porté sur Main gauche"));
+        assert_eq!(
+            facts.worn_label(&world.inventory, link),
+            Some(
+                aurora_i18n::tr!(
+                    "ui-appearance-items-worn-on",
+                    value0 = "",
+                    name = aurora_i18n::tr!("ui-appearance-items-left-hand-2")
+                )
+                .as_str()
+            )
+        );
         world.objects.remove_idx(idx);
         let facts = Facts::from_world(&world, false);
         assert_eq!(facts.worn_label(&world.inventory, object), None);
@@ -1255,7 +1317,7 @@ mod tests {
             crate::world::inventory::Folder {
                 info: aurora_net::inventory::InvFolder {
                     id: inv.root,
-                    name: "Mon inventaire".into(),
+                    name: aurora_i18n::tr!("common-my-inventory").into(),
                     type_default: 8,
                     ..Default::default()
                 },
@@ -1315,7 +1377,7 @@ mod tests {
                     |ui| {
                         super::super::widgets::Floater::new(
                             "narrow_inventory",
-                            "Inventaire",
+                            aurora_i18n::tr!("common-inventory"),
                             egui::pos2(100.0, 56.0),
                             Vec2::new(600.0, 550.0),
                         )
@@ -1384,8 +1446,11 @@ mod tests {
         let ctx = egui::Context::default();
         let mut inv = view_inventory(true);
         let agent = Uuid::from_u128(2);
-        inv.items.get_mut(&Uuid::from_u128(10000)).unwrap().name =
-            "Élément avec un nom très long pour vérifier le défilement horizontal. ".repeat(4);
+        inv.items.get_mut(&Uuid::from_u128(10000)).unwrap().name = format!(
+            "{}with a very long name to check horizontal scrolling. ",
+            aurora_i18n::tr!("world-inventory-demo-item", n = "")
+        )
+        .repeat(4);
         inv.generation += 1;
         let facts = Facts {
             agent,
@@ -1397,7 +1462,7 @@ mod tests {
         };
         let mut prefs = InventoryPreferences::default();
         let mut st = InventoryUi {
-            search: "Élément".into(),
+            search: aurora_i18n::tr!("world-inventory-demo-item", n = "").trim().into(),
             ..Default::default()
         };
         st.view
@@ -1544,11 +1609,16 @@ mod tests {
                 },
                 |ui| {
                     let ctx = ui.ctx();
-                    super::super::widgets::Floater::new("inventory", "Inventaire", egui::pos2(800.0, 56.0), Vec2::new(440.0, 550.0))
-                        .silent()
-                        .show(ctx, &palette, &mut true, |ui| {
-                            inventory_contents(ui, &palette, &Icons::default(), &mut inv, &mut st, &mut prefs, &facts, &mut vec![]);
-                        });
+                    super::super::widgets::Floater::new(
+                        "inventory",
+                        aurora_i18n::tr!("common-inventory"),
+                        egui::pos2(800.0, 56.0),
+                        Vec2::new(440.0, 550.0),
+                    )
+                    .silent()
+                    .show(ctx, &palette, &mut true, |ui| {
+                        inventory_contents(ui, &palette, &Icons::default(), &mut inv, &mut st, &mut prefs, &facts, &mut vec![]);
+                    });
                 },
             ));
             let size = ctx.memory(|memory| memory.area_rect(egui::Id::new("inventory")).unwrap().size());
@@ -1592,12 +1662,12 @@ mod tests {
                 .expect(label)
         };
         let field = position("Rechercher ici");
-        let selector = position("Nom");
+        let selector = position(aurora_i18n::tr!("common-name"));
         assert!(selector.x > field.x);
         assert!((selector.y - field.y).abs() < 4.0);
-        for label in ["Réduire", "Développer"] {
-            assert!((position(label).y - position("Filtres").y).abs() < 1.0);
-            assert!(position(label).x > position("Préférences").x);
+        for label in [aurora_i18n::tr!("common-collapse"), aurora_i18n::tr!("common-expand")] {
+            assert!((position(label).y - position(aurora_i18n::tr!("ui-inventory-controls-filters")).y).abs() < 1.0);
+            assert!(position(label).x > position(aurora_i18n::tr!("common-preferences")).x);
         }
     }
 
@@ -1616,7 +1686,7 @@ mod tests {
         };
         let mut prefs = InventoryPreferences::default();
         let mut st = InventoryUi {
-            search: "Élément".into(),
+            search: aurora_i18n::tr!("world-inventory-demo-item", n = "").trim().into(),
             ..Default::default()
         };
         st.view
@@ -1751,7 +1821,13 @@ mod tests {
         for id in [inv.root, inv.lib_root, root, Uuid::from_u128(8002)] {
             assert!(!st.visible.contains(&id), "outside or enclosing folder: {id}");
         }
-        for label in ["Mon inventaire", "Bibliothèque", "Essais du clic droit", "Inventaire", "Favoris"] {
+        for label in [
+            aurora_i18n::tr!("common-my-inventory"),
+            aurora_i18n::tr!("common-library"),
+            aurora_i18n::tr!("world-inventory-demo-right-click-tests"),
+            aurora_i18n::tr!("common-inventory"),
+            aurora_i18n::tr!("common-favorites"),
+        ] {
             assert!(
                 !output
                     .shapes
@@ -1779,10 +1855,10 @@ mod tests {
         };
         folder_window_frame(&ctx, &mut inv, root, &mut st);
         assert_eq!(st.visible, vec![Uuid::from_u128(8001), Uuid::from_u128(8103)]);
-        st.search = "sous-dossier".into();
+        st.search = inv.folders[&Uuid::from_u128(8001)].info.name.clone();
         folder_window_frame(&ctx, &mut inv, root, &mut st);
         assert_eq!(st.visible, vec![Uuid::from_u128(8001)]);
-        st.search = "annonces".into();
+        st.search = inv.folders[&Uuid::from_u128(8002)].info.name.clone();
         folder_window_frame(&ctx, &mut inv, root, &mut st);
         assert!(st.visible.is_empty());
     }
@@ -1960,7 +2036,7 @@ mod tests {
             lib_root: lib,
             ..Default::default()
         };
-        for (id, name, library) in [(root, "Mon inventaire", false), (lib, "Library", true)] {
+        for (id, name, library) in [(root, aurora_i18n::tr!("common-my-inventory"), false), (lib, "Library", true)] {
             inv.folders.insert(
                 id,
                 crate::world::inventory::Folder {
@@ -2018,7 +2094,7 @@ mod tests {
             )));
         }
         let output = output.expect("frame");
-        for label in ["Mon inventaire", "Bibliothèque"] {
+        for label in [aurora_i18n::tr!("common-my-inventory"), aurora_i18n::tr!("common-library")] {
             let text = output
                 .shapes
                 .iter()
@@ -2063,7 +2139,7 @@ mod tests {
             output
                 .shapes
                 .iter()
-                .any(|s| matches!(&s.shape, egui::epaint::Shape::Text(t) if t.galley.text() == "Propriétés"))
+                .any(|s| matches!(&s.shape, egui::epaint::Shape::Text(t) if t.galley.text() == aurora_i18n::tr!("common-properties")))
         );
         assert!(
             output

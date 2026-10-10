@@ -84,7 +84,7 @@ pub fn default_folder(inv: &Inventory, id: Uuid) -> Option<Uuid> {
     kind.and_then(|kind| system(inv, kind)).or(Some(inv.root).filter(|id| !id.is_nil()))
 }
 pub fn patch(inv: &Inventory, id: Uuid, body: Llsd) -> Result<Mutation, String> {
-    let old = parent(inv, id).ok_or("Élément introuvable.")?;
+    let old = parent(inv, id).ok_or(aurora_i18n::tr!("common-item-not-found"))?;
     let mut refresh = vec![old];
     if body.has("parent_id") {
         refresh.push(body["parent_id"].as_uuid());
@@ -109,7 +109,7 @@ pub fn name(inv: &Inventory, id: Uuid) -> String {
 pub fn clean_name(name: &str) -> Result<String, String> {
     let name = name.trim();
     if name.is_empty() || name.chars().any(|c| c.is_control() || c == '|') {
-        return Err("Saisissez un nom valide.".into());
+        return Err(aurora_i18n::tr!("world-inventory-actions-enter-a-valid-name").into());
     }
     Ok(name.chars().take(63).collect())
 }
@@ -128,9 +128,9 @@ pub fn create_folder(parent: Uuid, name: &str) -> Result<Mutation, String> {
 }
 fn push_move(inv: &Inventory, id: Uuid, to: Uuid, change: &mut Mutation) -> Result<(), String> {
     if id == to || under(inv, to, id) {
-        return Err("Un dossier ne peut pas être déplacé dans lui-même.".into());
+        return Err(aurora_i18n::tr!("world-inventory-actions-a-folder-cannot-be-moved-into-itself").into());
     }
-    let from = parent(inv, id).ok_or("Élément introuvable.")?;
+    let from = parent(inv, id).ok_or(aurora_i18n::tr!("common-item-not-found"))?;
     if from == to {
         return Ok(());
     }
@@ -157,12 +157,12 @@ pub fn move_selection(
     worn: &HashSet<Uuid>,
 ) -> Result<Mutation, String> {
     if !destination(inv, to, protected) && Some(to) != system(inv, 14) {
-        return Err("Ce dossier ne peut pas recevoir la sélection.".into());
+        return Err(aurora_i18n::tr!("world-inventory-actions-this-folder-cannot-receive-the-selection").into());
     }
     let mut change = Mutation::default();
     for id in roots(inv, ids) {
         if !movable(inv, id, protected) || (Some(to) == system(inv, 14) && worn.iter().any(|w| under(inv, *w, id))) {
-            return Err("La sélection contient un élément protégé, système ou porté.".into());
+            return Err(aurora_i18n::tr!("world-inventory-actions-the-selection-contains-a-protected-system-or-worn-item").into());
         }
         push_move(inv, id, to, &mut change)?;
     }
@@ -170,11 +170,11 @@ pub fn move_selection(
 }
 fn copy_one(inv: &Inventory, id: Uuid, to: Uuid, change: &mut Mutation, visited: &mut HashSet<Uuid>) -> Result<(), String> {
     if !visited.insert(id) {
-        return Err("Cycle dans les dossiers de la sélection.".into());
+        return Err(aurora_i18n::tr!("world-inventory-actions-cycle-in-the-selected-folders").into());
     }
     if let Some(f) = inv.folders.get(&id) {
         if f.state != FetchState::Fetched {
-            return Err("Chargez tous les sous-dossiers avant de copier ce dossier.".into());
+            return Err(aurora_i18n::tr!("world-inventory-actions-load-all-subfolders-before-copying-this-folder").into());
         }
         let new = Uuid::new_v4();
         change.operations.push(Operation::Folder {
@@ -189,7 +189,7 @@ fn copy_one(inv: &Inventory, id: Uuid, to: Uuid, change: &mut Mutation, visited:
         }
     } else if let Some(it) = inv.items.get(&id) {
         if matches!(it.asset_type, 24 | 25) {
-            let target = original(inv, id).ok_or("Le lien est cassé.")?;
+            let target = original(inv, id).ok_or(aurora_i18n::tr!("common-the-link-is-broken"))?;
             change.operations.push(Operation::Links {
                 parent: to,
                 links: vec![OutfitLink {
@@ -202,7 +202,7 @@ fn copy_one(inv: &Inventory, id: Uuid, to: Uuid, change: &mut Mutation, visited:
             });
         } else {
             if it.owner_mask & COPY == 0 && !library(inv, id) {
-                return Err("La sélection contient un élément non copiable.".into());
+                return Err(aurora_i18n::tr!("world-inventory-actions-the-selection-contains-a-no-copy-item").into());
             }
             change.copies.push(CopyItem {
                 item: id,
@@ -213,7 +213,7 @@ fn copy_one(inv: &Inventory, id: Uuid, to: Uuid, change: &mut Mutation, visited:
         }
         change.refresh.push(to);
     } else {
-        return Err("Élément introuvable.".into());
+        return Err(aurora_i18n::tr!("common-item-not-found").into());
     }
     Ok(())
 }
@@ -227,7 +227,7 @@ pub fn paste(
     worn: &HashSet<Uuid>,
 ) -> Result<Mutation, String> {
     if ids.is_empty() || !destination(inv, to, protected) {
-        return Err("Le presse-papiers est vide ou le dossier est protégé.".into());
+        return Err(aurora_i18n::tr!("world-inventory-actions-the-clipboard-is-empty-or-the-folder-is-protected").into());
     }
     if cut {
         return move_selection(inv, ids, to, protected, worn);
@@ -235,17 +235,17 @@ pub fn paste(
     let mut change = Mutation::default();
     for id in roots(inv, ids) {
         if id == to || under(inv, to, id) {
-            return Err("Un dossier ne peut pas être copié dans lui-même.".into());
+            return Err(aurora_i18n::tr!("world-inventory-actions-a-folder-cannot-be-copied-into-itself").into());
         }
         if links {
-            let id = original(inv, id).ok_or("Le lien est cassé.")?;
+            let id = original(inv, id).ok_or(aurora_i18n::tr!("common-the-link-is-broken"))?;
             if library(inv, id) || in_type(inv, id, 14) {
-                return Err("Copiez d’abord cet élément dans votre inventaire.".into());
+                return Err(aurora_i18n::tr!("world-inventory-actions-copy-this-item-to-your-inventory-first").into());
             }
             let folder = inv.folders.contains_key(&id);
             let it = inv.items.get(&id);
             if it.is_some_and(|it| matches!(it.asset_type, 2 | 49)) {
-                return Err("Ce type d’élément ne peut pas être lié.".into());
+                return Err(aurora_i18n::tr!("world-inventory-actions-this-item-type-cannot-be-linked").into());
             }
             change.operations.push(Operation::Links {
                 parent: to,
@@ -266,31 +266,34 @@ pub fn paste(
 }
 pub fn group(inv: &Inventory, ids: &[Uuid], protected: &HashSet<Uuid>, worn: &HashSet<Uuid>) -> Result<Mutation, String> {
     let ids = roots(inv, ids);
-    let to = ids.first().and_then(|id| parent(inv, *id)).ok_or("Sélection vide.")?;
+    let to = ids
+        .first()
+        .and_then(|id| parent(inv, *id))
+        .ok_or(aurora_i18n::tr!("world-inventory-actions-empty-selection"))?;
     if !destination(inv, to, protected) || ids.iter().any(|id| parent(inv, *id) != Some(to)) {
-        return Err("Sélectionnez des éléments du même dossier.".into());
+        return Err(aurora_i18n::tr!("world-inventory-actions-select-items-from-the-same-folder").into());
     }
-    let mut change = create_folder(to, "Nouveau dossier")?;
+    let mut change = create_folder(to, aurora_i18n::tr!("common-new-folder"))?;
     let new = match &change.operations[0] {
         Operation::Folder { id, .. } => *id,
-        _ => return Err("Dossier introuvable.".into()),
+        _ => return Err(aurora_i18n::tr!("common-folder-not-found").into()),
     };
     for id in ids {
         if !movable(inv, id, protected) || worn.iter().any(|w| under(inv, *w, id)) {
-            return Err("La sélection contient un élément protégé ou porté.".into());
+            return Err(aurora_i18n::tr!("world-inventory-actions-the-selection-contains-a-protected-or-worn-item").into());
         }
         push_move(inv, id, new, &mut change)?;
     }
     Ok(change)
 }
 pub fn ungroup(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>, worn: &HashSet<Uuid>) -> Result<Mutation, String> {
-    let f = inv.folders.get(&id).ok_or("Dossier introuvable.")?;
+    let f = inv.folders.get(&id).ok_or(aurora_i18n::tr!("common-folder-not-found"))?;
     if f.state != FetchState::Fetched || !movable(inv, id, protected) {
-        return Err("Chargez un dossier non protégé avant de le dégrouper.".into());
+        return Err(aurora_i18n::tr!("world-inventory-actions-load-an-unprotected-folder-before-ungrouping-it").into());
     }
     let ids: Vec<_> = f.children.iter().chain(&f.items).copied().collect();
     let mut change = move_selection(inv, &ids, f.info.parent, protected, worn)?;
-    let trash = system(inv, 14).ok_or("Corbeille introuvable.")?;
+    let trash = system(inv, 14).ok_or(aurora_i18n::tr!("common-trash-folder-not-found"))?;
     push_move(inv, id, trash, &mut change)?;
     Ok(change)
 }
@@ -327,7 +330,7 @@ pub fn demo_mutate(inv: &mut Inventory, agent: Uuid, change: Mutation) -> Result
             }
             Operation::Patch { id, folder, body } => {
                 if folder {
-                    let f = inv.folders.get_mut(&id).ok_or("Dossier introuvable.")?;
+                    let f = inv.folders.get_mut(&id).ok_or(aurora_i18n::tr!("common-folder-not-found"))?;
                     if body.has("name") {
                         f.info.name = body["name"].to_string_value();
                     }
@@ -341,7 +344,7 @@ pub fn demo_mutate(inv: &mut Inventory, agent: Uuid, change: Mutation) -> Result
                         f.info.thumbnail = body["thumbnail"]["asset_id"].as_uuid();
                     }
                 } else {
-                    let it = inv.items.get_mut(&id).ok_or("Élément introuvable.")?;
+                    let it = inv.items.get_mut(&id).ok_or(aurora_i18n::tr!("common-item-not-found"))?;
                     if body.has("name") {
                         it.name = body["name"].to_string_value();
                     }
@@ -450,30 +453,28 @@ pub fn demo_mutate(inv: &mut Inventory, agent: Uuid, change: Mutation) -> Result
 pub fn marketplace(inv: &Inventory, ids: &[Uuid], copy: bool, protected: &HashSet<Uuid>, worn: &HashSet<Uuid>) -> Result<Mutation, String> {
     fn validate(inv: &Inventory, id: Uuid, copy: bool, seen: &mut HashSet<Uuid>, depth: usize) -> Result<(), String> {
         if !seen.insert(id) || depth > 8 || seen.len() > 500 {
-            return Err("La sélection dépasse les limites de la Place du marché.".into());
+            return Err(aurora_i18n::tr!("world-inventory-actions-the-selection-exceeds-marketplace-limits").into());
         }
         if let Some(f) = inv.folders.get(&id) {
             if f.state != FetchState::Fetched || !matches!(f.info.type_default, -1 | 47) {
-                return Err("Chargez les sous-dossiers et choisissez un dossier personnel.".into());
+                return Err(aurora_i18n::tr!("world-inventory-actions-load-the-subfolders-and-choose-a-personal-folder").into());
             }
             for child in f.children.iter().chain(&f.items) {
                 validate(inv, *child, copy, seen, depth + 1)?;
             }
         } else {
-            let it = inv.items.get(&id).ok_or("Élément introuvable.")?;
+            let it = inv.items.get(&id).ok_or(aurora_i18n::tr!("common-item-not-found"))?;
             if it.owner_mask & TRANSFER == 0 || matches!(it.asset_type, 2 | 24 | 25) || (copy && it.owner_mask & COPY == 0) {
-                return Err(
-                    "Chaque élément doit être transférable et, pour une copie, copiable. Les liens et cartes de visite sont exclus.".into(),
-                );
+                return Err(aurora_i18n::tr!("world-inventory-actions-every-item-must-be-transferable-and-for-a-copy").into());
             }
         }
         Ok(())
     }
     if ids.is_empty() {
-        return Err("Sélection vide.".into());
+        return Err(aurora_i18n::tr!("world-inventory-actions-empty-selection").into());
     }
     if inv.root.is_nil() {
-        return Err("Inventaire indisponible.".into());
+        return Err(aurora_i18n::tr!("world-inventory-actions-inventory-unavailable").into());
     }
     let mut change = Mutation::default();
     let root = system(inv, 53).unwrap_or_else(|| {
@@ -481,7 +482,7 @@ pub fn marketplace(inv: &Inventory, ids: &[Uuid], copy: bool, protected: &HashSe
         change.operations.push(Operation::Folder {
             id,
             parent: inv.root,
-            name: "Annonces Place du marché".into(),
+            name: aurora_i18n::tr!("common-marketplace-listings").into(),
             type_default: 53,
         });
         change.refresh.extend([inv.root, id]);
@@ -489,7 +490,7 @@ pub fn marketplace(inv: &Inventory, ids: &[Uuid], copy: bool, protected: &HashSe
     });
     for id in roots(inv, ids) {
         if !mutable(inv, id, protected) || in_type(inv, id, 14) || in_type(inv, id, 53) || worn.iter().any(|w| under(inv, *w, id)) {
-            return Err("Un élément protégé, porté, dans la corbeille ou déjà en annonce ne peut pas être envoyé.".into());
+            return Err(aurora_i18n::tr!("world-inventory-actions-a-protected-worn-trashed-or-already-listed-item-cannot").into());
         }
         let mut seen = HashSet::new();
         validate(inv, id, copy, &mut seen, 0)?;
@@ -608,29 +609,29 @@ pub fn offer(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>, worn: &HashSe
     let mut bucket = Vec::new();
     while let Some(id) = todo.pop() {
         if !seen.insert(id) || seen.len() > 42 {
-            return Err("Le partage est limité à 42 éléments par dossier.".into());
+            return Err(aurora_i18n::tr!("world-inventory-actions-sharing-is-limited-to-42-items-per-folder").into());
         }
         if !mutable(inv, id, protected) || in_type(inv, id, 14) || worn.contains(&id) {
-            return Err("Un élément protégé, dans la corbeille ou porté ne peut pas être partagé.".into());
+            return Err(aurora_i18n::tr!("world-inventory-actions-a-protected-trashed-or-worn-item-cannot-be-shared").into());
         }
         if let Some(f) = inv.folders.get(&id) {
             if f.state != FetchState::Fetched || f.info.type_default != -1 {
-                return Err("Choisissez un dossier personnel entièrement chargé.".into());
+                return Err(aurora_i18n::tr!("world-inventory-actions-choose-a-fully-loaded-personal-folder").into());
             }
             bucket.push(8);
             bucket.extend_from_slice(id.as_bytes());
             todo.extend(f.items.iter().chain(&f.children).copied());
         } else {
-            let it = inv.items.get(&id).ok_or("Élément introuvable.")?;
+            let it = inv.items.get(&id).ok_or(aurora_i18n::tr!("common-item-not-found"))?;
             if it.owner_mask & TRANSFER == 0 || matches!(it.asset_type, 24 | 25) {
-                return Err("La sélection contient un élément non transférable ou un lien.".into());
+                return Err(aurora_i18n::tr!("world-inventory-actions-the-selection-contains-a-non-transferable-item-or-a").into());
             }
             bucket.push(it.asset_type as u8);
             bucket.extend_from_slice(id.as_bytes());
         }
     }
     if bucket.len() == 17 && inv.folders.contains_key(&id) {
-        return Err("Le dossier est vide.".into());
+        return Err(aurora_i18n::tr!("world-inventory-actions-the-folder-is-empty").into());
     }
     Ok(bucket)
 }

@@ -207,7 +207,7 @@ pub fn place_link(url: &str) -> Option<PlaceLink> {
         label = format!("{label} ({})", nums.join(","));
     }
     if teleport {
-        label = format!("Me téléporter vers {label}");
+        label = aurora_i18n::tr!("slurl-teleport-me-to", label = label.to_string());
     }
     Some(PlaceLink {
         location: Location {
@@ -244,7 +244,7 @@ mod tests {
             Some("Ahern (1,2,3)")
         );
         let l = place_link("secondlife:///app/teleport/Ahern/1/2/3").expect("teleport");
-        assert_eq!(l.label, "Me téléporter vers Ahern (1,2,3)");
+        assert_eq!(l.label, aurora_i18n::tr!("slurl-teleport-me-to", label = "Ahern (1,2,3)").as_str());
         assert!(l.teleport);
         // not places
         assert!(place_link("secondlife:///app/agent/0e346d8b-4433-4d66-a6b0-fd37083abc4c/about").is_none());

@@ -101,9 +101,9 @@ impl TexturePicker {
                 ui.vertical(|ui| {
                     ui.set_width(200.0);
                     let hint = if materials {
-                        "Filtrer les matériaux"
+                        aurora_i18n::tr!("ui-texture-picker-filter-materials")
                     } else {
-                        "Filtrer les textures"
+                        aurora_i18n::tr!("common-filter-textures")
                     };
                     widgets::search_field(ui, &mut self.filter, hint, 200.0);
                     ui.add_space(4.0);
@@ -113,9 +113,9 @@ impl TexturePicker {
                         .show(ui, |ui| {
                             if items.is_empty() {
                                 let t = if materials {
-                                    "Aucun matériau dans l'inventaire chargé."
+                                    aurora_i18n::tr!("ui-texture-picker-no-materials-in-the-loaded-inventory")
                                 } else {
-                                    "Aucune texture dans l'inventaire chargé."
+                                    aurora_i18n::tr!("ui-texture-picker-no-textures-in-the-loaded-inventory")
                                 };
                                 ui.label(RichText::new(t).size(11.5).color(p.muted));
                             }
@@ -150,7 +150,7 @@ impl TexturePicker {
                                 ui.painter().text(
                                     rect.center(),
                                     egui::Align2::CENTER_CENTER,
-                                    "Chargement…",
+                                    aurora_i18n::tr!("common-loading-2"),
                                     egui::FontId::proportional(11.5),
                                     p.muted,
                                 );
@@ -162,17 +162,17 @@ impl TexturePicker {
                         ui.horizontal_wrapped(|ui| {
                             ui.set_max_width(180.0);
                             if let Some(d) = self.default
-                                && flat_button(ui, p, "Défaut").clicked()
+                                && flat_button(ui, p, aurora_i18n::tr!("common-default")).clicked()
                             {
                                 self.selected = Some(d);
                             }
-                            if flat_button(ui, p, "Vierge").clicked() {
+                            if flat_button(ui, p, aurora_i18n::tr!("common-blank")).clicked() {
                                 self.selected = Some(if materials { BLANK_MATERIAL } else { BLANK_TEXTURE });
                             }
-                            if !materials && flat_button(ui, p, "Transparent").clicked() {
+                            if !materials && flat_button(ui, p, aurora_i18n::tr!("common-transparent")).clicked() {
                                 self.selected = Some(TRANSPARENT_TEXTURE);
                             }
-                            if self.allow_none && flat_button(ui, p, "Aucune").clicked() {
+                            if self.allow_none && flat_button(ui, p, aurora_i18n::tr!("common-none-2")).clicked() {
                                 chosen = Some(Uuid::nil());
                             }
                         });
@@ -182,10 +182,10 @@ impl TexturePicker {
                                     .hint_text("UUID")
                                     .desired_width(110.0),
                             );
-                            if flat_button(ui, p, "Appl. UUID").clicked() {
+                            if flat_button(ui, p, aurora_i18n::tr!("common-apply-uuid")).clicked() {
                                 match Uuid::parse_str(self.uuid_text.trim()) {
                                     Ok(id) => self.selected = Some(id),
-                                    Err(_) => self.uuid_text = "UUID invalide".into(),
+                                    Err(_) => self.uuid_text = aurora_i18n::tr!("ui-texture-picker-invalid-uuid").into(),
                                 }
                             }
                         });
@@ -197,7 +197,7 @@ impl TexturePicker {
                                 chosen = self.selected;
                             }
                         });
-                        if flat_button(ui, p, "Annuler").clicked() {
+                        if flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked() {
                             self.open = false;
                         }
                     });

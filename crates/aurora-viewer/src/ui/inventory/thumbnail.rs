@@ -78,7 +78,7 @@ impl ThumbnailUi {
         let mut caption = String::new();
         Floater::new(
             &format!("inventory_image_{ui_id}"),
-            "Modifier l’image de l’objet",
+            aurora_i18n::tr!("ui-inventory-thumbnail-edit-object-picture"),
             position,
             Vec2::new(300.0, 398.0),
         )
@@ -98,30 +98,65 @@ impl ThumbnailUi {
                     ui,
                     p,
                     "arrow-square-out",
-                    "Télécharger depuis votre ordinateur",
+                    aurora_i18n::tr!("ui-inventory-thumbnail-upload-from-your-computer"),
                     ready,
                     &mut caption,
                 ) {
                     self.request(item, Input::File, actions);
                 }
-                if toolbar_button(ui, p, "camera", "Prendre une photo", ready, &mut caption) {
+                if toolbar_button(
+                    ui,
+                    p,
+                    "camera",
+                    aurora_i18n::tr!("ui-inventory-thumbnail-take-snapshot"),
+                    ready,
+                    &mut caption,
+                ) {
                     self.photo_open = true;
                     self.request(item, Input::Capture, actions);
                 }
-                if toolbar_button(ui, p, "image", "Choisir une image", ready, &mut caption) {
+                if toolbar_button(
+                    ui,
+                    p,
+                    "image",
+                    aurora_i18n::tr!("ui-inventory-thumbnail-choose-image"),
+                    ready,
+                    &mut caption,
+                ) {
                     self.picker_open = true;
                     self.selected = (!asset.is_nil()).then_some(asset);
                     self.uuid_text = asset.to_string();
                     self.filter.clear();
                 }
-                if toolbar_button(ui, p, "copy", "Copier dans le presse-papiers", !asset.is_nil(), &mut caption) {
+                if toolbar_button(
+                    ui,
+                    p,
+                    "copy",
+                    aurora_i18n::tr!("ui-inventory-thumbnail-copy-to-clipboard"),
+                    !asset.is_nil(),
+                    &mut caption,
+                ) {
                     ctx.copy_text(asset.to_string());
                     actions.push(InvAction::ThumbnailCopied(asset));
                 }
-                if toolbar_button(ui, p, "clipboard-text", "Coller depuis le presse-papiers", ready, &mut caption) {
+                if toolbar_button(
+                    ui,
+                    p,
+                    "clipboard-text",
+                    aurora_i18n::tr!("ui-inventory-thumbnail-paste-from-clipboard"),
+                    ready,
+                    &mut caption,
+                ) {
                     self.request(item, Input::Paste, actions);
                 }
-                if toolbar_button(ui, p, "trash", "Supprimer l’image", ready && !asset.is_nil(), &mut caption) {
+                if toolbar_button(
+                    ui,
+                    p,
+                    "trash",
+                    aurora_i18n::tr!("ui-inventory-thumbnail-remove-image"),
+                    ready && !asset.is_nil(),
+                    &mut caption,
+                ) {
                     match rules::patch(
                         &world.inventory,
                         item,
@@ -134,7 +169,7 @@ impl ThumbnailUi {
             });
             ui.label(RichText::new(&caption).size(11.0).color(p.muted));
             if self.pending.is_some() || mutation_pending {
-                ui.label(RichText::new("Traitement de l’image…").color(p.muted));
+                ui.label(RichText::new(aurora_i18n::tr!("ui-inventory-thumbnail-processing-image")).color(p.muted));
             }
             if !self.error.is_empty() {
                 ui.label(RichText::new(&self.error).color(p.warn));
@@ -151,7 +186,7 @@ impl ThumbnailUi {
             let mut cancel = false;
             Floater::new(
                 &format!("inventory_photo_{ui_id}"),
-                "Photo de l’objet",
+                aurora_i18n::tr!("ui-inventory-thumbnail-object-picture"),
                 position + egui::vec2(312.0, 0.0),
                 Vec2::new(300.0, 326.0),
             )
@@ -166,23 +201,26 @@ impl ThumbnailUi {
                         ui.painter().text(
                             rect.center(),
                             egui::Align2::CENTER_CENTER,
-                            "Prise de photo…",
+                            aurora_i18n::tr!("ui-inventory-thumbnail-taking-snapshot"),
                             egui::FontId::proportional(13.0),
                             p.muted,
                         );
                     }
                 });
                 ui.horizontal(|ui| {
-                    if ui.add_enabled(ready, egui::Button::new("Prendre une photo")).clicked() {
+                    if ui
+                        .add_enabled(ready, egui::Button::new(aurora_i18n::tr!("ui-inventory-thumbnail-take-snapshot")))
+                        .clicked()
+                    {
                         self.request(item, Input::Capture, actions);
                     }
                     if ui
-                        .add_enabled(ready && self.pixels.is_some(), egui::Button::new("Enregistrer"))
+                        .add_enabled(ready && self.pixels.is_some(), egui::Button::new(aurora_i18n::tr!("common-save")))
                         .clicked()
                     {
                         self.save_photo(actions);
                     }
-                    if flat_button(ui, p, "Annuler").clicked() {
+                    if flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked() {
                         cancel = true;
                     }
                 });
@@ -195,7 +233,7 @@ impl ThumbnailUi {
             let mut cancel = false;
             Floater::new(
                 &format!("inventory_image_picker_{ui_id}"),
-                "Choisir : Image pour l’objet",
+                aurora_i18n::tr!("ui-inventory-thumbnail-choose-object-picture"),
                 position + egui::vec2(312.0, 0.0),
                 Vec2::new(450.0, 392.0),
             )
@@ -205,11 +243,11 @@ impl ThumbnailUi {
                     ui.vertical(|ui| {
                         ui.set_width(170.0);
                         picture(ui, p, self.selected.unwrap_or_default(), 164.0, images, wanted);
-                        ui.label("Inventaire");
-                        ui.label("Taille : 64 à 256 pixels");
+                        ui.label(aurora_i18n::tr!("common-inventory"));
+                        ui.label(aurora_i18n::tr!("ui-inventory-thumbnail-size-64-to-256-pixels"));
                         for (label, id) in [
-                            ("Vierge", aurora_prim::te::BLANK_TEXTURE),
-                            ("Transparent", aurora_prim::te::TRANSPARENT_TEXTURE),
+                            (aurora_i18n::tr!("common-blank"), aurora_prim::te::BLANK_TEXTURE),
+                            (aurora_i18n::tr!("common-transparent"), aurora_prim::te::TRANSPARENT_TEXTURE),
                         ] {
                             if flat_button(ui, p, label).clicked() {
                                 self.selected = Some(id);
@@ -219,7 +257,7 @@ impl ThumbnailUi {
                     });
                     ui.vertical(|ui| {
                         ui.set_width(250.0);
-                        search_field(ui, &mut self.filter, "Filtrer les textures", 250.0);
+                        search_field(ui, &mut self.filter, aurora_i18n::tr!("common-filter-textures"), 250.0);
                         egui::ScrollArea::both()
                             .id_salt("thumbnail_tree")
                             .max_height(255.0)
@@ -252,13 +290,13 @@ impl ThumbnailUi {
                 ui.horizontal(|ui| {
                     ui.add(
                         egui::TextEdit::singleline(&mut self.uuid_text)
-                            .hint_text("UUID de l’image")
+                            .hint_text(aurora_i18n::tr!("ui-inventory-thumbnail-image-uuid"))
                             .desired_width(320.0),
                     );
-                    if flat_button(ui, p, "Appl. UUID").clicked() {
+                    if flat_button(ui, p, aurora_i18n::tr!("common-apply-uuid")).clicked() {
                         match Uuid::parse_str(self.uuid_text.trim()) {
                             Ok(id) if !id.is_nil() => self.selected = Some(id),
-                            _ => self.error = "UUID d’image invalide.".into(),
+                            _ => self.error = aurora_i18n::tr!("ui-inventory-thumbnail-invalid-image-uuid").into(),
                         }
                     }
                 });
@@ -266,7 +304,7 @@ impl ThumbnailUi {
                     if ui.add_enabled(ready && self.selected.is_some(), egui::Button::new("OK")).clicked() {
                         chosen = self.selected;
                     }
-                    if flat_button(ui, p, "Annuler").clicked() {
+                    if flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked() {
                         cancel = true;
                     }
                 });
@@ -323,7 +361,7 @@ pub(super) fn picture(
             ui.painter().text(
                 rect.center(),
                 egui::Align2::CENTER_CENTER,
-                "Chargement…",
+                aurora_i18n::tr!("common-loading-2"),
                 egui::FontId::proportional(12.0),
                 p.muted,
             );
@@ -360,9 +398,9 @@ fn picker_folder(ui: &mut egui::Ui, p: &Palette, icons: &Icons, inv: &mut Invent
     }
     super::tree_spacing(ui);
     let name = if id == inv.root {
-        "Mon inventaire".to_owned()
+        aurora_i18n::tr!("common-my-inventory").to_owned()
     } else if id == inv.lib_root {
-        "Bibliothèque".to_owned()
+        aurora_i18n::tr!("common-library").to_owned()
     } else {
         folder.info.name.clone()
     };
@@ -376,7 +414,7 @@ fn picker_folder(ui: &mut egui::Ui, p: &Palette, icons: &Icons, inv: &mut Invent
         children.push(inv.lib_root);
         children.sort_by_cached_key(|id| {
             if *id == inv.lib_root {
-                "bibliothèque".to_owned()
+                aurora_i18n::tr!("ui-inventory-thumbnail-library").to_owned()
             } else {
                 rules::name(inv, *id).to_lowercase()
             }
@@ -486,7 +524,7 @@ mod tests {
             .shapes
             .iter()
             .find_map(|s| match &s.shape {
-                egui::epaint::Shape::Text(t) if t.galley.text() == "Enregistrer" => Some(t.pos + egui::vec2(4.0, 4.0)),
+                egui::epaint::Shape::Text(t) if t.galley.text() == aurora_i18n::tr!("common-save") => Some(t.pos + egui::vec2(4.0, 4.0)),
                 _ => None,
             })
             .expect("save button");
@@ -510,8 +548,8 @@ mod tests {
         assert_eq!(st.item, Some(item));
         assert!(st.pending.is_some());
         assert!(output.shapes.iter().any(|s| matches!(&s.shape, egui::epaint::Shape::Text(t)
-            if t.galley.text() == "Modifier l’image de l’objet")));
+            if t.galley.text() == aurora_i18n::tr!("ui-inventory-thumbnail-edit-object-picture"))));
         assert!(!output.shapes.iter().any(|s| matches!(&s.shape, egui::epaint::Shape::Text(t)
-            if t.galley.text() == "Photo de l’objet")));
+            if t.galley.text() == aurora_i18n::tr!("ui-inventory-thumbnail-object-picture"))));
     }
 }

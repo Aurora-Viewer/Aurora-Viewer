@@ -49,21 +49,21 @@ impl Default for Layout {
     fn default() -> Self {
         Layout {
             toolbar: vec![
-                tb("Command_HowTo_Icon", "help", "Aide"),
-                tb("Command_Chat_Icon", "conversations", "Conversations"),
-                tb("Command_Speak_Icon", "speak", "Parler"),
-                tb("Command_Move_Icon", "fly", "Voler / atterrir (F)"),
-                tb("Command_View_Icon", "mouselook", "Vue souris (M)"),
-                tb("Command_People_Icon", "people", "Personnes"),
-                tb("Command_Inventory_Icon", "inventory", "Inventaire"),
-                tb("Command_Appearance_Icon", "appearance", "Apparence"),
-                tb("Command_Search_Icon", "search", "Recherche (à venir)"),
-                tb("Command_Map_Icon", "worldmap", "Carte du monde"),
-                tb("Command_MiniMap_Icon", "minimap", "Mini-carte"),
-                tb("Command_Performance_Icon", "performance", "Performances"),
-                tb("groundsit", "sit", "S'asseoir par terre / se lever"),
-                tb("Home_Off", "home", "Rentrer chez moi"),
-                tb("Command_Preferences_Icon", "preferences", "Préférences"),
+                tb("Command_HowTo_Icon", "help", aurora_i18n::tr!("common-help")),
+                tb("Command_Chat_Icon", "conversations", aurora_i18n::tr!("common-conversations")),
+                tb("Command_Speak_Icon", "speak", aurora_i18n::tr!("ui-skin-speak")),
+                tb("Command_Move_Icon", "fly", aurora_i18n::tr!("extra-fly-land-f")),
+                tb("Command_View_Icon", "mouselook", aurora_i18n::tr!("common-mouselook-m")),
+                tb("Command_People_Icon", "people", aurora_i18n::tr!("common-people")),
+                tb("Command_Inventory_Icon", "inventory", aurora_i18n::tr!("common-inventory")),
+                tb("Command_Appearance_Icon", "appearance", aurora_i18n::tr!("common-appearance")),
+                tb("Command_Search_Icon", "search", aurora_i18n::tr!("ui-skin-search-coming-soon")),
+                tb("Command_Map_Icon", "worldmap", aurora_i18n::tr!("common-world-map")),
+                tb("Command_MiniMap_Icon", "minimap", aurora_i18n::tr!("common-mini-map")),
+                tb("Command_Performance_Icon", "performance", aurora_i18n::tr!("common-performance")),
+                tb("groundsit", "sit", aurora_i18n::tr!("extra-sit-on-ground-stand-up")),
+                tb("Home_Off", "home", aurora_i18n::tr!("common-go-home")),
+                tb("Command_Preferences_Icon", "preferences", aurora_i18n::tr!("common-preferences")),
             ],
             chat_bar_fraction: 0.22,
             chat_toasts: true,
@@ -137,15 +137,8 @@ impl Skin {
             std::fs::write(d.join("theme.example.json"), theme).ok()?;
             std::fs::write(d.join("layout.example.json"), layout).ok()?;
             let _ = std::fs::write(
-                d.join("LISEZ-MOI.txt"),
-                "Skin Aurora Viewer\n\n\
-                 theme.json  : couleurs (#RRGGBB), arrondis, taille des polices\n\
-                 layout.json : boutons de la barre d'outils (icone + commande), options du chat\n\
-                 (copiez les fichiers *.example.json pour partir des valeurs par defaut)\n\
-                 icons/      : PNG qui remplacent les icones integrees (meme nom de fichier)\n\n\
-                 Les modifications sont rechargees automatiquement en jeu.\n\
-                 Commandes : help, conversations, speak, fly, mouselook, people, friends, inventory,\n\
-                 appearance, search, worldmap, minimap, performance, sit, home, preferences.\n",
+                d.join(aurora_i18n::tr!("status-readme-txt")),
+                aurora_i18n::tr!("status-aurora-viewer-skin-theme-json-colors"),
             );
             Some(d)
         });

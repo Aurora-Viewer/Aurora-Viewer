@@ -211,7 +211,7 @@ mod tests {
 
     #[test]
     fn cube_outline_is_its_face_borders() {
-        let params = super::super::shapes::SHAPES[0].params();
+        let params = super::super::shapes::shapes()[0].params();
         let t = topology(&params);
         // 6 faces with 4 unit border sides each (split in segments)
         let total: f32 = t.border.iter().map(|e| e.a.distance(e.b)).sum();
@@ -220,7 +220,7 @@ mod tests {
 
     #[test]
     fn closed_torus_has_a_view_outline() {
-        let params = super::super::shapes::SHAPES[10].params();
+        let params = super::super::shapes::shapes()[10].params();
         let t = topology(&params);
         let cam = Vec3::new(0.0, -5.0, 2.0);
         let facing: Vec<bool> = t.tris.iter().map(|(v, n)| n.dot(cam - *v) > 0.0).collect();

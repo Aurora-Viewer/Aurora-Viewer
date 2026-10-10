@@ -130,8 +130,10 @@ impl WorldMapUi {
         }
         let screen = ctx.content_rect();
         let default_pos = pos2((screen.width() - 700.0).max(0.0) * 0.5, 60.0);
-        Floater::new("worldmap", "Carte du monde", default_pos, vec2(700.0, 600.0))
-            .help("Clic : placer un repère · double-clic : se téléporter · molette : zoom · glisser : déplacer")
+        Floater::new("worldmap", aurora_i18n::tr!("common-world-map"), default_pos, vec2(700.0, 600.0))
+            .help(aurora_i18n::tr!(
+                "ui-worldmap-click-place-marker-double-click-teleport-wheel-zoom-drag"
+            ))
             .show(ctx, p, open, |ui| {
                 let avail = ui.available_size();
                 let side = 236.0;
@@ -397,7 +399,14 @@ impl WorldMapUi {
         if rect.shrink(2.0).contains(sp) {
             draw_self(&painter, sp, 4.5, me_col);
         } else {
-            draw_tracking(&painter, rect, sp, Color32::from_rgb(255, 204, 0), 0.0, Some("Vous êtes ici"));
+            draw_tracking(
+                &painter,
+                rect,
+                sp,
+                Color32::from_rgb(255, 204, 0),
+                0.0,
+                Some(aurora_i18n::tr!("ui-worldmap-you-are-here")),
+            );
         }
 
         // --- tracking ---
@@ -406,10 +415,17 @@ impl WorldMapUi {
             if t.pending {
                 let v = 0.5 + 0.5 * (std::f32::consts::PI * (ui.input(|i| i.time) as f32 % 2.0)).cos();
                 let col = Color32::from_rgb(0, (v * 127.0) as u8, (v * 255.0) as u8);
-                draw_tracking(&painter, rect, sp, col, 0.0, Some("Chargement…"));
+                draw_tracking(&painter, rect, sp, col, 0.0, Some(aurora_i18n::tr!("common-loading-2")));
                 ui.ctx().request_repaint();
             } else if t.invalid {
-                draw_tracking(&painter, rect, sp, Color32::from_rgb(0, 128, 255), 0.0, Some("Lieu invalide"));
+                draw_tracking(
+                    &painter,
+                    rect,
+                    sp,
+                    Color32::from_rgb(0, 128, 255),
+                    0.0,
+                    Some(aurora_i18n::tr!("ui-worldmap-invalid-location")),
+                );
             } else {
                 draw_tracking(&painter, rect, sp, TRACK_COLOR, 0.0, Some(&t.label));
             }
@@ -445,10 +461,9 @@ impl WorldMapUi {
                     if !s.is_down() {
                         let n: i32 =
                             world.map.agents.get(&key).map(|v| v.iter().map(|a| a.2).sum()).unwrap_or(0) + i32::from(my_sim == Some(key));
-                        if n == 1 {
-                            t.push_str("\n1 personne");
-                        } else if n > 1 {
-                            t.push_str(&format!("\n{n} personnes"));
+                        if n > 0 {
+                            t.push('\n');
+                            t.push_str(&aurora_i18n::tr!("person-count", count = n));
                         }
                     }
                     for f in s.flag_labels() {
@@ -514,16 +529,19 @@ impl WorldMapUi {
             ui.separator();
         };
         let level = scale_to_level(256.0 * self.zoom.exp2());
-        heading(ui, "Légende");
+        heading(ui, aurora_i18n::tr!("ui-worldmap-legend"));
         ui.horizontal(|ui| {
-            if widgets::flat_button(ui, p, "Moi")
-                .on_hover_text("Centrer la carte sur ma position")
+            if widgets::flat_button(ui, p, aurora_i18n::tr!("common-me"))
+                .on_hover_text(aurora_i18n::tr!("ui-worldmap-center-map-on-my-position"))
                 .clicked()
             {
                 self.target_pan = Vec2::ZERO;
                 self.pan_tau = PAN_TAU_CENTER;
             }
-            if widgets::flat_button(ui, p, "Domicile").on_hover_text("Rentrer chez moi").clicked() {
+            if widgets::flat_button(ui, p, aurora_i18n::tr!("common-home"))
+                .on_hover_text(aurora_i18n::tr!("common-go-home"))
+                .clicked()
+            {
                 actions.push(WorldMapAction::TeleportHome);
             }
         });
@@ -532,7 +550,7 @@ impl WorldMapUi {
                 ui,
                 p,
                 &mut opts.world_people,
-                "Personnes",
+                aurora_i18n::tr!("common-people"),
                 None,
                 super::colors::c(super::colors::get().map_other),
             );
@@ -540,7 +558,7 @@ impl WorldMapUi {
                 ui,
                 p,
                 &mut opts.world_infohubs,
-                "Infohubs",
+                aurora_i18n::tr!("ui-worldmap-infohubs"),
                 Some("info"),
                 item_icon(ItemKind::Infohub, p).1,
             );
@@ -548,7 +566,7 @@ impl WorldMapUi {
                 ui,
                 p,
                 &mut opts.world_telehubs,
-                "Telehubs",
+                aurora_i18n::tr!("ui-worldmap-telehubs"),
                 Some("broadcast"),
                 item_icon(ItemKind::Telehub, p).1,
             );
@@ -556,7 +574,7 @@ impl WorldMapUi {
                 ui,
                 p,
                 &mut opts.world_land_for_sale,
-                "Terrains à vendre",
+                aurora_i18n::tr!("common-land-for-sale"),
                 Some("tag"),
                 item_icon(ItemKind::ForSale, p).1,
             );
@@ -564,7 +582,7 @@ impl WorldMapUi {
                 ui,
                 p,
                 &mut opts.world_events,
-                "Événements",
+                aurora_i18n::tr!("ui-worldmap-events"),
                 Some("calendar-dots"),
                 item_icon(ItemKind::EventPg, p).1,
             );
@@ -574,7 +592,7 @@ impl WorldMapUi {
                         ui,
                         p,
                         &mut opts.world_mature_events,
-                        "Modérés",
+                        aurora_i18n::tr!("ui-worldmap-moderate"),
                         None,
                         item_icon(ItemKind::EventMature, p).1,
                     );
@@ -582,7 +600,7 @@ impl WorldMapUi {
                         ui,
                         p,
                         &mut opts.world_adult_events,
-                        "Adultes",
+                        aurora_i18n::tr!("ui-worldmap-adult"),
                         None,
                         item_icon(ItemKind::EventAdult, p).1,
                     );
@@ -590,10 +608,14 @@ impl WorldMapUi {
             });
         });
         if level > DRAW_SIMINFO_THRESHOLD {
-            ui.label(RichText::new("Zoomez pour voir les détails.").size(11.0).color(p.muted));
+            ui.label(
+                RichText::new(aurora_i18n::tr!("ui-worldmap-zoom-in-to-see-details"))
+                    .size(11.0)
+                    .color(p.muted),
+            );
         }
 
-        heading(ui, "Trouver sur la carte");
+        heading(ui, aurora_i18n::tr!("ui-worldmap-find-on-map"));
         // landmarks of the inventory, sorted
         let mut lms: Vec<(Uuid, Uuid, String)> = world
             .inventory
@@ -603,13 +625,17 @@ impl WorldMapUi {
             .map(|i| (i.id, i.asset_id, i.name.clone()))
             .collect();
         lms.sort_by_key(|l| l.2.to_lowercase());
-        let current = self.landmark.as_ref().map(|l| l.2.clone()).unwrap_or_else(|| "Mes repères".into());
+        let current = self
+            .landmark
+            .as_ref()
+            .map(|l| l.2.clone())
+            .unwrap_or_else(|| aurora_i18n::tr!("ui-worldmap-my-landmarks").into());
         egui::ComboBox::from_id_salt("worldmap-landmarks")
             .selected_text(current)
             .width(ui.available_width() - 4.0)
             .show_ui(ui, |ui| {
                 if lms.is_empty() {
-                    ui.label(RichText::new("Aucun repère dans l'inventaire").color(p.muted));
+                    ui.label(RichText::new(aurora_i18n::tr!("ui-worldmap-no-landmarks-in-inventory")).color(p.muted));
                 }
                 for l in lms {
                     let sel = self.landmark.as_ref().is_some_and(|c| c.0 == l.0);
@@ -622,11 +648,16 @@ impl WorldMapUi {
         ui.add_space(4.0);
         let mut go = false;
         ui.horizontal(|ui| {
-            let r = widgets::search_field(ui, &mut self.search, "Régions par nom", ui.available_width() - 84.0);
+            let r = widgets::search_field(
+                ui,
+                &mut self.search,
+                aurora_i18n::tr!("ui-worldmap-regions-by-name"),
+                ui.available_width() - 84.0,
+            );
             if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                 go = true;
             }
-            if widgets::flat_button(ui, p, "Chercher").clicked() {
+            if widgets::flat_button(ui, p, aurora_i18n::tr!("ui-worldmap-search")).clicked() {
                 go = true;
             }
         });
@@ -643,9 +674,9 @@ impl WorldMapUi {
                 .collect();
             if results.is_empty() {
                 if sent.elapsed().as_secs_f32() > 3.0 {
-                    ui.label(RichText::new("Aucun résultat.").size(12.0).color(p.muted));
+                    ui.label(RichText::new(aurora_i18n::tr!("common-no-results")).size(12.0).color(p.muted));
                 } else {
-                    ui.label(RichText::new("Recherche…").size(12.0).color(p.muted));
+                    ui.label(RichText::new(aurora_i18n::tr!("ui-worldmap-searching")).size(12.0).color(p.muted));
                 }
             }
             // an exact name match is selected at once (updateSims)
@@ -679,19 +710,27 @@ impl WorldMapUi {
                 });
         }
 
-        heading(ui, "Position");
+        heading(ui, aurora_i18n::tr!("ui-worldmap-position"));
         let mut tp_target: Option<NetCommand> = None;
         if let Some((_, asset, name)) = &self.landmark {
-            ui.label(RichText::new(format!("Repère : {name}")).size(12.0).color(p.ink));
+            ui.label(
+                RichText::new(aurora_i18n::tr!("ui-worldmap-landmark", name = name.to_string()))
+                    .size(12.0)
+                    .color(p.ink),
+            );
             tp_target = Some(NetCommand::TeleportLandmark(*asset));
         } else if let Some(t) = world.map.track.clone() {
             let region = world.map.sim_at_global(t.x, t.y).map(|(k, s)| (k, s.name.clone()));
             match &region {
                 Some((_, n)) => ui.label(RichText::new(n).size(12.5).color(p.ink)),
                 None => ui.label(
-                    RichText::new(if t.pending { "Chargement…" } else { "Lieu invalide" })
-                        .size(12.0)
-                        .color(p.muted),
+                    RichText::new(if t.pending {
+                        aurora_i18n::tr!("common-loading-2")
+                    } else {
+                        aurora_i18n::tr!("ui-worldmap-invalid-location")
+                    })
+                    .size(12.0)
+                    .color(p.muted),
                 ),
             };
             if let Some(((sx, sy), _)) = region {
@@ -701,7 +740,13 @@ impl WorldMapUi {
                     for (label, v, max) in [("X", &mut lx, 8191.0), ("Y", &mut ly, 8191.0), ("Z", &mut lz, 10000.0)] {
                         ui.label(RichText::new(label).size(12.0).color(p.muted));
                         changed |= ui
-                            .add(egui::DragValue::new(v).range(0.0..=max).speed(1.0).max_decimals(0))
+                            .add(
+                                egui::DragValue::new(v)
+                                    .custom_parser(aurora_i18n::parse_number)
+                                    .range(0.0..=max)
+                                    .speed(1.0)
+                                    .max_decimals(0),
+                            )
                             .changed();
                     }
                 });
@@ -724,14 +769,16 @@ impl WorldMapUi {
             }
         } else {
             ui.label(
-                RichText::new("Cliquez sur la carte pour choisir un lieu.")
+                RichText::new(aurora_i18n::tr!("ui-worldmap-click-on-the-map-to-choose-a-location"))
                     .size(12.0)
                     .color(p.muted),
             );
         }
         ui.add_space(4.0);
         ui.horizontal_wrapped(|ui| {
-            if ui.add_enabled(tp_target.is_some(), egui::Button::new("Téléporter")).clicked()
+            if ui
+                .add_enabled(tp_target.is_some(), egui::Button::new(aurora_i18n::tr!("common-teleport-3")))
+                .clicked()
                 && let Some(c) = tp_target.clone()
             {
                 match c {
@@ -746,21 +793,26 @@ impl WorldMapUi {
                     glam::Vec3::new((t.x - sx as f64 * 256.0) as f32, (t.y - sy as f64 * 256.0) as f32, t.z),
                 ))
             });
-            if ui.add_enabled(slurl.is_some(), egui::Button::new("Copier la SLurl")).clicked()
+            if ui
+                .add_enabled(slurl.is_some(), egui::Button::new(aurora_i18n::tr!("common-copy-slurl")))
+                .clicked()
                 && let Some(u) = slurl
             {
                 ui.ctx().copy_text(u);
             }
             let tracked = world.map.track.as_ref().map(|t| (t.x, t.y));
             if ui
-                .add_enabled(tracked.is_some(), egui::Button::new("Montrer la sélection"))
+                .add_enabled(tracked.is_some(), egui::Button::new(aurora_i18n::tr!("ui-worldmap-show-selection")))
                 .clicked()
                 && let Some((x, y)) = tracked
             {
                 self.center_on(world, cam, x, y);
             }
             if ui
-                .add_enabled(tracked.is_some() || self.landmark.is_some(), egui::Button::new("Effacer"))
+                .add_enabled(
+                    tracked.is_some() || self.landmark.is_some(),
+                    egui::Button::new(aurora_i18n::tr!("common-clear")),
+                )
                 .clicked()
             {
                 world.map.track = None;
@@ -771,10 +823,15 @@ impl WorldMapUi {
             }
         });
 
-        heading(ui, "Zoom");
+        heading(ui, aurora_i18n::tr!("common-zoom"));
         let mut z = self.target_zoom;
         if ui
-            .add(egui::Slider::new(&mut z, ZOOM_MIN..=ZOOM_MAX).step_by(0.2).show_value(false))
+            .add(
+                egui::Slider::new(&mut z, ZOOM_MIN..=ZOOM_MAX)
+                    .custom_parser(aurora_i18n::parse_number)
+                    .step_by(0.2)
+                    .show_value(false),
+            )
             .changed()
         {
             self.target_zoom = z;
@@ -888,9 +945,19 @@ fn item_tooltip_of(it: &aurora_net::MapItem, kind: ItemKind) -> String {
             let area = it.extra;
             let price = it.extra2;
             if area > 0 {
-                format!("{}\n{area} m² L$ {price} ({:.1} L$/m²)", it.name, price as f32 / area as f32)
+                aurora_i18n::tr!(
+                    "status-area-m-l-price-l-m",
+                    value0 = it.name.to_string(),
+                    area = format!("{}", area),
+                    price = format!("{}", price),
+                    value1 = aurora_i18n::number_text(&format!("{:.1}", price as f32 / area as f32))
+                )
             } else {
-                format!("{}\nL$ {price} (surface inconnue)", it.name)
+                aurora_i18n::tr!(
+                    "ui-worldmap-l-unknown-area",
+                    value0 = it.name.to_string(),
+                    price = format!("{}", price)
+                )
             }
         }
         ItemKind::EventPg | ItemKind::EventMature | ItemKind::EventAdult => {
@@ -898,10 +965,15 @@ fn item_tooltip_of(it: &aurora_net::MapItem, kind: ItemKind) -> String {
             let t = std::time::UNIX_EPOCH + std::time::Duration::from_secs(it.extra.max(0) as u64);
             let secs = t.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
             let (h, m) = ((secs / 3600) % 24, (secs / 60) % 60);
-            format!("{}\nÀ {h:02}:{m:02} UTC", it.name)
+            aurora_i18n::tr!(
+                "ui-worldmap-at-utc",
+                value0 = it.name.to_string(),
+                h = format!("{:02}", h),
+                m = format!("{:02}", m)
+            )
         }
-        ItemKind::Infohub => format!("Infohub : {}", it.name),
-        ItemKind::Telehub => format!("Telehub : {}", it.name),
+        ItemKind::Infohub => aurora_i18n::tr!("ui-worldmap-infohub", value0 = it.name.to_string()),
+        ItemKind::Telehub => aurora_i18n::tr!("ui-worldmap-telehub", value0 = it.name.to_string()),
     }
 }
 

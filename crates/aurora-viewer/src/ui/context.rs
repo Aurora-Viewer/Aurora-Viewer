@@ -302,211 +302,234 @@ fn object_menu(
     act: &mut dyn FnMut(CtxAction),
 ) {
     let o = &f.object;
-    if menu::item_if(ui, p, "hand-pointing", "Toucher", o.touch) {
+    if menu::item_if(ui, p, "hand-pointing", aurora_i18n::tr!("ui-context-touch"), o.touch) {
         act(CtxAction::Touch(key.local_id));
     }
-    if menu::item(ui, p, "pencil-simple", "Modifier") {
+    if menu::item(ui, p, "pencil-simple", aurora_i18n::tr!("common-edit")) {
         act(CtxAction::Edit(id));
     }
-    menu::todo(ui, p, "paint-brush", "Modifier le matériau PBR");
+    menu::todo(ui, p, "paint-brush", aurora_i18n::tr!("ui-context-edit-pbr-material"));
     // Object.Build: the Create tool (LLToolCompCreate), like the land menu
-    if menu::item(ui, p, "cube", "Construire") {
+    if menu::item(ui, p, "cube", aurora_i18n::tr!("common-build")) {
         act(CtxAction::Build);
     }
-    if menu::item_if(ui, p, "package", "Ouvrir", o.open) {
+    if menu::item_if(ui, p, "package", aurora_i18n::tr!("common-open"), o.open) {
         act(CtxAction::Open(id));
     }
     menu::separator(ui, p);
-    if menu::item_if(ui, p, "armchair", "S'asseoir ici", o.sit) {
+    if menu::item_if(ui, p, "armchair", aurora_i18n::tr!("ui-context-sit-here"), o.sit) {
         act(CtxAction::Sit { target: id, offset });
     }
     menu::separator(ui, p);
-    if menu::item_if(ui, p, "person", "Se lever", o.stand) {
+    if menu::item_if(ui, p, "person", aurora_i18n::tr!("common-stand-up"), o.stand) {
         act(CtxAction::StandUp);
     }
     menu::separator(ui, p);
-    menu::submenu(ui, p, "cube", "Objet", true, |ui| {
-        menu::todo(ui, p, "info", "Profil");
-        menu::todo(ui, p, "magnifying-glass", "Inspecter");
-        menu::todo(ui, p, "code", "Informations sur les scripts");
+    menu::submenu(ui, p, "cube", aurora_i18n::tr!("common-object"), true, |ui| {
+        menu::todo(ui, p, "info", aurora_i18n::tr!("common-profile"));
+        menu::todo(ui, p, "magnifying-glass", aurora_i18n::tr!("ui-context-inspect-2"));
+        menu::todo(ui, p, "code", aurora_i18n::tr!("ui-context-script-information"));
         menu::separator(ui, p);
         // linking needs two selected objects: build tools only
-        menu::item_if(ui, p, "link", "Lier", false);
-        if menu::item_if(ui, p, "link-break", "Délier", o.unlink) {
+        menu::item_if(ui, p, "link", aurora_i18n::tr!("ui-context-link"), false);
+        if menu::item_if(ui, p, "link-break", aurora_i18n::tr!("ui-context-unlink"), o.unlink) {
             act(CtxAction::Unlink(id));
         }
-        if menu::check(ui, p, "cube-transparent", "Modifier les parties liées", f.edit_linked, true) {
+        if menu::check(
+            ui,
+            p,
+            "cube-transparent",
+            aurora_i18n::tr!("ui-context-edit-linked-parts"),
+            f.edit_linked,
+            true,
+        ) {
             act(CtxAction::EditLinkedParts(!f.edit_linked));
         }
         menu::separator(ui, p);
-        menu::todo(ui, p, "arrows-clockwise", "Réinitialiser les scripts");
-        menu::todo(ui, p, "play", "Exécuter les scripts");
-        menu::todo(ui, p, "stop-circle", "Arrêter les scripts");
-        menu::todo(ui, p, "trash", "Supprimer les scripts");
+        menu::todo(ui, p, "arrows-clockwise", aurora_i18n::tr!("ui-context-reset-scripts"));
+        menu::todo(ui, p, "play", aurora_i18n::tr!("ui-context-run-scripts"));
+        menu::todo(ui, p, "stop-circle", aurora_i18n::tr!("ui-context-stop-scripts"));
+        menu::todo(ui, p, "trash", aurora_i18n::tr!("ui-context-remove-scripts"));
     });
-    if menu::item(ui, p, "magnifying-glass-plus", "Zoomer") {
+    if menu::item(ui, p, "magnifying-glass-plus", aurora_i18n::tr!("common-zoom-2")) {
         act(CtxAction::Zoom(point));
     }
     menu::separator(ui, p);
-    menu::submenu(ui, p, "t-shirt", "Mettre", true, |ui| {
-        menu::todo(ui, p, "t-shirt", "Porter");
-        menu::todo(ui, p, "plus-circle", "Ajouter");
-        menu::todo(ui, p, "paperclip", "Attacher à");
-        menu::todo(ui, p, "paperclip", "Attacher au HUD");
+    menu::submenu(ui, p, "t-shirt", aurora_i18n::tr!("ui-context-wear"), true, |ui| {
+        menu::todo(ui, p, "t-shirt", aurora_i18n::tr!("common-wear"));
+        menu::todo(ui, p, "plus-circle", aurora_i18n::tr!("common-add"));
+        menu::todo(ui, p, "paperclip", aurora_i18n::tr!("common-attach-to"));
+        menu::todo(ui, p, "paperclip", aurora_i18n::tr!("common-attach-to-hud"));
     });
-    menu::submenu(ui, p, "warning", "Dérangement", true, |ui| {
-        menu::todo(ui, p, "flag", "Signaler");
+    menu::submenu(ui, p, "warning", aurora_i18n::tr!("ui-context-disturbance"), true, |ui| {
+        menu::todo(ui, p, "flag", aurora_i18n::tr!("common-report"));
         let (icon, label) = if o.blocked {
-            ("check-circle", "Cesser d'ignorer")
+            ("check-circle", aurora_i18n::tr!("common-stop-ignoring"))
         } else {
-            ("prohibit", "Ignorer")
+            ("prohibit", aurora_i18n::tr!("common-ignore"))
         };
         if menu::item(ui, p, icon, label) {
             act(CtxAction::ToggleBlockObject { id, name: o.name.clone() });
         }
     });
     menu::separator(ui, p);
-    menu::todo(ui, p, "arrows-clockwise", "Actualiser les textures");
-    menu::todo(ui, p, "eye-slash", "Faire disparaître");
-    menu::todo(ui, p, "eye-closed", "Faire disparaître & Blacklister");
-    menu::todo(ui, p, "arrow-u-up-left", "Renvoyer");
-    if menu::item_if(ui, p, "hand-grabbing", "Prendre", o.take) {
+    menu::todo(ui, p, "arrows-clockwise", aurora_i18n::tr!("ui-context-refresh-textures"));
+    menu::todo(ui, p, "eye-slash", aurora_i18n::tr!("ui-context-derender"));
+    menu::todo(ui, p, "eye-closed", aurora_i18n::tr!("ui-context-derender-blacklist"));
+    menu::todo(ui, p, "arrow-u-up-left", aurora_i18n::tr!("ui-context-return"));
+    if menu::item_if(ui, p, "hand-grabbing", aurora_i18n::tr!("ui-context-take"), o.take) {
         act(CtxAction::Take(id));
     }
-    if menu::item_if(ui, p, "copy", "Prendre une copie", o.take_copy) {
+    if menu::item_if(ui, p, "copy", aurora_i18n::tr!("ui-context-take-copy"), o.take_copy) {
         act(CtxAction::TakeCopy(id));
     }
-    if menu::item_if(ui, p, "hand-coins", "Payer", o.pay) {
+    if menu::item_if(ui, p, "hand-coins", aurora_i18n::tr!("common-pay"), o.pay) {
         act(CtxAction::Pay(id));
     }
-    if menu::item_if(ui, p, "shopping-cart", "Acheter", o.buy) {
+    if menu::item_if(ui, p, "shopping-cart", aurora_i18n::tr!("common-buy"), o.buy) {
         act(CtxAction::Buy(id));
     }
-    menu::todo(ui, p, "floppy-disk", "Enregistrer sous");
+    menu::todo(ui, p, "floppy-disk", aurora_i18n::tr!("common-save-as"));
     menu::separator(ui, p);
-    if menu::item_if(ui, p, "trash", "Supprimer", o.delete) {
+    if menu::item_if(ui, p, "trash", aurora_i18n::tr!("common-delete"), o.delete) {
         act(CtxAction::Delete(id));
     }
     menu::separator(ui, p);
-    menu::todo(ui, p, "sparkle", "Ignorer le propriétaire des particules");
+    menu::todo(ui, p, "sparkle", aurora_i18n::tr!("ui-context-ignore-particle-owner"));
 }
 
 /// menu_attachment_self.xml
 fn attachment_self_menu(ui: &mut egui::Ui, p: &Palette, f: &Facts, key: ObjKey, act: &mut dyn FnMut(CtxAction)) {
-    if menu::item_if(ui, p, "hand-pointing", "Toucher", f.object.touch) {
+    if menu::item_if(ui, p, "hand-pointing", aurora_i18n::tr!("ui-context-touch"), f.object.touch) {
         act(CtxAction::Touch(key.local_id));
     }
-    if menu::item_if(ui, p, "backpack", "Voir dans l'inventaire", f.object.attachment_item.is_some())
-        && let Some(item) = f.object.attachment_item
+    if menu::item_if(
+        ui,
+        p,
+        "backpack",
+        aurora_i18n::tr!("ui-context-show-in-inventory"),
+        f.object.attachment_item.is_some(),
+    ) && let Some(item) = f.object.attachment_item
     {
         act(CtxAction::AttachmentInventory(item));
     }
-    if menu::item_if(ui, p, "pencil-simple", "Modifier", f.object.edit_hud) {
+    if menu::item_if(ui, p, "pencil-simple", aurora_i18n::tr!("common-edit"), f.object.edit_hud) {
         act(CtxAction::EditAttachment(key));
     }
-    menu::todo(ui, p, "paint-brush", "Modifier le matériau PBR");
-    if menu::item_if(ui, p, "paperclip", "Détacher", f.object.attachment_item.is_some()) {
+    menu::todo(ui, p, "paint-brush", aurora_i18n::tr!("ui-context-edit-pbr-material"));
+    if menu::item_if(
+        ui,
+        p,
+        "paperclip",
+        aurora_i18n::tr!("common-detach"),
+        f.object.attachment_item.is_some(),
+    ) {
         act(CtxAction::Detach(key));
     }
-    menu::todo(ui, p, "floppy-disk", "Enregistrer sous");
+    menu::todo(ui, p, "floppy-disk", aurora_i18n::tr!("common-save-as"));
     menu::separator(ui, p);
     sit_stand(ui, p, f, act);
     appearance_submenu(ui, p, act);
     take_off_submenu(ui, p);
     menu::separator(ui, p);
-    if menu::item(ui, p, "airplane-takeoff", "Voler / Atterrir") {
+    if menu::item(ui, p, "airplane-takeoff", aurora_i18n::tr!("extra-fly-land-8")) {
         act(CtxAction::ToggleFly);
     }
-    menu::todo(ui, p, "stop-circle", "Arrêter les animations");
+    menu::todo(ui, p, "stop-circle", aurora_i18n::tr!("ui-context-stop-animations"));
     menu::separator(ui, p);
     community_submenu(ui, p, f.me, act);
-    menu::todo(ui, p, "info", "Profil de l'objet");
-    menu::todo(ui, p, "magnifying-glass", "Examiner");
-    menu::todo(ui, p, "code", "Informations sur les scripts");
-    menu::todo(ui, p, "eye-slash", "Faire disparaître temporairement");
-    menu::todo(ui, p, "eye-closed", "Faire disparaître & Blacklister");
-    menu::todo(ui, p, "image", "Afficher les textures");
-    menu::todo(ui, p, "arrows-clockwise", "Actualiser les textures");
+    menu::todo(ui, p, "info", aurora_i18n::tr!("ui-context-object-profile"));
+    menu::todo(ui, p, "magnifying-glass", aurora_i18n::tr!("ui-context-inspect"));
+    menu::todo(ui, p, "code", aurora_i18n::tr!("ui-context-script-information"));
+    menu::todo(ui, p, "eye-slash", aurora_i18n::tr!("ui-context-derender-temporarily"));
+    menu::todo(ui, p, "eye-closed", aurora_i18n::tr!("ui-context-derender-blacklist"));
+    menu::todo(ui, p, "image", aurora_i18n::tr!("ui-context-show-textures"));
+    menu::todo(ui, p, "arrows-clockwise", aurora_i18n::tr!("ui-context-refresh-textures"));
     menu::separator(ui, p);
     // « Supprimer » drops the attachment on the ground (Attachment.Drop)
-    menu::todo(ui, p, "trash", "Supprimer");
+    menu::todo(ui, p, "trash", aurora_i18n::tr!("common-delete"));
     menu::separator(ui, p);
-    menu::todo(ui, p, "sparkle", "Bloquer le propriétaire des particules");
+    menu::todo(ui, p, "sparkle", aurora_i18n::tr!("ui-context-block-particle-owner"));
 }
 
 /// menu_avatar_other.xml / menu_attachment_other.xml
 fn avatar_menu(ui: &mut egui::Ui, p: &Palette, f: &Facts, id: Uuid, attachment: Option<Uuid>, point: Vec3, act: &mut dyn FnMut(CtxAction)) {
-    if menu::item(ui, p, "user-circle", "Voir le profil") {
+    if menu::item(ui, p, "user-circle", aurora_i18n::tr!("common-view-profile")) {
         act(CtxAction::Profile(id));
     }
-    if menu::item_if(ui, p, "user-plus", "Devenir amis", !f.friend) {
+    if menu::item_if(ui, p, "user-plus", aurora_i18n::tr!("common-become-friends"), !f.friend) {
         act(CtxAction::AddFriend(id));
     }
-    menu::todo(ui, p, "users-three", "Ajouter à un cercle");
-    if menu::item(ui, p, "chat-text", "Envoyer un IM") {
+    menu::todo(ui, p, "users-three", aurora_i18n::tr!("ui-context-add-to-contact-set"));
+    if menu::item(ui, p, "chat-text", aurora_i18n::tr!("ui-context-send-im")) {
         act(CtxAction::Im(id));
     }
-    menu::todo(ui, p, "identification-card", "Donner ma carte de visite");
-    menu::todo(ui, p, "phone", "Appel vocal");
-    menu::todo(ui, p, "user-circle-plus", "Inviter dans un groupe");
-    if menu::item(ui, p, "paper-plane-tilt", "Proposer une téléportation") {
+    menu::todo(ui, p, "identification-card", aurora_i18n::tr!("ui-context-give-my-calling-card"));
+    menu::todo(ui, p, "phone", aurora_i18n::tr!("common-voice-call"));
+    menu::todo(ui, p, "user-circle-plus", aurora_i18n::tr!("ui-context-invite-to-group"));
+    if menu::item(ui, p, "paper-plane-tilt", aurora_i18n::tr!("common-offer-teleport")) {
         act(CtxAction::OfferTeleport(id));
     }
     menu::separator(ui, p);
-    menu::todo(ui, p, "eye", "Regard vers l'avatar");
+    menu::todo(ui, p, "eye", aurora_i18n::tr!("common-look-toward-avatar"));
     menu::separator(ui, p);
-    menu::todo(ui, p, "bone", "Réinitialiser le squelette");
-    menu::todo(ui, p, "person-simple-run", "Réinitialiser le squelette et les animations");
-    menu::todo(ui, p, "arrow-counter-clockwise", "Réinitialiser le LOD du mesh");
+    menu::todo(ui, p, "bone", aurora_i18n::tr!("ui-context-reset-skeleton"));
+    menu::todo(
+        ui,
+        p,
+        "person-simple-run",
+        aurora_i18n::tr!("ui-context-reset-skeleton-and-animations"),
+    );
+    menu::todo(ui, p, "arrow-counter-clockwise", aurora_i18n::tr!("ui-context-reset-mesh-lod-2"));
     menu::separator(ui, p);
-    menu::submenu(ui, p, "warning", "Dérangement", true, |ui| {
+    menu::submenu(ui, p, "warning", aurora_i18n::tr!("ui-context-disturbance"), true, |ui| {
         let (icon, label) = if f.blocked {
-            ("check-circle", "Cesser d'ignorer")
+            ("check-circle", aurora_i18n::tr!("common-stop-ignoring"))
         } else {
-            ("prohibit", "Ignorer")
+            ("prohibit", aurora_i18n::tr!("common-ignore"))
         };
         if menu::item(ui, p, icon, label) {
             act(CtxAction::ToggleBlock(id));
         }
-        menu::todo(ui, p, "flag", "Signaler");
-        menu::todo(ui, p, "snowflake", "Geler");
-        menu::todo(ui, p, "door-open", "Expulser");
+        menu::todo(ui, p, "flag", aurora_i18n::tr!("common-report"));
+        menu::todo(ui, p, "snowflake", aurora_i18n::tr!("ui-context-freeze"));
+        menu::todo(ui, p, "door-open", aurora_i18n::tr!("ui-context-eject"));
     });
-    if menu::item(ui, p, "magnifying-glass-plus", "Zoomer") {
+    if menu::item(ui, p, "magnifying-glass-plus", aurora_i18n::tr!("common-zoom-2")) {
         act(CtxAction::Zoom(point));
     }
-    menu::todo(ui, p, "currency-circle-dollar", "Payer");
+    menu::todo(ui, p, "currency-circle-dollar", aurora_i18n::tr!("common-pay"));
     if attachment.is_some() {
         menu::separator(ui, p);
-        menu::todo(ui, p, "info", "Profil de l'objet");
+        menu::todo(ui, p, "info", aurora_i18n::tr!("ui-context-object-profile"));
     }
     menu::separator(ui, p);
     // Firestorm « Rendu toujours complet / Aucun rendu / Rendu selon vos préférences »
     if let Some((c, silhouette)) = f.complexity {
-        let text = format!(
-            "Complexité : {}{}",
-            super::hud::group_digits(c),
-            if silhouette { " (silhouette)" } else { "" }
+        let text = aurora_i18n::tr!(
+            "ui-context-complexity",
+            value0 = super::hud::group_digits(c).to_string(),
+            value1 = (if silhouette { " (silhouette)" } else { "" }).to_string()
         );
         menu::info(ui, p, "gauge", &text);
     }
     for (mode, icon, label) in [
-        (2u8, "user-focus", "Toujours afficher tous les détails"),
-        (1, "ghost", "Ne jamais afficher tous les détails"),
-        (0, "sliders", "Affichage selon vos préférences"),
+        (2u8, "user-focus", aurora_i18n::tr!("ui-context-always-show-full-detail")),
+        (1, "ghost", aurora_i18n::tr!("ui-context-never-fully-render")),
+        (0, "sliders", aurora_i18n::tr!("ui-context-display-according-to-your-preferences")),
     ] {
         if menu::check(ui, p, icon, label, f.render == mode, true) {
             act(CtxAction::SetRender(id, mode));
         }
     }
-    menu::todo(ui, p, "magnifying-glass", "Inspecter");
-    menu::todo(ui, p, "code", "Informations sur les scripts");
-    menu::todo(ui, p, "eye-slash", "Faire disparaître temporairement");
-    menu::todo(ui, p, "eye-closed", "Faire disparaître & Blacklister");
-    menu::todo(ui, p, "image", "Afficher les textures");
-    menu::todo(ui, p, "arrows-clockwise", "Actualiser les textures");
+    menu::todo(ui, p, "magnifying-glass", aurora_i18n::tr!("ui-context-inspect-2"));
+    menu::todo(ui, p, "code", aurora_i18n::tr!("ui-context-script-information"));
+    menu::todo(ui, p, "eye-slash", aurora_i18n::tr!("ui-context-derender-temporarily"));
+    menu::todo(ui, p, "eye-closed", aurora_i18n::tr!("ui-context-derender-blacklist"));
+    menu::todo(ui, p, "image", aurora_i18n::tr!("ui-context-show-textures"));
+    menu::todo(ui, p, "arrows-clockwise", aurora_i18n::tr!("ui-context-refresh-textures"));
     menu::separator(ui, p);
-    menu::todo(ui, p, "sparkle", "Bloquer les particules");
+    menu::todo(ui, p, "sparkle", aurora_i18n::tr!("common-block-particles"));
 }
 
 /// menu_avatar_self.xml
@@ -520,70 +543,79 @@ fn self_menu(ui: &mut egui::Ui, p: &Palette, f: &Facts, id: Uuid, act: &mut dyn 
         ui,
         p,
         if f.flying { "airplane-landing" } else { "airplane-takeoff" },
-        if f.flying { "Atterrir" } else { "Voler" },
+        if f.flying {
+            aurora_i18n::tr!("ui-context-land")
+        } else {
+            aurora_i18n::tr!("common-fly")
+        },
     ) {
         act(CtxAction::ToggleFly);
     }
-    if menu::item(ui, p, "camera", "Réinitialiser la caméra") {
+    if menu::item(ui, p, "camera", aurora_i18n::tr!("ui-context-reset-camera")) {
         act(CtxAction::ResetCamera);
     }
-    menu::todo(ui, p, "code", "Informations sur les scripts");
-    menu::todo(ui, p, "image", "Afficher les textures");
-    menu::todo(ui, p, "arrows-clockwise", "Actualiser les textures");
+    menu::todo(ui, p, "code", aurora_i18n::tr!("ui-context-script-information"));
+    menu::todo(ui, p, "image", aurora_i18n::tr!("ui-context-show-textures"));
+    menu::todo(ui, p, "arrows-clockwise", aurora_i18n::tr!("ui-context-refresh-textures"));
 }
 
 /// « S'asseoir » (on the ground, Self.SitDown) and « Se lever ».
 fn sit_stand(ui: &mut egui::Ui, p: &Palette, f: &Facts, act: &mut dyn FnMut(CtxAction)) {
-    if menu::item_if(ui, p, "armchair", "S'asseoir", !f.seated) {
+    if menu::item_if(ui, p, "armchair", aurora_i18n::tr!("status-sit"), !f.seated) {
         act(CtxAction::SitGround);
     }
-    if menu::item_if(ui, p, "person", "Se lever", f.seated) {
+    if menu::item_if(ui, p, "person", aurora_i18n::tr!("common-stand-up"), f.seated) {
         act(CtxAction::StandUp);
     }
 }
 
 fn take_off_submenu(ui: &mut egui::Ui, p: &Palette) {
-    menu::submenu(ui, p, "t-shirt", "Enlever", true, |ui| {
-        menu::todo(ui, p, "t-shirt", "Vêtements");
+    menu::submenu(ui, p, "t-shirt", aurora_i18n::tr!("common-remove"), true, |ui| {
+        menu::todo(ui, p, "t-shirt", aurora_i18n::tr!("common-clothing"));
         menu::todo(ui, p, "monitor", "HUD");
-        menu::todo(ui, p, "paperclip", "Détacher");
-        menu::todo(ui, p, "x-circle", "Tout détacher");
+        menu::todo(ui, p, "paperclip", aurora_i18n::tr!("common-detach"));
+        menu::todo(ui, p, "x-circle", aurora_i18n::tr!("ui-context-detach-all"));
     });
 }
 
 fn appearance_submenu(ui: &mut egui::Ui, p: &Palette, act: &mut dyn FnMut(CtxAction)) {
-    menu::submenu(ui, p, "person", "Apparence", true, |ui| {
-        if menu::item(ui, p, "t-shirt", "Tenue actuelle") {
+    menu::submenu(ui, p, "person", aurora_i18n::tr!("common-appearance"), true, |ui| {
+        if menu::item(ui, p, "t-shirt", aurora_i18n::tr!("common-current-outfit")) {
             act(CtxAction::OpenAppearance { tab: 2, editing: false });
         }
-        if menu::item(ui, p, "backpack", "Changer de tenue") {
+        if menu::item(ui, p, "backpack", aurora_i18n::tr!("ui-context-change-outfit")) {
             act(CtxAction::OpenAppearance { tab: 0, editing: false });
         }
-        menu::todo(ui, p, "person", "Modifier la silhouette");
-        if menu::item(ui, p, "pencil-simple", "Modifier la tenue") {
+        menu::todo(ui, p, "person", aurora_i18n::tr!("ui-context-edit-shape"));
+        if menu::item(ui, p, "pencil-simple", aurora_i18n::tr!("ui-context-edit-outfit")) {
             act(CtxAction::OpenAppearance { tab: 2, editing: true });
         }
-        menu::todo(ui, p, "arrows-out-cardinal", "Voltigement");
+        menu::todo(ui, p, "arrows-out-cardinal", aurora_i18n::tr!("ui-context-flutter"));
         menu::separator(ui, p);
-        menu::todo(ui, p, "bone", "Réinitialiser le squelette");
-        menu::todo(ui, p, "person-simple-run", "Réinitialiser le squelette et les animations");
-        menu::todo(ui, p, "arrow-counter-clockwise", "Réinitialiser le LOD du maillage");
+        menu::todo(ui, p, "bone", aurora_i18n::tr!("ui-context-reset-skeleton"));
+        menu::todo(
+            ui,
+            p,
+            "person-simple-run",
+            aurora_i18n::tr!("ui-context-reset-skeleton-and-animations"),
+        );
+        menu::todo(ui, p, "arrow-counter-clockwise", aurora_i18n::tr!("ui-context-reset-mesh-lod"));
     });
 }
 
 fn community_submenu(ui: &mut egui::Ui, p: &Palette, me: Uuid, act: &mut dyn FnMut(CtxAction)) {
     let mut chosen = None;
-    menu::submenu(ui, p, "users-three", "Communauté", true, |ui| {
-        if menu::item(ui, p, "users", "Amis") {
+    menu::submenu(ui, p, "users-three", aurora_i18n::tr!("ui-context-community"), true, |ui| {
+        if menu::item(ui, p, "users", aurora_i18n::tr!("common-friends")) {
             chosen = Some(CtxAction::OpenPeople(1));
         }
-        if menu::item(ui, p, "users-three", "Groupes") {
+        if menu::item(ui, p, "users-three", aurora_i18n::tr!("common-groups")) {
             chosen = Some(CtxAction::OpenPeople(2));
         }
-        if menu::item(ui, p, "user-circle", "Profil") {
+        if menu::item(ui, p, "user-circle", aurora_i18n::tr!("common-profile")) {
             chosen = Some(CtxAction::Profile(me));
         }
-        if menu::item(ui, p, "identification-card", "Nom d'affichage…") {
+        if menu::item(ui, p, "identification-card", aurora_i18n::tr!("ui-context-display-name")) {
             chosen = Some(CtxAction::DisplayName);
         }
     });
@@ -594,29 +626,29 @@ fn community_submenu(ui: &mut egui::Ui, p: &Palette, me: Uuid, act: &mut dyn FnM
 
 /// menu_land.xml
 fn land_menu(ui: &mut egui::Ui, p: &Palette, f: &Facts, point: Vec3, act: &mut dyn FnMut(CtxAction)) {
-    if menu::item(ui, p, "info", "À propos du terrain") {
+    if menu::item(ui, p, "info", aurora_i18n::tr!("common-about-land")) {
         act(CtxAction::AboutLand(point));
     }
     // Land.Sit walks there first (autopilot): not in Aurora yet
-    menu::todo(ui, p, "armchair", "S'asseoir ici");
-    if f.seated && menu::item(ui, p, "person", "Se lever") {
+    menu::todo(ui, p, "armchair", aurora_i18n::tr!("ui-context-sit-here"));
+    if f.seated && menu::item(ui, p, "person", aurora_i18n::tr!("common-stand-up")) {
         act(CtxAction::StandUp);
     }
-    if menu::item(ui, p, "magnifying-glass-plus", "Zoomer") {
+    if menu::item(ui, p, "magnifying-glass-plus", aurora_i18n::tr!("common-zoom-2")) {
         act(CtxAction::Zoom(point));
     }
     menu::separator(ui, p);
-    menu::todo(ui, p, "shopping-cart", "Acheter ce terrain");
-    menu::todo(ui, p, "ticket", "Acheter un droit d'entrée");
+    menu::todo(ui, p, "shopping-cart", aurora_i18n::tr!("ui-context-buy-this-land"));
+    menu::todo(ui, p, "ticket", aurora_i18n::tr!("ui-context-buy-access"));
     menu::separator(ui, p);
-    if menu::item(ui, p, "cube", "Construire") {
+    if menu::item(ui, p, "cube", aurora_i18n::tr!("common-build")) {
         act(CtxAction::Build);
     }
-    if menu::item(ui, p, "mountains", "Modifier le terrain") {
+    if menu::item(ui, p, "mountains", aurora_i18n::tr!("ui-context-edit-land")) {
         act(CtxAction::EditTerrain);
     }
     menu::separator(ui, p);
-    menu::todo(ui, p, "sparkle", "Ignorer le propriétaire des particules");
+    menu::todo(ui, p, "sparkle", aurora_i18n::tr!("ui-context-ignore-particle-owner"));
 }
 
 /// Where an avatar menu of a list is opened: each place has its own
@@ -637,7 +669,7 @@ pub fn avatar_list_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid,
     let ctx = ui.ctx().clone();
     let act = |a: CtxAction| request(&ctx, a);
     if id == world.agent_id {
-        if menu::item(ui, p, "user-circle", "Voir le profil") {
+        if menu::item(ui, p, "user-circle", aurora_i18n::tr!("common-view-profile")) {
             act(CtxAction::Profile(id));
         }
         return;
@@ -648,58 +680,58 @@ pub fn avatar_list_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid,
     let online = friend.as_ref().is_none_or(|f| f.online);
     let name = world.social.name_of(&id);
     let profile = |ui: &mut egui::Ui| {
-        if menu::item(ui, p, "user-circle", "Voir le profil") {
+        if menu::item(ui, p, "user-circle", aurora_i18n::tr!("common-view-profile")) {
             act(CtxAction::Profile(id));
         }
     };
     let im = |ui: &mut egui::Ui| {
-        if menu::item(ui, p, "chat-text", "Envoyer un IM") {
+        if menu::item(ui, p, "chat-text", aurora_i18n::tr!("ui-context-send-im")) {
             act(CtxAction::Im(id));
         }
     };
     let offer_tp = |ui: &mut egui::Ui| {
-        if menu::item_if(ui, p, "paper-plane-tilt", "Proposer une téléportation", online) {
+        if menu::item_if(ui, p, "paper-plane-tilt", aurora_i18n::tr!("common-offer-teleport"), online) {
             act(CtxAction::OfferTeleport(id));
         }
     };
     let tp_to = |ui: &mut egui::Ui| {
-        if menu::item_if(ui, p, "navigation-arrow", "Se téléporter vers", here) {
+        if menu::item_if(ui, p, "navigation-arrow", aurora_i18n::tr!("common-teleport-to"), here) {
             act(CtxAction::TeleportToAvatar(id));
         }
     };
     let zoom = |ui: &mut egui::Ui| {
-        if menu::item_if(ui, p, "magnifying-glass-plus", "Zoomer", here) {
+        if menu::item_if(ui, p, "magnifying-glass-plus", aurora_i18n::tr!("common-zoom-2"), here) {
             act(CtxAction::ZoomAvatar(id));
         }
     };
     let block = |ui: &mut egui::Ui| {
-        if menu::check(ui, p, "prohibit", "Ignorer", blocked, true) {
+        if menu::check(ui, p, "prohibit", aurora_i18n::tr!("common-ignore"), blocked, true) {
             act(CtxAction::ToggleBlock(id));
         }
     };
     let copy = |ui: &mut egui::Ui| {
-        if menu::item(ui, p, "copy", "Copier le nom") {
+        if menu::item(ui, p, "copy", aurora_i18n::tr!("common-copy-name")) {
             ui.ctx().copy_text(name.clone());
         }
-        if menu::item(ui, p, "link", "Copier l'URL") {
+        if menu::item(ui, p, "link", aurora_i18n::tr!("common-copy-url")) {
             ui.ctx().copy_text(format!("secondlife:///app/agent/{id}/about"));
         }
-        if menu::item(ui, p, "at", "Copier l'URI de la mention") {
+        if menu::item(ui, p, "at", aurora_i18n::tr!("common-copy-mention-uri")) {
             ui.ctx().copy_text(format!("secondlife:///app/agent/{id}/mention"));
         }
     };
     let add_friend = |ui: &mut egui::Ui| {
-        if friend.is_none() && menu::item(ui, p, "user-plus", "Devenir amis") {
+        if friend.is_none() && menu::item(ui, p, "user-plus", aurora_i18n::tr!("common-become-friends")) {
             act(CtxAction::AddFriend(id));
         }
     };
     let remove_friend = |ui: &mut egui::Ui| {
-        if friend.is_some() && menu::item(ui, p, "user-minus", "Supprimer cet ami") {
+        if friend.is_some() && menu::item(ui, p, "user-minus", aurora_i18n::tr!("common-remove-this-friend")) {
             act(CtxAction::RemoveFriend(id));
         }
     };
     let request_tp = |ui: &mut egui::Ui| {
-        if menu::item_if(ui, p, "airplane-landing", "Demander une téléportation", online) {
+        if menu::item_if(ui, p, "airplane-landing", aurora_i18n::tr!("common-request-teleport"), online) {
             act(CtxAction::RequestTeleport(id));
         }
     };
@@ -710,34 +742,44 @@ pub fn avatar_list_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid,
             offer_tp(ui);
             request_tp(ui);
             tp_to(ui);
-            menu::todo(ui, p, "phone", "Appel vocal");
+            menu::todo(ui, p, "phone", aurora_i18n::tr!("common-voice-call"));
             menu::separator(ui, p);
-            menu::todo(ui, p, "clock-counter-clockwise", "Voir l'historique de conversations");
+            menu::todo(
+                ui,
+                p,
+                "clock-counter-clockwise",
+                aurora_i18n::tr!("common-view-conversation-history"),
+            );
             menu::separator(ui, p);
             add_friend(ui);
             remove_friend(ui);
-            menu::todo(ui, p, "users-three", "Ajouter à un cercle");
-            menu::todo(ui, p, "user-circle-plus", "Inviter dans un groupe");
+            menu::todo(ui, p, "users-three", aurora_i18n::tr!("ui-context-add-to-contact-set"));
+            menu::todo(ui, p, "user-circle-plus", aurora_i18n::tr!("ui-context-invite-to-group"));
             menu::separator(ui, p);
             zoom(ui);
-            if menu::item_if(ui, p, "map-trifold", "Voir sur la carte", here) {
+            if menu::item_if(ui, p, "map-trifold", aurora_i18n::tr!("common-show-on-map-2"), here) {
                 act(CtxAction::ShowOnMap(id));
             }
-            menu::todo(ui, p, "share-network", "Partager");
-            menu::todo(ui, p, "currency-circle-dollar", "Payer");
+            menu::todo(ui, p, "share-network", aurora_i18n::tr!("common-share"));
+            menu::todo(ui, p, "currency-circle-dollar", aurora_i18n::tr!("common-pay"));
             block(ui);
         }
         AvatarList::Friend => {
             profile(ui);
             im(ui);
-            menu::todo(ui, p, "clock-counter-clockwise", "Voir l'historique de conversations");
-            menu::todo(ui, p, "users-three", "Ajouter au cercle");
+            menu::todo(
+                ui,
+                p,
+                "clock-counter-clockwise",
+                aurora_i18n::tr!("common-view-conversation-history"),
+            );
+            menu::todo(ui, p, "users-three", aurora_i18n::tr!("common-add-to-contact-set"));
             zoom(ui);
             tp_to(ui);
             offer_tp(ui);
             request_tp(ui);
-            menu::todo(ui, p, "currency-circle-dollar", "Payer");
-            menu::todo(ui, p, "crosshair", "Suivre");
+            menu::todo(ui, p, "currency-circle-dollar", aurora_i18n::tr!("common-pay"));
+            menu::todo(ui, p, "crosshair", aurora_i18n::tr!("common-follow"));
             remove_friend(ui);
             menu::separator(ui, p);
             copy(ui);
@@ -745,7 +787,14 @@ pub fn avatar_list_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid,
                 menu::separator(ui, p);
                 // GlobalOnlineStatusToggle: the online status right we give
                 let on = f.rights_given & 1 != 0;
-                if menu::check(ui, p, "eye", "Statut connecté visible pour cet ami", on, true) {
+                if menu::check(
+                    ui,
+                    p,
+                    "eye",
+                    aurora_i18n::tr!("common-online-status-visible-to-this-friend"),
+                    on,
+                    true,
+                ) {
                     act(CtxAction::GrantRights {
                         friend: id,
                         rights: f.rights_given ^ 1,
@@ -756,17 +805,22 @@ pub fn avatar_list_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid,
         AvatarList::Name => {
             profile(ui);
             im(ui);
-            menu::todo(ui, p, "clock-counter-clockwise", "Voir l'historique de conversations");
+            menu::todo(
+                ui,
+                p,
+                "clock-counter-clockwise",
+                aurora_i18n::tr!("common-view-conversation-history"),
+            );
             add_friend(ui);
-            menu::todo(ui, p, "users-three", "Ajouter à un cercle");
+            menu::todo(ui, p, "users-three", aurora_i18n::tr!("ui-context-add-to-contact-set"));
             zoom(ui);
             tp_to(ui);
             offer_tp(ui);
             request_tp(ui);
-            menu::todo(ui, p, "crosshair", "Suivre le résident");
+            menu::todo(ui, p, "crosshair", aurora_i18n::tr!("ui-context-follow-resident"));
             remove_friend(ui);
             menu::separator(ui, p);
-            menu::todo(ui, p, "flag", "Signaler une infraction");
+            menu::todo(ui, p, "flag", aurora_i18n::tr!("ui-context-report-abuse"));
             block(ui);
             menu::separator(ui, p);
             copy(ui);
@@ -779,31 +833,38 @@ pub fn avatar_list_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid,
 pub fn group_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid) {
     let ctx = ui.ctx().clone();
     let act = |a: CtxAction| request(&ctx, a);
-    if menu::item_if(ui, p, "check-circle", "Activer", world.groups.active != id) {
+    if menu::item_if(ui, p, "check-circle", aurora_i18n::tr!("common-enable"), world.groups.active != id) {
         act(CtxAction::ActivateGroup(id));
     }
-    menu::todo(ui, p, "info", "Voir les infos");
-    if menu::item(ui, p, "link", "Copier le SLurl") {
+    menu::todo(ui, p, "info", aurora_i18n::tr!("common-view-info"));
+    if menu::item(ui, p, "link", aurora_i18n::tr!("common-copy-slurl-2")) {
         ui.ctx().copy_text(format!("secondlife:///app/group/{id}/about"));
     }
-    if menu::item(ui, p, "chat-text", "Chat") {
+    if menu::item(ui, p, "chat-text", aurora_i18n::tr!("common-chat")) {
         act(CtxAction::GroupChat(id));
     }
-    menu::todo(ui, p, "phone", "Appel vocal");
+    menu::todo(ui, p, "phone", aurora_i18n::tr!("common-voice-call"));
     let pin = if world.groups.favorites.contains(&id) {
-        "Désépingler le groupe"
+        aurora_i18n::tr!("common-unpin-group")
     } else {
-        "Épingler le groupe"
+        aurora_i18n::tr!("common-pin-group")
     };
     if menu::item(ui, p, "push-pin", pin) {
         act(CtxAction::PinGroup(id));
     }
     let blocked = world.mutes.group_chat_muted(&id);
-    if menu::check(ui, p, "chat-teardrop-slash", "Bloquer le chat du groupe", blocked, true) {
+    if menu::check(
+        ui,
+        p,
+        "chat-teardrop-slash",
+        aurora_i18n::tr!("ui-context-block-group-chat"),
+        blocked,
+        true,
+    ) {
         act(CtxAction::GroupChatBlocked(id, !blocked));
     }
     menu::separator(ui, p);
-    if menu::item(ui, p, "sign-out", "Quitter") {
+    if menu::item(ui, p, "sign-out", aurora_i18n::tr!("common-quit")) {
         act(CtxAction::LeaveGroup(id));
     }
 }
@@ -833,23 +894,23 @@ pub fn delete_warning(flags: &[u32]) -> Option<String> {
     let not_ours = flags.iter().any(|f| f & flags::OBJECT_YOU_OWNER == 0);
     let mut lines = Vec::new();
     if locked {
-        lines.push("Au moins un des objets est verrouillé.");
+        lines.push(aurora_i18n::tr!("ui-context-at-least-one-object-is-locked"));
     }
     if no_copy {
-        lines.push("Au moins un des objets n'est pas copiable.");
+        lines.push(aurora_i18n::tr!("ui-context-at-least-one-object-is-no-copy"));
     }
     if not_ours {
-        lines.push("Au moins un des objets ne vous appartient pas.");
+        lines.push(aurora_i18n::tr!("ui-context-at-least-one-object-is-not-yours"));
     }
     (!lines.is_empty()).then(|| {
-        format!(
-            "{}
-
-Êtes-vous certain de vouloir supprimer ces objets ?",
-            lines.join(
-                "
+        aurora_i18n::tr!(
+            "ui-context-are-you-sure-you-want-to-delete-these-objects",
+            value0 = lines
+                .join(
+                    "
 "
-            )
+                )
+                .to_string()
         )
     })
 }
@@ -860,20 +921,25 @@ pub fn delete_confirm(ctx: &egui::Context, p: &Palette, text: &str) -> Option<bo
     let mut answer = None;
     let modal = egui::Modal::new(egui::Id::new("object_delete_confirm")).show(ctx, |ui| {
         ui.set_width(340.0);
-        ui.label(RichText::new("Supprimer l'objet ?").size(15.0).strong().color(p.ink));
+        ui.label(
+            RichText::new(aurora_i18n::tr!("ui-context-delete-object"))
+                .size(15.0)
+                .strong()
+                .color(p.ink),
+        );
         ui.add_space(6.0);
         ui.label(RichText::new(text).size(12.5).color(p.muted));
         ui.add_space(10.0);
         ui.horizontal(|ui| {
             let yes = ui.add(
-                egui::Button::new(RichText::new("Supprimer").color(Color32::WHITE))
+                egui::Button::new(RichText::new(aurora_i18n::tr!("common-delete")).color(Color32::WHITE))
                     .fill(p.danger)
                     .corner_radius(CornerRadius::same(2)),
             );
             if yes.clicked() {
                 answer = Some(true);
             }
-            if super::widgets::flat_button(ui, p, "Annuler").clicked() {
+            if super::widgets::flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked() {
                 answer = Some(false);
             }
         });
@@ -891,19 +957,27 @@ pub fn place_teleport_confirm(ctx: &egui::Context, p: &Palette, region: &str) ->
     let mut answer = None;
     let modal = egui::Modal::new(egui::Id::new("place_teleport_confirm")).show(ctx, |ui| {
         ui.set_width(340.0);
-        ui.label(RichText::new("Téléportation").size(15.0).strong().color(p.ink));
+        ui.label(
+            RichText::new(aurora_i18n::tr!("common-teleport-2"))
+                .size(15.0)
+                .strong()
+                .color(p.ink),
+        );
         ui.add_space(6.0);
         ui.label(
-            RichText::new(format!("Voulez-vous vraiment vous téléporter jusqu'à {region} ?"))
-                .size(12.5)
-                .color(p.muted),
+            RichText::new(aurora_i18n::tr!(
+                "ui-context-do-you-really-want-to-teleport-to",
+                region = region.to_string()
+            ))
+            .size(12.5)
+            .color(p.muted),
         );
         ui.add_space(10.0);
         ui.horizontal(|ui| {
-            if super::widgets::flat_button(ui, p, "Téléporter").clicked() {
+            if super::widgets::flat_button(ui, p, aurora_i18n::tr!("common-teleport-3")).clicked() {
                 answer = Some(true);
             }
-            if super::widgets::flat_button(ui, p, "Annuler").clicked() {
+            if super::widgets::flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked() {
                 answer = Some(false);
             }
         });
@@ -925,8 +999,8 @@ pub fn external_link_confirm(ctx: &egui::Context, p: &Palette, url: &str, dont_w
     let modal = egui::Modal::new(egui::Id::new("external_link_confirm")).show(ctx, |ui| {
         ui.set_width(380.0);
         let (icon, col, title) = match danger {
-            Some(_) => ("x-circle-fill", p.danger, "Lien dangereux"),
-            None => ("warning-fill", p.amber, "Attention avant de cliquer"),
+            Some(_) => ("x-circle-fill", p.danger, aurora_i18n::tr!("ui-context-dangerous-link")),
+            None => ("warning-fill", p.amber, aurora_i18n::tr!("ui-context-think-before-clicking")),
         };
         ui.horizontal(|ui| {
             let (rect, _) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::hover());
@@ -943,14 +1017,10 @@ pub fn external_link_confirm(ctx: &egui::Context, p: &Palette, url: &str, dont_w
         }
         let text = match danger {
             Some(_) => {
-                "Aurora vous déconseille d'ouvrir ce lien. S'il vous demande de vous connecter ou de \
-                 payer, c'est très probablement une arnaque : ne donnez jamais votre mot de passe ni \
-                 vos informations de paiement."
+                aurora_i18n::tr!("ui-context-aurora-recommends-against-opening-this-link-if-it-asks")
             }
             None => {
-                "Ce lien mène à un site qui n'est pas dans la liste des sites de confiance d'Aurora. \
-                 Méfiez-vous des fausses pages de connexion et des offres trop belles : ne donnez \
-                 jamais votre mot de passe ni vos informations de paiement."
+                aurora_i18n::tr!("ui-context-this-link-leads-to-a-site-that-is-not")
             }
         };
         ui.label(RichText::new(text).size(12.5).color(p.muted));
@@ -962,20 +1032,25 @@ pub fn external_link_confirm(ctx: &egui::Context, p: &Palette, url: &str, dont_w
         );
         ui.add_space(8.0);
         if danger.is_none() {
-            ui.checkbox(dont_warn, RichText::new("Ne plus me prévenir").size(12.5).color(p.muted));
+            ui.checkbox(
+                dont_warn,
+                RichText::new(aurora_i18n::tr!("ui-context-do-not-warn-me-again"))
+                    .size(12.5)
+                    .color(p.muted),
+            );
             ui.add_space(8.0);
         }
         // the action, then « Annuler », like the other confirmations
         ui.horizontal(|ui| {
             let visit = if danger.is_some() {
-                "Visiter quand même"
+                aurora_i18n::tr!("ui-context-visit-anyway")
             } else {
-                "Visiter le lien"
+                aurora_i18n::tr!("ui-context-visit-link")
             };
             if super::widgets::flat_button(ui, p, visit).clicked() {
                 answer = Some(true);
             }
-            if super::widgets::flat_button(ui, p, "Annuler").clicked() {
+            if super::widgets::flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked() {
                 answer = Some(false);
             }
         });
@@ -994,7 +1069,7 @@ mod tests {
     fn modifier_click_opens_hud_editing_but_other_attachments_stay_disabled() {
         fn label_pos(shape: &egui::epaint::Shape) -> Option<egui::Pos2> {
             match shape {
-                egui::epaint::Shape::Text(t) if t.galley.text() == "Modifier" => Some(t.pos + egui::vec2(4.0, 4.0)),
+                egui::epaint::Shape::Text(t) if t.galley.text() == aurora_i18n::tr!("common-edit") => Some(t.pos + egui::vec2(4.0, 4.0)),
                 egui::epaint::Shape::Vec(v) => v.iter().find_map(label_pos),
                 _ => None,
             }
@@ -1081,9 +1156,17 @@ mod tests {
         let mine = MINE | flags::OBJECT_MOVE;
         assert_eq!(delete_warning(&[mine, mine]), None);
         let w = delete_warning(&[mine, mine & !flags::OBJECT_COPY]).unwrap_or_default();
-        assert!(w.contains("pas copiable") && !w.contains("verrouillé") && !w.contains("appartient"));
+        assert!(
+            w.contains(aurora_i18n::tr!("ui-context-at-least-one-object-is-no-copy"))
+                && !w.contains(aurora_i18n::tr!("ui-context-at-least-one-object-is-locked"))
+                && !w.contains(aurora_i18n::tr!("ui-context-at-least-one-object-is-not-yours"))
+        );
         let w = delete_warning(&[THEIRS | flags::OBJECT_MODIFY]).unwrap_or_default();
-        assert!(w.contains("verrouillé") && w.contains("pas copiable") && w.contains("appartient"));
+        assert!(
+            w.contains(aurora_i18n::tr!("ui-context-at-least-one-object-is-locked"))
+                && w.contains(aurora_i18n::tr!("ui-context-at-least-one-object-is-no-copy"))
+                && w.contains(aurora_i18n::tr!("ui-context-at-least-one-object-is-not-yours"))
+        );
     }
 
     #[test]

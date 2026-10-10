@@ -1,5 +1,5 @@
 //! Firestorm inventory view menu and finder options, presented with Aurora widgets.
-use super::view::{Age, Creator, Filters, InventoryPreferences, Links, SearchField, TYPES};
+use super::view::{Age, Creator, Filters, InventoryPreferences, Links, SearchField, types};
 use super::{InventoryUi, Palette};
 use crate::ui::widgets::{Floater, flat_button, switch};
 use egui::{RichText, Vec2};
@@ -15,27 +15,75 @@ fn check(ui: &mut egui::Ui, p: &Palette, label: &str, value: &mut bool) -> bool 
 
 pub fn preferences(ui: &mut egui::Ui, p: &Palette, prefs: &mut InventoryPreferences) -> bool {
     let mut changed = false;
-    ui.label(RichText::new("Ordre d'affichage").color(p.muted));
+    ui.label(RichText::new(aurora_i18n::tr!("ui-inventory-controls-display-order")).color(p.muted));
     ui.horizontal(|ui| {
-        changed |= ui.selectable_value(&mut prefs.sort.by_date, true, "Plus récents d'abord").changed();
-        changed |= ui.selectable_value(&mut prefs.sort.by_date, false, "Par nom").changed();
+        changed |= ui
+            .selectable_value(
+                &mut prefs.sort.by_date,
+                true,
+                aurora_i18n::tr!("ui-inventory-controls-newest-first"),
+            )
+            .changed();
+        changed |= ui
+            .selectable_value(&mut prefs.sort.by_date, false, aurora_i18n::tr!("common-by-name"))
+            .changed();
     });
-    changed |= check(ui, p, "Dossiers toujours par nom", &mut prefs.sort.folders_by_name);
-    changed |= check(ui, p, "Dossiers système en premier", &mut prefs.sort.system_first);
+    changed |= check(
+        ui,
+        p,
+        aurora_i18n::tr!("ui-inventory-controls-folders-always-by-name"),
+        &mut prefs.sort.folders_by_name,
+    );
+    changed |= check(
+        ui,
+        p,
+        aurora_i18n::tr!("ui-inventory-controls-system-folders-first"),
+        &mut prefs.sort.system_first,
+    );
     ui.add_space(6.0);
-    ui.label(RichText::new("Affichage").color(p.muted));
-    changed |= check(ui, p, "Afficher la bibliothèque", &mut prefs.show_library);
-    changed |= check(ui, p, "Onglet Récent", &mut prefs.show_recent);
-    changed |= check(ui, p, "Onglet Porté", &mut prefs.show_worn);
-    changed |= check(ui, p, "Onglet Favoris", &mut prefs.show_favorites);
-    changed |= check(ui, p, "Recherche distincte dans chaque onglet", &mut prefs.separate_searches);
-    changed |= check(ui, p, "Double-clic : ajouter les objets", &mut prefs.double_click_add_objects);
-    changed |= check(ui, p, "Double-clic : ajouter les vêtements", &mut prefs.double_click_add_clothes);
+    ui.label(RichText::new(aurora_i18n::tr!("common-display")).color(p.muted));
+    changed |= check(
+        ui,
+        p,
+        aurora_i18n::tr!("ui-inventory-controls-show-library"),
+        &mut prefs.show_library,
+    );
+    changed |= check(ui, p, aurora_i18n::tr!("ui-inventory-controls-recent-tab"), &mut prefs.show_recent);
+    changed |= check(ui, p, aurora_i18n::tr!("ui-inventory-controls-worn-tab"), &mut prefs.show_worn);
+    changed |= check(
+        ui,
+        p,
+        aurora_i18n::tr!("ui-inventory-controls-favorites-tab"),
+        &mut prefs.show_favorites,
+    );
+    changed |= check(
+        ui,
+        p,
+        aurora_i18n::tr!("ui-inventory-controls-separate-search-in-each-tab"),
+        &mut prefs.separate_searches,
+    );
+    changed |= check(
+        ui,
+        p,
+        aurora_i18n::tr!("ui-inventory-controls-double-click-add-objects"),
+        &mut prefs.double_click_add_objects,
+    );
+    changed |= check(
+        ui,
+        p,
+        aurora_i18n::tr!("ui-inventory-controls-double-click-add-clothes"),
+        &mut prefs.double_click_add_clothes,
+    );
     ui.add_space(6.0);
-    ui.label(RichText::new("Rechercher aussi dans…").color(p.muted));
-    changed |= check(ui, p, "La bibliothèque", &mut prefs.search_library);
-    changed |= check(ui, p, "La corbeille", &mut prefs.search_trash);
-    changed |= check(ui, p, "Les dossiers de tenues", &mut prefs.search_outfits);
+    ui.label(RichText::new(aurora_i18n::tr!("ui-inventory-controls-also-search-in")).color(p.muted));
+    changed |= check(ui, p, aurora_i18n::tr!("ui-inventory-controls-library"), &mut prefs.search_library);
+    changed |= check(ui, p, aurora_i18n::tr!("ui-inventory-controls-trash"), &mut prefs.search_trash);
+    changed |= check(
+        ui,
+        p,
+        aurora_i18n::tr!("ui-inventory-controls-outfit-folders"),
+        &mut prefs.search_outfits,
+    );
     changed
 }
 
@@ -44,15 +92,25 @@ pub fn toolbar(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi, prefs: &mut
         st.filters.clone_from(&prefs.filter_defaults);
         st.filters_initialized = true;
     }
-    let filter_label = if st.filters.active() { "Filtres •" } else { "Filtres" };
+    let filter_label = if st.filters.active() {
+        aurora_i18n::tr!("ui-inventory-controls-filters-2")
+    } else {
+        aurora_i18n::tr!("ui-inventory-controls-filters")
+    };
     let clear_label = if st.links_filter.is_some() {
-        "Quitter les liens"
+        aurora_i18n::tr!("ui-inventory-controls-exit-linked-mode")
     } else if !st.search.is_empty() || st.filters.active() {
-        "Effacer"
+        aurora_i18n::tr!("common-clear")
     } else {
         ""
     };
-    let labels = [filter_label, "Préférences", clear_label, "Réduire", "Développer"];
+    let labels = [
+        filter_label,
+        aurora_i18n::tr!("common-preferences"),
+        clear_label,
+        aurora_i18n::tr!("common-collapse"),
+        aurora_i18n::tr!("common-expand"),
+    ];
     let width: f32 = labels
         .iter()
         .filter(|label| !label.is_empty())
@@ -78,20 +136,30 @@ pub fn toolbar(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi, prefs: &mut
 }
 
 fn filter_actions(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi) {
-    if flat_button(ui, p, if st.filters.active() { "Filtres •" } else { "Filtres" }).clicked() {
+    if flat_button(
+        ui,
+        p,
+        if st.filters.active() {
+            aurora_i18n::tr!("ui-inventory-controls-filters-2")
+        } else {
+            aurora_i18n::tr!("ui-inventory-controls-filters")
+        },
+    )
+    .clicked()
+    {
         st.filters_open = !st.filters_open;
     }
-    if flat_button(ui, p, "Préférences").clicked() {
+    if flat_button(ui, p, aurora_i18n::tr!("common-preferences")).clicked() {
         st.preferences_open = !st.preferences_open;
     }
     if st.links_filter.is_some() {
-        if flat_button(ui, p, "Quitter les liens").clicked() {
+        if flat_button(ui, p, aurora_i18n::tr!("ui-inventory-controls-exit-linked-mode")).clicked() {
             st.links_filter = None;
             if let Some(filters) = st.saved_filters.take() {
                 st.filters = filters;
             }
         }
-    } else if (!st.search.is_empty() || st.filters.active()) && flat_button(ui, p, "Effacer").clicked() {
+    } else if (!st.search.is_empty() || st.filters.active()) && flat_button(ui, p, aurora_i18n::tr!("common-clear")).clicked() {
         st.search.clear();
         st.filters = Filters::default();
         st.links_filter = None;
@@ -101,14 +169,14 @@ fn filter_actions(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi) {
 
 fn tree_actions(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi) {
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        if flat_button(ui, p, "Développer")
-            .on_hover_text("Développer les dossiers affichés")
+        if flat_button(ui, p, aurora_i18n::tr!("common-expand"))
+            .on_hover_text(aurora_i18n::tr!("ui-inventory-controls-expand-displayed-folders"))
             .clicked()
         {
             st.expand_all = Some(true);
         }
-        if flat_button(ui, p, "Réduire")
-            .on_hover_text("Réduire les dossiers affichés")
+        if flat_button(ui, p, aurora_i18n::tr!("common-collapse"))
+            .on_hover_text(aurora_i18n::tr!("ui-inventory-controls-collapse-displayed-folders"))
             .clicked()
         {
             st.expand_all = Some(false);
@@ -128,25 +196,27 @@ pub fn search(ui: &mut egui::Ui, st: &mut InventoryUi, prefs: &mut InventoryPref
             .width(selector_width)
             .truncate()
             .selected_text(match prefs.search_field {
-                SearchField::Name => "Nom",
-                SearchField::Description => "Description",
-                SearchField::Creator => "Créateur",
+                SearchField::Name => aurora_i18n::tr!("common-name"),
+                SearchField::Description => aurora_i18n::tr!("ui-inventory-controls-description"),
+                SearchField::Creator => aurora_i18n::tr!("common-creator"),
                 SearchField::Uuid => "UUID",
-                SearchField::All => "Tous les champs",
+                SearchField::All => aurora_i18n::tr!("ui-inventory-controls-all-fields"),
             })
             .show_ui(ui, |ui| {
                 for (field, label) in [
-                    (SearchField::Name, "Nom"),
-                    (SearchField::Description, "Description"),
-                    (SearchField::Creator, "Créateur"),
+                    (SearchField::Name, aurora_i18n::tr!("common-name")),
+                    (SearchField::Description, aurora_i18n::tr!("ui-inventory-controls-description")),
+                    (SearchField::Creator, aurora_i18n::tr!("common-creator")),
                     (SearchField::Uuid, "UUID"),
-                    (SearchField::All, "Tous les champs"),
+                    (SearchField::All, aurora_i18n::tr!("ui-inventory-controls-all-fields")),
                 ] {
                     ui.selectable_value(&mut prefs.search_field, field, label);
                 }
             })
             .response
-            .on_hover_text("Recherche sans distinction de casse. + combine plusieurs termes ; des guillemets recherchent un mot exact.");
+            .on_hover_text(aurora_i18n::tr!(
+                "ui-inventory-controls-case-insensitive-search-combines-terms-quotes-search-for-an"
+            ));
     });
 }
 
@@ -156,7 +226,7 @@ pub fn dialogs(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi, prefs: &m
     let filters_size = Vec2::new(410.0, 710.0_f32.min((screen.height() - 90.0).max(180.0)));
     Floater::new(
         &format!("inventory_preferences_{}", st.ui_id),
-        "Préférences de l'inventaire",
+        aurora_i18n::tr!("ui-inventory-controls-inventory-preferences"),
         screen.center() - preferences_size / 2.0,
         preferences_size,
     )
@@ -169,7 +239,7 @@ pub fn dialogs(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi, prefs: &m
                 preferences(ui, p, prefs);
                 ui.add_space(6.0);
                 ui.label(
-                    RichText::new("Préférences conservées entre les sessions.")
+                    RichText::new(aurora_i18n::tr!("ui-inventory-controls-preferences-kept-between-sessions"))
                         .size(12.0)
                         .color(p.muted),
                 );
@@ -177,7 +247,7 @@ pub fn dialogs(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi, prefs: &m
     });
     Floater::new(
         &format!("inventory_filters_{}", st.ui_id),
-        "Filtres de l'inventaire",
+        aurora_i18n::tr!("ui-inventory-controls-inventory-filters"),
         screen.center() - filters_size / 2.0,
         filters_size,
     )
@@ -188,17 +258,17 @@ pub fn dialogs(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi, prefs: &m
             .auto_shrink([false, true])
             .show(ui, |ui| {
                 let f = &mut st.filters;
-                ui.label(RichText::new("Types d'éléments").color(p.muted));
+                ui.label(RichText::new(aurora_i18n::tr!("ui-inventory-controls-item-types")).color(p.muted));
                 ui.horizontal(|ui| {
-                    if flat_button(ui, p, "Tous").clicked() {
+                    if flat_button(ui, p, aurora_i18n::tr!("common-all")).clicked() {
                         f.types = u32::MAX;
                     }
-                    if flat_button(ui, p, "Aucun").clicked() {
+                    if flat_button(ui, p, aurora_i18n::tr!("common-none")).clicked() {
                         f.types = 0;
                     }
                 });
                 egui::Grid::new("inventory_types").num_columns(2).show(ui, |ui| {
-                    for (n, (kind, label)) in TYPES.iter().enumerate() {
+                    for (n, (kind, label)) in types().iter().enumerate() {
                         let bit = 1_u32 << kind;
                         let mut on = f.types & bit != 0;
                         if check(ui, p, label, &mut on) {
@@ -208,7 +278,7 @@ pub fn dialogs(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi, prefs: &m
                                 f.types &= !bit;
                             }
                             // Selecting every known type restores unknown types too.
-                            if TYPES.iter().all(|(kind, _)| f.types & (1_u32 << kind) != 0) {
+                            if types().iter().all(|(kind, _)| f.types & (1_u32 << kind) != 0) {
                                 f.types = u32::MAX;
                             }
                         }
@@ -218,12 +288,12 @@ pub fn dialogs(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi, prefs: &m
                     }
                 });
                 ui.add_space(5.0);
-                ui.label(RichText::new("Permissions requises").color(p.muted));
+                ui.label(RichText::new(aurora_i18n::tr!("ui-inventory-controls-required-permissions")).color(p.muted));
                 ui.horizontal(|ui| {
                     for (bit, label) in [
-                        (super::rules::MODIFY, "Modifier"),
-                        (super::rules::COPY, "Copier"),
-                        (super::rules::TRANSFER, "Transférer"),
+                        (super::rules::MODIFY, aurora_i18n::tr!("common-edit")),
+                        (super::rules::COPY, aurora_i18n::tr!("common-copy-2")),
+                        (super::rules::TRANSFER, aurora_i18n::tr!("common-transfer")),
                     ] {
                         let mut on = f.permissions & bit != 0;
                         if check(ui, p, label, &mut on) {
@@ -237,51 +307,61 @@ pub fn dialogs(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi, prefs: &m
                 });
                 egui::ComboBox::from_id_salt("inventory_links")
                     .selected_text(match f.links {
-                        Links::Include => "Inclure les liens",
-                        Links::Only => "Liens uniquement",
-                        Links::Exclude => "Masquer les liens",
+                        Links::Include => aurora_i18n::tr!("ui-inventory-controls-include-links"),
+                        Links::Only => aurora_i18n::tr!("ui-inventory-controls-links-only"),
+                        Links::Exclude => aurora_i18n::tr!("ui-inventory-controls-hide-links"),
                     })
                     .show_ui(ui, |ui| {
                         for (v, label) in [
-                            (Links::Include, "Inclure les liens"),
-                            (Links::Only, "Liens uniquement"),
-                            (Links::Exclude, "Masquer les liens"),
+                            (Links::Include, aurora_i18n::tr!("ui-inventory-controls-include-links")),
+                            (Links::Only, aurora_i18n::tr!("ui-inventory-controls-links-only")),
+                            (Links::Exclude, aurora_i18n::tr!("ui-inventory-controls-hide-links")),
                         ] {
                             ui.selectable_value(&mut f.links, v, label);
                         }
                     });
                 egui::ComboBox::from_id_salt("inventory_creator")
                     .selected_text(match f.creator {
-                        Creator::All => "Tous les créateurs",
-                        Creator::Me => "Créés par moi",
-                        Creator::Others => "Créés par d'autres",
+                        Creator::All => aurora_i18n::tr!("ui-inventory-controls-all-creators"),
+                        Creator::Me => aurora_i18n::tr!("ui-inventory-controls-created-by-me"),
+                        Creator::Others => aurora_i18n::tr!("ui-inventory-controls-created-by-others"),
                     })
                     .show_ui(ui, |ui| {
                         for (v, label) in [
-                            (Creator::All, "Tous les créateurs"),
-                            (Creator::Me, "Créés par moi"),
-                            (Creator::Others, "Créés par d'autres"),
+                            (Creator::All, aurora_i18n::tr!("ui-inventory-controls-all-creators")),
+                            (Creator::Me, aurora_i18n::tr!("ui-inventory-controls-created-by-me")),
+                            (Creator::Others, aurora_i18n::tr!("ui-inventory-controls-created-by-others")),
                         ] {
                             ui.selectable_value(&mut f.creator, v, label);
                         }
                     });
-                check(ui, p, "Afficher aussi les dossiers sans résultat", &mut f.always_folders);
-                check(ui, p, "Objets regroupés uniquement", &mut f.coalesced);
+                check(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-inventory-controls-also-show-folders-without-matching-items"),
+                    &mut f.always_folders,
+                );
+                check(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-inventory-controls-coalesced-objects-only"),
+                    &mut f.coalesced,
+                );
                 ui.add_space(5.0);
-                ui.label(RichText::new("Date de création").color(p.muted));
+                ui.label(RichText::new(aurora_i18n::tr!("ui-inventory-controls-creation-date")).color(p.muted));
                 egui::ComboBox::from_id_salt("inventory_age")
                     .selected_text(match f.age {
-                        Age::Any => "Toutes les dates",
-                        Age::SinceLogout => "Depuis la dernière déconnexion",
-                        Age::Newer => "Plus récent que…",
-                        Age::Older => "Plus ancien que…",
+                        Age::Any => aurora_i18n::tr!("ui-inventory-controls-all-dates"),
+                        Age::SinceLogout => aurora_i18n::tr!("ui-inventory-controls-since-last-logout"),
+                        Age::Newer => aurora_i18n::tr!("ui-inventory-controls-newer-than"),
+                        Age::Older => aurora_i18n::tr!("ui-inventory-controls-older-than"),
                     })
                     .show_ui(ui, |ui| {
                         for (v, label) in [
-                            (Age::Any, "Toutes les dates"),
-                            (Age::SinceLogout, "Depuis la dernière déconnexion"),
-                            (Age::Newer, "Plus récent que…"),
-                            (Age::Older, "Plus ancien que…"),
+                            (Age::Any, aurora_i18n::tr!("ui-inventory-controls-all-dates")),
+                            (Age::SinceLogout, aurora_i18n::tr!("ui-inventory-controls-since-last-logout")),
+                            (Age::Newer, aurora_i18n::tr!("ui-inventory-controls-newer-than")),
+                            (Age::Older, aurora_i18n::tr!("ui-inventory-controls-older-than")),
                         ] {
                             ui.selectable_value(&mut f.age, v, label);
                         }
@@ -289,24 +369,36 @@ pub fn dialogs(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi, prefs: &m
                 if matches!(f.age, Age::Newer | Age::Older) {
                     let (mut days, mut hours) = (f.hours / 24, f.hours % 24);
                     ui.horizontal(|ui| {
-                        ui.add(egui::DragValue::new(&mut days).range(0..=36500).suffix(" jours"));
-                        ui.add(egui::DragValue::new(&mut hours).range(0..=23).suffix(" heures"));
+                        ui.add(
+                            egui::DragValue::new(&mut days)
+                                .custom_parser(aurora_i18n::parse_number)
+                                .range(0..=36500)
+                                .suffix(aurora_i18n::tr!("status-days")),
+                        );
+                        ui.add(
+                            egui::DragValue::new(&mut hours)
+                                .custom_parser(aurora_i18n::parse_number)
+                                .range(0..=23)
+                                .suffix(aurora_i18n::tr!("status-hours")),
+                        );
                     });
                     f.hours = days * 24 + hours;
                 }
                 ui.add_space(7.0);
                 ui.horizontal(|ui| {
-                    if flat_button(ui, p, "Réinitialiser").clicked() {
+                    if flat_button(ui, p, aurora_i18n::tr!("common-reset")).clicked() {
                         *f = Filters::default();
                     }
-                    if flat_button(ui, p, "Garder par défaut").clicked() {
+                    if flat_button(ui, p, aurora_i18n::tr!("ui-inventory-controls-keep-by-default")).clicked() {
                         prefs.filter_defaults.clone_from(f);
                     }
                 });
                 ui.label(
-                    RichText::new("Récent : depuis la dernière déconnexion ; 24 h au premier lancement.")
-                        .size(12.0)
-                        .color(p.muted),
+                    RichText::new(aurora_i18n::tr!(
+                        "ui-inventory-controls-recent-since-your-last-logout-24-hours-on-first"
+                    ))
+                    .size(12.0)
+                    .color(p.muted),
                 );
             });
     });

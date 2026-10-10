@@ -465,21 +465,21 @@ mod tests {
         let friends = [id(1), id(2), id(3)];
         let is_friend = |x: &Uuid| friends.contains(x);
         let mut cs = ContactSets::default();
-        assert!(cs.add_set("Famille"));
-        assert!(!cs.add_set("Famille"));
+        assert!(cs.add_set(aurora_i18n::tr!("demo-family")));
+        assert!(!cs.add_set(aurora_i18n::tr!("demo-family")));
         assert!(!cs.add_set(ALL_SETS));
-        cs.add_set("Travail");
-        cs.add_to_set(&[id(1), id(9)], "Famille", is_friend);
-        cs.add_to_set(&[id(1), id(2)], "Travail", is_friend);
-        assert_eq!(cs.members("Famille", &friends, is_friend), vec![id(1), id(9)]);
+        cs.add_set(aurora_i18n::tr!("demo-work"));
+        cs.add_to_set(&[id(1), id(9)], aurora_i18n::tr!("demo-family"), is_friend);
+        cs.add_to_set(&[id(1), id(2)], aurora_i18n::tr!("demo-work"), is_friend);
+        assert_eq!(cs.members(aurora_i18n::tr!("demo-family"), &friends, is_friend), vec![id(1), id(9)]);
         assert_eq!(cs.members(ALL_SETS, &friends, is_friend), vec![id(1), id(2), id(9)]);
         assert_eq!(cs.members(NO_SETS, &friends, is_friend), vec![id(3)]);
         // a non-friend added to a set is listed with the non-friends
         assert_eq!(cs.members(EXTRA_AVS, &friends, is_friend), vec![id(9)]);
         // removing the set forgets the non-friend that was only there
-        cs.remove_set("Famille", is_friend);
+        cs.remove_set(aurora_i18n::tr!("demo-family"), is_friend);
         assert!(cs.members(EXTRA_AVS, &friends, is_friend).is_empty());
-        assert_eq!(cs.set_names(), vec!["Travail".to_owned()]);
+        assert_eq!(cs.set_names(), vec![aurora_i18n::tr!("demo-work").to_owned()]);
     }
 
     #[test]

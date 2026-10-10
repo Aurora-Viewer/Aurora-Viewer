@@ -892,13 +892,21 @@ fn snap_axes(a: Vec3, grid: Quat) -> (Vec3, Vec3) {
 fn direction_name(d: Vec3) -> &'static str {
     let a = d.abs();
     if a.z >= a.x && a.z >= a.y {
-        if d.z > 0.0 { "Haut" } else { "Bas" }
+        if d.z > 0.0 {
+            aurora_i18n::tr!("build-manip-top")
+        } else {
+            aurora_i18n::tr!("build-manip-bottom")
+        }
     } else if a.x >= a.y {
-        if d.x > 0.0 { "Est" } else { "Ouest" }
+        if d.x > 0.0 {
+            aurora_i18n::tr!("build-manip-east")
+        } else {
+            aurora_i18n::tr!("build-manip-west")
+        }
     } else if d.y > 0.0 {
-        "Nord"
+        aurora_i18n::tr!("build-manip-north")
     } else {
-        "Sud"
+        aurora_i18n::tr!("build-manip-south")
     }
 }
 

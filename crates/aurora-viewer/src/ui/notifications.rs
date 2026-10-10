@@ -48,11 +48,7 @@ pub fn bell(ui: &mut egui::Ui, p: &Palette, icons: &Icons, unread: usize, open: 
         ui.painter().rect_filled(badge, H / 2.0, p.rose);
         super::widgets::paint_ink_centered(ui.painter(), galley, badge.center(), Color32::WHITE);
     }
-    let tip = match unread {
-        0 => "Notifications".to_owned(),
-        1 => "1 nouvelle notification".to_owned(),
-        n => format!("{n} nouvelles notifications"),
-    };
+    let tip = aurora_i18n::tr!("notifications-unread-count", count = unread);
     (resp.on_hover_text(tip).clicked(), rect)
 }
 
@@ -116,13 +112,13 @@ fn card(ui: &mut egui::Ui, p: &Palette, icons: &Icons, n: &mut Notification, toa
                         );
                     }
                     let tip = if script {
-                        "Ignorer ce menu"
+                        aurora_i18n::tr!("ui-notifications-ignore-this-menu")
                     } else if toast {
-                        "Masquer (reste dans la cloche)"
+                        aurora_i18n::tr!("ui-notifications-hide-keep-in-bell")
                     } else if n.interactive() && !matches!(n.data, Data::Url(_)) {
-                        "Fermer (refuse l'offre)"
+                        aurora_i18n::tr!("ui-notifications-close-decline-offer")
                     } else {
-                        "Fermer"
+                        aurora_i18n::tr!("common-close")
                     };
                     if resp.on_hover_text(tip).clicked() {
                         out = Some(Response::Dismiss);
@@ -157,22 +153,22 @@ fn card(ui: &mut egui::Ui, p: &Palette, icons: &Icons, n: &mut Notification, toa
             match &n.data {
                 Data::None => {}
                 Data::Lure { .. } => {
-                    buttons.push(("Téléporter".into(), Response::Accept, true));
-                    buttons.push(("Refuser".into(), Response::Decline, false));
+                    buttons.push((aurora_i18n::tr!("common-teleport-3").into(), Response::Accept, true));
+                    buttons.push((aurora_i18n::tr!("ui-notifications-decline").into(), Response::Decline, false));
                 }
                 Data::Friend { .. } | Data::Group { .. } => {
-                    buttons.push(("Accepter".into(), Response::Accept, true));
-                    buttons.push(("Refuser".into(), Response::Decline, false));
+                    buttons.push((aurora_i18n::tr!("ui-notifications-accept").into(), Response::Accept, true));
+                    buttons.push((aurora_i18n::tr!("ui-notifications-decline").into(), Response::Decline, false));
                 }
                 Data::Inventory { .. } => {
-                    buttons.push(("Garder".into(), Response::Accept, true));
-                    buttons.push(("Rejeter".into(), Response::Decline, false));
+                    buttons.push((aurora_i18n::tr!("ui-notifications-keep").into(), Response::Accept, true));
+                    buttons.push((aurora_i18n::tr!("ui-notifications-reject").into(), Response::Decline, false));
                 }
                 Data::Permissions { .. } => {
-                    buttons.push(("Autoriser".into(), Response::Accept, true));
-                    buttons.push(("Refuser".into(), Response::Decline, false));
+                    buttons.push((aurora_i18n::tr!("ui-notifications-allow").into(), Response::Accept, true));
+                    buttons.push((aurora_i18n::tr!("ui-notifications-decline").into(), Response::Decline, false));
                 }
-                Data::Url(_) => buttons.push(("Ouvrir le lien".into(), Response::OpenUrl, true)),
+                Data::Url(_) => buttons.push((aurora_i18n::tr!("ui-notifications-open-link").into(), Response::OpenUrl, true)),
                 Data::Dialog {
                     buttons: b, own_object, ..
                 } => {
@@ -195,10 +191,14 @@ fn card(ui: &mut egui::Ui, p: &Palette, icons: &Icons, n: &mut Notification, toa
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if super::widgets::flat_button_sized(ui, p, "Ignorer", Vec2::new(72.0, 22.0)).clicked() {
+                            if super::widgets::flat_button_sized(ui, p, aurora_i18n::tr!("common-ignore"), Vec2::new(72.0, 22.0)).clicked()
+                            {
                                 out = Some(Response::Dismiss);
                             }
-                            if !own_object && super::widgets::flat_button_sized(ui, p, "Bloquer", Vec2::new(72.0, 22.0)).clicked() {
+                            if !own_object
+                                && super::widgets::flat_button_sized(ui, p, aurora_i18n::tr!("common-block"), Vec2::new(72.0, 22.0))
+                                    .clicked()
+                            {
                                 out = Some(Response::Block);
                             }
                         });
@@ -210,11 +210,11 @@ fn card(ui: &mut egui::Ui, p: &Palette, icons: &Icons, n: &mut Notification, toa
                         ui.add_space(22.0);
                         let resp = ui.add(
                             egui::TextEdit::singleline(&mut n.text)
-                                .hint_text("Réponse…")
+                                .hint_text(aurora_i18n::tr!("ui-notifications-reply"))
                                 .desired_width(WIDTH - 110.0),
                         );
                         let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                        if button(ui, p, "Envoyer", true).clicked() || enter {
+                        if button(ui, p, aurora_i18n::tr!("common-send"), true).clicked() || enter {
                             out = Some(Response::SendText);
                         }
                     });
@@ -289,15 +289,27 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, list: &mut Notifica
                     .show(ui, |ui| {
                         ui.set_width(WIDTH);
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Notifications").size(13.0).strong().color(p.ink));
+                            ui.label(
+                                RichText::new(aurora_i18n::tr!("ui-notifications-notifications"))
+                                    .size(13.0)
+                                    .strong()
+                                    .color(p.ink),
+                            );
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 let any_info = list.list.iter().any(|n| !n.interactive());
                                 if ui
                                     .add_enabled(
                                         any_info,
-                                        egui::Button::new(RichText::new("Tout effacer").size(11.5).color(p.muted)).frame(false),
+                                        egui::Button::new(
+                                            RichText::new(aurora_i18n::tr!("ui-notifications-clear-all"))
+                                                .size(11.5)
+                                                .color(p.muted),
+                                        )
+                                        .frame(false),
                                     )
-                                    .on_hover_text("Efface les notifications sans réponse en attente")
+                                    .on_hover_text(aurora_i18n::tr!(
+                                        "ui-notifications-clear-notifications-that-are-not-awaiting-a-response"
+                                    ))
                                     .clicked()
                                 {
                                     list.clear_info();
@@ -308,7 +320,11 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, list: &mut Notifica
                         if list.list.is_empty() {
                             ui.add_space(14.0);
                             ui.vertical_centered(|ui| {
-                                ui.label(RichText::new("Aucune notification").size(12.0).color(p.muted_dim));
+                                ui.label(
+                                    RichText::new(aurora_i18n::tr!("ui-notifications-no-notifications"))
+                                        .size(12.0)
+                                        .color(p.muted_dim),
+                                );
                             });
                             ui.add_space(14.0);
                             return;

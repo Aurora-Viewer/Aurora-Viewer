@@ -33,11 +33,11 @@ impl MuteType {
 
     pub fn label(self) -> &'static str {
         match self {
-            MuteType::ByName => "Par nom",
-            MuteType::Agent => "Résident",
-            MuteType::Object => "Objet",
-            MuteType::Group => "Groupe",
-            MuteType::External => "Externe",
+            MuteType::ByName => aurora_i18n::tr!("common-by-name"),
+            MuteType::Agent => aurora_i18n::tr!("common-resident"),
+            MuteType::Object => aurora_i18n::tr!("common-object"),
+            MuteType::Group => aurora_i18n::tr!("common-group"),
+            MuteType::External => aurora_i18n::tr!("world-mutes-external"),
         }
     }
 }
@@ -113,11 +113,11 @@ pub enum AddError {
 impl AddError {
     pub fn message(&self) -> String {
         match self {
-            AddError::Linden => "Impossible de bloquer le chat d'un Linden.".into(),
-            AddError::Myself => "Vous ne pouvez pas vous bloquer vous-même.".into(),
-            AddError::Limit => format!("Liste de blocage pleine ({MUTE_LIMIT} entrées)."),
-            AddError::Empty => "Nom vide.".into(),
-            AddError::Duplicate => "Déjà dans la liste de blocage.".into(),
+            AddError::Linden => aurora_i18n::tr!("world-mutes-cannot-block-a-linden-s-chat").into(),
+            AddError::Myself => aurora_i18n::tr!("world-mutes-you-cannot-block-yourself").into(),
+            AddError::Limit => aurora_i18n::tr!("world-mutes-block-list-full-entries", MUTE_LIMIT = format!("{}", MUTE_LIMIT)),
+            AddError::Empty => aurora_i18n::tr!("world-mutes-empty-name").into(),
+            AddError::Duplicate => aurora_i18n::tr!("world-mutes-already-on-the-block-list").into(),
         }
     }
 }

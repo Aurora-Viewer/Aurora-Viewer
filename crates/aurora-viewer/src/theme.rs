@@ -187,6 +187,9 @@ impl Theme {
 
         let mut style = egui::Style {
             visuals: v,
+            number_formatter: egui::style::NumberFormatter::new(|value, decimals| {
+                aurora_i18n::number_text(&egui::emath::format_with_decimals_in_range(value, decimals))
+            }),
             ..Default::default()
         };
         style.spacing.item_spacing = egui::vec2(8.0, 6.0);

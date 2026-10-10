@@ -304,21 +304,21 @@ pub fn set_full(ctx: &egui::Context, full: bool) {
 pub fn show(ctx: &egui::Context, p: &Palette, v: &PerfView, open: &mut bool) {
     let full = ctx.data_mut(|d| d.get_persisted::<bool>(full_id())).unwrap_or(false);
     let (icon, tip) = if full {
-        ("corners-in", "Version compacte")
+        ("corners-in", aurora_i18n::tr!("ui-perf-compact-version"))
     } else {
-        ("corners-out", "Afficher le détail")
+        ("corners-out", aurora_i18n::tr!("ui-perf-show-details"))
     };
     let width = if full { FULL_W } else { COMPACT_W };
     let screen = ctx.content_rect();
     let mut toggle = false;
     Floater::new(
         "perf",
-        "Performances",
+        aurora_i18n::tr!("common-performance"),
         pos2(screen.right() - FULL_W - 16.0, 300.0),
         vec2(width, 0.0),
     )
     .fixed()
-    .help("Le graphe montre les images/s des dernières secondes : un creux est un à-coup. Survolez-le pour lire une image.")
+    .help(aurora_i18n::tr!("ui-perf-the-graph-shows-fps-over-the-last-few-seconds"))
     .action(icon, tip, &mut toggle)
     .show(ctx, p, open, |ui| {
         ui.set_width(width);
@@ -349,7 +349,7 @@ fn headline(ui: &mut egui::Ui, p: &Palette, d: &PerfData) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 5.0;
         ui.label(
-            RichText::new(format!("{:.0}", d.fps))
+            RichText::new(aurora_i18n::number((d.fps) as f64, 0))
                 .size(28.0)
                 .strong()
                 .color(fps_color(p, d.fps)),
@@ -363,9 +363,13 @@ fn headline(ui: &mut egui::Ui, p: &Palette, d: &PerfData) {
             ui.add_space(3.0);
             ui.label(RichText::new(format!("{:.1} ms", d.frames.avg)).size(15.0).color(p.ink));
             ui.label(
-                RichText::new(format!("min {:.1} · max {:.1}", d.frames.min, d.frames.max))
-                    .size(11.0)
-                    .color(p.muted),
+                RichText::new(aurora_i18n::tr!(
+                    "status-min-max",
+                    value0 = aurora_i18n::number_text(&format!("{:.1}", d.frames.min)),
+                    value1 = aurora_i18n::number_text(&format!("{:.1}", d.frames.max))
+                ))
+                .size(11.0)
+                .color(p.muted),
             );
         });
     });
@@ -398,7 +402,7 @@ fn graph(ui: &mut egui::Ui, p: &Palette, d: &PerfData) {
         painter.text(
             pos2(rect.right() - 4.0, ly),
             egui::Align2::RIGHT_CENTER,
-            format!("{fps:.0} i/s"),
+            aurora_i18n::tr!("status-fps-fps", fps = aurora_i18n::number_text(&format!("{:.0}", fps))),
             mark_font.clone(),
             p.muted_dim,
         );
@@ -438,7 +442,11 @@ fn graph(ui: &mut egui::Ui, p: &Palette, d: &PerfData) {
         let ms = d.frame_ms[i];
         painter.line_segment([pos2(pt.x, rect.top()), pos2(pt.x, rect.bottom())], Stroke::new(1.0, p.muted_dim));
         painter.circle(pt, 3.5, p.violet_light, Stroke::new(2.0, p.field));
-        let text = format!("{:.0} i/s · {ms:.1} ms", fps_of(ms));
+        let text = aurora_i18n::tr!(
+            "perf-frame-tooltip",
+            fps = aurora_i18n::number(fps_of(ms) as f64, 0),
+            ms = aurora_i18n::number(ms as f64, 1)
+        );
         let galley = painter.layout_no_wrap(text, egui::FontId::proportional(11.0), p.ink);
         let size = galley.size() + vec2(10.0, 4.0);
         // beside the line, on the side with room
@@ -516,7 +524,11 @@ fn net_graph(ui: &mut egui::Ui, p: &Palette, d: &PerfData) {
         painter.line_segment([pos2(px, rect.top()), pos2(px, rect.bottom())], Stroke::new(1.0, p.muted_dim));
         painter.circle(outs[i], 3.5, p.rose, Stroke::new(2.0, p.field));
         painter.circle(ins[i], 3.5, p.teal, Stroke::new(2.0, p.field));
-        let text = format!("Entrant {} · Sortant {}", fmt_rate(rin), fmt_rate(rout));
+        let text = aurora_i18n::tr!(
+            "ui-perf-incoming-outgoing",
+            value0 = fmt_rate(rin).to_string(),
+            value1 = fmt_rate(rout).to_string()
+        );
         let galley = painter.layout_no_wrap(text, egui::FontId::proportional(11.0), p.ink);
         let size = galley.size() + vec2(10.0, 4.0);
         let left = px + 6.0 + size.x > rect.right();
@@ -549,13 +561,34 @@ fn gpu_parts(p: &Palette, live: &[f32; 7], shown: &[f32; 7]) -> Vec<Part> {
         .enumerate()
         .map(|(i, el)| {
             let (name, help) = match el {
-                GpuElement::ShadowsDepth => ("Ombres et profondeur", "Ombres du soleil, prépasse de profondeur, occlusion"),
-                GpuElement::Effects => ("Effets", "Occlusion ambiante, reflets (eau, miroirs, sondes), reflets écran"),
-                GpuElement::TerrainSky => ("Terrain et ciel", "Sol des régions et ciel"),
-                GpuElement::Objects => ("Objets et avatars", "Prims, meshes et avatars opaques ou masqués, imposteurs"),
-                GpuElement::Water => ("Eau", "Surface de l'eau (réfraction, vagues)"),
-                GpuElement::Transparent => ("Transparents et particules", "Faces semi-transparentes et particules"),
-                GpuElement::Post => ("Post-traitement", "Lueur, anticrénelage (TAA, SMAA), tonalité"),
+                GpuElement::ShadowsDepth => (
+                    aurora_i18n::tr!("ui-perf-shadows-and-depth"),
+                    aurora_i18n::tr!("ui-perf-sun-shadows-depth-prepass-occlusion"),
+                ),
+                GpuElement::Effects => (
+                    aurora_i18n::tr!("ui-perf-effects"),
+                    aurora_i18n::tr!("ui-perf-ambient-occlusion-reflections-water-mirrors-probes-screen-space-reflections"),
+                ),
+                GpuElement::TerrainSky => (
+                    aurora_i18n::tr!("ui-perf-terrain-and-sky"),
+                    aurora_i18n::tr!("ui-perf-region-terrain-and-sky"),
+                ),
+                GpuElement::Objects => (
+                    aurora_i18n::tr!("ui-perf-objects-and-avatars"),
+                    aurora_i18n::tr!("ui-perf-opaque-or-masked-prims-meshes-and-avatars-impostors"),
+                ),
+                GpuElement::Water => (
+                    aurora_i18n::tr!("common-water"),
+                    aurora_i18n::tr!("ui-perf-water-surface-refraction-waves"),
+                ),
+                GpuElement::Transparent => (
+                    aurora_i18n::tr!("ui-perf-transparent-objects-and-particles"),
+                    aurora_i18n::tr!("ui-perf-semi-transparent-faces-and-particles"),
+                ),
+                GpuElement::Post => (
+                    aurora_i18n::tr!("ui-perf-post-processing"),
+                    aurora_i18n::tr!("ui-perf-glow-anti-aliasing-taa-smaa-tone-mapping"),
+                ),
             };
             Part {
                 name,
@@ -569,23 +602,37 @@ fn gpu_parts(p: &Palette, live: &[f32; 7], shown: &[f32; 7]) -> Vec<Part> {
 }
 
 fn cpu_parts_view(p: &Palette, live: &[f32; CPU_PARTS], shown: &[f32; CPU_PARTS]) -> Vec<Part> {
-    const NAMES: [(&str, &str); CPU_PARTS] = [
-        ("Réseau vers monde", "Messages du simulateur appliqués au monde"),
-        ("Scène", "Géométrie, textures et objets envoyés au GPU"),
-        ("Culling et listes", "Choix de ce qui est visible, listes de dessin"),
-        ("Avatars et caméra", "Animations, agent, caméra, flux des textures"),
-        ("Interface", "Fenêtres et barres"),
-        (
-            "Encodage GPU",
-            "Préparation des commandes de rendu ; avec le thread de rendu, seulement le paquet d'image qui lui est remis",
-        ),
-        (
-            "Attente",
-            "Synchronisation verticale, limite d'images/s, présentation, attente du thread de rendu",
-        ),
-    ];
+    fn names() -> [(&'static str, &'static str); CPU_PARTS] {
+        [
+            (
+                aurora_i18n::tr!("ui-perf-network-to-world"),
+                aurora_i18n::tr!("ui-perf-simulator-messages-applied-to-world"),
+            ),
+            (
+                aurora_i18n::tr!("ui-perf-scene"),
+                aurora_i18n::tr!("ui-perf-geometry-textures-and-objects-sent-to-the-gpu"),
+            ),
+            (
+                aurora_i18n::tr!("ui-perf-culling-and-lists"),
+                aurora_i18n::tr!("ui-perf-visibility-choices-and-draw-lists"),
+            ),
+            (
+                aurora_i18n::tr!("ui-perf-avatars-and-camera"),
+                aurora_i18n::tr!("ui-perf-animations-agent-camera-texture-streaming"),
+            ),
+            (aurora_i18n::tr!("common-interface"), aurora_i18n::tr!("ui-perf-windows-and-bars")),
+            (
+                aurora_i18n::tr!("ui-perf-gpu-encoding"),
+                aurora_i18n::tr!("ui-perf-preparing-rendering-commands-with-the-render-thread-only-the"),
+            ),
+            (
+                aurora_i18n::tr!("ui-perf-waiting"),
+                aurora_i18n::tr!("ui-perf-vertical-synchronization-frame-rate-limit-presentation-render-thread-wait"),
+            ),
+        ]
+    }
     let colors = part_colors(p);
-    NAMES
+    names()
         .iter()
         .enumerate()
         .map(|(i, &(name, help))| Part {
@@ -736,157 +783,246 @@ fn details(ui: &mut egui::Ui, p: &Palette, v: &PerfView) {
     let d = v.data;
     rule(ui, p);
     match (d.gpu, d.gpu_shown) {
-        (Some(live), Some(shown)) => breakdown(ui, p, "gpu", "Rendu GPU", gpu_parts(p, &live, &shown), fmt_ms),
+        (Some(live), Some(shown)) => breakdown(
+            ui,
+            p,
+            "gpu",
+            aurora_i18n::tr!("ui-perf-gpu-rendering"),
+            gpu_parts(p, &live, &shown),
+            fmt_ms,
+        ),
         _ => {
             row(
                 ui,
                 p,
-                "Rendu GPU",
+                aurora_i18n::tr!("ui-perf-gpu-rendering"),
                 v.render.gpu_ms.map(|g| format!("{g:.1} ms")).unwrap_or_else(|| "n/d".into()),
             );
             ui.label(
-                RichText::new("Détail par élément indisponible avec cette carte graphique")
+                RichText::new(aurora_i18n::tr!("ui-perf-per-item-details-unavailable-with-this-graphics-card"))
                     .size(11.0)
                     .color(p.muted_dim),
             );
         }
     }
     rule(ui, p);
-    breakdown(ui, p, "cpu", "Processeur", cpu_parts_view(p, &d.cpu, &d.cpu_shown), fmt_ms);
+    breakdown(
+        ui,
+        p,
+        "cpu",
+        aurora_i18n::tr!("ui-perf-cpu"),
+        cpu_parts_view(p, &d.cpu, &d.cpu_shown),
+        fmt_ms,
+    );
     rule(ui, p);
 
-    group(ui, p, "Rendu", false, |ui| {
+    group(ui, p, aurora_i18n::tr!("common-rendering"), false, |ui| {
         row(
             ui,
             p,
-            "Draw calls",
-            format!("{} (+{} ombres)", v.render.draws, v.render.shadow_draws),
+            aurora_i18n::tr!("ui-perf-draw-calls"),
+            aurora_i18n::tr!(
+                "status-shadows",
+                value0 = format!("{}", v.render.draws),
+                value1 = format!("{}", v.render.shadow_draws)
+            ),
         );
         if let Some(n) = v.render.occluded {
-            row(ui, p, "Cachés (occlusion)", format!("{n}"));
+            row(ui, p, aurora_i18n::tr!("ui-perf-hidden-occlusion"), format!("{n}"));
         }
         row(
             ui,
             p,
-            "Culling",
-            if v.render.gpu_cull { "carte graphique" } else { "processeur" }.to_string(),
+            aurora_i18n::tr!("common-culling"),
+            if v.render.gpu_cull {
+                aurora_i18n::tr!("ui-perf-graphics-card-2")
+            } else {
+                "processeur"
+            }
+            .to_string(),
         );
         row(
             ui,
             p,
-            "Thread de rendu",
+            aurora_i18n::tr!("ui-perf-render-thread"),
             if v.render.render_thread {
-                format!("{} par image", fmt_ms(d.render_thread_shown))
+                aurora_i18n::tr!("ui-perf-per-frame", value0 = fmt_ms(d.render_thread_shown).to_string())
             } else {
-                "désactivé".to_string()
+                aurora_i18n::tr!("ui-perf-disabled").to_string()
             },
         );
-        row(ui, p, "Triangles", format!("{:.2} M", v.render.triangles as f64 / 1e6));
         row(
             ui,
             p,
-            "Objets",
-            format!("{} visibles / {}", v.scene.visible_objects, v.scene.objects),
+            aurora_i18n::tr!("ui-perf-triangles"),
+            format!("{:.2} M", v.render.triangles as f64 / 1e6),
         );
         row(
             ui,
             p,
-            "Géométries",
-            format!("{} ({} en cours)", v.scene.geometries, v.scene.geom_pending),
+            aurora_i18n::tr!("common-objects"),
+            aurora_i18n::tr!(
+                "status-visible",
+                value0 = format!("{}", v.scene.visible_objects),
+                value1 = format!("{}", v.scene.objects)
+            ),
         );
-        row(ui, p, "Distance", format!("{:.0} m", v.draw_distance));
-        row(ui, p, "Particules", format!("{}", v.render.particles));
+        row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-perf-geometries"),
+            aurora_i18n::tr!(
+                "ui-perf-in-progress",
+                value0 = format!("{}", v.scene.geometries),
+                value1 = format!("{}", v.scene.geom_pending)
+            ),
+        );
+        row(ui, p, aurora_i18n::tr!("common-distance"), format!("{:.0} m", v.draw_distance));
+        row(ui, p, aurora_i18n::tr!("common-particles"), format!("{}", v.render.particles));
         if let Some(c) = v.complexity.0 {
-            row(ui, p, "Votre complexité", format!("{c}"));
+            row(ui, p, aurora_i18n::tr!("ui-perf-your-complexity"), format!("{c}"));
         }
         if v.complexity.1 > 0 {
-            row(ui, p, "Avatars en silhouette", format!("{}", v.complexity.1));
+            row(ui, p, aurora_i18n::tr!("ui-perf-silhouette-avatars"), format!("{}", v.complexity.1));
         }
         if v.scene.avatars_hidden > 0 {
-            row(ui, p, "Avatars en imposteur", format!("{}", v.scene.avatars_hidden));
+            row(
+                ui,
+                p,
+                aurora_i18n::tr!("ui-perf-impostor-avatars"),
+                format!("{}", v.scene.avatars_hidden),
+            );
         }
         let refl = match (v.render.water_reflection, v.render.mirror) {
-            (true, true) => "eau + miroir",
+            (true, true) => aurora_i18n::tr!("status-water-mirror"),
             (true, false) => "eau",
             (false, true) => "miroir",
-            _ => "aucun",
+            _ => aurora_i18n::tr!("extra-none"),
         };
-        row(ui, p, "Reflets plans", refl.to_owned());
-        row(ui, p, "Sondes de réflexion", format!("{} prêtes / {}", v.probes.1, v.probes.0 + 1));
-        row(ui, p, "Sons en cours", format!("{}", v.sounds));
-    });
-    group(ui, p, "Mémoire et flux", false, |ui| {
-        row(ui, p, "Géométrie", format!("{:.0} Mo", v.render.geometry_bytes as f64 / 1048576.0));
+        row(ui, p, aurora_i18n::tr!("ui-perf-planar-reflections"), refl.to_owned());
         row(
             ui,
             p,
-            "Textures",
-            format!(
-                "{} / {} · {:.0} Mo",
-                v.tex.loaded,
-                v.tex.total,
-                v.render.texture_bytes as f64 / 1048576.0
+            aurora_i18n::tr!("common-reflection-probes"),
+            aurora_i18n::tr!(
+                "ui-perf-ready",
+                value0 = format!("{}", v.probes.1),
+                value1 = format!("{}", v.probes.0 + 1)
+            ),
+        );
+        row(ui, p, aurora_i18n::tr!("ui-perf-playing-sounds"), format!("{}", v.sounds));
+    });
+    group(ui, p, aurora_i18n::tr!("ui-perf-memory-and-streaming"), false, |ui| {
+        row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-perf-geometry"),
+            aurora_i18n::tr!(
+                "memory-mb",
+                value = aurora_i18n::number(v.render.geometry_bytes as f64 / 1048576.0, 0)
             ),
         );
         row(
             ui,
             p,
-            "Pages de textures",
-            format!(
-                "{} · {:.0} Mo",
-                v.render.texture_pages,
-                v.render.texture_page_bytes as f64 / 1048576.0
+            aurora_i18n::tr!("common-textures"),
+            aurora_i18n::tr!(
+                "perf-texture-memory",
+                loaded = v.tex.loaded.to_string(),
+                total = v.tex.total.to_string(),
+                value = aurora_i18n::number(v.render.texture_bytes as f64 / 1048576.0, 0)
             ),
         );
-        row(ui, p, "Réseau textures", format!("{}", v.tex.fetching));
-        row(ui, p, "Décodage", format!("{} · upload {}", v.tex.decoding, v.tex.pending_upload));
-        row(ui, p, "Tâches en fond", format!("{}", v.scene.jobs));
-        row(ui, p, "Meshes réseau", format!("{}", v.meshes_fetching));
-        row(ui, p, "Records GPU", format!("{}", v.render.records));
+        row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-perf-texture-pages"),
+            aurora_i18n::tr!(
+                "perf-page-memory",
+                pages = v.render.texture_pages.to_string(),
+                value = aurora_i18n::number(v.render.texture_page_bytes as f64 / 1048576.0, 0)
+            ),
+        );
+        row(ui, p, aurora_i18n::tr!("ui-perf-texture-network"), format!("{}", v.tex.fetching));
+        row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-perf-decoding"),
+            aurora_i18n::tr!(
+                "status-upload",
+                value0 = format!("{}", v.tex.decoding),
+                value1 = format!("{}", v.tex.pending_upload)
+            ),
+        );
+        row(ui, p, aurora_i18n::tr!("ui-perf-background-tasks"), format!("{}", v.scene.jobs));
+        row(ui, p, aurora_i18n::tr!("ui-perf-network-meshes"), format!("{}", v.meshes_fetching));
+        row(ui, p, aurora_i18n::tr!("ui-perf-gpu-records"), format!("{}", v.render.records));
     });
-    group(ui, p, "Réseau", false, |ui| {
+    group(ui, p, aurora_i18n::tr!("ui-perf-network"), false, |ui| {
         let last = d.net_hist.back().copied().unwrap_or_default();
         let parts = vec![
             Part {
-                name: "Entrant",
-                help: "Reçu du simulateur (UDP) et téléchargé (HTTP : textures, meshes, sons…)",
+                name: aurora_i18n::tr!("ui-perf-incoming"),
+                help: aurora_i18n::tr!("ui-perf-received-from-the-simulator-udp-and-downloaded-http-textures"),
                 color: p.teal,
                 live: d.net_live[0],
                 shown: last.0,
             },
             Part {
-                name: "Sortant",
-                help: "Envoyé au simulateur (UDP)",
+                name: aurora_i18n::tr!("ui-perf-outgoing"),
+                help: aurora_i18n::tr!("ui-perf-sent-to-simulator-udp"),
                 color: p.rose,
                 live: d.net_live[1],
                 shown: last.1,
             },
         ];
-        breakdown(ui, p, "net", "Débit", parts, fmt_rate);
+        breakdown(ui, p, "net", aurora_i18n::tr!("ui-perf-throughput"), parts, fmt_rate);
         ui.add_space(6.0);
         net_graph(ui, p, d);
         ui.add_space(6.0);
-        row(ui, p, "Ping", format!("{} ms", v.net.ping_ms));
-        row(ui, p, "Paquets", format!("in {:.0}/s · out {:.0}/s", d.net_rate.0, d.net_rate.1));
-        row(ui, p, "Renvoyés / perdus", format!("{} / {}", v.net.resent, v.net.dropped_reliable));
-        row(ui, p, "Non acquittés", format!("{}", v.net.unacked));
+        row(ui, p, aurora_i18n::tr!("ui-perf-ping"), format!("{} ms", v.net.ping_ms));
+        row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-perf-packets"),
+            aurora_i18n::tr!(
+                "status-in-s-out-s",
+                value0 = aurora_i18n::number_text(&format!("{:.0}", d.net_rate.0)),
+                value1 = aurora_i18n::number_text(&format!("{:.0}", d.net_rate.1))
+            ),
+        );
+        row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-perf-lost-and-found"),
+            format!("{} / {}", v.net.resent, v.net.dropped_reliable),
+        );
+        row(ui, p, aurora_i18n::tr!("ui-perf-unacknowledged"), format!("{}", v.net.unacked));
         row(
             ui,
             p,
             "HTTP",
-            format!("{} actifs · {} en file", v.net.http_in_flight, v.net.http_queued),
+            aurora_i18n::tr!(
+                "ui-perf-active-queued",
+                value0 = format!("{}", v.net.http_in_flight),
+                value1 = format!("{}", v.net.http_queued)
+            ),
         );
-        row(ui, p, "Débit HTTP", fmt_rate(d.http_rate_kbps));
+        row(ui, p, aurora_i18n::tr!("ui-perf-http-throughput"), fmt_rate(d.http_rate_kbps));
         row(
             ui,
             p,
-            "Téléchargé",
-            format!("{:.1} Mo ({} échecs)", v.net.http_bytes as f64 / 1048576.0, v.net.http_failed),
+            aurora_i18n::tr!("ui-perf-downloaded"),
+            aurora_i18n::tr!(
+                "ui-perf-mb-failures",
+                value0 = aurora_i18n::number_text(&format!("{:.1}", v.net.http_bytes as f64 / 1048576.0)),
+                value1 = format!("{}", v.net.http_failed)
+            ),
         );
-        row(ui, p, "Régions", format!("{}", v.regions));
+        row(ui, p, aurora_i18n::tr!("ui-perf-regions"), format!("{}", v.regions));
     });
-    group(ui, p, "Carte graphique", false, |ui| {
-        row(ui, p, "Carte", v.gpu.name.clone());
+    group(ui, p, aurora_i18n::tr!("ui-perf-graphics-card"), false, |ui| {
+        row(ui, p, aurora_i18n::tr!("common-map"), v.gpu.name.clone());
         row(ui, p, "API", format!("{} (wgpu)", v.gpu.backend));
     });
 }

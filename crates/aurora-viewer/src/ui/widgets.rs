@@ -121,10 +121,13 @@ impl<'a> Floater<'a> {
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
-                    if title_button(ui, p, "x").on_hover_text("Fermer").clicked() {
+                    if title_button(ui, p, "x").on_hover_text(aurora_i18n::tr!("common-close")).clicked() {
                         close = true;
                     }
-                    if title_button(ui, p, "minus").on_hover_text("Réduire").clicked() {
+                    if title_button(ui, p, "minus")
+                        .on_hover_text(aurora_i18n::tr!("common-collapse"))
+                        .clicked()
+                    {
                         toggle_min = true;
                     }
                     if let Some((icon, tip, clicked)) = self.action.as_mut()
@@ -363,9 +366,21 @@ pub fn online_color(p: &Palette, online: bool) -> Color32 {
 pub fn maturity_badge(ui: &mut egui::Ui, p: &Palette, maturity: &str, size: f32) -> Option<egui::Response> {
     // Fixed-meaning colors (kept from the official viewer): G violet, M white, A red.
     let (letter, bg, fg, tip) = match maturity {
-        "Général" => ("G", p.violet, Color32::WHITE, "Région Générale (tout public)"),
-        "Modéré" => ("M", Color32::WHITE, p.navy, "Région Modérée"),
-        "Adulte" => ("A", Color32::from_rgb(0xD9, 0x2D, 0x2D), Color32::WHITE, "Région Adulte"),
+        value if value == aurora_i18n::text("common-general") => (
+            "G",
+            p.violet,
+            Color32::WHITE,
+            aurora_i18n::tr!("ui-widgets-general-region-all-ages"),
+        ),
+        value if value == aurora_i18n::text("common-moderate") => {
+            ("M", Color32::WHITE, p.navy, aurora_i18n::tr!("ui-widgets-moderate-region"))
+        }
+        value if value == aurora_i18n::text("common-adult") => (
+            "A",
+            Color32::from_rgb(0xD9, 0x2D, 0x2D),
+            Color32::WHITE,
+            aurora_i18n::tr!("ui-widgets-adult-region"),
+        ),
         _ => return None,
     };
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(size), Sense::hover());

@@ -16,9 +16,9 @@ fn permission_name(name: &str, mask: u32) -> String {
     use aurora_net::build::perm;
     let mut text = name.to_owned();
     for (bit, suffix) in [
-        (perm::COPY, "non copiable"),
-        (perm::MODIFY, "non modifiable"),
-        (perm::TRANSFER, "non transférable"),
+        (perm::COPY, aurora_i18n::tr!("ui-object-actions-no-copy")),
+        (perm::MODIFY, aurora_i18n::tr!("ui-object-actions-no-modify")),
+        (perm::TRANSFER, aurora_i18n::tr!("ui-object-actions-no-transfer")),
     ] {
         if mask & bit == 0 {
             text.push_str(&format!(" ({suffix})"));
@@ -63,13 +63,13 @@ pub fn show(ctx: &egui::Context, p: &Palette, state: &mut Interactions, world: &
     };
     let title = if buy {
         match d.props.as_ref().map(|p| p.sale_type) {
-            Some(1) => "Acheter l'original",
-            Some(2) => "Acheter une copie",
-            Some(3) => "Acheter le contenu",
-            _ => "Acheter l'objet",
+            Some(1) => aurora_i18n::tr!("ui-object-actions-buy-original"),
+            Some(2) => aurora_i18n::tr!("ui-object-actions-buy-a-copy"),
+            Some(3) => aurora_i18n::tr!("ui-object-actions-buy-contents"),
+            _ => aurora_i18n::tr!("common-buy-object"),
         }
     } else {
-        "Payer l'objet"
+        aurora_i18n::tr!("common-pay-object")
     };
     Floater::new(
         if buy { "object_purchase" } else { "object_payment" },
@@ -86,14 +86,14 @@ pub fn show(ctx: &egui::Context, p: &Palette, state: &mut Interactions, world: &
         ui.spacing_mut().item_spacing.y = 4.0;
         let available = world.objects.index_of_uuid(&d.target.object).is_some();
         if !available {
-            ui.label(RichText::new("Cet objet n'est plus disponible.").color(p.danger));
+            ui.label(RichText::new(aurora_i18n::tr!("ui-object-actions-this-object-is-no-longer-available")).color(p.danger));
         } else if let Some(props) = &d.props {
             let seller = world
                 .social
                 .avatar_names
                 .complete(&props.owner_id)
                 .or_else(|| world.avatar_name(&props.owner_id))
-                .unwrap_or_else(|| "Nom en cours de chargement…".into());
+                .unwrap_or_else(|| aurora_i18n::tr!("ui-object-actions-loading-name").into());
             let affordable = |amount: i32| amount >= 0 && world.balance.is_some_and(|b| amount <= b);
             if buy {
                 let object_label = if props.sale_type == 3 {
@@ -103,7 +103,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, state: &mut Interactions, world: &
                 };
                 named_row(ui, p, "cube", &object_label);
                 ui.add_space(6.0);
-                ui.label("Contenu :");
+                ui.label(aurora_i18n::tr!("ui-object-actions-contents"));
                 egui::Frame::new()
                     .fill(p.raised)
                     .inner_margin(egui::Margin::same(6))
@@ -125,29 +125,32 @@ pub fn show(ctx: &egui::Context, p: &Palette, state: &mut Interactions, world: &
                                         );
                                     }
                                     if empty {
-                                        ui.label("Aucun élément transférable.");
+                                        ui.label(aurora_i18n::tr!("ui-object-actions-no-transferable-items"));
                                     }
                                 }
                                 Some(Err(error)) => {
                                     ui.label(RichText::new(error).color(p.danger));
                                 }
                                 None => {
-                                    ui.label("Chargement du contenu…");
+                                    ui.label(aurora_i18n::tr!("ui-object-actions-loading-contents"));
                                 }
                             });
                     });
                 ui.add_space(6.0);
-                ui.label(format!("Acheter pour {} à :", money(props.sale_price)));
+                ui.label(aurora_i18n::tr!(
+                    "ui-object-actions-buy-for-from",
+                    value0 = money(props.sale_price).to_string()
+                ));
                 named_row(ui, p, "user", &seller);
                 if !affordable(props.sale_price) {
-                    ui.label(RichText::new("Solde insuffisant ou encore inconnu.").color(p.danger));
+                    ui.label(RichText::new(aurora_i18n::tr!("common-insufficient-or-unknown-balance")).color(p.danger));
                 }
                 if !(1..=3).contains(&props.sale_type) {
-                    ui.label(RichText::new("Cet objet n'est plus en vente.").color(p.danger));
+                    ui.label(RichText::new(aurora_i18n::tr!("ui-object-actions-this-object-is-no-longer-for-sale")).color(p.danger));
                 }
             } else {
                 named_row(ui, p, "user", &seller);
-                ui.label(RichText::new("Via l'objet :").color(p.muted));
+                ui.label(RichText::new(aurora_i18n::tr!("ui-object-actions-via-object")).color(p.muted));
                 named_row(ui, p, "cube", &props.name);
                 ui.add_space(6.0);
                 if let Some((default, buttons)) = &d.prices {
@@ -179,7 +182,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, state: &mut Interactions, world: &
                         ui.add_space(6.0);
                     }
                     if *default != -1 {
-                        ui.label("Ou choisissez le montant :");
+                        ui.label(aurora_i18n::tr!("ui-object-actions-or-choose-an-amount"));
                         ui.horizontal(|ui| {
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 ui.add(egui::TextEdit::singleline(&mut d.amount).desired_width(110.0).char_limit(10));
@@ -188,14 +191,19 @@ pub fn show(ctx: &egui::Context, p: &Palette, state: &mut Interactions, world: &
                         });
                     }
                 } else {
-                    ui.label("Chargement des montants proposés…");
+                    ui.label(aurora_i18n::tr!("ui-object-actions-loading-suggested-amounts"));
                 }
             }
         } else {
-            ui.label("Chargement des informations de l'objet…");
+            ui.label(aurora_i18n::tr!("ui-object-actions-loading-object-information"));
         }
         if d.opened.elapsed().as_secs() > 15 && (d.props.is_none() || (buy && d.inventory.is_none()) || (!buy && d.prices.is_none())) {
-            ui.label(RichText::new("Le simulateur n'a pas répondu. Fermez puis réessayez.").color(p.danger));
+            ui.label(
+                RichText::new(aurora_i18n::tr!(
+                    "ui-object-actions-the-simulator-did-not-respond-close-and-try-again"
+                ))
+                .color(p.danger),
+            );
         }
         if let Some(error) = &d.error {
             ui.label(RichText::new(error).color(p.danger));
@@ -223,7 +231,16 @@ pub fn show(ctx: &egui::Context, p: &Palette, state: &mut Interactions, world: &
                     });
                 if ui
                     .add_enabled_ui(valid, |ui| {
-                        flat_button_sized(ui, p, if buy { "Acheter" } else { "Payer" }, Vec2::new(button_width, 24.0))
+                        flat_button_sized(
+                            ui,
+                            p,
+                            if buy {
+                                aurora_i18n::tr!("common-buy")
+                            } else {
+                                aurora_i18n::tr!("common-pay")
+                            },
+                            Vec2::new(button_width, 24.0),
+                        )
                     })
                     .inner
                     .clicked()
@@ -233,7 +250,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, state: &mut Interactions, world: &
             } else {
                 ui.add_space(button_width + ui.spacing().item_spacing.x);
             }
-            if flat_button_sized(ui, p, "Annuler", Vec2::new(button_width, 24.0)).clicked() {
+            if flat_button_sized(ui, p, aurora_i18n::tr!("common-cancel"), Vec2::new(button_width, 24.0)).clicked() {
                 cancel = true;
             }
         });
@@ -260,7 +277,7 @@ pub fn show_contents(ctx: &egui::Context, p: &Palette, icons: &super::icons::Ico
     let center = ctx.content_rect().center();
     Floater::new(
         "object_contents",
-        "Contenu de l'objet",
+        aurora_i18n::tr!("common-object-contents"),
         egui::pos2(center.x - 190.0, center.y - 130.0),
         Vec2::new(380.0, 260.0),
     )
@@ -269,11 +286,11 @@ pub fn show_contents(ctx: &egui::Context, p: &Palette, icons: &super::icons::Ico
             ui.label(RichText::new(&props.name).strong().color(p.ink));
         }
         if world.objects.index_of_uuid(&c.target.object).is_none() {
-            ui.label(RichText::new("Cet objet n'est plus disponible.").color(p.danger));
+            ui.label(RichText::new(aurora_i18n::tr!("ui-object-actions-this-object-is-no-longer-available")).color(p.danger));
         } else {
             match &c.result {
                 Some(Ok(items)) if items.is_empty() => {
-                    ui.label("Cet objet est vide.");
+                    ui.label(aurora_i18n::tr!("ui-object-actions-this-object-is-empty"));
                 }
                 Some(Ok(items)) => {
                     egui::ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
@@ -291,10 +308,15 @@ pub fn show_contents(ctx: &egui::Context, p: &Palette, icons: &super::icons::Ico
                     ui.label(RichText::new(error).color(p.danger));
                 }
                 None if c.opened.elapsed().as_secs() > 30 => {
-                    ui.label(RichText::new("Le simulateur n'a pas répondu. Fermez puis réessayez.").color(p.danger));
+                    ui.label(
+                        RichText::new(aurora_i18n::tr!(
+                            "ui-object-actions-the-simulator-did-not-respond-close-and-try-again"
+                        ))
+                        .color(p.danger),
+                    );
                 }
                 None => {
-                    ui.label("Chargement du contenu…");
+                    ui.label(aurora_i18n::tr!("ui-object-actions-loading-contents"));
                 }
             }
         }

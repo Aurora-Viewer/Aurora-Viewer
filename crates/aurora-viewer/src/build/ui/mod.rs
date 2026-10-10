@@ -252,11 +252,11 @@ pub fn show(
     let height = (screen.height() - 110.0).clamp(420.0, 760.0);
     Floater::new(
         "build_tools",
-        "Construire",
+        aurora_i18n::tr!("common-build"),
         egui::pos2(screen.left() + 12.0, 40.0),
         Vec2::new(330.0, height),
     )
-    .help("Outils de construction : Ctrl+B ouvre / ferme ; Ctrl+1 à 5 : mise au point, déplacer, modifier, créer, terrain")
+    .help(aurora_i18n::tr!("build-ui-mod-build-tools-ctrl-b-opens-closes-ctrl-1-to"))
     // floater_tools is silent in Firestorm (sound_flags="0")
     .silent()
     .show(ctx, p, &mut open, |ui| {
@@ -298,7 +298,14 @@ pub fn show(
                 p.ink,
             );
         }
-        if resp.on_hover_text(if s.expanded { "Replier" } else { "Déplier" }).clicked() {
+        if resp
+            .on_hover_text(if s.expanded {
+                aurora_i18n::tr!("build-ui-mod-collapse")
+            } else {
+                aurora_i18n::tr!("build-ui-mod-expand")
+            })
+            .clicked()
+        {
             s.expanded = !s.expanded;
         }
     });
@@ -317,11 +324,11 @@ fn tabs_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut 
         p,
         &mut tool.tab,
         &[
-            ("Général", true),
-            ("Objet", true),
-            ("Attributs", true),
-            ("Texture", true),
-            ("Contenu", true),
+            (aurora_i18n::tr!("common-general"), true),
+            (aurora_i18n::tr!("common-object"), true),
+            (aurora_i18n::tr!("build-ui-mod-attributes"), true),
+            (aurora_i18n::tr!("common-texture"), true),
+            (aurora_i18n::tr!("common-contents"), true),
         ],
     );
     ui.add_space(4.0);

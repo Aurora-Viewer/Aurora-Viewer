@@ -2,7 +2,7 @@
 //! allowed and blocked experiences, sent as access lists
 //! AL_ALLOW_EXPERIENCE / AL_BLOCK_EXPERIENCE).
 
-use super::{LandUi, NOT_YET, View};
+use super::{LandUi, View, not_yet};
 use crate::theme::Palette;
 use crate::world::World;
 use crate::world::land::powers;
@@ -25,14 +25,14 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
         (
             AL_ALLOW_EXPERIENCE,
             &allowed,
-            "Exp. autorisées :",
-            "Seules les expériences définies par terrain sont autorisées. Les expériences autorisées ont la permission de s'exécuter sur ce terrain sauf si elles ne sont pas bloquées par le domaine.",
+            aurora_i18n::tr!("ui-land-experiences-allowed-experiences"),
+            aurora_i18n::tr!("ui-land-experiences-only-experiences-defined-for-the-parcel-are-allowed-allowed"),
         ),
         (
             AL_BLOCK_EXPERIENCE,
             &blocked,
-            "Exp. bloquées :",
-            "N'importe quelle expérience de résident peut être bloquée. Les expériences bloquées ne peuvent pas s'exécuter sur ce terrain.",
+            aurora_i18n::tr!("ui-land-experiences-blocked-experiences"),
+            aurora_i18n::tr!("ui-land-experiences-any-resident-experience-can-be-blocked-blocked-experiences-cannot"),
         ),
     ] {
         let selected = if kind == AL_ALLOW_EXPERIENCE {
@@ -54,9 +54,13 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
                         ui.label(RichText::new(title).size(12.0).color(p.ink));
                         // ExperiencesCounter
                         ui.label(
-                            RichText::new(format!("({}, {PARCEL_MAX_EXPERIENCE_LIST} max.)", list.len()))
-                                .size(12.0)
-                                .color(p.muted),
+                            RichText::new(aurora_i18n::tr!(
+                                "status-parcel-max-experience-list-max",
+                                value0 = format!("{}", list.len()),
+                                PARCEL_MAX_EXPERIENCE_LIST = format!("{}", PARCEL_MAX_EXPERIENCE_LIST)
+                            ))
+                            .size(12.0)
+                            .color(p.muted),
                         );
                     });
                     ui.horizontal_top(|ui| {
@@ -73,10 +77,13 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
                                     ui.vertical(|ui| {
                                         ui.set_width(list_w - 12.0);
                                         if list.is_empty() {
-                                            ui.label(RichText::new("(vide)").size(12.0).color(p.muted));
+                                            ui.label(RichText::new(aurora_i18n::tr!("status-empty")).size(12.0).color(p.muted));
                                         }
                                         for id in list {
-                                            let name = world.land.experience_name(id).unwrap_or_else(|| "Chargement...".into());
+                                            let name = world
+                                                .land
+                                                .experience_name(id)
+                                                .unwrap_or_else(|| aurora_i18n::tr!("common-loading").into());
                                             let (rect, r) = ui.allocate_exact_size(Vec2::new(list_w - 12.0, 20.0), egui::Sense::click());
                                             let fill = if *selected == Some(*id) {
                                                 p.violet.gamma_multiply(0.6)
@@ -103,11 +110,11 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
                         ui.vertical(|ui| {
                             ui.set_min_width(90.0);
                             // the experience picker and profile are not ported yet
-                            super::button(ui, p, "Ajouter...", false).on_disabled_hover_text(NOT_YET);
-                            if super::button(ui, p, "Supprimer", editable && selected.is_some()).clicked() {
+                            super::button(ui, p, aurora_i18n::tr!("common-add-2"), false).on_disabled_hover_text(not_yet());
+                            if super::button(ui, p, aurora_i18n::tr!("common-delete"), editable && selected.is_some()).clicked() {
                                 remove = *selected;
                             }
-                            super::button(ui, p, "Profil...", false).on_disabled_hover_text(NOT_YET);
+                            super::button(ui, p, aurora_i18n::tr!("common-profile-2"), false).on_disabled_hover_text(not_yet());
                         });
                     });
                 });

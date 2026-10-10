@@ -23,14 +23,14 @@ pub(super) fn show(
     let mut open = true;
     let mut done = false;
     let title = match &dialog {
-        EditDialog::Properties(..) => "Propriétés de l’objet",
-        EditDialog::Delete(_, true) => "Purger la sélection",
-        EditDialog::Delete(_, false) => "Supprimer la sélection",
-        EditDialog::Empty(_) => "Vider la corbeille",
-        EditDialog::Ungroup(_) => "Dégrouper le dossier",
-        EditDialog::ReplaceLinks(..) => "Remplacer les liens",
-        EditDialog::Discard(..) => "Enregistrer les modifications ?",
-        EditDialog::Share(..) => "Partager la sélection",
+        EditDialog::Properties(..) => aurora_i18n::tr!("ui-inventory-dialogs-object-properties"),
+        EditDialog::Delete(_, true) => aurora_i18n::tr!("ui-inventory-dialogs-purge-selection"),
+        EditDialog::Delete(_, false) => aurora_i18n::tr!("ui-inventory-dialogs-delete-selection"),
+        EditDialog::Empty(_) => aurora_i18n::tr!("common-empty-trash"),
+        EditDialog::Ungroup(_) => aurora_i18n::tr!("ui-inventory-dialogs-ungroup-folder"),
+        EditDialog::ReplaceLinks(..) => aurora_i18n::tr!("common-replace-links"),
+        EditDialog::Discard(..) => aurora_i18n::tr!("ui-inventory-dialogs-save-changes"),
+        EditDialog::Share(..) => aurora_i18n::tr!("ui-inventory-dialogs-share-selection"),
     };
     let properties = matches!(dialog, EditDialog::Properties(_));
     let confirmation = matches!(dialog, EditDialog::Delete(..) | EditDialog::Empty(_));
@@ -69,8 +69,10 @@ pub(super) fn show(
                 done = super::properties::show(ui, p, icons, inv, st, prefs, facts, images, *id, actions);
             }
             EditDialog::Discard(id) => {
-                ui.label("Ce document contient des modifications non enregistrées.");
-                if ui.add_enabled(!st.save_pending, egui::Button::new("Enregistrer")).clicked()
+                ui.label(aurora_i18n::tr!("ui-inventory-dialogs-this-document-has-unsaved-changes"));
+                if ui
+                    .add_enabled(!st.save_pending, egui::Button::new(aurora_i18n::tr!("common-save")))
+                    .clicked()
                     && let Some(Ok(text)) = &st.preview_text
                 {
                     actions.push(InvAction::SaveContent {
@@ -79,20 +81,24 @@ pub(super) fn show(
                     });
                     done = true;
                 }
-                if flat_button(ui, p, "Abandonner les modifications").clicked() {
+                if flat_button(ui, p, aurora_i18n::tr!("ui-inventory-dialogs-discard-changes")).clicked() {
                     st.preview = None;
                     st.preview_dirty = false;
                     done = true;
                 }
             }
             EditDialog::Share(ids, resident) => {
-                ui.label(format!("Envoyer {} élément(s) au résident {} ?", ids.len(), resident));
+                ui.label(aurora_i18n::tr!(
+                    "ui-inventory-dialogs-send-item-s-to-resident",
+                    value0 = format!("{}", ids.len()),
+                    value1 = format!("{}", resident)
+                ));
                 if ids.iter().any(|id| {
                     rules::offer(inv, *id, &prefs.protected, &facts.worn).is_ok_and(|bucket| rules::offer_has_no_copy(inv, &bucket))
                 }) {
-                    ui.label(RichText::new("Les éléments non copiables quitteront votre inventaire.").color(p.warn));
+                    ui.label(RichText::new(aurora_i18n::tr!("ui-inventory-dialogs-no-copy-items-will-leave-your-inventory")).color(p.warn));
                 }
-                if flat_button(ui, p, "Partager").clicked() {
+                if flat_button(ui, p, aurora_i18n::tr!("common-share")).clicked() {
                     actions.push(InvAction::Share {
                         items: ids.clone(),
                         resident: *resident,
@@ -102,9 +108,12 @@ pub(super) fn show(
             }
             EditDialog::ReplaceLinks(old, selected) => {
                 if st.fetch_all {
-                    ui.label("Chargement de tous les dossiers avant le remplacement…");
+                    ui.label(aurora_i18n::tr!("ui-inventory-dialogs-loading-all-folders-before-replacing"));
                 }
-                ui.label(format!("Remplacer les liens vers « {} » par :", rules::name(inv, *old)));
+                ui.label(aurora_i18n::tr!(
+                    "ui-inventory-dialogs-replace-links-to-with",
+                    value0 = rules::name(inv, *old).to_string()
+                ));
                 let old_type = inv.items.get(old).map(|it| (it.asset_type, it.flags & 0xff));
                 let mut candidates: Vec<_> = inv
                     .items
@@ -128,7 +137,7 @@ pub(super) fn show(
                 if ui
                     .add_enabled(
                         selected.is_some() && st.pending.is_none() && !st.fetch_all && !facts.appearance_busy,
-                        egui::Button::new("Remplacer"),
+                        egui::Button::new(aurora_i18n::tr!("ui-inventory-dialogs-replace")),
                     )
                     .clicked()
                     && let Some(new) = *selected
@@ -169,7 +178,7 @@ pub(super) fn show(
                         change.refresh.push(link.parent);
                     }
                     if change.operations.is_empty() {
-                        st.message = "Aucun lien modifiable dans les dossiers chargés.".into();
+                        st.message = aurora_i18n::tr!("ui-inventory-dialogs-no-editable-links-in-the-loaded-folders").into();
                     } else {
                         actions.push(InvAction::Edit(change));
                     }
@@ -180,20 +189,30 @@ pub(super) fn show(
                 ui.add_space(4.0);
                 ui.label(
                     RichText::new(if ids.len() == 1 {
-                        format!("Supprimer « {} » ?", rules::name(inv, ids[0]))
+                        aurora_i18n::tr!("ui-inventory-dialogs-delete", value0 = rules::name(inv, ids[0]).to_string())
                     } else {
-                        format!("Supprimer les {} éléments sélectionnés ?", ids.len())
+                        aurora_i18n::tr!("ui-inventory-dialogs-delete-the-selected-items", value0 = format!("{}", ids.len()))
                     })
                     .strong()
                     .color(p.ink),
                 );
                 ui.add_space(4.0);
                 ui.label(if *purge {
-                    "Cette suppression est définitive."
+                    aurora_i18n::tr!("ui-inventory-dialogs-this-deletion-is-permanent")
                 } else {
-                    "Les éléments seront déplacés dans la corbeille."
+                    aurora_i18n::tr!("ui-inventory-dialogs-items-will-be-moved-to-trash")
                 });
-                if confirmation_buttons(ui, p, st.pending.is_none(), if *purge { "Purger" } else { "Supprimer" }, &mut done) {
+                if confirmation_buttons(
+                    ui,
+                    p,
+                    st.pending.is_none(),
+                    if *purge {
+                        aurora_i18n::tr!("ui-inventory-dialogs-purge")
+                    } else {
+                        aurora_i18n::tr!("common-delete")
+                    },
+                    &mut done,
+                ) {
                     let plan = if *purge {
                         let ids = rules::roots(inv, ids);
                         let refresh = ids.iter().filter_map(|id| rules::parent(inv, *id)).collect();
@@ -216,11 +235,11 @@ pub(super) fn show(
                                 ..Default::default()
                             })
                         } else {
-                            Err("La sélection ne peut plus être purgée.".into())
+                            Err(aurora_i18n::tr!("ui-inventory-dialogs-the-selection-can-no-longer-be-purged").into())
                         }
                     } else {
                         rules::system(inv, 14)
-                            .ok_or_else(|| "Corbeille introuvable.".to_owned())
+                            .ok_or_else(|| aurora_i18n::tr!("common-trash-folder-not-found").to_owned())
                             .and_then(|to| rules::move_selection(inv, ids, to, &prefs.protected, &facts.worn))
                     };
                     match plan {
@@ -233,8 +252,10 @@ pub(super) fn show(
                 }
             }
             EditDialog::Empty(id) => {
-                ui.label("Tous les éléments de la corbeille seront supprimés définitivement.");
-                if confirmation_buttons(ui, p, st.pending.is_none(), "Vider la corbeille", &mut done)
+                ui.label(aurora_i18n::tr!(
+                    "ui-inventory-dialogs-all-items-in-trash-will-be-permanently-deleted"
+                ));
+                if confirmation_buttons(ui, p, st.pending.is_none(), aurora_i18n::tr!("common-empty-trash"), &mut done)
                     && let Some(f) = inv.folders.get(id)
                     && f.info.type_default == 14
                     && f.state == FetchState::Fetched
@@ -249,13 +270,21 @@ pub(super) fn show(
                         }));
                         done = true;
                     } else {
-                        st.message = "La corbeille contient un élément porté.".into();
+                        st.message = aurora_i18n::tr!("ui-inventory-dialogs-trash-contains-a-worn-item").into();
                     }
                 }
             }
             EditDialog::Ungroup(id) => {
-                ui.label("Déplacer le contenu dans le dossier parent et mettre le dossier vide dans la corbeille ?");
-                if ui.add_enabled(st.pending.is_none(), egui::Button::new("Dégrouper")).clicked() {
+                ui.label(aurora_i18n::tr!(
+                    "ui-inventory-dialogs-move-the-contents-to-the-parent-folder-and-put"
+                ));
+                if ui
+                    .add_enabled(
+                        st.pending.is_none(),
+                        egui::Button::new(aurora_i18n::tr!("ui-inventory-dialogs-ungroup")),
+                    )
+                    .clicked()
+                {
                     match rules::ungroup(inv, *id, &prefs.protected, &facts.worn) {
                         Ok(change) => {
                             actions.push(InvAction::Edit(change));
@@ -269,7 +298,9 @@ pub(super) fn show(
         if !st.message.is_empty() {
             ui.label(RichText::new(&st.message).color(p.warn));
         }
-        if (!confirmation && flat_button(ui, p, "Fermer / Annuler").clicked()) || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+        if (!confirmation && flat_button(ui, p, aurora_i18n::tr!("extra-close-cancel")).clicked())
+            || ui.input(|i| i.key_pressed(egui::Key::Escape))
+        {
             done = true;
         }
     });
@@ -288,7 +319,7 @@ fn confirmation_buttons(ui: &mut egui::Ui, p: &Palette, enabled: bool, label: &s
             ui.add_enabled_ui(enabled, |ui| {
                 confirm = super::super::widgets::flat_button_sized(ui, p, label, Vec2::new(120.0, 28.0)).clicked();
             });
-            if super::super::widgets::flat_button_sized(ui, p, "Annuler", Vec2::new(96.0, 28.0)).clicked() {
+            if super::super::widgets::flat_button_sized(ui, p, aurora_i18n::tr!("common-cancel"), Vec2::new(96.0, 28.0)).clicked() {
                 *done = true;
             }
         });
@@ -329,10 +360,10 @@ pub(super) fn preview(
             if let Some(t) = images.get(&it.asset_id) {
                 ui.add(egui::Image::new(t).max_size(Vec2::splat(350.0)).fit_to_original_size(1.0));
             } else {
-                ui.label("Chargement de l’image…");
+                ui.label(aurora_i18n::tr!("ui-inventory-dialogs-loading-image"));
             }
         } else if matches!(it.asset_type, 20 | 1) {
-            if flat_button(ui, p, "Jouer").clicked() {
+            if flat_button(ui, p, aurora_i18n::tr!("common-play")).clicked() {
                 if it.asset_type == 20 {
                     actions.push(InvAction::Animation {
                         asset: it.asset_id,
@@ -344,14 +375,14 @@ pub(super) fn preview(
                 }
             }
             if it.asset_type == 20 {
-                if flat_button(ui, p, "Jouer localement").clicked() {
+                if flat_button(ui, p, aurora_i18n::tr!("common-play-locally")).clicked() {
                     actions.push(InvAction::Animation {
                         asset: it.asset_id,
                         local: true,
                         start: true,
                     });
                 }
-                if flat_button(ui, p, "Arrêter").clicked()
+                if flat_button(ui, p, aurora_i18n::tr!("common-stop")).clicked()
                     && let Some((asset, local)) = st.playing
                 {
                     actions.push(InvAction::Animation {
@@ -362,7 +393,8 @@ pub(super) fn preview(
                 }
             }
         } else {
-            if it.asset_type == 56 && !it.asset_id.is_nil() && flat_button(ui, p, "Appliquer uniquement à moi-même").clicked() {
+            if it.asset_type == 56 && !it.asset_id.is_nil() && flat_button(ui, p, aurora_i18n::tr!("common-apply-to-myself-only")).clicked()
+            {
                 actions.push(InvAction::Environment(it.asset_id, it.flags));
             }
             match &mut st.preview_text {
@@ -384,13 +416,16 @@ pub(super) fn preview(
                     ui.label(RichText::new(reason.as_str()).color(p.warn));
                 }
                 None => {
-                    ui.label("Chargement…");
+                    ui.label(aurora_i18n::tr!("common-loading-2"));
                 }
             }
             if matches!(it.asset_type, 7 | 10)
                 && st.preview_can_edit
                 && ui
-                    .add_enabled(st.preview_dirty && !st.save_pending, egui::Button::new("Enregistrer"))
+                    .add_enabled(
+                        st.preview_dirty && !st.save_pending,
+                        egui::Button::new(aurora_i18n::tr!("common-save")),
+                    )
                     .clicked()
                 && let Some(Ok(text)) = &st.preview_text
             {
@@ -436,14 +471,14 @@ fn animation(
     let mut open = true;
     Floater::new(
         &format!("inventory_preview_{}_{}", st.ui_id, it.id),
-        format!("Animation : {}", it.name),
+        aurora_i18n::tr!("ui-inventory-dialogs-animation", value0 = it.name.to_string()),
         ctx.content_rect().center() - egui::vec2(215.0, 85.0),
         Vec2::new(430.0, 170.0),
     )
     .fixed()
     .show(ctx, p, &mut open, |ui| {
         ui.horizontal(|ui| {
-            ui.label("Description :");
+            ui.label(aurora_i18n::tr!("common-description"));
             if let Some((_, description)) = &mut st.animation_description {
                 let can_edit = rules::mutable(inv, it.id, &prefs.protected) && it.owner_mask & rules::MODIFY != 0 && st.pending.is_none();
                 let response = ui.add_enabled(
@@ -463,10 +498,16 @@ fn animation(
         });
         ui.horizontal(|ui| {
             let playing = st.playing.filter(|(asset, _)| *asset == it.asset_id);
-            for (local, label) in [(false, "Jouer devant tout le monde"), (true, "Jouer localement")] {
+            for (local, label) in [
+                (false, aurora_i18n::tr!("ui-inventory-dialogs-play-for-everyone")),
+                (true, aurora_i18n::tr!("common-play-locally")),
+            ] {
                 let same = playing.is_some_and(|(_, mode)| mode == local);
                 if ui
-                    .add_enabled(playing.is_none() || same, egui::Button::new(if same { "Arrêter" } else { label }))
+                    .add_enabled(
+                        playing.is_none() || same,
+                        egui::Button::new(if same { aurora_i18n::tr!("common-stop") } else { label }),
+                    )
                     .clicked()
                 {
                     actions.push(InvAction::Animation {
@@ -480,7 +521,7 @@ fn animation(
                 ui,
                 p,
                 if st.animation_details { "caret-up" } else { "caret-down" },
-                "Afficher les statistiques",
+                aurora_i18n::tr!("ui-inventory-dialogs-show-statistics"),
                 true,
             ) {
                 st.animation_details = !st.animation_details;
@@ -492,18 +533,41 @@ fn animation(
                     .num_columns(2)
                     .spacing(egui::vec2(64.0, 2.0))
                     .show(ui, |ui| {
-                        ui.label(format!("Priorité : {}", stats.priority));
-                        ui.label(format!("Entrée : {:.2}s", stats.entry));
+                        ui.label(aurora_i18n::tr!(
+                            "ui-inventory-dialogs-priority",
+                            value0 = format!("{}", stats.priority)
+                        ));
+                        ui.label(aurora_i18n::tr!(
+                            "ui-inventory-dialogs-ease-in-s",
+                            value0 = aurora_i18n::number_text(&format!("{:.2}", stats.entry))
+                        ));
                         ui.end_row();
-                        ui.label(format!("Durée : {:.2}s", stats.duration));
-                        ui.label(format!("Sortie : {:.2}s", stats.exit));
+                        ui.label(aurora_i18n::tr!(
+                            "ui-inventory-dialogs-duration-s",
+                            value0 = aurora_i18n::number_text(&format!("{:.2}", stats.duration))
+                        ));
+                        ui.label(aurora_i18n::tr!(
+                            "ui-inventory-dialogs-ease-out-s",
+                            value0 = aurora_i18n::number_text(&format!("{:.2}", stats.exit))
+                        ));
                         ui.end_row();
-                        ui.label(format!("En boucle : {}", if stats.looping { "Oui" } else { "Non" }));
-                        ui.label(format!("Joints : {}", stats.joints));
+                        ui.label(aurora_i18n::tr!(
+                            "ui-inventory-dialogs-looping",
+                            value0 = (if stats.looping {
+                                aurora_i18n::tr!("common-yes")
+                            } else {
+                                aurora_i18n::tr!("common-no")
+                            })
+                            .to_string()
+                        ));
+                        ui.label(aurora_i18n::tr!(
+                            "ui-inventory-dialogs-joints",
+                            value0 = format!("{}", stats.joints)
+                        ));
                         ui.end_row();
                     });
             } else {
-                ui.label(RichText::new("Chargement des statistiques de l’animation…").color(p.muted));
+                ui.label(RichText::new(aurora_i18n::tr!("ui-inventory-dialogs-loading-animation-statistics")).color(p.muted));
             }
         }
     });
@@ -576,13 +640,13 @@ mod tests {
                 })
                 .expect("confirmation label")
         };
-        let cancel = text("Annuler");
-        let delete = text("Supprimer");
+        let cancel = text(aurora_i18n::tr!("common-cancel"));
+        let delete = text(aurora_i18n::tr!("common-delete"));
         assert!((cancel.y - delete.y).abs() < 1.0);
         assert!(cancel.x < delete.x);
-        assert!(delete.y > text("Les éléments seront déplacés dans la corbeille.").y);
+        assert!(delete.y > text(aurora_i18n::tr!("ui-inventory-dialogs-items-will-be-moved-to-trash")).y);
         assert!(
-            delete.y - text("Les éléments seront déplacés dans la corbeille.").y < 65.0,
+            delete.y - text(aurora_i18n::tr!("ui-inventory-dialogs-items-will-be-moved-to-trash")).y < 65.0,
             "footer must stay close to the message"
         );
         assert!(

@@ -56,8 +56,8 @@ impl AppearanceUi {
     pub fn begin_save_as(&mut self, inv: &crate::world::inventory::Inventory) {
         let name = model::base(inv)
             .and_then(|id| inv.folders.get(&id))
-            .map(|f| format!("{} (nouv.)", f.info.name))
-            .unwrap_or_else(|| "Nouvelle tenue".into());
+            .map(|f| aurora_i18n::tr!("status-new", value0 = f.info.name.to_string()))
+            .unwrap_or_else(|| aurora_i18n::tr!("ui-appearance-new-outfit").into());
         self.save_as = Some(name.chars().take(63).collect());
         self.select_name = true;
     }
@@ -175,7 +175,15 @@ fn row(ui: &mut egui::Ui, p: &Palette, it: &InvItem, desc: &str, selected: bool,
 
 fn item_menu(response: &egui::Response, it: &InvItem, actions: &mut Vec<Action>) {
     response.context_menu(|ui| {
-        if it.asset_type != 13 && ui.button(if it.asset_type == 6 { "Détacher" } else { "Enlever" }).clicked() {
+        if it.asset_type != 13
+            && ui
+                .button(if it.asset_type == 6 {
+                    aurora_i18n::tr!("common-detach")
+                } else {
+                    aurora_i18n::tr!("common-remove")
+                })
+                .clicked()
+        {
             actions.push(Action::Remove(it.id));
             ui.close();
         }
@@ -240,7 +248,7 @@ fn gallery(
                     gallery::context_menu(&response, p, world, st, *id, actions);
                     let current = model::base(&world.inventory) == Some(*id);
                     let text = if current {
-                        format!("{} (portée)", folder.info.name)
+                        aurora_i18n::tr!("ui-appearance-worn", value0 = folder.info.name.to_string())
                     } else {
                         folder.info.name.clone()
                     };
@@ -261,7 +269,7 @@ fn outfit_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut Appearanc
         };
         let is_current = current == Some(*id);
         let label = if is_current {
-            format!("{} (portée)", f.info.name)
+            aurora_i18n::tr!("ui-appearance-worn", value0 = f.info.name.to_string())
         } else {
             f.info.name.clone()
         };
@@ -278,7 +286,10 @@ fn outfit_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut Appearanc
             .open(reveal.then_some(true))
             .show(ui, |ui| {
                 if ui
-                    .selectable_label(st.selected_outfit == Some(*id), "Sélectionner cette tenue")
+                    .selectable_label(
+                        st.selected_outfit == Some(*id),
+                        aurora_i18n::tr!("ui-appearance-select-this-outfit"),
+                    )
                     .clicked()
                 {
                     st.selected_outfit = Some(*id);
@@ -309,18 +320,18 @@ fn outfit_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut Appearanc
                 if links.is_empty() {
                     ui.label(
                         RichText::new(if model::loaded(&world.inventory, *id) {
-                            "Tenue vide"
+                            aurora_i18n::tr!("ui-appearance-empty-outfit")
                         } else {
-                            "Chargement…"
+                            aurora_i18n::tr!("common-loading-2")
                         })
                         .color(p.muted),
                     );
                 }
                 ui.horizontal(|ui| {
-                    if widgets::flat_button(ui, p, "Porter").clicked() {
+                    if widgets::flat_button(ui, p, aurora_i18n::tr!("common-wear")).clicked() {
                         actions.push(Action::Wear(*id, false));
                     }
-                    if widgets::flat_button(ui, p, "Ajouter").clicked() {
+                    if widgets::flat_button(ui, p, aurora_i18n::tr!("common-add")).clicked() {
                         actions.push(Action::Wear(*id, true));
                     }
                 });
@@ -366,7 +377,11 @@ fn worn_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceU
         .filter(|l| !l.folder && (edit || q.is_empty() || l.name.to_lowercase().contains(&q)))
     {
         let Some(it) = inv.items.get(&link.target) else {
-            ui.label(RichText::new(format!("{} (chargement…)", link.name)).size(12.0).color(p.muted));
+            ui.label(
+                RichText::new(aurora_i18n::tr!("status-loading", value0 = link.name.to_string()))
+                    .size(12.0)
+                    .color(p.muted),
+            );
             continue;
         };
         if edit
@@ -385,7 +400,7 @@ fn worn_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceU
                 p,
                 it,
                 if it.asset_type == 6 && !worn.contains(&it.id) {
-                    "(attachement en cours)"
+                    aurora_i18n::tr!("ui-appearance-attaching")
                 } else {
                     ""
                 },
@@ -399,15 +414,25 @@ fn worn_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceU
             if edit && st.selected_item == Some(it.id) {
                 ui.horizontal(|ui| {
                     if it.asset_type != 13
-                        && icon_button(ui, p, "x-circle", if it.asset_type == 6 { "Détacher" } else { "Enlever" }).clicked()
+                        && icon_button(
+                            ui,
+                            p,
+                            "x-circle",
+                            if it.asset_type == 6 {
+                                aurora_i18n::tr!("common-detach")
+                            } else {
+                                aurora_i18n::tr!("common-remove")
+                            },
+                        )
+                        .clicked()
                     {
                         actions.push(Action::Remove(it.id));
                     }
                     if it.asset_type == 5 {
-                        if icon_button(ui, p, "caret-up", "Monter le calque").clicked() {
+                        if icon_button(ui, p, "caret-up", aurora_i18n::tr!("ui-appearance-move-layer-up")).clicked() {
                             actions.push(Action::MoveLayer(it.id, true));
                         }
-                        if icon_button(ui, p, "caret-down", "Descendre le calque").clicked() {
+                        if icon_button(ui, p, "caret-down", aurora_i18n::tr!("ui-appearance-move-layer-down")).clicked() {
                             actions.push(Action::MoveLayer(it.id, false));
                         }
                     }
@@ -416,7 +441,7 @@ fn worn_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceU
         });
     }
     if edit && st.edit_tab != 1 {
-        for (kind, name) in model::WEARABLES
+        for (kind, name) in model::wearables()
             .iter()
             .enumerate()
             .filter(|(k, _)| if st.edit_tab == 0 { *k >= 4 } else { *k < 4 })
@@ -430,7 +455,15 @@ fn worn_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceU
                         2 | 3 | 9 => "s",
                         _ => "",
                     };
-                    ui.label(RichText::new(format!("{name} non porté{ending}")).size(12.0).color(p.muted_dim));
+                    ui.label(
+                        RichText::new(aurora_i18n::tr!(
+                            "ui-appearance-not-worn",
+                            name = name.to_string(),
+                            ending = ending.to_string()
+                        ))
+                        .size(12.0)
+                        .color(p.muted_dim),
+                    );
                 });
             }
         }
@@ -438,7 +471,7 @@ fn worn_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceU
 }
 
 fn temporary_attachments(ui: &mut egui::Ui, p: &Palette, world: &World) {
-    egui::CollapsingHeader::new("Éléments temporaires")
+    egui::CollapsingHeader::new(aurora_i18n::tr!("ui-appearance-temporary-items"))
         .id_salt("temporary_attachments")
         .show(ui, |ui| {
             let temporary = world
@@ -454,20 +487,32 @@ fn temporary_attachments(ui: &mut egui::Ui, p: &Palette, world: &World) {
                 {
                     count += 1;
                     ui.label(
-                        RichText::new(format!("Objet temporaire ({})", o.attachment_point()))
-                            .size(12.0)
-                            .color(p.muted),
+                        RichText::new(aurora_i18n::tr!(
+                            "ui-appearance-temporary-object",
+                            value0 = format!("{}", o.attachment_point())
+                        ))
+                        .size(12.0)
+                        .color(p.muted),
                     );
                 }
             }
             if count == 0 {
-                ui.label(RichText::new("Aucun élément temporaire").size(12.0).color(p.muted_dim));
+                ui.label(
+                    RichText::new(aurora_i18n::tr!("ui-appearance-no-temporary-items"))
+                        .size(12.0)
+                        .color(p.muted_dim),
+                );
             }
         });
 }
 
 fn add_list(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut AppearanceUi, actions: &mut Vec<Action>) {
-    widgets::search_field(ui, &mut st.add_search, "Filtrer les éléments à porter", ui.available_width());
+    widgets::search_field(
+        ui,
+        &mut st.add_search,
+        aurora_i18n::tr!("ui-appearance-filter-wearable-items"),
+        ui.available_width(),
+    );
     let folders: Vec<_> = world
         .inventory
         .folders
@@ -584,7 +629,7 @@ pub fn show(
     let name = base
         .and_then(|id| inv.folders.get(&id))
         .map(|f| f.info.name.clone())
-        .unwrap_or_else(|| "Tenue actuelle".into());
+        .unwrap_or_else(|| aurora_i18n::tr!("common-current-outfit").into());
     let dirty = model::dirty(inv);
     let count = world.worn_attachment_items().len();
     let my = model::system_folder(inv, model::FT_MY_OUTFITS);
@@ -601,19 +646,29 @@ pub fn show(
     if st.reverse_sort {
         outfits.reverse();
     }
-    let mut floater = widgets::Floater::new("appearance", "Apparence", egui::pos2(18.0, 60.0), Vec2::new(370.0, 560.0))
-        .fixed()
-        .help("Choisissez une tenue, gérez les éléments portés ou enregistrez votre tenue actuelle.");
+    let mut floater = widgets::Floater::new(
+        "appearance",
+        aurora_i18n::tr!("common-appearance"),
+        egui::pos2(18.0, 60.0),
+        Vec2::new(370.0, 560.0),
+    )
+    .fixed()
+    .help(aurora_i18n::tr!("ui-appearance-choose-an-outfit-manage-worn-items-or-save-your"));
     floater.min_size = Vec2::new(350.0, 360.0);
     floater.show(ctx, p, open, |ui| {
         ui.set_width(370.0);
         if st.editing {
             ui.horizontal(|ui| {
-                if icon_button(ui, p, "arrow-left", "Revenir aux tenues").clicked() {
+                if icon_button(ui, p, "arrow-left", aurora_i18n::tr!("ui-appearance-back-to-outfits")).clicked() {
                     st.editing = false;
                     st.adding = false;
                 }
-                ui.label(RichText::new("Modifier l’habillement").size(20.0).strong().color(p.ink));
+                ui.label(
+                    RichText::new(aurora_i18n::tr!("ui-appearance-edit-clothing"))
+                        .size(20.0)
+                        .strong()
+                        .color(p.ink),
+                );
             });
         }
         ui.horizontal(|ui| {
@@ -623,11 +678,11 @@ pub fn show(
                 ui.set_width(name_width);
                 ui.label(
                     RichText::new(if st.pending.is_some() {
-                        "Mise à jour de la tenue…"
+                        aurora_i18n::tr!("ui-appearance-updating-outfit")
                     } else if dirty {
-                        "Modifications non enregistrées"
+                        aurora_i18n::tr!("ui-appearance-unsaved-changes")
                     } else {
-                        "Tenue actuelle"
+                        aurora_i18n::tr!("common-current-outfit")
                     })
                     .size(11.0)
                     .color(if dirty { p.warn } else { p.muted }),
@@ -635,7 +690,7 @@ pub fn show(
                 ui.add(egui::Label::new(RichText::new(&name).size(16.0).strong().color(p.ink)).truncate());
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if !st.editing && icon_button(ui, p, "wrench", "Modifier cette tenue").clicked() {
+                if !st.editing && icon_button(ui, p, "wrench", aurora_i18n::tr!("ui-appearance-edit-this-outfit")).clicked() {
                     st.editing = true;
                 }
             });
@@ -646,27 +701,46 @@ pub fn show(
                 let width = (ui.available_width() - 28.0 - ui.spacing().item_spacing.x).max(100.0);
                 ui.add_sized(
                     Vec2::new(width, 28.0),
-                    egui::TextEdit::singleline(&mut st.search).hint_text("Filtrer les tenues"),
+                    egui::TextEdit::singleline(&mut st.search).hint_text(aurora_i18n::tr!("ui-appearance-filter-outfits")),
                 );
-                icon_menu(ui, p, "list", "Trier les tenues", |ui| {
-                    if ui.selectable_label(!st.reverse_sort, "Nom : A → Z").clicked() {
+                icon_menu(ui, p, "list", aurora_i18n::tr!("ui-appearance-sort-outfits"), |ui| {
+                    if ui
+                        .selectable_label(!st.reverse_sort, aurora_i18n::tr!("ui-appearance-name-a-z"))
+                        .clicked()
+                    {
                         st.reverse_sort = false;
                         ui.close();
                     }
-                    if ui.selectable_label(st.reverse_sort, "Nom : Z → A").clicked() {
+                    if ui
+                        .selectable_label(st.reverse_sort, aurora_i18n::tr!("ui-appearance-name-z-a"))
+                        .clicked()
+                    {
                         st.reverse_sort = true;
                         ui.close();
                     }
                 });
             });
-            let worn = format!("Portés ({count}/38 att.)");
-            widgets::tabs(ui, p, &mut st.tab, &[("Galerie des tenues", true), ("Tenues", true), (&worn, true)]);
+            let worn = aurora_i18n::tr!("ui-appearance-worn-38-attachments", count = format!("{}", count));
+            widgets::tabs(
+                ui,
+                p,
+                &mut st.tab,
+                &[
+                    (aurora_i18n::tr!("ui-appearance-outfit-gallery"), true),
+                    (aurora_i18n::tr!("ui-appearance-outfits"), true),
+                    (&worn, true),
+                ],
+            );
         } else {
             widgets::tabs(
                 ui,
                 p,
                 &mut st.edit_tab,
-                &[("Vêtements", true), ("Éléments attachés", true), ("Corps", true)],
+                &[
+                    (aurora_i18n::tr!("common-clothing"), true),
+                    (aurora_i18n::tr!("ui-appearance-attached-items"), true),
+                    (aurora_i18n::tr!("common-body"), true),
+                ],
             );
         }
         ui.add_space(5.0);
@@ -689,13 +763,13 @@ pub fn show(
                                 0 => gallery(ui, p, world, st, &outfits, &mut actions, images),
                                 1 => outfit_list(ui, p, world, st, &outfits, &mut actions),
                                 _ => {
-                                    ui.label(RichText::new("Éléments à porter").color(p.muted));
+                                    ui.label(RichText::new(aurora_i18n::tr!("ui-appearance-items-to-wear")).color(p.muted));
                                     worn_list(ui, p, world, st, &mut actions, false);
                                 }
                             }
                         }
                         if !st.editing && st.tab < 2 && outfits.is_empty() {
-                            ui.label(RichText::new("Aucune tenue à afficher").color(p.muted));
+                            ui.label(RichText::new(aurora_i18n::tr!("ui-appearance-no-outfits-to-display")).color(p.muted));
                         }
                     });
                 });
@@ -709,9 +783,9 @@ pub fn show(
                     ui,
                     p,
                     if st.adding {
-                        "Retour aux éléments portés"
+                        aurora_i18n::tr!("ui-appearance-back-to-worn-items")
                     } else {
-                        "Ajouter plus…"
+                        aurora_i18n::tr!("ui-appearance-add-more")
                     },
                 )
                 .clicked()
@@ -721,7 +795,10 @@ pub fn show(
                 }
                 if st.adding
                     && ui
-                        .add_enabled(st.selected_item.is_some() && st.pending.is_none(), egui::Button::new("Porter"))
+                        .add_enabled(
+                            st.selected_item.is_some() && st.pending.is_none(),
+                            egui::Button::new(aurora_i18n::tr!("common-wear")),
+                        )
                         .clicked()
                     && let Some(id) = st.selected_item
                 {
@@ -732,15 +809,15 @@ pub fn show(
         }
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            icon_menu(ui, p, "gear-six", "Options de la tenue", |ui| {
-                if ui.button("Actualiser").clicked() {
+            icon_menu(ui, p, "gear-six", aurora_i18n::tr!("ui-appearance-outfit-options"), |ui| {
+                if ui.button(aurora_i18n::tr!("ui-appearance-refresh")).clicked() {
                     st.refresh(&mut world.inventory);
                     ui.close();
                 }
                 if ui
                     .add_enabled(
                         base.is_some() && st.pending.is_none(),
-                        egui::Button::new("Rétablir la tenue enregistrée"),
+                        egui::Button::new(aurora_i18n::tr!("ui-appearance-restore-saved-outfit")),
                     )
                     .clicked()
                 {
@@ -749,13 +826,20 @@ pub fn show(
                 }
             });
             if !st.editing && st.tab < 2 {
-                ui.label(RichText::new(format!("{} tenues", outfits.len())).size(11.0).color(p.muted));
+                ui.label(
+                    RichText::new(aurora_i18n::tr!("outfit-count", count = outfits.len()))
+                        .size(11.0)
+                        .color(p.muted),
+                );
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(
-                    RichText::new(format!("Complexité : {}", super::hud::group_digits(complexity)))
-                        .size(11.0)
-                        .color(p.muted),
+                    RichText::new(aurora_i18n::tr!(
+                        "common-complexity",
+                        value0 = super::hud::group_digits(complexity).to_string()
+                    ))
+                    .size(11.0)
+                    .color(p.muted),
                 );
             });
         });
@@ -767,20 +851,23 @@ pub fn show(
             if ui
                 .add_enabled(
                     available && base.is_some() && dirty,
-                    egui::Button::new("Enregistrer").fill(p.raised),
+                    egui::Button::new(aurora_i18n::tr!("common-save")).fill(p.raised),
                 )
                 .clicked()
             {
                 actions.push(Action::Save(None));
             }
             if ui
-                .add_enabled(available, egui::Button::new("Enregistrer sous…").fill(p.raised))
+                .add_enabled(
+                    available,
+                    egui::Button::new(aurora_i18n::tr!("ui-appearance-save-as")).fill(p.raised),
+                )
                 .clicked()
             {
                 st.begin_save_as(&world.inventory);
             }
             if st.editing {
-                if widgets::flat_button(ui, p, "Annuler").clicked() {
+                if widgets::flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked() {
                     if dirty && base.is_some() {
                         actions.push(Action::Revert);
                     }
@@ -791,7 +878,7 @@ pub fn show(
                 && ui
                     .add_enabled(
                         available && st.selected_outfit.is_some(),
-                        egui::Button::new("Porter").fill(p.violet),
+                        egui::Button::new(aurora_i18n::tr!("common-wear")).fill(p.violet),
                     )
                     .clicked()
                 && let Some(id) = st.selected_outfit
@@ -804,9 +891,9 @@ pub fn show(
         let mut close = false;
         let response = egui::Modal::new(egui::Id::new("outfit_save_as")).show(ctx, |ui| {
             ui.set_width(380.0);
-            ui.label(RichText::new("Enregistrer sous").size(17.0).strong().color(p.ink));
+            ui.label(RichText::new(aurora_i18n::tr!("common-save-as")).size(17.0).strong().color(p.ink));
             ui.add_space(6.0);
-            ui.label("Enregistrer ce que je porte comme nouvelle tenue :");
+            ui.label(aurora_i18n::tr!("ui-appearance-save-what-i-am-wearing-as-a-new-outfit"));
             ui.add_space(8.0);
             let r = ui.add(egui::TextEdit::singleline(&mut name).desired_width(f32::INFINITY).char_limit(63));
             if st.select_name {
@@ -832,7 +919,7 @@ pub fn show(
                     actions.push(Action::Save(Some(name.trim().into())));
                     close = true;
                 }
-                if widgets::flat_button_sized(ui, p, "Annuler", Vec2::new(80.0, 24.0)).clicked() {
+                if widgets::flat_button_sized(ui, p, aurora_i18n::tr!("common-cancel"), Vec2::new(80.0, 24.0)).clicked() {
                     close = true;
                 }
             });
@@ -877,7 +964,18 @@ mod tests {
                 }
             });
             output.textures_delta.clear();
-            for label in ["Porté sur Crâne", "Porté sur HUD : En haut à droite"] {
+            for label in [
+                aurora_i18n::tr!(
+                    "ui-appearance-items-worn-on",
+                    value0 = "",
+                    name = aurora_i18n::tr!("ui-appearance-items-skull")
+                ),
+                aurora_i18n::tr!(
+                    "ui-appearance-items-worn-on",
+                    value0 = "HUD : ",
+                    name = aurora_i18n::tr!("ui-appearance-items-top-right")
+                ),
+            ] {
                 assert!(
                     output
                         .shapes
@@ -907,6 +1005,35 @@ mod tests {
     }
 
     fn draw_input(ctx: &egui::Context, world: &mut World, st: &mut AppearanceUi, input: egui::RawInput) -> Vec<Action> {
+        draw_output(ctx, world, st, input).0
+    }
+
+    fn text_position(shape: &egui::Shape, label: &str) -> Option<egui::Pos2> {
+        match shape {
+            egui::Shape::Text(text) if text.galley.text().starts_with(label) => Some(text.pos + egui::vec2(3.0, 5.0)),
+            egui::Shape::Vec(shapes) => shapes.iter().find_map(|s| text_position(s, label)),
+            _ => None,
+        }
+    }
+
+    fn label_position(ctx: &egui::Context, world: &mut World, st: &mut AppearanceUi, label: &str) -> egui::Pos2 {
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 900.0))),
+            ..Default::default()
+        };
+        draw_output(ctx, world, st, input)
+            .1
+            .iter()
+            .find_map(|s| text_position(&s.shape, label))
+            .expect(label)
+    }
+
+    fn draw_output(
+        ctx: &egui::Context,
+        world: &mut World,
+        st: &mut AppearanceUi,
+        input: egui::RawInput,
+    ) -> (Vec<Action>, Vec<egui::epaint::ClippedShape>) {
         let mut actions = Vec::new();
         let mut output = ctx.run_ui(input, |ui| {
             actions = show(
@@ -921,7 +1048,7 @@ mod tests {
         });
         // Headless tests do not submit texture uploads to a renderer.
         output.textures_delta.clear();
-        actions
+        (actions, output.shapes)
     }
 
     #[test]
@@ -954,13 +1081,22 @@ mod tests {
         let _icons = icons::Icons::load(&ctx, None);
         let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
         model::seed_demo(&mut world.inventory, Uuid::from_u128(1));
+        let target = Uuid::from_u128(723);
+        let links: Vec<_> = world.inventory.folders[&Uuid::from_u128(704)]
+            .items
+            .iter()
+            .copied()
+            .filter(|id| world.inventory.items[id].asset_id == target)
+            .collect();
+        world.inventory.folders.get_mut(&Uuid::from_u128(704)).expect("outfit").items = links;
         let mut st = AppearanceUi::default();
         st.open_outfit(Uuid::from_u128(704));
         st.reveal_outfit = None; // keep preceding headings visible for these item clicks
         for _ in 0..4 {
             draw(&ctx, &mut world, &mut st, None);
         }
-        let pos = egui::pos2(180.0, 378.0);
+        let label = world.inventory.items[&Uuid::from_u128(723)].name.clone();
+        let pos = label_position(&ctx, &mut world, &mut st, &label);
         for pressed in [true, false] {
             let input = egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 900.0))),
@@ -1011,10 +1147,12 @@ mod tests {
                 draw(&ctx, &mut world, &mut st, None);
             }
             let mut actions = Vec::new();
-            for (pos, button) in [
-                (egui::pos2(180.0, 378.0), egui::PointerButton::Secondary),
-                (egui::pos2(245.0, 415.0), egui::PointerButton::Primary),
+            let label = world.inventory.items[&item].name.clone();
+            for (label, button) in [
+                (label.as_str(), egui::PointerButton::Secondary),
+                (aurora_i18n::tr!("common-add"), egui::PointerButton::Primary),
             ] {
+                let pos = label_position(&ctx, &mut world, &mut st, label);
                 for pressed in [true, false] {
                     actions.extend(draw_input(
                         &ctx,
@@ -1063,7 +1201,8 @@ mod tests {
         for _ in 0..4 {
             draw(&ctx, &mut world, &mut st, None);
         }
-        let pos = egui::pos2(295.0, 300.0); // Flic in the first gallery row
+        let label = world.inventory.folders[&Uuid::from_u128(703)].info.name.clone();
+        let pos = label_position(&ctx, &mut world, &mut st, &label) + egui::vec2(10.0, -50.0);
         let mut actions = Vec::new();
         for _ in 0..2 {
             for pressed in [true, false] {

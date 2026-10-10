@@ -370,7 +370,7 @@ mod tests {
                 info: InvFolder {
                     id: inv.root,
                     parent: Uuid::nil(),
-                    name: "Inventaire".into(),
+                    name: aurora_i18n::tr!("common-inventory").into(),
                     type_default: 8,
                     version: 1,
                     ..Default::default()
