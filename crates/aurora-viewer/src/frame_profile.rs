@@ -2,7 +2,10 @@
 //! one summary line in the log every second. The laps of the frame loop
 //! cover the whole time between two frames; the renderer adds its own
 //! steps, the GPU time by element and counters (draws, synced objects,
-//! posed avatars, bytes sent to the GPU). Off without the variable.
+//! posed avatars, bytes sent to the GPU). Besides the averages, the line
+//! gives the longest time of each step over the second (`max:`), so that a
+//! slow frame among fast ones can be pinned on the step that caused it.
+//! Off without the variable.
 
 use aurora_render::{GpuElement, RENDER_PHASES, RenderStats};
 use std::fmt::Write;
@@ -114,6 +117,9 @@ const GPU: usize = GpuElement::ALL.len();
 const PHASES: usize = RENDER_PHASES.len();
 /// Time covered by one summary line.
 const PERIOD: Duration = Duration::from_secs(1);
+/// Steps whose longest time over the period reaches this (ms) are listed
+/// in the `max:` segment.
+const MAX_SHOWN_MS: f32 = 1.0;
 
 /// Scene counts of a frame, summed over the period.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -142,6 +148,9 @@ struct Period {
     frame_ms: Vec<f32>,
     laps: [f32; LAPS],
     phases: [f32; PHASES],
+    /// Longest time of each step in a single frame.
+    laps_max: [f32; LAPS],
+    phases_max: [f32; PHASES],
     gpu: [f32; GPU],
     gpu_frames: u32,
     draws: u64,
@@ -234,6 +243,8 @@ impl FrameProfile {
         p.frame_ms.push(frame.iter().sum());
         add(&mut p.laps, &frame);
         add(&mut p.phases, &render.cpu_phases);
+        keep_max(&mut p.laps_max, &frame);
+        keep_max(&mut p.phases_max, &render.cpu_phases);
         if let Some(g) = render.gpu_elements {
             add(&mut p.gpu, &g);
             p.gpu_frames += 1;
@@ -283,6 +294,12 @@ fn add<const N: usize>(sum: &mut [f32; N], v: &[f32; N]) {
     }
 }
 
+fn keep_max<const N: usize>(max: &mut [f32; N], v: &[f32; N]) {
+    for (m, v) in max.iter_mut().zip(v) {
+        *m = m.max(*v);
+    }
+}
+
 /// The value under which 95 % of the frame times fall.
 fn p95(frames: &[f32]) -> f32 {
     if frames.is_empty() {
@@ -293,8 +310,25 @@ fn p95(frames: &[f32]) -> f32 {
     v[((v.len() - 1) * 95).div_ceil(100)]
 }
 
+/// Frames slower than this many times the period's median count as slow
+/// (`slow=` in the summary: the hitches the frame graph shows).
+const SLOW_FACTOR: f32 = 1.5;
+
+/// Number of frames over [`SLOW_FACTOR`] times the median frame time.
+fn slow_frames(frames: &[f32]) -> usize {
+    if frames.is_empty() {
+        return 0;
+    }
+    let mut v = frames.to_vec();
+    v.sort_by(f32::total_cmp);
+    let median = v[v.len() / 2];
+    frames.iter().filter(|&&f| f > median * SLOW_FACTOR).count()
+}
+
 /// One line: averages per frame over the period (times in ms); renderer
-/// steps prefixed with `r_`, GPU elements with `g_`.
+/// steps prefixed with `r_`, GPU elements with `g_`. The `max:` segment
+/// lists the steps (`r_*` included) whose longest single-frame time reached
+/// [`MAX_SHOWN_MS`], longest first (`-` when none did).
 fn summary(p: &Period, elapsed: Duration) -> String {
     let n = p.frames.max(1) as f32;
     let avg = |v: f32| v / n;
@@ -302,12 +336,28 @@ fn summary(p: &Period, elapsed: Duration) -> String {
     let frame_avg = p.frame_ms.iter().sum::<f32>() / n;
     let max = p.frame_ms.iter().copied().fold(0.0f32, f32::max);
     let mut out = format!(
-        "fps={:.1} frame={frame_avg:.2} p95={:.2} max={max:.2} |",
+        "fps={:.1} frame={frame_avg:.2} p95={:.2} max={max:.2} slow={} |",
         p.frames as f32 / elapsed.as_secs_f32().max(1e-3),
-        p95(&p.frame_ms)
+        p95(&p.frame_ms),
+        slow_frames(&p.frame_ms)
     );
     for (lap, ms) in Lap::ALL.iter().zip(p.laps) {
         let _ = write!(out, " {}={:.2}", lap.key(), avg(ms));
+    }
+    out.push_str(" | max:");
+    let mut slow: Vec<(&str, &str, f32)> = Lap::ALL
+        .iter()
+        .zip(p.laps_max)
+        .map(|(lap, ms)| ("", lap.key(), ms))
+        .chain(RENDER_PHASES.iter().zip(p.phases_max).map(|(key, ms)| ("r_", *key, ms)))
+        .filter(|(_, _, ms)| *ms >= MAX_SHOWN_MS)
+        .collect();
+    slow.sort_by(|a, b| b.2.total_cmp(&a.2));
+    if slow.is_empty() {
+        out.push_str(" -");
+    }
+    for (prefix, key, ms) in slow {
+        let _ = write!(out, " {prefix}{key}={ms:.2}");
     }
     out.push_str(" |");
     for (key, ms) in RENDER_PHASES.iter().zip(p.phases) {
@@ -414,12 +464,53 @@ mod tests {
     }
 
     #[test]
+    fn summary_names_the_step_of_a_slow_frame() {
+        let mut p = FrameProfile::new(true);
+        let t = Instant::now();
+        let mut render = RenderStats::default();
+        let mut lines = Vec::new();
+        let mut at = t;
+        for i in 0..=50u64 {
+            // one frame in 50 spends 6 ms in the media step, the others 0.1
+            let media = if i == 25 { 6 } else { 0 };
+            p.lap_at(Lap::Sync, at);
+            at += ms(media) + Duration::from_micros(100);
+            p.lap_at(Lap::Media, at);
+            at += ms(20);
+            p.lap_at(Lap::Render, at);
+            render.cpu_phases[1] = if i == 10 { 1.5 } else { 0.2 };
+            if let Some(l) = p.end_frame_at(&render, &SceneCounts::default(), at) {
+                lines.push(l);
+            }
+        }
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        let l = &lines[0];
+        let key = format!("r_{}", RENDER_PHASES[1]);
+        let max = l.split(" | max: ").nth(1).and_then(|s| s.split(" |").next()).unwrap_or_default();
+        assert!(max.starts_with("render=20.00 media=6.10 "), "{max}");
+        assert!(max.ends_with(&format!(" {key}=1.50")), "{max}");
+        assert!(!max.contains("sync="), "{max}");
+        // nothing over 1 ms
+        let quiet = summary(&Period::default(), PERIOD);
+        assert!(quiet.contains(" | max: - |"), "{quiet}");
+    }
+
+    #[test]
     fn p95_ignores_the_rare_slow_frames() {
         let mut v = vec![10.0; 99];
         v.push(100.0);
         assert_eq!(p95(&v), 10.0);
         assert_eq!(p95(&[]), 0.0);
         assert_eq!(p95(&[3.0]), 3.0);
+    }
+
+    #[test]
+    fn slow_frames_count_the_hitches() {
+        let mut v = vec![6.4; 98];
+        v.extend([10.5, 10.0, 9.0]);
+        assert_eq!(slow_frames(&v), 2);
+        assert_eq!(slow_frames(&[6.4; 10]), 0);
+        assert_eq!(slow_frames(&[]), 0);
     }
 
     #[test]

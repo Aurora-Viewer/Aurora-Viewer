@@ -162,13 +162,34 @@ settings and cache (`…\config\demo`, `…\cache\demo`).
 | `AURORA_OCCLUSION=0\|1` | Override the « Occlusion » setting (Graphismes › Qualité) |
 | `AURORA_NO_OCCLUSION=1`, `AURORA_NOVSYNC=1` | Turn GPU occlusion / vsync off |
 | `AURORA_CPU_CULL=1` | Build every draw list on the CPU (the fallback when the GPU lacks `MULTI_DRAW_INDIRECT_COUNT`) instead of culling them on the GPU, for comparison; `cull=cpu\|gpu` in the `perf summary` line |
-| `AURORA_PROFILE=1` | Profiling in the log: renderer steps and GPU time by element every frame (`render profile`, `gpu profile`), and once a second a `perf summary` line (frame rate, frame time avg / p95 / max, CPU time by step of the frame and of the renderer (`r_*`), GPU time by element (`g_*`), draws and draw commands, synced / rebuilt objects, posed avatars, bytes of records and palettes sent to the GPU, texture memory (live textures, texture pages and their allocated memory) and geometry memory) plus a `perf settings` line when the settings change |
+| `AURORA_PROFILE=1` | Profiling in the log: once a second a `perf summary` line, plus a `perf settings` line when the settings change (see [Profiling](#profiling)) |
+| `AURORA_PROFILE_FRAMES=1` | Also one `render profile` and one `gpu profile` line per frame (renderer steps and GPU time by element of every frame) |
 | `AURORA_GPU_VALIDATION=1` | wgpu validation layers |
 | `AURORA_DEBUG_GLOW=1`, `AURORA_GLOW_SKIP=<mask>`, `AURORA_MEDIA_DEBUG=1` | Renderer and media diagnostics |
 | `AURORA_EMOJI_FONT=<path>` | Use another emoji font |
 | `AURORA_LOG_NAME=<name>` | Log file name |
 
 Logs are in `%LOCALAPPDATA%\Aurora\AuroraViewer\data\logs\`.
+
+### Profiling
+
+With `AURORA_PROFILE=1`, each `perf summary` line covers one second:
+
+- `fps`, `frame` (average frame time, ms), `p95`, `max`, and `slow`: the
+  number of frames over 1.5 × the median of that second (the hitches the
+  frame graph shows);
+- the average CPU time of each step of the frame (`events`, `social`,
+  `sync`, `media`, `lists`, `stream`, `params`, `ui`, `render`…);
+- `max:` the steps whose longest single-frame time reached 1 ms in that
+  second, longest first, renderer steps included (`r_*`), or `-` when none
+  did. A periodic slow frame shows up here with the step that caused it,
+  e.g. `max: media=6.10 render=2.31`, while its average stays tiny;
+- the renderer steps (`r_*`: passes, egui, `finish`, `submit`, `present`,
+  `acquire`, the wait for the swapchain image), the GPU time by element
+  (`g_*`), draws and draw commands, synced / rebuilt objects, posed
+  avatars, bytes of records and palettes sent to the GPU, texture memory
+  (live textures, texture pages and their allocated memory) and geometry
+  memory.
 
 ## Contributing
 
