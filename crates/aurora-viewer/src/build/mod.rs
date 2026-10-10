@@ -111,6 +111,115 @@ pub struct BuildSettings {
     pub copy_key_separator: String,
 }
 
+#[cfg(test)]
+mod hud_tests {
+    use super::*;
+
+    fn world() -> World {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for ev in crate::demo::events().into_iter().chain(crate::demo::hud::events()) {
+            world.apply(ev);
+        }
+        world
+    }
+
+    #[test]
+    fn typed_hud_moves_allow_no_modify_root_but_reject_no_modify_linked_part() {
+        use crate::ui::context::flags::{OBJECT_MODIFY, OBJECT_MOVE};
+        let mut world = world();
+        let root = world.objects.index_of_uuid(&crate::demo::hud::object(31, false).full_id).unwrap();
+        let child = family(&world, root)[1];
+        for idx in [root, child] {
+            world.objects.get_mut(idx).unwrap().update_flags = OBJECT_MOVE;
+        }
+        let mut tool = BuildTool::default();
+        let mut settings = BuildSettings::default();
+        tool.click_select(&mut world, &settings, Some(root), false);
+        tool.out.clear();
+        let position = Vec3::new(0.0, 0.22, 0.16);
+        tool.set_transform(&mut world, &settings, Some(position), None, None, true);
+        assert_eq!(world.objects.get(root).unwrap().position, position);
+        assert_eq!(tool.out.len(), 1);
+        settings.edit_linked = true;
+        tool.click_select(&mut world, &settings, Some(child), false);
+        tool.out.clear();
+        let before = world.objects.get(child).unwrap().position;
+        tool.set_transform(&mut world, &settings, Some(position), None, None, true);
+        assert_eq!(world.objects.get(child).unwrap().position, before);
+        assert!(tool.out.is_empty());
+        world.objects.get_mut(child).unwrap().update_flags |= OBJECT_MODIFY;
+        tool.set_transform(&mut world, &settings, Some(position), None, None, true);
+        assert!(world.objects.get(child).unwrap().position.abs_diff_eq(position, 1e-5));
+        assert_eq!(tool.out.len(), 1);
+    }
+
+    #[test]
+    fn hud_selection_uses_linkset_root_and_survives_avatar_distance() {
+        let mut world = world();
+        let root = world.objects.index_of_uuid(&crate::demo::hud::object(31, false).full_id).unwrap();
+        let child = family(&world, root)[1];
+        let other = world.objects.iter().find(|(_, o)| o.key.local_id == 8241).map(|(i, _)| i).unwrap();
+        assert_eq!(BuildTool::unit_of(&world, child, false), Some(world.objects.get(root).unwrap().key));
+        assert!(BuildTool::unit_of(&world, other, false).is_none());
+        let s = BuildSettings::default();
+        let mut tool = BuildTool::default();
+        assert!(tool.select_for_menu(&mut world, &s, child));
+        tool.open_build(Tool::Edit);
+        world.agent.position = Vec3::splat(1000.0);
+        tool.prune(&world, Instant::now());
+        assert!(tool.hud_selected(&world));
+        tool.close(&mut world, &mut BuildSettings::default());
+        assert!(tool.selection.is_empty());
+    }
+
+    #[test]
+    fn typed_hud_position_is_attachment_local_for_roots_and_children() {
+        let mut world = world();
+        let root = world.objects.index_of_uuid(&crate::demo::hud::object(32, false).full_id).unwrap();
+        let child_root = world.objects.index_of_uuid(&crate::demo::hud::object(31, false).full_id).unwrap();
+        let child = family(&world, child_root)[1];
+        world.objects.get_mut(child_root).unwrap().rotation = Quat::from_rotation_x(0.7);
+        for idx in [root, child] {
+            let s = BuildSettings {
+                edit_linked: idx == child,
+                ..Default::default()
+            };
+            let mut tool = BuildTool::default();
+            tool.click_select(&mut world, &s, Some(idx), false);
+            tool.out.clear();
+            let pos = Vec3::new(0.02, -0.24, 0.12);
+            let rotation = Quat::from_rotation_x(0.3);
+            let state = world.objects.get(idx).unwrap().state;
+            tool.set_transform(&mut world, &s, Some(pos), None, Some(rotation), true);
+            let o = world.objects.get(idx).unwrap();
+            assert!(o.position.abs_diff_eq(pos, 1e-5));
+            assert!(o.rotation.abs_diff_eq(rotation, 1e-5));
+            assert_eq!(o.state, state);
+            assert!(matches!(&tool.out[..], [NetCommand::Build(BuildCmd::Transform { updates, .. })]
+                if updates[0].linked == (idx == root) && updates[0].position.unwrap().abs_diff_eq(pos, 1e-5)));
+        }
+    }
+
+    #[test]
+    fn shift_selection_does_not_mix_hud_and_world_coordinates() {
+        let mut world = world();
+        let root = world.objects.index_of_uuid(&crate::demo::hud::object(31, false).full_id).unwrap();
+        let ground = world
+            .objects
+            .iter()
+            .find(|(idx, _)| {
+                selectable(&world, *idx)
+                    && crate::scene::Scene::object_transform(&world, *idx, Instant::now(), 0).is_some_and(|(_, _, hud)| !hud)
+            })
+            .map(|(i, _)| i)
+            .unwrap();
+        let mut tool = BuildTool::default();
+        tool.click_select(&mut world, &BuildSettings::default(), Some(root), false);
+        tool.click_select(&mut world, &BuildSettings::default(), Some(ground), true);
+        assert_eq!(tool.selection, vec![world.objects.get(ground).unwrap().key]);
+    }
+}
+
 impl Default for BuildSettings {
     fn default() -> Self {
         BuildSettings {
@@ -339,8 +448,8 @@ pub fn root_of(world: &World, mut idx: usize) -> usize {
     idx
 }
 
-/// Attachments and avatars cannot be edited here (only in-world objects).
-fn selectable(world: &World, idx: usize) -> bool {
+/// World objects and our own HUDs; other attachments remain unsupported.
+pub fn selectable(world: &World, idx: usize) -> bool {
     let mut i = idx;
     for _ in 0..64 {
         let Some(o) = world.objects.get(i) else {
@@ -353,11 +462,32 @@ fn selectable(world: &World, idx: usize) -> bool {
             return true;
         }
         match world.objects.parent_of(o) {
-            Some(p) => i = p,
+            Some(p) => {
+                if let Some(parent) = world.objects.get(p)
+                    && parent.is_avatar()
+                {
+                    return parent.full_id == world.agent_id && (31..=38).contains(&o.attachment_point());
+                }
+                i = p;
+            }
             None => return true,
         }
     }
     false
+}
+
+/// Editing uses the attachment point, never the avatar's world transform
+/// (LLViewerJointAttachment / LLSelectMgr::sendMultipleUpdate).
+pub fn edit_parent(world: &World, idx: usize, now: Instant) -> Option<(Vec3, Quat)> {
+    let o = world.objects.get(idx)?;
+    let parent_idx = world.objects.parent_of(o)?;
+    let (p, r, hud) = crate::scene::Scene::object_transform(world, idx, now, 0)?;
+    if hud && world.objects.get(parent_idx)?.is_avatar() {
+        let rotation = (r * o.rotation.inverse()).normalize();
+        Some((p - rotation * o.position, rotation))
+    } else {
+        crate::scene::Scene::object_transform(world, parent_idx, now, 0).map(|(p, r, _)| (p, r))
+    }
 }
 
 /// Root and all its children (recursively).
@@ -382,7 +512,7 @@ pub fn highlighted_of(world: &World, selection: &[ObjKey], linked: bool) -> Vec<
             continue;
         };
         if linked {
-            let root = world.objects.get(idx).is_some_and(|o| o.parent_id == 0);
+            let root = root_of(world, idx) == idx;
             out.push((idx, root));
         } else {
             for (i, p) in family(world, idx).into_iter().enumerate() {
@@ -541,6 +671,14 @@ impl BuildTool {
             }
             return;
         };
+        // LLSelectMgr keeps HUD and world selections in separate spaces.
+        if let Some(i) = idx
+            && let Some((_, _, hud)) = crate::scene::Scene::object_transform(world, i, Instant::now(), 0)
+            && !self.selection.is_empty()
+            && hud != self.hud_selected(world)
+        {
+            self.deselect_all(world);
+        }
         if extend {
             if self.is_selected(&unit) {
                 self.deselect(world, &[unit]);
@@ -643,11 +781,20 @@ impl BuildTool {
         bounds_of(world, &self.selection, self.selection_linked, now)
     }
 
+    pub fn hud_selected(&self, world: &World) -> bool {
+        self.selection
+            .first()
+            .and_then(|key| world.objects.index_of(key))
+            .and_then(|idx| crate::scene::Scene::object_transform(world, idx, Instant::now(), 0))
+            .is_some_and(|(_, _, hud)| hud)
+    }
+
     /// Forget objects that are gone; drop a selection left far behind
     /// (LLSelectMgr::deselectAllIfTooFar).
     fn prune(&mut self, world: &World, now: Instant) {
         self.selection.retain(|k| world.objects.index_of(k).is_some());
         if !self.selection.is_empty()
+            && !self.hud_selected(world)
             && !self.manip.dragging()
             && let Some(b) = self.bounds(world, now)
             && b.center.distance(world.agent.position) > MAX_SELECT_DISTANCE
@@ -681,6 +828,9 @@ impl BuildTool {
 
     /// Delete (to the trash): roots only (LLSelectMgr::selectDelete).
     pub fn delete(&mut self, world: &mut World) {
+        if self.hud_selected(world) {
+            return;
+        }
         let roots = self.roots(world);
         if roots.is_empty() {
             return;
@@ -712,6 +862,9 @@ impl BuildTool {
 
     /// Take / take a copy into the Objects folder (derez_objects).
     pub fn take(&mut self, world: &mut World, copy: bool) {
+        if self.hud_selected(world) {
+            return;
+        }
         let roots = self.roots(world);
         if roots.is_empty() {
             return;
@@ -746,6 +899,9 @@ impl BuildTool {
 
     /// Ctrl+D: copies 0.5 m away, selected (LLSelectMgr::duplicate).
     pub fn duplicate(&mut self, world: &mut World, offset: Vec3, select_copy: bool) {
+        if self.hud_selected(world) {
+            return;
+        }
         let roots = self.roots(world);
         if roots.is_empty() {
             return;
@@ -768,6 +924,9 @@ impl BuildTool {
 
     /// Ctrl+L: link the selected linksets; the last selected becomes the root.
     pub fn link(&mut self, world: &mut World) {
+        if self.hud_selected(world) {
+            return;
+        }
         let roots = self.roots(world);
         if roots.len() < 2 {
             self.status = "Sélectionnez au moins deux objets à lier".into();
@@ -795,6 +954,9 @@ impl BuildTool {
 
     /// Ctrl+Shift+L: every selected prim (SEND_INDIVIDUALS).
     pub fn unlink(&mut self, world: &mut World) {
+        if self.hud_selected(world) {
+            return;
+        }
         let prims: Vec<usize> = self.highlighted(world).into_iter().map(|(i, _)| i).collect();
         if prims.is_empty() {
             return;
@@ -889,13 +1051,13 @@ impl BuildTool {
         self.selection_linked = s.edit_linked;
         let mut units = Vec::new();
         for (idx, o) in world.objects.iter() {
-            if o.is_avatar() || (!s.edit_linked && o.parent_id != 0) {
+            if o.is_avatar() || (!s.edit_linked && root_of(world, idx) != idx) {
                 continue;
             }
             let Some((p, _, hud)) = crate::scene::Scene::object_transform(world, idx, now, 0) else {
                 continue;
             };
-            if hud || p.distance(world.agent.position) > MAX_SELECT_DISTANCE {
+            if hud != self.cam.hud.is_some() || (!hud && p.distance(world.agent.position) > MAX_SELECT_DISTANCE) {
                 continue;
             }
             let Some((x, y)) = self.cam.project_px(p) else { continue };
@@ -1357,22 +1519,24 @@ impl BuildTool {
         let Some(key) = self.selection.first().copied() else { return };
         let Some(idx) = world.objects.index_of(&key) else { return };
         let now = Instant::now();
-        let Some((wp, wr, _)) = crate::scene::Scene::object_transform(world, idx, now, 0) else {
+        let Some((wp, wr, hud)) = crate::scene::Scene::object_transform(world, idx, now, 0) else {
             return;
         };
         let Some(o) = world.objects.get(idx) else { return };
+        if hud {
+            let flags = world.objects.get(root_of(world, idx)).map_or(0, |o| o.update_flags);
+            if flags & crate::ui::context::flags::OBJECT_MOVE == 0
+                || ((s.edit_linked || size.is_some()) && o.update_flags & crate::ui::context::flags::OBJECT_MODIFY == 0)
+            {
+                return;
+            }
+        }
         let Some(off) = world.region_offset(o.key.region) else { return };
-        let parent = if o.parent_id != 0 {
-            world
-                .objects
-                .parent_of(o)
-                .and_then(|p| crate::scene::Scene::object_transform(world, p, now, 0))
-                .map(|(p, r, _)| (p, r))
-        } else {
-            None
-        };
-        let new_world_pos = pos.map(|p| p + off).unwrap_or(wp);
-        let new_world_rot = rot.unwrap_or(wr);
+        let parent = edit_parent(world, idx, now);
+        let new_world_pos = pos
+            .map(|p| if hud { parent.map_or(p, |(pp, pr)| pp + pr * p) } else { p + off })
+            .unwrap_or(wp);
+        let new_world_rot = rot.map(|r| if hud { parent.map_or(r, |(_, pr)| pr * r) } else { r }).unwrap_or(wr);
         let (local_pos, local_rot) = match parent {
             Some((pp, pr)) => (pr.inverse() * (new_world_pos - pp), (pr.inverse() * new_world_rot).normalize()),
             None => (new_world_pos - off, new_world_rot.normalize()),
@@ -1402,7 +1566,7 @@ impl BuildTool {
             position: Some(local_pos),
             rotation: rot.map(|_| local_rot),
             scale,
-            linked: !s.edit_linked && parent.is_none(),
+            linked: !s.edit_linked && root_of(world, idx) == idx,
             uniform: false,
         };
         self.send(BuildCmd::Transform {

@@ -158,7 +158,17 @@ struct Frame {
 
 fn frame(world: &World, s: &BuildSettings, sel: &[ObjKey], linked: bool, now: Instant, grid_ref: Option<&Bounds>) -> Option<Frame> {
     let bounds = bounds_of(world, sel, linked, now)?;
-    let grid = super::grid_of(s, Some(&bounds), grid_ref);
+    let mut grid = super::grid_of(s, Some(&bounds), grid_ref);
+    if grid.world
+        && sel
+            .first()
+            .and_then(|k| world.objects.index_of(k))
+            .and_then(|i| Scene::object_transform(world, i, now, 0))
+            .is_some_and(|(_, _, hud)| hud)
+    {
+        // LLSelectMgr::getGrid caps the HUD world grid to half a screen unit.
+        grid.scale = grid.scale.min(Vec3::splat(0.5));
+    }
     // FSBuildPrefs_ActualRoot (LLManip::getPivotPoint): pivot on the
     // primary object's root prim rather than the selection's center
     let pivot = if s.actual_root {
@@ -291,7 +301,7 @@ impl Manip {
         let Some(part) = self.pick(cam, &f, mode, cursor) else {
             return false;
         };
-        let movers = save_movers(world, sel, linked, now);
+        let movers = save_movers(world, sel, linked, mode, now);
         if movers.is_empty() {
             return false;
         }
@@ -330,7 +340,7 @@ impl Manip {
                 d.axis = g * unit(i);
                 // the plane containing the axis that faces the camera (getManipNormal)
                 d.normal = d.axis.cross(cam.at).cross(d.axis).try_normalize().unwrap_or(cam.at);
-                let rel = (g.inverse() * (f.pivot - cam.eye).normalize_or_zero()).abs();
+                let rel = (g.inverse() * cam.direction_to(f.pivot)).abs();
                 d.snap_axis = g * unit(snap_offset_axis(i, rel));
                 d.snap_offset = cam.meters_for_pixels(d.movers[0].pos, ARROW_PX) * 1.5;
             }
@@ -340,7 +350,7 @@ impl Manip {
             Part::Ring(i) => {
                 d.axis = g * unit(i);
                 d.radius = ring_radius(cam, f.pivot);
-                let cam_dir = (f.pivot - cam.eye).normalize_or_zero();
+                let cam_dir = cam.direction_to(f.pivot);
                 d.edge_on = d.axis.dot(cam_dir).abs() < 85f32.to_radians().cos();
                 if let Some(q) = ray_plane(o, dir, f.pivot, d.axis) {
                     d.down_vec = (q - f.pivot).try_normalize().unwrap_or(Vec3::X);
@@ -433,7 +443,15 @@ impl Manip {
         let values = match mode {
             EditMode::Move => {
                 let off = sel.first().and_then(|k| world.region_offset(k.region)).unwrap_or(Vec3::ZERO);
-                (f.pivot - off).to_array()
+                if cam.hud.is_some() {
+                    sel.first()
+                        .and_then(|k| world.objects.index_of(k))
+                        .and_then(|i| world.objects.get(i))
+                        .map_or(Vec3::ZERO, |o| o.position)
+                        .to_array()
+                } else {
+                    (f.pivot - off).to_array()
+                }
             }
             EditMode::Rotate => {
                 let r = sel
@@ -475,7 +493,7 @@ impl Manip {
         // plane handles
         let at_g = g.inverse() * cam.at;
         let signs = Vec3::new(at_g.x.signum(), at_g.y.signum(), at_g.z.signum());
-        let rel = (g.inverse() * (piv - cam.eye).normalize_or_zero()).abs();
+        let rel = (g.inverse() * cam.direction_to(piv)).abs();
         let off = PLANE_OFFSET * len;
         for i in 0..3 {
             if !(active.is_none() || active == Some(Part::Plane(i))) || rel[i] <= MIN_PLANE_MANIP_DOT {
@@ -550,7 +568,7 @@ impl Manip {
         let max_sub = s.max_subdivision();
         let min_scale = d.grid.scale[i];
         let smallest = min_scale / max_sub;
-        let range = (center - cam.eye).length();
+        let range = if cam.hud.is_some() { 1.0 } else { (center - cam.eye).length() };
         let guide = SNAP_GUIDE_SCREEN_SIZE * cam.height * range / cam.pixel_meter_ratio();
         let dist_axis = (center - d.grid.origin).dot(axis);
         let off_unit = dist_axis.rem_euclid(smallest);
@@ -633,7 +651,7 @@ impl Manip {
         let w = 8.0 * r / RING_PX;
         let g = f.grid.rotation;
         let active = drag.map(|d| d.part);
-        let to_cam = (cam.eye - c).normalize_or_zero();
+        let to_cam = -cam.direction_to(c);
         let _ = (world, sel, now);
         if active.is_none() {
             // free-rotate sphere and roll ring (screen circles)
@@ -830,6 +848,9 @@ fn snap_offset_axis(arrow: usize, at_abs: Vec3) -> usize {
 }
 
 fn ring_radius(cam: &Cam, c: Vec3) -> f32 {
+    if cam.hud.is_some() {
+        return cam.meters_for_pixels(c, RING_PX);
+    }
     cam.depth(c).max(0.01) * (RING_PX / cam.height * cam.fov_y).tan()
 }
 
@@ -844,7 +865,7 @@ fn sphere_point(o: Vec3, d: Vec3, c: Vec3, r: f32, cam: &Cam) -> Vec3 {
         return (o + d * t - c).normalize_or_zero();
     }
     // outside: the closest point on the camera-facing plane, on the silhouette
-    let n = (cam.eye - c).normalize_or_zero();
+    let n = -cam.direction_to(c);
     match ray_plane(o, d, c, n) {
         Some(q) => (q - c).normalize_or_zero(),
         None => n,
@@ -906,7 +927,7 @@ fn pick_translate(cam: &Cam, f: &Frame, m: Pos2) -> Option<Part> {
     let off = PLANE_OFFSET * len;
     let at_g = g.inverse() * cam.at;
     let signs = Vec3::new(at_g.x.signum(), at_g.y.signum(), at_g.z.signum());
-    let rel = (g.inverse() * (piv - cam.eye).normalize_or_zero()).abs();
+    let rel = (g.inverse() * cam.direction_to(piv)).abs();
     // (depth of the end, part, start, end, radius)
     let mut segs: Vec<(f32, Part, Vec3, Vec3, f32)> = Vec::new();
     for i in 0..3 {
@@ -947,7 +968,7 @@ fn pick_rotate(cam: &Cam, f: &Frame, m: Pos2) -> Option<Part> {
     let r = ring_radius(cam, c);
     let w = 8.0 * r / RING_PX;
     let g = f.grid.rotation;
-    let to_cam = (cam.eye - c).normalize_or_zero();
+    let to_cam = -cam.direction_to(c);
     let mut best: Option<(f32, Part)> = None;
     for i in 0..3 {
         let a = g * unit(i);
@@ -1012,23 +1033,33 @@ fn pick_scale(cam: &Cam, f: &Frame, m: Pos2) -> Option<Part> {
 
 // ---- dragging
 
-fn save_movers(world: &World, sel: &[ObjKey], linked: bool, now: Instant) -> Vec<Mover> {
+fn save_movers(world: &World, sel: &[ObjKey], linked: bool, mode: EditMode, now: Instant) -> Vec<Mover> {
     let prims: Vec<usize> = sel.iter().filter_map(|k| world.objects.index_of(k)).collect();
     let selected: std::collections::HashSet<usize> = prims.iter().copied().collect();
     let mut out = Vec::new();
     for idx in prims {
-        let (Some(o), Some((pos, rot, _))) = (world.objects.get(idx), Scene::object_transform(world, idx, now, 0)) else {
+        let (Some(o), Some((pos, rot, hud))) = (world.objects.get(idx), Scene::object_transform(world, idx, now, 0)) else {
             continue;
         };
+        if hud {
+            let flags = world.objects.get(super::root_of(world, idx)).map_or(0, |o| o.update_flags);
+            if flags & crate::ui::context::flags::OBJECT_MOVE == 0
+                || ((linked || mode == EditMode::Stretch) && o.update_flags & crate::ui::context::flags::OBJECT_MODIFY == 0)
+            {
+                continue;
+            }
+        }
         let Some(region_off) = world.region_offset(o.key.region) else {
             continue;
         };
-        let parent_idx = (o.parent_id != 0).then(|| world.objects.parent_of(o)).flatten();
-        let parent = parent_idx
-            .and_then(|p| Scene::object_transform(world, p, now, 0))
-            .map(|(p, r, _)| (p, r));
+        let parent_idx = world
+            .objects
+            .parent_of(o)
+            .filter(|&p| world.objects.get(p).is_some_and(|o| !o.is_avatar()));
+        let parent = super::edit_parent(world, idx, now);
+        let root = super::root_of(world, idx) == idx;
         let mut children = Vec::new();
-        if o.parent_id == 0 {
+        if root {
             for c in super::family(world, idx).into_iter().skip(1) {
                 if linked && selected.contains(&c) {
                     continue;
@@ -1047,7 +1078,7 @@ fn save_movers(world: &World, sel: &[ObjKey], linked: bool, now: Instant) -> Vec
         out.push(Mover {
             idx,
             key: o.key,
-            root: o.parent_id == 0,
+            root,
             pos,
             rot,
             scale: o.scale,
@@ -1067,7 +1098,7 @@ fn apply(world: &mut World, d: &Drag, targets: &[(Vec3, Quat, Vec3)]) {
     for (m, &(wp, wr, sc)) in d.movers.iter().zip(targets) {
         let parent = m.parent_idx.and_then(|p| new_world.get(&p).copied()).or(m.parent);
         let (lp, lr) = match (m.root, parent) {
-            (false, Some((pp, pr))) => (pr.inverse() * (wp - pp), (pr.inverse() * wr).normalize()),
+            (_, Some((pp, pr))) => (pr.inverse() * (wp - pp), (pr.inverse() * wr).normalize()),
             _ => (wp - m.region_off, wr.normalize()),
         };
         if let Some(o) = world.objects.get_mut(m.idx) {
@@ -1123,7 +1154,7 @@ fn drag_update(
         }
         d.started = true;
         // Shift-drag leaves a copy behind (LLManipTranslate::handleHover, selectDuplicate)
-        if d.mode == EditMode::Move && mods.shift && !mods.ctrl {
+        if d.mode == EditMode::Move && mods.shift && !mods.ctrl && cam.hud.is_none() {
             if d.linked {
                 // Firestorm refuses to copy individual parts
             } else {
@@ -1499,7 +1530,7 @@ fn draw_scale_ruler(p: &mut Painter3d, s: &BuildSettings, start: Vec3, dir: Vec3
     let side = dir.cross(cam.at).try_normalize().unwrap_or(cam.up);
     let side = if side.dot(cam.up) < 0.0 { -side } else { side };
     let off = cam.meters_for_pixels(start, SNAP_GUIDE_SCREEN_OFFSET * cam.width);
-    let range = (start - cam.eye).length();
+    let range = if cam.hud.is_some() { 1.0 } else { (start - cam.eye).length() };
     let len = SNAP_GUIDE_SCREEN_SIZE * cam.width * range / cam.pixel_meter_ratio();
     let base = start + side * off;
     p.line_gradient(base, base + dir * len, fade(white, opacity), fade(white, opacity * 0.1), 1.0);
@@ -1545,5 +1576,129 @@ mod tests {
         let (a1, a2) = snap_axes(Vec3::Z, Quat::IDENTITY);
         assert!((a1 - Vec3::X).length() < 1e-5);
         assert!((a2 - Vec3::Y).length() < 1e-5);
+    }
+
+    fn hud_world() -> World {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for ev in crate::demo::events().into_iter().chain(crate::demo::hud::events()) {
+            world.apply(ev);
+        }
+        world
+    }
+
+    #[test]
+    fn hud_drag_preserves_anchor_and_child_offsets_and_sends_local_linkset_position() {
+        let mut world = hud_world();
+        let now = Instant::now();
+        let s = BuildSettings {
+            snap: false,
+            ..Default::default()
+        };
+        for size in [[1280, 720], [720, 1280]] {
+            world.hud_aspect = size[0] as f32 / size[1] as f32;
+            for zoom in [1.0, 0.5] {
+                for point in 31..=38 {
+                    let idx = world
+                        .objects
+                        .index_of_uuid(&crate::demo::hud::object(point, false).full_id)
+                        .unwrap();
+                    let o = world.objects.get(idx).unwrap();
+                    let (key, before, state) = (o.key, o.position, o.state);
+                    let children: Vec<_> = super::super::family(&world, idx)
+                        .into_iter()
+                        .skip(1)
+                        .map(|i| (i, world.objects.get(i).unwrap().position))
+                        .collect();
+                    let cam = Cam::for_hud(aurora_render::HudView::new(size, zoom, -1.0, 1.0), 1.5);
+                    let bounds = bounds_of(&world, &[key], false, now).unwrap();
+                    let start = cam
+                        .project_px(bounds.center + Vec3::Y * cam.meters_for_pixels(bounds.center, 45.0))
+                        .unwrap();
+                    let mut manip = Manip::default();
+                    assert!(manip.try_grab(&mut world, &s, &cam, &[key], false, EditMode::Move, start, now));
+                    assert_eq!(manip.drag.as_ref().unwrap().part, Part::Arrow(1));
+                    let mut out = Vec::new();
+                    manip.update(
+                        &mut world,
+                        &s,
+                        &cam,
+                        &[key],
+                        false,
+                        EditMode::Move,
+                        (start.0 + 40.0, start.1),
+                        false,
+                        Mods {
+                            shift: true,
+                            ..Default::default()
+                        },
+                        now,
+                        &mut out,
+                    );
+                    let expected = before - Vec3::Y * (40.0 / (size[1] as f32 * zoom));
+                    let moved = world.objects.get(idx).unwrap();
+                    assert!(moved.position.abs_diff_eq(expected, 1e-5));
+                    assert_eq!(moved.state, state);
+                    for (i, old) in children {
+                        assert_eq!(world.objects.get(i).unwrap().position, old);
+                    }
+                    manip.release(&mut world, &s, false, &mut out);
+                    assert!(matches!(&out[..], [BuildCmd::Transform { updates, .. }]
+                        if updates.len() == 1 && updates[0].local_id == key.local_id && updates[0].linked
+                            && updates[0].position.unwrap().abs_diff_eq(expected, 1e-5)));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn hud_child_edit_stays_relative_to_rotated_root_and_is_not_a_linkset_update() {
+        let mut world = hud_world();
+        let root = world.objects.index_of_uuid(&crate::demo::hud::object(31, false).full_id).unwrap();
+        world.objects.get_mut(root).unwrap().rotation = Quat::from_rotation_x(0.6);
+        let child = super::super::family(&world, root)[1];
+        let key = world.objects.get(child).unwrap().key;
+        let root_pos = world.objects.get(root).unwrap().position;
+        let now = Instant::now();
+        let before = Scene::object_transform(&world, child, now, 0).unwrap().0;
+        let cam = Cam::for_hud(aurora_render::HudView::new([1280, 720], 0.5, -1.0, 1.0), 1.0);
+        let s = BuildSettings {
+            snap: false,
+            ..Default::default()
+        };
+        let start = cam.project_px(before + Vec3::Y * cam.meters_for_pixels(before, 45.0)).unwrap();
+        let mut manip = Manip::default();
+        assert!(manip.try_grab(&mut world, &s, &cam, &[key], true, EditMode::Move, start, now));
+        let mut out = Vec::new();
+        manip.update(
+            &mut world,
+            &s,
+            &cam,
+            &[key],
+            true,
+            EditMode::Move,
+            (start.0 + 30.0, start.1),
+            false,
+            Mods::default(),
+            now,
+            &mut out,
+        );
+        let after = Scene::object_transform(&world, child, now, 0).unwrap().0;
+        assert!((after - before).abs_diff_eq(-Vec3::Y * (30.0 / 360.0), 1e-5));
+        assert_eq!(world.objects.get(root).unwrap().position, root_pos);
+        manip.release(&mut world, &s, true, &mut out);
+        assert!(matches!(&out[..], [BuildCmd::Transform { updates, .. }]
+            if updates.len() == 1 && !updates[0].linked && updates[0].local_id == key.local_id));
+    }
+
+    #[test]
+    fn hud_move_permission_is_independent_of_modify_permission() {
+        let mut world = hud_world();
+        let idx = world.objects.index_of_uuid(&crate::demo::hud::object(31, false).full_id).unwrap();
+        let key = world.objects.get(idx).unwrap().key;
+        world.objects.get_mut(idx).unwrap().update_flags &= !crate::ui::context::flags::OBJECT_MODIFY;
+        assert_eq!(save_movers(&world, &[key], false, EditMode::Move, Instant::now()).len(), 1);
+        assert!(save_movers(&world, &[key], false, EditMode::Stretch, Instant::now()).is_empty());
+        world.objects.get_mut(idx).unwrap().update_flags &= !crate::ui::context::flags::OBJECT_MOVE;
+        assert!(save_movers(&world, &[key], false, EditMode::Move, Instant::now()).is_empty());
     }
 }

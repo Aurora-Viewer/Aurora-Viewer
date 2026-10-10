@@ -323,6 +323,14 @@ impl App {
             settings.keybinds = Default::default();
         }
         // test overrides (used by automated captures)
+        if let Some(v) = std::env::var("AURORA_FPS_LIMIT")
+            .ok()
+            .and_then(|v| v.parse::<u32>().ok())
+            .filter(|&v| v > 0)
+        {
+            settings.fps_cap = true;
+            settings.fps_limit = v.clamp(10, 500);
+        }
         if let Some(v) = std::env::var("AURORA_AA").ok().and_then(|v| v.parse().ok()) {
             settings.antialiasing = v;
         }
@@ -772,7 +780,7 @@ impl App {
             }
             for mut ev in crate::demo::demo_reply(&cmd) {
                 if matches!(cmd, NetCommand::ObjectRelease { .. }) {
-                    crate::demo::hud::preserve_placement(&self.world, &mut ev);
+                    crate::demo::hud::preserve_touch_transform(&self.world, &mut ev);
                 }
                 if let NetEvent::InventoryContents(contents) = &mut ev {
                     for c in contents {
@@ -2343,8 +2351,15 @@ impl App {
             return false;
         };
         let (x, y) = self.cursor_pos;
-        let hit = g.renderer.pick_world(x, y);
-        let target = hit.and_then(|p| self.scene.pick_at(&self.world, p, Instant::now()));
+        let hud = (self.build.tool == crate::build::Tool::Edit)
+            .then(|| self.scene.hud_edit_pick(&self.world, (x, y)))
+            .flatten();
+        let (hit, target) = if let Some((idx, point, _)) = hud {
+            (Some(point), Some(idx))
+        } else {
+            let hit = g.renderer.pick_world(x, y);
+            (hit, hit.and_then(|p| self.scene.pick_at(&self.world, p, Instant::now())))
+        };
         let mods = crate::build::Mods {
             shift: self.shift,
             ctrl: self.ctrl,
@@ -3728,6 +3743,16 @@ impl App {
             h as f32,
             ctx.pixels_per_point(),
         );
+        if self.build.hud_selected(&self.world) && !self.settings.show_huds {
+            self.build.deselect_all(&self.world);
+        }
+        if self.build.tool == crate::build::Tool::Edit
+            && self.build.hud_selected(&self.world)
+            && self.settings.show_huds
+            && let Some(view) = self.scene.lists.hud_view
+        {
+            self.build.cam = crate::build::geom::Cam::for_hud(view, ctx.pixels_per_point());
+        }
         if self.in_world() {
             let over_ui = ctx.is_pointer_over_egui() || ctx.egui_wants_pointer_input();
             let mods = crate::build::Mods {
@@ -4031,6 +4056,52 @@ impl App {
                 self.cursor_pos.0 += 12.0;
             } else if self.frame_count == 900 {
                 self.on_left_release();
+            }
+        }
+        if self.demo
+            && let Ok(mode) = std::env::var("AURORA_DEMO_HUDS")
+            && matches!(mode.as_str(), "menu" | "edit" | "edit-zoom")
+        {
+            let key = crate::world::objects::ObjKey {
+                region: self.world.main_region.unwrap_or_default(),
+                local_id: crate::demo::hud::CHILD,
+            };
+            if self.frame_count == 720
+                && let Some(view) = self.scene.lists.hud_view
+            {
+                self.cursor_pos = (
+                    view.width * 0.5 - 0.18 * view.height * view.zoom,
+                    view.height * 0.5 - 0.028 * view.height * view.zoom,
+                );
+                self.open_context_menu();
+            } else if mode != "menu" {
+                if self.frame_count == 760 {
+                    self.on_ctx_action(ui::context::CtxAction::EditAttachment(key));
+                    self.context_menu = None;
+                } else if self.frame_count == 800
+                    && let Some(b) = self.build.bounds(&self.world, Instant::now())
+                {
+                    let handle = b.center + Vec3::Y * self.build.cam.meters_for_pixels(b.center, 45.0);
+                    if let Some(cursor) = self.build.cam.project_px(handle) {
+                        self.cursor_pos = cursor;
+                        self.build_mouse_down();
+                    }
+                } else if (801..=840).contains(&self.frame_count) {
+                    self.cursor_pos.0 += 2.0;
+                } else if self.frame_count == 850 {
+                    self.on_left_release();
+                    if let Some(idx) = self.world.objects.index_of(&crate::world::objects::ObjKey {
+                        region: key.region,
+                        local_id: crate::demo::hud::FIRST,
+                    }) && let Some(o) = self.world.objects.get(idx)
+                    {
+                        log::info!(
+                            "demo HUD edit: local position={:?}, attachment={}",
+                            o.position,
+                            o.attachment_point()
+                        );
+                    }
+                }
             }
         }
         // closing the window: leave once the last view is kept (or after 1 s)
@@ -5841,7 +5912,18 @@ impl ApplicationHandler for App {
             // HUD fixtures exercise screen-space rendering and the same
             // linked-object touch / inventory paths as real attachments.
             if let Ok(mode) = std::env::var("AURORA_DEMO_HUDS") {
-                for ev in crate::demo::hud::events() {
+                let faces = matches!(mode.as_str(), "faces" | "faces-turned");
+                if faces {
+                    for (id, material) in crate::demo::hud::face_materials() {
+                        self.scene.materials.insert(id, material);
+                    }
+                }
+                let events = if faces {
+                    crate::demo::hud::face_events(mode == "faces-turned")
+                } else {
+                    crate::demo::hud::events()
+                };
+                for ev in events {
                     self.world.apply(ev);
                 }
                 self.settings.show_huds = mode != "hidden";
@@ -5852,7 +5934,7 @@ impl ApplicationHandler for App {
                 self.panels.settings = false;
                 self.world.notifications.list.clear();
                 crate::demo::hud::seed_inventory(&mut self.world);
-                if mode == "zoom" || mode == "drag-zoom" {
+                if matches!(mode.as_str(), "zoom" | "edit-zoom" | "drag-zoom") {
                     self.world.hud_zoom = 0.5;
                 }
                 if mode == "drag-ignore" {

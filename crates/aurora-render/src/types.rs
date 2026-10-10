@@ -72,6 +72,8 @@ pub mod flags {
     /// Texture animation (llSetTextureAnim): `anim`, `anim_xf` and `flags[3]`
     /// (see `tex_anim::RecordAnim`), evaluated by the vertex shaders.
     pub const TEX_ANIM: u32 = 1024;
+    /// glTF doubleSided: HUD fragments keep back faces only when requested.
+    pub const DOUBLE_SIDED: u32 = 2048;
 }
 
 /// Per-face GPU record (must match `DrawRecord` in common.wgsl).

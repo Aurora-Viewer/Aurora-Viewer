@@ -1,10 +1,10 @@
 //! Direct HUD translation. The Alt gesture is an Aurora shortcut; the HUD
 //! coordinates and final position update follow LLManipTranslate::handleMouseUp
 //! and LLSelectMgr::sendMultipleUpdate (Firestorm, originally LGPL 2.1).
-use super::{BuildCmd, ObjKey, TransformUpdate, World, root_of};
+use super::{BuildCmd, ObjKey, TransformUpdate, World, edit_parent, root_of};
 use crate::scene::Scene;
 use aurora_render::HudView;
-use glam::{Quat, Vec3};
+use glam::Vec3;
 use std::time::Instant;
 use uuid::Uuid;
 
@@ -67,13 +67,9 @@ impl HudDrag {
         let Some(idx) = self.index(world) else { return false };
         let mut desired = view.ray(cursor.0, cursor.1).0 + self.grab_offset;
         desired.x = self.depth;
-        let (mut anchor, rotation) = world
-            .avatar_lib
-            .attach_points
-            .get(&self.point)
-            .map(|a| (a.position, a.rotation))
-            .unwrap_or((Vec3::ZERO, Quat::IDENTITY));
-        anchor.y *= world.hud_aspect;
+        let Some((anchor, rotation)) = edit_parent(world, idx, Instant::now()) else {
+            return false;
+        };
         let position = rotation.inverse() * (desired - anchor);
         if !position.is_finite() {
             return false;
@@ -110,6 +106,7 @@ impl HudDrag {
 mod tests {
     use super::*;
     use crate::scene::avatar::AvatarLibrary;
+    use glam::Quat;
     use std::sync::Arc;
 
     fn fixture() -> (World, usize, usize) {

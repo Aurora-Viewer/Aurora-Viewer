@@ -99,7 +99,30 @@ impl Scene {
                 indices: &f.indices,
             })
         });
-        pick::ray_faces(faces, model, ray.0, ray.1)
+        if !g.hud {
+            return pick::ray_faces(faces, model, ray.0, ray.1);
+        }
+        // LLVolume::lineSegmentIntersect rejects back-facing triangles.
+        // Explicit double-sided materials remain interactive on both sides.
+        pick::ray_faces_with_sidedness(faces, model, ray.0, ray.1, |face| {
+            let Some((_, id)) = o
+                .extra
+                .render_materials
+                .iter()
+                .find(|(fi, id)| *fi as usize == face && !id.is_nil())
+            else {
+                return false;
+            };
+            let mut material = self.materials.peek(id).map(|m| (*m).clone()).unwrap_or_default();
+            if let Some((_, ov)) = world
+                .gltf_overrides
+                .get(&o.key)
+                .and_then(|s| s.iter().rev().find(|(fi, _)| *fi as usize == face))
+            {
+                material.apply_override(ov);
+            }
+            material.double_sided
+        })
     }
 
     pub fn touch_surface(&self, world: &World, idx: usize, ray: (Vec3, Vec3)) -> Option<TouchSurface> {
@@ -383,7 +406,7 @@ mod tests {
                     pick_faces: vec![Some(PickFace {
                         positions: vec![[-0.5, -0.5, -0.5], [-0.5, 0.5, -0.5], [-0.5, 0.5, 0.5], [-0.5, -0.5, 0.5]],
                         uvs: vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
-                        indices: vec![0, 1, 2, 0, 2, 3],
+                        indices: vec![0, 2, 1, 0, 3, 2],
                     })],
                 })),
             },
@@ -415,6 +438,79 @@ mod tests {
             scene.gpu[idx].faces.push(face);
         }
         (world, scene, front, back)
+    }
+
+    #[test]
+    fn hud_back_faces_do_not_block_visible_buttons_unless_material_is_double_sided() {
+        let (mut world, mut scene, front, back) = scene_with_two_objects();
+        let own = world.objects.index_of_uuid(&world.agent_id).unwrap();
+        let parent = world.objects.get(own).unwrap().key.local_id;
+        for (idx, x) in [(front, 3.0), (back, 7.0)] {
+            let o = world.objects.get_mut(idx).unwrap();
+            o.parent_id = parent;
+            o.state = 31u8.rotate_left(4);
+            o.position = Vec3::new(x, 0.0, 0.0);
+            let g = &mut scene.gpu[idx];
+            g.hud = true;
+            g.owner_avatar = Some(own);
+            g.center = o.position;
+            g.radius = 1.0;
+        }
+        world.objects.get_mut(front).unwrap().rotation = Quat::from_rotation_z(std::f32::consts::PI);
+        scene.build_huds(&world, [1280, 720], true);
+        let cursor = (640.0, 360.0);
+        for hidden in [false, true] {
+            assert_eq!(scene.hud_pick(&world, cursor, hidden).unwrap().0, back);
+        }
+        assert_eq!(scene.hud_edit_pick(&world, cursor).unwrap().0, back);
+        assert_eq!(scene.hud_move_pick(&world, cursor), Some(back));
+        assert!(
+            scene
+                .touch_surface(&world, front, scene.lists.hud_view.unwrap().ray(cursor.0, cursor.1))
+                .is_none()
+        );
+
+        let mat = Uuid::from_u128(42);
+        world.objects.get_mut(front).unwrap().extra.render_materials = vec![(0, mat)];
+        scene.materials.insert(
+            mat,
+            aurora_assets::PbrMaterial {
+                double_sided: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(scene.hud_pick(&world, cursor, true).unwrap().0, front);
+        world.objects.get_mut(front).unwrap().click_action = crate::interaction::code::IGNORE;
+        assert_eq!(scene.hud_move_pick(&world, cursor), Some(front));
+        let key = world.objects.get(front).unwrap().key;
+        world.gltf_overrides.insert(
+            key,
+            vec![(
+                0,
+                aurora_assets::material::PbrOverride {
+                    double_sided: Some(false),
+                    ..Default::default()
+                },
+            )]
+            .into(),
+        );
+        assert_eq!(scene.hud_pick(&world, cursor, true).unwrap().0, back);
+        assert_eq!(scene.hud_move_pick(&world, cursor), Some(back));
+        world.gltf_overrides.insert(
+            key,
+            vec![(
+                0,
+                aurora_assets::material::PbrOverride {
+                    double_sided: Some(true),
+                    ..Default::default()
+                },
+            )]
+            .into(),
+        );
+        scene.materials.insert(mat, aurora_assets::PbrMaterial::default());
+        assert_eq!(scene.hud_move_pick(&world, cursor), Some(front));
+        world.objects.get_mut(front).unwrap().click_action = crate::interaction::code::NONE;
+        assert_eq!(scene.hud_pick(&world, cursor, true).unwrap().0, front);
     }
 
     #[test]
@@ -459,6 +555,7 @@ mod tests {
         }
         assert_eq!(scene.hud_pick(&world, cursor, true).unwrap().0, front);
         assert_eq!(scene.hud_pick(&world, cursor, false).unwrap().0, back);
+        assert_eq!(scene.hud_move_pick(&world, cursor), Some(back));
         scene.gpu[front].owner_avatar = None;
         scene.build_huds(&world, [1280, 720], true);
         assert_eq!(scene.lists.hud_opaque.len(), 1);
@@ -466,6 +563,7 @@ mod tests {
         scene.build_huds(&world, [1280, 720], false);
         assert!(scene.lists.hud_opaque.is_empty());
         assert!(scene.hud_pick(&world, cursor, true).is_none());
+        assert!(scene.hud_move_pick(&world, cursor).is_none());
     }
 
     #[test]

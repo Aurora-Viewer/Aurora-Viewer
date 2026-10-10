@@ -54,6 +54,12 @@ impl Scene {
         self.hud_pick_impl(world, cursor, false, true).map(|(idx, _, _)| idx)
     }
 
+    /// Editing and right-click selection also reach CLICK_ACTION_IGNORE
+    /// prims, as LLViewerWindow::cursorIntersect does in build mode.
+    pub fn hud_edit_pick(&self, world: &World, cursor: (f32, f32)) -> Option<(usize, Vec3, (Vec3, Vec3))> {
+        self.hud_pick_impl(world, cursor, true, true)
+    }
+
     fn hud_pick_impl(
         &self,
         world: &World,
