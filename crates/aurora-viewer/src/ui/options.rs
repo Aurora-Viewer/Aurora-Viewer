@@ -785,7 +785,7 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     ui,
                     p,
                     "Limiter les images/s",
-                    "Plafonne le nombre d'images par seconde (moins de chauffe et de bruit). Désactivé par défaut",
+                    "Plafonne le nombre d'images par seconde (moins de chauffe et de bruit). Activé par défaut à 120 img/s",
                     |ui| {
                         let mut ch = toggle(ui, p, &mut s.fps_cap);
                         ui.add_enabled_ui(s.fps_cap, |ui| {

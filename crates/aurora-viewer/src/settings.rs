@@ -161,7 +161,7 @@ pub struct Settings {
     pub antialiasing: u8,
     /// 0 Khronos PBR Neutral, 1 ACES
     pub tonemapper: u8,
-    /// Frame rate cap (off by default) and its value (images per second).
+    /// Optional frame rate cap (on by default at 120 images per second).
     pub fps_cap: bool,
     pub fps_limit: u32,
     /// Lower cap while the window is not focused (on by default, as
@@ -479,8 +479,8 @@ impl Default for Settings {
             shadow_quality: 3,
             antialiasing: 3,
             tonemapper: 0,
-            fps_cap: false,
-            fps_limit: 60,
+            fps_cap: true,
+            fps_limit: 120,
             background_fps_cap: true,
             background_fps_limit: 15,
             max_particles: 4096,
@@ -618,7 +618,7 @@ impl Settings {
             self.vsync = false;
             self.fps_cap = self.fps_limit >= 2;
             if !self.fps_cap {
-                self.fps_limit = 60;
+                self.fps_limit = 120;
             }
         }
         self.fps_limit = self.fps_limit.clamp(10, 500);
@@ -905,8 +905,14 @@ mod tests {
     use winit::keyboard::KeyCode;
 
     #[test]
-    fn fps_preferences_remain_optional_and_keep_saved_limits() {
-        assert!(!Settings::default().sanitized().fps_cap);
+    fn fps_defaults_and_saved_preferences() {
+        let defaults = Settings::default().sanitized();
+        assert!(defaults.fps_cap);
+        assert_eq!(defaults.fps_limit, 120);
+        let missing: Settings = serde_json::from_str("{}").expect("synthetic settings without FPS preferences");
+        let missing = missing.sanitized();
+        assert!(missing.fps_cap);
+        assert_eq!(missing.fps_limit, 120);
         for enabled in [false, true] {
             for limit in [30, 60, 144, 500] {
                 let original = Settings {
