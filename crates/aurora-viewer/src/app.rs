@@ -1572,7 +1572,7 @@ impl App {
 
     fn on_left_press(&mut self) {
         self.left_down = true;
-        if self.alt
+        if self.hud_drag_requested()
             && self.settings.show_huds
             && let Some(idx) = self.scene.hud_move_pick(&self.world, self.cursor_pos)
         {
@@ -2204,17 +2204,28 @@ impl App {
 
     /// End of a shortcut capture (None = cancelled).
     fn finish_capture(&mut self, input: Option<Input>) {
-        let Some((action, slot)) = self.options_ui.capture.take() else {
+        let Some(capture) = self.options_ui.capture.take() else {
             return;
         };
         if let Some(input) = input {
-            let b = crate::keybinds::Binding {
-                input,
-                ctrl: self.ctrl,
-                shift: self.shift,
-                alt: self.alt,
-            };
-            self.settings.keybinds.set(action, slot, Some(b));
+            match capture {
+                ui::options::Capture::Binding(action, slot) => {
+                    let b = crate::keybinds::Binding {
+                        input,
+                        ctrl: self.ctrl,
+                        shift: self.shift,
+                        alt: self.alt,
+                    };
+                    self.settings.keybinds.set(action, slot, Some(b));
+                }
+                ui::options::Capture::HudDrag => {
+                    let Some(key) = crate::keybinds::HoldKey::from_input(input) else {
+                        return;
+                    };
+                    self.settings.hud_drag_key = key;
+                    self.down.clear();
+                }
+            }
             self.settings.save();
         }
     }
@@ -2341,7 +2352,10 @@ impl App {
 
     /// Left press while building: handles, selection, create, terraform.
     fn build_mouse_down(&mut self) -> bool {
-        if !self.build.open || self.alt {
+        if !self.build.open
+            || self.alt
+            || (self.hud_drag_requested() && self.settings.show_huds && self.scene.hud_move_pick(&self.world, self.cursor_pos).is_some())
+        {
             return false;
         }
         if self.build.tool == crate::build::Tool::Focus {
@@ -3860,7 +3874,7 @@ impl App {
             }
         }
         if self.hud_drag.is_some()
-            || (self.alt
+            || (self.hud_drag_requested()
                 && self.settings.show_huds
                 && matches!(self.screen, Screen::World)
                 && self.mouse_mode == MouseMode::None
@@ -5937,6 +5951,14 @@ impl ApplicationHandler for App {
                 if matches!(mode.as_str(), "zoom" | "edit-zoom" | "drag-zoom") {
                     self.world.hud_zoom = 0.5;
                 }
+                if mode.starts_with("drag") {
+                    use crate::keybinds::HoldKey;
+                    self.settings.hud_drag_key = match mode.as_str() {
+                        "drag-ctrl" => HoldKey::Ctrl,
+                        "drag-key" => HoldKey::Key("KeyB".into()),
+                        _ => HoldKey::default(),
+                    };
+                }
                 if mode == "drag-ignore" {
                     let idx = self
                         .world
@@ -6019,6 +6041,9 @@ impl ApplicationHandler for App {
             WindowEvent::Focused(false) => {
                 self.focused = false;
                 self.down.clear();
+                self.alt = false;
+                self.ctrl = false;
+                self.shift = false;
                 self.right_drag = false;
                 self.mic_button_held = false;
                 self.on_left_release();
@@ -6043,11 +6068,24 @@ impl ApplicationHandler for App {
                     }
                     // shortcut being captured in the preferences
                     if self.options_ui.capture.is_some() {
-                        if pressed && !ke.repeat && !Input::is_modifier(code) {
+                        if pressed
+                            && !ke.repeat
+                            && (!Input::is_modifier(code) || self.options_ui.capture == Some(ui::options::Capture::HudDrag))
+                        {
                             let input = (code != KeyCode::Escape).then(|| Input::key(code));
                             self.finish_capture(input);
                         }
                         return;
+                    }
+                    // A gesture key must still be held when the chat or a web
+                    // page has keyboard focus; it only owns a visible HUD drag.
+                    let input = Input::key(code);
+                    if self.settings.hud_drag_key.is_key(&input) {
+                        if pressed {
+                            self.down.insert(input);
+                        } else {
+                            self.down.remove(&input);
+                        }
                     }
                     // Releases always go through so keys never get stuck.
                     let typing = self.egui_ctx.egui_wants_keyboard_input();
@@ -6101,7 +6139,7 @@ impl ApplicationHandler for App {
                 let over_ui = self.egui_ctx.is_pointer_over_egui() || self.egui_ctx.egui_wants_pointer_input();
                 // shortcut being captured: middle / side buttons bind, left / right cancel
                 if self.options_ui.capture.is_some() {
-                    if pressed {
+                    if pressed && (self.options_ui.capture != Some(ui::options::Capture::HudDrag) || Input::mouse(*button).is_none()) {
                         self.finish_capture(Input::mouse(*button));
                     }
                     return;

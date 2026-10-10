@@ -230,6 +230,9 @@ pub struct Settings {
     pub colors: ColorSettings,
     /// Rebindable keyboard / mouse controls.
     pub keybinds: crate::keybinds::KeyBindings,
+    /// Préférences › Pratique: hold this key while dragging visible HUDs.
+    /// Aurora shortcut requested by the user; ALT by default.
+    pub hud_drag_key: crate::keybinds::HoldKey,
     /// Bumped when defaults change in a way that must reach existing settings
     /// (missing in older files: 0).
     #[serde(default)]
@@ -508,6 +511,7 @@ impl Default for Settings {
             media: Default::default(),
             colors: ColorSettings::default(),
             keybinds: Default::default(),
+            hud_drag_key: Default::default(),
             settings_version: SETTINGS_VERSION,
         }
     }
@@ -899,6 +903,21 @@ mod tests {
     use super::*;
     use crate::keybinds::{Action, Input};
     use winit::keyboard::KeyCode;
+
+    #[test]
+    fn hud_drag_key_defaults_for_old_files_and_keeps_the_saved_choice() {
+        let old: Settings = serde_json::from_str("{}").expect("old synthetic settings");
+        assert_eq!(old.sanitized().hud_drag_key, crate::keybinds::HoldKey::Alt);
+        for key in [crate::keybinds::HoldKey::Ctrl, crate::keybinds::HoldKey::Key("KeyB".into())] {
+            let settings = Settings {
+                hud_drag_key: key.clone(),
+                ..Default::default()
+            };
+            let bytes = serde_json::to_vec(&settings).expect("serialize synthetic settings");
+            let loaded: Settings = serde_json::from_slice(&bytes).expect("read synthetic settings");
+            assert_eq!(loaded.sanitized().hud_drag_key, key);
+        }
+    }
 
     #[test]
     fn first_launch_movement_defaults_survive_saving_and_loading() {

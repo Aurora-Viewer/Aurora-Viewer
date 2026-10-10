@@ -462,6 +462,53 @@ pub struct Mods {
     pub alt: bool,
 }
 
+/// A single held keyboard key for pointer gestures. Modifier keys accept
+/// either side; unlike ordinary shortcuts, they can be bound on their own.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HoldKey {
+    #[default]
+    Alt,
+    Ctrl,
+    Shift,
+    Key(String),
+}
+
+impl HoldKey {
+    pub fn from_input(input: Input) -> Option<Self> {
+        let Input::Key(code) = input else { return None };
+        Some(match code.as_str() {
+            "AltLeft" | "AltRight" => Self::Alt,
+            "ControlLeft" | "ControlRight" => Self::Ctrl,
+            "ShiftLeft" | "ShiftRight" => Self::Shift,
+            _ => Self::Key(code),
+        })
+    }
+
+    pub fn label(&self) -> String {
+        match self {
+            Self::Alt => "ALT".into(),
+            Self::Ctrl => "Ctrl".into(),
+            Self::Shift => "Maj".into(),
+            Self::Key(code) => key_label(code),
+        }
+    }
+
+    /// The app also tracks this key when a text field or media has focus;
+    /// pointer ownership is decided only when the user starts the gesture.
+    pub fn is_key(&self, input: &Input) -> bool {
+        matches!((self, input), (Self::Key(code), Input::Key(key)) if code == key)
+    }
+
+    pub fn held(&self, down: &HashSet<Input>, mods: Mods) -> bool {
+        match self {
+            Self::Alt => mods.alt,
+            Self::Ctrl => mods.ctrl,
+            Self::Shift => mods.shift,
+            Self::Key(code) => down.contains(&Input::Key(code.clone())),
+        }
+    }
+}
+
 impl KeyBindings {
     /// Fill actions missing from an older settings file with their defaults.
     pub fn sanitized(mut self) -> KeyBindings {
@@ -579,6 +626,66 @@ impl KeyBindings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gesture_keys_accept_either_modifier_side_and_only_the_chosen_key() {
+        let down = [Input::key(KeyCode::KeyB)].into_iter().collect();
+        assert!(!HoldKey::default().held(&down, Mods::default()));
+        assert!(HoldKey::default().held(
+            &down,
+            Mods {
+                alt: true,
+                ..Default::default()
+            }
+        ));
+        for (left, right, expected, mods) in [
+            (
+                KeyCode::AltLeft,
+                KeyCode::AltRight,
+                HoldKey::Alt,
+                Mods {
+                    alt: true,
+                    ..Default::default()
+                },
+            ),
+            (
+                KeyCode::ControlLeft,
+                KeyCode::ControlRight,
+                HoldKey::Ctrl,
+                Mods {
+                    ctrl: true,
+                    ..Default::default()
+                },
+            ),
+            (
+                KeyCode::ShiftLeft,
+                KeyCode::ShiftRight,
+                HoldKey::Shift,
+                Mods {
+                    shift: true,
+                    ..Default::default()
+                },
+            ),
+        ] {
+            for code in [left, right] {
+                let key = HoldKey::from_input(Input::key(code)).unwrap();
+                assert_eq!(key, expected);
+                assert!(key.held(&down, mods));
+                assert!(!key.held(&down, Mods::default()));
+            }
+        }
+        let key = HoldKey::from_input(Input::key(KeyCode::KeyB)).unwrap();
+        assert!(key.held(&down, Mods::default()));
+        assert!(key.is_key(&Input::key(KeyCode::KeyB)));
+        assert!(!key.held(
+            &HashSet::new(),
+            Mods {
+                alt: true,
+                ..Default::default()
+            }
+        ));
+        assert!(HoldKey::from_input(Input::Mouse("Middle".into())).is_none());
+    }
 
     #[test]
     fn text_edit_keys_stay_with_the_field() {
