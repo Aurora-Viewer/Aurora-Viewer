@@ -538,7 +538,7 @@ mod tests {
         };
         let mut output = None;
         for _ in 0..5 {
-            output = Some(ctx.run_ui(
+            output = Some(headless_output(ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0))),
                     ..Default::default()
@@ -561,7 +561,7 @@ mod tests {
                         &mut Vec::new(),
                     );
                 },
-            ));
+            )));
         }
         let output = output.expect("confirmation frame");
         let text = |label| {

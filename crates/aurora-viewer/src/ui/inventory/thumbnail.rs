@@ -456,7 +456,7 @@ mod tests {
         };
         let mut actions = Vec::new();
         let mut frame = |events| {
-            ctx.run_ui(
+            headless_output(ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 800.0))),
                     events,
@@ -476,7 +476,7 @@ mod tests {
                         &mut actions,
                     );
                 },
-            )
+            ))
         };
         for _ in 0..4 {
             frame(Vec::new());

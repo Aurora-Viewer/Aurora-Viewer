@@ -1011,12 +1011,19 @@ pub fn show(
 }
 
 #[cfg(test)]
+fn headless_output(mut output: egui::FullOutput) -> egui::FullOutput {
+    // These tests inspect shapes/events without a renderer to apply texture uploads.
+    output.textures_delta.clear();
+    output
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
     fn folder_window_frame(ctx: &egui::Context, inv: &mut Inventory, root: Uuid, st: &mut InventoryUi) -> egui::FullOutput {
         st.visible.clear();
-        ctx.run_ui(
+        headless_output(ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(600.0, 700.0))),
                 ..Default::default()
@@ -1039,7 +1046,7 @@ mod tests {
                     &mut Vec::new(),
                 );
             },
-        )
+        ))
     }
 
     #[test]
@@ -1114,7 +1121,7 @@ mod tests {
 
     fn rename_frame(ctx: &egui::Context, inv: &Inventory, state: &mut InventoryUi, events: Vec<egui::Event>) -> Vec<InvAction> {
         let mut actions = Vec::new();
-        let _ = ctx.run_ui(
+        let _ = headless_output(ctx.run_ui(
             egui::RawInput {
                 events,
                 ..Default::default()
@@ -1138,7 +1145,7 @@ mod tests {
                 );
                 ui.add(egui::TextEdit::singleline(&mut String::new()).id(egui::Id::new("other_field")));
             },
-        );
+        ));
         actions
     }
 
@@ -1218,7 +1225,7 @@ mod tests {
     }
 
     fn item_frame(ctx: &egui::Context, inv: &Inventory, state: &mut InventoryUi, events: Vec<egui::Event>) -> egui::FullOutput {
-        ctx.run_ui(
+        headless_output(ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 900.0))),
                 events,
@@ -1242,7 +1249,7 @@ mod tests {
                     &mut Vec::new(),
                 );
             },
-        )
+        ))
     }
 
     #[test]
@@ -1275,7 +1282,7 @@ mod tests {
         let mut st = InventoryUi::default();
         let mut output = None;
         for frame in 0..4 {
-            output = Some(ctx.run_ui(
+            output = Some(headless_output(ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0))),
                     ..Default::default()
@@ -1309,7 +1316,7 @@ mod tests {
                         &mut Vec::new(),
                     );
                 },
-            ));
+            )));
         }
         let output = output.expect("frame");
         for label in ["Mon inventaire", "Bibliothèque"] {

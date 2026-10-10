@@ -668,7 +668,7 @@ mod tests {
         events: Vec<egui::Event>,
     ) -> egui::FullOutput {
         let p = crate::theme::Theme::default().palette();
-        ctx.run_ui(
+        headless_output(ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(1600.0, 900.0))),
                 events,
@@ -700,7 +700,7 @@ mod tests {
                     },
                 );
             },
-        )
+        ))
     }
     #[test]
     fn landmark_menu_keeps_teleport_and_the_place_profile_from_places() {
@@ -846,7 +846,7 @@ mod tests {
             let mut actions = Vec::new();
             let mut open = true;
             let mut frame = |events| {
-                ctx.run_ui(
+                headless_output(ctx.run_ui(
                     egui::RawInput {
                         screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(1600.0, 900.0))),
                         events,
@@ -873,7 +873,7 @@ mod tests {
                             },
                         );
                     },
-                )
+                ))
             };
             for _ in 0..4 {
                 let _ = frame(Vec::new());
