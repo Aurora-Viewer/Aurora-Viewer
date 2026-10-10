@@ -4,6 +4,8 @@
 use crate::theme::Palette;
 use egui::{Color32, CornerRadius, RichText, Sense, Stroke, Vec2};
 
+mod resize;
+
 pub struct Floater<'a> {
     pub id: &'a str,
     pub title: String,
@@ -83,20 +85,29 @@ impl<'a> Floater<'a> {
         let mut close = false;
         let mut toggle_min = false;
         let mut out = None;
+        let window_id = egui::Id::new(self.id);
+        let resizable = self.resizable && !minimized;
+        let resize_drag = resizable.then(|| resize::Drag::prepare(ctx, window_id, self.min_size)).flatten();
+        // Our handles clamp both geometry and position at the minimum, while
+        // Window retains its normal movement and persisted layout.
         let mut w = egui::Window::new(&self.title)
-            .id(egui::Id::new(self.id))
+            .id(window_id)
             .title_bar(false)
             .fade_in(false)
             .fade_out(false)
             .frame(frame)
             .default_pos(self.default_pos)
-            .resizable(self.resizable && !minimized);
+            .resizable(false);
         if self.resizable && !minimized {
             w = w.default_size(self.default_size).min_size(self.min_size);
         } else if !minimized {
             w = w.default_width(self.default_size.x);
         }
-        w.show(ctx, |ui| {
+        if let Some(drag) = resize_drag {
+            let rect = drag.rect();
+            w = w.fixed_size(rect.size()).current_pos(rect.min);
+        }
+        let response = w.show(ctx, |ui| {
             // title bar
             ui.horizontal(|ui| {
                 ui.set_min_height(20.0);
@@ -136,6 +147,14 @@ impl<'a> Floater<'a> {
                 out = Some(body(ui));
             }
         });
+        if let Some(response) = response {
+            if let Some(drag) = resize_drag {
+                drag.finish(ctx, window_id, response.response.rect);
+            }
+            if resizable {
+                resize::handles(ctx, &response.response);
+            }
+        }
         if close {
             *open = false;
         }

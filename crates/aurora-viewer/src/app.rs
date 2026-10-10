@@ -3712,13 +3712,38 @@ impl App {
         // native window or taking the user's keyboard (with_active(false)).
         if self.demo
             && self.capture.is_some()
-            && std::env::var("AURORA_DEMO_INVENTORY")
-                .is_ok_and(|v| matches!(v.as_str(), "rename" | "new-script" | "new-note" | "new-folder"))
+            && std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|v| {
+                matches!(
+                    v.as_str(),
+                    "rename" | "new-script" | "new-note" | "new-folder" | "resize-left" | "resize-right"
+                )
+            })
         {
             raw.focused = true;
             raw.events.retain(|e| !matches!(e, egui::Event::WindowFocused(false)));
             if let Some(viewport) = raw.viewports.get_mut(&raw.viewport_id) {
                 viewport.focused = Some(true);
+            }
+        }
+        if self.demo
+            && self.capture.is_some()
+            && let Ok(view) = std::env::var("AURORA_DEMO_INVENTORY")
+            && matches!(view.as_str(), "resize-left" | "resize-right")
+            && let Some(rect) = self.egui_ctx.memory(|memory| memory.area_rect(egui::Id::new("inventory")))
+        {
+            let left = view == "resize-left";
+            let start = if left { rect.left_center() } else { rect.right_center() };
+            let target = egui::pos2(if left { rect.right() + 120.0 } else { rect.left() - 120.0 }, start.y);
+            match self.frame_count {
+                300 => raw.events.push(egui::Event::PointerMoved(start)),
+                301 | 400 => raw.events.push(egui::Event::PointerButton {
+                    pos: if self.frame_count == 301 { start } else { target },
+                    button: egui::PointerButton::Primary,
+                    pressed: self.frame_count == 301,
+                    modifiers: egui::Modifiers::NONE,
+                }),
+                302 | 360 => raw.events.push(egui::Event::PointerMoved(target)),
+                _ => {}
             }
         }
         // AURORA_DEMO_POINTER="x,y[,r][;x,y…]": the pointer at these window
@@ -5808,7 +5833,17 @@ impl ApplicationHandler for App {
                 crate::world::inventory::demo::seed(&mut self.world.inventory, self.world.agent_id);
                 let configured_view = matches!(
                     view.as_str(),
-                    "sort" | "filters" | "preferences" | "recent" | "worn" | "filtered" | "large" | "long" | "long-filtered"
+                    "sort"
+                        | "filters"
+                        | "preferences"
+                        | "recent"
+                        | "worn"
+                        | "filtered"
+                        | "large"
+                        | "long"
+                        | "long-filtered"
+                        | "resize-left"
+                        | "resize-right"
                 );
                 if configured_view {
                     crate::world::inventory::demo::seed_view(&mut self.world.inventory, self.world.agent_id, view == "large");
@@ -5834,7 +5869,7 @@ impl ApplicationHandler for App {
                     if view == "large" {
                         self.inventory_ui.search = "Élément".into();
                     }
-                    if matches!(view.as_str(), "long" | "long-filtered") {
+                    if matches!(view.as_str(), "long" | "long-filtered" | "resize-left" | "resize-right") {
                         crate::world::inventory::demo::seed_long_names(&mut self.world.inventory);
                         if view == "long-filtered" {
                             self.inventory_ui.search = "JEANS_SUBSTANCE".into();
