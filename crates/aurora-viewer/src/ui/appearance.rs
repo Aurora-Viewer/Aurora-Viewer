@@ -116,7 +116,7 @@ fn icon_menu(ui: &mut egui::Ui, p: &Palette, name: &str, tip: &str, body: impl F
     egui::Popup::menu(&response).show(body);
 }
 
-fn row(ui: &mut egui::Ui, p: &Palette, it: &InvItem, desc: &str, selected: bool, worn: bool) -> egui::Response {
+fn row(ui: &mut egui::Ui, p: &Palette, it: &InvItem, desc: &str, selected: bool, worn: Option<&str>) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 25.0), egui::Sense::click());
     if selected || response.hovered() {
         ui.painter()
@@ -142,7 +142,7 @@ fn row(ui: &mut egui::Ui, p: &Palette, it: &InvItem, desc: &str, selected: bool,
     } else {
         format!("{} {desc}", it.name)
     };
-    let marker = worn.then(|| ui.painter().layout_no_wrap("Porté".into(), egui::FontId::proportional(12.0), p.ink));
+    let marker = worn.map(|label| ui.painter().layout_no_wrap(label.into(), egui::FontId::proportional(12.0), p.ink));
     let marker_width = marker.as_ref().map_or(0.0, |g| g.size().x + 10.0);
     let galley = egui::WidgetText::from(RichText::new(&text).size(12.0).color(p.ink)).into_galley(
         ui,
@@ -154,7 +154,7 @@ fn row(ui: &mut egui::Ui, p: &Palette, it: &InvItem, desc: &str, selected: bool,
     let painter = ui.painter().with_clip_rect(text_rect);
     let paint = |pos, galley: std::sync::Arc<egui::Galley>| {
         // LLFontGL BOLD_OFFSET: egui's strong text changes color, not weight.
-        if worn {
+        if worn.is_some() {
             let ppp = ui.ctx().pixels_per_point();
             painter.galley(pos + Vec2::new(ppp.round().max(1.0) / ppp, 0.0), galley.clone(), p.ink);
         }
@@ -167,7 +167,10 @@ fn row(ui: &mut egui::Ui, p: &Palette, it: &InvItem, desc: &str, selected: bool,
             marker,
         );
     }
-    response.on_hover_text(if worn { format!("{text} (Porté)") } else { text })
+    response.on_hover_text(match worn {
+        Some(label) => format!("{text} ({label})"),
+        None => text,
+    })
 }
 
 fn item_menu(response: &egui::Response, it: &InvItem, actions: &mut Vec<Action>) {
@@ -250,18 +253,26 @@ fn gallery(
 }
 
 fn outfit_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceUi, outfits: &[Uuid], actions: &mut Vec<Action>) {
-    let worn = items::worn_items(world);
+    let worn = items::worn_labels(world);
+    let current = model::base(&world.inventory);
     for id in outfits {
         let Some(f) = world.inventory.folders.get(id) else {
             continue;
         };
-        let label = if model::base(&world.inventory) == Some(*id) {
+        let is_current = current == Some(*id);
+        let label = if is_current {
             format!("{} (portée)", f.info.name)
         } else {
             f.info.name.clone()
         };
+        let galley = egui::WidgetText::from(RichText::new(label).color(p.ink)).into_galley(
+            ui,
+            Some(egui::TextWrapMode::Extend),
+            ui.available_width() - ui.spacing().indent,
+            egui::TextStyle::Button,
+        );
         let reveal = st.reveal_outfit == Some(*id);
-        let response = egui::CollapsingHeader::new(RichText::new(label).color(p.ink))
+        let response = egui::CollapsingHeader::new(galley.clone())
             .id_salt(("outfit", id))
             .default_open(st.selected_outfit == Some(*id))
             .open(reveal.then_some(true))
@@ -283,7 +294,7 @@ fn outfit_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut Appearanc
                                 it,
                                 "",
                                 st.selected_item == Some(it.id) && st.selected_outfit == Some(*id),
-                                worn.contains(&it.id),
+                                worn.get(&it.id).map(String::as_str),
                             );
                             if response.clicked() || response.secondary_clicked() {
                                 st.selected_outfit = Some(*id);
@@ -314,6 +325,14 @@ fn outfit_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut Appearanc
                     }
                 });
             });
+        if is_current && ui.is_rect_visible(response.header_response.rect) {
+            // LLOutfitsList::onHighlightBaseOutfit marks the current title BOLD.
+            // Match the item rows' LLFontGL offset: egui's strong is only a color.
+            let rect = response.header_response.rect;
+            let ppp = ui.ctx().pixels_per_point();
+            let pos = egui::pos2(rect.left() + ui.spacing().indent, rect.center().y - galley.size().y * 0.5);
+            ui.painter().galley(pos + Vec2::new(ppp.round().max(1.0) / ppp, 0.0), galley, p.ink);
+        }
         if reveal && response.body_response.is_some() {
             response.header_response.scroll_to_me(Some(egui::Align::Min));
             st.reveal_outfit = None;
@@ -325,6 +344,7 @@ fn worn_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceU
     let inv = &world.inventory;
     let mut links = model::cof(inv).map(|id| model::folder_links(inv, id)).unwrap_or_default();
     let worn = world.worn_attachment_items();
+    let labels = items::worn_labels(world);
     for id in &worn {
         if !links.iter().any(|l| l.target == *id)
             && let Some(it) = inv.items.get(id)
@@ -370,7 +390,7 @@ fn worn_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceU
                     ""
                 },
                 st.selected_item == Some(it.id),
-                false,
+                labels.get(&it.id).map(String::as_str),
             );
             if resp.clicked() {
                 st.selected_item = Some(it.id);
@@ -483,7 +503,7 @@ fn add_list(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut Appearan
         .collect();
     items.sort_by_key(|it| it.name.to_lowercase());
     for it in items {
-        let response = row(ui, p, it, "", st.selected_item == Some(it.id), false);
+        let response = row(ui, p, it, "", st.selected_item == Some(it.id), None);
         if response.clicked() {
             st.selected_item = Some(it.id);
         }
@@ -537,7 +557,7 @@ fn add_folder(
                 if !matches!(it.asset_type, 5 | 6 | 13) || worn.contains(&it.id) {
                     continue;
                 }
-                let response = row(ui, p, it, "", st.selected_item == Some(it.id), false);
+                let response = row(ui, p, it, "", st.selected_item == Some(it.id), None);
                 if response.clicked() {
                     st.selected_item = Some(it.id);
                 }
@@ -827,6 +847,47 @@ pub fn show(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn outfits_worn_and_editor_show_actual_attachment_points() {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let palette = crate::theme::Theme::default().palette();
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.agent_id = crate::demo::DEMO_AGENT;
+        model::seed_demo(&mut world.inventory, world.agent_id);
+        let folder = model::cof(&world.inventory).expect("current outfit");
+        world.objects.upsert(1, crate::demo::action_avatar(false));
+        for (item, point) in [(717, 2), (721, 32)] {
+            let mut object = crate::demo::hud::object(point, false);
+            object.full_id = Uuid::from_u128(item);
+            object.name_values = format!("AttachItemID STRING RW SV {}", object.full_id);
+            world.objects.upsert(1, object);
+        }
+        for view in 0..3 {
+            let mut st = AppearanceUi::default();
+            st.open_outfit(folder);
+            st.edit_tab = 1;
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                ui.set_width(430.0);
+                if view == 0 {
+                    outfit_list(ui, &palette, &world, &mut st, &[folder], &mut vec![]);
+                } else {
+                    worn_list(ui, &palette, &world, &mut st, &mut vec![], view == 2);
+                }
+            });
+            output.textures_delta.clear();
+            for label in ["Porté sur Crâne", "Porté sur HUD : En haut à droite"] {
+                assert!(
+                    output
+                        .shapes
+                        .iter()
+                        .any(|s| matches!(&s.shape, egui::Shape::Text(t) if t.galley.text() == label)),
+                    "missing attachment label in view {view}: {label}"
+                );
+            }
+        }
+    }
 
     fn draw(ctx: &egui::Context, world: &mut World, st: &mut AppearanceUi, key: Option<egui::Key>) -> Vec<Action> {
         let mut input = egui::RawInput {

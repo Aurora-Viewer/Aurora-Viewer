@@ -554,6 +554,7 @@ mod tests {
                         &Facts {
                             agent: Uuid::nil(),
                             worn: HashSet::new(),
+                            worn_labels: Default::default(),
                             points: Vec::new(),
                             appearance_busy: false,
                             names: Default::default(),

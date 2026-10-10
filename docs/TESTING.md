@@ -424,6 +424,10 @@ grille.
 Ces opérations restent hors ligne ; la création de nouveaux vêtements et de
 nouvelles parties du corps n'est pas encore disponible.
 
+Les objets de démo utilisent des points distincts (crâne, oreille gauche,
+annulaire gauche, pied gauche et HUD en haut à droite), affichés dans les
+listes d’Apparence et d’Inventaire.
+
 **`AURORA_DEMO_INVENTORY`** — ouvre un inventaire synthétique : dossier
 personnel, sous-dossier, tenues, objets, documents, texture, son, geste,
 ciel, matériau, lien et permissions variées ; bibliothèque dans l'arbre,

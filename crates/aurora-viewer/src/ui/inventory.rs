@@ -58,6 +58,7 @@ pub enum InvAction {
 pub struct Facts {
     pub agent: Uuid,
     pub worn: HashSet<Uuid>,
+    pub worn_labels: std::collections::HashMap<Uuid, String>,
     pub points: Vec<(u8, bool, String)>,
     pub appearance_busy: bool,
     pub names: std::collections::HashMap<Uuid, String>,
@@ -65,15 +66,8 @@ pub struct Facts {
 
 impl Facts {
     pub fn from_world(world: &World, appearance_busy: bool) -> Self {
-        let mut worn = world.worn_attachment_items();
-        if let Some(cof) = crate::world::appearance::cof(&world.inventory) {
-            worn.extend(
-                crate::world::appearance::folder_links(&world.inventory, cof)
-                    .into_iter()
-                    .filter(|l| !l.folder && world.inventory.items.get(&l.target).is_some_and(|it| it.asset_type != 6))
-                    .map(|l| l.target),
-            );
-        }
+        let worn_labels = super::appearance::items::worn_labels(world);
+        let worn = worn_labels.keys().copied().collect();
         let mut points: Vec<_> = world
             .avatar_lib
             .attach_points
@@ -87,10 +81,18 @@ impl Facts {
         Self {
             agent: world.agent_id,
             worn,
+            worn_labels,
             points,
             appearance_busy,
             names: Default::default(),
         }
+    }
+
+    fn worn_label(&self, inv: &Inventory, id: Uuid) -> Option<&str> {
+        let original = rules::original(inv, id)?;
+        self.worn
+            .contains(&original)
+            .then(|| self.worn_labels.get(&original).map(String::as_str).unwrap_or("Porté"))
     }
 }
 
@@ -376,8 +378,10 @@ fn item_row(
         if rename_row(ui, p, inv, *id, st, prefs, actions) {
             return;
         }
-        let worn = rules::original(inv, *id).is_some_and(|id| facts.worn.contains(&id));
-        let text = if worn { format!("{} (porté)", it.name) } else { it.name.clone() };
+        let text = match facts.worn_label(inv, *id) {
+            Some(label) => format!("{} ({label})", it.name),
+            None => it.name.clone(),
+        };
         let r = ui
             .push_id(("inv_item", it.id), |ui| {
                 ui.add_sized(
@@ -815,8 +819,8 @@ fn search_rows(
                 Some(FetchState::Failed) => label.push_str("  (échec)"),
                 _ => {}
             }
-        } else if rules::original(inv, row.id).is_some_and(|id| facts.worn.contains(&id)) {
-            label.push_str(" (porté)");
+        } else if let Some(worn) = facts.worn_label(inv, row.id) {
+            label.push_str(&format!(" ({worn})"));
         }
         let label_width = ui.fonts_mut(|fonts| fonts.layout_no_wrap(label, egui::FontId::proportional(13.0), p.ink).size().x);
         let width = row.depth.min(24) as f32 * ui.spacing().indent + label_width + 40.0;
@@ -1198,6 +1202,49 @@ fn headless_output(mut output: egui::FullOutput) -> egui::FullOutput {
 mod tests {
     use super::*;
 
+    #[test]
+    fn worn_labels_follow_actual_points_and_inventory_links() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.agent_id = crate::demo::DEMO_AGENT;
+        crate::world::inventory::demo::seed(&mut world.inventory, world.agent_id);
+        world.objects.upsert(1, crate::demo::action_avatar(false));
+        let attach = |item: u128, point| {
+            let mut object = crate::demo::hud::object(point, false);
+            object.full_id = Uuid::from_u128(item);
+            object.name_values = format!("AttachItemID STRING RW SV {}", object.full_id);
+            object
+        };
+        let object = Uuid::from_u128(8100);
+        let link = Uuid::from_u128(8113);
+        let hud = Uuid::from_u128(8110);
+        let unknown = Uuid::from_u128(8109);
+        world.objects.upsert(1, attach(8100, 6));
+        world.objects.upsert(1, attach(8110, 32));
+        world.objects.upsert(1, attach(8109, 250));
+        let facts = Facts::from_world(&world, false);
+        assert_eq!(facts.worn_label(&world.inventory, object), Some("Porté sur Main droite"));
+        assert_eq!(facts.worn_label(&world.inventory, link), Some("Porté sur Main droite"));
+        assert_eq!(facts.worn_label(&world.inventory, hud), Some("Porté sur HUD : En haut à droite"));
+        assert_eq!(
+            facts.worn_label(&world.inventory, unknown),
+            Some("Porté sur point d’attachement 250")
+        );
+        assert_eq!(facts.worn_label(&world.inventory, Uuid::from_u128(714)), Some("Porté"));
+        assert_eq!(
+            facts.worn_label(&world.inventory, Uuid::from_u128(717)),
+            None,
+            "COF alone does not attach an object"
+        );
+        let idx = world.objects.index_of_uuid(&object).expect("attached object");
+        world.objects.get_mut(idx).expect("attached object").state = 5_u8.rotate_left(4);
+        let facts = Facts::from_world(&world, false);
+        assert_eq!(facts.worn_label(&world.inventory, link), Some("Porté sur Main gauche"));
+        world.objects.remove_idx(idx);
+        let facts = Facts::from_world(&world, false);
+        assert_eq!(facts.worn_label(&world.inventory, object), None);
+        assert_eq!(facts.worn_label(&world.inventory, link), None);
+    }
+
     fn view_inventory(large: bool) -> Inventory {
         let mut inv = Inventory {
             root: Uuid::from_u128(1),
@@ -1241,6 +1288,7 @@ mod tests {
             let facts = Facts {
                 agent,
                 worn: inv.items.keys().copied().collect(),
+                worn_labels: Default::default(),
                 points: vec![],
                 appearance_busy: false,
                 names: Default::default(),
@@ -1342,6 +1390,7 @@ mod tests {
         let facts = Facts {
             agent,
             worn: HashSet::new(),
+            worn_labels: Default::default(),
             points: vec![],
             appearance_busy: false,
             names: Default::default(),
@@ -1403,6 +1452,7 @@ mod tests {
         let facts = Facts {
             agent,
             worn: HashSet::new(),
+            worn_labels: Default::default(),
             points: vec![],
             appearance_busy: false,
             names: Default::default(),
@@ -1462,6 +1512,7 @@ mod tests {
         let facts = Facts {
             agent,
             worn: inv.items.keys().copied().collect(),
+            worn_labels: Default::default(),
             points: vec![],
             appearance_busy: false,
             names: Default::default(),
@@ -1558,6 +1609,7 @@ mod tests {
         let facts = Facts {
             agent,
             worn: HashSet::new(),
+            worn_labels: Default::default(),
             points: vec![],
             appearance_busy: false,
             names: Default::default(),
@@ -1675,6 +1727,7 @@ mod tests {
                     &Facts {
                         agent: Uuid::nil(),
                         worn: HashSet::new(),
+                        worn_labels: Default::default(),
                         points: Vec::new(),
                         appearance_busy: false,
                         names: Default::default(),
@@ -1778,6 +1831,7 @@ mod tests {
                     &Facts {
                         agent: Uuid::nil(),
                         worn: HashSet::new(),
+                        worn_labels: Default::default(),
                         points: Vec::new(),
                         appearance_busy: false,
                         names: Default::default(),
@@ -1884,6 +1938,7 @@ mod tests {
                     &Facts {
                         agent: Uuid::nil(),
                         worn: HashSet::new(),
+                        worn_labels: Default::default(),
                         points: Vec::new(),
                         appearance_busy: false,
                         names: Default::default(),
@@ -1952,6 +2007,7 @@ mod tests {
                         &Facts {
                             agent: Uuid::nil(),
                             worn: HashSet::new(),
+                            worn_labels: Default::default(),
                             points: Vec::new(),
                             appearance_busy: false,
                             names: Default::default(),

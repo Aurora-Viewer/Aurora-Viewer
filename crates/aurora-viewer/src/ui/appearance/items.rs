@@ -9,7 +9,7 @@ use crate::{
 };
 use aurora_net::inventory::InvItem;
 use egui::{RichText, Vec2};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 /// LLPanelWearableOutfitItem::updateItem: clothing follows the confirmed COF;
@@ -25,6 +25,23 @@ pub(super) fn worn_items(world: &World) -> HashSet<Uuid> {
         );
     }
     worn
+}
+
+/// LLObjectBridge::getLabelSuffix (llinventorybridge.cpp, LGPL 2.1): use
+/// the simulator's current attachment point, never the item's saved flags.
+pub(crate) fn worn_labels(world: &World) -> HashMap<Uuid, String> {
+    let mut labels: HashMap<_, _> = worn_items(world).into_iter().map(|id| (id, "Porté".into())).collect();
+    for (id, point) in world.worn_attachment_points() {
+        let name = world
+            .avatar_lib
+            .attach_names
+            .get(&point)
+            .map(|name| point_name(name).to_owned())
+            .unwrap_or_else(|| format!("point d’attachement {point}"));
+        let hud = world.avatar_lib.attach_points.get(&point).is_some_and(|ap| ap.hud);
+        labels.insert(id, format!("Porté sur {}{name}", if hud { "HUD : " } else { "" }));
+    }
+    labels
 }
 
 pub(super) fn context_menu(

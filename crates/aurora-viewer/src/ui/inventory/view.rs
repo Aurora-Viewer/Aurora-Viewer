@@ -685,6 +685,7 @@ mod tests {
         let facts = Facts {
             agent: id(99),
             worn: HashSet::new(),
+            worn_labels: Default::default(),
             points: vec![],
             appearance_busy: false,
             names: HashMap::new(),
