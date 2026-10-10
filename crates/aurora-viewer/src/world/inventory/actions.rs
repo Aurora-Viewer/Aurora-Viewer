@@ -51,6 +51,17 @@ pub fn mutable(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>) -> bool {
 pub fn movable(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>) -> bool {
     mutable(inv, id, protected) && inv.folders.get(&id).is_none_or(|f| matches!(f.info.type_default, -1 | 47))
 }
+pub fn renameable(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>) -> bool {
+    mutable(inv, id, protected)
+        && inv.folders.get(&id).map_or_else(
+            || {
+                inv.items
+                    .get(&id)
+                    .is_some_and(|it| it.owner_mask & MODIFY != 0 && !matches!(it.asset_type, 2 | 24 | 25))
+            },
+            |f| matches!(f.info.type_default, -1 | 47),
+        )
+}
 pub fn destination(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>) -> bool {
     inv.folders.contains_key(&id) && mutable(inv, id, protected) && !in_type(inv, id, 14) && !in_type(inv, id, 48) && !in_type(inv, id, 53)
 }

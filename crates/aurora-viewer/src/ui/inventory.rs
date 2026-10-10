@@ -96,8 +96,6 @@ impl Facts {
 }
 
 pub enum EditDialog {
-    Rename(Uuid, String),
-    Folder(Uuid, String),
     Properties(Uuid),
     Discard(Uuid),
     Share(Vec<Uuid>, Uuid),
@@ -105,6 +103,12 @@ pub enum EditDialog {
     Empty(Uuid),
     Ungroup(Uuid),
     ReplaceLinks(Uuid, Option<Uuid>),
+}
+
+struct InlineRename {
+    id: Uuid,
+    name: String,
+    focus: bool,
 }
 
 pub struct PropertyEdit {
@@ -151,6 +155,7 @@ pub struct InventoryUi {
     pub tab: usize,
     pub expand_all: Option<bool>,
     pub selected: Option<Uuid>,
+    rename: Option<InlineRename>,
     reveal: Option<Uuid>,
     reveal_path: HashSet<Uuid>,
     roots_seen: HashSet<Uuid>,
@@ -197,6 +202,19 @@ pub struct AnimationStats {
 }
 
 impl InventoryUi {
+    /// LLFolderView::startRenamingSelectedItem: edit and select the name in place.
+    pub fn begin_rename(&mut self, inv: &Inventory, id: Uuid) {
+        self.selected = Some(id);
+        self.selection.clear();
+        self.selection.insert(id);
+        self.reveal = Some(id);
+        self.rename = Some(InlineRename {
+            id,
+            name: rules::name(inv, id),
+            focus: true,
+        });
+        self.message.clear();
+    }
     /// show_item_original: clear filters, expand ancestors, select and scroll to the original.
     pub fn show_original(&mut self, inv: &Inventory, id: Uuid) {
         self.search.clear();
@@ -324,6 +342,9 @@ fn item_row(
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         icon(ui, icons, item_icon(it.asset_type, it.inv_type), p);
+        if rename_row(ui, p, inv, *id, st, prefs, actions) {
+            return;
+        }
         let worn = rules::original(inv, *id).is_some_and(|id| facts.worn.contains(&id));
         let text = if worn { format!("{} (porté)", it.name) } else { it.name.clone() };
         let r = ui
@@ -438,6 +459,9 @@ fn folder_tree(
             _ => name.clone(),
         };
         state.visible.push(id);
+        if rename_row(ui, p, inv, id, state, prefs, actions) {
+            return;
+        }
         let r = ui.add_sized(
             [ui.available_width(), 20.0],
             egui::Button::selectable(state.selection.contains(&id), "").left_text(RichText::new(label).size(13.0).color(p.ink)),
@@ -482,6 +506,102 @@ fn tree_spacing(ui: &mut egui::Ui) {
     ui.spacing_mut().item_spacing.y = 1.0;
     ui.spacing_mut().button_padding = egui::vec2(2.0, 1.0);
     ui.spacing_mut().interact_size.y = 20.0;
+}
+
+fn rename_row(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    inv: &Inventory,
+    id: Uuid,
+    st: &mut InventoryUi,
+    prefs: &InventoryPreferences,
+    actions: &mut Vec<InvAction>,
+) -> bool {
+    if st.rename.is_none()
+        && st.selected == Some(id)
+        && st.selection.len() == 1
+        && st.pending.is_none()
+        && !ui.ctx().text_edit_focused()
+        && ui.input(|i| i.key_pressed(egui::Key::F2))
+        && rules::renameable(inv, id, &prefs.protected)
+    {
+        st.begin_rename(inv, id);
+    }
+    let Some(mut edit) = st.rename.take() else {
+        return false;
+    };
+    if edit.id != id {
+        st.rename = Some(edit);
+        return false;
+    }
+    if !rules::renameable(inv, id, &prefs.protected) {
+        return false;
+    }
+    let r = ui.add_sized(
+        [ui.available_width(), 20.0],
+        egui::TextEdit::singleline(&mut edit.name)
+            .id(ui.make_persistent_id(("inventory_rename", id)))
+            .font(egui::FontId::proportional(13.0))
+            .text_color(p.ink)
+            .char_limit(63),
+    );
+    if st.reveal == Some(id) {
+        r.scroll_to_me(Some(egui::Align::Center));
+        st.reveal = None;
+        st.reveal_path.clear();
+    }
+    if edit.focus {
+        r.request_focus();
+        if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), r.id) {
+            state.cursor.set_char_range(Some(egui::text::CCursorRange::two(
+                egui::text::CCursor::new(0),
+                egui::text::CCursor::new(edit.name.chars().count()),
+            )));
+            state.store(ui.ctx(), r.id);
+        }
+        edit.focus = false;
+    } else if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+        ui.memory_mut(|m| m.surrender_focus(r.id));
+        return true;
+    } else if !r.has_focus() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+        st.rename = Some(edit);
+        finish_rename(inv, st, prefs, actions);
+        return true;
+    }
+    st.rename = Some(edit);
+    true
+}
+
+fn finish_rename(inv: &Inventory, st: &mut InventoryUi, prefs: &InventoryPreferences, actions: &mut Vec<InvAction>) {
+    let Some(mut edit) = st.rename.take() else {
+        return;
+    };
+    if !rules::renameable(inv, edit.id, &prefs.protected) {
+        return;
+    }
+    match rules::clean_name(&edit.name) {
+        Ok(name) if name == rules::name(inv, edit.id) => return,
+        Ok(name) if st.pending.is_none() => match rules::patch(inv, edit.id, aurora_llsd::llsd_map! { "name" => name }) {
+            Ok(change) => {
+                actions.push(InvAction::Edit(change));
+                st.reveal = Some(edit.id);
+                return;
+            }
+            Err(reason) => st.message = reason,
+        },
+        Ok(_) => st.message = "Attendez la modification en cours.".into(),
+        Err(reason) => st.message = reason,
+    }
+    edit.focus = true;
+    st.rename = Some(edit);
+}
+
+fn finish_hidden_rename(inv: &Inventory, st: &mut InventoryUi, prefs: &InventoryPreferences, actions: &mut Vec<InvAction>) {
+    // Closing the window, filtering or collapsing a parent also ends editing.
+    if st.rename.as_ref().is_some_and(|edit| !st.visible.contains(&edit.id)) {
+        finish_rename(inv, st, prefs, actions);
+        st.rename = None;
+    }
 }
 
 pub fn show(
@@ -652,6 +772,7 @@ pub fn show(
             ui.label(RichText::new(format!("{} objets", inv.item_count())).size(12.0).color(p.muted));
         });
     });
+    finish_hidden_rename(inv, st, prefs, &mut actions);
     dialogs::show(ctx, p, icons, inv, st, prefs, &facts, images, &mut actions);
     dialogs::preview(ctx, p, inv, st, images, prefs, &mut actions);
     st.thumbnail.show(
@@ -715,6 +836,7 @@ pub fn show(
                 ui.label(RichText::new(&w.state.message).color(p.warn));
             }
         });
+        finish_hidden_rename(&world.inventory, &mut w.state, prefs, &mut actions);
         dialogs::show(ctx, p, icons, &world.inventory, &mut w.state, prefs, &facts, images, &mut actions);
         dialogs::preview(ctx, p, &world.inventory, &mut w.state, images, prefs, &mut actions);
         w.state.thumbnail.show(
@@ -768,6 +890,111 @@ pub fn show(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn rename_frame(ctx: &egui::Context, inv: &Inventory, state: &mut InventoryUi, events: Vec<egui::Event>) -> Vec<InvAction> {
+        let mut actions = Vec::new();
+        let _ = ctx.run_ui(
+            egui::RawInput {
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                item_row(
+                    ui,
+                    &crate::theme::Theme::default().palette(),
+                    &Icons::default(),
+                    inv,
+                    &Uuid::from_u128(8100),
+                    state,
+                    &mut InventoryPreferences::default(),
+                    &Facts {
+                        worn: HashSet::new(),
+                        points: Vec::new(),
+                        appearance_busy: false,
+                        names: Default::default(),
+                    },
+                    &mut actions,
+                );
+                ui.add(egui::TextEdit::singleline(&mut String::new()).id(egui::Id::new("other_field")));
+            },
+        );
+        actions
+    }
+
+    fn key(key: egui::Key) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    #[test]
+    fn inline_rename_submits_on_enter_and_leaves_the_item_unchanged_until_confirmation() {
+        let ctx = egui::Context::default();
+        let mut inv = Inventory::default();
+        crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+        let id = Uuid::from_u128(8100);
+        let old = inv.items[&id].name.clone();
+        let mut st = InventoryUi::default();
+        st.begin_rename(&inv, id);
+        rename_frame(&ctx, &inv, &mut st, Vec::new());
+        rename_frame(&ctx, &inv, &mut st, vec![egui::Event::Text("Objet renommé".into())]);
+        let actions = rename_frame(&ctx, &inv, &mut st, vec![key(egui::Key::Enter)]);
+        assert!(st.rename.is_none());
+        assert!(st.dialog.is_none());
+        assert_eq!(inv.items[&id].name, old);
+        assert!(matches!(&actions[..], [InvAction::Edit(change)] if matches!(&change.operations[..],
+            [aurora_net::inventory::operations::Operation::Patch { id: target, body, .. }] if *target == id && body["name"].as_str() == "Objet renommé")));
+    }
+
+    #[test]
+    fn inline_rename_cancels_on_escape_and_keeps_the_default_on_enter_or_focus_loss() {
+        for finish in [egui::Key::Escape, egui::Key::Enter, egui::Key::Tab] {
+            let ctx = egui::Context::default();
+            let mut inv = Inventory::default();
+            crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+            let id = Uuid::from_u128(8100);
+            let mut st = InventoryUi::default();
+            st.begin_rename(&inv, id);
+            rename_frame(&ctx, &inv, &mut st, Vec::new());
+            if finish == egui::Key::Escape {
+                rename_frame(&ctx, &inv, &mut st, vec![egui::Event::Text("Annulé".into())]);
+            }
+            let mut actions = rename_frame(&ctx, &inv, &mut st, vec![key(finish)]);
+            actions.extend(rename_frame(&ctx, &inv, &mut st, Vec::new()));
+            assert!(actions.is_empty(), "{finish:?}");
+            assert!(st.rename.is_none(), "{finish:?}");
+            assert!(st.dialog.is_none());
+        }
+    }
+
+    #[test]
+    fn inline_rename_saves_changes_when_another_field_takes_focus() {
+        let ctx = egui::Context::default();
+        let mut inv = Inventory::default();
+        crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+        let mut st = InventoryUi::default();
+        st.begin_rename(&inv, Uuid::from_u128(8100));
+        rename_frame(&ctx, &inv, &mut st, Vec::new());
+        rename_frame(&ctx, &inv, &mut st, vec![egui::Event::Text("Nouveau nom".into())]);
+        ctx.memory_mut(|m| m.request_focus(egui::Id::new("other_field")));
+        let actions = rename_frame(&ctx, &inv, &mut st, Vec::new());
+        assert!(st.rename.is_none());
+        assert!(matches!(&actions[..], [InvAction::Edit(change)] if matches!(&change.operations[..],
+            [aurora_net::inventory::operations::Operation::Patch { body, .. }] if body["name"].as_str() == "Nouveau nom")));
+        st.begin_rename(&inv, Uuid::from_u128(8100));
+        rename_frame(&ctx, &inv, &mut st, Vec::new());
+        rename_frame(&ctx, &inv, &mut st, vec![egui::Event::Text("Nom avant fermeture".into())]);
+        st.visible.clear();
+        let mut actions = Vec::new();
+        finish_hidden_rename(&inv, &mut st, &InventoryPreferences::default(), &mut actions);
+        assert!(st.rename.is_none());
+        assert!(matches!(&actions[..], [InvAction::Edit(change)] if matches!(&change.operations[..],
+            [aurora_net::inventory::operations::Operation::Patch { body, .. }] if body["name"].as_str() == "Nom avant fermeture")));
+    }
 
     fn item_frame(ctx: &egui::Context, inv: &Inventory, state: &mut InventoryUi, events: Vec<egui::Event>) -> egui::FullOutput {
         ctx.run_ui(
@@ -918,6 +1145,31 @@ mod tests {
                 .any(|s| matches!(&s.shape, egui::epaint::Shape::Rect(r) if r.fill == p.violet)),
             "selection must be visible"
         );
+    }
+
+    #[test]
+    fn f2_starts_inline_rename_after_selecting_a_row() {
+        let ctx = egui::Context::default();
+        let mut inv = Inventory::default();
+        crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+        let mut st = InventoryUi::default();
+        let pos = egui::pos2(200.0, 18.0);
+        for n in 0..8 {
+            let mut events = vec![egui::Event::PointerMoved(pos)];
+            if matches!(n, 4 | 5) {
+                events.push(egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: n == 4,
+                    modifiers: egui::Modifiers::NONE,
+                });
+            }
+            item_frame(&ctx, &inv, &mut st, events);
+        }
+        assert_eq!(st.selected, Some(Uuid::from_u128(8100)));
+        item_frame(&ctx, &inv, &mut st, vec![key(egui::Key::F2)]);
+        assert_eq!(st.rename.as_ref().map(|e| e.id), st.selected);
+        assert!(st.dialog.is_none());
     }
 
     #[test]

@@ -872,14 +872,9 @@ impl App {
     fn on_app_event(&mut self, ev: NetEvent) {
         if let NetEvent::InventoryCreated(item) = ev {
             let id = item.id;
-            let document = matches!(item.asset_type, 7 | 10);
             self.world.inventory.add_items(vec![item]);
             self.inventory_ui.show_original(&self.world.inventory, id);
-            if document && !self.inventory_ui.preview_dirty && !self.inventory_ui.save_pending {
-                self.inventory_ui.preview = Some(id);
-                self.inventory_ui.preview_text = None;
-                self.apply_inventory_action(ui::inventory::InvAction::Preview(id));
-            }
+            self.inventory_ui.begin_rename(&self.world.inventory, id);
             return;
         }
         if let NetEvent::InventoryMerchant(result) = ev {
@@ -965,7 +960,7 @@ impl App {
                                 self.world.agent_id,
                                 &self.world.worn_attachment_items(),
                             );
-                            if let Some(attachment) = self.appearance_ui.attachment.take() {
+                            for attachment in self.appearance_ui.attachments.drain(..) {
                                 crate::world::appearance::apply_attachment_override(&mut commands, attachment);
                             }
                             for cmd in commands {
@@ -974,7 +969,7 @@ impl App {
                         }
                     }
                     Err(reason) => {
-                        self.appearance_ui.attachment = None;
+                        self.appearance_ui.attachments.clear();
                         self.inventory_ui.message.clone_from(&reason);
                         self.appearance_ui.message = reason;
                         self.appearance_ui.refresh(&mut self.world.inventory);
@@ -3579,6 +3574,19 @@ impl App {
         // ---- UI
         let t_ui = Instant::now();
         let mut raw = gfx.egui_state.take_egui_input(&gfx.window);
+        // Inline-edit captures simulate logical focus without activating the
+        // native window or taking the user's keyboard (with_active(false)).
+        if self.demo
+            && self.capture.is_some()
+            && std::env::var("AURORA_DEMO_INVENTORY")
+                .is_ok_and(|v| matches!(v.as_str(), "rename" | "new-script" | "new-note" | "new-folder"))
+        {
+            raw.focused = true;
+            raw.events.retain(|e| !matches!(e, egui::Event::WindowFocused(false)));
+            if let Some(viewport) = raw.viewports.get_mut(&raw.viewport_id) {
+                viewport.focused = Some(true);
+            }
+        }
         // AURORA_DEMO_POINTER="x,y[,r][;x,y…]": the pointer at these window
         // pixels from frame 300, one point every 60 frames (hover states,
         // sub-menus); ",r" right-clicks the interface there
@@ -5537,7 +5545,38 @@ impl ApplicationHandler for App {
                 self.world.notifications = Default::default();
                 if let Some(id) = crate::world::inventory::demo::target(&view) {
                     self.inventory_ui.show_original(&self.world.inventory, id);
-                    if matches!(view.as_str(), "properties" | "animation-properties") {
+                    if view == "new-folder" {
+                        if let Ok(change) = crate::world::inventory::actions::create_folder(id, "Nouveau dossier") {
+                            self.apply_inventory_action(ui::inventory::InvAction::Edit(change));
+                        }
+                    } else if matches!(view.as_str(), "new-script" | "new-note") {
+                        self.apply_inventory_action(ui::inventory::InvAction::Create {
+                            parent: id,
+                            kind: if view == "new-script" {
+                                aurora_net::inventory::operations::NewItem::Script
+                            } else {
+                                aurora_net::inventory::operations::NewItem::Note
+                            },
+                            name: if view == "new-script" { "Nouveau script" } else { "Nouvelle note" }.into(),
+                        });
+                    } else if view == "rename" {
+                        self.inventory_ui.begin_rename(&self.world.inventory, id);
+                    } else if matches!(view.as_str(), "multi-add" | "multi-detach" | "delete") {
+                        let items: Vec<_> = [8100, 8109, 8110].into_iter().map(uuid::Uuid::from_u128).collect();
+                        if view == "multi-detach" {
+                            self.apply_appearance_action(crate::world::appearance::Action::WearItems {
+                                items: items.clone(),
+                                replace: false,
+                                point: 35,
+                            });
+                        }
+                        self.inventory_ui.selection.extend(items.iter().copied());
+                        if view == "delete" {
+                            self.inventory_ui.dialog = Some(ui::inventory::EditDialog::Delete(items, false));
+                        } else {
+                            self.inventory_ui.demo_menu = Some(id);
+                        }
+                    } else if matches!(view.as_str(), "properties" | "animation-properties") {
                         self.inventory_ui.dialog = Some(ui::inventory::EditDialog::Properties(id));
                     } else if view == "animation-open" {
                         self.inventory_ui.preview = Some(id);

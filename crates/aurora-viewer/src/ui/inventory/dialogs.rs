@@ -1,4 +1,4 @@
-//! Inventory rename, properties, thumbnail and confirmation floaters.
+//! Inventory properties, thumbnail and confirmation floaters.
 //! Follows LLFloaterProperties / LLFloaterInventory (Firestorm, LGPL 2.1).
 
 use super::*;
@@ -23,8 +23,6 @@ pub(super) fn show(
     let mut open = true;
     let mut done = false;
     let title = match &dialog {
-        EditDialog::Rename(..) => "Renommer",
-        EditDialog::Folder(..) => "Nouveau dossier",
         EditDialog::Properties(..) => "Propriétés de l’objet",
         EditDialog::Delete(_, true) => "Purger la sélection",
         EditDialog::Delete(_, false) => "Supprimer la sélection",
@@ -35,8 +33,19 @@ pub(super) fn show(
         EditDialog::Share(..) => "Partager la sélection",
     };
     let properties = matches!(dialog, EditDialog::Properties(_));
-    let window_id = format!("inventory_{}_{}", if properties { "properties" } else { "dialog" }, st.ui_id);
-    Floater::new(
+    let confirmation = matches!(dialog, EditDialog::Delete(..) | EditDialog::Empty(_));
+    let window_id = format!(
+        "inventory_{}_{}",
+        if properties {
+            "properties"
+        } else if confirmation {
+            "confirmation"
+        } else {
+            "dialog"
+        },
+        st.ui_id
+    );
+    let mut floater = Floater::new(
         &window_id,
         title,
         ctx.content_rect().center()
@@ -50,37 +59,12 @@ pub(super) fn show(
         } else {
             Vec2::new(420.0, 260.0)
         },
-    )
-    .show(ctx, p, &mut open, |ui| {
+    );
+    if confirmation {
+        floater = floater.fixed();
+    }
+    floater.show(ctx, p, &mut open, |ui| {
         match &mut dialog {
-            EditDialog::Rename(id, name) | EditDialog::Folder(id, name) => {
-                ui.label("Nom :");
-                let r = ui.add(egui::TextEdit::singleline(name).char_limit(63).desired_width(ui.available_width()));
-                if !r.has_focus() && ctx.input(|i| !i.pointer.any_pressed()) {
-                    r.request_focus();
-                }
-                let enter = r.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                let valid = rules::clean_name(name).is_ok();
-                ui.add_space(8.0);
-                if ui
-                    .add_enabled(valid && st.pending.is_none(), egui::Button::new("Enregistrer"))
-                    .clicked()
-                    || (enter && valid)
-                {
-                    let plan = if title == "Renommer" {
-                        rules::clean_name(name).and_then(|name| rules::patch(inv, *id, llsd_map! { "name" => name }))
-                    } else {
-                        rules::create_folder(*id, name)
-                    };
-                    match plan {
-                        Ok(change) => {
-                            actions.push(InvAction::Edit(change));
-                            done = true;
-                        }
-                        Err(reason) => st.message = reason,
-                    }
-                }
-            }
             EditDialog::Properties(id) => {
                 done = super::properties::show(ui, p, icons, inv, st, prefs, facts, images, *id, actions);
             }
@@ -193,17 +177,23 @@ pub(super) fn show(
                 }
             }
             EditDialog::Delete(ids, purge) => {
-                ui.label(format!("{} élément(s) sélectionné(s).", ids.len()));
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new(if ids.len() == 1 {
+                        format!("Supprimer « {} » ?", rules::name(inv, ids[0]))
+                    } else {
+                        format!("Supprimer les {} éléments sélectionnés ?", ids.len())
+                    })
+                    .strong()
+                    .color(p.ink),
+                );
+                ui.add_space(4.0);
                 ui.label(if *purge {
                     "Cette suppression est définitive."
                 } else {
                     "Les éléments seront déplacés dans la corbeille."
                 });
-                ui.add_space(8.0);
-                if ui
-                    .add_enabled(st.pending.is_none(), egui::Button::new(if *purge { "Purger" } else { "Supprimer" }))
-                    .clicked()
-                {
+                if confirmation_buttons(ui, p, st.pending.is_none(), if *purge { "Purger" } else { "Supprimer" }, &mut done) {
                     let plan = if *purge {
                         let ids = rules::roots(inv, ids);
                         let refresh = ids.iter().filter_map(|id| rules::parent(inv, *id)).collect();
@@ -244,9 +234,7 @@ pub(super) fn show(
             }
             EditDialog::Empty(id) => {
                 ui.label("Tous les éléments de la corbeille seront supprimés définitivement.");
-                if ui
-                    .add_enabled(st.pending.is_none(), egui::Button::new("Vider la corbeille"))
-                    .clicked()
+                if confirmation_buttons(ui, p, st.pending.is_none(), "Vider la corbeille", &mut done)
                     && let Some(f) = inv.folders.get(id)
                     && f.info.type_default == 14
                     && f.state == FetchState::Fetched
@@ -281,13 +269,31 @@ pub(super) fn show(
         if !st.message.is_empty() {
             ui.label(RichText::new(&st.message).color(p.warn));
         }
-        if flat_button(ui, p, "Fermer / Annuler").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+        if (!confirmation && flat_button(ui, p, "Fermer / Annuler").clicked()) || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
             done = true;
         }
     });
     if open && !done {
         st.dialog = Some(dialog);
     }
+}
+
+fn confirmation_buttons(ui: &mut egui::Ui, p: &Palette, enabled: bool, label: &str, done: &mut bool) -> bool {
+    ui.add_space(16.0);
+    ui.separator();
+    ui.add_space(6.0);
+    let mut confirm = false;
+    ui.horizontal(|ui| {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.add_enabled_ui(enabled, |ui| {
+                confirm = super::super::widgets::flat_button_sized(ui, p, label, Vec2::new(120.0, 28.0)).clicked();
+            });
+            if super::super::widgets::flat_button_sized(ui, p, "Annuler", Vec2::new(96.0, 28.0)).clicked() {
+                *done = true;
+            }
+        });
+    });
+    confirm
 }
 
 pub(super) fn preview(
@@ -510,5 +516,78 @@ fn animation(
                 start: false,
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deletion_confirmation_places_both_buttons_in_one_footer_row() {
+        let ctx = egui::Context::default();
+        let p = crate::theme::Theme::default().palette();
+        let mut inv = Inventory::default();
+        crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+        let mut st = InventoryUi {
+            dialog: Some(EditDialog::Delete(
+                vec![Uuid::from_u128(8100), Uuid::from_u128(8109), Uuid::from_u128(8110)],
+                false,
+            )),
+            ..Default::default()
+        };
+        let mut output = None;
+        for _ in 0..5 {
+            output = Some(ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0))),
+                    ..Default::default()
+                },
+                |_ui| {
+                    show(
+                        &ctx,
+                        &p,
+                        &Icons::default(),
+                        &inv,
+                        &mut st,
+                        &InventoryPreferences::default(),
+                        &Facts {
+                            worn: HashSet::new(),
+                            points: Vec::new(),
+                            appearance_busy: false,
+                            names: Default::default(),
+                        },
+                        &Default::default(),
+                        &mut Vec::new(),
+                    );
+                },
+            ));
+        }
+        let output = output.expect("confirmation frame");
+        let text = |label| {
+            output
+                .shapes
+                .iter()
+                .find_map(|s| match &s.shape {
+                    egui::epaint::Shape::Text(t) if t.galley.text() == label => Some(t.pos),
+                    _ => None,
+                })
+                .expect("confirmation label")
+        };
+        let cancel = text("Annuler");
+        let delete = text("Supprimer");
+        assert!((cancel.y - delete.y).abs() < 1.0);
+        assert!(cancel.x < delete.x);
+        assert!(delete.y > text("Les éléments seront déplacés dans la corbeille.").y);
+        assert!(
+            delete.y - text("Les éléments seront déplacés dans la corbeille.").y < 65.0,
+            "footer must stay close to the message"
+        );
+        assert!(
+            !output
+                .shapes
+                .iter()
+                .any(|s| matches!(&s.shape, egui::epaint::Shape::Text(t) if t.galley.text() == "Fermer / Annuler"))
+        );
     }
 }

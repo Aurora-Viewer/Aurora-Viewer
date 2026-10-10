@@ -62,7 +62,7 @@ fn new_menu(
     actions: &mut Vec<InvAction>,
 ) {
     if menu::item_if(ui, p, "folder", "Nouveau dossier", enabled) {
-        st.dialog = Some(EditDialog::Folder(id, "Nouveau dossier".into()));
+        submit(st, actions, rules::create_folder(id, "Nouveau dossier"));
     }
     for (kind, icon, name) in [
         (NewItem::Script, "code", "Nouveau script"),
@@ -298,16 +298,9 @@ pub(super) fn show(
                     st.dialog = Some(EditDialog::Properties(id));
                 }
             }
-            let rename = ready
-                && single
-                && writable
-                && !linked
-                && folder.map_or_else(
-                    || item.is_some_and(|it| it.owner_mask & rules::MODIFY != 0 && it.asset_type != 2),
-                    |f| matches!(f.info.type_default, -1 | 47),
-                );
+            let rename = ready && single && rules::renameable(inv, id, &prefs.protected);
             if menu::item_if(ui, p, "pencil-simple", "Renommer", rename) {
-                st.dialog = Some(EditDialog::Rename(id, rules::name(inv, id)));
+                st.begin_rename(inv, id);
             }
             if menu::item_if(ui, p, "image", "Image…", ready && single && writable && !linked) {
                 st.thumbnail.open(id);
@@ -536,14 +529,29 @@ pub(super) fn show(
                         actions,
                     );
                 }
-                let wear =
-                    single && !facts.appearance_busy && !worn && target.is_some() && !rules::library(inv, id) && matches!(kind, 5 | 6 | 13);
+                let selected_items: Vec<_> = ids.iter().filter_map(|id| rules::original(inv, *id)).collect();
+                let wear = ready
+                    && !facts.appearance_busy
+                    && selected_items.len() == ids.len()
+                    && selected_items.iter().all(|id| {
+                        !facts.worn.contains(id)
+                            && !rules::library(inv, *id)
+                            && !rules::in_type(inv, *id, 14)
+                            && inv.items.get(id).is_some_and(|it| matches!(it.asset_type, 5 | 6 | 13))
+                    });
+                let objects = selected_items
+                    .iter()
+                    .all(|id| inv.items.get(id).is_some_and(|it| it.asset_type == 6));
+                let add = wear
+                    && selected_items
+                        .iter()
+                        .all(|id| inv.items.get(id).is_some_and(|it| it.asset_type != 13));
                 entry(
                     ui,
                     p,
                     "t-shirt",
                     "Porter",
-                    wear,
+                    wear && single,
                     InvAction::Appearance(Wear::WearItem {
                         item: target.unwrap_or(id),
                         replace: true,
@@ -556,9 +564,9 @@ pub(super) fn show(
                     p,
                     "plus",
                     "Ajouter",
-                    wear && kind != 13,
-                    InvAction::Appearance(Wear::WearItem {
-                        item: target.unwrap_or(id),
+                    add,
+                    InvAction::Appearance(Wear::WearItems {
+                        items: selected_items.clone(),
                         replace: false,
                         point: 0,
                     }),
@@ -570,7 +578,7 @@ pub(super) fn show(
                         p,
                         if hud { "monitor" } else { "person" },
                         if hud { "Attacher au HUD" } else { "Attacher à" },
-                        wear && kind == 6,
+                        wear && objects,
                         |ui| {
                             egui::ScrollArea::vertical().max_height(450.0).show(ui, |ui| {
                                 for (point, is_hud, name) in facts.points.iter().filter(|(_, is_hud, _)| *is_hud == hud) {
@@ -581,8 +589,8 @@ pub(super) fn show(
                                         "person",
                                         &label,
                                         true,
-                                        InvAction::Appearance(Wear::WearItem {
-                                            item: target.unwrap_or(id),
+                                        InvAction::Appearance(Wear::WearItems {
+                                            items: selected_items.clone(),
                                             replace: false,
                                             point: *point,
                                         }),
@@ -593,14 +601,19 @@ pub(super) fn show(
                         },
                     );
                 }
-                if worn {
+                if selected_items.iter().any(|id| facts.worn.contains(id)) {
                     entry(
                         ui,
                         p,
                         "x-circle",
                         if kind == 6 { "Détacher de vous" } else { "Enlever" },
-                        single && kind != 13 && !facts.appearance_busy,
-                        InvAction::Appearance(Wear::Remove(target.unwrap_or(id))),
+                        ready
+                            && !facts.appearance_busy
+                            && selected_items.len() == ids.len()
+                            && selected_items
+                                .iter()
+                                .all(|id| facts.worn.contains(id) && inv.items.get(id).is_some_and(|it| matches!(it.asset_type, 5 | 6))),
+                        InvAction::Appearance(Wear::RemoveItems(selected_items)),
                         actions,
                     );
                 }
@@ -734,6 +747,89 @@ mod tests {
                 output.shapes.iter().any(|s| text_position(&s.shape, label).is_some()),
                 "missing {label}"
             );
+        }
+    }
+
+    #[test]
+    fn add_and_detach_menu_actions_include_every_selected_object() {
+        for detach in [false, true] {
+            let ctx = egui::Context::default();
+            crate::theme::Theme::default().apply(&ctx, 1.0);
+            let p = crate::theme::Theme::default().palette();
+            let mut inv = Inventory::default();
+            crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+            let ids: Vec<_> = [8100, 8109, 8110].into_iter().map(Uuid::from_u128).collect();
+            let mut state = InventoryUi {
+                selection: ids.iter().copied().collect(),
+                ..Default::default()
+            };
+            let facts = Facts {
+                worn: if detach { ids.iter().copied().collect() } else { HashSet::new() },
+                points: Vec::new(),
+                appearance_busy: false,
+                names: Default::default(),
+            };
+            let mut actions = Vec::new();
+            let mut open = true;
+            let mut frame = |events| {
+                ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(1600.0, 900.0))),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        menu::popup_at(
+                            ui.ctx(),
+                            egui::Id::new("batch_menu"),
+                            egui::pos2(500.0, 80.0),
+                            &mut open,
+                            &p,
+                            |ui| {
+                                show(
+                                    ui,
+                                    &p,
+                                    &inv,
+                                    ids[0],
+                                    &mut state,
+                                    &mut InventoryPreferences::default(),
+                                    &facts,
+                                    &mut actions,
+                                );
+                            },
+                        );
+                    },
+                )
+            };
+            for _ in 0..4 {
+                let _ = frame(Vec::new());
+            }
+            let output = frame(Vec::new());
+            let label = if detach { "Détacher de vous" } else { "Ajouter" };
+            let pos = output
+                .shapes
+                .iter()
+                .find_map(|s| text_position(&s.shape, label))
+                .expect("batch action")
+                + egui::vec2(4.0, 4.0);
+            for pressed in [true, false] {
+                let _ = frame(vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ]);
+            }
+            if detach {
+                assert!(matches!(&actions[..], [InvAction::Appearance(Wear::RemoveItems(items))] if *items == ids));
+            } else {
+                assert!(
+                    matches!(&actions[..], [InvAction::Appearance(Wear::WearItems { items, replace: false, point: 0 })] if *items == ids)
+                );
+            }
         }
     }
 }

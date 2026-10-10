@@ -203,6 +203,7 @@ impl App {
                 }
                 if let Some(id) = self.inventory_ui.created_selection.and_then(|id| reply.created.get(&id)) {
                     self.inventory_ui.show_original(&self.world.inventory, *id);
+                    self.inventory_ui.begin_rename(&self.world.inventory, *id);
                 }
                 if !reply.copies.is_empty() {
                     self.send(NetCommand::CopyInventoryItems(reply.copies));
@@ -295,12 +296,12 @@ impl App {
             return;
         }
         self.appearance_ui.saved_new = matches!(&action, crate::world::appearance::Action::Save(Some(_)));
-        let attachment = crate::world::appearance::attachment_for_action(&self.world.inventory, self.world.agent_id, &action);
+        let attachments = crate::world::appearance::attachments_for_action(&self.world.inventory, self.world.agent_id, &action);
         match crate::world::appearance::plan(&self.world.inventory, action, &self.world.worn_attachment_points()) {
             Ok((change, sync)) => {
                 let request = uuid::Uuid::new_v4();
                 self.appearance_ui.pending = Some((request, sync));
-                self.appearance_ui.attachment = attachment;
+                self.appearance_ui.attachments = attachments;
                 self.appearance_ui.message.clear();
                 self.send(NetCommand::UpdateOutfit { request, change });
             }
