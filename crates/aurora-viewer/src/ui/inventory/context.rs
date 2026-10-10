@@ -290,8 +290,18 @@ pub(super) fn show(
                 menu::separator(ui, p);
             } else {
                 let opens = single && target.is_some() && matches!(kind, 0 | 1 | 2 | 3 | 7 | 10 | 20 | 21 | 56 | 57);
-                if menu::item_if(ui, p, "folder-open", "Ouvrir", opens) {
+                let (icon, label) = if kind == 3 {
+                    ("navigation-arrow", "Se téléporter")
+                } else {
+                    ("folder-open", "Ouvrir")
+                };
+                if menu::item_if(ui, p, icon, label, opens) {
                     open(inv, id, st, actions);
+                }
+                if let Some(landmark) = original.filter(|it| it.asset_type == 3)
+                    && menu::item_if(ui, p, "info", "À propos du repère", single && !landmark.asset_id.is_nil())
+                {
+                    actions.push(InvAction::AboutLandmark(landmark.id, landmark.asset_id));
                 }
                 if menu::item_if(ui, p, "info", "Propriétés", single) {
                     st.property_edit = None;
@@ -691,6 +701,28 @@ mod tests {
                 );
             },
         )
+    }
+    #[test]
+    fn landmark_menu_keeps_teleport_and_the_place_profile_from_places() {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let mut inv = Inventory::default();
+        crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+        let mut landmark = inv.items[&Uuid::from_u128(8103)].clone();
+        landmark.id = Uuid::from_u128(8201);
+        landmark.asset_type = 3;
+        landmark.inv_type = 3;
+        inv.add_items(vec![landmark]);
+        for _ in 0..4 {
+            frame(&ctx, &inv, Uuid::from_u128(8201));
+        }
+        let output = frame(&ctx, &inv, Uuid::from_u128(8201));
+        for label in ["Se téléporter", "À propos du repère", "Propriétés", "Renommer", "Supprimer"] {
+            assert!(
+                output.shapes.iter().any(|s| text_position(&s.shape, label).is_some()),
+                "missing {label}"
+            );
+        }
     }
     #[test]
     fn folder_window_menu_targets_the_clicked_folder_including_the_library() {

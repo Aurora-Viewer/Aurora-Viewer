@@ -287,6 +287,9 @@ pub fn folder_contents(folder_id: Uuid, owner: Uuid) -> Option<FolderContents> {
                 group_mask: 0,
                 everyone_mask: 0,
                 next_owner_mask: 0,
+                base_mask: 0x7fffffff,
+                owner_mask: 0x7fffffff,
+                ..Default::default()
             }
         })
         .collect();

@@ -173,6 +173,7 @@ impl App {
                 }
             }
             InvAction::Profile(id) => self.profile_ui.open(&mut self.world, id),
+            InvAction::AboutLandmark(item, asset) => self.show_place_profile(crate::world::place_details::Source::Landmark { item, asset }),
             InvAction::ThumbnailCopied(asset) => {
                 self.inventory_ui.clipboard = vec![asset];
                 self.inventory_ui.cut = false;

@@ -4805,9 +4805,6 @@ impl App {
                 ) {
                     match ia {
                         ui::inventory::InvAction::TeleportLandmark(asset) => a.landmark = Some(asset),
-                        ui::inventory::InvAction::AboutLandmark(item, asset) => {
-                            self.show_place_profile(crate::world::place_details::Source::Landmark { item, asset })
-                        }
                         other => self.apply_inventory_action(other),
                     }
                 }

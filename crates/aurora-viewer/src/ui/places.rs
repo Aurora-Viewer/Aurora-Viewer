@@ -1054,6 +1054,7 @@ mod tests {
             group_mask: 0,
             everyone_mask: 0,
             next_owner_mask: 0,
+            ..Default::default()
         }
     }
 
