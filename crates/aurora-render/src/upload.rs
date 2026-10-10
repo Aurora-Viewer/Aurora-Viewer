@@ -164,6 +164,17 @@ impl StagingPool {
         self.state.lock().unwrap_or_else(|e| e.into_inner())
     }
 
+    /// The main thread never waits for the pool: a job (which runs at a
+    /// lower priority) may hold the lock; what `prepare` or `recycle` would
+    /// have done is done at the next frame.
+    fn try_lock(&self) -> Option<std::sync::MutexGuard<'_, PoolState>> {
+        match self.state.try_lock() {
+            Ok(s) => Some(s),
+            Err(std::sync::TryLockError::Poisoned(e)) => Some(e.into_inner()),
+            Err(std::sync::TryLockError::WouldBlock) => None,
+        }
+    }
+
     /// Take back the chunks whose mapping completed.
     fn receive(&self, s: &mut PoolState) {
         let returned = std::mem::take(&mut *self.returned.lock().unwrap_or_else(|e| e.into_inner()));
@@ -245,7 +256,9 @@ impl StagingPool {
     /// half (a chunk closed every frame with little in it would exhaust
     /// the pool), a few frames at most.
     fn prepare(&self) {
-        let mut s = self.lock();
+        let Some(mut s) = self.try_lock() else {
+            return;
+        };
         let busy = s.closed.iter().any(|c| c.staged.load(Ordering::Acquire) > 0);
         let chunk_bytes = self.chunk_bytes;
         if let Some(o) = s.open.as_mut() {
@@ -268,7 +281,9 @@ impl StagingPool {
     /// Main thread, right after a submit that consumed every recorded copy:
     /// map again the unmapped chunks with no region left.
     fn recycle(&self) {
-        let mut s = self.lock();
+        let Some(mut s) = self.try_lock() else {
+            return;
+        };
         let mut i = 0;
         while i < s.closed.len() {
             let c = &s.closed[i];
