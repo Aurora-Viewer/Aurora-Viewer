@@ -678,8 +678,8 @@ impl TextureStreamer {
             if e.cache_state == 1 || e.decoding || e.fetching {
                 continue;
             }
-            let needed = Self::bytes_needed(e);
-            let have_enough = !e.data.is_empty() && (e.complete || e.data.len() >= needed);
+            // (before looking at the data, which is behind a pointer: most
+            // textures stop here, every frame)
             let better = match e.decoded {
                 None => true,
                 Some(d) => e.want < d,
@@ -687,6 +687,8 @@ impl TextureStreamer {
             if !better {
                 continue;
             }
+            let needed = Self::bytes_needed(e);
+            let have_enough = !e.data.is_empty() && (e.complete || e.data.len() >= needed);
             if have_enough || (e.info.is_some() && e.decoded.is_none() && !e.data.is_empty() && e.failures > 0) {
                 if *decodes >= *max_decodes {
                     continue;
