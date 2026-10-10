@@ -58,12 +58,12 @@ same rules, same defaults — while rethinking the user interface.
 
 <table>
   <tr>
-    <td width="50%" align="center">
-      <img src="docs/screenshots/compare-firestorm.png" alt="Firestorm statistics window in a busy store: 68 fps" width="100%"><br>
+    <td width="50%" align="center" valign="top">
+      <img src="docs/screenshots/compare-firestorm.png" alt="Firestorm statistics window in a busy store: 68 fps"><br>
       <b>Firestorm</b> · 68 fps
     </td>
-    <td width="50%" align="center">
-      <img src="docs/screenshots/compare-aurora.png" alt="Aurora Viewer performance window in the same store: 386 fps" width="100%"><br>
+    <td width="50%" align="center" valign="top">
+      <img src="docs/screenshots/compare-aurora.png" alt="Aurora Viewer performance window in the same store: 386 fps"><br>
       <b>Aurora Viewer</b> · 386 fps
     </td>
   </tr>
