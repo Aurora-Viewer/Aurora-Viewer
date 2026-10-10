@@ -791,7 +791,7 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     ui,
                     p,
                     "Limiter hors focus",
-                    "Quand la fenêtre n'est pas au premier plan, le viewer ralentit pour libérer la machine. Désactivé par défaut",
+                    "Quand la fenêtre n'est pas au premier plan, le viewer ralentit pour libérer la machine. Activé par défaut",
                     |ui| {
                         let mut ch = toggle(ui, p, &mut s.background_fps_cap);
                         ui.add_enabled_ui(s.background_fps_cap, |ui| {

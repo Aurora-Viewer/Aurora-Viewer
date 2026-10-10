@@ -3797,17 +3797,9 @@ impl App {
         full.textures_delta.clear();
         self.last_render = stats;
         self.frame_profile.lap(Lap::Render);
-        // frame limiter: the background cap when the window is not focused,
-        // else the user cap; vsync already paces at the screen rate
-        let s = &self.settings;
-        let cap = if !self.focused && s.background_fps_cap {
-            let fg = if s.fps_cap { s.fps_limit } else { u32::MAX };
-            s.background_fps_limit.min(fg) as f32
-        } else if s.fps_cap {
-            s.fps_limit as f32
-        } else {
-            0.0
-        };
+        // frame limiter; vsync already paces at the screen rate
+        let timed = self.capture.is_some() || self.frame_profile.enabled();
+        let cap = frame_cap(&self.settings, self.focused, self.in_world(), self.monitor_hz, timed);
         let paced_by_vsync = gfx.renderer.vsync() && cap >= self.monitor_hz - 0.5;
         if cap >= 1.0 && !paced_by_vsync {
             let target = Duration::from_secs_f32(1.0 / cap);
@@ -5876,6 +5868,24 @@ impl ApplicationHandler for App {
     }
 }
 
+/// Frames per second the frame limiter holds the loop to (0 = none): the
+/// user cap, the lower background cap while the window is not focused, and
+/// the screen rate outside the world. The login screen draws an empty scene:
+/// left free it runs at thousands of frames per second, which floods the
+/// desktop compositor and makes the whole machine stutter on some setups.
+/// `timed` runs (AURORA_CAPTURE, AURORA_PROFILE) count or measure frames,
+/// often in a window that never had the focus: no background cap there.
+fn frame_cap(s: &Settings, focused: bool, in_world: bool, monitor_hz: f32, timed: bool) -> f32 {
+    let mut cap = if s.fps_cap { s.fps_limit as f32 } else { f32::INFINITY };
+    if !focused && s.background_fps_cap && !timed {
+        cap = cap.min(s.background_fps_limit as f32);
+    }
+    if !in_world {
+        cap = cap.min(monitor_hz);
+    }
+    if cap.is_finite() { cap } else { 0.0 }
+}
+
 /// AURORA_CAPTURE files: one per frame of AURORA_CAPTURE_FRAMES (comma
 /// separated, default 240), in frame order; with several frames each file is
 /// named `<name>-<frame>.<ext>`.
@@ -5901,8 +5911,39 @@ fn capture_files(path: &std::path::Path, frames: &str) -> Vec<(u64, std::path::P
 
 #[cfg(test)]
 mod tests {
-    use super::capture_files;
+    use super::{capture_files, frame_cap};
+    use crate::settings::Settings;
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn frame_cap_rules() {
+        let free = Settings {
+            fps_cap: false,
+            background_fps_cap: false,
+            ..Settings::default()
+        };
+        // in world: free unless the user asks for a cap
+        assert_eq!(frame_cap(&free, true, true, 144.0, false), 0.0);
+        assert_eq!(frame_cap(&free, false, true, 144.0, false), 0.0);
+        // outside the world (login): never above the screen rate
+        assert_eq!(frame_cap(&free, true, false, 144.0, false), 144.0);
+        let capped = Settings {
+            fps_cap: true,
+            fps_limit: 90,
+            background_fps_cap: true,
+            background_fps_limit: 15,
+            ..Settings::default()
+        };
+        assert_eq!(frame_cap(&capped, true, true, 144.0, false), 90.0);
+        assert_eq!(frame_cap(&capped, true, false, 144.0, false), 90.0);
+        assert_eq!(frame_cap(&capped, true, false, 60.0, false), 60.0);
+        // not focused: the lower of the two caps
+        assert_eq!(frame_cap(&capped, false, true, 144.0, false), 15.0);
+        assert_eq!(frame_cap(&capped, false, false, 144.0, false), 15.0);
+        // captures and profiles keep their pace without the focus
+        assert_eq!(frame_cap(&capped, false, true, 144.0, true), 90.0);
+        assert_eq!(frame_cap(&free, false, false, 144.0, true), 144.0);
+    }
 
     #[test]
     fn capture_files_by_frame() {

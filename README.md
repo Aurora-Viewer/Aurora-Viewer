@@ -101,7 +101,7 @@ settings and cache (`…\config\demo`, `…\cache\demo`).
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO=1` | Offline demo mode |
-| `AURORA_CAPTURE=<file.png>` | Save a capture of the frame (`AURORA_CAPTURE_FRAMES`, default 240; ~620 to pass the loading fade). Several frames separated by commas (`2500,2600`) save one file each, `<file>-<frame>.png` |
+| `AURORA_CAPTURE=<file.png>` | Save a capture of the frame (`AURORA_CAPTURE_FRAMES`, default 240; ~620 to pass the loading fade). Several frames separated by commas (`2500,2600`) save one file each, `<file>-<frame>.png`. The background frame cap ("Limiter hors focus") is ignored |
 | `AURORA_CAPTURE_EXIT=1` | Quit after the capture |
 | `AURORA_DEMO_CAM="yaw,pitch,dist"` | Camera heading offset and pitch around the avatar (radians, positive pitch looks down) and distance (meters) |
 | `AURORA_DEMO_PARTICLES=wind\|smoke\|both\|legacy` | Motorcycle wind streaks and smoke script parameters through compressed updates, in front of a dark panel; extended glow format (`legacy`: wind without glow), default soft particle texture offline |
@@ -163,7 +163,7 @@ settings and cache (`…\config\demo`, `…\cache\demo`).
 | `AURORA_OCCLUSION=0\|1` | Override the « Occlusion » setting (Graphismes › Qualité) |
 | `AURORA_NO_OCCLUSION=1`, `AURORA_NOVSYNC=1` | Turn GPU occlusion / vsync off |
 | `AURORA_CPU_CULL=1` | Build every draw list on the CPU (the fallback when the GPU lacks `MULTI_DRAW_INDIRECT_COUNT`) instead of culling them on the GPU, for comparison; `cull=cpu\|gpu` in the `perf summary` line |
-| `AURORA_PROFILE=1` | Profiling in the log: once a second a `perf summary` line, plus a `perf settings` line when the settings change (see [Profiling](#profiling)) |
+| `AURORA_PROFILE=1` | Profiling in the log: once a second a `perf summary` line, plus a `perf settings` line when the settings change (see [Profiling](#profiling)). The background frame cap ("Limiter hors focus") is ignored, so a window without the focus is still measured at full speed |
 | `AURORA_PROFILE_FRAMES=1` | Also one `render profile` and one `gpu profile` line per frame (renderer steps and GPU time by element of every frame) |
 | `AURORA_GPU_VALIDATION=1` | wgpu validation layers |
 | `AURORA_DEBUG_GLOW=1`, `AURORA_GLOW_SKIP=<mask>`, `AURORA_MEDIA_DEBUG=1` | Renderer and media diagnostics |

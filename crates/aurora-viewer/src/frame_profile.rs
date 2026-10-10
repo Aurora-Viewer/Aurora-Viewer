@@ -200,6 +200,10 @@ impl FrameProfile {
         }
     }
 
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+
     /// End a step of the frame now.
     pub fn lap(&mut self, lap: Lap) {
         if self.enabled {
