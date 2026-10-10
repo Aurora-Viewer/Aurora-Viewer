@@ -3723,15 +3723,14 @@ impl App {
             && self.media_cursor.is_none()
             && !ctx.is_pointer_over_egui()
             && !ctx.egui_wants_pointer_input()
-            && let Some(point) = self.scene.interaction_point(
+            // (searched again only when the cursor, the camera or the scene
+            // under the cursor changed: scene/hover.rs)
+            && let Some(idx) = self.scene.hover_object(
                 &self.world,
                 gfx.renderer.cursor_ray(self.cursor_pos.0, self.cursor_pos.1),
                 gfx.renderer.hover_pick(self.cursor_pos.0, self.cursor_pos.1),
-                false,
                 self.settings.draw_distance,
             )
-            && let Some(ray) = gfx.renderer.cursor_ray(self.cursor_pos.0, self.cursor_pos.1)
-            && let Some(idx) = self.scene.interaction_at_ray(&self.world, point, ray, false)
             && let Some(target) = crate::interaction::target(&self.world, idx, &std::collections::HashMap::new())
         {
             if let Some(cmd) = self.interactions.hover_request(target) {

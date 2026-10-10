@@ -51,6 +51,19 @@ pub fn ray_box(origin: Vec3, dir: Vec3, min: Vec3, max: Vec3) -> Option<f32> {
 }
 
 impl Scene {
+    /// The objects a search looks at, in index order: all of them, or the
+    /// candidates the pick index found for the ray (hover.rs). The exact
+    /// tests are the same either way.
+    fn pick_objects<'a>(&'a self, among: Option<&'a [usize]>) -> impl Iterator<Item = (usize, &'a ObjGpu)> + 'a {
+        let all = if among.is_some() { 0..0 } else { 0..self.gpu.len() };
+        among
+            .unwrap_or_default()
+            .iter()
+            .copied()
+            .chain(all)
+            .filter_map(|idx| Some((idx, self.gpu.get(idx)?)))
+    }
+
     pub fn click_bounds(&self, world: &World, idx: usize) -> Option<(Vec3, Vec3)> {
         let o = world.objects.get(idx)?;
         let (pos, rot, _) = Self::object_transform(world, idx, Instant::now(), 0)?;
@@ -100,13 +113,26 @@ impl Scene {
     /// Usually keep the GPU depth pick. Only trace past it when an ignored
     /// object's triangles actually intercept the ray; it stays visible.
     pub fn interaction_point(&self, world: &World, ray: Option<(Vec3, Vec3)>, depth: Option<Vec3>, build: bool, far: f32) -> Option<Vec3> {
+        self.interaction_point_among(world, ray, depth, build, far, None)
+    }
+
+    /// `interaction_point` over the objects of `among` (None: all).
+    pub(super) fn interaction_point_among(
+        &self,
+        world: &World,
+        ray: Option<(Vec3, Vec3)>,
+        depth: Option<Vec3>,
+        build: bool,
+        far: f32,
+        among: Option<&[usize]>,
+    ) -> Option<Vec3> {
         if build {
             return depth;
         }
         let ray = ray?;
         let now = Instant::now();
         let limit = depth.map_or(far, |p| (p - ray.0).dot(ray.1) + 0.1);
-        let ignored = self.gpu.iter().enumerate().any(|(idx, g)| {
+        let ignored = self.pick_objects(among).any(|(idx, g)| {
             !g.faces.is_empty()
                 && !g.hud
                 && world
@@ -117,11 +143,11 @@ impl Scene {
                 && self.face_hit(world, idx, ray, now, true).is_some_and(|h| h.t <= limit)
         });
         if !ignored {
-            return self.transparent_action_point(world, ray, depth, false, far);
+            return self.transparent_action_point(world, ray, depth, false, far, among);
         }
         let mut nearest = far;
         let mut found = false;
-        for (idx, g) in self.gpu.iter().enumerate() {
+        for (idx, g) in self.pick_objects(among) {
             let Some(o) = world.objects.get(idx) else { continue };
             if g.faces.is_empty() || g.hud || o.click_action == crate::interaction::code::IGNORE {
                 continue;
@@ -183,11 +209,12 @@ impl Scene {
         depth: Option<Vec3>,
         include_hidden: bool,
         far: f32,
+        among: Option<&[usize]>,
     ) -> Option<Vec3> {
         let mut nearest = depth.map_or(far, |p| (p - ray.0).dot(ray.1));
         let mut found = false;
         let props = HashMap::new();
-        for (idx, g) in self.gpu.iter().enumerate() {
+        for (idx, g) in self.pick_objects(among) {
             let Some(o) = world.objects.get(idx) else { continue };
             if g.hud || g.is_avatar || o.click_action == crate::interaction::code::IGNORE || !ray_may_hit(g, ray) {
                 continue;
@@ -223,7 +250,7 @@ impl Scene {
         if build {
             return point;
         }
-        self.transparent_action_point(world, ray?, point, true, far)
+        self.transparent_action_point(world, ray?, point, true, far, None)
     }
 
     pub fn interaction_at(&self, world: &World, point: Vec3, now: Instant, build: bool) -> Option<usize> {
@@ -234,12 +261,24 @@ impl Scene {
     /// identify the hit surface, not the smallest overlapping prim box. The
     /// depth point bounds the ray so terrain and avatars still occlude objects.
     pub fn interaction_at_ray(&self, world: &World, point: Vec3, ray: (Vec3, Vec3), include_hidden: bool) -> Option<usize> {
+        self.interaction_at_ray_among(world, point, ray, include_hidden, None)
+    }
+
+    /// `interaction_at_ray` over the objects of `among` (None: all).
+    pub(super) fn interaction_at_ray_among(
+        &self,
+        world: &World,
+        point: Vec3,
+        ray: (Vec3, Vec3),
+        include_hidden: bool,
+        among: Option<&[usize]>,
+    ) -> Option<usize> {
         let now = Instant::now();
         const TOLERANCE: f32 = 0.06;
         let ray = (point - ray.1 * TOLERANCE, ray.1);
         let mut nearest = TOLERANCE * 2.0;
         let mut picked = None;
-        for (idx, g) in self.gpu.iter().enumerate() {
+        for (idx, g) in self.pick_objects(among) {
             let Some(o) = world.objects.get(idx) else { continue };
             if g.faces.is_empty()
                 || g.hud

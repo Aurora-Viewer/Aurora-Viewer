@@ -6,6 +6,7 @@ pub mod animesh;
 pub mod avatar;
 pub mod banlines;
 pub mod complexity;
+pub mod hover;
 pub mod impostors;
 pub mod jobs;
 pub mod legacy_mat;
@@ -406,6 +407,10 @@ pub struct Scene {
     /// Geometries freed this frame: their picking triangles are released
     /// off the main thread.
     geom_trash: jobs::Trash<Arc<GpuGeom>>,
+    /// Bounds of the objects for the hover search, and its kept answer
+    /// (hover.rs).
+    pick: hover::PickIndex,
+    pub hover: hover::HoverCache,
     /// Slots of removed objects whose GPU state is still to be released,
     /// oldest first, and whether a slot is among them.
     removals: VecDeque<usize>,
@@ -700,6 +705,8 @@ impl Scene {
             alpha_changes_tmp: Vec::new(),
             sync_budget: std::time::Duration::from_millis(1),
             geom_trash: Default::default(),
+            pick: Default::default(),
+            hover: Default::default(),
             removals: VecDeque::new(),
             removal_pending: Vec::new(),
             system_bounds: Vec::new(),
@@ -1115,6 +1122,7 @@ impl Scene {
         }
         self.removal_pending[i] = false;
         self.sets.forget(i);
+        self.pick.remove(i);
         if let Some(mut g) = self.gpu.get_mut(i).map(std::mem::take) {
             self.release_obj(renderer, i, &mut g);
         }
@@ -1133,6 +1141,7 @@ impl Scene {
         self.removals.clear();
         self.removal_pending.clear();
         self.slot_users.clear();
+        self.pick.reset();
         renderer.cull.objects.reset();
         for (_, r) in self.regions.drain() {
             for (_, c) in r.chunks {
@@ -1428,6 +1437,8 @@ impl Scene {
             self.release_slot(renderer, idx);
             let rigged = self.gpu.get(idx).is_some_and(|g| g.rigged);
             self.sets.touched(&world.objects, agent, idx, rigged);
+            // (its click action or flags may have changed)
+            self.pick.changed(idx);
         }
         touched.clear();
         self.touched_tmp = touched;
@@ -1519,10 +1530,11 @@ impl Scene {
         }
         self.stats.sync_backlog = self.sets.backlog.len();
         // GPU object table: bounds and flags of what was synced (unchanged
-        // entries are not uploaded)
+        // entries are not uploaded); the same bounds for the hover search
         for idx in synced {
             if let Some(g) = self.gpu.get(idx) {
                 renderer.cull.objects.set(idx, g.cull_object(idx));
+                self.pick.set(idx, hover::PickEntry::of(g));
             }
         }
 
@@ -1583,6 +1595,8 @@ impl Scene {
                 }
                 if any {
                     g.special = is_special(&g.faces);
+                    // (a face that became see-through, or stopped being)
+                    self.pick.changed(idx);
                 }
             }
         }
@@ -1592,6 +1606,8 @@ impl Scene {
     /// mode, GPU face entries, `special`; and note the object as a user of
     /// their texture slots.
     fn finish_faces(&mut self, renderer: &mut Renderer, idx: usize, g: &mut ObjGpu) {
+        // (new faces: what the cursor is over may have changed)
+        self.pick.changed(idx);
         let alpha = &self.textures.alpha_by_slot;
         let channel = &self.textures.alpha_channel_by_slot;
         let mut last_slot = None;
