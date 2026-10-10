@@ -484,11 +484,11 @@ pub struct TreeState {
     pub order: Vec<Uuid>,
 }
 impl TreeState {
-    pub fn prepare(&mut self, view: &ViewCache, root: Uuid, tab: usize, show_root: bool) {
+    pub fn prepare(&mut self, view: &ViewCache, root: Uuid, tab: usize, show_root: bool) -> bool {
         let tab = tab.min(4);
         let key = (view.revision, root, tab, show_root);
         if self.key == Some(key) {
-            return;
+            return false;
         }
         self.rows.clear();
         self.order.clear();
@@ -516,6 +516,7 @@ impl TreeState {
             self.order.clear();
         }
         self.key = Some(key);
+        true
     }
 
     pub fn toggle(&mut self, id: Uuid, tab: usize) {

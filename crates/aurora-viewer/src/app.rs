@@ -5808,7 +5808,7 @@ impl ApplicationHandler for App {
                 crate::world::inventory::demo::seed(&mut self.world.inventory, self.world.agent_id);
                 let configured_view = matches!(
                     view.as_str(),
-                    "sort" | "filters" | "preferences" | "recent" | "worn" | "filtered" | "large"
+                    "sort" | "filters" | "preferences" | "recent" | "worn" | "filtered" | "large" | "long" | "long-filtered"
                 );
                 if configured_view {
                     crate::world::inventory::demo::seed_view(&mut self.world.inventory, self.world.agent_id, view == "large");
@@ -5833,6 +5833,15 @@ impl ApplicationHandler for App {
                     }
                     if view == "large" {
                         self.inventory_ui.search = "Élément".into();
+                    }
+                    if matches!(view.as_str(), "long" | "long-filtered") {
+                        crate::world::inventory::demo::seed_long_names(&mut self.world.inventory);
+                        if view == "long-filtered" {
+                            self.inventory_ui.search = "JEANS_SUBSTANCE".into();
+                        } else {
+                            self.inventory_ui.show_original(&self.world.inventory, uuid::Uuid::from_u128(8100));
+                        }
+                        self.inventory_ui.expand_all = Some(true);
                     }
                 }
                 self.panels.inventory = true;

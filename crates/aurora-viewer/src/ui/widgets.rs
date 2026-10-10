@@ -214,9 +214,10 @@ pub fn tabs(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&st
             .map(|(l, _)| ui.fonts_mut(|f| f.layout_no_wrap((*l).to_owned(), font.clone(), Color32::WHITE).size().x) + 18.0)
             .collect();
         let total: f32 = text_w.iter().sum::<f32>() + n;
+        let compact = ((ui.available_width() - (n - 1.0)) / (total - n)).clamp(0.0, 1.0);
         let extra = ((ui.available_width() - total) / n).max(0.0);
         for (i, (label, enabled)) in labels.iter().enumerate() {
-            let w = text_w[i] + extra.min(40.0);
+            let w = text_w[i] * compact + extra.min(40.0);
             let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, 22.0), if *enabled { Sense::click() } else { Sense::hover() });
             let sel = *selected == i;
             let fill = if sel {
@@ -241,13 +242,14 @@ pub fn tabs(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&st
             } else {
                 p.muted
             };
-            ui.painter().text(
-                rect.center(),
-                egui::Align2::CENTER_CENTER,
-                *label,
-                egui::FontId::proportional(12.0),
-                col,
+            let galley = egui::WidgetText::from(*label).into_galley(
+                ui,
+                Some(egui::TextWrapMode::Truncate),
+                (rect.width() - 8.0).max(0.0),
+                font.clone(),
             );
+            ui.painter().galley(rect.center() - galley.size() / 2.0, galley, col);
+            let resp = resp.on_hover_text(*label);
             if resp.clicked() && !sel {
                 *selected = i;
                 changed = true;

@@ -108,6 +108,9 @@ leurs dossiers, y compris dans Récent, Porté, les recherches et les vues filtr
 Réduire / Développer agit sur ces dossiers ; le sélecteur des champs est à droite
 de la saisie. « Afficher aussi les dossiers sans résultat » ajoute les dossiers
 vides à la vue, les dossiers parents des résultats étant toujours présents.
+La liste défile aussi horizontalement quand un nom dépasse la largeur disponible ;
+les noms longs ne bloquent pas la réduction de la fenêtre. Les commandes et onglets
+s'adaptent aux petites largeurs.
 Le chemin et la date restent disponibles en info-bulle. Récent part de la dernière déconnexion
 (24 h au premier lancement). Les filtres restent propres à chaque fenêtre ;
 « Garder par défaut » les mémorise pour les prochaines ouvertures.
@@ -121,7 +124,7 @@ settings and cache (`…\config\demo`, `…\cache\demo`).
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO=1` | Offline demo mode |
-| `AURORA_DEMO_INVENTORY=sort\|filters\|preferences\|recent\|worn\|filtered\|large` | Tri système / date, filtres, préférences, arborescence Récent / Porté, filtre excluant les objets ou recherche de 1 500 éléments. Données synthétiques uniquement ; aucun benchmark de rendu. |
+| `AURORA_DEMO_INVENTORY=sort\|filters\|preferences\|recent\|worn\|filtered\|large\|long\|long-filtered` | Tri système / date, filtres, préférences, arborescence Récent / Porté, filtre excluant les objets ou recherche de 1 500 éléments. `long` et `long-filtered` montrent les noms longs et le défilement horizontal dans l'arbre complet ou filtré. Données synthétiques uniquement ; aucun benchmark de rendu. |
 | `AURORA_CAPTURE=<file.png>` | Save a capture of the frame (`AURORA_CAPTURE_FRAMES`, default 240; ~620 to pass the loading fade). Several frames separated by commas (`2500,2600`) save one file each, `<file>-<frame>.png`. The background frame cap ("Limiter hors focus") is ignored |
 | `AURORA_CAPTURE_EXIT=1` | Quit after the capture |
 | `AURORA_DEMO_CAM="yaw,pitch,dist"` | Camera heading offset and pitch around the avatar (radians, positive pitch looks down) and distance (meters) |

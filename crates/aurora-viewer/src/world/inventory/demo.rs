@@ -231,3 +231,34 @@ pub fn seed_view(inv: &mut Inventory, agent: Uuid, large: bool) {
     inv.add_items(items);
     inv.sort_all();
 }
+
+/// Long labels in nested folders, for narrowing and horizontal scrolling.
+pub fn seed_long_names(inv: &mut Inventory) {
+    for (id, name) in [
+        (
+            8200,
+            "Collection de démonstration — JEANS_SUBSTANCE (matières, textures et accessoires)",
+        ),
+        (8202, "JEANS_SUBSTANCE — Textures et accessoires dans leur dossier d'origine"),
+    ] {
+        if let Some(folder) = inv.folders.get_mut(&Uuid::from_u128(id)) {
+            folder.info.name = name.into();
+        }
+    }
+    for (id, name) in [
+        (
+            8100,
+            "JEANS_SUBSTANCE_CUIR (JEANS) : JEANS_SUBSTANCE_CUIR (Normal) — Version de démonstration",
+        ),
+        (
+            710,
+            "JEANS_SUBSTANCE — Élément porté avec un nom très long dans un dossier imbriqué",
+        ),
+    ] {
+        if let Some(item) = inv.items.get_mut(&Uuid::from_u128(id)) {
+            item.name = name.into();
+        }
+    }
+    inv.generation += 1;
+    inv.sort_all();
+}

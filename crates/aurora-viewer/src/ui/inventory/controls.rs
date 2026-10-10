@@ -44,40 +44,75 @@ pub fn toolbar(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi, prefs: &mut
         st.filters.clone_from(&prefs.filter_defaults);
         st.filters_initialized = true;
     }
-    ui.horizontal(|ui| {
-        if flat_button(ui, p, if st.filters.active() { "Filtres •" } else { "Filtres" }).clicked() {
-            st.filters_open = !st.filters_open;
-        }
-        if flat_button(ui, p, "Préférences").clicked() {
-            st.preferences_open = !st.preferences_open;
-        }
-        if st.links_filter.is_some() {
-            if flat_button(ui, p, "Quitter les liens").clicked() {
-                st.links_filter = None;
-                if let Some(filters) = st.saved_filters.take() {
-                    st.filters = filters;
-                }
-            }
-        } else if (!st.search.is_empty() || st.filters.active()) && flat_button(ui, p, "Effacer").clicked() {
-            st.search.clear();
-            st.filters = Filters::default();
-            st.links_filter = None;
-            st.saved_filters = None;
-        }
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if flat_button(ui, p, "Développer")
-                .on_hover_text("Développer les dossiers affichés")
-                .clicked()
-            {
-                st.expand_all = Some(true);
-            }
-            if flat_button(ui, p, "Réduire")
-                .on_hover_text("Réduire les dossiers affichés")
-                .clicked()
-            {
-                st.expand_all = Some(false);
-            }
+    let filter_label = if st.filters.active() { "Filtres •" } else { "Filtres" };
+    let clear_label = if st.links_filter.is_some() {
+        "Quitter les liens"
+    } else if !st.search.is_empty() || st.filters.active() {
+        "Effacer"
+    } else {
+        ""
+    };
+    let labels = [filter_label, "Préférences", clear_label, "Réduire", "Développer"];
+    let width: f32 = labels
+        .iter()
+        .filter(|label| !label.is_empty())
+        .map(|label| {
+            ui.fonts_mut(|fonts| {
+                fonts
+                    .layout_no_wrap((*label).into(), egui::FontId::proportional(12.0), p.ink)
+                    .size()
+                    .x
+            }) + 24.0
+                + ui.spacing().item_spacing.x
+        })
+        .sum();
+    if ui.available_width() < width {
+        ui.horizontal_wrapped(|ui| filter_actions(ui, p, st));
+        ui.horizontal(|ui| tree_actions(ui, p, st));
+    } else {
+        ui.horizontal(|ui| {
+            filter_actions(ui, p, st);
+            tree_actions(ui, p, st);
         });
+    }
+}
+
+fn filter_actions(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi) {
+    if flat_button(ui, p, if st.filters.active() { "Filtres •" } else { "Filtres" }).clicked() {
+        st.filters_open = !st.filters_open;
+    }
+    if flat_button(ui, p, "Préférences").clicked() {
+        st.preferences_open = !st.preferences_open;
+    }
+    if st.links_filter.is_some() {
+        if flat_button(ui, p, "Quitter les liens").clicked() {
+            st.links_filter = None;
+            if let Some(filters) = st.saved_filters.take() {
+                st.filters = filters;
+            }
+        }
+    } else if (!st.search.is_empty() || st.filters.active()) && flat_button(ui, p, "Effacer").clicked() {
+        st.search.clear();
+        st.filters = Filters::default();
+        st.links_filter = None;
+        st.saved_filters = None;
+    }
+}
+
+fn tree_actions(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi) {
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        if flat_button(ui, p, "Développer")
+            .on_hover_text("Développer les dossiers affichés")
+            .clicked()
+        {
+            st.expand_all = Some(true);
+        }
+        if flat_button(ui, p, "Réduire")
+            .on_hover_text("Réduire les dossiers affichés")
+            .clicked()
+        {
+            st.expand_all = Some(false);
+        }
     });
 }
 

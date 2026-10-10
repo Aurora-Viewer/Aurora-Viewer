@@ -154,6 +154,7 @@ pub struct InventoryUi {
     saved_filters: Option<view::Filters>,
     view: view::ViewCache,
     result_tree: view::TreeState,
+    result_width: f32,
     creator_generation: Option<u64>,
     creators: HashSet<Uuid>,
     fetch_poll: Option<std::time::Instant>,
@@ -383,6 +384,7 @@ fn item_row(
                     [ui.available_width(), 20.0],
                     egui::Button::selectable(st.selection.contains(id), "")
                         .left_text(RichText::new(text).size(13.0).color(p.ink))
+                        .wrap_mode(egui::TextWrapMode::Extend)
                         .sense(egui::Sense::click_and_drag()),
                 )
             })
@@ -401,7 +403,7 @@ fn item_row(
             st.select(ui, *id, r.secondary_clicked());
         }
         if st.reveal == Some(it.id) {
-            r.scroll_to_me(Some(egui::Align::Center));
+            scroll_to_row(ui, &r, egui::Align::Center);
             st.reveal = None;
             st.reveal_path.clear();
         }
@@ -500,10 +502,12 @@ fn folder_row(
         }
         let r = ui.add_sized(
             [ui.available_width(), 20.0],
-            egui::Button::selectable(state.selection.contains(&id), "").left_text(RichText::new(label).size(13.0).color(p.ink)),
+            egui::Button::selectable(state.selection.contains(&id), "")
+                .left_text(RichText::new(label).size(13.0).color(p.ink))
+                .wrap_mode(egui::TextWrapMode::Extend),
         );
         if first_open {
-            r.scroll_to_me(Some(egui::Align::Min));
+            scroll_to_row(ui, &r, egui::Align::Min);
         }
         if r.clicked() || r.secondary_clicked() {
             state.select(ui, id, r.secondary_clicked());
@@ -512,7 +516,7 @@ fn folder_row(
             *open = !*open;
         }
         if state.reveal == Some(id) {
-            r.scroll_to_me(Some(egui::Align::Center));
+            scroll_to_row(ui, &r, egui::Align::Center);
             state.reveal = None;
             state.reveal_path.clear();
         }
@@ -622,14 +626,10 @@ fn folder_window_contents(
             search_scroll(ui, p, icons, inv, st, prefs, facts, actions, list_h);
             return;
         }
-        egui::ScrollArea::vertical()
-            .auto_shrink([false, false])
-            .max_height(list_h)
-            .min_scrolled_height(list_h)
-            .show(ui, |ui| {
-                let expand = st.expand_all.take();
-                folder_contents(ui, p, icons, inv, root, 1, expand, st, prefs, facts, actions);
-            });
+        list_scroll(ui, list_h).show(ui, |ui| {
+            let expand = st.expand_all.take();
+            folder_contents(ui, p, icons, inv, root, 1, expand, st, prefs, facts, actions);
+        });
     });
     status(ui, p, inv, st, filtered);
 }
@@ -647,8 +647,34 @@ fn prepare_result_tree(st: &mut InventoryUi, inv: &Inventory, root: Uuid) {
     if let Some(id) = st.reveal {
         st.result_tree.reveal(inv, id, st.tab);
     }
-    st.result_tree
-        .prepare(&st.view, root, st.tab, root == inv.root && inv.folders.contains_key(&root));
+    if st
+        .result_tree
+        .prepare(&st.view, root, st.tab, root == inv.root && inv.folders.contains_key(&root))
+    {
+        st.result_width = 0.0;
+    }
+}
+
+// LLFolderView::arrange/reshape (indra/llui/llfolderview.cpp): long labels
+// enlarge the scrollable document, rather than the surrounding floater.
+fn list_scroll(ui: &mut egui::Ui, height: f32) -> egui::ScrollArea {
+    ui.spacing_mut().scroll = egui::style::ScrollStyle {
+        dormant_background_opacity: 0.2,
+        dormant_handle_opacity: 0.6,
+        ..egui::style::ScrollStyle::solid()
+    };
+    egui::ScrollArea::both()
+        .auto_shrink([false, false])
+        .max_width(ui.available_width())
+        .max_height(height)
+        .min_scrolled_height((height - ui.spacing().scroll.allocated_width()).max(40.0))
+}
+
+fn scroll_to_row(ui: &egui::Ui, row: &egui::Response, align: egui::Align) {
+    // Reveal vertically while keeping folder carets and the start of names in
+    // view. Aligning a whole, potentially very wide label would also pan right.
+    let rect = egui::Rect::from_x_y_ranges(ui.clip_rect().x_range(), row.rect.y_range());
+    ui.scroll_to_rect(rect, Some(align));
 }
 
 fn list_height(ui: &egui::Ui) -> f32 {
@@ -740,13 +766,10 @@ fn search_scroll(
     facts: &Facts,
     actions: &mut Vec<InvAction>,
     height: f32,
-) {
+) -> egui::scroll_area::ScrollAreaOutput<()> {
     tree_spacing(ui);
     let total = st.result_tree.rows.len();
-    let scroll = egui::ScrollArea::vertical()
-        .auto_shrink([false, false])
-        .max_height(height)
-        .min_scrolled_height(height);
+    let scroll = list_scroll(ui, height);
     if total == 0 {
         scroll.show(ui, |ui| {
             ui.label(
@@ -754,11 +777,13 @@ fn search_scroll(
                     .size(12.0)
                     .color(p.muted),
             );
-        });
+        })
     } else {
         scroll.show_rows(ui, 20.0, total, |ui, range| {
+            ui.set_min_width(st.result_width);
             search_rows(ui, p, icons, inv, st, prefs, facts, actions, range);
-        });
+            ui.set_min_width(st.result_width);
+        })
     }
 }
 
@@ -779,6 +804,23 @@ fn search_rows(
     // intersecting the viewport. No arbitrary 500-item result limit.
     let rows = st.result_tree.rows[range].to_vec();
     for row in rows {
+        // Measure only viewport rows. Retain their natural width while scrolling
+        // vertically, so the horizontal range doesn't vanish with a long label.
+        // A rebuilt tree clears it; the viewport width itself is never retained.
+        let mut label = rules::name(inv, row.id);
+        if row.folder {
+            label = folder_name(inv, row.id);
+            match inv.folders.get(&row.id).map(|folder| folder.state) {
+                Some(FetchState::Fetching) => label.push_str("  (chargement…)"),
+                Some(FetchState::Failed) => label.push_str("  (échec)"),
+                _ => {}
+            }
+        } else if rules::original(inv, row.id).is_some_and(|id| facts.worn.contains(&id)) {
+            label.push_str(" (porté)");
+        }
+        let label_width = ui.fonts_mut(|fonts| fonts.layout_no_wrap(label, egui::FontId::proportional(13.0), p.ink).size().x);
+        let width = row.depth.min(24) as f32 * ui.spacing().indent + label_width + 40.0;
+        st.result_width = st.result_width.max(width);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
             ui.add_space(row.depth.min(24) as f32 * ui.spacing().indent);
@@ -833,7 +875,7 @@ fn rename_row(
             .char_limit(63),
     );
     if st.reveal == Some(id) {
-        r.scroll_to_me(Some(egui::Align::Center));
+        scroll_to_row(ui, &r, egui::Align::Center);
         st.reveal = None;
         st.reveal_path.clear();
     }
@@ -948,19 +990,15 @@ fn inventory_contents(
             search_scroll(ui, p, icons, inv, st, prefs, facts, actions, list_h);
             return;
         }
-        egui::ScrollArea::vertical()
-            .auto_shrink([false, false])
-            .max_height(list_h)
-            .min_scrolled_height(list_h)
-            .show(ui, |ui| {
-                let root = inv.root;
-                if root.is_nil() {
-                    ui.label(RichText::new("Inventaire non disponible.").color(p.muted));
-                } else {
-                    let expand = st.expand_all.take();
-                    folder_tree(ui, p, icons, inv, root, 0, expand, st, prefs, facts, actions);
-                }
-            });
+        list_scroll(ui, list_h).show(ui, |ui| {
+            let root = inv.root;
+            if root.is_nil() {
+                ui.label(RichText::new("Inventaire non disponible.").color(p.muted));
+            } else {
+                let expand = st.expand_all.take();
+                folder_tree(ui, p, icons, inv, root, 0, expand, st, prefs, facts, actions);
+            }
+        });
     });
     status(ui, p, inv, st, filtered);
 }
@@ -1160,13 +1198,265 @@ fn headless_output(mut output: egui::FullOutput) -> egui::FullOutput {
 mod tests {
     use super::*;
 
+    fn view_inventory(large: bool) -> Inventory {
+        let mut inv = Inventory {
+            root: Uuid::from_u128(1),
+            ..Default::default()
+        };
+        inv.folders.insert(
+            inv.root,
+            crate::world::inventory::Folder {
+                info: aurora_net::inventory::InvFolder {
+                    id: inv.root,
+                    name: "Mon inventaire".into(),
+                    type_default: 8,
+                    ..Default::default()
+                },
+                children: vec![],
+                items: vec![],
+                state: FetchState::Fetched,
+                library: false,
+            },
+        );
+        let agent = Uuid::from_u128(2);
+        crate::world::inventory::demo::seed(&mut inv, agent);
+        crate::world::inventory::demo::seed_view(&mut inv, agent, large);
+        inv
+    }
+
+    #[test]
+    fn long_names_allow_narrowing_the_inventory_and_folder_windows() {
+        for (folder_window, tab, filtered) in [
+            (false, 0, false),
+            (false, 0, true),
+            (false, 2, false),
+            (false, 3, false),
+            (true, 0, false),
+            (true, 0, true),
+        ] {
+            let ctx = egui::Context::default();
+            let mut inv = view_inventory(false);
+            let agent = Uuid::from_u128(2);
+            crate::world::inventory::demo::seed_long_names(&mut inv);
+            let facts = Facts {
+                agent,
+                worn: inv.items.keys().copied().collect(),
+                points: vec![],
+                appearance_busy: false,
+                names: Default::default(),
+            };
+            let palette = crate::theme::Theme::default().palette();
+            let mut prefs = InventoryPreferences::default();
+            let mut st = InventoryUi {
+                tab,
+                expand_all: Some(true),
+                search: if filtered { "JEANS_SUBSTANCE".into() } else { String::new() },
+                ..Default::default()
+            };
+            let mut frame = 0;
+            let mut run = |events| {
+                frame += 1;
+                st.visible.clear();
+                headless_output(ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 900.0))),
+                        time: Some(frame as f64 / 60.0),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        super::super::widgets::Floater::new(
+                            "narrow_inventory",
+                            "Inventaire",
+                            egui::pos2(100.0, 56.0),
+                            Vec2::new(600.0, 550.0),
+                        )
+                        .silent()
+                        .show(ui.ctx(), &palette, &mut true, |ui| {
+                            if folder_window {
+                                folder_window_contents(
+                                    ui,
+                                    &palette,
+                                    &Icons::default(),
+                                    &mut inv,
+                                    Uuid::from_u128(8000),
+                                    &mut st,
+                                    &mut prefs,
+                                    &facts,
+                                    &mut vec![],
+                                );
+                            } else {
+                                inventory_contents(ui, &palette, &Icons::default(), &mut inv, &mut st, &mut prefs, &facts, &mut vec![]);
+                            }
+                        });
+                    },
+                ));
+                ctx.memory(|memory| memory.area_rect(egui::Id::new("narrow_inventory")).unwrap())
+            };
+            let mut rect = run(vec![]);
+            for _ in 0..8 {
+                rect = run(vec![]);
+            }
+            let original_height = rect.height();
+            let start = rect.right_center();
+            let target = egui::pos2(rect.left() + 234.0, start.y);
+            run(vec![egui::Event::PointerMoved(start)]);
+            run(vec![egui::Event::PointerButton {
+                pos: start,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: Default::default(),
+            }]);
+            run(vec![egui::Event::PointerMoved(target)]);
+            for _ in 0..5 {
+                run(vec![]);
+            }
+            run(vec![egui::Event::PointerButton {
+                pos: target,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: Default::default(),
+            }]);
+            for _ in 0..30 {
+                rect = run(vec![]);
+            }
+            assert!(
+                rect.width() <= 250.0,
+                "folder={folder_window}, tab={tab}, filtered={filtered}: {rect:?}"
+            );
+            assert!(
+                rect.height() <= original_height + 1.0,
+                "narrowing must not make the window grow vertically"
+            );
+        }
+    }
+
+    #[test]
+    fn filtered_horizontal_scroll_reaches_long_names_and_keeps_its_range_offscreen() {
+        let ctx = egui::Context::default();
+        let mut inv = view_inventory(true);
+        let agent = Uuid::from_u128(2);
+        inv.items.get_mut(&Uuid::from_u128(10000)).unwrap().name =
+            "Élément avec un nom très long pour vérifier le défilement horizontal. ".repeat(4);
+        inv.generation += 1;
+        let facts = Facts {
+            agent,
+            worn: HashSet::new(),
+            points: vec![],
+            appearance_busy: false,
+            names: Default::default(),
+        };
+        let mut prefs = InventoryPreferences::default();
+        let mut st = InventoryUi {
+            search: "Élément".into(),
+            ..Default::default()
+        };
+        st.view
+            .search(&inv, inv.root, &st.search, &prefs, &st.filters, 0, None, &facts, agent, view::now());
+        prepare_result_tree(&mut st, &inv, inv.root);
+        let mut run = || {
+            st.visible.clear();
+            let mut scroll = None;
+            headless_output(ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(260.0, 200.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    scroll = Some(search_scroll(
+                        ui,
+                        &crate::theme::Theme::default().palette(),
+                        &Icons::default(),
+                        &mut inv,
+                        &mut st,
+                        &mut prefs,
+                        &facts,
+                        &mut vec![],
+                        180.0,
+                    ));
+                },
+            ));
+            assert!(st.visible.len() < 20, "horizontal scrolling preserves virtual drawing");
+            scroll.unwrap()
+        };
+        let first = run();
+        assert!(first.content_size.x > first.inner_rect.width() * 2.0);
+        let mut state = first.state;
+        state.offset = egui::vec2(100_000.0, 100_000.0);
+        state.store(&ctx, first.id);
+        let _ = run();
+        let last = run();
+        assert!(last.state.offset.x > 200.0, "the end of the long label is reachable");
+        assert!(
+            (last.content_size.x - first.content_size.x).abs() < 1.0,
+            "the horizontal range survives virtual scrolling"
+        );
+        assert!(last.state.offset.y > 10_000.0, "the last results are reachable vertically");
+    }
+
+    #[test]
+    fn revealing_a_long_name_keeps_the_folder_carets_in_view() {
+        let ctx = egui::Context::default();
+        let mut inv = view_inventory(false);
+        let agent = Uuid::from_u128(2);
+        crate::world::inventory::demo::seed_long_names(&mut inv);
+        let facts = Facts {
+            agent,
+            worn: HashSet::new(),
+            points: vec![],
+            appearance_busy: false,
+            names: Default::default(),
+        };
+        let mut prefs = InventoryPreferences::default();
+        let mut st = InventoryUi::default();
+        st.show_original(&inv, Uuid::from_u128(8100));
+        for frame in 0..30 {
+            let mut horizontal_offset = 0.0;
+            headless_output(ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(260.0, 200.0))),
+                    time: Some(frame as f64 / 60.0),
+                    ..Default::default()
+                },
+                |ui| {
+                    let root = inv.root;
+                    let scroll = list_scroll(ui, 180.0).show(ui, |ui| {
+                        folder_tree(
+                            ui,
+                            &crate::theme::Theme::default().palette(),
+                            &Icons::default(),
+                            &mut inv,
+                            root,
+                            0,
+                            None,
+                            &mut st,
+                            &mut prefs,
+                            &facts,
+                            &mut vec![],
+                        );
+                    });
+                    assert!(
+                        scroll.content_size.x > scroll.inner_rect.width(),
+                        "frame {frame}: {:?}, {:?}",
+                        scroll.content_size,
+                        scroll.inner_rect
+                    );
+                    horizontal_offset = scroll.state.offset.x;
+                },
+            ));
+            assert!(
+                horizontal_offset.abs() < 0.5,
+                "revealing an item must not pan away from the folder controls"
+            );
+        }
+        assert!(st.reveal.is_none(), "the selected item was revealed");
+    }
+
     #[test]
     fn inventory_size_stays_stable_during_loading_filtering_and_tab_changes() {
         let ctx = egui::Context::default();
-        let mut inv = Inventory::default();
+        let mut inv = view_inventory(false);
         let agent = Uuid::from_u128(2);
-        crate::world::inventory::demo::seed(&mut inv, agent);
-        crate::world::inventory::demo::seed_view(&mut inv, agent, false);
         let loading = Uuid::from_u128(8001);
         inv.folders.get_mut(&loading).unwrap().state = FetchState::Unknown;
         let facts = Facts {
@@ -1263,10 +1553,8 @@ mod tests {
     #[test]
     fn search_draws_only_the_viewport_and_can_reach_the_last_result() {
         let ctx = egui::Context::default();
-        let mut inv = Inventory::default();
+        let mut inv = view_inventory(true);
         let agent = Uuid::from_u128(2);
-        crate::world::inventory::demo::seed(&mut inv, agent);
-        crate::world::inventory::demo::seed_view(&mut inv, agent, true);
         let facts = Facts {
             agent,
             worn: HashSet::new(),
