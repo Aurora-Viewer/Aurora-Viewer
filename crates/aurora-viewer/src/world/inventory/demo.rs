@@ -145,3 +145,120 @@ pub fn target(view: &str) -> Option<Uuid> {
         _ => return None,
     }))
 }
+
+/// Sorting/filter fixtures with distinct ages, owners, permissions and paths.
+pub fn seed_view(inv: &mut Inventory, agent: Uuid, large: bool) {
+    let root = inv.root;
+    let personal = Uuid::from_u128(8200);
+    for (n, parent, name, kind) in [
+        (8200, root, "A — Dossier personnel", -1),
+        (8201, root, "Textures", 0),
+        (8202, personal, "Accessoires", -1),
+        (8203, personal, "Vêtements", -1),
+        (8204, personal, "Corps", -1),
+    ] {
+        if kind >= 0 && actions::system(inv, kind).is_some() {
+            continue;
+        }
+        let id = Uuid::from_u128(n);
+        inv.folders.insert(
+            id,
+            Folder {
+                info: InvFolder {
+                    id,
+                    parent,
+                    name: name.into(),
+                    type_default: kind,
+                    version: 1,
+                    ..Default::default()
+                },
+                children: Vec::new(),
+                items: Vec::new(),
+                state: FetchState::Fetched,
+                library: false,
+            },
+        );
+        if let Some(folder) = inv.folders.get_mut(&parent) {
+            folder.children.push(id);
+        }
+    }
+    let time = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64);
+    let parent = Uuid::from_u128(8000);
+    let mut items: Vec<_> = inv
+        .items
+        .values()
+        .filter(|it| it.parent == parent && !matches!(it.asset_type, 24 | 25))
+        .cloned()
+        .collect();
+    for it in &mut items {
+        it.created_at = time - (it.id.as_u128() as i64 - 8100) * 3600;
+        it.desc = "Élément de démonstration pour les filtres d'inventaire".into();
+        if it.id == Uuid::from_u128(8109) {
+            it.creator = Uuid::from_u128(100);
+            it.flags |= 0x200000;
+        }
+    }
+    items.extend(
+        inv.items
+            .values()
+            .filter(|it| it.parent == root && (710..724).contains(&it.id.as_u128()))
+            .map(|it| {
+                let mut it = it.clone();
+                it.parent = Uuid::from_u128(match it.asset_type {
+                    6 => 8202,
+                    5 => 8203,
+                    _ => 8204,
+                });
+                it
+            }),
+    );
+    if large {
+        items.extend((0..1500).map(|n| InvItem {
+            id: Uuid::from_u128(10000 + n),
+            parent,
+            name: format!("Élément {n}"),
+            asset_type: 6,
+            inv_type: 6,
+            created_at: time - n as i64 * 60,
+            owner: agent,
+            creator: agent,
+            owner_mask: actions::COPY | actions::MODIFY | actions::TRANSFER,
+            ..Default::default()
+        }));
+    }
+    inv.add_items(items);
+    inv.sort_all();
+}
+
+/// Long labels in nested folders, for narrowing and horizontal scrolling.
+pub fn seed_long_names(inv: &mut Inventory) {
+    for (id, name) in [
+        (
+            8200,
+            "Collection de démonstration — JEANS_SUBSTANCE (matières, textures et accessoires)",
+        ),
+        (8202, "JEANS_SUBSTANCE — Textures et accessoires dans leur dossier d'origine"),
+    ] {
+        if let Some(folder) = inv.folders.get_mut(&Uuid::from_u128(id)) {
+            folder.info.name = name.into();
+        }
+    }
+    for (id, name) in [
+        (
+            8100,
+            "JEANS_SUBSTANCE_CUIR (JEANS) : JEANS_SUBSTANCE_CUIR (Normal) — Version de démonstration",
+        ),
+        (
+            710,
+            "JEANS_SUBSTANCE — Élément porté avec un nom très long dans un dossier imbriqué",
+        ),
+    ] {
+        if let Some(item) = inv.items.get_mut(&Uuid::from_u128(id)) {
+            item.name = name.into();
+        }
+    }
+    inv.generation += 1;
+    inv.sort_all();
+}

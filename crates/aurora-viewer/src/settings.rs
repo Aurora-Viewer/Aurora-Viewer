@@ -45,6 +45,8 @@ impl DebugView {
 
 /// Look-at range slider maximum: no limit.
 pub const LOOK_AT_UNLIMITED: f32 = 64.0;
+/// Common ceiling for local demos, captures and grid sessions.
+pub const MAX_FPS: u32 = 60;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -161,7 +163,7 @@ pub struct Settings {
     pub antialiasing: u8,
     /// 0 Khronos PBR Neutral, 1 ACES
     pub tonemapper: u8,
-    /// Frame rate cap (off by default) and its value (images per second).
+    /// Frame rate cap, always enabled, and its value (at most MAX_FPS).
     pub fps_cap: bool,
     pub fps_limit: u32,
     /// Lower cap while the window is not focused (on by default, as
@@ -479,7 +481,7 @@ impl Default for Settings {
             shadow_quality: 3,
             antialiasing: 3,
             tonemapper: 0,
-            fps_cap: false,
+            fps_cap: true,
             fps_limit: 60,
             background_fps_cap: true,
             background_fps_limit: 15,
@@ -621,8 +623,12 @@ impl Settings {
                 self.fps_limit = 60;
             }
         }
-        self.fps_limit = self.fps_limit.clamp(10, 500);
-        self.background_fps_limit = self.background_fps_limit.clamp(1, 120);
+        if !self.fps_cap {
+            self.fps_limit = MAX_FPS;
+        }
+        self.fps_cap = true;
+        self.fps_limit = self.fps_limit.clamp(10, MAX_FPS);
+        self.background_fps_limit = self.background_fps_limit.clamp(1, MAX_FPS);
         if self.settings_version < 6 {
             // new defaults: texture memory from the detected VRAM, 20 GB disk cache
             self.texture_budget_auto = true;
@@ -900,6 +906,29 @@ impl Default for MapSettings {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn fps_ceiling_migrates_unlimited_and_high_caps_and_keeps_lower_caps() {
+        use super::*;
+        for enabled in [false, true] {
+            let settings = Settings {
+                fps_cap: enabled,
+                fps_limit: 500,
+                background_fps_limit: 120,
+                ..Settings::default()
+            }
+            .sanitized();
+            assert!(settings.fps_cap);
+            assert_eq!(settings.fps_limit, 60);
+            assert_eq!(settings.background_fps_limit, 60);
+        }
+        let lower = Settings {
+            fps_limit: 30,
+            ..Settings::default()
+        }
+        .sanitized();
+        assert_eq!(lower.fps_limit, 30);
+        assert!(Settings::default().fps_cap);
+    }
     use super::*;
     use crate::keybinds::{Action, Input};
     use winit::keyboard::KeyCode;

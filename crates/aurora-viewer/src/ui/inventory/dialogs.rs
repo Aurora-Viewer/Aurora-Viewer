@@ -552,6 +552,7 @@ mod tests {
                         &mut st,
                         &InventoryPreferences::default(),
                         &Facts {
+                            agent: Uuid::nil(),
                             worn: HashSet::new(),
                             points: Vec::new(),
                             appearance_busy: false,

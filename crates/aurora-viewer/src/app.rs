@@ -329,7 +329,7 @@ impl App {
             .filter(|&v| v > 0)
         {
             settings.fps_cap = true;
-            settings.fps_limit = v.clamp(10, 500);
+            settings.fps_limit = v.clamp(10, crate::settings::MAX_FPS);
         }
         if let Some(v) = std::env::var("AURORA_AA").ok().and_then(|v| v.parse().ok()) {
             settings.antialiasing = v;
@@ -857,6 +857,8 @@ impl App {
     }
 
     fn back_to_login(&mut self, error: Option<String>) {
+        self.record_inventory_logout();
+        self.inventory_ui = Default::default();
         self.hud_drag = None;
         self.media.clear();
         self.media.openid.clear();
@@ -2047,6 +2049,7 @@ impl App {
 
     /// Log out, save the window, layout, inventory cache and settings, exit.
     fn shutdown(&mut self, event_loop: &ActiveEventLoop) {
+        self.record_inventory_logout();
         if self.hud_drag.is_some() {
             self.on_left_release();
         }
@@ -2077,6 +2080,15 @@ impl App {
         }
         self.settings.save();
         event_loop.exit();
+    }
+
+    fn record_inventory_logout(&mut self) {
+        if self.in_world() && !self.demo {
+            self.settings.inventory.last_logout = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs() as i64);
+            self.settings.save();
+        }
     }
 
     /// Remember the normal (not maximized / minimized) window size and
@@ -3700,13 +3712,38 @@ impl App {
         // native window or taking the user's keyboard (with_active(false)).
         if self.demo
             && self.capture.is_some()
-            && std::env::var("AURORA_DEMO_INVENTORY")
-                .is_ok_and(|v| matches!(v.as_str(), "rename" | "new-script" | "new-note" | "new-folder"))
+            && std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|v| {
+                matches!(
+                    v.as_str(),
+                    "rename" | "new-script" | "new-note" | "new-folder" | "resize-left" | "resize-right"
+                )
+            })
         {
             raw.focused = true;
             raw.events.retain(|e| !matches!(e, egui::Event::WindowFocused(false)));
             if let Some(viewport) = raw.viewports.get_mut(&raw.viewport_id) {
                 viewport.focused = Some(true);
+            }
+        }
+        if self.demo
+            && self.capture.is_some()
+            && let Ok(view) = std::env::var("AURORA_DEMO_INVENTORY")
+            && matches!(view.as_str(), "resize-left" | "resize-right")
+            && let Some(rect) = self.egui_ctx.memory(|memory| memory.area_rect(egui::Id::new("inventory")))
+        {
+            let left = view == "resize-left";
+            let start = if left { rect.left_center() } else { rect.right_center() };
+            let target = egui::pos2(if left { rect.right() + 120.0 } else { rect.left() - 120.0 }, start.y);
+            match self.frame_count {
+                300 => raw.events.push(egui::Event::PointerMoved(start)),
+                301 | 400 => raw.events.push(egui::Event::PointerButton {
+                    pos: if self.frame_count == 301 { start } else { target },
+                    button: egui::PointerButton::Primary,
+                    pressed: self.frame_count == 301,
+                    modifiers: egui::Modifiers::NONE,
+                }),
+                302 | 360 => raw.events.push(egui::Event::PointerMoved(target)),
+                _ => {}
             }
         }
         // AURORA_DEMO_POINTER="x,y[,r][;x,y…]": the pointer at these window
@@ -5044,6 +5081,7 @@ impl App {
                     }
                 }
                 self.poll_inventory_animation_stats();
+                let inventory_preferences = self.settings.inventory.clone();
                 let mut open = self.panels.inventory;
                 if !self.inventory_ui.merchant_requested {
                     self.inventory_ui.merchant_requested = true;
@@ -5066,6 +5104,9 @@ impl App {
                     }
                 }
                 self.panels.inventory = open;
+                if self.settings.inventory != inventory_preferences {
+                    self.settings.save();
+                }
                 if self.panels.appearance {
                     let worn = self.world.worn_attachment_items();
                     for command in self.appearance_ui.prepare(&mut self.world.inventory, self.world.agent_id, &worn) {
@@ -5790,6 +5831,54 @@ impl ApplicationHandler for App {
             }
             if let Ok(view) = std::env::var("AURORA_DEMO_INVENTORY") {
                 crate::world::inventory::demo::seed(&mut self.world.inventory, self.world.agent_id);
+                let configured_view = matches!(
+                    view.as_str(),
+                    "sort"
+                        | "filters"
+                        | "preferences"
+                        | "recent"
+                        | "worn"
+                        | "filtered"
+                        | "large"
+                        | "long"
+                        | "long-filtered"
+                        | "resize-left"
+                        | "resize-right"
+                );
+                if configured_view {
+                    crate::world::inventory::demo::seed_view(&mut self.world.inventory, self.world.agent_id, view == "large");
+                    self.settings.inventory = ui::inventory::InventoryPreferences::default();
+                    self.inventory_ui.show_original(&self.world.inventory, self.world.inventory.root);
+                    self.inventory_ui.filters_open = view == "filters";
+                    self.inventory_ui.preferences_open = view == "preferences";
+                    if view == "sort" {
+                        self.inventory_ui.show_original(&self.world.inventory, uuid::Uuid::from_u128(8000));
+                        self.inventory_ui.open_folder_window(uuid::Uuid::from_u128(8000));
+                    }
+                    if view == "recent" {
+                        self.inventory_ui.tab = 2;
+                    }
+                    if view == "worn" {
+                        self.inventory_ui.tab = 3;
+                    }
+                    if view == "filtered" {
+                        self.settings.inventory.filter_defaults.types &= !(1 << 6);
+                        self.inventory_ui = Default::default();
+                        self.inventory_ui.filters_open = true;
+                    }
+                    if view == "large" {
+                        self.inventory_ui.search = "Élément".into();
+                    }
+                    if matches!(view.as_str(), "long" | "long-filtered" | "resize-left" | "resize-right") {
+                        crate::world::inventory::demo::seed_long_names(&mut self.world.inventory);
+                        if view == "long-filtered" {
+                            self.inventory_ui.search = "JEANS_SUBSTANCE".into();
+                        } else {
+                            self.inventory_ui.show_original(&self.world.inventory, uuid::Uuid::from_u128(8100));
+                        }
+                        self.inventory_ui.expand_all = Some(true);
+                    }
+                }
                 self.panels.inventory = true;
                 self.panels.perf = false;
                 self.panels.appearance = false;
@@ -5846,7 +5935,7 @@ impl ApplicationHandler for App {
                     } else {
                         self.inventory_ui.demo_menu = Some(id);
                     }
-                } else {
+                } else if !configured_view {
                     self.inventory_ui.show_original(&self.world.inventory, self.world.inventory.root);
                 }
                 for cmd in
@@ -6221,15 +6310,17 @@ impl ApplicationHandler for App {
     }
 }
 
-/// Frames per second the frame limiter holds the loop to (0 = none): the
-/// user cap, the lower background cap while the window is not focused, and
-/// the screen rate outside the world. The login screen draws an empty scene:
+/// Common 60 FPS ceiling, optionally lowered by preferences, process cap,
+/// background mode and the screen rate outside the world. The login screen draws an empty scene:
 /// left free it runs at thousands of frames per second, which floods the
 /// desktop compositor and makes the whole machine stutter on some setups.
 /// `timed` runs (AURORA_CAPTURE, AURORA_PROFILE) count or measure frames,
 /// often in a window that never had the focus: no background cap there.
 fn frame_cap(s: &Settings, focused: bool, in_world: bool, monitor_hz: f32, timed: bool, fps_limit: Option<u32>) -> f32 {
-    let mut cap = if s.fps_cap { s.fps_limit as f32 } else { f32::INFINITY };
+    let mut cap = crate::settings::MAX_FPS as f32;
+    if s.fps_cap {
+        cap = cap.min(s.fps_limit.max(1) as f32);
+    }
     if let Some(limit) = fps_limit {
         cap = cap.min(limit as f32);
     }
@@ -6278,11 +6369,11 @@ mod tests {
             background_fps_cap: false,
             ..Settings::default()
         };
-        // in world: free unless the user asks for a cap
-        assert_eq!(frame_cap(&free, true, true, 144.0, false, None), 0.0);
-        assert_eq!(frame_cap(&free, false, true, 144.0, false, None), 0.0);
+        // The ceiling survives older settings disabling the limiter.
+        assert_eq!(frame_cap(&free, true, true, 144.0, false, None), 60.0);
+        assert_eq!(frame_cap(&free, false, true, 144.0, false, None), 60.0);
         // outside the world (login): never above the screen rate
-        assert_eq!(frame_cap(&free, true, false, 144.0, false, None), 144.0);
+        assert_eq!(frame_cap(&free, true, false, 144.0, false, None), 60.0);
         let capped = Settings {
             fps_cap: true,
             fps_limit: 90,
@@ -6290,20 +6381,21 @@ mod tests {
             background_fps_limit: 15,
             ..Settings::default()
         };
-        assert_eq!(frame_cap(&capped, true, true, 144.0, false, None), 90.0);
-        assert_eq!(frame_cap(&capped, true, false, 144.0, false, None), 90.0);
+        assert_eq!(frame_cap(&capped, true, true, 144.0, false, None), 60.0);
+        assert_eq!(frame_cap(&capped, true, false, 144.0, false, None), 60.0);
         assert_eq!(frame_cap(&capped, true, false, 60.0, false, None), 60.0);
         // not focused: the lower of the two caps
         assert_eq!(frame_cap(&capped, false, true, 144.0, false, None), 15.0);
         assert_eq!(frame_cap(&capped, false, false, 144.0, false, None), 15.0);
         // captures and profiles keep their pace without the focus
-        assert_eq!(frame_cap(&capped, false, true, 144.0, true, None), 90.0);
-        assert_eq!(frame_cap(&free, false, false, 144.0, true, None), 144.0);
+        assert_eq!(frame_cap(&capped, false, true, 144.0, true, None), 60.0);
+        assert_eq!(frame_cap(&free, false, false, 144.0, true, None), 60.0);
         // A process cap survives preferences, capture mode and loss of focus.
         for focused in [false, true] {
             for in_world in [false, true] {
                 for timed in [false, true] {
                     assert_eq!(frame_cap(&free, focused, in_world, 144.0, timed, Some(60)), 60.0);
+                    assert_eq!(frame_cap(&free, focused, in_world, 144.0, timed, Some(500)), 60.0);
                     assert!(frame_cap(&capped, focused, in_world, 144.0, timed, Some(60)) <= 60.0);
                 }
             }
