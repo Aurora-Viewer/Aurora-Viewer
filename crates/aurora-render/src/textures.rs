@@ -29,7 +29,13 @@ pub const WHITE: u32 = 0;
 pub const FLAT_NORMAL: u32 = 1;
 pub const BLACK: u32 = 2;
 pub const TRANSPARENT: u32 = 3;
-const RESERVED: u32 = 4;
+/// The grey texel shown by textures still loading. Their slots point at
+/// this one layer ([`TextureTable::create_placeholder`]) instead of each
+/// getting a 1×1 layer written through the queue: a texture met for the
+/// first time cost ~1.3 µs of `write_texture` in the scene sync, 16 ms for
+/// the 12,000 of a region arrival.
+pub const PLACEHOLDER: u32 = 4;
+const RESERVED: u32 = 5;
 /// The white texture is the first one created: page 0, layer 0. Freed slots
 /// point there, so a stale draw record samples white, never a dropped page.
 const WHITE_LOC: u32 = 0;
@@ -59,6 +65,57 @@ const REBUILD_THROTTLE: Duration = Duration::from_millis(100);
 /// teleport, a crowd leaving) would keep their memory.
 const COMPACT_INTERVAL: Duration = Duration::from_secs(1);
 const COMPACT_MAX_BYTES: u64 = 16 << 20;
+/// Emptied pages are handed to the reaper thread one every this long (and
+/// at least one, at most [`PAGES_DESTROYED_PER_FRAME`], a frame). Once the
+/// bind group no longer holds a page, dropping it frees its video memory:
+/// ~0.4 ms each on the thread that drops it. The pages a rebuild released
+/// went together (1 to 4 ms in the frames where textures move to a finer
+/// level), and the ~300 pages of a region left by teleport made one
+/// submit of 18 to 50 ms. Paced, because the render thread meets the
+/// reaper on the device's memory allocator at each queue write.
+const PAGE_DESTROY_INTERVAL: Duration = Duration::from_millis(4);
+const PAGES_DESTROYED_PER_FRAME: usize = 8;
+
+/// Pages to hand to the reaper `since_last` after the previous ones.
+fn pages_to_destroy(waiting: usize, since_last: Duration) -> usize {
+    let due = (since_last.as_micros() / PAGE_DESTROY_INTERVAL.as_micros()) as usize;
+    waiting.min(due.clamp(1, PAGES_DESTROYED_PER_FRAME))
+}
+
+type DeadPage = (wgpu::Texture, wgpu::TextureView);
+
+/// Destroys emptied pages on a thread of its own, a few per frame.
+struct PageReaper {
+    /// None when the thread could not start: pages are then dropped by the
+    /// caller.
+    tx: Option<std::sync::mpsc::Sender<DeadPage>>,
+}
+
+impl PageReaper {
+    fn new() -> Self {
+        let (tx, rx) = std::sync::mpsc::channel::<DeadPage>();
+        let spawned = std::thread::Builder::new().name("aurora-pages".into()).spawn(move || {
+            for page in rx {
+                drop(page);
+            }
+        });
+        match spawned {
+            Ok(_) => PageReaper { tx: Some(tx) },
+            Err(e) => {
+                log::warn!("texture pages: reaper thread not started ({e}); pages are destroyed on the render thread");
+                PageReaper { tx: None }
+            }
+        }
+    }
+
+    fn destroy(&self, page: DeadPage) {
+        if let Some(tx) = &self.tx {
+            // (a page that cannot be sent comes back in the error and is
+            // dropped here)
+            let _ = tx.send(page);
+        }
+    }
+}
 const NO_SLOT: u32 = u32::MAX;
 
 /// Mip level data, tightly packed RGBA8.
@@ -212,6 +269,8 @@ struct Slot {
     key: PageKey,
     page: u32,
     layer: u32,
+    /// Shows the shared placeholder layer: the slot owns no layer yet.
+    shared: bool,
 }
 
 /// Slots, pages and the CPU copy of the location buffer (no bind group).
@@ -244,6 +303,9 @@ struct PageStore {
     warned_full: bool,
     /// CPU time spent creating pages, accumulated (AURORA_PROFILE).
     create_ms: f32,
+    /// Emptied pages the current bind group may still hold: taken by
+    /// `TextureTable::maintain` once it is rebuilt.
+    retired: Vec<DeadPage>,
 }
 
 impl PageStore {
@@ -268,6 +330,7 @@ impl PageStore {
             freed: false,
             warned_full: false,
             create_ms: 0.0,
+            retired: Vec::new(),
         }
     }
 
@@ -378,7 +441,8 @@ impl PageStore {
     }
 
     /// Free a layer; an empty page is dropped (not destroyed: the current
-    /// bind group may still reference it until rebuilt).
+    /// bind group may still reference it until rebuilt, and it is then
+    /// destroyed with a few others per frame).
     fn release(&mut self, page: u32, layer: u32) {
         let Some(Some(p)) = self.pages.get_mut(page as usize) else {
             return;
@@ -393,7 +457,9 @@ impl PageStore {
         }
         let key = p.key;
         self.page_bytes = self.page_bytes.saturating_sub(p.layers.len as u64 * key.layer_bytes());
-        self.pages[page as usize] = None;
+        if let Some(p) = self.pages[page as usize].take() {
+            self.retired.push((p.texture, p.view));
+        }
         if let Some(ids) = self.by_key.get_mut(&key) {
             ids.retain(|&i| i != page);
             if ids.is_empty() {
@@ -450,8 +516,43 @@ impl PageStore {
             return None;
         };
         self.upload(queue, page, layer, mips, key.mips);
-        self.slots[slot as usize] = Some(Slot { key, page, layer });
+        self.slots[slot as usize] = Some(Slot {
+            key,
+            page,
+            layer,
+            shared: false,
+        });
         self.bytes += key.layer_bytes();
+        self.live += 1;
+        self.set_loc(slot, pack(page, layer));
+        Some(slot)
+    }
+
+    /// A slot showing the shared placeholder layer until its first texels
+    /// arrive (`replace` / `replace_staged`): nothing is written and no
+    /// layer is taken.
+    fn create_placeholder(&mut self) -> Option<u32> {
+        let (key, page, layer) = self
+            .slots
+            .get(PLACEHOLDER as usize)
+            .and_then(Option::as_ref)
+            .map(|s| (s.key, s.page, s.layer))?;
+        let slot = match self.free_slots.pop() {
+            Some(Reverse(s)) => s,
+            None => {
+                if self.slots.len() as u32 >= self.capacity {
+                    return None;
+                }
+                self.slots.push(None);
+                (self.slots.len() - 1) as u32
+            }
+        };
+        self.slots[slot as usize] = Some(Slot {
+            key,
+            page,
+            layer,
+            shared: true,
+        });
         self.live += 1;
         self.set_loc(slot, pack(page, layer));
         Some(slot)
@@ -495,11 +596,19 @@ impl PageStore {
         }
         if let Some(s) = &self.slots[slot as usize]
             && s.key == key
+            && !s.shared
         {
             return Some((s.page, s.layer));
         }
         let (page, layer) = self.place(device, key, slot)?;
-        match self.slots[slot as usize].replace(Slot { key, page, layer }) {
+        match self.slots[slot as usize].replace(Slot {
+            key,
+            page,
+            layer,
+            shared: false,
+        }) {
+            // (the placeholder layer stays: other slots show it)
+            Some(old) if old.shared => {}
             Some(old) => {
                 self.release(old.page, old.layer);
                 self.bytes = self.bytes.saturating_sub(old.key.layer_bytes());
@@ -515,6 +624,27 @@ impl PageStore {
         Some((page, layer))
     }
 
+    /// Whether new texels of this size for `slot` would need a new page
+    /// (none of that size has a free layer, and the slot is not already of
+    /// that size). `levels`: length of the mip chain, as uploaded.
+    fn needs_page(&self, slot: u32, width: u32, height: u32, levels: u32) -> bool {
+        // the chain kept by `chain_key` for a regular chain
+        let mips = levels.min(32 - width.max(height).max(1).leading_zeros());
+        let key = PageKey { width, height, mips };
+        if self
+            .slots
+            .get(slot as usize)
+            .and_then(Option::as_ref)
+            .is_some_and(|s| s.key == key && !s.shared)
+        {
+            return false;
+        }
+        !self
+            .by_key
+            .get(&key)
+            .is_some_and(|ids| ids.iter().any(|&p| self.page(p).is_some_and(|pg| pg.layers.used() < pg.layers.len)))
+    }
+
     fn free(&mut self, slot: u32) {
         if slot < RESERVED {
             return;
@@ -522,8 +652,10 @@ impl PageStore {
         let Some(old) = self.slots.get_mut(slot as usize).and_then(Option::take) else {
             return;
         };
-        self.release(old.page, old.layer);
-        self.bytes = self.bytes.saturating_sub(old.key.layer_bytes());
+        if !old.shared {
+            self.release(old.page, old.layer);
+            self.bytes = self.bytes.saturating_sub(old.key.layer_bytes());
+        }
         self.live = self.live.saturating_sub(1);
         self.free_slots.push(Reverse(slot));
         self.set_loc(slot, WHITE_LOC);
@@ -616,6 +748,11 @@ pub struct TextureTable {
     dirty: bool,
     last_rebuild: Instant,
     last_compact: Instant,
+    /// Emptied pages no bind group holds any more, destroyed a few per
+    /// frame by the reaper (`pages_to_destroy`).
+    doomed: std::collections::VecDeque<DeadPage>,
+    reaper: PageReaper,
+    last_destroy: Instant,
 }
 
 impl TextureTable {
@@ -668,6 +805,7 @@ impl TextureTable {
             (FLAT_NORMAL, [128, 128, 255, 255]),
             (BLACK, [0, 0, 0, 255]),
             (TRANSPARENT, [0, 0, 0, 0]),
+            (PLACEHOLDER, [148, 148, 156, 255]),
         ] {
             let created = store.create(
                 device,
@@ -702,6 +840,9 @@ impl TextureTable {
             dirty: false,
             last_rebuild: Instant::now(),
             last_compact: Instant::now(),
+            doomed: Default::default(),
+            reaper: PageReaper::new(),
+            last_destroy: Instant::now(),
         }
     }
 
@@ -787,22 +928,7 @@ impl TextureTable {
     /// (none of that size has a free layer, and the slot is not already of
     /// that size). `levels`: length of the mip chain, as uploaded.
     pub fn needs_page(&self, slot: u32, width: u32, height: u32, levels: u32) -> bool {
-        // the chain kept by `chain_key` for a regular chain
-        let mips = levels.min(32 - width.max(height).max(1).leading_zeros());
-        let key = PageKey { width, height, mips };
-        if self
-            .store
-            .slots
-            .get(slot as usize)
-            .and_then(Option::as_ref)
-            .is_some_and(|s| s.key == key)
-        {
-            return false;
-        }
-        !self.store.by_key.get(&key).is_some_and(|ids| {
-            ids.iter()
-                .any(|&p| self.store.page(p).is_some_and(|pg| pg.layers.used() < pg.layers.len))
-        })
+        self.store.needs_page(slot, width, height, levels)
     }
 
     /// CPU time spent creating pages since the start (ms; AURORA_PROFILE).
@@ -817,6 +943,13 @@ impl TextureTable {
     /// Create a texture from a full mip chain (level 0 first). Returns the slot.
     pub fn create(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, mips: &[MipLevel]) -> Option<u32> {
         self.store.create(device, queue, mips)
+    }
+
+    /// A slot for a texture still loading: it shows the shared grey
+    /// placeholder ([`PLACEHOLDER`]) until `replace` / `replace_staged`
+    /// gives it texels. Costs no GPU work.
+    pub fn create_placeholder(&mut self) -> Option<u32> {
+        self.store.create_placeholder()
     }
 
     /// Replace the contents of an existing slot (e.g. higher resolution).
@@ -868,6 +1001,7 @@ impl TextureTable {
         };
         let need = w as usize * h as usize * 4;
         if slot < RESERVED
+            || s.shared
             || w == 0
             || h == 0
             || x.checked_add(w).is_none_or(|r| r > s.key.width)
@@ -920,17 +1054,22 @@ impl TextureTable {
         if std::mem::take(&mut self.store.dropped) {
             self.dirty = true;
         }
-        if !self.dirty {
-            return;
+        if self.dirty && (force || self.rebuild_now || self.last_rebuild.elapsed() >= REBUILD_THROTTLE) {
+            self.bound = bound_len(&self.store, self.partial);
+            self.bind_group = Self::build(device, &self.layout, &self.sampler, &self.loc_buffer, &self.store, self.bound);
+            self.dirty = false;
+            self.rebuild_now = false;
+            self.last_rebuild = Instant::now();
+            // the pages emptied before this rebuild are in no bind group now
+            self.doomed.extend(self.store.retired.drain(..));
         }
-        if !force && !self.rebuild_now && self.last_rebuild.elapsed() < REBUILD_THROTTLE {
-            return;
+        if !self.doomed.is_empty() {
+            let n = pages_to_destroy(self.doomed.len(), self.last_destroy.elapsed());
+            self.last_destroy = Instant::now();
+            for page in self.doomed.drain(..n) {
+                self.reaper.destroy(page);
+            }
         }
-        self.bound = bound_len(&self.store, self.partial);
-        self.bind_group = Self::build(device, &self.layout, &self.sampler, &self.loc_buffer, &self.store, self.bound);
-        self.dirty = false;
-        self.rebuild_now = false;
-        self.last_rebuild = Instant::now();
     }
 }
 
@@ -1157,6 +1296,21 @@ mod tests {
     }
 
     #[test]
+    fn emptied_pages_are_destroyed_at_a_steady_pace() {
+        let ms = Duration::from_millis;
+        // a fast frame: one page, so that the backlog always shrinks
+        assert_eq!(pages_to_destroy(300, ms(2)), 1);
+        assert_eq!(pages_to_destroy(300, ms(5)), 1);
+        // 30 frames a second: as many pages a second as at 200
+        assert_eq!(pages_to_destroy(300, ms(33)), 8);
+        assert_eq!(pages_to_destroy(300, ms(17)), 4);
+        // a long frame does not release a burst
+        assert_eq!(pages_to_destroy(300, ms(500)), PAGES_DESTROYED_PER_FRAME);
+        assert_eq!(pages_to_destroy(3, ms(500)), 3);
+        assert_eq!(pages_to_destroy(0, ms(500)), 0);
+    }
+
+    #[test]
     fn bound_length_follows_the_last_live_page() {
         assert_eq!(bound_for(None, 16384, true), 1);
         assert_eq!(bound_for(Some(0), 16384, true), 1);
@@ -1323,6 +1477,88 @@ mod tests {
             }
         }
         assert_eq!(store.live as usize, live.len() + RESERVED as usize);
+    }
+
+    /// GPU check of the shared placeholder: slots of textures still loading
+    /// show the one grey layer without owning it; their first texels (even
+    /// 1×1 ones, the placeholder's own size) go to a layer of their own and
+    /// leave it untouched, and freeing them does not release it.
+    /// `cargo test -p aurora-render placeholders -- --ignored`.
+    #[test]
+    #[ignore]
+    fn placeholders_share_one_layer_on_the_gpu() {
+        let instance = wgpu::Instance::default();
+        let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())) else {
+            eprintln!("no GPU adapter: skipped");
+            return;
+        };
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).expect("GPU device");
+        let max_layers = device.limits().max_texture_array_layers.min(MAX_LAYERS);
+        let mut store = PageStore::new(4096, 64, max_layers, 4096);
+        const GREY: [u8; 4] = [148, 148, 156, 255];
+        for slot in 0..RESERVED {
+            let texel = if slot == PLACEHOLDER { GREY } else { [slot as u8; 4] };
+            let created = store.create(
+                &device,
+                &queue,
+                &[MipLevel {
+                    width: 1,
+                    height: 1,
+                    data: &texel,
+                }],
+            );
+            assert_eq!(created, Some(slot));
+        }
+        let (bytes, pages) = (store.bytes, store.pages.len());
+        let grey_loc = store.loc[PLACEHOLDER as usize];
+        let waiting: Vec<u32> = (0..300).map(|_| store.create_placeholder().expect("slot")).collect();
+        // no layer taken, nothing allocated, every slot shows the grey texel
+        assert_eq!((store.bytes, store.pages.len()), (bytes, pages));
+        assert_eq!(store.live, RESERVED + 300);
+        assert!(waiting.iter().all(|&s| store.loc[s as usize] == grey_loc));
+        assert_eq!(store.page(0).map(|p| p.layers.used()), Some(RESERVED));
+        assert_eq!(read_back(&device, &queue, &store, waiting[7]), vec![GREY.to_vec()]);
+        // first texels of a texture: a layer of its own
+        let levels: Vec<Vec<u8>> = (0..5).map(|l| texels(42, 16, 16, l)).collect();
+        let mips: Vec<MipLevel> = levels
+            .iter()
+            .enumerate()
+            .map(|(l, d)| MipLevel {
+                width: level_dim(16, l as u32),
+                height: level_dim(16, l as u32),
+                data: d,
+            })
+            .collect();
+        assert!(store.needs_page(waiting[0], 16, 16, 5));
+        assert!(store.replace(&device, &queue, waiting[0], &mips));
+        assert_ne!(store.loc[waiting[0] as usize], grey_loc);
+        assert_eq!(read_back(&device, &queue, &store, waiting[0]), levels);
+        // a 1×1 texture has the placeholder's size: not written over it
+        let one = [MipLevel {
+            width: 1,
+            height: 1,
+            data: &[9, 8, 7, 6],
+        }];
+        assert!(store.needs_page(waiting[1], 1, 1, 1) || store.page(0).is_some_and(|p| p.layers.used() < p.layers.len));
+        assert!(store.replace(&device, &queue, waiting[1], &one));
+        assert_ne!(store.loc[waiting[1] as usize], grey_loc);
+        assert_eq!(read_back(&device, &queue, &store, waiting[1]), vec![vec![9, 8, 7, 6]]);
+        assert_eq!(read_back(&device, &queue, &store, PLACEHOLDER), vec![GREY.to_vec()]);
+        assert_eq!(read_back(&device, &queue, &store, waiting[2]), vec![GREY.to_vec()]);
+        // the media path refuses to draw into the shared layer
+        // (TextureTable::write_region checks `shared`); frees leave it alone
+        for &s in &waiting {
+            store.free(s);
+            assert_eq!(store.loc[s as usize], WHITE_LOC);
+        }
+        assert_eq!(store.live, RESERVED);
+        assert_eq!(store.bytes, bytes);
+        assert_eq!(store.page(0).map(|p| p.layers.used()), Some(RESERVED));
+        assert_eq!(read_back(&device, &queue, &store, PLACEHOLDER), vec![GREY.to_vec()]);
+        // freed slots are handed out again, as placeholders too
+        let again = store.create_placeholder().expect("slot");
+        assert!(waiting.contains(&again));
+        assert_eq!(store.loc[again as usize], grey_loc);
     }
 
     /// Randomized GPU check of the page store: creations, upgrades to the
