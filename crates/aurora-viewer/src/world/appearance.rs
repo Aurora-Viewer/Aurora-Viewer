@@ -31,13 +31,23 @@ pub const WEARABLES: &[&str] = &[
     "Universel",
 ];
 
+#[derive(Clone, Copy, Debug)]
+pub enum WearMode {
+    ReplaceOutfit,
+    Append,
+    ReplaceItems,
+}
+
 #[derive(Clone, Debug)]
 pub enum Action {
     Wear(Uuid, bool),
+    WearContents { folder: Uuid, mode: WearMode },
     Save(Option<String>),
     Remove(Uuid),
+    RemoveItems(Vec<Uuid>),
     Add(Uuid),
     WearItem { item: Uuid, replace: bool, point: u8 },
+    WearItems { items: Vec<Uuid>, replace: bool, point: u8 },
     DeleteFromOutfit { folder: Uuid, item: Uuid },
     ShowOriginal(Uuid),
     Favorite(Uuid),
@@ -164,6 +174,34 @@ pub fn prepare(inv: &mut Inventory, agent: Uuid, worn: &HashSet<Uuid>) -> Vec<Ne
     }
 }
 
+/// LLAppearanceMgr::wearInventoryCategory: ordinary folders are recursive;
+/// unrelated inventory types are ignored, incomplete or broken links are refused.
+pub fn wearable_contents(inv: &Inventory, folder: Uuid) -> Result<Vec<OutfitLink>, String> {
+    let mut pending = vec![folder];
+    let mut seen = HashSet::new();
+    let mut links = Vec::new();
+    while let Some(id) = pending.pop() {
+        if !seen.insert(id) {
+            return Err("Cycle dans les dossiers de la tenue.".into());
+        }
+        let f = inv.folders.get(&id).ok_or("Dossier introuvable.")?;
+        require_complete(inv, id)?;
+        for link in folder_links(inv, id).into_iter().filter(|l| !l.folder) {
+            let item = inv
+                .items
+                .get(&link.target)
+                .ok_or("Un lien de la tenue est cassé ou encore en cours de chargement.")?;
+            if matches!(item.asset_type, 5 | 6 | 13 | 21) {
+                links.push(link);
+            }
+        }
+        pending.extend(f.children.iter().copied());
+    }
+    let mut targets = HashSet::new();
+    links.retain(|l| targets.insert(l.target));
+    Ok(links)
+}
+
 fn require_complete(inv: &Inventory, folder: Uuid) -> Result<(), String> {
     if complete(inv, folder) {
         Ok(())
@@ -209,7 +247,13 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
     let mut current = folder_links(inv, cof);
     if matches!(
         action,
-        Action::Add(_) | Action::WearItem { .. } | Action::Remove(_) | Action::RemoveOutfit(_) | Action::MoveLayer(..)
+        Action::Add(_)
+            | Action::WearItem { .. }
+            | Action::WearItems { .. }
+            | Action::Remove(_)
+            | Action::RemoveItems(_)
+            | Action::RemoveOutfit(_)
+            | Action::MoveLayer(..)
     ) {
         for id in worn.keys() {
             if !current.iter().any(|l| l.target == *id) {
@@ -288,12 +332,31 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
                 sync = false;
             }
         }
-        Action::Wear(id, append) => {
+        Action::Wear(id, _) | Action::WearContents { folder: id, .. } => {
+            let append = matches!(
+                action,
+                Action::Wear(_, true)
+                    | Action::WearContents {
+                        mode: WearMode::Append | WearMode::ReplaceItems,
+                        ..
+                    }
+            );
+            let replace_items = matches!(
+                action,
+                Action::WearContents {
+                    mode: WearMode::ReplaceItems,
+                    ..
+                }
+            );
             require_complete(inv, id)?;
-            let mut next: Vec<_> = folder_links(inv, id)
-                .into_iter()
-                .filter(|l| !l.folder && inv.items.get(&l.target).is_none_or(|it| it.asset_type != 0))
-                .collect();
+            let mut next: Vec<_> = (if matches!(action, Action::WearContents { .. }) {
+                wearable_contents(inv, id)?
+            } else {
+                folder_links(inv, id)
+            })
+            .into_iter()
+            .filter(|l| !l.folder && inv.items.get(&l.target).is_none_or(|it| it.asset_type != 0))
+            .collect();
             if next
                 .iter()
                 .any(|l| inv.items.get(&l.target).is_none_or(|it| !matches!(it.asset_type, 5 | 6 | 13 | 21)))
@@ -301,7 +364,16 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
                 return Err("Cette tenue contient un lien qui ne peut pas être porté.".into());
             }
             for old in current.iter().filter(|l| !l.folder) {
-                let preserve = append
+                let preserve = (append
+                    && (!replace_items
+                        || inv.items.get(&old.target).is_none_or(|it| {
+                            it.asset_type != 5
+                                || !next.iter().any(|n| {
+                                    inv.items
+                                        .get(&n.target)
+                                        .is_some_and(|n| n.asset_type == 5 && n.flags & 0xff == it.flags & 0xff)
+                                })
+                        })))
                     || inv.items.get(&old.target).is_some_and(|it| {
                         it.asset_type == 13
                             && !next.iter().any(|l| {
@@ -324,7 +396,11 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
                         .get(&l.target)
                         .is_none_or(|it| it.asset_type != 13 || body.insert(it.flags & 0xff))
             });
-            if let Some(base) = if append { base(inv) } else { Some(id) } {
+            if let Some(base) = if append {
+                base(inv)
+            } else {
+                inv.folders.get(&id).filter(|f| f.info.type_default == FT_OUTFIT).map(|_| id)
+            } {
                 next.push(base_link(inv, base));
             }
             change.links = next;
@@ -336,19 +412,31 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
                 worn,
             );
         }
-        Action::Remove(id) => {
-            let it = inv.items.get(&id).ok_or("Cet élément n’est pas encore chargé.")?;
-            if it.asset_type == 13 {
-                return Err("Une partie du corps doit être remplacée, elle ne peut pas être enlevée.".into());
+        Action::Remove(_) | Action::RemoveItems(_) => {
+            let ids = match action {
+                Action::Remove(id) => vec![id],
+                Action::RemoveItems(ids) => ids,
+                _ => unreachable!(),
+            };
+            let mut removable = HashSet::new();
+            for id in ids {
+                let id = super::inventory::actions::original(inv, id).ok_or("Cet élément n’est pas encore chargé.")?;
+                let it = inv.items.get(&id).ok_or("Cet élément n’est pas encore chargé.")?;
+                if it.asset_type == 13 {
+                    return Err("Une partie du corps doit être remplacée, elle ne peut pas être enlevée.".into());
+                }
+                if !matches!(it.asset_type, 5 | 6 | 21) {
+                    return Err("Cet élément ne peut pas être enlevé de la tenue.".into());
+                }
+                removable.insert(id);
             }
-            current.retain(|l| l.target != id);
+            current.retain(|l| l.folder || !removable.contains(&l.target));
             change.links = current;
         }
         Action::RemoveOutfit(id) => {
-            require_outfit(inv, id)?;
             require_complete(inv, id)?;
             // takeOffOutfit never removes the four required body parts.
-            let removable: HashSet<_> = folder_links(inv, id)
+            let removable: HashSet<_> = wearable_contents(inv, id)?
                 .iter()
                 .filter(|l| !l.folder && inv.items.get(&l.target).is_some_and(|it| it.asset_type != 13))
                 .map(|l| l.target)
@@ -356,39 +444,53 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
             current.retain(|l| l.folder || !removable.contains(&l.target));
             change.links = current;
         }
-        Action::Add(id) | Action::WearItem { item: id, .. } => {
-            let it = inv.items.get(&id).ok_or("Cet élément n’est pas encore chargé.")?;
-            if !matches!(it.asset_type, 5 | 6 | 13) {
-                return Err("Cet élément ne peut pas être porté.".into());
-            }
-            let (replace, point) = match action {
-                Action::WearItem { replace, point, .. } => (replace, point),
-                _ => (false, 0),
+        Action::Add(_) | Action::WearItem { .. } | Action::WearItems { .. } => {
+            // LLInventoryAction::doToSelected handles wear_multiple in bulk:
+            // one COF update must include the entire selection before syncing.
+            let (ids, replace, point) = match action {
+                Action::WearItem { item, replace, point } => (vec![item], replace, point),
+                Action::WearItems { items, replace, point } => (items, replace, point),
+                Action::Add(id) => (vec![id], false, 0),
+                _ => unreachable!(),
             };
-            if it.asset_type == 13 || (replace && it.asset_type == 5) {
-                current.retain(|l| {
-                    l.folder
-                        || inv
-                            .items
-                            .get(&l.target)
-                            .is_none_or(|old| old.asset_type != it.asset_type || old.flags & 0xff != it.flags & 0xff)
-                });
-            }
-            if replace && it.asset_type == 6 {
-                // Point zero uses the last saved point (LLObjectBridge::mAttachPt).
-                let point = if point == 0 { (it.flags & 0xff) as u8 } else { point };
-                if point != 0 {
+            let mut seen = HashSet::new();
+            for id in ids {
+                let id = super::inventory::actions::original(inv, id).ok_or("Cet élément n’est pas encore chargé.")?;
+                if !seen.insert(id) {
+                    continue;
+                }
+                let it = inv.items.get(&id).ok_or("Cet élément n’est pas encore chargé.")?;
+                if !matches!(it.asset_type, 5 | 6 | 13)
+                    || super::inventory::actions::library(inv, id)
+                    || super::inventory::actions::in_type(inv, id, 14)
+                {
+                    return Err("Cet élément ne peut pas être porté.".into());
+                }
+                if it.asset_type == 13 || (replace && it.asset_type == 5) {
                     current.retain(|l| {
                         l.folder
-                            || l.target == id
-                            || inv.items.get(&l.target).is_none_or(|old| {
-                                old.asset_type != 6 || worn.get(&l.target).copied().unwrap_or((old.flags & 0xff) as u8) != point
-                            })
+                            || inv
+                                .items
+                                .get(&l.target)
+                                .is_none_or(|old| old.asset_type != it.asset_type || old.flags & 0xff != it.flags & 0xff)
                     });
                 }
-            }
-            if !current.iter().any(|l| l.target == id) {
-                current.push(item_link(it));
+                if replace && it.asset_type == 6 {
+                    // Point zero uses the last saved point (LLObjectBridge::mAttachPt).
+                    let point = if point == 0 { (it.flags & 0xff) as u8 } else { point };
+                    if point != 0 {
+                        current.retain(|l| {
+                            l.folder
+                                || l.target == id
+                                || inv.items.get(&l.target).is_none_or(|old| {
+                                    old.asset_type != 6 || worn.get(&l.target).copied().unwrap_or((old.flags & 0xff) as u8) != point
+                                })
+                        });
+                    }
+                }
+                if !current.iter().any(|l| l.target == id) {
+                    current.push(item_link(it));
+                }
             }
             change.links = current;
         }
@@ -587,23 +689,31 @@ pub fn sync_commands(inv: &Inventory, agent: Uuid, worn: &HashSet<Uuid>) -> Vec<
 
 /// Explicit attachment requests retain the chosen point and replace/add mode.
 /// They are sent only after the COF update has been acknowledged.
-pub fn attachment_for_action(inv: &Inventory, agent: Uuid, action: &Action) -> Option<AttachRequest> {
-    let Action::WearItem { item, point, replace } = action else {
-        return None;
+pub fn attachments_for_action(inv: &Inventory, agent: Uuid, action: &Action) -> Vec<AttachRequest> {
+    let (items, point, replace) = match action {
+        Action::WearItem { item, point, replace } => (std::slice::from_ref(item), *point, *replace),
+        Action::WearItems { items, point, replace } => (items.as_slice(), *point, *replace),
+        _ => return Vec::new(),
     };
-    let it = inv.items.get(item).filter(|it| it.asset_type == 6)?;
-    Some(AttachRequest {
-        item_id: it.id,
-        owner_id: if it.owner.is_nil() { agent } else { it.owner },
-        point: *point,
-        add: !replace,
-        flags: it.flags,
-        group_mask: it.group_mask,
-        everyone_mask: it.everyone_mask,
-        next_owner_mask: it.next_owner_mask,
-        name: it.name.clone(),
-        desc: it.desc.clone(),
-    })
+    let mut seen = HashSet::new();
+    items
+        .iter()
+        .filter_map(|id| super::inventory::actions::original(inv, *id))
+        .filter(|id| seen.insert(*id))
+        .filter_map(|id| inv.items.get(&id).filter(|it| it.asset_type == 6))
+        .map(|it| AttachRequest {
+            item_id: it.id,
+            owner_id: if it.owner.is_nil() { agent } else { it.owner },
+            point,
+            add: !replace,
+            flags: it.flags,
+            group_mask: it.group_mask,
+            everyone_mask: it.everyone_mask,
+            next_owner_mask: it.next_owner_mask,
+            name: it.name.clone(),
+            desc: it.desc.clone(),
+        })
+        .collect()
 }
 
 pub fn apply_attachment_override(commands: &mut Vec<NetCommand>, attachment: AttachRequest) {
@@ -692,6 +802,14 @@ pub fn seed_demo(inv: &mut Inventory, agent: Uuid) {
             group_mask: 0,
             everyone_mask: 0,
             next_owner_mask: 0,
+            thumbnail: Uuid::nil(),
+            base_mask: 0x7fffffff,
+            owner_mask: 0x7fffffff,
+            last_owner: uuid::Uuid::nil(),
+            group_id: uuid::Uuid::nil(),
+            group_owned: false,
+            sale_type: 0,
+            sale_price: 0,
         });
     }
     inv.add_items(items.clone());
@@ -769,6 +887,14 @@ fn demo_replace(inv: &mut Inventory, agent: Uuid, id: Uuid, links: &[OutfitLink]
             group_mask: 0,
             everyone_mask: 0,
             next_owner_mask: 0,
+            thumbnail: Uuid::nil(),
+            base_mask: 0x7fffffff,
+            owner_mask: 0x7fffffff,
+            last_owner: uuid::Uuid::nil(),
+            group_id: uuid::Uuid::nil(),
+            group_owned: false,
+            sale_type: 0,
+            sale_price: 0,
         })
         .collect();
     inv.apply(vec![aurora_net::inventory::FolderContents {
@@ -1116,7 +1242,7 @@ mod tests {
         };
         let (change, _) = plan(&inv, action.clone(), &HashMap::new()).expect("add to HUD");
         assert!(change.links.iter().any(|l| l.target == Uuid::from_u128(717)));
-        let attachment = attachment_for_action(&inv, agent, &action).expect("attachment");
+        let attachment = attachments_for_action(&inv, agent, &action).pop().expect("attachment");
         assert_eq!(attachment.point, 35);
         assert!(attachment.add);
         let duplicate = attachment.clone();
@@ -1150,5 +1276,104 @@ mod tests {
         assert!(!change.links.iter().any(|l| l.target == Uuid::from_u128(717)));
         assert!(change.links.iter().any(|l| l.target == Uuid::from_u128(718)));
         assert!(change.links.iter().any(|l| l.target == Uuid::from_u128(723)));
+    }
+
+    #[test]
+    fn multiple_objects_are_added_and_attached_together_after_the_cof_reply() {
+        let mut inv = fixture();
+        let agent = Uuid::from_u128(1);
+        let first = Uuid::from_u128(723);
+        let second = Uuid::from_u128(999);
+        let alias = Uuid::from_u128(1000);
+        let mut extra = inv.items[&first].clone();
+        extra.id = second;
+        inv.add_items(vec![
+            extra,
+            InvItem {
+                id: alias,
+                asset_type: 24,
+                asset_id: first,
+                ..Default::default()
+            },
+        ]);
+        let worn = HashMap::from([(Uuid::from_u128(717), 5), (Uuid::from_u128(718), 6)]);
+        let action = Action::WearItems {
+            items: vec![first, second, alias],
+            replace: false,
+            point: 35,
+        };
+        let (change, sync) = plan(&inv, action.clone(), &worn).expect("bulk add");
+        assert!(sync);
+        for id in [first, second] {
+            assert_eq!(change.links.iter().filter(|l| l.target == id).count(), 1);
+        }
+        for id in 710..714 {
+            assert!(change.links.iter().any(|l| l.target == Uuid::from_u128(id)));
+        }
+        assert!(worn.keys().all(|id| change.links.iter().any(|l| l.target == *id)));
+        let overrides = attachments_for_action(&inv, agent, &action);
+        assert_eq!(overrides.len(), 2);
+        demo_mutate(&mut inv, agent, &change).expect("COF reply");
+        let mut commands = sync_commands(&inv, agent, &worn.keys().copied().collect());
+        for attachment in overrides {
+            apply_attachment_override(&mut commands, attachment);
+        }
+        let batches: Vec<_> = commands
+            .iter()
+            .filter_map(|c| match c {
+                NetCommand::RezAttachments(items) => Some(items),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(batches.len(), 1);
+        for id in [first, second] {
+            assert!(batches[0].iter().any(|a| a.item_id == id && a.point == 35 && a.add));
+        }
+        assert!(matches!(commands.last(), Some(NetCommand::RequestServerAppearance { .. })));
+    }
+
+    #[test]
+    fn multiple_attachments_are_detached_together_including_an_object_missing_from_cof() {
+        let mut inv = fixture();
+        let agent = Uuid::from_u128(1);
+        let ids: Vec<_> = [717, 718, 723].into_iter().map(Uuid::from_u128).collect();
+        let worn = ids.iter().map(|id| (*id, 35)).collect();
+        let (change, sync) = plan(&inv, Action::RemoveItems(ids.clone()), &worn).expect("bulk detach");
+        assert!(sync);
+        assert!(!change.links.iter().any(|l| ids.contains(&l.target)));
+        assert!(change.links.iter().any(|l| l.target == Uuid::from_u128(719)));
+        for id in 710..714 {
+            assert!(change.links.iter().any(|l| l.target == Uuid::from_u128(id)));
+        }
+        demo_mutate(&mut inv, agent, &change).expect("COF reply");
+        let commands = sync_commands(&inv, agent, &ids.iter().copied().collect());
+        let batches: Vec<_> = commands
+            .iter()
+            .filter_map(|c| match c {
+                NetCommand::DetachAttachments(items) => Some(items),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(batches.len(), 1);
+        assert_eq!(
+            batches[0].iter().copied().collect::<HashSet<_>>(),
+            ids.iter().copied().collect::<HashSet<_>>()
+        );
+        assert!(ids.iter().all(|id| inv.items.contains_key(id)), "originals remain in inventory");
+    }
+
+    #[test]
+    fn a_body_part_in_a_multiple_removal_rejects_the_entire_selection() {
+        let inv = fixture();
+        let before = folder_links(&inv, cof(&inv).expect("COF"));
+        assert!(
+            plan(
+                &inv,
+                Action::RemoveItems(vec![Uuid::from_u128(717), Uuid::from_u128(710)]),
+                &HashMap::new()
+            )
+            .is_err()
+        );
+        assert_eq!(folder_links(&inv, cof(&inv).expect("COF")), before);
     }
 }

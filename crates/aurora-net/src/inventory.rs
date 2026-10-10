@@ -3,6 +3,13 @@
 
 use aurora_llsd::{Llsd, llsd_map};
 use uuid::Uuid;
+pub mod operations;
+pub mod thumbnail;
+
+pub fn created_date(seconds: i64) -> String {
+    let (year, month, day) = crate::profile::civil_from_days(seconds.div_euclid(86400));
+    format!("{day:02}/{month:02}/{year}")
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct InvFolder {
@@ -16,7 +23,7 @@ pub struct InvFolder {
     pub thumbnail: Uuid,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct InvItem {
     pub id: Uuid,
     pub parent: Uuid,
@@ -27,6 +34,14 @@ pub struct InvItem {
     pub asset_id: Uuid,
     pub flags: u32,
     pub favorite: bool,
+    pub thumbnail: Uuid,
+    pub base_mask: u32,
+    pub owner_mask: u32,
+    pub last_owner: Uuid,
+    pub group_id: Uuid,
+    pub group_owned: bool,
+    pub sale_type: u8,
+    pub sale_price: i32,
     pub creator: Uuid,
     pub created_at: i64,
     /// Owner and permission masks (needed to attach an object).
@@ -140,8 +155,13 @@ pub fn item_from_llsd(v: &Llsd) -> Option<InvItem> {
     let asset_id = if v.has("asset_id") {
         v["asset_id"].as_uuid()
     } else {
-        // shadow_id is the asset id obfuscated with a well known key; not needed for display
-        Uuid::nil()
+        // LLInventoryItem::fromLLSD (llinventory.cpp): fixed XOR key, not a secret.
+        let shadow = v["shadow_id"].as_uuid();
+        if shadow.is_nil() {
+            Uuid::nil()
+        } else {
+            Uuid::from_u128(shadow.as_u128() ^ 0x3c115e51_04f4_523c_9fa6_98aff1034730)
+        }
     };
     Some(InvItem {
         id,
@@ -153,6 +173,19 @@ pub fn item_from_llsd(v: &Llsd) -> Option<InvItem> {
         asset_id,
         flags: v["flags"].as_u32(),
         favorite: v["favorite"]["toggled"].as_bool(),
+        thumbnail: v["thumbnail"]["asset_id"].as_uuid(),
+        base_mask: v["permissions"]["base_mask"].as_u32(),
+        owner_mask: v["permissions"]["owner_mask"].as_u32(),
+        last_owner: v["permissions"]["last_owner_id"].as_uuid(),
+        group_id: v["permissions"]["group_id"].as_uuid(),
+        group_owned: v["permissions"]["is_owner_group"].as_bool(),
+        sale_type: match v["sale_info"]["sale_type"].as_str() {
+            "orig" => 1,
+            "copy" => 2,
+            "cntn" => 3,
+            _ => v["sale_info"]["sale_type"].as_u32() as u8,
+        },
+        sale_price: v["sale_info"]["sale_price"].as_i32(),
         creator: v["permissions"]["creator_id"].as_uuid(),
         created_at: v["created_at"].as_i32() as i64,
         owner: v["permissions"]["owner_id"].as_uuid(),

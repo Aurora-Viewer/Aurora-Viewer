@@ -26,6 +26,8 @@ use winit::window::{CursorGrabMode, Window, WindowId};
 
 mod chat_commands;
 mod context_menu;
+mod inventory;
+mod inventory_thumbnail;
 mod object_actions;
 
 enum Screen {
@@ -297,6 +299,7 @@ pub struct App {
     lighting_was_open: bool,
     demo: bool,
     inventory_ui: ui::inventory::InventoryUi,
+    inventory_images: inventory_thumbnail::ImageJobs,
     appearance_ui: ui::appearance::AppearanceUi,
     last_social_poll: Instant,
     /// Last keyboard / mouse button input (automatic away, AFKTimeout), and
@@ -547,6 +550,7 @@ impl App {
             lighting_was_open: false,
             demo: false,
             inventory_ui: Default::default(),
+            inventory_images: Default::default(),
             appearance_ui: Default::default(),
             last_social_poll: Instant::now(),
             last_input: Instant::now(),
@@ -619,6 +623,100 @@ impl App {
                         self.on_app_event(e);
                     }
                 }
+                return;
+            }
+            if matches!(cmd, NetCommand::RequestInventoryMerchant) {
+                self.inventory_ui.merchant = true;
+                return;
+            }
+            if let NetCommand::EditInventory { request, change } = &cmd {
+                let result = crate::world::inventory::actions::demo_mutate(&mut self.world.inventory, self.world.agent_id, change.clone());
+                self.on_app_event(NetEvent::InventoryEdited { request: *request, result });
+                return;
+            }
+            if let NetCommand::UploadInventoryThumbnail {
+                request,
+                item,
+                folder,
+                parent,
+                data,
+            } = &cmd
+            {
+                let asset = uuid::Uuid::new_v4();
+                if let Ok(decoded) = aurora_assets::decode_j2k(data, 0) {
+                    let texture = self.egui_ctx.load_texture(
+                        format!("demo_thumbnail_{asset}"),
+                        egui::ColorImage::from_rgba_unmultiplied([decoded.width as usize, decoded.height as usize], &decoded.data),
+                        egui::TextureOptions::LINEAR,
+                    );
+                    self.ui_images.insert(asset, texture);
+                }
+                let change = aurora_net::inventory::thumbnail::patch(*item, *folder, *parent, asset);
+                let result = crate::world::inventory::actions::demo_mutate(&mut self.world.inventory, self.world.agent_id, change);
+                self.on_app_event(NetEvent::InventoryEdited { request: *request, result });
+                return;
+            }
+            if let NetCommand::CopyInventoryItems(copies) = &cmd {
+                let items = copies
+                    .iter()
+                    .filter_map(|c| {
+                        self.world.inventory.items.get(&c.item).cloned().map(|mut it| {
+                            it.id = uuid::Uuid::new_v4();
+                            it.parent = c.parent;
+                            it
+                        })
+                    })
+                    .collect();
+                self.world.inventory.add_items(items);
+                return;
+            }
+            if let NetCommand::CreateInventoryWearable { parent, kind, name, .. } = &cmd {
+                self.send(NetCommand::CreateInventoryItem {
+                    parent: *parent,
+                    kind: aurora_net::inventory::operations::NewItem::Wearable(*kind),
+                    name: name.clone(),
+                });
+                return;
+            }
+            if let NetCommand::SaveInventoryContent { item, .. } = &cmd {
+                let result = self
+                    .world
+                    .inventory
+                    .items
+                    .get(item)
+                    .cloned()
+                    .ok_or_else(|| "Élément introuvable.".to_owned());
+                self.on_app_event(NetEvent::InventoryContentSaved { item: *item, result });
+                return;
+            }
+            if let NetCommand::CreateInventoryItem { parent, kind, name } = &cmd {
+                let (asset, inventory, subtype) = kind.types();
+                let item = aurora_net::inventory::InvItem {
+                    id: uuid::Uuid::new_v4(),
+                    parent: *parent,
+                    name: name.clone(),
+                    asset_type: asset as i32,
+                    inv_type: inventory as i32,
+                    flags: subtype as u32,
+                    owner: self.world.agent_id,
+                    creator: self.world.agent_id,
+                    base_mask: 0x7fffffff,
+                    owner_mask: 0x7fffffff,
+                    next_owner_mask: 0x7fffffff,
+                    ..Default::default()
+                };
+                self.on_app_event(NetEvent::InventoryCreated(item));
+                return;
+            }
+            if let NetCommand::PreviewInventoryItem(it) = &cmd {
+                let bytes = match it.asset_type {
+                    56 => b"<?llsd/notation?>\n{'type':'sky'}".to_vec(),
+                    57 => aurora_llsd::to_binary(
+                        &aurora_llsd::llsd_map! { "version" => "1.1", "type" => "GLTF 2.0", "data" => "{\"asset\":{\"version\":\"2.0\"},\"materials\":[{}]}" },
+                    ),
+                    _ => format!("Contenu de démonstration : {}", it.name).into_bytes(),
+                };
+                self.inventory_preview(it.id, Ok(bytes));
                 return;
             }
             if let NetCommand::UpdateOutfit { request, change } = &cmd {
@@ -772,6 +870,66 @@ impl App {
     }
 
     fn on_app_event(&mut self, ev: NetEvent) {
+        if let NetEvent::InventoryCreated(item) = ev {
+            let id = item.id;
+            self.world.inventory.add_items(vec![item]);
+            self.inventory_ui.show_original(&self.world.inventory, id);
+            self.inventory_ui.begin_rename(&self.world.inventory, id);
+            return;
+        }
+        if let NetEvent::InventoryMerchant(result) = ev {
+            match result {
+                Ok(merchant) => self.inventory_ui.merchant = merchant,
+                Err(reason) => self.inventory_ui.message = reason,
+            }
+            return;
+        }
+        if let NetEvent::InventoryContentSaved { item, result } = ev {
+            self.inventory_ui.save_pending = false;
+            let saved = result.is_ok();
+            match result {
+                Ok(it) => {
+                    self.world.inventory.add_items(vec![it]);
+                    if self.inventory_ui.preview == Some(item) {
+                        self.inventory_ui.preview_dirty = false;
+                    }
+                    self.inventory_ui.message = "Document enregistré.".into();
+                }
+                Err(reason) => self.inventory_ui.message = reason,
+            }
+            for w in &mut self.inventory_ui.windows {
+                if w.state.preview == Some(item) {
+                    w.state.save_pending = false;
+                    if saved {
+                        w.state.preview_dirty = false;
+                    }
+                    w.state.message.clone_from(&self.inventory_ui.message);
+                }
+            }
+            return;
+        }
+        if let NetEvent::InventoryOperationFailed(reason) = ev {
+            self.inventory_ui.message = reason;
+            return;
+        }
+        if let NetEvent::InventoryEdited { request, result } = ev {
+            self.inventory_result(request, result);
+            return;
+        }
+        if let NetEvent::InventoryPreview { item, result } = ev {
+            self.inventory_preview(item, result);
+            return;
+        }
+        if let NetEvent::InventoryThumbnailSource {
+            request,
+            asset,
+            resize,
+            result,
+        } = ev
+        {
+            self.inventory_image_source(request, asset, resize, result);
+            return;
+        }
         if let NetEvent::InventoryFavoriteUpdated { item, result } = ev {
             if self.appearance_ui.favorite_pending.remove(&item) {
                 match result {
@@ -802,7 +960,7 @@ impl App {
                                 self.world.agent_id,
                                 &self.world.worn_attachment_items(),
                             );
-                            if let Some(attachment) = self.appearance_ui.attachment.take() {
+                            for attachment in self.appearance_ui.attachments.drain(..) {
                                 crate::world::appearance::apply_attachment_override(&mut commands, attachment);
                             }
                             for cmd in commands {
@@ -811,7 +969,8 @@ impl App {
                         }
                     }
                     Err(reason) => {
-                        self.appearance_ui.attachment = None;
+                        self.appearance_ui.attachments.clear();
+                        self.inventory_ui.message.clone_from(&reason);
                         self.appearance_ui.message = reason;
                         self.appearance_ui.refresh(&mut self.world.inventory);
                     }
@@ -2633,6 +2792,7 @@ impl App {
         images.extend(self.contacts_ui.wanted_images.drain());
         images.extend(self.build.ui.wanted_images.drain());
         images.extend(self.appearance_ui.wanted_images.drain());
+        images.extend(self.inventory_ui.wanted_images.drain());
         for image in images {
             if self.ui_images.contains_key(&image) {
                 continue;
@@ -2787,6 +2947,7 @@ impl App {
     }
 
     fn frame(&mut self, event_loop: &ActiveEventLoop) {
+        self.poll_inventory_images();
         self.frame_profile.lap(Lap::Between);
         let now = Instant::now();
         let dt = now.duration_since(self.last_frame).as_secs_f32().min(0.1);
@@ -3413,6 +3574,19 @@ impl App {
         // ---- UI
         let t_ui = Instant::now();
         let mut raw = gfx.egui_state.take_egui_input(&gfx.window);
+        // Inline-edit captures simulate logical focus without activating the
+        // native window or taking the user's keyboard (with_active(false)).
+        if self.demo
+            && self.capture.is_some()
+            && std::env::var("AURORA_DEMO_INVENTORY")
+                .is_ok_and(|v| matches!(v.as_str(), "rename" | "new-script" | "new-note" | "new-folder"))
+        {
+            raw.focused = true;
+            raw.events.retain(|e| !matches!(e, egui::Event::WindowFocused(false)));
+            if let Some(viewport) = raw.viewports.get_mut(&raw.viewport_id) {
+                viewport.focused = Some(true);
+            }
+        }
         // AURORA_DEMO_POINTER="x,y[,r][;x,y…]": the pointer at these window
         // pixels from frame 300, one point every 60 frames (hover states,
         // sub-menus); ",r" right-clicks the interface there
@@ -3595,7 +3769,15 @@ impl App {
         self.update_maps();
         self.poll_key_to_name();
 
-        if self.want_scene_capture {
+        if let Some(request) = self.inventory_images.capture.take() {
+            if self.scene_capture_pending || self.inventory_images.capturing.is_some() || self.inventory_images.auto_capture_pending {
+                self.inventory_images.capture = Some(request);
+            } else {
+                gfx.renderer.capture_scene = true;
+                self.inventory_images.capturing = Some(request);
+            }
+        }
+        if self.want_scene_capture && self.inventory_images.capturing.is_none() && !self.inventory_images.auto_capture_pending {
             self.want_scene_capture = false;
             gfx.renderer.capture_scene = true;
             self.scene_capture_pending = true;
@@ -3643,6 +3825,22 @@ impl App {
         self.frame_profile.lap(Lap::Limiter);
         self.frame_start = Instant::now();
         self.frame_count += 1;
+        if self.demo
+            && self.frame_count == 1500
+            && std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|v| matches!(v.as_str(), "image-photo" | "image-photo-save"))
+        {
+            let request = uuid::Uuid::new_v4();
+            let item = uuid::Uuid::from_u128(8101);
+            self.inventory_ui.thumbnail.pending = Some(request);
+            self.inventory_image_action(request, item, ui::inventory::thumbnail::Input::Capture);
+        }
+        if self.demo && self.frame_count == 2100 && std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|v| v == "image-photo-save") {
+            let mut actions = Vec::new();
+            self.inventory_ui.thumbnail.save_photo(&mut actions);
+            for action in actions {
+                self.apply_inventory_action(action);
+            }
+        }
         if self.demo && std::env::var_os("AURORA_DEMO_ANIM_LOOP").is_some() {
             for event in crate::demo::loop_animation_events(self.frame_count) {
                 self.world.apply(event);
@@ -3657,6 +3855,12 @@ impl App {
             }
         }
         // last view for the loading screens (blurred in a thread, or now when quitting)
+        if self.inventory_images.capturing.is_some()
+            && let Some((w, h, pixels)) = gfx.renderer.captured.take()
+            && let Some(request) = self.inventory_images.capturing.take()
+        {
+            self.prepare_inventory_photo(request, w, h, pixels);
+        }
         if self.scene_capture_pending
             && let Some((w, h, px)) = gfx.renderer.captured.take()
         {
@@ -3665,13 +3869,19 @@ impl App {
             self.backdrop.set_capture(w, h, px, wait);
         }
         if let Some((files, exit)) = &mut self.capture {
-            if files.iter().any(|(at, _)| *at == self.frame_count) {
+            if !self.inventory_images.auto_capture_pending
+                && files.iter().any(|(at, _)| *at <= self.frame_count)
+                && self.inventory_images.capturing.is_none()
+                && !self.scene_capture_pending
+            {
                 gfx.renderer.capture_request = true;
+                self.inventory_images.auto_capture_pending = true;
             }
             // the picture of the earliest pending capture
             if let Some((w, h, px)) = gfx.renderer.captured.take()
                 && !files.is_empty()
             {
+                self.inventory_images.auto_capture_pending = false;
                 let (at, file) = files.remove(0);
                 match image::save_buffer(&file, &px, w, h, image::ExtendedColorType::Rgba8) {
                     Ok(()) => log::info!("frame {at} captured to {}", file.display()),
@@ -4576,20 +4786,26 @@ impl App {
                         }
                     }
                 }
+                self.poll_inventory_animation_stats();
                 let mut open = self.panels.inventory;
+                if !self.inventory_ui.merchant_requested {
+                    self.inventory_ui.merchant_requested = true;
+                    self.send(NetCommand::RequestInventoryMerchant);
+                }
                 for ia in ui::inventory::show(
                     &ctx,
                     &p,
                     &self.skin.icons,
-                    &mut self.world.inventory,
+                    &mut self.world,
                     &mut self.inventory_ui,
+                    &mut self.settings.inventory,
                     &mut open,
+                    self.appearance_ui.pending.is_some(),
+                    &self.ui_images,
                 ) {
                     match ia {
                         ui::inventory::InvAction::TeleportLandmark(asset) => a.landmark = Some(asset),
-                        ui::inventory::InvAction::AboutLandmark(item, asset) => {
-                            self.show_place_profile(crate::world::place_details::Source::Landmark { item, asset })
-                        }
+                        other => self.apply_inventory_action(other),
                     }
                 }
                 self.panels.inventory = open;
@@ -4610,50 +4826,7 @@ impl App {
                     complexity,
                     &self.ui_images,
                 ) {
-                    if let crate::world::appearance::Action::ShowOriginal(id) = action {
-                        self.panels.inventory = true;
-                        self.inventory_ui.show_original(&self.world.inventory, id);
-                        continue;
-                    }
-                    if let crate::world::appearance::Action::Favorite(id) = action {
-                        if let Some(it) = self.world.inventory.items.get(&id)
-                            && self.appearance_ui.favorite_pending.insert(id)
-                        {
-                            self.send(NetCommand::SetInventoryFavorite {
-                                item: id,
-                                favorite: !it.favorite,
-                            });
-                        }
-                        continue;
-                    }
-                    if self.appearance_ui.pending.is_some() {
-                        break;
-                    }
-                    if let crate::world::appearance::Action::Category(id, update) = action {
-                        self.appearance_ui.saved_new = false;
-                        match crate::world::appearance::category_plan(&self.world.inventory, id, update) {
-                            Ok(change) => {
-                                let request = uuid::Uuid::new_v4();
-                                self.appearance_ui.pending = Some((request, false));
-                                self.appearance_ui.message.clear();
-                                self.send(NetCommand::UpdateOutfitCategory { request, change });
-                            }
-                            Err(reason) => self.appearance_ui.message = reason,
-                        }
-                        continue;
-                    }
-                    self.appearance_ui.saved_new = matches!(&action, crate::world::appearance::Action::Save(Some(_)));
-                    let attachment = crate::world::appearance::attachment_for_action(&self.world.inventory, self.world.agent_id, &action);
-                    match crate::world::appearance::plan(&self.world.inventory, action, &self.world.worn_attachment_points()) {
-                        Ok((change, sync)) => {
-                            let request = uuid::Uuid::new_v4();
-                            self.appearance_ui.pending = Some((request, sync));
-                            self.appearance_ui.attachment = attachment;
-                            self.appearance_ui.message.clear();
-                            self.send(NetCommand::UpdateOutfit { request, change });
-                        }
-                        Err(reason) => self.appearance_ui.message = reason,
-                    }
+                    self.apply_appearance_action(action);
                 }
                 self.panels.appearance = open;
                 let facts = self.context_facts();
@@ -5356,6 +5529,73 @@ impl ApplicationHandler for App {
                 }
                 if matches!(view.as_str(), "menu" | "duplicates") {
                     self.appearance_ui.open_outfit(uuid::Uuid::from_u128(704));
+                }
+            }
+            if let Ok(view) = std::env::var("AURORA_DEMO_INVENTORY") {
+                crate::world::inventory::demo::seed(&mut self.world.inventory, self.world.agent_id);
+                self.panels.inventory = true;
+                self.panels.perf = false;
+                self.panels.appearance = false;
+                self.panels.minimap = false;
+                self.world.notifications = Default::default();
+                if let Some(id) = crate::world::inventory::demo::target(&view) {
+                    self.inventory_ui.show_original(&self.world.inventory, id);
+                    if view == "new-folder" {
+                        if let Ok(change) = crate::world::inventory::actions::create_folder(id, "Nouveau dossier") {
+                            self.apply_inventory_action(ui::inventory::InvAction::Edit(change));
+                        }
+                    } else if matches!(view.as_str(), "new-script" | "new-note") {
+                        self.apply_inventory_action(ui::inventory::InvAction::Create {
+                            parent: id,
+                            kind: if view == "new-script" {
+                                aurora_net::inventory::operations::NewItem::Script
+                            } else {
+                                aurora_net::inventory::operations::NewItem::Note
+                            },
+                            name: if view == "new-script" { "Nouveau script" } else { "Nouvelle note" }.into(),
+                        });
+                    } else if matches!(view.as_str(), "folder-window" | "folder-window-search") {
+                        self.inventory_ui.open_folder_window(id);
+                        if view == "folder-window-search"
+                            && let Some(window) = self.inventory_ui.windows.last_mut()
+                        {
+                            window.state.search = "démonstration".into();
+                        }
+                    } else if view == "rename" {
+                        self.inventory_ui.begin_rename(&self.world.inventory, id);
+                    } else if matches!(view.as_str(), "multi-add" | "multi-detach" | "delete") {
+                        let items: Vec<_> = [8100, 8109, 8110].into_iter().map(uuid::Uuid::from_u128).collect();
+                        if view == "multi-detach" {
+                            self.apply_appearance_action(crate::world::appearance::Action::WearItems {
+                                items: items.clone(),
+                                replace: false,
+                                point: 35,
+                            });
+                        }
+                        self.inventory_ui.selection.extend(items.iter().copied());
+                        if view == "delete" {
+                            self.inventory_ui.dialog = Some(ui::inventory::EditDialog::Delete(items, false));
+                        } else {
+                            self.inventory_ui.demo_menu = Some(id);
+                        }
+                    } else if matches!(view.as_str(), "properties" | "animation-properties") {
+                        self.inventory_ui.dialog = Some(ui::inventory::EditDialog::Properties(id));
+                    } else if view == "animation-open" {
+                        self.inventory_ui.preview = Some(id);
+                    } else if view.starts_with("image") {
+                        self.inventory_ui.thumbnail.open(id);
+                        self.inventory_ui.thumbnail.picker_open = view == "image-picker";
+                        self.inventory_ui.thumbnail.photo_open = matches!(view.as_str(), "image-photo" | "image-photo-save");
+                    } else {
+                        self.inventory_ui.demo_menu = Some(id);
+                    }
+                } else {
+                    self.inventory_ui.show_original(&self.world.inventory, self.world.inventory.root);
+                }
+                for cmd in
+                    crate::world::appearance::sync_commands(&self.world.inventory, self.world.agent_id, &self.world.worn_attachment_items())
+                {
+                    self.send(cmd);
                 }
             }
             if std::env::var_os("AURORA_DEMO_ACTIONS").is_some() {

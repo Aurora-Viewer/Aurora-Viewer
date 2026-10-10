@@ -668,6 +668,26 @@ pub enum NetEvent {
         sources: Vec<Uuid>,
     },
     InventoryContents(Vec<crate::inventory::FolderContents>),
+    InventoryEdited {
+        request: Uuid,
+        result: Result<crate::inventory::operations::Reply, String>,
+    },
+    InventoryPreview {
+        item: Uuid,
+        result: Result<Vec<u8>, String>,
+    },
+    InventoryThumbnailSource {
+        request: Uuid,
+        asset: Uuid,
+        resize: bool,
+        result: Result<Vec<u8>, String>,
+    },
+    InventoryOperationFailed(String),
+    InventoryMerchant(Result<bool, String>),
+    InventoryContentSaved {
+        item: Uuid,
+        result: Result<crate::inventory::InvItem, String>,
+    },
     OutfitUpdated {
         request: Uuid,
         result: Result<Vec<crate::inventory::FolderContents>, String>,
@@ -681,6 +701,8 @@ pub enum NetEvent {
     },
     /// Items fetched by id (FetchInventory2).
     InventoryItems(Vec<crate::inventory::InvItem>),
+    /// A locally requested creation, confirmed by its UDP callback.
+    InventoryCreated(crate::inventory::InvItem),
     InventoryItemsFailed {
         items: Vec<Uuid>,
     },
@@ -1064,6 +1086,42 @@ pub enum NetCommand {
     },
     /// Wear objects from the inventory (RezMultipleAttachmentsFromInv).
     RezAttachments(Vec<AttachRequest>),
+    EditInventory {
+        request: Uuid,
+        change: crate::inventory::operations::Mutation,
+    },
+    CopyInventoryItems(Vec<crate::inventory::operations::CopyItem>),
+    CreateInventoryItem {
+        parent: Uuid,
+        kind: crate::inventory::operations::NewItem,
+        name: String,
+    },
+    PreviewInventoryItem(crate::inventory::InvItem),
+    FetchInventoryThumbnail {
+        request: Uuid,
+        asset: Uuid,
+        resize: bool,
+    },
+    UploadInventoryThumbnail {
+        request: Uuid,
+        item: Uuid,
+        folder: bool,
+        parent: Uuid,
+        data: Vec<u8>,
+    },
+    RequestInventoryMerchant,
+    CreateInventoryWearable {
+        parent: Uuid,
+        kind: u8,
+        name: String,
+        data: Vec<u8>,
+    },
+    RestoreInventoryObject(crate::inventory::InvItem),
+    SaveInventoryContent {
+        item: Uuid,
+        asset_type: i32,
+        data: Vec<u8>,
+    },
     /// AIS link changes, acknowledged and re-fetched before updating appearance.
     UpdateOutfit {
         request: Uuid,

@@ -170,6 +170,8 @@ pub struct World {
     pub inventory: inventory::Inventory,
     /// Playing animations per avatar / animesh.
     pub animations: HashMap<Uuid, Vec<PlayingAnimation>>,
+    local_preview: Option<PlayingAnimation>,
+    preview_server_motion: Option<PlayingAnimation>,
     /// Our animation sources, kept until the simulator stops the motion.
     animation_sources: HashMap<Uuid, HashSet<Uuid>>,
     /// Motions to stop on the simulator after leaving a seat (drained by app).
@@ -259,6 +261,8 @@ impl World {
             status: status::Status::default(),
             inventory: inventory::Inventory::default(),
             animations: HashMap::new(),
+            local_preview: None,
+            preview_server_motion: None,
             animation_sources: HashMap::new(),
             animation_stops: Vec::new(),
             eep: eep_env::EnvSelector::default(),
@@ -1126,10 +1130,17 @@ impl World {
                 if anims.iter().any(|(id, _)| *id == ANIM_AGENT_TYPE) && !prev.iter().any(|p| p.id == ANIM_AGENT_TYPE) {
                     self.typing_started.push(avatar);
                 }
-                let list = anims
+                let mut list: Vec<_> = anims
                     .into_iter()
                     .map(|(id, seq)| PlayingAnimation::from_signal(id, seq, now, prev.iter().find(|p| p.id == id)))
                     .collect();
+                if avatar == self.agent_id
+                    && let Some(preview) = self.local_preview
+                {
+                    self.preview_server_motion = list.iter().find(|a| a.id == preview.id).copied();
+                    list.retain(|a| a.id != preview.id);
+                    list.push(preview);
+                }
                 self.animations.insert(avatar, list);
                 None
             }
@@ -1785,6 +1796,25 @@ impl World {
 
     pub fn animations_of(&self, owner: &Uuid) -> &[PlayingAnimation] {
         self.animations.get(owner).map(|v| v.as_slice()).unwrap_or(&[])
+    }
+
+    /// LLPreviewAnim::play locally: keep the motion across server signals,
+    /// and restore a server-owned motion with the same UUID when stopping.
+    pub fn preview_animation(&mut self, id: Uuid, start: bool) {
+        let motions = self.animations.entry(self.agent_id).or_default();
+        if start {
+            self.preview_server_motion = motions.iter().find(|a| a.id == id).copied();
+            let preview = PlayingAnimation::from_signal(id, 0, Instant::now(), None);
+            self.local_preview = Some(preview);
+            motions.retain(|a| a.id != id);
+            motions.push(preview);
+        } else if self.local_preview.is_some_and(|a| a.id == id) {
+            motions.retain(|a| a.id != id);
+            if let Some(motion) = self.preview_server_motion.take() {
+                motions.push(motion);
+            }
+            self.local_preview = None;
+        }
     }
 
     /// Port of LLVOAvatar::getOffObject / LLVOAvatarSelf::stopMotionFromSource

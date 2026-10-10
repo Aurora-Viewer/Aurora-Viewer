@@ -126,7 +126,7 @@ pub async fn set_favorite(
         .ok_or_else(|| "Le serveur n’a pas confirmé le changement du favori.".into())
 }
 
-async fn send(req: reqwest::RequestBuilder, body: &Llsd) -> Result<Llsd, String> {
+pub(crate) async fn send(req: reqwest::RequestBuilder, body: &Llsd) -> Result<Llsd, String> {
     let response = req
         .header("Content-Type", "application/llsd+xml")
         .header("Accept", "application/llsd+xml")
@@ -143,11 +143,11 @@ async fn send(req: reqwest::RequestBuilder, body: &Llsd) -> Result<Llsd, String>
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    pub(super) async fn server(replies: Vec<(u16, Llsd)>) -> (String, tokio::task::JoinHandle<Vec<(String, Llsd)>>) {
+    pub(crate) async fn server(replies: Vec<(u16, Llsd)>) -> (String, tokio::task::JoinHandle<Vec<(String, Llsd)>>) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("local test server");
         let url = format!("http://{}", listener.local_addr().expect("local address"));
         let task = tokio::spawn(async move {

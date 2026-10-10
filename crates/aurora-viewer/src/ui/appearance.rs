@@ -12,7 +12,7 @@ use model::Action;
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 mod gallery;
-mod items;
+pub(crate) mod items;
 
 #[derive(Default)]
 pub struct AppearanceUi {
@@ -30,7 +30,7 @@ pub struct AppearanceUi {
     reverse_sort: bool,
     pub pending: Option<(Uuid, bool)>,
     pub saved_new: bool,
-    pub attachment: Option<aurora_net::AttachRequest>,
+    pub attachments: Vec<aurora_net::AttachRequest>,
     pub favorite_pending: HashSet<Uuid>,
     profile_item: Option<Uuid>,
     pub message: String,
