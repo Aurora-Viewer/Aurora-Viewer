@@ -153,6 +153,10 @@ pub struct PerfData {
     gpu_shown: Option<[f32; GpuElement::ALL.len()]>,
     cpu: [f32; CPU_PARTS],
     cpu_shown: [f32; CPU_PARTS],
+    /// Time of the render thread on a frame (ms), smoothed, and the value
+    /// refreshed with `fps`; 0 without a render thread.
+    render_thread: f32,
+    pub render_thread_shown: f32,
     /// Top of the graph scale (images/s): follows the fast frames, eases down.
     graph_top: f32,
     /// Network rates (kb/s) per second: (in, UDP + HTTP; out).
@@ -182,6 +186,8 @@ impl Default for PerfData {
             gpu_shown: None,
             cpu: [0.0; CPU_PARTS],
             cpu_shown: [0.0; CPU_PARTS],
+            render_thread: 0.0,
+            render_thread_shown: 0.0,
             graph_top: GRAPH_MIN_TOP,
             net_hist: VecDeque::with_capacity(NET_HISTORY),
             net_live: [0.0; 2],
@@ -207,6 +213,9 @@ impl PerfData {
         );
         let k = ease(dt_ms, SMOOTHING_S);
         smooth(&mut self.cpu, &cpu, k);
+        // the render thread works beside the main thread: not a part of
+        // the bar above, which adds up to the frame time
+        self.render_thread += (render.thread_ms - self.render_thread) * k;
         self.gpu = match (render.gpu_elements, self.gpu) {
             (Some(now), Some(mut avg)) => {
                 smooth(&mut avg, &now, k);
@@ -230,6 +239,7 @@ impl PerfData {
             self.frames = frame_stats(&self.frame_ms);
             self.gpu_shown = self.gpu;
             self.cpu_shown = self.cpu;
+            self.render_thread_shown = self.render_thread;
         }
         let p = *self.net_prev.get_or_insert_with(|| {
             self.last_net = Instant::now();
@@ -565,8 +575,14 @@ fn cpu_parts_view(p: &Palette, live: &[f32; CPU_PARTS], shown: &[f32; CPU_PARTS]
         ("Culling et listes", "Choix de ce qui est visible, listes de dessin"),
         ("Avatars et caméra", "Animations, agent, caméra, flux des textures"),
         ("Interface", "Fenêtres et barres"),
-        ("Encodage GPU", "Préparation des commandes de rendu"),
-        ("Attente", "Synchronisation verticale, limite d'images/s, présentation"),
+        (
+            "Encodage GPU",
+            "Préparation des commandes de rendu ; avec le thread de rendu, seulement le paquet d'image qui lui est remis",
+        ),
+        (
+            "Attente",
+            "Synchronisation verticale, limite d'images/s, présentation, attente du thread de rendu",
+        ),
     ];
     let colors = part_colors(p);
     NAMES
@@ -754,6 +770,16 @@ fn details(ui: &mut egui::Ui, p: &Palette, v: &PerfView) {
             p,
             "Culling",
             if v.render.gpu_cull { "carte graphique" } else { "processeur" }.to_string(),
+        );
+        row(
+            ui,
+            p,
+            "Thread de rendu",
+            if v.render.render_thread {
+                format!("{} par image", fmt_ms(d.render_thread_shown))
+            } else {
+                "désactivé".to_string()
+            },
         );
         row(ui, p, "Triangles", format!("{:.2} M", v.render.triangles as f64 / 1e6));
         row(

@@ -266,6 +266,33 @@ pub struct ImpostorSprite {
 }
 
 impl DrawLists {
+    /// Make `self` a copy of `src`, keeping the memory `self` already has:
+    /// the lists of a frame packet, filled again every frame.
+    pub fn copy_from(&mut self, src: &DrawLists) {
+        self.terrain.clone_from(&src.terrain);
+        self.opaque.clone_from(&src.opaque);
+        self.opaque_two_sided.clone_from(&src.opaque_two_sided);
+        self.mask.clone_from(&src.mask);
+        self.mask_two_sided.clone_from(&src.mask_two_sided);
+        self.water.clone_from(&src.water);
+        self.blend.clone_from(&src.blend);
+        self.blend_glow.clone_from(&src.blend_glow);
+        self.shadow_casters.clone_from(&src.shadow_casters);
+        self.reflection.clone_from(&src.reflection);
+        self.probe.clone_from(&src.probe);
+        self.reflection_terrain.clone_from(&src.reflection_terrain);
+        self.particles.clone_from(&src.particles);
+        self.glow.clone_from(&src.glow);
+        self.glow_alpha.clone_from(&src.glow_alpha);
+        self.debug_red.clone_from(&src.debug_red);
+        self.debug_blue.clone_from(&src.debug_blue);
+        self.select_root.clone_from(&src.select_root);
+        self.select_child.clone_from(&src.select_child);
+        self.impostor_captures.clone_from(&src.impostor_captures);
+        self.impostor_sprites.clone_from(&src.impostor_sprites);
+        self.gpu = src.gpu;
+    }
+
     pub fn clear(&mut self) {
         self.terrain.clear();
         self.opaque.clear();
@@ -637,6 +664,9 @@ pub struct RenderStats {
     pub index_used: u64,
     pub records: u32,
     pub gpu_ms: Option<f32>,
+    /// CPU time the main thread spent on the frame's rendering (ms): the
+    /// whole encoding when the renderer runs on it, only the frame packet
+    /// with a render thread.
     pub cpu_encode_ms: f32,
     pub particles: u32,
     pub water_reflection: bool,
@@ -650,17 +680,37 @@ pub struct RenderStats {
     /// GPU time by kind of element (ms), in [`GpuElement::ALL`] order;
     /// None without in-pass timestamps.
     pub gpu_elements: Option<[f32; GpuElement::ALL.len()]>,
-    /// CPU time of each step of `Renderer::render` (ms), in
+    /// CPU time of each step of the renderer's frame (ms), in
     /// [`RENDER_PHASES`] order; "acquire" is the wait for the swapchain.
+    /// Spent on the render thread when there is one (then they are those
+    /// of the frame before: its result comes back with the next hand-over).
     pub cpu_phases: [f32; RENDER_PHASES.len()],
     /// Draw commands recorded (multi-draws, fullscreen and sprite draws).
     pub draw_calls: u32,
     /// Bytes of draw records and joint palettes sent to the GPU this frame.
     pub records_uploaded: u64,
     pub palettes_uploaded: u64,
+    /// The frame was drawn by the render thread (render_thread.rs); false
+    /// with AURORA_RENDER_THREAD=0.
+    pub render_thread: bool,
+    /// Main thread: time to build the frame packet and hand it over (ms),
+    /// without the wait below.
+    pub packet_ms: f32,
+    /// Main thread: time waited for the render thread to finish the frame
+    /// before (back-pressure, ms); also the whole wait of a frame that
+    /// carries a capture.
+    pub wait_render_ms: f32,
+    /// Render thread: its whole time on the frame (ms), from the packet to
+    /// the end of the presentation, swapchain wait included.
+    pub thread_ms: f32,
+    /// Render thread: time it waited for the main thread's packet (ms).
+    pub thread_idle_ms: f32,
+    /// Bytes of the frame's write journal (writes.rs).
+    pub journal_bytes: u64,
 }
 
-/// Steps of `Renderer::render`, in frame order (AURORA_PROFILE).
+/// Steps of the renderer's frame (`Backend::render`), in frame order
+/// (AURORA_PROFILE).
 pub const RENDER_PHASES: [&str; 16] = [
     "acquire",
     "resources",

@@ -41,8 +41,16 @@ impl TexelDst {
 /// One recorded queue call.
 #[derive(Debug)]
 enum Op<B, T, E> {
-    Buffer { buffer: B, offset: u64, data: Range<usize> },
-    Texture { texture: T, dst: TexelDst, data: Range<usize> },
+    Buffer {
+        buffer: B,
+        offset: u64,
+        data: Range<usize>,
+    },
+    Texture {
+        texture: T,
+        dst: TexelDst,
+        data: Range<usize>,
+    },
     /// Copies submitted before the end of the frame (an arena growth, with
     /// the staged copies recorded before it): they must see the writes
     /// above and none of those below.
@@ -116,6 +124,12 @@ impl<B: Clone, T: Clone, E> Journal<B, T, E> {
 
     pub fn is_empty(&self) -> bool {
         self.ops.is_empty()
+    }
+
+    /// Forget what was recorded (nobody is left to replay it).
+    pub fn clear(&mut self) {
+        self.ops.clear();
+        self.data.clear();
     }
 
     /// Bytes recorded since the last replay.

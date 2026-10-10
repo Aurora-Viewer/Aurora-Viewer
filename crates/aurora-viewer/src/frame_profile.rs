@@ -6,6 +6,14 @@
 //! gives the longest time of each step over the second (`max:`), so that a
 //! slow frame among fast ones can be pinned on the step that caused it.
 //! Off without the variable.
+//!
+//! Two threads: the laps are the main thread's; the renderer's steps
+//! (`r_*`) and their total (`rt_frame`) are the render thread's when there
+//! is one (aurora-render's render_thread.rs), running beside the laps of
+//! the next frame. The `thread` segment says how the two meet: what the
+//! main thread spent on the frame packet (`packet`), how long it waited
+//! for the render thread (`wait_render`, both inside the `render` lap) and
+//! how long the render thread waited for a packet (`rt_idle`).
 
 use aurora_render::{GpuElement, RENDER_PHASES, RenderStats};
 use std::fmt::Write;
@@ -50,7 +58,9 @@ pub enum Lap {
     Tessellate,
     /// Interface actions, avatar pictures, maps.
     Actions,
-    /// `Renderer::render`, swapchain wait included.
+    /// `Renderer::render`: the frame packet and the wait for the render
+    /// thread to take it; without a render thread, the whole frame's
+    /// encoding, swapchain wait included.
     Render,
     /// Frame limiter.
     Limiter,
@@ -206,6 +216,11 @@ impl Parts {
     }
 }
 
+/// The `thread` segment of the summary: `packet` and `wait_render` on the
+/// main thread (inside the `render` lap), `rt_frame` and `rt_idle` on the
+/// render thread.
+const THREAD_KEYS: [&str; 4] = ["packet", "wait_render", "rt_frame", "rt_idle"];
+
 const LAPS: usize = Lap::ALL.len();
 const GPU: usize = GpuElement::ALL.len();
 const PHASES: usize = RENDER_PHASES.len();
@@ -240,6 +255,13 @@ struct Period {
     frames: u32,
     /// Draw lists culled on the GPU in the last frame (gpu_cull.rs).
     gpu_cull: bool,
+    /// Frames drawn by the render thread (last frame).
+    threaded: bool,
+    /// Main thread and render thread meeting: sums and longest of
+    /// [packet, wait_render, rt_frame, rt_idle] (ms).
+    thread: [f32; THREAD_KEYS.len()],
+    thread_max: [f32; THREAD_KEYS.len()],
+    journal_bytes: u64,
     /// Frame times (ms), for the 95th percentile and the maximum.
     frame_ms: Vec<f32>,
     laps: [f32; LAPS],
@@ -349,6 +371,11 @@ impl FrameProfile {
         keep_max(&mut p.phases_max, &render.cpu_phases);
         add(&mut p.parts, &parts.0);
         keep_max(&mut p.parts_max, &parts.0);
+        let thread = [render.packet_ms, render.wait_render_ms, render.thread_ms, render.thread_idle_ms];
+        add(&mut p.thread, &thread);
+        keep_max(&mut p.thread_max, &thread);
+        p.threaded = render.render_thread;
+        p.journal_bytes += render.journal_bytes;
         if let Some(g) = render.gpu_elements {
             add(&mut p.gpu, &g);
             p.gpu_frames += 1;
@@ -432,9 +459,10 @@ fn slow_frames(frames: &[f32]) -> usize {
 
 /// One line: averages per frame over the period (times in ms); renderer
 /// steps prefixed with `r_`, streaming parts with `s_`, GPU elements with
-/// `g_`. The `max:` segment lists the steps (`r_*` and `s_*` included)
-/// whose longest single-frame time reached
-/// [`MAX_SHOWN_MS`], longest first (`-` when none did).
+/// `g_`. The `max:` segment lists the steps (`r_*`, `s_*` and the `thread`
+/// segment's included) whose longest single-frame time reached
+/// [`MAX_SHOWN_MS`], longest first (`-` when none did). The `thread`
+/// segment comes before the renderer steps it totals.
 fn summary(p: &Period, elapsed: Duration) -> String {
     let n = p.frames.max(1) as f32;
     let avg = |v: f32| v / n;
@@ -457,6 +485,7 @@ fn summary(p: &Period, elapsed: Duration) -> String {
         .map(|(lap, ms)| ("", lap.key(), ms))
         .chain(RENDER_PHASES.iter().zip(p.phases_max).map(|(key, ms)| ("r_", *key, ms)))
         .chain(Part::ALL.iter().zip(p.parts_max).map(|(part, ms)| ("s_", part.key(), ms)))
+        .chain(THREAD_KEYS.iter().zip(p.thread_max).map(|(key, ms)| ("", *key, ms)))
         .filter(|(_, _, ms)| *ms >= MAX_SHOWN_MS)
         .collect();
     slow.sort_by(|a, b| b.2.total_cmp(&a.2));
@@ -465,6 +494,10 @@ fn summary(p: &Period, elapsed: Duration) -> String {
     }
     for (prefix, key, ms) in slow {
         let _ = write!(out, " {prefix}{key}={ms:.2}");
+    }
+    let _ = write!(out, " | thread={}", if p.threaded { "on" } else { "off" });
+    for (key, ms) in THREAD_KEYS.iter().zip(p.thread) {
+        let _ = write!(out, " {key}={:.2}", avg(ms));
     }
     out.push_str(" |");
     for (key, ms) in RENDER_PHASES.iter().zip(p.phases) {
@@ -484,8 +517,8 @@ fn summary(p: &Period, elapsed: Duration) -> String {
         out,
         " | draws={:.0} calls={:.0} tris_k={:.0} shadow_draws={:.0} particles={:.0} occluded={:.0} cull={} \
          blend={:.0} blend_glow={:.0} glow_alpha={:.0} | objects={:.0} visible={:.0} synced={:.0} rebuilt={:.1} posed={:.1} \
-         records_kb={:.1} palettes_kb={:.1} | textures={} texture_mb={} texture_pages={} pages_mb={} geometry_mb={} jobs={:.0} geom_pending={:.0} \
-         sync_backlog={:.0}",
+         records_kb={:.1} palettes_kb={:.1} journal_kb={:.1} | textures={} texture_mb={} texture_pages={} pages_mb={} geometry_mb={} \
+         jobs={:.0} geom_pending={:.0} sync_backlog={:.0}",
         count(p.draws),
         count(p.calls),
         count(p.triangles) / 1000.0,
@@ -503,6 +536,7 @@ fn summary(p: &Period, elapsed: Duration) -> String {
         count(s[4]),
         count(p.records_bytes) / 1024.0,
         count(p.palette_bytes) / 1024.0,
+        count(p.journal_bytes) / 1024.0,
         p.textures,
         p.texture_bytes >> 20,
         p.texture_pages,
@@ -576,6 +610,10 @@ mod tests {
         assert!(l.contains(" synced=30 "), "{l}");
         assert!(l.contains(" posed=2.0 "), "{l}");
         assert!(l.contains(" records_kb=2.0 "), "{l}");
+        assert!(
+            l.contains(" | thread=off packet=0.00 wait_render=0.00 rt_frame=0.00 rt_idle=0.00 | r_acquire="),
+            "{l}"
+        );
         assert!(l.contains(" texture_mb=3 texture_pages=12 pages_mb=5 "), "{l}");
     }
 
@@ -619,6 +657,59 @@ mod tests {
         // nothing over 1 ms
         let quiet = summary(&Period::default(), PERIOD);
         assert!(quiet.contains(" | max: - |"), "{quiet}");
+    }
+
+    #[test]
+    fn summary_tells_the_two_threads_apart() {
+        let mut p = FrameProfile::new(true);
+        let t = Instant::now();
+        let mut lines = Vec::new();
+        let mut at = t;
+        for i in 0..1000u64 {
+            // main thread: 3 ms of simulation, then `render` = 0.1 ms of
+            // packet + 1 ms waiting for the render thread; one frame of the
+            // second waits 4 ms behind a slow render thread frame
+            let wait = if i == 20 { 4.0 } else { 1.0 };
+            p.lap_at(Lap::Tail, at);
+            at += ms(3);
+            p.lap_at(Lap::Sync, at);
+            at += Duration::from_micros(100 + (wait * 1000.0) as u64);
+            p.lap_at(Lap::Render, at);
+            let mut render = RenderStats {
+                render_thread: true,
+                packet_ms: 0.1,
+                wait_render_ms: wait,
+                // render thread: 4 ms a frame, of which 2.5 in finish; it
+                // never waits for the main thread here
+                thread_ms: if i == 20 { 7.0 } else { 4.0 },
+                thread_idle_ms: 0.0,
+                journal_bytes: 4096,
+                ..Default::default()
+            };
+            render.cpu_phases[13] = 2.5;
+            if let Some(l) = p.end_frame_at(&render, &SceneCounts::default(), &Parts::default(), at) {
+                lines.push(l);
+                break;
+            }
+        }
+        // 245 frames of 4.1 ms (one of 7.1) in the second
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        let l = &lines[0];
+        assert_eq!(RENDER_PHASES[13], "finish");
+        // the main thread laps: `render` holds the packet and the wait
+        assert!(l.contains(" sync=3.00 "), "{l}");
+        assert!(l.contains(" render=1.11 "), "{l}");
+        // the meeting of the two threads, then the render thread steps
+        assert!(
+            l.contains(" | thread=on packet=0.10 wait_render=1.01 rt_frame=4.01 rt_idle=0.00 | r_acquire=0.00 "),
+            "{l}"
+        );
+        assert!(l.contains(" r_finish=2.50 "), "{l}");
+        assert!(l.contains(" journal_kb=4.0 "), "{l}");
+        // the slow frame is named on both sides
+        let max = l.split(" | max: ").nth(1).and_then(|s| s.split(" |").next()).unwrap_or_default();
+        assert!(max.contains("rt_frame=7.00") && max.contains("wait_render=4.00"), "{max}");
+        assert!(max.contains("render=4.10"), "{max}");
     }
 
     #[test]

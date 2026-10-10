@@ -1,12 +1,19 @@
 //! Aurora Viewer renderer: wgpu on the Vulkan backend, bindless textures,
 //! sub-allocated geometry and multi-draw-indirect submission.
+//!
+//! Two halves: `main_thread` (the `Renderer` the scene uses: its stores,
+//! the frame packet) and `renderer` (the passes, run by the render thread
+//! of `render_thread`); see main_thread.rs for who owns what.
 
 pub mod arena;
 pub mod gpu_cull;
+pub mod main_thread;
 mod occlusion;
+mod packet;
 mod pick;
 pub mod probes;
-pub mod renderer;
+pub mod render_thread;
+mod renderer;
 pub mod tex_anim;
 pub mod textures;
 pub mod types;
@@ -14,7 +21,9 @@ pub mod upload;
 pub mod writes;
 
 pub use arena::MeshAlloc;
-pub use renderer::{CASCADES, EguiFrame, GpuInfo, RenderError, Renderer};
+pub use main_thread::{GpuInfo, Renderer};
+pub use packet::EguiFrame;
+pub use renderer::{CASCADES, RenderError};
 pub use textures::{MipLevel, build_mips};
 pub use types::*;
 pub use upload::{StagedMesh, StagedTexture, StagingPool};

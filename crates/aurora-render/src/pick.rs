@@ -159,10 +159,13 @@ impl DepthPick {
         }
     }
 
-    /// Ask for the depth under a pixel in the next frame; returns the last
-    /// hover answer (a frame or two old; None for the sky or not yet known).
-    pub fn hover(&mut self, x: u32, y: u32) -> Option<Vec3> {
+    /// Ask for the depth under a pixel in the next frame encoded.
+    pub fn hover(&mut self, x: u32, y: u32) {
         self.request = Some((x, y));
+    }
+
+    /// The last hover answer (None for the sky or not yet known).
+    pub fn latest(&self) -> Option<Vec3> {
         self.latest
     }
 
