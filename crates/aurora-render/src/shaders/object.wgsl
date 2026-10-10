@@ -320,6 +320,11 @@ override HUD_SRGB_TARGET: bool = false;
 @fragment
 fn fs_hud(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     let rec = records[in.record];
+    // LLGLSPipeline / LLRenderPass::pushGLTFBatch (indra/llrender/llglstates.h,
+    // indra/newview/lldrawpool.cpp, originally LGPL 2.1): back faces are
+    // hidden unless double-sided. Per-face rejection preserves the
+    // depth-sorted stream shared by translucent HUD materials.
+    if (!front && (rec.flags.x & FLAG_DOUBLE_SIDED) == 0u) { discard; }
     let mat = eval_material(in, front);
     if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u && mat.color.a < rec.params.w) { discard; }
     let blended = (rec.flags.x & FLAG_ALPHA_BLEND) != 0u;

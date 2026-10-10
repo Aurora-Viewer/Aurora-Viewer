@@ -213,6 +213,8 @@ Les HUDs portés passent par `scene/hud.rs` (listes de notre avatar, intérêt d
 
 L’édition des HUDs réutilise les outils de construction : `build/geom.rs` adapte leur caméra à la projection orthographique HUD (rayons parallèles, poignées de taille constante en pixels), `build/mod.rs::edit_parent` fournit la transformation du point d’attachement pour convertir les déplacements en coordonnées locales. Sélections HUD et monde restent séparées. `build/manip.rs` envoie les positions locales au relâché avec le drapeau de linkset ; l’onglet Objet utilise lui aussi les valeurs locales pour les HUDs.
 
+Les faces HUD tournées dos à l’écran sont rejetées dans `fs_hud`, avant toute couleur ou écriture de profondeur. Le drapeau de matériau `DOUBLE_SIDED` conserve l’exception glTF explicite sans casser l’ordre des faces translucides. Le picking HUD suit le même sens des triangles et les matériaux / overrides double face ; les faces arrière invisibles n’interceptent pas les boutons visibles.
+
 La projection et les listes HUD font partie de la copie du paquet d’image (`DrawLists::copy_from`) : le thread de rendu possède sa propre copie pendant que le thread principal garde la projection pour le picking.
 
 ## Données sur la machine

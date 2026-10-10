@@ -5842,7 +5842,18 @@ impl ApplicationHandler for App {
             // HUD fixtures exercise screen-space rendering and the same
             // linked-object touch / inventory paths as real attachments.
             if let Ok(mode) = std::env::var("AURORA_DEMO_HUDS") {
-                for ev in crate::demo::hud::events() {
+                let faces = matches!(mode.as_str(), "faces" | "faces-turned");
+                if faces {
+                    for (id, material) in crate::demo::hud::face_materials() {
+                        self.scene.materials.insert(id, material);
+                    }
+                }
+                let events = if faces {
+                    crate::demo::hud::face_events(mode == "faces-turned")
+                } else {
+                    crate::demo::hud::events()
+                };
+                for ev in events {
                     self.world.apply(ev);
                 }
                 self.settings.show_huds = mode != "hidden";

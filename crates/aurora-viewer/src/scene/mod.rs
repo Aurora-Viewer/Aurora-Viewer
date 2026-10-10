@@ -1981,6 +1981,9 @@ impl Scene {
                     aurora_assets::AlphaMode::Mask => 2,
                 });
                 two_sided = m.double_sided;
+                if two_sided {
+                    rec.flags[0] |= flags::DOUBLE_SIDED;
+                }
             }
             // legacy material (LLMaterial) of the texture entry
             let mut legacy_alpha = None;
