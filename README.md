@@ -126,7 +126,8 @@ settings and cache (`…\config\demo`, `…\cache\demo`).
 | `AURORA_DEMO_TEXTURES=<n>` | Texture stress test: n small cubes (9000 for a non-number), each with its own texture of several sizes (one not a power of two), streamed low resolution first then full, as in a busy region |
 | `AURORA_DEMO_CROWD=<n>` | Scene sync stress test: n extra avatars (40 for a non-number) playing the idle animation, each wearing eight attachment linksets of seven prims on bones all over the body (with `AURORA_DEMO_ANIMESH`, also the rigged demo mesh), as in a busy shop |
 | `AURORA_DEMO_TEXTURES_CHURN=1` | With `AURORA_DEMO_TEXTURES`: a third of the cubes removed at frame 300 (their textures evicted 2 s later: freed layers, page compaction), then back at frame 700 with new textures (freed slots reused, streamed again); capture after frame ~1000 |
-| `AURORA_DEMO_STREAM=<n>[,<wave>]` | Streaming hitch test: n textured objects (2000 for a non-number) arriving in waves after the loading fade, `wave` every 250 ms (100 by default, ~400 a second as on the grid; `wave` = n sends everything at once, as a teleport arrival). Each object has its own shape and its own texture, of the sizes of a grid region (mostly 512 and 1024), decoded on the background jobs at a quarter of its size, then at full size 1.5 s later. The log gives the end of the loading (`demo stream: fully loaded in … s`, with the uploads staged by the jobs / written by the main thread); with `AURORA_PROFILE=1`, read `stream`, `results` and the `s_*` parts in `max:` |
+| `AURORA_DEMO_STREAM=<n>[,<wave>][,leave]` | Streaming hitch test: n textured objects (2000 for a non-number) arriving in waves after the loading fade, `wave` every 250 ms (100 by default, ~400 a second as on the grid; `wave` = n sends everything at once, as a teleport arrival). Each object has its own shape and its own texture, of the sizes of a grid region (mostly 512 and 1024), decoded on the background jobs at a quarter of its size, then at full size 1.5 s later. The log gives the end of the loading (`demo stream: fully loaded in … s`, with the uploads staged by the jobs / written by the main thread); with `AURORA_PROFILE=1`, read `stream`, `results` and the `s_*` parts in `max:`. With `,leave`, the region is left a second after the loading, as by a teleport: every object is removed at once and its texture, by then holding downloaded data of the size of its J2C file, is unused and due for eviction 2 s later (`demo stream: region left`, then `demo stream: textures evicted`); read `s_maintain`, `sync`, `s_sync_list` and `r_submit` in `max:` |
+| `AURORA_DEMO_HOVER=1` | Hover cursor test: from frame 300 the cursor is swept over the window for 120 frames, then left still for 120, and so on (search of the object under the cursor and answers kept between frames, `scene/hover.rs`); read `hover` in the profile, and combine with `AURORA_HOVER_CHECK=1`, `AURORA_DEMO_ACTIONS=1` or a stress scene |
 | `AURORA_DEMO_PLANAR=1` | Floor slabs with planar texture mapping (tiles must line up across slabs) |
 | `AURORA_DEMO_PBR_OVERRIDE=1` | Two PBR slabs, one with a GLTF material override (4 × 4 repeats, tint) |
 | `AURORA_DEMO_TEXANIM=1` | Texture animations (llSetTextureAnim) on two rows of panels in place of the alpha panels: smooth scrolling, 4 × 4 frame grid, ping-pong, rotation, scale (alpha masked: prepass and shadows), a cube animated on one face only, a legacy material (normal map follows) and a PBR face |
@@ -167,6 +168,7 @@ settings and cache (`…\config\demo`, `…\cache\demo`).
 | `AURORA_PROFILE=1` | Profiling in the log: once a second a `perf summary` line, plus a `perf settings` line when the settings change (see [Profiling](#profiling)). The background frame cap ("Limiter hors focus") is ignored, so a window without the focus is still measured at full speed |
 | `AURORA_PROFILE_FRAMES=1` | Also one `render profile` and one `gpu profile` line per frame (renderer steps and GPU time by element of every frame) |
 | `AURORA_GPU_VALIDATION=1` | wgpu validation layers |
+| `AURORA_HOVER_CHECK=1` | Hover cursor diagnostics: every answer about the object under the cursor (kept from an earlier frame, or searched among the candidates of the pick index) is compared with the full search of the scene; differences are logged as `hover check`, with the searches done and the answers reused every ten seconds. Costs the full search every frame |
 | `AURORA_DEBUG_GLOW=1`, `AURORA_GLOW_SKIP=<mask>`, `AURORA_MEDIA_DEBUG=1` | Renderer and media diagnostics |
 | `AURORA_EMOJI_FONT=<path>` | Use another emoji font |
 | `AURORA_LOG_NAME=<name>` | Log file name |
@@ -183,8 +185,8 @@ With `AURORA_PROFILE=1`, each `perf summary` line covers one second:
 - the average CPU time of each step of the frame (`events`, `social`,
   `sync`, `media`, `lists`, `stream`, `params`, `ui`, `render`…);
 - `max:` the steps whose longest single-frame time reached 1 ms in that
-  second, longest first, renderer steps (`r_*`) and streaming parts (`s_*`)
-  included, or `-` when none did. A periodic slow frame shows up here with
+  second, longest first, renderer steps (`r_*`) and streaming and sync
+  parts (`s_*`) included, or `-` when none did. A periodic slow frame shows up here with
   the step that caused it, e.g. `max: media=6.10 render=2.31`, while its
   average stays tiny;
 - the renderer steps (`r_*`: passes, egui, `finish`, `submit`, `present`,
@@ -194,11 +196,16 @@ With `AURORA_PROFILE=1`, each `perf summary` line covers one second:
   arena, `decoded` other finished jobs, `tex_update` fetches and decodes
   started, `assets` meshes / animations / sounds / materials, `skin` skin
   bindings, `upload` textures sent to the GPU, of which `pages` new texture
-  pages, `maintain` eviction and cache writes, `diag`), the GPU time by element
+  pages, `maintain` eviction and cache writes, `diag`) and of the scene sync
+  (inside `sync`: `sync_list` removed and changed objects and the frame's
+  list, `sync_plan` their placement, `sync_apply` moves and the full syncs
+  that fit the frame's time budget, `sync_alpha` faces classified again
+  after a texture changed alpha class), the GPU time by element
   (`g_*`), draws and draw commands, synced / rebuilt objects, posed
   avatars, bytes of records and palettes sent to the GPU, texture memory
-  (live textures, texture pages and their allocated memory) and geometry
-  memory.
+  (live textures, texture pages and their allocated memory), geometry
+  memory, and the objects whose full sync waits for a frame with time left
+  (`sync_backlog`).
 
 ## Contributing
 
