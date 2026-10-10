@@ -77,8 +77,7 @@ benchmark:
 - about 343 fps at that spot (median) once the render thread landed, 386 fps
   in the capture above.
 
-Current builds cap the frame rate at 60 fps. The texture memory budget is
-set automatically from the detected VRAM.
+The texture memory budget is set automatically from the detected VRAM.
 
 **Interface**
 
