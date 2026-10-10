@@ -2617,7 +2617,7 @@ impl Scene {
         }
         let t = self.parts.lap(Part::Skin, t);
         let pages_before = renderer.textures.page_create_ms();
-        self.textures.upload(renderer, textures::UploadBudget::for_frame(frame));
+        self.textures.upload(renderer, &self.jobs, textures::UploadBudget::for_frame(frame));
         self.parts.add(Part::Pages, renderer.textures.page_create_ms() - pages_before);
         let t = self.parts.lap(Part::Upload, t);
         self.textures.maintain(renderer, &self.jobs, texture_budget);
