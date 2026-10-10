@@ -30,6 +30,7 @@ pub mod openid;
 pub mod pick;
 mod update;
 
+use crate::scene::sync_sets::IndexSet;
 use crate::scene::textures::TextureStreamer;
 use crate::scene::{CullView, Scene};
 use crate::world::World;
@@ -352,8 +353,6 @@ struct ObjMedia {
     idx: usize,
     fetched_version: Option<u32>,
     data: Option<ObjectMediaData>,
-    /// Still present at the last scan.
-    alive: bool,
     hud: bool,
     on_other_avatar: bool,
     owner: Uuid,
@@ -391,16 +390,28 @@ pub struct MediaManager {
     autoplay_done: bool,
     /// MediaTentativeAutoPlay: cleared by "stop all", set again on teleport.
     pub tentative_autoplay: bool,
-    last_scan: Instant,
+    /// Last refresh of the media objects' derived state (see `track_objects`).
+    last_refresh: Instant,
+    /// Slot → object of the entries in `objects`, to forget an object when
+    /// its slot is emptied or reused.
+    slot_ids: HashMap<usize, Uuid>,
+    /// Every object is visited at the next update (start, `clear`).
+    rescan: bool,
+    /// Objects whose local entry changed since the last update.
+    local_dirty: Vec<Uuid>,
+    /// Slots taken from the store's media change feed (reused buffer).
+    changes: Vec<usize>,
+    /// Parcel placeholder texture the parcel list was built for.
+    parcel_tex: Option<Uuid>,
     /// Objects showing the parcel placeholder texture (index), and their
     /// bounds this frame (interest of the parcel media).
-    parcel_objects: Vec<usize>,
+    parcel_objects: IndexSet,
     parcel_bounds: Vec<(Vec3, f32)>,
     pending_free: Vec<(u32, Uuid, Instant)>,
     scratch: Vec<u8>,
     last_parcel_key: Option<(Option<u64>, i32)>,
     /// Offline demo: media entries without the capability.
-    pub local_entries: HashMap<Uuid, ObjectMediaData>,
+    local_entries: HashMap<Uuid, ObjectMediaData>,
     nav_tx: crossbeam_channel::Sender<(Uuid, u8, Result<(), String>)>,
     nav_rx: crossbeam_channel::Receiver<(Uuid, u8, Result<(), String>)>,
     /// Messages for the chat / notifications (drained by the app).
@@ -432,8 +443,13 @@ impl Default for MediaManager {
             autoplay_since: Instant::now(),
             autoplay_done: false,
             tentative_autoplay: true,
-            last_scan: Instant::now() - Duration::from_secs(10),
-            parcel_objects: Vec::new(),
+            last_refresh: Instant::now(),
+            slot_ids: HashMap::new(),
+            rescan: true,
+            local_dirty: Vec::new(),
+            changes: Vec::new(),
+            parcel_tex: None,
+            parcel_objects: IndexSet::default(),
             parcel_bounds: Vec::new(),
             pending_free: Vec::new(),
             scratch: Vec::new(),
@@ -586,6 +602,10 @@ impl MediaManager {
             self.remove(&k);
         }
         self.objects.clear();
+        self.slot_ids.clear();
+        self.parcel_objects = IndexSet::default();
+        self.parcel_tex = None;
+        self.rescan = true;
         self.client.clear();
         self.focus = None;
         self.last_parcel_key = None;
@@ -608,6 +628,7 @@ impl MediaManager {
         }
         if demo {
             self.local_entries.insert(object, data);
+            self.local_dirty.push(object);
         }
     }
 
@@ -626,6 +647,7 @@ impl MediaManager {
         faces[face as usize] = Some(entry);
         log::info!("media: demo media on {object} face {face}");
         self.local_entries.insert(object, ObjectMediaData { version: 1, faces });
+        self.local_dirty.push(object);
         self.force_autoplay = true;
     }
 
