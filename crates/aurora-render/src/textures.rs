@@ -74,6 +74,11 @@ const COMPACT_MAX_BYTES: u64 = 16 << 20;
 /// level), and the ~300 pages of a region left by teleport made one
 /// submit of 18 to 50 ms. Paced, because the render thread meets the
 /// reaper on the device's memory allocator at each queue write.
+/// With the frames drawn by the render thread (render_thread.rs), the frame
+/// in flight still holds the bind group of before the rebuild in its
+/// packet: handles are reference counted, so a page handed to the reaper
+/// meanwhile lives until that frame ends (it is then freed there, by the
+/// render thread, never under a draw that reads it).
 const PAGE_DESTROY_INTERVAL: Duration = Duration::from_millis(4);
 const PAGES_DESTROYED_PER_FRAME: usize = 8;
 
