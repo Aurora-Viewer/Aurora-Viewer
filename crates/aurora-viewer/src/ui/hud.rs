@@ -69,6 +69,39 @@ pub struct NameTag {
     pub rect: egui::Rect,
 }
 
+/// llSetText on our HUD attachments, without world-distance fading.
+pub fn draw_attachments(ctx: &egui::Context, world: &World, scene: &Scene) {
+    let Some(view) = scene.lists.hud_view else { return };
+    let own = world.objects.index_of_uuid(&world.agent_id);
+    let ppp = ctx.pixels_per_point();
+    let proj = Projector {
+        view_proj: view.matrix(),
+        width: view.width,
+        height: view.height,
+        ppp,
+    };
+    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("attachment_text")));
+    for (idx, o) in world.objects.iter() {
+        if o.text.is_empty() || o.text_color[3] == 0 || !scene.gpu.get(idx).is_some_and(|g| g.hud && g.owner_avatar == own) {
+            continue;
+        }
+        let Some((pos, _, _)) = Scene::object_transform(world, idx, Instant::now(), 0) else {
+            continue;
+        };
+        let Some((point, _)) = proj.project(pos + Vec3::Z * o.scale.z * 0.6) else {
+            continue;
+        };
+        let c = o.text_color;
+        painter.text(
+            point,
+            egui::Align2::CENTER_BOTTOM,
+            &o.text,
+            egui::FontId::proportional(12.0),
+            Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3]),
+        );
+    }
+}
+
 /// `voice`: avatars in voice chat (level, speaking) for the voice dots.
 /// Returns the avatar name tags, far first as drawn (the last one on top).
 #[allow(clippy::too_many_arguments)]

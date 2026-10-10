@@ -92,12 +92,18 @@ impl MediaManager {
     /// The nearest media face along a ray (objects with media data only),
     /// unless something drawn is in front (`depth_t`: distance of the
     /// picked depth).
-    pub fn hit_test(&mut self, world: &World, scene: &Scene, origin: Vec3, dir: Vec3, depth_t: Option<f32>) -> Option<MediaHit> {
+    pub fn hit_test(&mut self, world: &World, scene: &Scene, origin: Vec3, dir: Vec3, depth_t: Option<f32>, hud: bool) -> Option<MediaHit> {
         let now = Instant::now();
         let candidates: Vec<(Uuid, usize, Vec<bool>)> = self
             .objects
             .iter()
-            .filter(|(_, om)| !om.hud)
+            .filter(|(_, om)| om.hud == hud)
+            .filter(|(_, om)| {
+                !hud || scene
+                    .gpu
+                    .get(om.idx)
+                    .is_some_and(|g| g.owner_avatar == world.objects.index_of_uuid(&world.agent_id))
+            })
             .filter_map(|(id, om)| {
                 let d = om.data.as_ref()?;
                 Some((
@@ -195,11 +201,12 @@ impl MediaManager {
         depth_t: Option<f32>,
         settings: &MediaSettings,
         mods: Modifiers,
+        hud: bool,
     ) -> bool {
         if !settings.enabled || !settings.prim_media {
             return false;
         }
-        let Some(hit) = self.hit_test(world, scene, ray.0, ray.1, depth_t) else {
+        let Some(hit) = self.hit_test(world, scene, ray.0, ray.1, depth_t, hud) else {
             self.unfocus();
             return false;
         };
@@ -261,9 +268,17 @@ impl MediaManager {
 
     /// Cursor moved over the world: mouse moves for the focused media.
     /// Returns the plugin's cursor name when the cursor is over it.
-    pub fn on_hover(&mut self, world: &World, scene: &Scene, ray: (Vec3, Vec3), depth_t: Option<f32>, mods: Modifiers) -> Option<String> {
+    pub fn on_hover(
+        &mut self,
+        world: &World,
+        scene: &Scene,
+        ray: (Vec3, Vec3),
+        depth_t: Option<f32>,
+        mods: Modifiers,
+        hud: bool,
+    ) -> Option<String> {
         let focus = self.focus?;
-        let hit = self.hit_test(world, scene, ray.0, ray.1, depth_t).filter(|h| h.key == focus)?;
+        let hit = self.hit_test(world, scene, ray.0, ray.1, depth_t, hud).filter(|h| h.key == focus)?;
         let (x, y) = self.pixel(&focus, hit.st)?;
         if self.last_pixel != Some((x, y)) {
             self.last_pixel = Some((x, y));
@@ -283,11 +298,12 @@ impl MediaManager {
         depth_t: Option<f32>,
         clicks: f32,
         mods: Modifiers,
+        hud: bool,
     ) -> bool {
         let Some(focus) = self.focus else {
             return false;
         };
-        let Some(hit) = self.hit_test(world, scene, ray.0, ray.1, depth_t).filter(|h| h.key == focus) else {
+        let Some(hit) = self.hit_test(world, scene, ray.0, ray.1, depth_t, hud).filter(|h| h.key == focus) else {
             return false;
         };
         let Some((x, y)) = self.pixel(&focus, hit.st) else {

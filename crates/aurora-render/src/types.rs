@@ -1,5 +1,6 @@
 //! Plain data shared between the world and the renderer.
 
+use crate::HudView;
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3, Vec4};
 
@@ -181,6 +182,10 @@ pub struct ShadowCaster {
 /// Visible draws for a frame, built by the world.
 #[derive(Default)]
 pub struct DrawLists {
+    /// Own HUD attachments, drawn after post-processing with their own depth.
+    pub hud_view: Option<HudView>,
+    pub hud_opaque: Vec<DrawCmd>,
+    pub hud_blend: Vec<DrawCmd>,
     pub terrain: Vec<DrawCmd>,
     pub opaque: Vec<DrawCmd>,
     pub opaque_two_sided: Vec<DrawCmd>,
@@ -269,6 +274,9 @@ impl DrawLists {
     /// Make `self` a copy of `src`, keeping the memory `self` already has:
     /// the lists of a frame packet, filled again every frame.
     pub fn copy_from(&mut self, src: &DrawLists) {
+        self.hud_view = src.hud_view;
+        self.hud_opaque.clone_from(&src.hud_opaque);
+        self.hud_blend.clone_from(&src.hud_blend);
         self.terrain.clone_from(&src.terrain);
         self.opaque.clone_from(&src.opaque);
         self.opaque_two_sided.clone_from(&src.opaque_two_sided);
@@ -294,6 +302,9 @@ impl DrawLists {
     }
 
     pub fn clear(&mut self) {
+        self.hud_view = None;
+        self.hud_opaque.clear();
+        self.hud_blend.clear();
         self.terrain.clear();
         self.opaque.clear();
         self.opaque_two_sided.clear();
@@ -319,7 +330,9 @@ impl DrawLists {
     }
 
     pub fn total(&self) -> usize {
-        self.terrain.len()
+        self.hud_opaque.len()
+            + self.hud_blend.len()
+            + self.terrain.len()
             + self.opaque.len()
             + self.opaque_two_sided.len()
             + self.mask.len()
@@ -794,6 +807,9 @@ mod tests {
     #[test]
     fn packet_lists_are_a_copy_that_keeps_its_memory() {
         let mut scene = DrawLists::default();
+        scene.hud_view = Some(HudView::new([1600, 900], 0.5, -1.0, 2.0));
+        scene.hud_opaque.push(cmd(20));
+        scene.hud_blend.push(cmd(21));
         scene.terrain.push(cmd(1));
         scene.blend.extend([cmd(7), cmd(8), cmd(9)]);
         scene.blend_glow.extend([false, true, false]);
@@ -832,6 +848,9 @@ mod tests {
         let (blend_memory, blend_room) = (packet.blend.as_ptr(), packet.blend.capacity());
         packet.copy_from(&scene);
         assert_eq!(packet.total(), scene.total());
+        assert_eq!(packet.hud_view.map(HudView::matrix), scene.hud_view.map(HudView::matrix));
+        assert_eq!(packet.hud_opaque[0].record, 20);
+        assert_eq!(packet.hud_blend[0].record, 21);
         assert_eq!(packet.blend.iter().map(|c| c.record).collect::<Vec<_>>(), [7, 8, 9]);
         assert_eq!(packet.blend_glow, [false, true, false]);
         assert_eq!((packet.terrain.len(), packet.glow.len(), packet.select_root.len()), (1, 1, 1));
@@ -845,6 +864,10 @@ mod tests {
         scene.clear();
         scene.blend.push(cmd(1));
         assert_eq!(packet.blend.len(), 3);
+        assert!(scene.hud_view.is_none());
+        assert!(scene.hud_opaque.is_empty());
+        assert!(packet.hud_view.is_some());
+        assert_eq!(packet.hud_opaque[0].record, 20);
         assert!(packet.gpu.is_some());
     }
 

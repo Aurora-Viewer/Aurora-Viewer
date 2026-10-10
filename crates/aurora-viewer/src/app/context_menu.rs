@@ -23,16 +23,20 @@ impl App {
         // an avatar name tag opens its avatar's menu, as a click on the
         // avatar; its point is the avatar, not the air at the tag ("Zoomer"
         // frames the avatar, like handle_look_at_selection)
-        let (picked, point) = match self.pick_name_tag(hit, ray) {
-            Some((idx, p)) => (
-                Some(idx),
-                Scene::object_transform(&self.world, idx, now, 0).map_or(p, |(pos, _, _)| pos),
-            ),
-            None => {
-                let Some(p) = hit else {
-                    return;
-                };
-                (self.scene.interaction_at(&self.world, p, now, self.build.open), p)
+        let (picked, point) = if let Some((idx, point, _)) = self.scene.hud_pick(&self.world, (x, y), true) {
+            (Some(idx), point)
+        } else {
+            match self.pick_name_tag(hit, ray) {
+                Some((idx, p)) => (
+                    Some(idx),
+                    Scene::object_transform(&self.world, idx, now, 0).map_or(p, |(pos, _, _)| pos),
+                ),
+                None => {
+                    let Some(p) = hit else {
+                        return;
+                    };
+                    (self.scene.interaction_at(&self.world, p, now, self.build.open), p)
+                }
             }
         };
         // the previous menu's selection goes, as deselectUnused would
@@ -139,6 +143,7 @@ impl App {
             for_sale,
         );
         f.open = interaction::allow_open(w, idx);
+        f.attachment_item = w.objects.get(root).and_then(|o| o.attachment_item_id());
         f.blocked = w.mutes.is_muted_id(&root_id);
         f.name = props.map(|p| p.name.clone()).unwrap_or_default();
         f
@@ -162,6 +167,20 @@ impl App {
 
     pub(super) fn on_ctx_action(&mut self, act: CtxAction) {
         match act {
+            CtxAction::AttachmentInventory(item) => self.apply_appearance_action(crate::world::appearance::Action::ShowOriginal(item)),
+            CtxAction::Detach(key) => {
+                if let Some(idx) = self.world.objects.index_of(&key)
+                    && ui::context::wearer(&self.world, idx) == Some(self.world.agent_id)
+                    && let Some(item) = self
+                        .world
+                        .objects
+                        .get(linkset_root(&self.world, idx))
+                        .and_then(|o| o.attachment_item_id())
+                {
+                    self.release_object_hold();
+                    self.apply_appearance_action(crate::world::appearance::Action::Remove(item));
+                }
+            }
             CtxAction::Touch(local_id) => self.send(NetCommand::Touch { local_id }),
             CtxAction::Sit { target, offset } => {
                 if let Some(idx) = self.world.objects.index_of_uuid(&target)

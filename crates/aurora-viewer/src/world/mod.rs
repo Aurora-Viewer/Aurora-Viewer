@@ -101,6 +101,10 @@ impl PlayingAnimation {
 }
 
 pub struct World {
+    /// mScreen's Y scale (LLVOAvatarSelf::updateCharacter).
+    pub hud_aspect: f32,
+    /// HUD zoom is local to the current session (LLAgentCamera).
+    pub hud_zoom: f32,
     pub login: Option<Arc<LoginResponse>>,
     pub agent_id: Uuid,
     pub regions: HashMap<RegionHandle, Region>,
@@ -218,6 +222,8 @@ const MAX_CHAT: usize = 500;
 impl World {
     pub fn new(avatar_lib: Arc<AvatarLibrary>) -> World {
         World {
+            hud_aspect: 1.0,
+            hud_zoom: 1.0,
             ui_sounds: Vec::new(),
             im_messages: Vec::new(),
             balance_changes: Vec::new(),

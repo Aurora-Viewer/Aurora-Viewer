@@ -10,6 +10,8 @@ use egui::{Color32, RichText, Vec2};
 
 #[derive(Default)]
 pub enum BarAction {
+    ShowHuds(bool),
+    HudZoom(f32),
     #[default]
     None,
     /// ShowBanLines: 0 hidden, 1 on collision, 2 on proximity.
@@ -45,6 +47,8 @@ pub enum BarAction {
 }
 
 pub struct StatusInfo<'a> {
+    pub show_huds: bool,
+    pub hud_zoom: f32,
     pub region: &'a str,
     /// Parcel the agent stands on (may be empty).
     pub parcel: &'a str,
@@ -359,6 +363,22 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         ui.menu_button("Statut de connexion", |ui| status_menu(ui, st.status, action));
     });
     ui.menu_button(small("Monde", p.ink), |ui| {
+        ui.menu_button("HUDs", |ui| {
+            let mut visible = st.show_huds;
+            if ui.checkbox(&mut visible, "Afficher les HUDs").changed() {
+                *action = BarAction::ShowHuds(visible);
+            }
+            for (zoom, label) in [
+                (1.0, "Taille normale"),
+                ((st.hud_zoom / 1.2).max(0.1), "Réduire"),
+                ((st.hud_zoom * 1.2).min(1.0), "Agrandir"),
+            ] {
+                if ui.button(label).clicked() {
+                    *action = BarAction::HudZoom(zoom);
+                    ui.close();
+                }
+            }
+        });
         // menu_viewer.xml: Historique de téléportation (Alt+H), Lieux
         if ui
             .add(egui::Button::new("Historique de téléportation").shortcut_text("Alt+H"))

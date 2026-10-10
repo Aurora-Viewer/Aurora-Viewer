@@ -72,7 +72,14 @@ impl Scene {
         Some((pos + rot * ((min + max) * 0.5 * o.scale), (max - min) * o.scale))
     }
 
-    fn face_hit(&self, world: &World, idx: usize, ray: (Vec3, Vec3), now: Instant, include_hidden: bool) -> Option<pick::FaceHit> {
+    pub(super) fn face_hit(
+        &self,
+        world: &World,
+        idx: usize,
+        ray: (Vec3, Vec3),
+        now: Instant,
+        include_hidden: bool,
+    ) -> Option<pick::FaceHit> {
         let o = world.objects.get(idx)?;
         let g = self.gpu.get(idx)?;
         let geom = self.geom_ready(&g.geom?)?;
@@ -104,7 +111,12 @@ impl Scene {
             uv: uv.extend(0.0),
             st: hit.uv.extend(0.0),
             face: hit.face as i32,
-            position: ray.0 + ray.1 * hit.t - world.region_offset(o.key.region)?,
+            position: ray.0 + ray.1 * hit.t
+                - if self.gpu.get(idx)?.hud {
+                    Vec3::ZERO
+                } else {
+                    world.region_offset(o.key.region)?
+                },
             normal: hit.normal,
             binormal: hit.binormal,
         })
@@ -403,6 +415,57 @@ mod tests {
             scene.gpu[idx].faces.push(face);
         }
         (world, scene, front, back)
+    }
+
+    #[test]
+    fn hud_picks_linked_surfaces_hides_others_and_never_uses_world_coordinates() {
+        let (mut world, mut scene, front, back) = scene_with_two_objects();
+        let own = world.objects.index_of_uuid(&world.agent_id).unwrap();
+        let avatar_id = world.objects.get(own).unwrap().key.local_id;
+        for (idx, x) in [(front, 3.0), (back, 7.0)] {
+            let o = world.objects.get_mut(idx).unwrap();
+            o.parent_id = avatar_id;
+            o.state = 31u8.rotate_left(4);
+            o.position = Vec3::new(x, 0.0, 0.0);
+            let g = &mut scene.gpu[idx];
+            g.hud = true;
+            g.owner_avatar = Some(own);
+            g.center = o.position;
+            g.radius = 1.0;
+        }
+        let front_id = world.objects.get(front).unwrap().key.local_id;
+        let child = world.objects.get_mut(back).unwrap();
+        child.parent_id = front_id;
+        child.state = 0;
+        child.position = Vec3::new(4.0, 0.0, 0.0);
+        scene.build_huds(&world, [1280, 720], true);
+        let cursor = (640.0, 360.0);
+        let (picked, p, ray) = scene.hud_pick(&world, cursor, true).unwrap();
+        assert_eq!(picked, front);
+        assert!((p - Vec3::new(2.5, 0.0, 0.0)).length() < 1e-5);
+        let surface = scene.touch_surface(&world, front, ray).unwrap();
+        assert_eq!(surface.face, 0);
+        assert!((surface.st - Vec3::new(0.5, 0.5, 0.0)).length() < 1e-5);
+        assert!((surface.position - p).length() < 1e-5);
+        assert_eq!(scene.object_cursor_ray(front, cursor, None), Some(ray));
+        // Ignore passes through the front HUD, Disabled still occludes.
+        world.objects.get_mut(front).unwrap().click_action = crate::interaction::code::IGNORE;
+        assert_eq!(scene.hud_pick(&world, cursor, true).unwrap().0, back);
+        world.objects.get_mut(front).unwrap().click_action = crate::interaction::code::DISABLED;
+        assert_eq!(scene.hud_pick(&world, cursor, true).unwrap().0, front);
+        // Invisible touch panels are picked on click, but not on hover.
+        for f in &mut Arc::make_mut(world.objects.get_mut(front).unwrap().te.as_mut().unwrap()).faces {
+            f.color[3] = 0.0;
+        }
+        assert_eq!(scene.hud_pick(&world, cursor, true).unwrap().0, front);
+        assert_eq!(scene.hud_pick(&world, cursor, false).unwrap().0, back);
+        scene.gpu[front].owner_avatar = None;
+        scene.build_huds(&world, [1280, 720], true);
+        assert_eq!(scene.lists.hud_opaque.len(), 1);
+        assert_eq!(scene.hud_pick(&world, cursor, true).unwrap().0, back);
+        scene.build_huds(&world, [1280, 720], false);
+        assert!(scene.lists.hud_opaque.is_empty());
+        assert!(scene.hud_pick(&world, cursor, true).is_none());
     }
 
     #[test]

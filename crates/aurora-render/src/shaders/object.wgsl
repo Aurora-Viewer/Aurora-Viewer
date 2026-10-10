@@ -313,6 +313,22 @@ struct DepthOut {
     @invariant @builtin(position) clip: vec4<f32>,
 };
 
+// Firestorm fullbrightF / pbropaqueF IS_HUD: base color plus emissive,
+// without atmosphere or scene lighting. Keep the shared UV/animation path.
+override HUD_SRGB_TARGET: bool = false;
+
+@fragment
+fn fs_hud(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    let rec = records[in.record];
+    let mat = eval_material(in, front);
+    if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u && mat.color.a < rec.params.w) { discard; }
+    let blended = (rec.flags.x & FLAG_ALPHA_BLEND) != 0u;
+    if (blended && mat.color.a < 0.004) { discard; }
+    var rgb = mat.color.rgb + select(vec3<f32>(0.0), mat.emissive, (rec.flags.x & FLAG_PBR) != 0u);
+    if (!HUD_SRGB_TARGET) { rgb = ll_linear_to_srgb(rgb); }
+    return vec4<f32>(rgb, select(1.0, mat.color.a, blended));
+}
+
 // Depth prepass (opaque geometry and terrain): position only.
 @vertex
 fn vs_depth(in: VsIn) -> DepthOut {
