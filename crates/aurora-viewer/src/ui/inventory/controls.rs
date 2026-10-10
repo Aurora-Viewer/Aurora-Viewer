@@ -51,34 +51,68 @@ pub fn toolbar(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi, prefs: &mut
         if flat_button(ui, p, "Préférences").clicked() {
             st.preferences_open = !st.preferences_open;
         }
-        if (!st.search.is_empty() || st.filters.active() || st.links_filter.is_some()) && flat_button(ui, p, "Effacer").clicked() {
+        if st.links_filter.is_some() {
+            if flat_button(ui, p, "Quitter les liens").clicked() {
+                st.links_filter = None;
+                if let Some(filters) = st.saved_filters.take() {
+                    st.filters = filters;
+                }
+            }
+        } else if (!st.search.is_empty() || st.filters.active()) && flat_button(ui, p, "Effacer").clicked() {
             st.search.clear();
             st.filters = Filters::default();
             st.links_filter = None;
             st.saved_filters = None;
         }
-    });
-    egui::ComboBox::from_id_salt("inventory_search_field")
-        .selected_text(match prefs.search_field {
-            SearchField::Name => "Nom",
-            SearchField::Description => "Description",
-            SearchField::Creator => "Créateur",
-            SearchField::Uuid => "UUID",
-            SearchField::All => "Tous les champs",
-        })
-        .show_ui(ui, |ui| {
-            for (field, label) in [
-                (SearchField::Name, "Nom"),
-                (SearchField::Description, "Description"),
-                (SearchField::Creator, "Créateur"),
-                (SearchField::Uuid, "UUID"),
-                (SearchField::All, "Tous les champs"),
-            ] {
-                ui.selectable_value(&mut prefs.search_field, field, label);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if flat_button(ui, p, "Développer")
+                .on_hover_text("Développer les dossiers affichés")
+                .clicked()
+            {
+                st.expand_all = Some(true);
             }
-        })
-        .response
-        .on_hover_text("Recherche sans distinction de casse. + combine plusieurs termes ; des guillemets recherchent un mot exact.");
+            if flat_button(ui, p, "Réduire")
+                .on_hover_text("Réduire les dossiers affichés")
+                .clicked()
+            {
+                st.expand_all = Some(false);
+            }
+        });
+    });
+}
+
+pub fn search(ui: &mut egui::Ui, st: &mut InventoryUi, prefs: &mut InventoryPreferences, hint: &str) {
+    ui.horizontal(|ui| {
+        let selector_width = 112.0_f32.min(ui.available_width() * 0.4);
+        let field_width = (ui.available_width() - selector_width - ui.spacing().item_spacing.x).max(40.0);
+        ui.add_sized(
+            [field_width, ui.spacing().interact_size.y],
+            egui::TextEdit::singleline(&mut st.search).hint_text(hint),
+        );
+        egui::ComboBox::from_id_salt("inventory_search_field")
+            .width(selector_width)
+            .truncate()
+            .selected_text(match prefs.search_field {
+                SearchField::Name => "Nom",
+                SearchField::Description => "Description",
+                SearchField::Creator => "Créateur",
+                SearchField::Uuid => "UUID",
+                SearchField::All => "Tous les champs",
+            })
+            .show_ui(ui, |ui| {
+                for (field, label) in [
+                    (SearchField::Name, "Nom"),
+                    (SearchField::Description, "Description"),
+                    (SearchField::Creator, "Créateur"),
+                    (SearchField::Uuid, "UUID"),
+                    (SearchField::All, "Tous les champs"),
+                ] {
+                    ui.selectable_value(&mut prefs.search_field, field, label);
+                }
+            })
+            .response
+            .on_hover_text("Recherche sans distinction de casse. + combine plusieurs termes ; des guillemets recherchent un mot exact.");
+    });
 }
 
 pub fn dialogs(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi, prefs: &mut InventoryPreferences) {
@@ -196,7 +230,7 @@ pub fn dialogs(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi, prefs: &m
                             ui.selectable_value(&mut f.creator, v, label);
                         }
                     });
-                check(ui, p, "Toujours afficher les dossiers", &mut f.always_folders);
+                check(ui, p, "Afficher aussi les dossiers sans résultat", &mut f.always_folders);
                 check(ui, p, "Objets regroupés uniquement", &mut f.coalesced);
                 ui.add_space(5.0);
                 ui.label(RichText::new("Date de création").color(p.muted));

@@ -1,6 +1,7 @@
 //! Inventory sorting and filtering rules from Firestorm LLInventorySort,
 //! LLInventoryFilter and LLFolderBridge::getSortGroup (indra/newview,
-//! originally LGPL 2.1). Views are cached by inventory generation and inputs;
+//! originally LGPL 2.1), including SHOW_NON_EMPTY_FOLDERS used by
+//! LLPanelMainInventory. Views are cached by inventory generation and inputs;
 //! parallel sorting/filtering never changes server folder membership.
 
 use super::{Facts, Inventory, folder_name, rules};
@@ -198,6 +199,9 @@ pub struct ViewCache {
     version: Option<(Uuid, Uuid, u64, Sort)>,
     entries: Vec<Entry>,
     children: HashMap<Uuid, Vec<Uuid>>,
+    result_children: HashMap<Uuid, Vec<Uuid>>,
+    folders: HashSet<Uuid>,
+    revision: u64,
     query: Option<Query>,
     pub results: Vec<Uuid>,
 }
@@ -279,6 +283,7 @@ impl ViewCache {
             }))
             .collect();
         self.entries.par_sort_unstable_by(|a, b| compare(a, b, sort));
+        self.folders = inv.folders.keys().copied().collect();
         self.children.clear();
         for entry in &self.entries {
             self.children.entry(entry.parent).or_default().push(entry.id);
@@ -434,7 +439,117 @@ impl ViewCache {
             })
             .map(|e| e.id)
             .collect();
+        // Every matching item retains its real ancestors. Folder visibility
+        // is independent of whether the folder itself passes item filters.
+        let mut included = HashSet::new();
+        for id in &self.results {
+            let mut parent = *id;
+            let mut seen = HashSet::new();
+            while parent != root && seen.insert(parent) {
+                included.insert(parent);
+                if parent == inv.lib_root && root == inv.root {
+                    break;
+                }
+                let Some(next) = rules::parent(inv, parent) else { break };
+                parent = next;
+            }
+        }
+        self.result_children.clear();
+        for (parent, children) in &self.children {
+            let children: Vec<_> = children.iter().filter(|id| included.contains(id)).copied().collect();
+            if !children.is_empty() {
+                self.result_children.insert(*parent, children);
+            }
+        }
+        self.revision = self.revision.wrapping_add(1);
         self.query = Some(query);
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct TreeRow {
+    pub id: Uuid,
+    pub depth: usize,
+    pub folder: bool,
+    pub open: bool,
+}
+
+/// Flatten only the expanded branches for virtual drawing. Collapsed folders
+/// belong to each tab, independently of the unfiltered inventory tree.
+#[derive(Default)]
+pub struct TreeState {
+    key: Option<(u64, Uuid, usize, bool)>,
+    closed: [HashSet<Uuid>; 5],
+    pub rows: Vec<TreeRow>,
+    pub order: Vec<Uuid>,
+}
+impl TreeState {
+    pub fn prepare(&mut self, view: &ViewCache, root: Uuid, tab: usize, show_root: bool) {
+        let tab = tab.min(4);
+        let key = (view.revision, root, tab, show_root);
+        if self.key == Some(key) {
+            return;
+        }
+        self.rows.clear();
+        self.order.clear();
+        let mut todo = vec![(root, 0)];
+        let mut seen = HashSet::new();
+        while let Some((id, depth)) = todo.pop() {
+            if !seen.insert(id) {
+                continue;
+            }
+            let folder = view.folders.contains(&id);
+            let open = folder && !self.closed[tab].contains(&id);
+            if id != root || show_root {
+                self.rows.push(TreeRow { id, depth, folder, open });
+                self.order.push(id);
+            }
+            if (open || (id == root && !show_root))
+                && let Some(children) = view.result_children.get(&id)
+            {
+                let depth = depth + usize::from(id != root || show_root);
+                todo.extend(children.iter().rev().map(|id| (*id, depth)));
+            }
+        }
+        if view.results.is_empty() {
+            self.rows.clear();
+            self.order.clear();
+        }
+        self.key = Some(key);
+    }
+
+    pub fn toggle(&mut self, id: Uuid, tab: usize) {
+        let closed = &mut self.closed[tab.min(4)];
+        if !closed.remove(&id) {
+            closed.insert(id);
+        }
+        self.key = None;
+    }
+
+    pub fn reveal(&mut self, inv: &Inventory, id: Uuid, tab: usize) {
+        let closed = &mut self.closed[tab.min(4)];
+        let mut parent = rules::parent(inv, id);
+        let mut seen = HashSet::new();
+        let mut changed = false;
+        while let Some(id) = parent {
+            if !seen.insert(id) {
+                break;
+            }
+            changed |= closed.remove(&id);
+            parent = rules::parent(inv, id);
+        }
+        if changed {
+            self.key = None;
+        }
+    }
+
+    pub fn set_all(&mut self, view: &ViewCache, root: Uuid, tab: usize, open: bool) {
+        let closed = &mut self.closed[tab.min(4)];
+        closed.clear();
+        if !open {
+            closed.extend(view.result_children.keys().filter(|id| **id != root).copied());
+        }
+        self.key = None;
     }
 }
 
@@ -685,6 +800,61 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(search(&inv, &facts, &prefs, &filters, 0), [id(11), id(10)]);
+    }
+
+    #[test]
+    fn filtered_items_keep_all_ancestors_without_unrelated_items() {
+        let (mut inv, facts) = fixture();
+        folder(&mut inv, 7, id(2), -1, "nested textures");
+        let mut texture = item(20, id(7), "texture", 500);
+        texture.inv_type = 0;
+        texture.asset_type = 0;
+        inv.add_items(vec![texture]);
+        let prefs = InventoryPreferences::default();
+        let filters = Filters {
+            types: 1,
+            ..Default::default()
+        };
+        let mut view = ViewCache::default();
+        view.search(&inv, inv.root, "", &prefs, &filters, 0, None, &facts, facts.agent, 1000);
+        let mut tree = TreeState::default();
+        tree.prepare(&view, inv.root, 0, true);
+        assert_eq!(view.results, [id(20)]);
+        assert_eq!(tree.order, [id(1), id(2), id(7), id(20)]);
+        assert_eq!(tree.rows.last().unwrap().depth, 3);
+        tree.set_all(&view, inv.root, 0, false);
+        tree.prepare(&view, inv.root, 0, true);
+        assert_eq!(tree.order, [id(1), id(2)]);
+        tree.toggle(id(2), 0);
+        tree.prepare(&view, inv.root, 0, true);
+        assert_eq!(tree.order, [id(1), id(2), id(7)]);
+        tree.reveal(&inv, id(20), 0);
+        tree.prepare(&view, inv.root, 0, true);
+        assert!(tree.order.contains(&id(20)));
+        tree.prepare(&view, id(2), 0, false);
+        assert_eq!(tree.order, [id(7), id(20)]);
+    }
+
+    #[test]
+    fn recent_and_worn_use_real_folders_and_separate_collapse_states() {
+        let (inv, mut facts) = fixture();
+        let prefs = InventoryPreferences {
+            last_logout: 200,
+            ..Default::default()
+        };
+        let mut view = ViewCache::default();
+        let mut tree = TreeState::default();
+        view.search(&inv, inv.root, "", &prefs, &Filters::default(), 2, None, &facts, facts.agent, 1000);
+        tree.prepare(&view, inv.root, 2, true);
+        assert_eq!(tree.order, [id(1), id(2), id(11)]);
+        tree.toggle(id(2), 2);
+        tree.prepare(&view, inv.root, 2, true);
+        assert_eq!(tree.order, [id(1), id(2)]);
+        facts.worn.insert(id(10));
+        view.search(&inv, inv.root, "", &prefs, &Filters::default(), 3, None, &facts, facts.agent, 1000);
+        tree.prepare(&view, inv.root, 3, true);
+        assert_eq!(tree.order, [id(1), id(2), id(10)]);
+        assert!(!tree.rows.last().unwrap().folder);
     }
 
     #[test]

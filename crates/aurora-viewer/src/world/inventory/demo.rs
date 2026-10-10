@@ -149,7 +149,14 @@ pub fn target(view: &str) -> Option<Uuid> {
 /// Sorting/filter fixtures with distinct ages, owners, permissions and paths.
 pub fn seed_view(inv: &mut Inventory, agent: Uuid, large: bool) {
     let root = inv.root;
-    for (n, name, kind) in [(8200, "A — Dossier personnel", -1), (8201, "Textures", 0)] {
+    let personal = Uuid::from_u128(8200);
+    for (n, parent, name, kind) in [
+        (8200, root, "A — Dossier personnel", -1),
+        (8201, root, "Textures", 0),
+        (8202, personal, "Accessoires", -1),
+        (8203, personal, "Vêtements", -1),
+        (8204, personal, "Corps", -1),
+    ] {
         if kind >= 0 && actions::system(inv, kind).is_some() {
             continue;
         }
@@ -159,7 +166,7 @@ pub fn seed_view(inv: &mut Inventory, agent: Uuid, large: bool) {
             Folder {
                 info: InvFolder {
                     id,
-                    parent: root,
+                    parent,
                     name: name.into(),
                     type_default: kind,
                     version: 1,
@@ -171,7 +178,7 @@ pub fn seed_view(inv: &mut Inventory, agent: Uuid, large: bool) {
                 library: false,
             },
         );
-        if let Some(folder) = inv.folders.get_mut(&root) {
+        if let Some(folder) = inv.folders.get_mut(&parent) {
             folder.children.push(id);
         }
     }
@@ -193,6 +200,20 @@ pub fn seed_view(inv: &mut Inventory, agent: Uuid, large: bool) {
             it.flags |= 0x200000;
         }
     }
+    items.extend(
+        inv.items
+            .values()
+            .filter(|it| it.parent == root && (710..724).contains(&it.id.as_u128()))
+            .map(|it| {
+                let mut it = it.clone();
+                it.parent = Uuid::from_u128(match it.asset_type {
+                    6 => 8202,
+                    5 => 8203,
+                    _ => 8204,
+                });
+                it
+            }),
+    );
     if large {
         items.extend((0..1500).map(|n| InvItem {
             id: Uuid::from_u128(10000 + n),

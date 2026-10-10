@@ -5806,17 +5806,30 @@ impl ApplicationHandler for App {
             }
             if let Ok(view) = std::env::var("AURORA_DEMO_INVENTORY") {
                 crate::world::inventory::demo::seed(&mut self.world.inventory, self.world.agent_id);
-                if matches!(view.as_str(), "sort" | "filters" | "preferences" | "recent" | "large") {
+                let configured_view = matches!(
+                    view.as_str(),
+                    "sort" | "filters" | "preferences" | "recent" | "worn" | "filtered" | "large"
+                );
+                if configured_view {
                     crate::world::inventory::demo::seed_view(&mut self.world.inventory, self.world.agent_id, view == "large");
                     self.settings.inventory = ui::inventory::InventoryPreferences::default();
-                    self.inventory_ui.show_original(&self.world.inventory, uuid::Uuid::from_u128(8000));
+                    self.inventory_ui.show_original(&self.world.inventory, self.world.inventory.root);
                     self.inventory_ui.filters_open = view == "filters";
                     self.inventory_ui.preferences_open = view == "preferences";
                     if view == "sort" {
+                        self.inventory_ui.show_original(&self.world.inventory, uuid::Uuid::from_u128(8000));
                         self.inventory_ui.open_folder_window(uuid::Uuid::from_u128(8000));
                     }
                     if view == "recent" {
                         self.inventory_ui.tab = 2;
+                    }
+                    if view == "worn" {
+                        self.inventory_ui.tab = 3;
+                    }
+                    if view == "filtered" {
+                        self.settings.inventory.filter_defaults.types &= !(1 << 6);
+                        self.inventory_ui = Default::default();
+                        self.inventory_ui.filters_open = true;
                     }
                     if view == "large" {
                         self.inventory_ui.search = "Élément".into();
@@ -5878,7 +5891,7 @@ impl ApplicationHandler for App {
                     } else {
                         self.inventory_ui.demo_menu = Some(id);
                     }
-                } else if !matches!(view.as_str(), "sort" | "filters" | "preferences" | "recent" | "large") {
+                } else if !configured_view {
                     self.inventory_ui.show_original(&self.world.inventory, self.world.inventory.root);
                 }
                 for cmd in

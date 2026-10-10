@@ -103,8 +103,12 @@ inclus dans la recherche et le double-clic. Les dossiers système viennent
 en premier ; les éléments sont triés du plus récent au plus ancien et les
 dossiers par nom. Ces options sont aussi dans Préférences › Interface.
 La recherche peut porter sur le nom, la description, le créateur ou l'UUID ;
-`+` combine des termes, `"mot"` cherche un mot exact. Les résultats conservent
-leur chemin et leur date en info-bulle. Récent part de la dernière déconnexion
+`+` combine des termes, `"mot"` cherche un mot exact. Les éléments restent dans
+leurs dossiers, y compris dans Récent, Porté, les recherches et les vues filtrées.
+Réduire / Développer agit sur ces dossiers ; le sélecteur des champs est à droite
+de la saisie. « Afficher aussi les dossiers sans résultat » ajoute les dossiers
+vides à la vue, les dossiers parents des résultats étant toujours présents.
+Le chemin et la date restent disponibles en info-bulle. Récent part de la dernière déconnexion
 (24 h au premier lancement). Les filtres restent propres à chaque fenêtre ;
 « Garder par défaut » les mémorise pour les prochaines ouvertures.
 
@@ -117,7 +121,7 @@ settings and cache (`…\config\demo`, `…\cache\demo`).
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO=1` | Offline demo mode |
-| `AURORA_DEMO_INVENTORY=sort\|filters\|preferences\|recent\|large` | Tri système / date et dates distinctes, fenêtre de filtres, préférences, onglet Récent ou recherche de 1 500 éléments. Données synthétiques uniquement ; aucun benchmark de rendu. |
+| `AURORA_DEMO_INVENTORY=sort\|filters\|preferences\|recent\|worn\|filtered\|large` | Tri système / date, filtres, préférences, arborescence Récent / Porté, filtre excluant les objets ou recherche de 1 500 éléments. Données synthétiques uniquement ; aucun benchmark de rendu. |
 | `AURORA_CAPTURE=<file.png>` | Save a capture of the frame (`AURORA_CAPTURE_FRAMES`, default 240; ~620 to pass the loading fade). Several frames separated by commas (`2500,2600`) save one file each, `<file>-<frame>.png`. The background frame cap ("Limiter hors focus") is ignored |
 | `AURORA_CAPTURE_EXIT=1` | Quit after the capture |
 | `AURORA_DEMO_CAM="yaw,pitch,dist"` | Camera heading offset and pitch around the avatar (radians, positive pitch looks down) and distance (meters) |
