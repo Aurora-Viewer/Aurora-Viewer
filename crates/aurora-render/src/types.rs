@@ -806,8 +806,10 @@ mod tests {
     /// still reads the copy.
     #[test]
     fn packet_lists_are_a_copy_that_keeps_its_memory() {
-        let mut scene = DrawLists::default();
-        scene.hud_view = Some(HudView::new([1600, 900], 0.5, -1.0, 2.0));
+        let mut scene = DrawLists {
+            hud_view: Some(HudView::new([1600, 900], 0.5, -1.0, 2.0)),
+            ..Default::default()
+        };
         scene.hud_opaque.push(cmd(20));
         scene.hud_blend.push(cmd(21));
         scene.terrain.push(cmd(1));
