@@ -3160,8 +3160,9 @@ impl App {
             // finished jobs only leave cheap work to the main thread (their
             // data is staged for the GPU by the jobs): a short budget is
             // enough, and keeps a burst of results from stretching a frame
-            self.scene
-                .process_results(&mut gfx.renderer, &self.net, Duration::from_micros(1000));
+            let frame_time = Duration::from_secs_f32(dt);
+            let results_budget = crate::scene::textures::frame_share(frame_time, Duration::from_millis(1));
+            self.scene.process_results(&mut gfx.renderer, &self.net, results_budget);
             self.frame_profile.lap(Lap::Results);
             // poses first: attachments follow their bone in the same frame
             let completed = self
@@ -3316,7 +3317,7 @@ impl App {
                 .settings
                 .texture_budget(gfx.renderer.info.vram_mb, gfx.renderer.info.integrated);
             self.scene
-                .stream(&mut gfx.renderer, &self.net, &self.world, texture_budget * 1024 * 1024);
+                .stream(&mut gfx.renderer, &self.net, &self.world, texture_budget * 1024 * 1024, frame_time);
         }
         self.perf.update_ms = t_up.elapsed().as_secs_f32() * 1000.0;
         self.frame_profile.lap(Lap::Stream);

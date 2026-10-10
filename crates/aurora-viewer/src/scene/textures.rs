@@ -179,10 +179,20 @@ pub struct UploadBudget {
     pub bytes: u64,
 }
 
-impl Default for UploadBudget {
-    fn default() -> Self {
+/// Main-thread time a frame of `frame` may give to a streaming step: 5 % of
+/// the frame (the share Firestorm gives its texture updates, 50 ms a second
+/// in llviewerdisplay.cpp), at least `floor` and at most 3 ms. A fast frame
+/// keeps the floor; at 15 or 30 frames a second (window in the background,
+/// modest machine) the same work is not spread over ten times more time.
+pub fn frame_share(frame: Duration, floor: Duration) -> Duration {
+    (frame / 20).clamp(floor, Duration::from_millis(3).max(floor))
+}
+
+impl UploadBudget {
+    /// The budget of a frame that lasts `frame`.
+    pub fn for_frame(frame: Duration) -> Self {
         UploadBudget {
-            time: Duration::from_micros(800),
+            time: frame_share(frame, Duration::from_micros(800)),
             bytes: 24 << 20,
         }
     }
@@ -1186,6 +1196,21 @@ mod tests {
         q.push(pending(3, 0), true, 75.0);
         let order: Vec<u128> = std::iter::from_fn(|| q.pop()).map(|u| u.id.as_u128()).collect();
         assert_eq!(order, [1, 3, 2]);
+    }
+
+    #[test]
+    fn budget_follows_the_frame_time() {
+        let ms = |v: f32| Duration::from_secs_f32(v / 1000.0);
+        // fast frames: the floor
+        assert_eq!(UploadBudget::for_frame(ms(2.0)).time, Duration::from_micros(800));
+        assert_eq!(UploadBudget::for_frame(ms(6.5)).time, Duration::from_micros(800));
+        // 30 frames a second: 5 % of the frame
+        let t = UploadBudget::for_frame(ms(33.3)).time;
+        assert!((t.as_secs_f32() * 1000.0 - 1.665).abs() < 0.01, "{t:?}");
+        // 15 frames a second and slower: capped
+        assert_eq!(UploadBudget::for_frame(ms(66.7)).time, Duration::from_millis(3));
+        assert_eq!(UploadBudget::for_frame(ms(100.0)).time, Duration::from_millis(3));
+        assert_eq!(frame_share(ms(10.0), Duration::from_millis(1)), Duration::from_millis(1));
     }
 
     #[test]

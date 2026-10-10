@@ -2593,7 +2593,7 @@ impl Scene {
     }
 
     /// Per-frame streaming work.
-    pub fn stream(&mut self, renderer: &mut Renderer, net: &NetClient, world: &World, texture_budget: u64) {
+    pub fn stream(&mut self, renderer: &mut Renderer, net: &NetClient, world: &World, texture_budget: u64, frame: std::time::Duration) {
         use crate::frame_profile::Part;
         let t = Instant::now();
         let va = world.viewer_asset_url();
@@ -2617,7 +2617,7 @@ impl Scene {
         }
         let t = self.parts.lap(Part::Skin, t);
         let pages_before = renderer.textures.page_create_ms();
-        self.textures.upload(renderer, textures::UploadBudget::default());
+        self.textures.upload(renderer, textures::UploadBudget::for_frame(frame));
         self.parts.add(Part::Pages, renderer.textures.page_create_ms() - pages_before);
         let t = self.parts.lap(Part::Upload, t);
         self.textures.maintain(renderer, &self.jobs, texture_budget);
