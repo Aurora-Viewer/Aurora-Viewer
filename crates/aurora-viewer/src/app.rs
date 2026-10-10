@@ -2196,6 +2196,12 @@ impl App {
         if !self.demo {
             return;
         }
+        // AURORA_DEMO_HOVER=1: the cursor swept over the scene, then still
+        if let Some(g) = &self.gfx
+            && let Some(cursor) = crate::demo::hover_sweep(self.frame_count, g.renderer.size())
+        {
+            self.cursor_pos = cursor;
+        }
         let Ok(mode) = std::env::var("AURORA_DEMO_ACTIONS") else {
             return;
         };

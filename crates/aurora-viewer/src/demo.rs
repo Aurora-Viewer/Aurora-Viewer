@@ -2222,6 +2222,23 @@ pub fn animesh_events() -> Vec<NetEvent> {
 /// AURORA_DEMO_TEXTURES=<n>: texture stress test, `n` small cubes (9000 for
 /// any value that is not a number, as many textures as a busy region), each
 /// with its own texture. Returns the cube count.
+/// AURORA_DEMO_HOVER=1: the cursor swept over the window from frame 300,
+/// then left still, in turns of 240 frames (hover search and kept answers,
+/// scene/hover.rs). The cursor position at `frame` in a window of `size`.
+pub fn hover_sweep(frame: u64, (w, h): (u32, u32)) -> Option<(f32, f32)> {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if frame < 300 || !*ON.get_or_init(|| std::env::var_os("AURORA_DEMO_HOVER").is_some()) {
+        return None;
+    }
+    let f = frame - 300;
+    // (the last position of a sweep is held while the cursor rests)
+    let moving = f / 240 * 120 + (f % 240).min(119);
+    let t = moving as f32 * 0.021;
+    let x = 0.5 + 0.42 * (t * 1.3).sin();
+    let y = 0.55 + 0.3 * (t * 0.9 + 1.0).sin();
+    Some(((x * w as f32).floor(), (y * h as f32).floor()))
+}
+
 pub fn texture_stress_count() -> Option<u32> {
     let v = std::env::var("AURORA_DEMO_TEXTURES").ok()?;
     Some(v.trim().parse().unwrap_or(9000).min(20_000))

@@ -919,6 +919,17 @@ impl TextureStreamer {
         }
     }
 
+    /// AURORA_DEMO_STREAM: the downloaded data a texture loaded at full
+    /// resolution holds (the demo textures arrive decoded, without any).
+    pub fn demo_attach_data(&mut self, id: &Uuid, data: Vec<u8>) {
+        if let Some(e) = self.entries.get_mut(id)
+            && e.decoded == Some(0)
+        {
+            e.data = Arc::new(data);
+            e.complete = true;
+        }
+    }
+
     /// Send decoded textures to the GPU, most visible first, within the
     /// frame's budget (at least one a frame, so a slow one still goes).
     pub fn upload(&mut self, renderer: &mut Renderer, budget: UploadBudget) {

@@ -12,6 +12,12 @@
 //! what they weigh on the grid. The log tells when everything is loaded
 //! (`demo stream: fully loaded`), to check that smoothing the uploads does
 //! not slow loading down.
+//!
+//! With `,leave` after the counts, the region is then left as by a
+//! teleport: a second after the loading, every object is removed at once
+//! and its texture, now holding downloaded data of the size of its J2C
+//! file, is no longer used; two seconds later they are all due for
+//! eviction (`demo stream: textures evicted`).
 
 use super::{HANDLE, height, prim, shape, te};
 use crate::scene::jobs::{AlphaKind, Jobs};
@@ -29,8 +35,12 @@ use uuid::Uuid;
 /// Default objects per wave, and time between waves.
 const WAVE: u32 = 100;
 const WAVE_EVERY: Duration = Duration::from_millis(250);
-/// First wave once the loading fade is over.
+/// First wave once the loading fade is over: not before this frame, nor
+/// before this long after the scenario was first driven (at several
+/// hundred frames a second, frame 300 comes while the loading screen still
+/// covers the view).
 const FIRST_FRAME: u64 = 300;
+const FIRST_AFTER: Duration = Duration::from_secs(4);
 /// Full resolution this long after the quarter-size level.
 const UPGRADE_AFTER: Duration = Duration::from_millis(1500);
 /// Local ids of the objects (apart from the other demo objects).
@@ -48,13 +58,30 @@ const SIZES: [(u32, u32); 8] = [
     (384, 384),
 ];
 
-/// Object count and objects per wave from the variable's value (2000
-/// objects for a count that is not a number, 100 per wave by default).
-fn parse(value: &str) -> (u32, u32) {
-    let mut parts = value.split(',').map(|p| p.trim().parse::<u32>().ok());
+/// The region is left this long after it is loaded (`,leave`), and its
+/// textures are evicted this long after that.
+const LEAVE_AFTER: Duration = Duration::from_secs(1);
+const EVICT_AFTER: Duration = Duration::from_secs(2);
+
+/// Object count, objects per wave and whether the region is left at the
+/// end, from the variable's value (2000 objects for a count that is not a
+/// number, 100 per wave by default).
+fn parse(value: &str) -> (u32, u32, bool) {
+    let leave = value.split(',').any(|p| p.trim() == "leave");
+    let mut parts = value
+        .split(',')
+        .filter(|p| p.trim() != "leave")
+        .map(|p| p.trim().parse::<u32>().ok());
     let n = parts.next().flatten().unwrap_or(2000).clamp(1, 20_000);
     let wave = parts.next().flatten().unwrap_or(WAVE).clamp(1, n);
-    (n, wave)
+    (n, wave, leave)
+}
+
+/// Bytes of downloaded data held by texture `i` once loaded: about what
+/// its J2C file weighs on the grid (2 bits a pixel).
+fn data_len(i: u32) -> usize {
+    let (w, h) = SIZES[i as usize % SIZES.len()];
+    (w * h / 4) as usize
 }
 
 pub fn texture(i: u32) -> Uuid {
@@ -147,24 +174,78 @@ pub struct StreamDemo {
     n: u32,
     wave: u32,
     next: u32,
+    /// First call of `tick`.
+    armed: Option<Instant>,
     started: Option<Instant>,
     last_wave: Option<Instant>,
     upgrades: VecDeque<(Instant, u32)>,
     loaded_logged: bool,
+    /// `,leave`: the region is left once loaded.
+    leave: bool,
+    loaded_at: Option<Instant>,
+    /// Textures given their downloaded data so far.
+    with_data: u32,
+    left_at: Option<Instant>,
+    evicted_logged: bool,
 }
 
 impl StreamDemo {
     pub fn from_env() -> Option<Self> {
-        let (n, wave) = parse(&std::env::var("AURORA_DEMO_STREAM").ok()?);
+        let (n, wave, leave) = parse(&std::env::var("AURORA_DEMO_STREAM").ok()?);
         Some(StreamDemo {
             n,
             wave,
             next: 0,
+            armed: None,
             started: None,
             last_wave: None,
             upgrades: VecDeque::new(),
             loaded_logged: false,
+            leave,
+            loaded_at: None,
+            with_data: 0,
+            left_at: None,
+            evicted_logged: false,
         })
+    }
+
+    /// `,leave`: the objects removed and their textures released a second
+    /// after the loading, then the wait for their eviction.
+    fn leave_region(&mut self, frame: u64, world: &mut crate::world::World, textures: &mut TextureStreamer) {
+        let now = Instant::now();
+        let Some(loaded_at) = self.loaded_at else {
+            return;
+        };
+        let Some(left_at) = self.left_at else {
+            // what a downloaded texture keeps in memory, a few per frame
+            // (so that the scenario's own work does not show as a hitch)
+            for i in self.with_data..(self.with_data + 64).min(self.n) {
+                textures.demo_attach_data(&texture(i), vec![0x5A; data_len(i)]);
+            }
+            self.with_data = (self.with_data + 64).min(self.n);
+            if self.with_data < self.n || now.duration_since(loaded_at) < LEAVE_AFTER {
+                return;
+            }
+            self.left_at = Some(now);
+            textures.evict_after = EVICT_AFTER;
+            for i in 0..self.n {
+                textures.release(&texture(i));
+            }
+            world.apply(NetEvent::ObjectsKilled {
+                handle: HANDLE,
+                local_ids: (0..self.n).map(|i| FIRST_LOCAL_ID + i).collect(),
+            });
+            log::info!("demo stream: region left ({} objects removed, their textures unused)", self.n);
+            return;
+        };
+        if !self.evicted_logged && frame.is_multiple_of(10) && !(0..self.n).any(|i| textures.is_wanted(&texture(i))) {
+            self.evicted_logged = true;
+            log::info!(
+                "demo stream: textures evicted {:.2} s after the region was left ({} textures)",
+                now.duration_since(left_at).as_secs_f32(),
+                self.n
+            );
+        }
     }
 
     pub fn tick(
@@ -176,7 +257,14 @@ impl StreamDemo {
         jobs: &Jobs,
         geom_pending: usize,
     ) {
-        if frame < FIRST_FRAME || self.loaded_logged {
+        let armed = *self.armed.get_or_insert_with(Instant::now);
+        if frame < FIRST_FRAME || armed.elapsed() < FIRST_AFTER {
+            return;
+        }
+        if self.loaded_logged {
+            if self.leave {
+                self.leave_region(frame, world, textures);
+            }
             return;
         }
         let now = Instant::now();
@@ -212,6 +300,7 @@ impl StreamDemo {
             let full = (0..self.n).filter(|&i| textures.decoded_level(&texture(i)) == Some(0)).count();
             if full == self.n as usize && geom_pending == 0 {
                 self.loaded_logged = true;
+                self.loaded_at = Some(now);
                 log::info!(
                     "demo stream: fully loaded in {:.2} s ({} textures at full resolution, geometry built; uploads {} staged / {} direct)",
                     now.duration_since(started).as_secs_f32(),
@@ -245,12 +334,22 @@ mod tests {
 
     #[test]
     fn variable_gives_count_and_wave() {
-        assert_eq!(parse("3000"), (3000, 100));
-        assert_eq!(parse("1"), (1, 1));
-        assert_eq!(parse("oui"), (2000, 100));
-        assert_eq!(parse("500, 500"), (500, 500));
+        assert_eq!(parse("3000"), (3000, 100, false));
+        assert_eq!(parse("1"), (1, 1, false));
+        assert_eq!(parse("oui"), (2000, 100, false));
+        assert_eq!(parse("500, 500"), (500, 500, false));
         // a wave larger than the count is the whole count
-        assert_eq!(parse("50,9999"), (50, 50));
+        assert_eq!(parse("50,9999"), (50, 50, false));
+        // the region left at the end, wherever the word is
+        assert_eq!(parse("3000,leave"), (3000, 100, true));
+        assert_eq!(parse("3000, 3000, leave"), (3000, 3000, true));
+        assert_eq!(parse("leave"), (2000, 100, true));
+    }
+
+    #[test]
+    fn downloaded_data_weighs_like_a_j2c_file() {
+        assert_eq!(data_len(0), 1024 * 1024 / 4);
+        assert_eq!(data_len(6), 128 * 128 / 4);
     }
 
     #[test]
