@@ -1,7 +1,9 @@
 //! Background work (rayon) and its results.
 
 use super::GeomKey;
-use aurora_render::{SkinVertex, Vertex};
+use super::animesh::JointBounds;
+use super::picking::PickFace;
+use aurora_render::{SkinVertex, StagedMesh, StagingPool, Vertex};
 use crossbeam_channel::{Receiver, Sender};
 use glam::Vec3;
 use std::sync::Arc;
@@ -31,12 +33,99 @@ pub struct FaceGeom {
 
 pub type FaceData = Option<FaceGeom>;
 
+/// Where a face's data waits for the GPU.
+pub enum FaceUpload {
+    /// Written into the renderer's staging memory by the job: the main
+    /// thread only records the copies.
+    Staged(StagedMesh),
+    /// Kept in memory for a main-thread write (staging memory full, or a
+    /// geometry built on the main thread).
+    Memory(FaceGeom),
+}
+
+/// A built geometry with everything the main thread would otherwise
+/// compute when it arrives: the picking copy of its triangles, the bounds
+/// of its skinned vertices per joint, and its vertex data staged for the
+/// GPU when the renderer's staging memory has room.
+pub struct PreparedGeom {
+    pub faces: Vec<Option<FaceUpload>>,
+    pub min: Vec3,
+    pub max: Vec3,
+    pub joint_bounds: Vec<JointBounds>,
+    pub pick_faces: Vec<Option<PickFace>>,
+}
+
+impl PreparedGeom {
+    /// `pick`: keep a copy of the triangles for ray picking (not for the
+    /// avatar's own body parts).
+    pub fn new(faces: Vec<FaceData>, min: Vec3, max: Vec3, pick: bool, pool: Option<&StagingPool>) -> Self {
+        let pick_faces = if pick {
+            faces
+                .iter()
+                .map(|f| {
+                    f.as_ref().map(|f| PickFace {
+                        positions: f.vertices.iter().map(|v| v.pos).collect(),
+                        uvs: f.vertices.iter().map(|v| v.uv).collect(),
+                        indices: f.indices.clone(),
+                    })
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let mut boxes = std::collections::HashMap::<u8, (Vec3, Vec3)>::new();
+        for f in faces.iter().flatten() {
+            if let Some(skin) = &f.skin {
+                for (v, s) in f.vertices.iter().zip(skin) {
+                    let p = Vec3::from_array(v.pos);
+                    for (&j, &w) in s.joints.iter().zip(&s.weights) {
+                        if w != 0 {
+                            let b = boxes.entry(j).or_insert((p, p));
+                            b.0 = b.0.min(p);
+                            b.1 = b.1.max(p);
+                        }
+                    }
+                }
+            }
+        }
+        let joint_bounds = boxes
+            .into_iter()
+            .map(|(joint, (min, max))| JointBounds { joint, min, max })
+            .collect();
+        let faces = faces
+            .into_iter()
+            .map(|f| {
+                let f = f?;
+                Some(
+                    match pool.and_then(|pool| StagedMesh::new(pool, &f.vertices, f.skin.as_deref(), &f.indices)) {
+                        Some(staged) => FaceUpload::Staged(staged),
+                        None => FaceUpload::Memory(f),
+                    },
+                )
+            })
+            .collect();
+        PreparedGeom {
+            faces,
+            min,
+            max,
+            joint_bounds,
+            pick_faces,
+        }
+    }
+
+    /// Every staged face can be copied (no job still writes in its chunk).
+    pub fn ready(&self) -> bool {
+        self.faces
+            .iter()
+            .flatten()
+            .all(|f| !matches!(f, FaceUpload::Staged(s) if !s.data.ready()))
+    }
+}
+
 pub enum JobResult {
     Geometry {
         key: GeomKey,
-        faces: Vec<FaceData>,
-        min: Vec3,
-        max: Vec3,
+        geom: PreparedGeom,
         /// LLVolume::getSurfaceArea (sculpts; 1 otherwise).
         area: f32,
     },
@@ -46,7 +135,10 @@ pub enum JobResult {
     Texture {
         id: Uuid,
         discard: u8,
+        /// Levels kept in memory (all of them unless `staged`).
         mips: Vec<(u32, u32, Vec<u8>)>,
+        /// The chain written into the renderer's staging memory by the job.
+        staged: Option<aurora_render::StagedTexture>,
         alpha: AlphaKind,
         /// The image has an alpha channel (2 or 4 components), whatever its values.
         alpha_channel: bool,
@@ -72,6 +164,36 @@ pub enum JobResult {
     Done,
 }
 
+/// Background jobs give way to the frame: while decodes keep every core
+/// busy (arrival in a region), the main thread, its `par_iter` workers and
+/// the encoder threads would otherwise wait for a core behind them (frames
+/// of 2.4 ms stretched to 5–8 ms in AURORA_DEMO_STREAM). Idle cores still go
+/// to the jobs, so loading is not slower.
+fn below_normal_priority() {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::System::Threading::{GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_BELOW_NORMAL};
+        // SAFETY: `GetCurrentThread` returns the calling thread's
+        // pseudo-handle, always valid for it; `SetThreadPriority` only
+        // reads that handle and an integer.
+        unsafe {
+            SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+        }
+    }
+}
+
+impl JobResult {
+    /// A geometry built by a job, prepared for the GPU on the job's thread.
+    pub fn geometry(key: GeomKey, (faces, min, max): (Vec<FaceData>, Vec3, Vec3), area: f32, pool: Option<&StagingPool>) -> Self {
+        let pick = !matches!(key, GeomKey::AvatarPart(_));
+        JobResult::Geometry {
+            key,
+            geom: PreparedGeom::new(faces, min, max, pick, pool),
+            area,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct Jobs {
     tx: Sender<JobResult>,
@@ -89,6 +211,7 @@ impl Jobs {
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(threads.saturating_sub(2).max(1))
             .thread_name(|i| format!("aurora-jobs-{i}"))
+            .start_handler(|_| below_normal_priority())
             .build()
             .map(Arc::new)
             .unwrap_or_else(|e| {
@@ -114,6 +237,26 @@ impl Jobs {
             let r = f();
             n.fetch_sub(1, Ordering::Relaxed);
             let _ = tx.send(r);
+        });
+    }
+
+    /// One job per item, queued with a single wake-up of the pool: a burst
+    /// of small jobs (the cache reads of a few hundred new textures) costs
+    /// the main thread one `spawn` instead of one each.
+    pub fn spawn_many<T: Send + 'static>(&self, items: Vec<T>, f: impl Fn(T) -> JobResult + Send + Sync + 'static) {
+        if items.is_empty() {
+            return;
+        }
+        let tx = self.tx.clone();
+        let n = self.in_flight.clone();
+        n.fetch_add(items.len(), Ordering::Relaxed);
+        self.pool.spawn(move || {
+            use rayon::prelude::*;
+            items.into_par_iter().for_each(|item| {
+                let r = f(item);
+                n.fetch_sub(1, Ordering::Relaxed);
+                let _ = tx.send(r);
+            });
         });
     }
 

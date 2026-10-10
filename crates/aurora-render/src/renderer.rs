@@ -16,6 +16,7 @@ use crate::gpu_cull::{
 };
 use crate::textures::{MipLevel, TextureTable};
 use crate::types::*;
+use crate::upload::{StagedMesh, StagedTexture, StagingPool, UploadQueue};
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3, Vec4};
 use std::sync::Arc;
@@ -533,6 +534,12 @@ struct Taa {
 }
 
 /// Halton(2,3) jitter sequence in [-0.5, 0.5].
+/// First skin binding to send when `sent` of `len` are already on the GPU:
+/// the new tail, or everything if the list was started over.
+fn skin_binds_tail(sent: usize, len: usize) -> usize {
+    if sent <= len { sent } else { 0 }
+}
+
 fn halton(i: u64, base: u64) -> f32 {
     let mut f = 1.0f32;
     let mut r = 0.0f32;
@@ -841,6 +848,9 @@ pub struct Renderer {
     surface_srgb: bool,
     pub info: GpuInfo,
     pub geometry: GeometryArena,
+    /// Copies of the streamed data staged by background jobs (upload.rs),
+    /// submitted first in the frame's submit.
+    pub uploads: UploadQueue,
     pub records: RecordStore,
     pub textures: TextureTable,
     pub egui: egui_wgpu::Renderer,
@@ -865,6 +875,8 @@ pub struct Renderer {
     /// Palette bytes written since the last frame (AURORA_PROFILE).
     palettes_uploaded: u64,
     skin_bind_buffer: wgpu::Buffer,
+    /// Skin bindings already in `skin_bind_buffer` (see `set_skin_binds`).
+    skin_binds_sent: usize,
     /// Shadow atlas: one tile per cascade (see `make_shadow_atlas`).
     shadow_view: wgpu::TextureView,
     shadow_buffers: Vec<wgpu::Buffer>,
@@ -2025,6 +2037,8 @@ impl Renderer {
             vram_mb,
             integrated: ainfo.device_type == wgpu::DeviceType::IntegratedGpu,
         };
+        // staging memory of the streamed uploads, created once here
+        let uploads = UploadQueue::new(&device, info.integrated || info.vram_mb.is_some_and(|mb| mb < 4096));
         let mut r = Renderer {
             device,
             queue,
@@ -2033,6 +2047,7 @@ impl Renderer {
             surface_srgb,
             info,
             geometry,
+            uploads,
             records,
             textures,
             egui,
@@ -2056,6 +2071,7 @@ impl Renderer {
             palette_buffer,
             palettes_uploaded: 0,
             skin_bind_buffer,
+            skin_binds_sent: 0,
             shadow_view,
             shadow_buffers,
             shadow_bind_groups,
@@ -2145,11 +2161,16 @@ impl Renderer {
 
     /// Upload the skin bindings (inverse bind matrix + palette joint per
     /// mesh joint) referenced by `DrawRecord::flags[2]` of skinned records.
+    /// The list only grows (a rigged mesh appends its joints): only the
+    /// entries not sent yet are written, unless the buffer had to grow. The
+    /// whole list sent again for every new rigged mesh was megabytes a frame
+    /// while a crowd loads.
     pub fn set_skin_binds(&mut self, binds: &[SkinBind]) {
         if binds.is_empty() {
             return;
         }
         let size = std::mem::size_of::<SkinBind>();
+        let mut from = skin_binds_tail(self.skin_binds_sent, binds.len());
         if std::mem::size_of_val(binds) as u64 > self.skin_bind_buffer.size() {
             let mut n = (self.skin_bind_buffer.size() as usize / size).max(1);
             while n < binds.len() {
@@ -2163,8 +2184,13 @@ impl Renderer {
                 &self.palette_buffer,
                 &self.skin_bind_buffer,
             );
+            from = 0;
         }
-        self.queue.write_buffer(&self.skin_bind_buffer, 0, bytemuck::cast_slice(binds));
+        if from < binds.len() {
+            self.queue
+                .write_buffer(&self.skin_bind_buffer, (from * size) as u64, bytemuck::cast_slice(&binds[from..]));
+        }
+        self.skin_binds_sent = binds.len();
     }
 
     fn make_palette_buffer(device: &wgpu::Device, matrices: usize) -> wgpu::Buffer {
@@ -3278,11 +3304,19 @@ impl Renderer {
     // ------------------------------------------------------------ resources
 
     pub fn upload_mesh(&mut self, vertices: &[Vertex], indices: &[u16]) -> Option<MeshAlloc> {
-        self.geometry.alloc(&self.device, &self.queue, vertices, None, indices)
+        self.geometry
+            .alloc(&self.device, &self.queue, &mut self.uploads, vertices, None, indices)
     }
 
     pub fn upload_skinned_mesh(&mut self, vertices: &[Vertex], skin: &[SkinVertex], indices: &[u16]) -> Option<MeshAlloc> {
-        self.geometry.alloc(&self.device, &self.queue, vertices, Some(skin), indices)
+        self.geometry
+            .alloc(&self.device, &self.queue, &mut self.uploads, vertices, Some(skin), indices)
+    }
+
+    /// Upload a mesh staged by a background job (`mesh.data.ready()` must
+    /// hold): the main thread only records the copies.
+    pub fn upload_mesh_staged(&mut self, mesh: &StagedMesh) -> Option<MeshAlloc> {
+        self.geometry.alloc_staged(&self.device, &self.queue, &mut self.uploads, mesh)
     }
 
     pub fn free_mesh(&mut self, m: MeshAlloc) {
@@ -3295,6 +3329,24 @@ impl Renderer {
 
     pub fn replace_texture(&mut self, slot: u32, mips: &[MipLevel]) -> bool {
         self.textures.replace(&self.device, &self.queue, slot, mips)
+    }
+
+    /// Staging memory shared with the background jobs (upload.rs).
+    pub fn staging_pool(&self) -> Arc<StagingPool> {
+        self.uploads.pool().clone()
+    }
+
+    /// Once a frame before the streamed copies: what the jobs staged so far
+    /// becomes copyable as soon as they are done writing.
+    pub fn prepare_uploads(&self) {
+        self.uploads.prepare();
+    }
+
+    /// Replace a slot's texels with a mip chain staged by a background job
+    /// (`staged.data.ready()` must hold): the main thread only records the
+    /// copies. False when refused (size), as `replace_texture`.
+    pub fn replace_texture_staged(&mut self, slot: u32, staged: &StagedTexture) -> bool {
+        self.textures.replace_staged(&self.device, &mut self.uploads, slot, staged)
     }
 
     /// Overwrite part of a texture's level 0 in place (media frames).
@@ -3500,7 +3552,9 @@ impl Renderer {
             );
             self.records_generation = self.records.generation;
         }
-        self.textures.maintain(&self.device, &self.queue, false);
+        self.textures.maintain(&self.device, &self.queue, &mut self.uploads, false);
+        // streamed textures and geometry: copied before every pass
+        let upload_cmds = self.uploads.finish();
         prof.push(("resources", Instant::now()));
 
         // one texture animation time for every pass of the frame
@@ -4642,7 +4696,9 @@ impl Renderer {
             }
         }
         prof.push(("finish", Instant::now()));
-        self.queue.submit(extra_cmds);
+        self.queue.submit(upload_cmds.into_iter().chain(extra_cmds));
+        // staging chunks whose copies are now submitted are mapped again
+        self.uploads.recycle();
         if let Some((buf, w, h, row)) = capture {
             self.capture_request = false;
             self.capture_scene = false;
@@ -4847,6 +4903,16 @@ fn detect_vram_mb(adapter: &wgpu::Adapter) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn skin_binds_send_only_the_new_tail() {
+        assert_eq!(skin_binds_tail(0, 134), 0);
+        assert_eq!(skin_binds_tail(134, 244), 134);
+        // nothing new: an empty tail
+        assert_eq!(skin_binds_tail(244, 244), 244);
+        // a shorter list is a new one
+        assert_eq!(skin_binds_tail(244, 134), 0);
+    }
 
     #[test]
     fn shadow_anchor_stays_near_and_still() {

@@ -286,6 +286,8 @@ pub struct App {
     places_ui: ui::places::PlacesUi,
     /// AURORA_DEMO_PLACE=repere|historique, opened once logged in.
     demo_place: Option<crate::world::place_details::Source>,
+    /// AURORA_DEMO_STREAM: objects and textures arriving in waves.
+    stream_demo: Option<crate::demo::stream::StreamDemo>,
     /// Parcel snapshots and group names the place profiles want.
     place_images: std::collections::HashSet<uuid::Uuid>,
     place_groups: std::collections::HashSet<uuid::Uuid>,
@@ -543,6 +545,7 @@ impl App {
             places_ui: Default::default(),
             place_images: Default::default(),
             demo_place: None,
+            stream_demo: None,
             place_groups: Default::default(),
             land_ui: Default::default(),
             env_ui: Default::default(),
@@ -3154,7 +3157,12 @@ impl App {
                 d if d.show_alpha => Some(d.show_alpha_rigged),
                 _ => None,
             };
-            self.scene.process_results(&mut gfx.renderer, &self.net, Duration::from_millis(6));
+            // finished jobs only leave cheap work to the main thread (their
+            // data is staged for the GPU by the jobs): a short budget is
+            // enough, and keeps a burst of results from stretching a frame
+            let frame_time = Duration::from_secs_f32(dt);
+            let results_budget = crate::scene::textures::frame_share(frame_time, Duration::from_millis(1));
+            self.scene.process_results(&mut gfx.renderer, &self.net, results_budget);
             self.frame_profile.lap(Lap::Results);
             // poses first: attachments follow their bone in the same frame
             let completed = self
@@ -3309,7 +3317,7 @@ impl App {
                 .settings
                 .texture_budget(gfx.renderer.info.vram_mb, gfx.renderer.info.integrated);
             self.scene
-                .stream(&mut gfx.renderer, &self.net, &self.world, texture_budget * 1024 * 1024);
+                .stream(&mut gfx.renderer, &self.net, &self.world, texture_budget * 1024 * 1024, frame_time);
         }
         self.perf.update_ms = t_up.elapsed().as_secs_f32() * 1000.0;
         self.frame_profile.lap(Lap::Stream);
@@ -3942,6 +3950,17 @@ impl App {
             self.toggle_ground_sit();
             log::info!("demo sit button: sitting {}", self.world.agent.is_sitting());
         }
+        if let (Some(demo), Some(g)) = (&mut self.stream_demo, &mut self.gfx) {
+            let pending = self.scene.stats.geom_pending;
+            demo.tick(
+                self.frame_count,
+                &mut self.world,
+                &mut self.scene.textures,
+                &mut g.renderer,
+                &self.scene.jobs,
+                pending,
+            );
+        }
         // AURORA_DEMO_TEXTURES_CHURN=1: stress cubes removed at frame 300
         // (textures released, evicted after 2 s), back with new textures at 700
         if self.demo
@@ -4222,7 +4241,8 @@ impl App {
             jobs: st.jobs,
             geom_pending: st.geom_pending,
         };
-        self.frame_profile.end_frame(&self.last_render, &counts);
+        let parts = std::mem::take(&mut self.scene.parts);
+        self.frame_profile.end_frame(&self.last_render, &counts, &parts);
     }
 
     /// Local chat from the chat bar or the conversations window: a chat bar
@@ -5612,6 +5632,7 @@ impl ApplicationHandler for App {
                     self.world.apply(ev);
                 }
             }
+            self.stream_demo = crate::demo::stream::StreamDemo::from_env();
             if let Some(n) = crate::demo::texture_stress_count() {
                 if let Some(g) = &mut self.gfx {
                     self.scene.textures.install_demo_stress(&mut g.renderer, 0..n);
