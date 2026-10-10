@@ -11,9 +11,10 @@
 //!   The main thread creates GPU resources (creation has no ordering and
 //!   the device is shared), but it never writes to them and never submits:
 //!   every write goes to the journal of the frame being built (writes.rs).
-//! - **Render thread, [`Backend`].** How to draw: the surface, pipelines,
-//!   render targets, per-frame uniforms, egui, the compute culling and its
-//!   bins, occlusion, readbacks. It is the only user of the queue.
+//! - **Render thread, `Backend` (renderer.rs).** How to draw: the surface,
+//!   pipelines, render targets, per-frame uniforms, egui, the compute
+//!   culling and its bins, occlusion, readbacks. It is the only user of the
+//!   queue.
 //!
 //! [`Renderer::render`] closes the frame on the main thread: the mirrors'
 //! dirty ranges join the journal, and the journal, the streamed copies, the

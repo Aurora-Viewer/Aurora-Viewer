@@ -38,6 +38,10 @@ impl TexelDst {
     }
 }
 
+/// A journal keeps the memory of a frame up to this size for the next ones
+/// (a busy region writes about a megabyte of records and palettes a frame).
+const KEEP_BYTES: usize = 8 << 20;
+
 /// One recorded queue call.
 #[derive(Debug)]
 enum Op<B, T, E> {
@@ -137,8 +141,23 @@ impl<B: Clone, T: Clone, E> Journal<B, T, E> {
         self.data.len()
     }
 
+    /// Recorded buffer writes, texture writes and submits (diagnostics).
+    pub fn counts(&self) -> [usize; 3] {
+        let mut n = [0; 3];
+        for op in &self.ops {
+            match op {
+                Op::Buffer { .. } => n[0] += 1,
+                Op::Texture { .. } => n[1] += 1,
+                Op::Submit(_) => n[2] += 1,
+            }
+        }
+        n
+    }
+
     /// Make the recorded calls, in order; the journal comes back empty with
-    /// its memory kept for the next frame.
+    /// its memory kept for the next frame. The memory of an unusual frame
+    /// (a burst of texture writes: tens of megabytes) is given back instead
+    /// of staying with every packet buffer.
     pub fn replay(&mut self, sink: &mut impl WriteSink<B, T, E>) {
         for op in self.ops.drain(..) {
             match op {
@@ -146,6 +165,9 @@ impl<B: Clone, T: Clone, E> Journal<B, T, E> {
                 Op::Texture { texture, dst, data } => sink.write_texture(&texture, dst, &self.data[data]),
                 Op::Submit(encoders) => sink.submit(encoders),
             }
+        }
+        if self.data.len() > KEEP_BYTES {
+            self.data = Vec::new();
         }
         self.data.clear();
     }
@@ -274,6 +296,19 @@ mod tests {
         // nothing recorded twice
         j.replay(&mut r);
         assert_eq!(r.0.len(), 2);
+    }
+
+    #[test]
+    fn the_memory_of_a_burst_is_given_back() {
+        let mut j: Journal<u32, u32, &'static str> = Journal::default();
+        let mut r = Recorder::default();
+        j.write_buffer(&1, 0, &vec![7; KEEP_BYTES + 1]);
+        j.replay(&mut r);
+        assert_eq!(j.data.capacity(), 0);
+        // an ordinary frame keeps its memory
+        j.write_buffer(&1, 0, &vec![7; 1 << 20]);
+        j.replay(&mut r);
+        assert!(j.data.capacity() >= 1 << 20);
     }
 
     #[test]

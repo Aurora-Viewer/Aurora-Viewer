@@ -542,6 +542,9 @@ struct Taa {
     reset: bool,
 }
 
+/// The replay of a frame's write journal is logged over this (ms).
+const SLOW_WRITES_MS: f32 = 4.0;
+
 /// Work of the helper threads (`Backend::finishers`).
 fn finish_encoder(encoder: wgpu::CommandEncoder) -> wgpu::CommandBuffer {
     encoder.finish()
@@ -3278,9 +3281,22 @@ impl Backend {
         // command buffer of the frame's submit. Done even when the frame
         // cannot be drawn.
         let t_writes = Instant::now();
+        let (recorded, counts) = (writes.bytes(), writes.counts());
         writes.replay(&mut QueueSink(&self.queue));
+        let replay_ms = t_writes.elapsed().as_secs_f32() * 1000.0;
         let upload_cmds = frame_uploads.take_commands();
         let writes_ms = t_writes.elapsed().as_secs_f32() * 1000.0;
+        if writes_ms > SLOW_WRITES_MS {
+            // a hitch worth explaining (an arrival: thousands of placeholder
+            // textures, megabytes of records, an arena that grows)
+            let [buffers, textures, submits] = counts;
+            log::info!(
+                "frame writes took {writes_ms:.1} ms: {} KB in {buffers} buffer and {textures} texture writes, {submits} submits \
+                 ({replay_ms:.1} ms), staged copies finished in {:.1} ms",
+                recorded >> 10,
+                writes_ms - replay_ms
+            );
+        }
         let t_acquire = Instant::now();
         let surface_tex = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => Some(t),

@@ -13,7 +13,7 @@ mod occlusion;
 mod packet;
 mod pick;
 pub mod probes;
-pub mod render_thread;
+mod render_thread;
 mod renderer;
 pub mod tex_anim;
 pub mod textures;
