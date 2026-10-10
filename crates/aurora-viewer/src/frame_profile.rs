@@ -113,8 +113,8 @@ impl Lap {
 }
 
 /// Sub-steps of the streaming work on the main thread (`s_*` in the
-/// summary): what `Results` and `Stream` spend their time on, so that a
-/// slow streaming frame names its cause.
+/// summary): what `Results`, `Stream` and `Sync` spend their time on, so
+/// that a slow frame while content loads names its cause.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Part {
     /// Downloads handed to the streamers (`Results`).
@@ -137,10 +137,19 @@ pub enum Part {
     Maintain,
     /// Streaming diagnostics in the log.
     Diag,
+    /// `Scene::sync`: removed objects, changed objects, the frame's list.
+    SyncList,
+    /// `Scene::sync`: placement of the listed objects (in parallel).
+    SyncPlan,
+    /// `Scene::sync`: moves applied, full syncs within the time budget.
+    SyncApply,
+    /// `Scene::sync`: faces classified again after a texture changed alpha
+    /// class.
+    SyncAlpha,
 }
 
 impl Part {
-    pub const ALL: [Part; 10] = [
+    pub const ALL: [Part; 14] = [
         Part::Fetched,
         Part::Geometry,
         Part::Decoded,
@@ -151,6 +160,10 @@ impl Part {
         Part::Pages,
         Part::Maintain,
         Part::Diag,
+        Part::SyncList,
+        Part::SyncPlan,
+        Part::SyncApply,
+        Part::SyncAlpha,
     ];
 
     fn key(self) -> &'static str {
@@ -165,6 +178,10 @@ impl Part {
             Part::Pages => "pages",
             Part::Maintain => "maintain",
             Part::Diag => "diag",
+            Part::SyncList => "sync_list",
+            Part::SyncPlan => "sync_plan",
+            Part::SyncApply => "sync_apply",
+            Part::SyncAlpha => "sync_alpha",
         }
     }
 }
@@ -213,6 +230,8 @@ pub struct SceneCounts {
     pub glow_alpha: usize,
     pub jobs: usize,
     pub geom_pending: usize,
+    /// Objects whose full sync waits for a frame with time left.
+    pub sync_backlog: usize,
 }
 
 /// Sums over the current period.
@@ -247,7 +266,7 @@ struct Period {
     texture_pages: u32,
     texture_page_bytes: u64,
     geometry_bytes: u64,
-    scene: [u64; 10],
+    scene: [u64; 11],
 }
 
 pub struct FrameProfile {
@@ -360,6 +379,7 @@ impl FrameProfile {
             s.glow_alpha,
             s.jobs,
             s.geom_pending,
+            s.sync_backlog,
         ]) {
             *sum += v as u64;
         }
@@ -464,7 +484,8 @@ fn summary(p: &Period, elapsed: Duration) -> String {
         out,
         " | draws={:.0} calls={:.0} tris_k={:.0} shadow_draws={:.0} particles={:.0} occluded={:.0} cull={} \
          blend={:.0} blend_glow={:.0} glow_alpha={:.0} | objects={:.0} visible={:.0} synced={:.0} rebuilt={:.1} posed={:.1} \
-         records_kb={:.1} palettes_kb={:.1} | textures={} texture_mb={} texture_pages={} pages_mb={} geometry_mb={} jobs={:.0} geom_pending={:.0}",
+         records_kb={:.1} palettes_kb={:.1} | textures={} texture_mb={} texture_pages={} pages_mb={} geometry_mb={} jobs={:.0} geom_pending={:.0} \
+         sync_backlog={:.0}",
         count(p.draws),
         count(p.calls),
         count(p.triangles) / 1000.0,
@@ -489,6 +510,7 @@ fn summary(p: &Period, elapsed: Duration) -> String {
         p.geometry_bytes >> 20,
         count(s[8]),
         count(s[9]),
+        count(s[10]),
     );
     out
 }
@@ -575,6 +597,7 @@ mod tests {
             render.cpu_phases[1] = if i == 10 { 1.5 } else { 0.2 };
             let mut parts = Parts::default();
             parts.add(Part::Upload, if i == 30 { 1.25 } else { 0.1 });
+            parts.add(Part::SyncApply, 0.5);
             if let Some(l) = p.end_frame_at(&render, &SceneCounts::default(), &parts, at) {
                 lines.push(l);
             }
@@ -586,6 +609,12 @@ mod tests {
         assert!(max.starts_with("render=20.00 media=6.10 "), "{max}");
         assert!(max.ends_with(&format!(" {key}=1.50 s_upload=1.25")), "{max}");
         assert!(l.contains(" s_upload=0.12 "), "{l}");
+        // the parts of the scene sync are listed with the streaming ones
+        assert!(
+            l.contains(" s_sync_list=0.00 s_sync_plan=0.00 s_sync_apply=0.50 s_sync_alpha=0.00 "),
+            "{l}"
+        );
+        assert!(l.ends_with(" sync_backlog=0"), "{l}");
         assert!(!max.contains("sync="), "{max}");
         // nothing over 1 ms
         let quiet = summary(&Period::default(), PERIOD);

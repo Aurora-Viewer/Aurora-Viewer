@@ -16,6 +16,8 @@
 //! - **LOD slice**: each object is visited every [`LOD_PERIOD`] frames
 //!   (detail level, and a safety net for state changed behind the store's
 //!   back). Only that frame's slice of the slab is walked.
+//! - **Backlog**: objects whose full sync did not fit the frame's time
+//!   budget; the sync takes them back, nearest first ([`Backlog`]).
 
 use crate::world::objects::{Object, ObjectStore};
 use glam::{Quat, Vec3};
@@ -203,6 +205,106 @@ pub trait SyncState {
     fn pending_due(&self, idx: usize) -> Option<bool>;
 }
 
+/// Full syncs put off to later frames, nearest to the camera first.
+///
+/// A full sync (geometry request, faces built, textures acquired) costs a
+/// few microseconds, but objects arrive by thousands: the region's object
+/// cache answering, a teleport, a linkset of a few hundred prims. Done all
+/// in the frame they arrive in, they made frames of 8 to 35 ms (Agni,
+/// BackBone Main Store). The sync does what fits its time budget and
+/// leaves the rest here; an object waits a few frames at most, the ones
+/// near the camera less than the far ones.
+#[derive(Default)]
+pub struct Backlog {
+    /// (distance key, object index), nearest first. An entry whose object
+    /// is no longer queued (synced, removed) is skipped when it comes up.
+    heap: std::collections::BinaryHeap<std::cmp::Reverse<(u32, u32)>>,
+    queued: Vec<bool>,
+    len: usize,
+}
+
+impl Backlog {
+    /// Queue an object at `distance` (m) from the camera. False when it
+    /// was already waiting (it keeps its place).
+    pub fn push(&mut self, idx: usize, distance: f32) -> bool {
+        if self.queued.len() <= idx {
+            self.queued.resize(idx + 1, false);
+        }
+        if std::mem::replace(&mut self.queued[idx], true) {
+            return false;
+        }
+        self.len += 1;
+        // 1/16 m steps; `as` saturates (NaN: 0, treated as nearest)
+        let key = (distance.max(0.0) * 16.0) as u32;
+        self.heap.push(std::cmp::Reverse((key, idx as u32)));
+        true
+    }
+
+    pub fn contains(&self, idx: usize) -> bool {
+        self.queued.get(idx).copied().unwrap_or(false)
+    }
+
+    /// The object was synced another way, or removed.
+    pub fn remove(&mut self, idx: usize) {
+        if let Some(q) = self.queued.get_mut(idx)
+            && std::mem::replace(q, false)
+        {
+            self.len -= 1;
+            if self.len == 0 {
+                // nothing but skipped entries left
+                self.heap.clear();
+            }
+        }
+    }
+
+    /// The nearest waiting object.
+    pub fn pop(&mut self) -> Option<usize> {
+        while let Some(std::cmp::Reverse((_, idx))) = self.heap.pop() {
+            let idx = idx as usize;
+            if self.contains(idx) {
+                self.remove(idx);
+                return Some(idx);
+            }
+        }
+        None
+    }
+
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+}
+
+/// Main-thread time a frame still has for the full syncs that can wait.
+/// Only their own time counts: what the frame must do anyway (moves,
+/// avatars) does not eat it.
+pub struct FullSyncBudget {
+    left: std::time::Duration,
+    done: u32,
+}
+
+impl FullSyncBudget {
+    pub fn new(budget: std::time::Duration) -> Self {
+        FullSyncBudget { left: budget, done: 0 }
+    }
+
+    /// Whether another full sync may start: while time is left, and
+    /// always the first of the frame (the backlog advances whatever the
+    /// budget).
+    pub fn allows(&self) -> bool {
+        !self.left.is_zero() || self.done == 0
+    }
+
+    /// A full sync took `spent`.
+    pub fn spend(&mut self, spent: std::time::Duration) {
+        self.left = self.left.saturating_sub(spent);
+        self.done += 1;
+    }
+}
+
 /// The event-driven sets of the scene sync (see the module documentation).
 #[derive(Default)]
 pub struct SyncSets {
@@ -214,6 +316,8 @@ pub struct SyncSets {
     pub material_users: IndexSet,
     /// Material generation the material users were last checked against.
     pub seen_mat_gen: u64,
+    /// Objects whose full sync waits for a frame with time left.
+    pub backlog: Backlog,
     listed: FrameMarks,
     expanded: FrameMarks,
 }
@@ -229,6 +333,7 @@ impl SyncSets {
         self.dirty.remove(idx);
         self.pending.remove(idx);
         self.material_users.remove(idx);
+        self.backlog.remove(idx);
     }
 
     /// An object changed through the store: synced this frame, and moving
@@ -287,6 +392,11 @@ impl SyncSets {
         let mut i = 0;
         while i < self.pending.len() {
             let idx = self.pending.items[i];
+            // already waiting for its full sync: not planned again each frame
+            if self.backlog.contains(idx) {
+                i += 1;
+                continue;
+            }
             match state.pending_due(idx) {
                 None => {
                     self.pending.remove(idx);
@@ -632,6 +742,107 @@ mod tests {
         state.pending = vec![(b, false)];
         assert_eq!(f.quiet_frame(&[a, b], &state), Vec::<usize>::new());
         assert!(!f.sets.pending.contains(a) && f.sets.pending.contains(b));
+    }
+
+    #[test]
+    fn full_sync_budget_counts_only_its_own_time() {
+        let us = std::time::Duration::from_micros;
+        let mut b = FullSyncBudget::new(us(1000));
+        let mut done = 0;
+        while b.allows() {
+            b.spend(us(300));
+            done += 1;
+        }
+        // the one that crosses the budget is the last
+        assert_eq!(done, 4);
+        // no time at all (a frame share of zero): the backlog still advances
+        let mut b = FullSyncBudget::new(us(0));
+        let mut done = 0;
+        while b.allows() {
+            b.spend(us(5000));
+            done += 1;
+        }
+        assert_eq!(done, 1);
+        // cheap syncs: as many as fit
+        let mut b = FullSyncBudget::new(us(1000));
+        let mut done = 0;
+        while b.allows() {
+            b.spend(us(1));
+            done += 1;
+        }
+        assert_eq!(done, 1000);
+    }
+
+    #[test]
+    fn backlog_serves_the_nearest_first() {
+        let mut b = Backlog::default();
+        assert!(b.is_empty() && b.pop().is_none());
+        assert!(b.push(10, 40.0));
+        assert!(b.push(11, 2.5));
+        assert!(b.push(12, 150.0));
+        assert!(b.push(13, 2.5));
+        // already waiting: it keeps its place, whatever the new distance
+        assert!(!b.push(12, 1.0));
+        assert_eq!(b.len(), 4);
+        assert!(b.contains(11) && !b.contains(99));
+        // equal distances: the lowest index
+        let order: Vec<usize> = std::iter::from_fn(|| b.pop()).collect();
+        assert_eq!(order, [11, 13, 10, 12]);
+        assert!(b.is_empty() && !b.contains(11));
+        // a distance that is not a number counts as nearest; huge ones saturate
+        b.push(1, f32::NAN);
+        b.push(2, 1e30);
+        b.push(3, -5.0);
+        b.push(4, 0.2);
+        let order: Vec<usize> = std::iter::from_fn(|| b.pop()).collect();
+        assert_eq!(order, [1, 3, 4, 2]);
+    }
+
+    #[test]
+    fn backlog_forgets_removed_objects() {
+        let mut b = Backlog::default();
+        b.push(5, 10.0);
+        b.push(6, 20.0);
+        b.push(7, 30.0);
+        // synced another way, or its object removed
+        b.remove(6);
+        b.remove(6);
+        b.remove(1234);
+        assert_eq!(b.len(), 2);
+        // the slot taken again by a new object, farther away: its old place
+        // is not served twice
+        b.remove(5);
+        b.push(5, 90.0);
+        assert_eq!(b.len(), 2);
+        let order: Vec<usize> = std::iter::from_fn(|| b.pop()).collect();
+        assert_eq!(order, [5, 7]);
+        assert!(b.is_empty());
+        // emptied by removals alone: nothing left to skip
+        b.push(8, 1.0);
+        b.remove(8);
+        assert!(b.heap.is_empty() && b.pop().is_none());
+    }
+
+    #[test]
+    fn objects_waiting_in_the_backlog_are_not_listed_for_their_geometry() {
+        let mut f = Fixture::new();
+        let mut state = State::default();
+        let a = f.add(9000, 0, false);
+        let b = f.add(9001, 0, false);
+        f.frame(&state);
+        // both have their geometry ready, but the frame had no time for a
+        f.sets.pending.insert(a);
+        f.sets.pending.insert(b);
+        state.pending = vec![(a, true), (b, true)];
+        f.sets.backlog.push(a, 12.0);
+        assert_eq!(f.quiet_frame(&[a, b], &state), vec![b]);
+        // served from the backlog: listed again if it still waits
+        assert_eq!(f.sets.backlog.pop(), Some(a));
+        assert_eq!(f.quiet_frame(&[a, b], &state), vec![a, b]);
+        // a removed object leaves the backlog with the other sets
+        f.sets.backlog.push(b, 3.0);
+        f.sets.forget(b);
+        assert!(f.sets.backlog.is_empty() && !f.sets.pending.contains(b));
     }
 
     #[test]

@@ -3168,6 +3168,10 @@ impl App {
             // enough, and keeps a burst of results from stretching a frame
             let frame_time = Duration::from_secs_f32(dt);
             let results_budget = crate::scene::textures::frame_share(frame_time, Duration::from_millis(1));
+            // the full syncs of arriving objects get the same share; more
+            // behind a loading or teleport screen, whose frames show nothing
+            let covered = matches!(self.screen, Screen::Loading { .. }) || self.tp_overlay.as_ref().is_some_and(|o| o.end.is_none());
+            self.scene.sync_budget = if covered { Duration::from_millis(8) } else { results_budget };
             self.scene.process_results(&mut gfx.renderer, &self.net, results_budget);
             self.frame_profile.lap(Lap::Results);
             // poses first: attachments follow their bone in the same frame
@@ -4246,6 +4250,7 @@ impl App {
             glow_alpha: lists.glow_alpha.len(),
             jobs: st.jobs,
             geom_pending: st.geom_pending,
+            sync_backlog: if in_world { st.sync_backlog } else { 0 },
         };
         let parts = std::mem::take(&mut self.scene.parts);
         self.frame_profile.end_frame(&self.last_render, &counts, &parts);

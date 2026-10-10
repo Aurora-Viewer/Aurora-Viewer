@@ -19,15 +19,17 @@ pub(super) enum Plan {
     /// Only its placement changed: applied from the parallel planning.
     Move(MoveSync),
     /// Full `sync_object` (geometry, faces, avatars…), with its transform
-    /// when known.
-    Full(Option<Xf>),
+    /// when known. When the frame has no time left for it, the object
+    /// waits in the backlog; `interim` then keeps the faces it already has
+    /// in place (a moving object does not freeze while it waits).
+    Full { xf: Option<Xf>, interim: Option<MoveSync> },
 }
 
 impl Plan {
     pub(super) fn xf(&self) -> Option<Xf> {
         match self {
             Plan::Move(m) => Some(m.xf),
-            Plan::Full(xf) => *xf,
+            Plan::Full { xf, .. } => *xf,
         }
     }
 }
@@ -239,21 +241,35 @@ impl SyncCtx<'_> {
     /// the full sync.
     pub(super) fn plan(&self, idx: usize) -> Plan {
         let world = self.world;
+        let none = Plan::Full { xf: None, interim: None };
         let Some(o) = world.objects.get(idx) else {
-            return Plan::Full(None);
+            return none;
         };
         let Some(xf) = self.transform(idx) else {
-            return Plan::Full(None);
+            return none;
         };
-        let full = Plan::Full(Some(xf));
-        if o.is_avatar() || o.shape_dirty || o.material_dirty {
-            return full;
-        }
         let Some(g) = self.gpu.get(idx) else {
-            return full;
+            return Plan::Full {
+                xf: Some(xf),
+                interim: None,
+            };
         };
-        if g.is_avatar || g.sculpt_wait.is_some() || (!g.material_ids.is_empty() && g.mat_generation != self.mat_gen) {
-            return full;
+        if o.is_avatar() || g.is_avatar {
+            // (never put off: no interim placement)
+            return Plan::Full {
+                xf: Some(xf),
+                interim: None,
+            };
+        }
+        let full = || Plan::Full {
+            xf: Some(xf),
+            interim: self.interim_move(idx, o, g, xf),
+        };
+        if o.shape_dirty || o.material_dirty {
+            return full();
+        }
+        if g.sculpt_wait.is_some() || (!g.material_ids.is_empty() && g.mat_generation != self.mat_gen) {
+            return full();
         }
         let (pos, _, hud) = xf;
         let lod = if hud {
@@ -263,25 +279,25 @@ impl SyncCtx<'_> {
             lod_for(radius, distance, self.lod_factor, self.fov_y)
         };
         let Some(key) = Scene::object_geom_key(o, lod) else {
-            return full;
+            return full();
         };
         if g.wanted_geom != Some(key) || g.geom != Some(key) {
-            return full;
+            return full();
         }
         // a sculpt keeps its texture held (the full sync acquires it again
         // after its faces were rebuilt)
         if matches!(key, GeomKey::Sculpt { .. }) && o.volume.sculpt.is_some_and(|s| !g.tex_ids.contains(&s.texture)) {
-            return full;
+            return full();
         }
         let Some(GeomState::Ready(geom)) = self.geoms.get(&key).map(|e| &e.state) else {
-            return full;
+            return full();
         };
         let p = self.placement(idx, o, xf, key, geom);
         if g.rigged != p.rigged
             || g.skeleton_owner != p.skeleton_owner.map(|s| s.0)
             || g.built_faces != geom.faces.iter().filter(|f| f.is_some()).count()
         {
-            return full;
+            return full();
         }
         let model = p.model.to_cols_array_2d();
         let changed = g.faces.iter().any(|f| self.records.get(f.record).is_some_and(|r| r.model != model));
@@ -295,6 +311,37 @@ impl SyncCtx<'_> {
             mirror: o.extra.reflection_probe.is_some_and(|p| p.flags & 0x4 != 0 && p.flags & 0x1 != 0),
             changed,
             clear_flags: o.render.needs_records,
+        })
+    }
+
+    /// Placement of the faces an object already has, for the frames its
+    /// full sync waits in the backlog: only when they moved, and when the
+    /// geometry they were built on is still placed the same way (a mesh
+    /// found rigged since changes space with its new faces only). The
+    /// object stays to be synced: no flag is cleared.
+    fn interim_move(&self, idx: usize, o: &Object, g: &ObjGpu, xf: Xf) -> Option<MoveSync> {
+        if g.faces.is_empty() {
+            return None;
+        }
+        let key = g.geom?;
+        let GeomState::Ready(geom) = &self.geoms.get(&key)?.state else {
+            return None;
+        };
+        let p = self.placement(idx, o, xf, key, geom);
+        if g.rigged != p.rigged || g.skeleton_owner != p.skeleton_owner.map(|s| s.0) {
+            return None;
+        }
+        let model = p.model.to_cols_array_2d();
+        let changed = g.faces.iter().any(|f| self.records.get(f.record).is_some_and(|r| r.model != model));
+        changed.then(|| MoveSync {
+            xf,
+            model,
+            center: p.center,
+            radius: p.radius,
+            owner_avatar: Scene::wearer_avatar(self.world, idx).map(|(_, i)| i),
+            mirror: g.mirror,
+            changed,
+            clear_flags: false,
         })
     }
 }
