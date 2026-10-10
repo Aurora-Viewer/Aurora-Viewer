@@ -797,6 +797,15 @@ impl GpuTimer {
     }
 }
 
+/// AURORA_PROFILE_FRAMES: one `render profile` / `gpu profile` log line per
+/// frame (~2 lines and 2 file writes per frame). AURORA_PROFILE alone keeps
+/// to the viewer's once-a-second summary, which reads the same values from
+/// `RenderStats`. Read once: the per-frame variable lookup is not free.
+fn profile_frames() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("AURORA_PROFILE_FRAMES").is_some())
+}
+
 fn ts_begin(t: &Option<GpuTimer>) -> Option<wgpu::RenderPassTimestampWrites<'_>> {
     t.as_ref().map(|t| wgpu::RenderPassTimestampWrites {
         query_set: &t.query_set,
@@ -4685,7 +4694,8 @@ impl Renderer {
         stats.draw_calls = calls.get();
         stats.records_uploaded = self.records.uploaded;
         stats.palettes_uploaded = std::mem::take(&mut self.palettes_uploaded);
-        if std::env::var_os("AURORA_PROFILE").is_some() {
+        let profile_frames = profile_frames();
+        if profile_frames {
             let mut out = format!("acquire={:.2} ", stats.cpu_phases[0]);
             for w in prof.windows(2) {
                 out.push_str(&format!("{}={:.2} ", w[1].0, (w[1].1 - w[0].1).as_secs_f32() * 1000.0));
@@ -4704,9 +4714,7 @@ impl Renderer {
         stats.records = self.records.live();
         stats.gpu_ms = self.timer.as_ref().and_then(|t| t.last_ms);
         stats.gpu_elements = self.timer.as_ref().and_then(|t| t.last_elements);
-        if std::env::var_os("AURORA_PROFILE").is_some()
-            && let Some(e) = stats.gpu_elements
-        {
+        if profile_frames && let Some(e) = stats.gpu_elements {
             let mut out = String::new();
             for (el, ms) in GpuElement::ALL.iter().zip(e) {
                 out.push_str(&format!("{}={ms:.3} ", el.key()));
