@@ -1,7 +1,7 @@
 //! Blocking diagnostics/image/file work. Called only by the report worker.
 
 use super::{Field, Report};
-use std::io::{Cursor, Read, Seek, SeekFrom};
+use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 const MAX_IMAGE_FILE: u64 = 16 * 1024 * 1024;
@@ -145,6 +145,7 @@ fn prepare_image(img: image::DynamicImage) -> Result<Attachment, &'static str> {
 pub struct Saved {
     pub public_dir: PathBuf,
     pub private_log_saved: bool,
+    pub logs: Option<Vec<u8>>,
 }
 
 pub fn save(report: &Report, image: Option<&Attachment>, include_image: bool, demo: bool) -> std::io::Result<Saved> {
@@ -186,7 +187,43 @@ fn save_in(
     Ok(Saved {
         public_dir: public,
         private_log_saved,
+        logs: None,
     })
+}
+
+pub fn prepare_private_logs(saved: &mut Saved) -> std::io::Result<()> {
+    let private = saved
+        .public_dir
+        .parent()
+        .ok_or_else(|| std::io::Error::other("missing report directory"))?
+        .join("private-do-not-upload");
+    if !saved.private_log_saved {
+        return Err(std::io::Error::other("missing session log"));
+    }
+    let mut archive = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated)
+        .compression_level(Some(1));
+    let mut total = 0;
+    for name in ["session.log", "diagnostics.md", "README.txt"] {
+        let mut bytes = Vec::new();
+        std::fs::File::open(private.join(name))?
+            .take(64 * 1024 * 1024 + 1)
+            .read_to_end(&mut bytes)?;
+        total += bytes.len();
+        if total > 64 * 1024 * 1024 {
+            return Err(std::io::Error::other("session log too large"));
+        }
+        archive.start_file(name, options)?;
+        archive.write_all(&bytes)?;
+    }
+    let bytes = archive.finish()?.into_inner();
+    if bytes.len() > 16 * 1024 * 1024 {
+        return Err(std::io::Error::other("archive too large"));
+    }
+    std::fs::write(private.join("logs.zip"), &bytes)?;
+    saved.logs = Some(bytes);
+    Ok(())
 }
 
 pub fn open_directory(path: &Path) -> std::io::Result<()> {
@@ -216,7 +253,7 @@ mod tests {
         let log = root.join("input.log");
         std::fs::write(&log, b"PRIVATE_LOG").unwrap();
         let image = capture(1, 1, vec![255; 4]).unwrap();
-        let saved = save_in(&root, &report, Some(&image), false, Some(&log)).unwrap();
+        let mut saved = save_in(&root, &report, Some(&image), false, Some(&log)).unwrap();
         let public = std::fs::read_to_string(saved.public_dir.join("report.md")).unwrap();
         assert!(!public.contains("SECRET_LOCATION"));
         assert!(!public.contains("PRIVATE_LOG"));
@@ -226,6 +263,15 @@ mod tests {
             std::fs::read(saved.public_dir.parent().unwrap().join("private-do-not-upload/session.log")).unwrap(),
             b"PRIVATE_LOG"
         );
+        prepare_private_logs(&mut saved).unwrap();
+        let bytes = saved.logs.as_ref().unwrap();
+        let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+        assert_eq!(archive.len(), 3);
+        let mut private_text = String::new();
+        archive.by_name("session.log").unwrap().read_to_string(&mut private_text).unwrap();
+        assert_eq!(private_text, "PRIVATE_LOG");
+        assert_eq!(std::fs::read_dir(&saved.public_dir).unwrap().count(), 1);
+        assert!(!saved.public_dir.join("logs.zip").exists());
         // Only the freshly generated test directory is removed.
         std::fs::remove_dir_all(root).unwrap();
     }

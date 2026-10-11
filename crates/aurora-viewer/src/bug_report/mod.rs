@@ -6,6 +6,7 @@
 pub mod files;
 pub mod github;
 pub mod privacy;
+pub mod uploads;
 
 use std::fmt::Write;
 

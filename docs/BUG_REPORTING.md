@@ -13,14 +13,16 @@ Créer une **GitHub App**, dans les réglages développeur de l’organisation
 Aurora-Viewer, puis :
 
 - activer **Enable Device Flow**, garder l’expiration des autorisations ;
-- laisser les URL de retour et de configuration vides, désactiver le webhook ;
+- pour le Device Flow seul, laisser les URL de retour et de configuration
+  vides ; pour les ZIP privés, ajouter le retour décrit plus bas. Désactiver
+  le webhook ;
 - permissions du dépôt : **Issues — Read and write**, métadonnées en lecture
   seule, aucune autre permission ;
 - application publique (**Any account**) pour les testeurs ; l’installer
   sur l’organisation avec uniquement le dépôt Aurora-Viewer sélectionné ;
 - reporter le **Client ID public** dans `bug_report/github.rs::CLIENT_ID`.
   L’App ID numérique ne convient pas. Aucun Client secret ni clé privée
-  n’est nécessaire et aucun ne doit être ajouté au viewer.
+  ne doit être ajouté au viewer.
 
 [Création d’une GitHub App](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/registering-a-github-app)
 et [Device Flow](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-user-access-token-for-a-github-app#using-the-device-flow-to-generate-a-user-access-token).
@@ -55,8 +57,8 @@ de copie et d’enregistrement sont dans « Autres actions ».
 Un nouveau rapport commence sur Description. Fermer la fenêtre conserve en
 mémoire le texte, l’onglet, le défilement, les cases, l’image et le mode d’envoi,
 y compris l’autorisation GitHub en cours, jusqu’à la fin de la session du viewer.
-Une erreur d’envoi conserve également le brouillon. Après création confirmée
-par l’API, le lien du rapport et son dossier restent disponibles ; rouvrir la
+Une erreur d’envoi conserve également le brouillon. Après publication complète
+de l’issue et de ses fichiers, le lien du rapport et son dossier restent disponibles ; rouvrir la
 fenêtre ou choisir « Nouveau rapport » prépare ensuite un formulaire neuf.
 Le navigateur ne confirme pas la publication au viewer : le testeur clique
 sur « J’ai publié le rapport » après l’envoi sur GitHub pour vider le brouillon.
@@ -81,8 +83,42 @@ Chaque enregistrement crée un dossier sous `data/bug-reports/`, à côté de
 `data/logs/`. Le sous-dossier `public` contient le texte choisi et, si incluse,
 `screenshot.png`. Le dossier `private-do-not-upload` contient les diagnostics
 locaux privés et ne doit jamais être joint à une issue publique. Les images
-ne sont pas téléversées par l’API : après création, ouvrir l’issue et glisser
-la capture depuis `public`. Le mode navigateur propose la même opération.
+de l’envoi direct sont téléversées sur `api.auroraviewer.com`, puis affichées
+dans l’issue. L’autorisation GitHub du testeur n’est jamais envoyée à ce service.
+Le mode navigateur conserve l’ajout manuel de la capture depuis `public`.
+
+## Images publiques et journaux privés
+
+Le service PHP est dans le dépôt privé
+[aurora-api](https://github.com/Aurora-Viewer/aurora-api), relié à Clever Cloud.
+Le bucket Cellar reste privé : l’API expose les captures et protège les ZIP.
+Le viewer vérifie la disponibilité du service avant de créer une issue avec
+des fichiers, déclare leurs empreintes SHA-256 dans le rapport, puis les envoie
+une fois le numéro de l’issue reçu. Le service accepte uniquement le fichier
+annoncé dans une issue récente du dépôt Aurora-Viewer. Images : 16 Mio,
+1920 pixels de côté au maximum, réencodage PNG côté serveur.
+
+« Joindre les journaux complets aux développeurs uniquement », dans Données,
+est décoché par défaut et proposé pour l’envoi depuis Aurora. Le ZIP contient
+le journal de cette session et les diagnostics complets ; il peut donc inclure
+des champs décochés pour le rapport public et des informations personnelles.
+Il reste dans `private-do-not-upload`, séparé de la copie publique. Limites :
+64 Mio avant compression et 16 Mio compressés ; un journal absent ou trop gros
+arrête la préparation et conserve le brouillon. Aucun ZIP réel n’est envoyé en démo.
+
+Le lien du ZIP figure dans l’issue publique, mais son téléchargement exige
+l’autorisation GitHub d’un compte qui accède au dépôt privé `aurora-api`.
+La GitHub App doit inclure ce dépôt dans son installation et avoir l’URL de
+retour `https://api.auroraviewer.com/auth/callback`. Son Client secret est
+configuré uniquement dans la variable Clever Cloud `GITHUB_CLIENT_SECRET`.
+Les sessions développeur durent quinze minutes et le droit d’accès est
+revérifié à chaque téléchargement. Aucun cache public ne reçoit les ZIP.
+
+Après une erreur partielle, le numéro de l’issue, les fichiers et le brouillon
+restent en mémoire, y compris après fermeture du formulaire. « Terminer l’envoi
+des fichiers » reprend le même rapport et conserve les modifications faites
+dans GitHub ; il ne crée pas de seconde issue. Un nouveau formulaire n’est
+préparé qu’après la réussite de l’ensemble de l’envoi.
 
 ## Validation
 

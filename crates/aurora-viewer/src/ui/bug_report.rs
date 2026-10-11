@@ -37,6 +37,7 @@ pub struct BugReportUi {
     tab: usize,
     include_ui: bool,
     include_image: bool,
+    include_logs: bool,
     image: Option<files::Attachment>,
     texture: Option<egui::TextureHandle>,
     diagnostics: Option<crossbeam_channel::Receiver<files::Diagnostics>>,
@@ -63,7 +64,7 @@ impl BugReportUi {
     pub fn begin(&mut self, fields: Vec<Field>, demo: bool) {
         // Keep the sent report visible for its issue link and picture attachment,
         // then start a fresh draft when the user opens the form again.
-        if self.github.created.is_some() {
+        if self.github.complete() {
             self.new_report();
         }
         self.requested = false;
@@ -194,13 +195,21 @@ impl BugReportUi {
                                 });
                             }
                         } else if delivery == Delivery::Direct {
-                            self.github.submit(report.title.clone(), report.markdown());
+                            let image = self.image.as_ref().filter(|_| with_image).map(|image| image.png.clone());
+                            self.github
+                                .submit(report.title.clone(), report.markdown(), image, saved.logs.clone());
                             self.notice = None;
                         }
                     }
                     self.saved = Some(saved);
                 }
-                Err(_) => self.error = Some("bug-save-error"),
+                Err(_) => {
+                    self.error = Some(if self.include_logs {
+                        "bug-private-logs-error"
+                    } else {
+                        "bug-save-error"
+                    })
+                }
             }
         }
     }
@@ -334,9 +343,19 @@ impl BugReportUi {
                     ui.separator();
                     ui.add_space(6.0);
                     ui.label(RichText::new(aurora_i18n::tr!("bug-send-heading")).strong().color(p.violet_light));
-                    ui.add_enabled_ui(!working && self.github.created.is_none(), |ui| self.delivery_options(ui, p));
+                    ui.add_enabled_ui(
+                        !working && (self.github.created.is_none() || self.github.attachment_pending()),
+                        |ui| self.delivery_options(ui, p),
+                    );
                     if self.include_image && self.image.is_some() {
-                        ui.label(RichText::new(aurora_i18n::tr!("bug-manual-image")).color(p.amber));
+                        ui.label(
+                            RichText::new(aurora_i18n::text(if self.delivery == Delivery::Direct {
+                                "bug-auto-image"
+                            } else {
+                                "bug-manual-image"
+                            }))
+                            .color(p.amber),
+                        );
                     }
                     ui.add_space(6.0);
                     if !self.report.ready() {
@@ -379,7 +398,7 @@ impl BugReportUi {
                                 });
                                 ui.close();
                             }
-                            if self.github.created.is_some() {
+                            if self.github.complete() {
                                 ui.separator();
                                 if ui
                                     .add_enabled(idle, egui::Button::new(aurora_i18n::tr!("bug-new-report")))
@@ -394,6 +413,18 @@ impl BugReportUi {
                             ui.spinner();
                         }
                     });
+                    if self.github.attachment_pending() {
+                        ui.label(RichText::new(aurora_i18n::tr!("bug-upload-partial")).color(p.amber));
+                        if ui
+                            .add_enabled(
+                                idle && self.github.connected(),
+                                egui::Button::new(aurora_i18n::tr!("bug-upload-retry")),
+                            )
+                            .clicked()
+                        {
+                            self.github.retry_attachments();
+                        }
+                    }
                     if let Some(key) = self.error {
                         ui.label(RichText::new(aurora_i18n::text(key)).color(p.danger));
                     }
@@ -499,6 +530,11 @@ impl BugReportUi {
                 ui.label(RichText::new(aurora_i18n::tr!("bug-no-secrets")).size(12.0).color(p.muted));
             }
             2 => {
+                ui.add_enabled_ui(self.delivery == Delivery::Direct, |ui| {
+                    ui.checkbox(&mut self.include_logs, aurora_i18n::tr!("bug-private-logs"));
+                });
+                ui.label(RichText::new(aurora_i18n::tr!("bug-private-logs-help")).size(12.0).color(p.amber));
+                ui.separator();
                 ui.label(RichText::new(aurora_i18n::tr!("bug-fields-help")).size(12.0).color(p.muted));
                 for field in &mut self.report.fields {
                     ui.checkbox(&mut field.included, aurora_i18n::text(field.label));
@@ -594,7 +630,9 @@ impl BugReportUi {
         // Only the current draft remembers the chosen delivery mode.
         ui.horizontal_wrapped(|ui| {
             ui.radio_value(&mut self.delivery, Delivery::Direct, aurora_i18n::tr!("bug-direct-mode"));
-            ui.radio_value(&mut self.delivery, Delivery::Browser, aurora_i18n::tr!("bug-browser-mode"));
+            ui.add_enabled_ui(!self.include_logs, |ui| {
+                ui.radio_value(&mut self.delivery, Delivery::Browser, aurora_i18n::tr!("bug-browser-mode"));
+            });
         });
         ui.label(
             RichText::new(aurora_i18n::text(if self.delivery == Delivery::Browser {
@@ -660,13 +698,20 @@ impl BugReportUi {
         let report = self.report.clone();
         let image = self.image.clone();
         let include_image = self.include_image;
+        let include_logs = self.include_logs;
         self.pending_delivery = Some((delivery, report.clone(), include_image && image.is_some()));
         self.notice = None;
         let demo = self.demo;
         let (tx, rx) = crossbeam_channel::bounded(1);
         self.save_job = Some(rx);
         std::thread::spawn(move || {
-            let _ = tx.send(files::save(&report, image.as_ref(), include_image, demo));
+            let result = files::save(&report, image.as_ref(), include_image, demo).and_then(|mut saved| {
+                if include_logs && !demo {
+                    files::prepare_private_logs(&mut saved)?;
+                }
+                Ok(saved)
+            });
+            let _ = tx.send(result);
         });
     }
 }
