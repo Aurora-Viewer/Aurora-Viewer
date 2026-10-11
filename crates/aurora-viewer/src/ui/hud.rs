@@ -95,31 +95,32 @@ pub fn draw_attachments(ctx: &egui::Context, world: &World, scene: &Scene) {
     }
 }
 
-/// `voice`: avatars in voice chat (level, speaking) for the voice dots.
+/// `voice`: avatars in voice chat (level, speaking); absence means no voice.
 /// Returns the avatar name tags, far first as drawn (the last one on top).
 #[allow(clippy::too_many_arguments)]
 pub fn draw(
     ctx: &egui::Context,
     p: &Palette,
+    icons: &super::icons::Icons,
     world: &World,
     proj: &Projector,
     eye: Vec3,
     show_own: bool,
     tag_distance: f32,
     voice: &HashMap<uuid::Uuid, (f32, bool)>,
-    dots: &mut super::voice_dot::VoiceDots,
+    voice_tags: &mut super::voice_tag::VoiceTags,
     complexity: Option<TagComplexity<'_>>,
     loading: Option<&HashMap<uuid::Uuid, f32>>,
 ) -> Vec<NameTag> {
     let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("hud")));
     let now = Instant::now();
-    // (distance, anchor, lines, voice: (id, level, speaking), loading, avatar)
+    // (distance, anchor, lines, voice: (level, speaking), loading, avatar)
     #[allow(clippy::type_complexity)]
     let mut tags: Vec<(
         f32,
         Pos2,
         Vec<(String, Color32, f32)>,
-        Option<(uuid::Uuid, f32, bool)>,
+        Option<(f32, bool)>,
         Option<f32>,
         Option<uuid::Uuid>,
     )> = Vec::new();
@@ -222,7 +223,7 @@ pub fn draw(
                     }
                 }
             }
-            let in_voice = voice.get(&o.full_id).map(|(level, speaking)| (o.full_id, *level, *speaking));
+            let in_voice = voice.get(&o.full_id).copied();
             let progress = loading.and_then(|l| l.get(&o.full_id).copied());
             tags.push((d, sp, lines, in_voice, progress, Some(o.full_id)));
         } else if !o.text.is_empty() {
@@ -284,8 +285,8 @@ pub fn draw(
         let total_h: f32 = galleys.iter().map(|g| g.size().y).sum();
         let max_w = galleys.iter().map(|g| g.size().x).fold(0.0, f32::max);
         y -= total_h;
-        // in voice chat: the voice dot sits in the tag, left of the name
-        let voice_w = if in_voice.is_some() { super::voice_dot::TAG_WIDTH } else { 0.0 };
+        let no_voice = is_avatar && in_voice.is_none();
+        let voice_w = if no_voice { super::voice_tag::ICON_WIDTH } else { 0.0 };
         let text_x = sp.x + voice_w * 0.5;
         if is_avatar {
             let w = max_w + 12.0 + voice_w;
@@ -320,11 +321,18 @@ pub fn draw(
                 mesh.add_triangle(0, 2, 3);
                 painter.add(mesh);
             }
-            if let Some((id, level, speaking)) = in_voice {
-                // centered on the name (last line)
-                let name_h = galleys.last().map(|g| g.size().y).unwrap_or(total_h);
-                let c = Pos2::new(r.left() + 4.0 + voice_w * 0.5, r.bottom() - 3.0 - name_h * 0.5);
-                dots.paint(&painter, p, id, c, level, speaking, now_s, fade);
+            if let Some(id) = avatar {
+                voice_tags.paint(&painter, p, id, r, in_voice, now_s, fade);
+            }
+            if no_voice && let Some(icon) = icons.get("microphone-slash-fill") {
+                let center = Pos2::new(r.left() + 6.0 + super::voice_tag::ICON_SIZE * 0.5, r.center().y);
+                let icon_rect = egui::Rect::from_center_size(center, egui::Vec2::splat(super::voice_tag::ICON_SIZE));
+                painter.image(
+                    icon.id(),
+                    icon_rect,
+                    egui::Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                    p.danger.gamma_multiply(fade),
+                );
             }
         }
         for g in galleys {
@@ -345,6 +353,6 @@ pub fn draw(
             y += h;
         }
     }
-    dots.prune(now_s);
+    voice_tags.prune(now_s);
     name_tags
 }

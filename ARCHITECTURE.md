@@ -130,6 +130,11 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
 | `scene/sync_sets.rs` | Objets que la synchro de la scène visite à chaque image, tenus à jour par événements (objets modifiés notés par `ObjectStore`, ensemble des objets qui bougent d'eux-mêmes et de ce qui les suit, géométries en attente, tranche de LOD) au lieu d'un parcours de tous les objets ; file d'attente des synchros complètes qui n'ont pas tenu dans le budget de temps de l'image, servie du plus proche au plus lointain (`Backlog`, `FullSyncBudget`) |
 | `scene/sync_plan.rs` | Placement en parallèle (rayon) des objets de l'image, niveau par niveau des chaînes de parents : transformation, LOD, limites ; mise à jour de la seule matrice ou synchro complète |
 
+Les indicateurs vocaux des étiquettes sont dessinés par `ui/voice_tag.rs` :
+contour lissé selon le niveau de parole, micro barré Phosphor fill pour les
+avatars hors vocal. `voice.rs` garantit l'entrée de notre avatar à partir du
+micro local, même sans écho de sa présence par le serveur vocal.
+
 ## Déroulement d'une image
 
 Le rez depuis l’inventaire passe par `ui/inventory.rs` (charge utile et relâché avant la fin de la passe egui), `app/inventory_drag.rs` (règles, groupe, préparation des commandes et consommation locale des exemplaires non copiables), `Scene::inventory_surface` (triangles parmi les candidats de l’index, terrain, sans attente GPU) et `aurora-net/src/inventory/rez.rs` (message fiable `RezObject` dans la région visée). Les pixels transparents sont testés avec un masque d’un bit par bloc 2×2, préparé par les tâches de décodage ; les surfaces invisibles et riggées sont écartées. Le curseur garde le résultat pendant 100 ms au plus quand le rayon ne bouge pas ; le relâché recalcule toujours la surface. Ctrl sur un objet envoie `UpdateTaskInventory`. La démo utilise un cube synthétique comme réponse au rez.

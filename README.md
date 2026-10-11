@@ -297,6 +297,7 @@ cargo run -p aurora-viewer
 |---|---|
 | `AURORA_DEMO=1` | Offline demo mode |
 | `AURORA_DEMO_<NAME>=…` | A demo scenario: a window, a stress scene, a camera script… |
+| `AURORA_DEMO_VOICE=speaking` / `listening` / `off` / `cycle` | Étiquettes vocales de soi et de l'autre avatar : contour animé, écoute silencieuse, micro barré, ou cycle de 9 s (4 s de parole, 3 s d'écoute, 2 s hors vocal), sans entrée micro ni modification des préférences |
 | `AURORA_DEMO_PIE=1` / `0` | Force le menu circulaire / en liste dans la démo, sans modifier la préférence ; à combiner avec `AURORA_DEMO_RCLICK` |
 | `AURORA_CAPTURE=<file.png>` | Saves a capture of a frame |
 | `AURORA_PROFILE=1` | Writes one profiling line per second to the log |

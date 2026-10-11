@@ -2678,24 +2678,78 @@ pub fn loop_animation_events(frame: u64) -> Vec<NetEvent> {
         .collect()
 }
 
-/// Offline voice stand-in for the voice dots: the other demo avatar talks
-/// in bursts; our own dot follows the real microphone (`mic_level`, Firestorm
-/// meter scale) while the microphone button / push-to-talk is on.
-pub fn voice_levels(t: f64, me: Uuid, talking: bool, mic_level: f32) -> std::collections::HashMap<Uuid, (f32, bool)> {
+/// Offline voice: the other avatar talks in bursts; our own outline follows
+/// the transmitted microphone. AURORA_DEMO_VOICE exercises both tags without
+/// microphone input: speaking / listening / off / cycle (4 s / 3 s / 2 s).
+pub fn voice_levels(
+    t: f64,
+    me: Uuid,
+    enabled: bool,
+    talking: bool,
+    mic_level: f32,
+    mode: Option<&str>,
+) -> std::collections::HashMap<Uuid, (f32, bool)> {
     let mut m = std::collections::HashMap::new();
     let t = t as f32;
+    let mode = match mode {
+        Some("cycle") => Some(if t.rem_euclid(9.0) < 4.0 {
+            "speaking"
+        } else if t.rem_euclid(9.0) < 7.0 {
+            "listening"
+        } else {
+            "off"
+        }),
+        mode => mode,
+    };
+    let synthetic = matches!(mode, Some("speaking" | "listening"));
+    if mode == Some("off") || (!synthetic && !enabled) {
+        return m;
+    }
     let other = Uuid::from_u128(0xA0E0_A6E1_0000_0000_0000_0000_0000_0002);
-    let burst = t.rem_euclid(6.0) < 3.5;
+    let burst = match mode {
+        Some("speaking") => true,
+        Some("listening") => false,
+        _ => t.rem_euclid(6.0) < 3.5,
+    };
     let level = if burst {
-        0.22 + 0.55 * (t * 2.3).sin().abs() * (0.6 + 0.4 * (t * 7.1).sin())
+        let (base, amplitude) = if synthetic { (0.35, 0.35) } else { (0.22, 0.55) };
+        base + amplitude * (t * 2.3).sin().abs() * (0.6 + 0.4 * (t * 7.1).sin())
     } else {
         0.0
     };
     m.insert(other, (level, burst && level > 0.2));
-    let mine = if talking { mic_level } else { 0.0 };
-    // above room noise (about 0.3 on this scale)
-    m.insert(me, (mine, talking && mine > 0.35));
+    let mine = if synthetic {
+        level
+    } else if talking {
+        mic_level
+    } else {
+        0.0
+    };
+    m.insert(me, (mine, mine > aurora_voice::SPEAKING_AUDIO_LEVEL));
     m
+}
+
+#[cfg(test)]
+mod voice_tests {
+    use super::*;
+
+    #[test]
+    fn own_demo_tag_respects_voice_and_transmission() {
+        assert!(voice_levels(1.0, DEMO_AGENT, false, true, 0.6, None).is_empty());
+        assert_eq!(voice_levels(1.0, DEMO_AGENT, true, false, 0.6, None)[&DEMO_AGENT], (0.0, false));
+        assert_eq!(voice_levels(1.0, DEMO_AGENT, true, true, 0.6, None)[&DEMO_AGENT], (0.6, true));
+    }
+
+    #[test]
+    fn scripted_voice_exercises_speaking_listening_and_disconnection_on_both_tags() {
+        let speaking = voice_levels(1.0, DEMO_AGENT, false, false, 0.0, Some("cycle"));
+        assert_eq!(speaking.len(), 2);
+        assert!(speaking.values().all(|(_, speaking)| *speaking));
+        let listening = voice_levels(5.0, DEMO_AGENT, false, false, 0.0, Some("cycle"));
+        assert_eq!(listening.len(), 2);
+        assert!(listening.values().all(|v| *v == (0.0, false)));
+        assert!(voice_levels(8.0, DEMO_AGENT, true, true, 0.6, Some("cycle")).is_empty());
+    }
 }
 
 // ---------------------------------------------------------------- alpha tests
