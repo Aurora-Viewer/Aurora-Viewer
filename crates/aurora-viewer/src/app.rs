@@ -3318,6 +3318,7 @@ impl App {
         // ---- network events (time-boxed)
         let t_ev = Instant::now();
         self.world.events_this_frame = 0;
+        self.world.script_debug.owner_say = self.settings.script_editor.owner_say_debug;
         while let Ok(ev) = self.net.events.try_recv() {
             if let Some(app_ev) = self.world.apply(ev) {
                 self.on_app_event(app_ev);
@@ -5104,7 +5105,9 @@ impl App {
                 );
                 self.sync_remembered_password();
                 // Keep disconnected script drafts accessible for copying.
-                let _ = self.script_editors.show(&ctx, &p);
+                for action in self.script_editors.show(&ctx, &p, &mut self.settings.script_editor) {
+                    self.apply_script_action(action);
+                }
             }
             Screen::Loading { since } => {
                 let stats = self.scene.textures.stats;

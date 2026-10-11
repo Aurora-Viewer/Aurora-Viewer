@@ -3,6 +3,10 @@
 //! come from Firestorm's keywords_lsl_default.xml. Custom functions are also
 //! recognized at declarations and calls. This lexer never changes the source.
 
+use super::{
+    reference,
+    settings::{ColorRole, ScriptSettings},
+};
 use crate::theme::Palette;
 use egui::{
     Color32, FontId, TextFormat,
@@ -24,6 +28,33 @@ enum Kind {
     Number,
     String,
     Comment,
+    Float,
+    Section,
+    StringConstant,
+    Compound,
+    Preprocessor,
+}
+
+impl Kind {
+    fn role(self) -> ColorRole {
+        match self {
+            Self::Plain => ColorRole::Text,
+            Self::Variable => ColorRole::Variable,
+            Self::Keyword => ColorRole::Control,
+            Self::Type => ColorRole::Type,
+            Self::Event => ColorRole::Event,
+            Self::Function => ColorRole::Function,
+            Self::Constant => ColorRole::Constant,
+            Self::Number => ColorRole::Integer,
+            Self::String => ColorRole::String,
+            Self::Comment => ColorRole::Comment,
+            Self::Float => ColorRole::Float,
+            Self::Section => ColorRole::Section,
+            Self::StringConstant => ColorRole::StringConstant,
+            Self::Compound => ColorRole::Compound,
+            Self::Preprocessor => ColorRole::Preprocessor,
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -52,6 +83,9 @@ fn keywords() -> &'static HashMap<String, Kind> {
             words.extend(names.into_iter().map(|name| (name, kind)));
         }
         words.insert("default".into(), Kind::Keyword);
+        for name in ["switch", "case", "break"] {
+            words.insert(name.into(), Kind::Keyword);
+        }
         words
     })
 }
@@ -112,6 +146,9 @@ fn tokens(source: &str) -> Vec<Token> {
         } else if bytes[cursor..].starts_with(b"/*") {
             cursor = source[cursor + 2..].find("*/").map_or(bytes.len(), |n| cursor + 2 + n + 2);
             Kind::Comment
+        } else if c == '#' && source[..cursor].rsplit('\n').next().is_some_and(|line| line.trim().is_empty()) {
+            cursor = source[cursor..].find('\n').map_or(bytes.len(), |n| cursor + n);
+            Kind::Preprocessor
         } else if c == '"' {
             cursor += 1;
             while cursor < bytes.len() {
@@ -129,7 +166,14 @@ fn tokens(source: &str) -> Vec<Token> {
             Kind::String
         } else if c.is_ascii_digit() || (c == '.' && bytes.get(cursor + 1).is_some_and(u8::is_ascii_digit)) {
             cursor = number_end(bytes, cursor);
-            Kind::Number
+            if source[start..cursor].contains(['.', 'e', 'E'])
+                && !source[start..cursor].starts_with("0x")
+                && !source[start..cursor].starts_with("0X")
+            {
+                Kind::Float
+            } else {
+                Kind::Number
+            }
         } else if identifier_start(c) {
             cursor += c.len_utf8();
             while let Some(c) = source[cursor..].chars().next() {
@@ -167,6 +211,18 @@ fn tokens(source: &str) -> Vec<Token> {
                 .get(text)
                 .copied()
                 .unwrap_or(if next_code == "(" { Kind::Function } else { Kind::Variable });
+            if text == "default" {
+                token.kind = Kind::Section;
+            }
+            if token.kind == Kind::Constant
+                && let Some(entry) = reference::get(text)
+            {
+                token.kind = match entry.data_type.as_str() {
+                    "string" | "key" => Kind::StringConstant,
+                    "vector" | "rotation" | "list" => Kind::Compound,
+                    _ => Kind::Constant,
+                };
+            }
         }
         if token.kind != Kind::Comment && !text.chars().all(char::is_whitespace) {
             next_code = text;
@@ -177,7 +233,7 @@ fn tokens(source: &str) -> Vec<Token> {
     for token in &mut result {
         let text = &source[token.bytes.clone()];
         if token.kind == Kind::Variable && matches!(previous_code, "state" | "jump" | "@") {
-            token.kind = Kind::Keyword;
+            token.kind = Kind::Section;
         }
         if token.kind != Kind::Comment && !text.chars().all(char::is_whitespace) {
             previous_code = text;
@@ -189,25 +245,37 @@ fn tokens(source: &str) -> Vec<Token> {
 #[derive(PartialEq)]
 struct Style {
     font: FontId,
-    colors: [Color32; 10],
+    colors: [Color32; 15],
+    query: String,
+    insensitive: bool,
+    highlight: Color32,
 }
 
 impl Style {
-    fn new(p: &Palette, font: FontId) -> Self {
+    fn new(p: &Palette, font: FontId, settings: &ScriptSettings, query: &str, insensitive: bool) -> Self {
         Self {
             font,
             colors: [
-                p.ink,
-                p.indigo_light,
-                p.violet_light,
-                p.rose,
-                p.violet_pale,
-                p.teal,
-                p.amber,
-                p.warn,
-                p.success,
-                p.muted,
-            ],
+                Kind::Plain,
+                Kind::Variable,
+                Kind::Keyword,
+                Kind::Type,
+                Kind::Event,
+                Kind::Function,
+                Kind::Constant,
+                Kind::Number,
+                Kind::String,
+                Kind::Comment,
+                Kind::Float,
+                Kind::Section,
+                Kind::StringConstant,
+                Kind::Compound,
+                Kind::Preprocessor,
+            ]
+            .map(|kind| settings.color(kind.role(), p)),
+            query: query.into(),
+            insensitive,
+            highlight: p.amber.gamma_multiply(0.3),
         }
     }
 }
@@ -221,8 +289,21 @@ pub(super) struct Highlighter {
 }
 
 impl Highlighter {
+    #[cfg(test)]
     pub(super) fn layout(&mut self, source: &str, p: &Palette, font: FontId) -> LayoutJob {
-        let style = Style::new(p, font);
+        self.custom(source, p, font, &ScriptSettings::default(), "", false)
+    }
+
+    pub(super) fn custom(
+        &mut self,
+        source: &str,
+        p: &Palette,
+        font: FontId,
+        settings: &ScriptSettings,
+        query: &str,
+        insensitive: bool,
+    ) -> LayoutJob {
+        let style = Style::new(p, font, settings, query, insensitive);
         if self.style.as_ref() != Some(&style) || self.job.text != source {
             let mut job = LayoutJob {
                 text: source.into(),
@@ -245,6 +326,39 @@ impl Highlighter {
                         format,
                     });
                 }
+            }
+            if !query.is_empty() {
+                let ranges = super::editing::matches(source, query, insensitive);
+                let boundaries: Vec<_> = source.char_indices().map(|(i, _)| i).chain([source.len()]).collect();
+                let mut highlights = ranges.into_iter().map(|r| boundaries[r.start]..boundaries[r.end]).peekable();
+                let mut sections = Vec::new();
+                for section in job.sections.drain(..) {
+                    let mut start = section.byte_range.start.0;
+                    let end = section.byte_range.end.0;
+                    while start < end {
+                        while highlights.peek().is_some_and(|r| r.end <= start) {
+                            highlights.next();
+                        }
+                        let mut format = section.format.clone();
+                        let limit = if let Some(range) = highlights.peek() {
+                            if range.start <= start {
+                                format.background = style.highlight;
+                                end.min(range.end)
+                            } else {
+                                end.min(range.start)
+                            }
+                        } else {
+                            end
+                        };
+                        sections.push(LayoutSection {
+                            leading_space: 0.0,
+                            byte_range: start.into()..limit.into(),
+                            format,
+                        });
+                        start = limit;
+                    }
+                }
+                job.sections = sections;
             }
             self.job = job;
             self.style = Some(style);
@@ -284,9 +398,9 @@ mod tests {
             ("touch_start", Kind::Event),
             ("if", Kind::Keyword),
             ("return", Kind::Keyword),
-            ("default", Kind::Keyword),
+            ("default", Kind::Section),
             ("PUBLIC_CHANNEL", Kind::Constant),
-            ("NULL_KEY", Kind::Constant),
+            ("NULL_KEY", Kind::StringConstant),
         ] {
             assert!(parsed.contains(&(text, kind)), "{text}: {parsed:?}");
             assert!(parsed.iter().filter(|(t, _)| *t == text).all(|(_, k)| *k == kind));
@@ -334,18 +448,24 @@ mod tests {
     #[test]
     fn numeric_literals_do_not_consume_arithmetic_operators() {
         let parsed = lex("0xFF+1 .5 -1.25e-3 2E+4 3e 4.0-2");
-        let numbers: Vec<_> = parsed.iter().filter(|(_, k)| *k == Kind::Number).map(|(t, _)| *t).collect();
+        let numbers: Vec<_> = parsed
+            .iter()
+            .filter(|(_, k)| matches!(k, Kind::Number | Kind::Float))
+            .map(|(t, _)| *t)
+            .collect();
         assert_eq!(numbers, ["0xFF", "1", ".5", "1.25e-3", "2E+4", "3", "4.0", "2"]);
         assert!(parsed.contains(&("+", Kind::Plain)));
         assert!(parsed.contains(&("-", Kind::Plain)));
         assert!(parsed.contains(&("e", Kind::Variable)));
+        assert!(parsed.contains(&("1.25e-3", Kind::Float)));
+        assert!(parsed.contains(&("0xFF", Kind::Number)));
     }
 
     #[test]
-    fn state_names_and_jump_labels_have_keyword_colors() {
+    fn state_names_and_jump_labels_have_section_colors() {
         for (text, kind) in lex("state /* next */ awake; jump done; @done; state awake { timer() {} }") {
             if matches!(text, "awake" | "done") {
-                assert_eq!(kind, Kind::Keyword);
+                assert_eq!(kind, Kind::Section);
             }
         }
     }

@@ -79,12 +79,23 @@ impl App {
 
     pub(super) fn demo_script_steps(&mut self) {
         let Ok(mode) = std::env::var("AURORA_DEMO_SCRIPTS") else { return };
-        let syntax_demo = matches!(mode.as_str(), "syntax" | "object-syntax" | "syntax-readonly");
+        let syntax_demo = matches!(
+            mode.as_str(),
+            "syntax" | "object-syntax" | "syntax-readonly" | "workbench" | "object-workbench" | "search" | "preferences" | "help"
+        );
         if self.frame_count == 280 {
             self.panels.perf = false;
             if !matches!(
                 mode.as_str(),
-                "object" | "object-save" | "object-syntax" | "object-indent" | "object-tabstops" | "experience" | "experience-save"
+                "object"
+                    | "object-save"
+                    | "object-syntax"
+                    | "object-indent"
+                    | "object-tabstops"
+                    | "experience"
+                    | "experience-save"
+                    | "object-workbench"
+                    | "object-preprocessor"
             ) {
                 crate::world::inventory::demo::seed(&mut self.world.inventory, self.world.agent_id);
                 let item = Uuid::from_u128(8102);
@@ -120,6 +131,8 @@ impl App {
                     | "experience"
                     | "experience-save"
                     | "both"
+                    | "object-workbench"
+                    | "object-preprocessor"
             ) {
                 let idx = self
                     .world
@@ -151,6 +164,35 @@ impl App {
                     }
                 }
             }
+        }
+        if self.frame_count == 300 && matches!(mode.as_str(), "preprocessor" | "processed" | "object-preprocessor") {
+            crate::world::inventory::demo::seed(&mut self.world.inventory, self.world.agent_id);
+            if let Some(mut include) = self.world.inventory.items.get(&Uuid::from_u128(8102)).cloned() {
+                include.id = Uuid::from_u128(8103);
+                include.name = "library.lsl".into();
+                let target = ScriptTarget {
+                    object: Uuid::nil(),
+                    item: include.id,
+                };
+                self.world.inventory.add_items(vec![include]);
+                self.demo_script_sources.insert(
+                    target,
+                    "#pragma once\ngreet(integer channel) { llSay(channel, \"Bonjour, Aurora !\"); }".into(),
+                );
+            }
+        }
+        if self.frame_count == 320
+            && matches!(
+                mode.as_str(),
+                "search" | "preferences" | "help" | "preprocessor" | "processed" | "object-preprocessor" | "preprocessor-error"
+            )
+            && let Some(target) = self.script_editors.documents.first().map(|e| e.target)
+        {
+            self.script_editors
+                .demo_tools(target, &self.egui_ctx, &mode, &mut self.settings.script_editor);
+        }
+        if self.frame_count == 430 && mode == "processed" {
+            self.script_editors.demo_processed(&self.egui_ctx);
         }
         if self.frame_count == 320
             && matches!(
@@ -194,7 +236,12 @@ impl App {
                 self.apply_script_action(action);
             }
         }
-        if self.frame_count == 360 && matches!(mode.as_str(), "save" | "object-save" | "experience-save") {
+        if self.frame_count == 360
+            && matches!(
+                mode.as_str(),
+                "save" | "object-save" | "experience-save" | "preprocessor" | "processed" | "object-preprocessor"
+            )
+        {
             let Some(target) = self.script_editors.documents.first().map(|e| e.target) else {
                 return;
             };
@@ -283,6 +330,8 @@ impl App {
     }
 
     pub(super) fn show_scripts(&mut self, ctx: &egui::Context, p: &Palette) {
+        self.script_editors.agent = self.world.agent_id;
+        self.script_editors.agent_name = self.world.social.name_of(&self.world.agent_id);
         let rights: Vec<_> = self
             .script_editors
             .documents
@@ -298,13 +347,57 @@ impl App {
                 }
             }
         }
-        for action in self.script_editors.show(ctx, p) {
+        for action in self.script_editors.show(ctx, p, &mut self.settings.script_editor) {
             self.apply_script_action(action);
         }
+        self.script_editors.show_debug(ctx, p, &mut self.world.script_debug);
     }
 
-    fn apply_script_action(&mut self, action: Action) {
+    pub(super) fn apply_script_action(&mut self, action: Action) {
         match action {
+            Action::Debug => self.script_editors.open_debug(),
+            Action::Include { request, name } => {
+                let target = self
+                    .world
+                    .inventory
+                    .items
+                    .values()
+                    .find(|item| item.asset_type == 10 && item.name == name)
+                    .map(|item| ScriptTarget {
+                        object: Uuid::nil(),
+                        item: item.id,
+                    });
+                let info = target.and_then(|target| self.script_info(target).filter(|info| info.can_read).map(|info| (target, info)));
+                if let Some((target, info)) = info {
+                    self.script_editors.include_asset(request, info.asset);
+                    self.send(NetCommand::LoadScript {
+                        request,
+                        target,
+                        handle: info.handle,
+                        owner: info.owner,
+                        asset: info.asset,
+                    });
+                } else {
+                    self.script_editors.loaded(
+                        request,
+                        ScriptTarget {
+                            object: Uuid::nil(),
+                            item: Uuid::nil(),
+                        },
+                        Err(aurora_i18n::tr!("script-preproc-include-missing", name = name)),
+                    );
+                }
+            }
+            Action::SettingsChanged => {
+                if !self.demo {
+                    self.settings.save();
+                }
+            }
+            Action::Paste(target) => {
+                if let Some(text) = self.gfx.as_mut().and_then(|g| g.egui_state.clipboard_text()) {
+                    self.script_editors.paste(&self.egui_ctx, target, &text);
+                }
+            }
             Action::Save {
                 request,
                 target,

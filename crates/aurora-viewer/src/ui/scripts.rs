@@ -6,14 +6,29 @@
 use super::widgets::{Floater, flat_button};
 use crate::theme::Palette;
 use aurora_net::scripts::{MAX_SOURCE, ScriptOptions, ScriptSaved, ScriptTarget};
-use egui::{RichText, Vec2};
+use egui::Vec2;
 use uuid::Uuid;
 
+mod debug;
+mod dialogs;
+mod editing;
 mod experiences;
+mod files;
 mod indent;
+mod preprocessor;
+mod reference;
+pub mod settings;
 mod syntax;
+mod view;
 
 pub enum Action {
+    Debug,
+    Include {
+        request: Uuid,
+        name: String,
+    },
+    Paste(ScriptTarget),
+    SettingsChanged,
     Save {
         request: Uuid,
         target: ScriptTarget,
@@ -41,6 +56,7 @@ struct PendingSave {
     source: String,
     mono: bool,
     experience: Option<Uuid>,
+    running: bool,
 }
 
 pub struct Editor {
@@ -65,6 +81,11 @@ pub struct Editor {
     close_after_save: bool,
     closed: bool,
     raise: bool,
+    tools: view::Tools,
+    recompile_allowed: bool,
+    processor_settings: settings::ScriptSettings,
+    processor_environment: preprocessor::Environment,
+    processing: Option<preprocessor::Job>,
 }
 
 impl Editor {
@@ -79,7 +100,7 @@ impl Editor {
             && self.loading.is_none()
             && (self.target.object.is_nil()
                 || (self.running.is_some() && self.experience.selected.is_some() && self.experience.loading.is_none()))
-            && (self.dirty() || self.compile_failed)
+            && (self.dirty() || self.compile_failed || self.recompile_allowed)
             && self.source.len() <= MAX_SOURCE
     }
 
@@ -93,9 +114,21 @@ impl Editor {
             source: self.source.clone(),
             mono: self.mono,
             experience: self.experience.selected,
+            running: self.running.unwrap_or(false),
         });
         self.status = aurora_i18n::tr!("script-saving").into();
         self.errors.clear();
+        self.tools.diagnostics_processed = false;
+        if self.processor_settings.preprocessor {
+            self.status = aurora_i18n::tr!("script-preproc-processing").into();
+            self.processing = Some(preprocessor::start(
+                self.source.clone(),
+                self.name.clone(),
+                self.processor_settings.clone(),
+                self.processor_environment.clone(),
+            ));
+            return None;
+        }
         Some(Action::Save {
             request,
             target: self.target,
@@ -112,15 +145,36 @@ impl Editor {
 #[derive(Default)]
 pub struct Editors {
     pub documents: Vec<Editor>,
+    preferences: dialogs::Preferences,
+    debug: debug::Debug,
+    includes: std::collections::HashMap<Uuid, PendingInclude>,
+    pub agent: Uuid,
+    pub agent_name: String,
+}
+
+struct PendingInclude {
+    owner: ScriptTarget,
+    asset: Uuid,
+    reply: std::sync::mpsc::Sender<Result<preprocessor::Include, String>>,
 }
 
 impl Editors {
+    pub fn show_debug(&mut self, ctx: &egui::Context, p: &Palette, messages: &mut crate::world::script_debug::Messages) {
+        self.debug.show(ctx, p, messages);
+    }
+    pub fn open_debug(&mut self) {
+        self.debug.open = true;
+    }
+
     pub fn disconnected(&mut self) {
+        self.includes.clear();
         self.documents.retain(|e| e.dirty() || e.saving.is_some());
         for e in &mut self.documents {
             e.loading = None;
             e.experience.loading = None;
             e.saving = None;
+            e.processing = None;
+            e.tools.external = None;
             e.can_read = false;
             e.can_edit = false;
             e.running = None;
@@ -180,6 +234,55 @@ impl Editors {
         }
     }
 
+    pub fn demo_tools(&mut self, target: ScriptTarget, ctx: &egui::Context, mode: &str, settings: &mut settings::ScriptSettings) {
+        let Some(e) = self.documents.iter_mut().find(|e| e.target == target) else {
+            return;
+        };
+        let id = format!("script_editor_{}_{}", target.object, target.item);
+        let text_id = egui::Id::new((&id, "source_text"));
+        match mode {
+            "search" => {
+                e.tools.search.begin(ctx, text_id, &e.source);
+                e.tools.search.query = "llSay".into();
+                e.tools.search.replacement = "llOwnerSay".into();
+                e.tools.search.find(ctx, text_id, &e.source);
+            }
+            "preferences" => self.preferences.open = true,
+            "help" => {
+                e.tools.help.open = true;
+                e.tools.help.visit("llSay");
+            }
+            "preprocessor" | "processed" | "object-preprocessor" | "preprocessor-error" => {
+                settings.preprocessor = true;
+                e.processor_settings.clone_from(settings);
+                e.source = if mode == "preprocessor-error" {
+                    "#if 1\n#error Demo preprocessing error\n#endif\n".into()
+                } else {
+                    "#define CHANNEL 0\n#include \"library.lsl\"\nlist values = [1, 2];\ndefault\n{\n    state_entry()\n    {\n        values[1] = 42;\n        switch ((integer)values[1])\n        {\n            case 42: greet(CHANNEL); break;\n            default: llOwnerSay(\"Unexpected value\");\n        }\n    }\n}\n".into()
+                };
+                e.save();
+            }
+            _ => {}
+        }
+    }
+
+    pub fn demo_processed(&mut self, ctx: &egui::Context) {
+        if let Some(e) = self.documents.first_mut() {
+            e.tools.processed = true;
+            let id = format!("script_editor_{}_{}", e.target.object, e.target.item);
+            let id = egui::Id::new((&id, "source_text")).with("processed");
+            let at = e
+                .tools
+                .processed_source
+                .find("\n//nfo_preprocessor_version 0\n")
+                .map(|i| i + "\n//nfo_preprocessor_version 0\n".len())
+                .unwrap_or(0);
+            let at = e.tools.processed_source[..at].chars().count();
+            editing::select(ctx, id, at..at, false);
+            e.tools.scroll_to_cursor = true;
+        }
+    }
+
     fn focus_source(e: &Editor, ctx: &egui::Context, byte: usize) {
         let cursor = egui::text::CCursor::new(e.source[..byte].chars().count());
         let id = format!("script_editor_{}_{}", e.target.object, e.target.item);
@@ -236,17 +339,34 @@ impl Editors {
             close_after_save: false,
             closed: false,
             raise: true,
+            tools: view::Tools::default(),
+            recompile_allowed: false,
+            processor_settings: settings::ScriptSettings::default(),
+            processor_environment: preprocessor::Environment::default(),
+            processing: None,
         });
         request
     }
 
     pub fn loaded(&mut self, request: Uuid, target: ScriptTarget, result: Result<String, String>) {
+        if let Some(include) = self.includes.remove(&request) {
+            let _ = include.reply.send(result.map(|source| preprocessor::Include {
+                source,
+                asset: include.asset,
+            }));
+            return;
+        }
         let Some(e) = self.documents.iter_mut().find(|e| e.target == target && e.loading == Some(request)) else {
             return;
         };
         e.loading = None;
         match result {
             Ok(source) => {
+                e.tools.reset_history = true;
+                e.tools.processed_source.clone_from(&source);
+                let source = preprocessor::decode(&source);
+                e.tools.has_processed = source != e.tools.processed_source;
+                e.tools.diagnostics_processed = false;
                 e.baseline.clone_from(&source);
                 e.source = source;
                 e.loaded = true;
@@ -265,6 +385,12 @@ impl Editors {
             .find(|e| e.target == target && e.can_read && !target.object.is_nil())?;
         let request = e.experience.begin()?;
         Some(Action::Experiences { request, target })
+    }
+
+    pub fn include_asset(&mut self, request: Uuid, asset: Uuid) {
+        if let Some(include) = self.includes.get_mut(&request) {
+            include.asset = asset;
+        }
     }
 
     pub fn experiences_loaded(&mut self, request: Uuid, target: ScriptTarget, result: aurora_net::scripts::experiences::ScriptExperiences) {
@@ -317,13 +443,92 @@ impl Editors {
         }
     }
 
-    pub fn show(&mut self, ctx: &egui::Context, p: &Palette) -> Vec<Action> {
+    pub fn paste(&mut self, ctx: &egui::Context, target: ScriptTarget, text: &str) {
+        let Some(e) = self
+            .documents
+            .iter_mut()
+            .find(|e| e.target == target && e.can_edit && e.loaded && e.saving.is_none() && !e.tools.processed)
+        else {
+            return;
+        };
+        let id = egui::Id::new((&format!("script_editor_{}_{}", target.object, target.item), "source_text"));
+        let [a, b] = editing::cursor(ctx, id).sorted_cursors();
+        if !editing::replace(ctx, id, &mut e.source, a.index.0..b.index.0, text) {
+            e.status = aurora_i18n::tr!("script-source-too-large").into();
+        }
+    }
+
+    pub fn show(&mut self, ctx: &egui::Context, p: &Palette, settings: &mut settings::ScriptSettings) -> Vec<Action> {
         let mut actions = Vec::new();
+        if self.preferences.show(ctx, p, settings) {
+            actions.push(Action::SettingsChanged);
+        }
         for e in &mut self.documents {
             if e.closed {
                 continue;
             }
             let id = format!("script_editor_{}_{}", e.target.object, e.target.item);
+            e.recompile_allowed = settings.preprocessor && settings.recompile;
+            if e.processor_settings != *settings {
+                e.processor_settings.clone_from(settings);
+            }
+            e.processor_environment.agent = self.agent;
+            if e.processor_environment.agent_name != self.agent_name {
+                e.processor_environment.agent_name.clone_from(&self.agent_name);
+            }
+            if let Some(job) = e.processing.as_ref() {
+                for request in job.includes.try_iter() {
+                    self.includes.insert(
+                        request.id,
+                        PendingInclude {
+                            owner: e.target,
+                            asset: Uuid::nil(),
+                            reply: request.reply,
+                        },
+                    );
+                    actions.push(Action::Include {
+                        request: request.id,
+                        name: request.name,
+                    });
+                }
+            }
+            if let Some(result) = e.processing.as_ref().and_then(|job| job.done.try_recv().ok()) {
+                e.processing = None;
+                self.includes.retain(|_, include| include.owner != e.target);
+                match result {
+                    Ok(output) => {
+                        e.tools.has_processed = true;
+                        e.tools.diagnostics_processed = true;
+                        e.tools.processed_source = output.uploaded.clone();
+                        if let Some(mono) = output.mono {
+                            e.mono = mono;
+                            if let Some(pending) = e.saving.as_mut() {
+                                pending.mono = mono;
+                            }
+                        }
+                        e.errors = output.warnings;
+                        if let Some(pending) = e.saving.as_ref() {
+                            actions.push(Action::Save {
+                                request: pending.request,
+                                target: e.target,
+                                options: ScriptOptions {
+                                    mono: pending.mono,
+                                    running: pending.running,
+                                    experience: pending.experience.unwrap_or_default(),
+                                },
+                                source: output.uploaded,
+                            });
+                        }
+                    }
+                    Err(reason) => {
+                        e.saving = None;
+                        e.close_after_save = false;
+                        e.compile_failed = true;
+                        e.errors = vec![reason];
+                        e.status = aurora_i18n::tr!("script-preproc-failed").into();
+                    }
+                }
+            }
             if std::mem::take(&mut e.raise) {
                 ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::new(&id)));
                 ctx.data_mut(|data| data.insert_persisted(egui::Id::new((&id, "minimized")), false));
@@ -337,110 +542,25 @@ impl Editors {
                 Vec2::new(660.0, 520.0),
             )
             .show(ctx, p, &mut open, |ui| {
-                ui.horizontal(|ui| {
-                    let save = ui
-                        .add_enabled_ui(e.can_save(), |ui| flat_button(ui, p, aurora_i18n::tr!("common-save")))
-                        .inner;
-                    if save.on_hover_text(aurora_i18n::tr!("script-save-hint")).clicked()
-                        && let Some(action) = e.save()
-                    {
-                        actions.push(action);
-                    }
-                    let reload = e.can_read && !e.dirty() && e.saving.is_none() && e.loading.is_none();
-                    if ui
-                        .add_enabled_ui(reload, |ui| flat_button(ui, p, aurora_i18n::tr!("build-ui-contents-refresh")))
-                        .inner
-                        .clicked()
-                    {
-                        let request = Uuid::new_v4();
-                        e.loading = Some(request);
-                        e.loaded = false;
-                        e.status = aurora_i18n::tr!("common-loading-2").into();
-                        actions.push(Action::Reload { request, target: e.target });
-                    }
-                    ui.add_enabled_ui(
-                        e.can_edit && e.loaded && e.saving.is_none() && (e.target.object.is_nil() || e.running.is_some()),
-                        |ui| {
-                            ui.checkbox(&mut e.mono, "Mono").on_hover_text(aurora_i18n::tr!("script-mono-hint"));
-                        },
-                    );
-                    if !e.target.object.is_nil() {
-                        ui.add_enabled_ui(e.can_edit && e.running.is_some() && e.saving.is_none(), |ui| {
-                            let mut running = e.running.unwrap_or(false);
-                            if ui.checkbox(&mut running, aurora_i18n::tr!("script-running")).changed() {
-                                actions.push(Action::Running { target: e.target, running });
-                            }
-                            if flat_button(ui, p, aurora_i18n::tr!("script-reset")).clicked() {
-                                actions.push(Action::Reset(e.target));
-                            }
-                        });
-                    }
-                });
-                if !e.target.object.is_nil()
-                    && e.experience.show(ui, p, e.can_edit && e.loaded && e.saving.is_none())
-                    && let Some(request) = e.experience.begin()
-                {
-                    actions.push(Action::Experiences { request, target: e.target });
-                }
-                if !e.can_edit && e.loaded {
-                    ui.label(RichText::new(aurora_i18n::tr!("script-read-only")).color(p.warn));
-                }
-                if !e.target.object.is_nil() && e.loaded && e.can_read && e.running.is_none() {
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new(aurora_i18n::tr!("script-waiting-running")).color(p.warn));
-                        if flat_button(ui, p, aurora_i18n::tr!("script-retry")).clicked() {
-                            actions.push(Action::QueryRunning(e.target));
-                        }
-                    });
-                }
-                ui.separator();
-                let height = (ui.available_height() - 110.0).max(120.0);
-                let mut shortcut_save = false;
-                egui::ScrollArea::both().id_salt((&id, "source")).max_height(height).show(ui, |ui| {
-                    let font = egui::TextStyle::Monospace.resolve(ui.style());
-                    if e.loaded && !e.can_edit {
-                        let job = e.highlighter.layout(&e.source, p, font);
-                        ui.add(egui::Label::new(job).selectable(true).wrap_mode(egui::TextWrapMode::Extend));
-                        return;
-                    }
-                    let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap_width: f32| {
-                        let mut job = e.highlighter.layout(text.as_str(), p, font.clone());
-                        job.wrap.max_width = wrap_width;
-                        ui.fonts_mut(|fonts| fonts.layout_job(job))
-                    };
-                    let text_id = egui::Id::new((&id, "source_text"));
-                    let response = indent::edit(ui, text_id, &mut e.source, |ui, source| {
-                        ui.add(
-                            egui::TextEdit::multiline(source)
-                                .id(text_id)
-                                .code_editor()
-                                .layouter(&mut layouter)
-                                .desired_width(f32::INFINITY)
-                                .desired_rows(18)
-                                .interactive(e.loaded && e.can_edit && e.saving.is_none() && e.loading.is_none()),
-                        )
-                    });
-                    if response.has_focus() {
-                        shortcut_save = ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::S));
-                    }
-                });
-                if shortcut_save && let Some(action) = e.save() {
-                    actions.push(action);
-                }
-                ui.separator();
-                if e.source.len() > MAX_SOURCE {
-                    ui.label(RichText::new(aurora_i18n::tr!("script-source-too-large")).color(p.danger));
-                }
-                ui.label(RichText::new(&e.status).color(if e.compile_failed { p.danger } else { p.muted }));
-                egui::ScrollArea::vertical()
-                    .id_salt((&id, "errors"))
-                    .max_height(80.0)
-                    .show(ui, |ui| {
-                        for error in &e.errors {
-                            ui.add(egui::Label::new(RichText::new(error).monospace().color(p.danger)).selectable(true));
-                        }
-                    });
+                view::body(
+                    ui,
+                    p,
+                    e,
+                    egui::Id::new((&id, "source_text")),
+                    settings,
+                    &mut self.preferences,
+                    &mut actions,
+                );
             });
+            view::dialogs(
+                ctx,
+                p,
+                e,
+                egui::Id::new((&id, "source_text")),
+                settings,
+                &mut self.preferences,
+                &mut actions,
+            );
             if !open {
                 if e.dirty() || e.saving.is_some() {
                     e.close_prompt = true;
@@ -464,11 +584,13 @@ impl Editors {
                             .add_enabled_ui(e.can_save(), |ui| flat_button(ui, p, aurora_i18n::tr!("common-save")))
                             .inner
                             .clicked()
-                            && let Some(action) = e.save()
                         {
-                            e.close_after_save = true;
-                            e.close_prompt = false;
-                            actions.push(action);
+                            let action = e.save();
+                            if e.saving.is_some() {
+                                e.close_after_save = true;
+                                e.close_prompt = false;
+                                actions.extend(action);
+                            }
                         }
                         if ui
                             .add_enabled_ui(e.saving.is_none(), |ui| flat_button(ui, p, aurora_i18n::tr!("script-discard")))
@@ -503,6 +625,102 @@ mod tests {
             object: Uuid::nil(),
             item: Uuid::from_u128(n),
         }
+    }
+
+    #[test]
+    fn asynchronous_preprocessing_loads_includes_and_saves_a_snapshot_that_reopens_as_original_source() {
+        let target = target(70);
+        let mut editors = Editors::default();
+        let load = editors.open(target, "Main".into(), true, true).unwrap();
+        editors.loaded(load, target, Ok("default {}".into()));
+        let original = "#include \"library.lsl\"\ndefault { state_entry() { greet(); } }";
+        let settings = settings::ScriptSettings {
+            preprocessor: true,
+            ..Default::default()
+        };
+        let e = &mut editors.documents[0];
+        e.processor_settings = settings.clone();
+        e.source = original.into();
+        assert!(e.save().is_none());
+        assert!(e.saving.is_some());
+        e.close_after_save = true;
+        let ctx = egui::Context::default();
+        let p = crate::theme::Theme::default().palette();
+        let mut settings = settings;
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        let mut uploaded = None;
+        while std::time::Instant::now() < until && uploaded.is_none() {
+            let mut actions = Vec::new();
+            let _ = ctx.run_ui(egui::RawInput::default(), |ui| actions = editors.show(ui.ctx(), &p, &mut settings));
+            for action in actions {
+                match action {
+                    Action::Include { request, name } => {
+                        assert_eq!(name, "library.lsl");
+                        editors.include_asset(request, Uuid::from_u128(71));
+                        editors.loaded(request, target, Ok("greet() { llOwnerSay(__ASSETID__); }".into()));
+                    }
+                    Action::Save { request, source, .. } => uploaded = Some((request, source)),
+                    _ => {}
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let (request, uploaded) = uploaded.expect("worker produced upload");
+        assert!(uploaded.contains(&Uuid::from_u128(71).to_string()));
+        assert_eq!(preprocessor::decode(&uploaded), original);
+        assert_eq!(editors.documents[0].source, original);
+        editors.saved(
+            request,
+            target,
+            &Ok(ScriptSaved {
+                asset: Uuid::from_u128(72),
+                compiled: true,
+                errors: vec![],
+            }),
+        );
+        assert!(editors.documents[0].closed);
+        editors.documents.clear();
+        let load = editors.open(target, "Main".into(), true, true).unwrap();
+        editors.loaded(load, target, Ok(uploaded));
+        assert_eq!(editors.documents[0].source, original);
+        assert!(!editors.documents[0].dirty());
+    }
+
+    #[test]
+    fn failed_preprocessing_keeps_the_draft_and_emits_no_network_save() {
+        let target = target(80);
+        let mut editors = Editors::default();
+        let load = editors.open(target, "Main".into(), true, true).unwrap();
+        editors.loaded(load, target, Ok("default {}".into()));
+        let mut settings = settings::ScriptSettings {
+            preprocessor: true,
+            ..Default::default()
+        };
+        editors.documents[0].processor_settings = settings.clone();
+        editors.documents[0].source = "#error test".into();
+        assert!(editors.documents[0].save().is_none());
+        let ctx = egui::Context::default();
+        let p = crate::theme::Theme::default().palette();
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while editors.documents[0].processing.is_some() && std::time::Instant::now() < until {
+            let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+                assert!(
+                    !editors
+                        .show(ui.ctx(), &p, &mut settings)
+                        .iter()
+                        .any(|a| matches!(a, Action::Save { .. }))
+                )
+            });
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let e = &editors.documents[0];
+        assert!(e.processing.is_none());
+        assert!(e.saving.is_none());
+        assert!(e.compile_failed);
+        assert!(e.dirty());
+        assert_eq!(e.source, "#error test");
+        assert_eq!(e.baseline, "default {}");
+        assert!(!e.tools.diagnostics_processed);
     }
 
     #[test]

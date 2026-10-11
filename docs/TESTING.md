@@ -167,7 +167,7 @@ Pour vérifier l'édition, ajouter `AURORA_DEMO_BUILD=move,object:90000` ou
 translucide et poignées de taille. `stretch,object:90000,fz,100,0` tire la face
 opposée à la base ; le flexible garde sa courbure pendant le changement de taille.
 
-**`AURORA_DEMO_SCRIPTS=inventory|object|both|save|object-save|error|readonly|syntax|object-syntax|syntax-readonly|indent|object-indent|tabstops|object-tabstops|experience|experience-save`** :
+**`AURORA_DEMO_SCRIPTS=inventory|object|both|save|object-save|error|readonly|syntax|object-syntax|syntax-readonly|indent|object-indent|tabstops|object-tabstops|experience|experience-save|workbench|object-workbench|search|preferences|help|preprocessor|object-preprocessor|processed|preprocessor-error`** :
 ouvre un éditeur de script depuis l'inventaire, le contenu d'un objet ou
 les deux à l'image 280. `save` et `object-save` enregistrent une source
 modifiée puis ferment et rouvrent l'éditeur à l'image 360 avec un UUID
@@ -196,6 +196,24 @@ sans supprimer un caractère du code pour rejoindre ce palier.
 Les autres démos d'objet commencent avec « Aucune ». Le sélecteur permet
 aussi de retirer une association puis d'enregistrer. L'inventaire personnel
 ne propose pas d'association d'expérience, comme Firestorm.
+
+`workbench` et `object-workbench` montrent les menus Fichier / Édition / Aide,
+la barre d'outils, les numéros de ligne, le curseur et le sélecteur de fonctions.
+`search`, `preferences` et `help` ouvrent respectivement la recherche/remplacement,
+les couleurs/options avec aperçu et l'aide locale de `llSay` avec sa signature.
+Les commandes de saisie utilisent l'historique natif ; les réglages ne sont
+jamais enregistrés sur le PC en démo. Les sélecteurs de fichiers et l'éditeur
+externe restent des actions explicites du testeur.
+`preprocessor` et `object-preprocessor` enregistrent un script utilisant une
+inclusion de l'inventaire, une macro, une liste étendue et un `switch`, puis
+le rouvrent : le texte original doit être conservé. `processed` montre le
+résultat envoyé au simulateur, en lecture seule ; `preprocessor-error` montre
+une erreur avant envoi, avec conservation du brouillon.
+Les nouveaux messages `llOwnerSay` ouvrent le débogage des scripts si leur
+routage est activé ; les erreurs
+des objets possédés y apparaissent également, après filtrage du bridge et
+des objets bloqués. La fenêtre permet de voir tous les objets ou un seul et
+d'effacer les messages affichés.
 
 **`AURORA_DEMO_ACTIONS`** — curseurs et clics d'objet comme Firestorm.
 Aucun L$ réel ni connexion à une grille.

@@ -70,6 +70,7 @@ pub struct Settings {
     pub contacts: crate::ui::contacts::ContactsSettings,
     pub inventory: crate::ui::inventory::InventoryPreferences,
     pub ao: crate::ao::Settings,
+    pub script_editor: crate::ui::scripts::settings::ScriptSettings,
     pub username: String,
     pub remember_username: bool,
     /// Remember the password (its login hash, in the system credential
@@ -448,6 +449,7 @@ impl Default for Settings {
             camera: Default::default(),
             contacts: Default::default(),
             inventory: Default::default(),
+            script_editor: Default::default(),
             username: String::new(),
             remember_username: true,
             remember_password: false,
