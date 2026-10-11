@@ -651,7 +651,9 @@ mod tests {
         let mut uploaded = None;
         while std::time::Instant::now() < until && uploaded.is_none() {
             let mut actions = Vec::new();
-            let _ = ctx.run_ui(egui::RawInput::default(), |ui| actions = editors.show(ui.ctx(), &p, &mut settings));
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| actions = editors.show(ui.ctx(), &p, &mut settings));
+            // No renderer consumes texture updates in this headless test.
+            output.textures_delta.clear();
             for action in actions {
                 match action {
                     Action::Include { request, name } => {
@@ -703,7 +705,7 @@ mod tests {
         let p = crate::theme::Theme::default().palette();
         let until = std::time::Instant::now() + std::time::Duration::from_secs(3);
         while editors.documents[0].processing.is_some() && std::time::Instant::now() < until {
-            let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
                 assert!(
                     !editors
                         .show(ui.ctx(), &p, &mut settings)
@@ -711,6 +713,7 @@ mod tests {
                         .any(|a| matches!(a, Action::Save { .. }))
                 )
             });
+            output.textures_delta.clear();
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
         let e = &editors.documents[0];

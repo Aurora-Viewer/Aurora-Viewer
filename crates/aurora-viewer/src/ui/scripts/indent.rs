@@ -183,7 +183,7 @@ mod tests {
 
     fn frame(ctx: &egui::Context, source: &mut String, events: Vec<Event>, time: f64) -> CCursorRange {
         let mut cursor = None;
-        let _ = ctx.run_ui(
+        let mut frame_output = ctx.run_ui(
             RawInput {
                 events,
                 time: Some(time),
@@ -196,6 +196,8 @@ mod tests {
                 cursor = output.cursor_range;
             },
         );
+        // Headless tests inspect editing state without uploading GPU textures.
+        frame_output.textures_delta.clear();
         cursor.unwrap_or_default()
     }
 
