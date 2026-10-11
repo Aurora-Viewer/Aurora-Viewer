@@ -239,6 +239,8 @@ commit compilé.
   commits non poussés n'y entrent pas.
 - Le premier build prend quelques minutes ; les suivants ne recompilent que
   ce qui a changé.
+- Le dossier prêt à lancer est préparé aussi bien avec Windows PowerShell
+  5.1 qu’avec PowerShell 7.
 - `build-release.bat 42` compile la PR n°42 (pour tester ses performances
   avant de la fusionner).
 - Ferme le viewer de ce dossier avant de recompiler (le script le signale).
