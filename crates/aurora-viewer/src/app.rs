@@ -3377,6 +3377,7 @@ impl App {
         let typing = self.egui_ctx.egui_wants_keyboard_input();
         self.update_move_input(typing, dt);
         self.update_audio();
+        let mut edit_camera_frame = None;
         if self.in_world() {
             self.update_sounds();
         }
@@ -3400,9 +3401,20 @@ impl App {
                 now: Instant::now(),
                 steering: self.mouse_mode == MouseMode::Steer,
                 build_mode: self.build.open,
+                edit_tracking: self
+                    .camera
+                    .focus_object_id()
+                    .filter(|id| self.build.edits_object(&self.world, id))
+                    .map(|_| self.settings.build.follow_edit_object),
                 draw_distance: self.settings.draw_distance,
             };
-            self.camera.update(&mut self.world, &self.settings.camera, &frame);
+            if frame.edit_tracking.is_some() {
+                // Evaluate the focused edit selection after the local drag,
+                // so a stale simulator echo cannot move the camera for a frame.
+                edit_camera_frame = Some(frame);
+            } else {
+                self.camera.update(&mut self.world, &self.settings.camera, &frame);
+            }
             let at = self.camera.forward();
             self.world.agent.body_turn = self.world.update_bodies(Instant::now(), dt, at, ml);
             self.update_look_at(w as f32, h as f32);
@@ -3430,9 +3442,9 @@ impl App {
             *self.net.controls.lock() = c;
         }
         self.update_voice();
-        let view = self.camera.view();
-        let proj = self.camera.proj(aspect);
-        let vp = proj * view;
+        let mut view = self.camera.view();
+        let mut proj = self.camera.proj(aspect);
+        let mut vp = proj * view;
         let mut cull = CullView::new(vp, self.camera.position, h as f32, self.camera.fov_y);
         // debug: frozen culling view (move around to see what it drops)
         if self.settings.debug.freeze_culling {
@@ -3550,6 +3562,26 @@ impl App {
             self.scene.selection_wire = self.build.wire_selection(&self.world, &self.settings.build);
             self.scene.selection_silhouettes = self.build.silhouette_selection(&self.world, &self.settings.build);
             self.flush_build();
+            if let Some(frame) = edit_camera_frame {
+                self.camera.update(&mut self.world, &self.settings.camera, &frame);
+                view = self.camera.view();
+                proj = self.camera.proj(aspect);
+                vp = proj * view;
+                cull = CullView::new(vp, self.camera.position, h as f32, self.camera.fov_y);
+                if self.settings.debug.freeze_culling {
+                    cull = *self.frozen_cull.get_or_insert(cull);
+                }
+                self.scene.fov_y = self.camera.fov_y;
+                self.build.cam = crate::build::geom::Cam::new(
+                    self.camera.position,
+                    self.camera.target,
+                    vp,
+                    self.camera.fov_y,
+                    w as f32,
+                    h as f32,
+                    self.egui_ctx.pixels_per_point(),
+                );
+            }
             self.scene.sync(&mut gfx.renderer, &mut self.world, &cull);
             self.frame_profile.lap(Lap::Sync);
             {
@@ -4673,6 +4705,17 @@ impl App {
                     crate::build::demo::Step::Release => {
                         self.build.mouse_up(&mut self.world, &self.settings.build);
                         self.flush_build();
+                    }
+                    crate::build::demo::Step::Focus(follow) => {
+                        self.settings.build.follow_edit_object = follow;
+                        if let Some(idx) = self.build.sel_prims(&self.world).first().copied()
+                            && let Some(object) = crate::camera::pick_focus_object(&self.world, idx, Instant::now())
+                        {
+                            let point = object.1.position;
+                            let ray = (self.camera.position, (point - self.camera.position).normalize_or_zero());
+                            self.camera
+                                .alt_focus(point, Some(object), ray, &mut self.world.agent, &self.settings.camera);
+                        }
                     }
                 }
             }

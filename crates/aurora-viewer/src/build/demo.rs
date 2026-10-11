@@ -18,6 +18,8 @@
 //! features | texture | contents, the texture tab with `:pbr`, `:bp` or
 //! `:media` (e.g. `texture:bp`), and opens `+weights`, `+grid`, `+media`
 //! (e.g. `general+weights+grid`).
+//! `AURORA_DEMO_BUILD_FOCUS=off|on` focuses the selected object before the
+//! drag, with edit camera tracking disabled/enabled.
 
 use super::manip::Part;
 use super::{BuildSettings, BuildTool, EditMode, Tool};
@@ -31,6 +33,7 @@ pub enum Step {
     Cursor(f32, f32),
     Press,
     Release,
+    Focus(bool),
 }
 
 fn part_of(s: &str) -> Option<Part> {
@@ -182,6 +185,11 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
         220 => vec![Step::Cursor(x, y), Step::Press],
         // land brush / selection: held (land: no release), others released
         226 if t != Tool::Land => vec![Step::Release],
+        227 if t == Tool::Edit => match std::env::var("AURORA_DEMO_BUILD_FOCUS").as_deref() {
+            Ok("off") => vec![Step::Focus(false)],
+            Ok("on") => vec![Step::Focus(true)],
+            _ => Vec::new(),
+        },
         235 if parts[0] == "select" => vec![Step::Cursor(x + dx, y + dy)],
         240 if parts[0] == "select" => vec![Step::Release],
         250 => match handle.and_then(|h| handle_px(tool, world, s, h)) {

@@ -37,7 +37,7 @@ pub enum Lap {
     /// Avatar and animesh poses.
     Poses,
     Complexity,
-    /// Local build drags, then `Scene::sync`: objects to GPU records.
+    /// Local build drags, edited focus camera, then `Scene::sync` to GPU records.
     Sync,
     Media,
     /// Loading clouds, particles, ban lines.

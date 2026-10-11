@@ -149,6 +149,7 @@ capture.
 | `AURORA_DEMO_DIALOG=<mode>` | Menu llDialog |
 | `AURORA_DEMO_BUILD="<script>"` | Script des outils de construction |
 | `AURORA_DEMO_BUILD_FRAME=<n>` | Image de départ du script de construction |
+| `AURORA_DEMO_BUILD_FOCUS=off\|on` | Focus sur la sélection avant le glissement, suivi caméra en édition désactivé / activé |
 | `AURORA_DEMO_BUILD_TAB=<onglet>` | Onglet de la fenêtre de construction |
 | `AURORA_DEMO_LSL_BRIDGE=1` | Messages du bridge LSL de Firestorm (cachés) |
 | `AURORA_DEMO_FLEXIBLE=1` | Prims flexibles : gravité, tension, vent, force et parent mobile |

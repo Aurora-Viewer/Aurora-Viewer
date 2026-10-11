@@ -165,6 +165,12 @@ Le rez depuis l’inventaire passe par `ui/inventory.rs` (charge utile et relâc
    de construction appliquent leur transformation locale, après les réponses
    du simulateur et avant `Scene::sync`. Ainsi, l'objet affiché et ses poignées
    suivent la même taille à chaque image, sans retour à un écho réseau ancien.
+   Lorsque le focus appartient à la sélection en édition, la caméra est
+   calculée après ce glissement, avant les matrices de rendu et le culling.
+   La bascule « Suivre l’objet en édition » est désactivée par défaut :
+   point de focus et cadrage restent fixes ; activée, elle suit la transformation
+   locale. La projection du curseur est alors conservée au début du glissement
+   pour que le mouvement de caméra ne modifie pas l'objet sans saisie.
    `Scene::sync` met à jour la
    géométrie, les textures et les enregistrements GPU de ce qui a changé ou
    bouge (ensembles tenus par événements, placement calculé en parallèle).

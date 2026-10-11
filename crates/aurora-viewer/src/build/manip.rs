@@ -112,6 +112,8 @@ pub struct Drag {
     pub pivot: Vec3,
     grid: Grid,
     pub start_cursor: (f32, f32),
+    /// Stable mouse projection while the camera follows the edited object.
+    camera: Cam,
     started: bool,
     linked: bool,
     // translate
@@ -282,7 +284,14 @@ impl Manip {
         out: &mut Vec<BuildCmd>,
     ) {
         if let Some(mut d) = self.drag.take() {
-            drag_update(&mut d, world, s, cam, cursor, mods, now, out);
+            // Following the object must not feed camera motion back into a
+            // held cursor, continuously moving/stretching it without input.
+            let drag_cam = if s.follow_edit_object && cam.hud.is_none() {
+                d.camera
+            } else {
+                *cam
+            };
+            drag_update(&mut d, world, s, &drag_cam, cursor, mods, now, out);
             self.animate(Some(d.part));
             self.drag = Some(d);
             return;
@@ -328,6 +337,7 @@ impl Manip {
             pivot: f.pivot,
             grid: f.grid,
             start_cursor: cursor,
+            camera: *cam,
             started: false,
             linked,
             axis: Vec3::X,
@@ -1699,6 +1709,7 @@ mod tests {
         let now = Instant::now();
         let settings = BuildSettings {
             snap: false,
+            follow_edit_object: true,
             ..Default::default()
         };
         let center = Scene::object_transform(&world, idx, now, 0).unwrap().0;
@@ -1718,11 +1729,11 @@ mod tests {
         assert!(manip.try_grab(&mut world, &settings, &cam, &[key], false, EditMode::Stretch, start, now));
         assert_eq!(manip.drag.as_ref().unwrap().part, Part::Corner(7));
         let mut out = Vec::new();
-        let step = |world: &mut World, manip: &mut Manip, at, out: &mut Vec<BuildCmd>| {
+        let step = |world: &mut World, manip: &mut Manip, projection: &Cam, at, out: &mut Vec<BuildCmd>| {
             manip.update(
                 world,
                 &settings,
-                &cam,
+                projection,
                 &[key],
                 false,
                 EditMode::Stretch,
@@ -1733,7 +1744,7 @@ mod tests {
                 out,
             );
         };
-        step(&mut world, &mut manip, now, &mut out);
+        step(&mut world, &mut manip, &cam, now, &mut out);
         let grown = world.objects.get(idx).unwrap();
         let expected = (grown.position, grown.scale);
         assert!(expected.1.min_element() > 1.0);
@@ -1744,12 +1755,32 @@ mod tests {
             handle,
             objects: vec![update],
         });
-        step(&mut world, &mut manip, now + std::time::Duration::from_millis(20), &mut out);
+        step(&mut world, &mut manip, &cam, now + std::time::Duration::from_millis(20), &mut out);
         let restored = world.objects.get(idx).unwrap();
         assert!(restored.position.abs_diff_eq(expected.0, 1e-5));
         assert!(restored.scale.abs_diff_eq(expected.1, 1e-5));
         assert_eq!(out.len(), 1);
-        step(&mut world, &mut manip, now + std::time::Duration::from_millis(120), &mut out);
+        camera.position += Vec3::Y;
+        camera.target += Vec3::Y;
+        let moved_cam = Cam::new(
+            camera.position,
+            camera.target,
+            camera.proj(1280.0 / 720.0) * camera.view(),
+            fov,
+            1280.0,
+            720.0,
+            1.0,
+        );
+        step(
+            &mut world,
+            &mut manip,
+            &moved_cam,
+            now + std::time::Duration::from_millis(120),
+            &mut out,
+        );
+        let held = world.objects.get(idx).unwrap();
+        assert!(held.position.abs_diff_eq(expected.0, 1e-5));
+        assert!(held.scale.abs_diff_eq(expected.1, 1e-5));
         assert_eq!(out.len(), 2);
         manip.release(&mut world, &settings, false, &mut out);
         assert!(matches!(out.last(), Some(BuildCmd::Transform { updates, .. })
