@@ -9,6 +9,8 @@ use aurora_net::scripts::{MAX_SOURCE, ScriptSaved, ScriptTarget};
 use egui::{RichText, Vec2};
 use uuid::Uuid;
 
+mod syntax;
+
 pub enum Action {
     Save {
         request: Uuid,
@@ -39,6 +41,7 @@ pub struct Editor {
     pub target: ScriptTarget,
     pub name: String,
     pub source: String,
+    highlighter: syntax::Highlighter,
     baseline: String,
     loaded: bool,
     loading: Option<Uuid>,
@@ -153,6 +156,7 @@ impl Editors {
             target,
             name,
             source: String::new(),
+            highlighter: syntax::Highlighter::default(),
             baseline: String::new(),
             loaded: false,
             loading: request,
@@ -313,14 +317,22 @@ impl Editors {
                 let height = (ui.available_height() - 110.0).max(120.0);
                 let mut shortcut_save = false;
                 egui::ScrollArea::both().id_salt((&id, "source")).max_height(height).show(ui, |ui| {
+                    let font = egui::TextStyle::Monospace.resolve(ui.style());
                     if e.loaded && !e.can_edit {
-                        ui.add(egui::Label::new(RichText::new(&e.source).monospace()).selectable(true));
+                        let job = e.highlighter.layout(&e.source, p, font);
+                        ui.add(egui::Label::new(job).selectable(true).wrap_mode(egui::TextWrapMode::Extend));
                         return;
                     }
+                    let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap_width: f32| {
+                        let mut job = e.highlighter.layout(text.as_str(), p, font.clone());
+                        job.wrap.max_width = wrap_width;
+                        ui.fonts_mut(|fonts| fonts.layout_job(job))
+                    };
                     let response = ui.add(
                         egui::TextEdit::multiline(&mut e.source)
                             .id(egui::Id::new((&id, "source_text")))
                             .code_editor()
+                            .layouter(&mut layouter)
                             .desired_width(f32::INFINITY)
                             .desired_rows(18)
                             .interactive(e.loaded && e.can_edit && e.saving.is_none() && e.loading.is_none()),

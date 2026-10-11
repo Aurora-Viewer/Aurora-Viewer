@@ -6,6 +6,25 @@ use aurora_net::build::{BuildCmd, perm};
 use aurora_net::scripts::{DEFAULT_SOURCE, ScriptSaved, ScriptTarget};
 use uuid::Uuid;
 
+const SYNTAX_DEMO_SOURCE: &str = r#"// LSL: types, variables, functions and events
+integer count = 0;
+float delay = 1.5;
+string greet(key resident) {
+    return "Bonjour, " + llKey2Name(resident);
+}
+default {
+    state_entry() { llSetTimerEvent(delay); }
+    touch_start(integer total) {
+        count += 1;
+        llSay(PUBLIC_CHANNEL, greet(llDetectedKey(0)));
+    }
+    timer() {
+        if (count > 0)
+            llSetColor(<0.5, 1.0, 0.25>, ALL_SIDES);
+    }
+}
+"#;
+
 struct ScriptInfo {
     name: String,
     handle: u64,
@@ -24,9 +43,10 @@ fn permissions(mask: u32, library: bool) -> (bool, bool) {
 impl App {
     pub(super) fn demo_script_steps(&mut self) {
         let Ok(mode) = std::env::var("AURORA_DEMO_SCRIPTS") else { return };
+        let syntax_demo = matches!(mode.as_str(), "syntax" | "object-syntax" | "syntax-readonly");
         if self.frame_count == 280 {
             self.panels.perf = false;
-            if !matches!(mode.as_str(), "object" | "object-save") {
+            if !matches!(mode.as_str(), "object" | "object-save" | "object-syntax") {
                 crate::world::inventory::demo::seed(&mut self.world.inventory, self.world.agent_id);
                 let item = Uuid::from_u128(8102);
                 if mode == "readonly"
@@ -34,11 +54,24 @@ impl App {
                 {
                     it.owner_mask &= !perm::MODIFY;
                 }
+                if mode == "syntax-readonly"
+                    && let Some(mut it) = self.world.inventory.items.get(&item).cloned()
+                {
+                    // Copy-only library source uses the real read-only permission path.
+                    it.parent = self.world.inventory.lib_root;
+                    it.owner = self.world.inventory.lib_owner;
+                    it.owner_mask &= !perm::MODIFY;
+                    self.world.inventory.add_items(vec![it]);
+                }
                 self.panels.inventory = true;
                 self.inventory_ui.show_original(&self.world.inventory, item);
-                self.open_script(ScriptTarget { object: Uuid::nil(), item });
+                let target = ScriptTarget { object: Uuid::nil(), item };
+                if syntax_demo {
+                    self.demo_script_sources.insert(target, SYNTAX_DEMO_SOURCE.into());
+                }
+                self.open_script(target);
             }
-            if matches!(mode.as_str(), "object" | "object-save" | "both") {
+            if matches!(mode.as_str(), "object" | "object-save" | "object-syntax" | "both") {
                 let idx = self
                     .world
                     .objects
@@ -61,7 +94,11 @@ impl App {
                             .and_then(|inv| inv.items.iter().find(|i| i.asset_type == 10))
                             .map(|it| it.item_id)
                     {
-                        self.open_script(ScriptTarget { object, item });
+                        let target = ScriptTarget { object, item };
+                        if syntax_demo {
+                            self.demo_script_sources.insert(target, SYNTAX_DEMO_SOURCE.into());
+                        }
+                        self.open_script(target);
                     }
                 }
             }
