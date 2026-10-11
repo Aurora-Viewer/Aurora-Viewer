@@ -263,7 +263,7 @@ mod tests {
             let mut time = 0.0;
             let mut frame = |events: Vec<egui::Event>, tool: &mut BuildTool| {
                 time += 0.04;
-                ctx.run_ui(
+                let mut output = ctx.run_ui(
                     egui::RawInput {
                         screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(600.0, 400.0))),
                         time: Some(time),
@@ -272,7 +272,10 @@ mod tests {
                         ..Default::default()
                     },
                     |ui| item_row(ui, &p, tool, &mut world, 0, object, &item, editable),
-                )
+                );
+                // This headless test inspects shapes without uploading textures.
+                output.textures_delta.clear();
+                output
             };
             let output = frame(Vec::new(), &mut tool);
             let pos = output
