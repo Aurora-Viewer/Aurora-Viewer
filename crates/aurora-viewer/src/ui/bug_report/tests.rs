@@ -199,6 +199,8 @@ fn long_descriptions_keep_all_questions_and_send_controls_visible() {
     state.report.steps = "A long description line\n".repeat(100);
     state.report.expected = state.report.steps.clone();
     state.report.actual = state.report.steps.clone();
+    state.image = Some(files::capture(1, 1, vec![21, 42, 63, 255]).unwrap());
+    state.include_image = true;
     for _ in 0..2 {
         draw_report(&ctx, &mut state);
     }

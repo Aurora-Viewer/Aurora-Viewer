@@ -64,6 +64,7 @@ bug-take-picture = Prendre une capture
 bug-attach-image = Choisir un fichier image
 bug-choose-image = Choisir une image pour le rapport public
 bug-images = Images
+bug-image-empty = Votre capture ou votre image apparaîtra ici.
 bug-with-ui = Inclure l’interface dans la capture
 bug-picture-login = La capture est disponible en monde uniquement, pour éviter de photographier les identifiants.
 bug-include-image = Préparer cette image pour le rapport
