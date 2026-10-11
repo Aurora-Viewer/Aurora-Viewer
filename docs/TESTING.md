@@ -415,6 +415,7 @@ grille.
 | `AURORA_DEMO_FEED=<url>` | Onglet « Flux » du profil sur cette page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Fenêtre Apparence et tenues |
 | `AURORA_DEMO_INVENTORY=<mode>` | Inventaire synthétique, menus et fenêtres |
+| `AURORA_DEMO_REZ=<mode>` | Rez par glisser-déposer depuis l’inventaire |
 | `AURORA_DEMO_LAND=<onglet>[:owner]` | « À propos du terrain » sur un onglet |
 | `AURORA_DEMO_PLACE=<lieu>` | « Lieux » sur un profil de lieu |
 | `AURORA_DEMO_PLACES=<onglet>` | « Lieux » sur un onglet |
@@ -567,6 +568,17 @@ nouvelles parties du corps n'est pas encore disponible.
 Les objets de démo utilisent des points distincts (crâne, oreille gauche,
 annulaire gauche, pied gauche et HUD en haut à droite), affichés dans les
 listes d’Apparence et d’Inventaire.
+
+**`AURORA_DEMO_REZ=1|land|object|contents|nocopy|cancel`** — ouvre l’inventaire
+synthétique. `1` permet de tester à la souris ; les autres modes font glisser
+une vraie ligne d’inventaire à partir de l’image 680 : terrain, objet opaque,
+contenu de l’objet avec Ctrl, exemplaire non copiable ou annulation par Échap.
+Le simulateur local affiche un cube synthétique au point de rez (aucun asset
+de grille). Capturer après l’image 700. Vérifier que l’exemplaire non copiable
+disparaît de l’inventaire, que Ctrl ajoute au contenu sans cube nouveau et
+qu’Échap ne crée rien. En ligne, valider les objets réels, le terrain interdit,
+la corbeille / bibliothèque, les régions voisines, le groupe du terrain et les
+objets déjà portés ; l’humain se connecte et effectue ces essais.
 
 **`AURORA_DEMO_INVENTORY`** — ouvre un inventaire synthétique : dossier
 personnel, sous-dossier, tenues, objets, documents, texture, son, geste,

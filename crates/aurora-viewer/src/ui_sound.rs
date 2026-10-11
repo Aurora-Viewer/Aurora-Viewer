@@ -36,6 +36,7 @@ pub enum UiSound {
     ObjectCreate,
     ObjectDelete,
     ObjectRezOut,
+    ObjectRezIn,
     PieMenuAppear,
     PieMenuHide,
     /// UISndPieMenuSliceHighlight0..7.
@@ -90,7 +91,7 @@ use UiSound as S;
 
 /// Every interface sound, in the order of the preferences list.
 #[rustfmt::skip]
-pub const CATALOG: [Entry; 40] = [
+pub const CATALOG: [Entry; 41] = [
     e!(S::Click, "Click", aurora_i18n::tr!("ui-sound-click-button-pressed"), CLICK, true),
     e!(S::ClickRelease, "ClickRelease", aurora_i18n::tr!("ui-sound-click-button-released"), CLICK, true),
     e!(S::BadKeystroke, "BadKeystroke", aurora_i18n::tr!("ui-sound-key-rejected"), u(0x2ca849ba_2885_4bc3_90ef_d4987a5b983a), true),
@@ -129,6 +130,7 @@ pub const CATALOG: [Entry; 40] = [
     e!(S::ObjectCreate, "ObjectCreate", aurora_i18n::tr!("ui-sound-object-creation"), u(0xf4a0660f_5446_dea2_80b7_6482a082803c), true),
     e!(S::ObjectDelete, "ObjectDelete", aurora_i18n::tr!("ui-sound-object-deletion"), u(0x0cb7b00a_4c10_6948_84de_a93c09af2ba9), false),
     e!(S::ObjectRezOut, "ObjectRezOut", aurora_i18n::tr!("ui-sound-object-taken"), Uuid::nil(), true),
+    e!(S::ObjectRezIn, "ObjectRezIn", aurora_i18n::tr!("ui-sound-object-rezzed"), u(0x3c8fc726_1fd6_862d_fa01_16c5b2568db6), true),
     e!(S::MicToggle, "MicToggle", aurora_i18n::tr!("ui-sound-microphone-on-off"), PIE_SLICE_0, false),
     e!(S::TrackerBeacon, "TrackerBeacon", aurora_i18n::tr!("ui-sound-destination-beacon"), ALERT, false),
 ];
@@ -334,6 +336,7 @@ mod tests {
         assert_eq!(s.resolve(S::PieMenuHide, true), None);
         assert_eq!(s.resolve(S::NewIncomingGroupImSession, false), Some(NEW_SESSION));
         assert!(!s.preload().contains(&Uuid::nil()));
+        assert_eq!(s.resolve(S::ObjectRezIn, false), Some(u(0x3c8fc726_1fd6_862d_fa01_16c5b2568db6)));
     }
 
     #[test]

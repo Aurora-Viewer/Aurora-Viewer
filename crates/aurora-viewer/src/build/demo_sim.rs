@@ -119,6 +119,10 @@ impl DemoSim {
     /// Events a simulator would send back for a build command.
     pub fn reply(&mut self, world: &World, c: &BuildCmd) -> Vec<NetEvent> {
         match c {
+            BuildCmd::RezInventory(rez) => vec![NetEvent::ObjectUpdates {
+                handle: rez.handle,
+                objects: vec![crate::demo::inventory_rez(rez)],
+            }],
             BuildCmd::Select { handle, local_ids } => {
                 let ids = Self::uuids(world, *handle, local_ids);
                 self.reply_props(world, &ids)

@@ -345,6 +345,11 @@ impl Session<'_> {
             return;
         };
         match c {
+            BuildCmd::RezInventory(rez) => {
+                if rez.ray_start.is_finite() && rez.ray_end.is_finite() {
+                    self.send(addr, &rez.message(agent_id, session_id), true);
+                }
+            }
             BuildCmd::SetPhysicsParams {
                 local_id,
                 physics,
@@ -828,6 +833,7 @@ impl Session<'_> {
 /// The region a command of `on_build_more` goes to.
 fn build_handle(c: &BuildCmd) -> Option<crate::types::RegionHandle> {
     Some(match c {
+        BuildCmd::RezInventory(rez) => rez.handle,
         BuildCmd::SetPhysicsParams { handle, .. }
         | BuildCmd::SetPermissions { handle, .. }
         | BuildCmd::SetGroup { handle, .. }

@@ -271,6 +271,7 @@ impl super::Scene {
         self.textures.on_job(JobResult::Texture {
             id: crate::demo::ANIMESH_TEXTURE,
             discard: 0,
+            pick_mask: super::textures::PickMask::from_rgba(32, 32, &rgba),
             mips: vec![(32, 32, rgba)],
             staged: None,
             alpha: super::jobs::AlphaKind::Blend,

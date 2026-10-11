@@ -47,6 +47,30 @@ fn first_id(v: &Llsd, key: &str) -> Uuid {
 }
 
 impl Inventory {
+    /// Check ancestry in O(depth), without finding system folders by a full
+    /// inventory scan. The bound also rejects malformed parent cycles.
+    pub fn in_folder_type(&self, id: Uuid, kind: i32) -> bool {
+        let mut current = self.items.get(&id).map_or(id, |item| item.parent);
+        for _ in 0..=self.folders.len() {
+            let Some(folder) = self.folders.get(&current) else { return false };
+            if folder.info.type_default == kind {
+                return true;
+            }
+            current = folder.info.parent;
+        }
+        false
+    }
+    /// Consume one original immediately after a reliable rez/drop is queued.
+    /// Touch only its folder, rather than scanning the whole inventory.
+    /// A failed rez is restored by the simulator's inventory update.
+    pub fn consume_item(&mut self, id: Uuid) {
+        if let Some(item) = self.items.remove(&id) {
+            if let Some(folder) = self.folders.get_mut(&item.parent) {
+                folder.items.retain(|other| *other != id);
+            }
+            self.generation += 1;
+        }
+    }
     pub fn from_login(raw: &Llsd) -> Inventory {
         let mut inv = Inventory {
             root: first_id(&raw["inventory-root"], "folder_id"),

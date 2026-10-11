@@ -336,7 +336,7 @@ impl BuildTool {
 
     /// The object's contents changed on our side: list them again soon
     /// (the simulator sends new properties with a new serial).
-    fn contents_changed(&mut self, object_id: Uuid) {
+    pub(crate) fn contents_changed(&mut self, object_id: Uuid) {
         if let Some(inv) = self.contents.objects.get_mut(&object_id) {
             inv.loading = false;
             inv.requested = None;

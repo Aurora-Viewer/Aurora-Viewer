@@ -315,6 +315,9 @@ pub fn create_panel(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings) {
         ui.vertical(|ui| {
             ui.spacing_mut().item_spacing.y = 2.0;
             ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+            if let Some(v) = check(ui, s.rez_under_land_group, false, aurora_i18n::tr!("rez-under-land-group"), true) {
+                s.rez_under_land_group = v;
+            }
             if let Some(v) = check(ui, s.keep_tool, false, aurora_i18n::tr!("build-ui-tools-keep-selection-tool"), true) {
                 s.keep_tool = v;
             }

@@ -142,6 +142,7 @@ pub enum JobResult {
         alpha: AlphaKind,
         /// The image has an alpha channel (2 or 4 components), whatever its values.
         alpha_channel: bool,
+        pick_mask: Option<super::textures::PickMask>,
         sculpt: Option<Arc<SculptMap>>,
     },
     TextureFailed {

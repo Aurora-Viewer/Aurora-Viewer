@@ -4,6 +4,7 @@
 use aurora_llsd::{Llsd, llsd_map};
 use uuid::Uuid;
 pub mod operations;
+pub mod rez;
 pub mod thumbnail;
 
 pub fn created_date(seconds: i64) -> String {

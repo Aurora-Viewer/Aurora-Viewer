@@ -76,6 +76,8 @@ pub struct BuildSettings {
     pub create_shape: usize,
     /// CreateToolKeepSelected.
     pub keep_tool: bool,
+    /// Firestorm RezUnderLandGroup, enabled by default.
+    pub rez_under_land_group: bool,
     /// New prim size (FSBuildPrefs_X/Y/Zsize).
     pub new_prim_size: [f32; 3],
     /// New prim material (FSBuildPrefs_Material, LL_MCODE_WOOD).
@@ -236,6 +238,7 @@ impl Default for BuildSettings {
             show_highlight: true,
             create_shape: 0,
             keep_tool: false,
+            rez_under_land_group: true,
             new_prim_size: [0.5; 3],
             new_prim_material: 3,
             land_action: 6,
