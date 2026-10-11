@@ -80,7 +80,8 @@ pub fn draw_attachments(ctx: &egui::Context, world: &World, scene: &Scene) {
         let Some((pos, _, _)) = Scene::object_transform(world, idx, Instant::now(), 0) else {
             continue;
         };
-        let Some((point, _)) = proj.project(pos + Vec3::Z * o.scale.z * 0.6) else {
+        let scale = world.hud_scale(idx);
+        let Some((point, _)) = proj.project(pos + Vec3::Z * o.scale.z * scale * 0.6) else {
             continue;
         };
         let c = o.text_color;
@@ -88,7 +89,7 @@ pub fn draw_attachments(ctx: &egui::Context, world: &World, scene: &Scene) {
             point,
             egui::Align2::CENTER_BOTTOM,
             &o.text,
-            egui::FontId::proportional(12.0),
+            egui::FontId::proportional(12.0 * scale),
             Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3]),
         );
     }

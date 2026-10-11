@@ -3387,11 +3387,15 @@ impl App {
             self.frame_profile.lap(Lap::Complexity);
             let hud_size = gfx.window.inner_size();
             self.world.hud_aspect = hud_size.width as f32 / hud_size.height.max(1) as f32;
+            self.refresh_local_huds();
             let drag_view =
                 self.scene.lists.hud_view.map(|view| {
                     aurora_render::HudView::new([hud_size.width, hud_size.height], self.world.hud_zoom, view.min_x, view.max_x)
                 });
             self.update_hud_drag(drag_view);
+            if let Some(view) = drag_view {
+                self.keep_scaled_huds_accessible(view);
+            }
             self.scene.sync(&mut gfx.renderer, &mut self.world, &cull);
             self.frame_profile.lap(Lap::Sync);
             {
@@ -5060,6 +5064,7 @@ impl App {
                     ui::minimap::draw_beacon(&ctx, &self.world, projector);
                 }
                 ui::hud::draw_attachments(&ctx, &self.world, &self.scene);
+                self.draw_hud_scale(&ctx);
                 {
                     let mods = crate::build::Mods {
                         shift: self.shift,
@@ -6207,13 +6212,16 @@ impl ApplicationHandler for App {
                 self.panels.settings = false;
                 self.world.notifications.list.clear();
                 crate::demo::hud::seed_inventory(&mut self.world);
+                self.world.hud_scales = crate::world::hud_scale::HudScales::load(
+                    crate::settings::account_dir(&self.world.agent_id).join(crate::world::hud_scale::FILE),
+                );
                 if matches!(mode.as_str(), "zoom" | "edit-zoom" | "drag-zoom") {
                     self.world.hud_zoom = 0.5;
                 }
-                if mode.starts_with("drag") {
+                if mode.starts_with("drag") || mode.starts_with("scale") || mode == "edit-scroll" {
                     let code = match mode.as_str() {
-                        "drag-ctrl" => KeyCode::ControlLeft,
-                        "drag-key" => KeyCode::KeyB,
+                        "drag-ctrl" | "scale-ctrl" => KeyCode::ControlLeft,
+                        "drag-key" | "scale-key" => KeyCode::KeyB,
                         _ => KeyCode::AltLeft,
                     };
                     self.settings.keybinds.set(
@@ -6221,7 +6229,7 @@ impl ApplicationHandler for App {
                         0,
                         Some(crate::keybinds::Binding::captured(Input::key(code), Mods::default())),
                     );
-                    let secondary = (mode == "drag-secondary")
+                    let secondary = matches!(mode.as_str(), "drag-secondary" | "scale-secondary")
                         .then(|| crate::keybinds::Binding::captured(Input::key(KeyCode::ControlLeft), Mods::default()));
                     self.settings.keybinds.set(Action::HudDrag, 1, secondary);
                 }
@@ -6429,6 +6437,9 @@ impl ApplicationHandler for App {
                     MouseScrollDelta::LineDelta(_, y) => *y,
                     MouseScrollDelta::PixelDelta(p) => p.y as f32 / 60.0,
                 };
+                if self.on_hud_scroll(steps) {
+                    return;
+                }
                 let mods = aurora_media::Modifiers {
                     control: self.ctrl,
                     alt: self.alt,

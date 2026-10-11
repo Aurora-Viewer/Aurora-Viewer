@@ -66,7 +66,7 @@ struct DrawRecord {
     uv_st: vec4<f32>,         // scale s, scale t, offset s, offset t
     params: vec4<f32>,        // x rotation, y metallic, z roughness, w alpha cutoff
     tex: vec4<u32>,           // base, normal, metallic-roughness, emissive
-    flags: vec4<u32>,         // x flags, y palette base, z skin binds, w texture animation mode | size x << 8 | size y << 16
+    flags: vec4<u32>,         // x low 16 flags / high 16 HUD zoom ×4096 (0 = 1), y palette base, z skin binds, w texture animation mode | size x << 8 | size y << 16
     mat_uv: vec4<f32>,        // normal map: scale s, t, offset s, t
     spec_uv: vec4<f32>,       // legacy specular / PBR metallic-roughness map: scale s, t, offset s, t
     legacy: vec4<f32>,        // x normal rot, y spec / MR rot, z glossiness (PBR: emissive rot), w env intensity

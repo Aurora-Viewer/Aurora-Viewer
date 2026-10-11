@@ -5,6 +5,38 @@ use super::*;
 use aurora_render::HudView;
 
 impl Scene {
+    /// Screen bounds of the visible linkset, using its zoomed geometry.
+    pub fn hud_rect(&self, world: &World, idx: usize, view: HudView) -> Option<[f32; 4]> {
+        let root = world.hud_root(idx)?;
+        let mut bounds = [f32::INFINITY, f32::INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY];
+        for idx in crate::build::family(world, root) {
+            if !self
+                .gpu
+                .get(idx)
+                .is_some_and(|g| g.hud && g.geom.is_some() && g.faces.iter().any(|f| f.pass != Pass::Hidden))
+            {
+                continue;
+            }
+            let (center, size) = self.click_bounds(world, idx)?;
+            let (_, rot, _) = Self::object_transform(world, idx, Instant::now(), 0)?;
+            for corner in 0..8 {
+                let sign = Vec3::new(
+                    if corner & 1 == 0 { -1.0 } else { 1.0 },
+                    if corner & 2 == 0 { -1.0 } else { 1.0 },
+                    if corner & 4 == 0 { -1.0 } else { 1.0 },
+                );
+                let p = center + rot * (size * sign * 0.5);
+                let x = view.width * 0.5 - p.y * view.height * view.zoom;
+                let y = view.height * 0.5 - p.z * view.height * view.zoom;
+                bounds[0] = bounds[0].min(x);
+                bounds[1] = bounds[1].min(y);
+                bounds[2] = bounds[2].max(x);
+                bounds[3] = bounds[3].max(y);
+            }
+        }
+        bounds.iter().all(|v| v.is_finite()).then_some(bounds)
+    }
+
     pub fn build_huds(&mut self, world: &World, size: [u32; 2], visible: bool) {
         self.lists.hud_view = None;
         self.lists.hud_opaque.clear();
@@ -107,6 +139,41 @@ impl Scene {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn local_zoom_scales_linked_offsets_without_changing_simulator_transforms() {
+        let mut world = World::new(Arc::new(AvatarLibrary::load()));
+        for ev in crate::demo::events().into_iter().chain(crate::demo::hud::events()) {
+            world.apply(ev);
+        }
+        let root = world.objects.index_of_uuid(&crate::demo::hud::object(31, false).full_id).unwrap();
+        let child = crate::build::family(&world, root)[1];
+        let now = Instant::now();
+        let pivot = Scene::object_transform(&world, root, now, 0).unwrap().0;
+        let before = Scene::object_transform(&world, child, now, 0).unwrap().0;
+        let id = world.objects.get(root).unwrap().full_id;
+        let original = [root, child].map(|idx| {
+            let o = world.objects.get(idx).unwrap();
+            (o.position, o.rotation, o.scale)
+        });
+        world.objects.get_mut(root).unwrap().update_flags = 0;
+        world.hud_scales.set(id, 2.0);
+        assert_eq!(Scene::object_transform(&world, root, now, 0).unwrap().0, pivot);
+        assert!(
+            Scene::object_transform(&world, child, now, 0)
+                .unwrap()
+                .0
+                .abs_diff_eq(pivot + (before - pivot) * 2.0, 1e-5)
+        );
+        for (idx, transform) in [root, child].into_iter().zip(original) {
+            let o = world.objects.get(idx).unwrap();
+            assert_eq!((o.position, o.rotation, o.scale), transform);
+            assert_eq!(world.visual_scale(idx), o.scale * 2.0);
+        }
+        assert_eq!(world.hud_scale(world.objects.index_of_uuid(&world.agent_id).unwrap()), 1.0);
+        let foreign = world.objects.iter().find(|(_, o)| o.key.local_id == 8241).unwrap().0;
+        assert_eq!(world.hud_scale(foreign), 1.0);
+    }
 
     #[test]
     fn hud_anchors_and_linksets_ignore_avatar_pose_and_region_offset() {

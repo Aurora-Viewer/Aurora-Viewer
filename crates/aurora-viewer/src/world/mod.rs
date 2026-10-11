@@ -9,6 +9,7 @@ pub mod eep_env;
 pub mod env;
 pub mod env_select;
 pub mod groups;
+pub mod hud_scale;
 pub mod inventory;
 pub mod land;
 pub mod landmarks;
@@ -105,6 +106,7 @@ pub struct World {
     pub hud_aspect: f32,
     /// HUD zoom is local to the current session (LLAgentCamera).
     pub hud_zoom: f32,
+    pub hud_scales: hud_scale::HudScales,
     pub login: Option<Arc<LoginResponse>>,
     pub agent_id: Uuid,
     pub regions: HashMap<RegionHandle, Region>,
@@ -224,6 +226,7 @@ impl World {
         World {
             hud_aspect: 1.0,
             hud_zoom: 1.0,
+            hud_scales: Default::default(),
             ui_sounds: Vec::new(),
             im_messages: Vec::new(),
             balance_changes: Vec::new(),
@@ -682,6 +685,7 @@ impl World {
                 self.contact_sets = contact_sets::ContactSets::load(account.join(contact_sets::CONTACT_SETS_FILE));
                 self.groups.load_favorites(account.join(groups::FAVORITE_GROUPS_FILE));
                 self.tp_storage = tphistory::HistoryStorage::load(account.join(tphistory::TELEPORT_HISTORY_FILE));
+                self.hud_scales = hud_scale::HudScales::load(account.join(hud_scale::FILE));
                 self.aliases_synced = u64::MAX;
                 self.sync_contact_aliases();
                 self.inventory = inventory::Inventory::from_login(&l.raw);

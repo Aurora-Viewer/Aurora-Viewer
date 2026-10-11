@@ -535,10 +535,10 @@ pub fn bounds_of(world: &World, selection: &[ObjKey], linked: bool, now: Instant
     let inv = rot.inverse();
     let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
     for (idx, _) in prims {
-        let (Some(o), Some((p, r, _))) = (world.objects.get(idx), crate::scene::Scene::object_transform(world, idx, now, 0)) else {
+        let Some((p, r, _)) = crate::scene::Scene::object_transform(world, idx, now, 0) else {
             continue;
         };
-        let h = o.scale * 0.5;
+        let h = world.visual_scale(idx) * 0.5;
         for c in 0..8 {
             let s = Vec3::new(
                 if c & 1 != 0 { 1.0 } else { -1.0 },
@@ -1536,12 +1536,22 @@ impl BuildTool {
         }
         let Some(off) = world.region_offset(o.key.region) else { return };
         let parent = edit_parent(world, idx, now);
+        let position_scale = world.hud_position_scale(idx);
         let new_world_pos = pos
-            .map(|p| if hud { parent.map_or(p, |(pp, pr)| pp + pr * p) } else { p + off })
+            .map(|p| {
+                if hud {
+                    parent.map_or(p, |(pp, pr)| pp + pr * (p * position_scale))
+                } else {
+                    p + off
+                }
+            })
             .unwrap_or(wp);
         let new_world_rot = rot.map(|r| if hud { parent.map_or(r, |(_, pr)| pr * r) } else { r }).unwrap_or(wr);
         let (local_pos, local_rot) = match parent {
-            Some((pp, pr)) => (pr.inverse() * (new_world_pos - pp), (pr.inverse() * new_world_rot).normalize()),
+            Some((pp, pr)) => (
+                pr.inverse() * (new_world_pos - pp) / position_scale,
+                (pr.inverse() * new_world_rot).normalize(),
+            ),
             None => (new_world_pos - off, new_world_rot.normalize()),
         };
         let scale = size.map(|v| v.clamp(Vec3::splat(MIN_PRIM_SCALE), Vec3::splat(MAX_PRIM_SCALE)));

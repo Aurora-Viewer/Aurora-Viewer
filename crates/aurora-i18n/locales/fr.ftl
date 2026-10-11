@@ -3186,6 +3186,10 @@ extra-skin = Skin
 extra-join-me = Join me!
 preferences-group-skin = Skin
 preferences-group-huds = HUDs
+hud-local-scale = Taille locale : { $percent } %
+hud-local-scale-reset = Revenir à 100 %
+hud-local-scale-forget = Oublier le réglage mémorisé
+hud-local-scale-help = Maintenez la touche des HUDs : clic gauche pour déplacer, molette pour changer la taille, Maj pour affiner. La taille est mémorisée sur ce PC par nom et créateur, pour ce compte. En édition d’un HUD, la molette sans cette touche zoome la vue de tous les HUDs.
 cli-help = { "Aurora Viewer\u000A\u000AUsage : aurora-viewer [--title <texte>] [--fps-limit <fps>] [--language <code>] [--version]\u000A\u000A  --title <texte>  Nomme cette fenêtre et son journal (aurora-<texte>.log,\u000A                  aurora-demo-<texte>.log en démo)\u000A  --fps-limit <fps>  Limite cette instance à 1..500 FPS sans enregistrer le réglage\u000A  --language <code>  Force la langue de cette instance (" }{ $languages }{ ")\u000A  -V, --version   Affiche la version compilée puis quitte\u000A  -h, --help      Affiche cette aide\u000A\u000ALes scénarios de test utilisent des variables (AURORA_DEMO=1, AURORA_CAPTURE=...) :\u000Avoir README.md." }
 demo-media-page = { "data:text/html;charset=utf-8,<html><body style='margin:0;height:100vh;background:linear-gradient(135deg,%232a1f4a,%230f6d6d);color:white;font:56px sans-serif;text-align:center'><h1 style='margin:40px 0 10px'>Aurora media</h1><p id='t' style='font-size:90px;margin:10px'>--</p><button onclick=\"document.body.style.background='%237a3b9c';this.textContent='Cliqu%C3%A9 !'\" style='font-size:48px;padding:10px 40px'>Cliquer</button><br><input placeholder='Taper ici' style='font-size:44px;margin-top:30px;width:70%'><script>setInterval(function(){document.getElementById('t').textContent=new Date().toLocaleTimeString()},250)</script></body></html>" }
 
