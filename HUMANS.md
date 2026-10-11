@@ -18,6 +18,7 @@ s'enchaîne.
 | Te lancent le viewer pour que tu testes | **Te connectes et testes sur la grille AGNI** (eux ne le font jamais) |
 | Ouvrent la PR, la relisent, corrigent, commentent, **la fusionnent** | Tranches quand l'agent te le demande (verdict ⚠️ ou ❌) |
 | Tiennent TASKS.md à jour, publient les releases | **Demandes** une release quand tu veux (« sors la 0.4.0 ») |
+| Lisent les issues et leurs captures / fichiers, les analysent, les étiquettent, répondent et les ferment après résolution | Donnes les précisions et validations nécessaires, tranches les choix produit |
 
 Tu n'as **aucune action à faire sur GitHub** : ton seul travail est de tester
 ce que l'agent te montre, et de te connecter à la grille quand il le faut.
@@ -72,9 +73,17 @@ PR sans relecture ou sorties de la file.
   `performance`, `maintenance`, `docs`, et `rupture` si elle casse une
   compatibilité), qui la range dans les notes de version, et une **zone**
   (`rendu`, `avatar`, `monde`, `réseau`, `audio-voix`, `interface`,
-  `construction`) pour s'y retrouver.
+  `construction`, `outillage`) pour s'y retrouver.
 - **Captures** : les images des PR sont rangées sur la branche `captures`
   (elle ne contient que ça).
+- **Issues** : les agents lisent aussi les captures et fichiers joints,
+  classent les rapports par nature, zone, suivi et priorité, puis répondent
+  directement sur GitHub. `bug` désigne le signalement, `correctif` la PR.
+  Une issue reste ouverte si des informations ou une validation manquent ;
+  elle est fermée après résolution vérifiée et fusion, ou avec une explication
+  pour un doublon / une demande hors périmètre. Les règles et étiquettes sont
+  détaillées dans [AGENTS.md](AGENTS.md#15-issues-github--lire-analyser-étiqueter-répondre-et-fermer)
+  et créées par `scripts/setup-labels.ps1`, qui conserve les autres étiquettes.
 - **Dependabot** ouvre chaque semaine des PR de mise à jour des dépendances ;
   un agent peut les vérifier pour toi, et les fusionne si tu es d'accord.
 - **Le dépôt** appartient à l'organisation `Aurora-Viewer` ; les
