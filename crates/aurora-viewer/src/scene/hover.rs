@@ -141,6 +141,10 @@ pub struct PickIndex {
 }
 
 impl PickIndex {
+    /// A separate query for inventory placement; do not disturb hover's watch.
+    pub fn ray_candidates(&self, ray: (Vec3, Vec3), out: &mut Vec<usize>) {
+        self.candidates(&Probe { ray, depth: None }, out);
+    }
     fn note(&mut self, e: PickEntry) {
         if !self.disturbed && self.watch.is_some_and(|probe| e.concerns(&probe)) {
             self.disturbed = true;
@@ -328,6 +332,21 @@ mod tests {
 
     const RAY: (Vec3, Vec3) = (Vec3::ZERO, Vec3::X);
     const PROBE: Probe = Probe { ray: RAY, depth: None };
+
+    #[test]
+    fn inventory_query_reuses_candidate_capacity_without_changing_hover_watch() {
+        let mut index = PickIndex::default();
+        index.set(0, sphere(5.0, 0.0, 1.0));
+        index.set(1, sphere(5.0, 8.0, 1.0));
+        index.watch(PROBE);
+        let mut out = Vec::with_capacity(8);
+        let capacity = out.capacity();
+        index.ray_candidates(RAY, &mut out);
+        assert_eq!(out, [0]);
+        assert_eq!(out.capacity(), capacity);
+        assert_eq!(index.watch, Some(PROBE));
+        assert!(!index.disturbed);
+    }
 
     fn sphere(x: f32, y: f32, r: f32) -> PickEntry {
         PickEntry {

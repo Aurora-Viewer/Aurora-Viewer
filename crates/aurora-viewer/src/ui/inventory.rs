@@ -150,10 +150,33 @@ pub struct InventoryWindow {
     pub open: bool,
 }
 
-/// An inventory item being dragged (dropped on an object's contents in
-/// the build floater, like LLToolDragAndDrop).
+/// Inventory cargo shared by world placement and the build contents floater.
 #[derive(Debug, Clone, Copy)]
 pub struct InvDrag(pub Uuid);
+
+pub(crate) struct WorldDrag {
+    pub item: Uuid,
+    pub position: egui::Pos2,
+    pub released: bool,
+    pub ctrl: bool,
+}
+
+/// Read before egui's end-pass clears released cargo. A dragging widget keeps
+/// wants-pointer set even over the world; only the destination area counts.
+pub(crate) fn world_drag(ctx: &egui::Context) -> Option<WorldDrag> {
+    let cargo = egui::DragAndDrop::payload::<InvDrag>(ctx)?;
+    if ctx.is_pointer_over_egui() {
+        return None;
+    }
+    ctx.input(|i| {
+        Some(WorldDrag {
+            item: cargo.0,
+            position: i.pointer.interact_pos()?,
+            released: i.pointer.button_released(egui::PointerButton::Primary),
+            ctrl: i.modifiers.ctrl,
+        })
+    })
+}
 
 #[derive(Default)]
 pub struct InventoryUi {
@@ -411,6 +434,7 @@ fn item_row(
         // One response handles clicks and dragging; a separate drag-source
         // interaction overlay used to consume secondary clicks on the label.
         r.dnd_set_drag_payload(InvDrag(it.id));
+        super::widgets::demo::rez_row(&r, it.id);
         let date = if it.created_at > 0 {
             aurora_net::inventory::created_date(it.created_at)
         } else {
@@ -2230,5 +2254,58 @@ mod tests {
         assert_eq!(st.reveal, Some(original));
         assert!(st.reveal_path.contains(&parent_id));
         assert!(st.expand_all.is_none());
+    }
+
+    #[test]
+    fn world_drop_reads_released_cargo_before_end_pass_and_respects_ui_and_escape() {
+        let ctx = egui::Context::default();
+        let id = Uuid::from_u128(8100);
+        let mut read = None;
+        let mut frame = |pos, events: Vec<egui::Event>| {
+            read = None;
+            let mut events = events;
+            events.insert(0, egui::Event::PointerMoved(pos));
+            headless_output(ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 600.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    egui::Area::new(egui::Id::new("drop_test_window"))
+                        .fixed_pos(egui::pos2(50.0, 50.0))
+                        .show(ui.ctx(), |ui| {
+                            ui.set_min_size(egui::vec2(200.0, 200.0));
+                        });
+                    read = world_drag(ui.ctx());
+                    if read.as_ref().is_some_and(|drag| drag.released) {
+                        egui::DragAndDrop::clear_payload(ui.ctx());
+                    }
+                },
+            ));
+            read.take()
+        };
+        for _ in 0..3 {
+            frame(egui::pos2(600.0, 400.0), vec![]);
+        }
+        egui::DragAndDrop::set_payload(&ctx, InvDrag(id));
+        assert!(frame(egui::pos2(100.0, 100.0), vec![]).is_none(), "window is not a world target");
+        let pos = egui::pos2(600.0, 400.0);
+        let released = frame(
+            pos,
+            vec![egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: Default::default(),
+            }],
+        )
+        .expect("release seen inside pass");
+        assert_eq!(released.item, id);
+        assert!(released.released);
+        assert!(egui::DragAndDrop::payload::<InvDrag>(&ctx).is_none());
+        assert!(frame(pos, vec![]).is_none(), "no duplicate drop next frame");
+        egui::DragAndDrop::set_payload(&ctx, InvDrag(id));
+        assert!(frame(pos, vec![key(egui::Key::Escape)]).is_none());
     }
 }

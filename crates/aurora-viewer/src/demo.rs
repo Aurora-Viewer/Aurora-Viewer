@@ -120,6 +120,28 @@ fn prim(
     }
 }
 
+/// Synthetic inventory rez stand-in: a cube, never a grid asset download.
+pub fn inventory_rez(rez: &aurora_net::inventory::rez::RezInventory) -> ObjectUpdate {
+    let id = Uuid::new_v4();
+    let mut o = prim(
+        id.as_u128() as u32,
+        rez.ray_end + Vec3::Z * 0.5,
+        Quat::IDENTITY,
+        Vec3::ONE,
+        shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE, 100, 0, 0),
+        te([0.35, 0.85, 0.75, 1.0], 0, false, 0.0),
+        ExtraParams::default(),
+        &rez.item.name,
+    );
+    o.full_id = id;
+    o.owner_id = DEMO_AGENT;
+    o.update_flags = crate::ui::context::flags::OBJECT_MODIFY
+        | crate::ui::context::flags::OBJECT_COPY
+        | crate::ui::context::flags::OBJECT_YOU_OWNER
+        | if rez.selected { 1 << 1 } else { 0 };
+    o
+}
+
 /// Legacy particle system block (LLPartSysData::packLegacy + LLPartData):
 /// a teal fountain fading to violet.
 fn fountain_particles() -> Vec<u8> {

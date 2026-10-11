@@ -4,6 +4,7 @@
 use super::*;
 use crate::media::pick::{self, FaceTris};
 use aurora_net::TouchSurface;
+use glam::Vec2;
 
 pub struct PickFace {
     pub positions: Vec<[f32; 3]>,
@@ -51,6 +52,82 @@ pub fn ray_box(origin: Vec3, dir: Vec3, min: Vec3, max: Vec3) -> Option<f32> {
 }
 
 impl Scene {
+    /// Inventory placement follows LLToolDragAndDrop::pick: hidden and rigged
+    /// surfaces are excluded and texture holes let the ray through. CPU
+    /// triangles use the maintained pick index without a GPU readback or wait.
+    pub fn inventory_surface(
+        &self,
+        world: &World,
+        ray: (Vec3, Vec3),
+        far: f32,
+        candidates: &mut Vec<usize>,
+    ) -> Option<(Vec3, Option<usize>)> {
+        self.pick.ray_candidates(ray, candidates);
+        self.inventory_surface_among(world, ray, far, Some(candidates))
+    }
+
+    fn inventory_surface_among(
+        &self,
+        world: &World,
+        ray: (Vec3, Vec3),
+        far: f32,
+        among: Option<&[usize]>,
+    ) -> Option<(Vec3, Option<usize>)> {
+        let now = Instant::now();
+        let mut nearest = far;
+        let mut target = None;
+        let mut found = false;
+        for (idx, g) in self.pick_objects(among) {
+            if g.hud || g.rigged {
+                continue;
+            }
+            let t = if g.is_avatar {
+                ray_box(
+                    ray.0,
+                    ray.1,
+                    g.center - Vec3::new(0.35, 0.35, 1.0),
+                    g.center + Vec3::new(0.35, 0.35, 1.0),
+                )
+            } else {
+                self.face_hit_mode(world, idx, ray, now, false, true).map(|h| h.t)
+            };
+            if let Some(t) = t
+                && t > 0.0
+                && t < nearest
+            {
+                nearest = t;
+                target = Some(idx);
+                found = true;
+            }
+        }
+        // Same heightfield refinement as picking through IGNORE objects.
+        // Only an active inventory drag queries it; release always recomputes.
+        let mut previous = 0.0;
+        let mut t = 0.25;
+        while t <= nearest {
+            let p = ray.0 + ray.1 * t;
+            if world.ground_height(p).is_some_and(|z| p.z <= z) {
+                let (mut lo, mut hi) = (previous, t);
+                for _ in 0..12 {
+                    let mid = (lo + hi) * 0.5;
+                    let p = ray.0 + ray.1 * mid;
+                    if world.ground_height(p).is_some_and(|z| p.z <= z) {
+                        hi = mid;
+                    } else {
+                        lo = mid;
+                    }
+                }
+                return Some((ray.0 + ray.1 * hi, None));
+            }
+            previous = t;
+            if t == nearest {
+                break;
+            }
+            t = (t + 1.0).min(nearest);
+        }
+        found.then_some((ray.0 + ray.1 * nearest, target))
+    }
+
     /// The objects a search looks at, in index order: all of them, or the
     /// candidates the pick index found for the ray (hover.rs). The exact
     /// tests are the same either way.
@@ -80,6 +157,18 @@ impl Scene {
         now: Instant,
         include_hidden: bool,
     ) -> Option<pick::FaceHit> {
+        self.face_hit_mode(world, idx, ray, now, include_hidden, false)
+    }
+
+    fn face_hit_mode(
+        &self,
+        world: &World,
+        idx: usize,
+        ray: (Vec3, Vec3),
+        now: Instant,
+        include_hidden: bool,
+        inventory_pick: bool,
+    ) -> Option<pick::FaceHit> {
         let o = world.objects.get(idx)?;
         let g = self.gpu.get(idx)?;
         let geom = self.geom_ready(&g.geom?)?;
@@ -88,6 +177,16 @@ impl Scene {
         let inv = model.inverse();
         ray_box(inv.transform_point3(ray.0), inv.transform_vector3(ray.1), geom.min, geom.max)?;
         let faces = geom.pick_faces.iter().enumerate().filter_map(|(face, f)| {
+            if inventory_pick {
+                let draw = geom
+                    .faces
+                    .get(face)
+                    .and_then(Option::as_ref)
+                    .and_then(|a| g.faces.iter().find(|f| f.cmd.first_index == a.index_offset));
+                if draw.is_none_or(|f| matches!(f.pass, Pass::Hidden)) {
+                    return None;
+                }
+            }
             if !include_hidden && o.te.as_ref().is_some_and(|te| te.face(face).color[3] < 0.004) {
                 return None;
             }
@@ -99,6 +198,34 @@ impl Scene {
                 indices: &f.indices,
             })
         });
+        if inventory_pick {
+            return faces
+                .filter_map(|face| {
+                    let hit = pick::ray_faces(std::iter::once(face), model, ray.0, ray.1)?;
+                    let tf = o.te.as_ref().map(|te| *te.face(hit.face)).unwrap_or_default();
+                    let draw = geom
+                        .faces
+                        .get(hit.face)
+                        .and_then(Option::as_ref)
+                        .and_then(|a| g.faces.iter().find(|f| f.cmd.first_index == a.index_offset))?;
+                    let ignore_alpha = draw.pbr_alpha == Some(0)
+                        || matches!(
+                            draw.legacy_alpha,
+                            Some(legacy_mat::alpha_mode::NONE | legacy_mat::alpha_mode::EMISSIVE)
+                        )
+                        || (draw.legacy_alpha == Some(legacy_mat::alpha_mode::MASK)
+                            && self.legacy_mats.peek(&tf.material_id).is_some_and(|m| m.alpha_cutoff == 0));
+                    if ignore_alpha {
+                        return Some(hit);
+                    }
+                    let Some(mask) = self.textures.pick_masks.get(&draw.tex_id) else {
+                        return Some(hit);
+                    };
+                    mask.hits(self.inventory_uv(world, o, &hit, (&geom, model), ray, now))
+                        .then_some(hit)
+                })
+                .min_by(|a, b| a.t.total_cmp(&b.t));
+        }
         if !g.hud {
             return pick::ray_faces(faces, model, ray.0, ray.1);
         }
@@ -123,6 +250,96 @@ impl Scene {
             }
             material.double_sided
         })
+    }
+
+    /// Same coordinate conventions as object.wgsl, evaluated only for a hit
+    /// with a resident alpha mask. Material clones contain fixed-size fields.
+    fn inventory_uv(
+        &self,
+        world: &World,
+        o: &Object,
+        hit: &pick::FaceHit,
+        geometry: (&GpuGeom, Mat4),
+        ray: (Vec3, Vec3),
+        now: Instant,
+    ) -> Vec2 {
+        use aurora_render::tex_anim::{AnimClock, TexAnimParams, TexXform, clock_counter, frame_from_counter};
+        let (geom, model) = geometry;
+        let tf = o.te.as_ref().map(|te| *te.face(hit.face)).unwrap_or_default();
+        let mut st = hit.uv;
+        if tf.planar() {
+            let p = model.inverse().transform_point3(ray.0 + ray.1 * hit.t) * o.scale;
+            let n = model.transpose().transform_vector3(hit.normal).normalize_or_zero();
+            let b = if n.x.abs() >= 0.5 {
+                Vec3::new(0.0, if n.x < 0.0 { -1.0 } else { 1.0 }, 0.0)
+            } else if n.y > 0.0 {
+                -Vec3::X
+            } else {
+                Vec3::X
+            };
+            st = Vec2::new(0.5 + 2.0 * b.dot(p), 0.5 - 2.0 * b.cross(n).dot(p));
+        }
+        let material = o
+            .extra
+            .render_materials
+            .iter()
+            .find(|(fi, id)| *fi as usize == hit.face && !id.is_nil());
+        let pbr = material.is_some();
+        let clock = AnimClock::new(o.tex_anim_clock.start);
+        let animated = tex_anim_record(o, hit.face, geom.pick_faces.len(), &tf, pbr, clock);
+        if let Some(anim) = animated
+            && let Some(ta) = o.tex_anim
+        {
+            let params = TexAnimParams {
+                mode: ta.mode,
+                size_x: ta.size_x,
+                size_y: ta.size_y,
+                start: ta.start,
+                length: ta.length,
+                rate: ta.rate,
+            }
+            .sanitized();
+            let time = clock.now(now);
+            let counter = clock_counter(
+                &params,
+                time[0].wrapping_sub(anim.anim[0]) as i32,
+                f32::from_bits(time[1]),
+                f32::from_bits(anim.anim[0]),
+            );
+            st = Vec2::from_array(
+                frame_from_counter(
+                    &params,
+                    counter,
+                    &TexXform {
+                        rot: tf.rotation,
+                        scale: [tf.scale_s, tf.scale_t],
+                        offset: [tf.offset_s, tf.offset_t],
+                    },
+                )
+                .apply(st.to_array()),
+            );
+        }
+        if let Some((_, id)) = material {
+            let loaded = self.materials.peek(id);
+            let mut m = loaded.as_ref().map(|m| (**m).clone()).unwrap_or_default();
+            if loaded.is_some()
+                && let Some((_, ov)) = world
+                    .gltf_overrides
+                    .get(&o.key)
+                    .and_then(|s| s.iter().rev().find(|(fi, _)| *fi as usize == hit.face))
+            {
+                m.apply_override(ov);
+            }
+            let t = m.transforms[0];
+            let v = Vec2::new(st.x, 1.0 - st.y) * Vec2::from_array(t.scale);
+            let (sin, cos) = t.rotation.sin_cos();
+            let uv = Vec2::new(cos * v.x + sin * v.y, -sin * v.x + cos * v.y) + Vec2::from_array(t.offset);
+            Vec2::new(uv.x, 1.0 - uv.y)
+        } else if animated.is_some() {
+            st
+        } else {
+            pick::te_transform(st, [tf.scale_s, tf.scale_t], [tf.offset_s, tf.offset_t], tf.rotation)
+        }
     }
 
     pub fn touch_surface(&self, world: &World, idx: usize, ray: (Vec3, Vec3)) -> Option<TouchSurface> {
@@ -406,7 +623,12 @@ mod tests {
                 refs: 2,
                 zero_since: 0,
                 state: GeomState::Ready(Arc::new(GpuGeom {
-                    faces: vec![None],
+                    faces: vec![Some(aurora_render::MeshAlloc {
+                        vertex_offset: 0,
+                        vertex_count: 4,
+                        index_offset: 0,
+                        index_count: 6,
+                    })],
                     min: -Vec3::splat(0.5),
                     max: Vec3::splat(0.5),
                     joint_bounds: Vec::new(),
@@ -547,6 +769,139 @@ mod tests {
             .touch_surface(&world, front, (enlarged_ray.0 + Vec3::new(0.0, 0.1, 0.2), Vec3::X))
             .unwrap();
         assert!(shifted.position.abs_diff_eq(original.position, 1e-5));
+    }
+
+    #[test]
+    fn inventory_placement_uses_triangles_and_excludes_texture_holes_rigged_and_hud_faces() {
+        let (mut world, mut scene, front, back) = scene_with_two_objects();
+        for idx in [front, back] {
+            scene.gpu[idx].center = world.objects.get(idx).unwrap().position;
+            scene.gpu[idx].radius = 1.0;
+            scene.pick.set(idx, super::super::hover::PickEntry::of(&scene.gpu[idx]));
+        }
+        let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
+        let mut candidates = Vec::new();
+        world.objects.get_mut(front).unwrap().click_action = crate::interaction::code::IGNORE;
+        let hit = scene.inventory_surface(&world, ray, 20.0, &mut candidates).unwrap();
+        assert_eq!(hit.1, Some(front));
+        assert!((hit.0.x - 2.5).abs() < 1e-5);
+        // Touch-only IGNORE rules must not affect inventory placement.
+        scene.gpu[front].faces[0].pass = Pass::Blend;
+        let texture = Uuid::from_u128(8888);
+        scene.gpu[front].faces[0].tex_id = texture;
+        scene
+            .textures
+            .pick_masks
+            .insert(texture, super::super::textures::PickMask::from_rgba(2, 2, &[0; 16]).unwrap());
+        assert_eq!(scene.inventory_surface(&world, ray, 20.0, &mut candidates).unwrap().1, Some(back));
+        scene.gpu[front].faces[0].pass = Pass::Opaque;
+        scene.textures.pick_masks.remove(&texture);
+        scene.gpu[front].rigged = true;
+        assert_eq!(scene.inventory_surface(&world, ray, 20.0, &mut candidates).unwrap().1, Some(back));
+        scene.gpu[front].rigged = false;
+        scene.gpu[front].hud = true;
+        assert_eq!(scene.inventory_surface(&world, ray, 20.0, &mut candidates).unwrap().1, Some(back));
+        assert!(scene.inventory_surface(&world, ray, 2.0, &mut candidates).is_none());
+        let down = (Vec3::new(140.0, 130.0, 60.0), -Vec3::Z);
+        let terrain = scene.inventory_surface(&world, down, 50.0, &mut candidates).unwrap();
+        assert!(terrain.1.is_none());
+        assert!((terrain.0.z - world.ground_height(terrain.0).unwrap()).abs() < 0.001);
+    }
+
+    #[test]
+    fn inventory_alpha_uv_matches_planar_projection_and_pbr_overrides() {
+        let (mut world, mut scene, front, _) = scene_with_two_objects();
+        let ray = (Vec3::new(0.0, -0.15, 50.15), Vec3::X);
+        let now = Instant::now();
+        let model = Mat4::from_translation(world.objects.get(front).unwrap().position);
+        let hit = scene.face_hit(&world, front, ray, now, true).unwrap();
+        let geom = scene.geom_ready(&scene.gpu[front].geom.unwrap()).unwrap();
+        let uv =
+            |world: &World, scene: &Scene| scene.inventory_uv(world, world.objects.get(front).unwrap(), &hit, (&geom, model), ray, now);
+        assert!((uv(&world, &scene) - Vec2::new(0.35, 0.65)).length() < 0.0001);
+        Arc::make_mut(world.objects.get_mut(front).unwrap().te.as_mut().unwrap()).faces[0].media_flags = 2;
+        assert!((uv(&world, &scene) - Vec2::splat(0.8)).length() < 0.0001);
+        let material = Uuid::from_u128(8890);
+        let key = world.objects.get(front).unwrap().key;
+        let o = world.objects.get_mut(front).unwrap();
+        let tf = &mut Arc::make_mut(o.te.as_mut().unwrap()).faces[0];
+        tf.media_flags = 0;
+        tf.scale_s = 3.0;
+        tf.offset_s = 0.2;
+        o.extra.render_materials = vec![(0, material)];
+        let mut m = aurora_assets::PbrMaterial::default();
+        m.transforms[0] = aurora_assets::material::TextureTransform {
+            scale: [2.0, 1.0],
+            offset: [-0.6, 0.2],
+            rotation: 0.0,
+        };
+        scene.materials.insert(material, m);
+        assert!((uv(&world, &scene) - Vec2::new(0.1, 0.45)).length() < 0.0001);
+        let mut ov = aurora_assets::material::PbrOverride::default();
+        ov.transforms[0].offset = [0.2, 0.1];
+        world.gltf_overrides.insert(key, vec![(0, ov)].into());
+        assert!((uv(&world, &scene) - Vec2::new(0.9, 0.55)).length() < 0.0001);
+    }
+
+    #[test]
+    #[ignore = "explicit placement performance comparison"]
+    fn inventory_placement_profile() {
+        let (mut world, mut scene, front, back) = scene_with_two_objects();
+        let template = aurora_net::inventory::rez::RezInventory {
+            handle: world.main_region.unwrap(),
+            group: Uuid::nil(),
+            item: Default::default(),
+            ray_start: Vec3::ZERO,
+            ray_end: Vec3::ZERO,
+            target: Uuid::nil(),
+            selected: false,
+            remove: false,
+            source_folder: Uuid::nil(),
+        };
+        let updates: Vec<_> = (0..16_000)
+            .map(|n| {
+                let mut o = crate::demo::inventory_rez(&template);
+                o.local_id = 20_000 + n;
+                o.position = Vec3::new(3.0 + (n % 100) as f32, 10.0 + (n / 100) as f32, 50.0);
+                o.text.clear();
+                o
+            })
+            .collect();
+        let ids: Vec<_> = updates.iter().map(|o| o.full_id).collect();
+        world.apply(aurora_net::NetEvent::ObjectUpdates {
+            handle: template.handle,
+            objects: updates,
+        });
+        scene
+            .gpu
+            .resize_with(world.objects.iter().map(|(i, _)| i).max().unwrap() + 1, Default::default);
+        let faces = scene.gpu[front].faces.clone();
+        let geom = scene.gpu[front].geom;
+        for idx in ids.iter().filter_map(|id| world.objects.index_of_uuid(id)).chain([front, back]) {
+            scene.gpu[idx].center = world.objects.get(idx).unwrap().position;
+            scene.gpu[idx].radius = 1.0;
+            scene.gpu[idx].geom = geom;
+            scene.gpu[idx].faces.clone_from(&faces);
+            scene.pick.set(idx, super::super::hover::PickEntry::of(&scene.gpu[idx]));
+        }
+        let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
+        let mut candidates = Vec::new();
+        let expected = scene.inventory_surface_among(&world, ray, 200.0, None);
+        assert_eq!(scene.inventory_surface(&world, ray, 200.0, &mut candidates), expected);
+        let start = Instant::now();
+        for _ in 0..100 {
+            std::hint::black_box(scene.inventory_surface_among(&world, ray, 200.0, None));
+        }
+        let full = start.elapsed().as_secs_f64() * 10_000.0;
+        let start = Instant::now();
+        for _ in 0..100 {
+            std::hint::black_box(scene.inventory_surface(&world, ray, 200.0, &mut candidates));
+        }
+        let indexed = start.elapsed().as_secs_f64() * 10_000.0;
+        println!(
+            "inventory placement: full={full:.1} us, indexed={indexed:.1} us, candidates={} / 16002",
+            candidates.len()
+        );
     }
 
     #[test]

@@ -96,6 +96,45 @@ pub enum TexSource {
     },
 }
 
+/// Picking follows LLImageGL::updatePickMask / getMask: one bit per 2×2
+/// block, alpha > 32 at its first texel, repeated UVs. Top-left decoded rows
+/// are indexed from the bottom, like world UVs. No OpenGL state or
+/// readback is involved; masks are built by decode workers and retired off-thread.
+pub struct PickMask {
+    width: u32,
+    height: u32,
+    bits: Vec<u8>,
+}
+
+impl PickMask {
+    pub fn from_rgba(width: u32, height: u32, rgba: &[u8]) -> Option<Self> {
+        let pixels = (width as usize).checked_mul(height as usize)?;
+        if width == 0 || height == 0 || rgba.len() != pixels.checked_mul(4)? {
+            return None;
+        }
+        let (w, h) = (width.div_ceil(2), height.div_ceil(2));
+        let mut bits = vec![0; (w as usize * h as usize).div_ceil(8)];
+        for y in 0..h {
+            for x in 0..w {
+                let row = height - 1 - y * 2;
+                if rgba[((row * width + x * 2) as usize) * 4 + 3] > 32 {
+                    let bit = (y * w + x) as usize;
+                    bits[bit / 8] |= 1 << (bit % 8);
+                }
+            }
+        }
+        Some(Self { width: w, height: h, bits })
+    }
+
+    pub fn hits(&self, uv: glam::Vec2) -> bool {
+        let uv = if uv.is_finite() { uv } else { glam::Vec2::ZERO };
+        let x = (uv.x.rem_euclid(1.0) * self.width as f32) as usize;
+        let y = (uv.y.rem_euclid(1.0) * self.height as f32) as usize;
+        let bit = y.min(self.height as usize - 1) * self.width as usize + x.min(self.width as usize - 1);
+        self.bits[bit / 8] & (1 << (bit % 8)) != 0
+    }
+}
+
 struct Entry {
     slot: u32,
     refs: u32,
@@ -135,6 +174,7 @@ struct PendingUpload {
     mips: Vec<(u32, u32, Vec<u8>)>,
     alpha: AlphaKind,
     alpha_channel: bool,
+    pick_mask: Option<PickMask>,
     priority: UploadPriority,
     /// Tests: as if staged in a chunk a job still writes in.
     #[cfg(test)]
@@ -240,6 +280,9 @@ impl PendingUpload {
     /// thread: freeing them here took 1–3 ms a frame while the decode jobs
     /// allocate on every core, unseen by the time budget.
     fn retire(self, trash: &mut Trash<Vec<u8>>) {
+        if let Some(mask) = self.pick_mask {
+            trash.push(mask.bits);
+        }
         for (_, _, pixels) in self.mips {
             if !pixels.is_empty() {
                 trash.push(pixels);
@@ -364,6 +407,7 @@ pub struct TextureStreamer {
     pub staging: Option<Arc<StagingPool>>,
     /// Alpha class by bindless slot (fast lookup during list building).
     pub alpha_by_slot: Vec<AlphaKind>,
+    pub(super) pick_masks: HashMap<Uuid, PickMask>,
     /// Per slot: the decoded image has an alpha channel (LL sends such
     /// faces to the alpha pool when rigged or glowing, even if opaque).
     pub alpha_channel_by_slot: Vec<bool>,
@@ -410,6 +454,14 @@ impl TextureStreamer {
             next_key: 1,
             uploads: PendingUploads::default(),
             staging: None,
+            pick_masks: HashMap::from([(
+                aurora_prim::te::TRANSPARENT_TEXTURE,
+                PickMask {
+                    width: 1,
+                    height: 1,
+                    bits: vec![0],
+                },
+            )]),
             // built-in slots: the transparent texture has no visible pixel
             alpha_by_slot: {
                 let mut a = vec![AlphaKind::Opaque; 16];
@@ -972,6 +1024,7 @@ impl TextureStreamer {
                 staged,
                 alpha,
                 alpha_channel,
+                pick_mask,
                 sculpt,
             } => {
                 self.decodes = self.decodes.saturating_sub(1);
@@ -991,6 +1044,7 @@ impl TextureStreamer {
                         mips,
                         alpha,
                         alpha_channel,
+                        pick_mask,
                         priority: UploadPriority::default(),
                         #[cfg(test)]
                         held: false,
@@ -1148,6 +1202,14 @@ impl TextureStreamer {
             }
             e.decoded = Some(u.discard);
             e.alpha = u.alpha;
+            let old = if let Some(mask) = u.pick_mask.take() {
+                self.pick_masks.insert(u.id, mask)
+            } else {
+                self.pick_masks.remove(&u.id)
+            };
+            if let Some(mask) = old {
+                self.trash.push(mask.bits);
+            }
             set_slot_alpha(
                 &mut self.alpha_by_slot,
                 &mut self.generation,
@@ -1197,6 +1259,9 @@ impl TextureStreamer {
             let mut gone = Vec::with_capacity(evict.len());
             for id in evict {
                 if let Some(e) = self.entries.remove(&id) {
+                    if let Some(mask) = self.pick_masks.remove(&id) {
+                        self.trash.push(mask.bits);
+                    }
                     renderer.free_texture(e.slot);
                     set_slot_alpha(
                         &mut self.alpha_by_slot,
@@ -1313,6 +1378,10 @@ pub fn texture_result(
     sculpt: Option<Arc<SculptMap>>,
     pool: Option<&StagingPool>,
 ) -> JobResult {
+    // Generated on the decode worker, before staging may release CPU levels.
+    let pick_mask = (alpha != AlphaKind::Opaque)
+        .then(|| mips.first().and_then(|(w, h, rgba)| PickMask::from_rgba(*w, *h, rgba)))
+        .flatten();
     let staged = pool.and_then(|pool| {
         let levels: Vec<(u32, u32, &[u8])> = mips.iter().map(|(w, h, d)| (*w, *h, d.as_slice())).collect();
         StagedTexture::new(pool, &levels)
@@ -1327,6 +1396,7 @@ pub fn texture_result(
         staged,
         alpha,
         alpha_channel,
+        pick_mask,
         sculpt,
     }
 }
@@ -1364,6 +1434,25 @@ fn decode_job(id: Uuid, data: &[u8], discard: u8, keep_pixels: bool, pool: Optio
 mod tests {
     use super::*;
 
+    #[test]
+    fn pick_mask_threshold_repeated_uvs_and_invalid_pixels() {
+        let mut rgba = vec![0; 4 * 4 * 4];
+        rgba[(3 * 4) * 4 + 3] = 32;
+        rgba[(3 * 4 + 2) * 4 + 3] = 33;
+        rgba[4 * 4 + 3] = 255;
+        let mask = PickMask::from_rgba(4, 4, &rgba).unwrap();
+        assert!(!mask.hits(glam::Vec2::new(0.2, 0.3)));
+        assert!(mask.hits(glam::Vec2::new(0.7, 0.3)));
+        assert!(mask.hits(glam::Vec2::new(-0.3, 2.3)));
+        assert!(mask.hits(glam::Vec2::new(0.2, 0.7)));
+        assert!(!mask.hits(glam::Vec2::new(0.7, 0.7)));
+        assert!(!mask.hits(glam::Vec2::splat(f32::NAN)));
+        assert!(PickMask::from_rgba(0, 2, &rgba).is_none());
+        assert!(PickMask::from_rgba(4, 4, &rgba[..4]).is_none());
+        let textures = TextureStreamer::new(PathBuf::new());
+        assert!(!textures.pick_masks[&aurora_prim::te::TRANSPARENT_TEXTURE].hits(glam::Vec2::splat(0.5)));
+    }
+
     fn pending(id: u128, discard: u8) -> PendingUpload {
         PendingUpload {
             id: Uuid::from_u128(id),
@@ -1372,6 +1461,7 @@ mod tests {
             mips: vec![(1, 1, vec![0; 4])],
             alpha: AlphaKind::Opaque,
             alpha_channel: false,
+            pick_mask: None,
             priority: UploadPriority::default(),
             held: false,
         }

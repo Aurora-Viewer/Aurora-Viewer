@@ -142,6 +142,8 @@ pub enum BuildCmd {
         updates: Vec<TransformUpdate>,
     },
     Add(Box<NewPrim>),
+    /// RezObject from the agent's inventory or the library.
+    RezInventory(Box<crate::inventory::rez::RezInventory>),
     /// ObjectDuplicate (offset in region meters; flags FLAGS_CREATE_SELECTED...).
     Duplicate {
         handle: RegionHandle,

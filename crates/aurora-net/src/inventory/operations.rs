@@ -297,6 +297,11 @@ pub fn item_from_udp(it: &aurora_msg::msgs::update_create_inventory_item::Invent
 
 /// LLInventoryItem::getCRC32 (a wrapping checksum, not a polynomial CRC).
 pub fn checksum(it: &InvItem) -> u32 {
+    checksum_in_folder(it, it.parent)
+}
+
+/// Rez can override the wire folder without mutating inventory metadata.
+pub(crate) fn checksum_in_folder(it: &InvItem, folder: Uuid) -> u32 {
     fn uuid_sum(id: Uuid) -> u32 {
         id.as_bytes()
             .as_chunks::<4>()
@@ -306,7 +311,7 @@ pub fn checksum(it: &InvItem) -> u32 {
     }
     [
         it.id,
-        it.parent,
+        folder,
         it.creator,
         it.owner,
         it.last_owner,

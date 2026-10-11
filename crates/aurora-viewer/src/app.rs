@@ -30,6 +30,7 @@ mod chat_commands;
 mod context_menu;
 mod hud_drag;
 mod inventory;
+mod inventory_drag;
 mod inventory_thumbnail;
 mod object_actions;
 
@@ -315,6 +316,7 @@ pub struct App {
     ao_missing: HashSet<uuid::Uuid>,
     ao_demo: Option<String>,
     ao_default_applied: bool,
+    inventory_drag: inventory_drag::InventoryDrag,
     inventory_images: inventory_thumbnail::ImageJobs,
     appearance_ui: ui::appearance::AppearanceUi,
     last_social_poll: Instant,
@@ -593,6 +595,7 @@ impl App {
             ao_missing: Default::default(),
             ao_demo: std::env::var("AURORA_DEMO_AO").ok(),
             ao_default_applied: false,
+            inventory_drag: Default::default(),
             inventory_images: Default::default(),
             appearance_ui: Default::default(),
             last_social_poll: Instant::now(),
@@ -3923,6 +3926,28 @@ impl App {
         if self.build.hud_selected(&self.world) && !self.settings.show_huds {
             self.build.deselect_all(&self.world);
         }
+        if self.demo && ui::widgets::demo::rez_mode().is_some() {
+            let mode = ui::widgets::demo::rez_mode().unwrap_or("1");
+            let point = if matches!(mode, "object" | "contents") {
+                self.world
+                    .objects
+                    .index_of_uuid(&crate::demo::action_id(970))
+                    .and_then(|idx| Scene::object_transform(&self.world, idx, Instant::now(), 0))
+                    .map(|(point, _, _)| point)
+            } else {
+                let p = self.world.agent.position + Vec3::new(5.0, 2.0, 0.0);
+                self.world.ground_height(p).map(|z| Vec3::new(p.x, p.y, z))
+            };
+            if let Some(pos) = point.and_then(|point| self.build.cam.project(point)) {
+                if mode == "contents" && (680..=686).contains(&self.frame_count) {
+                    raw.events.push(egui::Event::ModifiersChanged(egui::Modifiers {
+                        ctrl: true,
+                        ..Default::default()
+                    }));
+                }
+                raw.events.extend(ui::widgets::demo::rez_events(&ctx, self.frame_count, pos));
+            }
+        }
         if self.build.tool == crate::build::Tool::Edit
             && self.build.hud_selected(&self.world)
             && self.settings.show_huds
@@ -3976,9 +4001,13 @@ impl App {
             }
         }
         self.sound_cues.before(&ctx, &raw);
+        let mut inventory_drop = None;
         let mut full = ctx.run_ui(raw, |ui| {
             self.sound_cues.pass_start(ui.ctx());
             actions = self.draw_ui(ui, &projector, &gfx.renderer);
+            if inventory_drop.is_none() {
+                inventory_drop = self.inventory_drag_input(ui.ctx(), &gfx.renderer);
+            }
         });
         // interface sounds of the widgets; the sounds are SL assets, loaded
         // once logged in
@@ -3996,6 +4025,9 @@ impl App {
         // Native bitmap cursors, including the original Firestorm hotspot.
         // Set this every frame because egui's custom cursor output is sticky.
         full.platform_output.cursor_image = None;
+        if let Some(drop) = inventory_drop {
+            self.apply_inventory_drop(drop);
+        }
         self.update_object_hold(&gfx.renderer);
         if let Some(url) = self.interactions.media_url.take() {
             if self.demo {
@@ -4068,6 +4100,10 @@ impl App {
         {
             full.platform_output.cursor_icon = egui::CursorIcon::Grabbing;
             full.platform_output.cursor_image = self.cursors.hud_drag();
+        }
+        if let Some(cursor) = self.inventory_drag.cursor {
+            full.platform_output.cursor_icon = cursor;
+            full.platform_output.cursor_image = None;
         }
         gfx.egui_state
             .handle_platform_output_with_event_loop(&gfx.window, event_loop, full.platform_output);
@@ -6085,6 +6121,33 @@ impl ApplicationHandler for App {
                 }
                 if matches!(view.as_str(), "menu" | "duplicates") {
                     self.appearance_ui.open_outfit(uuid::Uuid::from_u128(704));
+                }
+            }
+            if let Some(mode) = ui::widgets::demo::rez_mode() {
+                if mode != "1" && std::env::var_os("AURORA_DEMO_CAM").is_none() {
+                    self.camera.demo_orbit(0.0, 0.6, Some(9.0), &self.settings.camera);
+                }
+                crate::world::inventory::demo::seed(&mut self.world.inventory, self.world.agent_id);
+                self.panels.inventory = true;
+                self.inventory_ui.show_original(
+                    &self.world.inventory,
+                    uuid::Uuid::from_u128(if mode == "nocopy" { 8109 } else { 8100 }),
+                );
+                self.inventory_ui.expand_all = Some(true);
+                if matches!(mode, "object" | "contents") {
+                    for ev in crate::demo::action_events() {
+                        self.world.apply(ev);
+                    }
+                    if let Some(idx) = self.world.objects.index_of_uuid(&crate::demo::action_id(970)) {
+                        let p = self.world.agent.position + Vec3::new(5.0, 2.0, 0.0);
+                        let z = self.world.ground_height(p).unwrap_or(p.z);
+                        if let Some(o) = self.world.objects.get_mut(idx) {
+                            o.position = Vec3::new(p.x, p.y, z + 1.0);
+                            o.scale = Vec3::ONE;
+                            o.owner_id = self.world.agent_id;
+                            o.update_flags |= crate::ui::context::flags::OBJECT_MODIFY | crate::ui::context::flags::OBJECT_YOU_OWNER;
+                        }
+                    }
                 }
             }
             if let Ok(view) = std::env::var("AURORA_DEMO_INVENTORY") {
