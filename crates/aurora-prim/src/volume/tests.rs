@@ -537,3 +537,46 @@ fn lod_triangle_counts_grow_with_detail() {
     let c = super::lod_triangle_counts(&p);
     assert!(c[0] > 0 && c[0] < c[1] && c[1] < c[2] && c[2] < c[3], "{c:?}");
 }
+#[test]
+fn flexible_sweep_keeps_face_order_topology_uvs_and_nonuniform_scale() {
+    use crate::extra::FlexibleParams;
+    use crate::flexible::Flexible;
+    use glam::{Quat, Vec3};
+    let mut p = VolumeParams::default();
+    p.path.curve_type = LL_PCODE_PATH_FLEXIBLE;
+    let scale = Vec3::new(0.2, 0.5, 4.0);
+    let rot = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
+    for profile in [LL_PCODE_PROFILE_SQUARE, LL_PCODE_PROFILE_CIRCLE, LL_PCODE_PROFILE_EQUALTRI] {
+        p.profile.curve_type = profile;
+        for hollow in [0.0, 0.4] {
+            p.profile.hollow = hollow;
+            p.path.twist_end = 0.4;
+            p.path.scale = [0.5, 1.2];
+            let mut sim = Flexible::new(2, scale.z, Vec3::ZERO, rot);
+            let straight = generate_flexible_volume(&p, 4.0, &sim.path(Vec3::ZERO, rot), scale);
+            let params = FlexibleParams {
+                softness: 2,
+                tension: 1.0,
+                air_friction: 2.0,
+                gravity: 4.0,
+                wind_sensitivity: 0.0,
+                user_force: Vec3::ZERO,
+            };
+            for _ in 0..180 {
+                sim.update(params, Vec3::ZERO, rot, 1.0 / 60.0, |_| Vec3::ZERO);
+            }
+            let bent = generate_flexible_volume(&p, 4.0, &sim.path(Vec3::ZERO, rot), scale);
+            assert_eq!(straight.faces.len(), num_faces(&p));
+            assert_eq!(straight.vertex_count(), bent.vertex_count());
+            assert_ne!(straight.faces[0].positions, bent.faces[0].positions);
+            for (a, b) in straight.faces.iter().zip(&bent.faces) {
+                assert_eq!((a.face_id, &a.indices, &a.uvs), (b.face_id, &b.indices, &b.uvs));
+                assert!(b.indices.iter().all(|&i| (i as usize) < b.positions.len()));
+                for (pos, normal) in b.positions.iter().zip(&b.normals) {
+                    assert!(Vec3::from_array(*pos).is_finite());
+                    assert!((Vec3::from_array(*normal).length() - 1.0).abs() < 1e-4);
+                }
+            }
+        }
+    }
+}

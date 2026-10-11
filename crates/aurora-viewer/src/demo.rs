@@ -1849,6 +1849,89 @@ pub fn events() -> Vec<NetEvent> {
     ));
     id += 1;
     let _ = id;
+    if let Ok(spec) = std::env::var("AURORA_DEMO_FLEXIBLE") {
+        objs.clear();
+        overrides.clear();
+        let edit = spec == "edit";
+        let count = if edit {
+            1
+        } else {
+            spec.parse::<usize>().unwrap_or(6).clamp(6, 2000)
+        };
+        for k in 0..count {
+            let mut volume = boxp;
+            volume.path.curve_type = LL_PCODE_PATH_FLEXIBLE;
+            if k % 3 == 1 {
+                volume.profile.curve_type = LL_PCODE_PROFILE_CIRCLE;
+            }
+            if k % 3 == 2 {
+                volume.profile.hollow = 0.45;
+                volume.path.twist_end = 0.5;
+                volume.path.scale = [0.4, 0.7];
+            }
+            let flex = aurora_prim::extra::FlexibleParams {
+                softness: if edit { 2 } else { (k % 4) as u8 },
+                tension: if k % 6 == 1 { 8.0 } else { 1.0 },
+                air_friction: 2.0,
+                gravity: if k % 6 == 2 { -3.0 } else { 3.0 },
+                wind_sensitivity: if k % 6 == 3 { 10.0 } else { 0.0 },
+                user_force: if k % 6 == 4 { Vec3::Y * 6.0 } else { Vec3::ZERO },
+            };
+            let x = 137.0 + (k % 6) as f32 * 1.6;
+            let y = 132.0 + (k / 6) as f32 * 1.6;
+            let z = height(x, y) + if edit { 5.0 } else { 3.0 };
+            let mut o = prim(
+                90000 + k as u32,
+                Vec3::new(x, y, z),
+                Quat::from_rotation_y(if edit {
+                    std::f32::consts::FRAC_PI_4
+                } else {
+                    std::f32::consts::FRAC_PI_2
+                }),
+                if edit {
+                    Vec3::new(1.0, 0.3, 4.0)
+                } else {
+                    Vec3::new(0.25, 0.4, 4.0)
+                },
+                volume,
+                te([0.25 + 0.1 * (k % 6) as f32, 0.75, 0.6, 1.0], 0, false, 0.0),
+                ExtraParams {
+                    flexible: Some(flex),
+                    ..Default::default()
+                },
+                "",
+            );
+            if spec == "rigid" {
+                o.extra.flexible = None;
+            }
+            if k % 6 == 5 {
+                // A moving linkset: child follows the rotating rigid root,
+                // while its free end keeps inertia in world space.
+                let root_id = 95000 + k as u32;
+                let mut root = prim(
+                    root_id,
+                    o.position,
+                    Quat::IDENTITY,
+                    Vec3::splat(0.35),
+                    boxp,
+                    te([0.8, 0.3, 0.2, 1.0], 0, false, 0.0),
+                    ExtraParams::default(),
+                    "",
+                );
+                root.angular_velocity = Vec3::Z * 0.8;
+                objs.push(root);
+                o.parent_id = root_id;
+                o.position = Vec3::Z;
+            }
+            objs.push(o);
+        }
+        ev.push(NetEvent::Wind {
+            handle: HANDLE,
+            grid: Box::new(aurora_net::terrain::WindGrid {
+                velocities: [Vec3::new(3.0, 2.0, 0.0); 256],
+            }),
+        });
+    }
     ev.push(NetEvent::ObjectUpdates {
         handle: HANDLE,
         objects: objs,

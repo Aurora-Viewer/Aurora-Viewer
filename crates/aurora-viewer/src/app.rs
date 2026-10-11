@@ -4036,6 +4036,7 @@ impl App {
             self.build
                 .update(&mut self.world, &self.settings.build, self.cursor_pos, over_ui, mods);
             self.scene.selection_wire = self.build.wire_selection(&self.world, &self.settings.build);
+            self.scene.selection_silhouettes = self.build.silhouette_selection(&self.world, &self.settings.build);
             self.flush_build();
         }
         let mut actions = UiActions::default();
@@ -4622,6 +4623,10 @@ impl App {
                         self.settings.build.land_action = land;
                     }
                     crate::build::demo::Step::Cursor(x, y) => self.cursor_pos = (x, y),
+                    crate::build::demo::Step::Select(idx) => {
+                        self.build.click_select(&mut self.world, &self.settings.build, Some(idx), false);
+                        self.flush_build();
+                    }
                     crate::build::demo::Step::Press => {
                         self.build_mouse_down();
                     }
@@ -5210,7 +5215,7 @@ impl App {
                         alt: self.alt,
                     };
                     crate::build::ui::shortcuts(&ctx, &mut self.build, &mut self.world, &mut self.settings.build);
-                    self.build.draw_overlay(&ctx, &self.world, &self.settings.build, mods);
+                    self.build.draw_overlay(&ctx, &self.world, &self.scene, &self.settings.build, mods);
                     let mut env = crate::build::ui::Env {
                         images: &self.ui_images,
                         media: &mut self.media,
@@ -6144,6 +6149,21 @@ impl ApplicationHandler for App {
                 if let Some(e) = self.world.apply(ev) {
                     self.on_app_event(e);
                 }
+            }
+            if std::env::var_os("AURORA_DEMO_FLEXIBLE").is_some() && std::env::var_os("AURORA_DEMO_CAM").is_none() {
+                let edit_focus = std::env::var("AURORA_DEMO_BUILD")
+                    .ok()
+                    .and_then(|spec| crate::build::demo::target_index(&spec, &self.world))
+                    .and_then(|i| crate::scene::Scene::object_transform(&self.world, i, Instant::now(), 0))
+                    .map(|(pos, _, _)| pos);
+                let focus = edit_focus.unwrap_or_else(|| Vec3::new(141.0, 132.0, crate::demo::floor_at(141.0, 132.0) + 3.0));
+                let offset = if edit_focus.is_some() {
+                    Vec3::new(0.0, -7.0, 3.0)
+                } else {
+                    Vec3::new(0.0, -14.0, 6.0)
+                };
+                self.camera
+                    .set_view(focus + offset, focus, &mut self.world.agent, &self.settings.camera);
             }
             if let Some(mode) = &self.ao_demo {
                 crate::ao::demo::assets(&mut self.scene);

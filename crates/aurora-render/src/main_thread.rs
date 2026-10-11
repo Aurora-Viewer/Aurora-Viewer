@@ -520,6 +520,20 @@ impl Renderer {
         self.geometry.free(m);
     }
 
+    /// Deform an existing allocation without touching indices or draw records.
+    /// The write is queued with this frame; the render thread never waits.
+    pub fn update_mesh_vertices(&mut self, mesh: MeshAlloc, vertices: &[Vertex]) -> bool {
+        if vertices.len() != mesh.vertex_count as usize {
+            return false;
+        }
+        self.writes.write_buffer(
+            &self.geometry.vertex_buffer,
+            mesh.vertex_offset as u64 * std::mem::size_of::<Vertex>() as u64,
+            bytemuck::cast_slice(vertices),
+        );
+        true
+    }
+
     pub fn create_texture(&mut self, mips: &[MipLevel]) -> Option<u32> {
         self.textures.create(&self.device, &mut self.writes, mips)
     }

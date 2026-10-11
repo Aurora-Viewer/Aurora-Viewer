@@ -1461,9 +1461,19 @@ impl BuildTool {
             .collect()
     }
 
+    pub fn silhouette_selection(&self, world: &World, s: &BuildSettings) -> HashSet<usize> {
+        if !(self.open || self.menu_selection) || !s.show_highlight || self.manip.dragging() {
+            return HashSet::new();
+        }
+        self.highlighted(world)
+            .into_iter()
+            .filter_map(|(i, _)| world.objects.get(i).is_some_and(|o| o.is_flexible()).then_some(i))
+            .collect()
+    }
+
     /// Selection outlines, manipulators, land brush and selection rectangle
     /// over the scene.
-    pub fn draw_overlay(&mut self, ctx: &egui::Context, world: &World, s: &BuildSettings, mods: Mods) {
+    pub fn draw_overlay(&mut self, ctx: &egui::Context, world: &World, scene: &crate::scene::Scene, s: &BuildSettings, mods: Mods) {
         if !self.open && !self.menu_selection {
             return;
         }
@@ -1473,7 +1483,7 @@ impl BuildTool {
         let now = Instant::now();
         if s.show_highlight && !self.manip.dragging() {
             let prims = self.highlighted(world);
-            self.silhouettes.draw(&p, world, &prims);
+            self.silhouettes.draw(&p, world, scene, &prims);
         }
         if !self.open {
             return;

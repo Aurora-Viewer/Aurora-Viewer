@@ -457,6 +457,10 @@ pub enum NetEvent {
         handle: RegionHandle,
         patches: Vec<TerrainPatch>,
     },
+    Wind {
+        handle: RegionHandle,
+        grid: Box<crate::terrain::WindGrid>,
+    },
     Chat(ChatMessage),
     InstantMessage(InstantMessage),
     Appearance(AvatarAppearance),

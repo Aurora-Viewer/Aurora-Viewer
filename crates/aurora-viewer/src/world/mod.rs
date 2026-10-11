@@ -48,6 +48,7 @@ pub struct Region {
     pub name: String,
     pub info: Option<Arc<RegionInfo>>,
     pub heightmap: Heightmap,
+    pub wind: aurora_net::terrain::WindGrid,
     pub dirty_chunks: HashSet<u32>,
     pub caps: Arc<HashMap<String, String>>,
     /// Voice server of the region (SimulatorFeatures): "webrtc", "vivox" or empty.
@@ -561,6 +562,7 @@ impl World {
             name: String::new(),
             info: None,
             heightmap: Heightmap::new(size.0.max(256), size.1.max(256)),
+            wind: Default::default(),
             dirty_chunks: HashSet::new(),
             caps: Arc::new(HashMap::new()),
             voice_server: String::new(),
@@ -871,6 +873,10 @@ impl World {
                     let dirty = r.heightmap.apply_patch(p.x, p.y, p.size, &p.heights);
                     r.dirty_chunks.extend(dirty);
                 }
+                None
+            }
+            NetEvent::Wind { handle, grid } => {
+                self.ensure_region(handle, (256, 256)).wind = *grid;
                 None
             }
             NetEvent::Chat(c) => {

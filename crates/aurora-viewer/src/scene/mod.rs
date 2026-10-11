@@ -6,6 +6,7 @@ pub mod animesh;
 pub mod avatar;
 pub mod banlines;
 pub mod complexity;
+mod flexible;
 pub mod hover;
 pub mod hud;
 pub mod impostors;
@@ -36,7 +37,7 @@ use glam::{Mat4, Quat, Vec3, Vec4};
 use jobs::{AlphaKind, JobResult, Jobs};
 use meshes::{MaterialStreamer, MeshStreamer};
 use rayon::prelude::*;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::Instant;
 use sync_plan::{FrameState, MoveSync, Placement, Plan};
@@ -47,6 +48,7 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum GeomKey {
     Prim { hash: u64, lod: u8 },
+    Flexible { id: Uuid, hash: u64, lod: u8 },
     Sculpt { hash: u64, lod: u8 },
     Mesh { id: Uuid, lod: u8 },
     AvatarPart(u8),
@@ -371,6 +373,7 @@ pub struct Scene {
     pub jobs: Jobs,
     job_rx: crossbeam_channel::Receiver<JobResult>,
     geoms: HashMap<GeomKey, GeomEntry>,
+    flexibles: HashMap<usize, flexible::State>,
     pub textures: TextureStreamer,
     pub meshes: MeshStreamer,
     pub materials: MaterialStreamer,
@@ -429,6 +432,8 @@ pub struct Scene {
     /// Build tools: selected mesh / sculpted objects drawn as wireframes
     /// (object index -> root color).
     pub selection_wire: HashMap<usize, bool>,
+    /// Selected prims whose deformed silhouette is prepared by rayon.
+    pub selection_silhouettes: HashSet<usize>,
     /// Far avatars drawn as pictures (RenderAvatarMaxNonImpostors).
     impostors: impostors::Impostors,
     /// Avatars still loading (clouds).
@@ -683,6 +688,7 @@ impl Scene {
             jobs,
             job_rx,
             geoms: HashMap::new(),
+            flexibles: HashMap::new(),
             textures: TextureStreamer::new(cache_dir.clone()),
             meshes: MeshStreamer::new(cache_dir.clone()),
             materials: MaterialStreamer::new(cache_dir),
@@ -714,6 +720,7 @@ impl Scene {
             visit_tmp: Vec::new(),
             light_objects: Default::default(),
             selection_wire: HashMap::new(),
+            selection_silhouettes: HashSet::new(),
             debug_alpha: None,
             last_cull: None,
             impostors: Default::default(),
@@ -861,6 +868,17 @@ impl Scene {
                 let pool = self.staging.clone();
                 self.jobs.spawn(move || {
                     let mesh = aurora_prim::generate_volume(&params, detail);
+                    JobResult::geometry(key, jobs::volume_to_faces(&mesh), 1.0, pool.as_deref())
+                });
+            }
+            GeomKey::Flexible { lod, .. } => {
+                let params = obj.volume;
+                let detail = aurora_prim::volume::DETAIL_SCALES[lod as usize % 4];
+                let pool = self.staging.clone();
+                self.jobs.spawn(move || {
+                    let sim = aurora_prim::flexible::Flexible::new(0, 1.0, Vec3::ZERO, Quat::IDENTITY);
+                    let mesh =
+                        aurora_prim::volume::generate_flexible_volume(&params, detail, &sim.path(Vec3::ZERO, Quat::IDENTITY), Vec3::ONE);
                     JobResult::geometry(key, jobs::volume_to_faces(&mesh), 1.0, pool.as_deref())
                 });
             }
@@ -1071,6 +1089,7 @@ impl Scene {
     }
 
     fn release_obj(&mut self, renderer: &mut Renderer, idx: usize, g: &mut ObjGpu) {
+        self.flexibles.remove(&idx);
         self.drop_faces(renderer, idx, g);
         for t in g.tex_ids.drain(..) {
             self.textures.release(&t);
@@ -1132,6 +1151,7 @@ impl Scene {
 
     /// Release everything (logout / teleport cleanup).
     pub fn clear(&mut self, renderer: &mut Renderer) {
+        self.flexibles.clear();
         let mut gpus = std::mem::take(&mut self.gpu);
         for (idx, g) in gpus.iter_mut().enumerate() {
             self.release_obj(renderer, idx, g);
@@ -1284,6 +1304,13 @@ impl Scene {
         if o.volume.is_mesh() {
             return o.volume.sculpt.map(|s| GeomKey::Mesh { id: s.texture, lod });
         }
+        if o.is_flexible() {
+            return Some(GeomKey::Flexible {
+                id: o.full_id,
+                hash: o.volume.cache_key(),
+                lod,
+            });
+        }
         if o.volume.is_sculpt() {
             return Some(GeomKey::Sculpt {
                 hash: o.volume.cache_key(),
@@ -1412,6 +1439,12 @@ impl Scene {
         // Render origin changed: every transform is stale.
         let origin = world.main_origin();
         if origin != self.last_origin {
+            if let (Some(old), Some(new)) = (self.last_origin, origin) {
+                let shift = Vec3::new((old.0 as f64 - new.0 as f64) as f32, (old.1 as f64 - new.1 as f64) as f32, 0.0);
+                for state in self.flexibles.values_mut() {
+                    state.sim.shift(shift);
+                }
+            }
             self.last_origin = origin;
             for (idx, o) in world.objects.slots.iter_mut().enumerate() {
                 if let Some(o) = o {
@@ -1543,6 +1576,7 @@ impl Scene {
             budget.spend(started.elapsed());
         }
         self.stats.sync_backlog = self.sets.backlog.len();
+        self.sync_flexibles(renderer, world, &synced, now, view);
         // GPU object table: bounds and flags of what was synced (unchanged
         // entries are not uploaded); the same bounds for the hover search
         for idx in synced {

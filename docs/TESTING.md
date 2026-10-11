@@ -151,8 +151,20 @@ capture.
 | `AURORA_DEMO_BUILD_FRAME=<n>` | Image de départ du script de construction |
 | `AURORA_DEMO_BUILD_TAB=<onglet>` | Onglet de la fenêtre de construction |
 | `AURORA_DEMO_LSL_BRIDGE=1` | Messages du bridge LSL de Firestorm (cachés) |
+| `AURORA_DEMO_FLEXIBLE=1` | Prims flexibles : gravité, tension, vent, force et parent mobile |
 
 ### Détails
+
+`AURORA_DEMO_FLEXIBLE` remplace les objets de la place par six prims avec
+quatre niveaux de souplesse, profils carrés / circulaires, creux, torsion et
+tailles non uniformes. La dernière suit une racine en rotation. `rigid` donne
+la comparaison sans simulation ; un entier (6–2000) ajoute des prims pour
+mesurer le coût. Le vent synthétique passe par le même événement que la grille.
+`edit` isole une plaque inclinée pour les outils de construction.
+Pour vérifier l'édition, ajouter `AURORA_DEMO_BUILD=move,object:90000` ou
+`stretch,object:90000` : pivot sur la base, contour déformé, boîte droite
+translucide et poignées de taille. `stretch,object:90000,fz,100,0` tire la face
+opposée à la base ; le flexible garde sa courbure pendant le changement de taille.
 
 **`AURORA_DEMO_ACTIONS`** — curseurs et clics d'objet comme Firestorm.
 Aucun L$ réel ni connexion à une grille.
@@ -194,6 +206,8 @@ sous le menu.
 construction. Modes : `move`, `rotate`, `stretch`, `face`, `align`, `grab`,
 `focus`, `create`, `land`, `select`. `AURORA_DEMO_BUILD_FRAME` change son
 image de départ.
+La variante `mode,object:<identifiant local>[,part,dx,dy]` sélectionne un
+objet de la démo sans coordonnées de clic fixes.
 
 **`AURORA_DEMO_BUILD_TAB=general|object|features|texture[:pbr|bp|media]|contents`**
 — onglet de la fenêtre de construction affiché par le script ; `+weights`,

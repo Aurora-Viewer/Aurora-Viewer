@@ -26,7 +26,7 @@ struct Edge {
 
 /// Edges of a prim shape, all faces together.
 #[derive(Default)]
-struct Topology {
+pub(crate) struct Topology {
     /// Triangle (first vertex, face normal) for the facing test.
     tris: Vec<(Vec3, Vec3)>,
     border: Vec<Edge>,
@@ -45,6 +45,12 @@ pub fn color(root: bool) -> Color32 {
 
 fn topology(params: &aurora_prim::VolumeParams) -> Topology {
     let mesh = aurora_prim::generate_volume(params, aurora_prim::volume::DETAIL_SCALES[2]);
+    from_mesh(&mesh)
+}
+
+/// LLVOVolume::generateSilhouette uses the current simulated flexible
+/// volume. Called on rayon together with that volume's vertex update.
+pub(crate) fn from_mesh(mesh: &aurora_prim::VolumeMesh) -> Topology {
     let mut out = Topology::default();
     for face in &mesh.faces {
         // weld by position so texture seams are not borders
@@ -121,7 +127,7 @@ impl Cache {
     }
 
     /// Outline the selected objects ((object index, root color)).
-    pub fn draw(&mut self, p: &Painter3d, world: &World, prims: &[(usize, bool)]) {
+    pub fn draw(&mut self, p: &Painter3d, world: &World, scene: &Scene, prims: &[(usize, bool)]) {
         let now = Instant::now();
         let eye = p.cam.eye;
         for &(idx, root) in prims.iter().take(512) {
@@ -132,12 +138,21 @@ impl Cache {
                 continue; // sculpts and meshes: renderer wireframe (Scene::selection_wire)
             }
             let c = color(root);
-            let scale = o.scale.max(Vec3::splat(0.001));
+            let scale = world.visual_scale(idx).max(Vec3::splat(0.001));
             if o.is_tree() || (hud && o.volume.sculpt.is_some()) {
                 obb(p, pos, rot, scale * 0.5, c);
                 continue;
             }
-            let topo = self.topology_for(&o.volume);
+            let cached;
+            let topo = if o.is_flexible() {
+                let Some(topo) = scene.flexible_outline(idx) else {
+                    continue;
+                };
+                topo
+            } else {
+                cached = self.topology_for(&o.volume);
+                &cached
+            };
             let world_pt = |v: Vec3| pos + rot * (v * scale);
             // the camera in the prim's unit space: facing signs are kept by the
             // (orientation preserving) object transform
@@ -230,5 +245,36 @@ mod tests {
             .filter(|e| facing[e.tris.0 as usize] != facing[e.tris.1 as usize])
             .count();
         assert!(outline > 20, "{outline}");
+    }
+
+    #[test]
+    fn flexible_outline_uses_current_bent_vertices_instead_of_the_rest_shape() {
+        use aurora_prim::flexible::Flexible;
+        let mut params = aurora_prim::VolumeParams::default();
+        params.path.curve_type = aurora_prim::params::LL_PCODE_PATH_FLEXIBLE;
+        let rot = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
+        let scale = Vec3::new(0.3, 0.5, 4.0);
+        let mut sim = Flexible::new(2, scale.z, Vec3::ZERO, rot);
+        let flex = super::super::edits::FLEX_DEFAULT;
+        for _ in 0..240 {
+            sim.update(flex, Vec3::ZERO, rot, 1.0 / 60.0, |_| Vec3::ZERO);
+        }
+        let mesh = aurora_prim::volume::generate_flexible_volume(&params, 3.0, &sim.path(Vec3::ZERO, rot), scale);
+        let bent = from_mesh(&mesh);
+        let lowest = |t: &Topology| {
+            t.border
+                .iter()
+                .flat_map(|e| [e.a, e.b])
+                .map(|v| (rot * (v * scale)).z)
+                .fold(f32::INFINITY, f32::min)
+        };
+        assert!(lowest(&bent) < lowest(&topology(&params)) - 0.5);
+        for e in bent.border.iter().chain(&bent.inner) {
+            for v in [e.a, e.b] {
+                assert!(mesh.faces.iter().any(|f| f.positions.iter().any(|p| Vec3::from_array(*p) == v)));
+            }
+            assert!(e.n.is_finite());
+            assert!((e.tris.0 as usize) < bent.tris.len() && (e.tris.1 as usize) < bent.tris.len());
+        }
     }
 }

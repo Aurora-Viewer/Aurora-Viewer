@@ -151,15 +151,23 @@ pub struct Manip {
 }
 
 /// What the gizmo is placed on this frame.
-struct Frame {
-    bounds: Bounds,
-    pivot: Vec3,
-    grid: Grid,
+pub(super) struct Frame {
+    pub(super) bounds: Bounds,
+    pub(super) pivot: Vec3,
+    pub(super) grid: Grid,
     prims: usize,
 }
 
-fn frame(world: &World, s: &BuildSettings, sel: &[ObjKey], linked: bool, now: Instant, grid_ref: Option<&Bounds>) -> Option<Frame> {
+pub(super) fn frame(
+    world: &World,
+    s: &BuildSettings,
+    sel: &[ObjKey],
+    linked: bool,
+    now: Instant,
+    grid_ref: Option<&Bounds>,
+) -> Option<Frame> {
     let bounds = bounds_of(world, sel, linked, now)?;
+    let prims = highlighted_of(world, sel, linked).len();
     let mut grid = super::grid_of(s, Some(&bounds), grid_ref);
     if grid.world
         && sel
@@ -177,8 +185,12 @@ fn frame(world: &World, s: &BuildSettings, sel: &[ObjKey], linked: bool, now: In
         sel.first()
             .and_then(|k| world.objects.index_of(k))
             .map(|i| super::root_of(world, i))
-            .and_then(|r| Scene::object_transform(world, r, now, 0))
-            .map(|(p, _, _)| p)
+            .and_then(|r| Scene::object_edit_pivot(world, r, now))
+            .unwrap_or(bounds.center)
+    } else if prims == 1 {
+        sel.first()
+            .and_then(|k| world.objects.index_of(k))
+            .and_then(|i| Scene::object_edit_pivot(world, i, now))
             .unwrap_or(bounds.center)
     } else {
         bounds.center
@@ -187,7 +199,7 @@ fn frame(world: &World, s: &BuildSettings, sel: &[ObjKey], linked: bool, now: In
         pivot,
         bounds,
         grid,
-        prims: highlighted_of(world, sel, linked).len(),
+        prims,
     })
 }
 
@@ -1018,14 +1030,17 @@ fn pick_rotate(cam: &Cam, f: &Frame, m: Pos2) -> Option<Part> {
 
 fn pick_scale(cam: &Cam, f: &Frame, m: Pos2) -> Option<Part> {
     let b = &f.bounds;
-    let mut best: Option<(u8, f32, Part)> = None;
+    let mut best: Option<(f32, f32, u8, Part)> = None;
     let mut consider = |kind: u8, part: Part| {
         let pos = handle_pos(b, part);
         let Some(s) = cam.project(pos) else { return };
-        if s.distance(m) < SCALE_PICK_PX {
+        let distance = s.distance(m);
+        if distance < SCALE_PICK_PX {
             let depth = cam.depth(pos);
-            if best.is_none_or(|(k, d, _)| (kind, depth) < (k, d)) {
-                best = Some((kind, depth, part));
+            // Thin prims have overlapping pick radii: choose the handle
+            // nearest the cursor, so a face center can still be grabbed.
+            if best.is_none_or(|(r, d, k, _)| (distance, depth, kind) < (r, d, k)) {
+                best = Some((distance, depth, kind, part));
             }
         }
     };
@@ -1038,7 +1053,7 @@ fn pick_scale(cam: &Cam, f: &Frame, m: Pos2) -> Option<Part> {
             consider(1, Part::Face(i, false));
         }
     }
-    best.map(|(_, _, p)| p)
+    best.map(|(_, _, _, p)| p)
 }
 
 // ---- dragging
@@ -1596,6 +1611,73 @@ mod tests {
             world.apply(ev);
         }
         world
+    }
+
+    #[test]
+    fn flexible_move_pivot_and_stretch_handles_use_the_anchor_and_rest_bounds() {
+        let mut world = hud_world();
+        let root = world.objects.index_of_uuid(&crate::demo::hud::object(31, false).full_id).unwrap();
+        let idx = super::super::family(&world, root)[1];
+        let o = world.objects.get_mut(idx).unwrap();
+        o.parent_id = 0;
+        o.state = 0;
+        o.position = Vec3::new(10.0, 20.0, 30.0);
+        o.rotation = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
+        o.scale = Vec3::new(0.3, 0.5, 4.0);
+        o.volume.path.curve_type = aurora_prim::params::LL_PCODE_PATH_FLEXIBLE;
+        o.extra.flexible = Some(super::super::edits::FLEX_DEFAULT);
+        let key = o.key;
+        let now = Instant::now();
+        let (pos, rot, _) = Scene::object_transform(&world, idx, now, 0).unwrap();
+        let anchor = pos - rot * Vec3::Z * 2.0;
+        let settings = BuildSettings {
+            snap: false,
+            scale_uniform: false,
+            ..Default::default()
+        };
+        let f = frame(&world, &settings, &[key], true, now, None).unwrap();
+        assert!(f.pivot.abs_diff_eq(anchor, 1e-5));
+        assert!(f.bounds.center.abs_diff_eq(pos, 1e-5));
+        assert!(handle_pos(&f.bounds, Part::Face(2, false)).abs_diff_eq(anchor, 1e-5));
+        assert!(handle_pos(&f.bounds, Part::Face(2, true)).abs_diff_eq(pos + rot * Vec3::Z * 2.0, 1e-5));
+
+        let eye = anchor + Vec3::new(0.0, -10.0, 4.0);
+        let proj = glam::camera::rh::proj::directx::perspective_infinite_reverse(1.0, 16.0 / 9.0, 0.01);
+        let cam = Cam::new(
+            eye,
+            anchor,
+            proj * glam::camera::rh::view::look_at_mat4(eye, anchor, Vec3::Z),
+            1.0,
+            1280.0,
+            720.0,
+            1.0,
+        );
+        let mut manip = Manip::default();
+        let start = cam.project_px(anchor + Vec3::X * cam.meters_for_pixels(anchor, 40.0)).unwrap();
+        assert!(manip.try_grab(&mut world, &settings, &cam, &[key], true, EditMode::Move, start, now));
+        assert_eq!(manip.drag.as_ref().unwrap().part, Part::Arrow(0));
+        assert!(manip.drag.as_ref().unwrap().pivot.abs_diff_eq(anchor, 1e-5));
+        manip.cancel();
+
+        // A positive local-Z resize grows from the unchanged negative-Z base.
+        let start = cam.project_px(handle_pos(&f.bounds, Part::Face(2, true))).unwrap();
+        assert!(manip.try_grab(&mut world, &settings, &cam, &[key], true, EditMode::Stretch, start, now));
+        let d = manip.drag.as_mut().unwrap();
+        assert_eq!(d.part, Part::Face(2, true));
+        assert!(d.anchor.abs_diff_eq(anchor, 1e-5));
+        d.factor[2] = 1.5;
+        let (new_pos, new_rot, new_scale) = scale_target(d, &d.movers[0]);
+        assert!(new_scale.abs_diff_eq(Vec3::new(0.3, 0.5, 6.0), 1e-5));
+        assert!((new_pos - new_rot * Vec3::Z * (new_scale.z * 0.5)).abs_diff_eq(anchor, 1e-5));
+
+        // Disabling flexibility restores the ordinary centered edit pivot.
+        world.objects.get_mut(idx).unwrap().extra.flexible = None;
+        assert!(
+            frame(&world, &settings, &[key], true, now, None)
+                .unwrap()
+                .pivot
+                .abs_diff_eq(pos, 1e-5)
+        );
     }
 
     #[test]
