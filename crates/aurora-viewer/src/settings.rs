@@ -49,6 +49,8 @@ pub const LOOK_AT_UNLIMITED: f32 = 64.0;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
+    pub update_mode: crate::updater::Mode,
+    pub ignored_update: String,
     /// Firestorm Language: default follows the OS.
     pub language: String,
     /// Firestorm LanguageIsPublic, exposed through llGetAgentLanguage.
@@ -428,6 +430,8 @@ impl Default for AudioSettings {
 impl Default for Settings {
     fn default() -> Self {
         Settings {
+            update_mode: crate::updater::Mode::Ask,
+            ignored_update: String::new(),
             language: "default".into(),
             language_is_public: true,
             show_huds: true,
@@ -555,6 +559,9 @@ fn for_mode(dir: PathBuf) -> PathBuf {
 }
 
 pub fn config_dir() -> PathBuf {
+    if let Some(test) = aurora_updater::test_environment() {
+        return test.root.join("profile");
+    }
     for_mode(
         directories::ProjectDirs::from("org", "Aurora", "AuroraViewer")
             .map(|d| d.config_dir().to_path_buf())
@@ -569,6 +576,9 @@ pub fn account_dir(agent: &uuid::Uuid) -> PathBuf {
 }
 
 pub fn cache_dir() -> PathBuf {
+    if let Some(test) = aurora_updater::test_environment() {
+        return test.root.join("cache");
+    }
     for_mode(
         directories::ProjectDirs::from("org", "Aurora", "AuroraViewer")
             .map(|d| d.cache_dir().to_path_buf())

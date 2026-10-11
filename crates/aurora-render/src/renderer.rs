@@ -4598,6 +4598,7 @@ impl Backend {
         prof.push(("submit", Instant::now()));
         let encode_ms = t0.elapsed().as_secs_f32() * 1000.0;
         self.queue.present(surface_tex);
+        stats.presented = true;
         let _ = self.device.poll(wgpu::PollType::Poll);
         prof.push(("present", Instant::now()));
         stats.cpu_phases[0] = (t0 - t_acquire).as_secs_f32() * 1000.0;

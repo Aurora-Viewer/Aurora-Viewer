@@ -257,6 +257,20 @@ travailler pendant une compilation ou quand un viewer est ouvert.
 
 ## Où sont les fichiers
 
+Les paquets Windows vérifient les mises à jour au lancement, en arrière-plan.
+« Ignorer cette version » masque sa proposition automatique ; « Vérifier les
+mises à jour », dans Aide et sur la connexion, permet de la retrouver.
+Préférences → Interface → Mises à jour : demander (par défaut), télécharger
+automatiquement ou seulement les mises à jour obligatoires. Le téléchargement
+automatique attend votre accord pour installer et relancer.
+
+Le viewer vérifie le ZIP, garde l’ancien dossier jusqu’à la première image
+affichée et le restaure si le démarrage échoue. Utiliser un dossier dédié, avec
+des droits d’écriture ; les dossiers contenant du code ou des fichiers personnels
+demandent une installation manuelle. Réglages et cache restent dans les dossiers
+habituels. Développement et démo ne vérifient pas les releases. Voir
+[docs/UPDATES.md](docs/UPDATES.md) pour le format des paquets et leur politique.
+
 | Quoi | Où |
 |---|---|
 | Code du viewer | `crates/` (voir [ARCHITECTURE.md](ARCHITECTURE.md)) |

@@ -361,6 +361,9 @@ grille.
 | `AURORA_DEMO_OPTIONS=<section>` | Ouvre les préférences sur une section |
 | `AURORA_DEMO_PERF=compact` ou `full` | Ouvre la fenêtre Performances, compacte ou complète |
 | `AURORA_DEMO_LOGIN=<mode>` | Écran de connexion hors ligne |
+| `AURORA_DEMO_UPDATE=<mode>` | Maquette interactive de mise à jour sur la connexion |
+| `AURORA_UPDATE_TEST_ROOT=<dossier>` | Installation jetable servie par un flux local |
+| `AURORA_UPDATE_TEST_VERSION=<tag>` | Compilation dev à version synthétique pour cet essai |
 | `AURORA_DEMO_MAP=1` ou `mini` | Carte du monde et mini-carte |
 | `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Liste des notifications, menu de statut, champ de lieu |
 | `AURORA_DEMO_CONV=1`, `AURORA_DEMO_TALK=1` | Conversation de groupe, micro ouvert |
@@ -383,6 +386,31 @@ grille.
 - **`AURORA_DEMO_LOGIN=remembered|empty`** : écran de connexion hors ligne
   avec un marqueur synthétique de mot de passe enregistré, ou un champ de
   mot de passe vide (aucun accès à une grille ni au coffre d'identifiants).
+- **`AURORA_DEMO_UPDATE=1|progress|ready|ignored`**, avec `AURORA_DEMO=1` : proposition
+  d'une version synthétique, téléchargement à 42 % ou téléchargement terminé.
+  « Mettre à jour » anime une progression simulée ; « Annuler » revient à la
+  proposition. Aucun téléchargement ni remplacement de fichier. La connexion
+  est inerte et les préférences de connexion restent intactes.
+  Après « Ignorer cette version » ou « Plus tard », le bouton « Vérifier les
+  mises à jour » du panneau Version rouvre la proposition. Le mode `ignored`
+  démarre directement avec le dialogue fermé pour essayer ce parcours.
+  Dans une petite fenêtre, le bouton reste accessible en haut à droite.
+- **Installation réelle isolée** : `scripts/test-update.ps1` prépare les paquets
+  0.2.100 et 0.2.101 dans `.scratch`, sert le second sur loopback et lance le premier.
+  Le serveur ralentit le ZIP pour tester Annuler. Compilation dans le `target`
+  ordinaire du worktree, profil dev, puis restauration du binaire normal à sa
+  version Git ; aucun tag ni release publié. `AURORA_UPDATE_TEST_ROOT` n’est
+  accepté que pour un exe dans son sous-dossier `install`, avec un marqueur
+  `aurora-update-test.json` définissant un flux HTTP loopback. Réglages, cache et
+  logs sont isolés sous cette racine ; connexion et coffre d’identifiants inertes.
+  `AURORA_UPDATE_TEST_VERSION` est réservé à ces binaires et refusé en release
+  ou avec `AURORA_VERSION_TAG`. Les binaires synthétiques refusent tout lancement
+  normal. Tester Ignorer → Vérifier, Mettre à jour → Annuler, puis Installer et
+  relancer : le titre doit passer de 0.2.100 à 0.2.101. Fermer le viewer et arrêter
+  le PID du serveur affiché avant le ménage. Les arguments de titre, langue et
+  limite de FPS fournis au script sont conservés après relance.
+  `AURORA_UPDATE_ACK` et `AURORA_UPDATE_ROLLBACK` sont des signaux internes entre
+  processus, pas des scénarios à définir à la main.
 - **`AURORA_DEMO_CONTACTS=amis|groupes|cercles|detache|ajout`** : onglet
   Contacts de Conversations sur Amis, Groupes ou Cercles de contacts (cercles
   et surnoms de démo), la fenêtre Contacts détachée, ou le sélecteur de

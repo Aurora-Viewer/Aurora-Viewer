@@ -3179,3 +3179,50 @@ memory-mb-suffix = { " Mo" }
 perf-frame-tooltip = { $fps } i/s · { $ms } ms
 perf-texture-memory = { $loaded } / { $total } · { $value } Mo
 perf-page-memory = { $pages } · { $value } Mo
+
+## Mise à jour du viewer
+update-demo-badge = APERÇU · VERSIONS DE DÉMONSTRATION
+update-title = Une mise à jour est disponible
+update-downloading-title = Téléchargement de la mise à jour
+update-ready-title = Tout est prêt pour la mise à jour
+update-intro = Une nouvelle version d’Aurora vous attend.
+update-current = VERSION ACTUELLE
+update-new = NOUVELLE VERSION
+update-release-notes = Nouveautés
+update-demo-notes =
+    • Une interface plus agréable, en français et en anglais.
+    • Des améliorations de stabilité et de performances.
+    • Vos réglages et votre cache sont conservés.
+update-downloading = Téléchargement en cours…
+update-transfer = { $downloaded } / { $total } Mo
+update-ready = Le téléchargement est terminé.
+update-preserve-data = Aurora sera relancé. Vos réglages et votre cache seront conservés.
+update-demo-safe = Simulation : aucun fichier n’est téléchargé ou installé.
+update-skip = Ignorer cette version
+update-skip-hint = Ne plus proposer cette version. Les versions suivantes seront proposées.
+update-later = Plus tard
+update-later-hint = Reproposer cette mise à jour au prochain lancement.
+update-install = Mettre à jour
+update-demo-finish = Terminer la démo
+update-check = Vérifier les mises à jour
+update-check-hint = Afficher les mises à jour disponibles, même les versions ignorées.
+update-required-title = Une mise à jour est nécessaire
+update-required = Cette version n’est plus prise en charge. Mettez Aurora à jour pour vous connecter.
+update-no-notes = Consultez la page de la release pour les nouveautés.
+update-preparing = Vérification et préparation des fichiers…
+update-restart = Installer et relancer Aurora
+update-restarting = Préparation de la relance…
+update-open-release = Ouvrir la page de la release
+update-error-title = La mise à jour n’a pas abouti
+update-error-network = Le téléchargement ou la vérification a échoué. Vérifiez votre connexion et réessayez depuis « Vérifier les mises à jour ».
+update-error-integrity = Le fichier téléchargé ne correspond pas à l’empreinte publiée. Il n’a pas été installé.
+update-error-filesystem = Impossible de préparer l’installation. Vérifiez l’espace libre et les droits d’écriture du dossier, puis fermez les autres instances d’Aurora.
+update-error-package = Le paquet est incomplet ou invalide. L’installation actuelle est conservée.
+update-error-unsupported = Cette release ne permet pas l’installation automatique depuis ce dossier. Téléchargez-la depuis sa page et décompressez-la dans un dossier dédié.
+update-error-startup = L’auxiliaire de mise à jour n’a pas pu démarrer. L’installation actuelle est conservée.
+update-rollback = La nouvelle version n’a pas démarré correctement. L’ancienne installation a été restaurée.
+update-settings = Mises à jour
+update-settings-help = Les mises à jour obligatoires restent vérifiées. Les téléchargements automatiques attendent votre accord pour la relance.
+update-mode-disabled = Mises à jour obligatoires uniquement
+update-mode-ask = Demander avant de télécharger
+update-mode-auto = Télécharger automatiquement

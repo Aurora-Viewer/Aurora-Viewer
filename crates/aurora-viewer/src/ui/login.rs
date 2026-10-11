@@ -36,6 +36,7 @@ pub enum LoginAction {
     None,
     Login,
     Quit,
+    CheckUpdates,
 }
 
 /// Animated aurora background (also behind the loading screens without a
@@ -204,7 +205,8 @@ fn panel_title(ui: &mut egui::Ui, p: &Palette, icons: &Icons, icon: &str, title:
     ui.add_space(4.0);
 }
 
-fn version_panel(ui: &mut egui::Ui, p: &Palette, icons: &Icons, info: &LoginInfo) {
+fn version_panel(ui: &mut egui::Ui, p: &Palette, icons: &Icons, info: &LoginInfo) -> bool {
+    let mut check_updates = false;
     glass(p, 10, 16).show(ui, |ui| {
         ui.set_width(ui.available_width());
         panel_title(ui, p, icons, "tag", aurora_i18n::tr!("ui-login-version"));
@@ -235,7 +237,16 @@ fn version_panel(ui: &mut egui::Ui, p: &Palette, icons: &Icons, info: &LoginInfo
                 img(ui, icons, icon, r, col);
             });
         });
-        if let VersionState::Available { url, .. } = &info.version {
+        if info.can_check_updates {
+            ui.add_space(8.0);
+            check_updates =
+                super::widgets::flat_button_sized(ui, p, aurora_i18n::tr!("update-check"), Vec2::new(ui.available_width(), 30.0))
+                    .on_hover_text(aurora_i18n::tr!("update-check-hint"))
+                    .clicked();
+        }
+        if let VersionState::Available { url, .. } = &info.version
+            && !url.is_empty()
+        {
             ui.add_space(8.0);
             let b = egui::Button::new(
                 RichText::new(aurora_i18n::tr!("ui-login-download-update"))
@@ -250,6 +261,7 @@ fn version_panel(ui: &mut egui::Ui, p: &Palette, icons: &Icons, info: &LoginInfo
             }
         }
     });
+    check_updates
 }
 
 fn news_panel(ui: &mut egui::Ui, p: &Palette, icons: &Icons, info: &LoginInfo, max_h: f32) {
@@ -560,9 +572,22 @@ pub fn show(
             .anchor(egui::Align2::RIGHT_CENTER, Vec2::new(-48.0, -10.0))
             .show(&ctx, |ui| {
                 ui.set_width(col_w);
-                version_panel(ui, p, icons, info);
+                if version_panel(ui, p, icons, info) {
+                    action = LoginAction::CheckUpdates;
+                }
                 ui.add_space(14.0);
                 news_panel(ui, p, icons, info, (screen.height() * 0.42).clamp(160.0, 420.0));
+            });
+    } else if info.can_check_updates {
+        egui::Area::new(egui::Id::new("login_check_updates"))
+            .anchor(egui::Align2::RIGHT_TOP, Vec2::new(-20.0, 20.0))
+            .show(&ctx, |ui| {
+                if super::widgets::flat_button_sized(ui, p, aurora_i18n::tr!("update-check"), Vec2::new(190.0, 30.0))
+                    .on_hover_text(aurora_i18n::tr!("update-check-hint"))
+                    .clicked()
+                {
+                    action = LoginAction::CheckUpdates;
+                }
             });
     }
 

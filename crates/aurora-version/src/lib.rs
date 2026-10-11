@@ -7,6 +7,11 @@ pub const fn version() -> &'static str {
     env!("AURORA_COMPILED_VERSION")
 }
 
+/// Synthetic version binaries are permitted only in disposable update fixtures.
+pub const fn update_test_build() -> bool {
+    env!("AURORA_UPDATE_TEST_BUILD").as_bytes()[0] == b'1'
+}
+
 /// HTTP clients use the same version as the interface.
 pub const fn user_agent() -> &'static str {
     concat!("AuroraViewer/", env!("AURORA_COMPILED_VERSION"))
