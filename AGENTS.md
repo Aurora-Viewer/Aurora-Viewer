@@ -467,6 +467,12 @@ gh api repos/Aurora-Viewer/Aurora-Viewer/issues/<n>/comments --paginate
 - Lis la description, tous les commentaires, les liens vers les autres
   issues / PR et les étiquettes avant de conclure. Pagine aussi la liste des
   issues si la limite de 100 est atteinte.
+- Lance `gh issue list` et `gh issue view` seuls, sans `cd`, `;`, variable ni
+  boucle PowerShell autour (pour choisir les champs : `--json … --jq …`). Si
+  ton outil refuse quand même la lecture (Claude Code en mode auto :
+  « interférence avec des charges de travail »), ne la contourne pas :
+  propose à l'humain le choix « Permissions de Claude » de
+  `aurora-tools.cmd`, qui autorise ces deux commandes une fois pour toutes.
 - **Ouvre réellement les captures et les fichiers joints**, dans la
   description comme dans les commentaires : images Markdown, balises HTML
   `<img src="…">`, liens de fichiers et vidéos. Les liens GitHub
