@@ -289,9 +289,10 @@ impl BugReportUi {
         }
         let mut open = self.open;
         let screen = ctx.content_rect();
-        let size = Vec2::new(660.0f32.min(screen.width() - 28.0), 740.0f32.min(screen.height() - 36.0));
+        let available = (screen.size() - Vec2::new(28.0, 36.0)).max(Vec2::splat(1.0));
+        let size = Vec2::new(800.0, 860.0).min(available);
         let mut floater = Floater::new("bug_report", aurora_i18n::tr!("bug-title"), screen.center() - size * 0.5, size);
-        floater.min_size = Vec2::new(440.0, 420.0);
+        floater.min_size = Vec2::new(700.0, 840.0).min(available);
         floater.show(ctx, p, &mut open, |ui| {
             ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
             // Also let the whole page scroll in short windows: sending controls
@@ -447,7 +448,7 @@ impl BugReportUi {
         );
         if self.tab == 0 {
             ui.add_space(8.0);
-            self.form(ui, p, in_world);
+            self.form(ui, p, in_world, height - 50.0);
             return;
         }
         egui::ScrollArea::vertical()
@@ -456,11 +457,11 @@ impl BugReportUi {
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 ui.add_space(8.0);
-                self.form(ui, p, in_world);
+                self.form(ui, p, in_world, height - 50.0);
             });
     }
 
-    fn form(&mut self, ui: &mut egui::Ui, p: &Palette, in_world: bool) {
+    fn form(&mut self, ui: &mut egui::Ui, p: &Palette, in_world: bool, height: f32) {
         match self.tab {
             0 => {
                 ui.label(aurora_i18n::tr!("bug-summary"));
@@ -479,7 +480,7 @@ impl BugReportUi {
                     ui.label(aurora_i18n::text(key));
                     // Long prose scrolls inside its own editor, so all three
                     // questions remain visible instead of growing the form.
-                    let editor_height = 2.0 * ui.text_style_height(&egui::TextStyle::Body) + 8.0;
+                    let editor_height = (3.0 * ui.text_style_height(&egui::TextStyle::Body) + 8.0).max(64.0);
                     egui::ScrollArea::vertical()
                         .id_salt(("bug-description", self.draft_id, key))
                         .max_height(editor_height)
@@ -489,7 +490,7 @@ impl BugReportUi {
                             ui.add(
                                 egui::TextEdit::multiline(value)
                                     .char_limit(6000)
-                                    .desired_rows(2)
+                                    .desired_rows(3)
                                     .desired_width(f32::INFINITY),
                             );
                         });
@@ -522,63 +523,70 @@ impl BugReportUi {
             _ => {
                 ui.label(RichText::new(aurora_i18n::tr!("bug-picture-warning")).color(p.amber));
                 ui.add_space(8.0);
-                let busy = self.image_busy();
-                ui.add_enabled_ui(!busy, |ui| {
-                    ui.horizontal_wrapped(|ui| {
-                        if ui
-                            .add_enabled(in_world, egui::Button::new(aurora_i18n::tr!("bug-take-picture")))
-                            .on_disabled_hover_text(aurora_i18n::tr!("bug-picture-login"))
-                            .clicked()
-                        {
-                            self.capture_requested = Some(self.include_ui);
-                        }
-                        if flat_button(ui, p, aurora_i18n::tr!("bug-attach-image")).clicked() {
-                            let (tx, rx) = crossbeam_channel::bounded(1);
-                            self.image_job = Some(ImageJob {
-                                rx,
-                                origin: ImageOrigin::File,
-                                include: true,
+                ui.columns(2, |columns| {
+                    columns[0].with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                        let busy = self.image_busy();
+                        ui.add_enabled_ui(!busy, |ui| {
+                            ui.horizontal_wrapped(|ui| {
+                                if ui
+                                    .add_enabled(in_world, egui::Button::new(aurora_i18n::tr!("bug-take-picture")))
+                                    .on_disabled_hover_text(aurora_i18n::tr!("bug-picture-login"))
+                                    .clicked()
+                                {
+                                    self.capture_requested = Some(self.include_ui);
+                                }
+                                if flat_button(ui, p, aurora_i18n::tr!("bug-attach-image")).clicked() {
+                                    let (tx, rx) = crossbeam_channel::bounded(1);
+                                    self.image_job = Some(ImageJob {
+                                        rx,
+                                        origin: ImageOrigin::File,
+                                        include: true,
+                                    });
+                                    std::thread::spawn(move || {
+                                        let _ = tx.send(files::choose_image());
+                                    });
+                                }
                             });
-                            std::thread::spawn(move || {
-                                let _ = tx.send(files::choose_image());
-                            });
-                        }
-                    });
-                    if ui.checkbox(&mut self.include_ui, aurora_i18n::tr!("bug-with-ui")).changed() {
-                        self.capture_option_changed(in_world);
-                    }
-                });
-                ui.label(RichText::new(aurora_i18n::tr!("bug-picture-refresh-help")).color(p.muted));
-                if busy {
-                    ui.spinner();
-                }
-                if self.image.is_some() {
-                    ui.add_enabled_ui(!busy, |ui| {
-                        ui.horizontal_wrapped(|ui| {
-                            ui.checkbox(&mut self.include_image, aurora_i18n::tr!("bug-include-image"));
-                            if flat_button(ui, p, aurora_i18n::tr!("bug-remove-image")).clicked() {
-                                self.image = None;
-                                self.texture = None;
-                                self.include_image = false;
-                                self.image_origin = None;
+                            if ui.checkbox(&mut self.include_ui, aurora_i18n::tr!("bug-with-ui")).changed() {
+                                self.capture_option_changed(in_world);
                             }
-                        })
+                        });
+                        ui.label(RichText::new(aurora_i18n::tr!("bug-picture-refresh-help")).color(p.muted));
+                        if busy {
+                            ui.spinner();
+                        }
+                        if self.image.is_some() {
+                            ui.add_enabled_ui(!busy, |ui| {
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.checkbox(&mut self.include_image, aurora_i18n::tr!("bug-include-image"));
+                                    if flat_button(ui, p, aurora_i18n::tr!("bug-remove-image")).clicked() {
+                                        self.image = None;
+                                        self.texture = None;
+                                        self.include_image = false;
+                                        self.image_origin = None;
+                                    }
+                                })
+                            });
+                        }
                     });
-                }
-                if let (Some(texture), Some(image)) = (&self.texture, &self.image) {
-                    ui.add_space(6.0);
-                    ui.add(
-                        egui::Image::new(texture)
-                            .max_width(ui.available_width())
-                            .max_height((ui.available_height() - 22.0).clamp(90.0, 190.0))
-                            .maintain_aspect_ratio(true),
-                    );
-                    ui.label(
-                        RichText::new(format!("{} × {} · PNG", image.width, image.height))
-                            .size(12.0)
-                            .color(p.muted),
-                    );
-                }
+                    columns[1].with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                        if let (Some(texture), Some(image)) = (&self.texture, &self.image) {
+                            ui.add(
+                                egui::Image::new(texture)
+                                    .max_width(ui.available_width())
+                                    .max_height((height - 55.0).clamp(120.0, 320.0))
+                                    .maintain_aspect_ratio(true),
+                            );
+                            ui.label(
+                                RichText::new(format!("{} × {} · PNG", image.width, image.height))
+                                    .size(12.0)
+                                    .color(p.muted),
+                            );
+                        } else {
+                            ui.label(RichText::new(aurora_i18n::tr!("bug-image-empty")).color(p.muted));
+                        }
+                    });
+                });
             }
         }
     }
