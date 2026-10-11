@@ -38,8 +38,7 @@ jobs:
           Compress-Archive -Path $dir -DestinationPath "$dir.zip"
           $hash = (Get-FileHash -LiteralPath "$dir.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  $dir.zip" | Set-Content -LiteralPath "$dir.zip.sha256" -Encoding utf8NoBOM
-          $policy = Get-Content -Raw -LiteralPath update-policy.json | ConvertFrom-Json
-          @{ schema = 1; version = $v.Substring(1); minimum_supported_version = $policy.minimum_supported_version } | ConvertTo-Json | Set-Content -LiteralPath aurora-update-policy.json -Encoding utf8NoBOM
+          ./scripts/write-update-policy.ps1 -Tag $v
           "ZIP=$dir.zip" >> $env:GITHUB_ENV
       - name: Publish
         shell: pwsh

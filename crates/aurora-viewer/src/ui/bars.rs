@@ -500,7 +500,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         });
     }
     ui.menu_button(small(aurora_i18n::tr!("common-help"), p.ink), |ui| {
-        if ui.button(aurora_i18n::tr!("update-check")).clicked() {
+        if crate::updater::checks_enabled() && ui.button(aurora_i18n::tr!("update-check")).clicked() {
             *action = BarAction::CheckUpdates;
             ui.close();
         }

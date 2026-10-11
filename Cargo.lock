@@ -614,6 +614,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "aurora-version",
+ "directories",
  "log",
  "reqwest",
  "semver",

@@ -5,6 +5,14 @@
 pub mod feed;
 pub mod install;
 pub mod package;
+mod user_data;
+
+/// Effects resolved for the installed version, including skipped releases.
+#[derive(Clone, Copy, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct Maintenance {
+    pub clear_cache: bool,
+    pub reset_settings: bool,
+}
 
 pub struct TestEnvironment {
     pub root: std::path::PathBuf,

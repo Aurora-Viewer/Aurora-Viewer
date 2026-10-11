@@ -3192,11 +3192,16 @@ update-release-notes = What’s new
 update-demo-notes =
     • A more welcoming interface, in English and French.
     • Stability and performance improvements.
-    • Your settings and cache are preserved.
+    • Verified installation with rollback if startup fails.
 update-downloading = Download in progress…
 update-transfer = { $downloaded } / { $total } MB
 update-ready = The download is complete.
-update-preserve-data = Aurora will restart. Your settings and cache will be preserved.
+update-effects-title = During installation
+update-cache-keep = Cache: preserved.
+update-cache-clear = Cache: cleared. Data will be downloaded again as needed.
+update-settings-migrate = Settings: preserved and migrated automatically as needed.
+update-settings-reset = Settings: reset to defaults. Your custom preferences will be lost.
+update-effects-restart = Aurora will restart. If startup fails, the previous files will be restored.
 update-demo-safe = Simulation: no files are downloaded or installed.
 update-skip = Skip this version
 update-skip-hint = Stop offering this version. Future versions will still be offered.
@@ -3208,6 +3213,9 @@ update-check = Check for updates
 update-check-hint = Show available updates, including skipped versions.
 update-required-title = An update is required
 update-required = This version is no longer supported. Update Aurora before signing in.
+update-login-required = Sign-in blocked: install the required update to continue.
+update-login-checking = Checking for updates before sign-in…
+update-login-test = Test installation: grid sign-in is disabled.
 update-no-notes = See the release page for what’s new.
 update-preparing = Verifying and preparing files…
 update-restart = Install and restart Aurora

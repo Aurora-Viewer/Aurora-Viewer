@@ -3192,11 +3192,16 @@ update-release-notes = Nouveautés
 update-demo-notes =
     • Une interface plus agréable, en français et en anglais.
     • Des améliorations de stabilité et de performances.
-    • Vos réglages et votre cache sont conservés.
+    • Une installation vérifiée avec retour arrière en cas d’échec.
 update-downloading = Téléchargement en cours…
 update-transfer = { $downloaded } / { $total } Mo
 update-ready = Le téléchargement est terminé.
-update-preserve-data = Aurora sera relancé. Vos réglages et votre cache seront conservés.
+update-effects-title = Lors de l’installation
+update-cache-keep = Cache : conservé.
+update-cache-clear = Cache : vidé. Les données seront téléchargées à nouveau si nécessaire.
+update-settings-migrate = Paramètres : conservés et adaptés automatiquement si nécessaire.
+update-settings-reset = Paramètres : réinitialisés aux valeurs par défaut. Vos choix personnalisés seront perdus.
+update-effects-restart = Aurora sera relancé. En cas d’échec au démarrage, les fichiers précédents seront restaurés.
 update-demo-safe = Simulation : aucun fichier n’est téléchargé ou installé.
 update-skip = Ignorer cette version
 update-skip-hint = Ne plus proposer cette version. Les versions suivantes seront proposées.
@@ -3208,6 +3213,9 @@ update-check = Vérifier les mises à jour
 update-check-hint = Afficher les mises à jour disponibles, même les versions ignorées.
 update-required-title = Une mise à jour est nécessaire
 update-required = Cette version n’est plus prise en charge. Mettez Aurora à jour pour vous connecter.
+update-login-required = Connexion bloquée : installez la mise à jour obligatoire pour continuer.
+update-login-checking = Vérification des mises à jour avant la connexion…
+update-login-test = Installation de test : la connexion à une grille est désactivée.
 update-no-notes = Consultez la page de la release pour les nouveautés.
 update-preparing = Vérification et préparation des fichiers…
 update-restart = Installer et relancer Aurora

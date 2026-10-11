@@ -20,6 +20,12 @@ plateformes autres que Windows pour les releases (le code reste portable).
 
 ## Arborescence
 
+Le fond des dialogues de mise à jour est flouté par `aurora-render/src/ui_blur.rs`
+et `shaders/ui_blur.wgsl` : un marqueur egui sépare les couches de fond du
+dialogue. La scène et ces couches sont rendues dans une texture, floutées
+horizontalement puis verticalement sur le GPU ; le dialogue reste net.
+Ces cibles existent seulement tant que le dialogue est affiché.
+
 ```
 aurora-viewer/                  dépôt git (GitHub : Aurora-Viewer/Aurora-Viewer)
 ├─ Cargo.toml                   workspace : version, édition, licence, lints communs
@@ -60,7 +66,7 @@ commande en une ligne (`scripts/setup.ps1`, puis les outils) :
 | Crate | Rôle |
 |---|---|
 | `aurora-viewer` | L'application : boucle de fenêtre (winit), état du monde, scène, interface egui, agent, caméra, démo hors ligne |
-| `aurora-updater` | Releases GitHub stables et version minimale ; téléchargement annulable, SHA-256 et extraction ZIP bornée ; auxiliaire Windows, remplacement transactionnel et restauration tant que la nouvelle version n’a pas présenté une image. Tests HTTP et fichiers isolés. |
+| `aurora-updater` | Releases GitHub stables et seuils de maintenance ; téléchargement annulable, SHA-256 et extraction ZIP bornée ; auxiliaire Windows, remplacement transactionnel et restauration tant que la nouvelle version n’a pas présenté une image. `user_data.rs` sauvegarde/restaure le cache et `settings.json` si la politique l’exige. Tests HTTP et fichiers isolés. |
 | `aurora-version` | Source commune de la version compilée : tag Git, provenance des builds entre tags, User-Agent HTTP et version de connexion SL à quatre composantes numériques. Son `build.rs` suit aussi les références Git des worktrees ; `build_support.rs` contient la résolution pure testée. |
 | `aurora-i18n` | Langue commune au viewer et aux messages réseau : catalogues Fluent `locales/*.ftl`, détection de l'OS, choix enregistré, repli anglais, variables, pluriels et décimales. `build.rs` découvre automatiquement les langues ; les libellés simples et tableaux de libellés sont mis en cache par langue. Voir `docs/TRANSLATING.md`. |
 | `aurora-net` | Connexion (XML-RPC), circuits UDP, capabilities, file d'événements, téléchargement HTTP des assets ; tourne sur son propre runtime tokio. `session/object_actions.rs` : toucher / saisir / relâcher et inventaire d'objet (capability ou transfert UDP borné en mémoire) ; `task_inventory.rs` : parsing LLSD et fichier historique ; `land.rs`, `session_land.rs` : messages des parcelles (« À propos du terrain », RemoteParcelRequest d'un lieu quelconque) |

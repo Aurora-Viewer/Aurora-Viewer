@@ -354,7 +354,7 @@ impl App {
         net.set_agent_language(aurora_i18n::language(), settings.language_is_public);
         let voice_http = net.caps_http();
         let login_info = ui::news::LoginInfo::start(net.runtime());
-        let updater = crate::updater::Updater::new(&settings, net.runtime());
+        let updater = crate::updater::Updater::new(net.runtime());
         let out_device = (!settings.audio.output_device.is_empty()).then(|| settings.audio.output_device.clone());
         let lib = Arc::new(AvatarLibrary::load());
         let cache = crate::settings::cache_dir();
@@ -4793,6 +4793,10 @@ impl App {
                 self.sync_remembered_password();
                 let progress = self.login_progress.as_ref().map(|(m, f)| (m.as_str(), *f));
                 self.login_info.poll();
+                self.login_form.block_reason = self
+                    .updater
+                    .login_block_reason()
+                    .or_else(|| aurora_updater::test_environment().map(|_| aurora_i18n::tr!("update-login-test")));
                 a.login = ui::login::show(
                     ui,
                     &p,

@@ -50,6 +50,9 @@ impl Server {
         let thread = std::thread::spawn(move || {
             while !flag.load(Ordering::Relaxed) {
                 if let Ok((mut socket, _)) = listener.accept() {
+                    // Windows accepts can inherit the listener's nonblocking
+                    // mode; wait for request bytes rather than closing early.
+                    socket.set_nonblocking(false).expect("blocking connection");
                     socket.set_read_timeout(Some(Duration::from_secs(2))).expect("timeout");
                     let mut data = Vec::new();
                     let mut buffer = [0_u8; 1024];
@@ -69,13 +72,14 @@ impl Server {
                         } else {
                             ("404 Not Found", b"missing".as_slice())
                         };
-                        let _ = write!(
-                            socket,
-                            "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                            body.len()
-                        );
-                        let _ = socket.write_all(body);
+                        let mut response =
+                            format!("HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).into_bytes();
+                        response.extend_from_slice(body);
+                        let _ = socket.write_all(&response);
                         let _ = socket.shutdown(std::net::Shutdown::Write);
+                        // Drain the peer before dropping the socket: closing with
+                        // unread bytes can reset the connection on Windows.
+                        while matches!(socket.read(&mut buffer), Ok(n) if n > 0) {}
                     }
                 } else {
                     std::thread::sleep(Duration::from_millis(5));
@@ -141,6 +145,7 @@ fn release(server: &Server, size: usize) -> Release {
         notes: "Changes".into(),
         url: format!("{}/release", server.base),
         required: false,
+        maintenance: Default::default(),
         archive: Some(Asset {
             name: "package.zip".into(),
             size: size as u64,

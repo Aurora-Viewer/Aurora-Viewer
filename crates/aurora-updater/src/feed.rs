@@ -63,7 +63,7 @@ impl Source {
 
     pub fn client(&self) -> Result<Client> {
         let source = self.clone();
-        Ok(Client::builder()
+        let builder = Client::builder()
             .user_agent(aurora_version::user_agent())
             .https_only(!self.loopback)
             .connect_timeout(Duration::from_secs(8))
@@ -76,8 +76,10 @@ impl Source {
                 } else {
                     attempt.error("untrusted redirect")
                 }
-            }))
-            .build()?)
+            }));
+        // An explicit local feed must not leave loopback through a system proxy.
+        let builder = if self.loopback { builder.no_proxy() } else { builder };
+        Ok(builder.build()?)
     }
 
     pub async fn bytes(&self, client: &Client, url: &str, limit: usize) -> Result<Vec<u8>> {
@@ -121,9 +123,12 @@ impl Source {
             .cloned();
         let checksum = r.assets.iter().find(|a| a.name == format!("{expected}.sha256")).cloned();
         let mut required = false;
+        let mut maintenance = super::Maintenance::default();
         if let Some(asset) = r.assets.iter().find(|a| a.name == POLICY) {
             let policy: Policy = serde_json::from_slice(&self.bytes(&client, &asset.browser_download_url, 16 * 1024).await?)?;
             ensure!(policy.schema == 1 && policy.version == v.to_string(), "incompatible update policy");
+            maintenance.clear_cache = threshold_applies(policy.cache_invalidation_before.as_deref(), current, &v)?;
+            maintenance.reset_settings = threshold_applies(policy.settings_reset_before.as_deref(), current, &v)?;
             if let Some(min) = policy.minimum_supported_version {
                 let min = version(&min).context("invalid minimum supported version")?;
                 ensure!(
@@ -144,6 +149,7 @@ impl Source {
             archive,
             checksum,
             required,
+            maintenance,
         }))
     }
 }
@@ -178,6 +184,18 @@ struct Policy {
     schema: u32,
     version: String,
     minimum_supported_version: Option<String>,
+    cache_invalidation_before: Option<String>,
+    settings_reset_before: Option<String>,
+}
+
+fn threshold_applies(threshold: Option<&str>, current: &str, latest: &Version) -> Result<bool> {
+    let Some(threshold) = threshold else { return Ok(false) };
+    let cutoff = version(threshold).context("invalid maintenance threshold")?;
+    ensure!(
+        cutoff.pre.is_empty() && cutoff.build.is_empty() && !cutoff.cmp_precedence(latest).is_gt(),
+        "invalid maintenance threshold"
+    );
+    Ok(version(current).is_some_and(|installed| installed.cmp_precedence(&cutoff).is_lt()))
 }
 
 #[derive(Clone, Debug)]
@@ -189,11 +207,22 @@ pub struct Release {
     pub archive: Option<Asset>,
     pub checksum: Option<Asset>,
     pub required: bool,
+    pub maintenance: super::Maintenance,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn maintenance_thresholds_survive_skipped_releases_and_do_not_repeat() {
+        let latest = Version::parse("0.5.0").expect("fixture");
+        assert!(threshold_applies(Some("0.3.0"), "0.2.0+8.gabcdef", &latest).expect("policy"));
+        assert!(!threshold_applies(Some("0.3.0"), "0.3.0", &latest).expect("policy"));
+        assert!(!threshold_applies(None, "0.2.0", &latest).expect("old policy"));
+        for invalid in ["0.6.0", "garbage", "0.3.0-rc.1", "0.3.0+build"] {
+            assert!(threshold_applies(Some(invalid), "0.2.0", &latest).is_err());
+        }
+    }
     #[test]
     fn strict_semver_and_provenance() {
         assert!(crate::is_newer("v0.3.0", "0.2.0+8.gabc123"));

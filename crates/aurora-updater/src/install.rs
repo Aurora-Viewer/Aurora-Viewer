@@ -48,7 +48,7 @@ fn lock(install: &Path) -> Result<File> {
     Ok(file)
 }
 
-fn plain_dir(path: &Path) -> Result<()> {
+pub(crate) fn plain_dir(path: &Path) -> Result<()> {
     let metadata = fs::symlink_metadata(path)?;
     ensure!(metadata.is_dir() && !metadata.file_type().is_symlink(), "directory is a link");
     #[cfg(windows)]
@@ -83,7 +83,7 @@ fn validate_install(install: &Path) -> Result<()> {
     Ok(())
 }
 
-fn validate_tree(path: &Path) -> Result<()> {
+pub(crate) fn validate_tree(path: &Path) -> Result<()> {
     plain_dir(path)?;
     for entry in fs::read_dir(path)? {
         let entry = entry?;
@@ -125,7 +125,7 @@ impl Workspace {
     }
 
     /// Called on a worker; copies the helper before the viewer shuts down.
-    pub fn handoff(mut self, version: &str) -> Result<()> {
+    pub fn handoff(mut self, version: &str, maintenance: crate::Maintenance) -> Result<()> {
         let exe = std::env::current_exe()?.canonicalize()?;
         ensure!(exe == self.install.join(EXE), "updater is not running from its installation");
         fs::copy(&exe, self.root.join("helper.exe"))?;
@@ -139,6 +139,7 @@ impl Workspace {
             parent: std::process::id(),
             args,
             version: version.into(),
+            maintenance,
         };
         let mut file = OpenOptions::new().write(true).create_new(true).open(self.root.join("plan.json"))?;
         file.write_all(&serde_json::to_vec(&plan)?)?;
@@ -187,6 +188,8 @@ struct Plan {
     parent: u32,
     args: Vec<String>,
     version: String,
+    #[serde(default)]
+    maintenance: crate::Maintenance,
 }
 
 fn validate_work(work: &Path, plan: &Plan) -> Result<()> {
@@ -214,6 +217,7 @@ fn cleanup_work(work: &Path, install: &Path, token: &str) -> Result<()> {
         parent: 0,
         args: vec![],
         version: String::new(),
+        maintenance: Default::default(),
     };
     validate_work(work, &plan)?;
     validate_tree(work)?;
@@ -254,17 +258,24 @@ pub fn run_helper() -> Result<bool> {
         validate_install(&plan.install)?;
         validate_install(&work.join("prepared"))?;
         apply(&plan.install, &work, || {
+            let mut data = crate::user_data::Backup::prepare(&plan.install, &plan.token, plan.maintenance)?;
             let mut command = Command::new(plan.install.join(EXE));
             command.args(&plan.args).env(ACK_ENV, &work).current_dir(&plan.install);
             hidden(&mut command);
             let mut child = command.spawn()?;
-            if await_frame(
+            let result = await_frame(
                 &mut child,
                 &work.join("first-frame"),
                 &plan.token,
                 &plan.version,
                 Duration::from_secs(90),
-            )? {
+            );
+            if !matches!(result, Ok(true)) {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+            if result? {
+                data.commit();
                 Ok(())
             } else {
                 anyhow::bail!("updated viewer did not render a frame")
@@ -308,6 +319,7 @@ pub fn apply(install: &Path, work: &Path, launch: impl FnOnce() -> Result<()>) -
             parent: 0,
             args: vec![],
             version: String::new(),
+            maintenance: Default::default(),
         },
     )?;
     validate_install(install)?;

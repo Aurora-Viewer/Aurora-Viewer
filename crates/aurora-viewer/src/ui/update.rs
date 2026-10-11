@@ -26,6 +26,7 @@ pub struct UpdateDemo {
     phase: Phase,
     started: Option<Instant>,
     open: bool,
+    maintenance: aurora_updater::Maintenance,
 }
 
 impl UpdateDemo {
@@ -48,10 +49,12 @@ impl UpdateDemo {
             phase,
             started: None,
             open: mode != "ignored",
+            maintenance: demo_maintenance(),
         })
     }
 
     pub fn show(&mut self, ui: &mut egui::Ui, p: &Palette, icons: &Icons, logo: Option<&egui::TextureHandle>) -> LoginAction {
+        self.form.block_reason = Some(aurora_i18n::tr!("update-login-test"));
         let action = super::login::show(ui, p, icons, logo, &mut self.settings, &mut self.form, &self.info, None);
         if matches!(action, LoginAction::CheckUpdates) {
             self.phase = Phase::Available;
@@ -82,8 +85,9 @@ impl UpdateDemo {
             ctx.request_repaint();
         }
         let width = (ctx.content_rect().width() - 64.0).clamp(280.0, 620.0);
+        aurora_render::blurred_backdrop(ctx, egui::Modal::default_area(egui::Id::new("viewer_update")).layer());
         let response = egui::Modal::new(egui::Id::new("viewer_update"))
-            .backdrop_color(p.bar.gamma_multiply(0.88))
+            .backdrop_color(egui::Color32::TRANSPARENT)
             .frame(
                 Frame::new()
                     .fill(p.panel)
@@ -171,7 +175,7 @@ impl UpdateDemo {
                     }
                 }
                 ui.add_space(8.0);
-                ui.label(RichText::new(aurora_i18n::tr!("update-preserve-data")).size(12.0).color(p.muted));
+                maintenance_summary(ui, p, self.maintenance);
                 ui.label(RichText::new(aurora_i18n::tr!("update-demo-safe")).size(11.0).color(p.muted_dim));
                 ui.add_space(10.0);
                 ui.separator();
@@ -242,8 +246,9 @@ pub fn show_real(
     let mut quit = false;
     let width = (ctx.content_rect().width() - 64.0).clamp(280.0, 620.0);
     let required = updater.required();
+    aurora_render::blurred_backdrop(ctx, egui::Modal::default_area(egui::Id::new("viewer_update")).layer());
     let response = egui::Modal::new(egui::Id::new("viewer_update"))
-        .backdrop_color(p.bar.gamma_multiply(0.88))
+        .backdrop_color(egui::Color32::TRANSPARENT)
         .frame(
             Frame::new()
                 .fill(p.panel)
@@ -353,7 +358,9 @@ pub fn show_real(
                 _ => {}
             }
             ui.add_space(8.0);
-            ui.label(RichText::new(aurora_i18n::tr!("update-preserve-data")).size(12.0).color(p.muted));
+            if let Some(release) = &updater.release {
+                maintenance_summary(ui, p, release.maintenance);
+            }
             ui.add_space(10.0);
             ui.separator();
             ui.add_space(8.0);
@@ -436,6 +443,46 @@ pub fn show_real(
     quit
 }
 
+fn demo_maintenance() -> aurora_updater::Maintenance {
+    let choice = std::env::var("AURORA_DEMO_UPDATE_MAINTENANCE").unwrap_or_default();
+    aurora_updater::Maintenance {
+        clear_cache: matches!(choice.as_str(), "cache" | "both"),
+        reset_settings: matches!(choice.as_str(), "settings" | "both"),
+    }
+}
+
+fn maintenance_summary(ui: &mut egui::Ui, p: &Palette, effects: aurora_updater::Maintenance) {
+    ui.label(
+        RichText::new(aurora_i18n::tr!("update-effects-title"))
+            .size(12.0)
+            .strong()
+            .color(p.ink),
+    );
+    ui.label(
+        RichText::new(if effects.clear_cache {
+            aurora_i18n::tr!("update-cache-clear")
+        } else {
+            aurora_i18n::tr!("update-cache-keep")
+        })
+        .size(12.0)
+        .color(if effects.clear_cache { p.amber } else { p.muted }),
+    );
+    ui.label(
+        RichText::new(if effects.reset_settings {
+            aurora_i18n::tr!("update-settings-reset")
+        } else {
+            aurora_i18n::tr!("update-settings-migrate")
+        })
+        .size(12.0)
+        .color(if effects.reset_settings { p.amber } else { p.muted }),
+    );
+    ui.label(
+        RichText::new(aurora_i18n::tr!("update-effects-restart"))
+            .size(11.0)
+            .color(p.muted_dim),
+    );
+}
+
 fn failure_text(kind: aurora_updater::Failure) -> &'static str {
     use aurora_updater::Failure;
     match kind {
@@ -514,6 +561,70 @@ mod tests {
     }
 
     #[test]
+    fn required_offer_has_no_skip_or_later_and_escape_cannot_close_it() {
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("runtime");
+        let mut updater = crate::updater::Updater::new(runtime.handle());
+        updater.release = Some(aurora_updater::feed::Release {
+            tag: "v0.3.0".into(),
+            version: "0.3.0".into(),
+            notes: "Synthetic notes".into(),
+            url: aurora_updater::feed::RELEASE_PAGE.into(),
+            archive: None,
+            checksum: None,
+            required: true,
+            maintenance: Default::default(),
+        });
+        updater.state = crate::updater::State::Offer;
+        updater.open = true;
+        let ctx = egui::Context::default();
+        let p = crate::theme::Theme::default().palette();
+        let icons = Icons::default();
+        let mut settings = Settings::default();
+        // Modal areas size themselves on the first frame before painting.
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+            show_real(ui.ctx(), &p, &icons, &mut updater, &mut settings, runtime.handle());
+        });
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 900.0))),
+                ..Default::default()
+            },
+            |ui| {
+                show_real(ui.ctx(), &p, &icons, &mut updater, &mut settings, runtime.handle());
+            },
+        );
+        output.textures_delta.clear();
+        for label in [aurora_i18n::tr!("update-skip"), aurora_i18n::tr!("update-later")] {
+            assert!(
+                !output.shapes.iter().any(|s| label_position(&s.shape, label).is_some()),
+                "forbidden choice: {label}"
+            );
+        }
+        for label in [aurora_i18n::tr!("common-quit"), aurora_i18n::tr!("update-install")] {
+            assert!(
+                output.shapes.iter().any(|s| label_position(&s.shape, label).is_some()),
+                "expected choice: {label}"
+            );
+        }
+        let _ = ctx.run_ui(
+            egui::RawInput {
+                events: vec![egui::Event::Key {
+                    key: egui::Key::Escape,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: Default::default(),
+                }],
+                ..Default::default()
+            },
+            |ui| {
+                show_real(ui.ctx(), &p, &icons, &mut updater, &mut settings, runtime.handle());
+            },
+        );
+        assert!(updater.open && updater.blocks_login());
+    }
+
+    #[test]
     fn manual_check_reopens_skipped_release_on_wide_and_narrow_login() {
         for width in [1600.0, 860.0] {
             let ctx = egui::Context::default();
@@ -524,6 +635,7 @@ mod tests {
                 phase: Phase::Available,
                 started: None,
                 open: true,
+                maintenance: Default::default(),
             };
             draw(&ctx, &mut demo, width, vec![]);
             click(&ctx, &mut demo, width, aurora_i18n::tr!("update-skip"));
