@@ -7,29 +7,35 @@ use super::common::small;
 use crate::build::BuildTool;
 use crate::build::contents::AT_LSL_TEXT;
 use crate::theme::Palette;
+use crate::ui::inventory::permissions::Permissions;
 use crate::ui::inventory::{InvDrag, item_icon};
 use crate::world::World;
 use aurora_net::build::{TaskItem, perm};
 use egui::{RichText, Vec2};
 
-/// Item name with the no-copy / no-modify / no-transfer suffixes
-/// (LLTaskInvFVBridge::getLabelSuffix).
+/// Localized item name (LLTaskInvFVBridge::getDisplayName). Permissions are
+/// displayed in their own compact column instead of repeating long suffixes.
 fn display_name(i: &TaskItem) -> String {
-    let mut n = if i.asset_type == AT_LSL_TEXT && i.name.starts_with("New Script") {
+    if i.asset_type == AT_LSL_TEXT && i.name.starts_with("New Script") {
         i.name.replacen("New Script", aurora_i18n::tr!("common-new-script"), 1)
     } else {
         i.name.clone()
-    };
-    if i.owner_mask & perm::COPY == 0 {
-        n.push_str(aurora_i18n::tr!("build-ui-contents-no-copy"));
     }
-    if i.owner_mask & perm::MODIFY == 0 {
-        n.push_str(aurora_i18n::tr!("build-ui-contents-no-modify"));
+}
+
+/// Keep Firestorm's restriction terms searchable after moving them to badges.
+fn searchable_name(i: &TaskItem) -> String {
+    let mut name = display_name(i);
+    for (bit, suffix) in [
+        (perm::COPY, aurora_i18n::tr!("build-ui-contents-no-copy")),
+        (perm::MODIFY, aurora_i18n::tr!("build-ui-contents-no-modify")),
+        (perm::TRANSFER, aurora_i18n::tr!("build-ui-contents-no-transfer")),
+    ] {
+        if i.owner_mask & bit == 0 {
+            name.push_str(suffix);
+        }
     }
-    if i.owner_mask & perm::TRANSFER == 0 {
-        n.push_str(aurora_i18n::tr!("build-ui-contents-no-transfer"));
-    }
-    n
+    name
 }
 
 /// "Contenus (N éléments)".
@@ -105,7 +111,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         });
         let mut list: Vec<&TaskItem> = items
             .iter()
-            .filter(|i| filter.is_empty() || display_name(i).to_uppercase().contains(&filter))
+            .filter(|i| filter.is_empty() || searchable_name(i).to_uppercase().contains(&filter))
             .collect();
         list.sort_by_key(|i| i.name.to_lowercase());
         for item in list {
@@ -166,12 +172,15 @@ fn item_row(
         if item.asset_type == AT_LSL_TEXT && running.is_some_and(|r| !r.0) {
             name.push_str(aurora_i18n::tr!("build-ui-contents-stopped"));
         }
-        let r = ui.add(egui::Label::new(RichText::new(name).size(12.0).color(p.ink)).sense(egui::Sense::click()));
-        let r = if item.description.is_empty() {
-            r
-        } else {
-            r.on_hover_text(&item.description)
-        };
+        let permissions = Permissions::new(item.owner_mask, item.next_owner_mask);
+        let r = permissions.row(ui, p, &name).on_hover_ui(|ui| {
+            ui.label(&name);
+            if !item.description.is_empty() {
+                ui.label(&item.description);
+            }
+            ui.separator();
+            ui.label(permissions.tooltip());
+        });
         let item_modify = item.owner_mask & perm::MODIFY != 0;
         let can_take = item.owner_mask & perm::COPY != 0 && item.owner_mask & perm::TRANSFER != 0
             || tool.props.get(&object_id).is_some_and(|pr| pr.owner_id == world.agent_id);
@@ -317,13 +326,7 @@ mod tests {
             owner_mask: perm::COPY | perm::MODIFY,
             ..Default::default()
         };
-        assert_eq!(
-            display_name(&i),
-            format!(
-                "{}{}",
-                aurora_i18n::tr!("common-new-script"),
-                aurora_i18n::tr!("build-ui-contents-no-transfer")
-            )
-        );
+        assert_eq!(display_name(&i), aurora_i18n::tr!("common-new-script"));
+        assert!(searchable_name(&i).contains(aurora_i18n::tr!("build-ui-contents-no-transfer")));
     }
 }

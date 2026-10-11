@@ -644,6 +644,10 @@ hors ligne ; les fichiers et photos chargés en démo restent hors ligne.
 - `folder-window` : une fenêtre limitée au contenu du dossier personnel,
   avec son nom en titre et un filtre propre ; `folder-window-search` montre
   cette recherche limitée aux descendants.
+  Vérifier les indicateurs C · M · T : droits accordés lisibles, droits
+  refusés barrés (objet non copiable, objet non transférable), détail du
+  propriétaire actuel et du prochain propriétaire au survol. Un lien
+  reprend les permissions de son original.
 - `rename`, `new-script`, `new-note`, `new-folder` : le renommage dans la
   ligne, sans fenêtre (leurs captures simulent le focus du champ sans
   activer la fenêtre Windows).
@@ -658,6 +662,14 @@ hors ligne ; les fichiers et photos chargés en démo restent hors ligne.
   correspondant au-delà de la taille minimale puis relâchent la souris.
 
 Données synthétiques uniquement ; aucun benchmark de rendu.
+
+Les indicateurs sont également visibles dans le contenu d'un objet :
+`AURORA_DEMO_ACTIONS=open` pour la fenêtre Ouvrir, ou
+`AURORA_DEMO_BUILD="move,object:100"` avec
+`AURORA_DEMO_BUILD_TAB=contents` pour l'onglet de construction. Les contenus
+de démo proposent des droits complets, sans modification ou sans copie ;
+le prochain propriétaire n'a que le transfert. Vérifier aussi le double-clic
+sur une note et la recherche « pas de copie » dans l'onglet Contenu.
 
 Pour valider les notecards sur la grille, ouvrir une note existante puis une
 note neuve, modifier leur texte, enregistrer et fermer / rouvrir. Refaire la

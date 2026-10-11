@@ -13,6 +13,7 @@ mod controls;
 mod dialogs;
 mod document;
 pub use document::document_demo_events;
+pub(crate) mod permissions;
 mod properties;
 pub mod thumbnail;
 mod view;
@@ -440,8 +441,14 @@ fn item_row(
         let worn = facts.worn_label(inv, *id);
         let suffix = worn.map_or_else(String::new, |label| format!(" ({label})"));
         let font_id = egui::FontId::proportional(13.0);
-        let label = super::widgets::name_with_suffix(&it.name, &suffix, font_id.clone(), p.ink);
+        let mut label = super::widgets::name_with_suffix(&it.name, &suffix, font_id.clone(), p.ink);
         let name = worn.map(|_| ui.painter().layout_no_wrap(it.name.clone(), font_id, p.ink));
+        let permissions = permissions::Permissions::inventory(inv, *id);
+        if let Some(permissions) = permissions {
+            // Keep each item's rights next to its name: a very long sibling
+            // must not push every row's badges outside the horizontal viewport.
+            permissions.append_suffix(&mut label, p);
+        }
         let r = ui
             .push_id(("inv_item", it.id), |ui| {
                 let text_id = ui.make_persistent_id("label");
@@ -469,7 +476,18 @@ fn item_row(
             aurora_i18n::tr!("ui-inventory-unknown-date").into()
         };
         let path = inventory_path(inv, it.parent);
-        let r = r.on_hover_text(format!("{path}\n{date}\n{}", it.desc));
+        let r = r.on_hover_ui(|ui| {
+            ui.label(&it.name);
+            ui.label(path);
+            ui.label(date);
+            if !it.desc.is_empty() {
+                ui.label(&it.desc);
+            }
+            if let Some(permissions) = permissions {
+                ui.separator();
+                ui.label(permissions.tooltip());
+            }
+        });
         if r.clicked() || r.secondary_clicked() {
             st.select(ui, *id, r.secondary_clicked());
         }
@@ -893,7 +911,13 @@ fn search_rows(
         } else if let Some(worn) = facts.worn_label(inv, row.id) {
             label.push_str(&format!(" ({worn})"));
         }
-        let label_width = ui.fonts_mut(|fonts| fonts.layout_no_wrap(label, egui::FontId::proportional(13.0), p.ink).size().x);
+        let mut label = super::widgets::name_with_suffix(&label, "", egui::FontId::proportional(13.0), p.ink);
+        if !row.folder
+            && let Some(permissions) = permissions::Permissions::inventory(inv, row.id)
+        {
+            permissions.append_suffix(&mut label, p);
+        }
+        let label_width = ui.fonts_mut(|fonts| fonts.layout_job(label).size().x);
         let width = row.depth.min(24) as f32 * ui.spacing().indent + label_width + 40.0;
         st.result_width = st.result_width.max(width);
         ui.horizontal(|ui| {
