@@ -76,6 +76,7 @@ fn redact(line: &str) -> std::borrow::Cow<'_, str> {
 /// Console + file writer.
 struct Tee {
     file: Option<std::fs::File>,
+    session_file: Option<std::fs::File>,
 }
 
 impl Write for Tee {
@@ -86,11 +87,17 @@ impl Write for Tee {
         if let Some(f) = &mut self.file {
             let _ = f.write_all(text.as_bytes());
         }
+        if let Some(f) = &mut self.session_file {
+            let _ = f.write_all(text.as_bytes());
+        }
         Ok(buf.len())
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
         if let Some(f) = &mut self.file {
+            let _ = f.flush();
+        }
+        if let Some(f) = &mut self.session_file {
             let _ = f.flush();
         }
         std::io::stderr().flush()
@@ -107,10 +114,14 @@ pub fn init() {
         env_logger::Env::default().default_filter_or("info,wgpu_core=warn,wgpu_hal=warn,naga=warn,reqwest=warn,symphonia=warn"),
     )
     .format_timestamp_millis()
-    .target(env_logger::Target::Pipe(Box::new(Tee { file })))
+    .target(env_logger::Target::Pipe(Box::new(Tee {
+        file,
+        session_file: crate::crash::session_log(),
+    })))
     .init();
     std::panic::set_hook(Box::new(|info| {
         let bt = std::backtrace::Backtrace::force_capture();
+        crate::crash::panic(info, &bt);
         log::error!("panic: {info}\n{bt}");
     }));
     log::info!(

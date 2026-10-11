@@ -367,6 +367,7 @@ impl App {
         ui::fonts::apply(&egui_ctx, &settings.font);
         ui::colors::set(&settings.colors);
         let skin = Skin::load(&egui_ctx, "aurora", settings.font_scale);
+        crate::crash::update(&skin.theme, &settings);
         let palette = skin.theme.palette();
         egui_ctx.set_zoom_factor(settings.ui_scale);
         // last view of the previous session for the loading screen
@@ -3116,6 +3117,7 @@ impl App {
             self.logo_rx = None;
         }
         if self.skin.maybe_reload(&self.egui_ctx, self.settings.font_scale) {
+            crate::crash::update(&self.skin.theme, &self.settings);
             self.palette = self.skin.theme.palette();
             self.cursors.set_palette(&self.palette);
             self.egui_ctx.set_zoom_factor(self.settings.ui_scale);
@@ -3991,6 +3993,7 @@ impl App {
         }
         if actions.settings_changed {
             aurora_i18n::select(&self.settings.language, crate::cli::get().language.as_deref());
+            crate::crash::update(&self.skin.theme, &self.settings);
             self.net
                 .set_agent_language(aurora_i18n::language(), self.settings.language_is_public);
             if self.settings.vsync != vsync {
@@ -4055,6 +4058,7 @@ impl App {
             aurora_updater::install::acknowledge_frame();
         }
         if gfx.renderer.failed() {
+            crate::crash::failure("The render thread terminated unexpectedly.");
             // the render thread is gone (its panic is in the log): nothing
             // more can be shown, leave cleanly
             self.gfx = Some(gfx);

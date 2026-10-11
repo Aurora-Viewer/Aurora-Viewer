@@ -10,6 +10,7 @@ mod cache;
 mod camera;
 mod cli;
 mod cmdline;
+mod crash;
 mod credentials;
 mod cursors;
 mod demo;
@@ -43,8 +44,25 @@ fn main() -> anyhow::Result<()> {
         !aurora_version::update_test_build() || aurora_updater::test_environment().is_some(),
         "update fixture binary requires an isolated test installation"
     );
+    if crash::helper()? {
+        return Ok(());
+    }
     aurora_i18n::select("default", cli::get().language.as_deref());
+    crash::start();
     logging::init();
+
+    let result = run_viewer();
+    if let Err(error) = &result {
+        crash::failure(&format!("Viewer startup / event loop error: {error:#}"));
+    }
+    crash::finished(result.is_ok());
+    result
+}
+
+fn run_viewer() -> anyhow::Result<()> {
+    if crash::demo() {
+        return Ok(());
+    }
 
     // Leave a core for the render thread; rayon handles decoding/meshing.
     let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);

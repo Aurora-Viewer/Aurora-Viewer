@@ -58,27 +58,16 @@ pub struct BugReportUi {
     browser_opened: bool,
     demo_text: Option<[String; 4]>,
     language: &'static str,
+    /// Preserve the crashed session's diagnostics, never the helper's log.
+    session_dir: Option<std::path::PathBuf>,
 }
 
 impl BugReportUi {
     pub fn begin(&mut self, fields: Vec<Field>, demo: bool) {
-        // Keep the sent report visible for its issue link and picture attachment,
-        // then start a fresh draft when the user opens the form again.
-        if self.github.complete() {
-            self.new_report();
-        }
-        self.requested = false;
-        self.open = true;
-        // Closing the floater preserves the draft and its original context.
-        if self.draft_active {
+        if !self.open_draft(demo) {
             return;
         }
-        self.draft_active = true;
-        self.draft_id = uuid::Uuid::new_v4();
-        self.tab = 0;
         self.report.fields = fields;
-        self.language = aurora_i18n::language();
-        self.demo = demo;
         if demo {
             self.report.title = aurora_i18n::tr!("bug-demo-title").into();
             self.report.steps = aurora_i18n::tr!("bug-demo-steps").into();
@@ -114,6 +103,44 @@ impl BugReportUi {
         std::thread::spawn(move || {
             let _ = tx.send(files::diagnostics(demo));
         });
+    }
+
+    /// Reuse delivery, privacy controls and draft retention for crash reports.
+    /// No system, renderer or live viewer state is recollected in the helper.
+    pub fn begin_preserved(&mut self, report: Report, session_dir: std::path::PathBuf, demo: bool) {
+        if !self.open_draft(demo) {
+            return;
+        }
+        self.report = report;
+        self.session_dir = Some(session_dir.clone());
+        if demo && std::env::var("AURORA_DEMO_BUG_REPORT").as_deref() == Ok("details") {
+            self.tab = 2;
+        }
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        self.diagnostics = Some(rx);
+        std::thread::spawn(move || {
+            let _ = tx.send(files::preserved_diagnostics(&session_dir));
+        });
+    }
+
+    fn open_draft(&mut self, demo: bool) -> bool {
+        // Keep the sent report visible for its issue link and picture attachment,
+        // then start a fresh draft when the user opens the form again.
+        if self.github.complete() {
+            self.new_report();
+        }
+        self.requested = false;
+        self.open = true;
+        // Closing the floater preserves the draft and its original context.
+        if self.draft_active {
+            return false;
+        }
+        self.draft_active = true;
+        self.draft_id = uuid::Uuid::new_v4();
+        self.tab = 0;
+        self.language = aurora_i18n::language();
+        self.demo = demo;
+        true
     }
 
     pub fn captured(&mut self, width: u32, height: u32, pixels: Vec<u8>) {
@@ -239,7 +266,7 @@ impl BugReportUi {
             }
         }
         for field in &mut self.report.fields {
-            if field.label == "bug-language" {
+            if self.session_dir.is_none() && field.label == "bug-language" {
                 field.value = language.into();
             }
         }
@@ -458,6 +485,16 @@ impl BugReportUi {
                 });
         });
         self.open = open;
+        // The recovery window sleeps between events, unlike the live viewer.
+        // Poll workers while active so auth, saving and delivery finish there.
+        if self.diagnostics.is_some()
+            || self.image_job.is_some()
+            || self.save_job.is_some()
+            || self.github.authorizing()
+            || self.github.sending
+        {
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        }
     }
 
     fn form_panel(&mut self, ui: &mut egui::Ui, p: &Palette, in_world: bool, height: f32) {
@@ -702,10 +739,11 @@ impl BugReportUi {
         self.pending_delivery = Some((delivery, report.clone(), include_image && image.is_some()));
         self.notice = None;
         let demo = self.demo;
+        let session_dir = self.session_dir.clone();
         let (tx, rx) = crossbeam_channel::bounded(1);
         self.save_job = Some(rx);
         std::thread::spawn(move || {
-            let result = files::save(&report, image.as_ref(), include_image, demo).and_then(|mut saved| {
+            let result = files::save(&report, image.as_ref(), include_image, demo, session_dir.as_deref()).and_then(|mut saved| {
                 if include_logs && !demo {
                     files::prepare_private_logs(&mut saved)?;
                 }

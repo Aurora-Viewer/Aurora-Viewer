@@ -361,6 +361,10 @@ grille.
 | `AURORA_DEMO_OPTIONS=<section>` | Ouvre les préférences sur une section |
 | `AURORA_DEMO_PERF=compact` ou `full` | Ouvre la fenêtre Performances, compacte ou complète |
 | `AURORA_DEMO_LOGIN=<mode>` | Écran de connexion hors ligne |
+| `AURORA_DEMO_CRASH=<mode>` | Plantage hors ligne et fenêtre de récupération |
+| `AURORA_DEMO_CRASH_DIR=<dossier>` | Isole les rapports de plantage des essais hors ligne |
+| `AURORA_CRASH_CAPTURE=<fichier.png>` | Capture de la fenêtre de récupération en démo |
+| `AURORA_CRASH_CAPTURE_EXIT=1` | Ferme la fenêtre après sa capture en démo |
 | `AURORA_DEMO_UPDATE=<mode>` | Maquette interactive de mise à jour sur la connexion |
 | `AURORA_DEMO_UPDATE_MAINTENANCE=<mode>` | Annonce d’une invalidation du cache et/ou remise à zéro |
 | `AURORA_UPDATE_TEST_ROOT=<dossier>` | Installation jetable servie par un flux local |
@@ -385,6 +389,24 @@ grille.
 
 - **`AURORA_DEMO_OPTIONS=<section>`** : par exemple `12` pour Pratique
   (touche de déplacement des HUDs).
+- **`AURORA_DEMO_CRASH=panic|native|missing|normal|recovery`**, seulement
+  avec `AURORA_DEMO` : déclenche une panique Rust, une exception native
+  Windows, une sortie anormale sans trace, une fermeture normale ou une
+  sortie sans surveillant. Le dernier mode permet de vérifier la
+  récupération au lancement suivant (relancer avec `normal`). Aucune
+  connexion ni initialisation du GPU. La fenêtre doit conserver la langue
+  et le thème de la session arrêtée, permettre la sélection et la copie de
+  la trace et ouvrir son dossier ; aucune fenêtre après une fermeture
+  normale. Les captures sont prises après trois images de la fenêtre
+  indépendante. `AURORA_DEMO_CRASH_DIR` permet d'utiliser un dossier
+  temporaire par scénario, sans toucher aux rapports réels.
+  Le bouton « Envoyer un rapport de plantage » doit ouvrir le formulaire
+  partagé, avec le titre et les informations de cette session. Pour le
+  capturer automatiquement, combiner avec `AURORA_DEMO_BUG_REPORT=1`
+  (Description) ou `details` (Données). Le mode démo reste sans envoi,
+  autorisation GitHub ou ouverture de navigateur. L'extrait public et le
+  ZIP privé commencent décochés. Décocher une information doit la retirer
+  de l'aperçu. Fermer et rouvrir le formulaire conserve le brouillon.
 - **`AURORA_DEMO_BUG_REPORT=1|details|image|image-ui|direct`** : ouvre le
   rapport après le chargement (image 550). `1` montre la description,
   `details` les informations avec le lieu décoché et les diagnostics filtrés,
