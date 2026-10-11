@@ -1,5 +1,5 @@
 //! Customisable egui theme. Defaults follow the Aurora brand palette
-//! (flat, violet/indigo accents on navy). Users can override any color in
+//! (subtle glass, violet/indigo accents on navy). Users can override any color in
 //! `theme.json` in the config directory.
 
 use egui::{Color32, CornerRadius, Stroke, Visuals};
@@ -35,18 +35,18 @@ pub struct Theme {
 }
 
 impl Default for Theme {
-    /// Brand colors from `scripts/aurora/brand.psd1`; window neutrals from the
-    /// Aurora Firestorm theme (`themes/aurora/colors.xml`: DkGray, AlchemyBlack1, MouseGray).
+    /// Brand colors from `scripts/aurora/brand.psd1`; window surfaces follow
+    /// the shared hierarchy documented in `docs/BRANDING.md`.
     fn default() -> Self {
         Theme {
             violet: "#8B5CF6".into(),
             indigo: "#4F46E5".into(),
             teal: "#5EEAD4".into(),
             navy: "#070B1F".into(),
-            panel: "#2A2A2A".into(),
-            bar: "#1C1C1C".into(),
-            field: "#1C1C1C".into(),
-            raised: "#3A3A3A".into(),
+            panel: "#252830".into(),
+            bar: "#1B1E26".into(),
+            field: "#181B23".into(),
+            raised: "#363B47".into(),
             violet_light: "#A78BFA".into(),
             violet_pale: "#C4B5FD".into(),
             ink: "#E8EDFB".into(),
@@ -59,9 +59,9 @@ impl Default for Theme {
             warn: "#FB923C".into(),
             danger_dim: "#A85252".into(),
             indigo_light: "#818CF8".into(),
-            panel_alpha: 245,
-            button_radius: 3,
-            window_radius: 2,
+            panel_alpha: 230,
+            button_radius: 5,
+            window_radius: 3,
             font_scale: 1.0,
         }
     }
@@ -148,8 +148,13 @@ impl Theme {
         v.window_stroke = Stroke::new(1.0, p.raised);
         v.window_corner_radius = CornerRadius::same(self.window_radius);
         v.menu_corner_radius = CornerRadius::same(self.window_radius);
-        v.window_shadow = egui::Shadow::NONE;
-        v.popup_shadow = egui::Shadow::NONE;
+        v.window_shadow = egui::Shadow {
+            offset: [0, 4],
+            blur: 14,
+            spread: 0,
+            color: p.bar.gamma_multiply(0.35),
+        };
+        v.popup_shadow = v.window_shadow;
         v.selection.bg_fill = p.violet;
         v.selection.stroke = Stroke::new(1.0, p.ink);
 

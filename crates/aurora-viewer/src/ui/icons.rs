@@ -157,6 +157,12 @@ const SVGS: &[(&str, &[u8])] = svg_list!(
     "arrow-square-in",
     "plus",
     "push-pin",
+    "selection",
+    "align-center-horizontal-simple",
+    "grid-four",
+    "file-text",
+    "flask",
+    "leaf",
     // build floater
     "hand-grabbing",
     "cursor",

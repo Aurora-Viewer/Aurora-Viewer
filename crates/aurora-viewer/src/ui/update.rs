@@ -92,7 +92,8 @@ impl UpdateDemo {
                 Frame::new()
                     .fill(p.panel)
                     .stroke(Stroke::new(1.0, p.raised))
-                    .corner_radius(CornerRadius::same(2))
+                    .corner_radius(ctx.global_style().visuals.window_corner_radius)
+                    .shadow(ctx.global_style().visuals.window_shadow)
                     .inner_margin(Margin::same(26)),
             )
             .show(ctx, |ui| {
@@ -253,7 +254,8 @@ pub fn show_real(
             Frame::new()
                 .fill(p.panel)
                 .stroke(Stroke::new(1.0, p.raised))
-                .corner_radius(2)
+                .corner_radius(ctx.global_style().visuals.window_corner_radius)
+                .shadow(ctx.global_style().visuals.window_shadow)
                 .inner_margin(Margin::same(26)),
         )
         .show(ctx, |ui| {

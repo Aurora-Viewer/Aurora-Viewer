@@ -24,8 +24,8 @@ fn tools() -> [(&'static str, &'static str, Tool); 5] {
 }
 
 /// One of the five big tool buttons (35×25 in Firestorm).
-fn tool_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, on: bool) -> bool {
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(38.0, 26.0), egui::Sense::click());
+fn tool_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, width: f32, on: bool) -> bool {
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, 32.0), egui::Sense::click());
     let fill = if on {
         p.violet
     } else if resp.hovered() {
@@ -34,7 +34,7 @@ fn tool_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, on: bool) 
         p.field
     };
     ui.painter().rect_filled(rect, 3.0, fill);
-    let tint = if on { Color32::WHITE } else { p.ink };
+    let tint = if on { p.ink } else { p.muted };
     if let Some(t) = crate::ui::icons::global(icon) {
         ui.painter().image(
             t.id(),
@@ -47,10 +47,11 @@ fn tool_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, on: bool) 
 }
 
 pub fn tool_row(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool) {
+    let width = (ui.available_width() - 16.0) / 5.0;
     ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 8.0;
+        ui.spacing_mut().item_spacing.x = 4.0;
         for (icon, tip, t) in tools() {
-            if tool_button(ui, p, icon, tip, tool.tool == t) && tool.tool != t {
+            if tool_button(ui, p, icon, tip, width, tool.tool == t) && tool.tool != t {
                 tool.set_tool(t);
             }
         }
@@ -135,195 +136,54 @@ pub fn grab_panel(ui: &mut egui::Ui, _p: &Palette, tool: &mut BuildTool, mods: M
     }
 }
 
-/// Edit tool: manipulators radio, options, part arrows, link, grid mode.
-pub fn edit_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings, mods: Mods) {
-    let mode = tool.effective_mode(mods);
-    ui.columns(2, |cols| {
-        let ui = &mut cols[0];
-        ui.spacing_mut().item_spacing.y = 2.0;
-        for (m, t) in [
-            (EditMode::Move, aurora_i18n::tr!("common-move")),
-            (EditMode::Rotate, aurora_i18n::tr!("build-ui-tools-rotate-ctrl")),
-            (EditMode::Stretch, aurora_i18n::tr!("build-ui-tools-stretch-ctrl-shift")),
-            (EditMode::Face, aurora_i18n::tr!("build-ui-tools-select-face")),
-            (EditMode::Align, aurora_i18n::tr!("common-align")),
-        ] {
-            if radio(ui, mode == m, t) && tool.edit_mode != m {
-                tool.set_edit_mode(world, s, m);
-            }
-        }
-        if let Some(v) = check(ui, s.edit_linked, false, aurora_i18n::tr!("build-ui-tools-linked-edit"), true) {
-            tool.set_edit_linked(world, s, v);
-        }
-        let ui = &mut cols[1];
-        ui.spacing_mut().item_spacing.y = 2.0;
-        if let Some(v) = check(
-            ui,
-            s.scale_uniform,
-            false,
-            aurora_i18n::tr!("build-ui-tools-stretch-both-sides"),
-            true,
-        ) {
-            s.scale_uniform = v;
-        }
-        if let Some(v) = check(
-            ui,
-            s.scale_stretch_textures,
-            false,
-            aurora_i18n::tr!("build-ui-tools-stretch-textures"),
-            true,
-        ) {
-            s.scale_stretch_textures = v;
-        }
-        ui.horizontal(|ui| {
-            if let Some(v) = check(ui, s.snap, false, aurora_i18n::tr!("build-ui-tools-set"), true) {
-                s.snap = v;
-            }
-            if super::common::icon_button(
-                ui,
-                p,
-                "arrow-right",
-                aurora_i18n::tr!("build-ui-tools-ruler-options-ctrl-shift-b"),
-                true,
-            ) {
-                tool.ui.grid_options_open = !tool.ui.grid_options_open;
-            }
-        });
-        if let Some(v) = check(ui, s.actual_root, false, aurora_i18n::tr!("build-ui-tools-edit-axis-at-root"), true) {
-            s.actual_root = v;
-        }
-        if let Some(v) = check(
-            ui,
-            s.show_highlight,
-            false,
-            aurora_i18n::tr!("build-ui-tools-show-selection-highlighting"),
-            true,
-        ) {
-            s.show_highlight = v;
-        }
-        if let Some(v) = check(
-            ui,
-            s.select_probes,
-            false,
-            aurora_i18n::tr!("build-ui-tools-select-reflection-probes"),
-            true,
-        ) {
-            s.select_probes = v;
-        }
-    });
-    if let Some(v) = check(
-        ui,
-        s.follow_edit_object,
-        false,
-        aurora_i18n::tr!("build-ui-tools-follow-edit-object"),
-        true,
-    ) {
-        s.follow_edit_object = v;
-    }
-    ui.horizontal(|ui| {
-        let parts = !tool.selection.is_empty() && (s.edit_linked || tool.edit_mode == EditMode::Face);
-        if super::common::icon_button(
-            ui,
-            p,
-            "caret-left",
-            aurora_i18n::tr!("build-ui-tools-select-previous-part-or-face-ctrl"),
-            parts,
-        ) {
-            tool.select_next_part(world, s, false, mods.shift);
-        }
-        if super::common::icon_button(
-            ui,
-            p,
-            "caret-right",
-            aurora_i18n::tr!("build-ui-tools-select-next-part-or-face-ctrl"),
-            parts,
-        ) {
-            tool.select_next_part(world, s, true, mods.shift);
-        }
-        let can_link = !tool.hud_selected(world) && !s.edit_linked && tool.roots(world).len() >= 2;
-        if ui
-            .add_enabled(
-                can_link,
-                egui::Button::new(RichText::new(aurora_i18n::tr!("build-ui-tools-link")).size(12.0)),
-            )
-            .on_hover_text(aurora_i18n::tr!("build-ui-tools-link-selected-objects-ctrl-l"))
-            .clicked()
-        {
-            tool.link(world);
-        }
-        if ui
-            .add_enabled(
-                !tool.hud_selected(world) && !tool.selection.is_empty(),
-                egui::Button::new(RichText::new(aurora_i18n::tr!("build-ui-tools-unlink")).size(12.0)),
-            )
-            .on_hover_text(aurora_i18n::tr!("build-ui-tools-unlink-selected-objects-ctrl-shift-l"))
-            .clicked()
-        {
-            tool.unlink(world);
-        }
-        let items = [
-            (aurora_i18n::tr!("common-world"), 0u8),
-            (aurora_i18n::tr!("build-ui-tools-local"), 1),
-            (aurora_i18n::tr!("build-ui-tools-reference"), 2),
-        ];
-        if let Some(m) = super::common::combo(ui, "grid_mode", Some(s.grid_mode), &items, 82.0, true) {
-            s.grid_mode = m;
-            if m == 2 && tool.grid_objects.is_empty() {
-                tool.use_selection_for_grid(world, s);
-            }
-        }
-    });
-    // link number / selected faces (link_num_obj_count)
-    if let Some(info) = tool.part_info(world, s) {
-        small(ui, p, &info);
-    }
-}
-
 /// Create tool: the 15 shapes, options, tree / grass species.
 pub fn create_panel(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings) {
     ui.horizontal_top(|ui| {
-        let cell = Vec2::new(26.0, 26.0);
-        egui::Grid::new("shapes").spacing(Vec2::splat(3.0)).show(ui, |ui| {
-            for i in 0..shapes().len() + 2 {
-                let sel = s.create_shape == i && !s.copy_selection;
-                let (rect, resp) = ui.allocate_exact_size(cell, egui::Sense::click());
-                let fill = if sel {
-                    p.violet
-                } else if resp.hovered() {
-                    p.raised
-                } else {
-                    p.field
-                };
-                ui.painter().rect_filled(rect, 3.0, fill);
-                let col = if sel { Color32::WHITE } else { p.ink };
-                let name = match i {
-                    i if i < shapes().len() => {
-                        let sh = &shapes()[i];
-                        super::object::shape_preview(ui, rect.shrink(3.0), &sh.params(), sh.rotation(), col);
-                        sh.name
+        let cell = Vec2::new(30.0, 30.0);
+        egui::Grid::new("shapes")
+            .min_col_width(cell.x)
+            .spacing(Vec2::splat(3.0))
+            .show(ui, |ui| {
+                for i in 0..shapes().len() + 2 {
+                    let sel = s.create_shape == i && !s.copy_selection;
+                    let (rect, resp) = ui.allocate_exact_size(cell, egui::Sense::click());
+                    let fill = if sel {
+                        p.violet
+                    } else if resp.hovered() {
+                        p.raised
+                    } else {
+                        p.field
+                    };
+                    ui.painter().rect_filled(rect, 3.0, fill);
+                    let col = if sel { Color32::WHITE } else { p.ink };
+                    let name = match i {
+                        i if i < shapes().len() => {
+                            let sh = &shapes()[i];
+                            super::object::shape_preview(ui, rect.shrink(3.0), &sh.params(), sh.rotation(), col);
+                            sh.name
+                        }
+                        i if i == shapes().len() => {
+                            tree_icon(ui, rect.shrink(4.0), col, true);
+                            aurora_i18n::tr!("build-ui-tools-tree")
+                        }
+                        _ => {
+                            tree_icon(ui, rect.shrink(4.0), col, false);
+                            aurora_i18n::tr!("build-ui-tools-grass")
+                        }
+                    };
+                    if resp.on_hover_text(name).clicked() {
+                        // LLFloaterTools::setObjectType also unticks « Copier la sélection »
+                        s.create_shape = i;
+                        s.copy_selection = false;
                     }
-                    i if i == shapes().len() => {
-                        tree_icon(ui, rect.shrink(4.0), col, true);
-                        aurora_i18n::tr!("build-ui-tools-tree")
+                    if i % 5 == 4 {
+                        ui.end_row();
                     }
-                    _ => {
-                        tree_icon(ui, rect.shrink(4.0), col, false);
-                        aurora_i18n::tr!("build-ui-tools-grass")
-                    }
-                };
-                if resp.on_hover_text(name).clicked() {
-                    // LLFloaterTools::setObjectType also unticks « Copier la sélection »
-                    s.create_shape = i;
-                    s.copy_selection = false;
                 }
-                if i % 5 == 4 {
-                    ui.end_row();
-                }
-            }
-        });
+            });
         ui.vertical(|ui| {
             ui.spacing_mut().item_spacing.y = 2.0;
-            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
             if let Some(v) = check(ui, s.rez_under_land_group, false, aurora_i18n::tr!("rez-under-land-group"), true) {
                 s.rez_under_land_group = v;
             }
@@ -606,56 +466,6 @@ pub fn parcel_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world:
             .clicked()
         {
             tool.ui.confirm = Some(Confirm::Release);
-        }
-    });
-}
-
-/// "selection_count" / "more info label" (LLFloaterTools::refresh):
-/// linksets, land impact, prims, remaining capacity.
-pub fn selection_line(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &World) {
-    let roots = tool.roots(world).len();
-    if roots == 0 {
-        small(ui, p, aurora_i18n::tr!("build-ui-tools-nothing-selected"));
-        return;
-    }
-    let prims = tool.sel_prims(world).len();
-    let impact = tool
-        .land_impact(world)
-        .map(|v| format!("{}", v as i32))
-        .unwrap_or_else(|| "…".into());
-    small(
-        ui,
-        p,
-        &aurora_i18n::tr!(
-            "build-ui-tools-objects-selected-land-impact-prims",
-            roots = format!("{}", roots),
-            impact = impact.to_string(),
-            prims = format!("{}", prims)
-        ),
-    );
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        if let Some((_, remaining)) = tool.costs.capacity(world) {
-            small(
-                ui,
-                p,
-                &aurora_i18n::tr!("build-ui-tools-remaining-capacity", remaining = format!("{}", remaining)),
-            );
-        }
-        if ui
-            .add(
-                egui::Label::new(
-                    RichText::new(aurora_i18n::tr!("build-ui-tools-more-info"))
-                        .size(11.0)
-                        .color(p.violet_light)
-                        .underline(),
-                )
-                .sense(egui::Sense::click()),
-            )
-            .on_hover_text(aurora_i18n::tr!("build-ui-tools-selection-weight-and-land-impact"))
-            .clicked()
-        {
-            tool.ui.weights_open = !tool.ui.weights_open;
         }
     });
 }

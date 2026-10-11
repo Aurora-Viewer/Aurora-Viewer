@@ -36,6 +36,7 @@ impl Permissions {
         )
     }
 
+    #[cfg(test)]
     pub fn indicators(self, p: &Palette) -> LayoutJob {
         let mut job = LayoutJob::default();
         self.append_to(&mut job, p);
@@ -113,17 +114,12 @@ impl Permissions {
         text
     }
 
-    /// One response keeps double-click and context-menu actions on the whole
-    /// row; the separate right atom leaves the indicators visible on long names.
-    pub fn row(self, ui: &mut egui::Ui, p: &Palette, name: &str) -> egui::Response {
-        ui.add_sized(
-            [ui.available_width(), 20.0],
-            egui::Button::new("")
-                .frame(false)
-                .left_text(egui::RichText::new(name).size(12.0).color(p.ink))
-                .right_text(self.indicators(p))
-                .truncate(),
-        )
+    /// Same suffix, hover and selection as the user's inventory. Long names
+    /// enlarge the scrollable list rather than the containing window.
+    pub fn row(self, ui: &mut egui::Ui, p: &Palette, name: &str, selected: bool) -> egui::Response {
+        let mut label = super::super::widgets::name_with_suffix(name, "", FontId::proportional(13.0), p.ink);
+        self.append_suffix(&mut label, p);
+        super::super::widgets::inventory_item_label(ui, label, selected, egui::Sense::click(), None)
     }
 }
 

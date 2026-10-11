@@ -60,7 +60,7 @@ pub(super) fn open(inv: &Inventory, id: Uuid, st: &mut InventoryUi, prefs: &Inve
         actions.push(InvAction::Preview(original));
     }
 }
-fn new_menu(
+pub(super) fn new_menu(
     ui: &mut egui::Ui,
     p: &Palette,
     id: Uuid,

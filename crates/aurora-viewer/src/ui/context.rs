@@ -573,7 +573,7 @@ pub fn delete_warning(flags: &[u32]) -> Option<String> {
 pub fn delete_confirm(ctx: &egui::Context, p: &Palette, text: &str) -> Option<bool> {
     use egui::{Color32, CornerRadius, RichText};
     let mut answer = None;
-    let modal = egui::Modal::new(egui::Id::new("object_delete_confirm")).show(ctx, |ui| {
+    let modal = crate::ui::widgets::Modal::new(egui::Id::new("object_delete_confirm")).show(ctx, |ui| {
         ui.set_width(340.0);
         ui.label(
             RichText::new(aurora_i18n::tr!("ui-context-delete-object"))
@@ -609,7 +609,7 @@ pub fn delete_confirm(ctx: &egui::Context, p: &Palette, text: &str) -> Option<bo
 pub fn place_teleport_confirm(ctx: &egui::Context, p: &Palette, region: &str) -> Option<bool> {
     use egui::RichText;
     let mut answer = None;
-    let modal = egui::Modal::new(egui::Id::new("place_teleport_confirm")).show(ctx, |ui| {
+    let modal = crate::ui::widgets::Modal::new(egui::Id::new("place_teleport_confirm")).show(ctx, |ui| {
         ui.set_width(340.0);
         ui.label(
             RichText::new(aurora_i18n::tr!("common-teleport-2"))
@@ -650,7 +650,7 @@ pub fn place_teleport_confirm(ctx: &egui::Context, p: &Palette, region: &str) ->
 pub fn external_link_confirm(ctx: &egui::Context, p: &Palette, url: &str, dont_warn: &mut bool, danger: Option<&str>) -> Option<bool> {
     use egui::RichText;
     let mut answer = None;
-    let modal = egui::Modal::new(egui::Id::new("external_link_confirm")).show(ctx, |ui| {
+    let modal = crate::ui::widgets::Modal::new(egui::Id::new("external_link_confirm")).show(ctx, |ui| {
         ui.set_width(380.0);
         let (icon, col, title) = match danger {
             Some(_) => ("x-circle-fill", p.danger, aurora_i18n::tr!("ui-context-dangerous-link")),

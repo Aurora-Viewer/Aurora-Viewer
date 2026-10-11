@@ -297,7 +297,7 @@ après le relâchement ; la caméra doit alors être arrêtée. Combiner avec
 cette variable pour vérifier le focus initial sur l’avatar. Les HUDs et le
 suivi activé conservent leur comportement.
 
-**`AURORA_DEMO_BUILD_TAB=general|object|features|texture[:pbr|bp|media]|contents`**
+**`AURORA_DEMO_BUILD_TAB=general|object|transform|shape|features|texture[:pbr|bp|media]|contents`**
 — onglet de la fenêtre de construction affiché par le script ; `+weights`,
 `+grid`, `+media` ouvrent aussi ces fenêtres.
 
@@ -544,6 +544,17 @@ grille.
 
 ### Détails
 
+- **Parcours de la refonte des fenêtres** : ouvrir l'inventaire et sélectionner
+  un dossier dans l'arborescence, puis un élément ; vérifier recherche, permissions,
+  menu contextuel et actions en bas. Agrandir et rétrécir la fenêtre :
+  l'arborescence reste unique et occupe toute la largeur. Dans Apparence, changer de galerie / liste
+  / portés, sélectionner une tenue et essayer Porter / Ajouter hors ligne.
+  Dans « À propos du terrain », parcourir les sections en gardant la synthèse
+  visible. Ouvrir ensuite Conversations, Personnes, Lieux, un profil,
+  Préférences et Environnement ; déplacer, redimensionner, replier et restaurer
+  les fenêtres. La construction garde sa largeur dans ses six sections, dont
+  Forme pour les paramètres avancés ; les listes longues défilent dans le corps,
+  les actions restent visibles. Les confirmations modales gardent le fond flouté.
 - **`AURORA_DEMO_WINDOWS=1|restore|drag`**, avec `AURORA_DEMO_INVENTORY=1` :
   double-clic sur le titre réel de l’inventaire aux images 660–665 ; `1`
   garde la barre repliée, `restore` la développe aux images 1000–1005,
@@ -758,6 +769,10 @@ hors ligne ; les fichiers et photos chargés en démo restent hors ligne.
   `notransfer`, `link` : le menu de l'élément choisi, ou ses propriétés.
   `clothes`, `body`, `settings`, `uploads` sont des alias de `folder`, à
   combiner avec `AURORA_DEMO_POINTER` pour survoler les sous-menus.
+- `received`, `received-filtered`, `received-missing` : onglet Achats reçus,
+  recherche limitée à sa boîte Marketplace et état sans dossier reçu. La liste
+  et les boutons Réduire / Développer gardent la même présentation ; aucun
+  dossier personnel ne doit apparaître dans cet onglet.
 - `animation-open`, `animation-properties`, `image`, `image-photo`,
   `image-picker` : les cinq panneaux de référence.
 - `note-open`, `note-new`, `note-readonly` : éditeur d’une note existante,
@@ -827,7 +842,10 @@ Les indicateurs sont également visibles dans le contenu d'un objet :
 `AURORA_DEMO_BUILD_TAB=contents` pour l'onglet de construction. Les contenus
 de démo proposent des droits complets, sans modification ou sans copie ;
 le prochain propriétaire n'a que le transfert. Vérifier aussi le double-clic
-sur une note et la recherche « pas de copie » dans l'onglet Contenu.
+sur une note et la recherche « pas de copie » dans l'onglet Contenu. Survoler et
+sélectionner un item : même ligne, mêmes icônes et permissions après le nom que
+dans l'inventaire utilisateur ; le menu contextuel et l'ouverture des documents
+restent disponibles. Les noms longs défilent horizontalement dans la liste.
 
 Pour valider les notecards sur la grille, ouvrir une note existante puis une
 note neuve, modifier leur texte, enregistrer et fermer / rouvrir. Refaire la

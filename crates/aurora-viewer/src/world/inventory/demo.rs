@@ -125,6 +125,58 @@ pub fn seed(inv: &mut Inventory, agent: Uuid) {
     inv.sort_all();
 }
 
+/// A Marketplace inbox separate from the normal inventory, for tab validation.
+pub fn seed_received(inv: &mut Inventory, agent: Uuid) {
+    let inbox = Uuid::from_u128(8_300_000);
+    let purchase = Uuid::from_u128(8_300_001);
+    for (id, parent, name, kind) in [
+        (inbox, inv.root, aurora_i18n::tr!("ui-inventory-received-purchases"), 50),
+        (purchase, inbox, aurora_i18n::tr!("common-demo-object"), -1),
+    ] {
+        inv.folders.insert(
+            id,
+            Folder {
+                info: InvFolder {
+                    id,
+                    parent,
+                    name: name.into(),
+                    type_default: kind,
+                    version: 1,
+                    ..Default::default()
+                },
+                children: Vec::new(),
+                items: Vec::new(),
+                state: FetchState::Fetched,
+                library: false,
+            },
+        );
+        if let Some(folder) = inv.folders.get_mut(&parent) {
+            folder.children.push(id);
+        }
+    }
+    inv.add_items(
+        [
+            (8_300_002, 6, 6, aurora_i18n::tr!("common-demo-object")),
+            (8_300_003, 7, 7, aurora_i18n::tr!("world-inventory-demo-instructions")),
+        ]
+        .into_iter()
+        .map(|(id, asset_type, inv_type, name)| InvItem {
+            id: Uuid::from_u128(id),
+            parent: purchase,
+            asset_id: Uuid::from_u128(id + 100),
+            name: name.into(),
+            asset_type,
+            inv_type,
+            owner: agent,
+            creator: agent,
+            base_mask: super::actions::COPY | super::actions::MODIFY | super::actions::TRANSFER,
+            owner_mask: super::actions::COPY | super::actions::MODIFY | super::actions::TRANSFER,
+            ..Default::default()
+        })
+        .collect(),
+    );
+}
+
 pub fn target(view: &str) -> Option<Uuid> {
     Some(Uuid::from_u128(match view {
         "folder"

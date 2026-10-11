@@ -3673,3 +3673,102 @@ script-debug-all = Tous les objets
 script-debug-clear = Effacer
 
 script-help-forward = Suivant
+
+# Compact build workspace
+build-compact-title = Construire
+build-compact-help = Ctrl+B : ouvrir / fermer ; Ctrl+1 à 5 : caméra, déplacer, modifier, créer, terrain.
+build-compact-transform = Transformer
+build-compact-shape = Forme
+build-compact-materials = Matériaux
+build-compact-features = Attributs
+build-compact-rights = Droits
+build-compact-contents = Contenu
+build-compact-multiple = Sélection multiple
+build-compact-selection = Objet sélectionné
+build-compact-select-hint = Clique sur un objet pour commencer.
+build-compact-waiting = Propriétés en cours de chargement…
+build-compact-editable = Modifiable
+build-compact-readonly = Lecture seule
+build-compact-counts = { $objects ->
+    [one] { $objects } objet
+   *[other] { $objects } objets
+    } · { $prims ->
+    [one] { $prims } prim
+   *[other] { $prims } prims
+    }
+build-compact-impact = Impact { $impact }
+build-compact-move = Bouger
+build-compact-rotate = Pivoter (Ctrl)
+build-compact-stretch = Étirer (Ctrl+Maj)
+build-compact-face = Choisir une face
+build-compact-align = Aligner (Maj : empiler)
+build-compact-world = Monde
+build-compact-local = Local
+build-compact-reference = Référence
+build-compact-grid-options = Options de la grille (Ctrl+Maj+B)
+build-compact-linked = Modifier les parties liées
+build-compact-snap = Accrocher à la grille
+build-compact-previous = Partie / face précédente (Ctrl+,)
+build-compact-next = Partie / face suivante (Ctrl+.)
+build-compact-options = Options de manipulation
+build-compact-both-sides = Étirer les deux côtés
+build-compact-stretch-textures = Étirer les textures
+build-compact-root-axis = Axe d’édition à la racine
+build-compact-highlight = Afficher le surlignage
+build-compact-probes = Sélectionner les sondes de réflexion
+build-compact-undo = Annuler (Ctrl+Z)
+build-compact-redo = Rétablir (Ctrl+Y)
+build-compact-duplicate = Dupliquer
+build-compact-link = Lier (Ctrl+L)
+build-compact-unlink = Délier (Ctrl+Maj+L)
+build-compact-collapse = Replier / déplier les rubriques
+build-compact-paste-system = Coller depuis le presse-papiers système
+build-compact-paste-vector = Coller le vecteur copié
+build-compact-copy-vector = Copier le vecteur
+build-compact-camera = Caméra
+build-compact-move-tool = Déplacer
+build-compact-edit = Modifier
+build-compact-create = Créer
+build-compact-land = Terrain
+build-compact-capacity = Capacité restante : { $remaining }. Cliquer pour voir les poids détaillés.
+build-compact-empty = Sélectionner un objet
+build-compact-selection-edit = Édition de la sélection
+build-compact-object-kind = Objet entier · { $kind }
+build-compact-prim = prim
+build-compact-mesh = mesh
+build-compact-object-count = { $count ->
+    [one] { $count } objet
+   *[other] { $count } objets
+    }
+build-compact-prim-count = { $count ->
+    [one] { $count } prim
+   *[other] { $count } prims
+    }
+build-compact-position = Position · m
+build-compact-size = Taille · m
+build-compact-rotation = Rotation · °
+build-compact-selection-snap = Sélection et accrochage
+build-compact-grid-unit = { $unit } m
+build-compact-copy-hint = Maj + glisser : copier
+build-compact-create-hint = Cliquer : créer
+build-compact-land-hint = Maintenir : peindre
+build-compact-drag-hint = Glisser dans le monde
+
+# Compact build inspector, C3
+build-c3-remaining = { $remaining } disponibles
+build-c3-emission-options = Émission et options
+build-c3-maps-tints = Cartes et teintes
+build-c3-texture-transform = Transformation des textures
+build-c3-material-assigned = Matériau PBR appliqué
+build-c3-choose = Choisir…
+
+workspace-inventory-selected = { $count } sélectionné(s)
+
+workspace-land-identity = Identité et propriété
+workspace-land-sale = Vente et informations
+workspace-land-actions = Actions sur la parcelle
+workspace-outfit-selection = Sélectionnez une tenue
+workspace-outfit-items = { $count } éléments dans cette tenue
+
+ui-inventory-received-purchases = Achats reçus
+ui-inventory-no-received-purchases = Aucun achat reçu pour le moment.

@@ -4,6 +4,9 @@ struct Fixture {
     ctx: egui::Context,
     frame: usize,
     fixed: bool,
+    framed: bool,
+    auto_height: bool,
+    body_height: f32,
     open: bool,
     text: String,
     bodies: usize,
@@ -11,10 +14,17 @@ struct Fixture {
 
 impl Fixture {
     fn new(fixed: bool) -> Self {
+        Self::with_header(fixed, false)
+    }
+
+    fn with_header(fixed: bool, framed: bool) -> Self {
         let mut fixture = Self {
             ctx: egui::Context::default(),
             frame: 0,
             fixed,
+            framed,
+            auto_height: false,
+            body_height: 180.0,
             open: true,
             text: "kept contents".into(),
             bodies: 0,
@@ -46,10 +56,16 @@ impl Fixture {
                 if self.fixed {
                     floater = floater.fixed();
                 }
+                if self.framed {
+                    floater = floater.framed_header("cube");
+                }
+                if self.auto_height {
+                    floater = floater.auto_height();
+                }
                 floater.show(ui.ctx(), &p, &mut self.open, |ui| {
                     self.bodies += 1;
                     ui.text_edit_singleline(&mut self.text);
-                    ui.set_min_height(180.0);
+                    ui.set_min_height(self.body_height);
                 });
             },
         );
@@ -82,6 +98,36 @@ impl Fixture {
             .rect
             .center()
     }
+}
+
+#[test]
+fn inspector_height_follows_content_after_growth_and_title_restoration() {
+    let mut f = Fixture::with_header(false, true);
+    f.auto_height = true;
+    f.body_height = 80.0;
+    for _ in 0..8 {
+        f.show(vec![]);
+    }
+    let short = f.show(vec![]);
+    f.body_height = 340.0;
+    for _ in 0..8 {
+        f.show(vec![]);
+    }
+    let tall = f.show(vec![]);
+    assert!(tall.height() > short.height() + 250.0, "{short:?} -> {tall:?}");
+    assert!((tall.width() - short.width()).abs() < 1.0);
+    let collapsed = f.double_click(f.title());
+    assert!(collapsed.height() < 50.0);
+    f.body_height = 80.0;
+    for _ in 0..40 {
+        f.show(vec![]);
+    }
+    f.double_click(f.title());
+    for _ in 0..8 {
+        f.show(vec![]);
+    }
+    let restored = f.show(vec![]);
+    assert!((restored.size() - short.size()).length() < 1.0, "{short:?} -> {restored:?}");
 }
 
 #[test]
@@ -130,6 +176,24 @@ fn minimized_title_can_be_dragged_and_does_not_expand_on_single_click() {
     let restored = f.double_click(f.title());
     assert!((restored.size() - expanded.size()).length() < 1.0);
     assert!((restored.min - moved.min).length() < 1.0);
+}
+
+#[test]
+fn inspector_header_restores_geometry_and_preserves_hidden_contents() {
+    let mut f = Fixture::with_header(false, true);
+    let expanded = f.show(vec![]);
+    let collapsed = f.double_click(f.title());
+    assert!(collapsed.height() >= 40.0 && collapsed.height() < 50.0, "{collapsed:?}");
+    assert!((collapsed.width() - expanded.width()).abs() < 1.0);
+    let bodies = f.bodies;
+    for _ in 0..40 {
+        f.show(vec![]);
+    }
+    assert_eq!(f.bodies, bodies);
+    let restored = f.double_click(f.title());
+    assert!((restored.size() - expanded.size()).length() < 1.0, "{expanded:?} -> {restored:?}");
+    assert_eq!(f.text, "kept contents");
+    assert!(f.open);
 }
 
 #[test]

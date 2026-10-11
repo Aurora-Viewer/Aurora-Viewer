@@ -91,7 +91,7 @@ impl EnvironmentUi {
             "environment_selector",
             aurora_i18n::tr!("common-environment"),
             pos,
-            Vec2::new(370.0, 230.0),
+            Vec2::new(440.0, 300.0),
         )
         .fixed()
         .help(aurora_i18n::tr!("ui-environment-choose-a-sky-water-or-day-cycle-from-your"))
@@ -118,22 +118,26 @@ impl EnvironmentUi {
                 ),
             ];
             for (kind, label, tip, shown) in rows {
-                ui.horizontal(|ui| {
-                    let (rect, resp) = ui.allocate_exact_size(Vec2::new(LABEL_W, 20.0), egui::Sense::hover());
-                    ui.painter().text(
-                        rect.left_center(),
-                        egui::Align2::LEFT_CENTER,
-                        label,
-                        egui::FontId::proportional(12.5),
-                        p.ink,
-                    );
-                    resp.on_hover_text(tip);
-                    if let Some(a) = self.list_row(ui, p, kind, shown) {
-                        out.push(a);
-                    }
+                widgets::surface(ui, p, |ui| {
+                    ui.set_min_width(ui.available_width());
+                    ui.horizontal(|ui| {
+                        let (rect, resp) = ui.allocate_exact_size(Vec2::new(LABEL_W, 20.0), egui::Sense::hover());
+                        ui.painter().text(
+                            rect.left_center(),
+                            egui::Align2::LEFT_CENTER,
+                            label,
+                            egui::FontId::proportional(12.5),
+                            p.ink,
+                        );
+                        resp.on_hover_text(tip);
+                        if let Some(a) = self.list_row(ui, p, kind, shown) {
+                            out.push(a);
+                        }
+                    });
                 });
             }
-            ui.add_space(2.0);
+            ui.add_space(6.0);
+            ui.separator();
             ui.horizontal(|ui| {
                 ui.add_space(LABEL_W + 4.0);
                 if widgets::flat_button(ui, p, aurora_i18n::tr!("common-personal-lighting"))
@@ -277,7 +281,7 @@ impl EnvironmentUi {
             "personal_lighting",
             aurora_i18n::tr!("ui-environment-personal-lighting"),
             pos,
-            Vec2::new(360.0, 560.0),
+            Vec2::new(400.0, 560.0),
         )
         .fixed()
         .help(aurora_i18n::tr!("ui-environment-adjusts-the-sky-for-your-view-only-other-people"))
@@ -447,7 +451,7 @@ impl EnvironmentUi {
 
 fn section(ui: &mut egui::Ui, p: &Palette, title: &str) {
     ui.add_space(2.0);
-    ui.label(RichText::new(title.to_uppercase()).size(11.0).strong().color(p.violet_light));
+    ui.label(RichText::new(title).size(13.0).strong().color(p.ink));
 }
 
 fn slider(ui: &mut egui::Ui, p: &Palette, label: &str, v: &mut f32, range: std::ops::RangeInclusive<f32>) -> egui::Response {

@@ -843,6 +843,7 @@ pub(crate) struct Backend {
     surface_srgb: bool,
     egui: egui_wgpu::Renderer,
     ui_blur: Option<crate::ui_blur::Blur>,
+    ui_glass: Option<crate::ui_glass::Glass>,
     frame_layout: wgpu::BindGroupLayout,
     records_layout: wgpu::BindGroupLayout,
     /// Layout of the scene's texture pages (textures.rs), for the pipelines.
@@ -1952,6 +1953,7 @@ impl Backend {
             surface_srgb,
             egui,
             ui_blur: None,
+            ui_glass: None,
             frame_layout,
             records_layout,
             tex_layout,
@@ -4532,6 +4534,32 @@ impl Backend {
         // ---- egui
         let mut extra_cmds = Vec::new();
         if let Some(ui) = &mut ui {
+            let size = [self.config.width, self.config.height];
+            let glass_supported = self.ui_blur.is_some() || self.config.usage.contains(wgpu::TextureUsages::COPY_SRC);
+            if glass_supported && crate::ui_glass::requested(&ui.primitives) {
+                if !self.ui_glass.as_ref().is_some_and(|glass| glass.matches(size, ui.pixels_per_point)) {
+                    if let Some(old) = self.ui_glass.take() {
+                        self.egui.free_texture(&old.texture);
+                    }
+                    self.ui_glass = Some(crate::ui_glass::Glass::new(
+                        &self.device,
+                        &mut self.egui,
+                        self.config.format,
+                        size,
+                        ui.pixels_per_point,
+                    ));
+                }
+                if let Some(glass) = &self.ui_glass {
+                    let scene = self.ui_blur.as_ref().map_or(&surface_tex.texture, |blur| &blur.source);
+                    glass.encode(&mut encoder, scene);
+                    glass.resolve(&mut ui.primitives, ui.pixels_per_point);
+                }
+            } else {
+                crate::ui_glass::skip(&mut ui.primitives);
+                if let Some(old) = self.ui_glass.take() {
+                    self.egui.free_texture(&old.texture);
+                }
+            }
             let sd = egui_wgpu::ScreenDescriptor {
                 size_in_pixels: [self.config.width, self.config.height],
                 pixels_per_point: ui.pixels_per_point,
