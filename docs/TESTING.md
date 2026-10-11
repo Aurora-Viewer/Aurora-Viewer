@@ -623,17 +623,16 @@ hors ligne ; les fichiers et photos chargés en démo restent hors ligne.
   et un objet : leurs icônes et noms sont affichés dans le texte ; les pièces jointes
   encore référencées sont conservées lors de l’enregistrement. Capture après
   l’image 720 ; le refus doit garder le brouillon et permettre une nouvelle
-  tentative. Le clic gauche comme le clic droit propose Ouvrir et Copier
-  dans l’inventaire. Ouvrir une image affiche son aperçu, un repère ouvre son
-  lieu, un son joue localement ; les autres types proposent une copie dans
-  l’inventaire.
+  tentative. Un clic gauche ouvre directement l’élément ; le clic droit
+  propose Ouvrir et Copier dans l’inventaire. Une image affiche son aperçu,
+  un repère ouvre son lieu, un son joue localement ; les autres types proposent
+  une copie dans l’inventaire.
   Glisser un élément de l’inventaire dans le texte l’insère à cet endroit
   si le prochain propriétaire dispose de copie / modification / transfert.
 - `note-drop` : dépose une texture à l’image 651 puis sauvegarde à l’image 670.
-  `note-menu-left`, `note-menu-right` : ouvre le même menu sur la texture
-  par clic gauche ou droit à l’image 651.
-  `note-image`, `note-landmark`, `note-copy` : clique respectivement
-  l’image, le repère ou l’objet puis choisit Ouvrir à l’image 661 ; `note-copy`
+  `note-menu-right` : ouvre le menu sur la texture par clic droit à l’image 651.
+  `note-image`, `note-landmark`, `note-copy` : ouvre respectivement
+  l’image, le repère ou l’objet par un seul clic gauche à l’image 651 ; `note-copy`
   confirme la copie à l’image 671. `note-task-embedded` permet
   de tester les mêmes pièces jointes dans une note d’objet. Capturer après
   l’image 740. Tout élément ajouté doit être enregistré avant son ouverture.

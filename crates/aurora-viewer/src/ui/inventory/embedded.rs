@@ -185,11 +185,14 @@ pub(super) fn editor(
                 id.with(("attachment", index)),
                 egui::Sense::click(),
             );
+            if response.clicked() {
+                result.open = Some(marker);
+            }
             response
                 .clone()
                 .on_hover_cursor(egui::CursorIcon::PointingHand)
                 .on_hover_text(format!("{}\n{}", attachment.item.name, attachment.item.desc));
-            super::super::menu::click_menu(&response, p, |ui| {
+            super::super::menu::context_menu(&response, p, |ui| {
                 let open = ui.scope(|ui| super::super::menu::item(ui, p, "folder-open", aurora_i18n::tr!("common-open")));
                 ui.ctx()
                     .data_mut(|data| data.insert_temp(id.with(("demo_attachment_open", marker)), open.response.rect));
@@ -304,74 +307,111 @@ mod tests {
         }
     }
 
+    fn click(pos: egui::Pos2, button: egui::PointerButton, pressed: bool) -> Vec<egui::Event> {
+        vec![
+            egui::Event::PointerMoved(pos),
+            egui::Event::PointerButton {
+                pos,
+                button,
+                pressed,
+                modifiers: Default::default(),
+            },
+        ]
+    }
+
     #[test]
-    fn either_mouse_button_opens_the_same_attachment_actions_in_editable_and_read_only_notes() {
+    fn one_left_click_opens_the_attachment_directly_in_editable_and_read_only_notes() {
         for editable in [true, false] {
-            for button in [egui::PointerButton::Primary, egui::PointerButton::Secondary] {
-                for action in ["open", "copy"] {
-                    let ctx = egui::Context::default();
-                    let (mut source, mut text) = fixture();
-                    let original = text.clone();
-                    for _ in 0..5 {
-                        frame(&ctx, &mut source, &mut text, editable, vec![]);
-                    }
-                    let id = egui::Id::new("note");
-                    let marker = '\u{100000}';
-                    let attachment = ctx
-                        .data_mut(|data| data.get_temp::<egui::Rect>(id.with(("demo_attachment", marker))))
-                        .expect("image");
-                    let click = |pos, button, pressed| {
-                        vec![
-                            egui::Event::PointerMoved(pos),
-                            egui::Event::PointerButton {
-                                pos,
-                                button,
-                                pressed,
-                                modifiers: Default::default(),
-                            },
-                        ]
-                    };
-                    frame(&ctx, &mut source, &mut text, editable, click(attachment.center(), button, true));
-                    let result = frame(&ctx, &mut source, &mut text, editable, click(attachment.center(), button, false));
-                    assert!(egui::Popup::is_any_open(&ctx), "{button:?} must open the menu");
-                    assert!(
-                        result.open.is_none() && result.copy.is_none(),
-                        "opening the menu must not execute an action"
-                    );
-                    for _ in 0..2 {
-                        frame(&ctx, &mut source, &mut text, editable, vec![]);
-                    }
-                    for entry in ["demo_attachment_open", "demo_attachment_copy"] {
-                        assert!(ctx.data_mut(|data| data.get_temp::<egui::Rect>(id.with((entry, marker)))).is_some());
-                    }
-                    let key = if action == "open" {
-                        "demo_attachment_open"
-                    } else {
-                        "demo_attachment_copy"
-                    };
-                    let row = ctx
-                        .data_mut(|data| data.get_temp::<egui::Rect>(id.with((key, marker))))
-                        .expect("menu action");
-                    frame(
-                        &ctx,
-                        &mut source,
-                        &mut text,
-                        editable,
-                        click(row.center(), egui::PointerButton::Primary, true),
-                    );
-                    let result = frame(
-                        &ctx,
-                        &mut source,
-                        &mut text,
-                        editable,
-                        click(row.center(), egui::PointerButton::Primary, false),
-                    );
-                    assert_eq!(result.open, (action == "open").then_some(marker));
-                    assert_eq!(result.copy, (action == "copy").then_some(marker));
-                    assert!(!egui::Popup::is_any_open(&ctx), "selecting an action must close the menu");
-                    assert_eq!(text, original);
-                    assert!(!result.changed);
+            for marker in ['\u{100000}', '\u{100001}', '\u{100002}'] {
+                let ctx = egui::Context::default();
+                let (mut source, mut text) = fixture();
+                let original = text.clone();
+                for _ in 0..5 {
+                    frame(&ctx, &mut source, &mut text, editable, vec![]);
                 }
+                let attachment = ctx
+                    .data_mut(|data| data.get_temp::<egui::Rect>(egui::Id::new("note").with(("demo_attachment", marker))))
+                    .expect("attachment");
+                let pressed = frame(
+                    &ctx,
+                    &mut source,
+                    &mut text,
+                    editable,
+                    click(attachment.center(), egui::PointerButton::Primary, true),
+                );
+                assert!(pressed.open.is_none());
+                let released = frame(
+                    &ctx,
+                    &mut source,
+                    &mut text,
+                    editable,
+                    click(attachment.center(), egui::PointerButton::Primary, false),
+                );
+                assert_eq!(released.open, Some(marker));
+                assert!(released.copy.is_none());
+                assert!(!egui::Popup::is_any_open(&ctx), "left click must open directly without a menu");
+                assert_eq!(text, original);
+                assert!(!released.changed);
+            }
+        }
+    }
+
+    #[test]
+    fn right_click_keeps_open_and_copy_actions_in_editable_and_read_only_notes() {
+        for editable in [true, false] {
+            let button = egui::PointerButton::Secondary;
+            for action in ["open", "copy"] {
+                let ctx = egui::Context::default();
+                let (mut source, mut text) = fixture();
+                let original = text.clone();
+                for _ in 0..5 {
+                    frame(&ctx, &mut source, &mut text, editable, vec![]);
+                }
+                let id = egui::Id::new("note");
+                let marker = '\u{100000}';
+                let attachment = ctx
+                    .data_mut(|data| data.get_temp::<egui::Rect>(id.with(("demo_attachment", marker))))
+                    .expect("image");
+                frame(&ctx, &mut source, &mut text, editable, click(attachment.center(), button, true));
+                let result = frame(&ctx, &mut source, &mut text, editable, click(attachment.center(), button, false));
+                assert!(egui::Popup::is_any_open(&ctx), "{button:?} must open the menu");
+                assert!(
+                    result.open.is_none() && result.copy.is_none(),
+                    "opening the menu must not execute an action"
+                );
+                for _ in 0..2 {
+                    frame(&ctx, &mut source, &mut text, editable, vec![]);
+                }
+                for entry in ["demo_attachment_open", "demo_attachment_copy"] {
+                    assert!(ctx.data_mut(|data| data.get_temp::<egui::Rect>(id.with((entry, marker)))).is_some());
+                }
+                let key = if action == "open" {
+                    "demo_attachment_open"
+                } else {
+                    "demo_attachment_copy"
+                };
+                let row = ctx
+                    .data_mut(|data| data.get_temp::<egui::Rect>(id.with((key, marker))))
+                    .expect("menu action");
+                frame(
+                    &ctx,
+                    &mut source,
+                    &mut text,
+                    editable,
+                    click(row.center(), egui::PointerButton::Primary, true),
+                );
+                let result = frame(
+                    &ctx,
+                    &mut source,
+                    &mut text,
+                    editable,
+                    click(row.center(), egui::PointerButton::Primary, false),
+                );
+                assert_eq!(result.open, (action == "open").then_some(marker));
+                assert_eq!(result.copy, (action == "copy").then_some(marker));
+                assert!(!egui::Popup::is_any_open(&ctx), "selecting an action must close the menu");
+                assert_eq!(text, original);
+                assert!(!result.changed);
             }
         }
     }

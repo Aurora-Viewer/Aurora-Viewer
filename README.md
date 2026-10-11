@@ -283,8 +283,9 @@ Le bouton **AO** de la barre du bas ouvre la gestion de l’Animation Overrider 
 
 Les notes affichent les images, repères et autres éléments intégrés avec leur
 icône et leur nom dans le texte. Glisser un élément depuis l’inventaire pour
-l’insérer ; un clic gauche ou droit ouvre le même menu pour l’ouvrir ou le
-copier dans l’inventaire. Enregistrer (Ctrl+S) conserve leurs permissions.
+l’insérer ; un clic gauche l’ouvre directement, et le clic droit propose
+Ouvrir ou Copier dans l’inventaire. Enregistrer (Ctrl+S) conserve leurs
+permissions.
 Les scénarios de démo sont décrits dans
 [le guide de test](docs/TESTING.md#interface).
 

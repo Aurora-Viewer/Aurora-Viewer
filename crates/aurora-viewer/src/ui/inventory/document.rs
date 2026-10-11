@@ -21,7 +21,6 @@ pub fn document_demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryU
             | "note-image"
             | "note-landmark"
             | "note-copy"
-            | "note-menu-left"
             | "note-menu-right"
     ) {
         return Vec::new();
@@ -51,10 +50,7 @@ pub fn document_demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryU
             ctx.memory_mut(|m| m.request_focus(editor));
         }
     }
-    if matches!(
-        mode.as_str(),
-        "note-image" | "note-landmark" | "note-copy" | "note-menu-left" | "note-menu-right"
-    ) {
+    if matches!(mode.as_str(), "note-image" | "note-landmark" | "note-copy" | "note-menu-right") {
         if mode == "note-copy"
             && matches!(frame, 670 | 671)
             && let Some(rect) = ctx.data_mut(|data| data.get_temp::<egui::Rect>(egui::Id::new(("notecard_copy_confirm", st.ui_id))))
@@ -69,20 +65,17 @@ pub fn document_demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryU
                 },
             ];
         }
-        let marker = if matches!(mode.as_str(), "note-image" | "note-menu-left" | "note-menu-right") {
+        let marker = if matches!(mode.as_str(), "note-image" | "note-menu-right") {
             '\u{100000}'
         } else if mode == "note-landmark" {
             '\u{100001}'
         } else {
             '\u{100002}'
         };
-        let opening = matches!(frame, 650 | 651);
-        let selecting = matches!(frame, 660 | 661) && !matches!(mode.as_str(), "note-menu-left" | "note-menu-right");
-        if !opening && !selecting {
+        if !matches!(frame, 650 | 651) {
             return Vec::new();
         }
-        let key = if opening { "demo_attachment" } else { "demo_attachment_open" };
-        let Some(rect) = ctx.data_mut(|data| data.get_temp::<egui::Rect>(editor.with((key, marker)))) else {
+        let Some(rect) = ctx.data_mut(|data| data.get_temp::<egui::Rect>(editor.with(("demo_attachment", marker)))) else {
             return Vec::new();
         };
         let pos = rect.center();
