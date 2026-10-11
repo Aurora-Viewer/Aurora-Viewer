@@ -112,6 +112,10 @@ pub struct Drag {
     pub pivot: Vec3,
     grid: Grid,
     pub start_cursor: (f32, f32),
+    /// Stable mouse projection while the camera follows the edited object.
+    camera: Cam,
+    edge_pan: super::edge_pan::EdgePan,
+    edge_pan_blocked: bool,
     started: bool,
     linked: bool,
     // translate
@@ -208,6 +212,25 @@ impl Manip {
         self.drag.as_ref().is_some_and(|d| d.started)
     }
 
+    pub fn camera_pan(&mut self, s: &BuildSettings, cam: &Cam, cursor: (f32, f32), dt: f32) -> Vec3 {
+        let Some(d) = self.drag.as_mut() else { return Vec3::ZERO };
+        let motion = match d.part {
+            Part::Arrow(_) => super::edge_pan::Motion::Axis(d.axis),
+            Part::Plane(_) => super::edge_pan::Motion::Plane(d.normal),
+            _ => return Vec3::ZERO,
+        };
+        let active = d.started
+            && d.mode == EditMode::Move
+            && !s.follow_edit_object
+            && !d.edge_pan_blocked
+            && d.delta.length() < MAX_DRAG_DISTANCE * 0.95;
+        let pan = d.edge_pan.update(cam, cursor, d.pivot + d.delta, motion, dt, active);
+        // The solver runs with the translated camera in this same frame.
+        // Predict its matching object pose when projecting the grab offset.
+        d.delta += pan;
+        pan
+    }
+
     pub fn cancel(&mut self) {
         self.drag = None;
         self.hover = None;
@@ -282,7 +305,14 @@ impl Manip {
         out: &mut Vec<BuildCmd>,
     ) {
         if let Some(mut d) = self.drag.take() {
-            drag_update(&mut d, world, s, cam, cursor, mods, now, out);
+            // Following the object must not feed camera motion back into a
+            // held cursor, continuously moving/stretching it without input.
+            let drag_cam = if s.follow_edit_object && cam.hud.is_none() {
+                d.camera
+            } else {
+                *cam
+            };
+            drag_update(&mut d, world, s, &drag_cam, cursor, mods, now, out);
             self.animate(Some(d.part));
             self.drag = Some(d);
             return;
@@ -328,6 +358,9 @@ impl Manip {
             pivot: f.pivot,
             grid: f.grid,
             start_cursor: cursor,
+            camera: *cam,
+            edge_pan: Default::default(),
+            edge_pan_blocked: false,
             started: false,
             linked,
             axis: Vec3::X,
@@ -1201,7 +1234,22 @@ fn drag_update(
             }
         }
     }
+    // Test the real mouse movement for slop before constraining the ray.
+    let cursor = if d.mode == EditMode::Move && !s.follow_edit_object && cam.hud.is_none() {
+        // The grab offset in pixels changes when an oblique axis approaches
+        // the camera. Bound the pivot rather than just the mouse ray.
+        let offset = cam
+            .project_px(d.start_hit + d.delta)
+            .zip(cam.project_px(d.pivot + d.delta))
+            .map(|(grab, pivot)| (grab.0 - pivot.0, grab.1 - pivot.1))
+            .unwrap_or_default();
+        super::edge_pan::drag_cursor(cam, cursor, d.start_cursor, offset)
+    } else {
+        cursor
+    };
     let (o, dir) = cam.ray(cursor.0, cursor.1);
+    // Stop the edge camera if the translation solver rejects this ray.
+    d.edge_pan_blocked = true;
     match d.part {
         Part::Arrow(i) => {
             let Some(hit) = ray_plane(o, dir, d.pivot, d.normal) else { return };
@@ -1209,6 +1257,7 @@ fn drag_update(
             if rel.length() > MAX_DRAG_DISTANCE {
                 return;
             }
+            d.edge_pan_blocked = false;
             let mut mag = rel.dot(d.axis);
             d.in_snap = false;
             if s.snap {
@@ -1232,6 +1281,7 @@ fn drag_update(
             if rel.length() > MAX_DRAG_DISTANCE {
                 return;
             }
+            d.edge_pan_blocked = false;
             d.in_snap = false;
             if s.snap {
                 let gi = d.grid.rotation.inverse();
@@ -1678,6 +1728,104 @@ mod tests {
                 .pivot
                 .abs_diff_eq(pos, 1e-5)
         );
+    }
+
+    #[test]
+    fn stretch_restores_local_size_after_server_echo_without_waiting_for_next_send() {
+        let mut world = hud_world();
+        let mut update = crate::demo::hud::object(31, false);
+        update.parent_id = 0;
+        update.state = 0;
+        update.position = Vec3::new(128.0, 128.0, 32.0);
+        update.rotation = Quat::IDENTITY;
+        update.scale = Vec3::ONE;
+        let handle = world.main_region.unwrap();
+        world.apply(aurora_net::NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![update.clone()],
+        });
+        let idx = world.objects.index_of_uuid(&update.full_id).unwrap();
+        let key = world.objects.get(idx).unwrap().key;
+        let now = Instant::now();
+        let settings = BuildSettings {
+            snap: false,
+            follow_edit_object: true,
+            ..Default::default()
+        };
+        let center = Scene::object_transform(&world, idx, now, 0).unwrap().0;
+        let eye = center + Vec3::new(4.0, -6.0, 3.0);
+        let fov = 60f32.to_radians();
+        let mut camera = crate::camera::Camera::default();
+        camera.position = eye;
+        camera.target = center;
+        camera.fov_y = fov;
+        let vp = camera.proj(1280.0 / 720.0) * camera.view();
+        let cam = Cam::new(eye, center, vp, fov, 1280.0, 720.0, 1.0);
+        let bounds = bounds_of(&world, &[key], false, now).unwrap();
+        let start = cam.project_px(bounds.center + bounds.rotation * bounds.half).unwrap();
+        let mid = cam.project_px(bounds.center).unwrap();
+        let cursor = (start.0 + (start.0 - mid.0) * 0.5, start.1 + (start.1 - mid.1) * 0.5);
+        let mut manip = Manip::default();
+        assert!(manip.try_grab(&mut world, &settings, &cam, &[key], false, EditMode::Stretch, start, now));
+        assert_eq!(manip.drag.as_ref().unwrap().part, Part::Corner(7));
+        let mut out = Vec::new();
+        let step = |world: &mut World, manip: &mut Manip, projection: &Cam, at, out: &mut Vec<BuildCmd>| {
+            manip.update(
+                world,
+                &settings,
+                projection,
+                &[key],
+                false,
+                EditMode::Stretch,
+                cursor,
+                false,
+                Mods::default(),
+                at,
+                out,
+            );
+        };
+        step(&mut world, &mut manip, &cam, now, &mut out);
+        let grown = world.objects.get(idx).unwrap();
+        let expected = (grown.position, grown.scale);
+        assert!(expected.1.min_element() > 1.0);
+        assert_eq!(out.len(), 1);
+        // A late full update overwrites the local preview even with a still
+        // cursor. The next frame must restore it before the scene consumes it.
+        world.apply(aurora_net::NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![update],
+        });
+        step(&mut world, &mut manip, &cam, now + std::time::Duration::from_millis(20), &mut out);
+        let restored = world.objects.get(idx).unwrap();
+        assert!(restored.position.abs_diff_eq(expected.0, 1e-5));
+        assert!(restored.scale.abs_diff_eq(expected.1, 1e-5));
+        assert_eq!(out.len(), 1);
+        camera.position += Vec3::Y;
+        camera.target += Vec3::Y;
+        let moved_cam = Cam::new(
+            camera.position,
+            camera.target,
+            camera.proj(1280.0 / 720.0) * camera.view(),
+            fov,
+            1280.0,
+            720.0,
+            1.0,
+        );
+        step(
+            &mut world,
+            &mut manip,
+            &moved_cam,
+            now + std::time::Duration::from_millis(120),
+            &mut out,
+        );
+        let held = world.objects.get(idx).unwrap();
+        assert!(held.position.abs_diff_eq(expected.0, 1e-5));
+        assert!(held.scale.abs_diff_eq(expected.1, 1e-5));
+        assert_eq!(out.len(), 2);
+        manip.release(&mut world, &settings, false, &mut out);
+        assert!(matches!(out.last(), Some(BuildCmd::Transform { updates, .. })
+            if updates[0].scale.unwrap().abs_diff_eq(expected.1, 1e-5)
+                && updates[0].position.unwrap().abs_diff_eq(expected.0, 1e-5)));
     }
 
     #[test]

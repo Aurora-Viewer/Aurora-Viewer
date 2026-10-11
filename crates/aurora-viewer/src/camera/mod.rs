@@ -143,6 +143,8 @@ pub struct FrameInput {
     pub steering: bool,
     /// Build tools open: no smoothing (LLToolMgr::inBuildMode).
     pub build_mode: bool,
+    /// Focus object belongs to the edit selection: follow it only on request.
+    pub edit_tracking: Option<bool>,
     pub draw_distance: f32,
 }
 
@@ -310,7 +312,11 @@ impl Camera {
         (!self.focus_on_avatar).then_some(self.focus_target)
     }
 
-    fn third_person(&self) -> bool {
+    pub fn focus_object_id(&self) -> Option<Uuid> {
+        (!self.focus_on_avatar).then_some(self.focus_object).flatten()
+    }
+
+    pub fn third_person(&self) -> bool {
         self.mode == CameraMode::ThirdPerson
     }
 
@@ -843,6 +849,31 @@ impl Camera {
         self.smoothing_last_global = self.focus_target + self.focus_offset_target;
     }
 
+    /// Already eased by the edit tool; translate the view in this frame,
+    /// preserving the focus offset so tracking cannot undo the edge pan.
+    pub fn pan_edit(&mut self, delta: Vec3, agent: &mut AgentState, s: &CameraSettings) -> bool {
+        if delta == Vec3::ZERO || !delta.is_finite() || !self.third_person() {
+            return false;
+        }
+        if self.focus_on_avatar {
+            self.set_view(self.position, self.target, agent, s);
+            self.anim = None;
+        }
+        self.focus_target += delta;
+        self.target += delta;
+        self.position += delta;
+        self.virtual_position += delta;
+        self.smoothing_last_global += delta;
+        self.smoothing_last_agent += delta;
+        self.smoothing_stop = true;
+        if let Some(anim) = self.anim.as_mut() {
+            anim.start_camera += delta;
+            anim.start_focus += delta;
+        }
+        self.update_focus_offset();
+        true
+    }
+
     /// LLAgentCamera::cameraPanLeft.
     fn pan_left(&mut self, meters: f32) {
         let axis = self.left_axis();
@@ -982,7 +1013,8 @@ impl Camera {
         let world = &*world;
         let agent = &world.agent;
         self.head = self.avatar.position + Vec3::Z * HEAD_HEIGHT;
-        self.refresh_focus_object(world, s, f.now);
+        self.refresh_focus_object(world, s, f.now, s.track_focus_object && f.edit_tracking != Some(false));
+        let offset_changed = self.focus_offset != self.focus_offset_target;
         // CAMERA_FOCUS_HALF_LIFE is 0: the offset follows at once
         self.focus_offset = self.focus_offset_target;
         let in_air = agent.flying || agent.velocity.z.abs() > 1.0;
@@ -992,7 +1024,10 @@ impl Camera {
         self.virtual_position = camera_target;
         let focus_target = self.calc_focus_target(world, s, f.now);
         // field of view correction: the camera backs off, the view narrows
-        self.fov_zoom = self.calc_fov_zoom();
+        // An edited object's growing extents must not move a frozen camera.
+        if f.edit_tracking != Some(false) || offset_changed {
+            self.fov_zoom = self.calc_fov_zoom();
+        }
         camera_target = focus_target + (camera_target - focus_target) * (1.0 + self.fov_zoom);
 
         if !self.initialized {
@@ -1096,7 +1131,7 @@ impl Camera {
 
     /// LLAgentCamera::validateFocusObject and the object tracking of
     /// calcFocusPositionTargetGlobal.
-    fn refresh_focus_object(&mut self, world: &World, s: &CameraSettings, now: Instant) {
+    fn refresh_focus_object(&mut self, world: &World, s: &CameraSettings, now: Instant, track: bool) {
         let Some(id) = self.focus_object else {
             self.focus_geom = None;
             return;
@@ -1116,7 +1151,7 @@ impl Camera {
                 }
                 self.focus_geom = Some(g);
                 if !self.focus_on_avatar {
-                    if s.track_focus_object {
+                    if track {
                         self.focus_target = g.position + self.focus_object_offset;
                     } else {
                         self.focus_object_offset = self.focus_target - g.position;
@@ -1401,6 +1436,7 @@ mod tests {
             now: Instant::now(),
             steering: false,
             build_mode: false,
+            edit_tracking: None,
             draw_distance: 128.0,
         }
     }
@@ -1531,5 +1567,187 @@ mod tests {
         let first = cam.position;
         settle(&mut cam, &mut w, &still);
         assert!(first.distance(cam.position) < 0.01);
+    }
+
+    fn focused_object() -> (World, Camera, CameraSettings, usize) {
+        let mut w = world_at(Vec3::new(128.0, 128.0, 25.0));
+        for ev in crate::demo::events() {
+            w.apply(ev);
+        }
+        let mut object = crate::demo::hud::object(31, false);
+        object.parent_id = 0;
+        object.state = 0;
+        object.position = Vec3::new(128.0, 128.0, 32.0);
+        object.scale = Vec3::ONE;
+        let id = object.full_id;
+        w.apply(aurora_net::NetEvent::ObjectUpdates {
+            handle: w.main_region.unwrap(),
+            objects: vec![object],
+        });
+        let idx = w.objects.index_of_uuid(&id).unwrap();
+        let g = focus_object_geom(&w, &id, Instant::now()).unwrap();
+        let s = CameraSettings::default();
+        let mut cam = Camera {
+            focus_on_avatar: false,
+            ..Default::default()
+        };
+        cam.set_camera_pos_and_focus(g.position + Vec3::new(-8.0, -8.0, 5.0), g.position, Some((id, g)), &s);
+        settle(&mut cam, &mut w, &s);
+        (w, cam, s, idx)
+    }
+
+    #[test]
+    fn edit_focus_freezes_movement_and_size_then_resumes_without_a_jump() {
+        let (mut w, mut cam, s, idx) = focused_object();
+        let before = (cam.position, cam.target, cam.fov_y);
+        let mut f = frame(1.0 / 60.0);
+        f.build_mode = true;
+        f.edit_tracking = Some(false);
+        for _ in 0..60 {
+            let o = w.objects.get_mut(idx).unwrap();
+            o.position += Vec3::Y * 0.05;
+            o.scale += Vec3::ONE;
+            cam.update(&mut w, &s, &f);
+            assert!(cam.position.abs_diff_eq(before.0, 1e-4));
+            assert!(cam.target.abs_diff_eq(before.1, 1e-4));
+            assert!((cam.fov_y - before.2).abs() < 1e-5);
+        }
+        // Resume tracking at the object's new position without recentering.
+        // Keep its size inside the camera distance for this position check.
+        w.objects.get_mut(idx).unwrap().scale = Vec3::ONE;
+        f.edit_tracking = Some(true);
+        cam.update(&mut w, &s, &f);
+        assert!(cam.position.abs_diff_eq(before.0, 1e-4));
+        w.objects.get_mut(idx).unwrap().position += Vec3::Y * 0.1;
+        cam.update(&mut w, &s, &f);
+        assert!(cam.target.abs_diff_eq(before.1 + Vec3::Y * 0.1, 1e-4));
+        f.edit_tracking = None;
+        w.objects.get_mut(idx).unwrap().position += Vec3::Y * 0.1;
+        cam.update(&mut w, &s, &f);
+        assert!(cam.target.abs_diff_eq(before.1 + Vec3::Y * 0.2, 1e-4));
+    }
+
+    #[test]
+    fn enabled_edit_tracking_follows_every_local_frame() {
+        let (mut w, mut cam, s, idx) = focused_object();
+        let mut f = frame(1.0 / 60.0);
+        f.build_mode = true;
+        f.edit_tracking = Some(true);
+        for _ in 0..60 {
+            let before = (cam.position, cam.target);
+            w.objects.get_mut(idx).unwrap().position += Vec3::Y * 0.05;
+            cam.update(&mut w, &s, &f);
+            assert!(cam.position.abs_diff_eq(before.0 + Vec3::Y * 0.05, 1e-4));
+            assert!(cam.target.abs_diff_eq(before.1 + Vec3::Y * 0.05, 1e-4));
+        }
+    }
+
+    #[test]
+    fn manual_zoom_keeps_fov_constraints_with_edit_tracking_disabled() {
+        let (mut w, mut cam, s, _) = focused_object();
+        let mut f = frame(1.0 / 60.0);
+        f.build_mode = true;
+        f.edit_tracking = Some(false);
+        cam.zoom_in(0.01);
+        for _ in 0..60 {
+            cam.update(&mut w, &s, &f);
+        }
+        assert!(cam.fov_zoom > 0.0);
+        assert!(cam.fov_y < s.fov);
+    }
+
+    #[test]
+    fn edit_edge_pan_survives_the_camera_update_without_doubling() {
+        let (mut w, mut cam, s, _) = focused_object();
+        let before = (cam.position, cam.target);
+        let delta = Vec3::new(0.0, 0.1, 0.05);
+        let mut f = frame(1.0 / 60.0);
+        f.build_mode = true;
+        f.edit_tracking = Some(false);
+        assert!(cam.pan_edit(delta, &mut w.agent, &s));
+        cam.update(&mut w, &s, &f);
+        assert!(cam.position.abs_diff_eq(before.0 + delta, 1e-4));
+        assert!(cam.target.abs_diff_eq(before.1 + delta, 1e-4));
+    }
+
+    #[test]
+    fn held_edge_cursor_keeps_moving_the_object_and_release_stops_the_camera() {
+        use crate::build::{BuildSettings, BuildTool, EditMode, Mods, Tool, geom::Cam, manip::Part};
+        for offset in [Vec3::X * 10.0, Vec3::new(6.8354, 5.5374, -1.4747)] {
+            let (mut w, mut camera, s, idx) = focused_object();
+            let g = camera.focus_geom.unwrap();
+            camera.set_camera_pos_and_focus(g.position - offset, g.position, Some((camera.focus_object.unwrap(), g)), &s);
+            settle(&mut camera, &mut w, &s);
+            let mut tool = BuildTool::default();
+            let settings = BuildSettings {
+                snap: false,
+                ..Default::default()
+            };
+            tool.open_build(Tool::Edit);
+            tool.click_select(&mut w, &settings, Some(idx), false);
+            let projection = |camera: &Camera| {
+                Cam::new(
+                    camera.position,
+                    camera.target,
+                    camera.proj(1600.0 / 900.0) * camera.view(),
+                    camera.fov_y,
+                    1600.0,
+                    900.0,
+                    1.0,
+                )
+            };
+            tool.cam = projection(&camera);
+            let key = w.objects.get(idx).unwrap().key;
+            let center = Scene::object_transform(&w, idx, Instant::now(), 0).unwrap().0;
+            let start = tool
+                .cam
+                .project_px(center + Vec3::Y * tool.cam.meters_for_pixels(center, 45.0))
+                .unwrap();
+            assert!(
+                tool.manip
+                    .try_grab(&mut w, &settings, &tool.cam, &[key], false, EditMode::Move, start, Instant::now())
+            );
+            assert_eq!(tool.manip.drag.as_ref().unwrap().part, Part::Arrow(1));
+            let mut f = frame(1.0 / 60.0);
+            f.build_mode = true;
+            f.edit_tracking = Some(false);
+            let mut held_start = Vec3::ZERO;
+            let mut held_offset = Vec3::ZERO;
+            for i in 0..150 {
+                let k = (i as f32 / 60.0).min(1.0);
+                let cursor = (start.0 + (1590.0 - start.0) * k, start.1);
+                let pan = tool.manip.camera_pan(&settings, &tool.cam, cursor, f.dt);
+                assert!(pan.length() < 0.17);
+                assert!(pan.cross(Vec3::Y).length() < 1e-6);
+                camera.pan_edit(pan, &mut w.agent, &s);
+                tool.cam = projection(&camera);
+                tool.update(&mut w, &settings, cursor, false, Mods::default());
+                camera.update(&mut w, &s, &f);
+                tool.cam = projection(&camera);
+                let position = Scene::object_transform(&w, idx, Instant::now(), 0).unwrap().0;
+                if i == 60 {
+                    held_start = position;
+                    held_offset = position - camera.position;
+                }
+                if i > 60 {
+                    assert!(
+                        (position - camera.position).abs_diff_eq(held_offset, 1e-3),
+                        "offset drift: {:?}",
+                        position - camera.position - held_offset
+                    );
+                    let (x, y) = tool.cam.project_px(position).unwrap();
+                    assert!((0.0..1600.0).contains(&x) && (0.0..900.0).contains(&y), "{x},{y}");
+                }
+            }
+            let held_end = Scene::object_transform(&w, idx, Instant::now(), 0).unwrap().0;
+            assert!(held_end.distance(held_start) > 2.0);
+            tool.mouse_up(&mut w, &settings);
+            assert_eq!(tool.manip.camera_pan(&settings, &tool.cam, (1590.0, start.1), f.dt), Vec3::ZERO);
+            let stopped = camera.position;
+            for _ in 0..30 {
+                camera.update(&mut w, &s, &f);
+            }
+            assert!(camera.position.abs_diff_eq(stopped, 1e-4));
+        }
     }
 }

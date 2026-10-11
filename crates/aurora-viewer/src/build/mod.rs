@@ -14,6 +14,7 @@ pub mod costs;
 pub mod demo;
 pub mod demo_sim;
 pub mod draw;
+mod edge_pan;
 pub mod edits;
 pub mod geom;
 pub mod grab;
@@ -70,6 +71,8 @@ pub struct BuildSettings {
     pub scale_uniform: bool,
     /// ScaleStretchTextures.
     pub scale_stretch_textures: bool,
+    /// Keep the camera attached to the focused object while editing it.
+    pub follow_edit_object: bool,
     /// RenderHighlightSelections.
     pub show_highlight: bool,
     /// Create tool: shape (index in `shapes::SHAPES`).
@@ -235,6 +238,7 @@ impl Default for BuildSettings {
             edit_linked: false,
             scale_uniform: false,
             scale_stretch_textures: true,
+            follow_edit_object: false,
             show_highlight: true,
             create_shape: 0,
             keep_tool: false,
@@ -628,6 +632,23 @@ impl BuildTool {
     /// color): whole linksets, or the selected prims with "Edit linked".
     pub fn highlighted(&self, world: &World) -> Vec<(usize, bool)> {
         highlighted_of(world, &self.selection, self.selection_linked)
+    }
+
+    /// Whether editing this selection can change the camera's focus object.
+    pub fn edits_object(&self, world: &World, id: &Uuid) -> bool {
+        if !self.open || self.tool != Tool::Edit {
+            return false;
+        }
+        let Some(idx) = world.objects.index_of_uuid(id) else { return false };
+        let Some(o) = world.objects.get(idx) else { return false };
+        self.selection.contains(&o.key)
+            || (!self.selection_linked
+                && self.selection.iter().any(|key| {
+                    world
+                        .objects
+                        .index_of(key)
+                        .is_some_and(|selected| root_of(world, selected) == root_of(world, idx))
+                }))
     }
 
     /// Local ids to send ObjectSelect / ObjectDeselect for, per region.

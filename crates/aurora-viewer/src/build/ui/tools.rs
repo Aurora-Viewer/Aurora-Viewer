@@ -211,6 +211,15 @@ pub fn edit_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &
             s.select_probes = v;
         }
     });
+    if let Some(v) = check(
+        ui,
+        s.follow_edit_object,
+        false,
+        aurora_i18n::tr!("build-ui-tools-follow-edit-object"),
+        true,
+    ) {
+        s.follow_edit_object = v;
+    }
     ui.horizontal(|ui| {
         let parts = !tool.selection.is_empty() && (s.edit_linked || tool.edit_mode == EditMode::Face);
         if super::common::icon_button(

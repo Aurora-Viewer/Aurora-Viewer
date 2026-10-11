@@ -3201,6 +3201,7 @@ common-pin-group = Épingler le groupe
 build-ui-tools-stretch-ctrl-shift = Étirer (Ctrl+Maj)
 build-ui-tools-stretch-both-sides = Étirer les deux côtés
 build-ui-tools-stretch-textures = Étirer les textures
+build-ui-tools-follow-edit-object = Suivre l’objet en édition
 ui-worldmap-events = Événements
 ui-land-dialogs-are-you-sure-you-want-to-return-all-objects = Êtes-vous certain de vouloir renvoyer tous les objets partagés par le groupe '{ $value0 }{ "' sur cette parcelle de terrain dans l'inventaire du propriétaire précédent ?\u000A\u000A*AVERTISSEMENT* Cela supprimera les objets non transférables cédés au groupe !\u000A\u000AObjets : " }{ $value1 }
 ui-land-dialogs-are-you-sure-you-want-to-return-all-objects-2 = { "Êtes-vous certain de vouloir renvoyer tous les objets que vous ne possédez pas sur cette parcelle dans l'inventaire de leur propriétaire ? Les objets transférables cédés à un groupe seront renvoyés aux propriétaires précédents.\u000A\u000A*Avertissement* Tous les objets non transférables cédés au groupe seront supprimés !\u000A\u000AObjets : " }{ $value0 }

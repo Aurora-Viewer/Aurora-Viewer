@@ -18,6 +18,10 @@
 //! features | texture | contents, the texture tab with `:pbr`, `:bp` or
 //! `:media` (e.g. `texture:bp`), and opens `+weights`, `+grid`, `+media`
 //! (e.g. `general+weights+grid`).
+//! `AURORA_DEMO_BUILD_FOCUS=off|on` focuses the selected object before the
+//! drag, with edit camera tracking disabled/enabled.
+//! `AURORA_DEMO_BUILD_EDGE=left|right|top|bottom` moves the cursor to an
+//! edge, holds it for 60 frames and releases the move handle at base +136.
 
 use super::manip::Part;
 use super::{BuildSettings, BuildTool, EditMode, Tool};
@@ -31,6 +35,7 @@ pub enum Step {
     Cursor(f32, f32),
     Press,
     Release,
+    Focus(bool),
 }
 
 fn part_of(s: &str) -> Option<Part> {
@@ -176,12 +181,27 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
         return Vec::new();
     };
     let (dx, dy) = (num(h + 1).unwrap_or(120.0), num(h + 2).unwrap_or(0.0));
+    let edge = (t == Tool::Edit && m == EditMode::Move)
+        .then(|| std::env::var("AURORA_DEMO_BUILD_EDGE").ok())
+        .flatten()
+        .and_then(|v| match v.as_str() {
+            "left" => Some((1.0, y_start(tool))),
+            "right" => Some((tool.cam.width - 1.0, y_start(tool))),
+            "top" => Some((x_start(tool), 1.0)),
+            "bottom" => Some((x_start(tool), tool.cam.height - 1.0)),
+            _ => None,
+        });
     match frame {
         215 => vec![Step::Open(t, m, land)],
         220 if object.is_some() => object.into_iter().map(Step::Select).collect(),
         220 => vec![Step::Cursor(x, y), Step::Press],
         // land brush / selection: held (land: no release), others released
         226 if t != Tool::Land => vec![Step::Release],
+        227 if t == Tool::Edit => match std::env::var("AURORA_DEMO_BUILD_FOCUS").as_deref() {
+            Ok("off") => vec![Step::Focus(false)],
+            Ok("on") => vec![Step::Focus(true)],
+            _ => Vec::new(),
+        },
         235 if parts[0] == "select" => vec![Step::Cursor(x + dx, y + dy)],
         240 if parts[0] == "select" => vec![Step::Release],
         250 => match handle.and_then(|h| handle_px(tool, world, s, h)) {
@@ -193,8 +213,17 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
         },
         251..=290 if handle.is_some() && tool.manip.drag.is_some() => {
             let k = (frame - 250) as f32 / 40.0;
-            vec![Step::Cursor(x_start(tool) + dx * k, y_start(tool) + dy * k)]
+            let (ex, ey) = edge.unwrap_or((x_start(tool) + dx, y_start(tool) + dy));
+            vec![Step::Cursor(
+                x_start(tool) + (ex - x_start(tool)) * k,
+                y_start(tool) + (ey - y_start(tool)) * k,
+            )]
         }
+        291..=350 if edge.is_some() && tool.manip.drag.is_some() => {
+            let (x, y) = edge.unwrap_or_default();
+            vec![Step::Cursor(x, y)]
+        }
+        351 if edge.is_some() => vec![Step::Release],
         _ => Vec::new(),
     }
 }

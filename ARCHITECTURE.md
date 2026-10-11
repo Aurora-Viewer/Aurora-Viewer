@@ -168,7 +168,24 @@ Le rez depuis l’inventaire passe par `ui/inventory.rs` (charge utile et relâc
 2. **Entrées → agent.** Les touches deviennent des drapeaux de contrôle ;
    `AgentState` et la caméra avancent ; l'`AgentUpdate` est envoyé.
 3. **Monde → scène.** Les poses des avatars sont calculées (contrôleur de
-   mouvements façon `LLMotionController`), puis `Scene::sync` met à jour la
+   mouvements façon `LLMotionController`), puis les glissements des outils
+   de construction appliquent leur transformation locale, après les réponses
+   du simulateur et avant `Scene::sync`. Ainsi, l'objet affiché et ses poignées
+   suivent la même taille à chaque image, sans retour à un écho réseau ancien.
+   Lorsque le focus appartient à la sélection en édition, la caméra est
+   calculée après ce glissement, avant les matrices de rendu et le culling.
+   La bascule « Suivre l’objet en édition » est désactivée par défaut :
+   point de focus et cadrage restent fixes au centre de l'écran ; pendant
+   un déplacement au bord, `build/edge_pan.rs` fait glisser la caméra
+   progressivement sur l'axe ou dans le plan de la poignée. La projection
+   inverse tient compte de la perspective ; la caméra avance avant le
+   solveur de déplacement, qui applique la même translation à l'objet dans
+   l'image courante. Leur distance ne dérive donc pas pendant le maintien
+   du curseur au bord (sans effet sur les HUDs).
+   Activée, la bascule suit la transformation locale. La projection du
+   curseur est alors conservée au début du glissement
+   pour que le mouvement de caméra ne modifie pas l'objet sans saisie.
+   `Scene::sync` met à jour la
    géométrie, les textures et les enregistrements GPU de ce qui a changé ou
    bouge (ensembles tenus par événements, placement calculé en parallèle).
    Les déplacements et les avatars sont appliqués à chaque image ; les

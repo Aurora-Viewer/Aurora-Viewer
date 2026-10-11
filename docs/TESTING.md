@@ -149,6 +149,8 @@ capture.
 | `AURORA_DEMO_DIALOG=<mode>` | Menu llDialog |
 | `AURORA_DEMO_BUILD="<script>"` | Script des outils de construction |
 | `AURORA_DEMO_BUILD_FRAME=<n>` | Image de départ du script de construction |
+| `AURORA_DEMO_BUILD_FOCUS=off\|on` | Focus et suivi caméra pendant l’édition |
+| `AURORA_DEMO_BUILD_EDGE=<bord>` | Déplacement jusqu’au bord, maintien puis relâchement |
 | `AURORA_DEMO_BUILD_TAB=<onglet>` | Onglet de la fenêtre de construction |
 | `AURORA_DEMO_LSL_BRIDGE=1` | Messages du bridge LSL de Firestorm (cachés) |
 | `AURORA_DEMO_FLEXIBLE=1` | Prims flexibles : gravité, tension, vent, force et parent mobile |
@@ -208,6 +210,24 @@ construction. Modes : `move`, `rotate`, `stretch`, `face`, `align`, `grab`,
 image de départ.
 La variante `mode,object:<identifiant local>[,part,dx,dy]` sélectionne un
 objet de la démo sans coordonnées de clic fixes.
+
+**`AURORA_DEMO_BUILD_FOCUS=off|on`** — focus sur la sélection avant de
+prendre une poignée, avec « Suivre l’objet en édition » désactivé / activé.
+Avec `off`, la vue reste fixe au centre de l’écran ; avec `on`, elle suit
+les transformations locales sans à-coups ni dérive quand la souris reste
+immobile. Tester le déplacement et l’étirement par face et par coin.
+
+**`AURORA_DEMO_BUILD_EDGE=left|right|top|bottom`** — complète un script
+`move` : la souris atteint le bord en 40 images, y reste 60 images puis
+relâche la poignée. Avec le suivi désactivé, la caméra glisse progressivement
+près du bord sur le même axe ou dans le même plan que l’objet, qui reste
+visible pendant le maintien de la souris sans rapprochement ni éloignement
+progressif. Tester un axe oblique à la caméra pour vérifier cette distance.
+Capturer vers l’image de départ +120 pendant le maintien et +170
+après le relâchement ; la caméra doit alors être arrêtée. Combiner avec
+`AURORA_DEMO_BUILD_FOCUS=off` pour vérifier le focus sur l’objet, puis sans
+cette variable pour vérifier le focus initial sur l’avatar. Les HUDs et le
+suivi activé conservent leur comportement.
 
 **`AURORA_DEMO_BUILD_TAB=general|object|features|texture[:pbr|bp|media]|contents`**
 — onglet de la fenêtre de construction affiché par le script ; `+weights`,

@@ -3377,6 +3377,7 @@ impl App {
         let typing = self.egui_ctx.egui_wants_keyboard_input();
         self.update_move_input(typing, dt);
         self.update_audio();
+        let mut edit_camera_frame = None;
         if self.in_world() {
             self.update_sounds();
         }
@@ -3400,9 +3401,20 @@ impl App {
                 now: Instant::now(),
                 steering: self.mouse_mode == MouseMode::Steer,
                 build_mode: self.build.open,
+                edit_tracking: self
+                    .camera
+                    .focus_object_id()
+                    .filter(|id| self.build.edits_object(&self.world, id))
+                    .map(|_| self.settings.build.follow_edit_object),
                 draw_distance: self.settings.draw_distance,
             };
-            self.camera.update(&mut self.world, &self.settings.camera, &frame);
+            if frame.edit_tracking.is_some() {
+                // Evaluate the focused edit selection after the local drag,
+                // so a stale simulator echo cannot move the camera for a frame.
+                edit_camera_frame = Some(frame);
+            } else {
+                self.camera.update(&mut self.world, &self.settings.camera, &frame);
+            }
             let at = self.camera.forward();
             self.world.agent.body_turn = self.world.update_bodies(Instant::now(), dt, at, ml);
             self.update_look_at(w as f32, h as f32);
@@ -3430,9 +3442,9 @@ impl App {
             *self.net.controls.lock() = c;
         }
         self.update_voice();
-        let view = self.camera.view();
-        let proj = self.camera.proj(aspect);
-        let vp = proj * view;
+        let mut view = self.camera.view();
+        let mut proj = self.camera.proj(aspect);
+        let mut vp = proj * view;
         let mut cull = CullView::new(vp, self.camera.position, h as f32, self.camera.fov_y);
         // debug: frozen culling view (move around to see what it drops)
         if self.settings.debug.freeze_culling {
@@ -3516,6 +3528,81 @@ impl App {
             self.update_hud_drag(drag_view);
             if let Some(view) = drag_view {
                 self.keep_scaled_huds_accessible(view);
+            }
+            // Apply the local drag after simulator updates and before scene sync.
+            // LLManipScale::dragFace/dragCorner (indra/newview/llmanipscale.cpp)
+            // also update locally every hover, independently of sendUpdates' 10 Hz throttle. Doing
+            // this in UI preparation let an older simulator echo reach the GPU
+            // for one frame, before the manipulator restored the current size.
+            self.build.cam = crate::build::geom::Cam::new(
+                self.camera.position,
+                self.camera.target,
+                vp,
+                self.camera.fov_y,
+                w as f32,
+                h as f32,
+                self.egui_ctx.pixels_per_point(),
+            );
+            if self.build.hud_selected(&self.world) && !self.settings.show_huds {
+                self.build.deselect_all(&self.world);
+            } else if self.build.tool == crate::build::Tool::Edit
+                && self.build.hud_selected(&self.world)
+                && let Some(view) = drag_view
+            {
+                self.build.cam = crate::build::geom::Cam::for_hud(view, self.egui_ctx.pixels_per_point());
+            }
+            let pan = if self.build.open && self.build.tool == crate::build::Tool::Edit && self.camera.third_person() {
+                self.build
+                    .manip
+                    .camera_pan(&self.settings.build, &self.build.cam, self.cursor_pos, dt)
+            } else {
+                Vec3::ZERO
+            };
+            let panned = self.camera.pan_edit(pan, &mut self.world.agent, &self.settings.camera);
+            if panned {
+                self.build.cam = crate::build::geom::Cam::new(
+                    self.camera.position,
+                    self.camera.target,
+                    self.camera.proj(aspect) * self.camera.view(),
+                    self.camera.fov_y,
+                    w as f32,
+                    h as f32,
+                    self.egui_ctx.pixels_per_point(),
+                );
+            }
+            let over_ui = self.egui_ctx.is_pointer_over_egui() || self.egui_ctx.egui_wants_pointer_input();
+            let mods = crate::build::Mods {
+                shift: self.shift,
+                ctrl: self.ctrl,
+                alt: self.alt,
+            };
+            self.build
+                .update(&mut self.world, &self.settings.build, self.cursor_pos, over_ui, mods);
+            self.scene.selection_wire = self.build.wire_selection(&self.world, &self.settings.build);
+            self.scene.selection_silhouettes = self.build.silhouette_selection(&self.world, &self.settings.build);
+            self.flush_build();
+            let camera_changed = edit_camera_frame.is_some() || panned;
+            if let Some(frame) = edit_camera_frame {
+                self.camera.update(&mut self.world, &self.settings.camera, &frame);
+            }
+            if camera_changed {
+                view = self.camera.view();
+                proj = self.camera.proj(aspect);
+                vp = proj * view;
+                cull = CullView::new(vp, self.camera.position, h as f32, self.camera.fov_y);
+                if self.settings.debug.freeze_culling {
+                    cull = *self.frozen_cull.get_or_insert(cull);
+                }
+                self.scene.fov_y = self.camera.fov_y;
+                self.build.cam = crate::build::geom::Cam::new(
+                    self.camera.position,
+                    self.camera.target,
+                    vp,
+                    self.camera.fov_y,
+                    w as f32,
+                    h as f32,
+                    self.egui_ctx.pixels_per_point(),
+                );
             }
             self.scene.sync(&mut gfx.renderer, &mut self.world, &cull);
             self.frame_profile.lap(Lap::Sync);
@@ -4004,19 +4091,6 @@ impl App {
             height: h as f32,
             ppp: ctx.pixels_per_point(),
         };
-        // build tools: camera of this frame, hover / drags / land brush
-        self.build.cam = crate::build::geom::Cam::new(
-            self.camera.position,
-            self.camera.target,
-            vp,
-            self.camera.fov_y,
-            w as f32,
-            h as f32,
-            ctx.pixels_per_point(),
-        );
-        if self.build.hud_selected(&self.world) && !self.settings.show_huds {
-            self.build.deselect_all(&self.world);
-        }
         if self.demo && ui::widgets::demo::rez_mode().is_some() {
             let mode = ui::widgets::demo::rez_mode().unwrap_or("1");
             let point = if matches!(mode, "object" | "contents") {
@@ -4046,31 +4120,18 @@ impl App {
         {
             self.build.cam = crate::build::geom::Cam::for_hud(view, ctx.pixels_per_point());
         }
-        if self.in_world() {
-            let over_ui = ctx.is_pointer_over_egui() || ctx.egui_wants_pointer_input();
-            let mods = crate::build::Mods {
-                shift: self.shift,
-                ctrl: self.ctrl,
-                alt: self.alt,
-            };
-            if self.build.open {
-                for idx in self.build.sel_prims(&self.world) {
-                    if let Some(id) = self.world.objects.get(idx).map(|o| o.full_id)
-                        && !self.build.face_counts.contains_key(&id)
-                        && let Some(n) = self.media.face_count(&self.world, &self.scene, idx)
-                    {
-                        self.build.face_counts.insert(id, n);
-                    }
-                }
-                if self.build.face_counts.len() > 1024 {
-                    self.build.face_counts.clear();
+        if self.in_world() && self.build.open {
+            for idx in self.build.sel_prims(&self.world) {
+                if let Some(id) = self.world.objects.get(idx).map(|o| o.full_id)
+                    && !self.build.face_counts.contains_key(&id)
+                    && let Some(n) = self.media.face_count(&self.world, &self.scene, idx)
+                {
+                    self.build.face_counts.insert(id, n);
                 }
             }
-            self.build
-                .update(&mut self.world, &self.settings.build, self.cursor_pos, over_ui, mods);
-            self.scene.selection_wire = self.build.wire_selection(&self.world, &self.settings.build);
-            self.scene.selection_silhouettes = self.build.silhouette_selection(&self.world, &self.settings.build);
-            self.flush_build();
+            if self.build.face_counts.len() > 1024 {
+                self.build.face_counts.clear();
+            }
         }
         let mut actions = UiActions::default();
         let vsync = gfx.renderer.vsync();
@@ -4666,6 +4727,17 @@ impl App {
                     crate::build::demo::Step::Release => {
                         self.build.mouse_up(&mut self.world, &self.settings.build);
                         self.flush_build();
+                    }
+                    crate::build::demo::Step::Focus(follow) => {
+                        self.settings.build.follow_edit_object = follow;
+                        if let Some(idx) = self.build.sel_prims(&self.world).first().copied()
+                            && let Some(object) = crate::camera::pick_focus_object(&self.world, idx, Instant::now())
+                        {
+                            let point = object.1.position;
+                            let ray = (self.camera.position, (point - self.camera.position).normalize_or_zero());
+                            self.camera
+                                .alt_focus(point, Some(object), ray, &mut self.world.agent, &self.settings.camera);
+                        }
                     }
                 }
             }

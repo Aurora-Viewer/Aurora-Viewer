@@ -3201,6 +3201,7 @@ common-pin-group = Pin group
 build-ui-tools-stretch-ctrl-shift = Stretch (Ctrl+Shift)
 build-ui-tools-stretch-both-sides = Stretch both sides
 build-ui-tools-stretch-textures = Stretch textures
+build-ui-tools-follow-edit-object = Follow object while editing
 ui-worldmap-events = Events
 ui-land-dialogs-are-you-sure-you-want-to-return-all-objects = Are you sure you want to return all objects shared by group '{ $value0 }{ "' on this parcel to their previous owner's inventory?\u000A\u000A*WARNING* This will delete non-transferable objects deeded to the group!\u000A\u000AObjects: " }{ $value1 }
 ui-land-dialogs-are-you-sure-you-want-to-return-all-objects-2 = { "Are you sure you want to return all objects you do not own on this parcel to their owners' inventories? Transferable objects deeded to a group will be returned to their previous owners.\u000A\u000A*Warning* All non-transferable objects deeded to the group will be deleted!\u000A\u000AObjects: " }{ $value0 }
