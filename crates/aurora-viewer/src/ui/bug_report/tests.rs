@@ -188,3 +188,53 @@ fn browser_draft_is_only_reset_after_explicit_publication_confirmation() {
     assert!(state.report.title.is_empty());
     assert!(!state.browser_opened);
 }
+
+#[test]
+fn long_descriptions_keep_all_questions_and_send_controls_visible() {
+    let ctx = egui::Context::default();
+    let mut state = BugReportUi::default();
+    state.begin(vec![], false);
+    state.diagnostics = None;
+    state.report.title = "Long report".into();
+    state.report.steps = "A long description line\n".repeat(100);
+    state.report.expected = state.report.steps.clone();
+    state.report.actual = state.report.steps.clone();
+    for _ in 0..2 {
+        draw_report(&ctx, &mut state);
+    }
+    let mut output = ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(900.0, 900.0))),
+            ..Default::default()
+        },
+        |ui| {
+            state.show(
+                ui.ctx(),
+                &crate::theme::Theme::default().palette(),
+                &super::super::icons::Icons::default(),
+                true,
+            )
+        },
+    );
+    for key in [
+        "bug-summary",
+        "bug-steps",
+        "bug-expected",
+        "bug-actual",
+        "bug-no-secrets",
+        "bug-connect",
+        "bug-send-direct",
+    ] {
+        assert!(
+            output.shapes.iter().any(|shape| match &shape.shape {
+                egui::Shape::Text(text) => {
+                    text.galley.job.text == aurora_i18n::text(key)
+                        && shape.clip_rect.contains_rect(text.galley.rect.translate(text.pos.to_vec2()))
+                }
+                _ => false,
+            }),
+            "{key} must be fully visible without scrolling the report"
+        );
+    }
+    output.textures_delta.clear();
+}

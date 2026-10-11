@@ -445,6 +445,11 @@ impl BugReportUi {
                 (aurora_i18n::tr!("bug-diagnostics"), true),
             ],
         );
+        if self.tab == 0 {
+            ui.add_space(8.0);
+            self.form(ui, p, in_world);
+            return;
+        }
         egui::ScrollArea::vertical()
             .id_salt(("bug-form", self.draft_id, self.tab))
             .max_height(height - 50.0)
@@ -472,12 +477,22 @@ impl BugReportUi {
                     ("bug-actual", &mut self.report.actual),
                 ] {
                     ui.label(aurora_i18n::text(key));
-                    ui.add(
-                        egui::TextEdit::multiline(value)
-                            .char_limit(6000)
-                            .desired_rows(3)
-                            .desired_width(f32::INFINITY),
-                    );
+                    // Long prose scrolls inside its own editor, so all three
+                    // questions remain visible instead of growing the form.
+                    let editor_height = 2.0 * ui.text_style_height(&egui::TextStyle::Body) + 8.0;
+                    egui::ScrollArea::vertical()
+                        .id_salt(("bug-description", self.draft_id, key))
+                        .max_height(editor_height)
+                        .min_scrolled_height(editor_height)
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            ui.add(
+                                egui::TextEdit::multiline(value)
+                                    .char_limit(6000)
+                                    .desired_rows(2)
+                                    .desired_width(f32::INFINITY),
+                            );
+                        });
                     ui.add_space(8.0);
                 }
                 ui.label(RichText::new(aurora_i18n::tr!("bug-no-secrets")).size(12.0).color(p.muted));
