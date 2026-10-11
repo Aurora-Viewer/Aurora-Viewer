@@ -11,6 +11,7 @@
 pub mod align;
 pub mod contents;
 pub mod costs;
+mod cycle;
 pub mod demo;
 pub mod demo_sim;
 pub mod draw;
@@ -342,6 +343,7 @@ pub struct Bounds {
 }
 
 pub struct BuildTool {
+    wheel_selection: cycle::Wheel,
     /// The build floater is open (build mode).
     pub open: bool,
     pub tool: Tool,
@@ -404,6 +406,7 @@ pub struct BuildTool {
 impl Default for BuildTool {
     fn default() -> Self {
         BuildTool {
+            wheel_selection: cycle::Wheel::default(),
             open: false,
             tool: Tool::Edit,
             edit_mode: EditMode::Move,

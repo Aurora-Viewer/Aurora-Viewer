@@ -52,6 +52,43 @@ pub fn ray_box(origin: Vec3, dir: Vec3, min: Vec3, max: Vec3) -> Option<f32> {
 }
 
 impl Scene {
+    /// Exact edit surfaces along the whole cursor ray, including hidden and
+    /// occluded prims. Reuses hover's bounds index and the rendered triangles;
+    /// the wheel never waits for a GPU depth readback.
+    pub fn edit_ray_hits(&self, world: &World, ray: (Vec3, Vec3), hud: bool) -> Vec<usize> {
+        let mut candidates = Vec::new();
+        if hud {
+            let own = world.objects.index_of_uuid(&world.agent_id);
+            candidates.extend(
+                self.gpu
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(idx, g)| (g.hud && g.owner_avatar == own).then_some(idx)),
+            );
+        } else {
+            self.pick.ray_candidates(ray, &mut candidates);
+        }
+        let now = Instant::now();
+        let mut hits: Vec<_> = candidates
+            .par_iter()
+            .filter_map(|&idx| {
+                let g = self.gpu.get(idx)?;
+                if g.hud != hud || !crate::build::selectable(world, idx) || !ray_may_hit(g, ray) {
+                    return None;
+                }
+                let hit = self.face_hit(world, idx, ray, now, true)?;
+                if !hit.t.is_finite()
+                    || (!hud && (ray.0 + ray.1 * hit.t).distance(world.agent.position) > crate::build::MAX_SELECT_DISTANCE)
+                {
+                    return None;
+                }
+                Some((idx, hit.t))
+            })
+            .collect();
+        hits.sort_unstable_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
+        hits.into_iter().map(|(idx, _)| idx).collect()
+    }
+
     /// Inventory placement follows LLToolDragAndDrop::pick: hidden and rigged
     /// surfaces are excluded and texture holes let the ray through. CPU
     /// triangles use the maintained pick index without a GPU readback or wait.
@@ -667,6 +704,47 @@ mod tests {
             scene.gpu[idx].faces.push(face);
         }
         (world, scene, front, back)
+    }
+
+    #[test]
+    fn edit_stack_reaches_occluded_and_ignored_prims_and_uses_triangles() {
+        let (mut world, mut scene, front, back) = scene_with_two_objects();
+        world.agent.position = Vec3::new(0.0, 0.0, 50.0);
+        for idx in [front, back] {
+            scene.pick.set(idx, super::super::hover::PickEntry::of(&scene.gpu[idx]));
+        }
+        let ray = (world.agent.position, Vec3::X);
+        world.objects.get_mut(front).unwrap().click_action = crate::interaction::code::IGNORE;
+        assert_eq!(scene.edit_ray_hits(&world, ray, false), [front, back]);
+        // Bounds still cover this corner, but the only remaining triangle does not.
+        let key = scene.gpu[front].geom.unwrap();
+        let GeomState::Ready(geom) = &mut scene.geoms.get_mut(&key).unwrap().state else {
+            panic!("ready geometry")
+        };
+        Arc::get_mut(geom).unwrap().pick_faces[0].as_mut().unwrap().indices = vec![0, 2, 1];
+        let ray = (Vec3::new(0.0, -0.4, 50.4), Vec3::X);
+        assert!(scene.edit_ray_hits(&world, ray, false).is_empty());
+        assert!(scene.edit_ray_hits(&world, (Vec3::new(0.0, 2.0, 50.0), Vec3::X), false).is_empty());
+    }
+
+    #[test]
+    fn edit_stack_respects_select_distance_and_keeps_hud_space_separate() {
+        let (mut world, mut scene, front, back) = scene_with_two_objects();
+        let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
+        world.agent.position = ray.0;
+        for idx in [front, back] {
+            scene.pick.set(idx, super::super::hover::PickEntry::of(&scene.gpu[idx]));
+        }
+        world.objects.get_mut(back).unwrap().position.x = 200.0;
+        assert_eq!(scene.edit_ray_hits(&world, ray, false), [front]);
+        world.objects.get_mut(back).unwrap().position.x = 7.0;
+        let own = world.objects.index_of_uuid(&world.agent_id).unwrap();
+        scene.gpu[front].hud = true;
+        scene.gpu[front].owner_avatar = Some(own);
+        assert_eq!(scene.edit_ray_hits(&world, ray, false), [back]);
+        assert_eq!(scene.edit_ray_hits(&world, ray, true), [front]);
+        scene.gpu[front].owner_avatar = Some(back);
+        assert!(scene.edit_ray_hits(&world, ray, true).is_empty());
     }
 
     #[test]

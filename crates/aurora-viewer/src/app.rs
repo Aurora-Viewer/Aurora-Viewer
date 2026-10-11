@@ -2559,6 +2559,47 @@ impl App {
         }
     }
 
+    /// CTRL + wheel cycles the edit selection before HUD, media or camera zoom.
+    fn on_build_scroll(&mut self, delta: f32) -> bool {
+        if !self.ctrl || self.alt || !self.build.open || self.build.tool != crate::build::Tool::Edit || self.camera.mouselook() {
+            self.build.reset_selection_wheel();
+            return false;
+        }
+        // A held drag owns the selection until release. Still consume the
+        // gesture so the camera or a HUD cannot move underneath its handles.
+        if self.left_down || self.build.manip.dragging() || self.hud_drag.is_some() || self.mouse_mode != MouseMode::None {
+            self.build.reset_selection_wheel();
+            return true;
+        }
+        let steps = self
+            .build
+            .selection_wheel_steps(delta, self.cursor_pos, self.settings.build.edit_linked);
+        if steps == 0 {
+            return true;
+        }
+        let mut hits = self
+            .settings
+            .show_huds
+            .then_some(self.scene.lists.hud_view)
+            .flatten()
+            .map(|view| {
+                self.scene
+                    .edit_ray_hits(&self.world, view.ray(self.cursor_pos.0, self.cursor_pos.1), true)
+            })
+            .unwrap_or_default();
+        if hits.is_empty()
+            && let Some(ray) = self
+                .gfx
+                .as_ref()
+                .and_then(|g| g.renderer.cursor_ray(self.cursor_pos.0, self.cursor_pos.1))
+        {
+            hits = self.scene.edit_ray_hits(&self.world, ray, false);
+        }
+        self.build.cycle_under_cursor(&mut self.world, &self.settings.build, &hits, steps);
+        self.flush_build();
+        true
+    }
+
     /// Left press while building: handles, selection, create, terraform.
     fn build_mouse_down(&mut self) -> bool {
         if !self.build.open
@@ -4795,6 +4836,22 @@ impl App {
                                 .alt_focus(point, Some(object), ray, &mut self.world.agent, &self.settings.camera);
                         }
                     }
+                    crate::build::demo::Step::Linked(on) => {
+                        self.build.set_edit_linked(&mut self.world, &mut self.settings.build, on);
+                        self.flush_build();
+                    }
+                    crate::build::demo::Step::Wheel(delta) => {
+                        let ctrl = self.ctrl;
+                        self.ctrl = true;
+                        let before = (self.camera.position, self.world.hud_zoom);
+                        let handled = self.on_build_scroll(delta);
+                        self.ctrl = ctrl;
+                        log::info!(
+                            "demo build cycle: delta {delta}, handled {handled}, selected {:?}, camera unchanged {}",
+                            self.build.selection.iter().map(|k| k.local_id).collect::<Vec<_>>(),
+                            before == (self.camera.position, self.world.hud_zoom)
+                        );
+                    }
                 }
             }
         }
@@ -6338,6 +6395,11 @@ impl ApplicationHandler for App {
                     self.on_app_event(e);
                 }
             }
+            if std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("cycle,") || v.starts_with("cycle-linked,")) {
+                for ev in crate::demo::selection_cycle_events() {
+                    self.world.apply(ev);
+                }
+            }
             if std::env::var_os("AURORA_DEMO_FLEXIBLE").is_some() && std::env::var_os("AURORA_DEMO_CAM").is_none() {
                 let edit_focus = std::env::var("AURORA_DEMO_BUILD")
                     .ok()
@@ -6763,9 +6825,13 @@ impl ApplicationHandler for App {
                 self.shift = m.state().shift_key();
                 self.ctrl = m.state().control_key();
                 self.alt = m.state().alt_key();
+                if !self.ctrl || self.alt {
+                    self.build.reset_selection_wheel();
+                }
             }
             WindowEvent::Focused(true) => self.focused = true,
             WindowEvent::Focused(false) => {
+                self.build.reset_selection_wheel();
                 self.focused = false;
                 self.down.clear();
                 self.alt = false;
@@ -6896,7 +6962,7 @@ impl ApplicationHandler for App {
                     MouseScrollDelta::LineDelta(_, y) => *y,
                     MouseScrollDelta::PixelDelta(p) => p.y as f32 / 60.0,
                 };
-                if self.on_hud_scroll(steps) {
+                if self.on_build_scroll(steps) || self.on_hud_scroll(steps) {
                     return;
                 }
                 let mods = aurora_media::Modifiers {

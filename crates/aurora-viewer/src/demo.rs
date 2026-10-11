@@ -1341,6 +1341,34 @@ pub fn action_events() -> Vec<NetEvent> {
     vec![NetEvent::ObjectUpdates { handle: HANDLE, objects }, NetEvent::Balance(balance)]
 }
 
+/// Nested surfaces for cursor-depth selection: two linksets and one single
+/// prim all share a center, so their surfaces overlap from every camera angle.
+pub fn selection_cycle_events() -> Vec<NetEvent> {
+    let mut objects = Vec::new();
+    for (id, scale, parent, name) in [
+        (99610, 3.0, 0, "A"),
+        (99611, 2.4, 99610, "A2"),
+        (99612, 1.8, 0, "B"),
+        (99613, 1.2, 99612, "B2"),
+        (99614, 0.6, 0, "C"),
+    ] {
+        let label = if parent == 0 {
+            aurora_i18n::tr!("demo-cycle-object", name = name)
+        } else {
+            aurora_i18n::tr!("demo-cycle-part", name = name)
+        };
+        let mut o = action_object(id, 0, 138.0, 126.0, [0.3, scale / 4.0, 0.8, 1.0], &label);
+        o.scale = Vec3::splat(scale);
+        o.position.z = floor_at(138.0, 126.0) + 2.0;
+        o.parent_id = parent;
+        if parent != 0 {
+            o.position = Vec3::ZERO;
+        }
+        objects.push(o);
+    }
+    vec![NetEvent::ObjectUpdates { handle: HANDLE, objects }]
+}
+
 /// AURORA_DEMO_BAN: the south-east lot (x >= 192 m, y < 64 m) is banned.
 pub fn ban_collision() -> NetEvent {
     let mut bitmap = vec![0u8; 64 * 64 / 8];
