@@ -58,7 +58,10 @@ Dans le code, on utilise toujours la `Palette` résolue (`p.violet`, `p.ink`…)
   peine plus clair que le fond, pour que l'on voie où commence et finit chaque
   élément sans alourdir.
 - **Typographie.** Inter (régulier, semi-gras) ; Noto Sans et Roboto en secours.
-  Pas d'autre police sans raison.
+  Pas d'autre police sans raison. Les caractères qu'elles n'ont pas (noms
+  d'affichage et messages en géorgien, japonais, arabe, lettres
+  mathématiques…) sont dessinés avec les polices du système, jamais choisies
+  pour un texte de l'interface elle-même.
 - **Espacement régulier.** Réutiliser les widgets existants
   (`ui/widgets.rs` : boutons plats, interrupteurs, pastilles d'aide, triangle
   d'avertissement…) plutôt que d'en recréer.

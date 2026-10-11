@@ -20,6 +20,9 @@ pub mod eep;
 /// Environment selector library and script (AURORA_DEMO_ENV_SELECT).
 #[path = "demo_env.rs"]
 pub mod env;
+/// Names and chat in the characters residents use (AURORA_DEMO_GLYPHS).
+#[path = "demo_glyphs.rs"]
+pub mod glyphs;
 #[path = "demo_hud.rs"]
 pub mod hud;
 /// About Land answers (AURORA_DEMO_LAND).
@@ -554,10 +557,13 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 names: ids
                     .iter()
                     .map(|id| {
+                        let glyphs = glyphs::resident(id);
                         let (first, last, dn) = if *id == DEMO_AGENT {
                             ("Aurora", "Demo", "")
                         } else if let Some(long) = long_name(id) {
                             long
+                        } else if let Some((first, sample)) = &glyphs {
+                            (first.as_str(), "Resident", sample.display_name)
                         } else {
                             names[(id.as_u128() & 0xFF) as usize % names.len()]
                         };

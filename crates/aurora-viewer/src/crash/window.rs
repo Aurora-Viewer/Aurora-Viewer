@@ -20,6 +20,9 @@ pub fn show(dir: &Path, record: super::Record) -> anyhow::Result<()> {
     let event_loop = EventLoop::new()?;
     let context = egui::Context::default();
     record.theme.apply(&context, record.font_scale);
+    // This window draws on events only: the few milliseconds of the system
+    // font scan are waited for here instead of polled each frame.
+    fonts::fallback::wait();
     fonts::apply(&context, &record.font);
     let icons = Icons::load(&context, None);
     let trace = super::trace(dir);
