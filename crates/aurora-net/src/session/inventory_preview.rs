@@ -29,15 +29,25 @@ struct Download {
     sim: SocketAddr,
     item: Uuid,
     asset: Uuid,
+    object: Uuid,
     started: Instant,
     data: Assembly,
 }
 
 impl Download {
     fn event(&self, result: Result<Vec<u8>, String>) -> NetEvent {
-        NetEvent::InventoryPreview {
-            item: self.item,
-            asset: self.asset,
+        preview_event(self.object, self.item, self.asset, result)
+    }
+}
+
+fn preview_event(object: Uuid, item: Uuid, asset: Uuid, result: Result<Vec<u8>, String>) -> NetEvent {
+    if object.is_nil() {
+        NetEvent::InventoryPreview { item, asset, result }
+    } else {
+        NetEvent::TaskNotecardPreview {
+            object,
+            item,
+            asset,
             result,
         }
     }
@@ -135,7 +145,7 @@ impl Assembly {
 }
 
 /// LLDataPackerBinaryBuffer: six UUIDs, then the S32 asset type little-endian.
-fn request(agent: Uuid, session: Uuid, item: &InvItem) -> TransferRequest {
+fn request(agent: Uuid, session: Uuid, object: Uuid, item: &InvItem) -> TransferRequest {
     let mut m = TransferRequest::default();
     let t = &mut m.transfer_info;
     t.transfer_id = Uuid::new_v4();
@@ -143,7 +153,7 @@ fn request(agent: Uuid, session: Uuid, item: &InvItem) -> TransferRequest {
     t.source_type = INVENTORY_SOURCE;
     // Both document previews request priority in getInvItemAsset: 100 + 1.
     t.priority = 101.0;
-    for id in [agent, session, item.owner, Uuid::nil(), item.id, item.asset_id] {
+    for id in [agent, session, item.owner, object, item.id, item.asset_id] {
         t.params.extend_from_slice(id.as_bytes());
     }
     t.params.extend_from_slice(&item.asset_type.to_le_bytes());
@@ -172,15 +182,16 @@ impl Previews {
 
 impl Session<'_> {
     pub(super) fn preview_inventory_document(&mut self, item: InvItem) {
-        let Some(sim) = self.main.filter(|addr| self.sims.contains_key(addr)) else {
-            emit(
-                self.sh,
-                NetEvent::InventoryPreview {
-                    item: item.id,
-                    asset: item.asset_id,
-                    result: Err(interrupted()),
-                },
-            );
+        self.preview_document(self.main, Uuid::nil(), item);
+    }
+
+    pub(super) fn preview_task_notecard(&mut self, handle: u64, object: Uuid, item: InvItem) {
+        self.preview_document(self.sim_for_handle(handle), object, item);
+    }
+
+    fn preview_document(&mut self, sim: Option<SocketAddr>, object: Uuid, item: InvItem) {
+        let Some(sim) = sim.filter(|addr| self.sims.contains_key(addr)) else {
+            emit(self.sh, preview_event(object, item.id, item.asset_id, Err(interrupted())));
             return;
         };
         // Several editors may request the same document on the same frame.
@@ -189,28 +200,30 @@ impl Session<'_> {
             .inventory_previews
             .pending
             .values()
-            .any(|d| d.sim == sim && d.item == item.id && d.asset == item.asset_id)
+            .any(|d| d.sim == sim && d.object == object && d.item == item.id && d.asset == item.asset_id)
         {
             return;
         }
         if self.inventory_previews.pending.len() >= MAX_DOWNLOADS {
             emit(
                 self.sh,
-                NetEvent::InventoryPreview {
-                    item: item.id,
-                    asset: item.asset_id,
-                    result: Err(aurora_i18n::tr!("inventory-preview-busy").into()),
-                },
+                preview_event(
+                    object,
+                    item.id,
+                    item.asset_id,
+                    Err(aurora_i18n::tr!("inventory-preview-busy").into()),
+                ),
             );
             return;
         }
-        let m = request(self.agent_id(), self.session_id(), &item);
+        let m = request(self.agent_id(), self.session_id(), object, &item);
         self.inventory_previews.pending.insert(
             m.transfer_info.transfer_id,
             Download {
                 sim,
                 item: item.id,
                 asset: item.asset_id,
+                object,
                 started: Instant::now(),
                 data: Assembly::default(),
             },
@@ -250,7 +263,10 @@ impl Session<'_> {
         };
         let (handled, event) = self.inventory_previews.receive(from, transfer, channel, reply);
         if let Some(event) = event {
-            if matches!(&event, NetEvent::InventoryPreview { result: Err(_), .. }) {
+            if matches!(
+                &event,
+                NetEvent::InventoryPreview { result: Err(_), .. } | NetEvent::TaskNotecardPreview { result: Err(_), .. }
+            ) {
                 self.abort_inventory_preview(from, transfer);
             }
             emit(self.sh, event);
@@ -303,7 +319,7 @@ mod tests {
             asset_type: 7,
             ..Default::default()
         };
-        let m = request(Uuid::from_u128(1), Uuid::from_u128(2), &item);
+        let m = request(Uuid::from_u128(1), Uuid::from_u128(2), Uuid::nil(), &item);
         let t = &m.transfer_info;
         assert_eq!((t.channel_type, t.source_type), (2, 3));
         assert_eq!(t.priority, 101.0);
@@ -343,6 +359,39 @@ mod tests {
         assert_eq!(
             a.accept(Reply::Info { status: 0, size: 9 }).expect("info"),
             Some(b"abcdefghi".to_vec())
+        );
+    }
+
+    #[test]
+    fn task_requests_and_results_remain_scoped_to_the_containing_object() {
+        let object = Uuid::from_u128(9);
+        let item = InvItem {
+            id: Uuid::from_u128(4),
+            owner: Uuid::from_u128(3),
+            asset_id: Uuid::from_u128(5),
+            asset_type: 7,
+            ..Default::default()
+        };
+        let m = request(Uuid::from_u128(1), Uuid::from_u128(2), object, &item);
+        assert_eq!(&m.transfer_info.params[48..64], object.as_bytes());
+        let transfer = m.transfer_info.transfer_id;
+        let sim = "127.0.0.1:13000".parse().expect("sim");
+        let mut previews = Previews::default();
+        previews.pending.insert(
+            transfer,
+            Download {
+                sim,
+                item: item.id,
+                asset: item.asset_id,
+                object,
+                started: Instant::now(),
+                data: Assembly::default(),
+            },
+        );
+        previews.receive(sim, transfer, 2, Reply::Info { status: 0, size: 3 });
+        let (_, event) = previews.receive(sim, transfer, 2, packet(0, b"abc", true));
+        assert!(
+            matches!(event, Some(NetEvent::TaskNotecardPreview { object: o, item: i, asset: a, result: Ok(data) }) if o == object && i == item.id && a == item.asset_id && data == b"abc")
         );
     }
 
@@ -389,6 +438,7 @@ mod tests {
                     sim,
                     item,
                     asset,
+                    object: Uuid::nil(),
                     started: Instant::now(),
                     data: Assembly::default(),
                 },

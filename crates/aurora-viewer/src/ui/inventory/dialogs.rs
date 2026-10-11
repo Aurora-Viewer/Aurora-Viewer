@@ -381,11 +381,26 @@ pub(super) fn preview(
     }
     let editable = st.preview_can_edit && crate::world::inventory::preview::can_edit(inv, id);
     let mut open = true;
+    let size = if it.asset_type == 7 {
+        Vec2::new(760.0, 600.0)
+    } else {
+        Vec2::new(500.0, 400.0)
+    };
+    let size = size.min((ctx.content_rect().size() - Vec2::splat(32.0)).max(Vec2::new(300.0, 220.0)));
     Floater::new(
-        &format!("inventory_preview_{}_{}", st.ui_id, id),
+        &format!(
+            "{}_{}_{}",
+            if it.asset_type == 7 {
+                "notecard_preview"
+            } else {
+                "inventory_preview"
+            },
+            st.ui_id,
+            id
+        ),
         format!("{}{}", it.name, if st.preview_dirty { " *" } else { "" }),
-        ctx.content_rect().center() - egui::vec2(250.0, 200.0),
-        Vec2::new(500.0, 400.0),
+        ctx.content_rect().center() - size * 0.5,
+        size,
     )
     .show(ctx, p, &mut open, |ui| {
         if it.asset_type == 0 {
@@ -445,56 +460,83 @@ pub(super) fn preview(
                             ui.label(RichText::new(aurora_i18n::tr!("notecard-attachments", names = names.join(", "))).color(p.muted));
                         }
                     }
-                    egui::ScrollArea::both().max_height(300.0).show(ui, |ui| {
-                        if matches!(it.asset_type, 7 | 10) {
-                            let mut layouter = |ui: &egui::Ui, buffer: &dyn egui::TextBuffer, wrap_width: f32| {
-                                // One displayed character per source character keeps
-                                // cursor/selection offsets intact for embedded markers.
-                                let display: String = buffer
-                                    .as_str()
-                                    .chars()
-                                    .map(|c| {
-                                        if it.asset_type == 7 && c as u32 >= aurora_net::inventory::notecard::FIRST_EMBEDDED_CHAR {
-                                            '📎'
-                                        } else {
-                                            c
-                                        }
-                                    })
-                                    .collect();
-                                ui.fonts_mut(|fonts| {
-                                    fonts.layout_job(egui::text::LayoutJob::simple(
-                                        display,
-                                        egui::TextStyle::Monospace.resolve(ui.style()),
-                                        p.ink,
-                                        wrap_width,
-                                    ))
-                                })
-                            };
-                            let mut editor = |ui: &mut egui::Ui, buffer: &mut dyn egui::TextBuffer| {
-                                ui.add(
-                                    egui::TextEdit::multiline(buffer)
-                                        .id(egui::Id::new(("inventory_document_text", st.ui_id, id)))
-                                        .desired_width(f32::INFINITY)
-                                        .desired_rows(12)
-                                        .font(egui::TextStyle::Monospace)
-                                        .layouter(&mut layouter),
-                                )
-                            };
-                            let response = if editable && !st.save_pending && !matches!(st.dialog, Some(EditDialog::Discard(_))) {
-                                editor(ui, text)
-                            } else {
-                                // An immutable buffer still allows selecting/copying
-                                // the text while editing or uploading is unavailable.
-                                editor(ui, &mut text.as_str())
-                            };
-                            changed = response.changed();
-                            if response.has_focus() {
-                                save_shortcut = ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::S));
-                            }
+                    let documents = matches!(it.asset_type, 7 | 10);
+                    let footer_height = ui.spacing().interact_size.y
+                        + ui.spacing().item_spacing.y * 2.0
+                        + if st.preview_message.is_empty() {
+                            0.0
                         } else {
-                            ui.add(egui::Label::new(RichText::new(text.as_str()).monospace()).selectable(true));
+                            ui.fonts_mut(|fonts| {
+                                fonts.layout(
+                                    st.preview_message.clone(),
+                                    egui::TextStyle::Body.resolve(ui.style()),
+                                    p.ink,
+                                    ui.available_width(),
+                                )
+                            })
+                            .size()
+                            .y + ui.spacing().item_spacing.y
                         }
-                    });
+                        + if it.asset_type == 7 && aurora_net::inventory::notecard::Notecard::validate_text(text).is_err() {
+                            ui.text_style_height(&egui::TextStyle::Body) + ui.spacing().item_spacing.y
+                        } else {
+                            0.0
+                        };
+                    let editor_size = Vec2::new(ui.available_width(), (ui.available_height() - footer_height).max(60.0));
+                    egui::ScrollArea::both()
+                        .max_height(if documents { editor_size.y } else { 300.0 })
+                        .auto_shrink(if documents { [false, false] } else { [true, true] })
+                        .show(ui, |ui| {
+                            if matches!(it.asset_type, 7 | 10) {
+                                let mut layouter = |ui: &egui::Ui, buffer: &dyn egui::TextBuffer, wrap_width: f32| {
+                                    // One displayed character per source character keeps
+                                    // cursor/selection offsets intact for embedded markers.
+                                    let display: String = buffer
+                                        .as_str()
+                                        .chars()
+                                        .map(|c| {
+                                            if it.asset_type == 7 && c as u32 >= aurora_net::inventory::notecard::FIRST_EMBEDDED_CHAR {
+                                                '📎'
+                                            } else {
+                                                c
+                                            }
+                                        })
+                                        .collect();
+                                    ui.fonts_mut(|fonts| {
+                                        fonts.layout_job(egui::text::LayoutJob::simple(
+                                            display,
+                                            egui::TextStyle::Monospace.resolve(ui.style()),
+                                            p.ink,
+                                            wrap_width,
+                                        ))
+                                    })
+                                };
+                                let mut editor = |ui: &mut egui::Ui, buffer: &mut dyn egui::TextBuffer| {
+                                    ui.add_sized(
+                                        editor_size,
+                                        egui::TextEdit::multiline(buffer)
+                                            .id(egui::Id::new(("inventory_document_text", st.ui_id, id)))
+                                            .desired_width(f32::INFINITY)
+                                            .desired_rows(1)
+                                            .font(egui::TextStyle::Monospace)
+                                            .layouter(&mut layouter),
+                                    )
+                                };
+                                let response = if editable && !st.save_pending && !matches!(st.dialog, Some(EditDialog::Discard(_))) {
+                                    editor(ui, text)
+                                } else {
+                                    // An immutable buffer still allows selecting/copying
+                                    // the text while editing or uploading is unavailable.
+                                    editor(ui, &mut text.as_str())
+                                };
+                                changed = response.changed();
+                                if response.has_focus() {
+                                    save_shortcut = ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::S));
+                                }
+                            } else {
+                                ui.add(egui::Label::new(RichText::new(text.as_str()).monospace()).selectable(true));
+                            }
+                        });
                 }
                 Some(Err(reason)) => {
                     ui.label(RichText::new(reason.as_str()).color(p.warn));
@@ -517,7 +559,7 @@ pub(super) fn preview(
                 ui.horizontal(|ui| {
                     clicked_save = ui
                         .push_id(("inventory_document_save", st.ui_id, id), |ui| {
-                            ui.add_enabled(can_save, egui::Button::new(aurora_i18n::tr!("common-save")))
+                            ui.add_enabled(can_save, egui::Button::new(aurora_i18n::tr!("notecard-save-button")))
                         })
                         .inner
                         .clicked();
@@ -828,7 +870,7 @@ mod tests {
             document_frame(&ctx, &inv, &mut st, Vec::new());
         }
         let (output, _) = document_frame(&ctx, &inv, &mut st, Vec::new());
-        let pos = label_center(&output, aurora_i18n::tr!("common-save"));
+        let pos = label_center(&output, aurora_i18n::tr!("notecard-save-button"));
         let actions = click_document(&ctx, &inv, &mut st, pos);
         assert!(matches!(&actions[..], [InvAction::SaveContent { text, close: false, .. }] if text == "Après"));
         st.dialog = Some(EditDialog::Discard(st.preview.expect("note")));

@@ -177,12 +177,13 @@ fn item_row(
             || tool.props.get(&object_id).is_some_and(|pr| pr.owner_id == world.agent_id);
         r.context_menu(|ui| {
             if ui
-                .add_enabled(false, egui::Button::new(aurora_i18n::tr!("common-open")))
+                .add_enabled(item.asset_type == 7, egui::Button::new(aurora_i18n::tr!("common-open")))
                 .on_disabled_hover_text(aurora_i18n::tr!(
                     "build-ui-contents-opening-items-inside-an-object-is-not-available-yet"
                 ))
                 .clicked()
             {
+                tool.ui.open_notecard = Some((object_id, item.item_id));
                 ui.close();
             }
             if ui.button(aurora_i18n::tr!("common-properties")).clicked() {
@@ -230,8 +231,12 @@ fn item_row(
                 }
             }
         });
-        if r.double_clicked() && editable && item_modify {
-            tool.ui.rename = Some((item.item_id, item.name.clone()));
+        if r.double_clicked() {
+            if item.asset_type == 7 {
+                tool.ui.open_notecard = Some((object_id, item.item_id));
+            } else if editable && item_modify {
+                tool.ui.rename = Some((item.item_id, item.name.clone()));
+            }
         }
     });
 }
@@ -239,6 +244,65 @@ fn item_row(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn double_click_opens_a_notecard_even_read_only_and_never_starts_renaming() {
+        for editable in [true, false] {
+            let ctx = egui::Context::default();
+            let p = crate::theme::Theme::default().palette();
+            let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+            let mut tool = BuildTool::default();
+            let object = uuid::Uuid::from_u128(1);
+            let item = TaskItem {
+                item_id: uuid::Uuid::from_u128(2),
+                name: "Note".into(),
+                asset_type: 7,
+                owner_mask: perm::COPY | perm::MODIFY | perm::TRANSFER,
+                ..Default::default()
+            };
+            let mut time = 0.0;
+            let mut frame = |events: Vec<egui::Event>, tool: &mut BuildTool| {
+                time += 0.04;
+                ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(600.0, 400.0))),
+                        time: Some(time),
+                        focused: true,
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| item_row(ui, &p, tool, &mut world, 0, object, &item, editable),
+                )
+            };
+            let output = frame(Vec::new(), &mut tool);
+            let pos = output
+                .shapes
+                .iter()
+                .find_map(|s| match &s.shape {
+                    egui::epaint::Shape::Text(t) if t.galley.text() == "Note" => Some(t.pos + t.galley.size() * 0.5),
+                    _ => None,
+                })
+                .expect("note row");
+            for _ in 0..2 {
+                for pressed in [true, false] {
+                    frame(
+                        vec![
+                            egui::Event::PointerMoved(pos),
+                            egui::Event::PointerButton {
+                                pos,
+                                button: egui::PointerButton::Primary,
+                                pressed,
+                                modifiers: egui::Modifiers::NONE,
+                            },
+                        ],
+                        &mut tool,
+                    );
+                }
+            }
+            assert_eq!(tool.ui.open_notecard, Some((object, item.item_id)));
+            assert!(tool.ui.rename.is_none());
+        }
+    }
 
     #[test]
     fn labels() {

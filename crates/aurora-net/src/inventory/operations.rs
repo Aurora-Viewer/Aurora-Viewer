@@ -388,7 +388,53 @@ pub async fn save_content(
     if kind == 10 {
         body.insert("target", Llsd::String("mono".into()));
     }
-    let answer = crate::caps::post_llsd(http, cap, &body)
+    let ack = upload_content(http, cap, &body, data).await?;
+    if kind == 10 && !ack["compiled"].as_bool() {
+        return Err(aurora_i18n::tr!("inventory-operations-the-script-contains-compilation-errors-check-the-code-and").into());
+    }
+    let asset = ack["new_asset"].as_uuid();
+    if kind == 7 && asset.is_nil() {
+        return Err(aurora_i18n::tr!("inventory-operations-the-server-did-not-confirm-the-save").into());
+    }
+    let saved_item = if ack["new_inventory_item"].as_uuid().is_nil() {
+        item
+    } else {
+        ack["new_inventory_item"].as_uuid()
+    };
+    let doc = crate::caps::post_llsd(http, fetch, &super::fetch_items_body(&[saved_item], owner))
+        .await
+        .map_err(|_| aurora_i18n::tr!("inventory-operations-saved-but-could-not-read-it-back-reload-inventory").to_owned())?;
+    let saved = super::parse_items_response(&doc)
+        .into_iter()
+        .find(|it| it.id == saved_item)
+        .ok_or_else(|| aurora_i18n::tr!("inventory-operations-the-saved-item-could-not-be-found").to_owned())?;
+    if kind == 7 && (saved.asset_id != asset || saved.asset_type != 7) {
+        return Err(aurora_i18n::tr!("notecard-save-unconfirmed").into());
+    }
+    Ok(saved)
+}
+
+/// LLBufferedAssetUploadInfo::generatePostBody / finishTaskUpload:
+/// task_id and item_id identify the note in the object, not agent inventory.
+pub async fn save_task_notecard(http: &reqwest::Client, cap: &str, object: Uuid, item: Uuid, data: Vec<u8>) -> Result<Uuid, String> {
+    if object.is_nil() || item.is_nil() {
+        return Err(aurora_i18n::tr!("notecard-edit-denied").into());
+    }
+    if data.len() > 1024 * 1024 {
+        return Err(aurora_i18n::tr!("inventory-operations-the-document-is-too-large").into());
+    }
+    super::notecard::Notecard::decode(&data)?;
+    let body = llsd_map! { "task_id" => object, "item_id" => item };
+    let ack = upload_content(http, cap, &body, data).await?;
+    let asset = ack["new_asset"].as_uuid();
+    if asset.is_nil() {
+        return Err(aurora_i18n::tr!("inventory-operations-the-server-did-not-confirm-the-save").into());
+    }
+    Ok(asset)
+}
+
+async fn upload_content(http: &reqwest::Client, cap: &str, body: &Llsd, data: Vec<u8>) -> Result<Llsd, String> {
+    let answer = crate::caps::post_llsd(http, cap, body)
         .await
         .map_err(|_| aurora_i18n::tr!("inventory-operations-the-save-was-rejected").to_owned())?;
     if answer["state"].as_str() != "upload" {
@@ -417,29 +463,7 @@ pub async fn save_content(
     if ack["state"].as_str() != "complete" {
         return Err(aurora_i18n::tr!("inventory-operations-the-server-did-not-confirm-the-save").into());
     }
-    if kind == 10 && !ack["compiled"].as_bool() {
-        return Err(aurora_i18n::tr!("inventory-operations-the-script-contains-compilation-errors-check-the-code-and").into());
-    }
-    let asset = ack["new_asset"].as_uuid();
-    if kind == 7 && asset.is_nil() {
-        return Err(aurora_i18n::tr!("inventory-operations-the-server-did-not-confirm-the-save").into());
-    }
-    let saved_item = if ack["new_inventory_item"].as_uuid().is_nil() {
-        item
-    } else {
-        ack["new_inventory_item"].as_uuid()
-    };
-    let doc = crate::caps::post_llsd(http, fetch, &super::fetch_items_body(&[saved_item], owner))
-        .await
-        .map_err(|_| aurora_i18n::tr!("inventory-operations-saved-but-could-not-read-it-back-reload-inventory").to_owned())?;
-    let saved = super::parse_items_response(&doc)
-        .into_iter()
-        .find(|it| it.id == saved_item)
-        .ok_or_else(|| aurora_i18n::tr!("inventory-operations-the-saved-item-could-not-be-found").to_owned())?;
-    if kind == 7 && (saved.asset_id != asset || saved.asset_type != 7) {
-        return Err(aurora_i18n::tr!("notecard-save-unconfirmed").into());
-    }
-    Ok(saved)
+    Ok(ack)
 }
 
 #[cfg(test)]
@@ -450,7 +474,12 @@ mod tests {
         Uuid::from_u128(n)
     }
 
-    async fn notecard_server(stale: bool, reject: bool, replace: bool) -> (String, tokio::task::JoinHandle<Vec<(String, Vec<u8>)>>) {
+    async fn notecard_server(
+        stale: bool,
+        reject: bool,
+        replace: bool,
+        task_save: bool,
+    ) -> (String, tokio::task::JoinHandle<Vec<(String, Vec<u8>)>>) {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("test server");
         let url = format!("http://{}", listener.local_addr().expect("address"));
@@ -459,7 +488,7 @@ mod tests {
             (200, llsd_map! { "state" => "upload", "uploader" => format!("{url}/upload") }),
             (
                 if reject { 503 } else { 200 },
-                llsd_map! { "state" => "complete", "new_asset" => id(40), "new_inventory_item" => returned_item },
+                llsd_map! { "state" => "complete", "new_asset" => if task_save && stale { Uuid::nil() } else { id(40) }, "new_inventory_item" => returned_item },
             ),
             (
                 200,
@@ -472,7 +501,7 @@ mod tests {
         ];
         let task = tokio::spawn(async move {
             let mut requests = Vec::new();
-            for (status, reply) in replies.into_iter().take(if reject { 2 } else { 3 }) {
+            for (status, reply) in replies.into_iter().take(if reject || task_save { 2 } else { 3 }) {
                 let (mut socket, _) = tokio::time::timeout(std::time::Duration::from_secs(5), listener.accept())
                     .await
                     .expect("request timeout")
@@ -519,7 +548,7 @@ mod tests {
     async fn notecard_save_posts_exact_asset_bytes_then_confirms_the_new_asset() {
         let data = super::super::notecard::Notecard::default().encode("Été 🐺\n}").expect("asset");
         for replace in [false, true] {
-            let (url, task) = notecard_server(false, false, replace).await;
+            let (url, task) = notecard_server(false, false, replace, false).await;
             let saved = save_content(
                 &reqwest::Client::new(),
                 &url,
@@ -546,10 +575,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn task_notecard_upload_uses_object_and_item_ids_and_requires_an_asset_ack() {
+        let data = super::super::notecard::Notecard::decode(b"")
+            .expect("empty")
+            .encode("Note dans un objet 🐺")
+            .expect("asset");
+        for (missing_asset, reject) in [(false, false), (false, true), (true, false)] {
+            let (url, task) = notecard_server(missing_asset, reject, false, true).await;
+            let result = save_task_notecard(&reqwest::Client::new(), &url, id(90), id(3), data.clone()).await;
+            assert_eq!(result.is_ok(), !missing_asset && !reject);
+            if let Ok(asset) = result {
+                assert_eq!(asset, id(40));
+            }
+            let requests = task.await.expect("requests");
+            assert_eq!(requests.len(), 2, "task notes must not be fetched from agent inventory");
+            let body = aurora_llsd::from_xml(&requests[0].1).expect("negotiation");
+            assert_eq!(body["task_id"].as_uuid(), id(90));
+            assert_eq!(body["item_id"].as_uuid(), id(3));
+            assert!(!body.has("target"));
+            assert_eq!(requests[1].1, data);
+        }
+        assert!(
+            save_task_notecard(&reqwest::Client::new(), "http://127.0.0.1:1", Uuid::nil(), id(3), data)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
     async fn notecard_upload_failure_and_stale_readback_do_not_confirm_a_save() {
         let data = super::super::notecard::Notecard::default().encode("Brouillon").expect("asset");
         for (stale, reject) in [(true, false), (false, true)] {
-            let (url, task) = notecard_server(stale, reject, false).await;
+            let (url, task) = notecard_server(stale, reject, false, false).await;
             assert!(
                 save_content(&reqwest::Client::new(), &url, &url, id(2), id(3), 7, data.clone())
                     .await

@@ -132,6 +132,7 @@ pub struct FloaterState {
     pub contents_filter: String,
     /// Item being renamed in the Contents tab.
     pub rename: Option<(Uuid, String)>,
+    pub open_notecard: Option<(Uuid, Uuid)>,
     pub weights_open: bool,
     pub grid_options_open: bool,
     pub group_picker_open: bool,

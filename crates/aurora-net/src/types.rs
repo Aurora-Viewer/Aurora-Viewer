@@ -677,6 +677,18 @@ pub enum NetEvent {
         asset: Uuid,
         result: Result<Vec<u8>, String>,
     },
+    TaskNotecardPreview {
+        object: Uuid,
+        item: Uuid,
+        asset: Uuid,
+        result: Result<Vec<u8>, String>,
+    },
+    TaskNotecardSaved {
+        request: Uuid,
+        object: Uuid,
+        item: Uuid,
+        result: Result<Uuid, String>,
+    },
     InventoryThumbnailSource {
         request: Uuid,
         asset: Uuid,
@@ -1101,6 +1113,18 @@ pub enum NetCommand {
         name: String,
     },
     PreviewInventoryItem(crate::inventory::InvItem),
+    PreviewTaskNotecard {
+        handle: RegionHandle,
+        object: Uuid,
+        item: Box<crate::inventory::InvItem>,
+    },
+    SaveTaskNotecard {
+        request: Uuid,
+        handle: RegionHandle,
+        object: Uuid,
+        item: Uuid,
+        data: Vec<u8>,
+    },
     FetchInventoryThumbnail {
         request: Uuid,
         asset: Uuid,

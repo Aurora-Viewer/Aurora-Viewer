@@ -19,6 +19,25 @@ mod view;
 pub use controls::preferences;
 pub use view::InventoryPreferences;
 
+/// The shared editor and unsaved-changes confirmation, without an inventory
+/// tree. Object notecards keep their own item model and document state.
+pub fn show_document(ctx: &egui::Context, p: &Palette, icons: &Icons, inv: &Inventory, st: &mut InventoryUi) -> Vec<InvAction> {
+    let mut actions = Vec::new();
+    let prefs = InventoryPreferences::default();
+    let images = std::collections::HashMap::new();
+    let facts = Facts {
+        agent: Uuid::nil(),
+        worn: Default::default(),
+        worn_labels: Default::default(),
+        points: Vec::new(),
+        appearance_busy: false,
+        names: Default::default(),
+    };
+    dialogs::preview(ctx, p, inv, st, &images, &prefs, &mut actions);
+    dialogs::show(ctx, p, icons, inv, st, &prefs, &facts, &images, &mut actions);
+    actions
+}
+
 pub enum InvAction {
     TeleportLandmark(Uuid),
     /// « À propos du repère » (LLLandmarkBridge "about"): its profile, as

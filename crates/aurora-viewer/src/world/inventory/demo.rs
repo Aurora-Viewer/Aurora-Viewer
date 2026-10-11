@@ -138,9 +138,8 @@ pub fn target(view: &str) -> Option<Uuid> {
         "object" | "properties" | "rename" | "multi-add" | "multi-detach" | "delete" => 8100,
         "animation" | "animation-open" | "animation-properties" | "image" | "image-photo" | "image-picker" | "image-photo-save" => 8101,
         "script" => 8102,
-        "note" | "note-open" | "note-edit" | "note-save" | "note-close" | "note-error" | "note-readonly" | "note-embedded" | "note-new" => {
-            8103
-        }
+        "note" | "note-open" | "note-edit" | "note-save" | "note-close" | "note-error" | "note-readonly" | "note-embedded" | "note-new"
+        | "note-task" | "note-task-save" | "note-task-error" | "note-task-readonly" => 8103,
         "nocopy" => 8109,
         "notransfer" => 8110,
         "link" => 8113,

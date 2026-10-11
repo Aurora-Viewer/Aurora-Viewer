@@ -7,6 +7,7 @@ mod build_cmds;
 mod inventory_preview;
 mod inventory_upload;
 mod object_actions;
+mod task_notecard;
 
 use crate::caps::{self, EqEvent};
 use crate::circuit::{Circuit, Resend};
@@ -1407,6 +1408,14 @@ impl Session<'_> {
                     });
                 });
             }
+            NetCommand::PreviewTaskNotecard { handle, object, item } => self.preview_task_notecard(handle, object, *item),
+            NetCommand::SaveTaskNotecard {
+                request,
+                handle,
+                object,
+                item,
+                data,
+            } => self.save_task_notecard(request, handle, object, item, data),
             NetCommand::CreateInventoryWearable { parent, kind, name, data } => self.create_wearable(parent, kind, name, data),
             NetCommand::RestoreInventoryObject(it) => {
                 let mut m = RezRestoreToWorld::default();

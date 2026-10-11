@@ -10,7 +10,7 @@ pub fn document_demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryU
     };
     if !matches!(
         mode.as_str(),
-        "note-edit" | "note-save" | "note-close" | "note-error" | "note-embedded"
+        "note-edit" | "note-save" | "note-close" | "note-error" | "note-embedded" | "note-task-save" | "note-task-error"
     ) {
         return Vec::new();
     }
@@ -33,7 +33,7 @@ pub fn document_demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryU
             egui::Event::Text(aurora_i18n::tr!("notecard-demo-edit").into()),
         ];
     }
-    if frame == 670 && matches!(mode.as_str(), "note-save" | "note-error") {
+    if frame == 670 && matches!(mode.as_str(), "note-save" | "note-error" | "note-task-save" | "note-task-error") {
         return vec![key(egui::Key::S)];
     }
     if frame == 670 && mode == "note-close" {
@@ -43,6 +43,14 @@ pub fn document_demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryU
 }
 
 impl InventoryUi {
+    pub fn document(item: Uuid) -> Self {
+        Self {
+            ui_id: Uuid::new_v4(),
+            preview: Some(item),
+            ..Default::default()
+        }
+    }
+
     pub fn reset_document(&mut self) {
         self.preview_text = None;
         self.preview_can_edit = false;

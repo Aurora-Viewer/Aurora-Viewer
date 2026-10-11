@@ -607,6 +607,15 @@ hors ligne ; les fichiers et photos chargés en démo restent hors ligne.
   session de démo. Une fermeture avec modifications propose Enregistrer,
   Ignorer les modifications ou Annuler ; Enregistrer ne ferme qu’après
   confirmation de la sauvegarde.
+- Les notes s’ouvrent par défaut en 760 × 600 pixels (adaptés au viewport) ;
+  le texte doit remplir la hauteur disponible, avec Enregistrer (Ctrl+S),
+  le compteur et l’éventuel message juste en dessous. Vérifier aussi après
+  redimensionnement et réduction / restauration de la fenêtre.
+- `note-task`, `note-task-readonly`, `note-task-save`, `note-task-error` :
+  même éditeur pour une note dans un objet. Les deux derniers ajoutent du
+  texte à l’image 650 puis envoient Ctrl+S à l’image 670 ; le refus conserve
+  le brouillon. Sauvegarder et fermer / rouvrir conserve le texte pendant
+  la session de démo, sans créer d’élément dans l’inventaire personnel.
 - `note-edit`, `note-save`, `note-close`, `note-error`, `note-embedded` :
   ajout automatique de texte à l’image 650, puis sauvegarde par Ctrl+S
   (`note-save`), confirmation de fermeture (`note-close`) ou refus simulé
@@ -642,6 +651,12 @@ lecture après déconnexion / reconnexion pour vérifier la persistance. Tester
 aussi une note avec pièce jointe : celle-ci doit rester présente après édition
 du texte. La relecture utilise le transfert d’inventaire du simulateur, comme
 Firestorm ; les notes et scripts protégés ne sont pas lus via ViewerAsset.
+Dans un objet modifiable, onglet Contenu de la construction (ou fenêtre
+Ouvrir de l’objet), double-cliquer sur une note puis utiliser Enregistrer
+ou Ctrl+S. Le clic droit › Ouvrir doit donner le même résultat ; Renommer
+reste une action distincte du menu. Fermer / rouvrir, puis recommencer
+après reconnexion. Avec une note ou un objet non modifiable, le texte doit
+être consultable quand la copie est permise et rester en lecture seule.
 
 Ce que l'inventaire doit montrer avec ces scénarios :
 
