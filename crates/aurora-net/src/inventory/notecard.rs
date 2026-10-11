@@ -319,15 +319,18 @@ fn legacy_record(item: &InvItem) -> String {
     let metadata = if item.thumbnail.is_nil() {
         String::new()
     } else {
-        format!(
-            "metadata {}|\n",
-            String::from_utf8_lossy(&aurora_llsd::to_xml(&aurora_llsd::llsd_map! {
-                "thumbnail" => aurora_llsd::llsd_map! { "asset_id" => item.thumbnail }
-            }))
-        )
+        let xml = aurora_llsd::to_xml_string(&aurora_llsd::llsd_map! {
+            "thumbnail" => aurora_llsd::llsd_map! { "asset_id" => item.thumbnail }
+        });
+        // LLInventoryItem reads inline <llsd> metadata, without an XML prolog.
+        let xml = xml.find("<llsd>").map_or(xml.as_str(), |start| &xml[start..]);
+        format!("\t\tmetadata\t{xml}|\n")
     };
+    let group_owned = if item.group_owned { "\t\tgroup_owned\t1\n" } else { "" };
+    // LLNotecard matches "inv_item\t0\n" byte-for-byte; name and desc use
+    // scanf "%s%[\t]%[^|]". Spaces are not interchangeable with tabs here.
     format!(
-        "inv_item 0\n{{\nitem_id {}\nparent_id {}\npermissions 0\n{{\nbase_mask {:08x}\nowner_mask {:08x}\ngroup_mask {:08x}\neveryone_mask {:08x}\nnext_owner_mask {:08x}\ncreator_id {}\nowner_id {}\nlast_owner_id {}\ngroup_id {}\ngroup_owned {}\n}}\n{metadata}{asset_key} {asset}\ntype {asset_type}\ninv_type {inv_type}\nflags {:08x}\nsale_info 0\n{{\nsale_type {sale}\nsale_price {}\n}}\nname {}|\ndesc {}|\ncreation_date {}\n}}\n",
+        "\tinv_item\t0\n\t{{\n\t\titem_id\t{}\n\t\tparent_id\t{}\n\tpermissions 0\n\t{{\n\t\tbase_mask\t{:08x}\n\t\towner_mask\t{:08x}\n\t\tgroup_mask\t{:08x}\n\t\teveryone_mask\t{:08x}\n\t\tnext_owner_mask\t{:08x}\n\t\tcreator_id\t{}\n\t\towner_id\t{}\n\t\tlast_owner_id\t{}\n\t\tgroup_id\t{}\n{group_owned}\t}}\n{metadata}\t\t{asset_key}\t{asset}\n\t\ttype\t{asset_type}\n\t\tinv_type\t{inv_type}\n\t\tflags\t{:08x}\n\tsale_info\t0\n\t{{\n\t\tsale_type\t{sale}\n\t\tsale_price\t{}\n\t}}\n\t\tname\t{}|\n\t\tdesc\t{}|\n\t\tcreation_date\t{}\n\t}}\n",
         item.id,
         item.parent,
         item.base_mask,
@@ -339,7 +342,6 @@ fn legacy_record(item: &InvItem) -> String {
         item.owner,
         item.last_owner,
         item.group_id,
-        u8::from(item.group_owned),
         item.flags,
         item.sale_price,
         clean(&item.name),
@@ -384,6 +386,31 @@ mod tests {
             sale_price: 12,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn new_item_records_use_firestorms_exact_header_and_tab_delimited_strings() {
+        let mut card = Notecard::default();
+        let mut text = String::new();
+        let mut item = item(0, 0);
+        item.thumbnail = Uuid::from_u128(70);
+        let marker = card.insert_attachment(&mut text, 0, &item).expect("drop");
+        let record = &card.attachment(marker).expect("item").record;
+        // Literal comparison in LLNotecard, and scanf "%s%[\t]%[^|]"
+        // for name/desc in LLInventoryItem::importLegacyStream.
+        assert!(record.trim_start().starts_with("inv_item\t0\n"));
+        assert!(record.contains("\n\t\tname\tÉté 🐺|\n"));
+        assert!(record.contains("\n\t\tdesc\tDescription|\n"));
+        let metadata = record
+            .lines()
+            .find_map(|line| line.trim_start().strip_prefix("metadata\t"))
+            .expect("metadata");
+        assert!(
+            metadata.starts_with("<llsd>"),
+            "legacy inventory imports XML only when the token starts with <llsd>"
+        );
+        let parsed = aurora_llsd::from_xml(metadata.trim_end_matches('|').as_bytes()).expect("thumbnail XML");
+        assert_eq!(parsed["thumbnail"]["asset_id"].as_uuid(), item.thumbnail);
     }
 
     #[test]
