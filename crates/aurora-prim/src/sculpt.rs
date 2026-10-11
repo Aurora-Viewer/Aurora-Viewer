@@ -177,7 +177,12 @@ fn generate_map_vertices(vol: &mut Volume, width: u32, height: u32, components: 
                 };
             }
 
-            let index = (x as usize + y as usize * width as usize) * components;
+            // LLVolume::sculptGenerateMapVertices samples LLImageRaw rows
+            // bottom-up: LLImageJ2COJ::decodeImpl reverses codestream rows.
+            // Aurora's decoder keeps them top-down. Convert after stitching
+            // so wrapped rows and pinched poles still match Firestorm.
+            let source_y = height - 1 - y;
+            let index = (x as usize + source_y as usize * width as usize) * components;
             let mut pt = match data.get(index..index + 3) {
                 Some(px) => sculpt_rgb_to_vector(px[0], px[1], px[2]),
                 None => Vec3::ZERO,
@@ -211,8 +216,9 @@ fn surface_area(vol: &Volume) -> f32 {
     area
 }
 
-/// Sculpted prim from a decoded sculpt map (RGB or RGBA bytes, row-major,
-/// `components` bytes per pixel). Produces a single face; honors the sculpt
+/// Sculpted prim from a decoded sculpt map (RGB or RGBA bytes, row-major
+/// top-to-bottom as returned by Aurora's JPEG2000 decoder, `components`
+/// bytes per pixel). Produces a single face; honors the sculpt
 /// type (sphere/torus/plane/cylinder stitching), invert & mirror flags and
 /// LL's mesh resolution / degenerate-area logic (falling back to the sphere
 /// placeholder like LL does).
