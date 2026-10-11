@@ -133,12 +133,17 @@ de l’onglet Données ; décochez celles que vous souhaitez garder privées.
 L’interface suit la langue choisie, même avec le formulaire ouvert. La capture
 et les diagnostics filtrés sont facultatifs. Le fichier destiné à GitHub utilise
 des rubriques anglaises ; votre description garde la langue de votre saisie.
+Un nouveau rapport s’ouvre sur Description. Fermer puis rouvrir le formulaire
+reprend le brouillon au même endroit jusqu’à l’envoi ou la fermeture du viewer.
+Dans le mode navigateur, cliquez sur « J’ai publié le rapport » après la
+publication sur GitHub pour commencer un autre rapport.
 Après une capture prise dans Aurora, cocher ou décocher « Inclure l’interface »
 reprend automatiquement la photo ; les fichiers importés restent inchangés.
 
-Deux modes, tous deux avec un compte GitHub : ouvrir une issue préremplie dans
-le navigateur, ou autoriser l’application GitHub d’Aurora puis envoyer depuis
-le viewer. Dans ce dernier cas, l’autorisation reste uniquement en mémoire
+Deux modes, tous deux avec un compte GitHub : « Envoyer depuis Aurora »,
+présenté en premier et sélectionné par défaut, ou ouvrir une issue préremplie
+dans le navigateur. L’envoi depuis Aurora demande d’autoriser son application
+GitHub ; l’autorisation reste uniquement en mémoire
 jusqu’à la fermeture du viewer ou sa déconnexion ; aucune publication ne suit
 automatiquement l’autorisation. Sans compte, enregistrez une copie locale.
 
