@@ -1112,6 +1112,31 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                 c |= row(
                     ui,
                     p,
+                    aurora_i18n::tr!("ui-options-context-menu"),
+                    aurora_i18n::tr!("ui-options-context-menu-help"),
+                    |ui| {
+                        let mut changed = false;
+                        let label = if s.use_pie_menu {
+                            aurora_i18n::tr!("ui-options-pie-menu")
+                        } else {
+                            aurora_i18n::tr!("ui-options-list-menu")
+                        };
+                        egui::ComboBox::from_id_salt("context-menu-style")
+                            .selected_text(label)
+                            .show_ui(ui, |ui| {
+                                changed |= ui
+                                    .selectable_value(&mut s.use_pie_menu, false, aurora_i18n::tr!("ui-options-list-menu"))
+                                    .changed();
+                                changed |= ui
+                                    .selectable_value(&mut s.use_pie_menu, true, aurora_i18n::tr!("ui-options-pie-menu"))
+                                    .changed();
+                            });
+                        changed
+                    },
+                );
+                c |= row(
+                    ui,
+                    p,
                     aurora_i18n::tr!("ui-options-loading-backdrop"),
                     aurora_i18n::tr!("ui-options-loading-and-teleport-screens-show-your-last-view-blurred"),
                     |ui| toggle(ui, p, &mut s.loading_backdrop),

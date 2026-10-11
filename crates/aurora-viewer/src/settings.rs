@@ -106,6 +106,8 @@ pub struct Settings {
     pub texture_budget_auto: bool,
     pub texture_budget_mb: u32,
     pub ui_scale: f32,
+    /// Firestorm UsePieMenu. Keep Aurora's existing list menu by default.
+    pub use_pie_menu: bool,
     pub show_perf: bool,
     pub show_chat: bool,
     pub show_minimap: bool,
@@ -468,6 +470,7 @@ impl Default for Settings {
             texture_budget_auto: true,
             texture_budget_mb: 1536,
             ui_scale: 1.0,
+            use_pie_menu: false,
             show_perf: true,
             show_chat: true,
             show_minimap: true,
@@ -959,6 +962,21 @@ mod tests {
     use super::*;
     use crate::keybinds::{Action, Input};
     use winit::keyboard::KeyCode;
+
+    #[test]
+    fn context_menu_style_defaults_to_list_and_survives_reload() {
+        let old: Settings = serde_json::from_str("{}").expect("synthetic old settings");
+        assert!(!old.use_pie_menu);
+        for use_pie_menu in [false, true] {
+            let original = Settings {
+                use_pie_menu,
+                ..Settings::default()
+            };
+            let saved = serde_json::to_vec(&original).expect("serialize synthetic menu settings");
+            let loaded: Settings = serde_json::from_slice(&saved).expect("reload synthetic menu settings");
+            assert_eq!(loaded.sanitized().use_pie_menu, use_pie_menu);
+        }
+    }
 
     #[test]
     fn old_settings_follow_the_os_and_saved_language_and_privacy_survive() {

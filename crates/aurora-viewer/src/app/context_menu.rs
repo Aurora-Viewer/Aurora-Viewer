@@ -82,6 +82,8 @@ impl App {
             pos: egui::pos2(self.cursor_pos.0 / ppp, self.cursor_pos.1 / ppp),
             point,
             target,
+            pie_path: Vec::new(),
+            pie_input_frame: None,
         });
     }
 

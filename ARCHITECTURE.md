@@ -231,6 +231,16 @@ Les faces HUD tournées dos à l’écran sont rejetées dans `fs_hud`, avant to
 
 La projection et les listes HUD font partie de la copie du paquet d’image (`DrawLists::copy_from`) : le thread de rendu possède sa propre copie pendant que le thread principal garde la projection pour le picking.
 
+Les menus du monde partagent un modèle d'entrées dans `ui/context/entries.rs`
+(actions, droits, sous-menus, coches). `ui/menu.rs` dessine la liste existante ;
+`ui/context/pie.rs` dispose ces mêmes entrées en huit secteurs, avec les directions
+de Firestorm et des sous-menus « Plus » pour les actions supplémentaires. Les
+secteurs non survolés reprennent la transparence des fenêtres du thème. Le clic
+gauche sélectionne ; le clic droit remonte d'un niveau (ferme à la racine). Le
+chemin de navigation reste dans le menu ouvert et se réinitialise à sa fermeture.
+`Settings::use_pie_menu` conserve le choix de Préférences › Interface ; la liste
+reste le choix initial d'Aurora.
+
 ## Données sur la machine
 
 Le zoom local propre à chaque HUD est tenu par `world/hud_scale.rs` : profils `hud_scales.json` dans le dossier du compte, identité par nom d’inventaire et créateur, écriture atomique sur un thread auxiliaire et copies portées indépendantes. `app/hud_drag.rs` réserve la molette avec la touche de déplacement, dessine le cadre / pourcentage et garde une partie du HUD accessible. En édition avec une sélection HUD, la molette sans cette touche change uniquement `World::hud_zoom`, projection commune à tous les HUDs, comme LLAgentCamera ; elle précède les médias et la caméra même dans une zone vide. Ce zoom de vue ne modifie pas les facteurs ni les décalages locaux. La racine conserve son origine à l’écran ; les offsets liés et les matrices de placement / picking suivent le facteur uniforme. Les outils de construction reconvertissent les positions liées, et les informations de toucher envoyées au serveur retrouvent les coordonnées originales. Dimensions et positions serveur ne sont pas modifiées par le zoom ; l’éventuel décalage pour garder le HUD accessible reste local.
