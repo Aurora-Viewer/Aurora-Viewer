@@ -2271,27 +2271,14 @@ impl App {
 
     /// End of a shortcut capture (None = cancelled).
     fn finish_capture(&mut self, input: Option<Input>) {
-        let Some(capture) = self.options_ui.capture.take() else {
+        let Some(ui::options::Capture::Binding(action, slot)) = self.options_ui.take_capture() else {
             return;
         };
         if let Some(input) = input {
-            match capture {
-                ui::options::Capture::Binding(action, slot) => {
-                    let b = crate::keybinds::Binding {
-                        input,
-                        ctrl: self.ctrl,
-                        shift: self.shift,
-                        alt: self.alt,
-                    };
-                    self.settings.keybinds.set(action, slot, Some(b));
-                }
-                ui::options::Capture::HudDrag => {
-                    let Some(key) = crate::keybinds::HoldKey::from_input(input) else {
-                        return;
-                    };
-                    self.settings.hud_drag_key = key;
-                    self.down.clear();
-                }
+            let b = crate::keybinds::Binding::captured(input, self.mods());
+            self.settings.keybinds.set(action, slot, Some(b));
+            if action == Action::HudDrag {
+                self.down.clear();
             }
             self.settings.save();
         }
@@ -6224,12 +6211,19 @@ impl ApplicationHandler for App {
                     self.world.hud_zoom = 0.5;
                 }
                 if mode.starts_with("drag") {
-                    use crate::keybinds::HoldKey;
-                    self.settings.hud_drag_key = match mode.as_str() {
-                        "drag-ctrl" => HoldKey::Ctrl,
-                        "drag-key" => HoldKey::Key("KeyB".into()),
-                        _ => HoldKey::default(),
+                    let code = match mode.as_str() {
+                        "drag-ctrl" => KeyCode::ControlLeft,
+                        "drag-key" => KeyCode::KeyB,
+                        _ => KeyCode::AltLeft,
                     };
+                    self.settings.keybinds.set(
+                        Action::HudDrag,
+                        0,
+                        Some(crate::keybinds::Binding::captured(Input::key(code), Mods::default())),
+                    );
+                    let secondary = (mode == "drag-secondary")
+                        .then(|| crate::keybinds::Binding::captured(Input::key(KeyCode::ControlLeft), Mods::default()));
+                    self.settings.keybinds.set(Action::HudDrag, 1, secondary);
                 }
                 if mode == "drag-ignore" {
                     let idx = self
@@ -6337,11 +6331,7 @@ impl ApplicationHandler for App {
                     }
                     // shortcut being captured in the preferences
                     if self.options_ui.capture.is_some() {
-                        if pressed
-                            && !ke.repeat
-                            && (!Input::is_modifier(code) || self.options_ui.capture == Some(ui::options::Capture::HudDrag))
-                        {
-                            let input = (code != KeyCode::Escape).then(|| Input::key(code));
+                        if let Some(input) = self.options_ui.capture_key(code, pressed, ke.repeat) {
                             self.finish_capture(input);
                         }
                         return;
@@ -6349,7 +6339,7 @@ impl ApplicationHandler for App {
                     // A gesture key must still be held when the chat or a web
                     // page has keyboard focus; it only owns a visible HUD drag.
                     let input = Input::key(code);
-                    if self.settings.hud_drag_key.is_key(&input) {
+                    if self.settings.keybinds.uses_input(Action::HudDrag, &input) {
                         if pressed {
                             self.down.insert(input);
                         } else {
@@ -6411,7 +6401,7 @@ impl ApplicationHandler for App {
                 let over_ui = self.egui_ctx.is_pointer_over_egui() || self.egui_ctx.egui_wants_pointer_input();
                 // shortcut being captured: middle / side buttons bind, left / right cancel
                 if self.options_ui.capture.is_some() {
-                    if pressed && (self.options_ui.capture != Some(ui::options::Capture::HudDrag) || Input::mouse(*button).is_none()) {
+                    if pressed {
                         self.finish_capture(Input::mouse(*button));
                     }
                     return;

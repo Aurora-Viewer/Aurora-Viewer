@@ -216,7 +216,8 @@ grille.
   relâchement gauche (image 840) sans toucher de script.
 - `drag-zoom` : de même à 50 % ; `drag-ignore` : sur un enfant avec l'action
   IGNORE ; `drag-ctrl` : Ctrl à la place de ALT ; `drag-key` : la touche B à
-  la place de ALT.
+  la place de ALT ; `drag-secondary` : ALT en touche principale et Ctrl en
+  touche secondaire, déplacement avec cette dernière.
 - `menu`, `edit`, `edit-zoom` : clic droit sur l'enfant, Modifier et
   déplacement du linkset par la poignée Y, aussi à 50 %.
 - `faces`, `faces-turned` : neuf panneaux HUD à une seule face visible —
@@ -230,9 +231,13 @@ grille.
 
 - ALT + clic gauche maintenu sur la géométrie visible déplace le HUD sans
   ouvrir les outils ; main de saisie au survol et pendant le déplacement.
-- Préférences › Pratique › HUDs : touche configurable (ALT par défaut), clic
-  sur la touche puis saisie au clavier, Échap pour annuler et bouton
-  Rétablir ALT ; choix enregistré et appliqué au survol comme au déplacement.
+- Préférences › Raccourcis › HUDs, entre Fenêtres et Débogage : deux touches
+  configurables comme les autres raccourcis (ALT en principale par défaut,
+  secondaire vide), clic pour saisir, clic droit pour effacer et Échap pour
+  annuler. Pour choisir Ctrl, ALT ou Maj seuls, appuyer puis relâcher ; les
+  combinaisons et les boutons de souris affectables sont aussi acceptés.
+  Les deux choix sont enregistrés et appliqués au survol comme au déplacement ;
+  « Rétablir les raccourcis par défaut » réinitialise aussi cette ligne.
 - Le droit Déplacer suffit, y compris sans droit Modifier.
 - Inventaire de démo lié à la tenue actuelle, pour tester le détachement et
   l'affichage dans l'inventaire.
@@ -403,7 +408,7 @@ grille.
   seulement 740, sans `AURORA_CAPTURE_EXIT`). Combiner avec
   `AURORA_DEMO_LOGIN=empty` pour l’écran de connexion : Déconnecter est
   désactivé. Les choix sont simulés hors ligne, sans requête de connexion.
-- **`AURORA_DEMO_OPTIONS=<section>`** : par exemple `12` pour Pratique
+- **`AURORA_DEMO_OPTIONS=<section>`** : par exemple `8` pour Raccourcis
   (touche de déplacement des HUDs).
 - **`AURORA_DEMO_CRASH=panic|native|missing|normal|recovery`**, seulement
   avec `AURORA_DEMO` : déclenche une panique Rust, une exception native
