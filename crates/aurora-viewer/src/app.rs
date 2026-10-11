@@ -761,12 +761,28 @@ impl App {
                 });
                 return;
             }
+            if let NetCommand::CopyNotecardInventory {
+                editor,
+                notecard,
+                item,
+                open,
+                ..
+            } = &cmd
+            {
+                let mut copied = item.as_ref().clone();
+                copied.id = uuid::Uuid::new_v4();
+                copied.parent =
+                    crate::world::inventory::actions::system(&self.world.inventory, copied.asset_type).unwrap_or(self.world.inventory.root);
+                copied.owner = self.world.agent_id;
+                self.notecard_inventory_copied(*editor, *notecard, *open, Ok(copied));
+                return;
+            }
             if let NetCommand::PreviewTaskNotecard { object, item, .. } = &cmd {
-                let data = self
-                    .demo_documents
-                    .get(&item.id)
-                    .cloned()
-                    .unwrap_or_else(|| crate::world::inventory::demo::note_asset(false));
+                let data = self.demo_documents.get(&item.id).cloned().unwrap_or_else(|| {
+                    crate::world::inventory::demo::note_asset(
+                        std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|v| v == "note-task-embedded"),
+                    )
+                });
                 self.task_notecard_preview(*object, item.id, item.asset_id, Ok(data));
                 return;
             }
@@ -813,7 +829,7 @@ impl App {
                         &aurora_llsd::llsd_map! { "version" => "1.1", "type" => "GLTF 2.0", "data" => "{\"asset\":{\"version\":\"2.0\"},\"materials\":[{}]}" },
                     ),
                     7 => crate::world::inventory::demo::note_asset(
-                        std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|v| v == "note-embedded"),
+                        std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|v| matches!(v.as_str(), "note-embedded" | "note-image" | "note-landmark" | "note-copy" | "note-menu-right")),
                     ),
                     _ => aurora_i18n::tr!("app-demo-content", value0 = it.name.to_string()).into_bytes(),
                 });
@@ -995,6 +1011,20 @@ impl App {
         }
         if let NetEvent::InventoryContentSaved { request, item, result } = ev {
             self.inventory_content_saved(request, item, result);
+            return;
+        }
+        if let NetEvent::NotecardCopySubmitted { editor, notecard, result } = ev {
+            self.notecard_copy_submitted(editor, notecard, result);
+            return;
+        }
+        if let NetEvent::NotecardInventoryCopied {
+            editor,
+            notecard,
+            open,
+            result,
+        } = ev
+        {
+            self.notecard_inventory_copied(editor, notecard, open, result);
             return;
         }
         if let NetEvent::InventoryOperationFailed(reason) = ev {
@@ -3027,6 +3057,9 @@ impl App {
         images.extend(self.build.ui.wanted_images.drain());
         images.extend(self.appearance_ui.wanted_images.drain());
         images.extend(self.inventory_ui.wanted_images.drain());
+        for note in self.task_notecards.values_mut() {
+            images.extend(note.state.wanted_images.drain());
+        }
         for image in images {
             if self.ui_images.contains_key(&image) {
                 continue;

@@ -279,6 +279,16 @@ preserved.
 
 Le bouton **AO** de la barre du bas ouvre la gestion de l’Animation Overrider intégré. Les ensembles sont conservés sous `#Firestorm/#AO` ; importez une notecard ZHAO depuis le même dossier que ses animations. L’AO est désactivé initialement, comme dans Firestorm. `cao on` / `cao off` l’activent ou le désactivent ; `cao sit` bascule l’assise, `cao sit off` remplace l’assise et `cao sit on` conserve l’assise standard, comme Firestorm. Le scénario de démo est décrit dans [les options de test](docs/TESTING.md#avatars-et-animations).
 
+### Notecards
+
+Les notes affichent les images, repères et autres éléments intégrés avec leur
+icône et leur nom dans le texte. Glisser un élément depuis l’inventaire pour
+l’insérer ; un clic gauche l’ouvre directement, et le clic droit propose
+Ouvrir ou Copier dans l’inventaire. Enregistrer (Ctrl+S) conserve leurs
+permissions.
+Les scénarios de démo sont décrits dans
+[le guide de test](docs/TESTING.md#interface).
+
 ### Test switches
 
 Local and editing HUD zoom scenarios (`AURORA_DEMO_HUDS=scale|scale-copy|scale-touch|scale-reset|scale-forget|scale-ctrl|scale-key|scale-secondary|edit-scroll`)

@@ -501,7 +501,7 @@ mod tests {
         ];
         let task = tokio::spawn(async move {
             let mut requests = Vec::new();
-            for (status, reply) in replies.into_iter().take(if reject || task_save { 2 } else { 3 }) {
+            for (mut status, reply) in replies.into_iter().take(if reject || task_save { 2 } else { 3 }) {
                 let (mut socket, _) = tokio::time::timeout(std::time::Duration::from_secs(5), listener.accept())
                     .await
                     .expect("request timeout")
@@ -531,6 +531,12 @@ mod tests {
                     String::from_utf8_lossy(&bytes[..start]).into_owned(),
                     bytes[start..start + size].to_vec(),
                 ));
+                if requests
+                    .last()
+                    .is_some_and(|(headers, body)| headers.starts_with("POST /upload ") && !firestorm_embedded_headers(body))
+                {
+                    status = 400;
+                }
                 let body = aurora_llsd::to_xml(&reply);
                 let header = format!(
                     "HTTP/1.1 {status} Test\r\nContent-Type: application/llsd+xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -542,6 +548,74 @@ mod tests {
             requests
         });
         (url, task)
+    }
+
+    fn firestorm_embedded_headers(data: &[u8]) -> bool {
+        // LLNotecard::importEmbeddedItemsStream uses the exact literal
+        // "inv_item\t0\n", not tokenized whitespace (llstreamtools.cpp).
+        let Ok(text) = std::str::from_utf8(data) else { return false };
+        let mut lines = text.lines();
+        while let Some(line) = lines.next() {
+            if line.starts_with("Text length ") {
+                break;
+            }
+            if line.trim_start().starts_with("ext char index ")
+                && lines.find(|line| !line.trim().is_empty()).map(str::trim_start) != Some("inv_item\t0")
+            {
+                return false;
+            }
+        }
+        true
+    }
+
+    #[tokio::test]
+    async fn notecard_with_inventory_item_saves_through_the_strict_uploader() {
+        let mut note = super::super::notecard::Notecard::default();
+        let mut text = "Photo : ".to_owned();
+        let embedded = InvItem {
+            id: id(50),
+            asset_id: id(60),
+            parent: id(1),
+            owner: id(2),
+            creator: id(2),
+            asset_type: 0,
+            inv_type: 0,
+            name: "Image de test".into(),
+            desc: "Description avec espaces".into(),
+            base_mask: 0x7fffffff,
+            owner_mask: 0x7fffffff,
+            next_owner_mask: 0xe000,
+            ..Default::default()
+        };
+        note.insert_attachment(&mut text, 8, &embedded).expect("image drop");
+        let data = note.encode(&text).expect("notecard asset");
+        for task_save in [false, true] {
+            let (url, task) = notecard_server(false, false, false, task_save).await;
+            if task_save {
+                assert_eq!(
+                    save_task_notecard(&reqwest::Client::new(), &url, id(90), id(3), data.clone())
+                        .await
+                        .expect("task note save"),
+                    id(40)
+                );
+            } else {
+                let saved = save_content(
+                    &reqwest::Client::new(),
+                    &url,
+                    &format!("{url}/fetch"),
+                    id(2),
+                    id(3),
+                    7,
+                    data.clone(),
+                )
+                .await
+                .expect("inventory note save");
+                assert_eq!(saved.asset_id, id(40));
+            }
+            let requests = task.await.expect("requests");
+            assert_eq!(requests[1].1, data);
+            assert!(firestorm_embedded_headers(&requests[1].1));
+        }
     }
 
     #[tokio::test]

@@ -12,6 +12,7 @@ mod context;
 mod controls;
 mod dialogs;
 mod document;
+mod embedded;
 pub use document::document_demo_events;
 mod properties;
 pub mod thumbnail;
@@ -21,10 +22,17 @@ pub use view::InventoryPreferences;
 
 /// The shared editor and unsaved-changes confirmation, without an inventory
 /// tree. Object notecards keep their own item model and document state.
-pub fn show_document(ctx: &egui::Context, p: &Palette, icons: &Icons, inv: &Inventory, st: &mut InventoryUi) -> Vec<InvAction> {
+pub fn show_document(
+    ctx: &egui::Context,
+    p: &Palette,
+    icons: &Icons,
+    inv: &Inventory,
+    st: &mut InventoryUi,
+    drag_inventory: &Inventory,
+    images: &std::collections::HashMap<Uuid, egui::TextureHandle>,
+) -> Vec<InvAction> {
     let mut actions = Vec::new();
     let prefs = InventoryPreferences::default();
-    let images = std::collections::HashMap::new();
     let facts = Facts {
         agent: Uuid::nil(),
         worn: Default::default(),
@@ -33,8 +41,8 @@ pub fn show_document(ctx: &egui::Context, p: &Palette, icons: &Icons, inv: &Inve
         appearance_busy: false,
         names: Default::default(),
     };
-    dialogs::preview(ctx, p, inv, st, &images, &prefs, &mut actions);
-    dialogs::show(ctx, p, icons, inv, st, &prefs, &facts, &images, &mut actions);
+    dialogs::preview(ctx, p, icons, inv, drag_inventory, st, images, &prefs, &mut actions);
+    dialogs::show(ctx, p, icons, inv, st, &prefs, &facts, images, &mut actions);
     actions
 }
 
@@ -62,6 +70,12 @@ pub enum InvAction {
         resident: Uuid,
     },
     Preview(Uuid),
+    Embedded {
+        editor: Uuid,
+        notecard: Uuid,
+        marker: char,
+        copy: bool,
+    },
     SaveContent {
         editor: Uuid,
         item: Uuid,
@@ -135,6 +149,8 @@ pub enum EditDialog {
     Empty(Uuid),
     Ungroup(Uuid),
     ReplaceLinks(Uuid, Option<Uuid>),
+    CopyEmbedded(Uuid, char),
+    SaveEmbedded(Uuid),
 }
 
 struct InlineRename {
@@ -253,6 +269,7 @@ pub struct InventoryUi {
     pub preview_dirty: bool,
     pub save_pending: bool,
     pub preview_source: Option<aurora_net::inventory::notecard::Notecard>,
+    pub attachment_preview: Option<aurora_net::inventory::InvItem>,
     pub preview_original: String,
     pub preview_message: String,
     pub content_save: Option<(Uuid, Vec<u8>, String)>,
@@ -1155,7 +1172,7 @@ pub fn show(
     controls::dialogs(ctx, p, st, prefs);
     finish_hidden_rename(inv, st, prefs, &mut actions);
     dialogs::show(ctx, p, icons, inv, st, prefs, &facts, images, &mut actions);
-    dialogs::preview(ctx, p, inv, st, images, prefs, &mut actions);
+    dialogs::preview(ctx, p, icons, inv, inv, st, images, prefs, &mut actions);
     st.thumbnail.show(
         ctx,
         p,
@@ -1212,7 +1229,17 @@ pub fn show(
         finish_hidden_rename(&world.inventory, &mut w.state, prefs, &mut actions);
         controls::dialogs(ctx, p, &mut w.state, prefs);
         dialogs::show(ctx, p, icons, &world.inventory, &mut w.state, prefs, &facts, images, &mut actions);
-        dialogs::preview(ctx, p, &world.inventory, &mut w.state, images, prefs, &mut actions);
+        dialogs::preview(
+            ctx,
+            p,
+            icons,
+            &world.inventory,
+            &world.inventory,
+            &mut w.state,
+            images,
+            prefs,
+            &mut actions,
+        );
         w.state.thumbnail.show(
             ctx,
             p,

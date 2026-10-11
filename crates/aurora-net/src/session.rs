@@ -29,6 +29,7 @@ use std::time::{Duration, Instant};
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
+use uuid::Uuid;
 
 /// Mute list, groups and chat sessions.
 #[path = "session_social.rs"]
@@ -129,6 +130,8 @@ struct Session<'a> {
     main: Option<SocketAddr>,
     eq_tx: mpsc::UnboundedSender<EqEvent>,
     caps_tx: mpsc::UnboundedSender<(SocketAddr, Result<HashMap<String, String>, String>)>,
+    notecard_copy_tx: mpsc::UnboundedSender<(u32, Result<(), String>)>,
+    notecard_copies: HashMap<u32, (Uuid, Uuid, bool)>,
     last_controls: AgentControls,
     last_agent_update: Instant,
     one_shot: u32,
@@ -226,6 +229,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
 
     let (eq_tx, mut eq_rx) = mpsc::unbounded_channel();
     let (caps_tx, mut caps_rx) = mpsc::unbounded_channel();
+    let (notecard_copy_tx, mut notecard_copy_rx) = mpsc::unbounded_channel();
     let mut s = Session {
         sh,
         sock: sock.clone(),
@@ -255,6 +259,8 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         inventory_uploads: Default::default(),
         inventory_previews: Default::default(),
         inventory_callbacks: HashMap::new(),
+        notecard_copy_tx,
+        notecard_copies: HashMap::new(),
         inventory_merchant_pending: false,
         next_inventory_callback: 0,
     };
@@ -285,6 +291,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
             },
             Some(e) = eq_rx.recv() => s.on_eq_event(e),
             Some((addr, caps)) = caps_rx.recv() => s.on_caps(addr, caps),
+            Some((callback, result)) = notecard_copy_rx.recv() => s.notecard_copy_http(callback, result),
         }
     }
     s.save_object_caches();
@@ -667,6 +674,20 @@ impl Session<'_> {
         let before = self.inventory_callbacks.len();
         self.inventory_callbacks
             .retain(|_, (sent, _)| sent.elapsed() < Duration::from_secs(60));
+        for (_, (editor, notecard, open)) in self
+            .notecard_copies
+            .extract_if(|callback, _| !self.inventory_callbacks.contains_key(callback))
+        {
+            emit(
+                self.sh,
+                NetEvent::NotecardInventoryCopied {
+                    editor,
+                    notecard,
+                    open,
+                    result: Err(aurora_i18n::tr!("session-a-creation-or-copy-was-not-confirmed-reload-the").into()),
+                },
+            );
+        }
         if before != self.inventory_callbacks.len() {
             emit(
                 self.sh,
@@ -1488,6 +1509,44 @@ impl Session<'_> {
                     self.send_main(&m, true);
                 }
             }
+            NetCommand::CopyNotecardInventory {
+                editor,
+                open,
+                handle,
+                object,
+                notecard,
+                item,
+            } => {
+                let cap = handle
+                    .and_then(|handle| self.sim_for_handle(handle))
+                    .or(self.main)
+                    .and_then(|addr| self.sims.get(&addr))
+                    .and_then(|sim| sim.caps.get("CopyInventoryFromNotecard"))
+                    .cloned();
+                let Some(cap) = cap else {
+                    emit(
+                        self.sh,
+                        NetEvent::NotecardCopySubmitted {
+                            editor,
+                            notecard,
+                            result: Err(aurora_i18n::tr!("notecard-copy-unavailable").into()),
+                        },
+                    );
+                    return;
+                };
+                let callback = self.inventory_callback(false);
+                self.notecard_copies.insert(callback, (editor, notecard, open));
+                let body = crate::inventory::notecard::copy_body(notecard, object, item.id, callback);
+                let http = self.sh.caps_http.clone();
+                let replies = self.notecard_copy_tx.clone();
+                tokio::spawn(async move {
+                    let result = caps::post_llsd(&http, &cap, &body)
+                        .await
+                        .map(|_| ())
+                        .map_err(|_| aurora_i18n::tr!("notecard-copy-failed").to_owned());
+                    let _ = replies.send((callback, result));
+                });
+            }
             NetCommand::CreateInventoryItem { parent, kind, name } => {
                 let (asset, inventory, subtype) = kind.types();
                 let mut m = CreateInventoryItem::default();
@@ -1898,6 +1957,34 @@ impl Session<'_> {
 
     fn main_cap(&self, name: &str) -> Option<String> {
         self.main.and_then(|a| self.sims.get(&a)).and_then(|s| s.caps.get(name).cloned())
+    }
+
+    fn notecard_copy_http(&mut self, callback: u32, result: Result<(), String>) {
+        let Some((editor, notecard, open)) = self.notecard_copies.get(&callback).copied() else {
+            return;
+        };
+        if let Err(reason) = result {
+            self.notecard_copies.remove(&callback);
+            self.inventory_callbacks.remove(&callback);
+            emit(
+                self.sh,
+                NetEvent::NotecardInventoryCopied {
+                    editor,
+                    notecard,
+                    open,
+                    result: Err(reason),
+                },
+            );
+        } else {
+            emit(
+                self.sh,
+                NetEvent::NotecardCopySubmitted {
+                    editor,
+                    notecard,
+                    result: Ok(()),
+                },
+            );
+        }
     }
 
     fn fetch_items(&mut self, items: Vec<uuid::Uuid>, owner: uuid::Uuid) {
@@ -2874,6 +2961,17 @@ impl Session<'_> {
                     .iter()
                     .map(|it| {
                         let item = crate::inventory::operations::item_from_udp(it);
+                        if let Some((editor, notecard, open)) = self.notecard_copies.remove(&it.callback_id) {
+                            emit(
+                                self.sh,
+                                NetEvent::NotecardInventoryCopied {
+                                    editor,
+                                    notecard,
+                                    open,
+                                    result: Ok(item.clone()),
+                                },
+                            );
+                        }
                         if self.inventory_callbacks.remove(&it.callback_id).is_some_and(|(_, new)| new) {
                             created.push(item.clone());
                         }
@@ -2921,6 +3019,17 @@ impl Session<'_> {
                         };
                         if new {
                             created.push(item.clone());
+                        }
+                        if let Some((editor, notecard, open)) = self.notecard_copies.remove(&it.callback_id) {
+                            emit(
+                                self.sh,
+                                NetEvent::NotecardInventoryCopied {
+                                    editor,
+                                    notecard,
+                                    open,
+                                    result: Ok(item.clone()),
+                                },
+                            );
                         }
                         item
                     })

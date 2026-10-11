@@ -6,6 +6,115 @@ use crate::world::inventory::actions as rules;
 use uuid::Uuid;
 
 impl App {
+    fn document_state(&mut self, editor: Uuid) -> Option<&mut crate::ui::inventory::InventoryUi> {
+        if self.inventory_ui.ui_id == editor {
+            return Some(&mut self.inventory_ui);
+        }
+        if let Some(index) = self.inventory_ui.windows.iter().position(|w| w.state.ui_id == editor) {
+            return Some(self.inventory_ui.windows[index].state.as_mut());
+        }
+        self.task_document_state(editor)
+    }
+
+    pub(super) fn notecard_copy_submitted(&mut self, editor: Uuid, notecard: Uuid, result: Result<(), String>) {
+        if let Some(st) = self.document_state(editor).filter(|st| st.preview == Some(notecard)) {
+            st.preview_message = result.err().unwrap_or_else(|| aurora_i18n::tr!("notecard-copy-requested").into());
+        }
+    }
+
+    pub(super) fn notecard_inventory_copied(
+        &mut self,
+        editor: Uuid,
+        notecard: Uuid,
+        open: bool,
+        result: Result<aurora_net::inventory::InvItem, String>,
+    ) {
+        match result {
+            Ok(item) => {
+                self.world.inventory.add_items(vec![item.clone()]);
+                if let Some(st) = self.document_state(editor).filter(|st| st.preview == Some(notecard)) {
+                    st.preview_message = aurora_i18n::tr!("notecard-copy-complete").into();
+                    if open && item.asset_type == 3 {
+                        self.show_place_profile(crate::world::place_details::Source::Landmark {
+                            item: item.id,
+                            asset: item.asset_id,
+                        });
+                    }
+                }
+            }
+            Err(reason) => self.notecard_copy_submitted(editor, notecard, Err(reason)),
+        }
+    }
+
+    pub(super) fn open_notecard_attachment(&mut self, editor: Uuid, notecard: Uuid, marker: char, copy: bool, object: Uuid) {
+        let Some(st) = self.document_state(editor).filter(|st| st.preview == Some(notecard)) else {
+            return;
+        };
+        if st.save_pending
+            || !st
+                .preview_text
+                .as_ref()
+                .is_some_and(|r| r.as_ref().is_ok_and(|text| text.contains(marker)))
+        {
+            return;
+        }
+        let Some(attachment) = st.preview_source.as_ref().and_then(|source| source.attachment(marker)) else {
+            return;
+        };
+        if !attachment.saved {
+            st.preview_message = aurora_i18n::tr!("notecard-attachment-unsaved").into();
+            st.dialog = Some(crate::ui::inventory::EditDialog::SaveEmbedded(notecard));
+            return;
+        }
+        let item = attachment.item.clone();
+        if copy || item.asset_type == 3 {
+            if !copy
+                && let Some(original) = self
+                    .world
+                    .inventory
+                    .items
+                    .values()
+                    .find(|it| it.asset_type == 3 && it.asset_id == item.asset_id)
+            {
+                self.show_place_profile(crate::world::place_details::Source::Landmark {
+                    item: original.id,
+                    asset: original.asset_id,
+                });
+                return;
+            }
+            let handle = self
+                .world
+                .objects
+                .index_of_uuid(&object)
+                .and_then(|idx| self.world.objects.get(idx))
+                .map(|o| o.key.region);
+            self.send(NetCommand::CopyNotecardInventory {
+                editor,
+                open: !copy,
+                handle,
+                object,
+                notecard,
+                item: Box::new(item),
+            });
+            return;
+        }
+        match item.asset_type {
+            0 => st.attachment_preview = Some(item),
+            2 => {
+                let avatar = item.desc.parse::<Uuid>().ok().filter(|id| !id.is_nil()).unwrap_or(item.creator);
+                if !avatar.is_nil() {
+                    self.profile_ui.open(&mut self.world, avatar);
+                }
+            }
+            1 => {
+                st.dialog = Some(crate::ui::inventory::EditDialog::CopyEmbedded(notecard, marker));
+                self.scene.sounds.want(item.asset_id);
+                self.scene.sounds.play_ui(self.audio_engine.as_ref(), item.asset_id);
+            }
+            _ => st.dialog = Some(crate::ui::inventory::EditDialog::CopyEmbedded(notecard, marker)),
+        }
+    }
+
     pub(super) fn apply_inventory_action(&mut self, action: InvAction) {
         match action {
             InvAction::Edit(change) => {
@@ -149,6 +258,14 @@ impl App {
                     }),
                     Err(reason) => st.preview_message = reason,
                 }
+            }
+            InvAction::Embedded {
+                editor,
+                notecard,
+                marker,
+                copy,
+            } => {
+                self.open_notecard_attachment(editor, notecard, marker, copy, Uuid::nil());
             }
             InvAction::Environment(asset, flags) => {
                 if let Some(kind) = crate::world::env_select::SettingsKind::from_flags(flags) {

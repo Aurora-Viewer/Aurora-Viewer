@@ -250,7 +250,7 @@ fn landmarks() -> &'static Vec<(u128, &'static str, (u32, u32), [f32; 3], i64)> 
 }
 
 /// Item and asset ids of the n-th demo landmark.
-fn landmark_ids(n: usize) -> (Uuid, Uuid) {
+pub(crate) fn landmark_ids(n: usize) -> (Uuid, Uuid) {
     (u(0x1A_0000 + n as u128), u(0x1B_0000 + n as u128))
 }
 

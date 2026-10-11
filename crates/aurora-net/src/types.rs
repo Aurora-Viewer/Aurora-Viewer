@@ -700,6 +700,17 @@ pub enum NetEvent {
         result: Result<Vec<u8>, String>,
     },
     InventoryOperationFailed(String),
+    NotecardCopySubmitted {
+        editor: Uuid,
+        notecard: Uuid,
+        result: Result<(), String>,
+    },
+    NotecardInventoryCopied {
+        editor: Uuid,
+        notecard: Uuid,
+        open: bool,
+        result: Result<crate::inventory::InvItem, String>,
+    },
     InventoryMerchant(Result<bool, String>),
     InventoryContentSaved {
         request: Uuid,
@@ -1154,6 +1165,14 @@ pub enum NetCommand {
         item: Uuid,
         asset_type: i32,
         data: Vec<u8>,
+    },
+    CopyNotecardInventory {
+        editor: Uuid,
+        open: bool,
+        handle: Option<RegionHandle>,
+        object: Uuid,
+        notecard: Uuid,
+        item: Box<crate::inventory::InvItem>,
     },
     /// AIS link changes, acknowledged and re-fetched before updating appearance.
     UpdateOutfit {

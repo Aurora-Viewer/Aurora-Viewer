@@ -11,6 +11,7 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "AvatarPickerSearch",
     "AvatarRenderInfo",
     "ChatSessionRequest",
+    "CopyInventoryFromNotecard",
     "EnvironmentSettings",
     "EventQueueGet",
     "ExtEnvironment",

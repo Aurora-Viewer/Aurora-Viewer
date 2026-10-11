@@ -633,12 +633,25 @@ hors ligne ; les fichiers et photos chargés en démo restent hors ligne.
 - `note-edit`, `note-save`, `note-close`, `note-error`, `note-embedded` :
   ajout automatique de texte à l’image 650, puis sauvegarde par Ctrl+S
   (`note-save`), confirmation de fermeture (`note-close`) ou refus simulé
-  (`note-error`) à l’image 670. `note-embedded` contient un repère joint :
-  son marqueur est affiché par un trombone ; le texte et les pièces jointes
-  encore référencées sont conservés lors de l’enregistrement. Capture après
+  (`note-error`) à l’image 670. `note-embedded` contient une image, un repère
+  et un objet : leurs icônes et noms sont affichés dans le texte ; les pièces jointes
+  encore référencées sont conservées lors de l’enregistrement. Capture après
   l’image 720 ; le refus doit garder le brouillon et permettre une nouvelle
-  tentative. La lecture / insertion / extraction des pièces jointes reste
-  à implémenter.
+  tentative. Un clic gauche ouvre directement l’élément ; le clic droit
+  propose Ouvrir et Copier dans l’inventaire. Une image affiche son aperçu,
+  un repère ouvre son lieu, un son joue localement ; les autres types proposent
+  une copie dans l’inventaire.
+  Glisser un élément de l’inventaire dans le texte l’insère à cet endroit
+  si le prochain propriétaire dispose de copie / modification / transfert.
+- `note-drop` : dépose une texture à l’image 651 puis sauvegarde à l’image 670.
+  `note-menu-right` : ouvre le menu sur la texture par clic droit à l’image 651.
+  `note-image`, `note-landmark`, `note-copy` : ouvre respectivement
+  l’image, le repère ou l’objet par un seul clic gauche à l’image 651 ; `note-copy`
+  confirme la copie à l’image 671. `note-task-embedded` permet
+  de tester les mêmes pièces jointes dans une note d’objet. Capturer après
+  l’image 740. Tout élément ajouté doit être enregistré avant son ouverture.
+  Les repères sont récupérés dans l’inventaire avant l’ouverture de leur lieu,
+  comme dans Firestorm ; un repère déjà présent pour le même asset est réutilisé.
 - `image-photo-save` : capture puis sauvegarde une vignette à l'image 2100
   et ferme la fenêtre Photo en gardant l'éditeur Image ouvert.
 - `folder-window` : une fenêtre limitée au contenu du dossier personnel,
