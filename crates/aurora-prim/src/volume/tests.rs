@@ -328,7 +328,8 @@ fn sphere_map(size: u32, comps: u8) -> Vec<u8> {
             let v = y as f32 / (size - 1) as f32;
             let theta = v * std::f32::consts::PI;
             let phi = u * 2.0 * std::f32::consts::PI;
-            let p = Vec3::new(theta.sin() * phi.cos(), theta.sin() * phi.sin(), -theta.cos()) * 0.5;
+            // JPEG2000 codestream order: north pole first (top-to-bottom).
+            let p = Vec3::new(theta.sin() * phi.cos(), theta.sin() * phi.sin(), theta.cos()) * 0.5;
             let c = ((p + Vec3::splat(0.5)) * 255.0).round();
             px.push(c.x as u8);
             px.push(c.y as u8);
@@ -396,6 +397,96 @@ fn sculpt_resolution_matches_ll() {
     // 128x32 map (ratio 4) at the highest LOD.
     let (s, t) = sculpt_calc_mesh_resolution(128, 32, 4.0);
     assert!(s * t <= 1024 && s >= 4 && t >= 4);
+}
+
+#[test]
+fn sculpt_top_down_sphere_faces_outward_unless_inverted() {
+    let mut p = sphere_params();
+    for flags in [
+        0,
+        LL_SCULPT_FLAG_INVERT,
+        LL_SCULPT_FLAG_MIRROR,
+        LL_SCULPT_FLAG_INVERT | LL_SCULPT_FLAG_MIRROR,
+    ] {
+        p.sculpt = Some(SculptParams {
+            texture: uuid::Uuid::nil(),
+            sculpt_type: LL_SCULPT_TYPE_SPHERE | flags,
+        });
+        let direction = if flags & LL_SCULPT_FLAG_INVERT == 0 { 1.0 } else { -1.0 };
+        for comps in [3, 4] {
+            for &detail in &DETAIL_SCALES {
+                let mesh = generate_sculpt(&p, detail, 64, 64, comps, &sphere_map(64, comps));
+                let face = &mesh.faces[0];
+                for (position, normal) in face.positions.iter().zip(&face.normals) {
+                    let radial = Vec3::from(*position).normalize();
+                    assert!(
+                        radial.dot(Vec3::from(*normal)) * direction > 0.8,
+                        "flags {flags}, detail {detail}, position {position:?}, normal {normal:?}"
+                    );
+                }
+                assert!(winding_agreement(face) > 0.99);
+                for tri in face.indices.as_chunks::<3>().0 {
+                    let a = Vec3::from(face.positions[tri[0] as usize]);
+                    let b = Vec3::from(face.positions[tri[1] as usize]);
+                    let c = Vec3::from(face.positions[tri[2] as usize]);
+                    let geometric = (b - a).cross(c - a);
+                    if geometric.length_squared() > 1e-12 {
+                        assert!(geometric.dot(a + b + c) * direction > 0.0, "triangle faces the wrong side");
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn sculpt_top_down_plane_keeps_uv_orientation_on_rectangular_maps() {
+    let mut p = sphere_params();
+    for (width, height) in [(64, 32), (32, 64)] {
+        for comps in [3, 4] {
+            let mut pixels = Vec::new();
+            for y in 0..height {
+                for x in 0..width {
+                    pixels.extend_from_slice(&[(x * 255 / (width - 1)) as u8, ((height - 1 - y) * 255 / (height - 1)) as u8, 128]);
+                    if comps == 4 {
+                        pixels.push(255);
+                    }
+                }
+            }
+            for flags in [
+                0,
+                LL_SCULPT_FLAG_INVERT,
+                LL_SCULPT_FLAG_MIRROR,
+                LL_SCULPT_FLAG_INVERT | LL_SCULPT_FLAG_MIRROR,
+            ] {
+                p.sculpt = Some(SculptParams {
+                    texture: uuid::Uuid::nil(),
+                    sculpt_type: LL_SCULPT_TYPE_PLANE | flags,
+                });
+                for &detail in &DETAIL_SCALES {
+                    let mesh = generate_sculpt(&p, detail, width, height, comps, &pixels);
+                    let face = &mesh.faces[0];
+                    let direction = if flags & LL_SCULPT_FLAG_INVERT == 0 { 1.0 } else { -1.0 };
+                    // A north-first image must put the south edge at V=0,
+                    // the north edge at V=1; horizontal UVs follow LL's XOR.
+                    let reverse = (flags & LL_SCULPT_FLAG_INVERT != 0) != (flags & LL_SCULPT_FLAG_MIRROR != 0);
+                    let last = face.positions.len() - 1;
+                    assert!(Vec3::from(face.positions[0]).abs_diff_eq(Vec3::new(-0.5 * direction, -0.5, 128.0 / 255.0 - 0.5), 1e-6,));
+                    assert!(Vec3::from(face.positions[last]).abs_diff_eq(Vec3::new(0.5 * direction, 0.5, 128.0 / 255.0 - 0.5), 1e-6,));
+                    let first_uv = [if reverse { 1.0 } else { 0.0 }, 0.0];
+                    let last_uv = [if reverse { 0.0 } else { 1.0 }, 1.0];
+                    for component in 0..2 {
+                        assert!((face.uvs[0][component] - first_uv[component]).abs() < 1e-6);
+                        assert!((face.uvs[last][component] - last_uv[component]).abs() < 1e-6);
+                    }
+                    for normal in &face.normals {
+                        assert!(Vec3::from(*normal).abs_diff_eq(Vec3::Z * direction, 1e-6));
+                    }
+                    assert!(winding_agreement(face) > 0.99);
+                }
+            }
+        }
+    }
 }
 
 #[test]
