@@ -960,7 +960,18 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
             .into_iter()
             .enumerate()
             .map(|(i, (ty, name))| {
+                let owner_mask = 0x7fff_ffff_u32
+                    & match i {
+                        1 => !aurora_net::build::perm::MODIFY,
+                        2 => !aurora_net::build::perm::COPY,
+                        _ => u32::MAX,
+                    };
                 aurora_llsd::llsd_map!("item_id" => action_id(990+i as u32),"parent_id" => *object,
+                    "permissions" => aurora_llsd::llsd_map!(
+                        "owner_id" => DEMO_AGENT,
+                        "base_mask" => 0x7fff_ffff_u32,
+                        "owner_mask" => owner_mask,
+                        "next_owner_mask" => aurora_net::build::perm::TRANSFER),
                     "type" => ty,"inv_type" => ty,"name" => name,"desc" => aurora_i18n::tr!("demo-contents-simulated-offline"))
             })
             .collect();

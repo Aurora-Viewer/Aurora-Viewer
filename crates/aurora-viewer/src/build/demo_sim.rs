@@ -26,7 +26,12 @@ fn demo_item(object: Uuid, n: u128, name: &str, asset_type: i8, inv_type: i8) ->
         creator_id: DEMO_CREATOR,
         owner_id: crate::demo::DEMO_AGENT,
         base_mask: PERM_ALL,
-        owner_mask: PERM_ALL,
+        owner_mask: PERM_ALL
+            & match n {
+                2 => !perm::MODIFY,
+                3 => !perm::COPY,
+                _ => u32::MAX,
+            },
         next_owner_mask: perm::MOVE | perm::TRANSFER,
         asset_id: Uuid::from_u128(n),
         asset_type,

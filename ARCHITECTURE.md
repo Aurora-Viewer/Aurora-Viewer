@@ -139,6 +139,13 @@ micro local, même sans écho de sa présence par le serveur vocal.
 
 ## Déroulement d'une image
 
+L'affichage des permissions d'éléments est partagé par l'inventaire, la fenêtre
+de contenu d'un objet et l'onglet Contenu de construction dans
+`ui/inventory/permissions.rs` : indicateurs compacts C·M·T, droits accordés verts
+et droits refusés rouges et barrés, couleurs issues de la palette du thème,
+détail du propriétaire actuel et du prochain propriétaire au survol ; les
+liens d'inventaire reprennent les droits de leur original.
+
 Les prims flexibles ont leur simulation propre (`aurora-prim/src/flexible.rs`,
 port de `LLVolumeImplFlexible`) et une géométrie unique par objet. La scène
 (`scene/flexible.rs`) calcule en parallèle les forces, le chemin déformé,

@@ -306,9 +306,15 @@ pub fn show_contents(
                                 if let Some(t) = icons.get(super::inventory::item_icon(item.asset_type, item.inv_type)) {
                                     ui.add(egui::Image::new(t).fit_to_exact_size(Vec2::splat(16.0)).tint(p.ink));
                                 }
-                                let r = ui
-                                    .add(egui::Label::new(&item.name).sense(egui::Sense::click()))
-                                    .on_hover_text(&item.desc);
+                                let permissions = super::inventory::permissions::Permissions::new(item.owner_mask, item.next_owner_mask);
+                                let r = permissions.row(ui, p, &item.name).on_hover_ui(|ui| {
+                                    ui.label(&item.name);
+                                    if !item.desc.is_empty() {
+                                        ui.label(&item.desc);
+                                    }
+                                    ui.separator();
+                                    ui.label(permissions.tooltip());
+                                });
                                 if item.asset_type == 7 {
                                     if r.double_clicked() {
                                         notecard = Some((c.target.object, item.id));
