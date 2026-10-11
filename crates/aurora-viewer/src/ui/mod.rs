@@ -15,6 +15,7 @@ pub mod debug_overlay;
 pub mod display_name;
 pub mod emoji;
 pub mod environment;
+pub mod exit;
 pub mod fonts;
 pub mod hud;
 pub mod icons;

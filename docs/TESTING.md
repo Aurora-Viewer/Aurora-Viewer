@@ -357,6 +357,8 @@ grille.
 
 | Variable | Effet |
 |---|---|
+| `AURORA_DEMO_WINDOWS=<mode>` | Repli, déplacement et restauration du titre de l’inventaire |
+| `AURORA_DEMO_EXIT=<mode>` | Modale de fermeture et choix hors ligne |
 | `AURORA_DEMO_UI=<onglet>` | Ouvre Personnes (onglet), l'inventaire et le chat |
 | `AURORA_DEMO_OPTIONS=<section>` | Ouvre les préférences sur une section |
 | `AURORA_DEMO_PERF=compact` ou `full` | Ouvre la fenêtre Performances, compacte ou complète |
@@ -387,6 +389,20 @@ grille.
 
 ### Détails
 
+- **`AURORA_DEMO_WINDOWS=1|restore|drag`**, avec `AURORA_DEMO_INVENTORY=1` :
+  double-clic sur le titre réel de l’inventaire aux images 660–665 ; `1`
+  garde la barre repliée, `restore` la développe aux images 1000–1005,
+  `drag` la déplace aussi de 100 × 60 points aux images 780–782.
+  Capturer `620,740,900,1120` pour vérifier contenu, repli, déplacement et
+  dimensions restaurées. Le bouton « − » reste utilisable ; les autres
+  boutons du titre et le contenu ne déclenchent pas le double-clic du titre.
+- **`AURORA_DEMO_EXIT=1|cancel|logout|quit`** : ouvre la modale à l’image 650.
+  `1` la laisse interactive ; les autres modes font le choix à l’image 800.
+  Capturer `740,900` pour comparer le fond flouté puis la session reprise ou
+  le retour au login. `quit` termine le processus à l’image 800 (capturer
+  seulement 740, sans `AURORA_CAPTURE_EXIT`). Combiner avec
+  `AURORA_DEMO_LOGIN=empty` pour l’écran de connexion : Déconnecter est
+  désactivé. Les choix sont simulés hors ligne, sans requête de connexion.
 - **`AURORA_DEMO_OPTIONS=<section>`** : par exemple `12` pour Pratique
   (touche de déplacement des HUDs).
 - **`AURORA_DEMO_CRASH=panic|native|missing|normal|recovery`**, seulement

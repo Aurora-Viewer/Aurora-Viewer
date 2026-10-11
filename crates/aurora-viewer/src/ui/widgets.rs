@@ -4,6 +4,9 @@
 use crate::theme::Palette;
 use egui::{Color32, CornerRadius, RichText, Sense, Stroke, Vec2};
 
+#[cfg(test)]
+mod collapse_tests;
+pub mod demo;
 mod resize;
 
 pub struct Floater<'a> {
@@ -86,6 +89,10 @@ impl<'a> Floater<'a> {
         let mut toggle_min = false;
         let mut out = None;
         let window_id = egui::Id::new(self.id);
+        let expanded_id = window_id.with("expanded_size");
+        let restore_id = window_id.with("restore_size");
+        let expanded = ctx.data_mut(|d| d.get_persisted::<Vec2>(expanded_id)).unwrap_or(self.default_size);
+        let restore = ctx.data_mut(|d| d.remove_temp::<bool>(restore_id)).unwrap_or(false);
         let resizable = self.resizable && !minimized;
         let resize_drag = resizable.then(|| resize::Drag::prepare(ctx, window_id, self.min_size)).flatten();
         // Our handles clamp both geometry and position at the minimum, while
@@ -103,19 +110,36 @@ impl<'a> Floater<'a> {
         } else if !minimized {
             w = w.default_width(self.default_size.x);
         }
+        // LLFloater::setMinimized keeps the expanded geometry. egui's Resize
+        // otherwise retains the old height when the body disappears, and then
+        // forgets it when clamped to the header. Restore that size once.
+        // Aurora keeps the dragged bar's current position when restoring.
+        if minimized {
+            w = w.fixed_size(Vec2::new(expanded.x, 31.0));
+        } else if restore {
+            w = w.fixed_size(expanded);
+        }
         if let Some(drag) = resize_drag {
             let rect = drag.rect();
             w = w.fixed_size(rect.size()).current_pos(rect.min);
         }
         let response = w.show(ctx, |ui| {
+            // Our custom resize handles replace egui's native resizability.
+            // Reserve the requested content area as a resizable Window would:
+            // height-filling scroll areas otherwise shave a few pixels off
+            // each restoration even though Resize remembered the right size.
+            if resizable || restore {
+                ui.set_min_size(ui.available_size());
+            }
             // title bar
-            ui.horizontal(|ui| {
+            let mut buttons_left = f32::INFINITY;
+            let header = ui.horizontal(|ui| {
                 ui.set_min_height(20.0);
                 let title = RichText::new(&self.title).size(13.0).color(p.ink);
                 // a fixed floater is as wide as its title; a resizable one
                 // cuts a long title short before the buttons (LLFloater
                 // titles end with an ellipsis)
-                let truncate = self.resizable && !minimized;
+                let truncate = self.resizable || minimized;
                 if !truncate {
                     ui.label(title.clone());
                 }
@@ -125,7 +149,11 @@ impl<'a> Floater<'a> {
                         close = true;
                     }
                     if title_button(ui, p, "minus")
-                        .on_hover_text(aurora_i18n::tr!("common-collapse"))
+                        .on_hover_text(if minimized {
+                            aurora_i18n::tr!("common-expand")
+                        } else {
+                            aurora_i18n::tr!("common-collapse")
+                        })
                         .clicked()
                     {
                         toggle_min = true;
@@ -138,6 +166,7 @@ impl<'a> Floater<'a> {
                     if let Some(h) = self.help {
                         title_button(ui, p, "question").on_hover_text(h);
                     }
+                    buttons_left = ui.cursor().right();
                     if truncate {
                         ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                             ui.add(egui::Label::new(title).truncate());
@@ -145,12 +174,25 @@ impl<'a> Floater<'a> {
                     }
                 });
             });
+            let mut title_rect = header.response.rect;
+            title_rect.max.x = buttons_left;
+            // Keep the title buttons outside the double-click target; Window
+            // still owns dragging the bar, including when it is minimized.
+            if ui
+                .interact(title_rect, window_id.with("title_double_click"), Sense::click())
+                .double_clicked()
+            {
+                toggle_min = true;
+            }
             if !minimized {
                 ui.add_space(2.0);
                 out = Some(body(ui));
             }
         });
         if let Some(response) = response {
+            if !minimized {
+                ctx.data_mut(|d| d.insert_persisted(expanded_id, response.response.rect.size()));
+            }
             if let Some(drag) = resize_drag {
                 drag.finish(ctx, window_id, response.response.rect);
             }
@@ -163,6 +205,9 @@ impl<'a> Floater<'a> {
         }
         if toggle_min {
             ctx.data_mut(|d| d.insert_persisted(min_id, !minimized));
+            if minimized {
+                ctx.data_mut(|d| d.insert_temp(restore_id, true));
+            }
             // LLFloater::setMinimized(false) plays UISndWindowClose
             if minimized && !self.silent {
                 super::sound_cues::request(ctx, crate::ui_sound::UiSound::WindowClose);
