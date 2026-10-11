@@ -2543,6 +2543,80 @@ pub fn animesh_events() -> Vec<NetEvent> {
     events
 }
 
+/// Mesh worn in AURORA_DEMO_CLOUD=self: an asset the asset server does not
+/// have (`MeshStreamer::insert_demo_unavailable`).
+pub const CLOUD_MESH: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0000_0000_0110);
+
+/// AURORA_DEMO_CLOUD=self (issue #121): the demo agent dressed like the
+/// residents who stayed a cloud for the whole 60 s limit. Its appearance has
+/// a head bake hidden by an alpha layer (IMG_INVISIBLE) with textured upper
+/// and lower bakes, and it wears a mesh that cannot be downloaded next to a
+/// plain hat. It must show a few seconds after its parts are there, without
+/// its head and without the mesh.
+pub fn cloud_self_events() -> Vec<NetEvent> {
+    use crate::scene::avatar::{BAKES, IMG_DEFAULT_AVATAR, IMG_INVISIBLE};
+    let mut bakes = TextureEntry::default();
+    for (slot, name, _) in BAKES {
+        if let Some(f) = bakes.faces.get_mut(slot) {
+            f.texture = match name {
+                "head" => IMG_INVISIBLE,
+                "upper" | "lower" => TEX_TILES,
+                _ => IMG_DEFAULT_AVATAR,
+            };
+        }
+    }
+    let mesh = SculptParams {
+        texture: CLOUD_MESH,
+        sculpt_type: LL_SCULPT_TYPE_MESH,
+    };
+    let state = |point: u8| ((point & 0x0F) << 4) | ((point & 0xF0) >> 4);
+    // chest: the mesh that never comes
+    let mut worn_mesh = prim(
+        9110,
+        Vec3::new(0.12, 0.0, 0.0),
+        Quat::IDENTITY,
+        Vec3::splat(0.3),
+        aurora_prim::VolumeParams {
+            sculpt: Some(mesh),
+            ..Default::default()
+        },
+        te([0.37, 0.92, 0.83, 1.0], 0, false, 0.0),
+        ExtraParams {
+            sculpt: Some(mesh),
+            ..Default::default()
+        },
+        "",
+    );
+    worn_mesh.parent_id = 9000;
+    worn_mesh.state = state(1);
+    // skull: a hat, where the hidden head would be
+    let mut hat = prim(
+        9111,
+        Vec3::new(0.0, 0.0, 0.1),
+        Quat::IDENTITY,
+        Vec3::new(0.26, 0.26, 0.2),
+        shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_CIRCLE, 100, 0, 0),
+        te([0.77, 0.71, 0.99, 1.0], 0, false, 0.0),
+        ExtraParams::default(),
+        "",
+    );
+    hat.parent_id = 9000;
+    hat.state = state(2);
+    vec![
+        NetEvent::ObjectUpdates {
+            handle: HANDLE,
+            objects: vec![worn_mesh, hat],
+        },
+        NetEvent::Appearance(aurora_net::AvatarAppearance {
+            avatar_id: DEMO_AGENT,
+            texture_entry: Some(Arc::new(bakes)),
+            visual_params: Vec::new(),
+            cof_version: 1,
+            hover_height: 0.0,
+        }),
+    ]
+}
+
 /// AURORA_DEMO_TEXTURES=<n>: texture stress test, `n` small cubes (9000 for
 /// any value that is not a number, as many textures as a busy region), each
 /// with its own texture. Returns the cube count.

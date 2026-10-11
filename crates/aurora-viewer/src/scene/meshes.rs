@@ -23,6 +23,9 @@ struct MeshEntry {
     state: u8, // 0 new, 1 cache check, 2 fetching, 3 ready, 4 failed
     retry_at: Option<Instant>,
     failures: u32,
+    /// The asset server does not have it, or what it sent is not a mesh:
+    /// asked again much later, and not expected meanwhile.
+    gone: bool,
     wanted_lods: HashSet<u8>,
     building: HashSet<u8>,
 }
@@ -106,8 +109,43 @@ impl MeshStreamer {
         );
     }
 
+    /// AURORA_DEMO_CLOUD=self: a mesh the asset server answered 404 for, as
+    /// `on_fetch` leaves it (no asset fetch offline).
+    pub fn insert_demo_unavailable(&mut self, id: Uuid) {
+        self.entries.entry(id).or_default();
+        self.fail(id, Duration::from_secs(600), true);
+    }
+
+    /// The mesh asset is not expected any more: missing on the asset server
+    /// or invalid (LLMeshHeaderHandler::processFailure marks every LOD
+    /// unavailable at once), or its download failed again and again.
     pub fn failed(&self, id: &Uuid) -> bool {
-        self.entries.get(id).is_some_and(|e| e.state == 4 && e.failures > 3)
+        self.entries.get(id).is_some_and(|e| e.state == 4 && (e.gone || e.failures > 3))
+    }
+
+    /// Diagnostic: the state of a mesh asset, without requesting it.
+    pub fn describe(&self, id: &Uuid) -> String {
+        let Some(e) = self.entries.get(id) else {
+            return "not requested".into();
+        };
+        let state = match e.state {
+            0 => "new",
+            1 => "reading the disk cache",
+            2 => "downloading",
+            3 => "loaded",
+            4 if e.gone => "unavailable",
+            4 => "download failed",
+            _ => "waiting to download",
+        };
+        let retry = e
+            .retry_at
+            .map(|t| t.saturating_duration_since(Instant::now()).as_secs())
+            .filter(|s| *s > 0)
+            .map(|s| format!(", retry in {s} s"))
+            .unwrap_or_default();
+        let mut building: Vec<u8> = e.building.iter().copied().collect();
+        building.sort_unstable();
+        format!("{state}, failures {}{retry}, LODs being built {building:?}", e.failures)
     }
 
     pub fn update(&mut self, jobs: &Jobs, fetcher: &Fetcher, viewer_asset: Option<&str>, rig: &Arc<super::anim::Rig>) {
@@ -193,6 +231,7 @@ impl MeshStreamer {
                 e.header = Some(h);
                 e.data = Some(Arc::new(data));
                 e.state = 3;
+                e.gone = false;
                 e.building.clear();
                 self.meta_generation += 1;
                 true
@@ -219,7 +258,8 @@ impl MeshStreamer {
                     });
                     return;
                 }
-                self.fail(id, Duration::from_secs(120));
+                // not a mesh: it will not get better
+                self.fail(id, Duration::from_secs(120), true);
             }
             _ => {
                 let why = match &r.data {
@@ -227,8 +267,9 @@ impl MeshStreamer {
                     Ok(_) => "empty response".to_owned(),
                 };
                 self.log_failure(format_args!("mesh {id}: download failed (HTTP {}, {why})", r.status));
-                let backoff = if r.status == 404 { 600 } else { 5 };
-                self.fail(id, Duration::from_secs(backoff));
+                let missing = r.status == 404;
+                let backoff = if missing { 600 } else { 5 };
+                self.fail(id, Duration::from_secs(backoff), missing);
             }
         }
     }
@@ -255,10 +296,13 @@ impl MeshStreamer {
         c
     }
 
-    fn fail(&mut self, id: Uuid, backoff: Duration) {
+    /// A download that failed, asked again after `backoff`; `gone` when the
+    /// asset is missing or invalid (see `failed`).
+    fn fail(&mut self, id: Uuid, backoff: Duration, gone: bool) {
         if let Some(e) = self.entries.get_mut(&id) {
             e.state = 4;
             e.failures += 1;
+            e.gone = gone;
             e.retry_at = Some(Instant::now() + backoff);
         }
     }
@@ -644,6 +688,66 @@ mod tests {
             offset: 0,
             data: Err(format!("HTTP {status}")),
         }
+    }
+
+    fn mesh_streamer() -> MeshStreamer {
+        MeshStreamer {
+            entries: HashMap::new(),
+            by_key: HashMap::new(),
+            next_key: 1,
+            cache_dir: PathBuf::new(),
+            fetching: 0,
+            logged_failures: 0,
+            meta_generation: 0,
+            staging: None,
+        }
+    }
+
+    /// A download of mesh `id` in flight, as `update` leaves it.
+    fn mesh_fetching(s: &mut MeshStreamer, id: Uuid) -> u64 {
+        s.want(id, 3);
+        let key = FETCH_KIND_MESH | s.next_key;
+        s.next_key += 1;
+        s.by_key.insert(key, id);
+        if let Some(e) = s.entries.get_mut(&id) {
+            e.state = 2;
+        }
+        key
+    }
+
+    #[test]
+    fn missing_or_invalid_mesh_is_not_expected_at_once() {
+        let (jobs, _rx) = Jobs::new();
+        let mut s = mesh_streamer();
+        // the asset server does not have it: its wearer does not wait for it
+        let missing = Uuid::from_u128(1);
+        let key = mesh_fetching(&mut s, missing);
+        assert!(!s.failed(&missing), "being downloaded");
+        s.on_fetch(failed(key, 404), &jobs);
+        assert!(s.failed(&missing));
+        assert!(s.describe(&missing).starts_with("unavailable"), "{}", s.describe(&missing));
+        // a transient error is retried: expected until the fourth failure
+        let flaky = Uuid::from_u128(2);
+        for attempt in 1..=4 {
+            let key = mesh_fetching(&mut s, flaky);
+            s.on_fetch(failed(key, 503), &jobs);
+            assert_eq!(s.failed(&flaky), attempt > 3, "attempt {attempt}");
+        }
+        // what arrived is not a mesh
+        let junk = Uuid::from_u128(3);
+        let key = mesh_fetching(&mut s, junk);
+        s.on_fetch(
+            FetchResult {
+                key,
+                status: 200,
+                complete: true,
+                offset: 0,
+                data: Ok(vec![1, 2, 3]),
+            },
+            &jobs,
+        );
+        assert!(s.failed(&junk));
+        assert_eq!(s.describe(&Uuid::from_u128(4)), "not requested");
     }
 
     fn denim_override() -> PbrOverride {
