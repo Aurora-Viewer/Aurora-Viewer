@@ -1,6 +1,8 @@
 //! Inventory mutations following AISAPI::{CreateInventory, UpdateItem,
 //! UpdateCategory, RemoveItem, RemoveCategory, PurgeDescendents} and
 //! copy_inventory_item (Firestorm indra/newview, originally LGPL 2.1).
+//! Parent changes use LLViewerInventory{Item,Category}::updateParentOnServer
+//! (llviewerinventory.cpp): reliable UDP, never an AIS parent_id PATCH.
 
 use super::{FolderContents, InvItem};
 use aurora_llsd::{Llsd, llsd_map};
@@ -13,6 +15,13 @@ pub struct CopyItem {
     pub owner: Uuid,
     pub parent: Uuid,
     pub name: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct InventoryMove {
+    pub id: Uuid,
+    pub parent: Uuid,
+    pub folder: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -66,11 +75,30 @@ pub fn metadata_thumbnail(id: Uuid) -> Llsd {
 /// Sequential operations preserve parent-before-child ordering. Client UUIDs
 /// for new folders are replaced with the UUIDs actually assigned by AIS.
 pub async fn mutate(http: &reqwest::Client, cap: &str, fetch_cap: &str, owner: Uuid, change: Mutation) -> Result<Reply, String> {
+    mutate_with_moves(http, cap, fetch_cap, owner, change, |_| async {
+        Err(aurora_i18n::tr!("inventory-move-connection-unavailable").into())
+    })
+    .await
+}
+
+pub(crate) async fn mutate_with_moves<F, Fut>(
+    http: &reqwest::Client,
+    cap: &str,
+    fetch_cap: &str,
+    owner: Uuid,
+    change: Mutation,
+    mut send_move: F,
+) -> Result<Reply, String>
+where
+    F: FnMut(InventoryMove) -> Fut,
+    Fut: std::future::Future<Output = Result<(), String>>,
+{
     if change.operations.len() > 2048 || change.copies.len() > 2048 || change.refresh.is_empty() {
         return Err(aurora_i18n::tr!("inventory-operations-the-selection-is-empty-or-too-large").into());
     }
     let cap = cap.trim_end_matches('/');
     let mut created = HashMap::new();
+    let mut moved = false;
     let resolve = |ids: &HashMap<Uuid, Uuid>, id: Uuid| ids.get(&id).copied().unwrap_or(id);
     for op in &change.operations {
         match op {
@@ -93,12 +121,26 @@ pub async fn mutate(http: &reqwest::Client, cap: &str, fetch_cap: &str, owner: U
             }
             Operation::Patch { id, folder, body } => {
                 let id = resolve(&created, *id);
-                let mut body = body.clone();
-                if body.has("parent_id") {
-                    body.insert("parent_id", Llsd::Uuid(resolve(&created, body["parent_id"].as_uuid())));
+                let Some(mut fields) = body.as_map().cloned() else {
+                    return Err(aurora_i18n::tr!("inventory-operations-the-selection-is-empty-or-too-large").into());
+                };
+                if let Some(parent) = fields.remove("parent_id") {
+                    let parent = resolve(&created, parent.as_uuid());
+                    if id.is_nil() || parent.is_nil() {
+                        return Err(aurora_i18n::tr!("inventory-move-invalid-target").into());
+                    }
+                    send_move(InventoryMove {
+                        id,
+                        parent,
+                        folder: *folder,
+                    })
+                    .await?;
+                    moved = true;
                 }
-                let kind = if *folder { "category" } else { "item" };
-                crate::outfits::send(http.patch(format!("{cap}/{kind}/{id}")), &body).await?;
+                if !fields.is_empty() {
+                    let kind = if *folder { "category" } else { "item" };
+                    crate::outfits::send(http.patch(format!("{cap}/{kind}/{id}")), &Llsd::Map(fields)).await?;
+                }
             }
             Operation::Links { parent, links } => {
                 let parent = resolve(&created, *parent);
@@ -123,18 +165,31 @@ pub async fn mutate(http: &reqwest::Client, cap: &str, fetch_cap: &str, owner: U
     refresh.sort();
     refresh.dedup();
     let mut contents = Vec::new();
-    for chunk in refresh.chunks(16) {
-        let doc = crate::caps::post_llsd(http, fetch_cap, &super::fetch_request_body(chunk, owner))
-            .await
-            .map_err(|_| aurora_i18n::tr!("inventory-operations-change-sent-but-could-not-read-it-back-reload").to_owned())?;
-        let fetched = super::parse_fetch_response(&doc);
-        if chunk.iter().any(|id| !fetched.iter().any(|c| c.folder_id == *id && c.version >= 0)) {
-            return Err(aurora_i18n::tr!("inventory-operations-read-back-incomplete-reload-inventory-before-trying-again").into());
+    let retries = if moved { 5 } else { 0 };
+    for attempt in 0..=retries {
+        contents.clear();
+        let mut complete = true;
+        for chunk in refresh.chunks(16) {
+            let doc = crate::caps::post_llsd(http, fetch_cap, &super::fetch_request_body(chunk, owner))
+                .await
+                .map_err(|_| aurora_i18n::tr!("inventory-operations-change-sent-but-could-not-read-it-back-reload").to_owned())?;
+            let fetched = super::parse_fetch_response(&doc);
+            complete &= chunk.iter().all(|id| fetched.iter().any(|c| c.folder_id == *id && c.version >= 0));
+            contents.extend(fetched);
         }
-        contents.extend(fetched);
-    }
-    if !confirmed(&change.operations, &created, &contents) {
-        return Err(aurora_i18n::tr!("inventory-operations-the-server-did-not-confirm-every-change-the-folders").into());
+        if complete && confirmed(&change.operations, &created, &contents) {
+            break;
+        }
+        if attempt == retries {
+            return Err(if complete {
+                aurora_i18n::tr!("inventory-operations-the-server-did-not-confirm-every-change-the-folders").into()
+            } else {
+                aurora_i18n::tr!("inventory-operations-read-back-incomplete-reload-inventory-before-trying-again").into()
+            });
+        }
+        // The reliable UDP packet can reach inventory storage after the first
+        // HTTP read. Retry reads only; a move is never submitted a second time.
+        tokio::time::sleep(std::time::Duration::from_millis(200 << attempt.min(3))).await;
     }
     // Parent metadata must precede its descendants (including new folders).
     contents.sort_by_key(|c| created.values().any(|id| *id == c.folder_id));
@@ -704,6 +759,240 @@ mod tests {
             );
         }
     }
+    async fn move_server(replies: Vec<Llsd>) -> (String, tokio::task::JoinHandle<Vec<(String, Llsd)>>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("local server");
+        let url = format!("http://{}", listener.local_addr().expect("address"));
+        let task = tokio::spawn(async move {
+            let mut requests = Vec::new();
+            for reply in replies {
+                let (mut socket, _) = tokio::time::timeout(std::time::Duration::from_secs(5), listener.accept())
+                    .await
+                    .expect("request timeout")
+                    .expect("request");
+                let mut bytes = Vec::new();
+                let (start, len) = loop {
+                    let mut buffer = [0u8; 4096];
+                    let n = socket.read(&mut buffer).await.expect("read");
+                    assert!(n > 0, "complete request");
+                    bytes.extend_from_slice(&buffer[..n]);
+                    if let Some(end) = bytes.windows(4).position(|b| b == b"\r\n\r\n") {
+                        let header = String::from_utf8_lossy(&bytes[..end]);
+                        let len = header
+                            .lines()
+                            .find_map(|line| {
+                                line.split_once(':')
+                                    .filter(|(key, _)| key.eq_ignore_ascii_case("content-length"))
+                                    .and_then(|(_, value)| value.trim().parse::<usize>().ok())
+                            })
+                            .expect("content length");
+                        if bytes.len() >= end + 4 + len {
+                            break (end + 4, len);
+                        }
+                    }
+                };
+                let header = String::from_utf8_lossy(&bytes[..start])
+                    .lines()
+                    .next()
+                    .expect("request line")
+                    .to_owned();
+                let body = aurora_llsd::from_xml(&bytes[start..start + len]).expect("LLSD");
+                let rejected = header.starts_with("PATCH ") && body.has("parent_id");
+                requests.push((header, body));
+                let body = aurora_llsd::to_xml(&reply);
+                let response = format!(
+                    "HTTP/1.1 {} Test\r\nContent-Type: application/llsd+xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    if rejected { 400 } else { 200 },
+                    body.len()
+                );
+                socket.write_all(response.as_bytes()).await.expect("header");
+                socket.write_all(&body).await.expect("body");
+                if rejected {
+                    break;
+                }
+            }
+            requests
+        });
+        (url, task)
+    }
+
+    fn move_readback(moved: bool) -> Llsd {
+        let parent = if moved { id(4) } else { id(1) };
+        let item = llsd_map! { "item_id" => id(3), "parent_id" => parent, "type" => 6, "inv_type" => 6, "name" => "Moved" };
+        let folder = llsd_map! { "category_id" => id(5), "parent_id" => parent, "type_default" => -1, "name" => "Folder" };
+        llsd_map! { "folders" => Llsd::Array([id(1), id(4)].into_iter().map(|id| llsd_map! {
+            "folder_id" => id, "version" => 2,
+            "items" => Llsd::Array(if id == parent { vec![item.clone()] } else { Vec::new() }),
+            "categories" => Llsd::Array(if id == parent { vec![folder.clone()] } else { Vec::new() }),
+        }).collect()) }
+    }
+
+    fn move_change() -> Mutation {
+        Mutation {
+            operations: [(id(3), false), (id(5), true)]
+                .into_iter()
+                .map(|(id, folder)| Operation::Patch {
+                    id,
+                    folder,
+                    body: llsd_map! { "parent_id" => super::tests::id(4) },
+                })
+                .collect(),
+            refresh: vec![id(1), id(4)],
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn parent_changes_use_udp_instead_of_the_ais_patch_rejected_with_http_400() {
+        let http = reqwest::Client::new();
+        let (url, task) = move_server(vec![Llsd::new_map()]).await;
+        let error = crate::outfits::send(http.patch(format!("{url}/item/{}", id(3))), &llsd_map! { "parent_id" => id(4) })
+            .await
+            .expect_err("old transport refused");
+        assert!(error.contains("400"));
+        task.await.expect("old request");
+
+        let (url, task) = move_server(vec![move_readback(true)]).await;
+        let mut moves = Vec::new();
+        let reply = mutate_with_moves(&http, &url, &format!("{url}/fetch"), id(2), move_change(), |movement| {
+            moves.push(movement);
+            std::future::ready(Ok(()))
+        })
+        .await
+        .expect("confirmed move");
+        assert_eq!(
+            moves,
+            vec![
+                InventoryMove {
+                    id: id(3),
+                    parent: id(4),
+                    folder: false
+                },
+                InventoryMove {
+                    id: id(5),
+                    parent: id(4),
+                    folder: true
+                }
+            ]
+        );
+        assert_eq!(reply.contents.len(), 2);
+        let requests = task.await.expect("new requests");
+        assert_eq!(requests.len(), 1, "moves must not issue any AIS PATCH");
+        assert!(requests[0].0.starts_with("POST /fetch "));
+    }
+
+    #[tokio::test]
+    async fn move_readback_waits_for_storage_without_sending_the_move_twice() {
+        let (url, task) = move_server(vec![move_readback(false), move_readback(true)]).await;
+        let mut moves = Vec::new();
+        let reply = mutate_with_moves(&reqwest::Client::new(), &url, &url, id(2), move_change(), |movement| {
+            moves.push(movement);
+            std::future::ready(Ok(()))
+        })
+        .await
+        .expect("eventual confirmation");
+        assert_eq!(moves.len(), 2, "one send per element");
+        assert_eq!(reply.contents[1].items[0].parent, id(4));
+        assert_eq!(task.await.expect("reads").len(), 2);
+    }
+
+    #[tokio::test]
+    async fn an_unconfirmed_move_never_succeeds_and_stops_retrying() {
+        let (url, task) = move_server(vec![move_readback(false); 6]).await;
+        let mut sent = 0;
+        let result = mutate_with_moves(&reqwest::Client::new(), &url, &url, id(2), move_change(), |_| {
+            sent += 1;
+            std::future::ready(Ok(()))
+        })
+        .await;
+        assert!(result.is_err());
+        assert_eq!(sent, 2);
+        assert_eq!(task.await.expect("bounded reads").len(), 6);
+    }
+
+    #[tokio::test]
+    async fn a_move_without_a_region_connection_fails_before_http_requests() {
+        let mut sent = 0;
+        let result = mutate_with_moves(&reqwest::Client::new(), "invalid", "invalid", id(2), move_change(), |_| {
+            sent += 1;
+            std::future::ready(Err("closed session".into()))
+        })
+        .await;
+        assert_eq!(result.expect_err("not sent"), "closed session");
+        assert_eq!(sent, 1, "stop at the first failed move");
+    }
+
+    #[tokio::test]
+    async fn moves_into_new_folders_use_the_server_assigned_parent_id() {
+        let doc = llsd_map! { "folders" => Llsd::Array(vec![
+            llsd_map! { "folder_id" => id(1), "version" => 2, "categories" => Llsd::Array(vec![
+                llsd_map! { "category_id" => id(200), "parent_id" => id(1), "type_default" => -1, "name" => "Destination" }
+            ]) },
+            llsd_map! { "folder_id" => id(200), "version" => 1, "items" => Llsd::Array(vec![
+                llsd_map! { "item_id" => id(3), "parent_id" => id(200), "type" => 6, "inv_type" => 6, "name" => "Moved" }
+            ]) }
+        ]) };
+        let (url, task) = move_server(vec![llsd_map! { "_created_categories" => Llsd::Array(vec![id(200).into()]) }, doc]).await;
+        let change = Mutation {
+            operations: vec![
+                Operation::Folder {
+                    id: id(100),
+                    parent: id(1),
+                    name: "Destination".into(),
+                    type_default: -1,
+                },
+                Operation::Patch {
+                    id: id(3),
+                    folder: false,
+                    body: llsd_map! { "parent_id" => id(100) },
+                },
+            ],
+            refresh: vec![id(1), id(100)],
+            ..Default::default()
+        };
+        let mut moves = Vec::new();
+        mutate_with_moves(&reqwest::Client::new(), &url, &url, id(2), change, |movement| {
+            moves.push(movement);
+            std::future::ready(Ok(()))
+        })
+        .await
+        .expect("created parent confirmed");
+        assert_eq!(
+            moves,
+            vec![InventoryMove {
+                id: id(3),
+                parent: id(200),
+                folder: false
+            }]
+        );
+        assert_eq!(task.await.expect("requests").len(), 2);
+    }
+
+    #[tokio::test]
+    async fn metadata_updates_keep_ais_but_remove_the_udp_parent_change() {
+        let (url, task) = move_server(vec![Llsd::new_map(), move_readback(true)]).await;
+        let change = Mutation {
+            operations: vec![Operation::Patch {
+                id: id(3),
+                folder: false,
+                body: llsd_map! { "parent_id" => id(4), "name" => "Moved" },
+            }],
+            refresh: vec![id(1), id(4)],
+            ..Default::default()
+        };
+        let mut moves = Vec::new();
+        mutate_with_moves(&reqwest::Client::new(), &url, &url, id(2), change, |movement| {
+            moves.push(movement);
+            std::future::ready(Ok(()))
+        })
+        .await
+        .expect("move and rename confirmed");
+        let requests = task.await.expect("requests");
+        assert!(requests[0].0.starts_with("PATCH /item/"));
+        assert_eq!(requests[0].1, llsd_map! { "name" => "Moved" });
+        assert_eq!(moves.len(), 1);
+    }
+
     #[tokio::test]
     async fn nested_folders_and_deferred_copies_use_the_server_assigned_ids() {
         let doc = llsd_map! { "folders" => Llsd::Array(vec![

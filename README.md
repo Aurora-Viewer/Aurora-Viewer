@@ -314,7 +314,6 @@ cargo run -p aurora-viewer
 Le menu clic droit de l’inventaire propose « Déplacer vers… » pour un dossier,
 un élément ou une sélection multiple. Saisir un nom dans le filtre de la
 fenêtre, choisir le dossier de destination puis valider avec Déplacer.
-Scénarios hors ligne : `AURORA_DEMO_INVENTORY=move-item|move-folder|move-multi|move-filter|move-window|move-menu`.
 
 The full list of switches (demo scenarios, captures, forced settings,
 diagnostics) and how to read the profiling output are in
