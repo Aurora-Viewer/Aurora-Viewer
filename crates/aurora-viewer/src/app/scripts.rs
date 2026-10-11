@@ -41,12 +41,31 @@ fn permissions(mask: u32, library: bool) -> (bool, bool) {
 }
 
 impl App {
+    pub(super) fn demo_script_input(&self, raw: &mut egui::RawInput) {
+        if self.demo
+            && self.frame_count == 321
+            && std::env::var("AURORA_DEMO_SCRIPTS").is_ok_and(|mode| matches!(mode.as_str(), "indent" | "object-indent"))
+        {
+            raw.events.push(egui::Event::Key {
+                key: egui::Key::Enter,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            });
+            raw.events.push(egui::Event::Text("// indentation".into()));
+        }
+    }
+
     pub(super) fn demo_script_steps(&mut self) {
         let Ok(mode) = std::env::var("AURORA_DEMO_SCRIPTS") else { return };
         let syntax_demo = matches!(mode.as_str(), "syntax" | "object-syntax" | "syntax-readonly");
         if self.frame_count == 280 {
             self.panels.perf = false;
-            if !matches!(mode.as_str(), "object" | "object-save" | "object-syntax") {
+            if !matches!(
+                mode.as_str(),
+                "object" | "object-save" | "object-syntax" | "object-indent" | "experience" | "experience-save"
+            ) {
                 crate::world::inventory::demo::seed(&mut self.world.inventory, self.world.agent_id);
                 let item = Uuid::from_u128(8102);
                 if mode == "readonly"
@@ -71,7 +90,10 @@ impl App {
                 }
                 self.open_script(target);
             }
-            if matches!(mode.as_str(), "object" | "object-save" | "object-syntax" | "both") {
+            if matches!(
+                mode.as_str(),
+                "object" | "object-save" | "object-syntax" | "object-indent" | "experience" | "experience-save" | "both"
+            ) {
                 let idx = self
                     .world
                     .objects
@@ -103,6 +125,16 @@ impl App {
                 }
             }
         }
+        if self.frame_count == 320
+            && matches!(mode.as_str(), "indent" | "object-indent" | "experience" | "experience-save")
+            && let Some(target) = self.script_editors.documents.first().map(|e| e.target)
+        {
+            if matches!(mode.as_str(), "indent" | "object-indent") {
+                self.script_editors.demo_indent(target, &self.egui_ctx, mode == "object-indent");
+            } else if let Some(action) = self.script_editors.demo_experience(target, Uuid::from_u128(9001)) {
+                self.apply_script_action(action);
+            }
+        }
         if self.frame_count == 320 && matches!(mode.as_str(), "error" | "save" | "object-save") {
             let target = if mode == "object-save" {
                 let Some(target) = self
@@ -130,7 +162,7 @@ impl App {
                 self.apply_script_action(action);
             }
         }
-        if self.frame_count == 360 && matches!(mode.as_str(), "save" | "object-save") {
+        if self.frame_count == 360 && matches!(mode.as_str(), "save" | "object-save" | "experience-save") {
             let Some(target) = self.script_editors.documents.first().map(|e| e.target) else {
                 return;
             };
@@ -205,6 +237,9 @@ impl App {
                 owner: info.owner,
                 asset: info.asset,
             });
+            if let Some(action) = self.script_editors.load_experiences(target) {
+                self.apply_script_action(action);
+            }
             if !target.object.is_nil() {
                 self.send(NetCommand::Build(BuildCmd::GetScriptRunning {
                     handle: info.handle,
@@ -241,8 +276,7 @@ impl App {
             Action::Save {
                 request,
                 target,
-                mono,
-                running,
+                options,
                 source,
             } => {
                 let Some(info) = self.script_info(target).filter(|i| i.can_edit) else {
@@ -254,12 +288,23 @@ impl App {
                     request,
                     target,
                     handle: info.handle,
-                    mono,
-                    running,
+                    options,
                     source,
                 });
             }
+            Action::Experiences { request, target } => {
+                if let Some(info) = self.script_info(target).filter(|i| i.can_read) {
+                    self.send(NetCommand::LoadScriptExperiences {
+                        request,
+                        target,
+                        handle: info.handle,
+                    });
+                }
+            }
             Action::Reload { request, target } => {
+                if let Some(action) = self.script_editors.load_experiences(target) {
+                    self.apply_script_action(action);
+                }
                 let Some(info) = self.script_info(target).filter(|i| i.can_read) else {
                     self.script_editors
                         .loaded(request, target, Err(aurora_i18n::tr!("script-no-permission").into()));
@@ -352,6 +397,22 @@ impl App {
 
     pub(super) fn demo_script_command(&mut self, cmd: &NetCommand) -> bool {
         match cmd {
+            NetCommand::LoadScriptExperiences { request, target, .. } => {
+                use aurora_net::scripts::experiences::{ScriptExperience, ScriptExperiences};
+                let selected = self.demo_script_experiences.get(target).copied().unwrap_or_default();
+                self.on_app_event(NetEvent::ScriptExperiences {
+                    request: *request,
+                    target: *target,
+                    result: ScriptExperiences {
+                        associated: Ok(selected),
+                        available: Ok(vec![ScriptExperience {
+                            id: Uuid::from_u128(9001),
+                            name: aurora_i18n::tr!("script-experience-demo").into(),
+                            selectable: true,
+                        }]),
+                    },
+                });
+            }
             NetCommand::LoadScript { request, target, .. } => {
                 let source = self
                     .demo_script_sources
@@ -368,8 +429,7 @@ impl App {
                 request,
                 target,
                 source,
-                mono,
-                running,
+                options,
                 ..
             } => {
                 // A named marker simulates a server diagnostic in demo mode;
@@ -377,7 +437,9 @@ impl App {
                 let compiled = !source.contains("AURORA_DEMO_SYNTAX_ERROR");
                 let asset = Uuid::new_v4();
                 self.demo_script_sources.insert(*target, source.clone());
-                self.build_demo.save_script(*target, asset, compiled && *running, *mono);
+                self.demo_script_experiences.insert(*target, options.experience);
+                self.build_demo
+                    .save_script(*target, asset, compiled && options.running, options.mono);
                 let result = Ok(ScriptSaved {
                     asset,
                     compiled,

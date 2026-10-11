@@ -167,7 +167,7 @@ Pour vérifier l'édition, ajouter `AURORA_DEMO_BUILD=move,object:90000` ou
 translucide et poignées de taille. `stretch,object:90000,fz,100,0` tire la face
 opposée à la base ; le flexible garde sa courbure pendant le changement de taille.
 
-**`AURORA_DEMO_SCRIPTS=inventory|object|both|save|object-save|error|readonly|syntax|object-syntax|syntax-readonly`** :
+**`AURORA_DEMO_SCRIPTS=inventory|object|both|save|object-save|error|readonly|syntax|object-syntax|syntax-readonly|indent|object-indent|experience|experience-save`** :
 ouvre un éditeur de script depuis l'inventaire, le contenu d'un objet ou
 les deux à l'image 280. `save` et `object-save` enregistrent une source
 modifiée puis ferment et rouvrent l'éditeur à l'image 360 avec un UUID
@@ -182,6 +182,14 @@ fonctions natives et personnalisées, événements, mots-clés, constantes,
 nombres, chaînes et commentaires. `syntax-readonly` montre la même source
 colorée et sélectionnable en lecture seule. La coloration suit les
 modifications pendant la saisie et les couleurs du thème actif.
+`indent` simule Entrée puis une saisie après une instruction indentée ;
+`object-indent` fait la même chose avec des tabulations dans un objet.
+Le commentaire ajouté doit être aligné sur l'instruction précédente.
+`experience` choisit et enregistre l'expérience simulée d'un script d'objet ;
+`experience-save` ferme ensuite l'éditeur et le rouvre avec cette association.
+Les autres démos d'objet commencent avec « Aucune ». Le sélecteur permet
+aussi de retirer une association puis d'enregistrer. L'inventaire personnel
+ne propose pas d'association d'expérience, comme Firestorm.
 
 **`AURORA_DEMO_ACTIONS`** — curseurs et clics d'objet comme Firestorm.
 Aucun L$ réel ni connexion à une grille.

@@ -90,6 +90,14 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
 
 ## `aurora-viewer` en détail
 
+`ui/scripts/indent.rs` conserve le retrait à Entrée dans les deux éditeurs,
+avec le curseur et l'historique d'annulation natifs d'egui. Le collage reste
+exact. `ui/scripts/experiences.rs` suit l'association et les choix disponibles
+dans les scripts d'objets ; `aurora-net/src/scripts/experiences.rs` charge
+GetMetadata / GetCreatorExperiences / GetExperienceInfo en arrière-plan.
+L'association choisie fait partie du document et de l'instantané enregistré :
+la sauvegarde n'a plus besoin de relire les métadonnées.
+
 `ui/scripts/syntax.rs` colore la source LSL des deux éditeurs, aussi en lecture
 seule. Le catalogue des noms natifs de Firestorm est embarqué dans
 `assets/lsl/keywords.json`. L'analyse lexicale et les formats restent en cache

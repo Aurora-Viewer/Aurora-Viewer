@@ -1448,14 +1448,14 @@ impl Session<'_> {
                 owner,
                 asset,
             } => self.load_script(request, target, handle, owner, asset),
+            NetCommand::LoadScriptExperiences { request, target, handle } => self.load_script_experiences(request, target, handle),
             NetCommand::SaveScript {
                 request,
                 target,
                 handle,
-                mono,
-                running,
+                options,
                 source,
-            } => self.save_script(request, target, handle, mono, running, source),
+            } => self.save_script(request, target, handle, options, source),
             NetCommand::CreateInventoryWearable { parent, kind, name, data } => self.create_wearable(parent, kind, name, data),
             NetCommand::RestoreInventoryObject(it) => {
                 let mut m = RezRestoreToWorld::default();

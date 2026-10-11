@@ -6,6 +6,15 @@
 use aurora_llsd::{Llsd, llsd_map};
 use uuid::Uuid;
 
+pub mod experiences;
+
+#[derive(Debug, Clone, Copy)]
+pub struct ScriptOptions {
+    pub mono: bool,
+    pub running: bool,
+    pub experience: Uuid,
+}
+
 pub const MAX_SOURCE: usize = 1024 * 1024;
 pub const DEFAULT_SOURCE: &str = "default\n{\n    state_entry()\n    {\n        llSay(0, \"Hello, Avatar!\");\n    }\n\n    touch_start(integer total_number)\n    {\n        llSay(0, \"Touched.\");\n    }\n}\n";
 
@@ -48,10 +57,8 @@ fn saved_reply(ack: &Llsd) -> Result<ScriptSaved, String> {
 pub async fn save(
     http: &reqwest::Client,
     cap: &str,
-    metadata: Option<&str>,
     target: ScriptTarget,
-    mono: bool,
-    running: bool,
+    options: ScriptOptions,
     source: String,
 ) -> Result<ScriptSaved, String> {
     if source.len() > MAX_SOURCE {
@@ -59,29 +66,15 @@ pub async fn save(
     }
     // Cover all requests, including a server that never finishes its response.
     tokio::time::timeout(std::time::Duration::from_secs(60), async {
-        // LLExperienceCache::fetchAssociatedExperienceCoro: preserve the
-        // script's association, including changes made in another viewer.
-        let experience = if let Some(metadata) = metadata.filter(|_| !target.object.is_nil()) {
-            let query =
-                llsd_map! { "object-id" => target.object, "item-id" => target.item, "fields" => Llsd::Array(vec!["experience".into()]) };
-            let reply = crate::caps::post_llsd(http, metadata, &query)
-                .await
-                .map_err(|_| aurora_i18n::tr!("script-metadata-failed").to_owned())?;
-            if !reply.as_map().is_some_and(|m| m.contains_key("experience")) {
-                return Err(aurora_i18n::tr!("script-metadata-failed").into());
-            }
-            let experience = match &reply["experience"] {
-                Llsd::Uuid(id) => *id,
-                Llsd::String(value) => Uuid::parse_str(value).map_err(|_| aurora_i18n::tr!("script-metadata-failed").to_owned())?,
-                _ => return Err(aurora_i18n::tr!("script-metadata-failed").into()),
-            };
-            Some(experience)
-        } else {
-            None
-        };
-        let answer = crate::caps::post_llsd(http, cap, &upload_body(target, mono, running, experience))
-            .await
-            .map_err(|_| aurora_i18n::tr!("script-save-failed").to_owned())?;
+        // LLLiveLSLEditor uploads the association loaded / selected by the
+        // editor. No metadata lookup at save time can block a plain script.
+        let answer = crate::caps::post_llsd(
+            http,
+            cap,
+            &upload_body(target, options.mono, options.running, Some(options.experience)),
+        )
+        .await
+        .map_err(|_| aurora_i18n::tr!("script-save-failed").to_owned())?;
         if answer["state"].as_str() != "upload" || answer["uploader"].as_str().is_empty() {
             return Err(aurora_i18n::tr!("script-save-unconfirmed").into());
         }
@@ -125,7 +118,6 @@ mod tests {
         let asset = Uuid::from_u128(44);
         let experience = Uuid::from_u128(45);
         let replies = [
-            llsd_map! { "experience" => experience },
             llsd_map! { "state" => "upload", "uploader" => format!("{url}/source") },
             llsd_map! { "state" => "complete", "new_asset" => asset, "compiled" => false, "errors" => Llsd::Array(vec!["(2, 3) ERROR".into()]) },
         ];
@@ -173,23 +165,30 @@ mod tests {
             item: Uuid::from_u128(21),
         };
         let source = "default\n{ // éèあ\n    state_entry() { llSay(0, \"Bonjour !\"); }\n}\n";
-        let result = save(&reqwest::Client::new(), &url, Some(&url), target, false, false, source.into())
-            .await
-            .expect("saved source");
+        let result = save(
+            &reqwest::Client::new(),
+            &url,
+            target,
+            ScriptOptions {
+                mono: false,
+                running: false,
+                experience,
+            },
+            source.into(),
+        )
+        .await
+        .expect("saved source");
         assert_eq!(result.asset, asset);
         assert!(!result.compiled);
         assert_eq!(result.errors, ["(2, 3) ERROR"]);
         let requests = server.await.expect("server");
-        let query = aurora_llsd::from_xml(&requests[0].1).expect("metadata LLSD");
-        assert_eq!(query["object-id"].as_uuid(), target.object);
-        assert_eq!(query["item-id"].as_uuid(), target.item);
-        assert_eq!(query["fields"].at(0).as_str(), "experience");
+        assert_eq!(requests.len(), 2);
         assert_eq!(
-            aurora_llsd::from_xml(&requests[1].1).expect("LLSD"),
+            aurora_llsd::from_xml(&requests[0].1).expect("LLSD"),
             upload_body(target, false, false, Some(experience))
         );
-        assert!(requests[2].0.to_lowercase().contains("content-type: application/octet-stream"));
-        assert_eq!(requests[2].1, source.as_bytes());
+        assert!(requests[1].0.to_lowercase().contains("content-type: application/octet-stream"));
+        assert_eq!(requests[1].1, source.as_bytes());
     }
 
     #[test]

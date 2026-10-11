@@ -3,7 +3,7 @@
 //! Firestorm indra/llmessage, originally LGPL 2.1).
 
 use super::*;
-use crate::scripts::{MAX_SOURCE, ScriptTarget};
+use crate::scripts::{MAX_SOURCE, ScriptOptions, ScriptTarget};
 use std::collections::BTreeMap;
 use uuid::Uuid;
 
@@ -146,13 +146,28 @@ impl Session<'_> {
         self.send(sim, &m, true);
     }
 
+    pub(super) fn load_script_experiences(&mut self, request: Uuid, target: ScriptTarget, handle: RegionHandle) {
+        let metadata = self
+            .sim_for_handle(handle)
+            .and_then(|addr| self.sims.get(&addr))
+            .and_then(|sim| sim.caps.get("GetMetadata"))
+            .cloned();
+        let creators = self.main_cap("GetCreatorExperiences");
+        let info = self.main_cap("GetExperienceInfo");
+        let http = self.sh.caps_http.clone();
+        let events = self.sh.events.clone();
+        tokio::spawn(async move {
+            let result = crate::scripts::experiences::load(&http, target, metadata.as_deref(), creators.as_deref(), info.as_deref()).await;
+            let _ = events.send(NetEvent::ScriptExperiences { request, target, result });
+        });
+    }
+
     pub(super) fn save_script(
         &mut self,
         request: Uuid,
         target: ScriptTarget,
         handle: RegionHandle,
-        mono: bool,
-        running: bool,
+        options: ScriptOptions,
         source: String,
     ) {
         let name = if target.object.is_nil() {
@@ -181,13 +196,8 @@ impl Session<'_> {
         };
         let http = self.sh.caps_http.clone();
         let events = self.sh.events.clone();
-        let metadata = self
-            .sim_for_handle(handle)
-            .and_then(|addr| self.sims.get(&addr))
-            .and_then(|sim| sim.caps.get("GetMetadata"))
-            .cloned();
         tokio::spawn(async move {
-            let result = crate::scripts::save(&http, &cap, metadata.as_deref(), target, mono, running, source).await;
+            let result = crate::scripts::save(&http, &cap, target, options, source).await;
             let _ = events.send(NetEvent::ScriptSaved { request, target, result });
         });
     }

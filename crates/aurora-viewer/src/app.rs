@@ -323,6 +323,7 @@ pub struct App {
     demo_documents: std::collections::HashMap<uuid::Uuid, Vec<u8>>,
     script_editors: ui::scripts::Editors,
     demo_script_sources: std::collections::HashMap<aurora_net::scripts::ScriptTarget, String>,
+    demo_script_experiences: std::collections::HashMap<aurora_net::scripts::ScriptTarget, uuid::Uuid>,
     inventory_images: inventory_thumbnail::ImageJobs,
     appearance_ui: ui::appearance::AppearanceUi,
     last_social_poll: Instant,
@@ -606,6 +607,7 @@ impl App {
             demo_documents: Default::default(),
             script_editors: Default::default(),
             demo_script_sources: Default::default(),
+            demo_script_experiences: Default::default(),
             inventory_images: Default::default(),
             appearance_ui: Default::default(),
             last_social_poll: Instant::now(),
@@ -1079,6 +1081,10 @@ impl App {
         }
         if let NetEvent::ScriptLoaded { request, target, result } = ev {
             self.script_editors.loaded(request, target, result);
+            return;
+        }
+        if let NetEvent::ScriptExperiences { request, target, result } = ev {
+            self.script_editors.experiences_loaded(request, target, result);
             return;
         }
         if let NetEvent::ScriptSaved { request, target, result } = ev {
@@ -3941,6 +3947,7 @@ impl App {
         // ---- UI
         let t_ui = Instant::now();
         let mut raw = gfx.egui_state.take_egui_input(&gfx.window);
+        self.demo_script_input(&mut raw);
         // Inline-edit captures simulate logical focus without activating the
         // native window or taking the user's keyboard (with_active(false)).
         if self.demo

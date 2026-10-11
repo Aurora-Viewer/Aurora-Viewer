@@ -5,21 +5,26 @@
 
 use super::widgets::{Floater, flat_button};
 use crate::theme::Palette;
-use aurora_net::scripts::{MAX_SOURCE, ScriptSaved, ScriptTarget};
+use aurora_net::scripts::{MAX_SOURCE, ScriptOptions, ScriptSaved, ScriptTarget};
 use egui::{RichText, Vec2};
 use uuid::Uuid;
 
+mod experiences;
+mod indent;
 mod syntax;
 
 pub enum Action {
     Save {
         request: Uuid,
         target: ScriptTarget,
-        mono: bool,
-        running: bool,
+        options: ScriptOptions,
         source: String,
     },
     Reload {
+        request: Uuid,
+        target: ScriptTarget,
+    },
+    Experiences {
         request: Uuid,
         target: ScriptTarget,
     },
@@ -35,6 +40,7 @@ struct PendingSave {
     request: Uuid,
     source: String,
     mono: bool,
+    experience: Option<Uuid>,
 }
 
 pub struct Editor {
@@ -50,6 +56,7 @@ pub struct Editor {
     pub can_edit: bool,
     pub mono: bool,
     baseline_mono: bool,
+    experience: experiences::State,
     running: Option<bool>,
     status: String,
     errors: Vec<String>,
@@ -62,7 +69,7 @@ pub struct Editor {
 
 impl Editor {
     fn dirty(&self) -> bool {
-        self.loaded && (self.source != self.baseline || self.mono != self.baseline_mono)
+        self.loaded && (self.source != self.baseline || self.mono != self.baseline_mono || self.experience.dirty())
     }
 
     fn can_save(&self) -> bool {
@@ -70,7 +77,8 @@ impl Editor {
             && self.can_edit
             && self.saving.is_none()
             && self.loading.is_none()
-            && (self.target.object.is_nil() || self.running.is_some())
+            && (self.target.object.is_nil()
+                || (self.running.is_some() && self.experience.selected.is_some() && self.experience.loading.is_none()))
             && (self.dirty() || self.compile_failed)
             && self.source.len() <= MAX_SOURCE
     }
@@ -84,14 +92,18 @@ impl Editor {
             request,
             source: self.source.clone(),
             mono: self.mono,
+            experience: self.experience.selected,
         });
         self.status = aurora_i18n::tr!("script-saving").into();
         self.errors.clear();
         Some(Action::Save {
             request,
             target: self.target,
-            mono: self.mono,
-            running: self.running.unwrap_or(false),
+            options: ScriptOptions {
+                mono: self.mono,
+                running: self.running.unwrap_or(false),
+                experience: self.experience.selected.unwrap_or_default(),
+            },
             source: self.source.clone(),
         })
     }
@@ -107,6 +119,7 @@ impl Editors {
         self.documents.retain(|e| e.dirty() || e.saving.is_some());
         for e in &mut self.documents {
             e.loading = None;
+            e.experience.loading = None;
             e.saving = None;
             e.can_read = false;
             e.can_edit = false;
@@ -132,6 +145,36 @@ impl Editors {
         let e = self.documents.iter_mut().find(|e| e.target == target)?;
         e.source = source;
         if save { e.save() } else { None }
+    }
+
+    pub fn demo_experience(&mut self, target: ScriptTarget, experience: Uuid) -> Option<Action> {
+        let e = self.documents.iter_mut().find(|e| e.target == target)?;
+        e.experience.selected = Some(experience);
+        e.save()
+    }
+
+    pub fn demo_indent(&mut self, target: ScriptTarget, ctx: &egui::Context, tabs: bool) {
+        let Some(e) = self.documents.iter_mut().find(|e| e.target == target) else {
+            return;
+        };
+        if tabs {
+            e.source = e.source.replace("    ", "\t");
+        }
+        let Some(line) = e
+            .source
+            .find("llSay(")
+            .and_then(|start| e.source[start..].find(';').map(|end| start + end + 1))
+        else {
+            return;
+        };
+        let cursor = egui::text::CCursor::new(e.source[..line].chars().count());
+        let id = format!("script_editor_{}_{}", target.object, target.item);
+        let text_id = egui::Id::new((&id, "source_text"));
+        if let Some(mut state) = egui::TextEdit::load_state(ctx, text_id) {
+            state.cursor.set_char_range(Some(egui::text::CCursorRange::one(cursor)));
+            state.store(ctx, text_id);
+            ctx.memory_mut(|m| m.request_focus(text_id));
+        }
     }
 
     pub fn demo_close_clean(&mut self, target: ScriptTarget) -> bool {
@@ -165,6 +208,7 @@ impl Editors {
             can_edit,
             mono: true,
             baseline_mono: true,
+            experience: experiences::State::default(),
             running: None,
             status: if can_read {
                 aurora_i18n::tr!("common-loading-2")
@@ -200,6 +244,21 @@ impl Editors {
         }
     }
 
+    pub fn load_experiences(&mut self, target: ScriptTarget) -> Option<Action> {
+        let e = self
+            .documents
+            .iter_mut()
+            .find(|e| e.target == target && e.can_read && !target.object.is_nil())?;
+        let request = e.experience.begin()?;
+        Some(Action::Experiences { request, target })
+    }
+
+    pub fn experiences_loaded(&mut self, request: Uuid, target: ScriptTarget, result: aurora_net::scripts::experiences::ScriptExperiences) {
+        if let Some(e) = self.documents.iter_mut().find(|e| e.target == target) {
+            e.experience.loaded(request, result);
+        }
+    }
+
     pub fn saved(&mut self, request: Uuid, target: ScriptTarget, result: &Result<ScriptSaved, String>) -> bool {
         let Some(e) = self
             .documents
@@ -213,6 +272,7 @@ impl Editors {
             Ok(saved) => {
                 e.baseline = pending.source;
                 e.baseline_mono = pending.mono;
+                e.experience.baseline = pending.experience;
                 e.compile_failed = !saved.compiled;
                 e.errors.clone_from(&saved.errors);
                 e.status = if saved.compiled {
@@ -302,6 +362,12 @@ impl Editors {
                         });
                     }
                 });
+                if !e.target.object.is_nil()
+                    && e.experience.show(ui, p, e.can_edit && e.loaded && e.saving.is_none())
+                    && let Some(request) = e.experience.begin()
+                {
+                    actions.push(Action::Experiences { request, target: e.target });
+                }
                 if !e.can_edit && e.loaded {
                     ui.label(RichText::new(aurora_i18n::tr!("script-read-only")).color(p.warn));
                 }
@@ -328,15 +394,18 @@ impl Editors {
                         job.wrap.max_width = wrap_width;
                         ui.fonts_mut(|fonts| fonts.layout_job(job))
                     };
-                    let response = ui.add(
-                        egui::TextEdit::multiline(&mut e.source)
-                            .id(egui::Id::new((&id, "source_text")))
-                            .code_editor()
-                            .layouter(&mut layouter)
-                            .desired_width(f32::INFINITY)
-                            .desired_rows(18)
-                            .interactive(e.loaded && e.can_edit && e.saving.is_none() && e.loading.is_none()),
-                    );
+                    let text_id = egui::Id::new((&id, "source_text"));
+                    let response = indent::edit(ui, text_id, &mut e.source, |ui, source| {
+                        ui.add(
+                            egui::TextEdit::multiline(source)
+                                .id(text_id)
+                                .code_editor()
+                                .layouter(&mut layouter)
+                                .desired_width(f32::INFINITY)
+                                .desired_rows(18)
+                                .interactive(e.loaded && e.can_edit && e.saving.is_none() && e.loading.is_none()),
+                        )
+                    });
                     if response.has_focus() {
                         shortcut_save = ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::S));
                     }
@@ -420,6 +489,96 @@ mod tests {
             object: Uuid::nil(),
             item: Uuid::from_u128(n),
         }
+    }
+
+    #[test]
+    fn experience_only_changes_and_removal_are_saved_with_their_snapshot() {
+        use aurora_net::scripts::experiences::ScriptExperiences;
+        let mut editors = Editors::default();
+        let target = ScriptTarget {
+            object: Uuid::from_u128(20),
+            item: Uuid::from_u128(1),
+        };
+        let request = editors.open(target, "Test".into(), true, true).expect("load");
+        editors.loaded(request, target, Ok("original".into()));
+        editors.running(target, true, Some(true));
+        let Action::Experiences { request, .. } = editors.load_experiences(target).expect("experiences") else {
+            panic!("load experiences")
+        };
+        editors.experiences_loaded(
+            request,
+            target,
+            ScriptExperiences {
+                associated: Ok(Uuid::nil()),
+                available: Ok(vec![]),
+            },
+        );
+        assert!(!editors.documents[0].dirty());
+        for id in [Uuid::from_u128(45), Uuid::nil()] {
+            editors.documents[0].experience.selected = Some(id);
+            assert!(!editors.prepare_exit());
+            let Action::Save {
+                request, options, source, ..
+            } = editors.documents[0].save().expect("save association")
+            else {
+                panic!("save")
+            };
+            assert_eq!(options.experience, id);
+            assert_eq!(source, "original");
+            editors.saved(
+                request,
+                target,
+                &Ok(ScriptSaved {
+                    asset: Uuid::from_u128(99),
+                    compiled: true,
+                    errors: vec![],
+                }),
+            );
+            assert!(!editors.documents[0].dirty());
+        }
+    }
+
+    #[test]
+    fn unknown_association_requires_a_choice_and_disconnect_rejects_metadata() {
+        use aurora_net::scripts::experiences::ScriptExperiences;
+        let mut editors = Editors::default();
+        let target = ScriptTarget {
+            object: Uuid::from_u128(20),
+            item: Uuid::from_u128(1),
+        };
+        let request = editors.open(target, "Test".into(), true, true).expect("load");
+        editors.loaded(request, target, Ok("original".into()));
+        editors.running(target, true, Some(true));
+        editors.documents[0].source.push_str(" // edit");
+        let Action::Experiences { request, .. } = editors.load_experiences(target).expect("experiences") else {
+            panic!("load")
+        };
+        assert!(!editors.documents[0].can_save());
+        editors.experiences_loaded(
+            request,
+            target,
+            ScriptExperiences {
+                associated: Err("unavailable".into()),
+                available: Ok(vec![]),
+            },
+        );
+        assert!(!editors.documents[0].can_save());
+        editors.documents[0].experience.selected = Some(Uuid::nil());
+        assert!(editors.documents[0].can_save());
+        let Action::Experiences { request, .. } = editors.load_experiences(target).expect("retry") else {
+            panic!("load")
+        };
+        editors.disconnected();
+        editors.experiences_loaded(
+            request,
+            target,
+            ScriptExperiences {
+                associated: Ok(Uuid::from_u128(45)),
+                available: Ok(vec![]),
+            },
+        );
+        assert_eq!(editors.documents[0].experience.selected, Some(Uuid::nil()));
+        assert!(!editors.documents[0].can_save());
     }
 
     #[test]
