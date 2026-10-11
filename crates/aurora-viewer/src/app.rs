@@ -6578,6 +6578,14 @@ impl ApplicationHandler for App {
                     self.world.apply(ev);
                 }
             }
+            // AURORA_DEMO_CLOUD=self: our avatar with an invisible head bake,
+            // wearing a mesh that cannot be downloaded (issue #121)
+            if std::env::var("AURORA_DEMO_CLOUD").is_ok_and(|v| v == "self") {
+                self.scene.meshes.insert_demo_unavailable(crate::demo::CLOUD_MESH);
+                for ev in crate::demo::cloud_self_events() {
+                    self.world.apply(ev);
+                }
+            }
             self.stream_demo = crate::demo::stream::StreamDemo::from_env();
             if let Some(n) = crate::demo::texture_stress_count() {
                 if let Some(g) = &mut self.gfx {

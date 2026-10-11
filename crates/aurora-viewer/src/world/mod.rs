@@ -912,6 +912,14 @@ impl World {
             NetEvent::Appearance(a) => {
                 self.appearance_counter += 1;
                 let id = a.avatar_id;
+                if id == self.agent_id {
+                    // (with the outfit restore lines: when our bakes came)
+                    log::info!(
+                        "own appearance received: COF version {}, bakes {}",
+                        a.cof_version,
+                        if a.texture_entry.is_some() { "present" } else { "absent" }
+                    );
+                }
                 self.appearances.insert(id, (a, self.appearance_counter));
                 // Attachments using bakes-on-mesh must refresh too.
                 if let Some(idx) = self.objects.index_of_uuid(&id) {

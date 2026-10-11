@@ -386,6 +386,14 @@ grille.
 - **`AURORA_DEMO_ANIMESH=1`** : mesh racine animé, mesh lié signalé par un
   enfant et animesh porté, avec des squelettes propres indépendants et des
   ombres alpha.
+- **`AURORA_DEMO_CLOUD=1|self`** : `1` active hors ligne les nuages et les
+  barres de chargement. `self` habille en plus notre avatar comme ceux qui
+  restaient en nuage pendant les 60 s de la limite (issue #121) : bake de
+  tête invisible (calque alpha), haut et bas texturés, un mesh porté que le
+  serveur d'assets n'a pas (404) et un chapeau. Il doit apparaître environ
+  5 s après son arrivée, sans tête et sans le mesh, et le journal contenir
+  « avatar … (own) shown after 5.0 s ». Captures avec `AURORA_FPS_LIMIT=60`
+  et `AURORA_CAPTURE_FRAMES=240,1200` : nuage, puis avatar.
 
 ## Rendu et environnement
 

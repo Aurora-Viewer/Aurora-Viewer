@@ -162,6 +162,8 @@ struct Entry {
     last_error: Option<String>,
     /// The failure was already logged at info level.
     error_logged: bool,
+    /// The last fetch was answered 404: asked again much later.
+    gone: bool,
 }
 
 struct PendingUpload {
@@ -655,6 +657,7 @@ impl TextureStreamer {
                 dirty_cache: false,
                 last_error: None,
                 error_logged: false,
+                gone: false,
             },
         );
         slot
@@ -730,9 +733,18 @@ impl TextureStreamer {
         self.ui_ready.remove(id)
     }
 
-    /// Something uses this texture (it is streamed).
+    /// Something uses this texture (it is streamed). An entry nothing
+    /// references any more only waits for its eviction: it is not fetched.
     pub fn is_wanted(&self, id: &Uuid) -> bool {
-        self.entries.contains_key(id)
+        self.entries.get(id).is_some_and(|e| e.refs > 0)
+    }
+
+    /// Never loaded and not coming for now: missing on the asset server
+    /// (asked again in ten minutes), or failing again and again.
+    pub fn is_unavailable(&self, id: &Uuid) -> bool {
+        self.entries
+            .get(id)
+            .is_some_and(|e| e.decoded.is_none() && (e.gone || e.failures > 3))
     }
 
     /// Discard level on the GPU (None until the first upload).
@@ -980,11 +992,13 @@ impl TextureStreamer {
                 }
                 e.last_error = None;
                 e.error_logged = false;
+                e.gone = false;
             }
             Err(err) => {
                 e.failures += 1;
                 let backoff = 2u64.pow(e.failures.min(6));
                 e.retry_at = Some(Instant::now() + Duration::from_secs(backoff));
+                e.gone = r.status == 404;
                 if r.status == 404 {
                     e.retry_at = Some(Instant::now() + Duration::from_secs(600));
                 }
