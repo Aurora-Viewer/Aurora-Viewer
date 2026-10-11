@@ -63,9 +63,20 @@ fn style(p: &Palette) -> egui::style::StyleModifier {
 /// Right-click menu of a widget (replaces `Response::context_menu`).
 /// Returns whether the menu is open.
 pub fn context_menu(resp: &egui::Response, p: &Palette, body: impl FnOnce(&mut Ui)) -> bool {
+    show_menu(Popup::context_menu(resp), p, body)
+}
+
+/// The same item menu on either a primary or secondary click.
+pub fn click_menu(resp: &egui::Response, p: &Palette, body: impl FnOnce(&mut Ui)) -> bool {
+    let popup =
+        Popup::context_menu(resp).open_memory((resp.clicked() || resp.secondary_clicked()).then_some(egui::SetOpenCommand::Bool(true)));
+    show_menu(popup, p, body)
+}
+
+fn show_menu(popup: Popup<'_>, p: &Palette, body: impl FnOnce(&mut Ui)) -> bool {
     // below-right of the pointer like the world menu, pushed back into the
     // window by the area's constraint instead of flipping above it
-    Popup::context_menu(resp)
+    popup
         .align(egui::RectAlign::BOTTOM_START)
         .align_alternatives(&[])
         .close_behavior(PopupCloseBehavior::CloseOnClickOutside)

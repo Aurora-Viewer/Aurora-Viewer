@@ -21,6 +21,8 @@ pub fn document_demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryU
             | "note-image"
             | "note-landmark"
             | "note-copy"
+            | "note-menu-left"
+            | "note-menu-right"
     ) {
         return Vec::new();
     }
@@ -49,7 +51,10 @@ pub fn document_demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryU
             ctx.memory_mut(|m| m.request_focus(editor));
         }
     }
-    if matches!(mode.as_str(), "note-image" | "note-landmark" | "note-copy") {
+    if matches!(
+        mode.as_str(),
+        "note-image" | "note-landmark" | "note-copy" | "note-menu-left" | "note-menu-right"
+    ) {
         if mode == "note-copy"
             && matches!(frame, 670 | 671)
             && let Some(rect) = ctx.data_mut(|data| data.get_temp::<egui::Rect>(egui::Id::new(("notecard_copy_confirm", st.ui_id))))
@@ -64,29 +69,36 @@ pub fn document_demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryU
                 },
             ];
         }
-        let marker = if mode == "note-image" {
+        let marker = if matches!(mode.as_str(), "note-image" | "note-menu-left" | "note-menu-right") {
             '\u{100000}'
         } else if mode == "note-landmark" {
             '\u{100001}'
         } else {
             '\u{100002}'
         };
-        let Some(rect) = ctx.data_mut(|data| data.get_temp::<egui::Rect>(editor.with(("demo_attachment", marker)))) else {
+        let opening = matches!(frame, 650 | 651);
+        let selecting = matches!(frame, 660 | 661) && !matches!(mode.as_str(), "note-menu-left" | "note-menu-right");
+        if !opening && !selecting {
+            return Vec::new();
+        }
+        let key = if opening { "demo_attachment" } else { "demo_attachment_open" };
+        let Some(rect) = ctx.data_mut(|data| data.get_temp::<egui::Rect>(editor.with((key, marker)))) else {
             return Vec::new();
         };
-        if (650..=653).contains(&frame) {
-            let pos = rect.center();
-            return vec![
-                egui::Event::PointerMoved(pos),
-                egui::Event::PointerButton {
-                    pos,
-                    button: egui::PointerButton::Primary,
-                    pressed: frame.is_multiple_of(2),
-                    modifiers: Default::default(),
+        let pos = rect.center();
+        return vec![
+            egui::Event::PointerMoved(pos),
+            egui::Event::PointerButton {
+                pos,
+                button: if mode == "note-menu-right" {
+                    egui::PointerButton::Secondary
+                } else {
+                    egui::PointerButton::Primary
                 },
-            ];
-        }
-        return Vec::new();
+                pressed: frame.is_multiple_of(2),
+                modifiers: Default::default(),
+            },
+        ];
     }
     let key = |key| egui::Event::Key {
         key,

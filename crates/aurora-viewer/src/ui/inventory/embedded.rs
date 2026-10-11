@@ -185,21 +185,22 @@ pub(super) fn editor(
                 id.with(("attachment", index)),
                 egui::Sense::click(),
             );
-            if response.double_clicked() {
-                result.open = Some(marker);
-            }
             response
                 .clone()
                 .on_hover_cursor(egui::CursorIcon::PointingHand)
                 .on_hover_text(format!("{}\n{}", attachment.item.name, attachment.item.desc));
-            response.context_menu(|ui| {
-                if ui.button(aurora_i18n::tr!("common-open")).clicked() {
+            super::super::menu::click_menu(&response, p, |ui| {
+                let open = ui.scope(|ui| super::super::menu::item(ui, p, "folder-open", aurora_i18n::tr!("common-open")));
+                ui.ctx()
+                    .data_mut(|data| data.insert_temp(id.with(("demo_attachment_open", marker)), open.response.rect));
+                if open.inner {
                     result.open = Some(marker);
-                    ui.close();
                 }
-                if ui.button(aurora_i18n::tr!("notecard-copy-inventory")).clicked() {
+                let copy = ui.scope(|ui| super::super::menu::item(ui, p, "copy", aurora_i18n::tr!("notecard-copy-inventory")));
+                ui.ctx()
+                    .data_mut(|data| data.insert_temp(id.with(("demo_attachment_copy", marker)), copy.response.rect));
+                if copy.inner {
                     result.copy = Some(marker);
-                    ui.close();
                 }
             });
         }
@@ -304,37 +305,85 @@ mod tests {
     }
 
     #[test]
-    fn inline_item_double_click_and_inventory_drop_use_character_positions() {
+    fn either_mouse_button_opens_the_same_attachment_actions_in_editable_and_read_only_notes() {
+        for editable in [true, false] {
+            for button in [egui::PointerButton::Primary, egui::PointerButton::Secondary] {
+                for action in ["open", "copy"] {
+                    let ctx = egui::Context::default();
+                    let (mut source, mut text) = fixture();
+                    let original = text.clone();
+                    for _ in 0..5 {
+                        frame(&ctx, &mut source, &mut text, editable, vec![]);
+                    }
+                    let id = egui::Id::new("note");
+                    let marker = '\u{100000}';
+                    let attachment = ctx
+                        .data_mut(|data| data.get_temp::<egui::Rect>(id.with(("demo_attachment", marker))))
+                        .expect("image");
+                    let click = |pos, button, pressed| {
+                        vec![
+                            egui::Event::PointerMoved(pos),
+                            egui::Event::PointerButton {
+                                pos,
+                                button,
+                                pressed,
+                                modifiers: Default::default(),
+                            },
+                        ]
+                    };
+                    frame(&ctx, &mut source, &mut text, editable, click(attachment.center(), button, true));
+                    let result = frame(&ctx, &mut source, &mut text, editable, click(attachment.center(), button, false));
+                    assert!(egui::Popup::is_any_open(&ctx), "{button:?} must open the menu");
+                    assert!(
+                        result.open.is_none() && result.copy.is_none(),
+                        "opening the menu must not execute an action"
+                    );
+                    for _ in 0..2 {
+                        frame(&ctx, &mut source, &mut text, editable, vec![]);
+                    }
+                    for entry in ["demo_attachment_open", "demo_attachment_copy"] {
+                        assert!(ctx.data_mut(|data| data.get_temp::<egui::Rect>(id.with((entry, marker)))).is_some());
+                    }
+                    let key = if action == "open" {
+                        "demo_attachment_open"
+                    } else {
+                        "demo_attachment_copy"
+                    };
+                    let row = ctx
+                        .data_mut(|data| data.get_temp::<egui::Rect>(id.with((key, marker))))
+                        .expect("menu action");
+                    frame(
+                        &ctx,
+                        &mut source,
+                        &mut text,
+                        editable,
+                        click(row.center(), egui::PointerButton::Primary, true),
+                    );
+                    let result = frame(
+                        &ctx,
+                        &mut source,
+                        &mut text,
+                        editable,
+                        click(row.center(), egui::PointerButton::Primary, false),
+                    );
+                    assert_eq!(result.open, (action == "open").then_some(marker));
+                    assert_eq!(result.copy, (action == "copy").then_some(marker));
+                    assert!(!egui::Popup::is_any_open(&ctx), "selecting an action must close the menu");
+                    assert_eq!(text, original);
+                    assert!(!result.changed);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn inventory_drop_below_the_text_uses_character_positions() {
         let ctx = egui::Context::default();
         let (mut source, mut text) = fixture();
         for _ in 0..5 {
             frame(&ctx, &mut source, &mut text, true, vec![]);
         }
         let id = egui::Id::new("note");
-        let rect = ctx
-            .data_mut(|data| data.get_temp::<egui::Rect>(id.with(("demo_attachment", '\u{100000}'))))
-            .expect("image");
-        let button = |pressed| egui::Event::PointerButton {
-            pos: rect.center(),
-            button: egui::PointerButton::Primary,
-            pressed,
-            modifiers: Default::default(),
-        };
-        let mut opened = None;
-        for _ in 0..2 {
-            frame(
-                &ctx,
-                &mut source,
-                &mut text,
-                true,
-                vec![egui::Event::PointerMoved(rect.center()), button(true)],
-            );
-            let result = frame(&ctx, &mut source, &mut text, true, vec![button(false)]);
-            if result.open.is_some() {
-                opened = result.open;
-            }
-        }
-        assert_eq!(opened, Some('\u{100000}'));
         // Drag-and-drop remains available in blank space below the text.
         let rect = ctx
             .data_mut(|data| data.get_temp::<egui::Rect>(id.with("demo_rect")))

@@ -142,7 +142,7 @@ pub fn target(view: &str) -> Option<Uuid> {
         "script" => 8102,
         "note" | "note-open" | "note-edit" | "note-save" | "note-close" | "note-error" | "note-readonly" | "note-embedded" | "note-new"
         | "note-task" | "note-task-save" | "note-task-error" | "note-task-readonly" | "note-drop" | "note-image" | "note-landmark"
-        | "note-copy" | "note-task-embedded" => 8103,
+        | "note-copy" | "note-task-embedded" | "note-menu-left" | "note-menu-right" => 8103,
         "nocopy" => 8109,
         "notransfer" => 8110,
         "link" => 8113,
