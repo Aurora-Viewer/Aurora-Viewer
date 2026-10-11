@@ -125,6 +125,30 @@ The texture memory budget is set automatically from the detected VRAM.
 
 ![Login screen](docs/screenshots/login.jpg)
 
+## Signaler un bug pendant l’alpha
+
+L’icône de bug dans la barre du haut, le menu Aide et l’écran de connexion
+ouvrent le même formulaire. Décrivez le problème, décochez les informations
+à garder privées et relisez le texte public exact. La capture et les diagnostics
+filtrés sont facultatifs. Le rapport utilise des rubriques anglaises ; votre
+description reste dans la langue dans laquelle vous l’avez écrite.
+
+Deux modes, tous deux avec un compte GitHub : ouvrir une issue préremplie dans
+le navigateur, ou autoriser l’application GitHub d’Aurora puis envoyer depuis
+le viewer. Dans ce dernier cas, l’autorisation reste uniquement en mémoire
+jusqu’à la fermeture du viewer ou sa déconnexion ; aucune publication ne suit
+automatiquement l’autorisation. Sans compte, enregistrez une copie locale.
+
+Les images sont enregistrées en PNG sans métadonnées, à ajouter manuellement
+dans l’issue GitHub depuis le dossier `public` du rapport. Si le texte est trop
+long pour un lien, Aurora le copie intégralement pour le coller dans GitHub.
+Ne publiez jamais le dossier `private-do-not-upload` : ses diagnostics restent
+locaux. Le bouton de barre se masque dans Préférences › Interface.
+
+Test hors ligne : `AURORA_DEMO=1` et `AURORA_DEMO_BUG_REPORT=1` ouvrent un rapport
+exemple ; l’envoi est simulé et le navigateur reste fermé. Voir
+[TESTING.md](docs/TESTING.md) et la [configuration GitHub](docs/BUG_REPORTING.md).
+
 ## Roadmap
 
 **Not there yet**

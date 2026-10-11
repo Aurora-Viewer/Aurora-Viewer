@@ -365,6 +365,7 @@ grille.
 | `AURORA_DEMO_UPDATE_MAINTENANCE=<mode>` | Annonce d’une invalidation du cache et/ou remise à zéro |
 | `AURORA_UPDATE_TEST_ROOT=<dossier>` | Installation jetable servie par un flux local |
 | `AURORA_UPDATE_TEST_VERSION=<tag>` | Compilation dev à version synthétique pour cet essai |
+| `AURORA_DEMO_BUG_REPORT=<mode>` | Rapport de bug public avec données de démo, sans envoi |
 | `AURORA_DEMO_MAP=1` ou `mini` | Carte du monde et mini-carte |
 | `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Liste des notifications, menu de statut, champ de lieu |
 | `AURORA_DEMO_CONV=1`, `AURORA_DEMO_TALK=1` | Conversation de groupe, micro ouvert |
@@ -384,6 +385,12 @@ grille.
 
 - **`AURORA_DEMO_OPTIONS=<section>`** : par exemple `12` pour Pratique
   (touche de déplacement des HUDs).
+- **`AURORA_DEMO_BUG_REPORT=1|details|image|image-ui|direct`** : ouvre le
+  rapport après le chargement (image 550). `1` montre la description,
+  `details` les informations avec le lieu décoché et les diagnostics filtrés,
+  `image` capture la scène seule, `image-ui` conserve l’interface, `direct`
+  sélectionne l’envoi direct. Dans tous ces modes, l’envoi reste local et
+  n’ouvre ni GitHub ni le navigateur. Voir [BUG_REPORTING.md](BUG_REPORTING.md).
 - **`AURORA_DEMO_LOGIN=remembered|empty`** : écran de connexion hors ligne
   avec un marqueur synthétique de mot de passe enregistré, ou un champ de
   mot de passe vide (aucun accès à une grille ni au coffre d'identifiants).

@@ -24,6 +24,7 @@ use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{CursorGrabMode, Window, WindowId};
 
+mod bug_report;
 mod chat_commands;
 mod context_menu;
 mod hud_drag;
@@ -113,6 +114,7 @@ pub struct App {
     ctrl: bool,
     screen: Screen,
     login_form: LoginForm,
+    bug_report: ui::bug_report::BugReportUi,
     login_progress: Option<(String, f32)>,
     panels: Panels,
     chat_ui: ChatUi,
@@ -444,6 +446,7 @@ impl App {
             ctrl: false,
             screen: Screen::Login,
             login_form: LoginForm::default(),
+            bug_report: Default::default(),
             login_progress: None,
             panels,
             chat_ui: ChatUi::default(),
@@ -3863,6 +3866,23 @@ impl App {
         let mut actions = UiActions::default();
         let vsync = gfx.renderer.vsync();
         self.frame_profile.lap(Lap::UiPrep);
+        // Serialize the report capture with other users of renderer.captured.
+        // Start before drawing so the report window is absent from the picture.
+        if self.bug_report.capture_requested.is_some()
+            && !self.inventory_images.auto_capture_pending
+            && self.inventory_images.capturing.is_none()
+            && !self.scene_capture_pending
+            && !gfx.renderer.capture_request
+            && !gfx.renderer.capture_scene
+            && let Some(with_ui) = self.bug_report.capture_requested.take()
+        {
+            self.bug_report.capture_pending = true;
+            if with_ui {
+                gfx.renderer.capture_request = true;
+            } else {
+                gfx.renderer.capture_scene = true;
+            }
+        }
         self.sound_cues.before(&ctx, &raw);
         let mut full = ctx.run_ui(raw, |ui| {
             self.sound_cues.pass_start(ui.ctx());
@@ -3993,14 +4013,22 @@ impl App {
         self.poll_key_to_name();
 
         if let Some(request) = self.inventory_images.capture.take() {
-            if self.scene_capture_pending || self.inventory_images.capturing.is_some() || self.inventory_images.auto_capture_pending {
+            if self.scene_capture_pending
+                || self.inventory_images.capturing.is_some()
+                || self.inventory_images.auto_capture_pending
+                || self.bug_report.capture_pending
+            {
                 self.inventory_images.capture = Some(request);
             } else {
                 gfx.renderer.capture_scene = true;
                 self.inventory_images.capturing = Some(request);
             }
         }
-        if self.want_scene_capture && self.inventory_images.capturing.is_none() && !self.inventory_images.auto_capture_pending {
+        if self.want_scene_capture
+            && self.inventory_images.capturing.is_none()
+            && !self.inventory_images.auto_capture_pending
+            && !self.bug_report.capture_pending
+        {
             self.want_scene_capture = false;
             gfx.renderer.capture_scene = true;
             self.scene_capture_pending = true;
@@ -4091,6 +4119,11 @@ impl App {
             }
         }
         // last view for the loading screens (blurred in a thread, or now when quitting)
+        if self.bug_report.capture_pending
+            && let Some((w, h, pixels)) = gfx.renderer.captured.take()
+        {
+            self.bug_report.captured(w, h, pixels);
+        }
         if self.inventory_images.capturing.is_some()
             && let Some((w, h, pixels)) = gfx.renderer.captured.take()
             && let Some(request) = self.inventory_images.capturing.take()
@@ -4575,6 +4608,7 @@ impl App {
         match a.login {
             LoginAction::Login if !self.updater.blocks_login() && aurora_updater::test_environment().is_none() => self.start_login(),
             LoginAction::CheckUpdates => self.updater.check(self.net.runtime(), true),
+            LoginAction::ReportBug => self.bug_report.requested = true,
             LoginAction::Quit => self.shutdown(event_loop),
             LoginAction::None | LoginAction::Login => {}
         }
@@ -4647,6 +4681,7 @@ impl App {
         }
         match a.bar {
             BarAction::CheckUpdates => self.updater.check(self.net.runtime(), true),
+            BarAction::ReportBug => self.bug_report.requested = true,
             BarAction::ShowHuds(visible) => {
                 if self.hud_drag.is_some() {
                     self.on_left_release();
@@ -4856,6 +4891,7 @@ impl App {
                     .map(|i| ui::bars::maturity_name(i.sim_access))
                     .unwrap_or("");
                 let status = ui::bars::StatusInfo {
+                    show_bug_report: self.settings.show_bug_report,
                     show_huds: self.settings.show_huds,
                     hud_zoom: self.world.hud_zoom,
                     ban_lines: self.settings.maps.ban_lines,
@@ -5570,6 +5606,14 @@ impl App {
                 }
             }
         }
+        if self.demo && self.frame_count == 550 && std::env::var_os("AURORA_DEMO_BUG_REPORT").is_some() {
+            self.bug_report.requested = true;
+        }
+        if self.bug_report.requested {
+            self.open_bug_report(renderer);
+        }
+        self.bug_report
+            .show(&ctx, &p, &self.skin.icons, matches!(self.screen, Screen::World));
         a
     }
 }

@@ -34,6 +34,7 @@ pub struct LoginForm {
 
 #[derive(Default)]
 pub enum LoginAction {
+    ReportBug,
     #[default]
     None,
     Login,
@@ -619,6 +620,9 @@ pub fn show(
                 ui.spacing_mut().item_spacing.x = 10.0;
                 link_button(ui, p, icons, "github-logo", "GitHub", crate::links::GITHUB);
                 link_button(ui, p, icons, "discord-logo", "Discord", crate::links::DISCORD);
+                if super::widgets::flat_button(ui, p, aurora_i18n::tr!("bug-title")).clicked() {
+                    action = LoginAction::ReportBug;
+                }
                 link_button(
                     ui,
                     p,
