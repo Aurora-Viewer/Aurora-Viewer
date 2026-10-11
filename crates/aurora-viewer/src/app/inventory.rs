@@ -89,11 +89,13 @@ impl App {
                     if matches!(it.asset_type, 7 | 10) && it.owner_mask & rules::COPY == 0 {
                         self.inventory_preview(
                             id,
+                            it.asset_id,
                             Err(aurora_i18n::tr!("app-inventory-you-are-not-allowed-to-read-this-content").into()),
                         );
                     } else if it.asset_id.is_nil() && matches!(it.asset_type, 7 | 10) {
                         self.inventory_preview(
                             id,
+                            it.asset_id,
                             Ok(if it.asset_type == 10 {
                                 "default\n{\n    state_entry()\n    {\n        llSay(0, \"Hello, Avatar!\");\n    }\n}\n"
                                     .as_bytes()
@@ -107,26 +109,45 @@ impl App {
                     }
                 }
             }
-            InvAction::SaveContent { item, text } => {
-                if let Some(it) = self.world.inventory.items.get(&item)
-                    && matches!(it.asset_type, 7 | 10)
-                    && it.owner_mask & (rules::MODIFY | rules::COPY) == rules::MODIFY | rules::COPY
-                {
-                    let data = if it.asset_type == 7 {
-                        format!(
-                            "Linden text version 2\n{{\nLLEmbeddedItems version 1\n{{\ncount 0\n}}\nText length {}\n{text}}}\n",
-                            text.len()
-                        )
-                        .into_bytes()
-                    } else {
-                        text.into_bytes()
-                    };
-                    self.inventory_ui.save_pending = true;
-                    self.send(NetCommand::SaveInventoryContent {
+            InvAction::SaveContent { editor, item, text, close } => {
+                let allowed = crate::world::inventory::preview::can_edit(&self.world.inventory, item);
+                let kind = self.world.inventory.items.get(&item).map_or(-1, |it| it.asset_type);
+                let busy = self.inventory_ui.preview == Some(item) && self.inventory_ui.save_pending
+                    || self
+                        .inventory_ui
+                        .windows
+                        .iter()
+                        .any(|w| w.state.preview == Some(item) && w.state.save_pending);
+                let st = if self.inventory_ui.ui_id == editor {
+                    Some(&mut self.inventory_ui)
+                } else {
+                    self.inventory_ui
+                        .windows
+                        .iter_mut()
+                        .find(|w| w.id == editor)
+                        .map(|w| w.state.as_mut())
+                };
+                let Some(st) = st.filter(|st| st.preview == Some(item)) else {
+                    return;
+                };
+                if !allowed {
+                    st.preview_message = aurora_i18n::tr!("notecard-edit-denied").into();
+                    st.close_after_save = false;
+                    return;
+                }
+                if busy {
+                    st.preview_message = aurora_i18n::tr!("notecard-saving").into();
+                    return;
+                }
+                let request = Uuid::new_v4();
+                match st.start_content_save(request, kind, text, close) {
+                    Ok(data) => self.send(NetCommand::SaveInventoryContent {
+                        request,
                         item,
-                        asset_type: it.asset_type,
+                        asset_type: kind,
                         data,
-                    });
+                    }),
+                    Err(reason) => st.preview_message = reason,
                 }
             }
             InvAction::Environment(asset, flags) => {
@@ -239,27 +260,47 @@ impl App {
         }
     }
 
-    pub(super) fn inventory_preview(&mut self, item: Uuid, result: Result<Vec<u8>, String>) {
-        let kind = self.world.inventory.items.get(&item).map(|it| it.asset_type);
-        let mut editable = self
-            .world
-            .inventory
-            .items
-            .get(&item)
-            .is_some_and(|it| matches!(it.asset_type, 7 | 10) && it.owner_mask & rules::MODIFY != 0);
-        let result = result.and_then(|data| {
-            let (text, can_edit) = crate::world::inventory::preview::text(kind.unwrap_or(-1), &data)?;
-            editable &= can_edit;
-            Ok(text)
-        });
+    pub(super) fn inventory_preview(&mut self, item: Uuid, asset: Uuid, result: Result<Vec<u8>, String>) {
+        if self.world.inventory.items.get(&item).is_none_or(|it| it.asset_id != asset) {
+            return;
+        }
+        let kind = self.world.inventory.items.get(&item).map_or(-1, |it| it.asset_type);
+        let editable = crate::world::inventory::preview::can_edit(&self.world.inventory, item);
         if self.inventory_ui.preview == Some(item) {
-            self.inventory_ui.preview_can_edit = editable;
-            self.inventory_ui.preview_text = Some(result.clone());
+            self.inventory_ui.load_document(kind, editable, &result);
         }
         for window in &mut self.inventory_ui.windows {
             if window.state.preview == Some(item) {
-                window.state.preview_can_edit = editable;
-                window.state.preview_text = Some(result.clone());
+                window.state.load_document(kind, editable, &result);
+            }
+        }
+    }
+
+    pub(super) fn inventory_content_saved(&mut self, request: Uuid, item: Uuid, result: Result<aurora_net::inventory::InvItem, String>) {
+        let error = result.as_ref().err().map(String::as_str);
+        self.inventory_ui.finish_content_save(request, error);
+        for w in &mut self.inventory_ui.windows {
+            w.state.finish_content_save(request, error);
+        }
+        if let Ok(it) = result {
+            // Servers can replace the inventory item when embedded permissions
+            // change. Follow the returned ID rather than retaining a broken editor.
+            if it.id != item {
+                if self.inventory_ui.preview == Some(item) {
+                    self.inventory_ui.preview = Some(it.id);
+                }
+                for w in &mut self.inventory_ui.windows {
+                    if w.state.preview == Some(item) {
+                        w.state.preview = Some(it.id);
+                    }
+                }
+                self.world.inventory.remove(&[item]);
+            }
+            self.world.inventory.add_items(vec![it.clone()]);
+            if it.asset_type == 7 {
+                // The simulator may rewrite embedded inventory records.
+                // load_document protects any drafts in the other windows.
+                self.send(NetCommand::PreviewInventoryItem(it));
             }
         }
     }

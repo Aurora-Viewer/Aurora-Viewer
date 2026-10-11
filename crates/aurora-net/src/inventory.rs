@@ -3,6 +3,7 @@
 
 use aurora_llsd::{Llsd, llsd_map};
 use uuid::Uuid;
+pub mod notecard;
 pub mod operations;
 pub mod rez;
 pub mod thumbnail;

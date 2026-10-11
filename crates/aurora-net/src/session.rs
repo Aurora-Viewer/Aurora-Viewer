@@ -4,8 +4,10 @@
 //! Message flow follows `newview/llstartup.cpp` and `llviewermessage.cpp`.
 
 mod build_cmds;
+mod inventory_preview;
 mod inventory_upload;
 mod object_actions;
+mod task_notecard;
 
 use crate::caps::{self, EqEvent};
 use crate::circuit::{Circuit, Resend};
@@ -152,6 +154,7 @@ struct Session<'a> {
     /// Decode failures per message name, to rate-limit their warnings.
     decode_failures: HashMap<&'static str, u64>,
     inventory_uploads: inventory_upload::Uploads,
+    inventory_previews: inventory_preview::Previews,
     inventory_callbacks: HashMap<u32, (Instant, bool)>,
     inventory_merchant_pending: bool,
     next_inventory_callback: u32,
@@ -250,6 +253,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         land: Default::default(),
         decode_failures: HashMap::new(),
         inventory_uploads: Default::default(),
+        inventory_previews: Default::default(),
         inventory_callbacks: HashMap::new(),
         inventory_merchant_pending: false,
         next_inventory_callback: 0,
@@ -659,6 +663,7 @@ impl Session<'_> {
     fn tick(&mut self) {
         self.expire_task_inventory();
         self.expire_inventory_uploads();
+        self.expire_inventory_previews();
         let before = self.inventory_callbacks.len();
         self.inventory_callbacks
             .retain(|_, (sent, _)| sent.elapsed() < Duration::from_secs(60));
@@ -1369,11 +1374,18 @@ impl Session<'_> {
                 });
             }
             NetCommand::PreviewInventoryItem(it) => {
+                // Protected inventory assets require the simulator to check
+                // the item permissions (LLAssetStorage::getInvItemAsset).
+                if matches!(it.asset_type, 7 | 10) {
+                    self.preview_inventory_document(it);
+                    return;
+                }
                 let Some(cap) = self.main_cap("ViewerAsset") else {
                     emit(
                         self.sh,
                         NetEvent::InventoryPreview {
                             item: it.id,
+                            asset: it.asset_id,
                             result: Err(aurora_i18n::tr!("session-this-region-does-not-support-uploading-this-content").into()),
                         },
                     );
@@ -1383,17 +1395,27 @@ impl Session<'_> {
                 let events = self.sh.events.clone();
                 tokio::spawn(async move {
                     let kind = match it.asset_type {
-                        7 => "notecard_id",
-                        10 => "lsltext_id",
                         21 => "gesture_id",
                         56 => "settings_id",
                         57 => "material_id",
                         _ => "",
                     };
                     let result = crate::inventory::operations::preview(&http, &cap, kind, it.asset_id).await;
-                    let _ = events.send(NetEvent::InventoryPreview { item: it.id, result });
+                    let _ = events.send(NetEvent::InventoryPreview {
+                        item: it.id,
+                        asset: it.asset_id,
+                        result,
+                    });
                 });
             }
+            NetCommand::PreviewTaskNotecard { handle, object, item } => self.preview_task_notecard(handle, object, *item),
+            NetCommand::SaveTaskNotecard {
+                request,
+                handle,
+                object,
+                item,
+                data,
+            } => self.save_task_notecard(request, handle, object, item, data),
             NetCommand::CreateInventoryWearable { parent, kind, name, data } => self.create_wearable(parent, kind, name, data),
             NetCommand::RestoreInventoryObject(it) => {
                 let mut m = RezRestoreToWorld::default();
@@ -1421,7 +1443,12 @@ impl Session<'_> {
                 m.inventory_data.crc = crate::inventory::operations::checksum(&it);
                 self.send_main(&m, true);
             }
-            NetCommand::SaveInventoryContent { item, asset_type, data } => {
+            NetCommand::SaveInventoryContent {
+                request,
+                item,
+                asset_type,
+                data,
+            } => {
                 let name = match asset_type {
                     7 => "UpdateNotecardAgentInventory",
                     10 => "UpdateScriptAgent",
@@ -1431,6 +1458,7 @@ impl Session<'_> {
                     emit(
                         self.sh,
                         NetEvent::InventoryContentSaved {
+                            request,
                             item,
                             result: Err(aurora_i18n::tr!("session-saving-is-unavailable-in-this-region").into()),
                         },
@@ -1442,7 +1470,7 @@ impl Session<'_> {
                 let owner = self.agent_id();
                 tokio::spawn(async move {
                     let result = crate::inventory::operations::save_content(&http, &cap, &fetch, owner, item, asset_type, data).await;
-                    let _ = events.send(NetEvent::InventoryContentSaved { item, result });
+                    let _ = events.send(NetEvent::InventoryContentSaved { request, item, result });
                 });
             }
             NetCommand::CopyInventoryItems(items) => {
@@ -2167,6 +2195,7 @@ impl Session<'_> {
     fn dispatch(&mut self, from: SocketAddr, pkt: &IncomingPacket) -> Result<(), aurora_msg::DecodeError> {
         let id = pkt.id;
         if self.dispatch_inventory_upload(from, pkt)?
+            || self.dispatch_inventory_preview(from, pkt)?
             || self.dispatch_object_actions(from, pkt)?
             || self.dispatch_social(from, pkt)?
             || self.dispatch_land(from, pkt)?

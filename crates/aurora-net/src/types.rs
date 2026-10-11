@@ -674,7 +674,20 @@ pub enum NetEvent {
     },
     InventoryPreview {
         item: Uuid,
+        asset: Uuid,
         result: Result<Vec<u8>, String>,
+    },
+    TaskNotecardPreview {
+        object: Uuid,
+        item: Uuid,
+        asset: Uuid,
+        result: Result<Vec<u8>, String>,
+    },
+    TaskNotecardSaved {
+        request: Uuid,
+        object: Uuid,
+        item: Uuid,
+        result: Result<Uuid, String>,
     },
     InventoryThumbnailSource {
         request: Uuid,
@@ -685,6 +698,7 @@ pub enum NetEvent {
     InventoryOperationFailed(String),
     InventoryMerchant(Result<bool, String>),
     InventoryContentSaved {
+        request: Uuid,
         item: Uuid,
         result: Result<crate::inventory::InvItem, String>,
     },
@@ -1099,6 +1113,18 @@ pub enum NetCommand {
         name: String,
     },
     PreviewInventoryItem(crate::inventory::InvItem),
+    PreviewTaskNotecard {
+        handle: RegionHandle,
+        object: Uuid,
+        item: Box<crate::inventory::InvItem>,
+    },
+    SaveTaskNotecard {
+        request: Uuid,
+        handle: RegionHandle,
+        object: Uuid,
+        item: Uuid,
+        data: Vec<u8>,
+    },
     FetchInventoryThumbnail {
         request: Uuid,
         asset: Uuid,
@@ -1120,6 +1146,7 @@ pub enum NetCommand {
     },
     RestoreInventoryObject(crate::inventory::InvItem),
     SaveInventoryContent {
+        request: Uuid,
         item: Uuid,
         asset_type: i32,
         data: Vec<u8>,

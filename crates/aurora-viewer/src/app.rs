@@ -33,6 +33,7 @@ mod inventory;
 mod inventory_drag;
 mod inventory_thumbnail;
 mod object_actions;
+mod task_notecards;
 
 enum Screen {
     Login,
@@ -317,6 +318,8 @@ pub struct App {
     ao_demo: Option<String>,
     ao_default_applied: bool,
     inventory_drag: inventory_drag::InventoryDrag,
+    task_notecards: std::collections::HashMap<(uuid::Uuid, uuid::Uuid), task_notecards::TaskNotecard>,
+    demo_documents: std::collections::HashMap<uuid::Uuid, Vec<u8>>,
     inventory_images: inventory_thumbnail::ImageJobs,
     appearance_ui: ui::appearance::AppearanceUi,
     last_social_poll: Instant,
@@ -596,6 +599,8 @@ impl App {
             ao_demo: std::env::var("AURORA_DEMO_AO").ok(),
             ao_default_applied: false,
             inventory_drag: Default::default(),
+            task_notecards: Default::default(),
+            demo_documents: Default::default(),
             inventory_images: Default::default(),
             appearance_ui: Default::default(),
             last_social_poll: Instant::now(),
@@ -728,15 +733,58 @@ impl App {
                 });
                 return;
             }
-            if let NetCommand::SaveInventoryContent { item, .. } = &cmd {
+            if let NetCommand::SaveInventoryContent { request, item, data, .. } = &cmd {
+                if std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|v| v == "note-error") {
+                    self.on_app_event(NetEvent::InventoryContentSaved {
+                        request: *request,
+                        item: *item,
+                        result: Err(aurora_i18n::tr!("notecard-demo-save-error").into()),
+                    });
+                    return;
+                }
                 let result = self
                     .world
                     .inventory
                     .items
                     .get(item)
                     .cloned()
+                    .map(|mut it| {
+                        it.asset_id = uuid::Uuid::new_v4();
+                        self.demo_documents.insert(it.id, data.clone());
+                        it
+                    })
                     .ok_or_else(|| aurora_i18n::tr!("common-item-not-found").to_owned());
-                self.on_app_event(NetEvent::InventoryContentSaved { item: *item, result });
+                self.on_app_event(NetEvent::InventoryContentSaved {
+                    request: *request,
+                    item: *item,
+                    result,
+                });
+                return;
+            }
+            if let NetCommand::PreviewTaskNotecard { object, item, .. } = &cmd {
+                let data = self
+                    .demo_documents
+                    .get(&item.id)
+                    .cloned()
+                    .unwrap_or_else(|| crate::world::inventory::demo::note_asset(false));
+                self.task_notecard_preview(*object, item.id, item.asset_id, Ok(data));
+                return;
+            }
+            if let NetCommand::SaveTaskNotecard {
+                request,
+                object,
+                item,
+                data,
+                ..
+            } = &cmd
+            {
+                let result = if std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|v| v == "note-task-error") {
+                    Err(aurora_i18n::tr!("notecard-demo-save-error").into())
+                } else {
+                    self.demo_documents.insert(*item, data.clone());
+                    Ok(uuid::Uuid::new_v4())
+                };
+                self.task_notecard_saved(*request, *object, *item, result);
                 return;
             }
             if let NetCommand::CreateInventoryItem { parent, kind, name } = &cmd {
@@ -759,14 +807,17 @@ impl App {
                 return;
             }
             if let NetCommand::PreviewInventoryItem(it) = &cmd {
-                let bytes = match it.asset_type {
+                let bytes = self.demo_documents.get(&it.id).cloned().unwrap_or_else(|| match it.asset_type {
                     56 => b"<?llsd/notation?>\n{'type':'sky'}".to_vec(),
                     57 => aurora_llsd::to_binary(
                         &aurora_llsd::llsd_map! { "version" => "1.1", "type" => "GLTF 2.0", "data" => "{\"asset\":{\"version\":\"2.0\"},\"materials\":[{}]}" },
                     ),
+                    7 => crate::world::inventory::demo::note_asset(
+                        std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|v| v == "note-embedded"),
+                    ),
                     _ => aurora_i18n::tr!("app-demo-content", value0 = it.name.to_string()).into_bytes(),
-                };
-                self.inventory_preview(it.id, Ok(bytes));
+                });
+                self.inventory_preview(it.id, it.asset_id, Ok(bytes));
                 return;
             }
             if let NetCommand::UpdateOutfit { request, change } = &cmd {
@@ -895,6 +946,7 @@ impl App {
     fn back_to_login(&mut self, error: Option<String>) {
         self.record_inventory_logout();
         self.inventory_ui = Default::default();
+        self.task_notecards.clear();
         self.hud_drag = None;
         self.media.clear();
         self.media.openid.clear();
@@ -941,28 +993,8 @@ impl App {
             }
             return;
         }
-        if let NetEvent::InventoryContentSaved { item, result } = ev {
-            self.inventory_ui.save_pending = false;
-            let saved = result.is_ok();
-            match result {
-                Ok(it) => {
-                    self.world.inventory.add_items(vec![it]);
-                    if self.inventory_ui.preview == Some(item) {
-                        self.inventory_ui.preview_dirty = false;
-                    }
-                    self.inventory_ui.message = aurora_i18n::tr!("app-document-saved").into();
-                }
-                Err(reason) => self.inventory_ui.message = reason,
-            }
-            for w in &mut self.inventory_ui.windows {
-                if w.state.preview == Some(item) {
-                    w.state.save_pending = false;
-                    if saved {
-                        w.state.preview_dirty = false;
-                    }
-                    w.state.message.clone_from(&self.inventory_ui.message);
-                }
-            }
+        if let NetEvent::InventoryContentSaved { request, item, result } = ev {
+            self.inventory_content_saved(request, item, result);
             return;
         }
         if let NetEvent::InventoryOperationFailed(reason) = ev {
@@ -977,12 +1009,32 @@ impl App {
             self.inventory_result(request, result);
             return;
         }
-        if let NetEvent::InventoryPreview { item, result } = ev {
+        if let NetEvent::InventoryPreview { item, asset, result } = ev {
             if self.ao_ui.import == Some(item) {
-                self.ao_import_result(item, result);
-                return;
+                // A shared download can serve both an AO import and an editor.
+                self.ao_import_result(item, result.clone());
             }
-            self.inventory_preview(item, result);
+            self.inventory_preview(item, asset, result);
+            return;
+        }
+        if let NetEvent::TaskNotecardPreview {
+            object,
+            item,
+            asset,
+            result,
+        } = ev
+        {
+            self.task_notecard_preview(object, item, asset, result);
+            return;
+        }
+        if let NetEvent::TaskNotecardSaved {
+            request,
+            object,
+            item,
+            result,
+        } = ev
+        {
+            self.task_notecard_saved(request, object, item, result);
             return;
         }
         if let NetEvent::InventoryThumbnailSource {
@@ -3832,7 +3884,7 @@ impl App {
                 matches!(
                     v.as_str(),
                     "rename" | "new-script" | "new-note" | "new-folder" | "resize-left" | "resize-right"
-                )
+                ) || v.starts_with("note-")
             })
         {
             raw.focused = true;
@@ -3906,6 +3958,12 @@ impl App {
         let ctx = self.egui_ctx.clone();
         if self.demo {
             raw.events.extend(ui::widgets::demo::events(&ctx, self.frame_count));
+            for d in self.task_notecards.values_mut() {
+                raw.events
+                    .extend(ui::inventory::document_demo_events(&ctx, self.frame_count, &mut d.state));
+            }
+            raw.events
+                .extend(ui::inventory::document_demo_events(&ctx, self.frame_count, &mut self.inventory_ui));
         }
         let projector = ui::hud::Projector {
             view_proj: vp,
@@ -5434,7 +5492,12 @@ impl App {
                     ctx.set_cursor_icon(c);
                 }
                 a.object_confirm = ui::object_actions::show(&ctx, &p, &mut self.interactions, &self.world);
-                ui::object_actions::show_contents(&ctx, &p, &self.skin.icons, &mut self.interactions, &self.world);
+                if let Some((object, item)) =
+                    ui::object_actions::show_contents(&ctx, &p, &self.skin.icons, &mut self.interactions, &self.world)
+                {
+                    self.open_task_notecard(object, item);
+                }
+                self.show_task_notecards(&ctx, &p);
                 for (id, r) in ui::notifications::show(&ctx, &p, &self.skin.icons, &mut self.world.notifications, &mut self.notif_ui) {
                     let (cmds, url) = self.world.respond_notification(id, r);
                     if cmds.iter().any(|c| matches!(c, NetCommand::AcceptLure { .. })) {
@@ -6252,6 +6315,21 @@ impl ApplicationHandler for App {
                         }
                     } else if matches!(view.as_str(), "properties" | "animation-properties") {
                         self.inventory_ui.dialog = Some(ui::inventory::EditDialog::Properties(id));
+                    } else if view.starts_with("note-task") {
+                        self.demo_task_notecard(&view);
+                    } else if view.starts_with("note-") {
+                        if view == "note-readonly"
+                            && let Some(it) = self.world.inventory.items.get_mut(&id)
+                        {
+                            it.owner_mask &= !crate::world::inventory::actions::MODIFY;
+                        }
+                        if view == "note-new"
+                            && let Some(it) = self.world.inventory.items.get_mut(&id)
+                        {
+                            it.asset_id = uuid::Uuid::nil();
+                        }
+                        self.inventory_ui.preview = Some(id);
+                        self.apply_inventory_action(ui::inventory::InvAction::Preview(id));
                     } else if view == "animation-open" {
                         self.inventory_ui.preview = Some(id);
                     } else if view.starts_with("image") {

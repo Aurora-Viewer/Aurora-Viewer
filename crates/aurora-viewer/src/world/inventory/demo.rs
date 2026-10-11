@@ -138,12 +138,25 @@ pub fn target(view: &str) -> Option<Uuid> {
         "object" | "properties" | "rename" | "multi-add" | "multi-detach" | "delete" => 8100,
         "animation" | "animation-open" | "animation-properties" | "image" | "image-photo" | "image-picker" | "image-photo-save" => 8101,
         "script" => 8102,
-        "note" => 8103,
+        "note" | "note-open" | "note-edit" | "note-save" | "note-close" | "note-error" | "note-readonly" | "note-embedded" | "note-new"
+        | "note-task" | "note-task-save" | "note-task-error" | "note-task-readonly" => 8103,
         "nocopy" => 8109,
         "notransfer" => 8110,
         "link" => 8113,
         _ => return None,
     }))
+}
+
+pub fn note_asset(embedded: bool) -> Vec<u8> {
+    let text = aurora_i18n::tr!("notecard-demo-text");
+    if embedded {
+        let text = format!("{text}\n\u{100000}\n");
+        format!("Linden text version 2\n{{\nLLEmbeddedItems version 1\n{{\ncount 1\n{{\next char index 0\ninv_item 0\n{{\nitem_id {}\npermissions 0\n{{\nbase_mask 7fffffff\nowner_mask 7fffffff\nnext_owner_mask 0000a000\n}}\nasset_id {}\ntype landmark\ninv_type landmark\nname Place Aurora|\ndesc |\n}}\n}}\n}}\nText length {}\n{text}}}\n", Uuid::from_u128(8120), Uuid::from_u128(18120), text.len()).into_bytes()
+    } else {
+        aurora_net::inventory::notecard::Notecard::default()
+            .encode(text)
+            .unwrap_or_default()
+    }
 }
 
 /// Sorting/filter fixtures with distinct ages, owners, permissions and paths.

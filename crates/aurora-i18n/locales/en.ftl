@@ -87,6 +87,29 @@ rez-worn = Detach this object before dropping it into the world.
 rez-no-surface = Drop the item onto land or a world object.
 rez-contents-denied = You cannot add this item to the target’s contents.
 rez-transfer-denied = This item cannot be transferred to the target’s owner.
+notecard-task-demo-object = Demo object
+notecard-task-title = { $note } ({ $object })
+notecard-task-unavailable = This notecard or its object is no longer available.
+notecard-task-demo-title = Notecard in an object
+notecard-save-button = Save (Ctrl+S)
+inventory-preview-busy = Too many documents are loading. Try again in a moment.
+inventory-preview-timeout = Loading the document timed out. Reopen it to retry.
+notecard-text-too-large = A notecard cannot exceed 65,536 bytes of text.
+notecard-edit-denied = You do not have permission to edit this document.
+notecard-byte-count = { $bytes } / 65,536 bytes
+notecard-attachments = Attachments: { $names }
+notecard-read-only = Read only
+notecard-saving = Saving…
+notecard-save-failed = Save failed: { $reason }
+notecard-save-unconfirmed = The server saved the notecard, but readback did not confirm the new asset. Retry or reopen the notecard.
+notecard-demo-save-error = The demo server rejects this save.
+notecard-demo-text =
+    Welcome to Aurora!
+
+    This notecard can be edited and saved.
+    Accents: été, forêt. Emoji: 🐺
+notecard-demo-edit =
+    { "\u000A" }Text added during the test.
 exit-title = Close Aurora Viewer?
 exit-world-body = Quit the viewer or return to the login screen?
 exit-login-body = Do you want to quit Aurora Viewer?

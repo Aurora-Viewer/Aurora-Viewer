@@ -33,6 +33,7 @@ pub(super) fn show(
         EditDialog::Share(..) => aurora_i18n::tr!("ui-inventory-dialogs-share-selection"),
     };
     let properties = matches!(dialog, EditDialog::Properties(_));
+    let discard = matches!(dialog, EditDialog::Discard(_));
     let confirmation = matches!(dialog, EditDialog::Delete(..) | EditDialog::Empty(_));
     let window_id = format!(
         "inventory_{}_{}",
@@ -51,16 +52,20 @@ pub(super) fn show(
         ctx.content_rect().center()
             - if properties {
                 egui::vec2(175.0, 305.0)
+            } else if discard {
+                egui::vec2(220.0, 70.0)
             } else {
                 egui::vec2(210.0, 130.0)
             },
         if properties {
             Vec2::new(350.0, 610.0)
+        } else if discard {
+            Vec2::new(440.0, 140.0)
         } else {
             Vec2::new(420.0, 260.0)
         },
     );
-    if confirmation {
+    if confirmation || discard {
         floater = floater.fixed();
     }
     floater.show(ctx, p, &mut open, |ui| {
@@ -70,21 +75,48 @@ pub(super) fn show(
             }
             EditDialog::Discard(id) => {
                 ui.label(aurora_i18n::tr!("ui-inventory-dialogs-this-document-has-unsaved-changes"));
-                if ui
-                    .add_enabled(!st.save_pending, egui::Button::new(aurora_i18n::tr!("common-save")))
-                    .clicked()
-                    && let Some(Ok(text)) = &st.preview_text
-                {
-                    actions.push(InvAction::SaveContent {
-                        item: *id,
-                        text: text.clone(),
-                    });
-                    done = true;
-                }
-                if flat_button(ui, p, aurora_i18n::tr!("ui-inventory-dialogs-discard-changes")).clicked() {
-                    st.preview = None;
-                    st.preview_dirty = false;
-                    done = true;
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_enabled(
+                            !st.save_pending
+                                && st.preview_can_edit
+                                && crate::world::inventory::preview::can_edit(inv, *id)
+                                && st.preview_text.as_ref().is_some_and(|r| {
+                                    r.as_ref().is_ok_and(|t| {
+                                        inv.items.get(id).is_none_or(|it| it.asset_type != 7)
+                                            || aurora_net::inventory::notecard::Notecard::validate_text(t).is_ok()
+                                    })
+                                }),
+                            egui::Button::new(aurora_i18n::tr!("common-save")),
+                        )
+                        .clicked()
+                        && let Some(Ok(text)) = &st.preview_text
+                    {
+                        actions.push(InvAction::SaveContent {
+                            editor: st.ui_id,
+                            item: *id,
+                            text: text.clone(),
+                            close: true,
+                        });
+                        done = true;
+                    }
+                    if ui
+                        .add_enabled(
+                            !st.save_pending,
+                            egui::Button::new(aurora_i18n::tr!("ui-inventory-dialogs-discard-changes")),
+                        )
+                        .clicked()
+                    {
+                        st.preview = None;
+                        st.reset_document();
+                        done = true;
+                    }
+                    if flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked() {
+                        done = true;
+                    }
+                });
+                if !st.preview_message.is_empty() {
+                    ui.label(RichText::new(&st.preview_message).color(p.warn));
                 }
             }
             EditDialog::Share(ids, resident) => {
@@ -298,7 +330,7 @@ pub(super) fn show(
         if !st.message.is_empty() {
             ui.label(RichText::new(&st.message).color(p.warn));
         }
-        if (!confirmation && flat_button(ui, p, aurora_i18n::tr!("extra-close-cancel")).clicked())
+        if (!confirmation && !discard && flat_button(ui, p, aurora_i18n::tr!("extra-close-cancel")).clicked())
             || ui.input(|i| i.key_pressed(egui::Key::Escape))
         {
             done = true;
@@ -347,12 +379,28 @@ pub(super) fn preview(
         animation(ctx, p, inv, st, it, prefs, actions);
         return;
     }
+    let editable = st.preview_can_edit && crate::world::inventory::preview::can_edit(inv, id);
     let mut open = true;
+    let size = if it.asset_type == 7 {
+        Vec2::new(760.0, 600.0)
+    } else {
+        Vec2::new(500.0, 400.0)
+    };
+    let size = size.min((ctx.content_rect().size() - Vec2::splat(32.0)).max(Vec2::new(300.0, 220.0)));
     Floater::new(
-        &format!("inventory_preview_{}_{}", st.ui_id, id),
-        it.name.clone(),
-        ctx.content_rect().center() - egui::vec2(250.0, 200.0),
-        Vec2::new(500.0, 400.0),
+        &format!(
+            "{}_{}_{}",
+            if it.asset_type == 7 {
+                "notecard_preview"
+            } else {
+                "inventory_preview"
+            },
+            st.ui_id,
+            id
+        ),
+        format!("{}{}", it.name, if st.preview_dirty { " *" } else { "" }),
+        ctx.content_rect().center() - size * 0.5,
+        size,
     )
     .show(ctx, p, &mut open, |ui| {
         if it.asset_type == 0 {
@@ -397,20 +445,98 @@ pub(super) fn preview(
             {
                 actions.push(InvAction::Environment(it.asset_id, it.flags));
             }
+            let mut changed = false;
+            let mut save_shortcut = false;
             match &mut st.preview_text {
                 Some(Ok(text)) => {
-                    egui::ScrollArea::both().max_height(300.0).show(ui, |ui| {
-                        if st.preview_can_edit && !st.save_pending {
-                            let response = ui.add(
-                                egui::TextEdit::multiline(text)
-                                    .desired_width(f32::INFINITY)
-                                    .font(egui::TextStyle::Monospace),
-                            );
-                            st.preview_dirty |= response.changed();
-                        } else {
-                            ui.add(egui::Label::new(RichText::new(text.as_str()).monospace()).selectable(true));
+                    if matches!(it.asset_type, 7 | 10) && !editable {
+                        ui.label(RichText::new(aurora_i18n::tr!("notecard-read-only")).color(p.muted));
+                    }
+                    if it.asset_type == 7
+                        && let Some(source) = &st.preview_source
+                    {
+                        let names = source.attachment_names(text);
+                        if !names.is_empty() {
+                            ui.label(RichText::new(aurora_i18n::tr!("notecard-attachments", names = names.join(", "))).color(p.muted));
                         }
-                    });
+                    }
+                    let documents = matches!(it.asset_type, 7 | 10);
+                    let footer_height = ui.spacing().interact_size.y
+                        + ui.spacing().item_spacing.y * 2.0
+                        + if st.preview_message.is_empty() {
+                            0.0
+                        } else {
+                            ui.fonts_mut(|fonts| {
+                                fonts.layout(
+                                    st.preview_message.clone(),
+                                    egui::TextStyle::Body.resolve(ui.style()),
+                                    p.ink,
+                                    ui.available_width(),
+                                )
+                            })
+                            .size()
+                            .y + ui.spacing().item_spacing.y
+                        }
+                        + if it.asset_type == 7 && aurora_net::inventory::notecard::Notecard::validate_text(text).is_err() {
+                            ui.text_style_height(&egui::TextStyle::Body) + ui.spacing().item_spacing.y
+                        } else {
+                            0.0
+                        };
+                    let editor_size = Vec2::new(ui.available_width(), (ui.available_height() - footer_height).max(60.0));
+                    egui::ScrollArea::both()
+                        .max_height(if documents { editor_size.y } else { 300.0 })
+                        .auto_shrink(if documents { [false, false] } else { [true, true] })
+                        .show(ui, |ui| {
+                            if matches!(it.asset_type, 7 | 10) {
+                                let mut layouter = |ui: &egui::Ui, buffer: &dyn egui::TextBuffer, wrap_width: f32| {
+                                    // One displayed character per source character keeps
+                                    // cursor/selection offsets intact for embedded markers.
+                                    let display: String = buffer
+                                        .as_str()
+                                        .chars()
+                                        .map(|c| {
+                                            if it.asset_type == 7 && c as u32 >= aurora_net::inventory::notecard::FIRST_EMBEDDED_CHAR {
+                                                '📎'
+                                            } else {
+                                                c
+                                            }
+                                        })
+                                        .collect();
+                                    ui.fonts_mut(|fonts| {
+                                        fonts.layout_job(egui::text::LayoutJob::simple(
+                                            display,
+                                            egui::TextStyle::Monospace.resolve(ui.style()),
+                                            p.ink,
+                                            wrap_width,
+                                        ))
+                                    })
+                                };
+                                let mut editor = |ui: &mut egui::Ui, buffer: &mut dyn egui::TextBuffer| {
+                                    ui.add_sized(
+                                        editor_size,
+                                        egui::TextEdit::multiline(buffer)
+                                            .id(egui::Id::new(("inventory_document_text", st.ui_id, id)))
+                                            .desired_width(f32::INFINITY)
+                                            .desired_rows(1)
+                                            .font(egui::TextStyle::Monospace)
+                                            .layouter(&mut layouter),
+                                    )
+                                };
+                                let response = if editable && !st.save_pending && !matches!(st.dialog, Some(EditDialog::Discard(_))) {
+                                    editor(ui, text)
+                                } else {
+                                    // An immutable buffer still allows selecting/copying
+                                    // the text while editing or uploading is unavailable.
+                                    editor(ui, &mut text.as_str())
+                                };
+                                changed = response.changed();
+                                if response.has_focus() {
+                                    save_shortcut = ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::S));
+                                }
+                            } else {
+                                ui.add(egui::Label::new(RichText::new(text.as_str()).monospace()).selectable(true));
+                            }
+                        });
                 }
                 Some(Err(reason)) => {
                     ui.label(RichText::new(reason.as_str()).color(p.warn));
@@ -419,32 +545,71 @@ pub(super) fn preview(
                     ui.label(aurora_i18n::tr!("common-loading-2"));
                 }
             }
-            if matches!(it.asset_type, 7 | 10)
-                && st.preview_can_edit
-                && ui
-                    .add_enabled(
-                        st.preview_dirty && !st.save_pending,
-                        egui::Button::new(aurora_i18n::tr!("common-save")),
-                    )
-                    .clicked()
+            if changed {
+                st.document_changed();
+            }
+            let valid_size = st.preview_text.as_ref().is_some_and(|r| {
+                r.as_ref()
+                    .is_ok_and(|text| it.asset_type != 7 || aurora_net::inventory::notecard::Notecard::validate_text(text).is_ok())
+            });
+            let can_save =
+                editable && st.preview_dirty && !st.save_pending && valid_size && !matches!(st.dialog, Some(EditDialog::Discard(_)));
+            let mut clicked_save = false;
+            if matches!(it.asset_type, 7 | 10) {
+                ui.horizontal(|ui| {
+                    clicked_save = ui
+                        .push_id(("inventory_document_save", st.ui_id, id), |ui| {
+                            ui.add_enabled(can_save, egui::Button::new(aurora_i18n::tr!("notecard-save-button")))
+                        })
+                        .inner
+                        .clicked();
+                    if st.save_pending {
+                        ui.spinner();
+                        ui.label(aurora_i18n::tr!("notecard-saving"));
+                    } else if it.asset_type == 7
+                        && let Some(Ok(text)) = &st.preview_text
+                    {
+                        ui.label(
+                            RichText::new(aurora_i18n::tr!("notecard-byte-count", bytes = text.len().to_string())).color(if valid_size {
+                                p.muted
+                            } else {
+                                p.warn
+                            }),
+                        );
+                    }
+                });
+            }
+            if can_save
+                && (clicked_save || save_shortcut)
                 && let Some(Ok(text)) = &st.preview_text
             {
                 actions.push(InvAction::SaveContent {
+                    editor: st.ui_id,
                     item: it.id,
                     text: text.clone(),
+                    close: false,
                 });
             }
-            if !st.message.is_empty() {
-                ui.label(RichText::new(&st.message).color(p.warn));
+            if !valid_size && it.asset_type == 7 && st.preview_text.as_ref().is_some_and(Result::is_ok) {
+                ui.label(RichText::new(aurora_i18n::tr!("notecard-text-too-large")).color(p.warn));
+            }
+            if !st.preview_message.is_empty() {
+                let saved = st.preview_message == aurora_i18n::tr!("app-document-saved");
+                ui.label(RichText::new(&st.preview_message).color(if saved { p.success } else { p.warn }));
             }
         }
     });
     if !open {
-        if st.preview_dirty || st.save_pending {
+        if st.save_pending {
+            st.close_after_save = true;
+            return;
+        }
+        if st.preview_dirty {
             st.dialog = Some(EditDialog::Discard(id));
             return;
         }
         st.preview = None;
+        st.reset_document();
         if let Some((asset, local)) = st.playing {
             actions.push(InvAction::Animation {
                 asset,
@@ -586,6 +751,168 @@ fn animation(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn document_frame(
+        ctx: &egui::Context,
+        inv: &Inventory,
+        st: &mut InventoryUi,
+        events: Vec<egui::Event>,
+    ) -> (egui::FullOutput, Vec<InvAction>) {
+        let mut actions = Vec::new();
+        let output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0))),
+                focused: true,
+                events,
+                ..Default::default()
+            },
+            |_ui| {
+                let p = crate::theme::Theme::default().palette();
+                show(
+                    ctx,
+                    &p,
+                    &Icons::default(),
+                    inv,
+                    st,
+                    &InventoryPreferences::default(),
+                    &Facts {
+                        agent: Uuid::from_u128(2),
+                        worn: Default::default(),
+                        worn_labels: Default::default(),
+                        points: Vec::new(),
+                        appearance_busy: false,
+                        names: Default::default(),
+                    },
+                    &Default::default(),
+                    &mut actions,
+                );
+                preview(
+                    ctx,
+                    &p,
+                    inv,
+                    st,
+                    &Default::default(),
+                    &InventoryPreferences::default(),
+                    &mut actions,
+                );
+            },
+        );
+        (headless_output(output), actions)
+    }
+
+    fn note_fixture() -> (Inventory, InventoryUi) {
+        let mut inv = Inventory::default();
+        crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+        let mut st = InventoryUi {
+            preview: Some(Uuid::from_u128(8103)),
+            ..Default::default()
+        };
+        st.load_document(7, true, &Ok(b"Avant".to_vec()));
+        (inv, st)
+    }
+
+    fn label_center(output: &egui::FullOutput, label: &str) -> egui::Pos2 {
+        output
+            .shapes
+            .iter()
+            .rev()
+            .find_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) if text.galley.text() == label => Some(text.pos + text.galley.size() * 0.5),
+                _ => None,
+            })
+            .expect("label")
+    }
+
+    fn click_document(ctx: &egui::Context, inv: &Inventory, st: &mut InventoryUi, pos: egui::Pos2) -> Vec<InvAction> {
+        let button = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        document_frame(ctx, inv, st, vec![egui::Event::PointerMoved(pos), button(true)]);
+        document_frame(ctx, inv, st, vec![button(false)]).1
+    }
+
+    #[test]
+    fn editing_and_ctrl_s_emit_the_current_draft_for_its_own_editor() {
+        let ctx = egui::Context::default();
+        let (inv, mut st) = note_fixture();
+        for _ in 0..5 {
+            document_frame(&ctx, &inv, &mut st, Vec::new());
+        }
+        ctx.memory_mut(|m| m.request_focus(egui::Id::new(("inventory_document_text", st.ui_id, st.preview.expect("note")))));
+        let key = |key| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers {
+                ctrl: true,
+                command: true,
+                ..Default::default()
+            },
+        };
+        document_frame(&ctx, &inv, &mut st, vec![key(egui::Key::End), egui::Event::Text("\nÉté 🐺".into())]);
+        assert!(st.preview_dirty);
+        let (_, actions) = document_frame(&ctx, &inv, &mut st, vec![key(egui::Key::S)]);
+        assert!(matches!(&actions[..], [InvAction::SaveContent { editor, item, text, close: false }]
+            if *editor == st.ui_id && Some(*item) == st.preview && text == "Avant\nÉté 🐺"));
+    }
+
+    #[test]
+    fn save_button_and_close_confirmation_preserve_the_draft_until_reply() {
+        let ctx = egui::Context::default();
+        let (inv, mut st) = note_fixture();
+        st.preview_text = Some(Ok("Après".into()));
+        st.document_changed();
+        for _ in 0..5 {
+            document_frame(&ctx, &inv, &mut st, Vec::new());
+        }
+        let (output, _) = document_frame(&ctx, &inv, &mut st, Vec::new());
+        let pos = label_center(&output, aurora_i18n::tr!("notecard-save-button"));
+        let actions = click_document(&ctx, &inv, &mut st, pos);
+        assert!(matches!(&actions[..], [InvAction::SaveContent { text, close: false, .. }] if text == "Après"));
+        st.dialog = Some(EditDialog::Discard(st.preview.expect("note")));
+        for _ in 0..5 {
+            document_frame(&ctx, &inv, &mut st, Vec::new());
+        }
+        let (output, _) = document_frame(&ctx, &inv, &mut st, Vec::new());
+        let pos = label_center(&output, aurora_i18n::tr!("common-save"));
+        let actions = click_document(&ctx, &inv, &mut st, pos);
+        assert!(matches!(&actions[..], [InvAction::SaveContent { text, close: true, .. }] if text == "Après"));
+        assert!(st.preview_dirty && st.preview.is_some());
+    }
+
+    #[test]
+    fn discard_and_cancel_choose_whether_to_keep_the_draft() {
+        for discard in [false, true] {
+            let ctx = egui::Context::default();
+            let (inv, mut st) = note_fixture();
+            st.preview_text = Some(Ok("Après".into()));
+            st.document_changed();
+            for _ in 0..5 {
+                document_frame(&ctx, &inv, &mut st, Vec::new());
+            }
+            st.dialog = Some(EditDialog::Discard(st.preview.expect("note")));
+            for _ in 0..5 {
+                document_frame(&ctx, &inv, &mut st, Vec::new());
+            }
+            let (output, _) = document_frame(&ctx, &inv, &mut st, Vec::new());
+            let pos = label_center(
+                &output,
+                if discard {
+                    aurora_i18n::tr!("ui-inventory-dialogs-discard-changes")
+                } else {
+                    aurora_i18n::tr!("common-cancel")
+                },
+            );
+            assert!(click_document(&ctx, &inv, &mut st, pos).is_empty());
+            assert_eq!(st.preview.is_none(), discard);
+            assert_eq!(st.preview_dirty, !discard);
+            assert!(st.dialog.is_none());
+        }
+    }
 
     #[test]
     fn deletion_confirmation_places_both_buttons_in_one_footer_row() {

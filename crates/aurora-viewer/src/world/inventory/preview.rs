@@ -1,7 +1,18 @@
 //! LLPreviewNotecard, LLSettingsVOBase and LLMaterialEditor asset decoding.
 //! Firestorm indra/newview, originally LGPL 2.1. Presentation stays in French.
 
+pub fn can_edit(inv: &super::Inventory, item: uuid::Uuid) -> bool {
+    !super::actions::library(inv, item)
+        && inv.items.get(&item).is_some_and(|it| {
+            matches!(it.asset_type, 7 | 10)
+                && it.owner_mask & (super::actions::COPY | super::actions::MODIFY) == super::actions::COPY | super::actions::MODIFY
+        })
+}
+
 pub fn text(kind: i32, data: &[u8]) -> Result<(String, bool), String> {
+    if kind == 7 {
+        return aurora_net::inventory::notecard::Notecard::decode(data).map(|card| (card.text, true));
+    }
     if kind == 56 {
         use crate::world::eep::Settings;
         let settings = Settings::from_asset(data).ok_or(aurora_i18n::tr!("world-inventory-preview-the-settings-are-unreadable"))?;
@@ -63,27 +74,6 @@ pub fn text(kind: i32, data: &[u8]) -> Result<(String, bool), String> {
         ));
     }
     let text = std::str::from_utf8(data).map_err(|_| aurora_i18n::tr!("world-inventory-preview-this-asset-is-not-a-text-document"))?;
-    if kind == 7 && text.starts_with("Linden text version") {
-        let pos = text
-            .find("\nText length ")
-            .map(|p| p + 1)
-            .ok_or(aurora_i18n::tr!("world-inventory-preview-invalid-notecard"))?;
-        let line_end = text[pos..]
-            .find('\n')
-            .map(|n| n + pos)
-            .ok_or(aurora_i18n::tr!("world-inventory-preview-invalid-notecard"))?;
-        let len: usize = text[pos + 12..line_end]
-            .trim()
-            .parse()
-            .map_err(|_| aurora_i18n::tr!("world-inventory-preview-invalid-notecard-size"))?;
-        let end = (line_end + 1)
-            .checked_add(len)
-            .ok_or(aurora_i18n::tr!("world-inventory-preview-invalid-notecard-size"))?;
-        let content = text
-            .get(line_end + 1..end)
-            .ok_or(aurora_i18n::tr!("world-inventory-preview-truncated-notecard"))?;
-        return Ok((content.into(), text.contains("\ncount 0\n")));
-    }
     Ok((text.into(), matches!(kind, 7 | 10)))
 }
 
@@ -91,12 +81,27 @@ pub fn text(kind: i32, data: &[u8]) -> Result<(String, bool), String> {
 mod tests {
     use super::*;
     #[test]
+    fn document_permissions_require_copy_and_modify_and_exclude_library() {
+        let mut inv = super::super::Inventory::default();
+        crate::world::inventory::demo::seed(&mut inv, uuid::Uuid::from_u128(2));
+        let id = uuid::Uuid::from_u128(8103);
+        assert!(can_edit(&inv, id));
+        for mask in [super::super::actions::COPY, super::super::actions::MODIFY, 0] {
+            inv.items.get_mut(&id).expect("note").owner_mask = mask;
+            assert!(!can_edit(&inv, id));
+        }
+        let item = inv.items.get_mut(&id).expect("note");
+        item.owner_mask = super::super::actions::COPY | super::super::actions::MODIFY;
+        item.parent = inv.lib_root;
+        assert!(!can_edit(&inv, id));
+    }
+    #[test]
     fn notecard_lengths_are_utf8_bytes_and_invalid_sizes_never_panic() {
         let note = "Linden text version 2\n{\nLLEmbeddedItems version 1\n{\ncount 0\n}\nText length 2\né}\n";
         assert_eq!(text(7, note.as_bytes()).expect("note"), ("é".into(), true));
         assert!(text(7, note.replace("length 2", "length 1").as_bytes()).is_err());
         assert!(text(7, note.replace("length 2", &format!("length {}", usize::MAX)).as_bytes()).is_err());
-        assert!(!text(7, note.replace("count 0", "count 1").as_bytes()).expect("embedded note").1);
+        assert!(text(7, note.replace("count 0", "count 1").as_bytes()).is_err());
     }
     #[test]
     fn settings_preview_decodes_the_same_notation_header_as_the_environment() {

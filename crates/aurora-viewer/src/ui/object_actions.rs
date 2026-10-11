@@ -271,9 +271,16 @@ fn ui_text_width(ctx: &egui::Context, text: &str) -> f32 {
 }
 
 /// LLFloaterOpenObject: load and show the root object's task inventory.
-pub fn show_contents(ctx: &egui::Context, p: &Palette, icons: &super::icons::Icons, state: &mut Interactions, world: &World) {
-    let Some(c) = state.contents.as_ref() else { return };
+pub fn show_contents(
+    ctx: &egui::Context,
+    p: &Palette,
+    icons: &super::icons::Icons,
+    state: &mut Interactions,
+    world: &World,
+) -> Option<(uuid::Uuid, uuid::Uuid)> {
+    let c = state.contents.as_ref()?;
     let mut open = true;
+    let mut notecard = None;
     let center = ctx.content_rect().center();
     Floater::new(
         "object_contents",
@@ -299,7 +306,20 @@ pub fn show_contents(ctx: &egui::Context, p: &Palette, icons: &super::icons::Ico
                                 if let Some(t) = icons.get(super::inventory::item_icon(item.asset_type, item.inv_type)) {
                                     ui.add(egui::Image::new(t).fit_to_exact_size(Vec2::splat(16.0)).tint(p.ink));
                                 }
-                                ui.label(&item.name).on_hover_text(&item.desc);
+                                let r = ui
+                                    .add(egui::Label::new(&item.name).sense(egui::Sense::click()))
+                                    .on_hover_text(&item.desc);
+                                if item.asset_type == 7 {
+                                    if r.double_clicked() {
+                                        notecard = Some((c.target.object, item.id));
+                                    }
+                                    r.context_menu(|ui| {
+                                        if ui.button(aurora_i18n::tr!("common-open")).clicked() {
+                                            notecard = Some((c.target.object, item.id));
+                                            ui.close();
+                                        }
+                                    });
+                                }
                             });
                         }
                     });
@@ -324,4 +344,5 @@ pub fn show_contents(ctx: &egui::Context, p: &Palette, icons: &super::icons::Ico
     if !open {
         state.contents = None;
     }
+    notecard
 }

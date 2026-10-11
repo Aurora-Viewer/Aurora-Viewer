@@ -54,7 +54,7 @@ pub(super) fn open(inv: &Inventory, id: Uuid, st: &mut InventoryUi, prefs: &Inve
         }));
     } else {
         st.preview = Some(original);
-        st.preview_text = None;
+        st.reset_document();
         actions.push(InvAction::Preview(original));
     }
 }

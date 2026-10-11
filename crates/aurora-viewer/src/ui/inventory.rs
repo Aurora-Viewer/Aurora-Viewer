@@ -11,11 +11,32 @@ use uuid::Uuid;
 mod context;
 mod controls;
 mod dialogs;
+mod document;
+pub use document::document_demo_events;
 mod properties;
 pub mod thumbnail;
 mod view;
 pub use controls::preferences;
 pub use view::InventoryPreferences;
+
+/// The shared editor and unsaved-changes confirmation, without an inventory
+/// tree. Object notecards keep their own item model and document state.
+pub fn show_document(ctx: &egui::Context, p: &Palette, icons: &Icons, inv: &Inventory, st: &mut InventoryUi) -> Vec<InvAction> {
+    let mut actions = Vec::new();
+    let prefs = InventoryPreferences::default();
+    let images = std::collections::HashMap::new();
+    let facts = Facts {
+        agent: Uuid::nil(),
+        worn: Default::default(),
+        worn_labels: Default::default(),
+        points: Vec::new(),
+        appearance_busy: false,
+        names: Default::default(),
+    };
+    dialogs::preview(ctx, p, inv, st, &images, &prefs, &mut actions);
+    dialogs::show(ctx, p, icons, inv, st, &prefs, &facts, &images, &mut actions);
+    actions
+}
 
 pub enum InvAction {
     TeleportLandmark(Uuid),
@@ -42,8 +63,10 @@ pub enum InvAction {
     },
     Preview(Uuid),
     SaveContent {
+        editor: Uuid,
         item: Uuid,
         text: String,
+        close: bool,
     },
     Environment(Uuid, u32),
     Profile(Uuid),
@@ -229,6 +252,11 @@ pub struct InventoryUi {
     pub preview_can_edit: bool,
     pub preview_dirty: bool,
     pub save_pending: bool,
+    pub preview_source: Option<aurora_net::inventory::notecard::Notecard>,
+    pub preview_original: String,
+    pub preview_message: String,
+    pub content_save: Option<(Uuid, Vec<u8>, String)>,
+    pub close_after_save: bool,
     pub wanted_images: HashSet<Uuid>,
     pub playing: Option<(Uuid, bool)>,
     pub animation_stats: Option<(Uuid, AnimationStats)>,
@@ -1158,7 +1186,6 @@ pub fn show(
         w.state.cut = st.cut;
         w.state.pending = st.pending;
         w.state.merchant = st.merchant;
-        w.state.save_pending = st.save_pending;
         w.state.playing = st.playing;
         let before = (w.state.clipboard.clone(), w.state.cut);
         let title = aurora_i18n::tr!("ui-inventory-inventory", value0 = folder_name(&world.inventory, w.root).to_string());
