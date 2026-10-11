@@ -644,8 +644,8 @@ hors ligne ; les fichiers et photos chargés en démo restent hors ligne.
 - `folder-window` : une fenêtre limitée au contenu du dossier personnel,
   avec son nom en titre et un filtre propre ; `folder-window-search` montre
   cette recherche limitée aux descendants.
-  Vérifier les indicateurs C · M · T : droits accordés lisibles, droits
-  refusés barrés (objet non copiable, objet non transférable), détail du
+  Vérifier les indicateurs compacts C·M·T : droits accordés verts, droits
+  refusés rouges et barrés (objet non copiable, objet non transférable), détail du
   propriétaire actuel et du prochain propriétaire au survol. Un lien
   reprend les permissions de son original.
 - `rename`, `new-script`, `new-note`, `new-folder` : le renommage dans la

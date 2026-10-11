@@ -134,7 +134,8 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
 
 L'affichage des permissions d'éléments est partagé par l'inventaire, la fenêtre
 de contenu d'un objet et l'onglet Contenu de construction dans
-`ui/inventory/permissions.rs` : indicateurs C · M · T, droits refusés barrés,
+`ui/inventory/permissions.rs` : indicateurs compacts C·M·T, droits accordés verts
+et droits refusés rouges et barrés, couleurs issues de la palette du thème,
 détail du propriétaire actuel et du prochain propriétaire au survol ; les
 liens d'inventaire reprennent les droits de leur original.
 

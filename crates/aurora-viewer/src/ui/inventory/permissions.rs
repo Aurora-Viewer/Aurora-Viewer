@@ -49,19 +49,24 @@ impl Permissions {
             .enumerate()
         {
             if index != 0 {
-                job.append(" · ", 0.0, TextFormat::simple(font.clone(), p.muted_dim));
+                job.append("·", 0.0, TextFormat::simple(font.clone(), p.muted_dim));
             }
             let allowed = self.owner.map(|mask| mask & bit != 0);
+            let color = match allowed {
+                Some(true) => p.success,
+                Some(false) => p.danger,
+                None => p.muted,
+            };
             job.append(
                 letter,
                 0.0,
                 TextFormat {
                     strikethrough: if allowed == Some(false) {
-                        Stroke::new(1.0, p.muted)
+                        Stroke::new(1.0, color)
                     } else {
                         Stroke::NONE
                     },
-                    ..TextFormat::simple(font.clone(), if allowed == Some(true) { p.ink } else { p.muted })
+                    ..TextFormat::simple(font.clone(), color)
                 },
             );
             if allowed.is_none() {
@@ -71,7 +76,7 @@ impl Permissions {
     }
 
     pub fn append_suffix(self, job: &mut LayoutJob, p: &Palette) {
-        job.append("   ", 0.0, TextFormat::simple(FontId::monospace(12.0), p.muted));
+        job.append(" ", 0.0, TextFormat::simple(FontId::monospace(12.0), p.muted));
         self.append_to(job, p);
     }
 
@@ -133,9 +138,13 @@ mod tests {
         for rights in 0..8 {
             let mask = ((rights & 1) * perm::COPY) | (((rights >> 1) & 1) * perm::MODIFY) | (((rights >> 2) & 1) * perm::TRANSFER);
             let job = Permissions::new(mask, 0).indicators(&p);
-            assert_eq!(job.text, "C · M · T");
+            assert_eq!(job.text, "C·M·T");
             for (index, bit) in [perm::COPY, perm::MODIFY, perm::TRANSFER].into_iter().enumerate() {
                 assert_eq!(job.sections[index * 2].format.strikethrough == Stroke::NONE, mask & bit != 0);
+                assert_eq!(
+                    job.sections[index * 2].format.color,
+                    if mask & bit != 0 { p.success } else { p.danger }
+                );
             }
         }
     }
@@ -173,7 +182,7 @@ mod tests {
         inv.items.get_mut(&link).expect("link").asset_id = link;
         let unknown = Permissions::inventory(&inv, link).expect("cyclic link");
         let job = unknown.indicators(&crate::theme::Theme::default().palette());
-        assert_eq!(job.text, "C? · M? · T?");
+        assert_eq!(job.text, "C?·M?·T?");
         assert!(job.sections.iter().all(|s| s.format.strikethrough == Stroke::NONE));
     }
 }
