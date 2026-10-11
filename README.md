@@ -275,6 +275,10 @@ The frame limiter is enabled at **120 fps by default** and can be disabled
 or adjusted in Préférences › Graphismes › Fluidité. Saved preferences are
 preserved.
 
+### Animation Overrider (AO)
+
+Le bouton **AO** de la barre du bas ouvre la gestion de l’Animation Overrider intégré. Les ensembles sont conservés sous `#Firestorm/#AO` ; importez une notecard ZHAO depuis le même dossier que ses animations. L’AO est désactivé initialement, comme dans Firestorm. `cao on` / `cao off` l’activent ou le désactivent ; `cao sit` bascule l’assise, `cao sit off` remplace l’assise et `cao sit on` conserve l’assise standard, comme Firestorm. Le scénario de démo est décrit dans [les options de test](docs/TESTING.md#avatars-et-animations).
+
 ### Test switches
 
 Local and editing HUD zoom scenarios (`AURORA_DEMO_HUDS=scale|scale-copy|scale-touch|scale-reset|scale-forget|scale-ctrl|scale-key|scale-secondary|edit-scroll`)

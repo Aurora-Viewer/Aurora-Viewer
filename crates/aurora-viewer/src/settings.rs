@@ -69,6 +69,7 @@ pub struct Settings {
     /// Contacts window (Amis / Groupes / Cercles).
     pub contacts: crate::ui::contacts::ContactsSettings,
     pub inventory: crate::ui::inventory::InventoryPreferences,
+    pub ao: crate::ao::Settings,
     pub username: String,
     pub remember_username: bool,
     /// Remember the password (its login hash, in the system credential
@@ -120,6 +121,7 @@ pub struct Settings {
     pub people_tab: u8,
     pub show_inventory: bool,
     pub show_appearance: bool,
+    pub show_ao: bool,
     /// Loading / teleport screens show the last view, blurred.
     pub loading_backdrop: bool,
     pub mouse_sensitivity: f32,
@@ -476,6 +478,8 @@ impl Default for Settings {
             people_tab: 0,
             show_inventory: false,
             show_appearance: false,
+            show_ao: false,
+            ao: Default::default(),
             loading_backdrop: true,
             mouse_sensitivity: 1.0,
             window_width: 1600,

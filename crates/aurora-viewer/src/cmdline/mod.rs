@@ -196,7 +196,9 @@ pub enum Command {
     },
     /// `/music url`: play a music stream.
     Music(String),
-    /// A command Aurora can't do yet (no AO, no bandwidth setting, no hover
+    Ao(bool),
+    AoSits(Option<bool>),
+    /// A command Aurora can't do yet (no bandwidth setting, no hover
     /// height): said in the chat instead of sending the line.
     Unavailable(&'static str),
     /// `key2name uuid`: tell the avatar name once known.
@@ -232,9 +234,6 @@ pub enum Command {
     PasteCamera(CameraSpec),
 }
 
-fn ao_unavailable() -> &'static str {
-    aurora_i18n::tr!("cmdline-mod-aurora-does-not-have-an-animation-overrider-ao-yet")
-}
 fn bandwidth_unavailable() -> &'static str {
     aurora_i18n::tr!("cmdline-mod-aurora-does-not-support-setting-the-maximum-bandwidth-yet")
 }
@@ -285,7 +284,18 @@ pub fn parse(text: &str, s: &ChatCommandSettings, mut roll: impl FnMut(u32) -> u
         return i.int().map(|_| Command::Unavailable(bandwidth_unavailable()));
     }
     if is(&s.ao) {
-        return Some(Command::Unavailable(ao_unavailable()));
+        return Some(match i.word() {
+            Some("on") => Command::Ao(true),
+            Some("off") => Command::Ao(false),
+            Some("sit") => match i.word() {
+                // FSCmdLineAO: on/off refer to the stock sit, hence reversed.
+                Some("off") => Command::AoSits(Some(true)),
+                Some("on") => Command::AoSits(Some(false)),
+                None => Command::AoSits(None),
+                _ => Command::Report(Vec::new()),
+            },
+            _ => Command::Report(Vec::new()),
+        });
     }
     if is(&s.key_to_name) {
         return Some(i.uuid().map_or(Command::Report(Vec::new()), Command::KeyToName));
@@ -488,7 +498,11 @@ mod tests {
         assert_eq!(cmd("dd far"), None);
         assert_eq!(cmd("bw 500"), Some(Command::Unavailable(bandwidth_unavailable())));
         assert_eq!(cmd("bw"), None);
-        assert_eq!(cmd("cao on"), Some(Command::Unavailable(ao_unavailable())));
+        assert_eq!(cmd("cao on"), Some(Command::Ao(true)));
+        assert_eq!(cmd("cao off"), Some(Command::Ao(false)));
+        assert_eq!(cmd("cao sit"), Some(Command::AoSits(None)));
+        assert_eq!(cmd("cao sit off"), Some(Command::AoSits(Some(true))));
+        assert_eq!(cmd("cao sit on"), Some(Command::AoSits(Some(false))));
         assert_eq!(cmd("rezplat"), Some(Command::RezPlatform(None)));
         assert_eq!(cmd("rezplat 12"), Some(Command::RezPlatform(Some(12.0))));
         assert_eq!(

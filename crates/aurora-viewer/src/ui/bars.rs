@@ -899,6 +899,7 @@ pub fn run_command(cmd: &str, panels: &mut Panels) -> BarAction {
         }
         "inventory" => panels.inventory = !panels.inventory,
         "appearance" => panels.appearance = !panels.appearance,
+        "ao" => panels.ao = !panels.ao,
         "minimap" => panels.minimap = !panels.minimap,
         "worldmap" => panels.world_map = !panels.world_map,
         "places" => panels.places = !panels.places,
@@ -956,6 +957,15 @@ fn tool_button(ui: &mut egui::Ui, p: &Palette, icons: &Icons, icon: &str, tip: &
             ir,
             egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
             tint,
+        );
+    }
+    if icon == "AO" {
+        painter.text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            "AO",
+            egui::FontId::proportional(12.0),
+            if active || resp.hovered() { p.ink } else { p.muted },
         );
     }
     if badge {
@@ -1105,6 +1115,7 @@ pub fn bottom_bar(
     mouselook: bool,
     chat_width: &mut f32,
     mic: &mut MicButton,
+    ao_active: bool,
 ) -> (Option<super::chat::OutgoingChat>, BarAction, f32, bool) {
     let mut out = None;
     let mut action = BarAction::None;
@@ -1175,7 +1186,11 @@ pub fn bottom_bar(
                         mic_button(ui, p, icons, btn_w, mic);
                         continue;
                     }
-                    let active = command_active(&b.command, panels, flying, seated, mouselook);
+                    let active = if b.command == "ao" {
+                        ao_active
+                    } else {
+                        command_active(&b.command, panels, flying, seated, mouselook)
+                    };
                     let badge = b.command == "conversations" && unread > 0 && !panels.chat;
                     let tip = if badge {
                         aurora_i18n::tr!("ui-bars-unread", value0 = b.tooltip.to_string(), unread = format!("{}", unread))

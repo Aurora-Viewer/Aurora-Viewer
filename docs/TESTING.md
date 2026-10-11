@@ -272,6 +272,7 @@ grille.
 | Variable | Effet |
 |---|---|
 | `AURORA_DEMO_ANIM_LOOP=1` | Boucles d'animation, séquences et arrêts |
+| `AURORA_DEMO_AO=1` | AO intégré et inventaire d’animations synthétique |
 | `AURORA_DEMO_ANIMESH=1` | Objets animés (animesh) |
 | `AURORA_DEMO_CLOUD=1` | Nuages de chargement des avatars |
 | `AURORA_DEMO_DISPLAYNAME="<nom>"` | Changement de nom d'affichage (simulé) |
@@ -282,6 +283,12 @@ grille.
 - **`AURORA_DEMO_ANIM_LOOP=1`** : boucle dont le premier intervalle manque,
   séquence changée toutes les 120 images, arrêt / redémarrage aux images
   960 / 1020 toutes les 1200 images.
+- **`AURORA_DEMO_AO=1`** : ouvre la gestion AO, avec deux poses debout en
+  cycle, marche, course, assise, vol, frappe et une notecard importable.
+  Les touches de déplacement changent l’état. `transitions` enchaîne les
+  états automatiquement après le chargement, toutes les 180 images ;
+  `off` commence avec l’AO désactivé. Vérifier le bouton AO en bas, les
+  poses, la pause, les cycles et l’ajout / import depuis l’inventaire.
 - **`AURORA_DEMO_ANIMESH=1`** : mesh racine animé, mesh lié signalé par un
   enfant et animesh porté, avec des squelettes propres indépendants et des
   ombres alpha.
