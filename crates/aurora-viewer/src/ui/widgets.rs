@@ -9,6 +9,20 @@ mod collapse_tests;
 pub mod demo;
 mod resize;
 
+/// Keep status suffixes at normal weight and slightly darker than the name.
+pub(crate) fn name_with_suffix(name: &str, suffix: &str, font_id: egui::FontId, color: Color32) -> egui::text::LayoutJob {
+    let mut job = egui::text::LayoutJob::default();
+    job.append(name, 0.0, egui::TextFormat::simple(font_id.clone(), color));
+    job.append(suffix, 0.0, egui::TextFormat::simple(font_id, color.gamma_multiply(0.85)));
+    job
+}
+
+/// LLFontGL BOLD_OFFSET: egui's strong text changes color, not weight.
+pub(crate) fn bold_text_offset(ui: &egui::Ui) -> Vec2 {
+    let ppp = ui.ctx().pixels_per_point();
+    Vec2::new(ppp.round().max(1.0) / ppp, 0.0)
+}
+
 pub struct Floater<'a> {
     pub id: &'a str,
     pub title: String,

@@ -5,7 +5,7 @@ use crate::theme::Palette;
 use crate::world::inventory::{FetchState, Inventory};
 use crate::world::{World, inventory::actions as rules};
 use aurora_net::inventory::operations::{Mutation, NewItem};
-use egui::{RichText, Vec2};
+use egui::{AtomExt, RichText, Vec2};
 use std::collections::HashSet;
 use uuid::Uuid;
 mod context;
@@ -386,19 +386,26 @@ fn item_row(
         if rename_row(ui, p, inv, *id, st, prefs, actions) {
             return;
         }
-        let text = match facts.worn_label(inv, *id) {
-            Some(label) => format!("{} ({label})", it.name),
-            None => it.name.clone(),
-        };
+        let worn = facts.worn_label(inv, *id);
+        let suffix = worn.map_or_else(String::new, |label| format!(" ({label})"));
+        let font_id = egui::FontId::proportional(13.0);
+        let label = super::widgets::name_with_suffix(&it.name, &suffix, font_id.clone(), p.ink);
+        let name = worn.map(|_| ui.painter().layout_no_wrap(it.name.clone(), font_id, p.ink));
         let r = ui
             .push_id(("inv_item", it.id), |ui| {
-                ui.add_sized(
-                    [ui.available_width(), 20.0],
-                    egui::Button::selectable(st.selection.contains(id), "")
-                        .left_text(RichText::new(text).size(13.0).color(p.ink))
+                let text_id = ui.make_persistent_id("label");
+                ui.add_sized([ui.available_width(), 20.0], |ui: &mut egui::Ui| {
+                    let response = egui::Button::selectable(st.selection.contains(id), "")
+                        .left_text(egui::Atom::from(label).atom_id(text_id))
                         .wrap_mode(egui::TextWrapMode::Extend)
-                        .sense(egui::Sense::click_and_drag()),
-                )
+                        .sense(egui::Sense::click_and_drag())
+                        .atom_ui(ui);
+                    // LLItemBridge::getLabelStyle: only the worn name is bold.
+                    if let Some((name, rect)) = name.zip(response.rect(text_id)) {
+                        ui.painter().galley(rect.min + super::widgets::bold_text_offset(ui), name, p.ink);
+                    }
+                    response.response
+                })
             })
             .inner;
         // One response handles clicks and dragging; a separate drag-source
