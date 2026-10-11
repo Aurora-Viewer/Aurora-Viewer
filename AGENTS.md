@@ -532,6 +532,11 @@ faits entre-temps par les autres.
   gh issue comment <n> --repo Aurora-Viewer/Aurora-Viewer --body-file .scratch/reponse-issue.md
   ```
 
+  Si ton outil refuse cette commande (Claude Code en mode auto : « écriture
+  sur un système externe »), ne la contourne pas : donne-la à l'humain et
+  propose-lui le choix « Permissions de Claude » de `aurora-tools.cmd`, qui
+  l'autorise une fois pour toutes. Lance-la seule, sans `cd` ni `;`.
+
 - **Résolue** : ferme seulement quand la solution couvre l'issue entière,
   a été vérifiée (validation humaine si nécessaire) et, si elle nécessite
   une modification du dépôt, sa PR fusionnée. Une question peut être résolue
