@@ -11,21 +11,25 @@ fn path() -> PathBuf {
 
 /// Restore the saved layout. The style and options set by the skin are
 /// kept (only positions, sizes and per-window state come from the file).
+///
+/// Call it before `fonts::apply`: egui keeps the font definitions that wait
+/// for the next pass in the memory this replaces, so fonts installed before
+/// it are dropped and the interface starts with egui's own.
 pub fn load(ctx: &egui::Context) {
     let Ok(bytes) = std::fs::read(path()) else {
         return;
     };
-    match std::str::from_utf8(&bytes)
-        .map_err(|e| e.to_string())
-        .and_then(|s| ron::from_str::<egui::Memory>(s).map_err(|e| e.to_string()))
-    {
-        Ok(mem) => {
-            let options = ctx.options(|o| o.clone());
-            ctx.memory_mut(|m| *m = mem);
-            ctx.options_mut(|o| *o = options);
-        }
-        Err(e) => log::warn!("ui layout ignored: {e}"),
+    if let Err(e) = std::str::from_utf8(&bytes).map_err(|e| e.to_string()).and_then(|s| restore(ctx, s)) {
+        log::warn!("ui layout ignored: {e}");
     }
+}
+
+fn restore(ctx: &egui::Context, saved: &str) -> Result<(), String> {
+    let mem = ron::from_str::<egui::Memory>(saved).map_err(|e| e.to_string())?;
+    let options = ctx.options(|o| o.clone());
+    ctx.memory_mut(|m| *m = mem);
+    ctx.options_mut(|o| *o = options);
+    Ok(())
 }
 
 pub fn save(ctx: &egui::Context) {
@@ -79,5 +83,28 @@ mod tests {
         assert_eq!(ctx2.data_mut(|d| d.get_persisted::<bool>(egui::Id::new("min"))), Some(true));
         let rect = ctx2.memory(|m| m.area_rect(egui::Id::new("floater_t")));
         assert!(rect.is_some_and(|r| (r.min.x - 123.0).abs() < 1.0), "{rect:?}");
+    }
+
+    /// The order of `App::new`: the interface font chosen in Preferences is
+    /// installed after the saved layout. The other way round, a session with
+    /// a saved layout started with egui's own fonts (and without the system
+    /// fallback faces, #127), whatever the setting.
+    #[test]
+    fn fonts_installed_after_the_layout_are_kept() {
+        let saved = ron::to_string(&egui::Context::default().memory(|m| m.clone())).expect("serialize");
+        let first_font = |ctx: &egui::Context| {
+            let mut out = ctx.run_ui(egui::RawInput::default(), |_| {});
+            out.textures_delta.clear();
+            ctx.fonts(|f| f.definitions().families[&egui::FontFamily::Proportional][0].clone())
+        };
+        let ctx = egui::Context::default();
+        super::restore(&ctx, &saved).expect("restore");
+        crate::ui::fonts::apply(&ctx, crate::ui::fonts::NOTO);
+        assert_eq!(first_font(&ctx), "aurora-main");
+
+        let ctx = egui::Context::default();
+        crate::ui::fonts::apply(&ctx, crate::ui::fonts::NOTO);
+        super::restore(&ctx, &saved).expect("restore");
+        assert_ne!(first_font(&ctx), "aurora-main", "egui keeps pending fonts now: the order is free");
     }
 }

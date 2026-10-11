@@ -385,7 +385,6 @@ impl App {
         net.set_object_cache_dir(Some(cache.join("objects")));
         let cache_root = cache.clone();
         let egui_ctx = egui::Context::default();
-        let system_fonts_pending = !ui::fonts::apply(&egui_ctx, &settings.font);
         ui::colors::set(&settings.colors);
         let skin = Skin::load(&egui_ctx, "aurora", settings.font_scale);
         crate::crash::update(&skin.theme, &settings);
@@ -400,6 +399,8 @@ impl App {
         if std::env::var_os("AURORA_CAPTURE").is_none() {
             ui::layout::load(&egui_ctx);
         }
+        // after the layout: restoring it drops the fonts installed before
+        let system_fonts_pending = !ui::fonts::apply(&egui_ctx, &settings.font);
 
         // Decode the 4096px logo off the main thread.
         let (tx, rx) = crossbeam_channel::bounded(1);

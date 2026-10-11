@@ -281,6 +281,27 @@ mod tests {
         }
     }
 
+    /// The same with each built-in interface font as the primary one: the
+    /// system faces must not depend on the font chosen in Preferences.
+    #[test]
+    fn demo_characters_are_drawn_whatever_the_builtin_font() {
+        let system = fallback::wait();
+        if !fallback::CANDIDATES.iter().all(|c| system.iter().any(|f| f.has(c.probe))) {
+            eprintln!("system fonts incomplete: not checked");
+            return;
+        }
+        let text = demo_text().join(" ");
+        for (name, ttf) in [(INTER, INTER_TTF), (NOTO, NOTO_TTF), (ROBOTO, ROBOTO_TTF)] {
+            let defs = definitions(egui::FontData::from_static(ttf), system);
+            let missing: String = drawable(defs, egui::FontFamily::Proportional, &text)
+                .into_iter()
+                .filter(|(c, ok)| !ok && !c.is_whitespace())
+                .map(|(c, _)| c)
+                .collect();
+            assert!(missing.is_empty(), "{name}: no font for {missing:?}");
+        }
+    }
+
     #[test]
     fn without_system_fonts_the_reported_character_is_a_square() {
         let before = drawable(noto(&[]), egui::FontFamily::Proportional, "ღKemono Friendღ");
