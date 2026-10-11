@@ -18,7 +18,7 @@ mod face;
 mod path;
 mod profile;
 
-use glam::Vec3;
+use glam::{Mat3, Quat, Vec3};
 
 use crate::params::{
     LL_PCODE_HOLE_MASK, LL_PCODE_HOLE_SQUARE, LL_PCODE_PATH_CIRCLE, LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_CIRCLE,
@@ -102,6 +102,56 @@ pub fn generate_volume(params: &VolumeParams, detail: f32) -> VolumeMesh {
         },
         None => VolumeMesh::default(),
     }
+}
+
+/// LLVolume swept along the simulated flexible path. Generate in metres,
+/// then undo the object's scale for the common draw/picking model matrix.
+/// Profile cuts, hollow, taper, twist, face order and UVs use the same face
+/// builder as ordinary prims.
+pub fn generate_flexible_volume(
+    params: &VolumeParams,
+    detail: f32,
+    points: &[crate::flexible::FlexiblePoint; 9],
+    scale: Vec3,
+) -> VolumeMesh {
+    let p = ll_constrain(params);
+    let detail = sanitize_detail(detail);
+    let scale = scale.max(Vec3::splat(0.001));
+    let mut profile = Profile::default();
+    if !profile.generate(&p.profile, true, detail, Volume::split_for(&p, detail), None) {
+        return VolumeMesh::default();
+    }
+    let begin = p.path.scale.map(|s| if s > 1.0 { 2.0 - s } else { 1.0 });
+    let end = p.path.scale.map(|s| s.min(1.0));
+    let path = Path {
+        open: true,
+        points: points
+            .iter()
+            .enumerate()
+            .map(|(i, point)| {
+                let t = i as f32 / 8.0;
+                path::PathPt {
+                    pos: point.position,
+                    rot: Mat3::from_quat(
+                        point.rotation * Quat::from_rotation_z(std::f32::consts::PI * lerp(p.path.twist_begin, p.path.twist_end, t)),
+                    ),
+                    scale: [scale.x * lerp(begin[0], end[0], t), scale.y * lerp(begin[1], end[1], t)],
+                    tex_t: t,
+                }
+            })
+            .collect(),
+    };
+    let vol = Volume::sweep(&p, profile, path);
+    let mut faces = vol.create_faces(LL_SCULPT_TYPE_NONE);
+    for face in &mut faces {
+        for pos in &mut face.positions {
+            *pos = (Vec3::from_array(*pos) / scale).to_array();
+        }
+        for normal in &mut face.normals {
+            *normal = (Vec3::from_array(*normal) * scale).normalize_or(Vec3::Z).to_array();
+        }
+    }
+    VolumeMesh { faces, surface_area: 1.0 }
 }
 
 /// `LLVolume::getLoDTriangleCounts`: triangles of the four LODs estimated
@@ -400,6 +450,10 @@ impl Volume {
     /// `LLVolume::generate`: path, profile and swept vertex grid.
     pub(crate) fn generate(params: &VolumeParams, detail: f32) -> Option<Volume> {
         let (path, profile) = Self::generate_shape(params, detail, None)?;
+        Some(Self::sweep(params, profile, path))
+    }
+
+    fn sweep(params: &VolumeParams, profile: Profile, path: Path) -> Volume {
         let size_s = path.points.len();
         let size_t = profile.points.len();
         let mut mesh = Vec::with_capacity(size_s * size_t);
@@ -412,12 +466,12 @@ impl Volume {
                 mesh.push(c0 * pt.x + c1 * pt.y + offset);
             }
         }
-        Some(Volume {
+        Volume {
             params: *params,
             profile,
             path,
             mesh,
-        })
+        }
     }
 
     /// `LLVolume::createVolumeFaces`.

@@ -2338,6 +2338,15 @@ impl Session<'_> {
             );
         } else if id == LayerData::ID {
             let m: LayerData = pkt.decode()?;
+            if let Some(grid) = terrain::decode_wind_layer(m.layer_id.type_, &m.layer_data.data) {
+                emit(
+                    self.sh,
+                    NetEvent::Wind {
+                        handle: self.handle_of(from),
+                        grid: Box::new(grid),
+                    },
+                );
+            }
             let patches = terrain::decode_land_layer(m.layer_id.type_, &m.layer_data.data);
             if !patches.is_empty() {
                 emit(

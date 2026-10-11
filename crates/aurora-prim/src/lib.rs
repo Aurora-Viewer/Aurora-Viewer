@@ -3,6 +3,7 @@
 //! `llmath/llvolume.cpp` from the Second Life viewer, originally LGPL 2.1).
 
 pub mod extra;
+pub mod flexible;
 mod pack;
 pub mod params;
 pub mod particles;

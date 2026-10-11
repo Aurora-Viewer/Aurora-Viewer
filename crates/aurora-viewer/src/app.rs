@@ -6082,6 +6082,15 @@ impl ApplicationHandler for App {
                     self.on_app_event(e);
                 }
             }
+            if std::env::var_os("AURORA_DEMO_FLEXIBLE").is_some() && std::env::var_os("AURORA_DEMO_CAM").is_none() {
+                let focus = Vec3::new(141.0, 132.0, crate::demo::floor_at(141.0, 132.0) + 3.0);
+                self.camera.set_view(
+                    focus + Vec3::new(0.0, -14.0, 6.0),
+                    focus,
+                    &mut self.world.agent,
+                    &self.settings.camera,
+                );
+            }
             if let Some(mode) = &self.ao_demo {
                 crate::ao::demo::assets(&mut self.scene);
                 let selected = crate::ao::demo::seed(&mut self.world.inventory, self.world.agent_id);

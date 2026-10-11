@@ -129,6 +129,15 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
 
 ## Déroulement d'une image
 
+Les prims flexibles ont leur simulation propre (`aurora-prim/src/flexible.rs`,
+port de `LLVolumeImplFlexible`) et une géométrie unique par objet. La scène
+(`scene/flexible.rs`) calcule en parallèle les forces, le chemin déformé,
+les normales, les limites et les triangles de sélection ; elle réécrit
+seulement les sommets dans leurs allocations GPU existantes. Le vent de chaque
+région est reçu par `LayerData` (deux patches DCT), interpolé comme `LLWind`.
+Les prims flexibles sont dans l'ensemble des objets actifs, même sans mouvement
+réseau ; les changements d'origine décalent leur simulation avec le monde.
+
 Le rez depuis l’inventaire passe par `ui/inventory.rs` (charge utile et relâché avant la fin de la passe egui), `app/inventory_drag.rs` (règles, groupe, préparation des commandes et consommation locale des exemplaires non copiables), `Scene::inventory_surface` (triangles parmi les candidats de l’index, terrain, sans attente GPU) et `aurora-net/src/inventory/rez.rs` (message fiable `RezObject` dans la région visée). Les pixels transparents sont testés avec un masque d’un bit par bloc 2×2, préparé par les tâches de décodage ; les surfaces invisibles et riggées sont écartées. Le curseur garde le résultat pendant 100 ms au plus quand le rayon ne bouge pas ; le relâché recalcule toujours la surface. Ctrl sur un objet envoie `UpdateTaskInventory`. La démo utilise un cube synthétique comme réponse au rez.
 
 1. **Réseau → monde.** `aurora-net` décode les messages sur son runtime et les

@@ -5,6 +5,7 @@
 
 pub const LAND_LAYER_CODE: u8 = b'L';
 pub const LAND_LAYER_CODE_LARGE: u8 = b'M';
+pub const WIND_LAYER_CODE: u8 = b'7';
 const END_OF_PATCHES: u8 = 97;
 const OO_SQRT2: f32 = std::f32::consts::FRAC_1_SQRT_2;
 
@@ -168,6 +169,61 @@ pub fn decode_land_layer(layer_type: u8, data: &[u8]) -> Vec<TerrainPatch> {
         LAND_LAYER_CODE_LARGE => true,
         _ => return Vec::new(),
     };
+    decode_layer(data, large, usize::MAX)
+}
+
+/// LLWind::decompress: two 16×16 DCT patches, X then Y. Wind always
+/// uses the small patch header, including Firestorm's alternate layer '9'.
+pub fn decode_wind_layer(layer_type: u8, data: &[u8]) -> Option<WindGrid> {
+    if !matches!(layer_type, WIND_LAYER_CODE | b'9') {
+        return None;
+    }
+    let patches = decode_layer(data, false, 2);
+    if patches.len() != 2 || patches.iter().any(|p| p.size != 16) {
+        return None;
+    }
+    Some(WindGrid {
+        velocities: std::array::from_fn(|i| glam::Vec3::new(patches[0].heights[i], patches[1].heights[i], 0.0)),
+    })
+}
+
+/// LLWind::getVelocity (indra/newview/llwind.cpp, LGPL 2.1): bilinear
+/// sampling inside the lattice, nearest sample on its last row/column,
+/// wrapped positive coordinates and WIND_SCALE_HACK = 2.
+#[derive(Debug, Clone)]
+pub struct WindGrid {
+    pub velocities: [glam::Vec3; 256],
+}
+
+impl Default for WindGrid {
+    fn default() -> Self {
+        Self {
+            velocities: [glam::Vec3::ZERO; 256],
+        }
+    }
+}
+
+impl WindGrid {
+    pub fn velocity(&self, position: glam::Vec3, width: f32) -> glam::Vec3 {
+        if !position.is_finite() || !width.is_finite() || width <= 0.0 {
+            return glam::Vec3::ZERO;
+        }
+        let x = position.x.max(0.0).rem_euclid(width) * (16.0 / width);
+        let y = position.y.max(0.0).rem_euclid(width) * (16.0 / width);
+        let (i, j) = ((x as usize).min(15), (y as usize).min(15));
+        let k = i + j * 16;
+        let v = if i < 15 && j < 15 {
+            self.velocities[k]
+                .lerp(self.velocities[k + 1], x - i as f32)
+                .lerp(self.velocities[k + 16].lerp(self.velocities[k + 17], x - i as f32), y - j as f32)
+        } else {
+            self.velocities[k]
+        };
+        v * 2.0
+    }
+}
+
+fn decode_layer(data: &[u8], large: bool, max_patches: usize) -> Vec<TerrainPatch> {
     let mut out = Vec::new();
     let mut br = BitReader::new(data);
     // Group header
@@ -188,6 +244,9 @@ pub fn decode_land_layer(layer_type: u8, data: &[u8]) -> Vec<TerrainPatch> {
     let mut coeffs = vec![0i32; size * size];
 
     while let Some(quant_wbits) = br.unpack(8) {
+        if out.len() == max_patches {
+            break;
+        }
         let quant_wbits = quant_wbits as u8;
         if quant_wbits == END_OF_PATCHES {
             break;
@@ -335,5 +394,58 @@ mod tests {
         assert_eq!(p.len(), 1);
         assert_eq!((p[0].x, p[0].y), (3, 4));
         assert!(p[0].heights.iter().all(|h| (h - 20.0).abs() < 1e-3));
+    }
+
+    #[test]
+    fn wind_decodes_both_components_and_rejects_partial_packets() {
+        let mut bits = Vec::new();
+        let mut push = |v: u32, n: u32| {
+            for byte in 0..n.div_ceil(8) {
+                let count = (n - byte * 8).min(8);
+                for bit in (0..count).rev() {
+                    bits.push(((v >> (byte * 8 + bit)) & 1) as u8);
+                }
+            }
+        };
+        push(16, 16);
+        push(16, 8);
+        push(WIND_LAYER_CODE as u32, 8);
+        for v in [3.0f32, -2.0] {
+            push(0x11, 8);
+            push(v.to_bits(), 32);
+            push(0, 16);
+            push(0, 10);
+            push(1, 1);
+            push(0, 1);
+        }
+        push(END_OF_PATCHES as u32, 8);
+        let mut bytes = vec![0u8; bits.len().div_ceil(8)];
+        for (i, bit) in bits.iter().enumerate() {
+            bytes[i / 8] |= bit << (7 - i % 8);
+        }
+        let grid = decode_wind_layer(WIND_LAYER_CODE, &bytes).expect("two wind patches");
+        assert_eq!(
+            grid.velocity(glam::Vec3::new(120.0, 88.0, 20.0), 256.0),
+            glam::Vec3::new(6.0, -4.0, 0.0)
+        );
+        for len in 0..bytes.len() - 2 {
+            assert!(decode_wind_layer(WIND_LAYER_CODE, &bytes[..len]).is_none());
+        }
+        assert!(decode_wind_layer(LAND_LAYER_CODE, &bytes).is_none());
+        let grid = WindGrid {
+            velocities: std::array::from_fn(|i| glam::Vec3::new((i % 16) as f32, (i / 16) as f32, 0.0)),
+        };
+        assert_eq!(
+            grid.velocity(glam::Vec3::new(8.0, 24.0, 0.0), 256.0),
+            glam::Vec3::new(1.0, 3.0, 0.0)
+        );
+        assert_eq!(
+            grid.velocity(glam::Vec3::new(248.0, 248.0, 0.0), 256.0),
+            glam::Vec3::new(30.0, 30.0, 0.0)
+        );
+        assert_eq!(
+            grid.velocity(glam::Vec3::new(264.0, 24.0, 0.0), 256.0),
+            glam::Vec3::new(1.0, 3.0, 0.0)
+        );
     }
 }

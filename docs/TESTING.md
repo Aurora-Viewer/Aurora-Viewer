@@ -151,8 +151,15 @@ capture.
 | `AURORA_DEMO_BUILD_FRAME=<n>` | Image de départ du script de construction |
 | `AURORA_DEMO_BUILD_TAB=<onglet>` | Onglet de la fenêtre de construction |
 | `AURORA_DEMO_LSL_BRIDGE=1` | Messages du bridge LSL de Firestorm (cachés) |
+| `AURORA_DEMO_FLEXIBLE=1` | Prims flexibles : gravité, tension, vent, force et parent mobile |
 
 ### Détails
+
+`AURORA_DEMO_FLEXIBLE` remplace les objets de la place par six prims avec
+quatre niveaux de souplesse, profils carrés / circulaires, creux, torsion et
+tailles non uniformes. La dernière suit une racine en rotation. `rigid` donne
+la comparaison sans simulation ; un entier (6–2000) ajoute des prims pour
+mesurer le coût. Le vent synthétique passe par le même événement que la grille.
 
 **`AURORA_DEMO_ACTIONS`** — curseurs et clics d'objet comme Firestorm.
 Aucun L$ réel ni connexion à une grille.

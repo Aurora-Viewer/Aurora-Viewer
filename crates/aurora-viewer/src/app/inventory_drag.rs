@@ -501,6 +501,7 @@ mod tests {
                 name: "Synthetic neighbor".into(),
                 info: None,
                 heightmap: crate::world::terrain::Heightmap::new(256, 256),
+                wind: Default::default(),
                 dirty_chunks: HashSet::new(),
                 caps: Arc::new(Default::default()),
                 voice_server: String::new(),

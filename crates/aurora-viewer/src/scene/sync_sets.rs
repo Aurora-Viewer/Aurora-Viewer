@@ -154,7 +154,7 @@ impl XfCache {
 /// Whether an object moves by itself and so must be placed again every
 /// frame, with everything that follows it.
 pub fn moves_by_itself(o: &Object, agent: Uuid, rigged: bool) -> bool {
-    o.has_motion() || o.is_avatar() || o.full_id == agent || rigged
+    o.has_motion() || o.is_avatar() || o.full_id == agent || rigged || super::flexible::enabled(o)
 }
 
 /// Ancestors of an object known to the store (0 for a root), at most
@@ -619,6 +619,32 @@ mod tests {
         assert_eq!(f.frame(&state), vec![root, child]);
         assert_eq!(f.quiet_frame(&[root, child, other], &state), Vec::<usize>::new());
         assert!(!f.sets.own_moving.contains(root));
+    }
+
+    #[test]
+    fn flexible_prims_update_without_network_motion_and_have_unique_geometry() {
+        let mut f = Fixture::new();
+        let state = State::default();
+        let a = f.add(9000, 0, false);
+        let b = f.add(9001, 0, false);
+        let rigid = f.add(9002, 0, false);
+        for idx in [a, b] {
+            f.update(idx, |u| {
+                u.volume.path.curve_type = aurora_prim::params::LL_PCODE_PATH_FLEXIBLE;
+                u.extra.flexible = Some(crate::build::edits::FLEX_DEFAULT);
+            });
+        }
+        f.frame(&state);
+        assert_eq!(f.quiet_frame(&[a, b, rigid], &state), vec![a, b]);
+        let ka = crate::scene::Scene::object_geom_key(f.world.objects.get(a).unwrap(), 3);
+        let kb = crate::scene::Scene::object_geom_key(f.world.objects.get(b).unwrap(), 3);
+        assert_ne!(ka, kb, "same shape never shares its simulated vertices");
+        f.update(a, |u| {
+            u.extra.flexible = None;
+            u.volume.path.curve_type = aurora_prim::params::LL_PCODE_PATH_LINE;
+        });
+        f.frame(&state);
+        assert_eq!(f.quiet_frame(&[a, b, rigid], &state), vec![b]);
     }
 
     #[test]
