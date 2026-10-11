@@ -72,10 +72,10 @@ function Invoke-Releases {
         Write-Color '  Lecture des releases et de tes droits sur GitHub…' muted_dim
         $releases = Get-ReleaseList $repo
         $rights = Test-ReleaseRights $repo
-        Show-Logo 'Releases'
-        Write-Color "  Dépôt : $($repo.Slug)" muted
-        Show-ReleaseList $releases
         if (-not $rights) {
+            Show-Logo 'Releases'
+            Write-Color "  Dépôt : $($repo.Slug)" muted
+            Show-ReleaseList $releases
             Write-Color '  Ton compte GitHub n''a pas le droit d''écriture sur ce dépôt : création et suppression indisponibles.' warn
             Wait-Back
             return
@@ -83,7 +83,7 @@ function Invoke-Releases {
         $pick = Show-Menu 'Gérer les releases' @(
             @{ Key = '1'; Label = 'Créer une release'; Hint = 'tag SemVer sur le dernier main, publiée par la CI' }
             @{ Key = '2'; Label = 'Supprimer une release'; Hint = 'release et tag, irréversible' }
-        )
+        ) { Show-Logo 'Releases'; Write-Color "  Dépôt : $($repo.Slug)" muted; Show-ReleaseList $releases }
         switch ($pick.Key) {
             '1' { New-AuroraRelease $repo }
             '2' { Remove-AuroraRelease $repo $releases }
@@ -114,18 +114,24 @@ function New-AuroraRelease($Repo) {
     $major = "v$($base.Major + 1).0.0"
     $suggested = if ($types['nouveauté'] -or $types['rupture']) { $minor } else { $patch }
 
-    Show-Logo 'Nouvelle release'
-    Write-Color "  Dernière version : $(if ($ctx.Last) { $ctx.Last.Tag } else { 'aucune' })" muted
-    Write-Color "  PR fusionnées depuis : $($ctx.Prs.Count) ($summary)" muted
-    foreach ($p in $ctx.Prs | Select-Object -First 12) { Write-Color ("    #$($p.number)".PadRight(10) + "$($p.title)") muted_dim }
-    if ($ctx.Prs.Count -gt 12) { Write-Color "    … et $($ctx.Prs.Count - 12) autres" muted_dim }
     $items = @(@{ Key = '1'; Label = "$suggested (proposée)"; Hint = 'd''après les étiquettes des PR'; Tag = $suggested })
     foreach ($t in @($patch, $minor, $major) | Where-Object { $_ -ne $suggested }) {
         $hint = if ($t -eq $patch) { 'correctifs seulement' } elseif ($t -eq $minor) { 'nouveautés' } else { 'version majeure' }
         $items += @{ Key = [string]($items.Count + 1); Label = $t; Hint = $hint; Tag = $t }
     }
     $items += @{ Key = 'n'; Label = 'Autre numéro…'; Hint = 'par exemple v0.3.0-beta.1 (pré-release)'; Tag = $null }
-    $pick = Show-Menu 'Quel numéro ?' $items
+    $pick = Show-Menu 'Étape 1/3 · Quel numéro ?' $items {
+        Show-Logo 'Nouvelle release'
+        Write-Color "  Dernière version : $(if ($ctx.Last) { $ctx.Last.Tag } else { 'aucune' })" muted
+        Write-Color "  PR fusionnées depuis : $($ctx.Prs.Count) ($summary)" muted
+        $limit = if ($Interactive) { [Math]::Max(0, [Math]::Min(12, $Host.UI.RawUI.WindowSize.Height - 17)) } else { 12 }
+        foreach ($p in $ctx.Prs | Select-Object -First $limit) {
+            $line = "    #$($p.number)".PadRight(10) + "$($p.title)"
+            if ($Interactive -and $line.Length -ge $Host.UI.RawUI.WindowSize.Width) { $line = $line.Substring(0, [Math]::Max(0, $Host.UI.RawUI.WindowSize.Width - 2)) + '…' }
+            Write-Color $line muted_dim
+        }
+        if ($ctx.Prs.Count -gt $limit) { Write-Color "    … et $($ctx.Prs.Count - $limit) autres" muted_dim }
+    }
     if (-not $pick) { return }
     $tag = $pick.Tag
     if (-not $tag) {
@@ -139,7 +145,7 @@ function New-AuroraRelease($Repo) {
     $policy = Get-UpdatePolicy -RepoPath $Paths.Repo -Tag $tag -BaseTag $(if ($ctx.Last) { $ctx.Last.Tag }) -Ref origin/main
     $policy = Read-ReleaseMaintenance $policy
     if (-not $policy) { return }
-    Write-Host ''
+    Show-Logo 'Confirmation de la release'
     Write-Color "  $tag, sur le dernier main$(if ($pre) { ', en pré-release' }) : le workflow Release compile le viewer et publie le zip avec les notes." ink
     Write-Color "  Cache : $(if ($policy.cache_invalidation_before) { 'vidé pour les versions antérieures à ' + $policy.cache_invalidation_before } else { 'conservé' })." ink
     Write-Color "  Paramètres : $(if ($policy.settings_reset_before) { 'réinitialisés pour les versions antérieures à ' + $policy.settings_reset_before } else { 'conservés et migrés automatiquement si nécessaire' })." ink
@@ -196,7 +202,7 @@ function Remove-AuroraRelease($Repo, $Releases) {
         $r = $Releases[$i]
         $items += @{ Key = $shortcuts[$i]; Label = $r.tagName; Hint = $r.name; Release = $r }
     }
-    $pick = Show-Menu 'Quelle release supprimer ?' $items
+    $pick = Show-Menu 'Quelle release supprimer ?' $items { Show-Logo 'Supprimer une release' }
     if (-not $pick) { return }
     $tag = $pick.Release.tagName
     # releases that hold assets (assets-1: the emoji font fetch-assets.ps1 downloads)
