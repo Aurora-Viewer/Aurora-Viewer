@@ -9,6 +9,16 @@ impl App {
     pub(super) fn open_bug_report(&mut self, renderer: &Renderer) {
         let gpu = &renderer.info;
         let s = &self.settings;
+        // What paces the frames besides the scene (issue #120): the user
+        // cap, the mode the swapchain presents with and the current rate of
+        // the screen the window is on.
+        let frame_limit = if s.fps_cap {
+            format!("{} FPS", s.fps_limit)
+        } else {
+            "false".into()
+        };
+        let present_mode = present_mode_name(renderer.present_mode());
+        let screen_rate = format!("{:.0} Hz", self.screen_rate.hz());
         let mut fields = vec![
             Field::new("bug-version", "Viewer version", aurora_version::version(), true),
             Field::new("bug-commit", "Build commit", aurora_version::commit(), true),
@@ -35,7 +45,7 @@ impl App {
                 "bug-graphics",
                 "Graphics settings",
                 format!(
-                    "Draw distance: {} m; LOD: {}; shadows: {} (quality {}); antialiasing: {}; SSAO: {}; reflections: {}; texture budget: {} MiB; max avatars: {}; vsync: {}",
+                    "Draw distance: {} m; LOD: {}; shadows: {} (quality {}); antialiasing: {}; SSAO: {}; reflections: {}; texture budget: {} MiB; max avatars: {}; vsync: {}; frame limit: {}; present mode: {present_mode}; screen: {screen_rate}",
                     s.draw_distance,
                     s.lod_factor,
                     s.shadows,
@@ -45,7 +55,8 @@ impl App {
                     s.water_reflections,
                     s.texture_budget(gpu.vram_mb, gpu.integrated),
                     s.max_avatars,
-                    s.vsync
+                    s.vsync,
+                    if s.fps_cap { frame_limit.as_str() } else { "off" }
                 ),
                 true,
             ),
@@ -78,6 +89,9 @@ impl App {
                 ),
                 ("bug-max-avatars", s.max_avatars.to_string()),
                 ("bug-vsync", s.vsync.to_string()),
+                ("bug-frame-limit", frame_limit),
+                ("bug-present-mode", present_mode.to_string()),
+                ("bug-screen-rate", screen_rate),
             ];
         }
         if matches!(self.screen, Screen::World) {

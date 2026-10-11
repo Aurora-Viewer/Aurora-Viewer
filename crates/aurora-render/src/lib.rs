@@ -13,6 +13,7 @@ pub mod main_thread;
 mod occlusion;
 mod packet;
 mod pick;
+pub mod present;
 pub mod probes;
 mod render_thread;
 mod renderer;

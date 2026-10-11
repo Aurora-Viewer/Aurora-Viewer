@@ -211,7 +211,8 @@ pub struct App {
     loading_frac: f32,
     loading_target: f32,
     frame_count: u64,
-    monitor_hz: f32,
+    /// Refresh rate of the screen the window is on, followed while it runs.
+    screen_rate: crate::screen_rate::ScreenRate,
     /// The window has the keyboard focus (background frame cap).
     focused: bool,
     /// Loading / teleport screen background (last view, blurred).
@@ -531,7 +532,7 @@ impl App {
             loading_frac: 0.0,
             loading_target: 0.0,
             frame_count: 0,
-            monitor_hz: 60.0,
+            screen_rate: Default::default(),
             focused: true,
             backdrop,
             want_scene_capture: false,
@@ -4442,17 +4443,21 @@ impl App {
             return;
         }
         self.frame_profile.lap(Lap::Render);
-        // frame limiter; vsync already paces at the screen rate
+        // frame limiter; vsync already paces at the rate of the screen the
+        // window is on now (it may have moved, the screen may have changed
+        // its mode)
+        self.screen_rate.poll(&gfx.window, Instant::now());
+        let monitor_hz = self.screen_rate.hz();
         let timed = self.capture.is_some() || self.frame_profile.enabled();
         let cap = frame_cap(
             &self.settings,
             self.focused,
             self.in_world(),
-            self.monitor_hz,
+            monitor_hz,
             timed,
             crate::cli::get().fps_limit,
         );
-        let paced_by_vsync = gfx.renderer.vsync() && cap >= self.monitor_hz - 0.5;
+        let paced_by_vsync = gfx.renderer.vsync() && cap >= monitor_hz - 0.5;
         if cap >= 1.0 && !paced_by_vsync {
             let target = Duration::from_secs_f32(1.0 / cap);
             let spent = self.frame_start.elapsed();
@@ -4953,10 +4958,12 @@ impl App {
     /// cost, for the summary line.
     fn end_profile_frame(&mut self, width: u32, height: u32) {
         let s = &self.settings;
+        let present = present_mode_name(self.last_render.present_mode);
+        let screen_hz = self.screen_rate.hz();
         self.frame_profile.settings(|| {
             format!(
-                "{width}x{height} vsync={} fps_cap={} draw_distance={:.0} lod_factor={:.2} max_avatars={} shadows={} \
-                 shadow_quality={} probes={} mirrors={} {:?}",
+                "{width}x{height} vsync={} present={present} screen_hz={screen_hz:.0} fps_cap={} draw_distance={:.0} lod_factor={:.2} \
+                 max_avatars={} shadows={} shadow_quality={} probes={} mirrors={} {:?}",
                 s.vsync,
                 if s.fps_cap { s.fps_limit } else { 0 },
                 s.draw_distance,
@@ -6185,11 +6192,7 @@ impl ApplicationHandler for App {
         );
         let mut renderer = renderer;
         renderer.apply_settings(self.settings.render_settings());
-        self.monitor_hz = window
-            .current_monitor()
-            .and_then(|m| m.refresh_rate_millihertz())
-            .map(|mhz| mhz as f32 / 1000.0)
-            .unwrap_or(60.0);
+        self.screen_rate.poll(&window, Instant::now());
         let max_tex = renderer.device.limits().max_texture_dimension_2d as usize;
         let egui_state = egui_winit::State::new(
             self.egui_ctx.clone(),
@@ -7038,6 +7041,12 @@ fn frame_cap(s: &Settings, focused: bool, in_world: bool, monitor_hz: f32, timed
         cap = cap.min(monitor_hz);
     }
     if cap.is_finite() { cap } else { 0.0 }
+}
+
+/// Name of the swapchain's presentation mode for the profile and the bug
+/// reports; `unknown` until the renderer has answered a frame.
+fn present_mode_name(mode: Option<aurora_render::wgpu::PresentMode>) -> &'static str {
+    mode.map_or("unknown", aurora_render::present::name)
 }
 
 /// AURORA_CAPTURE files: one per frame of AURORA_CAPTURE_FRAMES (comma
