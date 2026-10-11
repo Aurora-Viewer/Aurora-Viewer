@@ -174,6 +174,13 @@ raccourci « Aurora Tools » que l'outil peut créer). Tout se fait au clavier :
 arrière** pour revenir, et la touche affichée devant chaque choix comme
 raccourci.
 
+Le lanceur charge les scripts présents dans `scripts/tools/` à chaque ouverture.
+Il fonctionne aussi placé dans le dossier du projet, à côté de `aurora-viewer/` ;
+seul dans un dossier vide, il télécharge l'installateur depuis le `main` de GitHub.
+En ligne de commande, il transmet les arguments aux outils et retourne leur code
+de sortie, par exemple `aurora-tools.cmd -Action diagnose`. Les points d'exclamation
+dans le chemin restent valides même depuis une invite avec expansion retardée.
+
 Le choix actif porte un repère **›** sur fond violet ; le curseur de saisie
 reste masqué pendant la navigation. Les longues listes défilent avec la
 sélection et les menus s'adaptent au redimensionnement de la console.
