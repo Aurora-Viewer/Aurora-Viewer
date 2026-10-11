@@ -115,7 +115,7 @@ fn card(ui: &mut egui::Ui, p: &Palette, icons: &Icons, n: &mut Notification, toa
                         aurora_i18n::tr!("ui-notifications-ignore-this-menu")
                     } else if toast {
                         aurora_i18n::tr!("ui-notifications-hide-keep-in-bell")
-                    } else if n.interactive() && !matches!(n.data, Data::Url(_)) {
+                    } else if n.close_declines() {
                         aurora_i18n::tr!("ui-notifications-close-decline-offer")
                     } else {
                         aurora_i18n::tr!("common-close")
