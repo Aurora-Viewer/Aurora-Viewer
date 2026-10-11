@@ -257,11 +257,11 @@ impl ProfileUi {
             let name = world.social.name_of(&w.id);
             world.social.avatar_names.want(&w.id);
             // floater_profile.xml: 485 x 510 (480 x 510 at least), centered
-            let size = Vec2::new(485.0, 620.0);
+            let size = Vec2::new(540.0, 650.0);
             let pos = screen.center() - size * 0.5 + Vec2::splat(24.0 * (i % 6) as f32);
             let mut open = true;
             let mut floater = Floater::new(&win_id, name.clone(), pos, size);
-            floater.min_size = Vec2::new(480.0, 620.0);
+            floater.min_size = Vec2::new(500.0, 580.0);
             floater.show(ctx, p, &mut open, |ui| {
                 if w.confirm_close {
                     unsaved_bar(ui, p, w, &mut actions);
@@ -386,7 +386,7 @@ struct TabCtx<'a> {
 fn unsaved_bar(ui: &mut egui::Ui, p: &Palette, w: &mut Window, actions: &mut Vec<ProfileAction>) {
     egui::Frame::new()
         .fill(p.warn.gamma_multiply(0.18))
-        .corner_radius(egui::CornerRadius::same(2))
+        .corner_radius(egui::CornerRadius::same(6))
         .inner_margin(egui::Margin::same(6))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -454,9 +454,9 @@ fn label(ui: &mut egui::Ui, p: &Palette, text: &str) {
 /// Inset box (view_border bevel="in") of a fixed size.
 fn inset<R>(ui: &mut egui::Ui, p: &Palette, width: f32, height: f32, body: impl FnOnce(&mut egui::Ui) -> R) -> R {
     egui::Frame::new()
-        .fill(p.field)
+        .fill(p.field.gamma_multiply(0.82))
         .stroke(egui::Stroke::new(1.0, p.raised))
-        .corner_radius(egui::CornerRadius::same(2))
+        .corner_radius(egui::CornerRadius::same(6))
         .inner_margin(egui::Margin::symmetric(4, 2))
         .show(ui, |ui| {
             ui.set_width((width - 10.0).max(10.0));

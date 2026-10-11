@@ -12,6 +12,9 @@ Légende : ✅ fait (et vérifié sur Agni quand ça dépend de la grille) · �
 
 ## Priorité
 
+- 🟡 **Refonte de toutes les fenêtres** (11/10/2026) : cadre et dialogues partagés, palette charbon, verre dépoli discret sur le GPU, navigation et actions cohérentes ; inventaire avec navigation des dossiers et détails de sélection, galerie des tenues adaptative avec Porter / Ajouter, navigation latérale et synthèse du terrain, construction en inspecteur compact à six sections. Conversations, contacts, personnes, profils, lieux, environnement, textures et préférences reprennent la même hiérarchie. Comportements, permissions et commandes existants conservés.
+  - `check.ps1` vert : 1 072 tests réussis, 13 ignorés ; formatage et Clippy sans avertissement. Tests du repli / déplacement / restauration des fenêtres, de stabilité de l'inventaire étroit et large pendant chargement / recherche / changement d'onglet, et du verre aux différentes échelles. Captures de démo examinées pour les fenêtres principales, les six sections de construction, l'éditeur de tenue et les onglets Objets / Médias / Accès du terrain. Sur le même scénario à trois fenêtres, deux exécutions successives de 1 000 images sans compilation simultanée : moyenne des quatre dernières secondes, UI CPU 0,67 → 0,80 ms, tessellation 0,13 → 0,17 ms, thread de rendu 1,62 → 1,93 ms, attente du rendu 0 ms. Validation humaine du rendu et des interactions en attente avant PR.
+
 Ce qui passe avant le reste (demandé par l'humain).
 
 - ✅ **Prims flexibles rigides (#125)** : simulation locale de `LLVolumeImplFlexible` portée depuis Firestorm, avec gravité, tension, friction, vent régional, force utilisateur et inertie du parent. Géométrie propre à chaque prim, déformée en parallèle ; sommets GPU mis à jour sur place, ombres, normales, limites et sélection suivent la déformation. Aucun mouvement réseau n'est nécessaire pour animer une prim flexible.

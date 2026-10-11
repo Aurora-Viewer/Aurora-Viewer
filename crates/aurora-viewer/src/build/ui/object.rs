@@ -1,6 +1,6 @@
 //! Object tab (LLPanelObject, indra/newview/llpanelobject.cpp, Firestorm,
 //! originally LGPL 2.1): lock / physical / temporary / phantom, position,
-//! size and rotation with their C / P / p buttons, the prim shape (22
+//! size and rotation with copy / paste actions, the prim shape (22
 //! types, Firestorm's « Working33 » extra paths included) and sculpties.
 
 use super::common::{Edit, check, combo, label, section, small, spin};
@@ -292,7 +292,7 @@ pub fn parse_vector(t: &str) -> Option<Vec3> {
     (parts.len() == 3).then(|| Vec3::new(parts[0], parts[1], parts[2]))
 }
 
-/// The three numbers of a vector with their C / P / p buttons.
+/// Axis fields with the per-vector copy / paste commands in their menu.
 #[allow(clippy::too_many_arguments)]
 fn vec_block(
     ui: &mut egui::Ui,
@@ -305,64 +305,94 @@ fn vec_block(
     range: [std::ops::RangeInclusive<f32>; 3],
     decimals: usize,
     enabled: bool,
+    mixed: [bool; 3],
 ) -> (Edit, Option<Vec3>, bool) {
-    let colors = [
-        Color32::from_rgb(240, 110, 110),
-        Color32::from_rgb(110, 220, 110),
-        Color32::from_rgb(120, 150, 245),
-    ];
-    let names = [
-        aurora_i18n::tr!("build-ui-object-position"),
-        aurora_i18n::tr!("build-ui-object-size"),
-        aurora_i18n::tr!("build-ui-object-rotation"),
-    ];
     let mut e = Edit::default();
     let mut paste = None;
     let mut copy = false;
-    label(ui, p, title);
-    ui.add_enabled_ui(enabled, |ui| {
-        for (i, x) in v.iter_mut().enumerate() {
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(["X", "Y", "Z"][i]).size(12.0).strong().color(colors[i]));
-                e = e.or(spin(ui, x, increment, range[i].clone(), decimals, 92.0, false));
-                let n = names[which];
-                match i {
-                    0 => {
-                        if ui
-                            .small_button("C")
-                            .on_hover_text(aurora_i18n::tr!("build-ui-object-copy", n = n.to_string()))
-                            .clicked()
-                        {
-                            copy = true;
-                        }
-                    }
-                    1 => {
-                        let has = tool.ui.vec_clipboard[which].is_some();
-                        if ui
-                            .add_enabled(has, egui::Button::new("P").small())
-                            .on_hover_text(aurora_i18n::tr!("build-ui-object-paste", n = n.to_string()))
-                            .clicked()
-                        {
-                            paste = tool.ui.vec_clipboard[which];
-                        }
-                    }
-                    _ => {
-                        if ui
-                            .small_button("p")
-                            .on_hover_text(aurora_i18n::tr!("build-ui-object-try-pasting-from-clipboard", n = n.to_string()))
-                            .clicked()
-                        {
-                            tool.ui.requests.push(Request::PasteVector(which));
-                        }
-                    }
-                }
-            });
+    let spacing = ui.spacing().item_spacing.y;
+    ui.spacing_mut().item_spacing.y = 2.0;
+    ui.label(RichText::new(title).size(11.0).color(p.muted));
+    let width = ((ui.available_width() - 12.0) / 3.0).max(40.0);
+    let row = ui.add_enabled_ui(enabled, |ui| {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            for (axis, value) in v.iter_mut().enumerate() {
+                egui::Frame::new()
+                    .fill(p.field)
+                    .stroke(egui::Stroke::new(1.0, p.raised))
+                    .corner_radius(3)
+                    .inner_margin(egui::Margin {
+                        left: 6,
+                        right: 4,
+                        top: 1,
+                        bottom: 2,
+                    })
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing.x = 3.0;
+                        ui.spacing_mut().interact_size.y = 23.0;
+                        ui.spacing_mut().button_padding.y = 3.0;
+                        ui.visuals_mut().widgets.inactive.bg_stroke = egui::Stroke::NONE;
+                        ui.visuals_mut().widgets.hovered.bg_stroke = egui::Stroke::NONE;
+                        ui.visuals_mut().widgets.active.bg_stroke = egui::Stroke::NONE;
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(["X", "Y", "Z"][axis]).size(10.0).color(p.muted));
+                            e = e.or(super::common::spin_with_min_decimals(
+                                ui,
+                                value,
+                                increment,
+                                range[axis].clone(),
+                                decimals,
+                                (width - 23.0).max(20.0),
+                                mixed[axis],
+                                if which == 2 { 1 } else { 3 },
+                            ));
+                        });
+                    });
+            }
+        })
+    });
+    // Keep the per-vector C / P / system paste commands in the row menu,
+    // while the visible heading actions follow the active manipulator.
+    row.response.context_menu(|ui| {
+        if ui
+            .add_enabled(enabled, egui::Button::new(aurora_i18n::tr!("build-compact-copy-vector")))
+            .clicked()
+        {
+            copy = true;
+            ui.close();
+        }
+        if ui
+            .add_enabled(
+                enabled && tool.ui.vec_clipboard[which].is_some(),
+                egui::Button::new(aurora_i18n::tr!("build-compact-paste-vector")),
+            )
+            .clicked()
+        {
+            paste = tool.ui.vec_clipboard[which];
+            ui.close();
+        }
+        if ui
+            .add_enabled(enabled, egui::Button::new(aurora_i18n::tr!("build-compact-paste-system")))
+            .clicked()
+        {
+            tool.ui.requests.push(Request::PasteVector(which));
+            ui.close();
         }
     });
+    ui.add_space(3.0);
+    ui.spacing_mut().item_spacing.y = spacing;
     (e, paste, copy)
 }
 
-pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings, env: &mut Env) {
+pub fn show_transform(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    tool: &mut BuildTool,
+    world: &mut World,
+    s: &mut BuildSettings,
+    mods: crate::build::Mods,
+) {
     let Some(key) = tool.selection.first().copied() else { return };
     let Some(idx) = world.objects.index_of(&key) else { return };
     let now = Instant::now();
@@ -372,191 +402,266 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
     let Some(off) = world.region_offset(key.region) else { return };
     let Some(o) = world.objects.get(idx) else { return };
     let (local_pos, local_rot) = (o.position, o.rotation);
-    let (flags, scale, volume, is_root, full_id) = (o.update_flags, o.scale, o.volume, o.parent_id == 0, o.full_id);
-    let flexible = o.extra.flexible.is_some();
+    let (scale, full_id) = (o.scale, o.full_id);
     let props = tool.props.get(&full_id).cloned();
     let editable = tool.can_modify(world, idx);
-    let self_owned = props.as_ref().is_some_and(|pr| pr.owner_id == world.agent_id);
-    let single = tool.sel_prims(world).len() == 1 || tool.roots(world).len() == 1;
     let decimals = s.decimal_precision.min(7) as usize;
 
-    // ---- lock, physics, temporary, phantom; copy / paste of the shape
-    ui.horizontal_top(|ui| {
-        ui.vertical(|ui| {
-            ui.spacing_mut().item_spacing.y = 1.0;
-            // lock = owner's MOVE + MODIFY cleared (LLPanelObject::onCommitLock)
-            let roots = tool.roots(world);
-            let (locked, locked_mixed) = super::common::same(roots.iter().map(|&r| {
-                world
-                    .objects
-                    .get(r)
-                    .and_then(|o| tool.props.get(&o.full_id))
-                    .is_some_and(|pr| pr.owner_mask & perm::MOVE == 0)
-            }));
-            if let Some(v) = check(
-                ui,
-                locked.unwrap_or(false),
-                locked_mixed,
-                aurora_i18n::tr!("build-ui-object-locked"),
-                self_owned,
-            ) {
-                tool.set_perm(world, perm_field::OWNER, !v, perm::MOVE | perm::MODIFY);
-            }
-            let root_ok = editable && is_root;
-            if let Some(v) = check(
-                ui,
-                flags & FLAGS_USE_PHYSICS != 0,
-                false,
-                aurora_i18n::tr!("build-ui-object-physics"),
-                root_ok && !flexible,
-            ) {
-                tool.set_flags(world, Some(v), None, None);
-            }
-            if let Some(v) = check(
-                ui,
-                flags & FLAGS_TEMPORARY_ON_REZ != 0,
-                false,
-                aurora_i18n::tr!("common-temporary"),
-                root_ok,
-            ) {
-                tool.set_flags(world, None, Some(v), None);
-            }
-            if let Some(v) = check(
-                ui,
-                flags & FLAGS_PHANTOM != 0,
-                false,
-                aurora_i18n::tr!("build-ui-object-phantom"),
-                root_ok && !flexible,
-            ) {
-                tool.set_flags(world, None, None, Some(v));
-            }
-        });
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-            let mesh = volume.is_mesh();
-            if super::common::icon_button(
-                ui,
-                p,
-                "clipboard-text",
-                aurora_i18n::tr!("build-ui-object-paste-object-settings-from-the-clipboard"),
-                editable && single && !mesh && tool.ui.shape_clipboard.is_some(),
-            ) && let Some(c) = tool.ui.shape_clipboard
+    let mixed = mixed_vectors(tool, world, s);
+    let can_move = props.as_ref().is_none_or(|pr| pr.owner_mask & perm::MOVE != 0) && ((hud && !s.edit_linked) || editable);
+    let which = match tool.effective_mode(mods) {
+        crate::build::EditMode::Rotate => 2,
+        crate::build::EditMode::Stretch => 1,
+        _ => 0,
+    };
+    let can_copy = if which == 1 { editable } else { can_move };
+    let vector_name = [
+        aurora_i18n::tr!("build-ui-object-position"),
+        aurora_i18n::tr!("build-ui-object-size"),
+        aurora_i18n::tr!("build-ui-object-rotation"),
+    ][which];
+    let (z, y, x) = if hud { local_rot } else { wr }.to_euler(EulerRot::ZYX);
+    let wrap = |a: f32| {
+        let d = (a.to_degrees() / 0.05).round() * 0.05;
+        if d == 0.0 {
+            0.0
+        } else if d < 0.0 {
+            d + 360.0
+        } else {
+            d
+        }
+    };
+    let mut rot = [wrap(x), wrap(y), wrap(z)];
+    let current = [if hud { local_pos } else { wp - off }, scale, Vec3::from_array(rot)][which];
+    super::compact::heading(ui, p, "arrows-out-cardinal", aurora_i18n::tr!("build-compact-transform"), |ui| {
+        let paste = super::compact::icon_button(
+            ui,
+            p,
+            "clipboard-text",
+            &aurora_i18n::tr!("build-ui-object-paste", n = vector_name),
+            can_copy,
+        );
+        if paste.clicked() {
+            tool.ui.requests.push(Request::PasteVector(which));
+        }
+        paste.context_menu(|ui| {
+            if ui
+                .add_enabled(
+                    can_copy && tool.ui.vec_clipboard[which].is_some(),
+                    egui::Button::new(aurora_i18n::tr!("build-compact-paste-vector")),
+                )
+                .clicked()
             {
-                paste_params(tool, world, idx, c);
-            }
-            if super::common::icon_button(
-                ui,
-                p,
-                "copy",
-                aurora_i18n::tr!("build-ui-object-copy-object-settings-to-clipboard"),
-                editable && single && !mesh,
-            ) {
-                tool.ui.shape_clipboard = Some(ShapeClip {
-                    volume,
-                    sculpt: volume.sculpt,
-                });
+                if let Some(v) = tool.ui.vec_clipboard[which] {
+                    tool.paste_vector(world, s, which, &vector_text(v, decimals));
+                }
+                ui.close();
             }
         });
+        if super::compact::icon_button(ui, p, "copy", &aurora_i18n::tr!("build-ui-object-copy", n = vector_name), can_copy).clicked() {
+            copy_vector(ui, tool, which, current, decimals);
+        }
     });
-    ui.add_space(4.0);
-
-    // ---- position, size, rotation | shape
-    ui.columns(2, |cols| {
-        let ui = &mut cols[0];
-        let can_move = props.as_ref().is_none_or(|pr| pr.owner_mask & perm::MOVE != 0) && ((hud && !s.edit_linked) || editable);
-        let mut pos = if hud { local_pos } else { wp - off }.to_array();
-        let region = world
-            .regions
-            .get(&key.region)
-            .map(|r| (r.heightmap.size_x as f32, r.heightmap.size_y as f32))
-            .unwrap_or((256.0, 256.0));
-        let (e, paste, copy) = vec_block(
-            ui,
-            p,
-            tool,
-            0,
-            aurora_i18n::tr!("build-ui-object-position-meters"),
-            &mut pos,
-            0.01,
-            if hud {
-                [-64.0..=64.0, -64.0..=64.0, -64.0..=64.0]
-            } else {
-                [0.0..=region.0, 0.0..=region.1, 0.0..=4096.0]
-            },
-            decimals,
-            can_move,
-        );
-        if copy {
-            copy_vector(ui, tool, 0, Vec3::from_array(pos), decimals);
-        }
-        if let Some(v) = paste {
-            let v = if hud {
-                v.clamp(Vec3::splat(-64.0), Vec3::splat(64.0))
-            } else {
-                Vec3::new(v.x.clamp(0.0, region.0), v.y.clamp(0.0, region.1), v.z)
-            };
-            tool.set_transform(world, s, Some(v), None, None, true);
-        } else if e.changed {
-            tool.set_transform(world, s, Some(Vec3::from_array(pos)), None, None, e.commit);
-        }
-        ui.add_space(4.0);
-        let mut size = scale.to_array();
-        let (e, paste, copy) = vec_block(
-            ui,
-            p,
-            tool,
-            1,
-            aurora_i18n::tr!("build-ui-object-size-meters"),
-            &mut size,
-            0.01,
-            [
-                MIN_PRIM_SCALE..=MAX_PRIM_SCALE,
-                MIN_PRIM_SCALE..=MAX_PRIM_SCALE,
-                MIN_PRIM_SCALE..=MAX_PRIM_SCALE,
-            ],
-            decimals,
-            editable,
-        );
-        if copy {
-            copy_vector(ui, tool, 1, Vec3::from_array(size), decimals);
-        }
-        if let Some(v) = paste {
-            tool.set_transform(world, s, None, Some(v), None, true);
-        } else if e.changed {
-            tool.set_transform(world, s, None, Some(Vec3::from_array(size)), None, e.commit);
-        }
-        ui.add_space(4.0);
-        // Euler degrees rounded to 0.05, wrapped into 0..360
-        let (z, y, x) = if hud { local_rot } else { wr }.to_euler(EulerRot::ZYX);
-        let wrap = |a: f32| {
-            let d = (a.to_degrees() / 0.05).round() * 0.05;
-            if d < 0.0 { d + 360.0 } else { d }
+    let mut pos = if hud { local_pos } else { wp - off }.to_array();
+    let region = world
+        .regions
+        .get(&key.region)
+        .map(|r| (r.heightmap.size_x as f32, r.heightmap.size_y as f32))
+        .unwrap_or((256.0, 256.0));
+    let (e, paste, copy) = vec_block(
+        ui,
+        p,
+        tool,
+        0,
+        aurora_i18n::tr!("build-compact-position"),
+        &mut pos,
+        0.01,
+        if hud {
+            [-64.0..=64.0, -64.0..=64.0, -64.0..=64.0]
+        } else {
+            [0.0..=region.0, 0.0..=region.1, 0.0..=4096.0]
+        },
+        decimals,
+        can_move,
+        mixed[0],
+    );
+    if copy {
+        copy_vector(ui, tool, 0, Vec3::from_array(pos), decimals);
+    }
+    if let Some(v) = paste {
+        let v = if hud {
+            v.clamp(Vec3::splat(-64.0), Vec3::splat(64.0))
+        } else {
+            Vec3::new(v.x.clamp(0.0, region.0), v.y.clamp(0.0, region.1), v.z)
         };
-        let mut rot = [wrap(x), wrap(y), wrap(z)];
-        let (e, paste, copy) = vec_block(
+        tool.set_transform(world, s, Some(v), None, None, true);
+    } else if e.changed {
+        tool.set_transform(world, s, Some(Vec3::from_array(pos)), None, None, e.commit);
+    }
+    let mut size = scale.to_array();
+    let (e, paste, copy) = vec_block(
+        ui,
+        p,
+        tool,
+        1,
+        aurora_i18n::tr!("build-compact-size"),
+        &mut size,
+        0.01,
+        [
+            MIN_PRIM_SCALE..=MAX_PRIM_SCALE,
+            MIN_PRIM_SCALE..=MAX_PRIM_SCALE,
+            MIN_PRIM_SCALE..=MAX_PRIM_SCALE,
+        ],
+        decimals,
+        editable,
+        mixed[1],
+    );
+    if copy {
+        copy_vector(ui, tool, 1, Vec3::from_array(size), decimals);
+    }
+    if let Some(v) = paste {
+        tool.set_transform(world, s, None, Some(v), None, true);
+    } else if e.changed {
+        tool.set_transform(world, s, None, Some(Vec3::from_array(size)), None, e.commit);
+    }
+    let (e, paste, copy) = vec_block(
+        ui,
+        p,
+        tool,
+        2,
+        aurora_i18n::tr!("build-compact-rotation"),
+        &mut rot,
+        1.0,
+        [-9999.0..=9999.0, -9999.0..=9999.0, -9999.0..=9999.0],
+        decimals,
+        can_move,
+        mixed[2],
+    );
+    if copy {
+        copy_vector(ui, tool, 2, Vec3::from_array(rot), decimals);
+    }
+    let to_q = |r: [f32; 3]| Quat::from_euler(EulerRot::ZYX, r[2].to_radians(), r[1].to_radians(), r[0].to_radians());
+    if let Some(v) = paste {
+        tool.set_transform(world, s, None, None, Some(to_q(v.to_array())), true);
+    } else if e.changed {
+        tool.set_transform(world, s, None, None, Some(to_q(rot)), e.commit);
+    }
+}
+
+pub fn show_flags(ui: &mut egui::Ui, _p: &Palette, tool: &mut BuildTool, world: &mut World) {
+    let Some(key) = tool.selection.first().copied() else { return };
+    let Some(idx) = world.objects.index_of(&key) else { return };
+    let Some(o) = world.objects.get(idx) else { return };
+    let (flags, is_root, full_id, flexible) = (o.update_flags, o.parent_id == 0, o.full_id, o.extra.flexible.is_some());
+    let editable = tool.can_modify(world, idx);
+    let self_owned = tool.props.get(&full_id).is_some_and(|pr| pr.owner_id == world.agent_id);
+    ui.spacing_mut().item_spacing.y = 1.0;
+    // lock = owner's MOVE + MODIFY cleared (LLPanelObject::onCommitLock)
+    let roots = tool.roots(world);
+    let (locked, locked_mixed) = super::common::same(roots.iter().map(|&r| {
+        world
+            .objects
+            .get(r)
+            .and_then(|o| tool.props.get(&o.full_id))
+            .is_some_and(|pr| pr.owner_mask & perm::MOVE == 0)
+    }));
+    if let Some(v) = check(
+        ui,
+        locked.unwrap_or(false),
+        locked_mixed,
+        aurora_i18n::tr!("build-ui-object-locked"),
+        self_owned,
+    ) {
+        tool.set_perm(world, perm_field::OWNER, !v, perm::MOVE | perm::MODIFY);
+    }
+    let root_ok = editable && is_root;
+    if let Some(v) = check(
+        ui,
+        flags & FLAGS_USE_PHYSICS != 0,
+        false,
+        aurora_i18n::tr!("build-ui-object-physics"),
+        root_ok && !flexible,
+    ) {
+        tool.set_flags(world, Some(v), None, None);
+    }
+    if let Some(v) = check(
+        ui,
+        flags & FLAGS_TEMPORARY_ON_REZ != 0,
+        false,
+        aurora_i18n::tr!("common-temporary"),
+        root_ok,
+    ) {
+        tool.set_flags(world, None, Some(v), None);
+    }
+    if let Some(v) = check(
+        ui,
+        flags & FLAGS_PHANTOM != 0,
+        false,
+        aurora_i18n::tr!("build-ui-object-phantom"),
+        root_ok && !flexible,
+    ) {
+        tool.set_flags(world, None, None, Some(v));
+    }
+}
+
+pub fn show_shape(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, env: &mut Env) {
+    let Some(key) = tool.selection.first().copied() else { return };
+    let Some(idx) = world.objects.index_of(&key) else { return };
+    let Some(o) = world.objects.get(idx) else { return };
+    let (volume, flexible) = (o.volume, o.extra.flexible.is_some());
+    let editable = tool.can_modify(world, idx);
+    let single = tool.sel_prims(world).len() == 1 || tool.roots(world).len() == 1;
+    super::compact::heading(ui, p, "cube", aurora_i18n::tr!("build-compact-shape"), |ui| {
+        let mesh = volume.is_mesh();
+        if super::common::icon_button(
             ui,
             p,
-            tool,
-            2,
-            aurora_i18n::tr!("build-ui-object-rotation-degrees"),
-            &mut rot,
-            1.0,
-            [-9999.0..=9999.0, -9999.0..=9999.0, -9999.0..=9999.0],
-            decimals,
-            can_move,
-        );
-        if copy {
-            copy_vector(ui, tool, 2, Vec3::from_array(rot), decimals);
+            "clipboard-text",
+            aurora_i18n::tr!("build-ui-object-paste-object-settings-from-the-clipboard"),
+            editable && single && !mesh && tool.ui.shape_clipboard.is_some(),
+        ) && let Some(c) = tool.ui.shape_clipboard
+        {
+            paste_params(tool, world, idx, c);
         }
-        let to_q = |r: [f32; 3]| Quat::from_euler(EulerRot::ZYX, r[2].to_radians(), r[1].to_radians(), r[0].to_radians());
-        if let Some(v) = paste {
-            tool.set_transform(world, s, None, None, Some(to_q(v.to_array())), true);
-        } else if e.changed {
-            tool.set_transform(world, s, None, None, Some(to_q(rot)), e.commit);
+        if super::common::icon_button(
+            ui,
+            p,
+            "copy",
+            aurora_i18n::tr!("build-ui-object-copy-object-settings-to-clipboard"),
+            editable && single && !mesh,
+        ) {
+            tool.ui.shape_clipboard = Some(ShapeClip {
+                volume,
+                sculpt: volume.sculpt,
+            });
         }
-
-        let ui = &mut cols[1];
-        shape_column(ui, p, tool, world, idx, &volume, editable && single, flexible, env);
     });
+    shape_column(ui, p, tool, world, idx, &volume, editable && single, flexible, env);
+}
+
+/// Show a dash only on axes whose selected objects have different values.
+/// Whole linksets compare roots; linked editing compares the selected parts.
+fn mixed_vectors(tool: &BuildTool, world: &World, s: &BuildSettings) -> [[bool; 3]; 3] {
+    let indices = if s.edit_linked { tool.sel_prims(world) } else { tool.roots(world) };
+    let mut first = None;
+    let mut mixed = [[false; 3]; 3];
+    let now = Instant::now();
+    for idx in indices {
+        let Some(o) = world.objects.get(idx) else { continue };
+        let Some((pos, rot, hud)) = Scene::object_transform(world, idx, now, 0) else {
+            continue;
+        };
+        let Some(off) = world.region_offset(o.key.region) else { continue };
+        let (z, y, x) = if hud { o.rotation } else { rot }.to_euler(EulerRot::ZYX);
+        let values = [if hud { o.position } else { pos - off }.to_array(), o.scale.to_array(), [x, y, z]];
+        let reference = first.get_or_insert(values);
+        for (row, flags) in mixed.iter_mut().enumerate() {
+            for (axis, flag) in flags.iter_mut().enumerate() {
+                *flag |= (reference[row][axis] - values[row][axis]).abs() > 0.0001;
+            }
+        }
+    }
+    mixed
 }
 
 /// « C »: the vector in our clipboard and in the system's as "<x, y, z>".

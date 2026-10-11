@@ -1,6 +1,6 @@
 # Branding et interface d'Aurora Viewer
 
-L'interface d'Aurora est **plate, propre et moderne** : surfaces sombres et
+L'interface d'Aurora est **propre, moderne et légèrement vitrée** : surfaces sombres et
 calmes, une seule couleur d'accent forte (le violet), du texte lisible, des
 icônes fines et cohérentes. Chaque écran doit avoir l'air soigné et fini.
 
@@ -26,10 +26,10 @@ Dans le code, on utilise toujours la `Palette` résolue (`p.violet`, `p.ink`…)
 
 | Nom | Hex | Usage |
 |---|---|---|
-| panel | `#2A2A2A` | fond des fenêtres (opacité `panel_alpha` = 245) |
-| bar | `#1C1C1C` | barres du haut et du bas |
-| field | `#1C1C1C` | champs de saisie, zones creuses |
-| raised | `#3A3A3A` | boutons, éléments en relief |
+| panel | `#252830` | fond des fenêtres (opacité `panel_alpha` = 230) |
+| bar | `#1B1E26` | barres du haut et du bas |
+| field | `#181B23` | champs de saisie, zones creuses |
+| raised | `#363B47` | boutons, surfaces survolées |
 | ink | `#E8EDFB` | texte principal |
 | muted | `#9AA6C6` | texte secondaire, libellés |
 | muted_dim | `#6F7BA0` | texte tertiaire, désactivé |
@@ -46,9 +46,16 @@ Dans le code, on utilise toujours la `Palette` résolue (`p.violet`, `p.ink`…)
 
 ## Règles de design
 
-- **Plat.** Pas d'ombres portées, pas de reliefs, pas de textures. Les
-  dégradés sont réservés aux éléments de marque (fond de connexion, aurores).
-- **Arrondis discrets.** Boutons : rayon 3 ; fenêtres : rayon 2.
+- **Verre discret.** Un flou GPU partagé apparaît seulement dans les fenêtres
+  et dialogues, sous une teinte sombre. Une ombre douce et une bordure fine
+  séparent la fenêtre du monde ; les champs restent calmes et lisibles.
+  Une skin avec `panel_alpha = 255` garde des surfaces opaques sans ce flou.
+  Les dégradés sont réservés aux éléments de marque (fond de connexion, aurores).
+- **Arrondis discrets.** Boutons : rayon 5 ; fenêtres : rayon 8 ; cartes : rayon 6.
+- **Hiérarchie commune.** Titre et commandes de fenêtre en haut, navigation
+  stable, contenu regroupé par fonction, sélection et actions près du bas.
+  Les listes défilent dans leur zone et ne font pas grandir la fenêtre.
+  La construction utilise un inspecteur compact avec un rail de sections.
 - **Une seule couleur d'accent par zone.** Le violet signale ce qui est actif
   ou important ; le reste est neutre.
 - **Contraste et lisibilité.** Texte `ink` sur `panel` ; texte secondaire en

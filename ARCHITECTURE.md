@@ -198,6 +198,19 @@ Les changements de parent passent par `aurora-net/src/session/inventory_moves.rs
 le déplacement par relecture des dossiers, avec attente bornée si le stockage
 renvoie encore l’ancien parent. Les autres champs restent modifiés par AIS.
 
+### Surfaces des fenêtres
+
+`ui/widgets/workspace.rs` partage la navigation, les panneaux de détails et les
+dialogues. `build/ui/compact.rs` agence la construction en six sections dans un
+inspecteur étroit. `aurora-render/src/ui_glass.rs` produit un fond dépoli partagé
+par les fenêtres visibles : copie et deux passes de flou sur le GPU, puis
+échantillonnage dans leurs seuls rectangles arrondis. Les ressources sont
+réutilisées tant que la taille et l'échelle restent stables, puis libérées quand
+aucune surface n'en a besoin. Le monde autour des fenêtres reste net. Une skin
+avec `panel_alpha = 255` conserve des fenêtres opaques sans ces passes. Une
+surface GPU qui ne permet pas la copie garde le cadre teinté ; les marqueurs
+restent sans dessin pour préserver les indices du flou des modales.
+
 L'affichage des permissions d'éléments est partagé par l'inventaire, la fenêtre
 de contenu d'un objet et l'onglet Contenu de construction dans
 `ui/inventory/permissions.rs` : indicateurs compacts C·M·T, droits accordés verts

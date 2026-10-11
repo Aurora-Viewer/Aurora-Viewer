@@ -396,7 +396,7 @@ pub struct BuildTool {
     pending_create: Option<(Instant, HashSet<Uuid>)>,
     /// Selection rectangle being dragged (start, current in pixels, extend).
     pub rect: Option<((f32, f32), (f32, f32), bool)>,
-    /// Floater tab (General, Object, Features, Texture, Contents).
+    /// Compact section (Rights, Transform, Features, Materials, Contents, Shape).
     pub tab: usize,
     /// Last message for the floater's status line.
     pub status: String,

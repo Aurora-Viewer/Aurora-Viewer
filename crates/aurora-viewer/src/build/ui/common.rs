@@ -66,6 +66,20 @@ pub fn spin(
     width: f32,
     tentative: bool,
 ) -> Edit {
+    spin_with_min_decimals(ui, v, increment, range, decimals, width, tentative, decimals.min(5))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn spin_with_min_decimals(
+    ui: &mut egui::Ui,
+    v: &mut f32,
+    increment: f32,
+    range: std::ops::RangeInclusive<f32>,
+    decimals: usize,
+    width: f32,
+    tentative: bool,
+    min_decimals: usize,
+) -> Edit {
     // Firestorm's spinner modifiers: Alt ×10, Ctrl ×0.1, Shift ×0.01
     let m = ui.input(|i| i.modifiers);
     let speed = increment
@@ -84,11 +98,11 @@ pub fn spin(
         .range(range)
         .custom_parser(aurora_i18n::parse_number)
         .max_decimals(decimals)
-        .min_decimals(decimals.min(5));
+        .min_decimals(min_decimals.min(decimals));
     if tentative {
         dv = dv.custom_formatter(|_, _| "—".into());
     }
-    let r = ui.add_sized([width, 19.0], dv);
+    let r = ui.add_sized([width, 26.0], dv);
     let mut e = Edit::default();
     if r.changed() {
         e.changed = true;

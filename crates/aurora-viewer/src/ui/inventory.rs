@@ -239,6 +239,7 @@ pub struct InventoryUi {
     pub search: String,
     searches: [String; 5],
     pub tab: usize,
+    browse_root: Option<Uuid>,
     pub expand_all: Option<bool>,
     pub selected: Option<Uuid>,
     rename: Option<InlineRename>,
@@ -749,6 +750,7 @@ fn folder_window_contents(
             folder_contents(ui, p, icons, inv, root, 1, expand, st, prefs, facts, actions);
         });
     });
+    selection_summary(ui, p, inv, st, prefs, facts, actions);
     status(ui, p, inv, st, filtered);
 }
 
@@ -798,7 +800,7 @@ fn scroll_to_row(ui: &egui::Ui, row: &egui::Response, align: egui::Align) {
 fn list_height(ui: &egui::Ui) -> f32 {
     // Reserve both footer rows and their layout spacing, even while folders
     // arrive asynchronously. A variable-height footer made the window grow.
-    (ui.available_height() - 44.0 - 2.0 * ui.spacing().item_spacing.y).max(40.0)
+    (ui.available_height() - 182.0).max(40.0)
 }
 
 fn status(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, st: &InventoryUi, filtered: bool) {
@@ -1093,6 +1095,9 @@ fn inventory_contents(
         st.search.clone_from(&st.searches[tab_ids[visible_tab]]);
     }
     st.tab = tab_ids[visible_tab];
+    if let Some(id) = st.reveal {
+        st.browse_root = rules::parent(inv, id).filter(|id| inv.folders.contains_key(id));
+    }
     let filtered = !st.search.trim().is_empty() || st.tab >= 2 || st.links_filter.is_some() || st.filters.active();
     if filtered {
         request_search(inv, inv.root, st, prefs);
@@ -1109,26 +1114,191 @@ fn inventory_contents(
             view::now(),
         );
     }
-    ui.add_space(3.0);
+    ui.add_space(6.0);
     let list_h = list_height(ui);
-    egui::Frame::new().fill(p.field).show(ui, |ui| {
-        ui.set_width(ui.available_width());
-        if filtered {
-            prepare_result_tree(st, inv, inv.root);
-            search_scroll(ui, p, icons, inv, st, prefs, facts, actions, list_h);
-            return;
+    let wide = ui.available_width() >= 580.0 && !filtered;
+    ui.horizontal_top(|ui| {
+        if wide {
+            let nav_width = (ui.available_width() * 0.29).clamp(150.0, 220.0);
+            ui.allocate_ui_with_layout(Vec2::new(nav_width, list_h), egui::Layout::top_down(egui::Align::Min), |ui| {
+                ui.set_width(nav_width);
+                egui::ScrollArea::vertical()
+                    .id_salt("inventory_navigation")
+                    .max_height(list_h)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        folder_navigation(ui, p, inv, inv.root, 0, st, prefs);
+                        if prefs.show_library {
+                            folder_navigation(ui, p, inv, inv.lib_root, 0, st, prefs);
+                        }
+                    });
+            });
+            let (divider, _) = ui.allocate_exact_size(Vec2::new(1.0, list_h), egui::Sense::hover());
+            ui.painter()
+                .vline(divider.center().x, divider.y_range(), egui::Stroke::new(1.0, p.raised));
         }
-        list_scroll(ui, list_h).show(ui, |ui| {
-            let root = inv.root;
-            if root.is_nil() {
-                ui.label(RichText::new(aurora_i18n::tr!("ui-inventory-inventory-unavailable")).color(p.muted));
-            } else {
-                let expand = st.expand_all.take();
-                folder_tree(ui, p, icons, inv, root, 0, expand, st, prefs, facts, actions);
+        ui.vertical(|ui| {
+            ui.set_width(ui.available_width());
+            let root = st.browse_root.filter(|id| inv.folders.contains_key(id)).unwrap_or(inv.root);
+            if wide {
+                ui.add(egui::Label::new(RichText::new(inventory_path(inv, root)).size(12.0).color(p.muted)).truncate());
+            }
+            egui::Frame::new()
+                .fill(p.field.gamma_multiply(0.72))
+                .corner_radius(6)
+                .inner_margin(4)
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    if filtered {
+                        prepare_result_tree(st, inv, inv.root);
+                        search_scroll(ui, p, icons, inv, st, prefs, facts, actions, list_h);
+                        return;
+                    }
+                    list_scroll(ui, (list_h - if wide { 24.0 } else { 0.0 }).max(40.0)).show(ui, |ui| {
+                        if root.is_nil() {
+                            ui.label(RichText::new(aurora_i18n::tr!("ui-inventory-inventory-unavailable")).color(p.muted));
+                        } else {
+                            let expand = st.expand_all.take();
+                            if wide {
+                                folder_contents(ui, p, icons, inv, root, 1, expand, st, prefs, facts, actions);
+                            } else {
+                                folder_tree(ui, p, icons, inv, inv.root, 0, expand, st, prefs, facts, actions);
+                            }
+                        }
+                    });
+                });
+        });
+    });
+    selection_summary(ui, p, inv, st, prefs, facts, actions);
+    status(ui, p, inv, st, filtered);
+}
+
+/// Folder navigation only; item selection and drag/drop stay in the list.
+fn folder_navigation(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    inv: &mut Inventory,
+    id: Uuid,
+    depth: usize,
+    st: &mut InventoryUi,
+    prefs: &InventoryPreferences,
+) {
+    if depth > 24 || !inv.folders.contains_key(&id) {
+        return;
+    }
+    let name = folder_name(inv, id);
+    st.view.prepare(inv, prefs.sort);
+    let children = st.view.children(id, prefs, inv.lib_root);
+    let fetched = inv.folders.get(&id).is_some_and(|f| f.state == FetchState::Fetched);
+    let open = if st.reveal_path.contains(&id) {
+        Some(true)
+    } else {
+        st.expand_all.filter(|expand| !expand || fetched || depth == 0)
+    };
+    let selected = st.browse_root.unwrap_or(inv.root) == id;
+    let response = egui::CollapsingHeader::new(
+        RichText::new(&name)
+            .size(12.0)
+            .color(if selected { p.violet_light } else { p.muted }),
+    )
+    .id_salt(("folder_nav", id))
+    .default_open(depth == 0)
+    .open(open.map(|open| open || depth == 0))
+    .show(ui, |ui| {
+        inv.request(id);
+        for child in children {
+            if id != inv.root || child != inv.lib_root {
+                folder_navigation(ui, p, inv, child, depth + 1, st, prefs);
+            }
+        }
+    });
+    if response.header_response.clicked() {
+        st.browse_root = Some(id);
+        st.selected = Some(id);
+        st.selection.clear();
+        st.selection.insert(id);
+    }
+}
+
+fn selection_summary(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    inv: &Inventory,
+    st: &mut InventoryUi,
+    prefs: &mut InventoryPreferences,
+    facts: &Facts,
+    actions: &mut Vec<InvAction>,
+) {
+    ui.add_space(4.0);
+    super::widgets::surface(ui, p, |ui| {
+        ui.set_min_width(ui.available_width());
+        ui.set_min_height(46.0);
+        ui.horizontal(|ui| {
+            let id = st.selected.filter(|_| st.selection.len() <= 1);
+            let item = id.and_then(|id| rules::original(inv, id)).and_then(|id| inv.items.get(&id));
+            let icon = item.map_or("folder", |it| item_icon(it.asset_type, it.inv_type));
+            if let Some(t) = crate::ui::icons::global(icon) {
+                ui.add(egui::Image::new(&t).fit_to_exact_size(Vec2::splat(32.0)).tint(p.violet_light));
+            }
+            let name = id
+                .map(|id| rules::name(inv, id))
+                .unwrap_or_else(|| aurora_i18n::tr!("workspace-inventory-selection").into());
+            ui.vertical(|ui| {
+                ui.set_width((ui.available_width() - 160.0).max(80.0));
+                ui.add(egui::Label::new(RichText::new(&name).size(13.0).strong().color(p.ink)).truncate())
+                    .on_hover_text(&name);
+                if let Some(id) = id {
+                    let path = rules::parent(inv, id).map(|id| inventory_path(inv, id)).unwrap_or_default();
+                    ui.add(egui::Label::new(RichText::new(path).size(11.0).color(p.muted)).truncate());
+                    if let Some(permissions) = permissions::Permissions::inventory(inv, id) {
+                        let mut job = super::widgets::name_with_suffix("", "", egui::FontId::proportional(11.0), p.muted);
+                        permissions.append_suffix(&mut job, p);
+                        ui.label(job).on_hover_text(permissions.tooltip());
+                    }
+                }
+            });
+            if let Some(id) = id {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    super::widgets::icon_menu(ui, p, "dots-three", aurora_i18n::tr!("ui-places-show-more-options"), |ui| {
+                        context::show(ui, p, inv, id, st, prefs, facts, actions)
+                    });
+                    let label = match item.map(|it| it.asset_type) {
+                        Some(5 | 6 | 13) => aurora_i18n::tr!("common-wear"),
+                        Some(3) => aurora_i18n::tr!("common-teleport-3"),
+                        _ => aurora_i18n::tr!("common-open"),
+                    };
+                    let enabled =
+                        st.pending.is_none() && (!matches!(item.map(|it| it.asset_type), Some(5 | 6 | 13)) || !facts.appearance_busy);
+                    if ui.add_enabled(enabled, egui::Button::new(label).fill(p.violet)).clicked() {
+                        context::open(inv, id, st, prefs, actions);
+                    }
+                });
             }
         });
     });
-    status(ui, p, inv, st, filtered);
+    ui.horizontal(|ui| {
+        let to = st
+            .selected
+            .filter(|id| inv.folders.contains_key(id))
+            .or_else(|| st.selected.and_then(|id| rules::parent(inv, id)))
+            .unwrap_or(inv.root);
+        super::widgets::icon_menu(ui, p, "plus", aurora_i18n::tr!("common-new-folder"), |ui| {
+            context::new_menu(
+                ui,
+                p,
+                to,
+                st.pending.is_none() && rules::destination(inv, to, &prefs.protected),
+                st,
+                prefs,
+                actions,
+            );
+        });
+        ui.label(
+            RichText::new(aurora_i18n::tr!("workspace-inventory-selected", count = st.selection.len()))
+                .size(11.0)
+                .color(p.muted),
+        );
+    });
 }
 
 pub fn show(
@@ -1198,8 +1368,8 @@ pub fn show(
     super::widgets::Floater::new(
         "inventory",
         aurora_i18n::tr!("common-inventory"),
-        egui::pos2(screen.right() - 460.0, 56.0),
-        Vec2::new(440.0, 550.0),
+        egui::pos2(screen.right() - 700.0, 56.0),
+        Vec2::new(680.0, 610.0),
     )
     .help(aurora_i18n::tr!("ui-inventory-right-click-item-actions-ctrl-shift-multi-select"))
     .show(ctx, p, open, |ui| {
@@ -1694,74 +1864,85 @@ mod tests {
 
     #[test]
     fn inventory_size_stays_stable_during_loading_filtering_and_tab_changes() {
-        let ctx = egui::Context::default();
-        let mut inv = view_inventory(false);
-        let agent = Uuid::from_u128(2);
-        let loading = Uuid::from_u128(8001);
-        inv.folders.get_mut(&loading).unwrap().state = FetchState::Unknown;
-        let facts = Facts {
-            agent,
-            worn: inv.items.keys().copied().collect(),
-            worn_labels: Default::default(),
-            points: vec![],
-            appearance_busy: false,
-            names: Default::default(),
-        };
-        let palette = crate::theme::Theme::default().palette();
-        let mut prefs = InventoryPreferences::default();
-        let mut st = InventoryUi::default();
-        let mut initial_size = None;
-        for frame in 0..240 {
-            st.visible.clear();
-            st.tab = [2, 3, 0, 2][frame / 60];
-            st.filters.types = if st.tab == 0 { 1 << 6 } else { u32::MAX };
-            if frame == 120 {
-                inv.folders.get_mut(&loading).unwrap().state = FetchState::Fetched;
-                inv.generation += 1;
-                st.fetch_poll = None;
-            }
-            if frame == 150 {
-                st.message = "Un message de statut très long. ".repeat(30);
-            }
-            if frame == 180 {
-                st.message.clear();
-            }
-            headless_output(ctx.run_ui(
-                egui::RawInput {
-                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 900.0))),
-                    time: Some(frame as f64 / 60.0),
-                    ..Default::default()
-                },
-                |ui| {
-                    let ctx = ui.ctx();
-                    super::super::widgets::Floater::new(
-                        "inventory",
-                        aurora_i18n::tr!("common-inventory"),
-                        egui::pos2(800.0, 56.0),
-                        Vec2::new(440.0, 550.0),
-                    )
-                    .silent()
-                    .show(ctx, &palette, &mut true, |ui| {
-                        inventory_contents(ui, &palette, &Icons::default(), &mut inv, &mut st, &mut prefs, &facts, &mut vec![]);
-                    });
-                },
-            ));
-            let size = ctx.memory(|memory| memory.area_rect(egui::Id::new("inventory")).unwrap().size());
-            if frame == 8 {
-                initial_size = Some(size);
-            }
-            if let Some(initial) = initial_size {
-                assert!(size.y <= initial.y + 1.0, "window grew at frame {frame}: {initial:?} -> {size:?}");
-                assert!(
-                    size.x <= initial.x + 1.0,
-                    "window widened at frame {frame}: {initial:?} -> {size:?}"
-                );
+        for window_size in [Vec2::new(440.0, 550.0), Vec2::new(680.0, 610.0)] {
+            let ctx = egui::Context::default();
+            crate::theme::Theme::default().apply(&ctx, 1.0);
+            let mut inv = view_inventory(false);
+            let agent = Uuid::from_u128(2);
+            let loading = Uuid::from_u128(8001);
+            inv.folders.get_mut(&loading).unwrap().state = FetchState::Unknown;
+            let facts = Facts {
+                agent,
+                worn: inv.items.keys().copied().collect(),
+                worn_labels: Default::default(),
+                points: vec![],
+                appearance_busy: false,
+                names: Default::default(),
+            };
+            let palette = crate::theme::Theme::default().palette();
+            let mut prefs = InventoryPreferences::default();
+            let mut st = InventoryUi {
+                selected: Some(Uuid::from_u128(8100)),
+                selection: HashSet::from([Uuid::from_u128(8100)]),
+                ..Default::default()
+            };
+            let mut initial_size = None;
+            for frame in 0..240 {
+                st.visible.clear();
+                st.tab = [2, 3, 0, 2][frame / 60];
+                st.filters.types = if st.tab == 0 && frame >= 150 { 1 << 6 } else { u32::MAX };
+                if frame == 120 {
+                    inv.folders.get_mut(&loading).unwrap().state = FetchState::Fetched;
+                    inv.generation += 1;
+                    st.fetch_poll = None;
+                }
+                if frame == 150 {
+                    st.message = "Un message de statut très long. ".repeat(30);
+                }
+                if frame == 180 {
+                    st.message.clear();
+                }
+                headless_output(ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 900.0))),
+                        time: Some(frame as f64 / 60.0),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        let ctx = ui.ctx();
+                        super::super::widgets::Floater::new(
+                            "inventory",
+                            aurora_i18n::tr!("common-inventory"),
+                            egui::pos2(1280.0 - window_size.x - 20.0, 56.0),
+                            window_size,
+                        )
+                        .silent()
+                        .show(ctx, &palette, &mut true, |ui| {
+                            inventory_contents(ui, &palette, &Icons::default(), &mut inv, &mut st, &mut prefs, &facts, &mut vec![]);
+                        });
+                    },
+                ));
+                let size = ctx.memory(|memory| memory.area_rect(egui::Id::new("inventory")).unwrap().size());
+                if frame == 8 {
+                    assert!(
+                        size.x <= window_size.x + 1.0 && size.y <= window_size.y + 1.0,
+                        "initial layout exceeds requested size: {window_size:?} -> {size:?}"
+                    );
+                    initial_size = Some(size);
+                }
+                if let Some(initial) = initial_size {
+                    assert!(size.y <= initial.y + 1.0, "window grew at frame {frame}: {initial:?} -> {size:?}");
+                    assert!(
+                        size.x <= initial.x + 1.0,
+                        "window widened at frame {frame}: {initial:?} -> {size:?}"
+                    );
+                }
             }
         }
     }
 
     #[test]
-    fn search_selector_is_right_of_the_field_and_tree_actions_share_the_toolbar() {
+    fn search_selector_is_right_of_the_field_and_filters_share_the_toolbar() {
         let ctx = egui::Context::default();
         let palette = crate::theme::Theme::default().palette();
         let mut st = InventoryUi::default();
@@ -1790,10 +1971,11 @@ mod tests {
         let selector = position(aurora_i18n::tr!("common-name"));
         assert!(selector.x > field.x);
         assert!((selector.y - field.y).abs() < 4.0);
-        for label in [aurora_i18n::tr!("common-collapse"), aurora_i18n::tr!("common-expand")] {
-            assert!((position(label).y - position(aurora_i18n::tr!("ui-inventory-controls-filters")).y).abs() < 1.0);
-            assert!(position(label).x > position(aurora_i18n::tr!("common-preferences")).x);
-        }
+        let filters = position(aurora_i18n::tr!("ui-inventory-controls-filters"));
+        let preferences = position(aurora_i18n::tr!("common-preferences"));
+        assert!((preferences.y - filters.y).abs() < 1.0);
+        assert!(preferences.x > filters.x);
+        assert!(field.y > filters.y);
     }
 
     #[test]

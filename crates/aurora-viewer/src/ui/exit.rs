@@ -3,7 +3,7 @@
 //! originally LGPL 2.1); the three-way prompt is Aurora's requested behavior.
 
 use crate::theme::Palette;
-use egui::{CornerRadius, Frame, Id, Margin, RichText, Stroke, Vec2};
+use egui::{Frame, Id, Margin, RichText, Stroke, Vec2};
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,7 +58,8 @@ impl ExitPrompt {
                 Frame::new()
                     .fill(p.panel)
                     .stroke(Stroke::new(1.0, p.raised))
-                    .corner_radius(CornerRadius::same(2))
+                    .corner_radius(ctx.global_style().visuals.window_corner_radius)
+                    .shadow(ctx.global_style().visuals.window_shadow)
                     .inner_margin(Margin::same(24)),
             )
             .show(ctx, |ui| {

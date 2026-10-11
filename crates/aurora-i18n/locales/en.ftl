@@ -3673,3 +3673,100 @@ script-debug-all = All objects
 script-debug-clear = Clear
 
 script-help-forward = Next
+
+# Compact build workspace
+build-compact-title = Build
+build-compact-help = Ctrl+B: open / close; Ctrl+1 to 5: camera, move, edit, create, land.
+build-compact-transform = Transform
+build-compact-shape = Shape
+build-compact-materials = Materials
+build-compact-features = Features
+build-compact-rights = Rights
+build-compact-contents = Contents
+build-compact-multiple = Multiple selection
+build-compact-selection = Selected object
+build-compact-select-hint = Click an object to begin.
+build-compact-waiting = Loading properties…
+build-compact-editable = Editable
+build-compact-readonly = Read only
+build-compact-counts = { $objects ->
+    [one] { $objects } object
+   *[other] { $objects } objects
+    } · { $prims ->
+    [one] { $prims } prim
+   *[other] { $prims } prims
+    }
+build-compact-impact = Impact { $impact }
+build-compact-move = Move
+build-compact-rotate = Rotate (Ctrl)
+build-compact-stretch = Stretch (Ctrl+Shift)
+build-compact-face = Select a face
+build-compact-align = Align (Shift: stack)
+build-compact-world = World
+build-compact-local = Local
+build-compact-reference = Reference
+build-compact-grid-options = Grid options (Ctrl+Shift+B)
+build-compact-linked = Edit linked parts
+build-compact-snap = Snap to grid
+build-compact-previous = Previous part / face (Ctrl+,)
+build-compact-next = Next part / face (Ctrl+.)
+build-compact-options = Manipulation options
+build-compact-both-sides = Stretch both sides
+build-compact-stretch-textures = Stretch textures
+build-compact-root-axis = Edit axis at root
+build-compact-highlight = Show highlight
+build-compact-probes = Select reflection probes
+build-compact-undo = Undo (Ctrl+Z)
+build-compact-redo = Redo (Ctrl+Y)
+build-compact-duplicate = Duplicate
+build-compact-link = Link (Ctrl+L)
+build-compact-unlink = Unlink (Ctrl+Shift+L)
+build-compact-collapse = Collapse / expand sections
+build-compact-paste-system = Paste from the system clipboard
+build-compact-paste-vector = Paste the copied vector
+build-compact-copy-vector = Copy the vector
+build-compact-camera = Camera
+build-compact-move-tool = Move
+build-compact-edit = Edit
+build-compact-create = Create
+build-compact-land = Land
+build-compact-capacity = Remaining capacity: { $remaining }. Click to view detailed weights.
+build-compact-empty = Select an object
+build-compact-selection-edit = Editing the selection
+build-compact-object-kind = Whole object · { $kind }
+build-compact-prim = prim
+build-compact-mesh = mesh
+build-compact-object-count = { $count ->
+    [one] { $count } object
+   *[other] { $count } objects
+    }
+build-compact-prim-count = { $count ->
+    [one] { $count } prim
+   *[other] { $count } prims
+    }
+build-compact-position = Position · m
+build-compact-size = Size · m
+build-compact-rotation = Rotation · °
+build-compact-selection-snap = Selection and snapping
+build-compact-grid-unit = { $unit } m
+build-compact-copy-hint = Shift + drag: copy
+build-compact-create-hint = Click: create
+build-compact-land-hint = Hold: paint
+build-compact-drag-hint = Drag in the world
+
+# Compact build inspector, C3
+build-c3-remaining = { $remaining } available
+build-c3-emission-options = Emission and options
+build-c3-maps-tints = Maps and tints
+build-c3-texture-transform = Texture transforms
+build-c3-material-assigned = PBR material applied
+build-c3-choose = Choose…
+
+workspace-inventory-selection = Select an item to see its details
+workspace-inventory-selected = { $count } selected
+
+workspace-land-identity = Identity and ownership
+workspace-land-sale = Sale and information
+workspace-land-actions = Parcel actions
+workspace-outfit-selection = Select an outfit
+workspace-outfit-items = { $count } items in this outfit

@@ -10,6 +10,8 @@ pub mod demo;
 #[cfg(test)]
 pub(crate) mod elide_tests;
 mod resize;
+mod workspace;
+pub use workspace::{Modal, glyph, navigation, section_header, stat, surface};
 
 /// Keep status suffixes at normal weight and slightly darker than the name.
 pub(crate) fn name_with_suffix(name: &str, suffix: &str, font_id: egui::FontId, color: Color32) -> egui::text::LayoutJob {
@@ -75,6 +77,10 @@ pub struct Floater<'a> {
     pub action: Option<(&'a str, &'a str, &'a mut bool)>,
     /// No open / close sounds (sound_flags="0", e.g. floater_tools).
     pub silent: bool,
+    /// An inset dark title bar and edge-to-edge body for inspector layouts.
+    pub framed_header: Option<&'a str>,
+    /// Keep an inspector's width stable while its height follows the content.
+    pub auto_height: bool,
 }
 
 impl<'a> Floater<'a> {
@@ -89,6 +95,8 @@ impl<'a> Floater<'a> {
             help: None,
             action: None,
             silent: false,
+            framed_header: None,
+            auto_height: false,
         }
     }
 
@@ -113,6 +121,17 @@ impl<'a> Floater<'a> {
         self
     }
 
+    pub fn framed_header(mut self, icon: &'a str) -> Self {
+        self.framed_header = Some(icon);
+        self
+    }
+
+    pub fn auto_height(mut self) -> Self {
+        self.auto_height = true;
+        self.resizable = false;
+        self
+    }
+
     /// Show the floater; `open` is cleared by the close button.
     pub fn show<R>(mut self, ctx: &egui::Context, p: &Palette, open: &mut bool, body: impl FnOnce(&mut egui::Ui) -> R) -> Option<R> {
         if !*open {
@@ -131,13 +150,18 @@ impl<'a> Floater<'a> {
                 p.panel.b(),
                 p.panel_alpha,
             ))
-            .stroke(Stroke::new(1.0, p.raised))
-            .corner_radius(CornerRadius::same(2))
-            .inner_margin(egui::Margin {
-                left: 6,
-                right: 6,
-                top: 3,
-                bottom: 6,
+            .stroke(Stroke::new(1.0, p.muted_dim.gamma_multiply(0.6)))
+            .corner_radius(ctx.global_style().visuals.window_corner_radius)
+            .shadow(ctx.global_style().visuals.window_shadow)
+            .inner_margin(if self.framed_header.is_some() {
+                egui::Margin::ZERO
+            } else {
+                egui::Margin {
+                    left: 10,
+                    right: 10,
+                    top: if minimized { 4 } else { 5 },
+                    bottom: if minimized { 4 } else { 10 },
+                }
             });
         let mut close = false;
         let mut toggle_min = false;
@@ -159,7 +183,9 @@ impl<'a> Floater<'a> {
             .frame(frame)
             .default_pos(self.default_pos)
             .resizable(false);
-        if self.resizable && !minimized {
+        if self.auto_height && !minimized {
+            w = w.auto_sized().min_width(self.default_size.x).max_width(self.default_size.x);
+        } else if self.resizable && !minimized {
             w = w.default_size(self.default_size).min_size(self.min_size);
         } else if !minimized {
             w = w.default_width(self.default_size.x);
@@ -169,8 +195,8 @@ impl<'a> Floater<'a> {
         // forgets it when clamped to the header. Restore that size once.
         // Aurora keeps the dragged bar's current position when restoring.
         if minimized {
-            w = w.fixed_size(Vec2::new(expanded.x, 31.0));
-        } else if restore {
+            w = w.fixed_size(Vec2::new(expanded.x, if self.framed_header.is_some() { 40.0 } else { 38.0 }));
+        } else if restore && !self.auto_height {
             w = w.fixed_size(expanded);
         }
         if let Some(pos) = ctx.data_mut(|d| d.remove_temp::<egui::Pos2>(window_id.with(PLACE_POS))) {
@@ -180,58 +206,100 @@ impl<'a> Floater<'a> {
             let rect = drag.rect();
             w = w.fixed_size(rect.size()).current_pos(rect.min);
         }
+        let mut glass_slot = None;
         let response = w.show(ctx, |ui| {
+            glass_slot = Some((ui.painter().clone(), ui.painter().add(egui::Shape::Noop)));
             // Our custom resize handles replace egui's native resizability.
             // Reserve the requested content area as a resizable Window would:
             // height-filling scroll areas otherwise shave a few pixels off
             // each restoration even though Resize remembered the right size.
-            if resizable || restore {
+            if resizable || (restore && !self.auto_height) {
                 ui.set_min_size(ui.available_size());
             }
             // title bar
             let mut buttons_left = f32::INFINITY;
-            let header = ui.horizontal(|ui| {
-                ui.set_min_height(20.0);
-                let title = RichText::new(&self.title).size(13.0).color(p.ink);
-                // a fixed floater is as wide as its title; a resizable one
-                // cuts a long title short before the buttons (LLFloater
-                // titles end with an ellipsis)
-                let truncate = self.resizable || minimized;
-                if !truncate {
-                    ui.label(title.clone());
+            let framed_header = self.framed_header;
+            if framed_header.is_some() {
+                ui.spacing_mut().item_spacing.y = 0.0;
+            }
+            let mut header_content = |ui: &mut egui::Ui| {
+                if framed_header.is_some() {
+                    ui.spacing_mut().interact_size.y = 20.0;
                 }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.spacing_mut().item_spacing.x = 6.0;
-                    if title_button(ui, p, "x").on_hover_text(aurora_i18n::tr!("common-close")).clicked() {
-                        close = true;
+                ui.horizontal(|ui| {
+                    ui.set_min_height(if framed_header.is_some() { 20.0 } else { 28.0 });
+                    let title = RichText::new(&self.title).size(14.0).strong().color(p.ink);
+                    // a fixed floater is as wide as its title; a resizable one
+                    // cuts a long title short before the buttons (LLFloater
+                    // titles end with an ellipsis)
+                    let truncate = self.resizable || minimized || self.auto_height;
+                    if !truncate {
+                        glyph(ui, workspace::window_icon(self.id), p.violet_light, 18.0);
+                        ui.label(title.clone());
                     }
-                    if title_button(ui, p, "minus")
-                        .on_hover_text(if minimized {
-                            aurora_i18n::tr!("common-expand")
-                        } else {
-                            aurora_i18n::tr!("common-collapse")
-                        })
-                        .clicked()
-                    {
-                        toggle_min = true;
-                    }
-                    if let Some((icon, tip, clicked)) = self.action.as_mut()
-                        && title_button(ui, p, icon).on_hover_text(*tip).clicked()
-                    {
-                        **clicked = true;
-                    }
-                    if let Some(h) = self.help {
-                        title_button(ui, p, "question").on_hover_text(h);
-                    }
-                    buttons_left = ui.cursor().right();
-                    if truncate {
-                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                            ui.add(egui::Label::new(title).truncate());
-                        });
-                    }
-                });
-            });
-            let mut title_rect = header.response.rect;
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.spacing_mut().item_spacing.x = 6.0;
+                        if title_button(ui, p, "x").on_hover_text(aurora_i18n::tr!("common-close")).clicked() {
+                            close = true;
+                        }
+                        if title_button(ui, p, "minus")
+                            .on_hover_text(if minimized {
+                                aurora_i18n::tr!("common-expand")
+                            } else {
+                                aurora_i18n::tr!("common-collapse")
+                            })
+                            .clicked()
+                        {
+                            toggle_min = true;
+                        }
+                        if let Some((icon, tip, clicked)) = self.action.as_mut()
+                            && title_button(ui, p, icon).on_hover_text(*tip).clicked()
+                        {
+                            **clicked = true;
+                        }
+                        if let Some(h) = self.help {
+                            title_button(ui, p, "question").on_hover_text(h);
+                        }
+                        buttons_left = ui.cursor().right();
+                        if truncate {
+                            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                {
+                                    let icon = framed_header.unwrap_or_else(|| workspace::window_icon(self.id));
+                                    let (rect, _) = ui.allocate_exact_size(Vec2::splat(17.0), Sense::hover());
+                                    if let Some(t) = super::icons::global(icon) {
+                                        ui.painter().image(
+                                            t.id(),
+                                            rect,
+                                            egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                                            p.violet_light,
+                                        );
+                                    }
+                                }
+                                ui.add(egui::Label::new(title).truncate());
+                            });
+                        }
+                    });
+                })
+            };
+            let header = if framed_header.is_some() {
+                egui::Frame::new()
+                    .fill(p.bar)
+                    .inner_margin(egui::Margin {
+                        left: 12,
+                        right: 12,
+                        top: 10,
+                        bottom: 10,
+                    })
+                    .show(ui, &mut header_content)
+                    .response
+            } else {
+                header_content(ui).response
+            };
+            let mut title_rect = header.rect;
+            if framed_header.is_some() {
+                ui.painter()
+                    .hline(header.rect.x_range(), header.rect.bottom(), Stroke::new(1.0, p.raised));
+            }
             title_rect.max.x = buttons_left;
             // Keep the title buttons outside the double-click target; Window
             // still owns dragging the bar, including when it is minimized.
@@ -242,11 +310,24 @@ impl<'a> Floater<'a> {
                 toggle_min = true;
             }
             if !minimized {
-                ui.add_space(2.0);
+                if framed_header.is_none() {
+                    ui.separator();
+                    ui.add_space(5.0);
+                }
                 out = Some(body(ui));
             }
         });
         if let Some(response) = response {
+            if let Some((painter, slot)) = glass_slot {
+                let radius = f32::from(ctx.global_style().visuals.window_corner_radius.nw);
+                workspace::finish_glass(
+                    &painter.with_clip_rect(response.response.rect),
+                    slot,
+                    response.response.rect,
+                    p,
+                    radius,
+                );
+            }
             if !minimized {
                 ctx.data_mut(|d| d.insert_persisted(expanded_id, response.response.rect.size()));
             }
@@ -357,19 +438,22 @@ pub fn tabs(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&st
         let extra = ((ui.available_width() - total) / n).max(0.0);
         for (i, (label, enabled)) in labels.iter().enumerate() {
             let w = text_w[i] * compact + extra.min(40.0);
-            let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, 22.0), if *enabled { Sense::click() } else { Sense::hover() });
+            let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, 30.0), if *enabled { Sense::click() } else { Sense::hover() });
             let sel = *selected == i;
             let fill = if sel {
-                p.raised
+                p.violet.gamma_multiply(0.18)
             } else if resp.hovered() && *enabled {
                 p.field.gamma_multiply(1.4)
             } else {
-                p.field
+                Color32::TRANSPARENT
             };
-            ui.painter().rect_filled(rect, CornerRadius::same(1), fill);
+            ui.painter().rect_filled(rect, CornerRadius::same(4), fill);
             if sel {
                 ui.painter().rect_filled(
-                    egui::Rect::from_min_size(rect.left_bottom() - Vec2::new(0.0, 2.0), Vec2::new(rect.width(), 2.0)),
+                    egui::Rect::from_min_size(
+                        rect.left_bottom() - Vec2::new(-6.0, 2.0),
+                        Vec2::new((rect.width() - 12.0).max(1.0), 2.0),
+                    ),
                     0.0,
                     p.violet,
                 );
@@ -457,7 +541,7 @@ pub fn flat_button(ui: &mut egui::Ui, p: &Palette, label: &str) -> egui::Respons
     ui.add(
         egui::Button::new(RichText::new(label).size(12.0).color(p.ink))
             .fill(p.raised)
-            .corner_radius(CornerRadius::same(2))
+            .corner_radius(ui.visuals().widgets.inactive.corner_radius)
             .min_size(Vec2::new(0.0, 20.0)),
     )
 }
@@ -468,7 +552,7 @@ pub fn flat_button_sized(ui: &mut egui::Ui, p: &Palette, label: &str, size: Vec2
         size,
         egui::Button::new(RichText::new(label).size(12.0).color(p.ink))
             .fill(p.raised)
-            .corner_radius(CornerRadius::same(2))
+            .corner_radius(ui.visuals().widgets.inactive.corner_radius)
             .truncate(),
     )
     .on_hover_text(label)
@@ -480,7 +564,7 @@ pub fn primary_button_sized(ui: &mut egui::Ui, p: &Palette, label: &str, size: V
         size,
         egui::Button::new(RichText::new(label).size(12.0).strong().color(p.ink))
             .fill(p.violet)
-            .corner_radius(CornerRadius::same(2))
+            .corner_radius(ui.visuals().widgets.inactive.corner_radius)
             .truncate(),
     )
     .on_hover_text(label)

@@ -389,8 +389,8 @@ impl MiniMap {
         // FSMiniMapOpacity (0.66); dragged anywhere, resized by its corner
         let screen = ctx.content_rect();
         let frame = egui::Frame::new()
-            .fill(Color32::from_rgba_unmultiplied(32, 32, 32, 168))
-            .corner_radius(egui::CornerRadius::same(2))
+            .fill(Color32::from_rgba_unmultiplied(p.panel.r(), p.panel.g(), p.panel.b(), 168))
+            .corner_radius(egui::CornerRadius::same(8))
             .inner_margin(egui::Margin::same(2));
         egui::Window::new(aurora_i18n::tr!("common-mini-map"))
             .id(egui::Id::new("minimap"))

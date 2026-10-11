@@ -291,6 +291,11 @@ Les scénarios de démo sont décrits dans
 
 ### Test switches
 
+The compact build inspector also accepts `AURORA_DEMO_BUILD_TAB=transform|shape`;
+`object` remains an alias for the transformation section. Window redesign
+scenarios use the existing inventory, appearance, land, profile, environment
+and preferences switches listed in [docs/TESTING.md](docs/TESTING.md).
+
 Local and editing HUD zoom scenarios (`AURORA_DEMO_HUDS=scale|scale-copy|scale-touch|scale-reset|scale-forget|scale-ctrl|scale-key|scale-secondary|edit-scroll`)
 are described in [the testing guide](docs/TESTING.md#huds).
 

@@ -92,47 +92,14 @@ pub fn toolbar(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi, prefs: &mut
         st.filters.clone_from(&prefs.filter_defaults);
         st.filters_initialized = true;
     }
-    let filter_label = if st.filters.active() {
-        aurora_i18n::tr!("ui-inventory-controls-filters-2")
-    } else {
-        aurora_i18n::tr!("ui-inventory-controls-filters")
-    };
-    let clear_label = if st.links_filter.is_some() {
-        aurora_i18n::tr!("ui-inventory-controls-exit-linked-mode")
-    } else if !st.search.is_empty() || st.filters.active() {
-        aurora_i18n::tr!("common-clear")
-    } else {
-        ""
-    };
-    let labels = [
-        filter_label,
-        aurora_i18n::tr!("common-preferences"),
-        clear_label,
-        aurora_i18n::tr!("common-collapse"),
-        aurora_i18n::tr!("common-expand"),
-    ];
-    let width: f32 = labels
-        .iter()
-        .filter(|label| !label.is_empty())
-        .map(|label| {
-            ui.fonts_mut(|fonts| {
-                fonts
-                    .layout_no_wrap((*label).into(), egui::FontId::proportional(12.0), p.ink)
-                    .size()
-                    .x
-            }) + 24.0
-                + ui.spacing().item_spacing.x
-        })
-        .sum();
-    if ui.available_width() < width {
-        ui.horizontal_wrapped(|ui| filter_actions(ui, p, st));
-        ui.horizontal(|ui| tree_actions(ui, p, st));
-    } else {
-        ui.horizontal(|ui| {
-            filter_actions(ui, p, st);
-            tree_actions(ui, p, st);
+    ui.horizontal(|ui| {
+        filter_actions(ui, p, st);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            crate::ui::widgets::icon_menu(ui, p, "list", aurora_i18n::tr!("ui-places-show-more-options"), |ui| {
+                tree_actions(ui, p, st);
+            });
         });
-    }
+    });
 }
 
 fn filter_actions(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi) {
