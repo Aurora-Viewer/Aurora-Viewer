@@ -142,7 +142,11 @@ fn row(ui: &mut egui::Ui, p: &Palette, it: &InvItem, desc: &str, selected: bool,
     } else {
         format!("{} {desc}", it.name)
     };
-    let marker = worn.map(|label| ui.painter().layout_no_wrap(label.into(), egui::FontId::proportional(12.0), p.ink));
+    let marker_color = p.ink.gamma_multiply(0.85);
+    let marker = worn.map(|label| {
+        ui.painter()
+            .layout_no_wrap(label.into(), egui::FontId::proportional(12.0), marker_color)
+    });
     let marker_width = marker.as_ref().map_or(0.0, |g| g.size().x + 10.0);
     let galley = egui::WidgetText::from(RichText::new(&text).size(12.0).color(p.ink)).into_galley(
         ui,
@@ -155,16 +159,16 @@ fn row(ui: &mut egui::Ui, p: &Palette, it: &InvItem, desc: &str, selected: bool,
     let paint = |pos, galley: std::sync::Arc<egui::Galley>| {
         // LLFontGL BOLD_OFFSET: egui's strong text changes color, not weight.
         if worn.is_some() {
-            let ppp = ui.ctx().pixels_per_point();
-            painter.galley(pos + Vec2::new(ppp.round().max(1.0) / ppp, 0.0), galley.clone(), p.ink);
+            painter.galley(pos + widgets::bold_text_offset(ui), galley.clone(), p.ink);
         }
         painter.galley(pos, galley, p.ink);
     };
     paint(egui::pos2(rect.left() + 25.0, rect.center().y - galley.size().y * 0.5), galley);
     if let Some(marker) = marker {
-        paint(
+        painter.galley(
             egui::pos2(rect.right() - marker.size().x - 3.0, rect.center().y - marker.size().y * 0.5),
             marker,
+            marker_color,
         );
     }
     response.on_hover_text(match worn {
@@ -247,17 +251,38 @@ fn gallery(
                     }
                     gallery::context_menu(&response, p, world, st, *id, actions);
                     let current = model::base(&world.inventory) == Some(*id);
-                    let text = if current {
-                        aurora_i18n::tr!("ui-appearance-worn", value0 = folder.info.name.to_string())
-                    } else {
-                        folder.info.name.clone()
-                    };
-                    ui.add(egui::Label::new(RichText::new(text).size(12.0).color(if current { p.violet_light } else { p.ink })).truncate());
+                    let color = if current { p.violet_light } else { p.ink };
+                    let font_id = egui::FontId::proportional(12.0);
+                    let label = outfit_label(&folder.info.name, current, font_id.clone(), color);
+                    let galley =
+                        egui::WidgetText::from(label).into_galley(ui, Some(egui::TextWrapMode::Truncate), width, egui::TextStyle::Body);
+                    let response = ui.add(egui::Label::new(galley.clone()));
+                    if current && ui.is_rect_visible(response.rect) {
+                        let name = egui::WidgetText::from(RichText::new(&folder.info.name).font(font_id).color(color)).into_galley(
+                            ui,
+                            Some(egui::TextWrapMode::Truncate),
+                            galley.size().x,
+                            egui::TextStyle::Body,
+                        );
+                        let clip = response.rect.intersect(ui.clip_rect());
+                        ui.painter()
+                            .with_clip_rect(clip)
+                            .galley(response.rect.min + widgets::bold_text_offset(ui), name, color);
+                    }
                 });
             }
         });
         ui.add_space(12.0);
     }
+}
+
+fn outfit_label(name: &str, current: bool, font_id: egui::FontId, color: egui::Color32) -> egui::text::LayoutJob {
+    let suffix = if current {
+        aurora_i18n::tr!("ui-appearance-worn", value0 = "")
+    } else {
+        String::new()
+    };
+    widgets::name_with_suffix(name, &suffix, font_id, color)
 }
 
 fn outfit_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceUi, outfits: &[Uuid], actions: &mut Vec<Action>) {
@@ -268,12 +293,9 @@ fn outfit_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut Appearanc
             continue;
         };
         let is_current = current == Some(*id);
-        let label = if is_current {
-            aurora_i18n::tr!("ui-appearance-worn", value0 = f.info.name.to_string())
-        } else {
-            f.info.name.clone()
-        };
-        let galley = egui::WidgetText::from(RichText::new(label).color(p.ink)).into_galley(
+        let font_id = egui::TextStyle::Button.resolve(ui.style());
+        let label = outfit_label(&f.info.name, is_current, font_id.clone(), p.ink);
+        let galley = egui::WidgetText::from(label).into_galley(
             ui,
             Some(egui::TextWrapMode::Extend),
             ui.available_width() - ui.spacing().indent,
@@ -340,9 +362,9 @@ fn outfit_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut Appearanc
             // LLOutfitsList::onHighlightBaseOutfit marks the current title BOLD.
             // Match the item rows' LLFontGL offset: egui's strong is only a color.
             let rect = response.header_response.rect;
-            let ppp = ui.ctx().pixels_per_point();
             let pos = egui::pos2(rect.left() + ui.spacing().indent, rect.center().y - galley.size().y * 0.5);
-            ui.painter().galley(pos + Vec2::new(ppp.round().max(1.0) / ppp, 0.0), galley, p.ink);
+            let name = ui.painter().layout_no_wrap(f.info.name.clone(), font_id, p.ink);
+            ui.painter().galley(pos + widgets::bold_text_offset(ui), name, p.ink);
         }
         if reveal && response.body_response.is_some() {
             response.header_response.scroll_to_me(Some(egui::Align::Min));
