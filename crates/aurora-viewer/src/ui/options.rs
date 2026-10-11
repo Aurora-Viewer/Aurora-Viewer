@@ -1963,7 +1963,7 @@ fn binding_cell(
 
 /// "Raccourcis": every rebindable action, two bindings each.
 fn keys_page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi) -> bool {
-    let mut c = huds::shortcuts_group(ui, p, s, st);
+    let mut c = false;
     ui.label(
         RichText::new(aurora_i18n::tr!("ui-options-click-a-shortcut-then-press-the-desired-key-or"))
             .size(12.0)
@@ -1989,6 +1989,9 @@ fn keys_page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsU
                 });
             }
         });
+        if *section == aurora_i18n::text("common-windows") {
+            c |= huds::shortcuts_group(ui, p, s, st);
+        }
     }
     if super::widgets::flat_button(ui, p, aurora_i18n::tr!("ui-options-restore-default-shortcuts")).clicked() {
         s.keybinds = Default::default();
