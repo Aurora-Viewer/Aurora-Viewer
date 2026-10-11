@@ -54,4 +54,5 @@ fn main() {
         .unwrap_or_else(|error| panic!("Cannot determine Aurora's version: {error}"));
     println!("cargo:rustc-env=AURORA_COMPILED_VERSION={}", version.display);
     println!("cargo:rustc-env=AURORA_LOGIN_VERSION={}", version.login);
+    println!("cargo:rustc-env=AURORA_BUILD_COMMIT={}", commit.as_deref().unwrap_or("unknown"));
 }

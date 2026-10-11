@@ -53,6 +53,8 @@ pub struct Settings {
     pub language: String,
     /// Firestorm LanguageIsPublic, exposed through llGetAgentLanguage.
     pub language_is_public: bool,
+    /// Alpha feedback shortcut; Help and login remain available.
+    pub show_bug_report: bool,
     /// ShowHUDAttachments, enabled by default in Firestorm.
     pub show_huds: bool,
     /// Debug overlays (not saved).
@@ -430,6 +432,7 @@ impl Default for Settings {
         Settings {
             language: "default".into(),
             language_is_public: true,
+            show_bug_report: true,
             show_huds: true,
             debug: DebugView::default(),
             build: Default::default(),

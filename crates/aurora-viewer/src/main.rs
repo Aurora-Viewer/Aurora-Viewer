@@ -4,6 +4,7 @@
 
 mod agent;
 mod app;
+mod bug_report;
 mod build;
 mod cache;
 mod camera;

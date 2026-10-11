@@ -7,6 +7,9 @@
 . "$PSScriptRoot\common.ps1"
 
 $labels = @(
+    # retours des testeurs (issues publiques)
+    @{ Name = 'bug'; Color = 'F87171'; Desc = 'Problème signalé par un utilisateur' },
+    @{ Name = 'alpha'; Color = '8B5CF6'; Desc = 'Rapport de l’alpha test Aurora' },
     # type de changement (notes de version, .github/release.yml)
     @{ Name = 'nouveauté'; Color = '8B5CF6'; Desc = 'Nouvelle fonctionnalité' },
     @{ Name = 'correctif'; Color = 'F87171'; Desc = 'Correction de bug' },
@@ -26,6 +29,6 @@ $labels = @(
 foreach ($l in $labels) {
     Invoke-Checked "label $($l.Name)" { gh label create $l.Name --color $l.Color --description $l.Desc --force }
 }
-$defaults = 'bug', 'documentation', 'duplicate', 'enhancement', 'good first issue', 'help wanted', 'invalid', 'question', 'wontfix'
+$defaults = 'documentation', 'duplicate', 'enhancement', 'good first issue', 'help wanted', 'invalid', 'question', 'wontfix'
 foreach ($d in $defaults) { gh label delete $d --yes 2>$null | Out-Null }
 Write-Host "Étiquettes à jour." -ForegroundColor Green

@@ -10,6 +10,7 @@ use egui::{Color32, RichText, Vec2};
 
 #[derive(Default)]
 pub enum BarAction {
+    ReportBug,
     ShowHuds(bool),
     HudZoom(f32),
     #[default]
@@ -47,6 +48,7 @@ pub enum BarAction {
 }
 
 pub struct StatusInfo<'a> {
+    pub show_bug_report: bool,
     pub show_huds: bool,
     pub hud_zoom: f32,
     pub region: &'a str,
@@ -499,6 +501,11 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         });
     }
     ui.menu_button(small(aurora_i18n::tr!("common-help"), p.ink), |ui| {
+        if ui.button(aurora_i18n::tr!("bug-title")).clicked() {
+            *action = BarAction::ReportBug;
+            ui.close();
+        }
+        ui.separator();
         ui.label(small(
             aurora_i18n::tr!("common-aurora-viewer", value0 = aurora_version::version().to_string()),
             p.muted,
@@ -735,6 +742,9 @@ pub fn top_bars(
                     notif.open = !notif.open;
                 }
                 // online status (away, do not disturb, automatic responses)
+                if st.show_bug_report && icon_button(ui, p, icons, "bug", aurora_i18n::tr!("bug-title"), 17.0) {
+                    action = BarAction::ReportBug;
+                }
                 status_dot(ui, p, st.status, &mut action);
                 ui.add_space(2.0);
                 // back / forward through the teleport history, home (Firestorm navigation bar)

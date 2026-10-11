@@ -7,6 +7,11 @@ pub const fn version() -> &'static str {
     env!("AURORA_COMPILED_VERSION")
 }
 
+/// Build revision for a diagnostic report, including builds at an exact tag.
+pub const fn commit() -> &'static str {
+    env!("AURORA_BUILD_COMMIT")
+}
+
 /// HTTP clients use the same version as the interface.
 pub const fn user_agent() -> &'static str {
     concat!("AuroraViewer/", env!("AURORA_COMPILED_VERSION"))

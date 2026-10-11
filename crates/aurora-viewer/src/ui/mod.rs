@@ -6,6 +6,7 @@ pub mod aurora_bg;
 pub mod avatar_picker;
 pub mod backdrop;
 pub mod bars;
+pub mod bug_report;
 pub mod chat;
 pub mod colors;
 pub mod contacts;
