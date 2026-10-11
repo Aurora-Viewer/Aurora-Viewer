@@ -1011,8 +1011,8 @@ impl App {
         }
         if let NetEvent::InventoryPreview { item, asset, result } = ev {
             if self.ao_ui.import == Some(item) {
-                self.ao_import_result(item, result);
-                return;
+                // A shared download can serve both an AO import and an editor.
+                self.ao_import_result(item, result.clone());
             }
             self.inventory_preview(item, asset, result);
             return;
