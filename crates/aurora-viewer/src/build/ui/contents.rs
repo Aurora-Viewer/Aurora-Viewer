@@ -182,17 +182,25 @@ fn item_row(
             ui.label(permissions.tooltip());
         });
         let item_modify = item.owner_mask & perm::MODIFY != 0;
+        let script = item.asset_type == AT_LSL_TEXT;
         let can_take = item.owner_mask & perm::COPY != 0 && item.owner_mask & perm::TRANSFER != 0
             || tool.props.get(&object_id).is_some_and(|pr| pr.owner_id == world.agent_id);
         r.context_menu(|ui| {
             if ui
-                .add_enabled(item.asset_type == 7, egui::Button::new(aurora_i18n::tr!("common-open")))
+                .add_enabled(script || item.asset_type == 7, egui::Button::new(aurora_i18n::tr!("common-open")))
                 .on_disabled_hover_text(aurora_i18n::tr!(
                     "build-ui-contents-opening-items-inside-an-object-is-not-available-yet"
                 ))
                 .clicked()
             {
-                tool.ui.open_notecard = Some((object_id, item.item_id));
+                if script {
+                    tool.ui.requests.push(super::Request::Script {
+                        object: object_id,
+                        item: item.item_id,
+                    });
+                } else {
+                    tool.ui.open_notecard = Some((object_id, item.item_id));
+                }
                 ui.close();
             }
             if ui.button(aurora_i18n::tr!("common-properties")).clicked() {
@@ -241,7 +249,12 @@ fn item_row(
             }
         });
         if r.double_clicked() {
-            if item.asset_type == 7 {
+            if script {
+                tool.ui.requests.push(super::Request::Script {
+                    object: object_id,
+                    item: item.item_id,
+                });
+            } else if item.asset_type == 7 {
                 tool.ui.open_notecard = Some((object_id, item.item_id));
             } else if editable && item_modify {
                 tool.ui.rename = Some((item.item_id, item.name.clone()));

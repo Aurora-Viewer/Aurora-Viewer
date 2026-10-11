@@ -7,6 +7,7 @@ mod build_cmds;
 mod inventory_preview;
 mod inventory_upload;
 mod object_actions;
+mod scripts;
 mod task_notecard;
 
 use crate::caps::{self, EqEvent};
@@ -158,6 +159,7 @@ struct Session<'a> {
     decode_failures: HashMap<&'static str, u64>,
     inventory_uploads: inventory_upload::Uploads,
     inventory_previews: inventory_preview::Previews,
+    script_transfers: scripts::ScriptTransfers,
     inventory_callbacks: HashMap<u32, (Instant, bool)>,
     inventory_merchant_pending: bool,
     next_inventory_callback: u32,
@@ -258,6 +260,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         decode_failures: HashMap::new(),
         inventory_uploads: Default::default(),
         inventory_previews: Default::default(),
+        script_transfers: Default::default(),
         inventory_callbacks: HashMap::new(),
         notecard_copy_tx,
         notecard_copies: HashMap::new(),
@@ -669,6 +672,7 @@ impl Session<'_> {
 
     fn tick(&mut self) {
         self.expire_task_inventory();
+        self.expire_script_transfers();
         self.expire_inventory_uploads();
         self.expire_inventory_previews();
         let before = self.inventory_callbacks.len();
@@ -1437,6 +1441,21 @@ impl Session<'_> {
                 item,
                 data,
             } => self.save_task_notecard(request, handle, object, item, data),
+            NetCommand::LoadScript {
+                request,
+                target,
+                handle,
+                owner,
+                asset,
+            } => self.load_script(request, target, handle, owner, asset),
+            NetCommand::SaveScript {
+                request,
+                target,
+                handle,
+                mono,
+                running,
+                source,
+            } => self.save_script(request, target, handle, mono, running, source),
             NetCommand::CreateInventoryWearable { parent, kind, name, data } => self.create_wearable(parent, kind, name, data),
             NetCommand::RestoreInventoryObject(it) => {
                 let mut m = RezRestoreToWorld::default();
@@ -2283,6 +2302,7 @@ impl Session<'_> {
         let id = pkt.id;
         if self.dispatch_inventory_upload(from, pkt)?
             || self.dispatch_inventory_preview(from, pkt)?
+            || self.dispatch_script_transfer(from, pkt)?
             || self.dispatch_object_actions(from, pkt)?
             || self.dispatch_social(from, pkt)?
             || self.dispatch_land(from, pkt)?

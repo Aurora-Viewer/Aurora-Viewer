@@ -150,6 +150,7 @@ capture.
 | `AURORA_DEMO_BUILD="<script>"` | Script des outils de construction |
 | `AURORA_DEMO_BUILD_FRAME=<n>` | Image de départ du script de construction |
 | `AURORA_DEMO_BUILD_TAB=<onglet>` | Onglet de la fenêtre de construction |
+| `AURORA_DEMO_SCRIPTS=<mode>` | Édition et enregistrement de scripts hors ligne |
 | `AURORA_DEMO_LSL_BRIDGE=1` | Messages du bridge LSL de Firestorm (cachés) |
 | `AURORA_DEMO_FLEXIBLE=1` | Prims flexibles : gravité, tension, vent, force et parent mobile |
 
@@ -165,6 +166,15 @@ Pour vérifier l'édition, ajouter `AURORA_DEMO_BUILD=move,object:90000` ou
 `stretch,object:90000` : pivot sur la base, contour déformé, boîte droite
 translucide et poignées de taille. `stretch,object:90000,fz,100,0` tire la face
 opposée à la base ; le flexible garde sa courbure pendant le changement de taille.
+
+**`AURORA_DEMO_SCRIPTS=inventory|object|both|save|object-save|error|readonly`** :
+ouvre un éditeur de script depuis l'inventaire, le contenu d'un objet ou
+les deux à l'image 280. `save` et `object-save` enregistrent une source
+modifiée ; `error` simule un diagnostic de compilation ; `readonly`
+refuse la lecture d'un script personnel sans droit Modifier. Les sources
+enregistrées peuvent être fermées puis rouvertes dans la même session.
+Saisir `AURORA_DEMO_SYNTAX_ERROR` simule une erreur du serveur ; la démo
+n'exécute pas de compilateur LSL local.
 
 **`AURORA_DEMO_ACTIONS`** — curseurs et clics d'objet comme Firestorm.
 Aucun L$ réel ni connexion à une grille.

@@ -52,6 +52,10 @@ pub enum Request {
     /// « p » of the Object tab: read the system clipboard for this vector
     /// (0 position, 1 size, 2 rotation) and call BuildTool::paste_vector.
     PasteVector(usize),
+    Script {
+        object: Uuid,
+        item: Uuid,
+    },
 }
 
 /// Where a texture chosen in the picker goes.

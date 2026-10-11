@@ -90,6 +90,8 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
 
 ## `aurora-viewer` en détail
 
+Les scripts utilisent un éditeur commun (`ui/scripts.rs`, actions dans `app/scripts.rs`) pour les éléments de l'inventaire et le contenu d'une prim. Chaque document garde sa source, sa version enregistrée et ses requêtes en cours. `aurora-net/src/session/scripts.rs` charge les sources avec `TransferRequest` et le contexte de permissions de l'inventaire ; `aurora-net/src/scripts.rs` enregistre et compile par `UpdateScriptAgent` / `UpdateScriptTask`, avec retour distinct de l'asset enregistré et des diagnostics de compilation. Aucun transfert ne bloque la boucle d'image.
+
 | Dossier / fichier | Contenu |
 |---|---|
 | `ui/inventory/document.rs`, `aurora-net/src/inventory/notecard.rs` | Cycle d’édition des documents : brouillon et sauvegarde corrélés à la fenêtre, fermeture après confirmation, refus conservant le texte ; import des notecards v1 / v2, export v2 avec longueur UTF-8 bornée et conservation des permissions des pièces jointes encore référencées |

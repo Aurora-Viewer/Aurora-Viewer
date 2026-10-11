@@ -52,6 +52,8 @@ pub(super) fn open(inv: &Inventory, id: Uuid, st: &mut InventoryUi, prefs: &Inve
             },
             point: 0,
         }));
+    } else if it.asset_type == 10 {
+        actions.push(InvAction::Preview(original));
     } else {
         st.preview = Some(original);
         st.reset_document();

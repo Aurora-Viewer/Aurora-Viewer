@@ -22,6 +22,7 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "GetDisplayNames",
     "GetMesh",
     "GetMesh2",
+    "GetMetadata",
     // build floater: land impact, object weights, physics shape costs
     "GetObjectCost",
     "GetObjectPhysicsData",

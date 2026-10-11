@@ -119,6 +119,27 @@ notecard-demo-text =
     Accents: été, forêt. Emoji: 🐺
 notecard-demo-edit =
     { "\u000A" }Text added during the test.
+script-save-unconfirmed = The server did not confirm that the script was saved.
+script-source-too-large = The script exceeds the maximum size of 1 MB.
+script-save-failed = Saving failed. Your changes have been kept; try again.
+script-timeout = The simulator did not respond in time. Try again.
+script-transfer-invalid = The script transfer is incomplete or invalid. Try again.
+script-no-permission = You need Copy and Modify permissions to read and edit this script.
+script-load-failed = Could not load the script. Refresh to try again.
+script-save-unavailable = This region does not support saving scripts.
+script-saving = Saving and compiling…
+script-saved = Script saved and compiled.
+script-compile-failed = Source saved, but compilation failed. Correct the errors below.
+script-save-hint = Save and compile the script (Ctrl+S).
+script-mono-hint = Compile with Mono. Uncheck to use the classic LSL compiler.
+script-running = Running
+script-reset = Reset
+script-read-only = Read only: editing is not allowed or the item is no longer available.
+script-discard = Discard changes
+script-waiting-running = Waiting for the script’s running state…
+script-retry = Retry
+script-metadata-failed = Could not read the script’s associated experience. Try again; your changes have been kept.
+script-disconnected = Disconnected. The unsaved source has been kept; you can copy it.
 exit-title = Close Aurora Viewer?
 exit-world-body = Quit the viewer or return to the login screen?
 exit-login-body = Do you want to quit Aurora Viewer?

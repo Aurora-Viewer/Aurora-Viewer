@@ -12,6 +12,7 @@ pub mod objcache;
 pub mod objects;
 pub mod outfits;
 pub mod profile;
+pub mod scripts;
 mod session;
 pub mod social;
 pub mod stats;

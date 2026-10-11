@@ -119,6 +119,27 @@ notecard-demo-text =
     Accents : été, forêt. Emoji : 🐺
 notecard-demo-edit =
     { "\u000A" }Texte ajouté pendant le test.
+script-save-unconfirmed = Le serveur n’a pas confirmé l’enregistrement du script.
+script-source-too-large = Le script dépasse la taille maximale de 1 Mo.
+script-save-failed = L’enregistrement a échoué. Vos modifications sont conservées ; réessayez.
+script-timeout = Le simulateur n’a pas répondu à temps. Réessayez.
+script-transfer-invalid = Le transfert du script est incomplet ou invalide. Réessayez.
+script-no-permission = Vous devez disposer des droits Copier et Modifier pour lire et modifier ce script.
+script-load-failed = Impossible de charger le script. Actualisez pour réessayer.
+script-save-unavailable = Cette région ne permet pas d’enregistrer des scripts.
+script-saving = Enregistrement et compilation en cours…
+script-saved = Script enregistré et compilé.
+script-compile-failed = Source enregistrée, mais compilation échouée. Corrigez les erreurs ci-dessous.
+script-save-hint = Enregistrer et compiler le script (Ctrl+S).
+script-mono-hint = Compiler avec Mono. Décochez pour utiliser le compilateur LSL classique.
+script-running = En cours d’exécution
+script-reset = Réinitialiser
+script-read-only = Lecture seule : modification non autorisée ou élément devenu indisponible.
+script-discard = Ignorer les modifications
+script-waiting-running = En attente de l’état d’exécution du script…
+script-retry = Réessayer
+script-metadata-failed = Impossible de lire l’expérience associée au script. Réessayez ; vos modifications sont conservées.
+script-disconnected = Connexion interrompue. La source non enregistrée est conservée ; vous pouvez la copier.
 exit-title = Fermer Aurora Viewer ?
 exit-world-body = Quitter le viewer ou revenir à l’écran de connexion ?
 exit-login-body = Voulez-vous quitter Aurora Viewer ?

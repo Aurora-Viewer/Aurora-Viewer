@@ -33,6 +33,7 @@ mod inventory;
 mod inventory_drag;
 mod inventory_thumbnail;
 mod object_actions;
+mod scripts;
 mod task_notecards;
 
 enum Screen {
@@ -320,6 +321,8 @@ pub struct App {
     inventory_drag: inventory_drag::InventoryDrag,
     task_notecards: std::collections::HashMap<(uuid::Uuid, uuid::Uuid), task_notecards::TaskNotecard>,
     demo_documents: std::collections::HashMap<uuid::Uuid, Vec<u8>>,
+    script_editors: ui::scripts::Editors,
+    demo_script_sources: std::collections::HashMap<aurora_net::scripts::ScriptTarget, String>,
     inventory_images: inventory_thumbnail::ImageJobs,
     appearance_ui: ui::appearance::AppearanceUi,
     last_social_poll: Instant,
@@ -601,6 +604,8 @@ impl App {
             inventory_drag: Default::default(),
             task_notecards: Default::default(),
             demo_documents: Default::default(),
+            script_editors: Default::default(),
+            demo_script_sources: Default::default(),
             inventory_images: Default::default(),
             appearance_ui: Default::default(),
             last_social_poll: Instant::now(),
@@ -678,6 +683,9 @@ impl App {
                         self.on_app_event(e);
                     }
                 }
+                return;
+            }
+            if self.demo_script_command(&cmd) {
                 return;
             }
             if matches!(cmd, NetCommand::RequestInventoryMerchant) {
@@ -963,6 +971,8 @@ impl App {
         self.record_inventory_logout();
         self.inventory_ui = Default::default();
         self.task_notecards.clear();
+        self.script_editors.disconnected();
+        self.demo_script_sources.clear();
         self.hud_drag = None;
         self.media.clear();
         self.media.openid.clear();
@@ -1067,6 +1077,14 @@ impl App {
             self.task_notecard_saved(request, object, item, result);
             return;
         }
+        if let NetEvent::ScriptLoaded { request, target, result } = ev {
+            self.script_editors.loaded(request, target, result);
+            return;
+        }
+        if let NetEvent::ScriptSaved { request, target, result } = ev {
+            self.script_saved(request, target, result);
+            return;
+        }
         if let NetEvent::InventoryThumbnailSource {
             request,
             asset,
@@ -1151,6 +1169,14 @@ impl App {
                 mono,
             } => {
                 self.build.contents.running.insert((object_id, item_id), (running, mono));
+                self.script_editors.running(
+                    aurora_net::scripts::ScriptTarget {
+                        object: object_id,
+                        item: item_id,
+                    },
+                    running,
+                    mono,
+                );
             }
             NetEvent::PhysicsProperties(list) => {
                 for (local_id, params) in list {
@@ -2197,6 +2223,10 @@ impl App {
     }
 
     fn confirm_exit(&mut self, action: ui::exit::Action) {
+        if action != ui::exit::Action::Cancel && !self.script_editors.prepare_exit() {
+            self.exit_prompt.open = false;
+            return;
+        }
         if !self.exit_prompt.confirm(action, Instant::now()) {
             return;
         }
@@ -2411,6 +2441,7 @@ impl App {
                 let text = self.gfx.as_mut().and_then(|g| g.egui_state.clipboard_text()).unwrap_or_default();
                 self.build.paste_vector(&mut self.world, &self.settings.build, which, &text);
             }
+            Request::Script { object, item } => self.open_script(aurora_net::scripts::ScriptTarget { object, item }),
         }
         self.flush_build();
     }
@@ -2427,6 +2458,7 @@ impl App {
         if !self.demo {
             return;
         }
+        self.demo_script_steps();
         // AURORA_DEMO_HOVER=1: the cursor swept over the scene, then still
         if let Some(g) = &self.gfx
             && let Some(cursor) = crate::demo::hover_sweep(self.frame_count, g.renderer.size())
@@ -5064,6 +5096,8 @@ impl App {
                     progress,
                 );
                 self.sync_remembered_password();
+                // Keep disconnected script drafts accessible for copying.
+                let _ = self.script_editors.show(&ctx, &p);
             }
             Screen::Loading { since } => {
                 let stats = self.scene.textures.stats;
@@ -5539,12 +5573,16 @@ impl App {
                     ctx.set_cursor_icon(c);
                 }
                 a.object_confirm = ui::object_actions::show(&ctx, &p, &mut self.interactions, &self.world);
-                if let Some((object, item)) =
-                    ui::object_actions::show_contents(&ctx, &p, &self.skin.icons, &mut self.interactions, &self.world)
-                {
-                    self.open_task_notecard(object, item);
+                for document in ui::object_actions::show_contents(&ctx, &p, &self.skin.icons, &mut self.interactions, &self.world) {
+                    match document {
+                        ui::object_actions::ContentsOpen::Script(object, item) => {
+                            self.open_script(aurora_net::scripts::ScriptTarget { object, item })
+                        }
+                        ui::object_actions::ContentsOpen::Notecard(object, item) => self.open_task_notecard(object, item),
+                    }
                 }
                 self.show_task_notecards(&ctx, &p);
+                self.show_scripts(&ctx, &p);
                 for (id, r) in ui::notifications::show(&ctx, &p, &self.skin.icons, &mut self.world.notifications, &mut self.notif_ui) {
                     let (cmds, url) = self.world.respond_notification(id, r);
                     if cmds.iter().any(|c| matches!(c, NetCommand::AcceptLure { .. })) {
