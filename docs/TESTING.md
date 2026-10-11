@@ -391,6 +391,11 @@ grille.
   `image` capture la scène seule, `image-ui` conserve l’interface, `direct`
   sélectionne l’envoi direct. Dans tous ces modes, l’envoi reste local et
   n’ouvre ni GitHub ni le navigateur. Voir [BUG_REPORTING.md](BUG_REPORTING.md).
+  Modes de régression : `refresh` prend une capture puis active l’interface
+  à l’image 700 et la désactive à l’image 900 ; `language` bascule le formulaire
+  ouvert en anglais à l’image 700, puis en français à l’image 900. Capturer aux
+  images `650,850,1050` pour comparer. Pour tester le choix de langue dans les
+  Préférences, ne pas fournir l’argument `--language`.
 - **`AURORA_DEMO_LOGIN=remembered|empty`** : écran de connexion hors ligne
   avec un marqueur synthétique de mot de passe enregistré, ou un champ de
   mot de passe vide (aucun accès à une grille ni au coffre d'identifiants).

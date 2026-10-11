@@ -38,8 +38,15 @@ la configuration du dépôt. Le modèle d’issue est dans `.github/ISSUE_TEMPLA
 
 ## Données et fichiers
 
-Le texte visible dans l’aperçu est celui envoyé ou enregistré. Chaque champ
-automatique peut être décoché. Le nom de l’avatar et les diagnostics sont
+Le formulaire présente deux étapes : préparer le rapport, puis choisir l’envoi.
+Il tient sur une colonne avec trois onglets : Description, Image et Données.
+Les onglets restent visibles pendant le défilement. L’onglet Données permet
+de lire et de décocher chaque information automatique. Les libellés et les
+diagnostics suivent la langue de l’interface à chaque affichage. Le texte
+saisi est conservé tel quel. Les titres et valeurs techniques du fichier
+exporté restent en anglais pour les outils qui lisent les rapports. Les actions
+de copie, d’enregistrement et de nouveau rapport sont dans « Autres actions ».
+Le nom de l’avatar et les diagnostics sont
 décochés au départ. Aucun état de connexion SL ou réglage complet n’est
 sérialisé. Les diagnostics publics ne gardent que les catégories reconnues
 d’avertissement / erreur : une simple suppression des URL ou UUID ne suffirait
@@ -51,6 +58,9 @@ limités à 16 Mio, décodés avec des limites de dimensions/mémoire et réenco
 en PNG de 1920 pixels de côté au plus. Métadonnées, chemin et nom du fichier
 d’origine ne sont jamais joints. Une capture peut encore contenir des noms
 et du chat visibles : le testeur doit la relire.
+Après une première capture, changer « Inclure l’interface » refait la capture
+automatiquement, sans recocher son inclusion si le testeur l’avait exclue.
+Cette option ne remplace jamais une image importée depuis un fichier.
 
 Chaque enregistrement crée un dossier sous `data/bug-reports/`, à côté de
 `data/logs/`. Le sous-dossier `public` contient le texte choisi et, si incluse,
@@ -67,6 +77,11 @@ Les modes `details`, `image`, `image-ui` et `direct` montrent respectivement
 les informations avec le lieu décoché, une capture de la scène, une capture
 avec l’interface et le choix d’envoi direct. Le formulaire s’ouvre après le
 chargement de la scène (image 550).
+`refresh` prend une capture sans interface puis active l’option à l’image 700
+et la désactive à l’image 900. `language` passe la fenêtre déjà ouverte en
+anglais à l’image 700, puis en français à l’image 900, sans changer les
+préférences enregistrées. Pour tester manuellement la langue dans Préférences,
+lancer sans argument `--language`, qui forcerait la langue du processus.
 Tester les champs décochés, la copie, l’export, une image avec retrait puis
 réajout, une capture avec et sans interface, le redimensionnement et les deux
 langues. Tester également l’entrée depuis la connexion et le menu Aide.

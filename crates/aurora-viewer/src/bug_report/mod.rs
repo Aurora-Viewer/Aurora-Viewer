@@ -15,6 +15,8 @@ pub struct Field {
     pub heading: &'static str,
     pub value: String,
     pub included: bool,
+    /// Localized presentation of composite values; the export stays stable.
+    pub details: Vec<(&'static str, String)>,
 }
 
 impl Field {
@@ -24,7 +26,33 @@ impl Field {
             heading,
             value: value.into(),
             included,
+            details: Vec::new(),
         }
+    }
+
+    pub fn display_value(&self) -> String {
+        if !self.details.is_empty() {
+            return self
+                .details
+                .iter()
+                .map(|(key, value)| {
+                    let value = match value.as_str() {
+                        "true" => aurora_i18n::tr!("common-yes"),
+                        "false" => aurora_i18n::tr!("common-no"),
+                        _ => value,
+                    };
+                    format!("{} : {value}", aurora_i18n::text(key))
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+        }
+        if self.value == "Unavailable" {
+            return aurora_i18n::tr!("bug-unavailable").into();
+        }
+        if self.label == "bug-build" && self.value == "debug" {
+            return aurora_i18n::tr!("bug-build-development").into();
+        }
+        self.value.clone()
     }
 }
 

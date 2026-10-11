@@ -128,10 +128,13 @@ The texture memory budget is set automatically from the detected VRAM.
 ## Signaler un bug pendant l’alpha
 
 L’icône de bug dans la barre du haut, le menu Aide et l’écran de connexion
-ouvrent le même formulaire. Décrivez le problème, décochez les informations
-à garder privées et relisez le texte public exact. La capture et les diagnostics
-filtrés sont facultatifs. Le rapport utilise des rubriques anglaises ; votre
-description reste dans la langue dans laquelle vous l’avez écrite.
+ouvrent le même formulaire. Décrivez le problème et vérifiez les informations
+de l’onglet Données ; décochez celles que vous souhaitez garder privées.
+L’interface suit la langue choisie, même avec le formulaire ouvert. La capture
+et les diagnostics filtrés sont facultatifs. Le fichier destiné à GitHub utilise
+des rubriques anglaises ; votre description garde la langue de votre saisie.
+Après une capture prise dans Aurora, cocher ou décocher « Inclure l’interface »
+reprend automatiquement la photo ; les fichiers importés restent inchangés.
 
 Deux modes, tous deux avec un compte GitHub : ouvrir une issue préremplie dans
 le navigateur, ou autoriser l’application GitHub d’Aurora puis envoyer depuis
