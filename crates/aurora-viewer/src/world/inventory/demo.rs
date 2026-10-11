@@ -84,6 +84,8 @@ pub fn seed(inv: &mut Inventory, agent: Uuid) {
             parent: personal,
             asset_id: if asset_type == 20 {
                 crate::demo::IDLE_ANIM
+            } else if asset_type == 0 {
+                crate::demo::TEX_SNAPSHOT
             } else {
                 Uuid::from_u128(9000 + id)
             },
@@ -139,7 +141,8 @@ pub fn target(view: &str) -> Option<Uuid> {
         "animation" | "animation-open" | "animation-properties" | "image" | "image-photo" | "image-picker" | "image-photo-save" => 8101,
         "script" => 8102,
         "note" | "note-open" | "note-edit" | "note-save" | "note-close" | "note-error" | "note-readonly" | "note-embedded" | "note-new"
-        | "note-task" | "note-task-save" | "note-task-error" | "note-task-readonly" => 8103,
+        | "note-task" | "note-task-save" | "note-task-error" | "note-task-readonly" | "note-drop" | "note-image" | "note-landmark"
+        | "note-copy" | "note-task-embedded" => 8103,
         "nocopy" => 8109,
         "notransfer" => 8110,
         "link" => 8113,
@@ -150,8 +153,49 @@ pub fn target(view: &str) -> Option<Uuid> {
 pub fn note_asset(embedded: bool) -> Vec<u8> {
     let text = aurora_i18n::tr!("notecard-demo-text");
     if embedded {
-        let text = format!("{text}\n\u{100000}\n");
-        format!("Linden text version 2\n{{\nLLEmbeddedItems version 1\n{{\ncount 1\n{{\next char index 0\ninv_item 0\n{{\nitem_id {}\npermissions 0\n{{\nbase_mask 7fffffff\nowner_mask 7fffffff\nnext_owner_mask 0000a000\n}}\nasset_id {}\ntype landmark\ninv_type landmark\nname Place Aurora|\ndesc |\n}}\n}}\n}}\nText length {}\n{text}}}\n", Uuid::from_u128(8120), Uuid::from_u128(18120), text.len()).into_bytes()
+        let mut card = aurora_net::inventory::notecard::Notecard::default();
+        let mut text = format!("{text}\n");
+        for (id, name, asset_type, inv_type, asset) in [
+            (
+                8104,
+                aurora_i18n::tr!("world-inventory-demo-demo-texture"),
+                0,
+                0,
+                crate::demo::TEX_SNAPSHOT,
+            ),
+            (
+                8120,
+                aurora_i18n::tr!("common-landmark"),
+                3,
+                3,
+                crate::demo::place::landmark_ids(1).1,
+            ),
+            (8100, aurora_i18n::tr!("common-demo-object"), 6, 6, Uuid::from_u128(18100)),
+        ] {
+            let position = text.chars().count();
+            if card
+                .insert_attachment(
+                    &mut text,
+                    position,
+                    &InvItem {
+                        id: Uuid::from_u128(id),
+                        name: name.into(),
+                        asset_type,
+                        inv_type,
+                        asset_id: asset,
+                        base_mask: 0x7fffffff,
+                        owner_mask: 0x7fffffff,
+                        next_owner_mask: 0xe000,
+                        ..Default::default()
+                    },
+                )
+                .is_err()
+            {
+                return Vec::new();
+            }
+            text.push('\n');
+        }
+        card.encode(&text).unwrap_or_default()
     } else {
         aurora_net::inventory::notecard::Notecard::default()
             .encode(text)

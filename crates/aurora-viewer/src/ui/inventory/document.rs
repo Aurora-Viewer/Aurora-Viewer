@@ -10,11 +10,84 @@ pub fn document_demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryU
     };
     if !matches!(
         mode.as_str(),
-        "note-edit" | "note-save" | "note-close" | "note-error" | "note-embedded" | "note-task-save" | "note-task-error"
+        "note-edit"
+            | "note-save"
+            | "note-close"
+            | "note-error"
+            | "note-embedded"
+            | "note-task-save"
+            | "note-task-error"
+            | "note-drop"
+            | "note-image"
+            | "note-landmark"
+            | "note-copy"
     ) {
         return Vec::new();
     }
     let Some(item) = st.preview else { return Vec::new() };
+    let editor = egui::Id::new(("inventory_document_text", st.ui_id, item));
+    if mode == "note-drop" {
+        let Some(rect) = ctx.data_mut(|data| data.get_temp::<egui::Rect>(editor.with("demo_rect"))) else {
+            return Vec::new();
+        };
+        let pos = rect.min + egui::vec2(24.0, 12.0);
+        if frame == 650 {
+            egui::DragAndDrop::set_payload(ctx, InvDrag(Uuid::from_u128(8104)));
+        }
+        if matches!(frame, 650 | 651) {
+            return vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: frame == 650,
+                    modifiers: Default::default(),
+                },
+            ];
+        }
+        if frame == 670 {
+            ctx.memory_mut(|m| m.request_focus(editor));
+        }
+    }
+    if matches!(mode.as_str(), "note-image" | "note-landmark" | "note-copy") {
+        if mode == "note-copy"
+            && matches!(frame, 670 | 671)
+            && let Some(rect) = ctx.data_mut(|data| data.get_temp::<egui::Rect>(egui::Id::new(("notecard_copy_confirm", st.ui_id))))
+        {
+            return vec![
+                egui::Event::PointerMoved(rect.center()),
+                egui::Event::PointerButton {
+                    pos: rect.center(),
+                    button: egui::PointerButton::Primary,
+                    pressed: frame == 670,
+                    modifiers: Default::default(),
+                },
+            ];
+        }
+        let marker = if mode == "note-image" {
+            '\u{100000}'
+        } else if mode == "note-landmark" {
+            '\u{100001}'
+        } else {
+            '\u{100002}'
+        };
+        let Some(rect) = ctx.data_mut(|data| data.get_temp::<egui::Rect>(editor.with(("demo_attachment", marker)))) else {
+            return Vec::new();
+        };
+        if (650..=653).contains(&frame) {
+            let pos = rect.center();
+            return vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: frame.is_multiple_of(2),
+                    modifiers: Default::default(),
+                },
+            ];
+        }
+        return Vec::new();
+    }
     let key = |key| egui::Event::Key {
         key,
         physical_key: None,
@@ -26,14 +99,19 @@ pub fn document_demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryU
             ..Default::default()
         },
     };
-    if frame == 650 {
+    if frame == 650 && mode != "note-drop" {
         ctx.memory_mut(|m| m.request_focus(egui::Id::new(("inventory_document_text", st.ui_id, item))));
         return vec![
             key(egui::Key::End),
             egui::Event::Text(aurora_i18n::tr!("notecard-demo-edit").into()),
         ];
     }
-    if frame == 670 && matches!(mode.as_str(), "note-save" | "note-error" | "note-task-save" | "note-task-error") {
+    if frame == 670
+        && matches!(
+            mode.as_str(),
+            "note-save" | "note-error" | "note-task-save" | "note-task-error" | "note-drop"
+        )
+    {
         return vec![key(egui::Key::S)];
     }
     if frame == 670 && mode == "note-close" {
@@ -55,6 +133,7 @@ impl InventoryUi {
         self.preview_text = None;
         self.preview_can_edit = false;
         self.preview_source = None;
+        self.attachment_preview = None;
         self.preview_original.clear();
         self.preview_message.clear();
         self.preview_dirty = false;

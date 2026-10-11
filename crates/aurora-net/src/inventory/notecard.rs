@@ -2,14 +2,18 @@
 //! (Firestorm indra/llinventory/llnotecard.cpp and indra/newview/llviewertexteditor.cpp,
 //! originally LGPL 2.1). Inventory records stay opaque so all permissions survive.
 
+use super::InvItem;
 use std::collections::{HashMap, HashSet};
+use uuid::Uuid;
 
 pub const MAX_TEXT_BYTES: usize = 65_536;
 pub const FIRST_EMBEDDED_CHAR: u32 = 0x100000;
 
 #[derive(Clone, Debug)]
-struct EmbeddedItem {
-    name: String,
+pub struct EmbeddedItem {
+    pub item: InvItem,
+    /// Newly dropped items must be saved before copying them from the card.
+    pub saved: bool,
     record: String,
 }
 
@@ -74,18 +78,12 @@ impl Notecard {
             let start = cursor;
             let mut depth = 1usize;
             let mut end = start;
-            let mut name = String::new();
             while depth > 0 {
                 end = cursor;
                 let value = line(data, &mut cursor)?;
                 match value {
                     "{" => depth += 1,
                     "}" => depth -= 1,
-                    _ if depth == 2 => {
-                        if let Some(value) = value.strip_prefix("name").and_then(|s| s.strip_prefix([' ', '\t'])) {
-                            name = value.trim_start().trim_end_matches('|').into();
-                        }
-                    }
                     _ => {}
                 }
             }
@@ -93,8 +91,13 @@ impl Notecard {
             if !record.split_whitespace().take(2).eq(["inv_item", "0"]) {
                 return Err(invalid());
             }
+            let item = crate::task_inventory::parse_task_inventory(record)
+                .first()
+                .and_then(crate::build::TaskItem::to_inv_item)
+                .ok_or_else(invalid)?;
             items.push(EmbeddedItem {
-                name,
+                item,
+                saved: true,
                 record: record.into(),
             });
         }
@@ -156,8 +159,72 @@ impl Notecard {
             .iter()
             .enumerate()
             .filter(|(index, _)| referenced.contains(&(*index as u32)))
-            .map(|(_, item)| item.name.as_str())
+            .map(|(_, item)| item.item.name.as_str())
             .collect()
+    }
+
+    pub fn attachment(&self, marker: char) -> Option<&EmbeddedItem> {
+        self.items.get((marker as u32).checked_sub(FIRST_EMBEDDED_CHAR)? as usize)
+    }
+
+    /// Clipboard references are local to an editor. Remap them together with
+    /// their opaque records instead of interpreting another card's index here.
+    pub fn paste(&mut self, text: &str, source: &Self) -> Result<String, String> {
+        let mut mapped = HashMap::new();
+        let mut pasted = String::new();
+        let mut additions = Vec::new();
+        for c in text.chars() {
+            if (c as u32) < FIRST_EMBEDDED_CHAR {
+                pasted.push(c);
+                continue;
+            }
+            let attachment = source.attachment(c).ok_or_else(invalid)?;
+            let marker = if let Some(marker) = mapped.get(&c) {
+                *marker
+            } else {
+                let marker = char::from_u32(FIRST_EMBEDDED_CHAR + (self.items.len() + additions.len()) as u32).ok_or_else(invalid)?;
+                let mut attachment = attachment.clone();
+                attachment.saved = false;
+                additions.push(attachment);
+                mapped.insert(c, marker);
+                marker
+            };
+            pasted.push(marker);
+        }
+        self.items.extend(additions);
+        Ok(pasted)
+    }
+
+    /// LLViewerTextEditor::handleDragAndDrop: inventory items, unrestricted
+    /// next-owner permissions, supported cargo types (folders and links excluded).
+    pub fn can_embed(item: &InvItem) -> Result<(), String> {
+        if !matches!(item.asset_type, 0 | 1 | 2 | 3 | 5 | 6 | 7 | 10 | 13 | 20 | 21 | 49 | 56 | 57) {
+            return Err(aurora_i18n::tr!("notecard-drop-type").into());
+        }
+        if item.next_owner_mask & 0xe000 != 0xe000 {
+            return Err(aurora_i18n::tr!("notecard-drop-permissions").into());
+        }
+        if item.id.is_nil() {
+            return Err(invalid());
+        }
+        Ok(())
+    }
+
+    pub fn insert_attachment(&mut self, text: &mut String, position: usize, item: &InvItem) -> Result<char, String> {
+        Self::can_embed(item)?;
+        self.validate_references(text)?;
+        let marker = char::from_u32(FIRST_EMBEDDED_CHAR + self.items.len() as u32).ok_or_else(invalid)?;
+        if text.len() + marker.len_utf8() > MAX_TEXT_BYTES {
+            return Err(aurora_i18n::tr!("notecard-text-too-large").into());
+        }
+        let byte = text.char_indices().nth(position).map_or(text.len(), |(i, _)| i);
+        self.items.push(EmbeddedItem {
+            item: item.clone(),
+            saved: false,
+            record: legacy_record(item),
+        });
+        text.insert(byte, marker);
+        Ok(marker)
     }
 
     pub fn encode(&self, text: &str) -> Result<Vec<u8>, String> {
@@ -192,9 +259,245 @@ impl Notecard {
     }
 }
 
+/// LLInventoryItem::exportLegacyStream and LLPermissions::exportLegacyStream.
+/// Existing records remain byte-for-byte intact; only new inventory drops use this.
+fn legacy_record(item: &InvItem) -> String {
+    let asset_type = match item.asset_type {
+        0 => "texture",
+        1 => "sound",
+        2 => "callcard",
+        3 => "landmark",
+        5 => "clothing",
+        6 => "object",
+        7 => "notecard",
+        10 => "lsltext",
+        13 => "bodypart",
+        20 => "animatn",
+        21 => "gesture",
+        49 => "mesh",
+        56 => "settings",
+        57 => "material",
+        _ => "none",
+    };
+    let inv_type = match item.inv_type {
+        0 => "texture",
+        1 => "sound",
+        2 => "callcard",
+        3 => "landmark",
+        6 => "object",
+        7 => "notecard",
+        10 => "script",
+        15 => "snapshot",
+        17 => "attach",
+        18 => "wearable",
+        19 => "animation",
+        20 => "gesture",
+        22 => "mesh",
+        25 => "settings",
+        26 => "material",
+        _ => "none",
+    };
+    let (asset_key, asset) = if item.base_mask & 0xe000 == 0xe000 || item.asset_id.is_nil() {
+        ("asset_id", item.asset_id)
+    } else {
+        (
+            "shadow_id",
+            Uuid::from_u128(item.asset_id.as_u128() ^ 0x3c115e51_04f4_523c_9fa6_98aff1034730),
+        )
+    };
+    let clean = |s: &str| {
+        s.chars()
+            .map(|c| if c == '|' || c.is_control() { ' ' } else { c })
+            .collect::<String>()
+    };
+    let sale = match item.sale_type {
+        1 => "orig",
+        2 => "copy",
+        3 => "cntn",
+        _ => "not",
+    };
+    let metadata = if item.thumbnail.is_nil() {
+        String::new()
+    } else {
+        format!(
+            "metadata {}|\n",
+            String::from_utf8_lossy(&aurora_llsd::to_xml(&aurora_llsd::llsd_map! {
+                "thumbnail" => aurora_llsd::llsd_map! { "asset_id" => item.thumbnail }
+            }))
+        )
+    };
+    format!(
+        "inv_item 0\n{{\nitem_id {}\nparent_id {}\npermissions 0\n{{\nbase_mask {:08x}\nowner_mask {:08x}\ngroup_mask {:08x}\neveryone_mask {:08x}\nnext_owner_mask {:08x}\ncreator_id {}\nowner_id {}\nlast_owner_id {}\ngroup_id {}\ngroup_owned {}\n}}\n{metadata}{asset_key} {asset}\ntype {asset_type}\ninv_type {inv_type}\nflags {:08x}\nsale_info 0\n{{\nsale_type {sale}\nsale_price {}\n}}\nname {}|\ndesc {}|\ncreation_date {}\n}}\n",
+        item.id,
+        item.parent,
+        item.base_mask,
+        item.owner_mask,
+        item.group_mask,
+        item.everyone_mask,
+        item.next_owner_mask,
+        item.creator,
+        item.owner,
+        item.last_owner,
+        item.group_id,
+        u8::from(item.group_owned),
+        item.flags,
+        item.sale_price,
+        clean(&item.name),
+        clean(&item.desc),
+        item.created_at
+    )
+}
+
+/// copy_inventory_from_notecard (llviewerinventory.cpp): hyphenated fields
+/// are protocol names; a nil folder lets the simulator choose the type folder.
+pub fn copy_body(notecard: Uuid, object: Uuid, item: Uuid, callback: u32) -> aurora_llsd::Llsd {
+    aurora_llsd::llsd_map! { "notecard-id" => notecard, "object-id" => object, "item-id" => item,
+    "folder-id" => Uuid::nil(), "callback-id" => callback as i32 }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn item(kind: i32, inv_type: i32) -> InvItem {
+        InvItem {
+            id: Uuid::from_u128(1),
+            parent: Uuid::from_u128(2),
+            asset_id: Uuid::from_u128(3),
+            creator: Uuid::from_u128(4),
+            owner: Uuid::from_u128(5),
+            last_owner: Uuid::from_u128(6),
+            group_id: Uuid::from_u128(7),
+            group_owned: true,
+            base_mask: 0x7fffffff,
+            owner_mask: 0x7fffffff,
+            next_owner_mask: 0xe000,
+            group_mask: 0x8000,
+            everyone_mask: 0x2000,
+            asset_type: kind,
+            inv_type,
+            name: "Été 🐺".into(),
+            desc: "Description".into(),
+            flags: 42,
+            created_at: 1234,
+            sale_type: 2,
+            sale_price: 12,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn inventory_drops_preserve_types_assets_permissions_and_utf8_positions() {
+        for (kind, inv_type) in [
+            (0, 0),
+            (0, 15),
+            (1, 1),
+            (2, 2),
+            (3, 3),
+            (5, 18),
+            (6, 6),
+            (7, 7),
+            (10, 10),
+            (13, 18),
+            (20, 19),
+            (21, 20),
+            (49, 22),
+            (56, 25),
+            (57, 26),
+        ] {
+            let item = item(kind, inv_type);
+            let mut card = Notecard::default();
+            let mut text = "été après".to_owned();
+            let marker = card.insert_attachment(&mut text, 3, &item).expect("drop");
+            assert_eq!(text, "été\u{100000} après");
+            assert!(!card.attachment(marker).expect("new item").saved);
+            let saved = Notecard::decode(&card.encode(&text).expect("save")).expect("read");
+            let embedded = saved.attachment(marker).expect("item");
+            assert!(embedded.saved);
+            let actual = &embedded.item;
+            assert_eq!(
+                (actual.asset_type, actual.inv_type, actual.asset_id),
+                (kind, inv_type, item.asset_id)
+            );
+            assert_eq!(
+                (actual.name.as_str(), actual.desc.as_str()),
+                (item.name.as_str(), item.desc.as_str())
+            );
+            assert_eq!(
+                (
+                    actual.base_mask,
+                    actual.owner_mask,
+                    actual.next_owner_mask,
+                    actual.group_mask,
+                    actual.everyone_mask
+                ),
+                (
+                    item.base_mask,
+                    item.owner_mask,
+                    item.next_owner_mask,
+                    item.group_mask,
+                    item.everyone_mask
+                )
+            );
+            assert_eq!(
+                (actual.creator, actual.owner, actual.last_owner, actual.group_id, actual.group_owned),
+                (item.creator, item.owner, item.last_owner, item.group_id, item.group_owned)
+            );
+            assert_eq!(
+                (actual.flags, actual.created_at, actual.sale_type, actual.sale_price),
+                (42, 1234, 2, 12)
+            );
+        }
+    }
+
+    #[test]
+    fn restricted_unsupported_and_oversized_drops_leave_the_card_unchanged() {
+        let mut card = Notecard::default();
+        let mut text = "avant".to_owned();
+        for bit in [0x8000, 0x4000, 0x2000] {
+            let mut item = item(0, 0);
+            item.next_owner_mask &= !bit;
+            assert!(card.insert_attachment(&mut text, 0, &item).is_err());
+        }
+        for kind in [8, 24, 25, -1] {
+            assert!(card.insert_attachment(&mut text, 0, &item(kind, kind)).is_err());
+        }
+        assert_eq!(text, "avant");
+        assert!(card.items.is_empty());
+        let mut text = "a".repeat(MAX_TEXT_BYTES - 3);
+        assert!(card.insert_attachment(&mut text, 0, &item(0, 0)).is_err());
+        assert!(card.items.is_empty());
+    }
+
+    #[test]
+    fn clipboard_remaps_colliding_markers_and_keeps_opaque_permissions() {
+        let mut a = Notecard::default();
+        let mut a_text = String::new();
+        a.insert_attachment(&mut a_text, 0, &item(3, 3)).expect("landmark");
+        let mut b = Notecard::default();
+        let mut b_text = String::new();
+        b.insert_attachment(&mut b_text, 0, &item(0, 0)).expect("texture");
+        let pasted = b.paste(&a_text, &a).expect("paste");
+        assert_eq!(pasted, "\u{100001}");
+        b_text.push_str(&pasted);
+        let saved = Notecard::decode(&b.encode(&b_text).expect("save")).expect("decode");
+        assert_eq!(saved.attachment('\u{100000}').expect("texture").item.asset_type, 0);
+        assert_eq!(saved.attachment('\u{100001}').expect("landmark").item.asset_type, 3);
+        assert!(b.paste("\u{100002}", &a).is_err());
+    }
+
+    #[test]
+    fn copy_request_uses_simulator_item_ids_and_exact_capability_fields() {
+        let body = copy_body(Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3), 42);
+        let round_trip = aurora_llsd::from_xml(&aurora_llsd::to_xml(&body)).expect("LLSD");
+        assert_eq!(round_trip["notecard-id"].as_uuid(), Uuid::from_u128(1));
+        assert_eq!(round_trip["object-id"].as_uuid(), Uuid::from_u128(2));
+        assert_eq!(round_trip["item-id"].as_uuid(), Uuid::from_u128(3));
+        assert!(round_trip["folder-id"].as_uuid().is_nil());
+        assert_eq!(round_trip["callback-id"].as_i32(), 42);
+        assert_eq!(round_trip.as_map().expect("map").len(), 5);
+        assert!(crate::caps::REQUESTED_CAPS.contains(&"CopyInventoryFromNotecard"));
+    }
 
     fn embedded(text: &str) -> Vec<u8> {
         format!("Linden text version 2\n{{\nLLEmbeddedItems version 1\n{{\ncount 2\n{{\next char index 0\ninv_item 0\n{{\npermissions 0\n{{\nowner_mask 0000a000\n}}\nname Photo|\n}}\n}}\n{{\next char index 1\ninv_item 0\n{{\nname Repère|\n}}\n}}\n}}\nText length {}\n{text}}}\n", text.len()).into_bytes()

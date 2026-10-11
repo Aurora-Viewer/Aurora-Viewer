@@ -166,6 +166,7 @@ impl App {
         }
         let keys: Vec<_> = self.task_notecards.keys().copied().collect();
         let mut saves = Vec::new();
+        let mut embedded = Vec::new();
         for (object, item) in keys {
             let metadata = self.task_notecard_item(object, item);
             let Some(d) = self.task_notecards.get_mut(&(object, item)) else {
@@ -183,16 +184,42 @@ impl App {
             if metadata.is_none() {
                 d.state.preview_message = aurora_i18n::tr!("notecard-task-unavailable").into();
             }
-            for action in ui::inventory::show_document(ctx, p, &self.skin.icons, &d.inventory, &mut d.state) {
+            for action in ui::inventory::show_document(
+                ctx,
+                p,
+                &self.skin.icons,
+                &d.inventory,
+                &mut d.state,
+                &self.world.inventory,
+                &self.ui_images,
+            ) {
                 if let InvAction::SaveContent { text, close, .. } = action {
                     saves.push((object, item, text, close));
+                } else if let InvAction::Embedded {
+                    editor,
+                    notecard,
+                    marker,
+                    copy,
+                } = action
+                {
+                    embedded.push((editor, notecard, marker, copy, object));
                 }
             }
+        }
+        for (editor, notecard, marker, copy, object) in embedded {
+            self.open_notecard_attachment(editor, notecard, marker, copy, object);
         }
         for (object, item, text, close) in saves {
             self.save_task_notecard(object, item, text, close);
         }
         self.task_notecards.retain(|_, d| d.state.preview.is_some());
+    }
+
+    pub(super) fn task_document_state(&mut self, editor: Uuid) -> Option<&mut InventoryUi> {
+        self.task_notecards
+            .values_mut()
+            .find(|d| d.state.ui_id == editor)
+            .map(|d| &mut d.state)
     }
 
     fn save_task_notecard(&mut self, object: Uuid, item: Uuid, text: String, close: bool) {
