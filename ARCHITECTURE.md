@@ -90,7 +90,7 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
 
 ## `aurora-viewer` en détail
 
-Les scripts utilisent un éditeur commun (`ui/scripts.rs`, actions dans `app/scripts.rs`) pour les éléments de l'inventaire et le contenu d'une prim. Chaque document garde sa source, sa version enregistrée et ses requêtes en cours. `aurora-net/src/session/scripts.rs` charge les sources avec `TransferRequest` et le contexte de permissions de l'inventaire ; `aurora-net/src/scripts.rs` enregistre et compile par `UpdateScriptAgent` / `UpdateScriptTask`, avec retour distinct de l'asset enregistré et des diagnostics de compilation. Aucun transfert ne bloque la boucle d'image.
+Les scripts utilisent un éditeur commun (`ui/scripts.rs`, actions dans `app/scripts.rs`) pour les éléments de l'inventaire et le contenu d'une prim. Chaque document garde sa source, sa version enregistrée et ses requêtes en cours. `aurora-net/src/session/scripts.rs` charge les sources avec `TransferRequest` et le contexte de permissions de l'inventaire, y compris lorsque l'UUID d'asset est masqué : le simulateur résout la source à partir de l'élément et de son propriétaire / objet. Un UUID d'asset nul ne signifie pas un nouveau script et ne déclenche pas le modèle local. `aurora-net/src/scripts.rs` enregistre et compile par `UpdateScriptAgent` / `UpdateScriptTask`, avec retour distinct de l'asset enregistré et des diagnostics de compilation. Aucun transfert ne bloque la boucle d'image.
 
 | Dossier / fichier | Contenu |
 |---|---|

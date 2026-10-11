@@ -54,13 +54,12 @@ pub struct Editor {
     close_prompt: bool,
     close_after_save: bool,
     closed: bool,
-    new_asset: bool,
     raise: bool,
 }
 
 impl Editor {
     fn dirty(&self) -> bool {
-        self.loaded && (self.new_asset || self.source != self.baseline || self.mono != self.baseline_mono)
+        self.loaded && (self.source != self.baseline || self.mono != self.baseline_mono)
     }
 
     fn can_save(&self) -> bool {
@@ -132,7 +131,19 @@ impl Editors {
         if save { e.save() } else { None }
     }
 
-    pub fn open(&mut self, target: ScriptTarget, name: String, asset: Uuid, can_read: bool, can_edit: bool) -> Option<Uuid> {
+    pub fn demo_close_clean(&mut self, target: ScriptTarget) -> bool {
+        let Some(index) = self
+            .documents
+            .iter()
+            .position(|e| e.target == target && e.loaded && !e.dirty() && e.saving.is_none())
+        else {
+            return false;
+        };
+        self.documents.remove(index);
+        true
+    }
+
+    pub fn open(&mut self, target: ScriptTarget, name: String, can_read: bool, can_edit: bool) -> Option<Uuid> {
         if let Some(editor) = self.documents.iter_mut().find(|e| e.target == target) {
             editor.raise = true;
             return None;
@@ -162,7 +173,6 @@ impl Editors {
             close_prompt: false,
             close_after_save: false,
             closed: false,
-            new_asset: asset.is_nil(),
             raise: true,
         });
         request
@@ -199,7 +209,6 @@ impl Editors {
             Ok(saved) => {
                 e.baseline = pending.source;
                 e.baseline_mono = pending.mono;
-                e.new_asset = false;
                 e.compile_failed = !saved.compiled;
                 e.errors.clone_from(&saved.errors);
                 e.status = if saved.compiled {
@@ -402,10 +411,42 @@ mod tests {
     }
 
     #[test]
+    fn loaded_sources_are_clean_and_reopening_waits_for_the_server() {
+        let mut editors = Editors::default();
+        for object in [Uuid::nil(), Uuid::from_u128(10)] {
+            let target = ScriptTarget {
+                object,
+                item: Uuid::from_u128(1),
+            };
+            let source = "default { state_entry() { llSay(0, \"Saved source\"); } }";
+            let request = editors.open(target, "Test".into(), true, true).expect("request existing script");
+            assert!(editors.documents[0].source.is_empty());
+            assert!(!editors.documents[0].can_save());
+            editors.loaded(request, target, Ok(source.into()));
+            assert_eq!(editors.documents[0].source, source);
+            assert!(!editors.documents[0].dirty());
+            assert!(editors.prepare_exit());
+            assert!(editors.demo_close_clean(target));
+            let next = editors.open(target, "Test".into(), true, true).expect("request again");
+            assert_ne!(request, next);
+            assert!(editors.documents[0].source.is_empty());
+            editors.loaded(request, target, Ok("stale".into()));
+            assert!(editors.documents[0].source.is_empty());
+            editors.loaded(next, target, Ok(source.into()));
+            assert_eq!(editors.documents[0].source, source);
+            assert!(!editors.documents[0].dirty());
+            editors.documents[0].source.push_str("\n// Unsaved edit");
+            assert!(!editors.demo_close_clean(target));
+            assert!(!editors.prepare_exit());
+            editors.documents.clear();
+        }
+    }
+
+    #[test]
     fn load_and_save_replies_are_scoped_to_the_request_and_document() {
         let mut editors = Editors::default();
         let target = target(1);
-        let request = editors.open(target, "Test".into(), Uuid::from_u128(2), true, true).expect("load");
+        let request = editors.open(target, "Test".into(), true, true).expect("load");
         editors.loaded(Uuid::new_v4(), target, Ok("stale".into()));
         assert!(editors.documents[0].source.is_empty());
         editors.loaded(request, target, Ok("original".into()));
@@ -432,9 +473,10 @@ mod tests {
     fn compiler_errors_keep_the_editor_open_but_track_the_saved_source() {
         let mut editors = Editors::default();
         let target = target(1);
-        let request = editors.open(target, "Test".into(), Uuid::nil(), true, true).expect("load");
-        editors.loaded(request, target, Ok("invalid source".into()));
-        let Action::Save { request, .. } = editors.documents[0].save().expect("save new script") else {
+        let request = editors.open(target, "Test".into(), true, true).expect("load");
+        editors.loaded(request, target, Ok("original".into()));
+        editors.documents[0].source = "invalid source".into();
+        let Action::Save { request, .. } = editors.documents[0].save().expect("save script") else {
             panic!("save action")
         };
         editors.documents[0].close_after_save = true;
@@ -463,13 +505,13 @@ mod tests {
             ..inventory
         };
         for target in [inventory, object] {
-            let request = editors.open(target, "Test".into(), Uuid::from_u128(3), true, true).expect("load");
+            let request = editors.open(target, "Test".into(), true, true).expect("load");
             editors.loaded(request, target, Ok("original".into()));
         }
         editors.running(object, false, Some(false));
         editors.documents[0].source = "inventory edit".into();
         editors.documents[1].source = "object edit".into();
-        assert!(editors.open(inventory, "Again".into(), Uuid::from_u128(3), true, true).is_none());
+        assert!(editors.open(inventory, "Again".into(), true, true).is_none());
         assert_eq!(editors.documents.len(), 2);
         assert!(!editors.prepare_exit());
         assert!(editors.documents.iter().all(|e| e.close_prompt));
@@ -494,7 +536,7 @@ mod tests {
     fn disconnect_keeps_unsaved_source_and_rejects_the_previous_sessions_reply() {
         let mut editors = Editors::default();
         let target = target(1);
-        let request = editors.open(target, "Test".into(), Uuid::from_u128(2), true, true).expect("load");
+        let request = editors.open(target, "Test".into(), true, true).expect("load");
         editors.loaded(request, target, Ok("original".into()));
         editors.documents[0].source = "unsaved".into();
         let Action::Save { request, .. } = editors.documents[0].save().expect("save") else {

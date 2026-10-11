@@ -107,17 +107,9 @@ fn source_params(agent: Uuid, session: Uuid, owner: Uuid, target: ScriptTarget, 
 
 impl Session<'_> {
     pub(super) fn load_script(&mut self, request: Uuid, target: ScriptTarget, handle: RegionHandle, owner: Uuid, asset: Uuid) {
-        if asset.is_nil() {
-            emit(
-                self.sh,
-                NetEvent::ScriptLoaded {
-                    request,
-                    target,
-                    result: Ok(crate::scripts::DEFAULT_SOURCE.into()),
-                },
-            );
-            return;
-        }
+        // LLPreviewLSL::loadAsset / LLLiveLSLEditor::loadAsset request an
+        // existing inventory item's source even when its asset UUID is hidden.
+        // The simulator resolves it from OwnerID / TaskID / ItemID.
         let sim = if target.object.is_nil() {
             self.main
         } else {
@@ -278,6 +270,141 @@ impl Session<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn hidden_asset_ids_load_the_servers_source_in_inventory_and_objects() {
+        let sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.expect("viewer socket"));
+        let main = UdpSocket::bind("127.0.0.1:0").await.expect("main simulator");
+        let neighbour = UdpSocket::bind("127.0.0.1:0").await.expect("object simulator");
+        let main_addr = main.local_addr().expect("main address");
+        let neighbour_addr = neighbour.local_addr().expect("object address");
+        let (events, received) = crossbeam_channel::unbounded();
+        let sh = Shared {
+            http: reqwest::Client::new(),
+            caps_http: reqwest::Client::new(),
+            events,
+            controls: Arc::new(Mutex::new(AgentControls::default())),
+            stats: Arc::new(NetStats::default()),
+            object_cache_dir: Arc::new(Mutex::new(None)),
+            agent_language: Arc::new(Mutex::new(("en".into(), false))),
+        };
+        let login = Arc::new(LoginResponse {
+            agent_id: Uuid::from_u128(1),
+            session_id: Uuid::from_u128(2),
+            secure_session_id: Uuid::nil(),
+            first_name: String::new(),
+            last_name: String::new(),
+            sim_ip: Ipv4Addr::LOCALHOST,
+            sim_port: main_addr.port(),
+            circuit_code: 0,
+            region_x: 0,
+            region_y: 0,
+            region_size_x: 256,
+            region_size_y: 256,
+            seed_capability: String::new(),
+            look_at: Vec3::ZERO,
+            message: String::new(),
+            agent_appearance_service: String::new(),
+            inventory_root: Uuid::nil(),
+            mfa_hash: None,
+            raw: Llsd::Undef,
+        });
+        let (eq_tx, _) = mpsc::unbounded_channel();
+        let (caps_tx, _) = mpsc::unbounded_channel();
+        let mut session = Session {
+            sh: &sh,
+            sock: sock.clone(),
+            login,
+            sims: [(main_addr, Sim::new(main_addr, 10)), (neighbour_addr, Sim::new(neighbour_addr, 20))].into(),
+            main: Some(main_addr),
+            eq_tx,
+            caps_tx,
+            last_controls: AgentControls::default(),
+            last_agent_update: Instant::now(),
+            one_shot: 0,
+            cam_warned: false,
+            far: 128.0,
+            logout_started: None,
+            finished: false,
+            agent_moved: false,
+            cam_requested_at: None,
+            agent_parcel: None,
+            pending_named_tp: None,
+            obj_cache_dir: None,
+            obj_caches: HashMap::new(),
+            last_cache_save: Instant::now(),
+            social: Default::default(),
+            tasks: Default::default(),
+            land: Default::default(),
+            decode_failures: HashMap::new(),
+            inventory_uploads: Default::default(),
+            script_transfers: Default::default(),
+            inventory_callbacks: HashMap::new(),
+            inventory_merchant_pending: false,
+            next_inventory_callback: 0,
+        };
+        for (object, sim) in [(Uuid::nil(), &main), (Uuid::from_u128(3), &neighbour)] {
+            let target = ScriptTarget {
+                object,
+                item: Uuid::from_u128(4),
+            };
+            let request = Uuid::new_v4();
+            sock.writable().await.expect("socket ready");
+            // Existing scripts can hide their asset UUID. The containing
+            // inventory item, not that UUID, identifies the requested source.
+            session.load_script(request, target, 20, Uuid::from_u128(1), Uuid::nil());
+            assert!(received.is_empty(), "do not substitute a local template for the server's source");
+            let mut datagram = [0; 1200];
+            let (size, _) = tokio::time::timeout(Duration::from_secs(2), sim.recv_from(&mut datagram))
+                .await
+                .expect("source requested from simulator")
+                .expect("request packet");
+            let packet = parse_packet(&datagram[..size]).expect("request datagram");
+            assert_eq!(packet.id, TransferRequest::ID);
+            let query: TransferRequest = packet.decode().expect("source request");
+            let transfer = query.transfer_info.transfer_id;
+            assert_eq!(
+                query.transfer_info.params,
+                source_params(Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(1), target, Uuid::nil())
+            );
+            let source = "default { state_entry() { llSay(0, \"Source déjà enregistrée !\"); } }";
+            let mut info = TransferInfo::default();
+            info.transfer_info.transfer_id = transfer;
+            info.transfer_info.channel_type = ASSET_CHANNEL;
+            info.transfer_info.size = source.len() as i32;
+            let mut bytes = Vec::new();
+            aurora_msg::build_packet(&info, 1, true, false, &[], &mut bytes);
+            let from = sim.local_addr().expect("simulator address");
+            assert!(
+                session
+                    .dispatch_script_transfer(from, &parse_packet(&bytes).expect("info datagram"))
+                    .expect("info")
+            );
+            assert!(received.is_empty());
+            let mut data = TransferPacket::default();
+            data.transfer_data.transfer_id = transfer;
+            data.transfer_data.channel_type = ASSET_CHANNEL;
+            data.transfer_data.status = 1;
+            data.transfer_data.data = source.as_bytes().to_vec();
+            aurora_msg::build_packet(&data, 2, true, false, &[], &mut bytes);
+            assert!(
+                session
+                    .dispatch_script_transfer(from, &parse_packet(&bytes).expect("source datagram"))
+                    .expect("source")
+            );
+            let NetEvent::ScriptLoaded {
+                request: reply,
+                target: loaded_target,
+                result,
+            } = received.try_recv().expect("loaded source")
+            else {
+                panic!("script reply")
+            };
+            assert_eq!((reply, loaded_target), (request, target));
+            assert_eq!(result.expect("source"), source);
+            assert!(session.script_transfers.pending.is_empty());
+        }
+    }
 
     #[test]
     fn source_request_carries_the_inventory_permission_context() {

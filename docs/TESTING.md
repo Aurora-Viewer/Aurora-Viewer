@@ -170,7 +170,9 @@ opposée à la base ; le flexible garde sa courbure pendant le changement de tai
 **`AURORA_DEMO_SCRIPTS=inventory|object|both|save|object-save|error|readonly`** :
 ouvre un éditeur de script depuis l'inventaire, le contenu d'un objet ou
 les deux à l'image 280. `save` et `object-save` enregistrent une source
-modifiée ; `error` simule un diagnostic de compilation ; `readonly`
+modifiée puis ferment et rouvrent l'éditeur à l'image 360 avec un UUID
+d'asset masqué, pour vérifier la relecture ; `error` simule un diagnostic
+de compilation ; `readonly`
 refuse la lecture d'un script personnel sans droit Modifier. Les sources
 enregistrées peuvent être fermées puis rouvertes dans la même session.
 Saisir `AURORA_DEMO_SYNTAX_ERROR` simule une erreur du serveur ; la démo

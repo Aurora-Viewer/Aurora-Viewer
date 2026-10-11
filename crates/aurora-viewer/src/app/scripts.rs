@@ -93,6 +93,26 @@ impl App {
                 self.apply_script_action(action);
             }
         }
+        if self.frame_count == 360 && matches!(mode.as_str(), "save" | "object-save") {
+            let Some(target) = self.script_editors.documents.first().map(|e| e.target) else {
+                return;
+            };
+            if self.script_editors.demo_close_clean(target) {
+                // A listing may redact the asset UUID after a successful save.
+                // Reopening must still load the saved source via the item.
+                if target.object.is_nil() {
+                    if let Some(item) = self.world.inventory.items.get_mut(&target.item) {
+                        item.asset_id = Uuid::nil();
+                    }
+                } else if let Some(inv) = self.build.contents.objects.get_mut(&target.object)
+                    && let Some(item) = inv.items.iter_mut().find(|i| i.item_id == target.item)
+                {
+                    item.asset_id = Uuid::nil();
+                }
+                self.open_script(target);
+                log::info!("demo scripts: reopened saved source with a hidden asset UUID");
+            }
+        }
     }
 
     fn script_info(&self, target: ScriptTarget) -> Option<ScriptInfo> {
@@ -140,10 +160,7 @@ impl App {
 
     pub(super) fn open_script(&mut self, target: ScriptTarget) {
         let Some(info) = self.script_info(target) else { return };
-        if let Some(request) = self
-            .script_editors
-            .open(target, info.name, info.asset, info.can_read, info.can_edit)
-        {
+        if let Some(request) = self.script_editors.open(target, info.name, info.can_read, info.can_edit) {
             self.send(NetCommand::LoadScript {
                 request,
                 target,
