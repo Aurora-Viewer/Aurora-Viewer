@@ -10,6 +10,14 @@
 # through (the merge queue and the protection of main still apply). User
 # settings, not the repository's: the agents work in worktrees of ..\work\,
 # where a project file would not be read.
+#
+# The rest of the follow-up that AGENTS.md asks for is allowed ahead of a
+# refusal, which costs a stalled session: reading the PRs and the CI runs,
+# triaging the issues (labels, closing, reopening: all can be undone) and
+# publishing the captures of a PR (pr-captures.ps1 only pushes to the captures
+# branch). Left to the classifier on purpose: gh api and git push (a wildcard
+# would cover deletions, --force and tags), gh pr merge (merge-pr.ps1 goes
+# through the merge queue), releases and end-task.ps1.
 
 $ClaudeAllowRules = @(
     'PowerShell(gh pr comment *)'
@@ -17,6 +25,16 @@ $ClaudeAllowRules = @(
     'PowerShell(gh issue comment *)'
     'PowerShell(gh issue list *)'
     'PowerShell(gh issue view *)'
+    'PowerShell(gh pr view *)'
+    'PowerShell(gh pr list *)'
+    'PowerShell(gh pr checks *)'
+    'PowerShell(gh run view *)'
+    'PowerShell(gh run list *)'
+    'PowerShell(gh run watch *)'
+    'PowerShell(gh issue edit *)'
+    'PowerShell(gh issue close *)'
+    'PowerShell(gh issue reopen *)'
+    'PowerShell(./scripts/pr-captures.ps1 *)'
 )
 # For the classifier, should one of these commands still reach it (a listing
 # piped into a PowerShell loop does not match the allow rule). One rule per
@@ -25,6 +43,9 @@ $ClaudeAutoModeRules = @(
     'In the Aurora-Viewer repository, posting the review comment on the user''s own pull request and merging it with scripts/merge-pr.ps1 is allowed once the human has validated the change and CI is green (AGENTS.md workflow).'
     'In the Aurora-Viewer repository, posting a comment on an issue of that repository with gh issue comment is allowed: answering the issues is part of the agents'' work (AGENTS.md, section 15).'
     'In the Aurora-Viewer repository, listing and reading the issues of that repository with gh issue list or gh issue view, including formatting their JSON output in PowerShell, is allowed: these commands only read, and following the issues is part of the agents'' work (AGENTS.md, sections 8 and 15).'
+    'In the Aurora-Viewer repository, reading the state of its pull requests and CI runs with gh pr view, gh pr list, gh pr checks, gh run view, gh run list or gh run watch, including formatting their JSON output in PowerShell, is allowed: these commands only read (AGENTS.md, sections 8 and 11).'
+    'In the Aurora-Viewer repository, labelling, editing, closing and reopening an issue of that repository with gh issue edit, gh issue close or gh issue reopen is allowed: triaging the issues is part of the agents'' work (AGENTS.md, section 15).'
+    'In the Aurora-Viewer repository, publishing the demo captures of a pull request with scripts/pr-captures.ps1 is allowed: the script only pushes image files to the dedicated captures branch, never to main (AGENTS.md, section 12).'
 )
 
 function Get-ClaudeSettingsFile {
@@ -75,9 +96,9 @@ function Merge-ClaudeSettings([string]$File) {
 function Invoke-ClaudePermissions {
     $file = Get-ClaudeSettingsFile
     Write-Title 'Permissions de Claude Code pour les PR et les issues des agents'
-    Write-Color '  Les agents postent leur relecture, fusionnent leur PR, lisent les issues et y' muted
-    Write-Color '  répondent eux-mêmes (AGENTS.md) ; sans ces règles, le mode auto de Claude Code' muted
-    Write-Color '  le leur refuse. Autorisés ensuite :' muted
+    Write-Color '  Les agents suivent leurs PR et la CI, postent leur relecture et leurs captures,' muted
+    Write-Color '  fusionnent, trient les issues et y répondent eux-mêmes (AGENTS.md) ; sans ces' muted
+    Write-Color '  règles, le mode auto de Claude Code peut le leur refuser. Autorisés ensuite :' muted
     foreach ($r in $ClaudeAllowRules) { Write-Color "    • $r" ink }
     Write-Color '  La file de fusion et la protection de main s''appliquent toujours.' muted
     Write-Host ''
