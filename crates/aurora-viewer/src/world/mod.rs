@@ -22,6 +22,7 @@ pub mod objects;
 pub mod outfit;
 pub mod place_details;
 pub mod profiles;
+pub mod script_debug;
 pub mod social;
 pub mod status;
 pub mod terrain;
@@ -119,6 +120,7 @@ pub struct World {
     pub gltf_overrides: HashMap<ObjKey, Arc<[(u8, aurora_assets::material::PbrOverride)]>>,
     pub chat: VecDeque<ChatLine>,
     pub chat_unread: usize,
+    pub script_debug: script_debug::Messages,
     pub sun: Option<(SunInfo, Instant)>,
     pub agent: AgentState,
     pub coarse: HashMap<RegionHandle, Vec<(Uuid, Vec3)>>,
@@ -242,6 +244,7 @@ impl World {
             gltf_overrides: HashMap::new(),
             chat: VecDeque::new(),
             chat_unread: 0,
+            script_debug: script_debug::Messages::default(),
             sun: None,
             agent: AgentState::default(),
             coarse: HashMap::new(),
@@ -1435,6 +1438,9 @@ impl World {
 
     fn on_chat(&mut self, c: ChatMessage) {
         if c.message.is_empty() || self.lsl_bridge.hides(&c) || self.chat_blocked(&c) {
+            return;
+        }
+        if self.script_debug.route(&c, self.agent_id) {
             return;
         }
         let kind = match c.source_type {

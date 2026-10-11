@@ -152,6 +152,7 @@ capture.
 | `AURORA_DEMO_BUILD_FOCUS=off\|on` | Focus et suivi caméra pendant l’édition |
 | `AURORA_DEMO_BUILD_EDGE=<bord>` | Déplacement jusqu’au bord, maintien puis relâchement |
 | `AURORA_DEMO_BUILD_TAB=<onglet>` | Onglet de la fenêtre de construction |
+| `AURORA_DEMO_SCRIPTS=<mode>` | Édition et enregistrement de scripts hors ligne |
 | `AURORA_DEMO_LSL_BRIDGE=1` | Messages du bridge LSL de Firestorm (cachés) |
 | `AURORA_DEMO_FLEXIBLE=1` | Prims flexibles : gravité, tension, vent, force et parent mobile |
 
@@ -167,6 +168,54 @@ Pour vérifier l'édition, ajouter `AURORA_DEMO_BUILD=move,object:90000` ou
 `stretch,object:90000` : pivot sur la base, contour déformé, boîte droite
 translucide et poignées de taille. `stretch,object:90000,fz,100,0` tire la face
 opposée à la base ; le flexible garde sa courbure pendant le changement de taille.
+
+**`AURORA_DEMO_SCRIPTS=inventory|object|both|save|object-save|error|readonly|syntax|object-syntax|syntax-readonly|indent|object-indent|tabstops|object-tabstops|experience|experience-save|workbench|object-workbench|search|preferences|help|preprocessor|object-preprocessor|processed|preprocessor-error`** :
+ouvre un éditeur de script depuis l'inventaire, le contenu d'un objet ou
+les deux à l'image 280. `save` et `object-save` enregistrent une source
+modifiée puis ferment et rouvrent l'éditeur à l'image 360 avec un UUID
+d'asset masqué, pour vérifier la relecture ; `error` simule un diagnostic
+de compilation ; `readonly`
+refuse la lecture d'un script personnel sans droit Modifier. Les sources
+enregistrées peuvent être fermées puis rouvertes dans la même session.
+Saisir `AURORA_DEMO_SYNTAX_ERROR` simule une erreur du serveur ; la démo
+n'exécute pas de compilateur LSL local.
+`syntax` et `object-syntax` montrent la coloration des types, variables,
+fonctions natives et personnalisées, événements, mots-clés, constantes,
+nombres, chaînes et commentaires. `syntax-readonly` montre la même source
+colorée et sélectionnable en lecture seule. La coloration suit les
+modifications pendant la saisie et les couleurs du thème actif.
+`indent` simule Entrée puis une saisie après une instruction indentée ;
+`object-indent` fait la même chose avec des tabulations dans un objet.
+Le commentaire ajouté doit être aligné sur l'instruction précédente.
+`tabstops` et `object-tabstops` placent le curseur après sept espaces,
+simulent Retour arrière (quatre espaces), Tab (huit espaces), puis une saisie
+et Entrée. Le commentaire et l'instruction doivent être alignés sur huit
+espaces. Tab ajoute des espaces jusqu'au prochain multiple de quatre ;
+Retour arrière revient au palier précédent quand les espaces le permettent,
+sans supprimer un caractère du code pour rejoindre ce palier.
+`experience` choisit et enregistre l'expérience simulée d'un script d'objet ;
+`experience-save` ferme ensuite l'éditeur et le rouvre avec cette association.
+Les autres démos d'objet commencent avec « Aucune ». Le sélecteur permet
+aussi de retirer une association puis d'enregistrer. L'inventaire personnel
+ne propose pas d'association d'expérience, comme Firestorm.
+
+`workbench` et `object-workbench` montrent les menus Fichier / Édition / Aide,
+la barre d'outils, les numéros de ligne, le curseur et le sélecteur de fonctions.
+`search`, `preferences` et `help` ouvrent respectivement la recherche/remplacement,
+les couleurs/options avec aperçu et l'aide locale de `llSay` avec sa signature.
+Les commandes de saisie utilisent l'historique natif ; les réglages ne sont
+jamais enregistrés sur le PC en démo. Les sélecteurs de fichiers et l'éditeur
+externe restent des actions explicites du testeur.
+`preprocessor` et `object-preprocessor` enregistrent un script utilisant une
+inclusion de l'inventaire, une macro, une liste étendue et un `switch`, puis
+le rouvrent : le texte original doit être conservé. `processed` montre le
+résultat envoyé au simulateur, en lecture seule ; `preprocessor-error` montre
+une erreur avant envoi, avec conservation du brouillon.
+Les nouveaux messages `llOwnerSay` ouvrent le débogage des scripts si leur
+routage est activé ; les erreurs
+des objets possédés y apparaissent également, après filtrage du bridge et
+des objets bloqués. La fenêtre permet de voir tous les objets ou un seul et
+d'effacer les messages affichés.
 
 **`AURORA_DEMO_ACTIONS`** — curseurs et clics d'objet comme Firestorm.
 Aucun L$ réel ni connexion à une grille.

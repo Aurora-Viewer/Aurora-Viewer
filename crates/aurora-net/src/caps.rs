@@ -19,9 +19,12 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "FetchInventoryDescendents2",
     "FetchLib2",
     "FetchLibDescendents2",
+    "GetCreatorExperiences",
     "GetDisplayNames",
+    "GetExperienceInfo",
     "GetMesh",
     "GetMesh2",
+    "GetMetadata",
     // build floater: land impact, object weights, physics shape costs
     "GetObjectCost",
     "GetObjectPhysicsData",

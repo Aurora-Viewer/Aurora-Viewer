@@ -693,6 +693,21 @@ pub enum NetEvent {
         item: Uuid,
         result: Result<Uuid, String>,
     },
+    ScriptLoaded {
+        request: Uuid,
+        target: crate::scripts::ScriptTarget,
+        result: Result<String, String>,
+    },
+    ScriptExperiences {
+        request: Uuid,
+        target: crate::scripts::ScriptTarget,
+        result: crate::scripts::experiences::ScriptExperiences,
+    },
+    ScriptSaved {
+        request: Uuid,
+        target: crate::scripts::ScriptTarget,
+        result: Result<crate::scripts::ScriptSaved, String>,
+    },
     InventoryThumbnailSource {
         request: Uuid,
         asset: Uuid,
@@ -1139,6 +1154,25 @@ pub enum NetCommand {
         object: Uuid,
         item: Uuid,
         data: Vec<u8>,
+    },
+    LoadScript {
+        request: Uuid,
+        target: crate::scripts::ScriptTarget,
+        handle: RegionHandle,
+        owner: Uuid,
+        asset: Uuid,
+    },
+    LoadScriptExperiences {
+        request: Uuid,
+        target: crate::scripts::ScriptTarget,
+        handle: RegionHandle,
+    },
+    SaveScript {
+        request: Uuid,
+        target: crate::scripts::ScriptTarget,
+        handle: RegionHandle,
+        options: crate::scripts::ScriptOptions,
+        source: String,
     },
     FetchInventoryThumbnail {
         request: Uuid,

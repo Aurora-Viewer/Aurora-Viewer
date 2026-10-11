@@ -17,6 +17,7 @@ const PERM_ALL: u32 = 0x7fff_ffff;
 pub struct DemoSim {
     props: HashMap<Uuid, ObjectProps>,
     contents: HashMap<Uuid, (i16, Vec<TaskItem>)>,
+    running: HashMap<(Uuid, Uuid), (bool, bool)>,
 }
 
 fn demo_item(object: Uuid, n: u128, name: &str, asset_type: i8, inv_type: i8) -> TaskItem {
@@ -45,6 +46,15 @@ fn demo_item(object: Uuid, n: u128, name: &str, asset_type: i8, inv_type: i8) ->
 }
 
 impl DemoSim {
+    pub fn save_script(&mut self, target: aurora_net::scripts::ScriptTarget, asset: Uuid, running: bool, mono: bool) {
+        if let Some(entry) = self.contents.get_mut(&target.object)
+            && let Some(item) = entry.1.iter_mut().find(|i| i.item_id == target.item)
+        {
+            item.asset_id = asset;
+            entry.0 = entry.0.wrapping_add(1);
+        }
+        self.running.insert((target.object, target.item), (running, mono));
+    }
     fn props_of(&mut self, world: &World, id: Uuid) -> &mut ObjectProps {
         self.props.entry(id).or_insert_with(|| {
             let name = world
@@ -262,12 +272,24 @@ impl DemoSim {
                 self.props_of(world, id).inventory_serial = serial;
                 self.reply_props(world, &ids)
             }
-            BuildCmd::GetScriptRunning { object_id, item_id, .. } => vec![NetEvent::ScriptRunning {
-                object_id: *object_id,
-                item_id: *item_id,
-                running: true,
-                mono: Some(true),
-            }],
+            BuildCmd::SetScriptRunning {
+                object_id,
+                item_id,
+                running,
+                ..
+            } => {
+                self.running.entry((*object_id, *item_id)).or_insert((true, true)).0 = *running;
+                Vec::new()
+            }
+            BuildCmd::GetScriptRunning { object_id, item_id, .. } => {
+                let (running, mono) = self.running.get(&(*object_id, *item_id)).copied().unwrap_or((true, true));
+                vec![NetEvent::ScriptRunning {
+                    object_id: *object_id,
+                    item_id: *item_id,
+                    running,
+                    mono: Some(mono),
+                }]
+            }
             BuildCmd::ParcelRequest { handle, sequence, .. } => match world.parcel.clone() {
                 Some(p) => vec![NetEvent::SelectedParcel {
                     handle: *handle,

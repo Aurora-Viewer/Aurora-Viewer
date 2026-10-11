@@ -38,6 +38,8 @@ the Second Life viewer sources (originally LGPL 2.1).
 | Roboto | `crates/aurora-viewer/assets/fonts/` | Apache License 2.0 |
 | Noto 3D emoji font (downloaded by `scripts/fetch-assets.ps1`) | `assets/emoji/` | SIL Open Font License 1.1 ([LICENSE-OFL.txt](assets/emoji/LICENSE-OFL.txt)) |
 | Aurora wolf logo and silhouette | `assets/branding/` | Part of Aurora Viewer, GPL-3.0-or-later |
+| LSL keyword names, signatures and help from Firestorm `indra/newview/app_settings/keywords_lsl_default.xml` | `crates/aurora-viewer/assets/lsl/keywords.json`, `reference.json` | Originally LGPL 2.1, distributed here under GPL-3.0-or-later as described above |
+| LSL preprocessor rules from Modular Systems / Firestorm `indra/newview/fslslpreproc.cpp` | `crates/aurora-viewer/src/ui/scripts/preprocessor/` | BSD-3-Clause ([notice](crates/aurora-viewer/assets/lsl/PREPROCESSOR-LICENSE.txt)), retained alongside this GPL-3.0-or-later adaptation |
 | Firestorm / Second Life Sit, Buy/Pay, Open, Play, Pause, Open Media, Zoom and Grab cursors | `crates/aurora-viewer/assets/cursors/` | Original Firestorm artwork; source and conversion documented in [README](crates/aurora-viewer/assets/cursors/README.md), covered by the viewer source notice above |
 
 Fonts keep their own license (the OFL allows bundling them with software under

@@ -270,6 +270,11 @@ fn ui_text_width(ctx: &egui::Context, text: &str) -> f32 {
     })
 }
 
+pub enum ContentsOpen {
+    Script(uuid::Uuid, uuid::Uuid),
+    Notecard(uuid::Uuid, uuid::Uuid),
+}
+
 /// LLFloaterOpenObject: load and show the root object's task inventory.
 pub fn show_contents(
     ctx: &egui::Context,
@@ -277,10 +282,10 @@ pub fn show_contents(
     icons: &super::icons::Icons,
     state: &mut Interactions,
     world: &World,
-) -> Option<(uuid::Uuid, uuid::Uuid)> {
-    let c = state.contents.as_ref()?;
+) -> Vec<ContentsOpen> {
+    let Some(c) = state.contents.as_ref() else { return Vec::new() };
+    let mut documents = Vec::new();
     let mut open = true;
-    let mut notecard = None;
     let center = ctx.content_rect().center();
     Floater::new(
         "object_contents",
@@ -307,7 +312,7 @@ pub fn show_contents(
                                     ui.add(egui::Image::new(t).fit_to_exact_size(Vec2::splat(16.0)).tint(p.ink));
                                 }
                                 let permissions = super::inventory::permissions::Permissions::new(item.owner_mask, item.next_owner_mask);
-                                let r = permissions.row(ui, p, &item.name).on_hover_ui(|ui| {
+                                let response = permissions.row(ui, p, &item.name).on_hover_ui(|ui| {
                                     ui.label(&item.name);
                                     if !item.desc.is_empty() {
                                         ui.label(&item.desc);
@@ -315,13 +320,20 @@ pub fn show_contents(
                                     ui.separator();
                                     ui.label(permissions.tooltip());
                                 });
-                                if item.asset_type == 7 {
-                                    if r.double_clicked() {
-                                        notecard = Some((c.target.object, item.id));
+                                if matches!(item.asset_type, 7 | 10) {
+                                    let document = || {
+                                        if item.asset_type == 10 {
+                                            ContentsOpen::Script(c.target.object, item.id)
+                                        } else {
+                                            ContentsOpen::Notecard(c.target.object, item.id)
+                                        }
+                                    };
+                                    if response.double_clicked() {
+                                        documents.push(document());
                                     }
-                                    r.context_menu(|ui| {
+                                    response.context_menu(|ui| {
                                         if ui.button(aurora_i18n::tr!("common-open")).clicked() {
-                                            notecard = Some((c.target.object, item.id));
+                                            documents.push(document());
                                             ui.close();
                                         }
                                     });
@@ -350,5 +362,5 @@ pub fn show_contents(
     if !open {
         state.contents = None;
     }
-    notecard
+    documents
 }

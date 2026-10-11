@@ -39,6 +39,7 @@ pub mod perf;
 pub mod place_details;
 pub mod places;
 pub mod profile;
+pub mod scripts;
 pub mod skin;
 pub mod sound_cues;
 pub mod texture_picker;

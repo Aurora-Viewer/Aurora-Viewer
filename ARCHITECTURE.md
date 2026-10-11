@@ -90,6 +90,51 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
 
 ## `aurora-viewer` en détail
 
+`ui/scripts/indent.rs` gère les paliers de quatre colonnes pour Tab et Retour
+arrière et conserve le retrait à Entrée dans les deux éditeurs,
+avec le curseur et l'historique d'annulation natifs d'egui. Le collage reste
+exact. `ui/scripts/experiences.rs` suit l'association et les choix disponibles
+dans les scripts d'objets ; `aurora-net/src/scripts/experiences.rs` charge
+GetMetadata / GetCreatorExperiences / GetExperienceInfo en arrière-plan.
+L'association choisie fait partie du document et de l'instantané enregistré :
+la sauvegarde n'a plus besoin de relire les métadonnées.
+
+`ui/scripts/syntax.rs` colore la source LSL des deux éditeurs, aussi en lecture
+seule. Le catalogue des noms natifs de Firestorm est embarqué dans
+`assets/lsl/keywords.json`. L'analyse lexicale et les formats restent en cache
+par document tant que la source, le thème et la police ne changent pas ; la
+source envoyée au simulateur conserve exactement ses octets lorsque le
+préprocesseur est désactivé.
+
+`ui/scripts/view.rs` compose les menus, la barre d'outils, la gouttière des
+lignes et les diagnostics cliquables. `editing.rs` partage le curseur et
+l'historique natifs entre les commandes et la saisie ; `dialogs.rs` porte la
+recherche/remplacement, les préférences et l'aide par mot-clé.
+`settings.rs` conserve les couleurs et options de l'éditeur dans les réglages
+communs. `reference.rs` expose les signatures et descriptions du catalogue
+Firestorm embarqué dans `assets/lsl/reference.json`.
+`files.rs` réalise les dialogues, imports/exports et la surveillance d'un
+éditeur externe en arrière-plan, sans shell ni écrasement silencieux d'une
+modification concurrente. `world/script_debug.rs` filtre les sorties de scripts
+possédés après les blocages et le bridge ; `ui/scripts/debug.rs` les affiche
+ensemble ou par objet.
+
+`ui/scripts/preprocessor/` prépare l'enregistrement sur un thread distinct :
+lexique, macros C et expressions conditionnelles, inclusions de scripts de
+l'inventaire, inclusions locales facultatives, transformations LSL des
+listes étendues et `switch`, suppression des fonctions/variables inutilisées.
+Les demandes d'inclusions et leurs réponses traversent les actions de
+l'éditeur ; aucune attente réseau ou fichier ne bloque une image. La source
+originale est encapsulée avec les marqueurs de Firestorm et décodée à
+l'ouverture, tandis que le simulateur compile le résultat prétraité.
+Les deux vues utilisent des curseurs distincts : consulter le résultat ne
+remplace pas la source ni son historique d'annulation.
+`preprocessor/clock.rs` produit les macros de date et d'heure : horloge locale
+de Windows, avec appel système limité à la structure SYSTEMTIME ; UTC pour
+les autres plateformes.
+
+Les scripts utilisent un éditeur commun (`ui/scripts.rs`, actions dans `app/scripts.rs`) pour les éléments de l'inventaire et le contenu d'une prim. Chaque document garde sa source, sa version enregistrée et ses requêtes en cours. `aurora-net/src/session/scripts.rs` charge les sources avec `TransferRequest` et le contexte de permissions de l'inventaire, y compris lorsque l'UUID d'asset est masqué : le simulateur résout la source à partir de l'élément et de son propriétaire / objet. Un UUID d'asset nul ne signifie pas un nouveau script et ne déclenche pas le modèle local. `aurora-net/src/scripts.rs` enregistre et compile par `UpdateScriptAgent` / `UpdateScriptTask`, avec retour distinct de l'asset enregistré et des diagnostics de compilation. Aucun transfert ne bloque la boucle d'image.
+
 | Dossier / fichier | Contenu |
 |---|---|
 | `ui/inventory/document.rs`, `aurora-net/src/inventory/notecard.rs` | Cycle d’édition des documents : brouillon et sauvegarde corrélés à la fenêtre, fermeture après confirmation, refus conservant le texte ; import des notecards v1 / v2, export v2 avec longueur UTF-8 bornée et conservation des permissions des pièces jointes encore référencées |

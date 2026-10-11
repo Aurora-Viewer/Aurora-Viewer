@@ -182,17 +182,25 @@ fn item_row(
             ui.label(permissions.tooltip());
         });
         let item_modify = item.owner_mask & perm::MODIFY != 0;
+        let script = item.asset_type == AT_LSL_TEXT;
         let can_take = item.owner_mask & perm::COPY != 0 && item.owner_mask & perm::TRANSFER != 0
             || tool.props.get(&object_id).is_some_and(|pr| pr.owner_id == world.agent_id);
         r.context_menu(|ui| {
             if ui
-                .add_enabled(item.asset_type == 7, egui::Button::new(aurora_i18n::tr!("common-open")))
+                .add_enabled(script || item.asset_type == 7, egui::Button::new(aurora_i18n::tr!("common-open")))
                 .on_disabled_hover_text(aurora_i18n::tr!(
                     "build-ui-contents-opening-items-inside-an-object-is-not-available-yet"
                 ))
                 .clicked()
             {
-                tool.ui.open_notecard = Some((object_id, item.item_id));
+                if script {
+                    tool.ui.requests.push(super::Request::Script {
+                        object: object_id,
+                        item: item.item_id,
+                    });
+                } else {
+                    tool.ui.open_notecard = Some((object_id, item.item_id));
+                }
                 ui.close();
             }
             if ui.button(aurora_i18n::tr!("common-properties")).clicked() {
@@ -241,7 +249,12 @@ fn item_row(
             }
         });
         if r.double_clicked() {
-            if item.asset_type == 7 {
+            if script {
+                tool.ui.requests.push(super::Request::Script {
+                    object: object_id,
+                    item: item.item_id,
+                });
+            } else if item.asset_type == 7 {
                 tool.ui.open_notecard = Some((object_id, item.item_id));
             } else if editable && item_modify {
                 tool.ui.rename = Some((item.item_id, item.name.clone()));
@@ -255,8 +268,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn double_click_opens_a_notecard_even_read_only_and_never_starts_renaming() {
-        for editable in [true, false] {
+    fn double_click_opens_scripts_and_notecards_even_read_only_and_never_starts_renaming() {
+        for (asset_type, editable) in [(7, true), (7, false), (AT_LSL_TEXT, true), (AT_LSL_TEXT, false)] {
             let ctx = egui::Context::default();
             let p = crate::theme::Theme::default().palette();
             let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
@@ -265,7 +278,7 @@ mod tests {
             let item = TaskItem {
                 item_id: uuid::Uuid::from_u128(2),
                 name: "Note".into(),
-                asset_type: 7,
+                asset_type,
                 owner_mask: perm::COPY | perm::MODIFY | perm::TRANSFER,
                 ..Default::default()
             };
@@ -311,7 +324,18 @@ mod tests {
                     );
                 }
             }
-            assert_eq!(tool.ui.open_notecard, Some((object, item.item_id)));
+            if asset_type == AT_LSL_TEXT {
+                assert!(tool.ui.open_notecard.is_none());
+                assert_eq!(tool.ui.requests.len(), 1);
+                assert!(matches!(
+                    tool.ui.requests.first(),
+                    Some(super::super::Request::Script { object: opened, item: opened_item })
+                    if *opened == object && *opened_item == item.item_id
+                ));
+            } else {
+                assert_eq!(tool.ui.open_notecard, Some((object, item.item_id)));
+                assert!(tool.ui.requests.is_empty());
+            }
             assert!(tool.ui.rename.is_none());
         }
     }

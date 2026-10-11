@@ -195,6 +195,14 @@ impl App {
                     f.state = crate::world::inventory::FetchState::Unknown;
                     self.world.inventory.request(id);
                 } else if let Some(it) = self.world.inventory.items.get(&id).cloned() {
+                    if it.asset_type == 10 {
+                        self.inventory_ui.preview = self.inventory_ui.preview.filter(|preview| *preview != id);
+                        self.open_script(aurora_net::scripts::ScriptTarget {
+                            object: Uuid::nil(),
+                            item: id,
+                        });
+                        return;
+                    }
                     if matches!(it.asset_type, 7 | 10) && it.owner_mask & rules::COPY == 0 {
                         self.inventory_preview(
                             id,

@@ -277,8 +277,10 @@ fn item_from_llsd(v: &Llsd) -> Option<TaskItem> {
     let s = &v["sale_info"];
     let asset_id = if v.has("asset_id") {
         v["asset_id"].as_uuid()
-    } else {
+    } else if v.has("shadow_id") {
         xor_magic(v["shadow_id"].as_uuid())
+    } else {
+        Uuid::nil()
     };
     let mut item = TaskItem {
         item_id: id,
@@ -359,6 +361,7 @@ mod tests {
         reply.insert("inventory_serial", 7);
         let items = parse_cap(&reply).unwrap();
         assert_eq!(items[0].asset_type, 10);
+        assert!(items[0].asset_id.is_nil());
         assert_eq!(items[0].owner_mask, 0x7fff_ffff);
         assert_eq!(items[0].sale_type, 2);
         assert_eq!(cap_serial(&reply), Some(7));
