@@ -10,6 +10,7 @@ use egui::{Color32, RichText, Vec2};
 
 #[derive(Default)]
 pub enum BarAction {
+    CheckUpdates,
     ShowHuds(bool),
     HudZoom(f32),
     #[default]
@@ -499,6 +500,10 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         });
     }
     ui.menu_button(small(aurora_i18n::tr!("common-help"), p.ink), |ui| {
+        if crate::updater::checks_enabled() && ui.button(aurora_i18n::tr!("update-check")).clicked() {
+            *action = BarAction::CheckUpdates;
+            ui.close();
+        }
         ui.label(small(
             aurora_i18n::tr!("common-aurora-viewer", value0 = aurora_version::version().to_string()),
             p.muted,

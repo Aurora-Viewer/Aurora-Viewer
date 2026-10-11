@@ -1048,6 +1048,32 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     |ui| toggle(ui, p, &mut s.language_is_public),
                 );
             });
+            group(ui, p, aurora_i18n::tr!("update-settings"), |ui| {
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("update-settings"),
+                    aurora_i18n::tr!("update-settings-help"),
+                    |ui| {
+                        let mut changed = false;
+                        let label = match s.update_mode {
+                            crate::updater::Mode::Disabled => aurora_i18n::tr!("update-mode-disabled"),
+                            crate::updater::Mode::Ask => aurora_i18n::tr!("update-mode-ask"),
+                            crate::updater::Mode::Automatic => aurora_i18n::tr!("update-mode-auto"),
+                        };
+                        egui::ComboBox::from_id_salt("update-mode").selected_text(label).show_ui(ui, |ui| {
+                            for (value, label) in [
+                                (crate::updater::Mode::Disabled, aurora_i18n::tr!("update-mode-disabled")),
+                                (crate::updater::Mode::Ask, aurora_i18n::tr!("update-mode-ask")),
+                                (crate::updater::Mode::Automatic, aurora_i18n::tr!("update-mode-auto")),
+                            ] {
+                                changed |= ui.selectable_value(&mut s.update_mode, value, label).changed();
+                            }
+                        });
+                        changed
+                    },
+                );
+            });
             group(ui, p, aurora_i18n::tr!("ui-options-layout"), |ui| {
                 c |= row(ui, p, aurora_i18n::tr!("ui-options-interface-scale"), "", |ui| {
                     slider(ui, &mut s.ui_scale, 0.75..=2.0, "×")

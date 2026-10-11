@@ -11,6 +11,9 @@ fn account(grid: &str, username: &str) -> String {
 }
 
 fn entry(grid: &str, username: &str) -> Option<keyring::Entry> {
+    if aurora_updater::test_environment().is_some() {
+        return None;
+    }
     if username.trim().is_empty() {
         return None;
     }

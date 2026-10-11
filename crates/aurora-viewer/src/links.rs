@@ -7,8 +7,5 @@ pub const GITHUB: &str = "";
 pub const DISCORD: &str = "";
 /// Project website.
 pub const WEBSITE: &str = "";
-/// Latest release: GitHub API `https://api.github.com/repos/OWNER/REPO/releases/latest`
-/// (`tag_name`, `html_url`).
-pub const RELEASES_API: &str = "";
 /// News feed: JSON array of `{"date", "title", "summary", "url"}`.
 pub const NEWS_FEED: &str = "";

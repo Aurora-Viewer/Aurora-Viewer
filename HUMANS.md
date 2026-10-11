@@ -101,6 +101,15 @@ servent aussi à **supprimer** une release (il faut taper son tag pour
 confirmer ; `assets-1`, qui contient la police emoji, est protégée). Il faut
 le droit d'écriture sur le dépôt.
 
+Avant la confirmation de création, deux choix règlent l’effet de la mise à jour
+chez les utilisateurs : **conserver ou invalider le cache**, puis **conserver et
+migrer les paramètres automatiquement** (choix habituel) ou **les réinitialiser**.
+Les migrations doivent être implémentées dans le viewer ; une rupture incompatible
+peut imposer le retour aux valeurs par défaut. La fenêtre de mise à jour annonce
+ces effets avant l’installation. Les choix sont enregistrés dans le tag annoté,
+puis publiés avec la release ; ils restent applicables aux utilisateurs qui
+sautent une version. Les autres fichiers du profil ne sont pas réinitialisés.
+
 Tu peux aussi le demander à un agent : « sors la 0.4.0 » (ou « sors une
 version » : il te propose le numéro). Dans les deux cas, GitHub Actions
 compile le viewer, crée la release avec le zip Windows et écrit les notes,
@@ -256,6 +265,20 @@ Le script ne supprime que des dossiers de compilation Cargo, et refuse de
 travailler pendant une compilation ou quand un viewer est ouvert.
 
 ## Où sont les fichiers
+
+Les paquets Windows vérifient les mises à jour au lancement, en arrière-plan.
+« Ignorer cette version » masque sa proposition automatique ; « Vérifier les
+mises à jour », dans Aide et sur la connexion, permet de la retrouver.
+Préférences → Interface → Mises à jour : demander (par défaut), télécharger
+automatiquement ou seulement les mises à jour obligatoires. Le téléchargement
+automatique attend votre accord pour installer et relancer.
+
+Le viewer vérifie le ZIP, garde l’ancien dossier jusqu’à la première image
+affichée et le restaure si le démarrage échoue. Utiliser un dossier dédié, avec
+des droits d’écriture ; les dossiers contenant du code ou des fichiers personnels
+demandent une installation manuelle. Réglages et cache restent dans les dossiers
+habituels. Développement et démo ne vérifient pas les releases. Voir
+[docs/UPDATES.md](docs/UPDATES.md) pour le format des paquets et leur politique.
 
 | Quoi | Où |
 |---|---|

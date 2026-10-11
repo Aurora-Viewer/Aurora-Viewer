@@ -263,6 +263,9 @@ pub struct App {
     voice_http: reqwest::Client,
     /// Login screen news and latest version.
     login_info: ui::news::LoginInfo,
+    update_demo: Option<ui::update::UpdateDemo>,
+    updater: crate::updater::Updater,
+    update_acknowledged: bool,
     /// Voice dots above the avatars (wave animation state).
     voice_dots: ui::voice_dot::VoiceDots,
     /// Avatar name tags on screen last frame, far first: a click on one
@@ -351,6 +354,7 @@ impl App {
         net.set_agent_language(aurora_i18n::language(), settings.language_is_public);
         let voice_http = net.caps_http();
         let login_info = ui::news::LoginInfo::start(net.runtime());
+        let updater = crate::updater::Updater::new(net.runtime());
         let out_device = (!settings.audio.output_device.is_empty()).then(|| settings.audio.output_device.clone());
         let lib = Arc::new(AvatarLibrary::load());
         let cache = crate::settings::cache_dir();
@@ -414,6 +418,7 @@ impl App {
         let mut scene = Scene::new(cache, lib.clone());
         scene.draw_distance = settings.draw_distance;
         scene.lod_factor = settings.lod_factor;
+        let update_demo = ui::update::UpdateDemo::from_env(&settings);
         Ok(App {
             settings,
             disk_cache,
@@ -545,6 +550,9 @@ impl App {
             media_cursor: None,
             voice: Default::default(),
             voice_http,
+            update_demo,
+            updater,
+            update_acknowledged: false,
             login_info,
             voice_dots: Default::default(),
             name_tags: Vec::new(),
@@ -3076,6 +3084,10 @@ impl App {
     }
 
     fn frame(&mut self, event_loop: &ActiveEventLoop) {
+        if self.updater.poll(&self.settings, &mut self.login_info, self.net.runtime()) {
+            self.shutdown(event_loop);
+            return;
+        }
         self.poll_inventory_images();
         self.frame_profile.lap(Lap::Between);
         let now = Instant::now();
@@ -4010,6 +4022,10 @@ impl App {
             }),
         );
         self.last_render = stats;
+        if stats.presented && !self.update_acknowledged {
+            self.update_acknowledged = true;
+            aurora_updater::install::acknowledge_frame();
+        }
         if gfx.renderer.failed() {
             // the render thread is gone (its panic is in the log): nothing
             // more can be shown, leave cleanly
@@ -4552,10 +4568,15 @@ impl App {
     }
 
     fn handle_actions(&mut self, a: UiActions, event_loop: &ActiveEventLoop) {
+        if a.update_quit {
+            self.shutdown(event_loop);
+            return;
+        }
         match a.login {
-            LoginAction::Login => self.start_login(),
-            LoginAction::Quit => event_loop.exit(),
-            LoginAction::None => {}
+            LoginAction::Login if !self.updater.blocks_login() && aurora_updater::test_environment().is_none() => self.start_login(),
+            LoginAction::CheckUpdates => self.updater.check(self.net.runtime(), true),
+            LoginAction::Quit => self.shutdown(event_loop),
+            LoginAction::None | LoginAction::Login => {}
         }
         if let Some(c) = a.chat {
             self.send_local_chat(c);
@@ -4625,6 +4646,7 @@ impl App {
             }
         }
         match a.bar {
+            BarAction::CheckUpdates => self.updater.check(self.net.runtime(), true),
             BarAction::ShowHuds(visible) => {
                 if self.hud_drag.is_some() {
                     self.on_left_release();
@@ -4754,11 +4776,27 @@ impl App {
         let mut a = UiActions::default();
         let p = self.palette;
         let ctx = ui.ctx().clone();
+        a.update_quit = ui::update::show_real(
+            &ctx,
+            &p,
+            &self.skin.icons,
+            &mut self.updater,
+            &mut self.settings,
+            self.net.runtime(),
+        );
         match self.screen {
             Screen::Login => {
+                if let Some(demo) = &mut self.update_demo {
+                    a.login = demo.show(ui, &p, &self.skin.icons, self.logo.as_ref());
+                    return a;
+                }
                 self.sync_remembered_password();
                 let progress = self.login_progress.as_ref().map(|(m, f)| (m.as_str(), *f));
                 self.login_info.poll();
+                self.login_form.block_reason = self
+                    .updater
+                    .login_block_reason()
+                    .or_else(|| aurora_updater::test_environment().map(|_| aurora_i18n::tr!("update-login-test")));
                 a.login = ui::login::show(
                     ui,
                     &p,
@@ -5538,6 +5576,7 @@ impl App {
 
 #[derive(Default)]
 struct UiActions {
+    update_quit: bool,
     login: LoginAction,
     chat: Option<ui::chat::OutgoingChat>,
     bar: BarAction,
@@ -5658,6 +5697,10 @@ impl ApplicationHandler for App {
         });
         if std::env::var_os("AURORA_DEMO").is_some() {
             self.demo = true;
+            if self.update_demo.is_some() {
+                // The update preview stays offline on a synthetic login screen.
+                return;
+            }
             if let Ok(mode) = std::env::var("AURORA_DEMO_LOGIN") {
                 self.settings.username = "Demo Resident".into();
                 self.settings.remember_username = true;

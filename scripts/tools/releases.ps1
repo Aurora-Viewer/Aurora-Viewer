@@ -136,17 +136,31 @@ function New-AuroraRelease($Repo) {
     }
     if (git -C $Paths.Repo tag --list $tag) { Write-Color "  Le tag $tag existe déjà." danger; Wait-Back; return }
     $pre = [bool](ConvertTo-Version $tag).Suffix
+    $policy = Get-UpdatePolicy -RepoPath $Paths.Repo -Tag $tag -BaseTag $(if ($ctx.Last) { $ctx.Last.Tag }) -Ref origin/main
+    $policy = Read-ReleaseMaintenance $policy
+    if (-not $policy) { return }
     Write-Host ''
     Write-Color "  $tag, sur le dernier main$(if ($pre) { ', en pré-release' }) : le workflow Release compile le viewer et publie le zip avec les notes." ink
+    Write-Color "  Cache : $(if ($policy.cache_invalidation_before) { 'vidé pour les versions antérieures à ' + $policy.cache_invalidation_before } else { 'conservé' })." ink
+    Write-Color "  Paramètres : $(if ($policy.settings_reset_before) { 'réinitialisés pour les versions antérieures à ' + $policy.settings_reset_before } else { 'conservés et migrés automatiquement si nécessaire' })." ink
     if (-not (Read-YesNo "Créer la release $tag ?")) { return }
 
+    $message = "Aurora Viewer $($tag.TrimStart('v'))`n`nAurora-Update-Policy: $($policy | ConvertTo-Json -Compress -Depth 4)"
+
     if ($DryRun) {
-        Write-Color "  [simulation] git tag -a $tag origin/main ; git push origin $tag" teal
+        Write-Color "  [simulation] tag $tag sur origin/main avec politique : $($policy | ConvertTo-Json -Compress -Depth 4)" teal
         Wait-Back; return
     }
     git -C $Paths.Repo fetch origin --quiet
-    git -C $Paths.Repo tag -a $tag origin/main -m "Aurora Viewer $($tag.TrimStart('v'))"
-    if ($LASTEXITCODE -ne 0) { Write-Color '  Création du tag impossible.' danger; Wait-Back; return }
+    $tagMessageFile = [IO.Path]::GetTempFileName()
+    try {
+        [IO.File]::WriteAllText($tagMessageFile, $message, [Text.UTF8Encoding]::new($false))
+        git -C $Paths.Repo tag -a $tag origin/main -F $tagMessageFile
+        $tagExit = $LASTEXITCODE
+    } finally {
+        Remove-Item -LiteralPath $tagMessageFile -Force
+    }
+    if ($tagExit -ne 0) { Write-Color '  Création du tag impossible.' danger; Wait-Back; return }
     git -C $Paths.Repo push origin $tag
     if ($LASTEXITCODE -ne 0) {
         git -C $Paths.Repo tag -d $tag | Out-Null

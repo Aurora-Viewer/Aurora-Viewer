@@ -7,6 +7,9 @@ use std::io::Write;
 use std::path::PathBuf;
 
 pub fn logs_dir() -> PathBuf {
+    if let Some(test) = aurora_updater::test_environment() {
+        return test.root.join("logs");
+    }
     directories::ProjectDirs::from("org", "Aurora", "AuroraViewer")
         .map(|d| d.data_local_dir().join("logs"))
         .unwrap_or_else(|| PathBuf::from("logs"))
