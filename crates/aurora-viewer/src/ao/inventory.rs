@@ -308,6 +308,21 @@ fn finish(mut change: Mutation) -> Mutation {
     change
 }
 
+/// Refresh lists contain parents, so they alone cannot protect an element
+/// being renamed or removed. Check operation targets and destinations too.
+pub fn editable(inv: &Inventory, change: &Mutation, protected: &HashSet<Uuid>) -> bool {
+    change
+        .operations
+        .iter()
+        .map(|op| match op {
+            Operation::Folder { parent, .. } | Operation::Links { parent, .. } => *parent,
+            Operation::Patch { id, .. } | Operation::Delete { id, .. } | Operation::Purge(id) => *id,
+        })
+        .chain(change.refresh.iter().copied())
+        .filter(|id| inv.folders.contains_key(id) || inv.items.contains_key(id))
+        .all(|id| actions::mutable(inv, id, protected))
+}
+
 /// Build the entire parent-before-child mutation before sending it. AIS
 /// remaps every new folder UUID, and reads the contents back before success.
 pub fn create(inv: &Inventory, catalog: &Catalog, set: &Set) -> Result<(Mutation, Uuid), String> {

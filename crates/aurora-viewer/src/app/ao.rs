@@ -146,10 +146,7 @@ impl App {
                     .copied()
                     .filter(|id| self.world.inventory.folders.contains_key(id))
                     .collect();
-                if existing
-                    .iter()
-                    .any(|id| !crate::world::inventory::actions::mutable(&self.world.inventory, *id, protected))
-                {
+                if !inventory::editable(&self.world.inventory, &change, protected) {
                     self.ao_ui.message = aurora_i18n::tr!("ao-protected").into();
                     return;
                 }

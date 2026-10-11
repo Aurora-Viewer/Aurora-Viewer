@@ -349,3 +349,26 @@ fn failed_fetch_is_reported_without_retrying_or_losing_the_loaded_set() {
     assert!(!catalog.failed);
     assert!(inv.queue.iter().any(|(id, _)| *id == folder));
 }
+
+#[test]
+fn protected_operation_targets_cannot_be_changed_but_originals_remain_readable() {
+    let (inv, mut set) = fixture();
+    let none = std::collections::HashSet::new();
+    set.name = "Renamed".into();
+    let rename = inventory::save_set(&inv, &set).expect("rename");
+    assert!(inventory::editable(&inv, &rename, &none));
+    assert!(!inventory::editable(&inv, &rename, &std::collections::HashSet::from([set.id])));
+    let config = &set.states[&State::Standing];
+    let cycle = inventory::save_cycle(&inv, State::Standing, config).expect("cycle");
+    assert!(!inventory::editable(
+        &inv,
+        &cycle,
+        &std::collections::HashSet::from([config.folder])
+    ));
+    let a = &config.steps[0].members[0];
+    let remove = inventory::remove(&inv, a.link).expect("remove");
+    assert!(!inventory::editable(&inv, &remove, &std::collections::HashSet::from([a.link])));
+    let add = inventory::add(&inv, &set, State::Walking, a.original, None).expect("add");
+    assert!(inventory::editable(&inv, &add, &std::collections::HashSet::from([a.original])));
+    assert!(!inventory::editable(&inv, &add, &std::collections::HashSet::from([set.id])));
+}
