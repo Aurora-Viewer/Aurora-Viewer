@@ -1852,7 +1852,12 @@ pub fn events() -> Vec<NetEvent> {
     if let Ok(spec) = std::env::var("AURORA_DEMO_FLEXIBLE") {
         objs.clear();
         overrides.clear();
-        let count = spec.parse::<usize>().unwrap_or(6).clamp(6, 2000);
+        let edit = spec == "edit";
+        let count = if edit {
+            1
+        } else {
+            spec.parse::<usize>().unwrap_or(6).clamp(6, 2000)
+        };
         for k in 0..count {
             let mut volume = boxp;
             volume.path.curve_type = LL_PCODE_PATH_FLEXIBLE;
@@ -1865,7 +1870,7 @@ pub fn events() -> Vec<NetEvent> {
                 volume.path.scale = [0.4, 0.7];
             }
             let flex = aurora_prim::extra::FlexibleParams {
-                softness: (k % 4) as u8,
+                softness: if edit { 2 } else { (k % 4) as u8 },
                 tension: if k % 6 == 1 { 8.0 } else { 1.0 },
                 air_friction: 2.0,
                 gravity: if k % 6 == 2 { -3.0 } else { 3.0 },
@@ -1874,12 +1879,20 @@ pub fn events() -> Vec<NetEvent> {
             };
             let x = 137.0 + (k % 6) as f32 * 1.6;
             let y = 132.0 + (k / 6) as f32 * 1.6;
-            let z = height(x, y) + 3.0;
+            let z = height(x, y) + if edit { 5.0 } else { 3.0 };
             let mut o = prim(
                 90000 + k as u32,
                 Vec3::new(x, y, z),
-                Quat::from_rotation_y(std::f32::consts::FRAC_PI_2),
-                Vec3::new(0.25, 0.4, 4.0),
+                Quat::from_rotation_y(if edit {
+                    std::f32::consts::FRAC_PI_4
+                } else {
+                    std::f32::consts::FRAC_PI_2
+                }),
+                if edit {
+                    Vec3::new(1.0, 0.3, 4.0)
+                } else {
+                    Vec3::new(0.25, 0.4, 4.0)
+                },
                 volume,
                 te([0.25 + 0.1 * (k % 6) as f32, 0.75, 0.6, 1.0], 0, false, 0.0),
                 ExtraParams {

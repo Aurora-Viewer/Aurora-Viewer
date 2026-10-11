@@ -137,6 +137,11 @@ seulement les sommets dans leurs allocations GPU existantes. Le vent de chaque
 région est reçu par `LayerData` (deux patches DCT), interpolé comme `LLWind`.
 Les prims flexibles sont dans l'ensemble des objets actifs, même sans mouvement
 réseau ; les changements d'origine décalent leur simulation avec le monde.
+Le contour des flexibles sélectionnés est préparé sur le même worker depuis
+les sommets simulés (`build/silhouette.rs`). Les outils de déplacement et de
+rotation utilisent leur ancrage négatif en Z ; la boîte et les poignées de
+taille gardent les dimensions droites, comme `LLManipScale`. Modifier la taille
+ou la souplesse remappe la chaîne existante au lieu de la réinitialiser droite.
 
 Le rez depuis l’inventaire passe par `ui/inventory.rs` (charge utile et relâché avant la fin de la passe egui), `app/inventory_drag.rs` (règles, groupe, préparation des commandes et consommation locale des exemplaires non copiables), `Scene::inventory_surface` (triangles parmi les candidats de l’index, terrain, sans attente GPU) et `aurora-net/src/inventory/rez.rs` (message fiable `RezObject` dans la région visée). Les pixels transparents sont testés avec un masque d’un bit par bloc 2×2, préparé par les tâches de décodage ; les surfaces invisibles et riggées sont écartées. Le curseur garde le résultat pendant 100 ms au plus quand le rayon ne bouge pas ; le relâché recalcule toujours la surface. Ctrl sur un objet envoie `UpdateTaskInventory`. La démo utilise un cube synthétique comme réponse au rez.
 

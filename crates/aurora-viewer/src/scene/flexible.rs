@@ -3,29 +3,38 @@
 //! Source: LLVolumeImplFlexible (indra/newview/llflexibleobject.cpp, LGPL 2.1).
 
 use super::*;
+use crate::build::silhouette::{self, Topology};
 use aurora_prim::flexible::Flexible;
-use aurora_prim::params::{LL_PCODE_PATH_FLEXIBLE, LL_PCODE_VOLUME};
 
 pub(super) struct State {
     id: Uuid,
     pub(super) sim: Flexible,
     last: Instant,
-}
-
-pub(super) fn enabled(o: &Object) -> bool {
-    o.pcode == LL_PCODE_VOLUME
-        && o.volume.path.curve_type == LL_PCODE_PATH_FLEXIBLE
-        && o.extra.flexible.is_some()
-        && !o.volume.is_sculpt()
-        && !o.volume.is_mesh()
+    outline: Option<Topology>,
 }
 
 impl Scene {
+    /// LLVolumeImplFlexible::getPivotPosition / getAnchorPosition: the
+    /// negative-Z end, independent of the bent geometry's bounds.
+    pub fn object_edit_pivot(world: &World, idx: usize, now: Instant) -> Option<Vec3> {
+        let o = world.objects.get(idx)?;
+        let (pos, rot, _) = Self::object_transform(world, idx, now, 0)?;
+        Some(if o.is_flexible() {
+            pos - rot * Vec3::Z * (world.visual_scale(idx).z * 0.5)
+        } else {
+            pos
+        })
+    }
+
+    pub(crate) fn flexible_outline(&self, idx: usize) -> Option<&Topology> {
+        self.flexibles.get(&idx)?.outline.as_ref()
+    }
+
     pub(super) fn sync_flexibles(&mut self, renderer: &mut Renderer, world: &World, synced: &[usize], now: Instant, view: &CullView) {
         self.flexibles
-            .retain(|&idx, s| world.objects.get(idx).is_some_and(|o| o.full_id == s.id && enabled(o)));
+            .retain(|&idx, s| world.objects.get(idx).is_some_and(|o| o.full_id == s.id && o.is_flexible()));
         for &idx in synced {
-            let Some(o) = world.objects.get(idx).filter(|o| enabled(o)) else {
+            let Some(o) = world.objects.get(idx).filter(|o| o.is_flexible()) else {
                 continue;
             };
             let Some(p) = o.extra.flexible else {
@@ -38,6 +47,7 @@ impl Scene {
                 id: o.full_id,
                 sim: Flexible::new(p.softness, world.visual_scale(idx).z, pos, rot),
                 last: now,
+                outline: None,
             });
         }
         let updates: Vec<_> = self
@@ -60,7 +70,7 @@ impl Scene {
                     return None;
                 }
                 if !state.sim.matches(p.softness, scale.z) {
-                    state.sim = Flexible::new(p.softness, scale.z, pos, rot);
+                    state.sim.reconfigure(p.softness, scale.z, pos, rot);
                 }
                 let dt = now.saturating_duration_since(state.last).as_secs_f32();
                 state.last = now;
@@ -79,12 +89,15 @@ impl Scene {
                     &state.sim.path(pos, rot),
                     scale,
                 );
+                // Only selected flexies need silhouette topology. Build it
+                // from the exact rendered mesh on the same rayon worker.
+                let outline = self.selection_silhouettes.contains(&idx).then(|| silhouette::from_mesh(&mesh));
                 let (faces, min, max) = jobs::volume_to_faces(&mesh);
                 let prepared = jobs::PreparedGeom::new(faces, min, max, true, None);
-                Some((idx, key, prepared, pos, rot, scale))
+                Some((idx, key, prepared, outline, pos, rot, scale))
             })
             .collect();
-        for (idx, key, prepared, pos, rot, scale) in updates {
+        for (idx, key, prepared, outline, pos, rot, scale) in updates {
             let Some(GeomEntry {
                 state: GeomState::Ready(geom),
                 ..
@@ -114,6 +127,9 @@ impl Scene {
             geom.min = prepared.min;
             geom.max = prepared.max;
             geom.pick_faces = prepared.pick_faces;
+            if let Some(state) = self.flexibles.get_mut(&idx) {
+                state.outline = outline;
+            }
             let model = Mat4::from_scale_rotation_translation(scale, rot, pos);
             let g = &mut self.gpu[idx];
             g.center = model.transform_point3((geom.min + geom.max) * 0.5);

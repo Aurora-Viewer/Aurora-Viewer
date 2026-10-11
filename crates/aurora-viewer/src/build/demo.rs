@@ -11,6 +11,8 @@
 //!
 //! Frames are counted from AURORA_DEMO_BUILD_FRAME (600 by default: after
 //! the loading fade; capture at about +90 frames).
+//! `mode,object:<local_id>[,part,dx,dy]` selects a demo object directly,
+//! so an animated flexible shape needs no fixed screen click coordinate.
 //!
 //! `AURORA_DEMO_BUILD_TAB` shows a tab of the floater: general | object |
 //! features | texture | contents, the texture tab with `:pbr`, `:bp` or
@@ -25,6 +27,7 @@ use std::time::Instant;
 
 pub enum Step {
     Open(Tool, EditMode, u8),
+    Select(usize),
     Cursor(f32, f32),
     Press,
     Release,
@@ -54,10 +57,11 @@ fn part_of(s: &str) -> Option<Part> {
 /// Screen position (physical pixels) of a handle of the current selection.
 fn handle_px(tool: &BuildTool, world: &World, s: &BuildSettings, part: Part) -> Option<(f32, f32)> {
     let now = Instant::now();
-    let b = tool.bounds(world, now)?;
-    let g = super::grid_of(s, Some(&b), None);
+    let f = super::manip::frame(world, s, &tool.selection, tool.selection_linked, now, None)?;
+    let b = f.bounds;
+    let g = f.grid;
     let cam = &tool.cam;
-    let c = b.center;
+    let c = f.pivot;
     let len = cam.meters_for_pixels(c, 50.0);
     let unit = |i: usize| {
         let mut v = Vec3::ZERO;
@@ -95,9 +99,9 @@ fn handle_px(tool: &BuildTool, world: &World, s: &BuildSettings, part: Part) -> 
                 if k & 2 != 0 { 1.0 } else { -1.0 },
                 if k & 4 != 0 { 1.0 } else { -1.0 },
             );
-            c + b.rotation * (b.half * sg)
+            b.center + b.rotation * (b.half * sg)
         }
-        Part::Face(i, pos) => c + b.rotation * unit(i) * b.half[i] * if pos { 1.0 } else { -1.0 },
+        Part::Face(i, pos) => b.center + b.rotation * unit(i) * b.half[i] * if pos { 1.0 } else { -1.0 },
     };
     cam.project_px(p)
 }
@@ -133,12 +137,21 @@ pub fn apply_tab(tool: &mut BuildTool) {
     };
 }
 
+/// Optional direct object selection, used for animated-shape captures.
+pub fn target_index(spec: &str, world: &World) -> Option<usize> {
+    let id = spec.split(',').nth(1)?.trim().strip_prefix("object:")?.parse::<u32>().ok()?;
+    world.objects.iter().find_map(|(i, o)| (o.key.local_id == id).then_some(i))
+}
+
 /// What to do at this frame.
 pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildSettings) -> Vec<Step> {
     let parts: Vec<&str> = spec.split(',').map(|x| x.trim()).collect();
     let num = |i: usize| parts.get(i).and_then(|v| v.parse::<f32>().ok());
-    let (Some(x), Some(y)) = (num(1), num(2)) else {
-        return Vec::new();
+    let object = target_index(spec, world);
+    let (x, y) = match (object, num(1), num(2)) {
+        (Some(_), _, _) => (0.0, 0.0),
+        (_, Some(x), Some(y)) => (x, y),
+        _ => return Vec::new(),
     };
     let (t, m, land) = match parts[0] {
         "rotate" => (Tool::Edit, EditMode::Rotate, 6),
@@ -152,7 +165,8 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
         "select" => (Tool::Land, EditMode::Move, 6),
         _ => (Tool::Edit, EditMode::Move, 6),
     };
-    let handle = parts.get(3).and_then(|p| part_of(p));
+    let h = if object.is_some() { 2 } else { 3 };
+    let handle = parts.get(h).and_then(|p| part_of(p));
     // script start (AURORA_DEMO_BUILD_FRAME, after the loading fade by default)
     let base: u64 = std::env::var("AURORA_DEMO_BUILD_FRAME")
         .ok()
@@ -161,9 +175,10 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
     let Some(frame) = (frame + 215).checked_sub(base) else {
         return Vec::new();
     };
-    let (dx, dy) = (num(4).unwrap_or(120.0), num(5).unwrap_or(0.0));
+    let (dx, dy) = (num(h + 1).unwrap_or(120.0), num(h + 2).unwrap_or(0.0));
     match frame {
         215 => vec![Step::Open(t, m, land)],
+        220 if object.is_some() => object.into_iter().map(Step::Select).collect(),
         220 => vec![Step::Cursor(x, y), Step::Press],
         // land brush / selection: held (land: no release), others released
         226 if t != Tool::Land => vec![Step::Release],

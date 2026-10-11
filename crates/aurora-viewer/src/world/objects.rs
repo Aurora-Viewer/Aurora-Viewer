@@ -116,6 +116,16 @@ pub struct Object {
 }
 
 impl Object {
+    /// Ordinary flexible volumes use a simulated path; sculpt/mesh assets
+    /// retain their own geometry even if they carry stale flexible parameters.
+    pub fn is_flexible(&self) -> bool {
+        self.pcode == aurora_prim::params::LL_PCODE_VOLUME
+            && self.volume.path.curve_type == aurora_prim::params::LL_PCODE_PATH_FLEXIBLE
+            && self.extra.flexible.is_some()
+            && !self.volume.is_sculpt()
+            && !self.volume.is_mesh()
+    }
+
     pub fn from_update(region: RegionHandle, u: ObjectUpdate) -> Object {
         Object {
             key: ObjKey {

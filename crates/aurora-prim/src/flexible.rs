@@ -49,7 +49,42 @@ impl Flexible {
     }
 
     pub fn matches(&self, softness: u8, length: f32) -> bool {
-        self.sections.len() == (1usize << softness.min(3)) + 1 && (self.length - length).abs() < 1e-5
+        self.sections.len() == (1usize << softness.min(3)) + 1 && (self.length - finite(length, 1.0).clamp(0.001, 64.0)).abs() < 1e-5
+    }
+
+    /// LLVolumeImplFlexible::onSetScale / remapSections: keep the bent
+    /// chain and its inertia while changing size or simulation resolution.
+    pub fn reconfigure(&mut self, softness: u8, length: f32, position: Vec3, rotation: Quat) {
+        if self.matches(softness, length) || !position.is_finite() || !rotation.is_finite() {
+            return;
+        }
+        let samples = self.path(Vec3::ZERO, Quat::IDENTITY);
+        let old = &self.sections;
+        let old_n = old.len() - 1;
+        let n = 1usize << softness.min(3);
+        let length = finite(length, 1.0).clamp(0.001, 64.0);
+        let mut sections = Vec::with_capacity(n + 1);
+        sections.push(Section {
+            position: position - rotation * Vec3::Z * (length * 0.5),
+            velocity: Vec3::ZERO,
+            direction: rotation * Vec3::Z,
+            rotation,
+        });
+        for i in 1..=n {
+            let parent = sections[i - 1];
+            let (a, b) = (samples[(i - 1) * 8 / n], samples[i * 8 / n]);
+            let direction = (b.position - a.position).normalize_or(parent.direction);
+            let t = i as f32 * old_n as f32 / n as f32;
+            let k = (t as usize).min(old_n - 1);
+            sections.push(Section {
+                position: parent.position + direction * (length / n as f32),
+                velocity: old[k].velocity.lerp(old[k + 1].velocity, t - k as f32),
+                direction,
+                rotation: b.rotation,
+            });
+        }
+        self.sections = sections;
+        self.length = length;
     }
 
     /// Long frames are bounded as in Firestorm, and split to keep the length
@@ -248,5 +283,33 @@ mod tests {
                 assert!(s.position.is_finite() && s.rotation.is_finite());
             }
         }
+    }
+
+    #[test]
+    fn resizing_and_changing_softness_preserve_bend_and_anchor() {
+        let rot = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
+        let mut f = Flexible::new(2, 4.0, Vec3::ZERO, rot);
+        for _ in 0..240 {
+            f.update(params(), Vec3::ZERO, rot, 1.0 / 60.0, |_| Vec3::ZERO);
+        }
+        let before = f.sections.clone();
+        let anchor = before[0].position;
+        // Stretch from the positive Z face; the opposite face stays fixed.
+        let pos = anchor + rot * Vec3::Z * 3.0;
+        f.reconfigure(2, 6.0, pos, rot);
+        assert!(f.sections[0].position.abs_diff_eq(anchor, 1e-5));
+        for (old, new) in before.iter().zip(&f.sections).skip(1) {
+            assert!(old.direction.dot(new.direction) > 0.9999);
+            assert!(old.velocity.abs_diff_eq(new.velocity, 1e-5));
+        }
+        assert!(f.sections[4].position.z < pos.z - 0.5, "resizing must not straighten a bent prim");
+        f.reconfigure(3, 6.0, pos, rot);
+        assert!(f.matches(3, 6.0));
+        for pair in f.sections.windows(2) {
+            assert!((pair[0].position.distance(pair[1].position) - 0.75).abs() < 1e-5);
+        }
+        assert!(f.sections[8].position.z < pos.z - 0.5);
+        f.update(params(), pos, rot, 1.0 / 60.0, |_| Vec3::ZERO);
+        assert!(f.path(pos, rot).iter().all(|p| p.position.is_finite() && p.rotation.is_finite()));
     }
 }

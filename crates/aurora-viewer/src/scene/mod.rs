@@ -37,7 +37,7 @@ use glam::{Mat4, Quat, Vec3, Vec4};
 use jobs::{AlphaKind, JobResult, Jobs};
 use meshes::{MaterialStreamer, MeshStreamer};
 use rayon::prelude::*;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::Instant;
 use sync_plan::{FrameState, MoveSync, Placement, Plan};
@@ -432,6 +432,8 @@ pub struct Scene {
     /// Build tools: selected mesh / sculpted objects drawn as wireframes
     /// (object index -> root color).
     pub selection_wire: HashMap<usize, bool>,
+    /// Selected prims whose deformed silhouette is prepared by rayon.
+    pub selection_silhouettes: HashSet<usize>,
     /// Far avatars drawn as pictures (RenderAvatarMaxNonImpostors).
     impostors: impostors::Impostors,
     /// Avatars still loading (clouds).
@@ -718,6 +720,7 @@ impl Scene {
             visit_tmp: Vec::new(),
             light_objects: Default::default(),
             selection_wire: HashMap::new(),
+            selection_silhouettes: HashSet::new(),
             debug_alpha: None,
             last_cull: None,
             impostors: Default::default(),
@@ -1301,7 +1304,7 @@ impl Scene {
         if o.volume.is_mesh() {
             return o.volume.sculpt.map(|s| GeomKey::Mesh { id: s.texture, lod });
         }
-        if flexible::enabled(o) {
+        if o.is_flexible() {
             return Some(GeomKey::Flexible {
                 id: o.full_id,
                 hash: o.volume.cache_key(),
