@@ -2680,7 +2680,7 @@ pub fn loop_animation_events(frame: u64) -> Vec<NetEvent> {
 
 /// Offline voice: the other avatar talks in bursts; our own outline follows
 /// the transmitted microphone. AURORA_DEMO_VOICE exercises both tags without
-/// microphone input: speaking / listening / off / cycle (4 s / 3 s / 2 s).
+/// microphone input: speaking / loud / listening / off / cycle (4 s / 3 s / 2 s).
 pub fn voice_levels(
     t: f64,
     me: Uuid,
@@ -2701,19 +2701,21 @@ pub fn voice_levels(
         }),
         mode => mode,
     };
-    let synthetic = matches!(mode, Some("speaking" | "listening"));
+    let synthetic = matches!(mode, Some("speaking" | "loud" | "listening"));
     if mode == Some("off") || (!synthetic && !enabled) {
         return m;
     }
     let other = Uuid::from_u128(0xA0E0_A6E1_0000_0000_0000_0000_0000_0002);
     let burst = match mode {
-        Some("speaking") => true,
+        Some("speaking" | "loud") => true,
         Some("listening") => false,
         _ => t.rem_euclid(6.0) < 3.5,
     };
-    let level = if burst {
-        let (base, amplitude) = if synthetic { (0.35, 0.35) } else { (0.22, 0.55) };
-        base + amplitude * (t * 2.3).sin().abs() * (0.6 + 0.4 * (t * 7.1).sin())
+    let level = if mode == Some("loud") {
+        // Reach red with a realistic WebRTC participant level, below clipping.
+        0.60
+    } else if burst {
+        0.35 + 0.26 * (t * 2.3).sin().abs() * (0.6 + 0.4 * (t * 7.1).sin())
     } else {
         0.0
     };
@@ -2745,6 +2747,9 @@ mod voice_tests {
         let speaking = voice_levels(1.0, DEMO_AGENT, false, false, 0.0, Some("cycle"));
         assert_eq!(speaking.len(), 2);
         assert!(speaking.values().all(|(_, speaking)| *speaking));
+        let loud = voice_levels(1.0, DEMO_AGENT, false, false, 0.0, Some("loud"));
+        assert_eq!(loud.len(), 2);
+        assert!(loud.values().all(|(level, speaking)| *speaking && (0.58..0.632).contains(level)));
         let listening = voice_levels(5.0, DEMO_AGENT, false, false, 0.0, Some("cycle"));
         assert_eq!(listening.len(), 2);
         assert!(listening.values().all(|v| *v == (0.0, false)));

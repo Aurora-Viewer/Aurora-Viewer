@@ -693,13 +693,15 @@ Ce que l'inventaire doit montrer avec ces scénarios :
 | `AURORA_DEMO_MEDIA_CLICK_FRAME=<n>` | Image de départ de ces clics |
 | `AURORA_DEMO_MUSIC=<url>` ou `1` | Musique de la parcelle de démo |
 | `AURORA_DEMO_SOUND=1` | Sons du monde et de l'interface audibles |
-| `AURORA_DEMO_VOICE=speaking` / `listening` / `off` / `cycle` | Parole, écoute silencieuse ou absence de voix sur les deux étiquettes d'avatars |
+| `AURORA_DEMO_VOICE` | États vocaux et couleurs des deux étiquettes d'avatars |
 
 ### Détails
 
 - **`AURORA_DEMO_VOICE`** : `speaking` anime le contour des étiquettes de
-  soi et de l'autre avatar avec des niveaux synthétiques, `listening` garde
-  les deux étiquettes neutres, `off` montre le micro barré rouge. `cycle`
+  soi et de l'autre avatar avec des niveaux synthétiques réalistes (0,35 à
+  0,61 sur l'échelle WebRTC), `loud` maintient un niveau fort de 0,60 : les
+  deux contours doivent être rouges sans nécessiter un signal saturé.
+  `listening` garde les deux étiquettes neutres, `off` montre le micro barré rouge. `cycle`
   enchaîne 4 s de parole, 3 s d'écoute, 2 s hors vocal. Sans cette variable,
   notre contour suit le vrai micro quand son bouton / push-to-talk est actif
   et la voix activée. Aucun réglage enregistré n'est changé.

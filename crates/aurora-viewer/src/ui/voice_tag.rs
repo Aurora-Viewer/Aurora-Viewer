@@ -13,8 +13,12 @@ use uuid::Uuid;
 /// Time constants in seconds: react quickly, then fade between syllables.
 const ATTACK: f32 = 0.035;
 const RELEASE: f32 = 0.10;
-const LEVEL_MIN: f32 = 0.2;
-const LEVEL_MAX: f32 = 0.7;
+const LEVEL_MIN: f32 = aurora_voice::SPEAKING_AUDIO_LEVEL;
+const LEVEL_AMBER: f32 = 0.48;
+// WebRTC's participant level peaks at ~0.632 for full-scale PCM, so the
+// legacy visualizer's 0.7 red threshold is unreachable locally. Red at
+// ~0.58 corresponds to -10 dBFS, the microphone meter's overdrive point.
+const LEVEL_MAX: f32 = 0.58;
 /// Keep the previous voice tag width across speaking, listening and offline states.
 pub const TAG_EXTRA_WIDTH: f32 = 30.0;
 pub const ICON_SIZE: f32 = 14.0;
@@ -58,17 +62,17 @@ pub struct VoiceTags {
     envelopes: HashMap<Uuid, Envelope>,
 }
 
-/// Preserve the volume colors of LLVoiceVisualizer: green → amber → red.
+/// Green → amber → red, calibrated for WebRTC's actual participant range.
 fn level_color(p: &Palette, level: f32) -> Color32 {
     let lerp = |a: Color32, b: Color32, t: f32| {
         let t = t.clamp(0.0, 1.0);
         let mix = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).round() as u8;
         Color32::from_rgb(mix(a.r(), b.r()), mix(a.g(), b.g()), mix(a.b(), b.b()))
     };
-    if level < 0.45 {
-        lerp(p.success, p.amber, (level - LEVEL_MIN) / (0.45 - LEVEL_MIN))
+    if level < LEVEL_AMBER {
+        lerp(p.success, p.amber, (level - LEVEL_MIN) / (LEVEL_AMBER - LEVEL_MIN))
     } else {
-        lerp(p.amber, p.danger, (level - 0.45) / (LEVEL_MAX - 0.45))
+        lerp(p.amber, p.danger, (level - LEVEL_AMBER) / (LEVEL_MAX - LEVEL_AMBER))
     }
 }
 
@@ -109,6 +113,19 @@ impl VoiceTags {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn loud_pcm_reaches_red_without_clipping() {
+        let p = crate::theme::Theme::default().palette();
+        // A 0.5-amplitude sine has RMS ~0.35: the same signal exercised by
+        // aurora_voice::transmit's encoder test, on Firestorm's 16-bit scale.
+        let level = 0.18 + 0.1 * (0.35_f32 * 32_768.0).log10();
+        let mut e = Envelope::new(0.0);
+        e.update(level, true, 0.3);
+        assert_eq!(level_color(&p, e.level), p.danger);
+        assert_eq!(level_color(&p, 0.30), p.success);
+        assert_ne!(level_color(&p, 0.48), p.danger);
+    }
 
     #[test]
     fn listening_never_activates_outline_even_with_a_stale_level() {
