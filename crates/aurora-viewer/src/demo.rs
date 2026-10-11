@@ -514,6 +514,26 @@ pub fn seed_contact_sets(world: &mut crate::world::World) {
     cs.remove_display_name(&[u(103)], is_friend);
 }
 
+/// Item of the notification center's sample inventory offer.
+pub const DEMO_OFFER: Uuid = Uuid::from_u128(0x0FFE_0000_0000_0000_0000_0000_0000_0001);
+
+/// What fetching `DEMO_OFFER` by id returns: the offered object, filed by
+/// the "server" in `parent`.
+pub fn offered_item(parent: Uuid, owner: Uuid) -> aurora_net::inventory::InvItem {
+    aurora_net::inventory::InvItem {
+        id: DEMO_OFFER,
+        parent,
+        name: aurora_i18n::tr!("demo-aurora-lantern").into(),
+        asset_type: 6,
+        inv_type: 6,
+        creator: Uuid::from_u128(2),
+        owner,
+        base_mask: 0x7fffffff,
+        owner_mask: 0x7fffffff,
+        ..Default::default()
+    }
+}
+
 pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
     if let Some(events) = hud::reply(cmd) {
         return events;
@@ -2258,7 +2278,10 @@ pub fn events() -> Vec<NetEvent> {
         })
     };
     ev.push(im(22, aurora_i18n::tr!("demo-come-see-the-lagoon-at-sunset"), Vec::new()));
-    ev.push(im(4, aurora_i18n::tr!("demo-aurora-lantern"), vec![6]));
+    // a resident's offer: asset type, then the item already in our inventory
+    let mut offer = vec![6];
+    offer.extend_from_slice(DEMO_OFFER.as_bytes());
+    ev.push(im(4, aurora_i18n::tr!("demo-aurora-lantern"), offer));
     let menu = std::env::var("AURORA_DEMO_DIALOG").unwrap_or_default();
     let (object_name, message, buttons) = if !menu.is_empty() {
         let mut buttons = [

@@ -83,6 +83,9 @@ pub enum Data {
         from: Uuid,
         tx: Uuid,
         asset_type: i8,
+        /// Item or folder a resident's offer already put in our inventory
+        /// (nil for objects' offers, delivered once accepted).
+        object: Uuid,
         task: bool,
     },
     Group {
@@ -125,6 +128,16 @@ impl Notification {
     /// Needs an answer (stays until answered).
     pub fn interactive(&self) -> bool {
         !matches!(self.data, Data::None)
+    }
+
+    /// Closing it answers "no"; a link has no answer and a resident's
+    /// inventory offer is kept.
+    pub fn close_declines(&self) -> bool {
+        match &self.data {
+            Data::None | Data::Url(_) => false,
+            Data::Inventory { object, .. } => object.is_nil(),
+            _ => true,
+        }
     }
 }
 
@@ -212,7 +225,22 @@ impl Notifications {
                 match &n.data {
                     Data::Lure { from, lure } => out.push(decline_lure(*from, *lure)),
                     Data::Friend { tx, .. } => out.push(NetCommand::DeclineFriendship { transaction: *tx }),
-                    Data::Inventory { from, tx, task, .. } => out.push(inventory_answer(*from, *tx, *task, false, Uuid::nil())),
+                    // Closing a resident's offer refuses nothing: what it
+                    // delivered stays (inventory_offer_callback, "close
+                    // button probably"), and the giver reads "accepted" as
+                    // with Firestorm's answer on arrival. An object's
+                    // offer is declined.
+                    Data::Inventory {
+                        from,
+                        tx,
+                        asset_type,
+                        object,
+                        task,
+                    } => {
+                        let keep = !object.is_nil();
+                        let folder = if keep { folder_for(*asset_type) } else { Uuid::nil() };
+                        out.push(inventory_answer(*from, *tx, *task, keep, folder));
+                    }
                     Data::Group { group, tx } => out.push(group_answer(*group, *tx, false)),
                     Data::Dialog { .. } | Data::TextBox { .. } => {} // ignore = no reply
                     _ => {}
@@ -241,6 +269,7 @@ impl Notifications {
                     tx,
                     asset_type,
                     task,
+                    ..
                 },
                 _,
             ) => {
@@ -294,6 +323,20 @@ fn decline_lure(from: Uuid, lure: Uuid) -> NetCommand {
         message: String::new(),
         bucket: Vec::new(),
     }
+}
+
+/// LLAssetType::AT_CATEGORY: the offer is a folder.
+pub const AT_CATEGORY: i8 = 8;
+
+/// Binary bucket of a resident's inventory offer (offer_agent_bucket_t,
+/// process_improved_im in indra/newview/llimprocessing.cpp, originally
+/// LGPL 2.1): the asset type, then the id of the item or folder. The server
+/// has already copied it into our inventory when the offer arrives, so the
+/// id is the one to fetch (inventory_offer_handler) or to discard.
+pub fn offered_object(bucket: &[u8]) -> Option<(i8, Uuid)> {
+    let (asset_type, id) = bucket.split_first()?;
+    let id = Uuid::from_slice(id).ok().filter(|id| !id.is_nil())?;
+    Some((*asset_type as i8, id))
 }
 
 pub(crate) fn inventory_answer(from: Uuid, tx: Uuid, task: bool, accept: bool, folder: Uuid) -> NetCommand {
@@ -367,6 +410,7 @@ mod tests {
                 from,
                 tx,
                 asset_type: 6,
+                object: Uuid::nil(),
                 task: false,
             },
         );
@@ -374,6 +418,20 @@ mod tests {
         assert!(
             matches!(&cmds[..], [NetCommand::SendImDialog { dialog: im::INVENTORY_ACCEPTED, bucket, .. }] if bucket[..] == folder.as_bytes()[..])
         );
+    }
+
+    #[test]
+    fn offered_object_needs_the_type_and_a_full_id() {
+        let id = Uuid::from_u128(0x1234_5678);
+        let mut bucket = vec![5u8];
+        bucket.extend_from_slice(id.as_bytes());
+        assert_eq!(offered_object(&bucket), Some((5, id)));
+        // objects' offers only carry the type; a nil id is nothing to fetch
+        assert_eq!(offered_object(&[6]), None);
+        assert_eq!(offered_object(&[]), None);
+        assert_eq!(offered_object(&[0; 17]), None);
+        bucket.push(0);
+        assert_eq!(offered_object(&bucket), None);
     }
 
     #[test]
