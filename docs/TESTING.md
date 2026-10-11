@@ -121,10 +121,11 @@ capture.
   les mêmes cibles. Pour le test humain du sélecteur, retirer cette variable :
   Préférences › Interface › Disposition › Menu du clic droit ; basculer entre
   Menu en liste et Pie menu (circulaire), puis redémarrer pour vérifier le choix.
-- **`AURORA_DEMO_POINTER="x,y[,r][;x,y…]"`** : déplace le pointeur de
+- **`AURORA_DEMO_POINTER="x,y[,l|r][;x,y…]"`** : déplace le pointeur de
   l'interface vers ces pixels de la fenêtre à partir de l'image 300, un point
-  toutes les 60 images (états de survol, sous-menus) ; `,r` fait un clic
-  droit sur l'interface à cet endroit (menus des listes et des noms).
+  toutes les 60 images (états de survol, sous-menus) ; `,l` fait un clic gauche,
+  `,r` un clic droit sur l'interface à cet endroit. Dans le pie menu, le clic
+  gauche entre dans un sous-menu et le clic droit remonte d'un niveau.
 - **`AURORA_DEMO_HOVER=1`** : à partir de l'image 300, le curseur balaie la
   fenêtre pendant 120 images, reste immobile 120 images, et ainsi de suite
   (recherche de l'objet sous le curseur et réponses gardées d'une image à

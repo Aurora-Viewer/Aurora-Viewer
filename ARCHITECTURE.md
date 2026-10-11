@@ -234,8 +234,10 @@ La projection et les listes HUD font partie de la copie du paquet d’image (`Dr
 Les menus du monde partagent un modèle d'entrées dans `ui/context/entries.rs`
 (actions, droits, sous-menus, coches). `ui/menu.rs` dessine la liste existante ;
 `ui/context/pie.rs` dispose ces mêmes entrées en huit secteurs, avec les directions
-de Firestorm et des sous-menus « Plus » pour les actions supplémentaires. Le chemin
-de navigation reste dans le menu ouvert et se réinitialise au clic droit suivant.
+de Firestorm et des sous-menus « Plus » pour les actions supplémentaires. Les
+secteurs non survolés reprennent la transparence des fenêtres du thème. Le clic
+gauche sélectionne ; le clic droit remonte d'un niveau (ferme à la racine). Le
+chemin de navigation reste dans le menu ouvert et se réinitialise à sa fermeture.
 `Settings::use_pie_menu` conserve le choix de Préférences › Interface ; la liste
 reste le choix initial d'Aurora.
 

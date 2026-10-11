@@ -3,6 +3,7 @@
 //! Eight fixed directions, clockwise screen coordinates reversed to match SL,
 //! disabled slices, click-through submenus. Aurora keeps its extra actions in
 //! « Plus » and adds a center back button; it does not warp the system pointer.
+//! At the user's request, right-click goes back instead of selecting a slice.
 
 use super::entries::{Entry, Kind};
 use super::{ContextMenu, CtxAction, Target};
@@ -235,7 +236,9 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, menu: &mut ContextMenu, ent
     let offset = ctx.input(|i| i.pointer.interact_pos()).map(|pos| pos - center);
     let hovered = offset.and_then(|offset| sector(offset, inner, radius));
     let hot = hovered.filter(|&index| current.get(index).is_some_and(|e| e.enabled));
-    let mut released = false;
+    let mut primary_released = false;
+    let mut secondary_released = false;
+    let panel = Color32::from_rgba_unmultiplied(p.panel.r(), p.panel.g(), p.panel.b(), p.panel_alpha);
     egui::Area::new(egui::Id::new("world_pie_menu"))
         .order(egui::Order::Foreground)
         .fixed_pos(screen.min)
@@ -253,11 +256,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, menu: &mut ContextMenu, ent
                     inner,
                     radius,
                     index,
-                    if hot == Some(index) {
-                        p.violet.gamma_multiply(0.7)
-                    } else {
-                        p.panel
-                    },
+                    if hot == Some(index) { p.violet.gamma_multiply(0.7) } else { panel },
                 );
                 let angle = index as f32 * FRAC_PI_4 - PI / 8.0;
                 let direction = egui::vec2(angle.cos(), -angle.sin());
@@ -328,9 +327,8 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, menu: &mut ContextMenu, ent
                 };
                 response.on_hover_text(tooltip);
             }
-            released = ui.input(|i| {
-                i.pointer.button_released(egui::PointerButton::Primary) || i.pointer.button_released(egui::PointerButton::Secondary)
-            });
+            primary_released = ui.input(|i| i.pointer.button_released(egui::PointerButton::Primary));
+            secondary_released = ui.input(|i| i.pointer.button_released(egui::PointerButton::Secondary));
         });
     let escape = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
     let back = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Backspace));
@@ -338,8 +336,12 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, menu: &mut ContextMenu, ent
         *open = false;
     } else if back {
         menu.pie_path.pop();
-    } else if released && menu.pie_input_frame.is_some_and(|frame| frame != ctx.cumulative_frame_nr()) {
-        if offset.is_none_or(|o| o.length() > radius) {
+    } else if (primary_released || secondary_released) && menu.pie_input_frame.is_some_and(|frame| frame != ctx.cumulative_frame_nr()) {
+        if secondary_released {
+            if menu.pie_path.pop().is_none() {
+                *open = false;
+            }
+        } else if offset.is_none_or(|o| o.length() > radius) {
             *open = false;
         } else if offset.is_some_and(|o| o.length() <= inner) {
             if menu.pie_path.pop().is_none() {
@@ -416,20 +418,43 @@ mod tests {
     }
 
     #[test]
-    fn disabled_slice_stays_open_and_both_mouse_buttons_commit_once() {
-        for button in [egui::PointerButton::Primary, egui::PointerButton::Secondary] {
-            let ctx = egui::Context::default();
-            let facts = Facts::default();
-            let mut menu = open(Target::Ground);
-            frame(&ctx, &mut menu, &facts, Vec::new());
-            frame(&ctx, &mut menu, &facts, Vec::new());
-            click(&ctx, &mut menu, &facts, egui::pos2(300.0, 400.0), button);
-            assert!(menu.is_some());
-            assert!(super::super::take_requests(&ctx).is_empty());
-            click(&ctx, &mut menu, &facts, egui::pos2(500.0, 400.0), button);
-            assert!(menu.is_none());
-            assert!(matches!(super::super::take_requests(&ctx).as_slice(), [CtxAction::AboutLand(_)]));
-        }
+    fn disabled_slice_stays_open_and_left_click_commits_once() {
+        let ctx = egui::Context::default();
+        let facts = Facts::default();
+        let mut menu = open(Target::Ground);
+        frame(&ctx, &mut menu, &facts, Vec::new());
+        frame(&ctx, &mut menu, &facts, Vec::new());
+        click(&ctx, &mut menu, &facts, egui::pos2(300.0, 400.0), egui::PointerButton::Primary);
+        assert!(menu.is_some());
+        assert!(super::super::take_requests(&ctx).is_empty());
+        click(&ctx, &mut menu, &facts, egui::pos2(500.0, 400.0), egui::PointerButton::Primary);
+        assert!(menu.is_none());
+        assert!(matches!(super::super::take_requests(&ctx).as_slice(), [CtxAction::AboutLand(_)]));
+    }
+
+    #[test]
+    fn right_click_returns_one_level_without_dispatching_the_hovered_action() {
+        let ctx = egui::Context::default();
+        let facts = Facts::default();
+        let mut menu = open(Target::Object {
+            key: crate::world::objects::ObjKey { region: 1, local_id: 2 },
+            full_id: uuid::Uuid::nil(),
+            offset: Vec3::ZERO,
+        });
+        // More contains the Object submenu at direction 1.
+        frame(&ctx, &mut menu, &facts, Vec::new());
+        click(&ctx, &mut menu, &facts, egui::pos2(400.0, 500.0), egui::PointerButton::Primary);
+        assert_eq!(menu.as_ref().expect("open More").pie_path, vec![6]);
+        click(&ctx, &mut menu, &facts, egui::pos2(470.0, 330.0), egui::PointerButton::Primary);
+        assert_eq!(menu.as_ref().expect("open Object").pie_path, vec![6, 1]);
+        // Back works over a sector and outside the circle, once per click.
+        click(&ctx, &mut menu, &facts, egui::pos2(330.0, 470.0), egui::PointerButton::Secondary);
+        assert_eq!(menu.as_ref().expect("back to More").pie_path, vec![6]);
+        click(&ctx, &mut menu, &facts, egui::pos2(900.0, 400.0), egui::PointerButton::Secondary);
+        assert!(menu.as_ref().expect("back to root").pie_path.is_empty());
+        click(&ctx, &mut menu, &facts, egui::pos2(500.0, 400.0), egui::PointerButton::Secondary);
+        assert!(menu.is_none());
+        assert!(super::super::take_requests(&ctx).is_empty());
     }
 
     #[test]

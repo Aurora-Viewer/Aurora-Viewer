@@ -3859,31 +3859,41 @@ impl App {
                 _ => {}
             }
         }
-        // AURORA_DEMO_POINTER="x,y[,r][;x,y…]": the pointer at these window
+        // AURORA_DEMO_POINTER="x,y[,l|r][;x,y…]": the pointer at these window
         // pixels from frame 300, one point every 60 frames (hover states,
-        // sub-menus); ",r" right-clicks the interface there
+        // sub-menus); ",l"/",r" left-/right-clicks the interface there
         if self.demo
             && self.frame_count >= 300
             && let Ok(v) = std::env::var("AURORA_DEMO_POINTER")
         {
-            let points: Vec<(f32, f32, bool)> = v
+            let points: Vec<(f32, f32, Option<egui::PointerButton>)> = v
                 .split(';')
                 .filter_map(|pt| {
                     let mut it = pt.split(',').map(str::trim);
-                    Some((it.next()?.parse().ok()?, it.next()?.parse().ok()?, it.next() == Some("r")))
+                    let x = it.next()?.parse().ok()?;
+                    let y = it.next()?.parse().ok()?;
+                    let button = match it.next() {
+                        Some("l") => Some(egui::PointerButton::Primary),
+                        Some("r") => Some(egui::PointerButton::Secondary),
+                        _ => None,
+                    };
+                    Some((x, y, button))
                 })
                 .collect();
             let step = (self.frame_count - 300) / 60;
             let i = (step as usize).min(points.len().saturating_sub(1));
-            if let Some(&(x, y, right)) = points.get(i) {
+            if let Some(&(x, y, button)) = points.get(i) {
                 let ppp = self.egui_ctx.pixels_per_point().max(0.1);
                 let pos = egui::pos2(x / ppp, y / ppp);
                 raw.events.push(egui::Event::PointerMoved(pos));
                 let click_frame = (self.frame_count - 300) % 60;
-                if right && step as usize == i && matches!(click_frame, 2 | 3) {
+                if let Some(button) = button
+                    && step as usize == i
+                    && matches!(click_frame, 2 | 3)
+                {
                     raw.events.push(egui::Event::PointerButton {
                         pos,
-                        button: egui::PointerButton::Secondary,
+                        button,
                         pressed: click_frame == 2,
                         modifiers: egui::Modifiers::NONE,
                     });
