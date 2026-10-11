@@ -61,7 +61,7 @@ pub struct ContextMenu {
     /// World point that was clicked.
     pub point: Vec3,
     pub target: Target,
-    /// Navigation in the radial menu, reset on each right click.
+    /// Navigation in the radial menu, reset when opening a new menu.
     pub pie_path: Vec<usize>,
     /// Ignore the opening release and repeated egui passes in the same frame.
     pub pie_input_frame: Option<u64>,
