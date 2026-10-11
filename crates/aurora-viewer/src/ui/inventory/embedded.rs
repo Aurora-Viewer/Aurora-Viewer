@@ -185,6 +185,7 @@ pub(super) fn editor(
                 id.with(("attachment", index)),
                 egui::Sense::click(),
             );
+            // LLViewerTextEditor::handleMouseUp opens items on a single click.
             if response.clicked() {
                 result.open = Some(marker);
             }
