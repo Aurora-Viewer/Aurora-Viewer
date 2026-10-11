@@ -15,6 +15,7 @@ macro_rules! svg_list {
 const SVGS: &[(&str, &[u8])] = svg_list!(
     "bug",
     "chat-circle-dots",
+    "dots-three",
     "terminal-window",
     "microphone",
     "speaker-high",

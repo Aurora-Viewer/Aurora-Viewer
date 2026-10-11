@@ -84,6 +84,7 @@ capture.
 | `AURORA_DEMO_SIT=<n>` | Clique n fois sur le bouton S'asseoir |
 | `AURORA_DEMO_MMO="x,y[,1\|2]"` | Pilotage de l'avatar à la souris |
 | `AURORA_DEMO_RCLICK="x,y"` ou `tag` | Clic droit (menu contextuel) |
+| `AURORA_DEMO_PIE=1` | Menu circulaire du clic droit |
 | `AURORA_DEMO_POINTER=<points>` | Déplace le pointeur sur l'interface |
 | `AURORA_DEMO_HOVER=1` | Balayage du curseur au survol |
 | `AURORA_DEMO_LOOKAT=1` | Suivi du regard et regard d'un autre avatar |
@@ -114,6 +115,12 @@ capture.
 - **`AURORA_DEMO_RCLICK`** : clic droit en (x, y) à l'image 225, ou avec
   `tag` sur l'étiquette de nom de l'autre avatar le plus proche à
   l'image 600.
+- **`AURORA_DEMO_PIE`** : `1` force le pie menu, `0` force la liste,
+  uniquement en démo et sans modifier le choix enregistré. Combiner avec
+  `AURORA_DEMO_RCLICK="x,y"`, `tag` ou `AURORA_DEMO_HUDS=menu` pour comparer
+  les mêmes cibles. Pour le test humain du sélecteur, retirer cette variable :
+  Préférences › Interface › Disposition › Menu du clic droit ; basculer entre
+  Menu en liste et Pie menu (circulaire), puis redémarrer pour vérifier le choix.
 - **`AURORA_DEMO_POINTER="x,y[,r][;x,y…]"`** : déplace le pointeur de
   l'interface vers ces pixels de la fenêtre à partir de l'image 300, un point
   toutes les 60 images (états de survol, sous-menus) ; `,r` fait un clic

@@ -5331,7 +5331,17 @@ impl App {
                 }
                 let facts = self.context_facts();
                 let had_menu = self.context_menu.is_some();
-                ui::context::show(&ctx, &p, &mut self.context_menu, &facts);
+                // Capture-only style override; leave the saved preference intact.
+                let use_pie = if self.demo {
+                    match std::env::var("AURORA_DEMO_PIE").as_deref() {
+                        Ok("1") => true,
+                        Ok("0") => false,
+                        _ => self.settings.use_pie_menu,
+                    }
+                } else {
+                    self.settings.use_pie_menu
+                };
+                ui::context::show(&ctx, &p, &mut self.context_menu, &facts, use_pie);
                 if had_menu && self.context_menu.is_none() {
                     // LLViewerMenuHolderGL::hideMenus drops the menu's selection
                     self.build.release_menu_selection(&self.world);

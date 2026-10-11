@@ -3,7 +3,8 @@
 //! menu_object.xml, menu_attachment_self.xml, menu_avatar_other.xml,
 //! menu_attachment_other.xml, menu_avatar_self.xml) and the avatar and
 //! group names of lists (menu_people_nearby.xml, menu_fs_contacts_friends.xml,
-//! menu_url_agent.xml, menu_people_groups.xml), all drawn by ui/menu.rs.
+//! menu_url_agent.xml, menu_people_groups.xml). ui/menu.rs draws the list;
+//! context/pie.rs draws the radial world menu from their shared entries.
 //! Entries Aurora cannot do yet stay in place, greyed out with a tooltip,
 //! the way Firestorm greys the ones that do not apply.
 //!
@@ -16,6 +17,9 @@ use crate::world::World;
 use crate::world::objects::ObjKey;
 use glam::Vec3;
 use uuid::Uuid;
+
+mod entries;
+mod pie;
 
 /// Object update flags (llprimitive/object_flags.h).
 pub mod flags {
@@ -57,6 +61,10 @@ pub struct ContextMenu {
     /// World point that was clicked.
     pub point: Vec3,
     pub target: Target,
+    /// Navigation in the radial menu, reset on each right click.
+    pub pie_path: Vec<usize>,
+    /// Ignore the opening release and repeated egui passes in the same frame.
+    pub pie_input_frame: Option<u64>,
 }
 
 /// What the object menu entries depend on (the on_enable functions of
@@ -262,22 +270,26 @@ pub fn avatar_position(world: &World, id: &Uuid) -> Option<Vec3> {
 const HOVERED: &str = "world_context_menu_hovered";
 
 /// Draw the world menu; `menu` becomes `None` once it closed.
-pub fn show(ctx: &egui::Context, p: &Palette, menu: &mut Option<ContextMenu>, f: &Facts) {
+pub fn show(ctx: &egui::Context, p: &Palette, menu: &mut Option<ContextMenu>, f: &Facts, use_pie: bool) {
     let Some(m) = menu.clone() else {
         return;
     };
     let mut open = true;
-    let hovered = menu::popup_at(ctx, egui::Id::new("world_context_menu"), m.pos, &mut open, p, |ui| {
-        let ctx = ui.ctx().clone();
-        let mut act = |a: CtxAction| request(&ctx, a);
-        match &m.target {
-            Target::Object { key, full_id, offset } => object_menu(ui, p, f, *key, *full_id, *offset, m.point, &mut act),
-            Target::Attachment { key } => attachment_self_menu(ui, p, f, *key, &mut act),
-            Target::Avatar { id, own: true, .. } => self_menu(ui, p, f, *id, &mut act),
-            Target::Avatar { id, attachment, .. } => avatar_menu(ui, p, f, *id, *attachment, m.point, &mut act),
-            Target::Ground => land_menu(ui, p, f, m.point, &mut act),
+    let entries = entries::world_menu(&m.target, f, m.point);
+    let hovered = if use_pie {
+        let mut radial = m;
+        let hovered = pie::show(ctx, p, &mut radial, &entries, &mut open);
+        *menu = Some(radial);
+        hovered
+    } else {
+        if let Some(m) = menu.as_mut() {
+            m.pie_path.clear();
+            m.pie_input_frame = None;
         }
-    });
+        menu::popup_at(ctx, egui::Id::new("world_context_menu"), m.pos, &mut open, p, |ui| {
+            entries::draw_list(ui, p, &entries);
+        })
+    };
     // UISndPieMenuSliceHighlight0..7 when an enabled row gets hovered (the
     // eight slices of Firestorm's default pie menu, PieMenu::draw)
     let before = ctx.data_mut(|d| d.get_temp::<Option<usize>>(egui::Id::new(HOVERED)).flatten());
@@ -291,389 +303,6 @@ pub fn show(ctx: &egui::Context, p: &Palette, menu: &mut Option<ContextMenu>, f:
         *menu = None;
         ctx.data_mut(|d| d.remove::<Option<usize>>(egui::Id::new(HOVERED)));
     }
-}
-
-/// menu_object.xml
-#[allow(clippy::too_many_arguments)]
-fn object_menu(
-    ui: &mut egui::Ui,
-    p: &Palette,
-    f: &Facts,
-    key: ObjKey,
-    id: Uuid,
-    offset: Vec3,
-    point: Vec3,
-    act: &mut dyn FnMut(CtxAction),
-) {
-    let o = &f.object;
-    if menu::item_if(ui, p, "hand-pointing", aurora_i18n::tr!("ui-context-touch"), o.touch) {
-        act(CtxAction::Touch(key.local_id));
-    }
-    if menu::item(ui, p, "pencil-simple", aurora_i18n::tr!("common-edit")) {
-        act(CtxAction::Edit(id));
-    }
-    menu::todo(ui, p, "paint-brush", aurora_i18n::tr!("ui-context-edit-pbr-material"));
-    // Object.Build: the Create tool (LLToolCompCreate), like the land menu
-    if menu::item(ui, p, "cube", aurora_i18n::tr!("common-build")) {
-        act(CtxAction::Build);
-    }
-    if menu::item_if(ui, p, "package", aurora_i18n::tr!("common-open"), o.open) {
-        act(CtxAction::Open(id));
-    }
-    menu::separator(ui, p);
-    if menu::item_if(ui, p, "armchair", aurora_i18n::tr!("ui-context-sit-here"), o.sit) {
-        act(CtxAction::Sit { target: id, offset });
-    }
-    menu::separator(ui, p);
-    if menu::item_if(ui, p, "person", aurora_i18n::tr!("common-stand-up"), o.stand) {
-        act(CtxAction::StandUp);
-    }
-    menu::separator(ui, p);
-    menu::submenu(ui, p, "cube", aurora_i18n::tr!("common-object"), true, |ui| {
-        menu::todo(ui, p, "info", aurora_i18n::tr!("common-profile"));
-        menu::todo(ui, p, "magnifying-glass", aurora_i18n::tr!("ui-context-inspect-2"));
-        menu::todo(ui, p, "code", aurora_i18n::tr!("ui-context-script-information"));
-        menu::separator(ui, p);
-        // linking needs two selected objects: build tools only
-        menu::item_if(ui, p, "link", aurora_i18n::tr!("ui-context-link"), false);
-        if menu::item_if(ui, p, "link-break", aurora_i18n::tr!("ui-context-unlink"), o.unlink) {
-            act(CtxAction::Unlink(id));
-        }
-        if menu::check(
-            ui,
-            p,
-            "cube-transparent",
-            aurora_i18n::tr!("ui-context-edit-linked-parts"),
-            f.edit_linked,
-            true,
-        ) {
-            act(CtxAction::EditLinkedParts(!f.edit_linked));
-        }
-        menu::separator(ui, p);
-        menu::todo(ui, p, "arrows-clockwise", aurora_i18n::tr!("ui-context-reset-scripts"));
-        menu::todo(ui, p, "play", aurora_i18n::tr!("ui-context-run-scripts"));
-        menu::todo(ui, p, "stop-circle", aurora_i18n::tr!("ui-context-stop-scripts"));
-        menu::todo(ui, p, "trash", aurora_i18n::tr!("ui-context-remove-scripts"));
-    });
-    if menu::item(ui, p, "magnifying-glass-plus", aurora_i18n::tr!("common-zoom-2")) {
-        act(CtxAction::Zoom(point));
-    }
-    menu::separator(ui, p);
-    menu::submenu(ui, p, "t-shirt", aurora_i18n::tr!("ui-context-wear"), true, |ui| {
-        menu::todo(ui, p, "t-shirt", aurora_i18n::tr!("common-wear"));
-        menu::todo(ui, p, "plus-circle", aurora_i18n::tr!("common-add"));
-        menu::todo(ui, p, "paperclip", aurora_i18n::tr!("common-attach-to"));
-        menu::todo(ui, p, "paperclip", aurora_i18n::tr!("common-attach-to-hud"));
-    });
-    menu::submenu(ui, p, "warning", aurora_i18n::tr!("ui-context-disturbance"), true, |ui| {
-        menu::todo(ui, p, "flag", aurora_i18n::tr!("common-report"));
-        let (icon, label) = if o.blocked {
-            ("check-circle", aurora_i18n::tr!("common-stop-ignoring"))
-        } else {
-            ("prohibit", aurora_i18n::tr!("common-ignore"))
-        };
-        if menu::item(ui, p, icon, label) {
-            act(CtxAction::ToggleBlockObject { id, name: o.name.clone() });
-        }
-    });
-    menu::separator(ui, p);
-    menu::todo(ui, p, "arrows-clockwise", aurora_i18n::tr!("ui-context-refresh-textures"));
-    menu::todo(ui, p, "eye-slash", aurora_i18n::tr!("ui-context-derender"));
-    menu::todo(ui, p, "eye-closed", aurora_i18n::tr!("ui-context-derender-blacklist"));
-    menu::todo(ui, p, "arrow-u-up-left", aurora_i18n::tr!("ui-context-return"));
-    if menu::item_if(ui, p, "hand-grabbing", aurora_i18n::tr!("ui-context-take"), o.take) {
-        act(CtxAction::Take(id));
-    }
-    if menu::item_if(ui, p, "copy", aurora_i18n::tr!("ui-context-take-copy"), o.take_copy) {
-        act(CtxAction::TakeCopy(id));
-    }
-    if menu::item_if(ui, p, "hand-coins", aurora_i18n::tr!("common-pay"), o.pay) {
-        act(CtxAction::Pay(id));
-    }
-    if menu::item_if(ui, p, "shopping-cart", aurora_i18n::tr!("common-buy"), o.buy) {
-        act(CtxAction::Buy(id));
-    }
-    menu::todo(ui, p, "floppy-disk", aurora_i18n::tr!("common-save-as"));
-    menu::separator(ui, p);
-    if menu::item_if(ui, p, "trash", aurora_i18n::tr!("common-delete"), o.delete) {
-        act(CtxAction::Delete(id));
-    }
-    menu::separator(ui, p);
-    menu::todo(ui, p, "sparkle", aurora_i18n::tr!("ui-context-ignore-particle-owner"));
-}
-
-/// menu_attachment_self.xml
-fn attachment_self_menu(ui: &mut egui::Ui, p: &Palette, f: &Facts, key: ObjKey, act: &mut dyn FnMut(CtxAction)) {
-    if let Some(scale) = f.object.local_hud_scale {
-        menu::info(
-            ui,
-            p,
-            "magnifying-glass",
-            &aurora_i18n::tr!("hud-local-scale", percent = format!("{:.0}", scale * 100.0)),
-        );
-        if menu::item(ui, p, "arrow-counter-clockwise", aurora_i18n::tr!("hud-local-scale-reset")) {
-            act(CtxAction::ResetHudScale(key));
-        }
-        if menu::item_if(
-            ui,
-            p,
-            "eraser",
-            aurora_i18n::tr!("hud-local-scale-forget"),
-            f.object.saved_hud_scale,
-        ) {
-            act(CtxAction::ForgetHudScale(key));
-        }
-        menu::separator(ui, p);
-    }
-    if menu::item_if(ui, p, "hand-pointing", aurora_i18n::tr!("ui-context-touch"), f.object.touch) {
-        act(CtxAction::Touch(key.local_id));
-    }
-    if menu::item_if(
-        ui,
-        p,
-        "backpack",
-        aurora_i18n::tr!("ui-context-show-in-inventory"),
-        f.object.attachment_item.is_some(),
-    ) && let Some(item) = f.object.attachment_item
-    {
-        act(CtxAction::AttachmentInventory(item));
-    }
-    if menu::item_if(ui, p, "pencil-simple", aurora_i18n::tr!("common-edit"), f.object.edit_hud) {
-        act(CtxAction::EditAttachment(key));
-    }
-    menu::todo(ui, p, "paint-brush", aurora_i18n::tr!("ui-context-edit-pbr-material"));
-    if menu::item_if(
-        ui,
-        p,
-        "paperclip",
-        aurora_i18n::tr!("common-detach"),
-        f.object.attachment_item.is_some(),
-    ) {
-        act(CtxAction::Detach(key));
-    }
-    menu::todo(ui, p, "floppy-disk", aurora_i18n::tr!("common-save-as"));
-    menu::separator(ui, p);
-    sit_stand(ui, p, f, act);
-    appearance_submenu(ui, p, act);
-    take_off_submenu(ui, p);
-    menu::separator(ui, p);
-    if menu::item(ui, p, "airplane-takeoff", aurora_i18n::tr!("extra-fly-land-8")) {
-        act(CtxAction::ToggleFly);
-    }
-    menu::todo(ui, p, "stop-circle", aurora_i18n::tr!("ui-context-stop-animations"));
-    menu::separator(ui, p);
-    community_submenu(ui, p, f.me, act);
-    menu::todo(ui, p, "info", aurora_i18n::tr!("ui-context-object-profile"));
-    menu::todo(ui, p, "magnifying-glass", aurora_i18n::tr!("ui-context-inspect"));
-    menu::todo(ui, p, "code", aurora_i18n::tr!("ui-context-script-information"));
-    menu::todo(ui, p, "eye-slash", aurora_i18n::tr!("ui-context-derender-temporarily"));
-    menu::todo(ui, p, "eye-closed", aurora_i18n::tr!("ui-context-derender-blacklist"));
-    menu::todo(ui, p, "image", aurora_i18n::tr!("ui-context-show-textures"));
-    menu::todo(ui, p, "arrows-clockwise", aurora_i18n::tr!("ui-context-refresh-textures"));
-    menu::separator(ui, p);
-    // « Supprimer » drops the attachment on the ground (Attachment.Drop)
-    menu::todo(ui, p, "trash", aurora_i18n::tr!("common-delete"));
-    menu::separator(ui, p);
-    menu::todo(ui, p, "sparkle", aurora_i18n::tr!("ui-context-block-particle-owner"));
-}
-
-/// menu_avatar_other.xml / menu_attachment_other.xml
-fn avatar_menu(ui: &mut egui::Ui, p: &Palette, f: &Facts, id: Uuid, attachment: Option<Uuid>, point: Vec3, act: &mut dyn FnMut(CtxAction)) {
-    if menu::item(ui, p, "user-circle", aurora_i18n::tr!("common-view-profile")) {
-        act(CtxAction::Profile(id));
-    }
-    if menu::item_if(ui, p, "user-plus", aurora_i18n::tr!("common-become-friends"), !f.friend) {
-        act(CtxAction::AddFriend(id));
-    }
-    menu::todo(ui, p, "users-three", aurora_i18n::tr!("ui-context-add-to-contact-set"));
-    if menu::item(ui, p, "chat-text", aurora_i18n::tr!("ui-context-send-im")) {
-        act(CtxAction::Im(id));
-    }
-    menu::todo(ui, p, "identification-card", aurora_i18n::tr!("ui-context-give-my-calling-card"));
-    menu::todo(ui, p, "phone", aurora_i18n::tr!("common-voice-call"));
-    menu::todo(ui, p, "user-circle-plus", aurora_i18n::tr!("ui-context-invite-to-group"));
-    if menu::item(ui, p, "paper-plane-tilt", aurora_i18n::tr!("common-offer-teleport")) {
-        act(CtxAction::OfferTeleport(id));
-    }
-    menu::separator(ui, p);
-    menu::todo(ui, p, "eye", aurora_i18n::tr!("common-look-toward-avatar"));
-    menu::separator(ui, p);
-    menu::todo(ui, p, "bone", aurora_i18n::tr!("ui-context-reset-skeleton"));
-    menu::todo(
-        ui,
-        p,
-        "person-simple-run",
-        aurora_i18n::tr!("ui-context-reset-skeleton-and-animations"),
-    );
-    menu::todo(ui, p, "arrow-counter-clockwise", aurora_i18n::tr!("ui-context-reset-mesh-lod-2"));
-    menu::separator(ui, p);
-    menu::submenu(ui, p, "warning", aurora_i18n::tr!("ui-context-disturbance"), true, |ui| {
-        let (icon, label) = if f.blocked {
-            ("check-circle", aurora_i18n::tr!("common-stop-ignoring"))
-        } else {
-            ("prohibit", aurora_i18n::tr!("common-ignore"))
-        };
-        if menu::item(ui, p, icon, label) {
-            act(CtxAction::ToggleBlock(id));
-        }
-        menu::todo(ui, p, "flag", aurora_i18n::tr!("common-report"));
-        menu::todo(ui, p, "snowflake", aurora_i18n::tr!("ui-context-freeze"));
-        menu::todo(ui, p, "door-open", aurora_i18n::tr!("ui-context-eject"));
-    });
-    if menu::item(ui, p, "magnifying-glass-plus", aurora_i18n::tr!("common-zoom-2")) {
-        act(CtxAction::Zoom(point));
-    }
-    menu::todo(ui, p, "currency-circle-dollar", aurora_i18n::tr!("common-pay"));
-    if attachment.is_some() {
-        menu::separator(ui, p);
-        menu::todo(ui, p, "info", aurora_i18n::tr!("ui-context-object-profile"));
-    }
-    menu::separator(ui, p);
-    // Firestorm « Rendu toujours complet / Aucun rendu / Rendu selon vos préférences »
-    if let Some((c, silhouette)) = f.complexity {
-        let text = aurora_i18n::tr!(
-            "ui-context-complexity",
-            value0 = super::hud::group_digits(c).to_string(),
-            value1 = (if silhouette { " (silhouette)" } else { "" }).to_string()
-        );
-        menu::info(ui, p, "gauge", &text);
-    }
-    for (mode, icon, label) in [
-        (2u8, "user-focus", aurora_i18n::tr!("ui-context-always-show-full-detail")),
-        (1, "ghost", aurora_i18n::tr!("ui-context-never-fully-render")),
-        (0, "sliders", aurora_i18n::tr!("ui-context-display-according-to-your-preferences")),
-    ] {
-        if menu::check(ui, p, icon, label, f.render == mode, true) {
-            act(CtxAction::SetRender(id, mode));
-        }
-    }
-    menu::todo(ui, p, "magnifying-glass", aurora_i18n::tr!("ui-context-inspect-2"));
-    menu::todo(ui, p, "code", aurora_i18n::tr!("ui-context-script-information"));
-    menu::todo(ui, p, "eye-slash", aurora_i18n::tr!("ui-context-derender-temporarily"));
-    menu::todo(ui, p, "eye-closed", aurora_i18n::tr!("ui-context-derender-blacklist"));
-    menu::todo(ui, p, "image", aurora_i18n::tr!("ui-context-show-textures"));
-    menu::todo(ui, p, "arrows-clockwise", aurora_i18n::tr!("ui-context-refresh-textures"));
-    menu::separator(ui, p);
-    menu::todo(ui, p, "sparkle", aurora_i18n::tr!("common-block-particles"));
-}
-
-/// menu_avatar_self.xml
-fn self_menu(ui: &mut egui::Ui, p: &Palette, f: &Facts, id: Uuid, act: &mut dyn FnMut(CtxAction)) {
-    sit_stand(ui, p, f, act);
-    take_off_submenu(ui, p);
-    appearance_submenu(ui, p, act);
-    community_submenu(ui, p, id, act);
-    // not in Firestorm's menu: kept from Aurora's (fly is in menu_attachment_self.xml)
-    if menu::item(
-        ui,
-        p,
-        if f.flying { "airplane-landing" } else { "airplane-takeoff" },
-        if f.flying {
-            aurora_i18n::tr!("ui-context-land")
-        } else {
-            aurora_i18n::tr!("common-fly")
-        },
-    ) {
-        act(CtxAction::ToggleFly);
-    }
-    if menu::item(ui, p, "camera", aurora_i18n::tr!("ui-context-reset-camera")) {
-        act(CtxAction::ResetCamera);
-    }
-    menu::todo(ui, p, "code", aurora_i18n::tr!("ui-context-script-information"));
-    menu::todo(ui, p, "image", aurora_i18n::tr!("ui-context-show-textures"));
-    menu::todo(ui, p, "arrows-clockwise", aurora_i18n::tr!("ui-context-refresh-textures"));
-}
-
-/// « S'asseoir » (on the ground, Self.SitDown) and « Se lever ».
-fn sit_stand(ui: &mut egui::Ui, p: &Palette, f: &Facts, act: &mut dyn FnMut(CtxAction)) {
-    if menu::item_if(ui, p, "armchair", aurora_i18n::tr!("status-sit"), !f.seated) {
-        act(CtxAction::SitGround);
-    }
-    if menu::item_if(ui, p, "person", aurora_i18n::tr!("common-stand-up"), f.seated) {
-        act(CtxAction::StandUp);
-    }
-}
-
-fn take_off_submenu(ui: &mut egui::Ui, p: &Palette) {
-    menu::submenu(ui, p, "t-shirt", aurora_i18n::tr!("common-remove"), true, |ui| {
-        menu::todo(ui, p, "t-shirt", aurora_i18n::tr!("common-clothing"));
-        menu::todo(ui, p, "monitor", "HUD");
-        menu::todo(ui, p, "paperclip", aurora_i18n::tr!("common-detach"));
-        menu::todo(ui, p, "x-circle", aurora_i18n::tr!("ui-context-detach-all"));
-    });
-}
-
-fn appearance_submenu(ui: &mut egui::Ui, p: &Palette, act: &mut dyn FnMut(CtxAction)) {
-    menu::submenu(ui, p, "person", aurora_i18n::tr!("common-appearance"), true, |ui| {
-        if menu::item(ui, p, "t-shirt", aurora_i18n::tr!("common-current-outfit")) {
-            act(CtxAction::OpenAppearance { tab: 2, editing: false });
-        }
-        if menu::item(ui, p, "backpack", aurora_i18n::tr!("ui-context-change-outfit")) {
-            act(CtxAction::OpenAppearance { tab: 0, editing: false });
-        }
-        menu::todo(ui, p, "person", aurora_i18n::tr!("ui-context-edit-shape"));
-        if menu::item(ui, p, "pencil-simple", aurora_i18n::tr!("ui-context-edit-outfit")) {
-            act(CtxAction::OpenAppearance { tab: 2, editing: true });
-        }
-        menu::todo(ui, p, "arrows-out-cardinal", aurora_i18n::tr!("ui-context-flutter"));
-        menu::separator(ui, p);
-        menu::todo(ui, p, "bone", aurora_i18n::tr!("ui-context-reset-skeleton"));
-        menu::todo(
-            ui,
-            p,
-            "person-simple-run",
-            aurora_i18n::tr!("ui-context-reset-skeleton-and-animations"),
-        );
-        menu::todo(ui, p, "arrow-counter-clockwise", aurora_i18n::tr!("ui-context-reset-mesh-lod"));
-    });
-}
-
-fn community_submenu(ui: &mut egui::Ui, p: &Palette, me: Uuid, act: &mut dyn FnMut(CtxAction)) {
-    let mut chosen = None;
-    menu::submenu(ui, p, "users-three", aurora_i18n::tr!("ui-context-community"), true, |ui| {
-        if menu::item(ui, p, "users", aurora_i18n::tr!("common-friends")) {
-            chosen = Some(CtxAction::OpenPeople(1));
-        }
-        if menu::item(ui, p, "users-three", aurora_i18n::tr!("common-groups")) {
-            chosen = Some(CtxAction::OpenPeople(2));
-        }
-        if menu::item(ui, p, "user-circle", aurora_i18n::tr!("common-profile")) {
-            chosen = Some(CtxAction::Profile(me));
-        }
-        if menu::item(ui, p, "identification-card", aurora_i18n::tr!("ui-context-display-name")) {
-            chosen = Some(CtxAction::DisplayName);
-        }
-    });
-    if let Some(a) = chosen {
-        act(a);
-    }
-}
-
-/// menu_land.xml
-fn land_menu(ui: &mut egui::Ui, p: &Palette, f: &Facts, point: Vec3, act: &mut dyn FnMut(CtxAction)) {
-    if menu::item(ui, p, "info", aurora_i18n::tr!("common-about-land")) {
-        act(CtxAction::AboutLand(point));
-    }
-    // Land.Sit walks there first (autopilot): not in Aurora yet
-    menu::todo(ui, p, "armchair", aurora_i18n::tr!("ui-context-sit-here"));
-    if f.seated && menu::item(ui, p, "person", aurora_i18n::tr!("common-stand-up")) {
-        act(CtxAction::StandUp);
-    }
-    if menu::item(ui, p, "magnifying-glass-plus", aurora_i18n::tr!("common-zoom-2")) {
-        act(CtxAction::Zoom(point));
-    }
-    menu::separator(ui, p);
-    menu::todo(ui, p, "shopping-cart", aurora_i18n::tr!("ui-context-buy-this-land"));
-    menu::todo(ui, p, "ticket", aurora_i18n::tr!("ui-context-buy-access"));
-    menu::separator(ui, p);
-    if menu::item(ui, p, "cube", aurora_i18n::tr!("common-build")) {
-        act(CtxAction::Build);
-    }
-    if menu::item(ui, p, "mountains", aurora_i18n::tr!("ui-context-edit-land")) {
-        act(CtxAction::EditTerrain);
-    }
-    menu::separator(ui, p);
-    menu::todo(ui, p, "sparkle", aurora_i18n::tr!("ui-context-ignore-particle-owner"));
 }
 
 /// Where an avatar menu of a list is opened: each place has its own
@@ -1115,6 +744,8 @@ mod tests {
                 pos: egui::pos2(200.0, 80.0),
                 point: Vec3::ZERO,
                 target: Target::Attachment { key },
+                pie_path: Vec::new(),
+                pie_input_frame: None,
             });
             let mut frame = |events: Vec<egui::Event>| {
                 let mut output = ctx.run_ui(
@@ -1123,7 +754,7 @@ mod tests {
                         events,
                         ..Default::default()
                     },
-                    |ui| show(ui.ctx(), &theme.palette(), &mut current, &facts),
+                    |ui| show(ui.ctx(), &theme.palette(), &mut current, &facts, false),
                 );
                 output.textures_delta.clear();
                 output
