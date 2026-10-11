@@ -705,7 +705,7 @@ fn folder_window_contents(
     actions: &mut Vec<InvAction>,
 ) {
     controls::toolbar(ui, p, st, prefs);
-    controls::search(ui, st, prefs, aurora_i18n::tr!("ui-inventory-filter-inventory-folder"));
+    controls::search(ui, p, st, prefs, aurora_i18n::tr!("ui-inventory-filter-inventory-folder"));
     ui.add_space(3.0);
     let q = st.search.trim().to_lowercase();
     let filtered = !q.is_empty() || st.links_filter.is_some() || st.filters.active();
@@ -1092,7 +1092,7 @@ fn inventory_contents(
     actions: &mut Vec<InvAction>,
 ) {
     controls::toolbar(ui, p, st, prefs);
-    controls::search(ui, st, prefs, aurora_i18n::tr!("ui-inventory-filter-inventory"));
+    controls::search(ui, p, st, prefs, aurora_i18n::tr!("ui-inventory-filter-inventory"));
     ui.add_space(3.0);
     let mut tab_ids = vec![0];
     let mut labels = vec![(aurora_i18n::tr!("common-inventory"), true)];
@@ -1841,7 +1841,7 @@ mod tests {
             },
             |ui| {
                 controls::toolbar(ui, &palette, &mut st, &mut prefs);
-                controls::search(ui, &mut st, &mut prefs, "Rechercher ici");
+                controls::search(ui, &palette, &mut st, &mut prefs, "Rechercher ici");
             },
         ));
         let position = |label| {
@@ -1868,6 +1868,109 @@ mod tests {
         assert!((expand.y - filters.y).abs() < 1.0);
         assert!(collapse.x > preferences.x && expand.x > collapse.x);
         assert!(field.y > filters.y);
+    }
+
+    #[test]
+    fn typing_and_clearing_keep_inventory_search_layout_stable() {
+        for width in [234.0, 350.0, 440.0] {
+            let ctx = egui::Context::default();
+            crate::theme::Theme::default().apply(&ctx, 1.0);
+            let palette = crate::theme::Theme::default().palette();
+            let mut st = InventoryUi::default();
+            let mut prefs = InventoryPreferences::default();
+            let frame = |st: &mut InventoryUi, prefs: &mut InventoryPreferences, events| {
+                headless_output(ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, 240.0))),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        controls::toolbar(ui, &palette, st, prefs);
+                        controls::search(ui, &palette, st, prefs, "Chercher");
+                        ui.label("below_controls");
+                    },
+                ))
+            };
+            let field_rect = |output: &egui::FullOutput| {
+                output
+                    .shapes
+                    .iter()
+                    .filter_map(|shape| match &shape.shape {
+                        egui::Shape::Rect(rect) if rect.fill == palette.field => Some(rect.rect),
+                        _ => None,
+                    })
+                    .max_by(|a, b| a.width().total_cmp(&b.width()))
+                    .expect("search field")
+            };
+            let text_rect = |output: &egui::FullOutput, label: &str| {
+                output
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        egui::Shape::Text(text) if text.galley.text() == label => {
+                            Some(egui::Rect::from_min_size(text.pos, text.galley.size()))
+                        }
+                        _ => None,
+                    })
+                    .expect(label)
+            };
+            let pointer = |pos, pressed| {
+                vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: Default::default(),
+                    },
+                ]
+            };
+            let output = frame(&mut st, &mut prefs, vec![]);
+            let field = field_rect(&output);
+            let below = text_rect(&output, "below_controls");
+            assert!((text_rect(&output, "Chercher").center().y - field.center().y).abs() < 1.0);
+            let input_pos = field.left_center() + egui::vec2(12.0, 0.0);
+            frame(&mut st, &mut prefs, pointer(input_pos, true));
+            frame(&mut st, &mut prefs, pointer(input_pos, false));
+            frame(&mut st, &mut prefs, vec![egui::Event::Text("fe".into())]);
+            assert_eq!(st.search, "fe");
+            let output = frame(&mut st, &mut prefs, vec![]);
+            assert_eq!(field_rect(&output), field, "typing must not resize the field");
+            assert_eq!(text_rect(&output, "below_controls"), below, "typing must not move following rows");
+            assert!((text_rect(&output, "fe").center().y - field.center().y).abs() < 1.0);
+            let focus = ctx.memory(|memory| memory.focused());
+            st.filters.types = 1 << 6;
+            frame(&mut st, &mut prefs, vec![]);
+            let clear_pos = field.right_center() - egui::vec2(14.0, 0.0);
+            frame(&mut st, &mut prefs, pointer(clear_pos, true));
+            let output = frame(&mut st, &mut prefs, pointer(clear_pos, false));
+            assert!(st.search.is_empty() && !st.filters.active());
+            assert_eq!(
+                ctx.memory(|memory| memory.focused()),
+                focus,
+                "clearing keeps the search ready for typing"
+            );
+            assert_eq!(field_rect(&output), field);
+            assert_eq!(text_rect(&output, "below_controls"), below);
+
+            st.search = "link-query".into();
+            st.links_filter = Some(Uuid::from_u128(8100));
+            st.saved_filters = Some(view::Filters {
+                permissions: rules::COPY,
+                ..Default::default()
+            });
+            frame(&mut st, &mut prefs, vec![]);
+            frame(&mut st, &mut prefs, pointer(clear_pos, true));
+            frame(&mut st, &mut prefs, pointer(clear_pos, false));
+            assert!(st.links_filter.is_none());
+            assert_eq!(
+                st.filters.permissions,
+                rules::COPY,
+                "leaving linked mode restores the previous filters"
+            );
+            assert_eq!(st.search, "link-query");
+        }
     }
 
     #[test]

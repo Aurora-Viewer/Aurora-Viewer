@@ -1,7 +1,7 @@
 //! Firestorm inventory view menu and finder options, presented with Aurora widgets.
 use super::view::{Age, Creator, Filters, InventoryPreferences, Links, SearchField, types};
 use super::{InventoryUi, Palette};
-use crate::ui::widgets::{Floater, flat_button, switch};
+use crate::ui::widgets::{Floater, flat_button, switch, underlined_button};
 use egui::{RichText, Vec2};
 
 fn check(ui: &mut egui::Ui, p: &Palette, label: &str, value: &mut bool) -> bool {
@@ -98,46 +98,30 @@ pub fn toolbar(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi, prefs: &mut
 }
 
 fn filter_actions(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi) {
-    if flat_button(
+    if underlined_button(
         ui,
         p,
-        if st.filters.active() {
-            aurora_i18n::tr!("ui-inventory-controls-filters-2")
-        } else {
-            aurora_i18n::tr!("ui-inventory-controls-filters")
-        },
+        aurora_i18n::tr!("ui-inventory-controls-filters"),
+        st.filters_open || st.filters.active(),
     )
     .clicked()
     {
         st.filters_open = !st.filters_open;
     }
-    if flat_button(ui, p, aurora_i18n::tr!("common-preferences")).clicked() {
+    if underlined_button(ui, p, aurora_i18n::tr!("common-preferences"), st.preferences_open).clicked() {
         st.preferences_open = !st.preferences_open;
     }
     tree_actions(ui, p, st);
-    if st.links_filter.is_some() {
-        if flat_button(ui, p, aurora_i18n::tr!("ui-inventory-controls-exit-linked-mode")).clicked() {
-            st.links_filter = None;
-            if let Some(filters) = st.saved_filters.take() {
-                st.filters = filters;
-            }
-        }
-    } else if (!st.search.is_empty() || st.filters.active()) && flat_button(ui, p, aurora_i18n::tr!("common-clear")).clicked() {
-        st.search.clear();
-        st.filters = Filters::default();
-        st.links_filter = None;
-        st.saved_filters = None;
-    }
 }
 
 fn tree_actions(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi) {
-    if flat_button(ui, p, aurora_i18n::tr!("common-collapse"))
+    if underlined_button(ui, p, aurora_i18n::tr!("common-collapse"), false)
         .on_hover_text(aurora_i18n::tr!("ui-inventory-controls-collapse-displayed-folders"))
         .clicked()
     {
         st.expand_all = Some(false);
     }
-    if flat_button(ui, p, aurora_i18n::tr!("common-expand"))
+    if underlined_button(ui, p, aurora_i18n::tr!("common-expand"), false)
         .on_hover_text(aurora_i18n::tr!("ui-inventory-controls-expand-displayed-folders"))
         .clicked()
     {
@@ -145,14 +129,67 @@ fn tree_actions(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi) {
     }
 }
 
-pub fn search(ui: &mut egui::Ui, st: &mut InventoryUi, prefs: &mut InventoryPreferences, hint: &str) {
+pub fn search(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi, prefs: &mut InventoryPreferences, hint: &str) {
     ui.horizontal(|ui| {
         let selector_width = 112.0_f32.min(ui.available_width() * 0.4);
         let field_width = (ui.available_width() - selector_width - ui.spacing().item_spacing.x).max(40.0);
-        ui.add_sized(
+        // LLSearchEditor (indra/llui/llsearcheditor.cpp): keep the clear action
+        // inside the field and reserve its text padding even before typing.
+        let field = ui.add_sized(
             [field_width, ui.spacing().interact_size.y],
-            egui::TextEdit::singleline(&mut st.search).hint_text(hint),
+            egui::TextEdit::singleline(&mut st.search)
+                .hint_text(hint)
+                .vertical_align(egui::Align::Center)
+                .margin(egui::Margin {
+                    left: 5,
+                    right: 28,
+                    top: 0,
+                    bottom: 0,
+                }),
         );
+        if !st.search.is_empty() || st.filters.active() || st.links_filter.is_some() {
+            let tip = if st.links_filter.is_some() {
+                aurora_i18n::tr!("ui-inventory-controls-exit-linked-mode")
+            } else {
+                aurora_i18n::tr!("common-clear")
+            };
+            let rect = egui::Rect::from_center_size(field.rect.right_center() - Vec2::new(14.0, 0.0), Vec2::splat(20.0));
+            let clear = ui
+                .interact(rect, ui.id().with("inventory_clear"), egui::Sense::click())
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .on_hover_text(tip);
+            clear.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), tip));
+            let color = if clear.hovered() { p.ink } else { p.muted };
+            if let Some(icon) = crate::ui::icons::global("x") {
+                ui.painter().image(
+                    icon.id(),
+                    egui::Rect::from_center_size(rect.center(), Vec2::splat(12.0)),
+                    egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                    color,
+                );
+            } else {
+                ui.painter().line_segment(
+                    [rect.center() - Vec2::splat(3.0), rect.center() + Vec2::splat(3.0)],
+                    egui::Stroke::new(1.0, color),
+                );
+                ui.painter().line_segment(
+                    [rect.center() + Vec2::new(-3.0, 3.0), rect.center() + Vec2::new(3.0, -3.0)],
+                    egui::Stroke::new(1.0, color),
+                );
+            }
+            if clear.clicked() {
+                if st.links_filter.take().is_some() {
+                    if let Some(filters) = st.saved_filters.take() {
+                        st.filters = filters;
+                    }
+                } else {
+                    st.search.clear();
+                    st.filters = Filters::default();
+                    st.saved_filters = None;
+                }
+                field.request_focus();
+            }
+        }
         egui::ComboBox::from_id_salt("inventory_search_field")
             .width(selector_width)
             .truncate()

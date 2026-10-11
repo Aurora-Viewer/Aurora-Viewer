@@ -455,33 +455,15 @@ pub fn tabs(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&st
             let w = text_w[i] * compact + extra.min(40.0);
             let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, 30.0), if *enabled { Sense::click() } else { Sense::hover() });
             let sel = *selected == i;
-            let fill = if sel {
-                p.violet.gamma_multiply(0.28)
-            } else if resp.hovered() && *enabled {
-                p.raised
-            } else {
-                p.field
-            };
-            ui.painter().rect_filled(rect, CornerRadius::same(4), fill);
-            let border = if sel {
-                p.violet
-            } else if resp.hovered() && *enabled {
-                p.violet_light.gamma_multiply(0.65)
-            } else {
-                p.muted_dim.gamma_multiply(0.65)
-            };
-            ui.painter()
-                .rect_stroke(rect, 4.0, Stroke::new(1.0, border), egui::StrokeKind::Inside);
-            if sel {
-                ui.painter().rect_filled(
-                    egui::Rect::from_min_size(
-                        rect.left_bottom() - Vec2::new(-6.0, 2.0),
-                        Vec2::new((rect.width() - 12.0).max(1.0), 2.0),
-                    ),
-                    0.0,
-                    p.violet,
-                );
+            if sel || (resp.hovered() && *enabled) {
+                let fill = if sel {
+                    p.violet.gamma_multiply(0.18)
+                } else {
+                    p.raised.gamma_multiply(0.25)
+                };
+                ui.painter().rect_filled(rect, CornerRadius::same(4), fill);
             }
+            underline(ui, p, &resp, sel, *enabled);
             let col = if !*enabled {
                 p.muted_dim
             } else if sel {
@@ -563,6 +545,37 @@ pub fn icon_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, enable
 /// Small flat text button.
 pub fn flat_button(ui: &mut egui::Ui, p: &Palette, label: &str) -> egui::Response {
     text_button(ui, p, label, None)
+}
+
+/// A light toolbar action using the same gray/active underline as the tabs.
+pub(crate) fn underlined_button(ui: &mut egui::Ui, p: &Palette, label: &str, selected: bool) -> egui::Response {
+    let response = ui.add(
+        egui::Button::new(RichText::new(label).size(12.0).color(p.ink))
+            .frame(false)
+            .min_size(Vec2::new(0.0, ui.spacing().interact_size.y)),
+    );
+    underline(ui, p, &response, selected || response.is_pointer_button_down_on(), ui.is_enabled());
+    response
+}
+
+fn underline(ui: &egui::Ui, p: &Palette, response: &egui::Response, selected: bool, enabled: bool) {
+    let color = if selected {
+        p.violet
+    } else if response.hovered() && enabled {
+        p.muted
+    } else {
+        p.muted_dim.gamma_multiply(0.7)
+    };
+    let height = if selected { 2.0 } else { 1.0 };
+    let rect = response.rect;
+    ui.painter().rect_filled(
+        egui::Rect::from_min_size(
+            rect.left_bottom() - Vec2::new(-6.0, height),
+            Vec2::new((rect.width() - 12.0).max(1.0), height),
+        ),
+        0.0,
+        color,
+    );
 }
 
 /// Equal-sized dialog buttons; long script labels keep their full hover text.
