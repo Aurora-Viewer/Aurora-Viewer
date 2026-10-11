@@ -5574,6 +5574,9 @@ impl App {
         if self.bug_report.requested {
             self.open_bug_report(renderer);
         }
+        if self.demo {
+            self.bug_report.demo_step(self.frame_count);
+        }
         self.bug_report
             .show(&ctx, &p, &self.skin.icons, matches!(self.screen, Screen::World));
         a

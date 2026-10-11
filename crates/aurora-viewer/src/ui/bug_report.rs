@@ -1,4 +1,4 @@
-//! Explicit review of the public report, shared by all entry points.
+//! Public report form, shared by all entry points.
 
 use super::widgets::{Floater, flat_button};
 use crate::bug_report::github::{self, Github};
@@ -6,12 +6,27 @@ use crate::bug_report::{Field, Report, files};
 use crate::theme::Palette;
 use egui::{RichText, Vec2};
 
+#[cfg(test)]
+mod tests;
+
 #[derive(Clone, Copy, Default, PartialEq)]
 enum Delivery {
     #[default]
     Local,
     Browser,
     Direct,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum ImageOrigin {
+    Capture(bool),
+    File,
+}
+
+struct ImageJob {
+    rx: crossbeam_channel::Receiver<Result<Option<files::Attachment>, &'static str>>,
+    origin: ImageOrigin,
+    include: bool,
 }
 
 #[derive(Default)]
@@ -25,17 +40,20 @@ pub struct BugReportUi {
     image: Option<files::Attachment>,
     texture: Option<egui::TextureHandle>,
     diagnostics: Option<crossbeam_channel::Receiver<files::Diagnostics>>,
-    image_job: Option<crossbeam_channel::Receiver<Result<Option<files::Attachment>, String>>>,
+    image_job: Option<ImageJob>,
+    image_origin: Option<ImageOrigin>,
     save_job: Option<crossbeam_channel::Receiver<std::io::Result<files::Saved>>>,
     pub capture_requested: Option<bool>,
     pub capture_pending: bool,
     saved: Option<files::Saved>,
-    error: Option<String>,
+    error: Option<&'static str>,
     demo: bool,
     delivery: Delivery,
     pending_delivery: Option<(Delivery, Report, bool)>,
     github: Github,
     notice: Option<&'static str>,
+    demo_text: Option<[String; 4]>,
+    language: &'static str,
 }
 
 impl BugReportUi {
@@ -47,15 +65,22 @@ impl BugReportUi {
             return;
         }
         self.report.fields = fields;
+        self.language = aurora_i18n::language();
         self.demo = demo;
         if demo {
             self.report.title = aurora_i18n::tr!("bug-demo-title").into();
             self.report.steps = aurora_i18n::tr!("bug-demo-steps").into();
             self.report.expected = aurora_i18n::tr!("bug-demo-expected").into();
             self.report.actual = aurora_i18n::tr!("bug-demo-actual").into();
+            self.demo_text = Some([
+                self.report.title.clone(),
+                self.report.steps.clone(),
+                self.report.expected.clone(),
+                self.report.actual.clone(),
+            ]);
             match std::env::var("AURORA_DEMO_BUG_REPORT").as_deref() {
                 Ok("details") => {
-                    self.tab = 1;
+                    self.tab = 2;
                     self.report.include_excerpt = true;
                     for field in &mut self.report.fields {
                         if field.heading == "Location" {
@@ -63,8 +88,8 @@ impl BugReportUi {
                         }
                     }
                 }
-                Ok(mode @ ("image" | "image-ui")) => {
-                    self.tab = 2;
+                Ok(mode @ ("image" | "image-ui" | "refresh")) => {
+                    self.tab = 1;
                     self.include_ui = mode == "image-ui";
                     self.capture_requested = Some(self.include_ui);
                 }
@@ -82,7 +107,15 @@ impl BugReportUi {
     pub fn captured(&mut self, width: u32, height: u32, pixels: Vec<u8>) {
         self.capture_pending = false;
         let (tx, rx) = crossbeam_channel::bounded(1);
-        self.image_job = Some(rx);
+        self.image_job = Some(ImageJob {
+            rx,
+            origin: ImageOrigin::Capture(self.include_ui),
+            include: if matches!(self.image_origin, Some(ImageOrigin::Capture(_))) {
+                self.include_image
+            } else {
+                true
+            },
+        });
         std::thread::spawn(move || {
             let _ = tx.send(files::capture(width, height, pixels).map(Some));
         });
@@ -97,19 +130,27 @@ impl BugReportUi {
             self.report.excerpt = diagnostics.excerpt;
             self.diagnostics = None;
         }
-        if let Some(rx) = &self.image_job
-            && let Ok(result) = rx.try_recv()
+        if let Some(job) = &self.image_job
+            && let Ok(result) = job.rx.try_recv()
         {
+            let (origin, include) = (job.origin, job.include);
             self.image_job = None;
             match result {
                 Ok(Some(image)) => {
                     self.texture = Some(ctx.load_texture("bug-report-image", image.preview.clone(), Default::default()));
                     self.image = Some(image);
-                    self.include_image = true;
+                    self.include_image = include;
+                    self.image_origin = Some(origin);
+                    self.error = None;
                     self.saved = None;
                 }
                 Ok(None) => {}
-                Err(error) => self.error = Some(error),
+                Err(error) => {
+                    self.error = Some(error);
+                    if let Some(ImageOrigin::Capture(with_ui)) = self.image_origin {
+                        self.include_ui = with_ui;
+                    }
+                }
             }
         }
         if let Some(rx) = &self.save_job
@@ -146,141 +187,213 @@ impl BugReportUi {
                     }
                     self.saved = Some(saved);
                 }
-                Err(_) => self.error = Some(aurora_i18n::tr!("bug-save-error").into()),
+                Err(_) => self.error = Some("bug-save-error"),
             }
         }
     }
 
+    fn refresh_language(&mut self, language: &'static str) {
+        if self.language == language {
+            return;
+        }
+        self.language = language;
+        // Only untouched demo prose is translated. Never overwrite the user's draft.
+        if let Some(previous) = &mut self.demo_text {
+            for ((value, old), key) in [
+                &mut self.report.title,
+                &mut self.report.steps,
+                &mut self.report.expected,
+                &mut self.report.actual,
+            ]
+            .into_iter()
+            .zip(previous.iter_mut())
+            .zip(["bug-demo-title", "bug-demo-steps", "bug-demo-expected", "bug-demo-actual"])
+            {
+                let translated = aurora_i18n::text_in(language, key);
+                if value == old {
+                    *value = translated.into();
+                }
+                *old = translated.into();
+            }
+        }
+        for field in &mut self.report.fields {
+            if field.label == "bug-language" {
+                field.value = language.into();
+            }
+        }
+    }
+
+    pub fn demo_step(&mut self, frame: u64) {
+        if !self.demo || !matches!(frame, 700 | 900) {
+            return;
+        }
+        match std::env::var("AURORA_DEMO_BUG_REPORT").as_deref() {
+            Ok("refresh") => {
+                self.include_ui = frame == 700;
+                self.capture_option_changed(true);
+            }
+            Ok("language") => {
+                aurora_i18n::select(if frame == 700 { "en" } else { "fr" }, None);
+            }
+            _ => {}
+        }
+    }
+
+    fn image_busy(&self) -> bool {
+        self.image_job.is_some() || self.capture_requested.is_some() || self.capture_pending
+    }
+
+    fn capture_option_changed(&mut self, in_world: bool) {
+        // Imported pictures must never be replaced by the camera.
+        if in_world && !self.image_busy() && matches!(self.image_origin, Some(ImageOrigin::Capture(_))) {
+            self.capture_requested = Some(self.include_ui);
+        }
+    }
+
+    fn new_report(&mut self) {
+        let mut github = std::mem::take(&mut self.github);
+        github.created = None;
+        github.failure = None;
+        *self = Self {
+            github,
+            requested: true,
+            open: true,
+            ..Default::default()
+        };
+    }
+
     pub fn show(&mut self, ctx: &egui::Context, p: &Palette, icons: &super::icons::Icons, in_world: bool) {
+        self.refresh_language(aurora_i18n::language());
         self.poll(ctx);
         if self.capture_pending {
             return;
         }
         let mut open = self.open;
         let screen = ctx.content_rect();
-        let size = Vec2::new(880.0f32.min(screen.width() - 28.0), 660.0f32.min(screen.height() - 36.0));
+        let size = Vec2::new(660.0f32.min(screen.width() - 28.0), 740.0f32.min(screen.height() - 36.0));
         let mut floater = Floater::new("bug_report", aurora_i18n::tr!("bug-title"), screen.center() - size * 0.5, size);
-        floater.min_size = Vec2::new(390.0, 340.0);
+        floater.min_size = Vec2::new(440.0, 420.0);
         floater.show(ctx, p, &mut open, |ui| {
-            ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                if let Some(icon) = icons.get("bug") {
-                    ui.add(egui::Image::new(icon).fit_to_exact_size(Vec2::splat(28.0)).tint(p.violet_light));
-                }
-                ui.vertical(|ui| {
-                    ui.label(RichText::new(aurora_i18n::tr!("bug-heading")).size(20.0).strong().color(p.ink));
-                    ui.label(RichText::new(aurora_i18n::tr!("bug-public-warning")).color(p.amber));
-                });
-            });
-            ui.add_space(8.0);
-            ui.label(RichText::new(aurora_i18n::tr!("bug-review-help")).small().color(p.muted));
-            if self.demo {
-                ui.label(RichText::new(aurora_i18n::tr!("bug-demo-warning")).small().color(p.teal));
-            }
-            ui.separator();
-            let working = self.save_job.is_some() || self.github.sending;
-            let height = (ui.available_height() - 155.0).max(130.0);
-            ui.add_enabled_ui(!working, |ui| {
-                if ui.available_width() >= 730.0 {
-                    ui.columns(2, |columns| {
-                        egui::ScrollArea::vertical()
-                            .id_salt("bug-form")
-                            .max_height(height)
-                            .auto_shrink([false, false])
-                            .show(&mut columns[0], |ui| {
-                                self.form(ui, p, in_world);
-                            });
-                        Self::preview(&self.report, &mut columns[1], p, height);
-                    });
-                } else {
-                    egui::ScrollArea::vertical()
-                        .id_salt("bug-narrow")
-                        .max_height(height)
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| {
-                            self.form(ui, p, in_world);
-                            ui.separator();
-                            Self::preview(&self.report, ui, p, 200.0);
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+            // Also let the whole page scroll in short windows: sending controls
+            // and status messages must remain reachable when they wrap.
+            let page_height = ui.available_height();
+            egui::ScrollArea::vertical()
+                .id_salt("bug-page")
+                .max_height(page_height)
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        if let Some(icon) = icons.get("bug") {
+                            ui.add(egui::Image::new(icon).fit_to_exact_size(Vec2::splat(28.0)).tint(p.violet_light));
+                        }
+                        ui.vertical(|ui| {
+                            ui.label(RichText::new(aurora_i18n::tr!("bug-heading")).size(20.0).color(p.ink));
+                            ui.label(RichText::new(aurora_i18n::tr!("bug-public-warning")).color(p.amber));
                         });
-                }
-            });
-            ui.separator();
-            if let Some(error) = &self.error {
-                ui.label(RichText::new(error).color(p.danger));
-            }
-            if let Some(error) = self.github.failure {
-                ui.label(RichText::new(error.message()).color(p.danger));
-            }
-            if let Some(notice) = self.notice {
-                ui.label(RichText::new(aurora_i18n::text(notice)).small().color(p.teal));
-            }
-            if let Some(number) = self.github.created {
-                ui.hyperlink_to(
-                    aurora_i18n::tr!("bug-created", number = number.to_string()),
-                    format!("{}/{}", github::ISSUES, number),
-                );
-            }
-            if let Some(saved) = &self.saved {
-                ui.label(RichText::new(aurora_i18n::tr!("bug-saved")).color(p.success));
-                if !saved.private_log_saved && !self.demo {
-                    ui.label(
-                        RichText::new(aurora_i18n::tr!("bug-private-log-unavailable"))
-                            .small()
-                            .color(p.muted),
-                    );
-                }
-            }
-            ui.add_enabled_ui(!working, |ui| self.delivery_options(ui, p));
-            ui.horizontal_wrapped(|ui| {
-                if flat_button(ui, p, aurora_i18n::tr!("bug-copy")).clicked() {
-                    ctx.copy_text(self.report.markdown());
-                }
-                let ready = !working
-                    && self.diagnostics.is_none()
-                    && self.image_job.is_none()
-                    && self.capture_requested.is_none()
-                    && self.report.ready();
-                if ui.add_enabled(ready, egui::Button::new(aurora_i18n::tr!("bug-save"))).clicked() {
-                    self.save(Delivery::Local);
-                }
-                let delivery_ready = self.delivery == Delivery::Browser || self.github.connected() || self.demo;
-                let label = if self.delivery == Delivery::Direct {
-                    aurora_i18n::tr!("bug-send-direct")
-                } else {
-                    aurora_i18n::tr!("bug-open-github")
-                };
-                if ui
-                    .add_enabled(
-                        ready && delivery_ready && self.github.created.is_none(),
-                        egui::Button::new(RichText::new(label).color(p.ink)).fill(p.violet),
-                    )
-                    .clicked()
-                {
-                    self.save(self.delivery);
-                }
-                if let Some(saved) = &self.saved
-                    && flat_button(ui, p, aurora_i18n::tr!("bug-open-folder")).clicked()
-                {
-                    let path = saved.public_dir.clone();
-                    std::thread::spawn(move || {
-                        let _ = files::open_directory(&path);
                     });
-                }
-                if working || self.diagnostics.is_some() {
-                    ui.spinner();
-                }
-                if !working && flat_button(ui, p, aurora_i18n::tr!("bug-new-report")).clicked() {
-                    let mut github = std::mem::take(&mut self.github);
-                    github.created = None;
-                    github.failure = None;
-                    *self = Self {
-                        github,
-                        requested: true,
-                        open: true,
-                        ..Default::default()
+                    ui.add_space(6.0);
+                    ui.label(aurora_i18n::tr!("bug-review-help"));
+                    if self.demo {
+                        ui.label(RichText::new(aurora_i18n::tr!("bug-demo-warning")).color(p.teal));
+                    }
+                    ui.add_space(6.0);
+                    ui.separator();
+                    let working = self.save_job.is_some() || self.github.sending;
+                    let image_note = if self.include_image && self.image.is_some() { 40.0 } else { 0.0 };
+                    let auth_controls = if self.delivery == Delivery::Direct && !self.demo {
+                        65.0
+                    } else {
+                        0.0
                     };
-                }
-            });
+                    let height = (page_height - 315.0 - image_note - auth_controls).clamp(160.0, 440.0);
+                    ui.add_enabled_ui(!working, |ui| {
+                        self.form_panel(ui, p, in_world, height);
+                    });
+                    ui.separator();
+                    ui.add_space(6.0);
+                    ui.label(RichText::new(aurora_i18n::tr!("bug-send-heading")).strong().color(p.violet_light));
+                    ui.add_enabled_ui(!working, |ui| self.delivery_options(ui, p));
+                    if self.include_image && self.image.is_some() {
+                        ui.label(RichText::new(aurora_i18n::tr!("bug-manual-image")).color(p.amber));
+                    }
+                    ui.add_space(6.0);
+                    if !self.report.ready() {
+                        ui.label(RichText::new(aurora_i18n::tr!("bug-required-help")).color(p.muted));
+                    }
+                    let idle = !working && self.diagnostics.is_none() && !self.image_busy();
+                    ui.horizontal_wrapped(|ui| {
+                        let label = if self.delivery == Delivery::Direct {
+                            aurora_i18n::tr!("bug-send-direct")
+                        } else {
+                            aurora_i18n::tr!("bug-open-github")
+                        };
+                        let delivery_ready = self.delivery == Delivery::Browser || self.github.connected() || self.demo;
+                        if ui
+                            .add_enabled(
+                                idle && self.report.ready() && delivery_ready && self.github.created.is_none(),
+                                egui::Button::new(RichText::new(label).color(p.ink))
+                                    .fill(p.violet)
+                                    .min_size(Vec2::new(180.0, 30.0)),
+                            )
+                            .clicked()
+                        {
+                            self.save(self.delivery);
+                        }
+                        ui.menu_button(aurora_i18n::tr!("bug-other-actions"), |ui| {
+                            if ui.button(aurora_i18n::tr!("bug-copy")).clicked() {
+                                ctx.copy_text(self.report.markdown());
+                                ui.close();
+                            }
+                            if ui.add_enabled(idle, egui::Button::new(aurora_i18n::tr!("bug-save"))).clicked() {
+                                self.save(Delivery::Local);
+                                ui.close();
+                            }
+                            if let Some(saved) = &self.saved
+                                && ui.button(aurora_i18n::tr!("bug-open-folder")).clicked()
+                            {
+                                let path = saved.public_dir.clone();
+                                std::thread::spawn(move || {
+                                    let _ = files::open_directory(&path);
+                                });
+                                ui.close();
+                            }
+                            ui.separator();
+                            if ui
+                                .add_enabled(idle, egui::Button::new(aurora_i18n::tr!("bug-new-report")))
+                                .clicked()
+                            {
+                                self.new_report();
+                                ui.close();
+                            }
+                        });
+                        if working || self.diagnostics.is_some() {
+                            ui.spinner();
+                        }
+                    });
+                    if let Some(key) = self.error {
+                        ui.label(RichText::new(aurora_i18n::text(key)).color(p.danger));
+                    }
+                    if let Some(error) = self.github.failure {
+                        ui.label(RichText::new(error.message()).color(p.danger));
+                    }
+                    if let Some(notice) = self.notice {
+                        ui.label(RichText::new(aurora_i18n::text(notice)).color(p.teal));
+                    }
+                    if let Some(number) = self.github.created {
+                        ui.hyperlink_to(
+                            aurora_i18n::tr!("bug-created", number = number.to_string()),
+                            format!("{}/{number}", github::ISSUES),
+                        );
+                    }
+                    if let Some(saved) = &self.saved {
+                        ui.label(RichText::new(aurora_i18n::tr!("bug-saved")).color(p.success));
+                        if !saved.private_log_saved && !self.demo {
+                            ui.label(RichText::new(aurora_i18n::tr!("bug-private-log-unavailable")).color(p.muted));
+                        }
+                    }
+                });
         });
         if !open {
             self.github.cancel_authorization();
@@ -288,18 +401,34 @@ impl BugReportUi {
         self.open = open;
     }
 
-    fn form(&mut self, ui: &mut egui::Ui, p: &Palette, in_world: bool) {
+    fn form_panel(&mut self, ui: &mut egui::Ui, p: &Palette, in_world: bool, height: f32) {
+        ui.label(
+            RichText::new(aurora_i18n::tr!("bug-compose-heading"))
+                .strong()
+                .color(p.violet_light),
+        );
+        // Keep navigation outside the form's scroll area.
         super::widgets::tabs(
             ui,
             p,
             &mut self.tab,
             &[
                 (aurora_i18n::tr!("bug-description"), true),
-                (aurora_i18n::tr!("bug-diagnostics"), true),
                 (aurora_i18n::tr!("bug-picture"), true),
+                (aurora_i18n::tr!("bug-diagnostics"), true),
             ],
         );
-        ui.add_space(10.0);
+        egui::ScrollArea::vertical()
+            .id_salt(("bug-form", self.tab))
+            .max_height(height - 50.0)
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.add_space(8.0);
+                self.form(ui, p, in_world);
+            });
+    }
+
+    fn form(&mut self, ui: &mut egui::Ui, p: &Palette, in_world: bool) {
         match self.tab {
             0 => {
                 ui.label(aurora_i18n::tr!("bug-summary"));
@@ -324,14 +453,14 @@ impl BugReportUi {
                     );
                     ui.add_space(8.0);
                 }
-                ui.label(RichText::new(aurora_i18n::tr!("bug-no-secrets")).small().color(p.muted));
+                ui.label(RichText::new(aurora_i18n::tr!("bug-no-secrets")).size(12.0).color(p.muted));
             }
-            1 => {
-                ui.label(RichText::new(aurora_i18n::tr!("bug-fields-help")).small().color(p.muted));
+            2 => {
+                ui.label(RichText::new(aurora_i18n::tr!("bug-fields-help")).size(12.0).color(p.muted));
                 for field in &mut self.report.fields {
                     ui.checkbox(&mut field.included, aurora_i18n::text(field.label));
                     ui.indent(field.heading, |ui| {
-                        ui.add(egui::Label::new(RichText::new(&field.value).small().color(p.muted)).wrap());
+                        ui.add(egui::Label::new(RichText::new(field.display_value()).color(p.muted)).wrap());
                     });
                     ui.add_space(4.0);
                 }
@@ -339,10 +468,10 @@ impl BugReportUi {
                 ui.add_enabled_ui(!self.report.excerpt.is_empty(), |ui| {
                     ui.checkbox(&mut self.report.include_excerpt, aurora_i18n::tr!("bug-log"));
                 });
-                ui.label(RichText::new(aurora_i18n::tr!("bug-log-help")).small().color(p.muted));
+                ui.label(RichText::new(aurora_i18n::tr!("bug-log-help")).size(12.0).color(p.muted));
                 if !self.report.excerpt.is_empty() {
                     ui.add(
-                        egui::Label::new(RichText::new(&self.report.excerpt).monospace().small())
+                        egui::Label::new(RichText::new(crate::bug_report::privacy::display_excerpt(&self.report.excerpt)))
                             .wrap()
                             .selectable(true),
                     );
@@ -351,7 +480,7 @@ impl BugReportUi {
             _ => {
                 ui.label(RichText::new(aurora_i18n::tr!("bug-picture-warning")).color(p.amber));
                 ui.add_space(8.0);
-                let busy = self.image_job.is_some() || self.capture_requested.is_some() || self.capture_pending;
+                let busy = self.image_busy();
                 ui.add_enabled_ui(!busy, |ui| {
                     ui.horizontal_wrapped(|ui| {
                         if ui
@@ -363,57 +492,53 @@ impl BugReportUi {
                         }
                         if flat_button(ui, p, aurora_i18n::tr!("bug-attach-image")).clicked() {
                             let (tx, rx) = crossbeam_channel::bounded(1);
-                            self.image_job = Some(rx);
+                            self.image_job = Some(ImageJob {
+                                rx,
+                                origin: ImageOrigin::File,
+                                include: true,
+                            });
                             std::thread::spawn(move || {
                                 let _ = tx.send(files::choose_image());
                             });
                         }
                     });
-                    ui.checkbox(&mut self.include_ui, aurora_i18n::tr!("bug-with-ui"));
+                    if ui.checkbox(&mut self.include_ui, aurora_i18n::tr!("bug-with-ui")).changed() {
+                        self.capture_option_changed(in_world);
+                    }
                 });
+                ui.label(RichText::new(aurora_i18n::tr!("bug-picture-refresh-help")).color(p.muted));
                 if busy {
                     ui.spinner();
                 }
+                if self.image.is_some() {
+                    ui.add_enabled_ui(!busy, |ui| {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.checkbox(&mut self.include_image, aurora_i18n::tr!("bug-include-image"));
+                            if flat_button(ui, p, aurora_i18n::tr!("bug-remove-image")).clicked() {
+                                self.image = None;
+                                self.texture = None;
+                                self.include_image = false;
+                                self.image_origin = None;
+                            }
+                        })
+                    });
+                }
                 if let (Some(texture), Some(image)) = (&self.texture, &self.image) {
-                    ui.add_space(8.0);
+                    ui.add_space(6.0);
                     ui.add(
                         egui::Image::new(texture)
                             .max_width(ui.available_width())
-                            .max_height(230.0)
+                            .max_height((ui.available_height() - 22.0).clamp(90.0, 190.0))
                             .maintain_aspect_ratio(true),
                     );
                     ui.label(
                         RichText::new(format!("{} × {} · PNG", image.width, image.height))
-                            .small()
+                            .size(12.0)
                             .color(p.muted),
                     );
-                    ui.horizontal(|ui| {
-                        ui.checkbox(&mut self.include_image, aurora_i18n::tr!("bug-include-image"));
-                        if flat_button(ui, p, aurora_i18n::tr!("bug-remove-image")).clicked() {
-                            self.image = None;
-                            self.texture = None;
-                            self.include_image = false;
-                        }
-                    });
                 }
             }
         }
-    }
-
-    fn preview(report: &Report, ui: &mut egui::Ui, p: &Palette, height: f32) {
-        ui.label(RichText::new(aurora_i18n::tr!("bug-preview")).strong().color(p.violet_light));
-        ui.label(RichText::new(&report.title).strong().color(p.ink));
-        egui::ScrollArea::vertical()
-            .id_salt("bug-preview-text")
-            .max_height(height - 50.0)
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                ui.add(
-                    egui::Label::new(RichText::new(report.markdown()).monospace().size(11.5).color(p.ink))
-                        .wrap()
-                        .selectable(true),
-                );
-            });
     }
 
     fn delivery_options(&mut self, ui: &mut egui::Ui, p: &Palette) {
@@ -422,12 +547,17 @@ impl BugReportUi {
             self.delivery = Delivery::Browser;
         }
         ui.horizontal_wrapped(|ui| {
-            ui.selectable_value(&mut self.delivery, Delivery::Browser, aurora_i18n::tr!("bug-browser-mode"));
-            ui.selectable_value(&mut self.delivery, Delivery::Direct, aurora_i18n::tr!("bug-direct-mode"));
+            ui.radio_value(&mut self.delivery, Delivery::Browser, aurora_i18n::tr!("bug-browser-mode"));
+            ui.radio_value(&mut self.delivery, Delivery::Direct, aurora_i18n::tr!("bug-direct-mode"));
         });
-        if self.include_image && self.image.is_some() {
-            ui.label(RichText::new(aurora_i18n::tr!("bug-manual-image")).small().color(p.amber));
-        }
+        ui.label(
+            RichText::new(aurora_i18n::text(if self.delivery == Delivery::Browser {
+                "bug-browser-help"
+            } else {
+                "bug-direct-help"
+            }))
+            .color(p.muted),
+        );
         if self.delivery != Delivery::Direct {
             return;
         }
@@ -436,7 +566,7 @@ impl BugReportUi {
         }
         if self.github.connected() {
             ui.horizontal(|ui| {
-                ui.label(RichText::new(aurora_i18n::tr!("bug-connected")).small().color(p.teal));
+                ui.label(RichText::new(aurora_i18n::tr!("bug-connected")).size(12.0).color(p.teal));
                 if flat_button(ui, p, aurora_i18n::tr!("bug-disconnect")).clicked() {
                     self.github.disconnect();
                 }
@@ -472,7 +602,7 @@ impl BugReportUi {
                     } else {
                         "bug-account-needed"
                     }))
-                    .small()
+                    .size(12.0)
                     .color(p.muted),
                 );
             });

@@ -63,6 +63,23 @@ impl App {
                 true,
             ),
         ];
+        if let Some(graphics) = fields.iter_mut().find(|field| field.label == "bug-graphics") {
+            graphics.details = vec![
+                ("common-draw-distance", format!("{} m", s.draw_distance)),
+                ("bug-lod", s.lod_factor.to_string()),
+                ("bug-shadows", s.shadows.to_string()),
+                ("bug-shadow-quality", s.shadow_quality.to_string()),
+                ("bug-antialiasing", s.antialiasing.to_string()),
+                ("bug-ssao", s.ssao.to_string()),
+                ("bug-reflections", s.water_reflections.to_string()),
+                (
+                    "bug-texture-budget",
+                    format!("{} MiB", s.texture_budget(gpu.vram_mb, gpu.integrated)),
+                ),
+                ("bug-max-avatars", s.max_avatars.to_string()),
+                ("bug-vsync", s.vsync.to_string()),
+            ];
+        }
         if matches!(self.screen, Screen::World) {
             fields.insert(
                 3,

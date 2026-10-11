@@ -79,7 +79,7 @@ pub struct Attachment {
     pub height: u32,
 }
 
-pub fn choose_image() -> Result<Option<Attachment>, String> {
+pub fn choose_image() -> Result<Option<Attachment>, &'static str> {
     rfd::FileDialog::new()
         .set_title(aurora_i18n::tr!("bug-choose-image"))
         .add_filter(aurora_i18n::tr!("bug-images"), &["png", "jpg", "jpeg", "bmp", "tga"])
@@ -88,36 +88,36 @@ pub fn choose_image() -> Result<Option<Attachment>, String> {
         .transpose()
 }
 
-fn read_image(path: &Path) -> Result<Attachment, String> {
-    let file = std::fs::File::open(path).map_err(|_| aurora_i18n::tr!("bug-image-error").to_owned())?;
-    if file.metadata().map_err(|_| aurora_i18n::tr!("bug-image-error"))?.len() > MAX_IMAGE_FILE {
-        return Err(aurora_i18n::tr!("bug-image-limit").into());
+fn read_image(path: &Path) -> Result<Attachment, &'static str> {
+    let file = std::fs::File::open(path).map_err(|_| "bug-image-error")?;
+    if file.metadata().map_err(|_| "bug-image-error")?.len() > MAX_IMAGE_FILE {
+        return Err("bug-image-limit");
     }
     let mut bytes = Vec::new();
     file.take(MAX_IMAGE_FILE + 1)
         .read_to_end(&mut bytes)
-        .map_err(|_| aurora_i18n::tr!("bug-image-error"))?;
+        .map_err(|_| "bug-image-error")?;
     if bytes.len() as u64 > MAX_IMAGE_FILE {
-        return Err(aurora_i18n::tr!("bug-image-limit").into());
+        return Err("bug-image-limit");
     }
     let mut reader = image::ImageReader::new(Cursor::new(bytes))
         .with_guessed_format()
-        .map_err(|_| aurora_i18n::tr!("bug-image-error"))?;
+        .map_err(|_| "bug-image-error")?;
     let mut limits = image::Limits::default();
     limits.max_image_width = Some(8192);
     limits.max_image_height = Some(8192);
     limits.max_alloc = Some(128 * 1024 * 1024);
     reader.limits(limits);
-    let img = reader.decode().map_err(|_| aurora_i18n::tr!("bug-image-error"))?;
+    let img = reader.decode().map_err(|_| "bug-image-error")?;
     prepare_image(img)
 }
 
-pub fn capture(width: u32, height: u32, pixels: Vec<u8>) -> Result<Attachment, String> {
-    let img = image::RgbaImage::from_raw(width, height, pixels).ok_or_else(|| aurora_i18n::tr!("bug-image-error").to_owned())?;
+pub fn capture(width: u32, height: u32, pixels: Vec<u8>) -> Result<Attachment, &'static str> {
+    let img = image::RgbaImage::from_raw(width, height, pixels).ok_or("bug-image-error")?;
     prepare_image(image::DynamicImage::ImageRgba8(img))
 }
 
-fn prepare_image(img: image::DynamicImage) -> Result<Attachment, String> {
+fn prepare_image(img: image::DynamicImage) -> Result<Attachment, &'static str> {
     // Re-encode pixel data, never original EXIF, source path or filename.
     let img = if img.width() > 1920 || img.height() > 1920 {
         img.resize(1920, 1920, image::imageops::FilterType::Triangle)
@@ -133,8 +133,7 @@ fn prepare_image(img: image::DynamicImage) -> Result<Attachment, String> {
     let preview = egui::ColorImage::from_rgba_unmultiplied([preview.width() as usize, preview.height() as usize], preview.as_raw());
     let (width, height) = (img.width(), img.height());
     let mut png = Cursor::new(Vec::new());
-    img.write_to(&mut png, image::ImageFormat::Png)
-        .map_err(|_| aurora_i18n::tr!("bug-image-error").to_owned())?;
+    img.write_to(&mut png, image::ImageFormat::Png).map_err(|_| "bug-image-error")?;
     Ok(Attachment {
         png: png.into_inner(),
         preview,
