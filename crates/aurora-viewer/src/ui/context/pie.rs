@@ -373,7 +373,7 @@ mod tests {
     use glam::Vec3;
 
     fn frame(ctx: &egui::Context, menu: &mut Option<ContextMenu>, facts: &Facts, events: Vec<egui::Event>) {
-        let _ = ctx.run_ui(
+        let mut output = ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(1280.0, 900.0))),
                 events,
@@ -386,6 +386,8 @@ mod tests {
                 }
             },
         );
+        // These input tests intentionally do not upload textures to a renderer.
+        output.textures_delta.clear();
     }
 
     fn click(ctx: &egui::Context, menu: &mut Option<ContextMenu>, facts: &Facts, pos: Pos2, button: egui::PointerButton) {
