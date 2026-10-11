@@ -14,6 +14,7 @@ pub mod costs;
 pub mod demo;
 pub mod demo_sim;
 pub mod draw;
+mod edge_pan;
 pub mod edits;
 pub mod geom;
 pub mod grab;

@@ -849,6 +849,31 @@ impl Camera {
         self.smoothing_last_global = self.focus_target + self.focus_offset_target;
     }
 
+    /// Already eased by the edit tool; translate the view in this frame,
+    /// preserving the focus offset so tracking cannot undo the edge pan.
+    pub fn pan_edit(&mut self, delta: Vec3, agent: &mut AgentState, s: &CameraSettings) -> bool {
+        if delta == Vec3::ZERO || !delta.is_finite() || !self.third_person() {
+            return false;
+        }
+        if self.focus_on_avatar {
+            self.set_view(self.position, self.target, agent, s);
+            self.anim = None;
+        }
+        self.focus_target += delta;
+        self.target += delta;
+        self.position += delta;
+        self.virtual_position += delta;
+        self.smoothing_last_global += delta;
+        self.smoothing_last_agent += delta;
+        self.smoothing_stop = true;
+        if let Some(anim) = self.anim.as_mut() {
+            anim.start_camera += delta;
+            anim.start_focus += delta;
+        }
+        self.update_focus_offset();
+        true
+    }
+
     /// LLAgentCamera::cameraPanLeft.
     fn pan_left(&mut self, meters: f32) {
         let axis = self.left_axis();
@@ -1629,5 +1654,91 @@ mod tests {
         }
         assert!(cam.fov_zoom > 0.0);
         assert!(cam.fov_y < s.fov);
+    }
+
+    #[test]
+    fn edit_edge_pan_survives_the_camera_update_without_doubling() {
+        let (mut w, mut cam, s, _) = focused_object();
+        let before = (cam.position, cam.target);
+        let delta = Vec3::new(0.0, 0.1, 0.05);
+        let mut f = frame(1.0 / 60.0);
+        f.build_mode = true;
+        f.edit_tracking = Some(false);
+        assert!(cam.pan_edit(delta, &mut w.agent, &s));
+        cam.update(&mut w, &s, &f);
+        assert!(cam.position.abs_diff_eq(before.0 + delta, 1e-4));
+        assert!(cam.target.abs_diff_eq(before.1 + delta, 1e-4));
+    }
+
+    #[test]
+    fn held_edge_cursor_keeps_moving_the_object_and_release_stops_the_camera() {
+        use crate::build::{BuildSettings, BuildTool, EditMode, Mods, Tool, geom::Cam, manip::Part};
+        for offset in [Vec3::X * 10.0, Vec3::new(6.8354, 5.5374, -1.4747)] {
+            let (mut w, mut camera, s, idx) = focused_object();
+            let g = camera.focus_geom.unwrap();
+            camera.set_camera_pos_and_focus(g.position - offset, g.position, Some((camera.focus_object.unwrap(), g)), &s);
+            settle(&mut camera, &mut w, &s);
+            let mut tool = BuildTool::default();
+            let settings = BuildSettings {
+                snap: false,
+                ..Default::default()
+            };
+            tool.open_build(Tool::Edit);
+            tool.click_select(&mut w, &settings, Some(idx), false);
+            let projection = |camera: &Camera| {
+                Cam::new(
+                    camera.position,
+                    camera.target,
+                    camera.proj(1600.0 / 900.0) * camera.view(),
+                    camera.fov_y,
+                    1600.0,
+                    900.0,
+                    1.0,
+                )
+            };
+            tool.cam = projection(&camera);
+            let key = w.objects.get(idx).unwrap().key;
+            let center = Scene::object_transform(&w, idx, Instant::now(), 0).unwrap().0;
+            let start = tool
+                .cam
+                .project_px(center + Vec3::Y * tool.cam.meters_for_pixels(center, 45.0))
+                .unwrap();
+            assert!(
+                tool.manip
+                    .try_grab(&mut w, &settings, &tool.cam, &[key], false, EditMode::Move, start, Instant::now())
+            );
+            assert_eq!(tool.manip.drag.as_ref().unwrap().part, Part::Arrow(1));
+            let mut f = frame(1.0 / 60.0);
+            f.build_mode = true;
+            f.edit_tracking = Some(false);
+            let mut held_start = Vec3::ZERO;
+            for i in 0..150 {
+                let k = (i as f32 / 60.0).min(1.0);
+                let cursor = (start.0 + (1590.0 - start.0) * k, start.1);
+                tool.update(&mut w, &settings, cursor, false, Mods::default());
+                let pan = tool.manip.camera_pan(&settings, &tool.cam, cursor, f.dt);
+                assert!(pan.length() < 0.17);
+                camera.pan_edit(pan, &mut w.agent, &s);
+                camera.update(&mut w, &s, &f);
+                tool.cam = projection(&camera);
+                let position = Scene::object_transform(&w, idx, Instant::now(), 0).unwrap().0;
+                if i == 60 {
+                    held_start = position;
+                }
+                if i > 60 {
+                    let (x, y) = tool.cam.project_px(position).unwrap();
+                    assert!((0.0..1600.0).contains(&x) && (0.0..900.0).contains(&y), "{x},{y}");
+                }
+            }
+            let held_end = Scene::object_transform(&w, idx, Instant::now(), 0).unwrap().0;
+            assert!(held_end.distance(held_start) > 2.0);
+            tool.mouse_up(&mut w, &settings);
+            assert_eq!(tool.manip.camera_pan(&settings, &tool.cam, (1590.0, start.1), f.dt), Vec3::ZERO);
+            let stopped = camera.position;
+            for _ in 0..30 {
+                camera.update(&mut w, &s, &f);
+            }
+            assert!(camera.position.abs_diff_eq(stopped, 1e-4));
+        }
     }
 }

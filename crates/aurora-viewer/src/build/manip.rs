@@ -114,6 +114,8 @@ pub struct Drag {
     pub start_cursor: (f32, f32),
     /// Stable mouse projection while the camera follows the edited object.
     camera: Cam,
+    edge_pan: super::edge_pan::EdgePan,
+    edge_pan_blocked: bool,
     started: bool,
     linked: bool,
     // translate
@@ -208,6 +210,16 @@ pub(super) fn frame(
 impl Manip {
     pub fn dragging(&self) -> bool {
         self.drag.as_ref().is_some_and(|d| d.started)
+    }
+
+    pub fn camera_pan(&mut self, s: &BuildSettings, cam: &Cam, cursor: (f32, f32), dt: f32) -> Vec3 {
+        let Some(d) = self.drag.as_mut() else { return Vec3::ZERO };
+        let active = d.started
+            && d.mode == EditMode::Move
+            && !s.follow_edit_object
+            && !d.edge_pan_blocked
+            && d.delta.length() < MAX_DRAG_DISTANCE * 0.95;
+        d.edge_pan.update(cam, cursor, d.pivot + d.delta, dt, active)
     }
 
     pub fn cancel(&mut self) {
@@ -338,6 +350,8 @@ impl Manip {
             grid: f.grid,
             start_cursor: cursor,
             camera: *cam,
+            edge_pan: Default::default(),
+            edge_pan_blocked: false,
             started: false,
             linked,
             axis: Vec3::X,
@@ -1211,7 +1225,22 @@ fn drag_update(
             }
         }
     }
+    // Test the real mouse movement for slop before constraining the ray.
+    let cursor = if d.mode == EditMode::Move && !s.follow_edit_object && cam.hud.is_none() {
+        // The grab offset in pixels changes when an oblique axis approaches
+        // the camera. Bound the pivot rather than just the mouse ray.
+        let offset = cam
+            .project_px(d.start_hit + d.delta)
+            .zip(cam.project_px(d.pivot + d.delta))
+            .map(|(grab, pivot)| (grab.0 - pivot.0, grab.1 - pivot.1))
+            .unwrap_or_default();
+        super::edge_pan::drag_cursor(cam, cursor, d.start_cursor, offset)
+    } else {
+        cursor
+    };
     let (o, dir) = cam.ray(cursor.0, cursor.1);
+    // Stop the edge camera if the translation solver rejects this ray.
+    d.edge_pan_blocked = true;
     match d.part {
         Part::Arrow(i) => {
             let Some(hit) = ray_plane(o, dir, d.pivot, d.normal) else { return };
@@ -1219,6 +1248,7 @@ fn drag_update(
             if rel.length() > MAX_DRAG_DISTANCE {
                 return;
             }
+            d.edge_pan_blocked = false;
             let mut mag = rel.dot(d.axis);
             d.in_snap = false;
             if s.snap {
@@ -1242,6 +1272,7 @@ fn drag_update(
             if rel.length() > MAX_DRAG_DISTANCE {
                 return;
             }
+            d.edge_pan_blocked = false;
             d.in_snap = false;
             if s.snap {
                 let gi = d.grid.rotation.inverse();

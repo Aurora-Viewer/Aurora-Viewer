@@ -168,8 +168,11 @@ Le rez depuis l’inventaire passe par `ui/inventory.rs` (charge utile et relâc
    Lorsque le focus appartient à la sélection en édition, la caméra est
    calculée après ce glissement, avant les matrices de rendu et le culling.
    La bascule « Suivre l’objet en édition » est désactivée par défaut :
-   point de focus et cadrage restent fixes ; activée, elle suit la transformation
-   locale. La projection du curseur est alors conservée au début du glissement
+   point de focus et cadrage restent fixes au centre de l'écran ; pendant
+   un déplacement au bord, `build/edge_pan.rs` fait glisser la caméra
+   progressivement pour garder l'objet visible (sans effet sur les HUDs).
+   Activée, la bascule suit la transformation locale. La projection du
+   curseur est alors conservée au début du glissement
    pour que le mouvement de caméra ne modifie pas l'objet sans saisie.
    `Scene::sync` met à jour la
    géométrie, les textures et les enregistrements GPU de ce qui a changé ou

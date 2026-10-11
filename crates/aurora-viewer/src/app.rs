@@ -3562,8 +3562,19 @@ impl App {
             self.scene.selection_wire = self.build.wire_selection(&self.world, &self.settings.build);
             self.scene.selection_silhouettes = self.build.silhouette_selection(&self.world, &self.settings.build);
             self.flush_build();
+            let pan = if self.build.open && self.build.tool == crate::build::Tool::Edit {
+                self.build
+                    .manip
+                    .camera_pan(&self.settings.build, &self.build.cam, self.cursor_pos, dt)
+            } else {
+                Vec3::ZERO
+            };
+            let panned = self.camera.pan_edit(pan, &mut self.world.agent, &self.settings.camera);
+            let camera_changed = edit_camera_frame.is_some() || panned;
             if let Some(frame) = edit_camera_frame {
                 self.camera.update(&mut self.world, &self.settings.camera, &frame);
+            }
+            if camera_changed {
                 view = self.camera.view();
                 proj = self.camera.proj(aspect);
                 vp = proj * view;
