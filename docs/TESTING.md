@@ -739,6 +739,12 @@ racine ouverte et libellés alignés à gauche. Créations et mutations simulée
 hors ligne ; les fichiers et photos chargés en démo restent hors ligne.
 
 - `1` : l'inventaire seul.
+- `move-menu` : menu d’un élément avec « Déplacer vers… » ; `move-item`,
+  `move-folder`, `move-multi` : fenêtre de destination pour un élément, un
+  dossier ou trois objets (dont un non copiable et un non transférable).
+  `move-filter` : filtre sur le sous-dossier ; `move-window` : même fenêtre
+  depuis un inventaire limité à un dossier. Sélectionner un dossier puis
+  Déplacer ; Annuler doit laisser la sélection à son emplacement initial.
 - `folder`, `object`, `animation`, `script`, `note`, `properties`, `nocopy`,
   `notransfer`, `link` : le menu de l'élément choisi, ou ses propriétés.
   `clothes`, `body`, `settings`, `uploads` sont des alias de `folder`, à

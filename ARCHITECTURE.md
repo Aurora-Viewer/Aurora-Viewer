@@ -186,6 +186,18 @@ micro local, même sans écho de sa présence par le serveur vocal.
 
 ## Déroulement d'une image
 
+Le sélecteur `ui/inventory/move_to.rs` propose les destinations de
+« Déplacer vers… » pour la sélection d’origine, avec filtre par nom et
+chemins. La liste est calculée en parallèle, gardée par génération et dessinée
+uniquement pour les lignes visibles ; le déplacement réutilise les mutations
+d’inventaire existantes, avec vérification des droits à la validation.
+
+Les changements de parent passent par `aurora-net/src/session/inventory_moves.rs`
+(MoveInventoryItem / MoveInventoryFolder UDP fiables, comme Firestorm).
+`inventory/operations.rs` conserve l’ordre avec les créations AIS et confirme
+le déplacement par relecture des dossiers, avec attente bornée si le stockage
+renvoie encore l’ancien parent. Les autres champs restent modifiés par AIS.
+
 L'affichage des permissions d'éléments est partagé par l'inventaire, la fenêtre
 de contenu d'un objet et l'onglet Contenu de construction dans
 `ui/inventory/permissions.rs` : indicateurs compacts C·M·T, droits accordés verts
