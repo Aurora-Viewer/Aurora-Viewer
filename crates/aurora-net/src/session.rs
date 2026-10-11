@@ -4,6 +4,7 @@
 //! Message flow follows `newview/llstartup.cpp` and `llviewermessage.cpp`.
 
 mod build_cmds;
+mod inventory_preview;
 mod inventory_upload;
 mod object_actions;
 
@@ -152,6 +153,7 @@ struct Session<'a> {
     /// Decode failures per message name, to rate-limit their warnings.
     decode_failures: HashMap<&'static str, u64>,
     inventory_uploads: inventory_upload::Uploads,
+    inventory_previews: inventory_preview::Previews,
     inventory_callbacks: HashMap<u32, (Instant, bool)>,
     inventory_merchant_pending: bool,
     next_inventory_callback: u32,
@@ -250,6 +252,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         land: Default::default(),
         decode_failures: HashMap::new(),
         inventory_uploads: Default::default(),
+        inventory_previews: Default::default(),
         inventory_callbacks: HashMap::new(),
         inventory_merchant_pending: false,
         next_inventory_callback: 0,
@@ -659,6 +662,7 @@ impl Session<'_> {
     fn tick(&mut self) {
         self.expire_task_inventory();
         self.expire_inventory_uploads();
+        self.expire_inventory_previews();
         let before = self.inventory_callbacks.len();
         self.inventory_callbacks
             .retain(|_, (sent, _)| sent.elapsed() < Duration::from_secs(60));
@@ -1369,6 +1373,12 @@ impl Session<'_> {
                 });
             }
             NetCommand::PreviewInventoryItem(it) => {
+                // Protected inventory assets require the simulator to check
+                // the item permissions (LLAssetStorage::getInvItemAsset).
+                if matches!(it.asset_type, 7 | 10) {
+                    self.preview_inventory_document(it);
+                    return;
+                }
                 let Some(cap) = self.main_cap("ViewerAsset") else {
                     emit(
                         self.sh,
@@ -1384,8 +1394,6 @@ impl Session<'_> {
                 let events = self.sh.events.clone();
                 tokio::spawn(async move {
                     let kind = match it.asset_type {
-                        7 => "notecard_id",
-                        10 => "lsltext_id",
                         21 => "gesture_id",
                         56 => "settings_id",
                         57 => "material_id",
@@ -2178,6 +2186,7 @@ impl Session<'_> {
     fn dispatch(&mut self, from: SocketAddr, pkt: &IncomingPacket) -> Result<(), aurora_msg::DecodeError> {
         let id = pkt.id;
         if self.dispatch_inventory_upload(from, pkt)?
+            || self.dispatch_inventory_preview(from, pkt)?
             || self.dispatch_object_actions(from, pkt)?
             || self.dispatch_social(from, pkt)?
             || self.dispatch_land(from, pkt)?

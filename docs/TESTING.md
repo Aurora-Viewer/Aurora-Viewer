@@ -636,6 +636,13 @@ hors ligne ; les fichiers et photos chargés en démo restent hors ligne.
 
 Données synthétiques uniquement ; aucun benchmark de rendu.
 
+Pour valider les notecards sur la grille, ouvrir une note existante puis une
+note neuve, modifier leur texte, enregistrer et fermer / rouvrir. Refaire la
+lecture après déconnexion / reconnexion pour vérifier la persistance. Tester
+aussi une note avec pièce jointe : celle-ci doit rester présente après édition
+du texte. La relecture utilise le transfert d’inventaire du simulateur, comme
+Firestorm ; les notes et scripts protégés ne sont pas lus via ViewerAsset.
+
 Ce que l'inventaire doit montrer avec ces scénarios :
 
 - **Filtres** sélectionne les types, permissions, liens, créateur et
