@@ -51,7 +51,8 @@ Dans le code, on utilise toujours la `Palette` résolue (`p.violet`, `p.ink`…)
   séparent la fenêtre du monde ; les champs restent calmes et lisibles.
   Une skin avec `panel_alpha = 255` garde des surfaces opaques sans ce flou.
   Les dégradés sont réservés aux éléments de marque (fond de connexion, aurores).
-- **Arrondis discrets.** Boutons : rayon 5 ; fenêtres : rayon 8 ; cartes : rayon 6.
+- **Arrondis discrets.** Boutons : rayon 5 ; fenêtres et cartes : rayon 3,
+  avec des coins proches de ceux de la construction, y compris au repli.
 - **Hiérarchie commune.** Titre et commandes de fenêtre en haut, navigation
   stable, contenu regroupé par fonction, sélection et actions près du bas.
   Les listes défilent dans leur zone et ne font pas grandir la fenêtre.

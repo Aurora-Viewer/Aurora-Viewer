@@ -1,6 +1,38 @@
 //! Shared hierarchy for floaters: navigation, inset surfaces and summaries.
 
 use super::*;
+use egui::AtomExt;
+
+/// The user tree and object contents share row density and interaction styling.
+pub(crate) fn inventory_spacing(ui: &mut egui::Ui) {
+    ui.spacing_mut().item_spacing.y = 1.0;
+    ui.spacing_mut().button_padding = egui::vec2(2.0, 1.0);
+    ui.spacing_mut().interact_size.y = 20.0;
+}
+
+pub(crate) fn inventory_item_label(
+    ui: &mut egui::Ui,
+    label: egui::text::LayoutJob,
+    selected: bool,
+    sense: Sense,
+    bold_name: Option<std::sync::Arc<egui::Galley>>,
+) -> egui::Response {
+    inventory_spacing(ui);
+    let text_id = ui.make_persistent_id("label");
+    ui.add_sized([ui.available_width(), 20.0], |ui: &mut egui::Ui| {
+        let response = egui::Button::selectable(selected, "")
+            .left_text(egui::Atom::from(label).atom_id(text_id))
+            .wrap_mode(egui::TextWrapMode::Extend)
+            .sense(sense)
+            .atom_ui(ui);
+        // LLItemBridge::getLabelStyle: only the worn name is bold.
+        if let Some((name, rect)) = bold_name.zip(response.rect(text_id)) {
+            let color = ui.visuals().text_color();
+            ui.painter().galley(rect.min + bold_text_offset(ui), name, color);
+        }
+        response.response
+    })
+}
 
 pub fn glyph(ui: &mut egui::Ui, name: &str, color: Color32, size: f32) {
     let (rect, _) = ui.allocate_exact_size(Vec2::splat(size), Sense::hover());
@@ -54,7 +86,7 @@ pub fn surface<R>(ui: &mut egui::Ui, p: &Palette, body: impl FnOnce(&mut egui::U
     egui::Frame::new()
         .fill(p.field.gamma_multiply(0.8))
         .stroke(Stroke::new(1.0, p.raised))
-        .corner_radius(6)
+        .corner_radius(3)
         .inner_margin(10)
         .show(ui, body)
         .inner

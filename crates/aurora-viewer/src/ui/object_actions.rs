@@ -284,6 +284,11 @@ pub fn show_contents(
     world: &World,
 ) -> Vec<ContentsOpen> {
     let Some(c) = state.contents.as_ref() else { return Vec::new() };
+    let selection_id = egui::Id::new("object_contents_selected");
+    let mut selected = ctx
+        .data(|d| d.get_temp::<(uuid::Uuid, uuid::Uuid)>(selection_id))
+        .filter(|(object, _)| *object == c.target.object)
+        .map(|(_, item)| item);
     let mut documents = Vec::new();
     let mut open = true;
     let center = ctx.content_rect().center();
@@ -305,42 +310,65 @@ pub fn show_contents(
                     ui.label(aurora_i18n::tr!("ui-object-actions-this-object-is-empty"));
                 }
                 Some(Ok(items)) => {
-                    egui::ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
-                        for item in items {
-                            ui.horizontal(|ui| {
-                                if let Some(t) = icons.get(super::inventory::item_icon(item.asset_type, item.inv_type)) {
-                                    ui.add(egui::Image::new(t).fit_to_exact_size(Vec2::splat(16.0)).tint(p.ink));
-                                }
-                                let permissions = super::inventory::permissions::Permissions::new(item.owner_mask, item.next_owner_mask);
-                                let response = permissions.row(ui, p, &item.name).on_hover_ui(|ui| {
-                                    ui.label(&item.name);
-                                    if !item.desc.is_empty() {
-                                        ui.label(&item.desc);
+                    egui::Frame::new()
+                        .fill(p.field.gamma_multiply(0.72))
+                        .corner_radius(3)
+                        .inner_margin(4)
+                        .show(ui, |ui| {
+                            super::widgets::inventory_spacing(ui);
+                            egui::ScrollArea::both()
+                                .max_width(ui.available_width())
+                                .max_height((ui.available_height() - 8.0).clamp(80.0, 200.0))
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    for item in items {
+                                        ui.horizontal(|ui| {
+                                            ui.spacing_mut().item_spacing.x = 4.0;
+                                            if let Some(t) = icons.get(super::inventory::item_icon(item.asset_type, item.inv_type)) {
+                                                ui.add(egui::Image::new(t).fit_to_exact_size(Vec2::splat(16.0)).tint(p.ink));
+                                            } else {
+                                                ui.add_space(16.0);
+                                            }
+                                            let permissions =
+                                                super::inventory::permissions::Permissions::new(item.owner_mask, item.next_owner_mask);
+                                            let response = ui
+                                                .push_id(("object_item", item.id), |ui| {
+                                                    permissions.row(ui, p, &item.name, selected == Some(item.id))
+                                                })
+                                                .inner
+                                                .on_hover_ui(|ui| {
+                                                    ui.label(&item.name);
+                                                    if !item.desc.is_empty() {
+                                                        ui.label(&item.desc);
+                                                    }
+                                                    ui.separator();
+                                                    ui.label(permissions.tooltip());
+                                                });
+                                            if response.clicked() || response.secondary_clicked() {
+                                                selected = Some(item.id);
+                                            }
+                                            if matches!(item.asset_type, 7 | 10) {
+                                                let document = || {
+                                                    if item.asset_type == 10 {
+                                                        ContentsOpen::Script(c.target.object, item.id)
+                                                    } else {
+                                                        ContentsOpen::Notecard(c.target.object, item.id)
+                                                    }
+                                                };
+                                                if response.double_clicked() {
+                                                    documents.push(document());
+                                                }
+                                                response.context_menu(|ui| {
+                                                    if ui.button(aurora_i18n::tr!("common-open")).clicked() {
+                                                        documents.push(document());
+                                                        ui.close();
+                                                    }
+                                                });
+                                            }
+                                        });
                                     }
-                                    ui.separator();
-                                    ui.label(permissions.tooltip());
                                 });
-                                if matches!(item.asset_type, 7 | 10) {
-                                    let document = || {
-                                        if item.asset_type == 10 {
-                                            ContentsOpen::Script(c.target.object, item.id)
-                                        } else {
-                                            ContentsOpen::Notecard(c.target.object, item.id)
-                                        }
-                                    };
-                                    if response.double_clicked() {
-                                        documents.push(document());
-                                    }
-                                    response.context_menu(|ui| {
-                                        if ui.button(aurora_i18n::tr!("common-open")).clicked() {
-                                            documents.push(document());
-                                            ui.close();
-                                        }
-                                    });
-                                }
-                            });
-                        }
-                    });
+                        });
                 }
                 Some(Err(error)) => {
                     ui.label(RichText::new(error).color(p.danger));
@@ -359,7 +387,11 @@ pub fn show_contents(
             }
         }
     });
+    if let Some(item) = selected {
+        ctx.data_mut(|d| d.insert_temp(selection_id, (c.target.object, item)));
+    }
     if !open {
+        ctx.data_mut(|d| d.remove::<(uuid::Uuid, uuid::Uuid)>(selection_id));
         state.contents = None;
     }
     documents

@@ -200,9 +200,11 @@ renvoie encore l’ancien parent. Les autres champs restent modifiés par AIS.
 
 ### Surfaces des fenêtres
 
-`ui/widgets/workspace.rs` partage la navigation, les panneaux de détails et les
-dialogues. `build/ui/compact.rs` agence la construction en six sections dans un
-inspecteur étroit. `aurora-render/src/ui_glass.rs` produit un fond dépoli partagé
+`ui/widgets/workspace.rs` partage la navigation, les panneaux de détails, les
+dialogues et les lignes de l'inventaire utilisateur et des contenus d'objets
+(densité, survol, sélection et style du nom). `build/ui/compact.rs` agence la
+construction en six sections dans un inspecteur étroit.
+`aurora-render/src/ui_glass.rs` produit un fond dépoli partagé
 par les fenêtres visibles : copie et deux passes de flou sur le GPU, puis
 échantillonnage dans leurs seuls rectangles arrondis. Les ressources sont
 réutilisées tant que la taille et l'échelle restent stables, puis libérées quand

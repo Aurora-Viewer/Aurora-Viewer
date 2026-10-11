@@ -12,6 +12,7 @@ pub(crate) mod elide_tests;
 mod resize;
 mod workspace;
 pub use workspace::{Modal, glyph, navigation, section_header, stat, surface};
+pub(crate) use workspace::{inventory_item_label, inventory_spacing};
 
 /// Keep status suffixes at normal weight and slightly darker than the name.
 pub(crate) fn name_with_suffix(name: &str, suffix: &str, font_id: egui::FontId, color: Color32) -> egui::text::LayoutJob {

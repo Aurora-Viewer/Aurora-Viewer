@@ -5,7 +5,7 @@ use crate::theme::Palette;
 use crate::world::inventory::{FetchState, Inventory};
 use crate::world::{World, inventory::actions as rules};
 use aurora_net::inventory::operations::{Mutation, NewItem};
-use egui::{AtomExt, RichText, Vec2};
+use egui::{RichText, Vec2};
 use std::collections::HashSet;
 use uuid::Uuid;
 mod context;
@@ -239,7 +239,6 @@ pub struct InventoryUi {
     pub search: String,
     searches: [String; 5],
     pub tab: usize,
-    browse_root: Option<Uuid>,
     pub expand_all: Option<bool>,
     pub selected: Option<Uuid>,
     rename: Option<InlineRename>,
@@ -481,19 +480,7 @@ fn item_row(
         }
         let r = ui
             .push_id(("inv_item", it.id), |ui| {
-                let text_id = ui.make_persistent_id("label");
-                ui.add_sized([ui.available_width(), 20.0], |ui: &mut egui::Ui| {
-                    let response = egui::Button::selectable(st.selection.contains(id), "")
-                        .left_text(egui::Atom::from(label).atom_id(text_id))
-                        .wrap_mode(egui::TextWrapMode::Extend)
-                        .sense(egui::Sense::click_and_drag())
-                        .atom_ui(ui);
-                    // LLItemBridge::getLabelStyle: only the worn name is bold.
-                    if let Some((name, rect)) = name.zip(response.rect(text_id)) {
-                        ui.painter().galley(rect.min + super::widgets::bold_text_offset(ui), name, p.ink);
-                    }
-                    response.response
-                })
+                super::widgets::inventory_item_label(ui, label, st.selection.contains(id), egui::Sense::click_and_drag(), name)
             })
             .inner;
         // One response handles clicks and dragging; a separate drag-source
@@ -755,9 +742,7 @@ fn folder_window_contents(
 }
 
 fn tree_spacing(ui: &mut egui::Ui) {
-    ui.spacing_mut().item_spacing.y = 1.0;
-    ui.spacing_mut().button_padding = egui::vec2(2.0, 1.0);
-    ui.spacing_mut().interact_size.y = 20.0;
+    super::widgets::inventory_spacing(ui);
 }
 
 fn prepare_result_tree(st: &mut InventoryUi, inv: &Inventory, root: Uuid) {
@@ -1095,9 +1080,6 @@ fn inventory_contents(
         st.search.clone_from(&st.searches[tab_ids[visible_tab]]);
     }
     st.tab = tab_ids[visible_tab];
-    if let Some(id) = st.reveal {
-        st.browse_root = rules::parent(inv, id).filter(|id| inv.folders.contains_key(id));
-    }
     let filtered = !st.search.trim().is_empty() || st.tab >= 2 || st.links_filter.is_some() || st.filters.active();
     if filtered {
         request_search(inv, inv.root, st, prefs);
@@ -1116,108 +1098,29 @@ fn inventory_contents(
     }
     ui.add_space(6.0);
     let list_h = list_height(ui);
-    let wide = ui.available_width() >= 580.0 && !filtered;
-    ui.horizontal_top(|ui| {
-        if wide {
-            let nav_width = (ui.available_width() * 0.29).clamp(150.0, 220.0);
-            ui.allocate_ui_with_layout(Vec2::new(nav_width, list_h), egui::Layout::top_down(egui::Align::Min), |ui| {
-                ui.set_width(nav_width);
-                egui::ScrollArea::vertical()
-                    .id_salt("inventory_navigation")
-                    .max_height(list_h)
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        folder_navigation(ui, p, inv, inv.root, 0, st, prefs);
-                        if prefs.show_library {
-                            folder_navigation(ui, p, inv, inv.lib_root, 0, st, prefs);
-                        }
-                    });
-            });
-            let (divider, _) = ui.allocate_exact_size(Vec2::new(1.0, list_h), egui::Sense::hover());
-            ui.painter()
-                .vline(divider.center().x, divider.y_range(), egui::Stroke::new(1.0, p.raised));
-        }
-        ui.vertical(|ui| {
+    egui::Frame::new()
+        .fill(p.field.gamma_multiply(0.72))
+        .corner_radius(3)
+        .inner_margin(4)
+        .show(ui, |ui| {
             ui.set_width(ui.available_width());
-            let root = st.browse_root.filter(|id| inv.folders.contains_key(id)).unwrap_or(inv.root);
-            if wide {
-                ui.add(egui::Label::new(RichText::new(inventory_path(inv, root)).size(12.0).color(p.muted)).truncate());
+            if filtered {
+                prepare_result_tree(st, inv, inv.root);
+                search_scroll(ui, p, icons, inv, st, prefs, facts, actions, list_h);
+                return;
             }
-            egui::Frame::new()
-                .fill(p.field.gamma_multiply(0.72))
-                .corner_radius(6)
-                .inner_margin(4)
-                .show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    if filtered {
-                        prepare_result_tree(st, inv, inv.root);
-                        search_scroll(ui, p, icons, inv, st, prefs, facts, actions, list_h);
-                        return;
-                    }
-                    list_scroll(ui, (list_h - if wide { 24.0 } else { 0.0 }).max(40.0)).show(ui, |ui| {
-                        if root.is_nil() {
-                            ui.label(RichText::new(aurora_i18n::tr!("ui-inventory-inventory-unavailable")).color(p.muted));
-                        } else {
-                            let expand = st.expand_all.take();
-                            if wide {
-                                folder_contents(ui, p, icons, inv, root, 1, expand, st, prefs, facts, actions);
-                            } else {
-                                folder_tree(ui, p, icons, inv, inv.root, 0, expand, st, prefs, facts, actions);
-                            }
-                        }
-                    });
-                });
+            list_scroll(ui, list_h).show(ui, |ui| {
+                let root = inv.root;
+                if root.is_nil() {
+                    ui.label(RichText::new(aurora_i18n::tr!("ui-inventory-inventory-unavailable")).color(p.muted));
+                } else {
+                    let expand = st.expand_all.take();
+                    folder_tree(ui, p, icons, inv, root, 0, expand, st, prefs, facts, actions);
+                }
+            });
         });
-    });
     selection_summary(ui, p, inv, st, prefs, facts, actions);
     status(ui, p, inv, st, filtered);
-}
-
-/// Folder navigation only; item selection and drag/drop stay in the list.
-fn folder_navigation(
-    ui: &mut egui::Ui,
-    p: &Palette,
-    inv: &mut Inventory,
-    id: Uuid,
-    depth: usize,
-    st: &mut InventoryUi,
-    prefs: &InventoryPreferences,
-) {
-    if depth > 24 || !inv.folders.contains_key(&id) {
-        return;
-    }
-    let name = folder_name(inv, id);
-    st.view.prepare(inv, prefs.sort);
-    let children = st.view.children(id, prefs, inv.lib_root);
-    let fetched = inv.folders.get(&id).is_some_and(|f| f.state == FetchState::Fetched);
-    let open = if st.reveal_path.contains(&id) {
-        Some(true)
-    } else {
-        st.expand_all.filter(|expand| !expand || fetched || depth == 0)
-    };
-    let selected = st.browse_root.unwrap_or(inv.root) == id;
-    let response = egui::CollapsingHeader::new(
-        RichText::new(&name)
-            .size(12.0)
-            .color(if selected { p.violet_light } else { p.muted }),
-    )
-    .id_salt(("folder_nav", id))
-    .default_open(depth == 0)
-    .open(open.map(|open| open || depth == 0))
-    .show(ui, |ui| {
-        inv.request(id);
-        for child in children {
-            if id != inv.root || child != inv.lib_root {
-                folder_navigation(ui, p, inv, child, depth + 1, st, prefs);
-            }
-        }
-    });
-    if response.header_response.clicked() {
-        st.browse_root = Some(id);
-        st.selected = Some(id);
-        st.selection.clear();
-        st.selection.insert(id);
-    }
 }
 
 fn selection_summary(
@@ -1864,7 +1767,7 @@ mod tests {
 
     #[test]
     fn inventory_size_stays_stable_during_loading_filtering_and_tab_changes() {
-        for window_size in [Vec2::new(440.0, 550.0), Vec2::new(680.0, 610.0)] {
+        for window_size in [Vec2::new(440.0, 550.0), Vec2::new(680.0, 610.0), Vec2::new(1000.0, 700.0)] {
             let ctx = egui::Context::default();
             crate::theme::Theme::default().apply(&ctx, 1.0);
             let mut inv = view_inventory(false);
@@ -1922,6 +1825,12 @@ mod tests {
                         });
                     },
                 ));
+                if st.tab == 0 && !st.filters.active() {
+                    assert!(
+                        st.visible.contains(&inv.root),
+                        "the complete tree stays available at every window width"
+                    );
+                }
                 let size = ctx.memory(|memory| memory.area_rect(egui::Id::new("inventory")).unwrap().size());
                 if frame == 8 {
                     assert!(

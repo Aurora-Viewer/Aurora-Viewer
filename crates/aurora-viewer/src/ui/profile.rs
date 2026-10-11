@@ -386,7 +386,7 @@ struct TabCtx<'a> {
 fn unsaved_bar(ui: &mut egui::Ui, p: &Palette, w: &mut Window, actions: &mut Vec<ProfileAction>) {
     egui::Frame::new()
         .fill(p.warn.gamma_multiply(0.18))
-        .corner_radius(egui::CornerRadius::same(6))
+        .corner_radius(egui::CornerRadius::same(3))
         .inner_margin(egui::Margin::same(6))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -456,7 +456,7 @@ fn inset<R>(ui: &mut egui::Ui, p: &Palette, width: f32, height: f32, body: impl 
     egui::Frame::new()
         .fill(p.field.gamma_multiply(0.82))
         .stroke(egui::Stroke::new(1.0, p.raised))
-        .corner_radius(egui::CornerRadius::same(6))
+        .corner_radius(egui::CornerRadius::same(3))
         .inner_margin(egui::Margin::symmetric(4, 2))
         .show(ui, |ui| {
             ui.set_width((width - 10.0).max(10.0));

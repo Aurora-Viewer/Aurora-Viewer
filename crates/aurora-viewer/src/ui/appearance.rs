@@ -773,7 +773,7 @@ pub fn show(
         let height = (ui.available_height() - reserved).max(100.0);
         egui::Frame::new()
             .fill(p.field.gamma_multiply(0.65))
-            .corner_radius(6)
+            .corner_radius(3)
             .inner_margin(8)
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());

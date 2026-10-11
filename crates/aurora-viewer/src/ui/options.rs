@@ -188,7 +188,7 @@ fn group(ui: &mut egui::Ui, p: &Palette, title: &str, body: impl FnOnce(&mut egu
     ui.add_space(2.0);
     egui::Frame::new()
         .fill(p.field)
-        .corner_radius(CornerRadius::same(6))
+        .corner_radius(CornerRadius::same(3))
         .stroke(egui::Stroke::new(1.0, p.raised))
         .inner_margin(egui::Margin::symmetric(10, 8))
         .show(ui, |ui| {

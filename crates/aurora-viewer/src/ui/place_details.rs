@@ -463,7 +463,7 @@ fn description(ui: &mut egui::Ui, c: &mut Ctx, place: &Place, data: &Shown, heig
     egui::Frame::new()
         .fill(p.field.gamma_multiply(0.82))
         .stroke(egui::Stroke::new(1.0, p.raised))
-        .corner_radius(egui::CornerRadius::same(6))
+        .corner_radius(egui::CornerRadius::same(3))
         .inner_margin(egui::Margin::symmetric(5, 3))
         .show(ui, |ui| {
             ui.set_width(width - 10.0);

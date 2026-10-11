@@ -135,6 +135,7 @@ pub struct FloaterState {
     /// « À vendre » ticked / sale type / price not applied yet (Appliquer).
     pub sale_draft: Option<(bool, u8, i32)>,
     pub contents_filter: String,
+    pub contents_selected: Option<(Uuid, Uuid)>,
     /// Item being renamed in the Contents tab.
     pub rename: Option<(Uuid, String)>,
     pub open_notecard: Option<(Uuid, Uuid)>,
@@ -252,6 +253,7 @@ pub fn show(
         tool.ui.edits.clear();
         tool.ui.sale_draft = None;
         tool.ui.rename = None;
+        tool.ui.contents_selected = None;
     }
     let screen = ctx.content_rect();
     let mut open = true;

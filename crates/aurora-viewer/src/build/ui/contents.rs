@@ -9,12 +9,13 @@ use crate::build::contents::AT_LSL_TEXT;
 use crate::theme::Palette;
 use crate::ui::inventory::permissions::Permissions;
 use crate::ui::inventory::{InvDrag, item_icon};
+use crate::ui::widgets;
 use crate::world::World;
 use aurora_net::build::{TaskItem, perm};
 use egui::{RichText, Vec2};
 
 /// Localized item name (LLTaskInvFVBridge::getDisplayName). Permissions are
-/// displayed in their own compact column instead of repeating long suffixes.
+/// displayed with the same compact suffix as the user's inventory.
 fn display_name(i: &TaskItem) -> String {
     if i.asset_type == AT_LSL_TEXT && i.name.starts_with("New Script") {
         i.name.replacen("New Script", aurora_i18n::tr!("common-new-script"), 1)
@@ -93,31 +94,58 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
     let items: Vec<TaskItem> = inv.items.iter().filter(|i| !i.is_folder).cloned().collect();
     let filter = tool.ui.contents_filter.trim().to_uppercase();
     // the list is also where inventory items are dropped
-    let frame = egui::Frame::new().fill(p.field).corner_radius(2).inner_margin(4);
-    let (_, dropped) = ui.dnd_drop_zone::<InvDrag, _>(frame, |ui| {
-        ui.set_min_size(Vec2::new(ui.available_width(), 180.0));
-        let open_icon = if inv.loading && items.is_empty() { "folder" } else { "folder-open" };
-        ui.horizontal(|ui| {
-            if let Some(t) = crate::ui::icons::global(open_icon) {
-                ui.add(egui::Image::new(&t).fit_to_exact_size(Vec2::splat(15.0)).tint(p.violet_light));
-            }
-            let title = if inv.loading && inv.items.is_empty() {
-                aurora_i18n::tr!("build-ui-contents-loading-contents").to_owned()
-            } else {
-                root_label(items.len())
-            };
-            ui.label(RichText::new(title).size(12.0).color(p.ink))
-                .on_hover_text(aurora_i18n::tr!("common-object-contents"));
-        });
-        let mut list: Vec<&TaskItem> = items
-            .iter()
-            .filter(|i| filter.is_empty() || searchable_name(i).to_uppercase().contains(&filter))
-            .collect();
-        list.sort_by_key(|i| i.name.to_lowercase());
-        for item in list {
-            item_row(ui, p, tool, world, idx, object_id, item, editable);
-        }
+    let height = (ui.clip_rect().bottom() - ui.cursor().top() - 8.0).clamp(80.0, 220.0);
+    let frame = egui::Frame::new()
+        .fill(p.field.gamma_multiply(0.72))
+        .corner_radius(3)
+        .inner_margin(4);
+    let zone = frame.show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        widgets::inventory_spacing(ui);
+        egui::ScrollArea::both()
+            .id_salt("task_contents_list")
+            .max_width(ui.available_width())
+            .max_height(height)
+            .min_scrolled_height((height - ui.spacing().scroll.allocated_width()).max(40.0))
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                let open_icon = if inv.loading && items.is_empty() { "folder" } else { "folder-open" };
+                ui.horizontal(|ui| {
+                    if let Some(t) = crate::ui::icons::global(open_icon) {
+                        ui.add(egui::Image::new(&t).fit_to_exact_size(Vec2::splat(16.0)).tint(p.violet_light));
+                    }
+                    let title = if inv.loading && inv.items.is_empty() {
+                        aurora_i18n::tr!("build-ui-contents-loading-contents").to_owned()
+                    } else {
+                        root_label(items.len())
+                    };
+                    ui.label(RichText::new(title).size(13.0).color(p.ink))
+                        .on_hover_text(aurora_i18n::tr!("common-object-contents"));
+                });
+                let mut list: Vec<&TaskItem> = items
+                    .iter()
+                    .filter(|i| filter.is_empty() || searchable_name(i).to_uppercase().contains(&filter))
+                    .collect();
+                list.sort_by_key(|i| i.name.to_lowercase());
+                ui.indent("task_contents_items", |ui| {
+                    for item in list {
+                        item_row(ui, p, tool, world, idx, object_id, item, editable);
+                    }
+                });
+            });
     });
+    // egui's generic drop zone replaces the frame fill with a button color.
+    // Keep the inventory surface and show a border while cargo is over it.
+    if egui::DragAndDrop::has_any_payload(ui.ctx()) && zone.response.contains_pointer() {
+        let allowed = editable && egui::DragAndDrop::has_payload_of_type::<InvDrag>(ui.ctx());
+        ui.painter().rect_stroke(
+            zone.response.rect,
+            3.0,
+            egui::Stroke::new(1.0, if allowed { p.violet_light } else { p.muted_dim }),
+            egui::StrokeKind::Inside,
+        );
+    }
+    let dropped = zone.response.dnd_release_payload::<InvDrag>();
     if let Some(d) = dropped
         && let Some(item) = world.inventory.items.get(&d.0).cloned()
     {
@@ -149,9 +177,12 @@ fn item_row(
     editable: bool,
 ) {
     ui.horizontal(|ui| {
-        ui.add_space(14.0);
+        ui.spacing_mut().item_spacing.x = 4.0;
+        widgets::inventory_spacing(ui);
         if let Some(t) = crate::ui::icons::global(item_icon(item.asset_type as i32, item.inv_type as i32)) {
-            ui.add(egui::Image::new(&t).fit_to_exact_size(Vec2::splat(15.0)).tint(p.ink));
+            ui.add(egui::Image::new(&t).fit_to_exact_size(Vec2::splat(16.0)).tint(p.ink));
+        } else {
+            ui.add_space(16.0);
         }
         // renaming in place
         if let Some((id, text)) = tool.ui.rename.as_mut()
@@ -173,14 +204,21 @@ fn item_row(
             name.push_str(aurora_i18n::tr!("build-ui-contents-stopped"));
         }
         let permissions = Permissions::new(item.owner_mask, item.next_owner_mask);
-        let r = permissions.row(ui, p, &name).on_hover_ui(|ui| {
-            ui.label(&name);
-            if !item.description.is_empty() {
-                ui.label(&item.description);
-            }
-            ui.separator();
-            ui.label(permissions.tooltip());
-        });
+        let selected = tool.ui.contents_selected == Some((object_id, item.item_id));
+        let r = ui
+            .push_id(("task_item", object_id, item.item_id), |ui| permissions.row(ui, p, &name, selected))
+            .inner
+            .on_hover_ui(|ui| {
+                ui.label(&name);
+                if !item.description.is_empty() {
+                    ui.label(&item.description);
+                }
+                ui.separator();
+                ui.label(permissions.tooltip());
+            });
+        if r.clicked() || r.secondary_clicked() {
+            tool.ui.contents_selected = Some((object_id, item.item_id));
+        }
         let item_modify = item.owner_mask & perm::MODIFY != 0;
         let script = item.asset_type == AT_LSL_TEXT;
         let can_take = item.owner_mask & perm::COPY != 0 && item.owner_mask & perm::TRANSFER != 0
@@ -304,7 +342,7 @@ mod tests {
                 .shapes
                 .iter()
                 .find_map(|s| match &s.shape {
-                    egui::epaint::Shape::Text(t) if t.galley.text() == "Note" => Some(t.pos + t.galley.size() * 0.5),
+                    egui::epaint::Shape::Text(t) if t.galley.text().starts_with("Note ") => Some(t.pos + t.galley.size() * 0.5),
                     _ => None,
                 })
                 .expect("note row");
@@ -337,6 +375,7 @@ mod tests {
                 assert!(tool.ui.requests.is_empty());
             }
             assert!(tool.ui.rename.is_none());
+            assert_eq!(tool.ui.contents_selected, Some((object, item.item_id)));
         }
     }
 

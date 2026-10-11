@@ -61,7 +61,7 @@ impl Default for Theme {
             indigo_light: "#818CF8".into(),
             panel_alpha: 230,
             button_radius: 5,
-            window_radius: 8,
+            window_radius: 3,
             font_scale: 1.0,
         }
     }

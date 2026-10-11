@@ -545,9 +545,9 @@ grille.
 ### Détails
 
 - **Parcours de la refonte des fenêtres** : ouvrir l'inventaire et sélectionner
-  un dossier dans le rail, puis un élément ; vérifier recherche, permissions,
-  menu contextuel et actions en bas. Réduire la largeur pour retrouver l'arbre
-  complet, puis revenir à la vue large. Dans Apparence, changer de galerie / liste
+  un dossier dans l'arborescence, puis un élément ; vérifier recherche, permissions,
+  menu contextuel et actions en bas. Agrandir et rétrécir la fenêtre :
+  l'arborescence reste unique et occupe toute la largeur. Dans Apparence, changer de galerie / liste
   / portés, sélectionner une tenue et essayer Porter / Ajouter hors ligne.
   Dans « À propos du terrain », parcourir les sections en gardant la synthèse
   visible. Ouvrir ensuite Conversations, Personnes, Lieux, un profil,
@@ -829,7 +829,10 @@ Les indicateurs sont également visibles dans le contenu d'un objet :
 `AURORA_DEMO_BUILD_TAB=contents` pour l'onglet de construction. Les contenus
 de démo proposent des droits complets, sans modification ou sans copie ;
 le prochain propriétaire n'a que le transfert. Vérifier aussi le double-clic
-sur une note et la recherche « pas de copie » dans l'onglet Contenu.
+sur une note et la recherche « pas de copie » dans l'onglet Contenu. Survoler et
+sélectionner un item : même ligne, mêmes icônes et permissions après le nom que
+dans l'inventaire utilisateur ; le menu contextuel et l'ouverture des documents
+restent disponibles. Les noms longs défilent horizontalement dans la liste.
 
 Pour valider les notecards sur la grille, ouvrir une note existante puis une
 note neuve, modifier leur texte, enregistrer et fermer / rouvrir. Refaire la
