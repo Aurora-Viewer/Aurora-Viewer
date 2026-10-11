@@ -91,6 +91,11 @@ The texture memory budget is set automatically from the detected VRAM.
 - Interface en français et en anglais : détection du système, choix enregistré
   dans les Préférences et changement immédiat. Les catalogues Fluent permettent
   d'ajouter une langue ; voir [le guide de traduction](docs/TRANSLATING.md).
+- Double-clic sur le titre d’une fenêtre pour la replier en barre déplaçable,
+  puis la restaurer avec ses dimensions et son contenu.
+- À la fermeture : dialogue sur fond flouté avec Quitter, Déconnecter vers
+  l’écran de connexion et Annuler. Échap annule ; la déconnexion est attendue
+  avant de fermer le viewer.
 
 **Things Firestorm doesn't have**
 

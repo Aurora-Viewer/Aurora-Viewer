@@ -1,4 +1,11 @@
 language-name = English
+exit-title = Close Aurora Viewer?
+exit-world-body = Quit the viewer or return to the login screen?
+exit-login-body = Do you want to quit Aurora Viewer?
+exit-waiting = Logging out…
+exit-logout = Log out
+exit-logout-hint = End the session and return to the login screen.
+exit-quit = QUIT
 bug-browser-mode = In my browser
 bug-direct-mode = Send from Aurora
 bug-open-github = Continue to GitHub

@@ -176,6 +176,7 @@ pub struct App {
     last_render: RenderStats,
     empty_lists: DrawLists,
     quit_at: Option<Instant>,
+    exit_prompt: ui::exit::ExitPrompt,
     loading_stage: String,
     move_complete_at: Option<Instant>,
     /// Teleport diagnostics still to log (seconds after the arrival).
@@ -214,8 +215,6 @@ pub struct App {
     /// Capture the 3D view on the next frame; a capture is on its way.
     want_scene_capture: bool,
     scene_capture_pending: bool,
-    /// Closing the window: waiting for the last view capture (since).
-    closing: Option<Instant>,
     /// Teleport screen: start, end (fade out), destination.
     tp_overlay: Option<TpOverlay>,
     was_teleporting: bool,
@@ -488,6 +487,7 @@ impl App {
             last_render: RenderStats::default(),
             empty_lists: DrawLists::default(),
             quit_at: None,
+            exit_prompt: Default::default(),
             loading_stage: String::new(),
             move_complete_at: None,
             tp_checks: Vec::new(),
@@ -511,7 +511,6 @@ impl App {
             backdrop,
             want_scene_capture: false,
             scene_capture_pending: false,
-            closing: None,
             tp_overlay: None,
             was_teleporting: false,
             demo_tp_start: None,
@@ -2072,6 +2071,33 @@ impl App {
         }
     }
 
+    fn request_exit(&mut self) {
+        self.exit_prompt.request();
+        self.down.clear();
+        self.right_drag = false;
+        self.mic_button_held = false;
+        self.on_left_release();
+        self.release_object_hold();
+        if self.temp_run.take().is_some() && !self.always_run {
+            self.send(NetCommand::SetAlwaysRun(false));
+        }
+        self.set_mouselook_grab(false);
+        self.egui_ctx.request_repaint();
+    }
+
+    fn confirm_exit(&mut self, action: ui::exit::Action) {
+        if !self.exit_prompt.confirm(action, Instant::now()) {
+            return;
+        }
+        if self.in_world() && !self.demo {
+            self.record_inventory_logout();
+            if self.settings.loading_backdrop {
+                self.want_scene_capture = true;
+            }
+            self.net.send(NetCommand::Logout);
+        }
+    }
+
     /// Log out, save the window, layout, inventory cache and settings, exit.
     fn shutdown(&mut self, event_loop: &ActiveEventLoop) {
         self.record_inventory_logout();
@@ -3087,6 +3113,20 @@ impl App {
     }
 
     fn frame(&mut self, event_loop: &ActiveEventLoop) {
+        if self.demo && self.frame_count == 650 && std::env::var_os("AURORA_DEMO_EXIT").is_some() {
+            self.request_exit();
+        }
+        if self.demo
+            && self.frame_count == 800
+            && let Ok(mode) = std::env::var("AURORA_DEMO_EXIT")
+        {
+            match mode.as_str() {
+                "cancel" => self.confirm_exit(ui::exit::Action::Cancel),
+                "logout" => self.confirm_exit(ui::exit::Action::Logout),
+                "quit" => self.confirm_exit(ui::exit::Action::Quit),
+                _ => {}
+            }
+        }
         if self.updater.poll(&self.settings, &mut self.login_info, self.net.runtime()) {
             self.shutdown(event_loop);
             return;
@@ -3094,6 +3134,19 @@ impl App {
         self.poll_inventory_images();
         self.frame_profile.lap(Lap::Between);
         let now = Instant::now();
+        if let Some(action) = self.exit_prompt.finish(!self.in_world() || self.demo, now) {
+            match action {
+                ui::exit::Action::Quit => {
+                    self.shutdown(event_loop);
+                    return;
+                }
+                ui::exit::Action::Logout => self.back_to_login(None),
+                ui::exit::Action::Cancel => {}
+            }
+        }
+        if !self.exit_prompt.open && self.camera.mouselook() && self.focused && !self.cursor_grabbed {
+            self.set_mouselook_grab(true);
+        }
         let dt = now.duration_since(self.last_frame).as_secs_f32().min(0.1);
         self.last_frame = now;
         if let Some(t) = self.quit_at
@@ -3812,6 +3865,9 @@ impl App {
             }
         }
         let ctx = self.egui_ctx.clone();
+        if self.demo {
+            raw.events.extend(ui::widgets::demo::events(&ctx, self.frame_count));
+        }
         let projector = ui::hud::Projector {
             view_proj: vp,
             width: w as f32,
@@ -4134,7 +4190,7 @@ impl App {
             && let Some((w, h, px)) = gfx.renderer.captured.take()
         {
             self.scene_capture_pending = false;
-            let wait = self.closing.is_some() || self.quit_at.is_some();
+            let wait = self.quit_at.is_some();
             self.backdrop.set_capture(w, h, px, wait);
         }
         if let Some((files, exit)) = &mut self.capture {
@@ -4225,14 +4281,6 @@ impl App {
                     }
                 }
             }
-        }
-        // closing the window: leave once the last view is kept (or after 1 s)
-        if let Some(t) = self.closing
-            && ((!self.scene_capture_pending && !self.want_scene_capture) || t.elapsed() > Duration::from_secs(1))
-        {
-            self.closing = None;
-            self.shutdown(event_loop);
-            return;
         }
         // captures: AURORA_DEMO_RCLICK="x,y" simulates a right click (physical
         // px) at frame 225; "tag" on the name tag of the nearest other avatar
@@ -4601,6 +4649,10 @@ impl App {
     }
 
     fn handle_actions(&mut self, a: UiActions, event_loop: &ActiveEventLoop) {
+        if let Some(action) = a.exit {
+            self.confirm_exit(action);
+            return;
+        }
         if a.update_quit {
             self.shutdown(event_loop);
             return;
@@ -4609,7 +4661,7 @@ impl App {
             LoginAction::Login if !self.updater.blocks_login() && aurora_updater::test_environment().is_none() => self.start_login(),
             LoginAction::CheckUpdates => self.updater.check(self.net.runtime(), true),
             LoginAction::ReportBug => self.bug_report.requested = true,
-            LoginAction::Quit => self.shutdown(event_loop),
+            LoginAction::Quit => self.request_exit(),
             LoginAction::None | LoginAction::Login => {}
         }
         if let Some(c) = a.chat {
@@ -4715,14 +4767,7 @@ impl App {
                 self.world.system_message(aurora_i18n::tr!("app-logging-out"));
             }
             BarAction::Quit => {
-                if self.in_world() {
-                    if self.settings.loading_backdrop {
-                        self.want_scene_capture = true;
-                    }
-                    self.net.send(NetCommand::Logout);
-                }
-                self.settings.save();
-                self.quit_at = Some(Instant::now() + Duration::from_millis(400));
+                self.request_exit();
             }
             BarAction::TeleportHome => {
                 self.begin_teleport(aurora_i18n::tr!("common-home").into(), false);
@@ -4811,18 +4856,24 @@ impl App {
         let mut a = UiActions::default();
         let p = self.palette;
         let ctx = ui.ctx().clone();
-        a.update_quit = ui::update::show_real(
-            &ctx,
-            &p,
-            &self.skin.icons,
-            &mut self.updater,
-            &mut self.settings,
-            self.net.runtime(),
-        );
+        if self.exit_prompt.open {
+            ui.disable();
+            ctx.memory_mut(|m| m.set_modal_layer(egui::Modal::default_area(egui::Id::new("viewer_exit")).layer()));
+        }
+        a.update_quit = !self.exit_prompt.open
+            && ui::update::show_real(
+                &ctx,
+                &p,
+                &self.skin.icons,
+                &mut self.updater,
+                &mut self.settings,
+                self.net.runtime(),
+            );
         match self.screen {
             Screen::Login => {
                 if let Some(demo) = &mut self.update_demo {
                     a.login = demo.show(ui, &p, &self.skin.icons, self.logo.as_ref());
+                    a.exit = self.exit_prompt.show(&ctx, &p, false);
                     return a;
                 }
                 self.sync_remembered_password();
@@ -5617,12 +5668,14 @@ impl App {
         }
         self.bug_report
             .show(&ctx, &p, &self.skin.icons, matches!(self.screen, Screen::World));
+        a.exit = self.exit_prompt.show(&ctx, &p, self.in_world());
         a
     }
 }
 
 #[derive(Default)]
 struct UiActions {
+    exit: Option<ui::exit::Action>,
     update_quit: bool,
     login: LoginAction,
     chat: Option<ui::chat::OutgoingChat>,
@@ -6231,13 +6284,7 @@ impl ApplicationHandler for App {
         let resp = g.egui_state.on_window_event(&g.window, &event);
         match &event {
             WindowEvent::CloseRequested => {
-                // in world: keep the last view (loading screens) before leaving
-                if self.in_world() && self.settings.loading_backdrop && self.capture.is_none() && self.closing.is_none() {
-                    self.closing = Some(Instant::now());
-                    self.want_scene_capture = true;
-                    return;
-                }
-                self.shutdown(event_loop);
+                self.request_exit();
             }
             WindowEvent::Resized(s) => {
                 g.renderer.resize(s.width, s.height);
@@ -6268,6 +6315,9 @@ impl ApplicationHandler for App {
             }
             WindowEvent::KeyboardInput { event: ke, .. } => {
                 self.last_input = Instant::now();
+                if self.exit_prompt.open {
+                    return;
+                }
                 if let PhysicalKey::Code(code) = ke.physical_key {
                     let pressed = ke.state == ElementState::Pressed;
                     // learn the keyboard layout for the shortcut labels
@@ -6350,6 +6400,9 @@ impl ApplicationHandler for App {
             }
             WindowEvent::MouseInput { state, button, .. } => {
                 self.last_input = Instant::now();
+                if self.exit_prompt.open {
+                    return;
+                }
                 let pressed = *state == ElementState::Pressed;
                 let over_ui = self.egui_ctx.is_pointer_over_egui() || self.egui_ctx.egui_wants_pointer_input();
                 // shortcut being captured: middle / side buttons bind, left / right cancel
@@ -6377,7 +6430,7 @@ impl ApplicationHandler for App {
                     }
                 }
             }
-            WindowEvent::MouseWheel { delta, .. } if !self.egui_ctx.is_pointer_over_egui() && self.in_world() => {
+            WindowEvent::MouseWheel { delta, .. } if !self.exit_prompt.open && !self.egui_ctx.is_pointer_over_egui() && self.in_world() => {
                 let steps = match delta {
                     MouseScrollDelta::LineDelta(_, y) => *y,
                     MouseScrollDelta::PixelDelta(p) => p.y as f32 / 60.0,
@@ -6420,7 +6473,7 @@ impl ApplicationHandler for App {
 
     fn device_event(&mut self, _el: &ActiveEventLoop, _id: winit::event::DeviceId, event: DeviceEvent) {
         if let DeviceEvent::MouseMotion { delta } = event {
-            if !self.in_world() {
+            if !self.in_world() || self.exit_prompt.open {
                 return;
             }
             let dy = if self.settings.invert_mouse { -delta.1 } else { delta.1 };
