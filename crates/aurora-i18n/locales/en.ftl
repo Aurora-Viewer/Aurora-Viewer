@@ -3762,7 +3762,6 @@ build-c3-texture-transform = Texture transforms
 build-c3-material-assigned = PBR material applied
 build-c3-choose = Choose…
 
-workspace-inventory-selection = Select an item to see its details
 workspace-inventory-selected = { $count } selected
 
 workspace-land-identity = Identity and ownership
@@ -3770,3 +3769,6 @@ workspace-land-sale = Sale and information
 workspace-land-actions = Parcel actions
 workspace-outfit-selection = Select an outfit
 workspace-outfit-items = { $count } items in this outfit
+
+ui-inventory-received-purchases = Received purchases
+ui-inventory-no-received-purchases = No received purchases yet.

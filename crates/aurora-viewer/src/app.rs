@@ -6501,6 +6501,9 @@ impl ApplicationHandler for App {
                         | "long-filtered"
                         | "resize-left"
                         | "resize-right"
+                        | "received"
+                        | "received-filtered"
+                        | "received-missing"
                 );
                 if configured_view {
                     crate::world::inventory::demo::seed_view(&mut self.world.inventory, self.world.agent_id, view == "large");
@@ -6517,6 +6520,16 @@ impl ApplicationHandler for App {
                     }
                     if view == "worn" {
                         self.inventory_ui.tab = 3;
+                    }
+                    if matches!(view.as_str(), "received" | "received-filtered" | "received-missing") {
+                        self.inventory_ui.tab = 1;
+                        if view != "received-missing" {
+                            crate::world::inventory::demo::seed_received(&mut self.world.inventory, self.world.agent_id);
+                            self.inventory_ui.expand_all = Some(true);
+                        }
+                        if view == "received-filtered" {
+                            self.inventory_ui.search = aurora_i18n::tr!("world-inventory-demo-instructions").into();
+                        }
                     }
                     if view == "filtered" {
                         self.settings.inventory.filter_defaults.types &= !(1 << 6);

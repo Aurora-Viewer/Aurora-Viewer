@@ -92,13 +92,8 @@ pub fn toolbar(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi, prefs: &mut
         st.filters.clone_from(&prefs.filter_defaults);
         st.filters_initialized = true;
     }
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         filter_actions(ui, p, st);
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            crate::ui::widgets::icon_menu(ui, p, "list", aurora_i18n::tr!("ui-places-show-more-options"), |ui| {
-                tree_actions(ui, p, st);
-            });
-        });
     });
 }
 
@@ -119,6 +114,7 @@ fn filter_actions(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi) {
     if flat_button(ui, p, aurora_i18n::tr!("common-preferences")).clicked() {
         st.preferences_open = !st.preferences_open;
     }
+    tree_actions(ui, p, st);
     if st.links_filter.is_some() {
         if flat_button(ui, p, aurora_i18n::tr!("ui-inventory-controls-exit-linked-mode")).clicked() {
             st.links_filter = None;
@@ -135,20 +131,18 @@ fn filter_actions(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi) {
 }
 
 fn tree_actions(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi) {
-    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        if flat_button(ui, p, aurora_i18n::tr!("common-expand"))
-            .on_hover_text(aurora_i18n::tr!("ui-inventory-controls-expand-displayed-folders"))
-            .clicked()
-        {
-            st.expand_all = Some(true);
-        }
-        if flat_button(ui, p, aurora_i18n::tr!("common-collapse"))
-            .on_hover_text(aurora_i18n::tr!("ui-inventory-controls-collapse-displayed-folders"))
-            .clicked()
-        {
-            st.expand_all = Some(false);
-        }
-    });
+    if flat_button(ui, p, aurora_i18n::tr!("common-collapse"))
+        .on_hover_text(aurora_i18n::tr!("ui-inventory-controls-collapse-displayed-folders"))
+        .clicked()
+    {
+        st.expand_all = Some(false);
+    }
+    if flat_button(ui, p, aurora_i18n::tr!("common-expand"))
+        .on_hover_text(aurora_i18n::tr!("ui-inventory-controls-expand-displayed-folders"))
+        .clicked()
+    {
+        st.expand_all = Some(true);
+    }
 }
 
 pub fn search(ui: &mut egui::Ui, st: &mut InventoryUi, prefs: &mut InventoryPreferences, hint: &str) {

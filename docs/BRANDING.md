@@ -54,7 +54,9 @@ Dans le code, on utilise toujours la `Palette` résolue (`p.violet`, `p.ink`…)
 - **Arrondis discrets.** Boutons : rayon 5 ; fenêtres et cartes : rayon 3,
   avec des coins proches de ceux de la construction, y compris au repli.
 - **Hiérarchie commune.** Titre et commandes de fenêtre en haut, navigation
-  stable, contenu regroupé par fonction, sélection et actions près du bas.
+  stable, contenu regroupé par fonction et actions accessibles.
+  L’inventaire garde une grande liste et une seule ligne de statut en bas,
+  sans fiche de détails de la sélection.
   Les listes défilent dans leur zone et ne font pas grandir la fenêtre.
   La construction utilise un inspecteur compact avec un rail de sections.
 - **Une seule couleur d'accent par zone.** Le violet signale ce qui est actif

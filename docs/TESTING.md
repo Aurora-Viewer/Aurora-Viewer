@@ -760,6 +760,10 @@ hors ligne ; les fichiers et photos chargés en démo restent hors ligne.
   `notransfer`, `link` : le menu de l'élément choisi, ou ses propriétés.
   `clothes`, `body`, `settings`, `uploads` sont des alias de `folder`, à
   combiner avec `AURORA_DEMO_POINTER` pour survoler les sous-menus.
+- `received`, `received-filtered`, `received-missing` : onglet Achats reçus,
+  recherche limitée à sa boîte Marketplace et état sans dossier reçu. La liste
+  et les boutons Réduire / Développer gardent la même présentation ; aucun
+  dossier personnel ne doit apparaître dans cet onglet.
 - `animation-open`, `animation-properties`, `image`, `image-photo`,
   `image-picker` : les cinq panneaux de référence.
 - `note-open`, `note-new`, `note-readonly` : éditeur d’une note existante,
