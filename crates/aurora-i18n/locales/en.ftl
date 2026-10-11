@@ -3270,7 +3270,6 @@ bug-browser-help = Your browser will open the completed report. Review and publi
 bug-direct-help = Aurora will publish the report when you click Send. Connect your GitHub account below first.
 bug-required-help = To continue, fill in a title and “What happened?” in Description.
 bug-other-actions = More actions
-bug-picture-refresh-help = Changing this option retakes the picture. Imported files stay unchanged.
 bug-unavailable = Unavailable
 bug-build-development = Development
 bug-lod = Level of detail

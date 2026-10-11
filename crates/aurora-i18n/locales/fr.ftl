@@ -3270,7 +3270,6 @@ bug-browser-help = Votre navigateur ouvrira le rapport déjà rempli. Vous pourr
 bug-direct-help = Aurora publiera le rapport quand vous cliquerez sur Envoyer. Connectez d’abord votre compte GitHub ci-dessous.
 bug-required-help = Pour continuer, renseignez un titre et le champ « Que s’est-il passé ? » dans Description.
 bug-other-actions = Autres actions
-bug-picture-refresh-help = Changer l’option actualise la capture. Les fichiers importés restent inchangés.
 bug-unavailable = Indisponible
 bug-build-development = Développement
 bug-lod = Niveau de détail
