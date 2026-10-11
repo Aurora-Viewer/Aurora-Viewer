@@ -213,14 +213,7 @@ pub fn page(ui: &mut egui::Ui, p: &Palette, s: &mut ChatCommandSettings) -> bool
                 aurora_i18n::tr!("ui-options-commands-set-and-play-streaming-music"),
                 &mut s.music,
             );
-            c |= command_name(
-                ui,
-                p,
-                "AO",
-                "cmd on/off",
-                aurora_i18n::tr!("common-not-available-in-aurora-yet"),
-                &mut s.ao,
-            );
+            c |= command_name(ui, p, "AO", "cmd on/off", aurora_i18n::tr!("ao-command-help"), &mut s.ao);
             c |= command_name(
                 ui,
                 p,

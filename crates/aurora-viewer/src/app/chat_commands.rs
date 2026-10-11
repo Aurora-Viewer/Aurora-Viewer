@@ -50,6 +50,38 @@ impl App {
 
     fn run_chat_command(&mut self, cmd: Command) -> bool {
         match cmd {
+            Command::Ao(enabled) => {
+                let account = self.settings.ao.accounts.entry(self.world.agent_id).or_default();
+                let changed = account.enabled != enabled;
+                account.enabled = enabled;
+                if enabled {
+                    self.ao_runtime.stands = true;
+                    self.ao_runtime.paused = false;
+                }
+                self.settings.save();
+                if changed {
+                    self.report_command(if enabled {
+                        aurora_i18n::tr!("ao-command-on")
+                    } else {
+                        aurora_i18n::tr!("ao-command-off")
+                    });
+                }
+            }
+            Command::AoSits(value) => {
+                let selected = self
+                    .settings
+                    .ao
+                    .accounts
+                    .get(&self.world.agent_id)
+                    .map_or(uuid::Uuid::nil(), |a| a.selected);
+                if let Some(mut set) = self.ao_catalog.selected(selected).cloned() {
+                    set.sits = value.unwrap_or(!set.sits);
+                    match crate::ao::inventory::save_set(&self.world.inventory, &set) {
+                        Ok(change) => self.apply_ao_action(crate::ui::ao::Action::Edit(change, None)),
+                        Err(reason) => self.report_command(reason),
+                    }
+                }
+            }
             Command::Report(lines) => {
                 for l in lines {
                     self.report_command(l);

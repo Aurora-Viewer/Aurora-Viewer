@@ -176,6 +176,8 @@ pub struct World {
     pub inventory: inventory::Inventory,
     /// Playing animations per avatar / animesh.
     pub animations: HashMap<Uuid, Vec<PlayingAnimation>>,
+    /// AO remapping applies only to our rendered pose, never movement signals.
+    pub ao_pose: Option<Vec<PlayingAnimation>>,
     local_preview: Option<PlayingAnimation>,
     preview_server_motion: Option<PlayingAnimation>,
     /// Our animation sources, kept until the simulator stops the motion.
@@ -270,6 +272,7 @@ impl World {
             status: status::Status::default(),
             inventory: inventory::Inventory::default(),
             animations: HashMap::new(),
+            ao_pose: None,
             local_preview: None,
             preview_server_motion: None,
             animation_sources: HashMap::new(),
@@ -1818,7 +1821,53 @@ impl World {
     }
 
     pub fn animations_of(&self, owner: &Uuid) -> &[PlayingAnimation] {
+        if *owner == self.agent_id
+            && let Some(pose) = &self.ao_pose
+        {
+            return pose;
+        }
         self.animations.get(owner).map(|v| v.as_slice()).unwrap_or(&[])
+    }
+
+    /// AOEngine::foreignAnimations: only the seat/linkset can cancel smart
+    /// sits; attachments and unrelated scripted objects must not cancel them.
+    pub fn seat_has_animations(&self) -> bool {
+        let Some(avatar) = self.objects.index_of_uuid(&self.agent_id).and_then(|i| self.objects.get(i)) else {
+            return false;
+        };
+        if avatar.parent_id == 0 {
+            return false;
+        }
+        let seat = ObjKey {
+            region: avatar.key.region,
+            local_id: avatar.parent_id,
+        };
+        self.animation_sources.keys().any(|source| {
+            let Some(mut object) = self.objects.index_of_uuid(source).and_then(|i| self.objects.get(i)) else {
+                return false;
+            };
+            let mut visited = HashSet::new();
+            while visited.insert(object.key) {
+                if object.is_avatar() {
+                    return false;
+                }
+                if object.key == seat {
+                    return true;
+                }
+                if object.parent_id == 0 {
+                    return false;
+                }
+                let parent = ObjKey {
+                    region: object.key.region,
+                    local_id: object.parent_id,
+                };
+                let Some(next) = self.objects.index_of(&parent).and_then(|i| self.objects.get(i)) else {
+                    return false;
+                };
+                object = next;
+            }
+            false
+        })
     }
 
     /// LLPreviewAnim::play locally: keep the motion across server signals,
@@ -2019,6 +2068,46 @@ mod motion_tests {
             objects: vec![avatar],
         });
         assert!(world.animation_stops.is_empty(), "repeated standing packet");
+    }
+
+    #[test]
+    fn ao_smart_sit_uses_only_the_seat_and_linkset_sources() {
+        let (mut world, mut avatar, handle, root, linked) = seated_fixture();
+        for (source, expected) in [(Uuid::from_u128(999), false), (root, true), (linked, true)] {
+            world.animation_sources.clear();
+            world.apply(NetEvent::AvatarAnimations {
+                avatar: world.agent_id,
+                anims: vec![(Uuid::from_u128(77), 1)],
+                sources: vec![source],
+            });
+            assert_eq!(world.seat_has_animations(), expected);
+        }
+        avatar.parent_id = 0;
+        world.apply(NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![avatar],
+        });
+        assert!(!world.seat_has_animations());
+    }
+
+    #[test]
+    fn ao_pose_does_not_replace_network_signals_or_other_avatars() {
+        let (mut world, _, _) = fixture();
+        let other = Uuid::from_u128(2);
+        let stock = crate::ao::State::GroundSit.motion();
+        let now = Instant::now();
+        world.ao_pose = Some(vec![PlayingAnimation::from_signal(Uuid::from_u128(950), 1, now, None)]);
+        for avatar in [world.agent_id, other] {
+            world.apply(NetEvent::AvatarAnimations {
+                avatar,
+                anims: vec![(stock, 1)],
+                sources: Vec::new(),
+            });
+        }
+        assert!(world.agent.ground_sit);
+        assert_eq!(world.animations[&world.agent_id][0].id, stock);
+        assert_eq!(world.animations_of(&world.agent_id)[0].id, Uuid::from_u128(950));
+        assert_eq!(world.animations_of(&other)[0].id, stock);
     }
 
     #[test]

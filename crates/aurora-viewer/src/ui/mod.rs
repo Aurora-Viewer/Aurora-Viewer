@@ -1,5 +1,6 @@
 //! egui user interface.
 
+pub mod ao;
 pub mod appearance;
 pub mod audio;
 pub mod aurora_bg;
@@ -65,6 +66,7 @@ pub struct Panels {
     pub personal_lighting: bool,
     pub inventory: bool,
     pub appearance: bool,
+    pub ao: bool,
     pub people_tab: u8,
     /// The torn-off Contacts window (ContactsTornOff).
     pub contacts: bool,

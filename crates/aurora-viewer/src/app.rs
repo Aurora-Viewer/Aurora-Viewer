@@ -24,6 +24,7 @@ use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{CursorGrabMode, Window, WindowId};
 
+mod ao;
 mod bug_report;
 mod chat_commands;
 mod context_menu;
@@ -307,6 +308,13 @@ pub struct App {
     lighting_was_open: bool,
     demo: bool,
     inventory_ui: ui::inventory::InventoryUi,
+    ao_ui: ui::ao::AoUi,
+    ao_catalog: crate::ao::inventory::Catalog,
+    ao_runtime: crate::ao::runtime::Runtime,
+    ao_agent: uuid::Uuid,
+    ao_missing: HashSet<uuid::Uuid>,
+    ao_demo: Option<String>,
+    ao_default_applied: bool,
     inventory_images: inventory_thumbnail::ImageJobs,
     appearance_ui: ui::appearance::AppearanceUi,
     last_social_poll: Instant,
@@ -410,6 +418,7 @@ impl App {
             personal_lighting: false,
             inventory: settings.show_inventory,
             appearance: settings.show_appearance,
+            ao: settings.show_ao,
             people_tab: settings.people_tab.min(1),
             contacts: false,
             about_land: false,
@@ -577,6 +586,13 @@ impl App {
             lighting_was_open: false,
             demo: false,
             inventory_ui: Default::default(),
+            ao_ui: Default::default(),
+            ao_catalog: Default::default(),
+            ao_runtime: Default::default(),
+            ao_agent: uuid::Uuid::nil(),
+            ao_missing: Default::default(),
+            ao_demo: std::env::var("AURORA_DEMO_AO").ok(),
+            ao_default_applied: false,
             inventory_images: Default::default(),
             appearance_ui: Default::default(),
             last_social_poll: Instant::now(),
@@ -894,6 +910,7 @@ impl App {
             self.scene.clear(&mut g.renderer);
         }
         self.world.reset();
+        self.ao_agent = uuid::Uuid::nil();
         self.appearance_ui = Default::default();
         self.interactions = Default::default();
         self.screen = Screen::Login;
@@ -950,10 +967,18 @@ impl App {
             return;
         }
         if let NetEvent::InventoryEdited { request, result } = ev {
+            if self.ao_ui.pending.as_ref().is_some_and(|p| p.request == request) {
+                self.ao_inventory_result(result);
+                return;
+            }
             self.inventory_result(request, result);
             return;
         }
         if let NetEvent::InventoryPreview { item, result } = ev {
+            if self.ao_ui.import == Some(item) {
+                self.ao_import_result(item, result);
+                return;
+            }
             self.inventory_preview(item, result);
             return;
         }
@@ -3180,6 +3205,7 @@ impl App {
             self.send(NetCommand::AgentAnimation { anim, start: false });
         }
         self.frame_profile.lap(Lap::Events);
+        self.poll_ao();
         if self.in_world() && self.last_social_poll.elapsed() > Duration::from_millis(500) {
             self.last_social_poll = Instant::now();
             self.poll_names();
@@ -3353,11 +3379,18 @@ impl App {
             self.scene.sync_budget = if covered { Duration::from_millis(8) } else { results_budget };
             self.scene.process_results(&mut gfx.renderer, &self.net, results_budget);
             self.frame_profile.lap(Lap::Results);
+            if self.demo
+                && let Some(mode) = &self.ao_demo
+            {
+                crate::ao::demo::signal(&mut self.world, self.frame_count, mode, now);
+            }
+            self.update_ao(now);
             // poses first: attachments follow their bone in the same frame
             let completed = self
                 .scene
                 .update_poses(&mut gfx.renderer, &mut self.world, self.camera.position, now);
             for anim in completed {
+                self.ao_runtime.finished(anim);
                 // LLAgent::requestStopMotion: stop the finished non-looping
                 // animation and advance simulator-controlled transitions.
                 let flags = self.world.agent.animation_stop_flags(anim, self.input.up, now);
@@ -5010,6 +5043,7 @@ impl App {
                     self.camera.mouselook(),
                     &mut self.settings.chat_bar_width,
                     &mut mic,
+                    self.settings.ao.accounts.get(&self.world.agent_id).is_some_and(|a| a.enabled) && !self.ao_runtime.paused,
                 );
                 if chat_width_set {
                     self.settings.save();
@@ -5276,6 +5310,25 @@ impl App {
                     self.apply_appearance_action(action);
                 }
                 self.panels.appearance = open;
+                let mut open = self.panels.ao;
+                let mut account = self.settings.ao.accounts.get(&self.world.agent_id).cloned().unwrap_or_default();
+                let actions = ui::ao::show(
+                    &ctx,
+                    &p,
+                    &mut self.world.inventory,
+                    &self.ao_catalog,
+                    &mut self.ao_runtime,
+                    &mut account,
+                    &mut self.ao_ui,
+                    &mut open,
+                );
+                self.panels.ao = open;
+                if actions.iter().any(|a| matches!(a, ui::ao::Action::Preferences)) {
+                    self.settings.ao.accounts.insert(self.world.agent_id, account);
+                }
+                for action in actions {
+                    self.apply_ao_action(action);
+                }
                 let facts = self.context_facts();
                 let had_menu = self.context_menu.is_some();
                 ui::context::show(&ctx, &p, &mut self.context_menu, &facts);
@@ -5608,6 +5661,7 @@ impl App {
                 self.settings.people_tab = self.panels.people_tab;
                 self.settings.show_inventory = self.panels.inventory;
                 self.settings.show_appearance = self.panels.appearance;
+                self.settings.show_ao = self.panels.ao;
                 if self.panels.time_of_day != self.settings.time_of_day {
                     self.settings.time_of_day = self.panels.time_of_day;
                 }
@@ -5971,6 +6025,20 @@ impl ApplicationHandler for App {
                 if let Some(e) = self.world.apply(ev) {
                     self.on_app_event(e);
                 }
+            }
+            if let Some(mode) = &self.ao_demo {
+                crate::ao::demo::assets(&mut self.scene);
+                let selected = crate::ao::demo::seed(&mut self.world.inventory, self.world.agent_id);
+                self.settings.ao.accounts.insert(
+                    self.world.agent_id,
+                    crate::ao::Account {
+                        enabled: mode != "off",
+                        selected,
+                    },
+                );
+                self.panels.ao = true;
+                self.panels.perf = false;
+                self.panels.inventory = false;
             }
             if let Ok(view) = std::env::var("AURORA_DEMO_APPEARANCE") {
                 crate::world::appearance::seed_demo(&mut self.world.inventory, self.world.agent_id);

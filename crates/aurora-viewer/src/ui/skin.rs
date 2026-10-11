@@ -57,6 +57,7 @@ impl Default for Layout {
                 tb("Command_People_Icon", "people", aurora_i18n::tr!("common-people")),
                 tb("Command_Inventory_Icon", "inventory", aurora_i18n::tr!("common-inventory")),
                 tb("Command_Appearance_Icon", "appearance", aurora_i18n::tr!("common-appearance")),
+                tb("AO", "ao", aurora_i18n::tr!("ao-title")),
                 tb("Command_Search_Icon", "search", aurora_i18n::tr!("ui-skin-search-coming-soon")),
                 tb("Command_Map_Icon", "worldmap", aurora_i18n::tr!("common-world-map")),
                 tb("Command_MiniMap_Icon", "minimap", aurora_i18n::tr!("common-mini-map")),
