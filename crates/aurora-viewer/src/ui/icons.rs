@@ -139,6 +139,7 @@ const SVGS: &[(&str, &[u8])] = svg_list!(
     "sign-out",
     "chat-teardrop-slash",
     "microphone-fill",
+    "microphone-slash-fill",
     "airplane-tilt-fill",
     "hand-palm-fill",
     "cube-fill",

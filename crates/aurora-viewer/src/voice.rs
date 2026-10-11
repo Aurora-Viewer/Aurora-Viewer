@@ -234,15 +234,64 @@ impl Voice {
         }
     }
 
-    /// Voice participants: level (0..1) and speaking, for the voice dots.
-    pub fn levels(&self) -> HashMap<Uuid, (f32, bool)> {
+    /// Voice participants: level (0..1) and speaking, including our local mic.
+    pub fn levels(&self, agent_id: Uuid) -> HashMap<Uuid, (f32, bool)> {
         match &self.session {
-            Some((_, s)) if self.connected => s.participants().into_iter().map(|p| (p.agent_id, (p.level, p.speaking))).collect(),
+            Some((_, s)) if self.connected => tag_levels(s.participants(), agent_id, s.own_level()),
             _ => HashMap::new(),
         }
     }
 }
 
+fn tag_levels(participants: Vec<aurora_voice::Participant>, agent_id: Uuid, own_level: f32) -> HashMap<Uuid, (f32, bool)> {
+    let mut levels: HashMap<_, _> = participants.into_iter().map(|p| (p.agent_id, (p.level, p.speaking))).collect();
+    // Servers need not echo our own join. Local capture is authoritative,
+    // as in LLWebRTCVoiceClient::predUpdateOwnVolume (originally LGPL 2.1).
+    levels.insert(agent_id, (own_level, own_level > aurora_voice::SPEAKING_AUDIO_LEVEL));
+    levels
+}
+
 fn non_empty(s: &str) -> Option<String> {
     (!s.is_empty()).then(|| s.to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn own_tag_uses_local_mic_even_without_a_server_entry() {
+        let me = Uuid::from_u128(1);
+        let other = Uuid::from_u128(2);
+        let levels = tag_levels(
+            vec![aurora_voice::Participant {
+                agent_id: other,
+                level: 0.4,
+                speaking: true,
+                moderator_muted: false,
+            }],
+            me,
+            0.5,
+        );
+        assert_eq!(levels[&me], (0.5, true));
+        assert_eq!(levels[&other], (0.4, true));
+        assert!(!levels.contains_key(&Uuid::from_u128(3)));
+    }
+
+    #[test]
+    fn closed_local_mic_overrides_stale_server_speech() {
+        let me = Uuid::from_u128(1);
+        let levels = tag_levels(
+            vec![aurora_voice::Participant {
+                agent_id: me,
+                level: 0.8,
+                speaking: true,
+                moderator_muted: false,
+            }],
+            me,
+            0.0,
+        );
+        assert_eq!(levels[&me], (0.0, false));
+        assert!(Voice::default().levels(me).is_empty());
+    }
 }

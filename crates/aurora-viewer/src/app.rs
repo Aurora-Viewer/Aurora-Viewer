@@ -270,8 +270,8 @@ pub struct App {
     update_demo: Option<ui::update::UpdateDemo>,
     updater: crate::updater::Updater,
     update_acknowledged: bool,
-    /// Voice dots above the avatars (wave animation state).
-    voice_dots: ui::voice_dot::VoiceDots,
+    /// Smoothed speaking outlines of the avatar name tags.
+    voice_tags: ui::voice_tag::VoiceTags,
     /// Avatar name tags on screen last frame, far first: a click on one
     /// counts as one on its avatar.
     name_tags: Vec<ui::hud::NameTag>,
@@ -571,7 +571,7 @@ impl App {
             updater,
             update_acknowledged: false,
             login_info,
-            voice_dots: Default::default(),
+            voice_tags: Default::default(),
             name_tags: Vec::new(),
             sound_blocks: Default::default(),
             devices_listed: false,
@@ -5173,20 +5173,29 @@ impl App {
                 }
                 // overlays
                 let voice_levels = if self.demo {
-                    crate::demo::voice_levels(ctx.input(|i| i.time), self.world.agent_id, self.talking(), self.voice.mic_level)
+                    static VOICE_MODE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+                    crate::demo::voice_levels(
+                        ctx.input(|i| i.time),
+                        self.world.agent_id,
+                        self.settings.audio.voice_enabled,
+                        self.talking(),
+                        self.voice.mic_level,
+                        VOICE_MODE.get_or_init(|| std::env::var("AURORA_DEMO_VOICE").ok()).as_deref(),
+                    )
                 } else {
-                    self.voice.levels()
+                    self.voice.levels(self.world.agent_id)
                 };
                 self.name_tags = ui::hud::draw(
                     &ctx,
                     &p,
+                    &self.skin.icons,
                     &self.world,
                     projector,
                     self.camera.position,
                     !self.camera.mouselook(),
                     self.settings.name_tag_distance,
                     &voice_levels,
-                    &mut self.voice_dots,
+                    &mut self.voice_tags,
                     {
                         let s = &self.settings;
                         // debug: on every tag

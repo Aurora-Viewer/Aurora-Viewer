@@ -130,6 +130,12 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
 | `scene/sync_sets.rs` | Objets que la synchro de la scène visite à chaque image, tenus à jour par événements (objets modifiés notés par `ObjectStore`, ensemble des objets qui bougent d'eux-mêmes et de ce qui les suit, géométries en attente, tranche de LOD) au lieu d'un parcours de tous les objets ; file d'attente des synchros complètes qui n'ont pas tenu dans le budget de temps de l'image, servie du plus proche au plus lointain (`Backlog`, `FullSyncBudget`) |
 | `scene/sync_plan.rs` | Placement en parallèle (rayon) des objets de l'image, niveau par niveau des chaînes de parents : transformation, LOD, limites ; mise à jour de la seule matrice ou synchro complète |
 
+Les indicateurs vocaux des étiquettes sont dessinés par `ui/voice_tag.rs` :
+contour lissé selon le niveau de parole, couleurs calibrées sur l'échelle
+WebRTC (rouge dès 0,58, le micro local plafonnant vers 0,63), micro barré
+Phosphor fill pour les avatars hors vocal. `voice.rs` garantit l'entrée de notre avatar à partir du
+micro local, même sans écho de sa présence par le serveur vocal.
+
 ## Déroulement d'une image
 
 Les prims flexibles ont leur simulation propre (`aurora-prim/src/flexible.rs`,

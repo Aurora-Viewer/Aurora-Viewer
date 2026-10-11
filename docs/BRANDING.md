@@ -103,7 +103,9 @@ Ne pas mélanger avec un autre jeu d'icônes.
 
 Les graisses « fill » ou « bold » ne servent qu'à un état précis (élément
 sélectionné, alerte) et uniquement si c'est cohérent avec le reste de l'écran.
-Exception : les icônes des autorisations de la parcelle (bout droit du champ de
+Exception : le micro barré des étiquettes d'avatars hors vocal est en « fill »
+et en `danger`, pour garder ce statut lisible à petite taille.
+Les icônes des autorisations de la parcelle (bout droit du champ de
 lieu) sont en « fill », car ces petites formes colorées en vert / rouge s'y
 lisent mieux qu'au trait. De même pour l'icône devant les liens web du chat et
 des profils : `check-circle-fill` en `success` (site de confiance) et
