@@ -289,7 +289,7 @@ pub fn draw(
         let voice_w = if no_voice { super::voice_tag::ICON_WIDTH } else { 0.0 };
         let text_x = sp.x + voice_w * 0.5;
         if is_avatar {
-            let w = max_w + 12.0 + voice_w;
+            let w = max_w + 12.0 + super::voice_tag::TAG_EXTRA_WIDTH;
             let r = egui::Rect::from_min_size(Pos2::new(sp.x - w * 0.5, y - 3.0), egui::vec2(w, total_h + 6.0));
             if let Some(id) = avatar {
                 name_tags.push(NameTag { id, rect: r });

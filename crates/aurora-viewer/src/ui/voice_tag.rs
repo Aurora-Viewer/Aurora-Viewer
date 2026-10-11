@@ -15,6 +15,8 @@ const ATTACK: f32 = 0.035;
 const RELEASE: f32 = 0.10;
 const LEVEL_MIN: f32 = 0.2;
 const LEVEL_MAX: f32 = 0.7;
+/// Keep the previous voice tag width across speaking, listening and offline states.
+pub const TAG_EXTRA_WIDTH: f32 = 30.0;
 pub const ICON_SIZE: f32 = 14.0;
 pub const ICON_WIDTH: f32 = ICON_SIZE + 4.0;
 
@@ -71,7 +73,7 @@ fn level_color(p: &Palette, level: f32) -> Color32 {
 }
 
 impl VoiceTags {
-    /// Draw inside the existing tag, preserving its size and click rectangle.
+    /// Draw outside the tag so the thicker outline leaves its text unobstructed.
     pub fn paint(&mut self, painter: &egui::Painter, p: &Palette, id: Uuid, rect: Rect, voice: Option<(f32, bool)>, now: f64, fade: f32) {
         let Some((level, speaking)) = voice else {
             self.envelopes.remove(&id);
@@ -84,8 +86,17 @@ impl VoiceTags {
         e.update(level, speaking, now);
         if e.opacity > 0.0 {
             let volume = ((e.level - LEVEL_MIN) / (LEVEL_MAX - LEVEL_MIN)).clamp(0.0, 1.0);
-            let color = level_color(p, e.level).gamma_multiply(e.opacity * fade);
-            painter.rect_stroke(rect, 3.0, Stroke::new(1.2 + volume * 1.2, color), StrokeKind::Inside);
+            // Keep speech readable at a distance and against bright scene backgrounds.
+            let opacity = e.opacity * fade.sqrt();
+            let width = 3.0 + volume * 1.5;
+            let color = level_color(p, e.level).gamma_multiply(opacity);
+            painter.rect_stroke(
+                rect,
+                3.0,
+                Stroke::new(width + 2.0, p.bar.gamma_multiply(opacity)),
+                StrokeKind::Outside,
+            );
+            painter.rect_stroke(rect, 3.0, Stroke::new(width, color), StrokeKind::Outside);
         }
     }
 
