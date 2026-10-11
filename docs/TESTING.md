@@ -396,6 +396,13 @@ grille.
   normale. Les captures sont prises après trois images de la fenêtre
   indépendante. `AURORA_DEMO_CRASH_DIR` permet d'utiliser un dossier
   temporaire par scénario, sans toucher aux rapports réels.
+  Le bouton « Envoyer un rapport de plantage » doit ouvrir le formulaire
+  partagé, avec le titre et les informations de cette session. Pour le
+  capturer automatiquement, combiner avec `AURORA_DEMO_BUG_REPORT=1`
+  (Description) ou `details` (Données). Le mode démo reste sans envoi,
+  autorisation GitHub ou ouverture de navigateur. L'extrait public et le
+  ZIP privé commencent décochés. Décocher une information doit la retirer
+  de l'aperçu. Fermer et rouvrir le formulaire conserve le brouillon.
 - **`AURORA_DEMO_BUG_REPORT=1|details|image|image-ui|direct`** : ouvre le
   rapport après le chargement (image 550). `1` montre la description,
   `details` les informations avec le lieu décoché et les diagnostics filtrés,

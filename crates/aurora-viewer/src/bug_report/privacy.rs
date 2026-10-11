@@ -48,6 +48,7 @@ pub fn excerpt(log: &str) -> String {
         let mut categories = Vec::new();
         for (needles, category) in [
             (&["panic:", "panicked"][..], "Rust panic"),
+            (&["native exception"][..], "native exception"),
             (&["validation error", "validation failed"][..], "GPU validation error"),
             (&["out of memory", "outofmemory"][..], "out of memory"),
             (&["device lost", "devicelost"][..], "GPU device lost"),
@@ -85,6 +86,7 @@ pub fn display_excerpt(excerpt: &str) -> String {
         ("GPU validation error", "bug-log-validation"),
         ("GPU device lost", "bug-log-device-lost"),
         ("Rust panic", "bug-log-panic"),
+        ("native exception", "bug-log-native"),
         ("out of memory", "bug-log-memory"),
         ("connection failure", "bug-log-connection"),
         ("asset decoding", "bug-log-decoding"),

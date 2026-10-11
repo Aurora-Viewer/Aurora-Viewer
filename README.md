@@ -124,8 +124,10 @@ The texture memory budget is set automatically from the detected VRAM.
 
 ## Signaler un bug pendant l’alpha
 
-L’icône de bug dans la barre du haut, le menu Aide et l’écran de connexion
-ouvrent le même formulaire. Décrivez le problème et vérifiez les informations
+L’icône de bug dans la barre du haut, le menu Aide, l’écran de connexion et
+le bouton « Envoyer un rapport de plantage » après un crash ouvrent le même
+formulaire. Après un crash, les données viennent de la session arrêtée.
+Décrivez le problème et vérifiez les informations
 de l’onglet Données ; décochez celles que vous souhaitez garder privées.
 L’interface suit la langue choisie, même avec le formulaire ouvert. La capture
 et les diagnostics filtrés sont facultatifs. Le fichier destiné à GitHub utilise

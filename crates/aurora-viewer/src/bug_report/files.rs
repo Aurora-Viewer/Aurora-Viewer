@@ -57,7 +57,11 @@ pub fn diagnostics(demo: bool) -> Diagnostics {
 }
 
 fn log_tail() -> std::io::Result<Vec<u8>> {
-    let mut file = std::fs::File::open(crate::logging::log_path())?;
+    log_tail_from(&crate::logging::log_path())
+}
+
+fn log_tail_from(path: &Path) -> std::io::Result<Vec<u8>> {
+    let mut file = std::fs::File::open(path)?;
     let len = file.metadata()?.len();
     file.seek(SeekFrom::Start(len.saturating_sub(MAX_LOG_TAIL)))?;
     let mut bytes = Vec::new();
@@ -69,6 +73,26 @@ fn log_tail() -> std::io::Result<Vec<u8>> {
         bytes.drain(..=end);
     }
     Ok(bytes)
+}
+
+/// Public diagnostics use the same closed vocabulary as live reports. The
+/// full native/Rust traces stay local or in the explicitly opted-in ZIP.
+pub fn preserved_diagnostics(dir: &Path) -> Diagnostics {
+    let mut log = log_tail_from(&dir.join("session.log"))
+        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+        .unwrap_or_default();
+    for name in ["panic.txt", "native.txt", "failure.txt"] {
+        if let Ok(bytes) = log_tail_from(&dir.join(name))
+            && !bytes.is_empty()
+        {
+            log.push_str("\n[crash ERROR aurora_viewer] ");
+            log.push_str(&String::from_utf8_lossy(&bytes));
+        }
+    }
+    Diagnostics {
+        fields: Vec::new(),
+        excerpt: super::privacy::excerpt(&log),
+    }
 }
 
 #[derive(Clone)]
@@ -148,10 +172,18 @@ pub struct Saved {
     pub logs: Option<Vec<u8>>,
 }
 
-pub fn save(report: &Report, image: Option<&Attachment>, include_image: bool, demo: bool) -> std::io::Result<Saved> {
+pub fn save(
+    report: &Report,
+    image: Option<&Attachment>,
+    include_image: bool,
+    demo: bool,
+    session_dir: Option<&Path>,
+) -> std::io::Result<Saved> {
     let root = crate::logging::logs_dir().parent().unwrap_or(Path::new(".")).join("bug-reports");
-    let log = (!demo).then(crate::logging::log_path);
-    save_in(&root, report, image, include_image, log.as_deref())
+    let log = session_dir
+        .map(|dir| dir.join("session.log"))
+        .or_else(|| (!demo).then(crate::logging::log_path));
+    save_in(&root, report, image, include_image, log.as_deref(), session_dir)
 }
 
 fn save_in(
@@ -160,6 +192,7 @@ fn save_in(
     image: Option<&Attachment>,
     include_image: bool,
     private_log: Option<&Path>,
+    session_dir: Option<&Path>,
 ) -> std::io::Result<Saved> {
     let directory = root.join(uuid::Uuid::new_v4().to_string());
     let public = directory.join("public");
@@ -180,6 +213,15 @@ fn save_in(
     full.include_excerpt = true;
     std::fs::write(private.join("diagnostics.md"), full.markdown())?;
     let private_log_saved = private_log.is_some_and(|path| std::fs::copy(path, private.join("session.log")).is_ok());
+    if let Some(dir) = session_dir {
+        for name in ["panic.txt", "native.txt", "failure.txt"] {
+            match std::fs::copy(dir.join(name), private.join(name)) {
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+        }
+    }
     std::fs::write(
         private.join("README.txt"),
         "PRIVATE LOCAL DIAGNOSTICS. Never upload this folder to a public issue.\nThe session log and unchecked information may contain private data.\n",
@@ -205,11 +247,21 @@ pub fn prepare_private_logs(saved: &mut Saved) -> std::io::Result<()> {
         .compression_method(zip::CompressionMethod::Deflated)
         .compression_level(Some(1));
     let mut total = 0;
-    for name in ["session.log", "diagnostics.md", "README.txt"] {
+    for name in [
+        "session.log",
+        "diagnostics.md",
+        "README.txt",
+        "panic.txt",
+        "native.txt",
+        "failure.txt",
+    ] {
+        let file = match std::fs::File::open(private.join(name)) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound && name.ends_with(".txt") && name != "README.txt" => continue,
+            Err(error) => return Err(error),
+        };
         let mut bytes = Vec::new();
-        std::fs::File::open(private.join(name))?
-            .take(64 * 1024 * 1024 + 1)
-            .read_to_end(&mut bytes)?;
+        file.take(64 * 1024 * 1024 + 1).read_to_end(&mut bytes)?;
         total += bytes.len();
         if total > 64 * 1024 * 1024 {
             return Err(std::io::Error::other("session log too large"));
@@ -242,6 +294,48 @@ mod tests {
     use super::*;
 
     #[test]
+    fn crash_bundle_uses_saved_log_and_keeps_raw_traces_out_of_public_files() {
+        let root = std::env::temp_dir().join(format!("aurora-crash-bundle-test-{}", uuid::Uuid::new_v4()));
+        let session = root.join("old-session");
+        std::fs::create_dir_all(&session).unwrap();
+        std::fs::write(session.join("session.log"), "[old ERROR aurora_viewer] panic: PRIVATE_LOG_NAME\n").unwrap();
+        std::fs::write(session.join("panic.txt"), "Rust panic: panicked at PRIVATE_TRACE_PATH\n").unwrap();
+        std::fs::write(
+            session.join("native.txt"),
+            "Native exception 0xC0000005\nFault address: PRIVATE_NATIVE\n",
+        )
+        .unwrap();
+        let diagnostics = preserved_diagnostics(&session);
+        assert!(diagnostics.fields.is_empty());
+        assert!(diagnostics.excerpt.contains("Rust panic"));
+        assert!(diagnostics.excerpt.contains("native exception"));
+        assert!(!diagnostics.excerpt.contains("PRIVATE_"));
+        assert!(!diagnostics.excerpt.contains("0xC0000005"));
+        let report = Report {
+            title: "Crash".into(),
+            excerpt: diagnostics.excerpt,
+            ..Default::default()
+        };
+        let mut saved = save_in(&root, &report, None, false, Some(&session.join("session.log")), Some(&session)).unwrap();
+        let public = std::fs::read_to_string(saved.public_dir.join("report.md")).unwrap();
+        assert!(!public.contains("PRIVATE_"));
+        assert!(!public.contains("Rust panic"));
+        prepare_private_logs(&mut saved).unwrap();
+        let mut archive = zip::ZipArchive::new(Cursor::new(saved.logs.as_ref().unwrap())).unwrap();
+        let mut trace = String::new();
+        archive.by_name("panic.txt").unwrap().read_to_string(&mut trace).unwrap();
+        assert!(trace.contains("PRIVATE_TRACE_PATH"));
+        trace.clear();
+        archive.by_name("native.txt").unwrap().read_to_string(&mut trace).unwrap();
+        assert!(trace.contains("PRIVATE_NATIVE"));
+        trace.clear();
+        archive.by_name("session.log").unwrap().read_to_string(&mut trace).unwrap();
+        assert!(trace.contains("PRIVATE_LOG_NAME"));
+        assert_eq!(std::fs::read_dir(&saved.public_dir).unwrap().count(), 1);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn public_bundle_contains_only_reviewed_fields_and_private_log_is_separate() {
         let root = std::env::temp_dir().join(format!("aurora-report-test-{}", uuid::Uuid::new_v4()));
         let report = Report {
@@ -253,7 +347,7 @@ mod tests {
         let log = root.join("input.log");
         std::fs::write(&log, b"PRIVATE_LOG").unwrap();
         let image = capture(1, 1, vec![255; 4]).unwrap();
-        let mut saved = save_in(&root, &report, Some(&image), false, Some(&log)).unwrap();
+        let mut saved = save_in(&root, &report, Some(&image), false, Some(&log), None).unwrap();
         let public = std::fs::read_to_string(saved.public_dir.join("report.md")).unwrap();
         assert!(!public.contains("SECRET_LOCATION"));
         assert!(!public.contains("PRIVATE_LOG"));

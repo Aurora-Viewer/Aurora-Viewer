@@ -1,6 +1,50 @@
 use super::*;
 
 #[test]
+fn preserved_report_keeps_crashed_session_language_draft_and_privacy_choices() {
+    let dir = std::env::temp_dir().join(format!("aurora-preserved-ui-test-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::write(dir.join("session.log"), "[old ERROR aurora_viewer] panic: PRIVATE_NAME\n").unwrap();
+    let mut state = BugReportUi::default();
+    state.begin_preserved(
+        Report {
+            title: "Crash of the original viewer".into(),
+            actual: "Stopped unexpectedly".into(),
+            fields: vec![Field::new("bug-language", "Viewer language", "fr", false)],
+            ..Default::default()
+        },
+        dir.clone(),
+        true,
+    );
+    assert!(state.open);
+    assert!(state.delivery == Delivery::Direct);
+    assert!(!state.include_logs);
+    assert!(!state.include_image);
+    assert!(!state.report.include_excerpt);
+    assert_eq!(state.capture_requested, None);
+    let result = state
+        .diagnostics
+        .take()
+        .unwrap()
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .unwrap();
+    assert!(result.fields.is_empty());
+    assert!(result.excerpt.contains("Rust panic"));
+    assert!(!result.excerpt.contains("PRIVATE_NAME"));
+    state.language = "fr";
+    state.refresh_language("en");
+    assert_eq!(state.report.fields[0].value, "fr");
+    assert!(!state.report.fields[0].included);
+    state.report.steps = "My own description".into();
+    state.open = false;
+    state.begin_preserved(Report::default(), dir.clone(), true);
+    assert_eq!(state.report.steps, "My own description");
+    assert_eq!(state.report.title, "Crash of the original viewer");
+    assert_eq!(state.session_dir.as_deref(), Some(dir.as_path()));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn interface_toggle_recaptures_only_camera_images_in_both_directions() {
     let mut state = BugReportUi::default();
     state.capture_option_changed(true);

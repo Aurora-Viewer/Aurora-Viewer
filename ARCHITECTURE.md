@@ -227,7 +227,7 @@ La projection et les listes HUD font partie de la copie du paquet d’image (`Dr
 
 `aurora-viewer/src/crash/` conserve un dossier par session (UUID), avant
 l'initialisation du réseau et du rendu. `mod.rs` gère les instantanés
-(version, langue, thème), la trace Rust et la récupération au lancement
+(version, commit, langue, thème), la trace Rust et la récupération au lancement
 suivant ; `native.rs` installe le filtre d'exception Windows et surveille
 la fin du processus par une poignée système, avec contrôle de sa date de
 création pour éviter la réutilisation d'un PID. Le surveillant est le même
@@ -238,6 +238,15 @@ Il ne relance jamais le viewer.
 et les boutons du viewer. `software.rs` dessine ses maillages egui sur le
 CPU et `softbuffer` présente les pixels, sans initialiser Vulkan ni aucun
 adaptateur graphique. La boucle attend les événements entre les images.
+
+`report.rs` compose le brouillon depuis cet instantané et les marqueurs de
+la session arrêtée. « Envoyer un rapport de plantage » ouvre le même
+`ui/bug_report.rs` que le viewer, avec ses cases, son aperçu et ses modes
+d'envoi GitHub. Le formulaire reçoit le dossier de la session ; il ne
+relève pas la configuration ou le journal du processus de récupération.
+Les workers lisent l'extrait filtré et préparent les fichiers pendant que
+la fenêtre attend les événements. Le ZIP privé facultatif contient aussi
+les traces Rust / native, jamais dans le texte public de l'issue.
 
 Le journal est écrit également dans le dossier propre à la session : ni
 la rotation du journal ordinaire ni une autre instance ne peuvent le

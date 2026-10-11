@@ -4,6 +4,7 @@
 //! no automatic submission; diagnostics stay in the local session folder.
 
 mod native;
+mod report;
 mod software;
 mod window;
 
@@ -27,6 +28,8 @@ pub struct Record {
     pub process_started: u64,
     pub started_unix: u64,
     pub version: String,
+    #[serde(default)]
+    pub commit: String,
     pub profile: String,
     pub language: String,
     pub font: String,
@@ -161,6 +164,7 @@ fn start_inner() -> anyhow::Result<()> {
         process_started: native::current_process_started(),
         started_unix: SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs(),
         version: aurora_version::version().to_owned(),
+        commit: aurora_version::commit().to_owned(),
         profile: env!("AURORA_BUILD_PROFILE").to_owned(),
         language: aurora_i18n::language().into(),
         font: settings.font,
@@ -238,6 +242,14 @@ fn should_report(dir: &Path, exit_code: u32) -> bool {
 fn preserve(dir: &Path, exit_code: u32) -> anyhow::Result<()> {
     std::fs::write(dir.join("exit-code.txt"), format!("0x{exit_code:08X}"))?;
     std::fs::write(dir.join("failed"), [])?;
+    std::fs::write(
+        dir.join("stopped-unix.txt"),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+            .to_string(),
+    )?;
     Ok(())
 }
 
@@ -334,6 +346,7 @@ mod tests {
             process_started: 123,
             started_unix: 456,
             version: "0.2.0+7.gabcdef".into(),
+            commit: "abcdef".into(),
             profile: "debug".into(),
             language: "fr".into(),
             font: "Inter".into(),

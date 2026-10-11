@@ -39,6 +39,7 @@ pub fn show(dir: &Path, record: super::Record) -> anyhow::Result<()> {
         frames: 0,
         copied: false,
         action_error: None,
+        bug_report: Default::default(),
         reason: if dir.join("panic.txt").metadata().is_ok_and(|m| m.len() > 0) {
             aurora_i18n::tr!("crash-reason-rust")
         } else if dir.join("native.txt").metadata().is_ok_and(|m| m.len() > 0) {
@@ -71,14 +72,23 @@ struct Recovery {
     copied: bool,
     action_error: Option<String>,
     reason: &'static str,
+    bug_report: crate::ui::bug_report::BugReportUi,
 }
 
 impl Recovery {
     fn content(&mut self, ui: &mut egui::Ui, event_loop: &ActiveEventLoop) {
         let p = self.record.theme.palette();
+        if self.bug_report.requested {
+            self.open_report();
+        }
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(p.panel).inner_margin(28.0))
             .show(ui, |ui| {
+                // Do not leave the private stack readable behind the shared
+                // report form's translucent viewer surface.
+                if self.bug_report.open {
+                    return;
+                }
                 ui.horizontal(|ui| {
                     if let Some(icon) = self.icons.get("warning") {
                         ui.add(egui::Image::new(icon).fit_to_exact_size(Vec2::splat(58.0)).tint(p.amber));
@@ -158,8 +168,26 @@ impl Recovery {
                     if widgets::flat_button_sized(ui, &p, aurora_i18n::tr!("crash-close"), Vec2::new(110.0, 34.0)).clicked() {
                         event_loop.exit();
                     }
+                    if widgets::flat_button_sized(ui, &p, aurora_i18n::tr!("crash-send-report"), Vec2::new(232.0, 34.0)).clicked() {
+                        self.open_report();
+                    }
                 });
             });
+        self.bug_report.show(ui.ctx(), &p, &self.icons, false);
+    }
+
+    fn open_report(&mut self) {
+        self.bug_report
+            .begin_preserved(super::report::draft(&self.record, &self.dir), self.dir.clone(), self.record.demo);
+        if let Some(window) = &self.window {
+            let scale = window.scale_factor();
+            let height = window
+                .current_monitor()
+                .map(|m| f64::from(m.size().height) / scale - 100.0)
+                .unwrap_or(940.0)
+                .clamp(500.0, 940.0);
+            let _ = window.request_inner_size(winit::dpi::LogicalSize::new(840.0, height));
+        }
     }
 
     fn render(&mut self, event_loop: &ActiveEventLoop) -> anyhow::Result<()> {
@@ -276,6 +304,9 @@ impl ApplicationHandler for Recovery {
                 self.window = Some(window);
                 self.surface = Some(surface);
                 self.input = Some(input);
+                if self.record.demo && std::env::var_os("AURORA_DEMO_BUG_REPORT").is_some() {
+                    self.open_report();
+                }
             }
             Err(error) => {
                 self.error = Some(error.to_string());

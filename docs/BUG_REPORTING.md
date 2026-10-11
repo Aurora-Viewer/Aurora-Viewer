@@ -7,6 +7,18 @@ Le mode navigateur est disponible sans configuration d’application ; les
 deux modes demandent un compte GitHub au testeur. Sans compte, une copie
 locale reste possible.
 
+Après un plantage, la fenêtre indépendante propose « Envoyer un rapport de
+plantage ». Ce bouton ouvre le même formulaire avec un titre et les données
+conservées de la session arrêtée. Le testeur précise ce qu'il faisait,
+choisit les informations à publier, puis autorise l'envoi. La langue, la
+version et le journal viennent de la session qui a planté, même lorsque la
+fenêtre est récupérée au lancement suivant. Les diagnostics publics et le
+ZIP privé sont décochés au départ ; les traces complètes peuvent rejoindre
+le ZIP privé si le testeur le choisit. Une image peut être jointe depuis un
+fichier. L'autorisation GitHub du viewer étant conservée uniquement en
+mémoire, l'envoi direct depuis la fenêtre de crash demande une nouvelle
+autorisation du testeur.
+
 ## Configuration de l’envoi direct
 
 Créer une **GitHub App**, dans les réglages développeur de l’organisation

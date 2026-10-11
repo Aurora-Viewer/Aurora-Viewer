@@ -53,6 +53,14 @@ impl Field {
         if self.label == "bug-build" && self.value == "debug" {
             return aurora_i18n::tr!("bug-build-development").into();
         }
+        if self.label == "crash-report-reason" {
+            return aurora_i18n::text(match self.value.as_str() {
+                "Rust panic" => "crash-reason-rust",
+                "Native exception" => "crash-reason-native",
+                _ => "crash-reason-unknown",
+            })
+            .into();
+        }
         self.value.clone()
     }
 }
