@@ -25,4 +25,7 @@ Copy-Item -LiteralPath $docs -Destination $Out -ErrorAction Stop
 $taskExePath = (Resolve-Path -LiteralPath $Exe).Path
 $taskVersion = (& $taskExePath --version | Out-String).Trim() -replace '^Aurora Viewer ', ''
 if ($LASTEXITCODE -ne 0 -or $taskVersion -notmatch '^\d+\.\d+\.\d+([+-][0-9A-Za-z.+-]+)?$') { throw 'Version du paquet invalide.' }
-@{ schema = 1; version = $taskVersion } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $Out 'aurora-install.json') -Encoding utf8NoBOM
+$taskJson = @{ schema = 1; version = $taskVersion } | ConvertTo-Json
+$taskMetadataPath = Join-Path (Resolve-Path -LiteralPath $Out -ErrorAction Stop).Path 'aurora-install.json'
+# Windows PowerShell 5.1 does not support Set-Content -Encoding utf8NoBOM.
+[IO.File]::WriteAllText($taskMetadataPath, $taskJson, [Text.UTF8Encoding]::new($false))
