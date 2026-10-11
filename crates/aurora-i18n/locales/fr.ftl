@@ -2142,7 +2142,6 @@ ui-land-access-residents-must-have-payment-info-on-file-to-access = Pour pouvoir
 ui-land-dialogs-the-asking-price-must-exceed-l-0-to-sell = Pour rendre l'annonce disponible à tous, le prix de vente doit être supérieur à 0 L$. Si le prix de vente est de 0 L$, vous devez choisir un acheteur spécifique.
 ui-land-dialogs-for-l-you-can-enter-this-parcel-and-stay = { "Pour " }{ $value0 }{ " L$ vous pouvez pénétrer sur ce terrain (" }{ $value1 }{ ") et y rester " }{ $value2 }{ " heures.\u000A\u000AAcheter un pass ?" }
 build-ui-tools-click-and-drag-to-stretch-the-selected-side = Pour étirer le côté sélectionné, cliquez et faites glisser.
-ui-options-practical = Pratique
 demo-premium = Premium
 world-profiles-lifetime-premium-plus = Premium Plus à vie
 world-profiles-lifetime-premium = Premium à vie

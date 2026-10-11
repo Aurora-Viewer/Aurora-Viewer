@@ -2142,7 +2142,6 @@ ui-land-access-residents-must-have-payment-info-on-file-to-access = Residents mu
 ui-land-dialogs-the-asking-price-must-exceed-l-0-to-sell = The asking price must exceed L$ 0 to sell to anyone. At L$ 0, you must choose a specific buyer.
 ui-land-dialogs-for-l-you-can-enter-this-parcel-and-stay = { "For L$ " }{ $value0 }{ " you can enter this parcel (" }{ $value1 }{ ") and stay for " }{ $value2 }{ " hours.\u000A\u000ABuy a pass?" }
 build-ui-tools-click-and-drag-to-stretch-the-selected-side = Click and drag to stretch the selected side.
-ui-options-practical = Practical
 demo-premium = Premium
 world-profiles-lifetime-premium-plus = Lifetime Premium Plus
 world-profiles-lifetime-premium = Lifetime Premium

@@ -1,11 +1,11 @@
-//! Aurora convenience gestures requested by the user.
+//! HUD gestures in the shortcut preferences.
 use super::{Capture, OptionsUi, group, row};
 use crate::{keybinds::HoldKey, settings::Settings, theme::Palette};
 use egui::{CornerRadius, RichText, Vec2};
 
-pub(super) fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi) -> bool {
+pub(super) fn shortcuts_group(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi) -> bool {
     let mut changed = false;
-    group(ui, p, "HUDs", |ui| {
+    group(ui, p, aurora_i18n::tr!("preferences-group-huds"), |ui| {
         changed |= row(
             ui,
             p,

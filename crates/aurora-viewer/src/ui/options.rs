@@ -3,7 +3,7 @@
 
 mod camera;
 mod commands;
-mod practical;
+mod huds;
 
 use super::fonts::{self, SystemFont};
 use super::icons::Icons;
@@ -60,7 +60,7 @@ pub struct OptionsResult {
 }
 
 /// Category tabs (index = `OptionsUi::tab`).
-fn categories() -> [(&'static str, &'static str); 13] {
+fn categories() -> [(&'static str, &'static str); 12] {
     [
         (aurora_i18n::tr!("ui-options-graphics"), "Command_Environments_Icon"),
         (aurora_i18n::tr!("common-interface"), "Command_Appearance_Icon"),
@@ -74,18 +74,16 @@ fn categories() -> [(&'static str, &'static str); 13] {
         (aurora_i18n::tr!("common-debug"), "code"),
         (aurora_i18n::tr!("common-camera"), "camera"),
         (aurora_i18n::tr!("ui-options-commands"), "terminal-window"),
-        (aurora_i18n::tr!("ui-options-practical"), "hand-grabbing"),
     ]
 }
 
 /// Order of the tabs in the sidebar.
-const ORDER: [usize; 13] = [0, 1, 2, 3, TAB_COMMANDS, 7, 4, TAB_CAMERA, TAB_PRACTICAL, 8, 5, 6, 9];
+const ORDER: [usize; 12] = [0, 1, 2, 3, TAB_COMMANDS, 7, 4, TAB_CAMERA, 8, 5, 6, 9];
 
 pub const TAB_AUDIO: usize = 7;
 pub const TAB_CHAT: usize = 3;
 pub const TAB_CAMERA: usize = 10;
 pub const TAB_COMMANDS: usize = 11;
-pub const TAB_PRACTICAL: usize = 12;
 
 const LABEL_W: f32 = 180.0;
 
@@ -462,7 +460,6 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
                             9 => debug_page(ui, p, s),
                             TAB_CAMERA => camera::page(ui, p, s),
                             TAB_COMMANDS => commands::page(ui, p, &mut s.chat_commands),
-                            TAB_PRACTICAL => practical::page(ui, p, s, st),
                             _ => content(ui, p, s, st, &mut r.font_changed, &mut r.clear_cache),
                         };
                     });
@@ -1966,7 +1963,7 @@ fn binding_cell(
 
 /// "Raccourcis": every rebindable action, two bindings each.
 fn keys_page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi) -> bool {
-    let mut c = false;
+    let mut c = huds::shortcuts_group(ui, p, s, st);
     ui.label(
         RichText::new(aurora_i18n::tr!("ui-options-click-a-shortcut-then-press-the-desired-key-or"))
             .size(12.0)

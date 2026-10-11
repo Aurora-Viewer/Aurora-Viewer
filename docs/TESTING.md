@@ -230,7 +230,7 @@ grille.
 
 - ALT + clic gauche maintenu sur la géométrie visible déplace le HUD sans
   ouvrir les outils ; main de saisie au survol et pendant le déplacement.
-- Préférences › Pratique › HUDs : touche configurable (ALT par défaut), clic
+- Préférences › Raccourcis › HUDs : touche configurable (ALT par défaut), clic
   sur la touche puis saisie au clavier, Échap pour annuler et bouton
   Rétablir ALT ; choix enregistré et appliqué au survol comme au déplacement.
 - Le droit Déplacer suffit, y compris sans droit Modifier.
@@ -403,7 +403,7 @@ grille.
   seulement 740, sans `AURORA_CAPTURE_EXIT`). Combiner avec
   `AURORA_DEMO_LOGIN=empty` pour l’écran de connexion : Déconnecter est
   désactivé. Les choix sont simulés hors ligne, sans requête de connexion.
-- **`AURORA_DEMO_OPTIONS=<section>`** : par exemple `12` pour Pratique
+- **`AURORA_DEMO_OPTIONS=<section>`** : par exemple `8` pour Raccourcis
   (touche de déplacement des HUDs).
 - **`AURORA_DEMO_CRASH=panic|native|missing|normal|recovery`**, seulement
   avec `AURORA_DEMO` : déclenche une panique Rust, une exception native
