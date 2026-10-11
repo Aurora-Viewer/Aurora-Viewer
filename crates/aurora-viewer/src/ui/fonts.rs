@@ -394,6 +394,102 @@ mod tests {
         }
     }
 
+    /// Known defect of egui 0.36.2 (emilk/egui#8576), whatever the fonts: a
+    /// run that starts with a right-to-left letter and holds n characters
+    /// comes back from shaping as 2n - 1 glyphs (its cluster offsets
+    /// decrease, and `layout_shaped_run` then pads the first cluster with
+    /// the whole run), while egui's cursor code counts one glyph per
+    /// character. The end of the row is past the end of the text, and
+    /// `ccursor_previous_word` subtracts below zero from there.
+    ///
+    /// This test fails once egui is fixed: remove it, and the `#[ignore]` of
+    /// the two tests below, put Ctrl+Left and Ctrl+Backspace back in
+    /// `select_and_edit`, and update the line of TASKS.md.
+    #[test]
+    fn egui_still_shapes_surplus_glyphs_in_right_to_left_runs() {
+        let mut fonts = egui::epaint::Fonts::new(Default::default(), noto(&[]));
+        let mut glyphs = |text: &str| {
+            let font = egui::FontId::proportional(14.0);
+            let galley = fonts
+                .with_pixels_per_point(1.0)
+                .layout_no_wrap(text.to_owned(), font, egui::Color32::WHITE);
+            galley.rows[0].glyphs.len()
+        };
+        assert_eq!(glyphs("ب"), 1);
+        assert_eq!(glyphs("dب"), 2, "a run that starts left to right");
+        assert_eq!(glyphs("بب"), 3, "egui#8576 is fixed: see this test's comment");
+        assert_eq!(glyphs("a אבג b"), 9, "egui#8576 is fixed: see this test's comment");
+    }
+
+    /// What the cursor code needs: one glyph per character in every row.
+    #[test]
+    #[ignore = "egui 0.36.2 shapes surplus glyphs in right-to-left runs (emilk/egui#8576)"]
+    fn right_to_left_runs_hold_one_glyph_per_character() {
+        let system = fallback::wait();
+        for defs in [egui::FontDefinitions::default(), noto(&[]), noto(system)] {
+            let mut fonts = egui::epaint::Fonts::new(Default::default(), defs);
+            for text in ["Aurora بღd", "بب", "ببب", "אב", "a אבג b", "عدد 123 مرحبا", "ღب"] {
+                let galley = fonts.with_pixels_per_point(1.0).layout_no_wrap(
+                    text.to_owned(),
+                    egui::FontId::proportional(14.0),
+                    egui::Color32::WHITE,
+                );
+                assert_eq!(galley.rows[0].glyphs.len(), text.chars().count(), "{text:?}");
+                assert_eq!(galley.end().index.0, text.chars().count(), "{text:?}");
+            }
+        }
+    }
+
+    /// Previous word (Ctrl+Left) and its deletion (Ctrl+Backspace) from the
+    /// end of a field holding right-to-left letters. With egui 0.36.2 the
+    /// caret is past the text there (11 for 10 characters): the profiles
+    /// with overflow checks (`ci`, `debugging`) panic in
+    /// `ccursor_previous_word`; the others send the caret to the start of
+    /// the text, and Ctrl+Backspace empties the field.
+    #[test]
+    #[ignore = "egui 0.36.2 shapes surplus glyphs in right-to-left runs (emilk/egui#8576)"]
+    fn previous_word_from_the_end_of_right_to_left_text() {
+        use egui::{Event, Key, Modifiers};
+        let ctx = egui::Context::default();
+        let id = egui::Id::new("edit");
+        let mut text = "Aurora بღd".to_owned();
+        let frame = |events: Vec<Event>, text: &mut String| {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(400.0, 200.0))),
+                events,
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(input, |ui| ui.add(egui::TextEdit::multiline(text).id(id)).request_focus());
+            out.textures_delta.clear();
+        };
+        let key = |key, modifiers| Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        };
+        let caret = || {
+            let range = egui::TextEdit::load_state(&ctx, id).and_then(|state| state.cursor.char_range());
+            range.map(|range| (range.secondary.index.0, range.primary.index.0))
+        };
+        let command = Modifiers {
+            ctrl: true,
+            command: true,
+            ..Modifiers::NONE
+        };
+        frame(vec![], &mut text);
+        frame(vec![], &mut text);
+        frame(vec![key(Key::End, Modifiers::NONE)], &mut text);
+        assert_eq!(caret(), Some((10, 10)), "End");
+        frame(vec![key(Key::ArrowLeft, command)], &mut text);
+        assert_eq!(caret(), Some((7, 7)), "Ctrl+Left");
+        frame(vec![key(Key::End, Modifiers::NONE)], &mut text);
+        frame(vec![key(Key::Backspace, command)], &mut text);
+        assert_eq!(text, "Aurora ", "Ctrl+Backspace");
+        assert_eq!(caret(), Some((7, 7)), "Ctrl+Backspace");
+    }
+
     fn select_and_edit(defs: egui::FontDefinitions, labels: &[&str]) {
         use egui::{Event, Key, Modifiers, PointerButton, Rect, pos2, vec2};
         let ctx = egui::Context::default();
@@ -458,10 +554,10 @@ mod tests {
                 frame(vec![Event::PointerMoved(at), button(at, true)], &mut edited);
                 frame(vec![button(at, false)], &mut edited);
                 // No move or deletion to the previous word (Ctrl+Left,
-                // Ctrl+Backspace): egui 0.36.2 subtracts past zero there once
-                // the field holds a right-to-left letter, whatever the fonts
-                // (ccursor_previous_word). Without overflow checks the caret
-                // goes to the start of the text; the CI profile panics.
+                // Ctrl+Backspace) until egui is fixed: its caret is past the
+                // text once the field holds a right-to-left run, and the
+                // profiles with overflow checks panic there (see
+                // egui_still_shapes_surplus_glyphs_in_right_to_left_runs).
                 for (k, m) in [
                     (Key::ArrowLeft, Modifiers::NONE),
                     (Key::ArrowRight, Modifiers::SHIFT),
