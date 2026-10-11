@@ -581,9 +581,10 @@ mod tests {
         let icons = Icons::default();
         let mut settings = Settings::default();
         // Modal areas size themselves on the first frame before painting.
-        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+        let mut warmup = ctx.run_ui(egui::RawInput::default(), |ui| {
             show_real(ui.ctx(), &p, &icons, &mut updater, &mut settings, runtime.handle());
         });
+        warmup.textures_delta.clear();
         let mut output = ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 900.0))),
@@ -606,7 +607,7 @@ mod tests {
                 "expected choice: {label}"
             );
         }
-        let _ = ctx.run_ui(
+        let mut escape = ctx.run_ui(
             egui::RawInput {
                 events: vec![egui::Event::Key {
                     key: egui::Key::Escape,
@@ -621,6 +622,7 @@ mod tests {
                 show_real(ui.ctx(), &p, &icons, &mut updater, &mut settings, runtime.handle());
             },
         );
+        escape.textures_delta.clear();
         assert!(updater.open && updater.blocks_login());
     }
 

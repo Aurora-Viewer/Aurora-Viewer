@@ -204,7 +204,7 @@ mod tests {
     fn tessellation_keeps_lower_layers_before_the_blur_and_modal_layers_after_it() {
         let ctx = egui::Context::default();
         let modal = egui::LayerId::new(egui::Order::Foreground, egui::Id::new("modal"));
-        let output = ctx.run_ui(Default::default(), |_| {
+        let mut output = ctx.run_ui(Default::default(), |_| {
             // Call order deliberately differs from layer order.
             blurred_backdrop(&ctx, modal);
             ctx.layer_painter(modal).rect_filled(
@@ -218,6 +218,8 @@ mod tests {
                 egui::Color32::RED,
             );
         });
+        // No GPU renderer in this test: discard texture uploads explicitly.
+        output.textures_delta.clear();
         let mut primitives = ctx.tessellate(output.shapes, output.pixels_per_point);
         let boundary = take_boundary(&mut primitives).expect("blur marker survives tessellation");
         let colors = |jobs: &[egui::ClippedPrimitive]| {
