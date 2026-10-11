@@ -283,6 +283,9 @@ pub struct App {
     devices_listed: bool,
     /// Color emoji (Noto 3D) for chat and the picker.
     emoji: ui::emoji::Emoji,
+    /// The system's fallback fonts were still being looked for when the
+    /// fonts were installed: installed again once they are there.
+    system_fonts_pending: bool,
     /// Profile pictures by avatar id (egui textures).
     avatar_pics: std::collections::HashMap<uuid::Uuid, egui::TextureHandle>,
     /// Other interface images by asset id (profiles: 1st life picture,
@@ -338,6 +341,8 @@ pub struct App {
 
 impl App {
     pub fn new() -> anyhow::Result<App> {
+        // found on a background thread while the rest starts
+        ui::fonts::fallback::start();
         let mut settings = Settings::load();
         aurora_i18n::select(&settings.language, crate::cli::get().language.as_deref());
         if std::env::var_os("AURORA_DEMO").is_some() && std::env::var_os("AURORA_DEMO_KEYBOARD").is_some() {
@@ -380,7 +385,7 @@ impl App {
         net.set_object_cache_dir(Some(cache.join("objects")));
         let cache_root = cache.clone();
         let egui_ctx = egui::Context::default();
-        ui::fonts::apply(&egui_ctx, &settings.font);
+        let system_fonts_pending = !ui::fonts::apply(&egui_ctx, &settings.font);
         ui::colors::set(&settings.colors);
         let skin = Skin::load(&egui_ctx, "aurora", settings.font_scale);
         crate::crash::update(&skin.theme, &settings);
@@ -580,6 +585,7 @@ impl App {
             sound_blocks: Default::default(),
             devices_listed: false,
             emoji: ui::emoji::Emoji::load(),
+            system_fonts_pending,
             avatar_pics: Default::default(),
             ui_images: Default::default(),
             profile_ui: Default::default(),
@@ -4034,6 +4040,9 @@ impl App {
         self.frame_profile.lap(Lap::Params);
         // ---- UI
         let t_ui = Instant::now();
+        if self.system_fonts_pending && ui::fonts::fallback::ready().is_some() {
+            self.system_fonts_pending = !ui::fonts::apply(&self.egui_ctx, &self.settings.font);
+        }
         let mut raw = gfx.egui_state.take_egui_input(&gfx.window);
         self.demo_script_input(&mut raw);
         // Inline-edit captures simulate logical focus without activating the
@@ -4314,7 +4323,7 @@ impl App {
 
         // apply UI actions
         if actions.font_changed {
-            ui::fonts::apply(&self.egui_ctx, &self.settings.font);
+            self.system_fonts_pending = !ui::fonts::apply(&self.egui_ctx, &self.settings.font);
         }
         if actions.settings_changed {
             aurora_i18n::select(&self.settings.language, crate::cli::get().language.as_deref());
@@ -6584,6 +6593,20 @@ impl ApplicationHandler for App {
                 for ev in crate::demo::crowd_events(n, rigged) {
                     self.world.apply(ev);
                 }
+            }
+            // AURORA_DEMO_GLYPHS=1|2: residents named and talking in the
+            // characters of the grid's display names (system fallback fonts)
+            if let Some(reversed) = crate::demo::glyphs::scenario() {
+                for ev in crate::demo::glyphs::events(reversed) {
+                    if let Some(e) = self.world.apply(ev) {
+                        self.on_app_event(e);
+                    }
+                }
+                self.panels.chat = true;
+                self.panels.people = false;
+                self.panels.inventory = false;
+                self.panels.minimap = false;
+                self.panels.perf = false;
             }
             // AURORA_DEMO_SOUND=1: a looped chime on the fountain and the
             // interface sounds (audible: off by default for the captures)
