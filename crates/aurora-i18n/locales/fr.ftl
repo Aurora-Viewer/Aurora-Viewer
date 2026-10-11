@@ -3179,3 +3179,20 @@ memory-mb-suffix = { " Mo" }
 perf-frame-tooltip = { $fps } i/s · { $ms } ms
 perf-texture-memory = { $loaded } / { $total } · { $value } Mo
 perf-page-memory = { $pages } · { $value } Mo
+
+# Fenêtre indépendante de récupération après plantage
+crash-title = Aurora Viewer — Rapport de plantage
+crash-heading = Aurora Viewer s’est arrêté de façon inattendue
+crash-explanation = Votre session est terminée. Les détails ci-dessous peuvent aider à comprendre le problème.
+crash-local-only = Ces informations sont conservées sur cet ordinateur. Rien n’a été envoyé.
+crash-details = Détails techniques
+crash-open-folder = Ouvrir le dossier du rapport
+crash-copy-trace = Copier la trace
+crash-no-trace = Aucune pile d’appels n’a pu être récupérée. Les informations de session restent disponibles dans le dossier du rapport.
+crash-private-trace = La trace complète peut contenir des chemins personnels. Vérifiez-la avant de la partager.
+crash-copied = Trace copiée. Vérifiez son contenu avant de la partager.
+crash-close = Fermer
+crash-folder-error = Le dossier du rapport n’a pas pu être ouvert. La trace peut toujours être copiée.
+crash-reason-rust = Panique Rust
+crash-reason-native = Plantage natif
+crash-reason-unknown = Arrêt inattendu

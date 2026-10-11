@@ -222,6 +222,42 @@ La projection et les listes HUD font partie de la copie du paquet d’image (`Dr
 
 ## Données sur la machine
 
+### Récupération après plantage
+
+`aurora-viewer/src/crash/` conserve un dossier par session (UUID), avant
+l'initialisation du réseau et du rendu. `mod.rs` gère les instantanés
+(version, langue, thème), la trace Rust et la récupération au lancement
+suivant ; `native.rs` installe le filtre d'exception Windows et surveille
+la fin du processus par une poignée système, avec contrôle de sa date de
+création pour éviter la réutilisation d'un PID. Le surveillant est le même
+exécutable, démarré en mode interne avant toute initialisation du viewer.
+Il ne relance jamais le viewer.
+
+`window.rs` réutilise Fluent, la Palette, les polices, les icônes Phosphor
+et les boutons du viewer. `software.rs` dessine ses maillages egui sur le
+CPU et `softbuffer` présente les pixels, sans initialiser Vulkan ni aucun
+adaptateur graphique. La boucle attend les événements entre les images.
+
+Le journal est écrit également dans le dossier propre à la session : ni
+la rotation du journal ordinaire ni une autre instance ne peuvent le
+remplacer. Les traces et journaux complets restent locaux. Un verrou de
+fichier empêche deux fenêtres de présenter le même rapport ; une seule
+tentative de récupération automatique est faite au lancement suivant si
+la première fenêtre n'a pas pu s'ouvrir. Les rapports confirmés restent
+sur disque ; les dossiers des sessions terminées normalement sont retirés.
+
+La surveillance immédiate et la capture native concernent Windows
+(plateforme des releases). Une trace native contient le code d'exception,
+l'adresse fautive et les adresses de la pile ; une trace Rust contient
+les symboles disponibles. Une pile endommagée ou un arrêt forcé peut ne
+laisser aucune trace, ce que la fenêtre explique explicitement.
+
+Les rapports sont sous `logs/crashes/sessions/<uuid>/`, et les essais
+hors ligne sous `logs/crashes/demo/<uuid>/` ; `session.json`, `session.log`,
+`panic.txt`, `native.txt` et les marqueurs appartiennent à une seule
+exécution. Les arguments internes `--crash-watch` et `--crash-show`
+n'acceptent que les dossiers UUID immédiatement sous cette racine.
+
 | Quoi | Où (Windows) |
 |---|---|
 | Réglages, skins, disposition des fenêtres | `%APPDATA%\Aurora\AuroraViewer\config\` |

@@ -3179,3 +3179,20 @@ memory-mb-suffix = { " MB" }
 perf-frame-tooltip = { $fps } FPS · { $ms } ms
 perf-texture-memory = { $loaded } / { $total } · { $value } MB
 perf-page-memory = { $pages } · { $value } MB
+
+# Independent crash recovery window
+crash-title = Aurora Viewer — Crash report
+crash-heading = Aurora Viewer stopped unexpectedly
+crash-explanation = Your session has ended. The details below can help identify the problem.
+crash-local-only = These details are saved on this computer. Nothing has been sent.
+crash-details = Technical details
+crash-open-folder = Open report folder
+crash-copy-trace = Copy trace
+crash-no-trace = No stack trace could be recovered. The session details are still available in the report folder.
+crash-private-trace = The full trace may contain personal paths. Review it before sharing.
+crash-copied = Trace copied. Review its contents before sharing.
+crash-close = Close
+crash-folder-error = The report folder could not be opened. The trace can still be copied.
+crash-reason-rust = Rust panic
+crash-reason-native = Native crash
+crash-reason-unknown = Unexpected shutdown

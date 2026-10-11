@@ -96,6 +96,15 @@ fn skin_dirs(name: &str) -> Vec<PathBuf> {
     v
 }
 
+/// Read the theme before graphics startup so early crashes use the same skin.
+pub fn recovery_theme() -> Theme {
+    skin_dirs("aurora")
+        .into_iter()
+        .find(|dir| dir.is_dir())
+        .map(|dir| read_json(&dir.join("theme.json")))
+        .unwrap_or_default()
+}
+
 /// Latest modification time of any file in the skin (for hot reload).
 fn stamp(dir: &Path) -> Option<SystemTime> {
     let mut latest: Option<SystemTime> = None;

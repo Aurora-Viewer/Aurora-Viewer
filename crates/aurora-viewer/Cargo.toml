@@ -39,6 +39,7 @@ resvg = "0.48"
 rfd = "0.17.2"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
+softbuffer = "0.4.8"
 ttf-parser = "0.25.1"
 uuid = { version = "1.27.0", features = ["v4"] }
 wgpu = "30.0.1"
@@ -53,7 +54,7 @@ tokio = { version = "1", default-features = false, features = ["rt"] }
 version = "4"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61.2", features = ["Win32_UI_Input_KeyboardAndMouse", "Win32_System_Threading"] }
+windows-sys = { version = "0.61.2", features = ["Win32_UI_Input_KeyboardAndMouse", "Win32_System_Threading", "Win32_System_Diagnostics_Debug", "Win32_System_Kernel"] }
 
 [lints]
 workspace = true
