@@ -268,8 +268,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn double_click_opens_a_notecard_even_read_only_and_never_starts_renaming() {
-        for editable in [true, false] {
+    fn double_click_opens_scripts_and_notecards_even_read_only_and_never_starts_renaming() {
+        for (asset_type, editable) in [(7, true), (7, false), (AT_LSL_TEXT, true), (AT_LSL_TEXT, false)] {
             let ctx = egui::Context::default();
             let p = crate::theme::Theme::default().palette();
             let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
@@ -278,7 +278,7 @@ mod tests {
             let item = TaskItem {
                 item_id: uuid::Uuid::from_u128(2),
                 name: "Note".into(),
-                asset_type: 7,
+                asset_type,
                 owner_mask: perm::COPY | perm::MODIFY | perm::TRANSFER,
                 ..Default::default()
             };
@@ -324,7 +324,18 @@ mod tests {
                     );
                 }
             }
-            assert_eq!(tool.ui.open_notecard, Some((object, item.item_id)));
+            if asset_type == AT_LSL_TEXT {
+                assert!(tool.ui.open_notecard.is_none());
+                assert_eq!(tool.ui.requests.len(), 1);
+                assert!(matches!(
+                    tool.ui.requests.first(),
+                    Some(super::super::Request::Script { object: opened, item: opened_item })
+                    if *opened == object && *opened_item == item.item_id
+                ));
+            } else {
+                assert_eq!(tool.ui.open_notecard, Some((object, item.item_id)));
+                assert!(tool.ui.requests.is_empty());
+            }
             assert!(tool.ui.rename.is_none());
         }
     }

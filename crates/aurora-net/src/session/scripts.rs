@@ -321,6 +321,7 @@ mod tests {
         });
         let (eq_tx, _) = mpsc::unbounded_channel();
         let (caps_tx, _) = mpsc::unbounded_channel();
+        let (notecard_copy_tx, _) = mpsc::unbounded_channel();
         let mut session = Session {
             sh: &sh,
             sock: sock.clone(),
@@ -329,6 +330,8 @@ mod tests {
             main: Some(main_addr),
             eq_tx,
             caps_tx,
+            notecard_copy_tx,
+            notecard_copies: HashMap::new(),
             last_controls: AgentControls::default(),
             last_agent_update: Instant::now(),
             one_shot: 0,
@@ -348,6 +351,7 @@ mod tests {
             land: Default::default(),
             decode_failures: HashMap::new(),
             inventory_uploads: Default::default(),
+            inventory_previews: Default::default(),
             script_transfers: Default::default(),
             inventory_callbacks: HashMap::new(),
             inventory_merchant_pending: false,
