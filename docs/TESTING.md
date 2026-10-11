@@ -505,6 +505,7 @@ grille.
 | `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Liste des notifications, menu de statut, champ de lieu |
 | `AURORA_DEMO_CONV=1`, `AURORA_DEMO_TALK=1` | Conversation de groupe, micro ouvert |
 | `AURORA_DEMO_CONTACTS=<onglet>` | Onglet Contacts de Conversations |
+| `AURORA_DEMO_GLYPHS=1` | Noms, titres et chat en caractères étendus (polices du système) |
 | `AURORA_DEMO_PROFILE=<avatar>[:onglet]` | Fenêtre de profil d'un avatar |
 | `AURORA_DEMO_FEED=<url>` | Onglet « Flux » du profil sur cette page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Fenêtre Apparence et tenues |
@@ -535,6 +536,26 @@ grille.
   désactivé. Les choix sont simulés hors ligne, sans requête de connexion.
 - **`AURORA_DEMO_OPTIONS=<section>`** : par exemple `8` pour Raccourcis
   (touche de déplacement des HUDs).
+- **`AURORA_DEMO_GLYPHS=1|2`** : huit résidents sur deux rangs devant
+  l'avatar (le second rang en vol), un cube à texte flottant à droite et la
+  fenêtre Conversations sur le chat local. Titre de groupe, nom d'affichage
+  et message de chacun utilisent une famille de caractères : géorgien et
+  arménien (le titre « ღAurora Friendღ » de l'issue #127), lettres
+  mathématiques (gras, script, gothique, double trait), symboles et
+  encadrés, cyrillique et grec, japonais / coréen / chinois, arabe et
+  hébreu, autres écritures (syllabaire canadien, cherokee, devanagari,
+  thaï, tamoul, tibétain…), emojis. `2` : mêmes messages dans l'ordre
+  inverse (la fenêtre de chat par défaut montre les quatre derniers).
+  Ce qu'il faut voir : aucun carré dans les étiquettes, le texte flottant,
+  le chat et sa liste ; tous les caractères d'une ligne posés sur la même
+  ligne de base. Comparer avec `AURORA_FONT_FALLBACK=0` (carrés partout
+  sauf cyrillique, grec, emojis et quelques symboles). Limites visibles : les mots arabes et
+  hébreux sont bien formés, mais ceux d'une phrase se suivent de gauche à
+  droite ; drapeaux, tons de peau et séquences ZWJ non composés ; emojis
+  monochromes hors du chat. Sur un système sans les polices attendues
+  (voir `ui/fonts/fallback.rs`, vérifié sur Windows 11), les carrés
+  restent pour les écritures manquantes ; le journal liste les polices
+  trouvées (`system fallback fonts: …`).
 - **`AURORA_DEMO_CRASH=panic|native|missing|normal|recovery`**, seulement
   avec `AURORA_DEMO` : déclenche une panique Rust, une exception native
   Windows, une sortie anormale sans trace, une fermeture normale ou une
@@ -856,9 +877,15 @@ Ce que l'inventaire doit montrer avec ces scénarios :
 | `AURORA_DEBUG_GLOW=1` | Diagnostic du glow |
 | `AURORA_GLOW_SKIP=<masque>` | Retire une famille de faces du glow |
 | `AURORA_MEDIA_DEBUG=1` | Diagnostic des médias |
+| `AURORA_FONT_FALLBACK=0` | Sans les polices de repli du système |
 
 ### Détails
 
+- **`AURORA_FONT_FALLBACK=0`** : n'utilise que les polices embarquées, comme
+  avant l'ajout des polices de repli du système : les caractères qu'elles
+  n'ont pas (géorgien, CJK, arabe, lettres mathématiques…) redeviennent des
+  carrés. Pour comparer avec `AURORA_DEMO_GLYPHS=1` ou isoler un problème
+  de police. Le journal indique `system fallback fonts: off`.
 - **`AURORA_CPU_CULL=1`** : construit toutes les listes de dessin sur le CPU
   (le repli quand le GPU n'a pas `MULTI_DRAW_INDIRECT_COUNT`) au lieu de les
   trier sur le GPU, pour comparer ; `cull=cpu|gpu` dans la ligne
