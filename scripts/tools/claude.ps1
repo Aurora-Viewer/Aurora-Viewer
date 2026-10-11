@@ -1,19 +1,26 @@
-﻿# Aurora Tools: Claude Code permissions for the agents' PR workflow
+﻿# Aurora Tools: Claude Code permissions for the agents' PR and issue workflow
 # (dot-sourced by aurora-tools.ps1).
 #
-# AGENTS.md has the agent post its review on its own PR and merge it with
-# merge-pr.ps1; Claude Code's auto mode classifier refuses both as
-# "self-approval", even after the human agrees in the chat. Allow rules in the
-# user settings let these two commands through (the merge queue and the
-# protection of main still apply). User settings, not the repository's: the
-# agents work in worktrees of ..\work\, where a project file would not be read.
+# AGENTS.md has the agent post its review on its own PR, merge it with
+# merge-pr.ps1 and answer the issues it handles; Claude Code's auto mode
+# classifier refuses the first two as "self-approval" and the issue comment as
+# an "external system write", even after the human agrees in the chat. Allow
+# rules in the user settings let these commands through (the merge queue and
+# the protection of main still apply). User settings, not the repository's:
+# the agents work in worktrees of ..\work\, where a project file would not be
+# read.
 
 $ClaudeAllowRules = @(
     'PowerShell(gh pr comment *)'
     'PowerShell(./scripts/merge-pr.ps1 *)'
+    'PowerShell(gh issue comment *)'
 )
-# For the classifier, should one of these commands still reach it.
-$ClaudeAutoModeRule = 'In the Aurora-Viewer repository, posting the review comment on the user''s own pull request and merging it with scripts/merge-pr.ps1 is allowed once the human has validated the change and CI is green (AGENTS.md workflow).'
+# For the classifier, should one of these commands still reach it. One rule
+# per subject: a settings file that already has the first only gains the second.
+$ClaudeAutoModeRules = @(
+    'In the Aurora-Viewer repository, posting the review comment on the user''s own pull request and merging it with scripts/merge-pr.ps1 is allowed once the human has validated the change and CI is green (AGENTS.md workflow).'
+    'In the Aurora-Viewer repository, posting a comment on an issue of that repository with gh issue comment is allowed: answering the issues is part of the agents'' work (AGENTS.md, section 15).'
+)
 
 function Get-ClaudeSettingsFile {
     $dir = if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-Path $HOME '.claude' }
@@ -56,15 +63,16 @@ function Merge-ClaudeSettings([string]$File) {
     $added += & $addTo $settings.permissions 'allow' $ClaudeAllowRules @()
     # '$defaults' keeps the built-in classifier rules (only for a new list:
     # an existing one without it was trimmed on purpose)
-    $added += & $addTo $settings.autoMode 'allow' @($ClaudeAutoModeRule) @('$defaults')
+    $added += & $addTo $settings.autoMode 'allow' $ClaudeAutoModeRules @('$defaults')
     @{ Json = ($settings | ConvertTo-Json -Depth 64); Added = @($added | Where-Object { $_ }) }
 }
 
 function Invoke-ClaudePermissions {
     $file = Get-ClaudeSettingsFile
-    Write-Title 'Permissions de Claude Code pour les PR des agents'
-    Write-Color '  Les agents postent leur relecture et fusionnent leur PR eux-mêmes (AGENTS.md) ;' muted
-    Write-Color '  sans ces règles, le mode auto de Claude Code le leur refuse. Autorisés ensuite :' muted
+    Write-Title 'Permissions de Claude Code pour les PR et les issues des agents'
+    Write-Color '  Les agents postent leur relecture, fusionnent leur PR et répondent aux issues' muted
+    Write-Color '  eux-mêmes (AGENTS.md) ; sans ces règles, le mode auto de Claude Code le leur' muted
+    Write-Color '  refuse. Autorisés ensuite :' muted
     foreach ($r in $ClaudeAllowRules) { Write-Color "    • $r" ink }
     Write-Color '  La file de fusion et la protection de main s''appliquent toujours.' muted
     Write-Host ''
