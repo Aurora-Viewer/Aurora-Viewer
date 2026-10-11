@@ -2,24 +2,29 @@
 # (dot-sourced by aurora-tools.ps1).
 #
 # AGENTS.md has the agent post its review on its own PR, merge it with
-# merge-pr.ps1 and answer the issues it handles; Claude Code's auto mode
-# classifier refuses the first two as "self-approval" and the issue comment as
-# an "external system write", even after the human agrees in the chat. Allow
-# rules in the user settings let these commands through (the merge queue and
-# the protection of main still apply). User settings, not the repository's:
-# the agents work in worktrees of ..\work\, where a project file would not be
-# read.
+# merge-pr.ps1, read the open issues at the start of each session and answer
+# the ones it handles; Claude Code's auto mode classifier refuses the first two
+# as "self-approval", the issue comment as an "external system write" and even
+# the listing of the issues ("interfere with workloads"), even after the human
+# agrees in the chat. Allow rules in the user settings let these commands
+# through (the merge queue and the protection of main still apply). User
+# settings, not the repository's: the agents work in worktrees of ..\work\,
+# where a project file would not be read.
 
 $ClaudeAllowRules = @(
     'PowerShell(gh pr comment *)'
     'PowerShell(./scripts/merge-pr.ps1 *)'
     'PowerShell(gh issue comment *)'
+    'PowerShell(gh issue list *)'
+    'PowerShell(gh issue view *)'
 )
-# For the classifier, should one of these commands still reach it. One rule
-# per subject: a settings file that already has the first only gains the second.
+# For the classifier, should one of these commands still reach it (a listing
+# piped into a PowerShell loop does not match the allow rule). One rule per
+# subject: a settings file that already has the first ones only gains the new.
 $ClaudeAutoModeRules = @(
     'In the Aurora-Viewer repository, posting the review comment on the user''s own pull request and merging it with scripts/merge-pr.ps1 is allowed once the human has validated the change and CI is green (AGENTS.md workflow).'
     'In the Aurora-Viewer repository, posting a comment on an issue of that repository with gh issue comment is allowed: answering the issues is part of the agents'' work (AGENTS.md, section 15).'
+    'In the Aurora-Viewer repository, listing and reading the issues of that repository with gh issue list or gh issue view, including formatting their JSON output in PowerShell, is allowed: these commands only read, and following the issues is part of the agents'' work (AGENTS.md, sections 8 and 15).'
 )
 
 function Get-ClaudeSettingsFile {
@@ -70,9 +75,9 @@ function Merge-ClaudeSettings([string]$File) {
 function Invoke-ClaudePermissions {
     $file = Get-ClaudeSettingsFile
     Write-Title 'Permissions de Claude Code pour les PR et les issues des agents'
-    Write-Color '  Les agents postent leur relecture, fusionnent leur PR et répondent aux issues' muted
-    Write-Color '  eux-mêmes (AGENTS.md) ; sans ces règles, le mode auto de Claude Code le leur' muted
-    Write-Color '  refuse. Autorisés ensuite :' muted
+    Write-Color '  Les agents postent leur relecture, fusionnent leur PR, lisent les issues et y' muted
+    Write-Color '  répondent eux-mêmes (AGENTS.md) ; sans ces règles, le mode auto de Claude Code' muted
+    Write-Color '  le leur refuse. Autorisés ensuite :' muted
     foreach ($r in $ClaudeAllowRules) { Write-Color "    • $r" ink }
     Write-Color '  La file de fusion et la protection de main s''appliquent toujours.' muted
     Write-Host ''
