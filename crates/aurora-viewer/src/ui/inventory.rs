@@ -11,6 +11,8 @@ use uuid::Uuid;
 mod context;
 mod controls;
 mod dialogs;
+mod document;
+pub use document::document_demo_events;
 mod properties;
 pub mod thumbnail;
 mod view;
@@ -42,8 +44,10 @@ pub enum InvAction {
     },
     Preview(Uuid),
     SaveContent {
+        editor: Uuid,
         item: Uuid,
         text: String,
+        close: bool,
     },
     Environment(Uuid, u32),
     Profile(Uuid),
@@ -229,6 +233,11 @@ pub struct InventoryUi {
     pub preview_can_edit: bool,
     pub preview_dirty: bool,
     pub save_pending: bool,
+    pub preview_source: Option<aurora_net::inventory::notecard::Notecard>,
+    pub preview_original: String,
+    pub preview_message: String,
+    pub content_save: Option<(Uuid, Vec<u8>, String)>,
+    pub close_after_save: bool,
     pub wanted_images: HashSet<Uuid>,
     pub playing: Option<(Uuid, bool)>,
     pub animation_stats: Option<(Uuid, AnimationStats)>,
@@ -1158,7 +1167,6 @@ pub fn show(
         w.state.cut = st.cut;
         w.state.pending = st.pending;
         w.state.merchant = st.merchant;
-        w.state.save_pending = st.save_pending;
         w.state.playing = st.playing;
         let before = (w.state.clipboard.clone(), w.state.cut);
         let title = aurora_i18n::tr!("ui-inventory-inventory", value0 = folder_name(&world.inventory, w.root).to_string());

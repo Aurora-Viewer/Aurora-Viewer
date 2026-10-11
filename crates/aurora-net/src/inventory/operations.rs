@@ -381,6 +381,9 @@ pub async fn save_content(
     if data.len() > 1024 * 1024 {
         return Err(aurora_i18n::tr!("inventory-operations-the-document-is-too-large").into());
     }
+    if kind == 7 {
+        super::notecard::Notecard::decode(&data)?;
+    }
     let mut body = llsd_map! { "item_id" => item };
     if kind == 10 {
         body.insert("target", Llsd::String("mono".into()));
@@ -417,13 +420,26 @@ pub async fn save_content(
     if kind == 10 && !ack["compiled"].as_bool() {
         return Err(aurora_i18n::tr!("inventory-operations-the-script-contains-compilation-errors-check-the-code-and").into());
     }
-    let doc = crate::caps::post_llsd(http, fetch, &super::fetch_items_body(&[item], owner))
+    let asset = ack["new_asset"].as_uuid();
+    if kind == 7 && asset.is_nil() {
+        return Err(aurora_i18n::tr!("inventory-operations-the-server-did-not-confirm-the-save").into());
+    }
+    let saved_item = if ack["new_inventory_item"].as_uuid().is_nil() {
+        item
+    } else {
+        ack["new_inventory_item"].as_uuid()
+    };
+    let doc = crate::caps::post_llsd(http, fetch, &super::fetch_items_body(&[saved_item], owner))
         .await
         .map_err(|_| aurora_i18n::tr!("inventory-operations-saved-but-could-not-read-it-back-reload-inventory").to_owned())?;
-    super::parse_items_response(&doc)
+    let saved = super::parse_items_response(&doc)
         .into_iter()
-        .find(|it| it.id == item)
-        .ok_or_else(|| aurora_i18n::tr!("inventory-operations-the-saved-item-could-not-be-found").into())
+        .find(|it| it.id == saved_item)
+        .ok_or_else(|| aurora_i18n::tr!("inventory-operations-the-saved-item-could-not-be-found").to_owned())?;
+    if kind == 7 && (saved.asset_id != asset || saved.asset_type != 7) {
+        return Err(aurora_i18n::tr!("notecard-save-unconfirmed").into());
+    }
+    Ok(saved)
 }
 
 #[cfg(test)]
@@ -432,6 +448,130 @@ mod tests {
     use crate::outfits::tests::server;
     fn id(n: u128) -> Uuid {
         Uuid::from_u128(n)
+    }
+
+    async fn notecard_server(stale: bool, reject: bool, replace: bool) -> (String, tokio::task::JoinHandle<Vec<(String, Vec<u8>)>>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("test server");
+        let url = format!("http://{}", listener.local_addr().expect("address"));
+        let returned_item = if replace { id(30) } else { id(3) };
+        let replies = vec![
+            (200, llsd_map! { "state" => "upload", "uploader" => format!("{url}/upload") }),
+            (
+                if reject { 503 } else { 200 },
+                llsd_map! { "state" => "complete", "new_asset" => id(40), "new_inventory_item" => returned_item },
+            ),
+            (
+                200,
+                llsd_map! { "items" => Llsd::Array(vec![llsd_map! {
+                    "item_id" => returned_item, "parent_id" => id(1), "type" => 7, "inv_type" => 7,
+                    "asset_id" => if stale { id(4) } else { id(40) }, "name" => "Note",
+                    "permissions" => llsd_map! { "owner_id" => id(2), "owner_mask" => 0x7fffffff }
+                }]) },
+            ),
+        ];
+        let task = tokio::spawn(async move {
+            let mut requests = Vec::new();
+            for (status, reply) in replies.into_iter().take(if reject { 2 } else { 3 }) {
+                let (mut socket, _) = tokio::time::timeout(std::time::Duration::from_secs(5), listener.accept())
+                    .await
+                    .expect("request timeout")
+                    .expect("request");
+                let mut bytes = Vec::new();
+                let (start, size) = loop {
+                    let mut chunk = [0u8; 4096];
+                    let n = socket.read(&mut chunk).await.expect("read");
+                    assert!(n > 0, "complete request body");
+                    bytes.extend_from_slice(&chunk[..n]);
+                    if let Some(end) = bytes.windows(4).position(|b| b == b"\r\n\r\n") {
+                        let header = String::from_utf8_lossy(&bytes[..end]);
+                        let size = header
+                            .lines()
+                            .find_map(|line| {
+                                line.split_once(':')
+                                    .filter(|(key, _)| key.eq_ignore_ascii_case("content-length"))
+                                    .and_then(|(_, value)| value.trim().parse::<usize>().ok())
+                            })
+                            .expect("content length");
+                        if bytes.len() >= end + 4 + size {
+                            break (end + 4, size);
+                        }
+                    }
+                };
+                requests.push((
+                    String::from_utf8_lossy(&bytes[..start]).into_owned(),
+                    bytes[start..start + size].to_vec(),
+                ));
+                let body = aurora_llsd::to_xml(&reply);
+                let header = format!(
+                    "HTTP/1.1 {status} Test\r\nContent-Type: application/llsd+xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                socket.write_all(header.as_bytes()).await.expect("header");
+                socket.write_all(&body).await.expect("body");
+            }
+            requests
+        });
+        (url, task)
+    }
+
+    #[tokio::test]
+    async fn notecard_save_posts_exact_asset_bytes_then_confirms_the_new_asset() {
+        let data = super::super::notecard::Notecard::default().encode("Été 🐺\n}").expect("asset");
+        for replace in [false, true] {
+            let (url, task) = notecard_server(false, false, replace).await;
+            let saved = save_content(
+                &reqwest::Client::new(),
+                &url,
+                &format!("{url}/fetch"),
+                id(2),
+                id(3),
+                7,
+                data.clone(),
+            )
+            .await
+            .expect("save");
+            assert_eq!(saved.asset_id, id(40));
+            assert_eq!(saved.id, if replace { id(30) } else { id(3) });
+            let requests = task.await.expect("requests");
+            let negotiate = aurora_llsd::from_xml(&requests[0].1).expect("negotiation");
+            assert_eq!(negotiate["item_id"].as_uuid(), id(3));
+            assert!(!negotiate.has("target"));
+            assert!(requests[1].0.starts_with("POST /upload "));
+            assert!(requests[1].0.to_lowercase().contains("content-type: application/octet-stream"));
+            assert_eq!(requests[1].1, data);
+            let fetch = aurora_llsd::from_xml(&requests[2].1).expect("fetch");
+            assert_eq!(fetch["items"].at(0)["item_id"].as_uuid(), saved.id);
+        }
+    }
+
+    #[tokio::test]
+    async fn notecard_upload_failure_and_stale_readback_do_not_confirm_a_save() {
+        let data = super::super::notecard::Notecard::default().encode("Brouillon").expect("asset");
+        for (stale, reject) in [(true, false), (false, true)] {
+            let (url, task) = notecard_server(stale, reject, false).await;
+            assert!(
+                save_content(&reqwest::Client::new(), &url, &url, id(2), id(3), 7, data.clone())
+                    .await
+                    .is_err()
+            );
+            let requests = task.await.expect("requests");
+            assert_eq!(requests.len(), if reject { 2 } else { 3 });
+        }
+    }
+
+    #[tokio::test]
+    async fn malformed_or_oversized_notecards_are_rejected_before_http() {
+        for data in [
+            b"Linden text version 3\n".to_vec(),
+            vec![b'a'; super::super::notecard::MAX_TEXT_BYTES + 1],
+        ] {
+            assert!(
+                save_content(&reqwest::Client::new(), "invalid", "invalid", id(2), id(3), 7, data)
+                    .await
+                    .is_err()
+            );
+        }
     }
     #[tokio::test]
     async fn nested_folders_and_deferred_copies_use_the_server_assigned_ids() {

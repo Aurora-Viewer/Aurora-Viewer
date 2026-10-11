@@ -87,6 +87,22 @@ rez-worn = Détachez cet objet avant de le déposer dans le monde.
 rez-no-surface = Déposez l’objet sur le terrain ou sur un objet du monde.
 rez-contents-denied = Vous ne pouvez pas ajouter cet objet au contenu de la cible.
 rez-transfer-denied = Cet objet ne peut pas être transféré au propriétaire de la cible.
+notecard-text-too-large = Une note ne peut pas dépasser 65 536 octets de texte.
+notecard-edit-denied = Vous n’avez pas la permission de modifier ce document.
+notecard-byte-count = { $bytes } / 65 536 octets
+notecard-attachments = Pièces jointes : { $names }
+notecard-read-only = Lecture seule
+notecard-saving = Enregistrement…
+notecard-save-failed = Échec de l’enregistrement : { $reason }
+notecard-save-unconfirmed = Le serveur a enregistré la note, mais la relecture n’a pas confirmé le nouvel asset. Réessayez ou rouvrez la note.
+notecard-demo-save-error = Le serveur de démonstration refuse cet enregistrement.
+notecard-demo-text =
+    Bienvenue à Aurora !
+
+    Cette note peut être modifiée et enregistrée.
+    Accents : été, forêt. Emoji : 🐺
+notecard-demo-edit =
+    { "\u000A" }Texte ajouté pendant le test.
 exit-title = Fermer Aurora Viewer ?
 exit-world-body = Quitter le viewer ou revenir à l’écran de connexion ?
 exit-login-body = Voulez-vous quitter Aurora Viewer ?

@@ -601,6 +601,21 @@ hors ligne ; les fichiers et photos chargés en démo restent hors ligne.
   combiner avec `AURORA_DEMO_POINTER` pour survoler les sous-menus.
 - `animation-open`, `animation-properties`, `image`, `image-photo`,
   `image-picker` : les cinq panneaux de référence.
+- `note-open`, `note-new`, `note-readonly` : éditeur d’une note existante,
+  note vide sans asset ou note non modifiable. Modifier le texte puis
+  Enregistrer (ou Ctrl+S) ; fermer et rouvrir conserve le texte pendant la
+  session de démo. Une fermeture avec modifications propose Enregistrer,
+  Ignorer les modifications ou Annuler ; Enregistrer ne ferme qu’après
+  confirmation de la sauvegarde.
+- `note-edit`, `note-save`, `note-close`, `note-error`, `note-embedded` :
+  ajout automatique de texte à l’image 650, puis sauvegarde par Ctrl+S
+  (`note-save`), confirmation de fermeture (`note-close`) ou refus simulé
+  (`note-error`) à l’image 670. `note-embedded` contient un repère joint :
+  son marqueur est affiché par un trombone ; le texte et les pièces jointes
+  encore référencées sont conservés lors de l’enregistrement. Capture après
+  l’image 720 ; le refus doit garder le brouillon et permettre une nouvelle
+  tentative. La lecture / insertion / extraction des pièces jointes reste
+  à implémenter.
 - `image-photo-save` : capture puis sauvegarde une vignette à l'image 2100
   et ferme la fenêtre Photo en gardant l'éditeur Image ouvert.
 - `folder-window` : une fenêtre limitée au contenu du dossier personnel,

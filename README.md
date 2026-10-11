@@ -305,6 +305,10 @@ The full list of switches (demo scenarios, captures, forced settings,
 diagnostics) and how to read the profiling output are in
 [docs/TESTING.md](docs/TESTING.md) (in French).
 
+Pour tester l’édition des notecards hors ligne, utiliser
+`AURORA_DEMO_INVENTORY=note-open` avec `AURORA_DEMO=1` ; les scénarios de
+sauvegarde, de fermeture et de refus sont décrits dans le guide de test.
+
 Logs are in `%LOCALAPPDATA%\Aurora\AuroraViewer\data\logs\`.
 
 ## Contributing

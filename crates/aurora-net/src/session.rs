@@ -1374,6 +1374,7 @@ impl Session<'_> {
                         self.sh,
                         NetEvent::InventoryPreview {
                             item: it.id,
+                            asset: it.asset_id,
                             result: Err(aurora_i18n::tr!("session-this-region-does-not-support-uploading-this-content").into()),
                         },
                     );
@@ -1391,7 +1392,11 @@ impl Session<'_> {
                         _ => "",
                     };
                     let result = crate::inventory::operations::preview(&http, &cap, kind, it.asset_id).await;
-                    let _ = events.send(NetEvent::InventoryPreview { item: it.id, result });
+                    let _ = events.send(NetEvent::InventoryPreview {
+                        item: it.id,
+                        asset: it.asset_id,
+                        result,
+                    });
                 });
             }
             NetCommand::CreateInventoryWearable { parent, kind, name, data } => self.create_wearable(parent, kind, name, data),
@@ -1421,7 +1426,12 @@ impl Session<'_> {
                 m.inventory_data.crc = crate::inventory::operations::checksum(&it);
                 self.send_main(&m, true);
             }
-            NetCommand::SaveInventoryContent { item, asset_type, data } => {
+            NetCommand::SaveInventoryContent {
+                request,
+                item,
+                asset_type,
+                data,
+            } => {
                 let name = match asset_type {
                     7 => "UpdateNotecardAgentInventory",
                     10 => "UpdateScriptAgent",
@@ -1431,6 +1441,7 @@ impl Session<'_> {
                     emit(
                         self.sh,
                         NetEvent::InventoryContentSaved {
+                            request,
                             item,
                             result: Err(aurora_i18n::tr!("session-saving-is-unavailable-in-this-region").into()),
                         },
@@ -1442,7 +1453,7 @@ impl Session<'_> {
                 let owner = self.agent_id();
                 tokio::spawn(async move {
                     let result = crate::inventory::operations::save_content(&http, &cap, &fetch, owner, item, asset_type, data).await;
-                    let _ = events.send(NetEvent::InventoryContentSaved { item, result });
+                    let _ = events.send(NetEvent::InventoryContentSaved { request, item, result });
                 });
             }
             NetCommand::CopyInventoryItems(items) => {
