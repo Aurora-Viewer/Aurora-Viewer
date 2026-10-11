@@ -14,6 +14,11 @@ Légende : ✅ fait (et vérifié sur Agni quand ça dépend de la grille) · �
 
 Ce qui passe avant le reste (demandé par l'humain).
 
+- ⬜ **Réduire une fenêtre à sa barre de titre par double-clic** (demandé le 11/10/2026) : comme dans Firestorm, un double-clic sur la barre de titre d'une fenêtre de l'interface la replie en une simple barre de titre, toujours déplaçable. Un nouveau double-clic la restaure, avec son contenu et ses dimensions conservés.
+- ⬜ **Modale de fermeture du viewer avec fond flouté** (demandé le 11/10/2026) : cliquer sur la croix de la fenêtre principale ouvre une modale et floute le fond ; les interactions avec le viewer restent bloquées jusqu'au choix.
+  - **QUITTER**, bouton rouge : déconnecter proprement la session puis fermer le viewer.
+  - **Déconnecter** : terminer la session et revenir à l'écran de connexion, en gardant le viewer ouvert.
+  - **Annuler**, ainsi qu'une croix en haut à droite de la modale : fermer uniquement la modale et reprendre la session en cours.
 - ✅ **Viewer en anglais et choix de la langue** : changement immédiat anglais / français, menus, nombres et dates validés par l'humain en démo le 11/10/2026 avant la PR ; choix English conservé au redémarrage sans option de langue, vérifié par capture.
   - Choix humain du 11/10/2026 : Fluent (`.ftl`). Crate commune `aurora-i18n`, catalogues anglais / français, clés lisibles, variables et pluriels ; ajouter un fichier suffit pour proposer une langue. Repli anglais, libellés simples et tables mis en cache. Tests de syntaxe, clés / variables, rendu de tous les messages, pluriels et repli.
   - Interface, connexion, commandes, notifications et messages réseau traduits. Préférences › Interface : langue du système par défaut, anglais si elle n'est pas disponible, choix enregistré et changement immédiat ; ordre de sélection de `LLUI::getUILanguage`. `--language en|fr` force seulement la session de test. Nombres, séparateurs et dates du profil suivent la langue ; noms des résidents, contenu utilisateur et identifiants du protocole conservés.
