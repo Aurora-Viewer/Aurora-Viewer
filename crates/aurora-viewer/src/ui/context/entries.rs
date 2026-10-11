@@ -229,7 +229,11 @@ fn attachment_self_menu(ui: &mut Builder, f: &Facts, key: ObjKey) {
             "magnifying-glass",
             &aurora_i18n::tr!("hud-local-scale", percent = format!("{:.0}", scale * 100.0)),
         );
-        ui.item("arrow-counter-clockwise", aurora_i18n::tr!("hud-local-scale-reset"), CtxAction::ResetHudScale(key));
+        ui.item(
+            "arrow-counter-clockwise",
+            aurora_i18n::tr!("hud-local-scale-reset"),
+            CtxAction::ResetHudScale(key),
+        );
         ui.item_if(
             "eraser",
             aurora_i18n::tr!("hud-local-scale-forget"),

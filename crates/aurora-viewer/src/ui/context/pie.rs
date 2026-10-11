@@ -581,8 +581,18 @@ mod tests {
             Facts {
                 seated: true,
                 object: super::super::ObjectFacts {
+                    local_hud_scale: Some(1.6),
+                    saved_hud_scale: true,
                     buy: true,
                     stand: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            Facts {
+                object: super::super::ObjectFacts {
+                    local_hud_scale: Some(1.0),
+                    saved_hud_scale: false,
                     ..Default::default()
                 },
                 ..Default::default()
