@@ -4,21 +4,28 @@ use aurora_render::HudView;
 
 impl App {
     pub(super) fn hud_drag_requested(&self) -> bool {
-        self.settings.hud_drag_key.held(&self.down, self.mods())
+        self.settings.keybinds.held(Action::HudDrag, &self.down, self.mods())
+    }
+
+    fn demo_hud_drag_binding(&self) -> Option<crate::keybinds::Binding> {
+        let slot = usize::from(std::env::var("AURORA_DEMO_HUDS").is_ok_and(|mode| mode == "drag-secondary"));
+        self.settings.keybinds.get(Action::HudDrag)[slot].clone()
     }
 
     fn demo_hud_drag_key(&mut self, pressed: bool) {
-        use crate::keybinds::HoldKey;
-        match &self.settings.hud_drag_key {
-            HoldKey::Alt => self.alt = pressed,
-            HoldKey::Ctrl => self.ctrl = pressed,
-            HoldKey::Shift => self.shift = pressed,
-            HoldKey::Key(code) => {
-                let input = Input::Key(code.clone());
+        let Some(binding) = self.demo_hud_drag_binding() else { return };
+        self.ctrl = pressed && binding.ctrl;
+        self.alt = pressed && binding.alt;
+        self.shift = pressed && binding.shift;
+        match &binding.input {
+            Input::Key(code) if matches!(code.as_str(), "AltLeft" | "AltRight") => self.alt = pressed,
+            Input::Key(code) if matches!(code.as_str(), "ControlLeft" | "ControlRight") => self.ctrl = pressed,
+            Input::Key(code) if matches!(code.as_str(), "ShiftLeft" | "ShiftRight") => self.shift = pressed,
+            input => {
                 if pressed {
-                    self.down.insert(input);
+                    self.down.insert(input.clone());
                 } else {
-                    self.down.remove(&input);
+                    self.down.remove(input);
                 }
             }
         }
@@ -60,7 +67,7 @@ impl App {
                 self.hud_drag.is_some(),
                 self.interactions.held.is_some(),
                 self.mouse_mode,
-                self.settings.hud_drag_key.label()
+                self.demo_hud_drag_binding().map(|b| b.label()).unwrap_or_default()
             );
         } else if (740..840).contains(&self.frame_count) {
             self.cursor_pos.0 += 1.2;

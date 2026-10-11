@@ -34,7 +34,7 @@ impl Input {
         }
     }
 
-    /// Modifier keys alone are not bindable (they qualify the binding).
+    /// Modifier keys qualify ordinary shortcuts; HUD gestures also accept them alone.
     pub fn is_modifier(code: KeyCode) -> bool {
         matches!(
             code,
@@ -82,6 +82,12 @@ fn learned(k: &str) -> Option<String> {
 }
 
 fn key_label(k: &str) -> String {
+    match k {
+        "AltLeft" | "AltRight" => return "ALT".into(),
+        "ControlLeft" | "ControlRight" => return "Ctrl".into(),
+        "ShiftLeft" | "ShiftRight" => return aurora_i18n::tr!("keybinds-shift").into(),
+        _ => {}
+    }
     if !k.starts_with(aurora_i18n::tr!("common-numpad"))
         && let Some(l) = learned(k)
     {
@@ -154,6 +160,33 @@ pub struct Binding {
 }
 
 impl Binding {
+    /// Canonicalize either modifier side without displaying "Ctrl+Ctrl".
+    pub fn captured(mut input: Input, mut mods: Mods) -> Binding {
+        if let Input::Key(code) = &mut input {
+            match code.as_str() {
+                "ControlLeft" | "ControlRight" => {
+                    *code = "ControlLeft".into();
+                    mods.ctrl = false;
+                }
+                "AltLeft" | "AltRight" => {
+                    *code = "AltLeft".into();
+                    mods.alt = false;
+                }
+                "ShiftLeft" | "ShiftRight" => {
+                    *code = "ShiftLeft".into();
+                    mods.shift = false;
+                }
+                _ => {}
+            }
+        }
+        Binding {
+            input,
+            ctrl: mods.ctrl,
+            shift: mods.shift,
+            alt: mods.alt,
+        }
+    }
+
     fn plain(input: Input) -> Binding {
         Binding {
             input,
@@ -218,6 +251,8 @@ pub enum Action {
     TeleportHistory,
     Performance,
     Preferences,
+    /// Aurora's held shortcut for dragging a visible HUD with the left button.
+    HudDrag,
     /// « Afficher la transparence » (Firestorm Ctrl+Alt+T).
     ShowTransparency,
 }
@@ -245,6 +280,7 @@ pub fn is_held(a: Action) -> bool {
             | Action::CamPanRight
             | Action::CamPanUp
             | Action::CamPanDown
+            | Action::HudDrag
     )
 }
 
@@ -305,6 +341,10 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                     (Action::Performance, aurora_i18n::tr!("common-performance")),
                     (Action::Preferences, aurora_i18n::tr!("common-preferences")),
                 ],
+            ),
+            (
+                aurora_i18n::tr!("preferences-group-huds"),
+                vec![(Action::HudDrag, aurora_i18n::tr!("ui-options-practical-movement-key"))],
             ),
             (
                 aurora_i18n::tr!("keybinds-debug"),
@@ -421,6 +461,7 @@ impl KeyBindings {
             ),
             (Action::Performance, [kmod(K::Digit1, true, true), None]),
             (Action::Preferences, [kmod(K::KeyP, true, false), None]),
+            (Action::HudDrag, [k(K::AltLeft), None]),
             (
                 Action::ShowTransparency,
                 [
@@ -473,8 +514,7 @@ pub struct Mods {
     pub alt: bool,
 }
 
-/// A single held keyboard key for pointer gestures. Modifier keys accept
-/// either side; unlike ordinary shortcuts, they can be bound on their own.
+/// Legacy single-key HUD setting, read only to migrate older settings files.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum HoldKey {
     #[default]
@@ -485,38 +525,14 @@ pub enum HoldKey {
 }
 
 impl HoldKey {
-    pub fn from_input(input: Input) -> Option<Self> {
-        let Input::Key(code) = input else { return None };
-        Some(match code.as_str() {
-            "AltLeft" | "AltRight" => Self::Alt,
-            "ControlLeft" | "ControlRight" => Self::Ctrl,
-            "ShiftLeft" | "ShiftRight" => Self::Shift,
-            _ => Self::Key(code),
-        })
-    }
-
-    pub fn label(&self) -> String {
-        match self {
-            Self::Alt => "ALT".into(),
-            Self::Ctrl => "Ctrl".into(),
-            Self::Shift => aurora_i18n::tr!("keybinds-shift").into(),
-            Self::Key(code) => key_label(code),
-        }
-    }
-
-    /// The app also tracks this key when a text field or media has focus;
-    /// pointer ownership is decided only when the user starts the gesture.
-    pub fn is_key(&self, input: &Input) -> bool {
-        matches!((self, input), (Self::Key(code), Input::Key(key)) if code == key)
-    }
-
-    pub fn held(&self, down: &HashSet<Input>, mods: Mods) -> bool {
-        match self {
-            Self::Alt => mods.alt,
-            Self::Ctrl => mods.ctrl,
-            Self::Shift => mods.shift,
-            Self::Key(code) => down.contains(&Input::Key(code.clone())),
-        }
+    pub fn into_binding(self) -> Binding {
+        let input = match self {
+            Self::Alt => Input::key(KeyCode::AltLeft),
+            Self::Ctrl => Input::key(KeyCode::ControlLeft),
+            Self::Shift => Input::key(KeyCode::ShiftLeft),
+            Self::Key(code) => Input::Key(code),
+        };
+        Binding::captured(input, Mods::default())
     }
 }
 
@@ -566,6 +582,13 @@ impl KeyBindings {
             .unwrap_or([None, None])
     }
 
+    /// Track either gesture slot even while text or media owns keyboard focus.
+    pub fn uses_input(&self, a: Action, input: &Input) -> bool {
+        self.map
+            .iter()
+            .any(|(x, bs)| *x == a && bs.iter().flatten().any(|b| &b.input == input))
+    }
+
     pub fn set(&mut self, a: Action, slot: usize, b: Option<Binding>) {
         let slot = slot.min(1);
         if let Some((_, binds)) = self.map.iter_mut().find(|(x, _)| *x == a) {
@@ -594,11 +617,23 @@ impl KeyBindings {
         let fits = |b: &Binding| (!b.ctrl || m.ctrl) && (!b.shift || m.shift) && (!b.alt || m.alt);
         let weight = |b: &Binding| b.ctrl as u8 + b.shift as u8 + b.alt as u8;
         self.get(a).iter().flatten().any(|b| {
-            down.contains(&b.input)
+            let pressed = if a == Action::HudDrag {
+                match &b.input {
+                    Input::Key(code) if matches!(code.as_str(), "ControlLeft" | "ControlRight") => m.ctrl,
+                    Input::Key(code) if matches!(code.as_str(), "AltLeft" | "AltRight") => m.alt,
+                    Input::Key(code) if matches!(code.as_str(), "ShiftLeft" | "ShiftRight") => m.shift,
+                    _ => down.contains(&b.input),
+                }
+            } else {
+                down.contains(&b.input)
+            };
+            pressed
                 && fits(b)
-                && !self.map.iter().any(|(x, bs)| {
-                    *x != a && is_held(*x) && bs.iter().flatten().any(|o| o.input == b.input && fits(o) && weight(o) > weight(b))
-                })
+                // HUD ownership is decided on left press over a visible HUD;
+                // its binding must not suppress movement or camera elsewhere.
+                && (a == Action::HudDrag || !self.map.iter().any(|(x, bs)| {
+                    *x != a && *x != Action::HudDrag && is_held(*x) && bs.iter().flatten().any(|o| o.input == b.input && fits(o) && weight(o) > weight(b))
+                }))
         })
     }
 
@@ -639,21 +674,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn gesture_keys_accept_either_modifier_side_and_only_the_chosen_key() {
-        let down = [Input::key(KeyCode::KeyB)].into_iter().collect();
-        assert!(!HoldKey::default().held(&down, Mods::default()));
-        assert!(HoldKey::default().held(
-            &down,
-            Mods {
-                alt: true,
-                ..Default::default()
-            }
-        ));
-        for (left, right, expected, mods) in [
+    fn hud_modifier_capture_accepts_either_side_without_duplicate_modifiers() {
+        for (left, right, mods) in [
             (
                 KeyCode::AltLeft,
                 KeyCode::AltRight,
-                HoldKey::Alt,
                 Mods {
                     alt: true,
                     ..Default::default()
@@ -662,7 +687,6 @@ mod tests {
             (
                 KeyCode::ControlLeft,
                 KeyCode::ControlRight,
-                HoldKey::Ctrl,
                 Mods {
                     ctrl: true,
                     ..Default::default()
@@ -671,7 +695,6 @@ mod tests {
             (
                 KeyCode::ShiftLeft,
                 KeyCode::ShiftRight,
-                HoldKey::Shift,
                 Mods {
                     shift: true,
                     ..Default::default()
@@ -679,23 +702,59 @@ mod tests {
             ),
         ] {
             for code in [left, right] {
-                let key = HoldKey::from_input(Input::key(code)).unwrap();
-                assert_eq!(key, expected);
-                assert!(key.held(&down, mods));
-                assert!(!key.held(&down, Mods::default()));
+                let b = Binding::captured(Input::key(code), mods);
+                assert_eq!(b, Binding::plain(Input::key(left)));
+                let mut kb = KeyBindings::default();
+                kb.set(Action::HudDrag, 0, Some(b));
+                assert!(kb.held(Action::HudDrag, &HashSet::new(), mods));
+                assert!(!kb.held(Action::HudDrag, &HashSet::new(), Mods::default()));
             }
         }
-        let key = HoldKey::from_input(Input::key(KeyCode::KeyB)).unwrap();
-        assert!(key.held(&down, Mods::default()));
-        assert!(key.is_key(&Input::key(KeyCode::KeyB)));
-        assert!(!key.held(
+    }
+
+    #[test]
+    fn either_hud_slot_can_hold_the_gesture_and_cleared_slots_stay_inactive() {
+        let mut kb = KeyBindings::default();
+        let ctrl = Mods {
+            ctrl: true,
+            ..Default::default()
+        };
+        kb.set(Action::HudDrag, 1, Some(Binding::captured(Input::key(KeyCode::KeyB), ctrl)));
+        let down = [Input::key(KeyCode::KeyB)].into_iter().collect();
+        assert!(kb.held(
+            Action::HudDrag,
             &HashSet::new(),
             Mods {
                 alt: true,
                 ..Default::default()
             }
         ));
-        assert!(HoldKey::from_input(Input::Mouse("Middle".into())).is_none());
+        assert!(kb.uses_input(Action::HudDrag, &Input::key(KeyCode::KeyB)));
+        assert!(kb.held(Action::HudDrag, &down, ctrl));
+        assert!(!kb.held(Action::HudDrag, &down, Mods::default()));
+        assert_eq!(kb.triggered(&Input::key(KeyCode::KeyB), ctrl), None);
+        kb.set(Action::HudDrag, 0, None);
+        kb.set(Action::HudDrag, 1, None);
+        assert!(!kb.sanitized().held(Action::HudDrag, &down, Mods { alt: true, ..ctrl }));
+    }
+
+    #[test]
+    fn hud_shortcuts_warn_of_conflicts_without_suppressing_other_held_actions() {
+        let mut kb = KeyBindings::default();
+        let ctrl = Mods {
+            ctrl: true,
+            ..Default::default()
+        };
+        let input = Input::key(KeyCode::ArrowUp);
+        let b = Binding::captured(input.clone(), ctrl);
+        kb.set(Action::HudDrag, 0, Some(b.clone()));
+        kb.set(Action::PushToTalk, 1, Some(b.clone()));
+        assert_eq!(kb.users(&b), vec![Action::PushToTalk, Action::HudDrag]);
+        let down = [input].into_iter().collect();
+        assert!(kb.held(Action::HudDrag, &down, ctrl));
+        assert!(kb.held(Action::PushToTalk, &down, ctrl));
+        kb.set(Action::PushToTalk, 1, None);
+        assert!(kb.held(Action::Forward, &down, ctrl));
     }
 
     #[test]

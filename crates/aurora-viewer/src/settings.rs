@@ -237,10 +237,11 @@ pub struct Settings {
     /// Name tag, minimap and chat colors (Firestorm color preferences).
     pub colors: ColorSettings,
     /// Rebindable keyboard / mouse controls.
+    #[serde(default = "legacy_keybindings")]
     pub keybinds: crate::keybinds::KeyBindings,
-    /// Préférences › Pratique: hold this key while dragging visible HUDs.
-    /// Aurora shortcut requested by the user; ALT by default.
-    pub hud_drag_key: crate::keybinds::HoldKey,
+    /// Read the former single-key setting once; new files use HudDrag's two slots.
+    #[serde(rename = "hud_drag_key", skip_serializing)]
+    pub(crate) legacy_hud_drag_key: Option<crate::keybinds::HoldKey>,
     /// Bumped when defaults change in a way that must reach existing settings
     /// (missing in older files: 0).
     #[serde(default)]
@@ -534,10 +535,18 @@ impl Default for Settings {
             media: Default::default(),
             colors: ColorSettings::default(),
             keybinds: Default::default(),
-            hud_drag_key: Default::default(),
+            legacy_hud_drag_key: None,
             settings_version: SETTINGS_VERSION,
         }
     }
+}
+
+/// A file without a shortcut table predates HudDrag. Leave it missing until
+/// migration can copy the saved legacy choice instead of an invented default.
+fn legacy_keybindings() -> crate::keybinds::KeyBindings {
+    let mut kb = crate::keybinds::KeyBindings::default();
+    kb.map.retain(|(a, _)| *a != crate::keybinds::Action::HudDrag);
+    kb
 }
 
 /// Automatic texture memory (MB) from the detected video memory: 70 % of
@@ -647,6 +656,11 @@ impl Settings {
             // former "always noon" switch
             self.time_of_day = 2;
             self.force_midday = false;
+        }
+        if let Some(key) = self.legacy_hud_drag_key.take()
+            && !self.keybinds.map.iter().any(|(a, _)| *a == crate::keybinds::Action::HudDrag)
+        {
+            self.keybinds.set(crate::keybinds::Action::HudDrag, 0, Some(key.into_binding()));
         }
         self.keybinds = std::mem::take(&mut self.keybinds).sanitized();
         self.camera = std::mem::take(&mut self.camera).sanitized();
@@ -991,17 +1005,52 @@ mod tests {
     }
 
     #[test]
-    fn hud_drag_key_defaults_for_old_files_and_keeps_the_saved_choice() {
+    fn legacy_hud_key_migrates_without_losing_the_saved_choice() {
         let old: Settings = serde_json::from_str("{}").expect("old synthetic settings");
-        assert_eq!(old.sanitized().hud_drag_key, crate::keybinds::HoldKey::Alt);
-        for key in [crate::keybinds::HoldKey::Ctrl, crate::keybinds::HoldKey::Key("KeyB".into())] {
-            let settings = Settings {
-                hud_drag_key: key.clone(),
-                ..Default::default()
-            };
-            let bytes = serde_json::to_vec(&settings).expect("serialize synthetic settings");
-            let loaded: Settings = serde_json::from_slice(&bytes).expect("read synthetic settings");
-            assert_eq!(loaded.sanitized().hud_drag_key, key);
+        assert_eq!(
+            old.sanitized().keybinds.get(Action::HudDrag),
+            Settings::default().keybinds.get(Action::HudDrag)
+        );
+        for key in [
+            crate::keybinds::HoldKey::Alt,
+            crate::keybinds::HoldKey::Ctrl,
+            crate::keybinds::HoldKey::Shift,
+            crate::keybinds::HoldKey::Key("KeyB".into()),
+        ] {
+            for table_present in [false, true] {
+                let mut json = serde_json::json!({ "hud_drag_key": key });
+                if table_present {
+                    json["keybinds"] = serde_json::to_value(legacy_keybindings()).expect("old shortcut table");
+                }
+                let loaded: Settings = serde_json::from_value(json).expect("synthetic old settings");
+                let loaded = loaded.sanitized();
+                assert_eq!(loaded.keybinds.get(Action::HudDrag), [Some(key.clone().into_binding()), None]);
+                let json = serde_json::to_value(&loaded).expect("migrated settings");
+                assert!(json.get("hud_drag_key").is_none());
+                let reloaded: Settings = serde_json::from_value(json).expect("reload migrated settings");
+                assert_eq!(reloaded.sanitized().keybinds, loaded.keybinds);
+            }
+        }
+    }
+
+    #[test]
+    fn hud_primary_secondary_and_cleared_slots_survive_stale_legacy_settings() {
+        use crate::keybinds::{Binding, Mods};
+        for slots in [
+            [
+                Some(Binding::captured(Input::key(KeyCode::KeyB), Mods::default())),
+                Some(Binding::captured(Input::key(KeyCode::ControlRight), Mods::default())),
+            ],
+            [None, None],
+        ] {
+            let mut settings = Settings::default();
+            for (slot, binding) in slots.iter().enumerate() {
+                settings.keybinds.set(Action::HudDrag, slot, binding.clone());
+            }
+            let mut json = serde_json::to_value(&settings).expect("new settings");
+            json["hud_drag_key"] = serde_json::json!("Alt");
+            let loaded: Settings = serde_json::from_value(json).expect("settings with a stale key");
+            assert_eq!(loaded.sanitized().keybinds.get(Action::HudDrag), slots);
         }
     }
 

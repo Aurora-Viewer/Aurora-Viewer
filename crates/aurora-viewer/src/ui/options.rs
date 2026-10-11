@@ -3,7 +3,6 @@
 
 mod camera;
 mod commands;
-mod huds;
 
 use super::fonts::{self, SystemFont};
 use super::icons::Icons;
@@ -15,7 +14,6 @@ use egui::{Color32, CornerRadius, RichText, Sense, Vec2};
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Capture {
     Binding(crate::keybinds::Action, usize),
-    HudDrag,
 }
 
 #[derive(Default)]
@@ -39,11 +37,44 @@ pub struct OptionsUi {
     pub media_running: usize,
     /// Shortcut or gesture waiting for its next input, captured by the app.
     pub capture: Option<Capture>,
+    capture_modifier: Option<winit::keyboard::KeyCode>,
     clear: Option<(crate::keybinds::Action, usize)>,
     /// "Tout réinitialiser" confirmation open.
     confirm_reset: bool,
     /// Sound assets being typed (Firestorm name -> text).
     ui_sound_text: std::collections::HashMap<&'static str, String>,
+}
+
+impl OptionsUi {
+    /// A HUD modifier on its own is captured on release, leaving time to
+    /// press a second key for combinations such as Ctrl+B.
+    pub fn capture_key(&mut self, code: winit::keyboard::KeyCode, pressed: bool, repeat: bool) -> Option<Option<crate::keybinds::Input>> {
+        use crate::keybinds::{Action, Input};
+        use winit::keyboard::KeyCode;
+        let capture = self.capture?;
+        if repeat {
+            return None;
+        }
+        if pressed && code == KeyCode::Escape {
+            return Some(None);
+        }
+        if Input::is_modifier(code) {
+            if matches!(capture, Capture::Binding(Action::HudDrag, _)) {
+                if pressed {
+                    self.capture_modifier = Some(code);
+                } else if self.capture_modifier == Some(code) {
+                    return Some(Some(Input::key(code)));
+                }
+            }
+            return None;
+        }
+        pressed.then(|| Some(Input::key(code)))
+    }
+
+    pub fn take_capture(&mut self) -> Option<Capture> {
+        self.capture_modifier = None;
+        self.capture.take()
+    }
 }
 
 #[derive(Default)]
@@ -1934,6 +1965,7 @@ fn binding_cell(
             .min_size(Vec2::new(132.0, 20.0)),
     );
     if resp.clicked() {
+        st.capture_modifier = None;
         st.capture = if capturing { None } else { Some(Capture::Binding(a, slot)) };
     }
     if resp.secondary_clicked() && b.is_some() {
@@ -1989,9 +2021,6 @@ fn keys_page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsU
                 });
             }
         });
-        if *section == aurora_i18n::text("common-windows") {
-            c |= huds::shortcuts_group(ui, p, s, st);
-        }
     }
     if super::widgets::flat_button(ui, p, aurora_i18n::tr!("ui-options-restore-default-shortcuts")).clicked() {
         s.keybinds = Default::default();
@@ -2145,5 +2174,44 @@ fn parse_uuid_text(text: &str) -> Option<uuid::Uuid> {
         Some(uuid::Uuid::nil())
     } else {
         uuid::Uuid::parse_str(t).ok()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::keybinds::{Action, Input};
+    use winit::keyboard::KeyCode;
+
+    #[test]
+    fn hud_modifier_alone_waits_for_release_but_a_combination_captures_its_key() {
+        let mut ui = OptionsUi {
+            capture: Some(Capture::Binding(Action::HudDrag, 1)),
+            ..Default::default()
+        };
+        assert_eq!(ui.capture_key(KeyCode::ControlRight, true, false), None);
+        assert_eq!(
+            ui.capture_key(KeyCode::ControlRight, false, false),
+            Some(Some(Input::key(KeyCode::ControlRight)))
+        );
+        ui.take_capture();
+        ui.capture = Some(Capture::Binding(Action::HudDrag, 0));
+        assert_eq!(ui.capture_key(KeyCode::ControlLeft, true, false), None);
+        assert_eq!(ui.capture_key(KeyCode::KeyB, true, false), Some(Some(Input::key(KeyCode::KeyB))));
+        ui.take_capture();
+        assert_eq!(ui.capture_key(KeyCode::ControlLeft, false, false), None);
+    }
+
+    #[test]
+    fn ordinary_capture_still_ignores_modifier_keys_and_escape_cancels() {
+        let mut ui = OptionsUi {
+            capture: Some(Capture::Binding(Action::Inventory, 0)),
+            ..Default::default()
+        };
+        assert_eq!(ui.capture_key(KeyCode::ControlLeft, true, false), None);
+        assert_eq!(ui.capture_key(KeyCode::ControlLeft, false, false), None);
+        assert_eq!(ui.capture_key(KeyCode::KeyI, true, true), None);
+        assert_eq!(ui.capture_key(KeyCode::KeyI, true, false), Some(Some(Input::key(KeyCode::KeyI))));
+        assert_eq!(ui.capture_key(KeyCode::Escape, true, false), Some(None));
     }
 }
