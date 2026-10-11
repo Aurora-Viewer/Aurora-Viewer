@@ -1339,14 +1339,19 @@ pub fn action_events() -> Vec<NetEvent> {
 /// prim all share a center, so their surfaces overlap from every camera angle.
 pub fn selection_cycle_events() -> Vec<NetEvent> {
     let mut objects = Vec::new();
-    for (id, scale, parent, label) in [
-        (99610, 3.0, 0, "Objet A"),
-        (99611, 2.4, 99610, "Partie A2"),
-        (99612, 1.8, 0, "Objet B"),
-        (99613, 1.2, 99612, "Partie B2"),
-        (99614, 0.6, 0, "Objet C"),
+    for (id, scale, parent, name) in [
+        (99610, 3.0, 0, "A"),
+        (99611, 2.4, 99610, "A2"),
+        (99612, 1.8, 0, "B"),
+        (99613, 1.2, 99612, "B2"),
+        (99614, 0.6, 0, "C"),
     ] {
-        let mut o = action_object(id, 0, 138.0, 126.0, [0.3, scale / 4.0, 0.8, 1.0], label);
+        let label = if parent == 0 {
+            aurora_i18n::tr!("demo-cycle-object", name = name)
+        } else {
+            aurora_i18n::tr!("demo-cycle-part", name = name)
+        };
+        let mut o = action_object(id, 0, 138.0, 126.0, [0.3, scale / 4.0, 0.8, 1.0], &label);
         o.scale = Vec3::splat(scale);
         o.position.z = floor_at(138.0, 126.0) + 2.0;
         o.parent_id = parent;

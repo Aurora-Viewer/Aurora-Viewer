@@ -59,7 +59,7 @@ impl BuildTool {
         if units.is_empty() {
             return;
         }
-        // Wheel toward the screen goes deeper, toward the user goes nearer.
+        // Scrolling down goes deeper; scrolling up goes nearer.
         // Starting a new stack selects its nearest surface in either direction.
         let offset = -i64::from(steps);
         let current = self.selection.first().and_then(|key| units.iter().position(|(_, k)| k == key));
