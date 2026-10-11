@@ -41,6 +41,9 @@ la configuration du dépôt. Le modèle d’issue est dans `.github/ISSUE_TEMPLA
 
 Le formulaire présente deux étapes : préparer le rapport, puis choisir l’envoi.
 Il tient sur une colonne avec trois onglets : Description, Image et Données.
+Les quatre champs de Description restent visibles ensemble sans défilement
+du formulaire à la taille normale. Les textes longs défilent dans leur propre
+zone de saisie.
 Les onglets restent visibles pendant le défilement. L’onglet Données permet
 de lire et de décocher chaque information automatique. Les libellés et les
 diagnostics suivent la langue de l’interface à chaque affichage. Le texte
