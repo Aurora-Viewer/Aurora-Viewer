@@ -1075,6 +1075,9 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                 );
             });
             group(ui, p, aurora_i18n::tr!("ui-options-layout"), |ui| {
+                c |= row(ui, p, aurora_i18n::tr!("bug-toolbar"), aurora_i18n::tr!("bug-toolbar-help"), |ui| {
+                    toggle(ui, p, &mut s.show_bug_report)
+                });
                 c |= row(ui, p, aurora_i18n::tr!("ui-options-interface-scale"), "", |ui| {
                     slider(ui, &mut s.ui_scale, 0.75..=2.0, "×")
                 });

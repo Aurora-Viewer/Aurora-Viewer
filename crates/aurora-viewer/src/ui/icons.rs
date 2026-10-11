@@ -13,6 +13,7 @@ macro_rules! svg_list {
 
 /// Embedded Phosphor icons (regular weight), by Phosphor name.
 const SVGS: &[(&str, &[u8])] = svg_list!(
+    "bug",
     "chat-circle-dots",
     "terminal-window",
     "microphone",

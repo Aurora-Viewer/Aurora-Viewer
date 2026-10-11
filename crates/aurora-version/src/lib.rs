@@ -12,6 +12,11 @@ pub const fn update_test_build() -> bool {
     env!("AURORA_UPDATE_TEST_BUILD").as_bytes()[0] == b'1'
 }
 
+/// Build revision for a diagnostic report, including builds at an exact tag.
+pub const fn commit() -> &'static str {
+    env!("AURORA_BUILD_COMMIT")
+}
+
 /// HTTP clients use the same version as the interface.
 pub const fn user_agent() -> &'static str {
     concat!("AuroraViewer/", env!("AURORA_COMPILED_VERSION"))

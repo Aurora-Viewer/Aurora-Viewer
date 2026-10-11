@@ -125,6 +125,42 @@ The texture memory budget is set automatically from the detected VRAM.
 
 ![Login screen](docs/screenshots/login.jpg)
 
+## Signaler un bug pendant l’alpha
+
+L’icône de bug dans la barre du haut, le menu Aide et l’écran de connexion
+ouvrent le même formulaire. Décrivez le problème et vérifiez les informations
+de l’onglet Données ; décochez celles que vous souhaitez garder privées.
+L’interface suit la langue choisie, même avec le formulaire ouvert. La capture
+et les diagnostics filtrés sont facultatifs. Le fichier destiné à GitHub utilise
+des rubriques anglaises ; votre description garde la langue de votre saisie.
+Un nouveau rapport s’ouvre sur Description. Fermer puis rouvrir le formulaire
+reprend le brouillon au même endroit jusqu’à l’envoi ou la fermeture du viewer.
+Dans le mode navigateur, cliquez sur « J’ai publié le rapport » après la
+publication sur GitHub pour commencer un autre rapport.
+Après une capture prise dans Aurora, cocher ou décocher « Inclure l’interface »
+reprend automatiquement la photo ; les fichiers importés restent inchangés.
+
+Deux modes, tous deux avec un compte GitHub : « Envoyer depuis Aurora »,
+présenté en premier et sélectionné par défaut, ou ouvrir une issue préremplie
+dans le navigateur. L’envoi depuis Aurora demande d’autoriser son application
+GitHub ; l’autorisation reste uniquement en mémoire
+jusqu’à la fermeture du viewer ou sa déconnexion ; aucune publication ne suit
+automatiquement l’autorisation. Sans compte, enregistrez une copie locale.
+
+L’envoi depuis Aurora publie l’image choisie sur auroraviewer.com et l’affiche
+dans l’issue. Une option distincte de l’onglet Données, décochée par défaut,
+permet de joindre le ZIP des journaux aux développeurs ; son lien demande une
+connexion GitHub autorisée dans le dépôt privé. Les fichiers restent dans le
+Cellar privé. Un envoi interrompu peut être terminé sur la même issue.
+Dans le navigateur, ajoutez l’image manuellement depuis le dossier `public`.
+Si le texte est trop long pour un lien, Aurora le copie intégralement pour le
+coller dans GitHub. Ne publiez jamais le dossier `private-do-not-upload`.
+Le bouton de barre se masque dans Préférences › Interface.
+
+Test hors ligne : `AURORA_DEMO=1` et `AURORA_DEMO_BUG_REPORT=1` ouvrent un rapport
+exemple ; l’envoi est simulé et le navigateur reste fermé. Voir
+[TESTING.md](docs/TESTING.md) et la [configuration GitHub](docs/BUG_REPORTING.md).
+
 ## Roadmap
 
 **Not there yet**
