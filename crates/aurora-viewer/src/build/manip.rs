@@ -214,12 +214,21 @@ impl Manip {
 
     pub fn camera_pan(&mut self, s: &BuildSettings, cam: &Cam, cursor: (f32, f32), dt: f32) -> Vec3 {
         let Some(d) = self.drag.as_mut() else { return Vec3::ZERO };
+        let motion = match d.part {
+            Part::Arrow(_) => super::edge_pan::Motion::Axis(d.axis),
+            Part::Plane(_) => super::edge_pan::Motion::Plane(d.normal),
+            _ => return Vec3::ZERO,
+        };
         let active = d.started
             && d.mode == EditMode::Move
             && !s.follow_edit_object
             && !d.edge_pan_blocked
             && d.delta.length() < MAX_DRAG_DISTANCE * 0.95;
-        d.edge_pan.update(cam, cursor, d.pivot + d.delta, dt, active)
+        let pan = d.edge_pan.update(cam, cursor, d.pivot + d.delta, motion, dt, active);
+        // The solver runs with the translated camera in this same frame.
+        // Predict its matching object pose when projecting the grab offset.
+        d.delta += pan;
+        pan
     }
 
     pub fn cancel(&mut self) {

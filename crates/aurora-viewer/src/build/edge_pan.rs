@@ -1,7 +1,7 @@
 //! Keep a dragged object visible at the viewport edges. LLManipTranslate::
 //! handleHover (indra/newview/llmaniptranslate.cpp) rotates at the outer 5%.
-//! Aurora deliberately pans in both screen axes with eased velocity instead,
-//! preserving the viewing angle and avoiding an abrupt edge transition.
+//! Aurora deliberately translates along the active drag axis/plane with
+//! eased velocity, keeping the camera/object offset while continuing the drag.
 
 use super::geom::Cam;
 use glam::{Vec2, Vec3};
@@ -14,6 +14,38 @@ const MAX_SPEED: f32 = 10.0;
 #[derive(Debug, Clone, Default)]
 pub struct EdgePan {
     velocity: Vec2,
+}
+
+#[derive(Clone, Copy)]
+pub enum Motion {
+    Axis(Vec3),
+    Plane(Vec3),
+}
+
+impl Motion {
+    /// Invert the screen displacement within the manipulator constraint.
+    /// Projection along the eye ray changes depth without moving a pixel.
+    fn constrain(self, cam: &Cam, point: Vec3, screen: Vec3) -> Vec3 {
+        let ray = point - cam.eye;
+        let delta = match self {
+            Self::Axis(axis) => {
+                let projected = axis - ray * (axis.dot(cam.at) / cam.depth(point));
+                let length = projected.length_squared();
+                if length < 1e-6 {
+                    return Vec3::ZERO;
+                }
+                axis * (screen.dot(projected) / length)
+            }
+            Self::Plane(normal) => {
+                let denominator = ray.dot(normal);
+                if denominator.abs() < 1e-4 {
+                    return Vec3::ZERO;
+                }
+                screen - ray * (screen.dot(normal) / denominator)
+            }
+        };
+        if delta.is_finite() { delta } else { Vec3::ZERO }
+    }
 }
 
 fn pressure(pixel: f32, extent: f32) -> f32 {
@@ -45,8 +77,14 @@ pub fn drag_cursor(cam: &Cam, cursor: (f32, f32), start: (f32, f32), grab_offset
 }
 
 impl EdgePan {
-    pub fn update(&mut self, cam: &Cam, cursor: (f32, f32), point: Vec3, dt: f32, active: bool) -> Vec3 {
-        if !active || cam.hud.is_some() || !dt.is_finite() || !Vec2::from(cursor).is_finite() || cam.depth(point) <= 0.01 {
+    pub fn update(&mut self, cam: &Cam, cursor: (f32, f32), point: Vec3, motion: Motion, dt: f32, active: bool) -> Vec3 {
+        if !active
+            || cam.hud.is_some()
+            || !dt.is_finite()
+            || !Vec2::from(cursor).is_finite()
+            || !point.is_finite()
+            || cam.depth(point) <= 0.01
+        {
             self.velocity = Vec2::ZERO;
             return Vec3::ZERO;
         }
@@ -68,7 +106,9 @@ impl EdgePan {
         }
         let meters_per_pixel = cam.depth(point) / cam.pixel_meter_ratio();
         let screen = travel * Vec2::new(cam.width, cam.height) * (SCREENS_PER_SECOND * meters_per_pixel);
-        (-cam.left * screen.x - cam.up * screen.y).clamp_length_max(MAX_SPEED * dt)
+        motion
+            .constrain(cam, point, -cam.left * screen.x - cam.up * screen.y)
+            .clamp_length_max(MAX_SPEED * dt)
     }
 }
 
@@ -90,14 +130,17 @@ mod tests {
         assert_eq!(drag_cursor(&cam, (1600.0, 450.0), (800.0, 450.0), (0.0, 0.0)), (1520.0, 450.0));
         assert_eq!(drag_cursor(&cam, (40.0, 450.0), (40.0, 450.0), (0.0, 0.0)), (40.0, 450.0));
         assert_eq!(drag_cursor(&cam, (1600.0, 450.0), (800.0, 450.0), (-90.0, 0.0)), (1430.0, 450.0));
-        assert_eq!(EdgePan::default().update(&cam, (800.0, 450.0), Vec3::ZERO, 0.016, true), Vec3::ZERO);
+        assert_eq!(
+            EdgePan::default().update(&cam, (800.0, 450.0), Vec3::ZERO, Motion::Plane(cam.at), 0.016, true),
+            Vec3::ZERO
+        );
         for (cursor, axis) in [
             ((0.0, 450.0), cam.left),
             ((1600.0, 450.0), -cam.left),
             ((800.0, 0.0), cam.up),
             ((800.0, 900.0), -cam.up),
         ] {
-            let delta = EdgePan::default().update(&cam, cursor, Vec3::ZERO, 0.016, true);
+            let delta = EdgePan::default().update(&cam, cursor, Vec3::ZERO, Motion::Plane(cam.at), 0.016, true);
             assert!(delta.dot(axis) > 0.0);
             assert!(delta.cross(axis).length() < 1e-5);
         }
@@ -107,12 +150,41 @@ mod tests {
     fn offscreen_object_triggers_pan_and_huds_or_inactive_drags_do_not() {
         let cam = camera();
         let outside = -cam.left * 12.0;
-        assert!(EdgePan::default().update(&cam, (800.0, 450.0), outside, 0.016, true).dot(-cam.left) > 0.0);
+        assert!(
+            EdgePan::default()
+                .update(&cam, (800.0, 450.0), outside, Motion::Plane(cam.at), 0.016, true)
+                .dot(-cam.left)
+                > 0.0
+        );
         let mut pan = EdgePan::default();
-        pan.update(&cam, (1600.0, 450.0), Vec3::ZERO, 0.016, true);
-        assert_eq!(pan.update(&cam, (1600.0, 450.0), Vec3::ZERO, 0.016, false), Vec3::ZERO);
+        pan.update(&cam, (1600.0, 450.0), Vec3::ZERO, Motion::Plane(cam.at), 0.016, true);
+        assert_eq!(
+            pan.update(&cam, (1600.0, 450.0), Vec3::ZERO, Motion::Plane(cam.at), 0.016, false),
+            Vec3::ZERO
+        );
         let hud = Cam::for_hud(aurora_render::HudView::new([1600, 900], 1.0, -1.0, 1.0), 1.0);
-        assert_eq!(pan.update(&hud, (1600.0, 450.0), Vec3::ZERO, 0.016, true), Vec3::ZERO);
+        assert_eq!(
+            pan.update(&hud, (1600.0, 450.0), Vec3::ZERO, Motion::Plane(cam.at), 0.016, true),
+            Vec3::ZERO
+        );
+    }
+
+    #[test]
+    fn translation_stays_on_the_drag_axis_or_plane_in_perspective() {
+        let cam = camera();
+        let point = Vec3::new(0.0, -8.0, 3.0);
+        let requested = -cam.left * 0.03 + cam.up * 0.02;
+        let axis = Vec3::new(0.8, -0.6, 0.0);
+        let delta = Motion::Axis(axis).constrain(&cam, point, requested);
+        assert!(delta.length() > 0.0);
+        assert!(delta.cross(axis).length() < 1e-6);
+        let normal = Vec3::new(0.4, 0.0, 0.9).normalize();
+        let delta = Motion::Plane(normal).constrain(&cam, point, requested);
+        assert!(delta.dot(normal).abs() < 1e-6);
+        let projected = delta - (point - cam.eye) * (delta.dot(cam.at) / cam.depth(point));
+        assert!(projected.abs_diff_eq(requested, 1e-6));
+        assert_eq!(Motion::Axis(cam.at).constrain(&cam, Vec3::ZERO, requested), Vec3::ZERO);
+        assert_eq!(Motion::Plane(cam.up).constrain(&cam, Vec3::ZERO, requested), Vec3::ZERO);
     }
 
     #[test]
@@ -122,22 +194,22 @@ mod tests {
             let mut pan = EdgePan::default();
             let mut distance = Vec3::ZERO;
             for _ in 0..fps {
-                distance += pan.update(&cam, (1600.0, 450.0), Vec3::ZERO, 1.0 / fps as f32, true);
+                distance += pan.update(&cam, (1600.0, 450.0), Vec3::ZERO, Motion::Plane(cam.at), 1.0 / fps as f32, true);
             }
             distance
         };
         assert!(run(60).abs_diff_eq(run(120), 1e-4));
         let mut pan = EdgePan::default();
-        let first = pan.update(&cam, (1600.0, 450.0), Vec3::ZERO, 1.0 / 60.0, true);
+        let first = pan.update(&cam, (1600.0, 450.0), Vec3::ZERO, Motion::Plane(cam.at), 1.0 / 60.0, true);
         let mut last = first;
         for _ in 0..60 {
-            last = pan.update(&cam, (1600.0, 450.0), Vec3::ZERO, 1.0 / 60.0, true);
+            last = pan.update(&cam, (1600.0, 450.0), Vec3::ZERO, Motion::Plane(cam.at), 1.0 / 60.0, true);
         }
         assert!(last.length() > first.length() * 5.0);
-        let stopping = pan.update(&cam, (800.0, 450.0), Vec3::ZERO, 1.0 / 60.0, true);
+        let stopping = pan.update(&cam, (800.0, 450.0), Vec3::ZERO, Motion::Plane(cam.at), 1.0 / 60.0, true);
         assert!(stopping.length() < last.length());
         for _ in 0..120 {
-            last = pan.update(&cam, (800.0, 450.0), Vec3::ZERO, 1.0 / 60.0, true);
+            last = pan.update(&cam, (800.0, 450.0), Vec3::ZERO, Motion::Plane(cam.at), 1.0 / 60.0, true);
         }
         assert_eq!(last, Vec3::ZERO);
     }

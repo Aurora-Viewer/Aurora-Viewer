@@ -170,7 +170,11 @@ Le rez depuis l’inventaire passe par `ui/inventory.rs` (charge utile et relâc
    La bascule « Suivre l’objet en édition » est désactivée par défaut :
    point de focus et cadrage restent fixes au centre de l'écran ; pendant
    un déplacement au bord, `build/edge_pan.rs` fait glisser la caméra
-   progressivement pour garder l'objet visible (sans effet sur les HUDs).
+   progressivement sur l'axe ou dans le plan de la poignée. La projection
+   inverse tient compte de la perspective ; la caméra avance avant le
+   solveur de déplacement, qui applique la même translation à l'objet dans
+   l'image courante. Leur distance ne dérive donc pas pendant le maintien
+   du curseur au bord (sans effet sur les HUDs).
    Activée, la bascule suit la transformation locale. La projection du
    curseur est alors conservée au début du glissement
    pour que le mouvement de caméra ne modifie pas l'objet sans saisie.

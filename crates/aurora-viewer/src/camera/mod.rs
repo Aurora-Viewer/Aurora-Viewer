@@ -316,7 +316,7 @@ impl Camera {
         (!self.focus_on_avatar).then_some(self.focus_object).flatten()
     }
 
-    fn third_person(&self) -> bool {
+    pub fn third_person(&self) -> bool {
         self.mode == CameraMode::ThirdPerson
     }
 
@@ -1712,20 +1712,29 @@ mod tests {
             f.build_mode = true;
             f.edit_tracking = Some(false);
             let mut held_start = Vec3::ZERO;
+            let mut held_offset = Vec3::ZERO;
             for i in 0..150 {
                 let k = (i as f32 / 60.0).min(1.0);
                 let cursor = (start.0 + (1590.0 - start.0) * k, start.1);
-                tool.update(&mut w, &settings, cursor, false, Mods::default());
                 let pan = tool.manip.camera_pan(&settings, &tool.cam, cursor, f.dt);
                 assert!(pan.length() < 0.17);
+                assert!(pan.cross(Vec3::Y).length() < 1e-6);
                 camera.pan_edit(pan, &mut w.agent, &s);
+                tool.cam = projection(&camera);
+                tool.update(&mut w, &settings, cursor, false, Mods::default());
                 camera.update(&mut w, &s, &f);
                 tool.cam = projection(&camera);
                 let position = Scene::object_transform(&w, idx, Instant::now(), 0).unwrap().0;
                 if i == 60 {
                     held_start = position;
+                    held_offset = position - camera.position;
                 }
                 if i > 60 {
+                    assert!(
+                        (position - camera.position).abs_diff_eq(held_offset, 1e-3),
+                        "offset drift: {:?}",
+                        position - camera.position - held_offset
+                    );
                     let (x, y) = tool.cam.project_px(position).unwrap();
                     assert!((0.0..1600.0).contains(&x) && (0.0..900.0).contains(&y), "{x},{y}");
                 }

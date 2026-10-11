@@ -3551,6 +3551,25 @@ impl App {
             {
                 self.build.cam = crate::build::geom::Cam::for_hud(view, self.egui_ctx.pixels_per_point());
             }
+            let pan = if self.build.open && self.build.tool == crate::build::Tool::Edit && self.camera.third_person() {
+                self.build
+                    .manip
+                    .camera_pan(&self.settings.build, &self.build.cam, self.cursor_pos, dt)
+            } else {
+                Vec3::ZERO
+            };
+            let panned = self.camera.pan_edit(pan, &mut self.world.agent, &self.settings.camera);
+            if panned {
+                self.build.cam = crate::build::geom::Cam::new(
+                    self.camera.position,
+                    self.camera.target,
+                    self.camera.proj(aspect) * self.camera.view(),
+                    self.camera.fov_y,
+                    w as f32,
+                    h as f32,
+                    self.egui_ctx.pixels_per_point(),
+                );
+            }
             let over_ui = self.egui_ctx.is_pointer_over_egui() || self.egui_ctx.egui_wants_pointer_input();
             let mods = crate::build::Mods {
                 shift: self.shift,
@@ -3562,14 +3581,6 @@ impl App {
             self.scene.selection_wire = self.build.wire_selection(&self.world, &self.settings.build);
             self.scene.selection_silhouettes = self.build.silhouette_selection(&self.world, &self.settings.build);
             self.flush_build();
-            let pan = if self.build.open && self.build.tool == crate::build::Tool::Edit {
-                self.build
-                    .manip
-                    .camera_pan(&self.settings.build, &self.build.cam, self.cursor_pos, dt)
-            } else {
-                Vec3::ZERO
-            };
-            let panned = self.camera.pan_edit(pan, &mut self.world.agent, &self.settings.camera);
             let camera_changed = edit_camera_frame.is_some() || panned;
             if let Some(frame) = edit_camera_frame {
                 self.camera.update(&mut self.world, &self.settings.camera, &frame);

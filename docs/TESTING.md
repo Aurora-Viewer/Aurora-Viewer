@@ -220,8 +220,10 @@ immobile. Tester le déplacement et l’étirement par face et par coin.
 **`AURORA_DEMO_BUILD_EDGE=left|right|top|bottom`** — complète un script
 `move` : la souris atteint le bord en 40 images, y reste 60 images puis
 relâche la poignée. Avec le suivi désactivé, la caméra glisse progressivement
-près du bord et l’objet reste visible, y compris pendant le maintien de la
-souris. Capturer vers l’image de départ +120 pendant le maintien et +170
+près du bord sur le même axe ou dans le même plan que l’objet, qui reste
+visible pendant le maintien de la souris sans rapprochement ni éloignement
+progressif. Tester un axe oblique à la caméra pour vérifier cette distance.
+Capturer vers l’image de départ +120 pendant le maintien et +170
 après le relâchement ; la caméra doit alors être arrêtée. Combiner avec
 `AURORA_DEMO_BUILD_FOCUS=off` pour vérifier le focus sur l’objet, puis sans
 cette variable pour vérifier le focus initial sur l’avatar. Les HUDs et le
