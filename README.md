@@ -109,6 +109,8 @@ The texture memory budget is set automatically from the detected VRAM.
   Sizes from 10% to 800% are saved per account by inventory name and creator,
   then restored on new copies. Right-click a HUD to reset its size to 100%
   or forget its saved size (the current copy keeps its size).
+  While editing a HUD, scrolling without the HUD key zooms the entire HUD
+  view, revealing off-screen HUDs while keeping their saved local sizes.
 - Local chat bubbles show the speaker's profile picture.
 - The remembered password is kept in Windows Credential Manager, as a hash
   only.
@@ -275,7 +277,7 @@ preserved.
 
 ### Test switches
 
-Local HUD zoom scenarios (`AURORA_DEMO_HUDS=scale|scale-copy|scale-touch|scale-reset|scale-forget|scale-ctrl|scale-key|scale-secondary`)
+Local and editing HUD zoom scenarios (`AURORA_DEMO_HUDS=scale|scale-copy|scale-touch|scale-reset|scale-forget|scale-ctrl|scale-key|scale-secondary|edit-scroll`)
 are described in [the testing guide](docs/TESTING.md#huds).
 
 The offline **demo mode** simulates a server locally (a plaza, avatars,

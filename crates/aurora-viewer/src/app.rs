@@ -6218,7 +6218,7 @@ impl ApplicationHandler for App {
                 if matches!(mode.as_str(), "zoom" | "edit-zoom" | "drag-zoom") {
                     self.world.hud_zoom = 0.5;
                 }
-                if mode.starts_with("drag") || mode.starts_with("scale") {
+                if mode.starts_with("drag") || mode.starts_with("scale") || mode == "edit-scroll" {
                     let code = match mode.as_str() {
                         "drag-ctrl" | "scale-ctrl" => KeyCode::ControlLeft,
                         "drag-key" | "scale-key" => KeyCode::KeyB,

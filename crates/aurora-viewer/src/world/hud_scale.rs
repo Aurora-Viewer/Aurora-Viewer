@@ -48,7 +48,7 @@ pub struct HudScales {
     local: HashMap<Uuid, Local>,
     writer: Option<Sender<Vec<Profile>>>,
     worker: Option<JoinHandle<()>>,
-    viewport: Option<[f32; 3]>,
+    viewport: Option<[f32; 2]>,
 }
 
 impl Drop for HudScales {
@@ -160,7 +160,7 @@ impl HudScales {
         }
     }
 
-    pub fn prepare_clamp(&mut self, viewport: [f32; 3]) {
+    pub fn prepare_clamp(&mut self, viewport: [f32; 2]) {
         if self.viewport != Some(viewport) {
             self.viewport = Some(viewport);
             for s in self.local.values_mut() {

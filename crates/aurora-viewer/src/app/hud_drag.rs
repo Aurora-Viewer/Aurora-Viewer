@@ -1,4 +1,4 @@
-//! Configurable held-key + left-button HUD gesture and its offline scenario.
+//! Configurable held-key HUD gestures, editing view zoom and offline scenarios.
 use super::*;
 use aurora_render::HudView;
 use uuid::Uuid;
@@ -43,13 +43,24 @@ impl App {
     }
     /// Own the wheel before media or camera, even on a no-modify/locked HUD.
     pub(super) fn on_hud_scroll(&mut self, steps: f32) -> bool {
-        if !self.hud_drag_requested()
-            || !self.settings.show_huds
+        if !self.settings.show_huds
             || self.camera.mouselook()
             || !matches!(self.screen, Screen::World)
             || self.mouse_mode != MouseMode::None
         {
             return false;
+        }
+        if !self.hud_drag_requested() {
+            if !self.build.open || !self.build.hud_selected(&self.world) {
+                return false;
+            }
+            // LLAgentCamera::handleScrollWheel / cameraZoomIn (Firestorm,
+            // originally LGPL 2.1): a HUD selection zooms the entire HUD view.
+            // No hit under the cursor is needed; local scale profiles stay intact.
+            if self.hud_drag.is_none() && !self.build.manip.dragging() && self.interactions.held.is_none() {
+                self.world.hud_zoom = hud_view_zoom(self.world.hud_zoom, steps);
+            }
+            return true;
         }
         let Some(idx) = self.scene.hud_move_pick(&self.world, self.cursor_pos) else {
             return false;
@@ -96,7 +107,8 @@ impl App {
         if self.hud_drag.is_some() || self.build.manip.dragging() {
             return;
         }
-        self.world.hud_scales.prepare_clamp([view.width, view.height, view.zoom]);
+        // View zoom must only change the projection, not local HUD positions.
+        self.world.hud_scales.prepare_clamp([view.width, view.height]);
         let Some(me) = self
             .world
             .objects
@@ -210,6 +222,7 @@ impl App {
     }
 
     pub(super) fn demo_hud_drag_steps(&mut self) {
+        self.demo_hud_view_zoom_steps();
         self.demo_hud_scale_steps();
         if !self.demo || !std::env::var("AURORA_DEMO_HUDS").is_ok_and(|mode| mode.starts_with("drag")) {
             return;
@@ -256,6 +269,81 @@ impl App {
                 self.hud_drag.is_some(),
                 self.interactions.held.is_some(),
                 self.mouse_mode
+            );
+        }
+    }
+
+    fn demo_hud_view_zoom_steps(&mut self) {
+        if !self.demo || !std::env::var("AURORA_DEMO_HUDS").is_ok_and(|mode| mode == "edit-scroll") {
+            return;
+        }
+        let Some(root) = self.world.objects.index_of_uuid(&crate::demo::hud::object(31, false).full_id) else {
+            return;
+        };
+        if self.frame_count == 720 {
+            self.build.open_build(crate::build::Tool::Edit);
+            self.build.click_select(&mut self.world, &self.settings.build, Some(root), false);
+            // Start with distinct local sizes, including a HUD outside the view.
+            let id = self.world.objects.get(root).map(|o| o.full_id);
+            if let Some(id) = id {
+                self.world.hud_scales.set(id, 2.0);
+                self.world.dirty_hud(root);
+            }
+            self.demo_hud_drag_key(false);
+        } else if self.frame_count == 740 {
+            if let Some(o) = self.world.objects.get_mut(root) {
+                o.position.y = 1.2;
+                o.render.needs_records = true;
+            }
+        } else if self.frame_count == 760 || self.frame_count == 900 {
+            self.cursor_pos = (10.0, 300.0); // Empty space still zooms all HUDs.
+            let before = self.camera.position;
+            let handled = self.on_hud_scroll(if self.frame_count == 760 { -5.0 } else { 5.0 });
+            log::info!(
+                "demo HUD editing view: handled={handled}, view_zoom={:.3}, local_scale={:.3}, camera_unchanged={}",
+                self.world.hud_zoom,
+                self.world.hud_scale(root),
+                self.camera.position == before
+            );
+        } else if self.frame_count == 820 {
+            if let Some(view) = self.scene.lists.hud_view
+                && let Some((pos, _, _)) = Scene::object_transform(&self.world, root, Instant::now(), 0)
+            {
+                self.cursor_pos = (
+                    view.width * 0.5 - pos.y * view.height * view.zoom,
+                    view.height * 0.5 - pos.z * view.height * view.zoom,
+                );
+                self.demo_hud_drag_key(true);
+                let before = self.world.hud_zoom;
+                let handled = self.on_hud_scroll(1.0);
+                self.demo_hud_drag_key(false);
+                log::info!(
+                    "demo HUD editing local: handled={handled}, local_scale={:.3}, view_unchanged={}",
+                    self.world.hud_scale(root),
+                    self.world.hud_zoom == before
+                );
+            }
+        } else if self.frame_count == 920 {
+            self.build.close(&mut self.world, &mut self.settings.build);
+            let before = self.world.hud_zoom;
+            let handled = self.on_hud_scroll(-1.0);
+            log::info!(
+                "demo HUD view outside edit: handled={handled}, view_unchanged={}",
+                self.world.hud_zoom == before
+            );
+        } else if self.frame_count == 940 {
+            let ground = self.world.objects.iter().find_map(|(idx, _)| {
+                (crate::build::selectable(&self.world, idx)
+                    && Scene::object_transform(&self.world, idx, Instant::now(), 0).is_some_and(|(_, _, hud)| !hud))
+                .then_some(idx)
+            });
+            self.build.open_build(crate::build::Tool::Edit);
+            self.build.click_select(&mut self.world, &self.settings.build, ground, false);
+            let before = self.world.hud_zoom;
+            let handled = self.on_hud_scroll(-1.0);
+            log::info!(
+                "demo HUD view with world selection: handled={handled}, view_unchanged={}",
+                self.world.hud_zoom == before
             );
         }
     }
@@ -331,6 +419,15 @@ impl App {
     }
 }
 
+/// Firestorm's wheel factor with winit's opposite scroll sign; same bounds
+/// as Aurora's World > HUDs view zoom controls (never a per-object resize).
+fn hud_view_zoom(zoom: f32, steps: f32) -> f32 {
+    if !steps.is_finite() {
+        return zoom;
+    }
+    (zoom * 0.8_f32.powf(-steps.clamp(-100.0, 100.0))).clamp(0.1, 1.0)
+}
+
 /// Keep at least 24 pixels visible; small panels keep their full width/height.
 fn accessible_delta(rect: [f32; 4], screen: [f32; 2]) -> [f32; 2] {
     std::array::from_fn(|axis| {
@@ -348,6 +445,29 @@ fn accessible_delta(rect: [f32; 4], screen: [f32; 2]) -> [f32; 2] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn editing_view_wheel_reveals_offscreen_huds_and_preserves_local_sizes() {
+        let view_zoom = hud_view_zoom(1.0, -5.0);
+        let view = HudView::new([1600, 900], view_zoom, -1.0, 1.0);
+        let screen_x = view.width * 0.5 - 1.2 * view.height * view.zoom;
+        assert!((0.0..view.width).contains(&screen_x));
+        assert!((hud_view_zoom(view_zoom, 5.0) - 1.0).abs() < 1e-5);
+        assert_eq!(hud_view_zoom(view_zoom, f32::NAN), view_zoom);
+        assert_eq!(hud_view_zoom(0.1, -1000.0), 0.1);
+        assert_eq!(hud_view_zoom(1.0, 1000.0), 1.0);
+        let mut scales = crate::world::hud_scale::HudScales::default();
+        let id = Uuid::from_u128(1);
+        scales.set(id, 2.0);
+        scales.prepare_clamp([view.width, view.height]);
+        scales.set_offset(id, Vec3::Y * 0.2);
+        scales.clamped(id);
+        let restored = HudView::new([1600, 900], hud_view_zoom(view_zoom, 5.0), -1.0, 1.0);
+        scales.prepare_clamp([restored.width, restored.height]);
+        assert!(!scales.needs_clamp(id));
+        assert_eq!(scales.scale(id), 2.0);
+        assert_eq!(scales.offset(id), Vec3::Y * 0.2);
+    }
 
     #[test]
     fn oversized_and_offscreen_huds_keep_a_reachable_strip() {

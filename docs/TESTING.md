@@ -228,6 +228,15 @@ grille.
   touche secondaire, déplacement avec cette dernière.
 - `menu`, `edit`, `edit-zoom` : clic droit sur l'enfant, Modifier et
   déplacement du linkset par la poignée Y, aussi à 50 %.
+- `edit-scroll` : sélectionne un HUD agrandi localement à 200 %, puis le
+  place hors écran (image 740). Sans touche HUD, cinq crans arrière dans
+  une zone vide dézooment tous les HUDs (image 760) ; avec la touche HUD,
+  un cran agrandit seulement le HUD survolé (image 820). Cinq crans avant
+  reviennent à la vue globale normale (image 900). La caméra et les facteurs
+  locaux sont conservés pendant le zoom global ; la touche HUD conserve
+  sa priorité pour le zoom local. Les images 920 et 940 ferment l’édition,
+  puis sélectionnent un objet du monde : la molette n’est plus interceptée
+  par les HUDs. Captures conseillées : 750,790,850,910.
 - `faces`, `faces-turned` : neuf panneaux HUD à une seule face visible —
   colonnes avant / arrière / matériau PBR explicitement double face, lignes
   opaque / translucide / masqué. La colonne arrière doit rester vide ;
