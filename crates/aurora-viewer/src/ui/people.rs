@@ -73,6 +73,9 @@ pub fn nearby(world: &World) -> Vec<(Uuid, String, Vec3, f32)> {
     out
 }
 
+/// Width of the distance column of the nearby list.
+const DISTANCE_W: f32 = 70.0;
+
 fn distance_color(p: &Palette, d: f32) -> Color32 {
     if d <= 20.0 {
         p.success
@@ -129,12 +132,20 @@ pub fn people_window(
                 .collect();
             let w = ui.available_width();
             let title = aurora_i18n::tr!("ui-people-name", value0 = format!("{}", list.len()));
-            widgets::header_row(ui, p, &[(&title, w - 70.0), (aurora_i18n::tr!("common-distance"), 70.0)]);
+            widgets::header_row(
+                ui,
+                p,
+                &[(&title, w - DISTANCE_W), (aurora_i18n::tr!("common-distance"), DISTANCE_W)],
+            );
             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                 for (id, name, _, d) in list.iter().take(200) {
                     ui.horizontal(|ui| {
                         ui.set_min_height(18.0);
-                        let r = ui.add(egui::Label::new(RichText::new(name).size(13.0).color(p.ink)).sense(egui::Sense::click()));
+                        // complete names can be long: cut before the distance
+                        // column (full name on hover)
+                        let name_w = (ui.available_width() - DISTANCE_W).max(60.0);
+                        let name = RichText::new(name).size(13.0).color(p.ink);
+                        let r = ui.add(widgets::elided_label(ui, name, name_w).sense(egui::Sense::click()));
                         // menu_people_nearby.xml
                         menu::context_menu(&r, p, |ui| context::avatar_list_menu(ui, p, world, *id, AvatarList::Nearby));
                         if r.double_clicked() {

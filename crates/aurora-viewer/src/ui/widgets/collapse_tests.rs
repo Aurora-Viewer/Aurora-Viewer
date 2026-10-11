@@ -160,3 +160,22 @@ fn expanded_geometry_survives_serialized_layout_and_restoration() {
         assert!((f.show(vec![]).size() - expanded.size()).length() < 1.0);
     }
 }
+
+#[test]
+fn placed_floater_takes_the_asked_position_and_size_expanded() {
+    let mut f = Fixture::new(false);
+    let before = f.show(vec![]);
+    // collapsed, as a previous run may have left it
+    f.double_click(f.title());
+    assert!(f.show(vec![]).height() < 40.0);
+    let bodies = f.bodies;
+    let (pos, size) = (egui::pos2(40.0, 60.0), egui::vec2(520.0, 340.0));
+    place_floater(&f.ctx, "collapse_fixture", pos, size);
+    let mut placed = f.show(vec![]);
+    for _ in 0..8 {
+        placed = f.show(vec![]);
+    }
+    assert!((placed.min - pos).length() < 1.0, "{before:?} -> {placed:?}");
+    assert!((placed.size() - size).length() < 1.0, "{before:?} -> {placed:?}");
+    assert!(f.bodies > bodies, "the contents are shown again");
+}

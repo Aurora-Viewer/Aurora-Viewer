@@ -4074,34 +4074,40 @@ impl App {
                 _ => {}
             }
         }
-        // AURORA_DEMO_POINTER="x,y[,l|r][;x,y…]": the pointer at these window
+        // AURORA_DEMO_POINTER="x,y[,l|r|s][;x,y…]": the pointer at these window
         // pixels from frame 300, one point every 60 frames (hover states,
-        // sub-menus); ",l"/",r" left-/right-clicks the interface there
+        // sub-menus); ",l"/",r" left-/right-clicks the interface there; ",s"
+        // leaves the pointer at rest there instead of moving it every frame
+        // (egui only shows a tooltip under a pointer at rest)
         if self.demo
             && self.frame_count >= 300
             && let Ok(v) = std::env::var("AURORA_DEMO_POINTER")
         {
-            let points: Vec<(f32, f32, Option<egui::PointerButton>)> = v
+            let points: Vec<(f32, f32, Option<egui::PointerButton>, bool)> = v
                 .split(';')
                 .filter_map(|pt| {
                     let mut it = pt.split(',').map(str::trim);
                     let x = it.next()?.parse().ok()?;
                     let y = it.next()?.parse().ok()?;
-                    let button = match it.next() {
-                        Some("l") => Some(egui::PointerButton::Primary),
-                        Some("r") => Some(egui::PointerButton::Secondary),
-                        _ => None,
+                    let (button, still) = match it.next() {
+                        Some("l") => (Some(egui::PointerButton::Primary), false),
+                        Some("r") => (Some(egui::PointerButton::Secondary), false),
+                        Some("s") => (None, true),
+                        _ => (None, false),
                     };
-                    Some((x, y, button))
+                    Some((x, y, button, still))
                 })
                 .collect();
             let step = (self.frame_count - 300) / 60;
             let i = (step as usize).min(points.len().saturating_sub(1));
-            if let Some(&(x, y, button)) = points.get(i) {
+            if let Some(&(x, y, button, still)) = points.get(i) {
                 let ppp = self.egui_ctx.pixels_per_point().max(0.1);
                 let pos = egui::pos2(x / ppp, y / ppp);
-                raw.events.push(egui::Event::PointerMoved(pos));
                 let click_frame = (self.frame_count - 300) % 60;
+                // at rest: only brought (back) there when it is elsewhere
+                if !still || self.egui_ctx.input(|i| i.pointer.latest_pos()) != Some(pos) {
+                    raw.events.push(egui::Event::PointerMoved(pos));
+                }
                 if let Some(button) = button
                     && step as usize == i
                     && matches!(click_frame, 2 | 3)
@@ -6275,8 +6281,18 @@ impl ApplicationHandler for App {
                     self.contacts_ui.pick_new_friend();
                 }
             }
-            // AURORA_DEMO_CONV=1: the demo group chat with its participants
-            if std::env::var_os("AURORA_DEMO_CONV").is_some() {
+            // AURORA_DEMO_CONV=1: the demo group chat with its participants;
+            // =noms[:etroit|large]: conversations and nearby avatars whose
+            // names do not fit, in windows of a known size
+            if let Some((conversations, people)) = crate::demo::long_names_scenario() {
+                self.panels.chat = true;
+                self.panels.people = true;
+                self.panels.people_tab = 0;
+                self.panels.perf = false;
+                self.chat_ui.selected = Some(crate::demo::DEMO_LONG_NAME);
+                ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(8.0, 480.0), conversations);
+                ui::widgets::place_floater(&self.egui_ctx, "people", egui::pos2(8.0, 40.0), people);
+            } else if std::env::var_os("AURORA_DEMO_CONV").is_some() {
                 self.panels.chat = true;
                 self.chat_ui.selected = Some(crate::demo::DEMO_GROUP1);
                 self.chat_ui.show_profile = true;

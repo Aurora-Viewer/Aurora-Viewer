@@ -571,6 +571,39 @@ fn tool_resp(ui: &mut egui::Ui, p: &Palette, icons: &super::icons::Icons, icon: 
     resp
 }
 
+/// The time at the right of a message header, laid out before the names so
+/// that they know the room it takes.
+fn header_time(ui: &egui::Ui, p: &Palette, time: String) -> std::sync::Arc<egui::Galley> {
+    let text = RichText::new(time).size(11.5).color(p.muted);
+    egui::WidgetText::from(text).into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::TextStyle::Body)
+}
+
+/// Narrower than this, the "- username" of a header is left out (it then
+/// shows on hover of the name) rather than reduced to an ellipsis.
+const USERNAME_MIN_W: f32 = 36.0;
+
+/// Sender of a message header: the display name, then " - username" in
+/// small (FSChatHistoryHeader). Both are cut with an ellipsis so that
+/// `reserve` pixels stay free at the right of the row for the time, as the
+/// user_name text of panel_chat_header.xml is (use_ellipses="true", the time
+/// box keeps its place); what was cut shows on hover. Returns the response
+/// of the name, clickable.
+fn header_names(ui: &mut egui::Ui, p: &Palette, name: &str, username: Option<&str>, col: Color32, reserve: f32) -> egui::Response {
+    let room = ui.available_width() - reserve;
+    let label = super::widgets::elided_label(ui, RichText::new(name).size(13.0).strong().color(col), room);
+    let r = ui.add(label.sense(egui::Sense::click()));
+    let Some(u) = username else {
+        return r;
+    };
+    let room = ui.available_width() - reserve;
+    if room < USERNAME_MIN_W {
+        return r.on_hover_text(u);
+    }
+    let text = RichText::new(format!("- {u}")).size(11.5).color(p.indigo_light);
+    ui.add(super::widgets::elided_label(ui, text, room));
+    r
+}
+
 /// Messages grouped by sender: header strip (picture, name, time) then lines.
 #[allow(clippy::too_many_arguments)]
 fn conversation(
@@ -651,7 +684,9 @@ fn conversation(
                             avatar_pic(ui, p, pics.get(&line.source), &name, 20.0);
                         }
                         let col = super::colors::sender_color(line);
-                        let r = ui.add(egui::Label::new(RichText::new(&name).size(13.0).strong().color(col)).sense(egui::Sense::click()));
+                        let time = header_time(ui, p, hhmm(line.time));
+                        let reserve = time.size().x + ui.spacing().item_spacing.x;
+                        let r = header_names(ui, p, &name, username.as_deref(), col, reserve);
                         // the inspector in Firestorm; Aurora opens the profile
                         let avatar = if own { world.agent_id } else { line.source };
                         if !object && !avatar.is_nil() {
@@ -665,11 +700,8 @@ fn conversation(
                         {
                             super::profile::request_open(ui.ctx(), avatar);
                         }
-                        if let Some(u) = &username {
-                            ui.label(RichText::new(format!("- {u}")).size(11.5).color(p.indigo_light));
-                        }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(RichText::new(hhmm(line.time)).size(11.5).color(p.muted));
+                            ui.label(time);
                         });
                     });
                 });
@@ -708,6 +740,84 @@ fn conversation(
                 );
             });
     }
+}
+
+/// Width of the conversation list and of its entries (the vertical tabs of
+/// FSFloaterIMContainer have a fixed width too: tab_width="115").
+const LIST_W: f32 = 140.0;
+const ENTRY_W: f32 = 136.0;
+const UNREAD_DOT_R: f32 = 4.0;
+
+/// One entry of the conversation list: picture (or initials), name, unread
+/// dot. The name is cut with an ellipsis before the dot and the edge of the
+/// entry, as the tab labels of Firestorm's conversations window are
+/// (use_ellipses="true" in floater_fs_im_container.xml), and the whole name
+/// shows on hover when it was cut (LLTabContainer::addLabelToolTip).
+fn list_entry(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    label: &str,
+    pic: Option<(Option<&egui::TextureHandle>, &str)>,
+    sel: bool,
+    unread: usize,
+) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(ENTRY_W, 24.0), egui::Sense::click());
+    let fill = if sel {
+        p.raised
+    } else if resp.hovered() {
+        p.field.gamma_multiply(1.4)
+    } else {
+        p.field
+    };
+    ui.painter().rect_filled(rect, 1.0, fill);
+    if sel {
+        ui.painter()
+            .rect_filled(egui::Rect::from_min_size(rect.min, egui::vec2(2.0, rect.height())), 0.0, p.violet);
+    }
+    let mut x = rect.left() + 8.0;
+    if let Some((tex, name)) = pic {
+        let r = egui::Rect::from_min_size(egui::pos2(x, rect.center().y - 8.0), egui::vec2(16.0, 16.0));
+        match tex {
+            Some(t) => {
+                ui.painter().image(
+                    t.id(),
+                    r,
+                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                    Color32::WHITE,
+                );
+            }
+            None => {
+                ui.painter().rect_filled(r, 2.0, p.raised);
+                ui.painter().text(
+                    r.center(),
+                    egui::Align2::CENTER_CENTER,
+                    initials(name),
+                    egui::FontId::proportional(7.5),
+                    p.violet_pale,
+                );
+            }
+        }
+        x += 22.0;
+    }
+    let dot = rect.right_center() - egui::vec2(10.0, 0.0);
+    // the name stops before the unread dot, else before the entry's edge
+    let text_right = if unread > 0 {
+        dot.x - UNREAD_DOT_R - 4.0
+    } else {
+        rect.right() - 6.0
+    };
+    let cut = super::widgets::paint_elided(
+        ui,
+        label,
+        egui::pos2(x, rect.center().y),
+        text_right - x,
+        egui::FontId::proportional(12.0),
+        if sel { p.ink } else { p.muted },
+    );
+    if unread > 0 {
+        ui.painter().circle_filled(dot, UNREAD_DOT_R, p.violet);
+    }
+    if cut { resp.on_hover_text(label) } else { resp }
 }
 
 /// Conversations floater (FSFloaterIMContainer): the tabs on the left
@@ -760,65 +870,12 @@ pub fn show(
         ui.horizontal_top(|ui| {
             // ---- contacts column
             ui.vertical(|ui| {
-                ui.set_width(140.0);
+                ui.set_width(LIST_W);
                 ui.spacing_mut().item_spacing.y = 2.0;
-                let entry =
-                    |ui: &mut egui::Ui, label: &str, pic: Option<(Option<&egui::TextureHandle>, &str)>, sel: bool, unread: usize| -> bool {
-                        let (rect, resp) = ui.allocate_exact_size(egui::vec2(136.0, 24.0), egui::Sense::click());
-                        let fill = if sel {
-                            p.raised
-                        } else if resp.hovered() {
-                            p.field.gamma_multiply(1.4)
-                        } else {
-                            p.field
-                        };
-                        ui.painter().rect_filled(rect, 1.0, fill);
-                        if sel {
-                            ui.painter()
-                                .rect_filled(egui::Rect::from_min_size(rect.min, egui::vec2(2.0, rect.height())), 0.0, p.violet);
-                        }
-                        let mut x = rect.left() + 8.0;
-                        if let Some((tex, name)) = pic {
-                            let r = egui::Rect::from_min_size(egui::pos2(x, rect.center().y - 8.0), egui::vec2(16.0, 16.0));
-                            match tex {
-                                Some(t) => {
-                                    ui.painter().image(
-                                        t.id(),
-                                        r,
-                                        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                                        Color32::WHITE,
-                                    );
-                                }
-                                None => {
-                                    ui.painter().rect_filled(r, 2.0, p.raised);
-                                    ui.painter().text(
-                                        r.center(),
-                                        egui::Align2::CENTER_CENTER,
-                                        initials(name),
-                                        egui::FontId::proportional(7.5),
-                                        p.violet_pale,
-                                    );
-                                }
-                            }
-                            x += 22.0;
-                        }
-                        ui.painter().text(
-                            egui::pos2(x, rect.center().y),
-                            egui::Align2::LEFT_CENTER,
-                            label,
-                            egui::FontId::proportional(12.0),
-                            if sel { p.ink } else { p.muted },
-                        );
-                        if unread > 0 {
-                            ui.painter()
-                                .circle_filled(rect.right_center() - egui::vec2(10.0, 0.0), 4.0, p.violet);
-                        }
-                        resp.clicked()
-                    };
                 // Contacts first (addFloater at START); once torn off the
                 // entry brings its own window up (Firestorm has the toolbar
                 // button for that)
-                if entry(ui, aurora_i18n::tr!("common-contacts"), None, st.contacts, 0) {
+                if list_entry(ui, p, aurora_i18n::tr!("common-contacts"), None, st.contacts, 0).clicked() {
                     if docked {
                         st.contacts = true;
                     } else {
@@ -826,13 +883,16 @@ pub fn show(
                     }
                 }
                 let local_shown = st.selected.is_none() && !st.contacts;
-                if entry(
+                if list_entry(
                     ui,
+                    p,
                     aurora_i18n::tr!("common-nearby-chat"),
                     None,
                     local_shown,
                     if local_shown { 0 } else { world.chat_unread },
-                ) {
+                )
+                .clicked()
+                {
                     st.selected = None;
                     st.show_profile = false;
                     st.contacts = false;
@@ -843,13 +903,16 @@ pub fn show(
                     if !world.is_group_session(&other) {
                         st.wanted_pics.insert(other);
                     }
-                    if entry(
+                    if list_entry(
                         ui,
+                        p,
                         &name,
                         Some((pics.get(&other), &name)),
                         st.selected == Some(other) && !st.contacts,
                         unread,
-                    ) {
+                    )
+                    .clicked()
+                    {
                         st.selected = Some(other);
                         st.show_profile = false;
                         st.contacts = false;
@@ -1483,5 +1546,121 @@ mod tests {
         assert_eq!(parse_channel("hello"), (0, "hello".into()));
         assert_eq!(parse_channel("/me waves"), (0, "/me waves".into()));
         assert_eq!(parse_channel("/-1 x"), (-1, "x".into()));
+    }
+
+    use crate::ui::widgets::elide_tests::{Frames, LONG, SHORT, WIDE, painted, tooltip_shown};
+
+    const LONG_GROUP: &str = "The Honourable Society of Extremely Long Conference Names (Northern Chapter)";
+    const USERNAME: &str = "maximilienne.wolfeschlegelsteinhausen";
+
+    fn entry(ui: &mut egui::Ui, label: &str, pic: bool, sel: bool, unread: usize) -> egui::Rect {
+        let p = crate::theme::Theme::default().palette();
+        list_entry(ui, &p, label, pic.then_some((None, label)), sel, unread).rect
+    }
+
+    #[test]
+    fn list_entry_keeps_long_names_inside() {
+        let mut frames = Frames::new();
+        for name in [LONG, WIDE, LONG_GROUP] {
+            for (pic, sel, unread) in [(true, false, 0), (true, true, 0), (true, false, 3), (false, false, 1)] {
+                let mut rect = egui::Rect::NOTHING;
+                let texts = frames.run(Vec::new(), |ui| rect = entry(ui, name, pic, sel, unread));
+                assert_eq!(rect.width(), ENTRY_W);
+                let t = painted(&texts, name);
+                assert!(t.cut && t.shown.ends_with('…'), "{name:?} shown as {:?}", t.shown);
+                // before the unread dot when there is one, else inside the entry
+                let limit = if unread > 0 {
+                    rect.right() - 10.0 - UNREAD_DOT_R
+                } else {
+                    rect.right()
+                };
+                assert!(t.rect.right() < limit, "{name:?} reaches {} (limit {limit})", t.rect.right());
+                // after the picture
+                assert!(t.rect.left() >= rect.left() + if pic { 24.0 } else { 8.0 });
+                // and it still says something
+                assert!(t.shown.chars().count() > 4, "{name:?} shown as {:?}", t.shown);
+            }
+        }
+    }
+
+    #[test]
+    fn list_entry_shows_the_whole_name_on_hover_only_when_cut() {
+        for (name, cut) in [(LONG, true), (LONG_GROUP, true), (SHORT, false)] {
+            let mut frames = Frames::new();
+            let mut rect = egui::Rect::NOTHING;
+            let count = |texts: &[crate::ui::widgets::elide_tests::Text]| texts.iter().filter(|t| t.source == name).count();
+            let texts = frames.run(Vec::new(), |ui| rect = entry(ui, name, false, false, 2));
+            assert_eq!(painted(&texts, name).cut, cut);
+            assert_eq!(count(&texts), 1);
+            let texts = frames.hover(rect.center(), |ui| {
+                entry(ui, name, false, false, 2);
+            });
+            assert_eq!(count(&texts), if cut { 2 } else { 1 }, "{name:?}");
+            assert!(!cut || tooltip_shown(&texts, name), "{name:?}");
+        }
+    }
+
+    /// A message header `width` wide: (row, name, time) rects.
+    fn header(ui: &mut egui::Ui, width: f32, name: &str, username: Option<&str>) -> (egui::Rect, egui::Rect, egui::Rect) {
+        let p = crate::theme::Theme::default().palette();
+        let mut rects = (egui::Rect::NOTHING, egui::Rect::NOTHING);
+        let row = ui
+            .allocate_ui_with_layout(egui::vec2(width, 22.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                let time = header_time(ui, &p, "23:59".into());
+                let reserve = time.size().x + ui.spacing().item_spacing.x;
+                rects.0 = header_names(ui, &p, name, username, p.ink, reserve).rect;
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    rects.1 = ui.label(time).rect;
+                });
+            })
+            .response
+            .rect;
+        (row, rects.0, rects.1)
+    }
+
+    #[test]
+    fn header_names_stop_before_the_time() {
+        let mut frames = Frames::new();
+        let small = format!("- {USERNAME}");
+        for name in [LONG, WIDE, SHORT] {
+            for width in (90..=1200).step_by(11).map(|w| w as f32) {
+                let mut rects = None;
+                let texts = frames.run(Vec::new(), |ui| rects = Some(header(ui, width, name, Some(USERNAME))));
+                let (row, name_rect, time) = rects.expect("the header is drawn");
+                assert!(
+                    row.width() <= width + 0.01,
+                    "{name:?} widens the header to {} at {width} px",
+                    row.width()
+                );
+                assert!(name_rect.right() <= time.left(), "{name:?} runs under the time at {width} px");
+                // the username, when there is room for it, stops before the time too
+                if let Some(u) = texts.iter().find(|t| t.source == small) {
+                    assert!(u.rect.left() >= name_rect.right());
+                    assert!(u.rect.right() <= time.left() + 0.01, "username under the time at {width} px");
+                    assert!(u.rect.width() >= USERNAME_MIN_W || !u.cut);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn header_names_are_whole_when_there_is_room() {
+        let mut frames = Frames::new();
+        let small = format!("- {USERNAME}");
+        let texts = frames.run(Vec::new(), |ui| {
+            header(ui, 1200.0, LONG, Some(USERNAME));
+        });
+        assert!(!painted(&texts, LONG).cut);
+        assert!(!painted(&texts, &small).cut);
+        // no room left after the name: the username waits on hover of the name
+        let mut name_rect = egui::Rect::NOTHING;
+        let texts = frames.run(Vec::new(), |ui| name_rect = header(ui, 200.0, LONG, Some(USERNAME)).1);
+        assert!(painted(&texts, LONG).cut);
+        assert!(texts.iter().all(|t| t.source != small));
+        let texts = frames.hover(name_rect.center(), |ui| {
+            header(ui, 200.0, LONG, Some(USERNAME));
+        });
+        assert!(tooltip_shown(&texts, LONG));
+        assert!(texts.iter().any(|t| t.source == USERNAME));
     }
 }

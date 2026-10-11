@@ -121,11 +121,14 @@ capture.
   les mêmes cibles. Pour le test humain du sélecteur, retirer cette variable :
   Préférences › Interface › Disposition › Menu du clic droit ; basculer entre
   Menu en liste et Pie menu (circulaire), puis redémarrer pour vérifier le choix.
-- **`AURORA_DEMO_POINTER="x,y[,l|r][;x,y…]"`** : déplace le pointeur de
+- **`AURORA_DEMO_POINTER="x,y[,l|r|s][;x,y…]"`** : déplace le pointeur de
   l'interface vers ces pixels de la fenêtre à partir de l'image 300, un point
   toutes les 60 images (états de survol, sous-menus) ; `,l` fait un clic gauche,
   `,r` un clic droit sur l'interface à cet endroit. Dans le pie menu, le clic
-  gauche entre dans un sous-menu et le clic droit remonte d'un niveau.
+  gauche entre dans un sous-menu et le clic droit remonte d'un niveau. `,s`
+  laisse le pointeur immobile à cet endroit (il n'y est ramené que s'il en a
+  bougé) : c'est ce qu'il faut pour capturer une info-bulle, qu'egui n'affiche
+  que sous un pointeur au repos.
 - **`AURORA_DEMO_HOVER=1`** : à partir de l'image 300, le curseur balaie la
   fenêtre pendant 120 images, reste immobile 120 images, et ainsi de suite
   (recherche de l'objet sous le curseur et réponses gardées d'une image à
@@ -610,6 +613,19 @@ grille.
   est désactivée ; ne saisir que des valeurs synthétiques pour cet essai.
   `AURORA_UPDATE_ACK` et `AURORA_UPDATE_ROLLBACK` sont des signaux internes entre
   processus, pas des scénarios à définir à la main.
+- **`AURORA_DEMO_CONV=1|noms[:etroit|large]`** : `1` ouvre la conversation du
+  groupe de démo avec ses participants. `noms` montre des noms plus longs que
+  leur place (issue #124) : deux résidents (nom d'affichage long avec nom
+  d'utilisateur, lettres larges et accentuées) et une conférence au titre long
+  dans la liste de Conversations, avec des messages non lus, et ces résidents
+  dans Personnes › Près de vous. Les deux fenêtres sont placées à une taille
+  connue, quelle que soit la disposition enregistrée : 600 et 330 px de large,
+  400 et 230 avec `:etroit`, 900 et 520 avec `:large`. À voir : chaque nom
+  coupé par « … » avant la pastille de non-lu, l'heure du message ou la
+  distance, sans rien recouvrir ; les fenêtres gardent la largeur demandée ;
+  le nom entier s'affiche au survol d'un nom coupé (pour une capture :
+  `AURORA_DEMO_POINTER="85,633,s"` sur la conférence, `"120,377,s"` sur un
+  résident proche, fenêtre de 1600 × 900).
 - **`AURORA_DEMO_CONTACTS=amis|groupes|cercles|detache|ajout`** : onglet
   Contacts de Conversations sur Amis, Groupes ou Cercles de contacts (cercles
   et surnoms de démo), la fenêtre Contacts détachée, ou le sélecteur de
