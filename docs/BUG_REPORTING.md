@@ -1,7 +1,8 @@
 # Rapports de bugs de l’alpha
 
 Le formulaire commun est accessible depuis la barre du haut, Aide et la
-connexion. Les options d’envoi sont indépendantes du modèle du rapport.
+connexion. « Envoyer depuis Aurora » est le premier choix et le mode par défaut
+des nouveaux rapports. Les options d’envoi sont indépendantes du modèle du rapport.
 Le mode navigateur est disponible sans configuration d’application ; les
 deux modes demandent un compte GitHub au testeur. Sans compte, une copie
 locale reste possible.
@@ -45,7 +46,16 @@ de lire et de décocher chaque information automatique. Les libellés et les
 diagnostics suivent la langue de l’interface à chaque affichage. Le texte
 saisi est conservé tel quel. Les titres et valeurs techniques du fichier
 exporté restent en anglais pour les outils qui lisent les rapports. Les actions
-de copie, d’enregistrement et de nouveau rapport sont dans « Autres actions ».
+de copie et d’enregistrement sont dans « Autres actions ».
+Un nouveau rapport commence sur Description. Fermer la fenêtre conserve en
+mémoire le texte, l’onglet, le défilement, les cases, l’image et le mode d’envoi,
+y compris l’autorisation GitHub en cours, jusqu’à la fin de la session du viewer.
+Une erreur d’envoi conserve également le brouillon. Après création confirmée
+par l’API, le lien du rapport et son dossier restent disponibles ; rouvrir la
+fenêtre ou choisir « Nouveau rapport » prépare ensuite un formulaire neuf.
+Le navigateur ne confirme pas la publication au viewer : le testeur clique
+sur « J’ai publié le rapport » après l’envoi sur GitHub pour vider le brouillon.
+Ouvrir GitHub ou enregistrer une copie locale ne le vide pas.
 Le nom de l’avatar et les diagnostics sont
 décochés au départ. Aucun état de connexion SL ou réglage complet n’est
 sérialisé. Les diagnostics publics ne gardent que les catégories reconnues
@@ -84,7 +94,9 @@ préférences enregistrées. Pour tester manuellement la langue dans Préférenc
 lancer sans argument `--language`, qui forcerait la langue du processus.
 Tester les champs décochés, la copie, l’export, une image avec retrait puis
 réajout, une capture avec et sans interface, le redimensionnement et les deux
-langues. Tester également l’entrée depuis la connexion et le menu Aide.
+langues. Modifier le texte, choisir Image ou Données, fermer puis rouvrir depuis
+Signaler un bug : vérifier le texte, les cases, l’image et l’onglet conservés.
+Tester également l’entrée depuis la connexion et le menu Aide.
 
 L’autorisation réelle et la publication d’un rapport de test sur GitHub sont
 validées par l’humain, avec son compte. Vérifier aussi l’annulation et le refus

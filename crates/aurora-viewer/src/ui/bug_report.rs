@@ -11,9 +11,9 @@ mod tests;
 
 #[derive(Clone, Copy, Default, PartialEq)]
 enum Delivery {
-    #[default]
     Local,
     Browser,
+    #[default]
     Direct,
 }
 
@@ -52,18 +52,29 @@ pub struct BugReportUi {
     pending_delivery: Option<(Delivery, Report, bool)>,
     github: Github,
     notice: Option<&'static str>,
+    draft_active: bool,
+    draft_id: uuid::Uuid,
+    browser_opened: bool,
     demo_text: Option<[String; 4]>,
     language: &'static str,
 }
 
 impl BugReportUi {
     pub fn begin(&mut self, fields: Vec<Field>, demo: bool) {
+        // Keep the sent report visible for its issue link and picture attachment,
+        // then start a fresh draft when the user opens the form again.
+        if self.github.created.is_some() {
+            self.new_report();
+        }
         self.requested = false;
         self.open = true;
         // Closing the floater preserves the draft and its original context.
-        if !self.report.fields.is_empty() {
+        if self.draft_active {
             return;
         }
+        self.draft_active = true;
+        self.draft_id = uuid::Uuid::new_v4();
+        self.tab = 0;
         self.report.fields = fields;
         self.language = aurora_i18n::language();
         self.demo = demo;
@@ -174,6 +185,8 @@ impl BugReportUi {
                                 "bug-browser-opened"
                             });
                             ctx.open_url(egui::OpenUrl::new_tab(draft.url));
+                            // Opening a draft URL is not confirmation of publication.
+                            self.browser_opened = true;
                             if with_image {
                                 let path = saved.public_dir.clone();
                                 std::thread::spawn(move || {
@@ -262,6 +275,12 @@ impl BugReportUi {
         };
     }
 
+    fn confirm_browser_publication(&mut self) {
+        if self.browser_opened {
+            self.new_report();
+        }
+    }
+
     pub fn show(&mut self, ctx: &egui::Context, p: &Palette, icons: &super::icons::Icons, in_world: bool) {
         self.refresh_language(aurora_i18n::language());
         self.poll(ctx);
@@ -279,7 +298,7 @@ impl BugReportUi {
             // and status messages must remain reachable when they wrap.
             let page_height = ui.available_height();
             egui::ScrollArea::vertical()
-                .id_salt("bug-page")
+                .id_salt(("bug-page", self.draft_id))
                 .max_height(page_height)
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
@@ -308,13 +327,13 @@ impl BugReportUi {
                         0.0
                     };
                     let height = (page_height - 315.0 - image_note - auth_controls).clamp(160.0, 440.0);
-                    ui.add_enabled_ui(!working, |ui| {
+                    ui.add_enabled_ui(!working && self.github.created.is_none(), |ui| {
                         self.form_panel(ui, p, in_world, height);
                     });
                     ui.separator();
                     ui.add_space(6.0);
                     ui.label(RichText::new(aurora_i18n::tr!("bug-send-heading")).strong().color(p.violet_light));
-                    ui.add_enabled_ui(!working, |ui| self.delivery_options(ui, p));
+                    ui.add_enabled_ui(!working && self.github.created.is_none(), |ui| self.delivery_options(ui, p));
                     if self.include_image && self.image.is_some() {
                         ui.label(RichText::new(aurora_i18n::tr!("bug-manual-image")).color(p.amber));
                     }
@@ -359,13 +378,15 @@ impl BugReportUi {
                                 });
                                 ui.close();
                             }
-                            ui.separator();
-                            if ui
-                                .add_enabled(idle, egui::Button::new(aurora_i18n::tr!("bug-new-report")))
-                                .clicked()
-                            {
-                                self.new_report();
-                                ui.close();
+                            if self.github.created.is_some() {
+                                ui.separator();
+                                if ui
+                                    .add_enabled(idle, egui::Button::new(aurora_i18n::tr!("bug-new-report")))
+                                    .clicked()
+                                {
+                                    self.new_report();
+                                    ui.close();
+                                }
                             }
                         });
                         if working || self.diagnostics.is_some() {
@@ -381,6 +402,15 @@ impl BugReportUi {
                     if let Some(notice) = self.notice {
                         ui.label(RichText::new(aurora_i18n::text(notice)).color(p.teal));
                     }
+                    if self.browser_opened && self.github.created.is_none() {
+                        ui.label(RichText::new(aurora_i18n::tr!("bug-browser-confirm-help")).color(p.muted));
+                        if ui
+                            .add_enabled(idle, egui::Button::new(aurora_i18n::tr!("bug-browser-confirm")))
+                            .clicked()
+                        {
+                            self.confirm_browser_publication();
+                        }
+                    }
                     if let Some(number) = self.github.created {
                         ui.hyperlink_to(
                             aurora_i18n::tr!("bug-created", number = number.to_string()),
@@ -395,9 +425,6 @@ impl BugReportUi {
                     }
                 });
         });
-        if !open {
-            self.github.cancel_authorization();
-        }
         self.open = open;
     }
 
@@ -419,7 +446,7 @@ impl BugReportUi {
             ],
         );
         egui::ScrollArea::vertical()
-            .id_salt(("bug-form", self.tab))
+            .id_salt(("bug-form", self.draft_id, self.tab))
             .max_height(height - 50.0)
             .auto_shrink([false, false])
             .show(ui, |ui| {
@@ -542,13 +569,10 @@ impl BugReportUi {
     }
 
     fn delivery_options(&mut self, ui: &mut egui::Ui, p: &Palette) {
-        // No preference/authorization is persisted; browser is the default.
-        if self.delivery == Delivery::Local {
-            self.delivery = Delivery::Browser;
-        }
+        // Only the current draft remembers the chosen delivery mode.
         ui.horizontal_wrapped(|ui| {
-            ui.radio_value(&mut self.delivery, Delivery::Browser, aurora_i18n::tr!("bug-browser-mode"));
             ui.radio_value(&mut self.delivery, Delivery::Direct, aurora_i18n::tr!("bug-direct-mode"));
+            ui.radio_value(&mut self.delivery, Delivery::Browser, aurora_i18n::tr!("bug-browser-mode"));
         });
         ui.label(
             RichText::new(aurora_i18n::text(if self.delivery == Delivery::Browser {
