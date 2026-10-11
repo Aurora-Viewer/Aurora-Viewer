@@ -30,6 +30,10 @@ try {
     Assert-PolicyTest ($read.cache_invalidation_before -eq '0.5.0' -and $read.settings_reset_before -eq '0.5.0') 'Le workflow doit relire exactement les choix du tag.'
     function Show-Menu($Title, $Items) { return $null }
     Assert-PolicyTest ($null -eq (Read-ReleaseMaintenance $policy)) 'Annuler ne doit pas créer de politique.'
+    $pending = [ordered]@{ schema = 1; version = '0.5.0'; cache_invalidation_before = $null; settings_reset_before = $null }
+    $script:menuStep = 0
+    function Show-Menu($Title, $Items) { if ($script:menuStep++ -eq 0) { $Items[1] } else { return $null } }
+    Assert-PolicyTest ($null -eq (Read-ReleaseMaintenance $pending) -and -not $pending.cache_invalidation_before) 'Annuler les paramètres ne doit pas appliquer le choix du cache.'
     $invalid = @{ schema = 1; version = '0.5.0'; cache_invalidation_before = '0.6.0' }
     $rejected = $false
     try { Assert-UpdatePolicy $invalid '0.5.0' } catch { $rejected = $true }

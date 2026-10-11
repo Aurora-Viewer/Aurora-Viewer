@@ -52,7 +52,12 @@ function Write-Aurora([string]$Text) {
     Write-Host "$out$Esc[0m"
 }
 
-function Clear-Screen { if ($Interactive) { Clear-Host } }
+function Set-CursorVisible([bool]$Visible) {
+    if (-not $Interactive) { return }
+    try { [Console]::CursorVisible = $Visible } catch { }
+}
+
+function Clear-Screen { if ($Interactive) { Clear-Host; Set-CursorVisible $false } }
 
 function Show-Logo([string]$Subtitle) {
     Clear-Screen
@@ -111,17 +116,24 @@ function Write-Footer([string]$Hints) {
     $status = @(if ($FooterStatus) { & $FooterStatus })
     # one segment comes unrolled: ('text', 'color'); plain text: one muted segment
     if ($status.Count -and $status[0] -isnot [array]) {
-        $status = if ($status.Count -eq 2 -and $Palette.ContainsKey([string]$status[1])) { @(, $status) } else { @(, @(($status -join ' '), 'muted')) }
+        if ($status.Count -eq 2 -and $Palette.ContainsKey([string]$status[1])) { $status = ,@($status[0], $status[1]) }
+        else { $status = ,@(($status -join ' '), 'muted') }
     }
     $segments = @($status) + @(, @("  $(Get-Date -Format 'HH:mm:ss') ", 'muted'))
     $left = " $Hints"
+    # On narrow windows keep the clock, dropping status segments that do not fit.
     $rightLength = ($segments | ForEach-Object { ([string]$_[0]).Length } | Measure-Object -Sum).Sum
+    $start = 0
+    while ($start -lt $segments.Count - 1 -and $rightLength -gt $w - 1) {
+        $rightLength -= ([string]$segments[$start][0]).Length
+        $start++
+    }
     $gap = $w - $left.Length - $rightLength
     if ($gap -lt 1) { $left = $left.Substring(0, [Math]::Max(0, $left.Length + $gap - 1)); $gap = 1 }
     $saved = $raw.CursorPosition
     $raw.CursorPosition = New-Object Management.Automation.Host.Coordinates 0, $y
     Write-Color ($left + (' ' * $gap)) muted -Background bar -NoNewline
-    foreach ($s in $segments) { Write-Color ([string]$s[0]) $s[1] -Background bar -NoNewline }
+    for ($i = $start; $i -lt $segments.Count; $i++) { $s = $segments[$i]; Write-Color ([string]$s[0]) $s[1] -Background bar -NoNewline }
     $raw.CursorPosition = $saved
 }
 
@@ -142,6 +154,7 @@ function Get-WindowSize {
 $KeySource = $null
 $TickHook = $null
 function Read-Key([string]$Hints, [string]$Size) {
+    Set-CursorVisible $false
     if ($KeySource) { return & $KeySource }
     $last = [DateTime]::MinValue
     $seen = Get-WindowSize
@@ -189,7 +202,8 @@ function Read-Text([string]$Prompt) {
     Write-Host ''
     Write-Color "  $Prompt" ink
     Write-Color '  > ' violet -NoNewline
-    (Read-Host).Trim().Trim('"')
+    Set-CursorVisible $true
+    try { (Read-Host).Trim().Trim('"') } finally { Set-CursorVisible $false }
 }
 
 # --- Menu -------------------------------------------------------------------
@@ -198,6 +212,7 @@ function Read-Text([string]$Prompt) {
 # sits above the menu: everything is redrawn from it when the window is
 # resized, so a menu with something above it gives it as $Header.
 function Show-Menu([string]$Title, [object[]]$Items, [scriptblock]$Header, [int]$Selected = 0) {
+    if (-not $Items.Count) { return $null }
     $hints = '↑↓ choisir · Entrée valider · Échap retour'
     if (-not $Interactive -and -not $KeySource) {
         if ($Header) { & $Header }
@@ -206,66 +221,92 @@ function Show-Menu([string]$Title, [object[]]$Items, [scriptblock]$Header, [int]
         $a = Read-Text 'Ton choix (vide : retour) :'
         return $Items | Where-Object { $_.Key -eq $a } | Select-Object -First 1
     }
-    $sel = [Math]::Max(0, [Math]::Min($Selected, $Items.Count - 1))
-    # hints start in one column, after the longest label
-    $column = [Math]::Max(40, ($Items | ForEach-Object { "  $($_.Key)  $($_.Label)".Length + 2 } | Measure-Object -Maximum).Maximum)
-    $natural = [Math]::Max(60, ($Items | ForEach-Object { $column + $_.Hint.Length } | Measure-Object -Maximum).Maximum)
-    # Every line has the same width, the selected one or not: a shorter line
-    # would leave the end of the violet bar on screen when the selection moves.
-    $draw = {
-        for ($i = 0; $i -lt $Items.Count; $i++) {
-            $it = $Items[$i]
-            $label = "  $($it.Key)  $($it.Label)".PadRight($column)
-            $text = $label + $it.Hint
-            if ($text.Length -gt $width) { $text = $text.Substring(0, $width - 1) + '…' }
-            $text = $text.PadRight($width)
-            Write-Color '  ' -NoNewline
-            if ($i -eq $sel) {
-                Write-Color $text ink -Background violet
-            } else {
-                $keyEnd = [Math]::Min(5, $text.Length)
-                $labelEnd = [Math]::Min($label.Length, $text.Length)
-                Write-Color $text.Substring(0, $keyEnd) violet_light -NoNewline
-                Write-Color $text.Substring($keyEnd, $labelEnd - $keyEnd) ink -NoNewline
-                Write-Color $text.Substring($labelEnd) muted_dim
-            }
-        }
-    }
-    # all of it (dot-sourced: sets $top, $width and $size here)
-    $full = {
-        if ($Header) { & $Header }
-        Write-Title $Title
-        Write-Host ''
-        $size = if ($KeySource) { '' } else { Get-WindowSize }
-        # no line wider than the window: a wrapped line shifts all the others
-        $width = if ($KeySource) { $natural } else { [Math]::Max(20, [Math]::Min($natural, $Host.UI.RawUI.WindowSize.Width - 3)) }
-        $top = if ($KeySource) { 0 } else { $Host.UI.RawUI.CursorPosition.Y }
-        & $draw
-    }
-    . $full
-    while ($true) {
-        Write-Footer $hints
-        $k = Read-Key $hints $size
-        $choice = $null
-        switch ($k.Key) {
-            'Resize' { Clear-Screen; . $full }
-            'UpArrow' { $sel = ($sel - 1 + $Items.Count) % $Items.Count }
-            'DownArrow' { $sel = ($sel + 1) % $Items.Count }
-            'Home' { $sel = 0 }
-            'End' { $sel = $Items.Count - 1 }
-            'Enter' { return $Items[$sel] }
-            { $_ -in 'Escape', 'Backspace' } { return $null }
-            default {
-                $choice = $Items | Where-Object { $_.Key -eq [string]$k.KeyChar } | Select-Object -First 1
-                if (-not $choice -and $k.KeyChar) {
-                    $choice = $Items | Where-Object { $_.Key -eq ([string]$k.KeyChar).ToLower() } | Select-Object -First 1
+    $cursorVisible = $true
+    if ($Interactive) { try { $cursorVisible = [Console]::CursorVisible } catch { } }
+    Set-CursorVisible $false
+    try {
+        $sel = [Math]::Max(0, [Math]::Min($Selected, $Items.Count - 1))
+        $first = 0
+        # hints start in one column, after the longest label
+        $column = [Math]::Max(40, ($Items | ForEach-Object { "  $($_.Key)  $($_.Label)".Length + 2 } | Measure-Object -Maximum).Maximum)
+        $natural = [Math]::Max(60, ($Items | ForEach-Object { $column + $_.Hint.Length } | Measure-Object -Maximum).Maximum)
+        # Every line has the same width, the selected one or not: a shorter line
+        # would leave the end of the violet bar on screen when the selection moves.
+        $draw = {
+            if ($sel -lt $first) { $first = $sel }
+            if ($sel -ge $first + $rows) { $first = $sel - $rows + 1 }
+            for ($i = $first; $i -lt [Math]::Min($Items.Count, $first + $rows); $i++) {
+                if ($Interactive) { $Host.UI.RawUI.CursorPosition = New-Object Management.Automation.Host.Coordinates 0, ($top + $i - $first) }
+                $it = $Items[$i]
+                $marker = if ($i -eq $sel) { '›' } else { ' ' }
+                $label = "$marker $($it.Key)  $($it.Label)".PadRight($column)
+                $text = $label + $it.Hint
+                if ($text.Length -gt $width) { $text = $text.Substring(0, $width - 1) + '…' }
+                $text = $text.PadRight($width)
+                Write-Color '  ' -NoNewline
+                if ($i -eq $sel) {
+                    Write-Color $text ink -Background violet -NoNewline:$Interactive
+                } else {
+                    $keyEnd = [Math]::Min(5, $text.Length)
+                    $labelEnd = [Math]::Min($label.Length, $text.Length)
+                    Write-Color $text.Substring(0, $keyEnd) violet_light -NoNewline
+                    Write-Color $text.Substring($keyEnd, $labelEnd - $keyEnd) ink -NoNewline
+                    Write-Color $text.Substring($labelEnd) muted_dim -NoNewline:$Interactive
                 }
-                if ($choice) { return $choice }
             }
+            if ($Interactive) { $Host.UI.RawUI.CursorPosition = New-Object Management.Automation.Host.Coordinates 0, ($top + $rows) }
         }
-        if ($k.Key -ne 'Resize' -and -not $KeySource) {
-            $Host.UI.RawUI.CursorPosition = New-Object Management.Automation.Host.Coordinates 0, $top
-            & $draw
+        # all of it (dot-sourced: sets $top, $width and $size here)
+        $full = {
+            if ($Header) { & $Header }
+            Set-CursorVisible $false
+            Write-Title $Title
+            Write-Host ''
+            $size = if ($Interactive) { Get-WindowSize } else { '' }
+            # no line wider than the window: a wrapped line shifts all the others
+            $width = if ($Interactive) { [Math]::Max(1, [Math]::Min($natural, $Host.UI.RawUI.WindowSize.Width - 3)) } else { $natural }
+            $top = if ($Interactive) { $Host.UI.RawUI.CursorPosition.Y } else { 0 }
+            $rows = $Items.Count
+            if ($Interactive) {
+                $raw = $Host.UI.RawUI
+                $available = $raw.WindowPosition.Y + $raw.WindowSize.Height - 2 - $top
+                # A long preceding transcript must not push the choices off screen.
+                # Reserve the footer and a line after the menu; paginate tall lists.
+                if ($available -lt [Math]::Min(3, $Items.Count)) {
+                    Clear-Screen
+                    Set-CursorVisible $false
+                    $caption = "  » $Title"
+                    if ($caption.Length -gt $width + 2) { $caption = $caption.Substring(0, $width + 1) + '…' }
+                    Write-Color $caption violet_light
+                    $top = $raw.CursorPosition.Y
+                    $available = $raw.WindowPosition.Y + $raw.WindowSize.Height - 2 - $top
+                }
+                $rows = [Math]::Max(1, [Math]::Min($Items.Count, $available))
+            }
+            . $draw
         }
-    }
+        . $full
+        while ($true) {
+            Write-Footer $hints
+            $k = Read-Key $hints $size
+            $choice = $null
+            switch ($k.Key) {
+                'Resize' { Clear-Screen; . $full }
+                'UpArrow' { $sel = ($sel - 1 + $Items.Count) % $Items.Count }
+                'DownArrow' { $sel = ($sel + 1) % $Items.Count }
+                'Home' { $sel = 0 }
+                'End' { $sel = $Items.Count - 1 }
+                'Enter' { return $Items[$sel] }
+                { $_ -in 'Escape', 'Backspace' } { return $null }
+                default {
+                    $choice = $Items | Where-Object { $_.Key -eq [string]$k.KeyChar } | Select-Object -First 1
+                    if (-not $choice -and $k.KeyChar) {
+                        $choice = $Items | Where-Object { $_.Key -eq ([string]$k.KeyChar).ToLower() } | Select-Object -First 1
+                    }
+                    if ($choice) { return $choice }
+                }
+            }
+            if ($k.Key -ne 'Resize') { . $draw }
+        }
+    } finally { Set-CursorVisible $cursorVisible }
 }

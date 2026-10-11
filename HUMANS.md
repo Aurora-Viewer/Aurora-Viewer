@@ -165,11 +165,25 @@ raccourci « Aurora Tools » que l'outil peut créer). Tout se fait au clavier :
 arrière** pour revenir, et la touche affichée devant chaque choix comme
 raccourci.
 
+Le choix actif porte un repère **›** sur fond violet ; le curseur de saisie
+reste masqué pendant la navigation. Les longues listes défilent avec la
+sélection et les menus s'adaptent au redimensionnement de la console.
+La création d'une release sépare le numéro, le cache et les paramètres en
+trois écrans, avec la version choisie et un récapitulatif avant confirmation.
+
 À l'ouverture, l'outil vérifie l'environnement : outils, dépôt en retard sur
 GitHub, sources de Firestorm périmées, Rust pas à jour, police, connexion
 GitHub… S'il manque ou s'il est périmé quelque chose, le premier choix est
 **Réparer / mettre à jour** (la même installation que la commande en une
 ligne : ce qui est là est mis à jour, rien n'est réinstallé).
+Si cette mise à jour modifie les scripts d'Aurora Tools, l'outil redémarre
+automatiquement dans la même console et rouvre son menu avec le nouveau
+comportement. Cela s'applique aussi à l'action `-Action repair` ; une
+réparation qui ne modifie pas les outils conserve la session en cours.
+
+Pour vérifier ces comportements sans installer ni publier quoi que ce soit :
+`powershell -NoProfile -File scripts/test-tools.ps1` teste les menus dans des
+consoles Windows masquées et la relance sur des scripts temporaires isolés.
 
 | Choix | Ce que ça fait |
 |---|---|

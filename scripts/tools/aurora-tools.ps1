@@ -53,6 +53,34 @@ function Show-Failure($Err) {
     Write-Color '  Corrige le problème puis relance : ce qui est fait est gardé.' muted
 }
 
+# Compare the scripts on disk with the session's snapshot, including module
+# additions/removals. A new PowerShell process must load them after repair.
+function Get-ToolsFingerprint([string]$RepoPath) {
+    $folder = Join-Path $RepoPath 'scripts\tools'
+    ((Get-ChildItem -LiteralPath $folder -Filter *.ps1 | Sort-Object Name | ForEach-Object {
+        "$($_.Name):$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash)"
+    }) -join '|')
+}
+
+function Invoke-ToolsRepair($P) {
+    try { Invoke-Repair $P } finally {
+        # A later repair step may fail after git has already updated the tools.
+        if ($ToolsFingerprint -ne (Get-ToolsFingerprint $P.Repo)) {
+            $script:ToolsRestartPath = Join-Path $P.Repo 'scripts\tools\aurora-tools.ps1'
+        }
+    }
+}
+
+function Restart-AuroraTools([string]$ToolsPath) {
+    Write-Color '  Aurora Tools a été mis à jour. Redémarrage automatique…' success
+    # Run in this console, with the same PowerShell edition. The old session
+    # has stopped its watcher and will exit when the replacement exits.
+    $engine = (Get-Process -Id $PID).Path
+    $arguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ToolsPath, '-Action', 'menu')
+    if ($DryRun) { $arguments += '-DryRun' }
+    & $engine @arguments
+}
+
 # --- Installation ---------------------------------------------------------------
 
 function Start-Install {
@@ -144,7 +172,7 @@ function Show-Main {
         Show-Logo $pick.Label
         try {
             switch ($pick.Key) {
-                'r' { Invoke-Repair $Paths; $checks = $null; Wait-Back }
+                'r' { Invoke-ToolsRepair $Paths; if ($ToolsRestartPath) { return }; $checks = $null; Wait-Back }
                 '1' { Invoke-ReleaseViewer; $checks = $null; Wait-Back }
                 '2' { Invoke-DevViewer; Wait-Back }
                 '3' { Invoke-DebugViewer; Wait-Back }
@@ -161,6 +189,7 @@ function Show-Main {
             }
         } catch {
             Show-Failure $_
+            if ($ToolsRestartPath) { return }
             Wait-Back
         }
     }
@@ -170,27 +199,39 @@ function Show-Main {
 
 $Paths = Find-Project
 if ($Action -eq 'install' -or -not $Paths) { Start-Install; exit }
-# GitHub followed in the background: PR summary in the footer, notifications
-if ($Action -in 'menu', 'prs') {
-    Start-GitHubWatch
-    $FooterStatus = { Get-PrSummary }
-    $TickHook = { Update-PrNotifications }
+$ToolsFingerprint = Get-ToolsFingerprint $Paths.Repo
+$ToolsRestartPath = $null
+$sessionCursorVisible = $true
+if ($Interactive) { try { $sessionCursorVisible = [Console]::CursorVisible } catch { } }
+try {
+    # GitHub followed in the background: PR summary in the footer, notifications
+    if ($Action -in 'menu', 'prs') {
+        Start-GitHubWatch
+        $FooterStatus = { Get-PrSummary }
+        $TickHook = { Update-PrNotifications }
+    }
+    switch ($Action) {
+        'menu' { Show-Main }
+        'prs' { Show-PrPanel }
+        'releases' { Invoke-Releases }
+        'reset' { Invoke-Reset }
+        'diagnose' { Show-Checks (Get-Checks $Paths) "Environnement : $($Paths.Root)" }
+        'repair' { try { Invoke-ToolsRepair $Paths } catch { Show-Failure $_; if (-not $ToolsRestartPath) { exit 1 } } }
+        'release' { Invoke-ReleaseViewer }
+        'dev' { Invoke-DevViewer }
+        'debug' { Invoke-DebugViewer }
+        'demo' { [void](Invoke-Demo) }
+        'tasks' { [void](Show-Tasks) }
+        'disk' { Invoke-Disk }
+        'logs' { Invoke-Logs }
+        'shortcut' { Invoke-Shortcut }
+        'claude' { Invoke-ClaudePermissions }
+    }
+} finally {
+    Stop-GitHubWatch
+    Set-CursorVisible $sessionCursorVisible
 }
-switch ($Action) {
-    'menu' { Show-Main }
-    'prs' { Show-PrPanel }
-    'releases' { Invoke-Releases }
-    'reset' { Invoke-Reset }
-    'diagnose' { Show-Checks (Get-Checks $Paths) "Environnement : $($Paths.Root)" }
-    'repair' { try { Invoke-Repair $Paths } catch { Show-Failure $_; exit 1 } }
-    'release' { Invoke-ReleaseViewer }
-    'dev' { Invoke-DevViewer }
-    'debug' { Invoke-DebugViewer }
-    'demo' { [void](Invoke-Demo) }
-    'tasks' { [void](Show-Tasks) }
-    'disk' { Invoke-Disk }
-    'logs' { Invoke-Logs }
-    'shortcut' { Invoke-Shortcut }
-    'claude' { Invoke-ClaudePermissions }
+if ($ToolsRestartPath) {
+    Restart-AuroraTools $ToolsRestartPath
+    exit $LASTEXITCODE
 }
-Stop-GitHubWatch

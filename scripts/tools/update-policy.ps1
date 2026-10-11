@@ -44,17 +44,22 @@ function Assert-UpdatePolicy($Policy, [string]$Version) {
 }
 
 function Read-ReleaseMaintenance($Policy) {
-    $cache = Show-Menu 'Cache des utilisateurs' @(
+    $cache = Show-Menu 'Étape 2/3 · Cache des utilisateurs' @(
         @{ Key = '1'; Label = 'Conserver le cache'; Hint = 'choix habituel, téléchargement des données évité'; Clear = $false }
         @{ Key = '2'; Label = "Forcer l’invalidation du cache"; Hint = 'cache vidé au premier démarrage de cette version'; Clear = $true }
-    )
+    ) { Show-Logo 'Nouvelle release'; Write-Color "  Version choisie : v$($Policy.version)" teal }
     if (-not $cache) { return }
-    $settings = Show-Menu 'Paramètres des utilisateurs' @(
+    $core = ($Policy.version -split '-')[0]
+    $cacheThreshold = if ($cache.Clear) { $core } else { $Policy.cache_invalidation_before }
+    $settings = Show-Menu 'Étape 3/3 · Paramètres des utilisateurs' @(
         @{ Key = '1'; Label = 'Conserver et migrer automatiquement'; Hint = 'migrations codées dans le viewer, choix habituel'; Reset = $false }
         @{ Key = '2'; Label = 'Réinitialiser les paramètres'; Hint = 'retour aux valeurs par défaut ; annoncé avant installation'; Reset = $true }
-    )
+    ) {
+        Show-Logo 'Nouvelle release'
+        Write-Color "  Version choisie : v$($Policy.version)" teal
+        Write-Color "  Cache : $(if ($cacheThreshold) { 'vidé pour les versions antérieures à ' + $cacheThreshold } else { 'conservé' })." muted
+    }
     if (-not $settings) { return }
-    $core = ($Policy.version -split '-')[0]
     if ($cache.Clear) { $Policy.cache_invalidation_before = $core }
     if ($settings.Reset) { $Policy.settings_reset_before = $core }
     Assert-UpdatePolicy $Policy $Policy.version
