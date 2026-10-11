@@ -82,6 +82,8 @@ pub struct Floater<'a> {
     pub framed_header: Option<&'a str>,
     /// Keep an inspector's width stable while its height follows the content.
     pub auto_height: bool,
+    /// Put a toolbar directly beneath the title, without a separator layout row.
+    pub compact_header: bool,
 }
 
 impl<'a> Floater<'a> {
@@ -98,6 +100,7 @@ impl<'a> Floater<'a> {
             silent: false,
             framed_header: None,
             auto_height: false,
+            compact_header: false,
         }
     }
 
@@ -130,6 +133,11 @@ impl<'a> Floater<'a> {
     pub fn auto_height(mut self) -> Self {
         self.auto_height = true;
         self.resizable = false;
+        self
+    }
+
+    pub fn compact_header(mut self) -> Self {
+        self.compact_header = true;
         self
     }
 
@@ -312,8 +320,13 @@ impl<'a> Floater<'a> {
             }
             if !minimized {
                 if framed_header.is_none() {
-                    ui.separator();
-                    ui.add_space(5.0);
+                    if self.compact_header {
+                        ui.painter()
+                            .hline(header.rect.x_range(), header.rect.bottom() + 2.0, Stroke::new(1.0, p.raised));
+                    } else {
+                        ui.separator();
+                        ui.add_space(5.0);
+                    }
                 }
                 out = Some(body(ui));
             }
@@ -427,28 +440,38 @@ pub fn switch(ui: &mut egui::Ui, p: &Palette, on: &mut bool) -> egui::Response {
 pub fn tabs(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)]) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 1.0;
+        ui.spacing_mut().item_spacing.x = 4.0;
         let n = labels.len().max(1) as f32;
         let font = egui::FontId::proportional(12.0);
         let text_w: Vec<f32> = labels
             .iter()
             .map(|(l, _)| ui.fonts_mut(|f| f.layout_no_wrap((*l).to_owned(), font.clone(), Color32::WHITE).size().x) + 18.0)
             .collect();
-        let total: f32 = text_w.iter().sum::<f32>() + n;
-        let compact = ((ui.available_width() - (n - 1.0)) / (total - n)).clamp(0.0, 1.0);
+        let gaps = (n - 1.0) * ui.spacing().item_spacing.x;
+        let total: f32 = text_w.iter().sum::<f32>() + gaps;
+        let compact = ((ui.available_width() - gaps) / (total - gaps)).clamp(0.0, 1.0);
         let extra = ((ui.available_width() - total) / n).max(0.0);
         for (i, (label, enabled)) in labels.iter().enumerate() {
             let w = text_w[i] * compact + extra.min(40.0);
             let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, 30.0), if *enabled { Sense::click() } else { Sense::hover() });
             let sel = *selected == i;
             let fill = if sel {
-                p.violet.gamma_multiply(0.18)
+                p.violet.gamma_multiply(0.28)
             } else if resp.hovered() && *enabled {
-                p.field.gamma_multiply(1.4)
+                p.raised
             } else {
-                Color32::TRANSPARENT
+                p.field
             };
             ui.painter().rect_filled(rect, CornerRadius::same(4), fill);
+            let border = if sel {
+                p.violet
+            } else if resp.hovered() && *enabled {
+                p.violet_light.gamma_multiply(0.65)
+            } else {
+                p.muted_dim.gamma_multiply(0.65)
+            };
+            ui.painter()
+                .rect_stroke(rect, 4.0, Stroke::new(1.0, border), egui::StrokeKind::Inside);
             if sel {
                 ui.painter().rect_filled(
                     egui::Rect::from_min_size(
@@ -539,24 +562,38 @@ pub fn icon_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, enable
 
 /// Small flat text button.
 pub fn flat_button(ui: &mut egui::Ui, p: &Palette, label: &str) -> egui::Response {
-    ui.add(
-        egui::Button::new(RichText::new(label).size(12.0).color(p.ink))
-            .fill(p.raised)
-            .corner_radius(ui.visuals().widgets.inactive.corner_radius)
-            .min_size(Vec2::new(0.0, 20.0)),
-    )
+    text_button(ui, p, label, None)
 }
 
 /// Equal-sized dialog buttons; long script labels keep their full hover text.
 pub fn flat_button_sized(ui: &mut egui::Ui, p: &Palette, label: &str, size: Vec2) -> egui::Response {
-    ui.add_sized(
-        size,
-        egui::Button::new(RichText::new(label).size(12.0).color(p.ink))
-            .fill(p.raised)
-            .corner_radius(ui.visuals().widgets.inactive.corner_radius)
-            .truncate(),
-    )
-    .on_hover_text(label)
+    text_button(ui, p, label, Some(size)).on_hover_text(label)
+}
+
+fn text_button(ui: &mut egui::Ui, p: &Palette, label: &str, size: Option<Vec2>) -> egui::Response {
+    // Keep the button in the parent's layout so wrapped toolbars can break
+    // before it. A child UI would wrap internally and enlarge narrow windows.
+    let style = ui.style().clone();
+    {
+        // A darker face stays identifiable even when panel and raised match.
+        let w = &mut ui.visuals_mut().widgets;
+        w.inactive.weak_bg_fill = p.field;
+        w.inactive.bg_fill = p.field;
+        w.inactive.bg_stroke = Stroke::new(1.0, p.muted_dim.gamma_multiply(0.65));
+        w.hovered.weak_bg_fill = p.raised;
+        w.hovered.bg_fill = p.raised;
+        w.hovered.bg_stroke = Stroke::new(1.0, p.violet_light.gamma_multiply(0.65));
+        w.active.weak_bg_fill = p.violet.gamma_multiply(0.28);
+        w.active.bg_fill = p.violet.gamma_multiply(0.28);
+        w.active.bg_stroke = Stroke::new(1.0, p.violet);
+    }
+    let button = egui::Button::new(RichText::new(label).size(12.0).color(p.ink));
+    let response = match size {
+        Some(size) => ui.add_sized(size, button.truncate()),
+        None => ui.add(button.min_size(Vec2::new(0.0, 20.0))),
+    };
+    ui.set_style(style);
+    response
 }
 
 /// Primary action using the Aurora accent and the flat button geometry.

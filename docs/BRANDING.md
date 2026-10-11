@@ -59,6 +59,10 @@ Dans le code, on utilise toujours la `Palette` résolue (`p.violet`, `p.ink`…)
   sans fiche de détails de la sélection.
   Les listes défilent dans leur zone et ne font pas grandir la fenêtre.
   La construction utilise un inspecteur compact avec un rail de sections.
+- **Commandes visibles au repos.** Les boutons secondaires et onglets gardent
+  un fond sombre et un contour discret. Le survol éclaircit leur surface ;
+  la sélection ajoute le violet. La barre de commandes de l’inventaire suit
+  directement le titre, sans rangée vide de séparation.
 - **Une seule couleur d'accent par zone.** Le violet signale ce qui est actif
   ou important ; le reste est neutre.
 - **Contraste et lisibilité.** Texte `ink` sur `panel` ; texte secondaire en

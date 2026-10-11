@@ -1249,6 +1249,7 @@ pub fn show(
         egui::pos2(screen.right() - 700.0, 56.0),
         Vec2::new(680.0, 610.0),
     )
+    .compact_header()
     .help(aurora_i18n::tr!("ui-inventory-right-click-item-actions-ctrl-shift-multi-select"))
     .show(ctx, p, open, |ui| {
         inventory_contents(ui, p, icons, inv, st, prefs, &facts, &mut actions)
@@ -1298,6 +1299,7 @@ pub fn show(
             screen.center() - egui::vec2(210.0, 220.0),
             Vec2::new(420.0, 440.0),
         )
+        .compact_header()
         .show(ctx, p, &mut w.open, |ui| {
             folder_window_contents(
                 ui,
@@ -1794,6 +1796,7 @@ mod tests {
                             egui::pos2(1280.0 - window_size.x - 20.0, 56.0),
                             window_size,
                         )
+                        .compact_header()
                         .silent()
                         .show(ctx, &palette, &mut true, |ui| {
                             inventory_contents(ui, &palette, &Icons::default(), &mut inv, &mut st, &mut prefs, &facts, &mut vec![]);
