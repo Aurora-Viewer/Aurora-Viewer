@@ -551,7 +551,6 @@ impl BugReportUi {
                                 self.capture_option_changed(in_world);
                             }
                         });
-                        ui.label(RichText::new(aurora_i18n::tr!("bug-picture-refresh-help")).color(p.muted));
                         if busy {
                             ui.spinner();
                         }
