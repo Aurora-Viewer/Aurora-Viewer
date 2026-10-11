@@ -348,6 +348,90 @@ pub const DEMO_GROUP1: Uuid = Uuid::from_u128(0x6E00_0000_0000_0000_0000_0000_00
 pub const DEMO_GROUP2: Uuid = Uuid::from_u128(0x6E00_0000_0000_0000_0000_0000_0000_0002);
 /// Hidden from the profile (Contacts › Groupes shows it in the other color).
 pub const DEMO_GROUP3: Uuid = Uuid::from_u128(0x6E00_0000_0000_0000_0000_0000_0000_0003);
+/// AURORA_DEMO_CONV=noms: residents and a conference whose names do not fit
+/// in the lists (long display name and username, wide letters, long title).
+pub const DEMO_LONG_NAME: Uuid = Uuid::from_u128(0xA0E0_A6E1_0000_0000_0000_0000_0000_0010);
+pub const DEMO_WIDE_NAME: Uuid = Uuid::from_u128(0xA0E0_A6E1_0000_0000_0000_0000_0000_0011);
+pub const DEMO_LONG_SESSION: Uuid = Uuid::from_u128(0x6E00_0000_0000_0000_0000_0000_0000_0010);
+const LONG_SESSION_NAME: &str = "The Honourable Society of Extremely Long Conference Names (Northern Chapter)";
+
+/// (legacy first, legacy last, display name) of the long-named residents.
+fn long_name(id: &Uuid) -> Option<(&'static str, &'static str, &'static str)> {
+    match *id {
+        DEMO_LONG_NAME => Some((
+            "Maximilienne",
+            "Wolfeschlegelsteinhausen",
+            "Maximilienne ♪ the Wandering Northern Aurora Wolf",
+        )),
+        DEMO_WIDE_NAME => Some(("wwwmmmwwwmmmwwwmmm", "Resident", "ŴŴŴ ÆØÅ MMMMWWWWMMMM ŒŒŒŒ")),
+        _ => None,
+    }
+}
+
+/// AURORA_DEMO_CONV=noms[:etroit|large]: the long names scenario, and the
+/// sizes of the Conversations and People windows it is shown in.
+pub fn long_names_scenario() -> Option<(egui::Vec2, egui::Vec2)> {
+    let v = std::env::var("AURORA_DEMO_CONV").ok()?;
+    let (mode, width) = v.split_once(':').unwrap_or((v.as_str(), ""));
+    if mode != "noms" {
+        return None;
+    }
+    let size = |w, h| egui::vec2(w, h);
+    Some(match width {
+        "etroit" => (size(400.0, 300.0), size(230.0, 420.0)),
+        "large" => (size(900.0, 360.0), size(520.0, 420.0)),
+        _ => (size(600.0, 360.0), size(330.0, 420.0)),
+    })
+}
+
+/// Instant messages, a conference invitation, a local chat line and two
+/// nearby avatars, all with names longer than their lists.
+fn long_name_events(agent: Uuid) -> Vec<NetEvent> {
+    let im = |from: Uuid, message: &str| {
+        let (first, last, _) = long_name(&from).unwrap_or_default();
+        NetEvent::InstantMessage(aurora_net::InstantMessage {
+            from_agent_id: from,
+            from_name: format!("{first} {last}"),
+            to_agent_id: agent,
+            dialog: 0,
+            session_id: Uuid::nil(),
+            message: message.into(),
+            offline: false,
+            from_group: false,
+            binary_bucket: Vec::new(),
+        })
+    };
+    vec![
+        im(DEMO_LONG_NAME, aurora_i18n::tr!("demo-come-see-the-lagoon-at-sunset")),
+        im(DEMO_LONG_NAME, aurora_i18n::tr!("demo-yes-beautiful-at-sunset")),
+        im(DEMO_WIDE_NAME, aurora_i18n::tr!("demo-arriving-with-textures")),
+        NetEvent::SessionInvite(aurora_net::SessionInvite {
+            session: DEMO_LONG_SESSION,
+            from: DEMO_TESS,
+            from_name: "Tess Touch".into(),
+            message: aurora_i18n::tr!("demo-has-anyone-seen-the-new-eep-sky").into(),
+            session_name: LONG_SESSION_NAME.into(),
+            offline: false,
+            timestamp: 0,
+        }),
+        NetEvent::Chat(aurora_net::ChatMessage {
+            from_name: "Maximilienne Wolfeschlegelsteinhausen".into(),
+            source_id: DEMO_LONG_NAME,
+            owner_id: Uuid::nil(),
+            source_type: aurora_net::ChatSourceType::Agent,
+            chat_type: aurora_net::ChatType::Normal,
+            position: Vec3::ZERO,
+            message: aurora_i18n::tr!("demo-hi-everyone-we-re-building-the-plaza-tonight").into(),
+        }),
+        NetEvent::CoarseLocations {
+            handle: HANDLE,
+            positions: vec![
+                (DEMO_LONG_NAME, Vec3::new(146.0, 132.0, 25.0)),
+                (DEMO_WIDE_NAME, Vec3::new(120.0, 150.0, 25.0)),
+            ],
+        },
+    ]
+}
 
 /// AgentProfile reply of the demo residents (AURORA_DEMO_PROFILE).
 fn demo_profile(id: Uuid) -> aurora_net::AvatarProfile {
@@ -472,6 +556,8 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                     .map(|id| {
                         let (first, last, dn) = if *id == DEMO_AGENT {
                             ("Aurora", "Demo", "")
+                        } else if let Some(long) = long_name(id) {
+                            long
                         } else {
                             names[(id.as_u128() & 0xFF) as usize % names.len()]
                         };
@@ -2188,6 +2274,9 @@ pub fn events() -> Vec<NetEvent> {
         channel: -4242,
         buttons,
     });
+    if long_names_scenario().is_some() {
+        ev.extend(long_name_events(agent));
+    }
     ev
 }
 

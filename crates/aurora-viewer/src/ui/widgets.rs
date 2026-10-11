@@ -173,6 +173,9 @@ impl<'a> Floater<'a> {
         } else if restore {
             w = w.fixed_size(expanded);
         }
+        if let Some(pos) = ctx.data_mut(|d| d.remove_temp::<egui::Pos2>(window_id.with(PLACE_POS))) {
+            w = w.current_pos(pos);
+        }
         if let Some(drag) = resize_drag {
             let rect = drag.rect();
             w = w.fixed_size(rect.size()).current_pos(rect.min);
@@ -269,6 +272,21 @@ impl<'a> Floater<'a> {
         }
         out
     }
+}
+
+const PLACE_POS: &str = "place_pos";
+
+/// Give the floater `id` this position and size on its next frame, expanded,
+/// as if the user had moved and resized it: a demo scenario then shows the
+/// same thing whatever layout the previous run left in ui_layout.ron.
+pub fn place_floater(ctx: &egui::Context, id: &str, pos: egui::Pos2, size: Vec2) {
+    let window_id = egui::Id::new(id);
+    ctx.data_mut(|d| {
+        d.insert_persisted(egui::Id::new((id, "minimized")), false);
+        d.insert_persisted(window_id.with("expanded_size"), size);
+        d.insert_temp(window_id.with("restore_size"), true);
+        d.insert_temp(window_id.with(PLACE_POS), pos);
+    });
 }
 
 /// Title bar button with a Phosphor icon (drawn by hand if it is missing).
