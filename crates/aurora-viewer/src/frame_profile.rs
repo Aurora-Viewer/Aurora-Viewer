@@ -37,7 +37,7 @@ pub enum Lap {
     /// Avatar and animesh poses.
     Poses,
     Complexity,
-    /// `Scene::sync`: objects to GPU records.
+    /// Local build drags, then `Scene::sync`: objects to GPU records.
     Sync,
     Media,
     /// Loading clouds, particles, ban lines.
@@ -48,7 +48,7 @@ pub enum Lap {
     Stream,
     /// Loading transition, lights, environment, frame parameters.
     Params,
-    /// Interface input, build tools and selection outlines.
+    /// Interface input and build floater preparation.
     UiPrep,
     /// The egui windows (`run_ui`).
     Ui,

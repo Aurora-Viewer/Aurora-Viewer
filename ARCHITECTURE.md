@@ -161,7 +161,11 @@ Le rez depuis l’inventaire passe par `ui/inventory.rs` (charge utile et relâc
 2. **Entrées → agent.** Les touches deviennent des drapeaux de contrôle ;
    `AgentState` et la caméra avancent ; l'`AgentUpdate` est envoyé.
 3. **Monde → scène.** Les poses des avatars sont calculées (contrôleur de
-   mouvements façon `LLMotionController`), puis `Scene::sync` met à jour la
+   mouvements façon `LLMotionController`), puis les glissements des outils
+   de construction appliquent leur transformation locale, après les réponses
+   du simulateur et avant `Scene::sync`. Ainsi, l'objet affiché et ses poignées
+   suivent la même taille à chaque image, sans retour à un écho réseau ancien.
+   `Scene::sync` met à jour la
    géométrie, les textures et les enregistrements GPU de ce qui a changé ou
    bouge (ensembles tenus par événements, placement calculé en parallèle).
    Les déplacements et les avatars sont appliqués à chaque image ; les

@@ -1681,6 +1681,83 @@ mod tests {
     }
 
     #[test]
+    fn stretch_restores_local_size_after_server_echo_without_waiting_for_next_send() {
+        let mut world = hud_world();
+        let mut update = crate::demo::hud::object(31, false);
+        update.parent_id = 0;
+        update.state = 0;
+        update.position = Vec3::new(128.0, 128.0, 32.0);
+        update.rotation = Quat::IDENTITY;
+        update.scale = Vec3::ONE;
+        let handle = world.main_region.unwrap();
+        world.apply(aurora_net::NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![update.clone()],
+        });
+        let idx = world.objects.index_of_uuid(&update.full_id).unwrap();
+        let key = world.objects.get(idx).unwrap().key;
+        let now = Instant::now();
+        let settings = BuildSettings {
+            snap: false,
+            ..Default::default()
+        };
+        let center = Scene::object_transform(&world, idx, now, 0).unwrap().0;
+        let eye = center + Vec3::new(4.0, -6.0, 3.0);
+        let fov = 60f32.to_radians();
+        let mut camera = crate::camera::Camera::default();
+        camera.position = eye;
+        camera.target = center;
+        camera.fov_y = fov;
+        let vp = camera.proj(1280.0 / 720.0) * camera.view();
+        let cam = Cam::new(eye, center, vp, fov, 1280.0, 720.0, 1.0);
+        let bounds = bounds_of(&world, &[key], false, now).unwrap();
+        let start = cam.project_px(bounds.center + bounds.rotation * bounds.half).unwrap();
+        let mid = cam.project_px(bounds.center).unwrap();
+        let cursor = (start.0 + (start.0 - mid.0) * 0.5, start.1 + (start.1 - mid.1) * 0.5);
+        let mut manip = Manip::default();
+        assert!(manip.try_grab(&mut world, &settings, &cam, &[key], false, EditMode::Stretch, start, now));
+        assert_eq!(manip.drag.as_ref().unwrap().part, Part::Corner(7));
+        let mut out = Vec::new();
+        let step = |world: &mut World, manip: &mut Manip, at, out: &mut Vec<BuildCmd>| {
+            manip.update(
+                world,
+                &settings,
+                &cam,
+                &[key],
+                false,
+                EditMode::Stretch,
+                cursor,
+                false,
+                Mods::default(),
+                at,
+                out,
+            );
+        };
+        step(&mut world, &mut manip, now, &mut out);
+        let grown = world.objects.get(idx).unwrap();
+        let expected = (grown.position, grown.scale);
+        assert!(expected.1.min_element() > 1.0);
+        assert_eq!(out.len(), 1);
+        // A late full update overwrites the local preview even with a still
+        // cursor. The next frame must restore it before the scene consumes it.
+        world.apply(aurora_net::NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![update],
+        });
+        step(&mut world, &mut manip, now + std::time::Duration::from_millis(20), &mut out);
+        let restored = world.objects.get(idx).unwrap();
+        assert!(restored.position.abs_diff_eq(expected.0, 1e-5));
+        assert!(restored.scale.abs_diff_eq(expected.1, 1e-5));
+        assert_eq!(out.len(), 1);
+        step(&mut world, &mut manip, now + std::time::Duration::from_millis(120), &mut out);
+        assert_eq!(out.len(), 2);
+        manip.release(&mut world, &settings, false, &mut out);
+        assert!(matches!(out.last(), Some(BuildCmd::Transform { updates, .. })
+            if updates[0].scale.unwrap().abs_diff_eq(expected.1, 1e-5)
+                && updates[0].position.unwrap().abs_diff_eq(expected.0, 1e-5)));
+    }
+
+    #[test]
     fn hud_drag_preserves_anchor_and_child_offsets_and_sends_local_linkset_position() {
         let mut world = hud_world();
         let now = Instant::now();

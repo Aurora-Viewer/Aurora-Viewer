@@ -3517,6 +3517,39 @@ impl App {
             if let Some(view) = drag_view {
                 self.keep_scaled_huds_accessible(view);
             }
+            // Apply the local drag after simulator updates and before scene sync.
+            // LLManipScale::dragFace/dragCorner (indra/newview/llmanipscale.cpp)
+            // also update locally every hover, independently of sendUpdates' 10 Hz throttle. Doing
+            // this in UI preparation let an older simulator echo reach the GPU
+            // for one frame, before the manipulator restored the current size.
+            self.build.cam = crate::build::geom::Cam::new(
+                self.camera.position,
+                self.camera.target,
+                vp,
+                self.camera.fov_y,
+                w as f32,
+                h as f32,
+                self.egui_ctx.pixels_per_point(),
+            );
+            if self.build.hud_selected(&self.world) && !self.settings.show_huds {
+                self.build.deselect_all(&self.world);
+            } else if self.build.tool == crate::build::Tool::Edit
+                && self.build.hud_selected(&self.world)
+                && let Some(view) = drag_view
+            {
+                self.build.cam = crate::build::geom::Cam::for_hud(view, self.egui_ctx.pixels_per_point());
+            }
+            let over_ui = self.egui_ctx.is_pointer_over_egui() || self.egui_ctx.egui_wants_pointer_input();
+            let mods = crate::build::Mods {
+                shift: self.shift,
+                ctrl: self.ctrl,
+                alt: self.alt,
+            };
+            self.build
+                .update(&mut self.world, &self.settings.build, self.cursor_pos, over_ui, mods);
+            self.scene.selection_wire = self.build.wire_selection(&self.world, &self.settings.build);
+            self.scene.selection_silhouettes = self.build.silhouette_selection(&self.world, &self.settings.build);
+            self.flush_build();
             self.scene.sync(&mut gfx.renderer, &mut self.world, &cull);
             self.frame_profile.lap(Lap::Sync);
             {
@@ -4004,19 +4037,6 @@ impl App {
             height: h as f32,
             ppp: ctx.pixels_per_point(),
         };
-        // build tools: camera of this frame, hover / drags / land brush
-        self.build.cam = crate::build::geom::Cam::new(
-            self.camera.position,
-            self.camera.target,
-            vp,
-            self.camera.fov_y,
-            w as f32,
-            h as f32,
-            ctx.pixels_per_point(),
-        );
-        if self.build.hud_selected(&self.world) && !self.settings.show_huds {
-            self.build.deselect_all(&self.world);
-        }
         if self.demo && ui::widgets::demo::rez_mode().is_some() {
             let mode = ui::widgets::demo::rez_mode().unwrap_or("1");
             let point = if matches!(mode, "object" | "contents") {
@@ -4046,31 +4066,18 @@ impl App {
         {
             self.build.cam = crate::build::geom::Cam::for_hud(view, ctx.pixels_per_point());
         }
-        if self.in_world() {
-            let over_ui = ctx.is_pointer_over_egui() || ctx.egui_wants_pointer_input();
-            let mods = crate::build::Mods {
-                shift: self.shift,
-                ctrl: self.ctrl,
-                alt: self.alt,
-            };
-            if self.build.open {
-                for idx in self.build.sel_prims(&self.world) {
-                    if let Some(id) = self.world.objects.get(idx).map(|o| o.full_id)
-                        && !self.build.face_counts.contains_key(&id)
-                        && let Some(n) = self.media.face_count(&self.world, &self.scene, idx)
-                    {
-                        self.build.face_counts.insert(id, n);
-                    }
-                }
-                if self.build.face_counts.len() > 1024 {
-                    self.build.face_counts.clear();
+        if self.in_world() && self.build.open {
+            for idx in self.build.sel_prims(&self.world) {
+                if let Some(id) = self.world.objects.get(idx).map(|o| o.full_id)
+                    && !self.build.face_counts.contains_key(&id)
+                    && let Some(n) = self.media.face_count(&self.world, &self.scene, idx)
+                {
+                    self.build.face_counts.insert(id, n);
                 }
             }
-            self.build
-                .update(&mut self.world, &self.settings.build, self.cursor_pos, over_ui, mods);
-            self.scene.selection_wire = self.build.wire_selection(&self.world, &self.settings.build);
-            self.scene.selection_silhouettes = self.build.silhouette_selection(&self.world, &self.settings.build);
-            self.flush_build();
+            if self.build.face_counts.len() > 1024 {
+                self.build.face_counts.clear();
+            }
         }
         let mut actions = UiActions::default();
         let vsync = gfx.renderer.vsync();
