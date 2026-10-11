@@ -161,6 +161,22 @@ capture.
 
 ### Détails
 
+En mode Modifier, maintenir CTRL et tourner la molette parcourt les objets
+réellement sous le pointeur : défilement vers le bas pour aller plus loin,
+vers le haut pour revenir plus près, avec retour au début à la fin de la liste. Avec
+Modification liée, seuls les prims sous le pointeur du même objet que la
+sélection principale participent. Le geste remplace la sélection sans
+déplacer la caméra. Sur une zone vide, la sélection reste inchangée.
+
+`AURORA_DEMO_BUILD=cycle,object:99610` ajoute trois objets imbriqués,
+dont deux linksets, sélectionne A puis simule deux crans vers le fond et
+un vers l’avant : A → B → C → B. Le scénario
+`cycle-linked,object:99610` active Modification liée : racine A → partie
+A2 → racine A → partie A2, sans passer sur B ou C. Les lignes
+`demo build cycle` du journal indiquent les sélections et vérifient que
+la caméra et le zoom HUD ne changent pas pendant le geste. Capturer vers
+l’image 690 (départ 600 par défaut).
+
 `AURORA_DEMO_FLEXIBLE` remplace les objets de la place par six prims avec
 quatre niveaux de souplesse, profils carrés / circulaires, creux, torsion et
 tailles non uniformes. La dernière suit une racine en rotation. `rigid` donne

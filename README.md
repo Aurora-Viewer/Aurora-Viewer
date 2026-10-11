@@ -294,6 +294,10 @@ Les scénarios de démo sont décrits dans
 Local and editing HUD zoom scenarios (`AURORA_DEMO_HUDS=scale|scale-copy|scale-touch|scale-reset|scale-forget|scale-ctrl|scale-key|scale-secondary|edit-scroll`)
 are described in [the testing guide](docs/TESTING.md#huds).
 
+Les scénarios `AURORA_DEMO_BUILD=cycle,object:99610` et
+`cycle-linked,object:99610` vérifient CTRL + molette parmi les objets
+superposés et les parties liées, comme décrit dans [le guide de test](docs/TESTING.md#objets-et-construction).
+
 The offline **demo mode** simulates a server locally (a plaza, avatars,
 objects, chat, notifications…): no connection, no account. It keeps its own
 settings and cache (`…\config\demo`, `…\cache\demo`).

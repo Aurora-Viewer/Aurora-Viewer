@@ -3,6 +3,8 @@
 //!
 //! - mode: move | rotate | stretch | face | align | grab | focus | create |
 //!   land | select
+//!   cycle | cycle-linked: nested objects, three CTRL + wheel notches
+//!   (deeper, deeper, nearer), centered on `object:99610`.
 //! - x, y: click (physical pixels) at frame 220: selects the object there,
 //!   creates a prim, or presses the land brush (held until the capture)
 //! - part: handle grabbed at frame 250 (move: x y z xy yz xz; rotate: rx ry
@@ -36,6 +38,8 @@ pub enum Step {
     Press,
     Release,
     Focus(bool),
+    Linked(bool),
+    Wheel(f32),
 }
 
 fn part_of(s: &str) -> Option<Part> {
@@ -158,6 +162,7 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
         (_, Some(x), Some(y)) => (x, y),
         _ => return Vec::new(),
     };
+    let cycle = matches!(parts[0], "cycle" | "cycle-linked");
     let (t, m, land) = match parts[0] {
         "rotate" => (Tool::Edit, EditMode::Rotate, 6),
         "stretch" => (Tool::Edit, EditMode::Stretch, 6),
@@ -200,8 +205,21 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
         227 if t == Tool::Edit => match std::env::var("AURORA_DEMO_BUILD_FOCUS").as_deref() {
             Ok("off") => vec![Step::Focus(false)],
             Ok("on") => vec![Step::Focus(true)],
+            _ if cycle => vec![Step::Focus(false)],
             _ => Vec::new(),
         },
+        240 if cycle => {
+            let mut steps = vec![Step::Linked(parts[0] == "cycle-linked")];
+            steps.extend(object.into_iter().map(Step::Select));
+            steps
+        }
+        250 if cycle => object
+            .and_then(|idx| crate::scene::Scene::object_transform(world, idx, Instant::now(), 0))
+            .and_then(|(p, _, _)| tool.cam.project_px(p))
+            .map(|(x, y)| vec![Step::Cursor(x, y)])
+            .unwrap_or_default(),
+        260 | 270 if cycle => vec![Step::Wheel(-1.0)],
+        280 if cycle => vec![Step::Wheel(1.0)],
         235 if parts[0] == "select" => vec![Step::Cursor(x + dx, y + dy)],
         240 if parts[0] == "select" => vec![Step::Release],
         250 => match handle.and_then(|h| handle_px(tool, world, s, h)) {
