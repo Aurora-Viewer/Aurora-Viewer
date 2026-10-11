@@ -23,6 +23,7 @@ mod links;
 mod logging;
 mod media;
 mod scene;
+mod screen_rate;
 mod settings;
 mod slurl;
 mod theme;

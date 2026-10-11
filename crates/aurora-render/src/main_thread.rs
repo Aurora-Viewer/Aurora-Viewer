@@ -498,6 +498,12 @@ impl Renderer {
         self.vsync
     }
 
+    /// Presentation mode the swapchain is configured with, as the backend
+    /// reported it with the last frame it finished (None before the first).
+    pub fn present_mode(&self) -> Option<wgpu::PresentMode> {
+        self.last_stats.present_mode
+    }
+
     // ------------------------------------------------------------ resources
 
     pub fn upload_mesh(&mut self, vertices: &[Vertex], indices: &[u16]) -> Option<MeshAlloc> {
@@ -713,6 +719,7 @@ impl Renderer {
                 occluded: self.last_stats.occluded,
                 visible_objects: self.last_stats.visible_objects,
                 gpu_cull: self.last_stats.gpu_cull,
+                present_mode: self.last_stats.present_mode,
                 water_reflection: self.last_stats.water_reflection,
                 mirror: self.last_stats.mirror,
                 ..Default::default()

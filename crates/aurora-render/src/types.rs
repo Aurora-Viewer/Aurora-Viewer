@@ -682,6 +682,9 @@ pub struct ProbeFrame {
 pub struct RenderStats {
     /// A swapchain image was presented, including the egui frame.
     pub presented: bool,
+    /// Presentation mode the swapchain is configured with (present.rs);
+    /// None until the backend has answered a frame.
+    pub present_mode: Option<wgpu::PresentMode>,
     pub draws: u32,
     pub shadow_draws: u32,
     pub triangles: u64,

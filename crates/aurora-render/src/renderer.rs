@@ -895,6 +895,8 @@ pub(crate) struct Backend {
     finishers: Helpers<wgpu::CommandEncoder, wgpu::CommandBuffer>,
     msaa_samples: u32,
     vsync: bool,
+    /// Presentation modes of the surface, read when it was created.
+    present_modes: Vec<wgpu::PresentMode>,
     settings: RenderSettings,
     taa: Option<Taa>,
     prev_view_proj: Option<Mat4>,
@@ -1603,7 +1605,15 @@ impl Backend {
             .or_else(|| caps.formats.first().copied())
             .ok_or_else(|| RenderError::Surface("no surface formats".into()))?;
         let surface_srgb = format.is_srgb();
-        let present_mode = Self::pick_present_mode(&caps, vsync);
+        // one rule for the creation and for later vsync switches (present.rs)
+        let present_modes = caps.present_modes.clone();
+        let present_mode = crate::present::choose(&present_modes, vsync, crate::present::forced());
+        log::info!(
+            "presentation: {} (vsync {}, surface supports {:?})",
+            crate::present::name(present_mode),
+            if vsync { "on" } else { "off" },
+            present_modes
+        );
         let mut surface_usage = wgpu::TextureUsages::RENDER_ATTACHMENT;
         if caps.usages.contains(wgpu::TextureUsages::COPY_SRC) {
             surface_usage |= wgpu::TextureUsages::COPY_SRC;
@@ -1985,6 +1995,7 @@ impl Backend {
             finishers: Helpers::new(2, "aurora-render-finish", finish_encoder),
             msaa_samples,
             vsync,
+            present_modes,
             settings,
             taa: None,
             prev_view_proj: None,
@@ -1996,23 +2007,6 @@ impl Backend {
         };
         r.rebuild_bind_groups();
         Ok(r)
-    }
-
-    fn pick_present_mode(caps: &wgpu::SurfaceCapabilities, vsync: bool) -> wgpu::PresentMode {
-        let has = |m| caps.present_modes.contains(&m);
-        if vsync {
-            if has(wgpu::PresentMode::FifoRelaxed) {
-                wgpu::PresentMode::FifoRelaxed
-            } else {
-                wgpu::PresentMode::Fifo
-            }
-        } else if has(wgpu::PresentMode::Mailbox) {
-            wgpu::PresentMode::Mailbox
-        } else if has(wgpu::PresentMode::Immediate) {
-            wgpu::PresentMode::Immediate
-        } else {
-            wgpu::PresentMode::Fifo
-        }
     }
 
     /// Shadow atlas of 2x2 tiles of `size` (cascade i in tile (i % 2, i / 2)),
@@ -3086,12 +3080,18 @@ impl Backend {
             return;
         }
         self.vsync = vsync;
-        // Present modes are validated by wgpu; fall back to Fifo when unsupported.
-        self.config.present_mode = if vsync {
-            wgpu::PresentMode::Fifo
-        } else {
-            wgpu::PresentMode::AutoNoVsync
-        };
+        // The rule of the creation (present.rs): switching the setting in a
+        // session ends on the mode a launch with that setting presents with.
+        let mode = crate::present::choose(&self.present_modes, vsync, crate::present::forced());
+        log::info!(
+            "presentation: {} (vsync {})",
+            crate::present::name(mode),
+            if vsync { "on" } else { "off" }
+        );
+        if mode == self.config.present_mode {
+            return;
+        }
+        self.config.present_mode = mode;
         self.surface.configure(&self.device, &self.config);
     }
 
@@ -3290,6 +3290,7 @@ impl Backend {
         self.depth_pick.harvest();
         // the window and the settings as the main thread had them for this frame
         self.apply_surface(surface);
+        stats.present_mode = Some(self.config.present_mode);
         if settings != self.settings {
             self.apply_settings(settings);
         }

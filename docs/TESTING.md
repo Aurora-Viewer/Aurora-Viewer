@@ -892,6 +892,7 @@ Ce que l'inventaire doit montrer avec ces scénarios :
 | `AURORA_OCCLUSION=0` ou `1` | Remplace le réglage « Occlusion » (Graphismes › Qualité) |
 | `AURORA_NO_OCCLUSION=1` | Coupe l'occlusion GPU |
 | `AURORA_NOVSYNC=1` | Coupe la synchronisation verticale |
+| `AURORA_PRESENT_MODE=<mode>` | Force le mode de présentation de la swapchain |
 | `AURORA_CPU_CULL=1` | Listes de dessin construites sur le CPU |
 | `AURORA_RENDER_THREAD=0` | Images dessinées sur le thread principal |
 | `AURORA_PROFILE=1` | Profilage dans le journal (voir [Profilage](#profilage)) |
@@ -910,6 +911,19 @@ Ce que l'inventaire doit montrer avec ces scénarios :
   n'ont pas (géorgien, CJK, arabe, lettres mathématiques…) redeviennent des
   carrés. Pour comparer avec `AURORA_DEMO_GLYPHS=1` ou isoler un problème
   de police. Le journal indique `system fallback fonts: off`.
+- **`AURORA_PRESENT_MODE=immediate|mailbox|fifo|fifo-relaxed`** : remplace le
+  mode de présentation choisi d'après la synchronisation verticale
+  (`aurora-render/src/present.rs` : sans synchronisation `Mailbox`, sinon
+  `Immediate` ; avec, `FifoRelaxed`, sinon `Fifo`), si la surface le
+  propose ; une valeur inconnue est signalée dans le journal et ignorée.
+  Sert à comparer les images/s d'un écran à l'autre (écrans de fréquences
+  différentes, fréquence variable G-Sync / FreeSync) : `immediate` ne se
+  synchronise jamais sur l'écran (déchirures possibles), `fifo` s'aligne sur
+  sa fréquence. Le journal donne le mode retenu et ceux de la surface
+  (`presentation: Mailbox (vsync off, surface supports […])`), puis l'écran
+  sous la fenêtre et sa fréquence à chaque changement
+  (`screen under the window: \\.\DISPLAY2, 144 Hz`) ; `present=` et
+  `screen_hz=` figurent dans la ligne `perf settings`.
 - **`AURORA_CPU_CULL=1`** : construit toutes les listes de dessin sur le CPU
   (le repli quand le GPU n'a pas `MULTI_DRAW_INDIRECT_COUNT`) au lieu de les
   trier sur le GPU, pour comparer ; `cull=cpu|gpu` dans la ligne
