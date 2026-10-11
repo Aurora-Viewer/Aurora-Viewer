@@ -2,6 +2,7 @@
 //! stay in the user's browser. Access tokens live only in this module's
 //! memory for the current viewer session, never in reports/settings/logs.
 
+use super::uploads::{self, Pending};
 use crossbeam_channel::{Receiver, Sender};
 use serde_json::Value;
 use std::time::{Duration, Instant};
@@ -50,6 +51,7 @@ pub enum Failure {
     Unauthorized,
     RateLimit,
     Ambiguous,
+    Attachments,
 }
 
 impl Failure {
@@ -63,6 +65,7 @@ impl Failure {
             Self::Unauthorized => "bug-github-unauthorized",
             Self::RateLimit => "bug-github-rate-limit",
             Self::Ambiguous => "bug-github-ambiguous",
+            Self::Attachments => "bug-upload-error",
         })
     }
 }
@@ -70,7 +73,7 @@ impl Failure {
 enum Reply {
     Code(String),
     Authorized(String, Instant),
-    Created(u64),
+    Created(u64, Option<Pending>),
     Failed(Failure),
 }
 
@@ -83,9 +86,18 @@ pub struct Github {
     pub failure: Option<Failure>,
     pub created: Option<u64>,
     pub sending: bool,
+    pending: Option<Pending>,
 }
 
 impl Github {
+    pub fn complete(&self) -> bool {
+        self.created.is_some() && self.pending.is_none() && !self.sending
+    }
+
+    pub fn attachment_pending(&self) -> bool {
+        self.pending.is_some()
+    }
+
     pub fn connected(&self) -> bool {
         self.token.as_ref().is_some_and(|(_, expires)| *expires > Instant::now())
     }
@@ -104,8 +116,10 @@ impl Github {
                     self.rx = None;
                     self.cancel = None;
                 }
-                Reply::Created(number) => {
+                Reply::Created(number, pending) => {
                     self.created = Some(number);
+                    self.failure = pending.as_ref().map(|_| Failure::Attachments);
+                    self.pending = pending;
                     self.sending = false;
                     self.rx = None;
                 }
@@ -163,8 +177,11 @@ impl Github {
         self.token = None;
     }
 
-    pub fn submit(&mut self, title: String, body: String) {
+    pub fn submit(&mut self, title: String, body: String, image: Option<Vec<u8>>, logs: Option<Vec<u8>>) {
         if self.rx.is_some() || !self.connected() {
+            return;
+        }
+        if self.created.is_some() {
             return;
         }
         let Some((token, _)) = &self.token else {
@@ -177,11 +194,32 @@ impl Github {
         let (tx, rx) = crossbeam_channel::bounded(1);
         self.rx = Some(rx);
         std::thread::spawn(move || {
-            let reply = match create_issue(&token, title, body) {
-                Ok(n) => Reply::Created(n),
+            let reply = match create_issue(&token, title, body, image, logs) {
+                Ok((n, pending)) => Reply::Created(n, pending),
                 Err(e) => Reply::Failed(e),
             };
             let _ = tx.send(reply);
+        });
+    }
+
+    pub fn retry_attachments(&mut self) {
+        if self.rx.is_some() || !self.connected() {
+            return;
+        }
+        let Some(pending) = self.pending.take() else { return };
+        let Some((token, _)) = self.token.as_ref() else { return };
+        let token = token.clone();
+        self.sending = true;
+        self.failure = None;
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        self.rx = Some(rx);
+        std::thread::spawn(move || {
+            let result = tokio::runtime::Builder::new_current_thread().enable_all().build();
+            let success = result.ok().is_some_and(|rt| {
+                rt.block_on(async { uploads::complete(&client()?, API, uploads::BASE, &token, &pending).await })
+                    .is_ok()
+            });
+            let _ = tx.send(Reply::Created(pending.number, (!success).then_some(pending)));
         });
     }
 }
@@ -205,10 +243,10 @@ fn client() -> Result<reqwest::Client, Failure> {
         .map_err(|_| Failure::Network)
 }
 
-async fn json(mut response: reqwest::Response) -> Result<Value, Failure> {
+pub(super) async fn json(mut response: reqwest::Response) -> Result<Value, Failure> {
     let mut bytes = Vec::new();
     while let Some(chunk) = response.chunk().await.map_err(|_| Failure::Network)? {
-        if bytes.len() + chunk.len() > 64 * 1024 {
+        if bytes.len() + chunk.len() > 256 * 1024 {
             return Err(Failure::Invalid);
         }
         bytes.extend_from_slice(&chunk);
@@ -314,12 +352,31 @@ fn authorize(tx: &Sender<Reply>, cancel: &Receiver<()>) -> Result<(), Failure> {
     })
 }
 
-fn create_issue(token: &str, title: String, body: String) -> Result<u64, Failure> {
+fn create_issue(
+    token: &str,
+    title: String,
+    body: String,
+    image: Option<Vec<u8>>,
+    logs: Option<Vec<u8>>,
+) -> Result<(u64, Option<Pending>), Failure> {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|_| Failure::Network)?;
-    rt.block_on(create_request(&client()?, API, token, &title, &body))
+    rt.block_on(async {
+        let client = client()?;
+        let body = uploads::declare(body, image.as_deref(), logs.as_deref())?;
+        if image.is_some() || logs.is_some() {
+            uploads::preflight(&client, uploads::BASE, image.is_some(), logs.is_some()).await?;
+        }
+        let number = create_request(&client, API, token, &title, &body).await?;
+        if image.is_none() && logs.is_none() {
+            return Ok((number, None));
+        }
+        let pending = Pending { number, image, logs };
+        let complete = uploads::complete(&client, API, uploads::BASE, token, &pending).await.is_ok();
+        Ok((number, (!complete).then_some(pending)))
+    })
 }
 
 async fn create_request(client: &reqwest::Client, url: &str, token: &str, title: &str, body: &str) -> Result<u64, Failure> {
@@ -445,6 +502,22 @@ mod tests {
     }
 
     #[test]
+    fn long_unicode_issue_replies_remain_bounded() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .unwrap();
+        for (body, expected) in [("é".repeat(50_000), Ok(123)), ("a".repeat(256 * 1024), Err(Failure::Ambiguous))] {
+            let response = serde_json::json!({"number": 123, "body": body}).to_string();
+            let (url, server) = fixture(201, &response);
+            assert_eq!(rt.block_on(create_request(&client, &url, "test-only", "Title", "Body")), expected);
+            server.join().unwrap();
+        }
+    }
+
+    #[test]
     fn authorization_does_not_send_and_disconnect_forgets_session() {
         let (tx, rx) = crossbeam_channel::bounded(2);
         let mut state = Github {
@@ -455,6 +528,7 @@ mod tests {
             failure: None,
             created: None,
             sending: false,
+            pending: None,
         };
         tx.send(Reply::Authorized("test-only".into(), Instant::now() + Duration::from_secs(60)))
             .unwrap();
@@ -470,6 +544,48 @@ mod tests {
         state.cancel_authorization();
         assert!(cancelled.try_recv().is_ok());
         assert!(state.user_code.is_none());
+    }
+
+    #[test]
+    fn partial_upload_keeps_the_receipt_and_pending_files_until_completion() {
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        let mut state = Github {
+            rx: Some(rx),
+            sending: true,
+            token: None,
+            cancel: None,
+            user_code: None,
+            failure: None,
+            created: None,
+            pending: None,
+        };
+        tx.send(Reply::Created(
+            42,
+            Some(Pending {
+                number: 42,
+                image: Some(vec![1]),
+                logs: Some(vec![2]),
+            }),
+        ))
+        .unwrap();
+        state.poll();
+        assert_eq!(state.created, Some(42));
+        assert!(state.attachment_pending());
+        assert!(!state.complete());
+        assert_eq!(state.failure, Some(Failure::Attachments));
+        // Authorization failure leaves the existing issue and its files intact.
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        state.rx = Some(rx);
+        tx.send(Reply::Failed(Failure::Denied)).unwrap();
+        state.poll();
+        assert!(state.attachment_pending());
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        state.rx = Some(rx);
+        tx.send(Reply::Created(42, None)).unwrap();
+        state.poll();
+        assert!(state.complete());
+        assert!(!state.attachment_pending());
+        assert_eq!(state.failure, None);
     }
 
     #[test]

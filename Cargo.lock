@@ -673,6 +673,7 @@ dependencies = [
  "ron",
  "serde",
  "serde_json",
+ "sha2",
  "sysinfo",
  "tokio",
  "ttf-parser",
@@ -680,6 +681,7 @@ dependencies = [
  "wgpu",
  "windows-sys 0.61.2",
  "winit",
+ "zip",
 ]
 
 [[package]]

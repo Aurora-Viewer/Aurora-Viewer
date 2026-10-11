@@ -147,11 +147,15 @@ GitHub ; l’autorisation reste uniquement en mémoire
 jusqu’à la fermeture du viewer ou sa déconnexion ; aucune publication ne suit
 automatiquement l’autorisation. Sans compte, enregistrez une copie locale.
 
-Les images sont enregistrées en PNG sans métadonnées, à ajouter manuellement
-dans l’issue GitHub depuis le dossier `public` du rapport. Si le texte est trop
-long pour un lien, Aurora le copie intégralement pour le coller dans GitHub.
-Ne publiez jamais le dossier `private-do-not-upload` : ses diagnostics restent
-locaux. Le bouton de barre se masque dans Préférences › Interface.
+L’envoi depuis Aurora publie l’image choisie sur auroraviewer.com et l’affiche
+dans l’issue. Une option distincte de l’onglet Données, décochée par défaut,
+permet de joindre le ZIP des journaux aux développeurs ; son lien demande une
+connexion GitHub autorisée dans le dépôt privé. Les fichiers restent dans le
+Cellar privé. Un envoi interrompu peut être terminé sur la même issue.
+Dans le navigateur, ajoutez l’image manuellement depuis le dossier `public`.
+Si le texte est trop long pour un lien, Aurora le copie intégralement pour le
+coller dans GitHub. Ne publiez jamais le dossier `private-do-not-upload`.
+Le bouton de barre se masque dans Préférences › Interface.
 
 Test hors ligne : `AURORA_DEMO=1` et `AURORA_DEMO_BUG_REPORT=1` ouvrent un rapport
 exemple ; l’envoi est simulé et le navigateur reste fermé. Voir

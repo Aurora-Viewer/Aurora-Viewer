@@ -396,6 +396,14 @@ grille.
   ouvert en anglais à l’image 700, puis en français à l’image 900. Capturer aux
   images `650,850,1050` pour comparer. Pour tester le choix de langue dans les
   Préférences, ne pas fournir l’argument `--language`.
+  Validation humaine de l’envoi réel, sans mode démo : autoriser GitHub,
+  sélectionner une image et, dans Données, cocher explicitement le ZIP privé
+  (décoché au départ), puis envoyer. L’issue doit afficher l’image et le lien
+  des journaux, sans contenu du ZIP dans le texte public. Le téléchargement
+  du ZIP doit demander GitHub et refuser un compte sans accès au dépôt privé
+  `Aurora-Viewer/aurora-api`. Un développeur autorisé doit pouvoir l’ouvrir.
+  Après un échec d’envoi des fichiers, fermer et rouvrir la fenêtre doit garder
+  la même issue et proposer de terminer son envoi, sans créer de doublon.
 - **`AURORA_DEMO_LOGIN=remembered|empty`** : écran de connexion hors ligne
   avec un marqueur synthétique de mot de passe enregistré, ou un champ de
   mot de passe vide (aucun accès à une grille ni au coffre d'identifiants).
