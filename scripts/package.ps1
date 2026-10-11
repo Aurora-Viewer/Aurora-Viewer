@@ -22,3 +22,7 @@ $emoji = 'Noto-3D-128.ttf', 'LICENSE-OFL.txt' | ForEach-Object { Join-Path $Sour
 Copy-Item -LiteralPath $emoji -Destination (Join-Path $Out 'assets\emoji') -ErrorAction Stop
 $docs = 'LICENSE', 'NOTICE.md', 'README.md' | ForEach-Object { Join-Path $Source $_ }
 Copy-Item -LiteralPath $docs -Destination $Out -ErrorAction Stop
+$taskExePath = (Resolve-Path -LiteralPath $Exe).Path
+$taskVersion = (& $taskExePath --version | Out-String).Trim() -replace '^Aurora Viewer ', ''
+if ($LASTEXITCODE -ne 0 -or $taskVersion -notmatch '^\d+\.\d+\.\d+([+-][0-9A-Za-z.+-]+)?$') { throw 'Version du paquet invalide.' }
+@{ schema = 1; version = $taskVersion } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $Out 'aurora-install.json') -Encoding utf8NoBOM

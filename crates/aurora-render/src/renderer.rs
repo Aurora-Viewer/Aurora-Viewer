@@ -842,6 +842,7 @@ pub(crate) struct Backend {
     config: wgpu::SurfaceConfiguration,
     surface_srgb: bool,
     egui: egui_wgpu::Renderer,
+    ui_blur: Option<crate::ui_blur::Blur>,
     frame_layout: wgpu::BindGroupLayout,
     records_layout: wgpu::BindGroupLayout,
     /// Layout of the scene's texture pages (textures.rs), for the pipelines.
@@ -1940,6 +1941,7 @@ impl Backend {
             config,
             surface_srgb,
             egui,
+            ui_blur: None,
             frame_layout,
             records_layout,
             tex_layout,
@@ -3273,7 +3275,7 @@ impl Backend {
             scene,
             params,
             lists: draw_lists,
-            ui,
+            mut ui,
             surface,
             settings,
             hover,
@@ -3341,7 +3343,24 @@ impl Backend {
             return self.skip(index, stats, upload_cmds, frame_uploads, spent);
         };
         let (f, lists) = (&params, &draw_lists);
-        let surface_view = surface_tex.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let present_view = surface_tex.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let blur_boundary = ui.as_mut().and_then(|ui| crate::ui_blur::take_boundary(&mut ui.primitives));
+        if let Some(ui) = ui.as_ref().filter(|_| blur_boundary.is_some()) {
+            let size = [self.config.width, self.config.height];
+            if !self.ui_blur.as_ref().is_some_and(|blur| blur.matches(size, ui.pixels_per_point)) {
+                self.ui_blur = Some(crate::ui_blur::Blur::new(
+                    &self.device,
+                    self.config.format,
+                    size,
+                    ui.pixels_per_point,
+                ));
+            }
+        } else {
+            self.ui_blur = None;
+        }
+        // Offscreen only while a modal is visible. This works even when the
+        // swapchain cannot be sampled or copied, and preserves scene captures.
+        let surface_view = self.ui_blur.as_ref().map_or_else(|| present_view.clone(), |blur| blur.view.clone());
         // CPU encode time excludes waiting for the swapchain (vsync).
         let t0 = Instant::now();
         let mut prof: Vec<(&str, Instant)> = vec![("acquire", t0)];
@@ -4463,7 +4482,8 @@ impl Backend {
         // scene only (no interface): copied before egui draws on top
         let mut capture = None;
         if wanted == Some(Capture::Scene) {
-            capture = self.encode_capture(&mut encoder, &surface_tex.texture);
+            let source = self.ui_blur.as_ref().map_or(&surface_tex.texture, |blur| &blur.source);
+            capture = self.encode_capture(&mut encoder, source);
         }
 
         prof.push(("post", Instant::now()));
@@ -4510,7 +4530,7 @@ impl Backend {
         }
         // ---- egui
         let mut extra_cmds = Vec::new();
-        if let Some(ui) = &ui {
+        if let Some(ui) = &mut ui {
             let sd = egui_wgpu::ScreenDescriptor {
                 size_in_pixels: [self.config.width, self.config.height],
                 pixels_per_point: ui.pixels_per_point,
@@ -4518,24 +4538,39 @@ impl Backend {
             extra_cmds = self
                 .egui
                 .update_buffers(&self.device, &self.queue, &mut encoder, &ui.primitives, &sd);
-            let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("egui"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &surface_view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-            let mut pass = pass.forget_lifetime();
-            self.egui.render(&mut pass, &ui.primitives, &sd);
+            let draw_ui = |encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView, primitives: &[egui::ClippedPrimitive]| {
+                let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("egui"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                let mut pass = pass.forget_lifetime();
+                self.egui.render(&mut pass, primitives, &sd);
+            };
+            if let (Some(boundary), Some(blur)) = (blur_boundary, &self.ui_blur) {
+                draw_ui(&mut encoder, &surface_view, &ui.primitives[..boundary]);
+                blur.encode(&mut encoder, &present_view);
+                // egui starts its mesh-buffer iterators at zero on each render.
+                // Empty clips advance them without drawing the lower layers a
+                // second time. Buffers and texture uploads remain shared.
+                for primitive in &mut ui.primitives[..boundary] {
+                    primitive.clip_rect = egui::Rect::NOTHING;
+                }
+                draw_ui(&mut encoder, &present_view, &ui.primitives);
+            } else {
+                draw_ui(&mut encoder, &surface_view, &ui.primitives);
+            }
         }
 
         prof.push(("egui", Instant::now()));
@@ -4598,6 +4633,7 @@ impl Backend {
         prof.push(("submit", Instant::now()));
         let encode_ms = t0.elapsed().as_secs_f32() * 1000.0;
         self.queue.present(surface_tex);
+        stats.presented = true;
         let _ = self.device.poll(wgpu::PollType::Poll);
         prof.push(("present", Instant::now()));
         stats.cpu_phases[0] = (t0 - t_acquire).as_secs_f32() * 1000.0;

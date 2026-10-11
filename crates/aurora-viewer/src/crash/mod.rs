@@ -125,7 +125,14 @@ pub fn helper() -> anyhow::Result<bool> {
 
 fn spawn_helper(dir: &Path, mode: &str) -> std::io::Result<std::process::Child> {
     let mut command = std::process::Command::new(std::env::current_exe()?);
-    command.arg(mode).arg(dir);
+    let session_root = root().canonicalize()?;
+    command.arg(mode).arg(dir.canonicalize()?);
+    // An inherited installation working directory would block the updater's
+    // directory swap on Windows, even after the viewer itself has exited.
+    command.current_dir(&session_root);
+    if std::env::var_os("AURORA_DEMO").is_some() {
+        command.env("AURORA_DEMO_CRASH_DIR", &session_root);
+    }
     if let Some(title) = &crate::cli::get().title {
         command.arg("--title").arg(title);
     }

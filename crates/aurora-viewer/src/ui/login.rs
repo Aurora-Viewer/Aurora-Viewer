@@ -19,6 +19,8 @@ pub struct LoginForm {
     pub agree_tos: bool,
     pub error: Option<String>,
     pub busy: bool,
+    /// A visible reason keeps the button and all login paths disabled together.
+    pub block_reason: Option<&'static str>,
     /// Password shown in clear (eye button).
     pub show_password: bool,
     /// The first field to fill already has the keyboard focus (set again
@@ -37,6 +39,7 @@ pub enum LoginAction {
     None,
     Login,
     Quit,
+    CheckUpdates,
 }
 
 /// Animated aurora background (also behind the loading screens without a
@@ -205,7 +208,8 @@ fn panel_title(ui: &mut egui::Ui, p: &Palette, icons: &Icons, icon: &str, title:
     ui.add_space(4.0);
 }
 
-fn version_panel(ui: &mut egui::Ui, p: &Palette, icons: &Icons, info: &LoginInfo) {
+fn version_panel(ui: &mut egui::Ui, p: &Palette, icons: &Icons, info: &LoginInfo) -> bool {
+    let mut check_updates = false;
     glass(p, 10, 16).show(ui, |ui| {
         ui.set_width(ui.available_width());
         panel_title(ui, p, icons, "tag", aurora_i18n::tr!("ui-login-version"));
@@ -236,7 +240,16 @@ fn version_panel(ui: &mut egui::Ui, p: &Palette, icons: &Icons, info: &LoginInfo
                 img(ui, icons, icon, r, col);
             });
         });
-        if let VersionState::Available { url, .. } = &info.version {
+        if info.can_check_updates {
+            ui.add_space(8.0);
+            check_updates =
+                super::widgets::flat_button_sized(ui, p, aurora_i18n::tr!("update-check"), Vec2::new(ui.available_width(), 30.0))
+                    .on_hover_text(aurora_i18n::tr!("update-check-hint"))
+                    .clicked();
+        }
+        if let VersionState::Available { url, .. } = &info.version
+            && !url.is_empty()
+        {
             ui.add_space(8.0);
             let b = egui::Button::new(
                 RichText::new(aurora_i18n::tr!("ui-login-download-update"))
@@ -251,6 +264,7 @@ fn version_panel(ui: &mut egui::Ui, p: &Palette, icons: &Icons, info: &LoginInfo
             }
         }
     });
+    check_updates
 }
 
 fn news_panel(ui: &mut egui::Ui, p: &Palette, icons: &Icons, info: &LoginInfo, max_h: f32) {
@@ -465,8 +479,13 @@ pub fn show(
                         .on_hover_text(aurora_i18n::tr!("ui-login-stored-in-windows-credential-manager-as-the-hash-sent"));
                     });
                     ui.add_space(10.0);
-                    let can = !settings.username.trim().is_empty() && (!form.password.is_empty() || form.stored.is_some());
-                    let (r, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 42.0), Sense::click());
+                    let can = form.block_reason.is_none()
+                        && !settings.username.trim().is_empty()
+                        && (!form.password.is_empty() || form.stored.is_some());
+                    let (r, resp) = ui.allocate_exact_size(
+                        Vec2::new(ui.available_width(), 42.0),
+                        if can { Sense::click() } else { Sense::hover() },
+                    );
                     // Requested UX: focus the first missing field, or Connect
                     // when credentials are ready. Firestorm giveFocus otherwise
                     // returns to the user-name field when both are present.
@@ -507,7 +526,7 @@ pub fn show(
                     img(
                         ui,
                         icons,
-                        "sign-in",
+                        if form.block_reason.is_some() { "lock-simple" } else { "sign-in" },
                         egui::Rect::from_center_size(egui::pos2(x0 + 9.0, r.center().y), Vec2::splat(18.0)),
                         txt_col,
                     );
@@ -526,6 +545,10 @@ pub fn show(
                         action = LoginAction::Login;
                     }
                 });
+                if let Some(reason) = form.block_reason {
+                    ui.add_space(8.0);
+                    ui.label(RichText::new(reason).size(12.0).color(p.amber));
+                }
                 if let Some(msg) = form.tos_message.clone() {
                     ui.add_space(8.0);
                     ui.separator();
@@ -534,7 +557,10 @@ pub fn show(
                         ui.label(RichText::new(msg).size(12.0).color(p.muted));
                     });
                     if ui
-                        .button(aurora_i18n::tr!("ui-login-i-accept-the-terms-and-want-to-log-in"))
+                        .add_enabled(
+                            form.block_reason.is_none() && !form.busy,
+                            egui::Button::new(aurora_i18n::tr!("ui-login-i-accept-the-terms-and-want-to-log-in")),
+                        )
                         .clicked()
                     {
                         form.agree_tos = true;
@@ -561,9 +587,22 @@ pub fn show(
             .anchor(egui::Align2::RIGHT_CENTER, Vec2::new(-48.0, -10.0))
             .show(&ctx, |ui| {
                 ui.set_width(col_w);
-                version_panel(ui, p, icons, info);
+                if version_panel(ui, p, icons, info) {
+                    action = LoginAction::CheckUpdates;
+                }
                 ui.add_space(14.0);
                 news_panel(ui, p, icons, info, (screen.height() * 0.42).clamp(160.0, 420.0));
+            });
+    } else if info.can_check_updates {
+        egui::Area::new(egui::Id::new("login_check_updates"))
+            .anchor(egui::Align2::RIGHT_TOP, Vec2::new(-20.0, 20.0))
+            .show(&ctx, |ui| {
+                if super::widgets::flat_button_sized(ui, p, aurora_i18n::tr!("update-check"), Vec2::new(190.0, 30.0))
+                    .on_hover_text(aurora_i18n::tr!("update-check-hint"))
+                    .clicked()
+                {
+                    action = LoginAction::CheckUpdates;
+                }
             });
     }
 
@@ -649,6 +688,145 @@ pub fn show(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn required_update_disables_mouse_enter_and_terms_with_synthetic_credentials() {
+        fn position(shape: &egui::Shape, label: &str) -> Option<egui::Pos2> {
+            match shape {
+                egui::Shape::Text(t) if t.galley.text() == label => Some(t.pos + egui::vec2(3.0, 5.0)),
+                egui::Shape::Vec(shapes) => shapes.iter().find_map(|s| position(s, label)),
+                _ => None,
+            }
+        }
+        let ctx = egui::Context::default();
+        let mut settings = Settings {
+            username: "Demo Resident".into(),
+            ..Default::default()
+        };
+        let mut form = LoginForm {
+            password: "synthetic".into(),
+            block_reason: Some(aurora_i18n::tr!("update-login-required")),
+            ..Default::default()
+        };
+        let p = crate::theme::Theme::default().palette();
+        let icons = Icons::default();
+        let info = LoginInfo::preview_release("0.3.0");
+        let draw = |events, form: &mut LoginForm, settings: &mut Settings| {
+            let mut action = LoginAction::None;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 900.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    action = show(ui, &p, &icons, None, settings, form, &info, None);
+                },
+            );
+            output.textures_delta.clear();
+            (action, output)
+        };
+        draw(vec![], &mut form, &mut settings);
+        let (_, output) = draw(vec![], &mut form, &mut settings);
+        assert!(
+            output
+                .shapes
+                .iter()
+                .any(|s| position(&s.shape, aurora_i18n::tr!("update-login-required")).is_some())
+        );
+        let pos = output
+            .shapes
+            .iter()
+            .find_map(|s| position(&s.shape, aurora_i18n::tr!("ui-login-log-in")))
+            .expect("button");
+        for pressed in [true, false] {
+            let (action, _) = draw(
+                vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: Default::default(),
+                    },
+                ],
+                &mut form,
+                &mut settings,
+            );
+            assert!(matches!(action, LoginAction::None));
+        }
+        ctx.memory_mut(|m| m.request_focus(egui::Id::new("login_pass")));
+        let (action, _) = draw(
+            vec![egui::Event::Key {
+                key: egui::Key::Enter,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Default::default(),
+            }],
+            &mut form,
+            &mut settings,
+        );
+        assert!(matches!(action, LoginAction::None));
+        form.tos_message = Some("Synthetic terms".into());
+        let (_, output) = draw(vec![], &mut form, &mut settings);
+        let pos = output
+            .shapes
+            .iter()
+            .find_map(|s| position(&s.shape, aurora_i18n::tr!("ui-login-i-accept-the-terms-and-want-to-log-in")))
+            .expect("terms");
+        for pressed in [true, false] {
+            let (action, _) = draw(
+                vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: Default::default(),
+                    },
+                ],
+                &mut form,
+                &mut settings,
+            );
+            assert!(matches!(action, LoginAction::None));
+        }
+        assert!(!form.agree_tos);
+        // Verify the same fixture can log in once the policy permits it.
+        form.tos_message = None;
+        form.block_reason = None;
+        draw(vec![], &mut form, &mut settings);
+        let (_, output) = draw(vec![], &mut form, &mut settings);
+        let pos = output
+            .shapes
+            .iter()
+            .find_map(|s| position(&s.shape, aurora_i18n::tr!("ui-login-log-in")))
+            .expect("enabled button");
+        draw(
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Default::default(),
+                },
+            ],
+            &mut form,
+            &mut settings,
+        );
+        let (action, _) = draw(
+            vec![egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: Default::default(),
+            }],
+            &mut form,
+            &mut settings,
+        );
+        assert!(matches!(action, LoginAction::Login));
+    }
 
     #[test]
     fn saved_password_marker_survives_focus_without_becoming_input() {

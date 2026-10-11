@@ -357,6 +357,18 @@ pub fn flat_button_sized(ui: &mut egui::Ui, p: &Palette, label: &str, size: Vec2
     .on_hover_text(label)
 }
 
+/// Primary action using the Aurora accent and the flat button geometry.
+pub fn primary_button_sized(ui: &mut egui::Ui, p: &Palette, label: &str, size: Vec2) -> egui::Response {
+    ui.add_sized(
+        size,
+        egui::Button::new(RichText::new(label).size(12.0).strong().color(p.ink))
+            .fill(p.violet)
+            .corner_radius(CornerRadius::same(2))
+            .truncate(),
+    )
+    .on_hover_text(label)
+}
+
 /// Green online / grey offline.
 pub fn online_color(p: &Palette, online: bool) -> Color32 {
     if online { p.success } else { p.muted_dim }

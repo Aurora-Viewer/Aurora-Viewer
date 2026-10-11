@@ -666,6 +666,8 @@ pub struct ProbeFrame {
 /// Per-frame statistics reported by the renderer.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct RenderStats {
+    /// A swapchain image was presented, including the egui frame.
+    pub presented: bool,
     pub draws: u32,
     pub shadow_draws: u32,
     pub triangles: u64,

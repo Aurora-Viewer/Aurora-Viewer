@@ -20,6 +20,12 @@ plateformes autres que Windows pour les releases (le code reste portable).
 
 ## Arborescence
 
+Le fond des dialogues de mise à jour est flouté par `aurora-render/src/ui_blur.rs`
+et `shaders/ui_blur.wgsl` : un marqueur egui sépare les couches de fond du
+dialogue. La scène et ces couches sont rendues dans une texture, floutées
+horizontalement puis verticalement sur le GPU ; le dialogue reste net.
+Ces cibles existent seulement tant que le dialogue est affiché.
+
 ```
 aurora-viewer/                  dépôt git (GitHub : Aurora-Viewer/Aurora-Viewer)
 ├─ Cargo.toml                   workspace : version, édition, licence, lints communs
@@ -60,6 +66,7 @@ commande en une ligne (`scripts/setup.ps1`, puis les outils) :
 | Crate | Rôle |
 |---|---|
 | `aurora-viewer` | L'application : boucle de fenêtre (winit), état du monde, scène, interface egui, agent, caméra, démo hors ligne |
+| `aurora-updater` | Releases GitHub stables et seuils de maintenance ; téléchargement annulable, SHA-256 et extraction ZIP bornée ; auxiliaire Windows, remplacement transactionnel et restauration tant que la nouvelle version n’a pas présenté une image. `user_data.rs` sauvegarde/restaure le cache et `settings.json` si la politique l’exige. Tests HTTP et fichiers isolés. |
 | `aurora-version` | Source commune de la version compilée : tag Git, provenance des builds entre tags, User-Agent HTTP et version de connexion SL à quatre composantes numériques. Son `build.rs` suit aussi les références Git des worktrees ; `build_support.rs` contient la résolution pure testée. |
 | `aurora-i18n` | Langue commune au viewer et aux messages réseau : catalogues Fluent `locales/*.ftl`, détection de l'OS, choix enregistré, repli anglais, variables, pluriels et décimales. `build.rs` découvre automatiquement les langues ; les libellés simples et tableaux de libellés sont mis en cache par langue. Voir `docs/TRANSLATING.md`. |
 | `aurora-net` | Connexion (XML-RPC), circuits UDP, capabilities, file d'événements, téléchargement HTTP des assets ; tourne sur son propre runtime tokio. `session/object_actions.rs` : toucher / saisir / relâcher et inventaire d'objet (capability ou transfert UDP borné en mémoire) ; `task_inventory.rs` : parsing LLSD et fichier historique ; `land.rs`, `session_land.rs` : messages des parcelles (« À propos du terrain », RemoteParcelRequest d'un lieu quelconque) |
@@ -106,6 +113,7 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
 | `aurora-net/src/outfits.rs`, `aurora-net/src/outfits/categories.rs` | Écriture des liens de tenue, favoris, noms et images par AIS InventoryAPIv3, déplacement dans la corbeille ; confirmation et relecture des dossiers / éléments |
 | `slurl.rs`, `link_trust.rs` | Liens des textes : SLURL (barre de navigation, libellés « Région (x,y,z) » des liens de lieu) ; confiance des liens web (site de confiance, inconnu, dangereux : raccourcisseurs, faux noms officiels, adresses IP…), jugée localement sur l'URL |
 | `ui/widgets.rs`, `ui/widgets/resize.rs` | Widgets communs et fenêtres flottantes ; poignées de redimensionnement bornées avant le déplacement, bord opposé fixe, limites du contenu et de la zone visible ; position et taille conservées par egui |
+| `updater.rs`, `ui/update.rs` | Contrôleur asynchrone et fenêtre de mise à jour : notes, progression, relance et erreurs ; recherche manuelle dans Aide / connexion, tag ignoré et choix Demander / Automatique / Obligatoires uniquement. Démo synthétique isolée via `AURORA_DEMO_UPDATE`. |
 | `ui/inventory.rs`, `ui/inventory/view.rs`, `ui/inventory/controls.rs`, `ui/inventory/context.rs`, `ui/inventory/dialogs.rs`, `ui/inventory/properties.rs`, `ui/inventory/thumbnail.rs`, `app/inventory.rs`, `app/inventory_thumbnail.rs` | Inventaire : tri / filtres purs et cache de vues par génération dans `view.rs` (index, tri et filtrage parallèles avec rayon), commandes et préférences persistantes dans `controls.rs`, arborescence filtrée incluant les dossiers parents, états de dépliage par onglet, résultats dessinés selon la zone visible sans limite de 500 et zone de statut de hauteur fixe ; défilement sur les deux axes, largeur des noms mesurée dans la zone visible puis conservée pour les résultats virtuels, commandes adaptées aux petites largeurs ; menus par type, sélection multiple avec ajout / détachement groupés, renommage dans la ligne après création ou sur demande, fenêtres de dossiers limitées à leurs descendants avec un filtre propre, presse-papiers partagé entre fenêtres, propriétés et confirmations, aperçus / édition des notes et scripts, lecture des statistiques d’animation ; éditeur d’image à six actions, choix en arbre et capture de la scène sans interface ; décodage / redimensionnement / encodage hors du thread de rendu et exécution des actions après dessin de l’interface |
 | `world/inventory/actions.rs`, `world/inventory/wearable.rs`, `world/inventory/demo.rs`, `world/inventory/preview.rs`, `world/inventory/tests.rs` | Règles de permissions, déplacements / copies / liens et offres, préparation des annonces Place du marché, assets de vêtements par défaut et scénario synthétique ; cache d’inventaire v2 avec permissions complètes |
 | `aurora-net/src/inventory/operations.rs`, `aurora-net/src/inventory/thumbnail.rs`, `aurora-net/src/session/inventory_upload.rs` | Mutations AIS avec relecture, remappage des UUID attribués par le serveur, créations / copies UDP et accusés avec expiration, sauvegarde des documents par capabilities ; chargement AssetUpload / Xfer des vêtements avant création de l’élément ; vignettes gratuites par InventoryThumbnailUpload, POST JPEG2000 puis AIS et relecture |
@@ -232,7 +240,9 @@ suivant ; `native.rs` installe le filtre d'exception Windows et surveille
 la fin du processus par une poignée système, avec contrôle de sa date de
 création pour éviter la réutilisation d'un PID. Le surveillant est le même
 exécutable, démarré en mode interne avant toute initialisation du viewer.
-Il ne relance jamais le viewer.
+Son dossier de travail est celui des rapports, pour laisser l'updater
+remplacer le dossier d'installation après l'arrêt du viewer. Il ne relance
+jamais le viewer.
 
 `window.rs` réutilise Fluent, la Palette, les polices, les icônes Phosphor
 et les boutons du viewer. `software.rs` dessine ses maillages egui sur le

@@ -119,6 +119,9 @@ The texture memory budget is set automatically from the detected VRAM.
   notifications, voice (WebRTC).
 - **Interface** — flat Aurora theme, Phosphor icons, mini-map and world map,
   inventory, preferences, debug overlays.
+- **Windows updates** — release checks, cancellable verified downloads,
+  installation and restart with rollback. The prompt explains whether cache
+  and settings will be preserved, migrated or reset.
 
 ![Login screen](docs/screenshots/login.jpg)
 

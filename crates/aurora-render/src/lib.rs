@@ -19,6 +19,7 @@ mod renderer;
 pub mod tex_anim;
 pub mod textures;
 pub mod types;
+mod ui_blur;
 pub mod upload;
 pub mod writes;
 
@@ -29,6 +30,7 @@ pub use packet::EguiFrame;
 pub use renderer::{CASCADES, RenderError};
 pub use textures::{MipLevel, build_mips};
 pub use types::*;
+pub use ui_blur::blurred_backdrop;
 pub use upload::{StagedMesh, StagedTexture, StagingPool};
 
 pub use egui;
@@ -111,6 +113,11 @@ mod shader_tests {
     #[test]
     fn glow_shader_is_valid() {
         validate(include_str!("shaders/glow.wgsl"));
+    }
+
+    #[test]
+    fn ui_blur_shader_is_valid() {
+        validate(include_str!("shaders/ui_blur.wgsl"));
     }
 
     #[test]

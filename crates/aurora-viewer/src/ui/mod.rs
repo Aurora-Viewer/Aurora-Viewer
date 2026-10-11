@@ -40,6 +40,7 @@ pub mod profile;
 pub mod skin;
 pub mod sound_cues;
 pub mod texture_picker;
+pub mod update;
 pub mod voice_dot;
 pub mod web_view;
 pub mod widgets;

@@ -7,6 +7,11 @@ pub const fn version() -> &'static str {
     env!("AURORA_COMPILED_VERSION")
 }
 
+/// Synthetic version binaries are permitted only in disposable update fixtures.
+pub const fn update_test_build() -> bool {
+    env!("AURORA_UPDATE_TEST_BUILD").as_bytes()[0] == b'1'
+}
+
 /// Build revision for a diagnostic report, including builds at an exact tag.
 pub const fn commit() -> &'static str {
     env!("AURORA_BUILD_COMMIT")

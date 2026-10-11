@@ -27,11 +27,23 @@ mod slurl;
 mod theme;
 mod ui;
 mod ui_sound;
+mod updater;
 mod voice;
 mod world;
 
 fn main() -> anyhow::Result<()> {
+    if aurora_updater::install::run_helper()? {
+        return Ok(());
+    }
     cli::get();
+    anyhow::ensure!(
+        std::env::var_os("AURORA_UPDATE_TEST_ROOT").is_none() || aurora_updater::test_environment().is_some(),
+        "invalid isolated update test installation"
+    );
+    anyhow::ensure!(
+        !aurora_version::update_test_build() || aurora_updater::test_environment().is_some(),
+        "update fixture binary requires an isolated test installation"
+    );
     if crash::helper()? {
         return Ok(());
     }

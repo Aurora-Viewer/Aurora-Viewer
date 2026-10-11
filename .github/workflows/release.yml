@@ -36,6 +36,9 @@ jobs:
           $dir = "Aurora-Viewer-$v-windows-x64"
           ./scripts/package.ps1 -Exe target/release/aurora-viewer.exe -Out $dir
           Compress-Archive -Path $dir -DestinationPath "$dir.zip"
+          $hash = (Get-FileHash -LiteralPath "$dir.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $dir.zip" | Set-Content -LiteralPath "$dir.zip.sha256" -Encoding utf8NoBOM
+          ./scripts/write-update-policy.ps1 -Tag $v
           "ZIP=$dir.zip" >> $env:GITHUB_ENV
       - name: Publish
         shell: pwsh
@@ -43,6 +46,6 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           $v = "${{ github.ref_name }}"
-          $ghArgs = @($v, $env:ZIP, '--title', "Aurora Viewer $v", '--generate-notes', '--verify-tag')
+          $ghArgs = @($v, $env:ZIP, "$($env:ZIP).sha256", 'aurora-update-policy.json', '--title', "Aurora Viewer $v", '--generate-notes', '--verify-tag')
           if ($v -match '-') { $ghArgs += '--prerelease' }   # v0.3.0-beta.1
           gh release create @ghArgs
