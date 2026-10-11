@@ -65,11 +65,11 @@ impl Scene {
     }
 
     pub fn click_bounds(&self, world: &World, idx: usize) -> Option<(Vec3, Vec3)> {
-        let o = world.objects.get(idx)?;
         let (pos, rot, _) = Self::object_transform(world, idx, Instant::now(), 0)?;
         let geom = self.gpu.get(idx).and_then(|g| g.geom).and_then(|key| self.geom_ready(&key));
         let (min, max) = geom.map_or((-Vec3::splat(0.5), Vec3::splat(0.5)), |g| (g.min, g.max));
-        Some((pos + rot * ((min + max) * 0.5 * o.scale), (max - min) * o.scale))
+        let scale = world.visual_scale(idx);
+        Some((pos + rot * ((min + max) * 0.5 * scale), (max - min) * scale))
     }
 
     pub(super) fn face_hit(
@@ -84,7 +84,7 @@ impl Scene {
         let g = self.gpu.get(idx)?;
         let geom = self.geom_ready(&g.geom?)?;
         let (pos, rot, _) = Self::object_transform(world, idx, now, 0)?;
-        let model = Mat4::from_scale_rotation_translation(o.scale, rot, pos);
+        let model = Mat4::from_scale_rotation_translation(world.visual_scale(idx), rot, pos);
         let inv = model.inverse();
         ray_box(inv.transform_point3(ray.0), inv.transform_vector3(ray.1), geom.min, geom.max)?;
         let faces = geom.pick_faces.iter().enumerate().filter_map(|(face, f)| {
@@ -130,11 +130,18 @@ impl Scene {
         let hit = self.face_hit(world, idx, ray, Instant::now(), true)?;
         let tf = o.te.as_ref().map(|t| *t.face(hit.face)).unwrap_or_default();
         let uv = pick::te_transform(hit.uv, [tf.scale_s, tf.scale_t], [tf.offset_s, tf.offset_t], tf.rotation);
+        let mut position = ray.0 + ray.1 * hit.t;
+        if let Some(root) = world.hud_root(idx) {
+            let id = world.objects.get(root)?.full_id;
+            let pivot = Self::object_transform(world, root, Instant::now(), 0)?.0;
+            // Scripts receive the original HUD coordinates, never visual zoom.
+            position = pivot - world.hud_scales.offset(id) + (position - pivot) / world.hud_scales.scale(id);
+        }
         Some(TouchSurface {
             uv: uv.extend(0.0),
             st: hit.uv.extend(0.0),
             face: hit.face as i32,
-            position: ray.0 + ray.1 * hit.t
+            position: position
                 - if self.gpu.get(idx)?.hud {
                     Vec3::ZERO
                 } else {
@@ -511,6 +518,35 @@ mod tests {
         assert_eq!(scene.hud_move_pick(&world, cursor), Some(front));
         world.objects.get_mut(front).unwrap().click_action = crate::interaction::code::NONE;
         assert_eq!(scene.hud_pick(&world, cursor, true).unwrap().0, front);
+    }
+
+    #[test]
+    fn scaled_hud_pick_and_uvs_follow_the_visual_but_script_coordinates_stay_original() {
+        let (mut world, mut scene, front, _) = scene_with_two_objects();
+        let own = world.objects.index_of_uuid(&world.agent_id).unwrap();
+        let parent = world.objects.get(own).unwrap().key.local_id;
+        let o = world.objects.get_mut(front).unwrap();
+        o.parent_id = parent;
+        o.state = 31u8.rotate_left(4);
+        o.position = Vec3::new(3.0, 0.0, 0.0);
+        o.te = None;
+        let id = o.full_id;
+        scene.gpu[front].hud = true;
+        scene.gpu[front].owner_avatar = Some(own);
+        let original_ray = (Vec3::new(0.0, 0.4, 0.2), Vec3::X);
+        let original = scene.touch_surface(&world, front, original_ray).unwrap();
+        let enlarged_ray = (Vec3::new(0.0, 0.8, 0.4), Vec3::X);
+        assert!(scene.touch_surface(&world, front, enlarged_ray).is_none());
+        world.hud_scales.set(id, 2.0);
+        let enlarged = scene.touch_surface(&world, front, enlarged_ray).unwrap();
+        assert!(enlarged.st.abs_diff_eq(original.st, 1e-5));
+        assert!(enlarged.uv.abs_diff_eq(original.uv, 1e-5));
+        assert!(enlarged.position.abs_diff_eq(original.position, 1e-5));
+        world.hud_scales.set_offset(id, Vec3::new(0.0, 0.1, 0.2));
+        let shifted = scene
+            .touch_surface(&world, front, (enlarged_ray.0 + Vec3::new(0.0, 0.1, 0.2), Vec3::X))
+            .unwrap();
+        assert!(shifted.position.abs_diff_eq(original.position, 1e-5));
     }
 
     #[test]

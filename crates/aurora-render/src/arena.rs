@@ -466,10 +466,22 @@ impl RecordStore {
     /// no copy of the whole record, and an unchanged one is not uploaded).
     pub fn set_model(&mut self, id: u32, model: [[f32; 4]; 4]) {
         if let Some(slot) = self.mirror.get_mut(id as usize)
-            && slot.model != model
+            && (slot.model != model || slot.flags[0] >> 16 != 0)
         {
             slot.model = model;
+            slot.set_hud_zoom(1.0);
             self.mark(id as usize);
+        }
+    }
+
+    pub fn set_hud_model(&mut self, id: u32, model: [[f32; 4]; 4], zoom: f32) {
+        if let Some(slot) = self.mirror.get_mut(id as usize) {
+            let old_flags = slot.flags[0];
+            slot.set_hud_zoom(zoom);
+            if slot.model != model || slot.flags[0] != old_flags {
+                slot.model = model;
+                self.mark(id as usize);
+            }
         }
     }
 

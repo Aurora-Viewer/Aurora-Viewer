@@ -169,7 +169,7 @@ impl SyncCtx<'_> {
     pub(super) fn placement(&self, idx: usize, o: &Object, xf: Xf, geom_key: GeomKey, geom: &GpuGeom) -> Placement {
         let world = self.world;
         let (pos, rot, _) = xf;
-        let scale = o.scale.max(Vec3::splat(0.001));
+        let scale = (o.scale * if xf.2 { world.hud_scale(idx) } else { 1.0 }).max(Vec3::splat(0.001));
         let rigged = matches!(geom_key, GeomKey::Mesh { id, .. } if self.meshes.meta(&id).is_some_and(|m| m.skin.is_some()));
         let skeleton_owner = rigged.then(|| Scene::skeleton_owner(world, idx)).flatten();
         let owner_xf = skeleton_owner.and_then(|(_, owner_idx)| self.transform(owner_idx));
@@ -189,7 +189,8 @@ impl SyncCtx<'_> {
                         ar = (ar * bind_rot).normalize();
                     }
                 }
-                Mat4::from_rotation_translation(ar, ap) * Mat4::from_translation(-world.avatar_lib.pelvis)
+                Mat4::from_scale_rotation_translation(Vec3::splat(if xf.2 { world.hud_scale(idx) } else { 1.0 }), ar, ap)
+                    * Mat4::from_translation(-world.avatar_lib.pelvis)
             }
             _ => Mat4::from_scale_rotation_translation(scale, rot, pos),
         };
@@ -300,7 +301,7 @@ impl SyncCtx<'_> {
             return full();
         }
         let model = p.model.to_cols_array_2d();
-        let changed = g.faces.iter().any(|f| self.records.get(f.record).is_some_and(|r| r.model != model));
+        let changed = g.hud != hud || g.faces.iter().any(|f| self.records.get(f.record).is_some_and(|r| r.model != model));
         Plan::Move(MoveSync {
             xf,
             model,

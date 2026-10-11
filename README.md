@@ -104,7 +104,11 @@ The texture memory budget is set automatically from the detected VRAM.
 - Parcel permission icons show everything, green for allowed and red for
   forbidden; Firestorm shows only the restrictions.
 - HUDs can be moved directly with Alt + drag (the key is configurable),
-  without opening the build tools.
+  without opening the build tools. Hold the same key and scroll over a HUD
+  to resize it locally (Shift gives finer steps), including no-modify HUDs.
+  Sizes from 10% to 800% are saved per account by inventory name and creator,
+  then restored on new copies. Right-click a HUD to reset its size to 100%
+  or forget its saved size (the current copy keeps its size).
 - Local chat bubbles show the speaker's profile picture.
 - The remembered password is kept in Windows Credential Manager, as a hash
   only.
@@ -270,6 +274,9 @@ or adjusted in Préférences › Graphismes › Fluidité. Saved preferences are
 preserved.
 
 ### Test switches
+
+Local HUD zoom scenarios (`AURORA_DEMO_HUDS=scale|scale-copy|scale-touch|scale-reset|scale-forget|scale-ctrl|scale-key|scale-secondary`)
+are described in [the testing guide](docs/TESTING.md#huds).
 
 The offline **demo mode** simulates a server locally (a plaza, avatars,
 objects, chat, notifications…): no connection, no account. It keeps its own

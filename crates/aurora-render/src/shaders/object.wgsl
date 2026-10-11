@@ -80,7 +80,12 @@ fn planar_st(pos: vec3<f32>, normal: vec3<f32>, model: mat4x4<f32>) -> vec2<f32>
 // planar projection when the texture entry asks for it.
 fn face_st(in: VsIn, rec: DrawRecord) -> vec2<f32> {
     if ((rec.flags.x & FLAG_PLANAR) != 0u) {
-        return planar_st(in.pos, in.normal.xyz, rec.model);
+        let st = planar_st(in.pos, in.normal.xyz, rec.model);
+        // Local HUD zoom changes the screen size, never the texture repeats.
+        let packed_zoom = rec.flags.x >> 16u;
+        if (packed_zoom == 0u) { return st; }
+        let zoom = f32(packed_zoom) / 4096.0;
+        return (st - vec2<f32>(0.5)) / zoom + vec2<f32>(0.5);
     }
     return in.uv;
 }

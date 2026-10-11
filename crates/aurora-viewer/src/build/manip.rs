@@ -85,6 +85,8 @@ struct Mover {
     rot: Quat,
     scale: Vec3,
     region_off: Vec3,
+    visual_scale: f32,
+    position_scale: f32,
     parent_idx: Option<usize>,
     parent: Option<(Vec3, Quat)>,
     /// Children that follow along: kept in place when their root moves alone
@@ -1091,6 +1093,8 @@ fn save_movers(world: &World, sel: &[ObjKey], linked: bool, mode: EditMode, now:
             rot,
             scale: o.scale,
             region_off,
+            visual_scale: world.hud_scale(idx),
+            position_scale: world.hud_position_scale(idx),
             parent_idx,
             parent,
             children,
@@ -1106,7 +1110,7 @@ fn apply(world: &mut World, d: &Drag, targets: &[(Vec3, Quat, Vec3)]) {
     for (m, &(wp, wr, sc)) in d.movers.iter().zip(targets) {
         let parent = m.parent_idx.and_then(|p| new_world.get(&p).copied()).or(m.parent);
         let (lp, lr) = match (m.root, parent) {
-            (_, Some((pp, pr))) => (pr.inverse() * (wp - pp), (pr.inverse() * wr).normalize()),
+            (_, Some((pp, pr))) => (pr.inverse() * (wp - pp) / m.position_scale, (pr.inverse() * wr).normalize()),
             _ => (wp - m.region_off, wr.normalize()),
         };
         if let Some(o) = world.objects.get_mut(m.idx) {
@@ -1125,7 +1129,7 @@ fn apply(world: &mut World, d: &Drag, targets: &[(Vec3, Quat, Vec3)]) {
             // root moved alone: its other prims stay where they are
             for c in &m.children {
                 if let Some(o) = world.objects.get_mut(c.idx) {
-                    o.position = wr.inverse() * (c.world_pos - wp);
+                    o.position = wr.inverse() * (c.world_pos - wp) / m.visual_scale;
                     o.rotation = (wr.inverse() * c.world_rot).normalize();
                     o.render.needs_records = true;
                 }
@@ -1338,7 +1342,7 @@ fn scale_target(d: &Drag, m: &Mover) -> (Vec3, Quat, Vec3) {
             };
             let mut sc = m.scale;
             sc[k] = (m.scale[k] * d.factor[i]).clamp(MIN_PRIM_SCALE, MAX_PRIM_SCALE);
-            let grown = sc[k] - m.scale[k];
+            let grown = (sc[k] - m.scale[k]) * m.visual_scale;
             let pos = if (d.anchor - d.bounds.center).length_squared() < 1e-10 {
                 m.pos
             } else {
@@ -1708,5 +1712,54 @@ mod tests {
         assert!(save_movers(&world, &[key], false, EditMode::Stretch, Instant::now()).is_empty());
         world.objects.get_mut(idx).unwrap().update_flags &= !crate::ui::context::flags::OBJECT_MOVE;
         assert!(save_movers(&world, &[key], false, EditMode::Move, Instant::now()).is_empty());
+    }
+
+    #[test]
+    fn local_hud_zoom_keeps_child_gizmo_motion_and_typed_positions_in_server_units() {
+        let mut world = hud_world();
+        let root = world.objects.index_of_uuid(&crate::demo::hud::object(31, false).full_id).unwrap();
+        let id = world.objects.get(root).unwrap().full_id;
+        world.hud_scales.set(id, 2.0);
+        let child = super::super::family(&world, root)[1];
+        let o = world.objects.get(child).unwrap();
+        let (key, local) = (o.key, o.position);
+        let now = Instant::now();
+        let before = Scene::object_transform(&world, child, now, 0).unwrap().0;
+        let cam = Cam::for_hud(aurora_render::HudView::new([1280, 720], 1.0, -1.0, 1.0), 1.0);
+        let settings = BuildSettings {
+            snap: false,
+            edit_linked: true,
+            ..Default::default()
+        };
+        let start = cam.project_px(before + Vec3::Y * cam.meters_for_pixels(before, 45.0)).unwrap();
+        let mut manip = Manip::default();
+        assert!(manip.try_grab(&mut world, &settings, &cam, &[key], true, EditMode::Move, start, now));
+        let mut out = Vec::new();
+        manip.update(
+            &mut world,
+            &settings,
+            &cam,
+            &[key],
+            true,
+            EditMode::Move,
+            (start.0 + 72.0, start.1),
+            false,
+            Mods::default(),
+            now,
+            &mut out,
+        );
+        assert!(
+            Scene::object_transform(&world, child, now, 0)
+                .unwrap()
+                .0
+                .abs_diff_eq(before - Vec3::Y * 0.1, 1e-5)
+        );
+        assert!(world.objects.get(child).unwrap().position.abs_diff_eq(local - Vec3::Y * 0.05, 1e-5));
+        manip.release(&mut world, &settings, true, &mut out);
+        let mut build = super::super::BuildTool::default();
+        build.click_select(&mut world, &settings, Some(child), false);
+        let typed = Vec3::new(0.0, 0.1, 0.1);
+        build.set_transform(&mut world, &settings, Some(typed), None, None, true);
+        assert!(world.objects.get(child).unwrap().position.abs_diff_eq(typed, 1e-5));
     }
 }

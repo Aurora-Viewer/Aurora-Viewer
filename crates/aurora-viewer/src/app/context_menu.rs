@@ -151,6 +151,10 @@ impl App {
         f.attachment_item = w.objects.get(root).and_then(|o| o.attachment_item_id());
         f.blocked = w.mutes.is_muted_id(&root_id);
         f.name = props.map(|p| p.name.clone()).unwrap_or_default();
+        if let Some(root) = w.hud_root(idx).and_then(|i| w.objects.get(i)) {
+            f.local_hud_scale = Some(w.hud_scales.scale(root.full_id));
+            f.saved_hud_scale = w.hud_scales.has_profile(root.full_id);
+        }
         f
     }
 
@@ -172,6 +176,8 @@ impl App {
 
     pub(super) fn on_ctx_action(&mut self, act: CtxAction) {
         match act {
+            CtxAction::ResetHudScale(key) => self.reset_hud_scale(key, false),
+            CtxAction::ForgetHudScale(key) => self.reset_hud_scale(key, true),
             CtxAction::EditAttachment(key) => {
                 if let Some(idx) = self.world.objects.index_of(&key)
                     && crate::build::selectable(&self.world, idx)

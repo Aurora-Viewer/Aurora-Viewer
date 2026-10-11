@@ -211,6 +211,14 @@ grille.
   720–900), puis change la couleur du HUD.
 - `zoom` : réduit à 50 % ; `hidden` : masque les HUDs ; `media` : affiche la
   page locale de test sur le HUD central.
+- `scale` : cinq crans de molette avec la touche HUD (image 720), sur un
+  HUD sans droits Modifier / Déplacer ; cadre et pourcentage jusqu’à l’image
+  840. `scale-ctrl`, `scale-key`, `scale-secondary` utilisent Ctrl, B ou la
+  touche secondaire. `scale-reset` rétablit 100 % ; `scale-forget` oublie le
+  profil sans modifier la copie actuelle. `scale-copy` remplace le HUD par
+  un nouvel UUID au même nom / créateur (image 900) et journalise l’échelle
+  restaurée. `scale-touch` clique ensuite le HUD agrandi (images 880–900).
+  Les profils de ces scénarios restent dans le dossier de compte de démo.
 - `drag` : saisit l'enfant avec ALT (image 720), déplace tout le HUD,
   relâche ALT avant le clic (image 800), puis enregistre la position au
   relâchement gauche (image 840) sans toucher de script.
@@ -239,6 +247,12 @@ grille.
   Les deux choix sont enregistrés et appliqués au survol comme au déplacement ;
   « Rétablir les raccourcis par défaut » réinitialise aussi cette ligne.
 - Le droit Déplacer suffit, y compris sans droit Modifier.
+- Touche HUD + molette : taille locale de 10 % à 800 %, Maj pour affiner,
+  sans zoom de caméra ni défilement de média. Clic droit : « Revenir à
+  100 % » et « Oublier le réglage mémorisé ». Les nouvelles copies reprennent
+  le profil du même nom d’inventaire / créateur sur ce compte ; les copies
+  déjà portées gardent leurs tailles indépendantes. Vérifier après relance,
+  détachement / réattachement, clic sur les boutons et déplacement du HUD.
 - Inventaire de démo lié à la tenue actuelle, pour tester le détachement et
   l'affichage dans l'inventaire.
 - Menu Monde › HUDs : afficher / masquer, réduire / agrandir et taille

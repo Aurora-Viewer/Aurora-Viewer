@@ -2005,6 +2005,10 @@ fn keys_page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsU
     let kb = s.keybinds.clone();
     for (section, actions) in crate::keybinds::sections() {
         group(ui, p, section, |ui| {
+            if actions.iter().any(|(action, _)| *action == crate::keybinds::Action::HudDrag) {
+                ui.label(RichText::new(aurora_i18n::tr!("hud-local-scale-help")).size(12.0).color(p.muted));
+                ui.add_space(4.0);
+            }
             for (a, label) in actions.iter() {
                 ui.horizontal(|ui| {
                     let (rect, _) = ui.allocate_exact_size(Vec2::new(LABEL_W, 22.0), Sense::hover());

@@ -133,6 +133,20 @@ impl Default for DrawRecord {
     }
 }
 
+impl DrawRecord {
+    /// Upper 16 bits of flags.x: visual HUD zoom in units of 1/4096.
+    /// Zero means 1. The shader removes it from planar texture generation,
+    /// before materials and animations, without enlarging every GPU record.
+    pub fn set_hud_zoom(&mut self, zoom: f32) {
+        let packed = if zoom == 1.0 {
+            0
+        } else {
+            (zoom.clamp(0.1, 8.0) * 4096.0).round() as u32
+        };
+        self.flags[0] = (self.flags[0] & 0xffff) | (packed << 16);
+    }
+}
+
 /// One indexed draw referring to a record slot.
 #[derive(Debug, Clone, Copy)]
 pub struct DrawCmd {
@@ -911,5 +925,22 @@ mod tests {
                 "anim_xf"
             ]
         );
+    }
+
+    #[test]
+    fn hud_zoom_keeps_material_skin_and_animation_flags() {
+        let mut record = DrawRecord {
+            flags: [0x0fff, 42, 128, 0x123456],
+            ..Default::default()
+        };
+        for zoom in [0.1, 0.5, 1.61051, 8.0] {
+            record.set_hud_zoom(zoom);
+            assert_eq!(record.flags[0] & 0xffff, 0x0fff);
+            assert_eq!(&record.flags[1..], &[42, 128, 0x123456]);
+            let decoded = (record.flags[0] >> 16) as f32 / 4096.0;
+            assert!((decoded - zoom).abs() <= 1.0 / 8192.0);
+        }
+        record.set_hud_zoom(1.0);
+        assert_eq!(record.flags[0], 0x0fff);
     }
 }

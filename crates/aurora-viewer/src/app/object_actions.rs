@@ -70,7 +70,7 @@ impl App {
                 };
                 // Firestorm starts from the root center, not the surface hit,
                 // so dragging a child does not make a linked object jump.
-                let offset = rot.inverse() * (pos - clicked);
+                let offset = rot.inverse() * (pos - clicked) / self.world.hud_scale(idx);
                 let surface = ray.and_then(|r| self.scene.touch_surface(&self.world, idx, r)).unwrap_or_default();
                 let physical = self
                     .world

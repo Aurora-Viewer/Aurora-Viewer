@@ -63,6 +63,8 @@ pub struct ContextMenu {
 /// llviewermenu.cpp), worked out every frame while the menu is open.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ObjectFacts {
+    pub local_hud_scale: Option<f32>,
+    pub saved_hud_scale: bool,
     pub edit_hud: bool,
     pub attachment_item: Option<Uuid>,
     /// enable_object_touch: the prim or its parent handles touches.
@@ -136,6 +138,8 @@ pub struct Facts {
 
 #[derive(Debug, Clone)]
 pub enum CtxAction {
+    ResetHudScale(ObjKey),
+    ForgetHudScale(ObjKey),
     Detach(ObjKey),
     AttachmentInventory(Uuid),
     EditAttachment(ObjKey),
@@ -400,6 +404,27 @@ fn object_menu(
 
 /// menu_attachment_self.xml
 fn attachment_self_menu(ui: &mut egui::Ui, p: &Palette, f: &Facts, key: ObjKey, act: &mut dyn FnMut(CtxAction)) {
+    if let Some(scale) = f.object.local_hud_scale {
+        menu::info(
+            ui,
+            p,
+            "magnifying-glass",
+            &aurora_i18n::tr!("hud-local-scale", percent = format!("{:.0}", scale * 100.0)),
+        );
+        if menu::item(ui, p, "arrow-counter-clockwise", aurora_i18n::tr!("hud-local-scale-reset")) {
+            act(CtxAction::ResetHudScale(key));
+        }
+        if menu::item_if(
+            ui,
+            p,
+            "eraser",
+            aurora_i18n::tr!("hud-local-scale-forget"),
+            f.object.saved_hud_scale,
+        ) {
+            act(CtxAction::ForgetHudScale(key));
+        }
+        menu::separator(ui, p);
+    }
     if menu::item_if(ui, p, "hand-pointing", aurora_i18n::tr!("ui-context-touch"), f.object.touch) {
         act(CtxAction::Touch(key.local_id));
     }

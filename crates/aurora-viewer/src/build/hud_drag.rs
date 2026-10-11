@@ -162,6 +162,26 @@ mod tests {
     }
 
     #[test]
+    fn zoomed_hud_drag_keeps_local_zoom_out_of_the_server_update() {
+        let (mut world, root, child) = fixture();
+        let o = world.objects.get(root).unwrap();
+        let (id, before, size) = (o.full_id, o.position, o.scale);
+        world.hud_scales.set(id, 2.0);
+        world.hud_scales.set_offset(id, Vec3::new(0.0, 0.1, 0.1));
+        let view = HudView::new([1280, 720], 1.0, -1.0, 1.0);
+        let drag = HudDrag::start(&world, child, view, (500.0, 350.0)).unwrap();
+        assert!(drag.update(&mut world, view, (644.0, 278.0)));
+        let o = world.objects.get(root).unwrap();
+        assert!(o.position.abs_diff_eq(before + Vec3::new(0.0, -0.2, 0.1), 1e-5));
+        assert_eq!(o.scale, size);
+        let BuildCmd::Transform { updates, .. } = drag.release(&world).unwrap() else {
+            panic!("position update")
+        };
+        assert!(updates[0].scale.is_none());
+        assert_eq!(world.hud_scales.scale(id), 2.0);
+    }
+
+    #[test]
     fn keeps_grab_point_at_zoom_and_resize_with_rotated_attachment_anchor() {
         let mut lib = AvatarLibrary::load();
         lib.attach_points.get_mut(&32).unwrap().rotation = Quat::from_rotation_x(0.7);

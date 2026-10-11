@@ -1360,7 +1360,12 @@ impl Scene {
             let (mut apos, mut arot) = ap.map(|a| (a.position, a.rotation)).unwrap_or((Vec3::ZERO, Quat::IDENTITY));
             if hud {
                 apos.y *= world.hud_aspect;
-                return Some((apos + arot * p, arot * r, true));
+                let offset = if parent.full_id == world.agent_id {
+                    world.hud_scales.offset(o.full_id)
+                } else {
+                    Vec3::ZERO
+                };
+                return Some((apos + arot * p + offset, arot * r, true));
             }
             // follow the animated bone (LLViewerJointAttachment under its joint)
             if let Some((a, j)) = ap.and_then(|a| Some((a, a.joint?)))
@@ -1373,7 +1378,11 @@ impl Scene {
             let pos = pp + pr * (apos + arot * p);
             return Some((pos, pr * arot * r, hud));
         }
-        Some((pp + pr * p, (pr * r).normalize(), phud))
+        Some((
+            pp + pr * (p * if phud { world.hud_scale(idx) } else { 1.0 }),
+            (pr * r).normalize(),
+            phud,
+        ))
     }
 
     /// Bring GPU records up to date, visiting only the objects that need it
@@ -1666,7 +1675,11 @@ impl Scene {
         g.radius = m.radius;
         if m.changed {
             for f in &g.faces {
-                renderer.records.set_model(f.record, m.model);
+                if g.hud {
+                    renderer.records.set_hud_model(f.record, m.model, world.hud_scale(idx));
+                } else {
+                    renderer.records.set_model(f.record, m.model);
+                }
             }
         }
         if m.clear_flags
@@ -1837,7 +1850,11 @@ impl Scene {
             // transform-only update; an unchanged record is not uploaded again
             let model = model.to_cols_array_2d();
             for f in &self.gpu[idx].faces {
-                renderer.records.set_model(f.record, model);
+                if hud {
+                    renderer.records.set_hud_model(f.record, model, world.hud_scale(idx));
+                } else {
+                    renderer.records.set_model(f.record, model);
+                }
             }
         }
         let g = &mut self.gpu[idx];
@@ -1891,6 +1908,7 @@ impl Scene {
             },
             _ => None,
         };
+        let hud_zoom = if g.hud { world.hud_scale(idx) } else { 1.0 };
         for (fi, face) in geom.faces.iter().enumerate() {
             let Some(alloc) = face else {
                 continue;
@@ -2069,6 +2087,7 @@ impl Scene {
                 rec.anim = a.anim;
                 rec.anim_xf = a.constants;
             }
+            rec.set_hud_zoom(hud_zoom);
             let record = renderer.records.alloc(rec);
             g.faces.push(FaceDraw {
                 record,
