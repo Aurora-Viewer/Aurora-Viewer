@@ -7,6 +7,8 @@ use egui::{Color32, CornerRadius, RichText, Sense, Stroke, Vec2};
 #[cfg(test)]
 mod collapse_tests;
 pub mod demo;
+#[cfg(test)]
+pub(crate) mod elide_tests;
 mod resize;
 
 /// Keep status suffixes at normal weight and slightly darker than the name.
@@ -15,6 +17,44 @@ pub(crate) fn name_with_suffix(name: &str, suffix: &str, font_id: egui::FontId, 
     job.append(name, 0.0, egui::TextFormat::simple(font_id.clone(), color));
     job.append(suffix, 0.0, egui::TextFormat::simple(font_id, color.gamma_multiply(0.85)));
     job
+}
+
+/// A one-line label at most `max_width` wide: a longer text ends with « … »,
+/// as the texts Firestorm declares with use_ellipses="true" do
+/// (LLFontGL::render), and shows whole on hover (egui's tooltip of an elided
+/// label; Firestorm adds it to its truncated tab labels,
+/// LLTabContainer::addLabelToolTip). It takes the room of its text only, so
+/// what follows in a row stays next to it. For names of residents, groups
+/// and conversations, whose length is not ours.
+///
+/// The galley comes from egui's layout cache: an unchanged text costs a
+/// lookup per frame, not a layout.
+pub(crate) fn elided_label(ui: &egui::Ui, text: impl Into<egui::WidgetText>, max_width: f32) -> egui::Label {
+    egui::Label::new(elided_galley(ui, text, max_width))
+}
+
+/// The same for a row painted by hand: `text` starts at `left_center` and is
+/// cut at `width`. Returns true when it was cut, for the caller to show the
+/// whole text on hover (LLTabContainer::addLabelToolTip, FIRE-36603: only a
+/// truncated label gets the tooltip).
+pub(crate) fn paint_elided(ui: &egui::Ui, text: &str, left_center: egui::Pos2, width: f32, font: egui::FontId, color: Color32) -> bool {
+    if text.is_empty() {
+        return false;
+    }
+    // less room than the ellipsis itself: nothing readable to paint
+    if width < font.size {
+        return true;
+    }
+    let galley = elided_galley(ui, RichText::new(text).font(font).color(color), width);
+    let pos = egui::pos2(left_center.x, left_center.y - galley.size().y * 0.5);
+    let cut = galley.elided;
+    ui.painter().galley(pos, galley, color);
+    cut
+}
+
+fn elided_galley(ui: &egui::Ui, text: impl Into<egui::WidgetText>, max_width: f32) -> std::sync::Arc<egui::Galley> {
+    text.into()
+        .into_galley(ui, Some(egui::TextWrapMode::Truncate), max_width.max(0.0), egui::TextStyle::Body)
 }
 
 /// LLFontGL BOLD_OFFSET: egui's strong text changes color, not weight.
