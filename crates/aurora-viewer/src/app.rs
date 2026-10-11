@@ -6494,6 +6494,21 @@ impl ApplicationHandler for App {
                         {
                             window.state.search = aurora_i18n::tr!("app-demo").into();
                         }
+                    } else if view.starts_with("move-") && view != "move-menu" {
+                        if view == "move-multi" {
+                            self.inventory_ui.selection.extend([8109, 8110].map(uuid::Uuid::from_u128));
+                        }
+                        if view == "move-window" {
+                            self.inventory_ui.open_folder_window(uuid::Uuid::from_u128(8000));
+                            if let Some(window) = self.inventory_ui.windows.last_mut() {
+                                window.state.begin_move_to(id);
+                            }
+                        } else {
+                            self.inventory_ui.begin_move_to(id);
+                            if view == "move-filter" {
+                                self.inventory_ui.filter_move_to(aurora_i18n::tr!("world-inventory-demo-subfolder"));
+                            }
+                        }
                     } else if view == "rename" {
                         self.inventory_ui.begin_rename(&self.world.inventory, id);
                     } else if matches!(view.as_str(), "multi-add" | "multi-detach" | "delete") {

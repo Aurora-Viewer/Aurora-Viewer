@@ -13,6 +13,7 @@ mod controls;
 mod dialogs;
 mod document;
 mod embedded;
+mod move_to;
 pub use document::document_demo_events;
 pub(crate) mod permissions;
 mod properties;
@@ -258,6 +259,7 @@ pub struct InventoryUi {
     pub pending: Option<Uuid>,
     pub message: String,
     pub dialog: Option<EditDialog>,
+    move_to: Option<move_to::MoveTo>,
     pub links_filter: Option<Uuid>,
     pub windows: Vec<InventoryWindow>,
     pub thumbnail: thumbnail::ThumbnailUi,
@@ -293,6 +295,16 @@ pub struct AnimationStats {
 }
 
 impl InventoryUi {
+    pub fn begin_move_to(&mut self, id: Uuid) {
+        self.move_to = Some(move_to::MoveTo::new(self.selected_ids(id)));
+    }
+
+    pub fn filter_move_to(&mut self, filter: &str) {
+        if let Some(picker) = &mut self.move_to {
+            picker.filter = filter.into();
+        }
+    }
+
     /// FSFloaterPartialInventory: show only descendants of the chosen folder.
     /// Firestorm indra/newview/fsfloaterpartialinventory.cpp (LGPL 2.1).
     pub fn open_folder_window(&mut self, root: Uuid) {
@@ -1196,6 +1208,7 @@ pub fn show(
     controls::dialogs(ctx, p, st, prefs);
     finish_hidden_rename(inv, st, prefs, &mut actions);
     dialogs::show(ctx, p, icons, inv, st, prefs, &facts, images, &mut actions);
+    move_to::show(ctx, p, icons, inv, st, prefs, &facts, &mut actions);
     dialogs::preview(ctx, p, icons, inv, inv, st, images, prefs, &mut actions);
     st.thumbnail.show(
         ctx,
@@ -1253,6 +1266,7 @@ pub fn show(
         finish_hidden_rename(&world.inventory, &mut w.state, prefs, &mut actions);
         controls::dialogs(ctx, p, &mut w.state, prefs);
         dialogs::show(ctx, p, icons, &world.inventory, &mut w.state, prefs, &facts, images, &mut actions);
+        move_to::show(ctx, p, icons, &mut world.inventory, &mut w.state, prefs, &facts, &mut actions);
         dialogs::preview(
             ctx,
             p,
@@ -1292,7 +1306,9 @@ pub fn show(
     }
     // Documents and confirmations outlive the inventory window which opened
     // them, just like the main inventory's auxiliary floaters.
-    windows.retain(|w| w.open || w.state.preview.is_some() || w.state.dialog.is_some() || w.state.thumbnail.item.is_some());
+    windows.retain(|w| {
+        w.open || w.state.preview.is_some() || w.state.dialog.is_some() || w.state.move_to.is_some() || w.state.thumbnail.item.is_some()
+    });
     windows.append(&mut spawned);
     st.windows = windows;
     if let Some(id) = st.demo_menu {

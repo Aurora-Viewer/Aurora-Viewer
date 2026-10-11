@@ -1,4 +1,17 @@
 language-name = English
+
+inventory-move-to = Move to…
+inventory-move-filter = Filter folders by name…
+inventory-move-selection-name = Move “{ $name }”
+inventory-move-selection-count = Move { $count } items
+inventory-move-no-folders = No folders available for this filter.
+inventory-move-folder-count = { $count ->
+    [one] { $count } available folder
+   *[other] { $count } available folders
+    }
+inventory-move-loading = Loading folders…
+inventory-move-loading-failed = Some folders could not be loaded.
+inventory-move-confirm = Move
 ao-title = AO · Avatar animations
 ao-help = Choose a set, then add inventory animations for each state. Import a ZHAO notecard from the same folder as its animations. Sets and options are stored in #Firestorm/#AO. Double-click to choose an animation; a group plays its members together, and each track has its own cycle.
 ao-enabled = Enable AO
