@@ -90,7 +90,8 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
 
 ## `aurora-viewer` en détail
 
-`ui/scripts/indent.rs` conserve le retrait à Entrée dans les deux éditeurs,
+`ui/scripts/indent.rs` gère les paliers de quatre colonnes pour Tab et Retour
+arrière et conserve le retrait à Entrée dans les deux éditeurs,
 avec le curseur et l'historique d'annulation natifs d'egui. Le collage reste
 exact. `ui/scripts/experiences.rs` suit l'association et les choix disponibles
 dans les scripts d'objets ; `aurora-net/src/scripts/experiences.rs` charge

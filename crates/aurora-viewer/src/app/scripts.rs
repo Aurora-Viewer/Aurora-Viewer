@@ -42,10 +42,30 @@ fn permissions(mask: u32, library: bool) -> (bool, bool) {
 
 impl App {
     pub(super) fn demo_script_input(&self, raw: &mut egui::RawInput) {
-        if self.demo
-            && self.frame_count == 321
-            && std::env::var("AURORA_DEMO_SCRIPTS").is_ok_and(|mode| matches!(mode.as_str(), "indent" | "object-indent"))
-        {
+        if !self.demo {
+            return;
+        }
+        let Ok(mode) = std::env::var("AURORA_DEMO_SCRIPTS") else { return };
+        if self.frame_count == 323 && matches!(mode.as_str(), "tabstops" | "object-tabstops") {
+            for key in [egui::Key::Backspace, egui::Key::Tab] {
+                raw.events.push(egui::Event::Key {
+                    key,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                });
+            }
+            raw.events.push(egui::Event::Text("// tab stops".into()));
+            raw.events.push(egui::Event::Key {
+                key: egui::Key::Enter,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        if self.frame_count == 321 && matches!(mode.as_str(), "indent" | "object-indent") {
             raw.events.push(egui::Event::Key {
                 key: egui::Key::Enter,
                 physical_key: None,
@@ -64,7 +84,7 @@ impl App {
             self.panels.perf = false;
             if !matches!(
                 mode.as_str(),
-                "object" | "object-save" | "object-syntax" | "object-indent" | "experience" | "experience-save"
+                "object" | "object-save" | "object-syntax" | "object-indent" | "object-tabstops" | "experience" | "experience-save"
             ) {
                 crate::world::inventory::demo::seed(&mut self.world.inventory, self.world.agent_id);
                 let item = Uuid::from_u128(8102);
@@ -92,7 +112,14 @@ impl App {
             }
             if matches!(
                 mode.as_str(),
-                "object" | "object-save" | "object-syntax" | "object-indent" | "experience" | "experience-save" | "both"
+                "object"
+                    | "object-save"
+                    | "object-syntax"
+                    | "object-indent"
+                    | "object-tabstops"
+                    | "experience"
+                    | "experience-save"
+                    | "both"
             ) {
                 let idx = self
                     .world
@@ -126,10 +153,15 @@ impl App {
             }
         }
         if self.frame_count == 320
-            && matches!(mode.as_str(), "indent" | "object-indent" | "experience" | "experience-save")
+            && matches!(
+                mode.as_str(),
+                "indent" | "object-indent" | "tabstops" | "object-tabstops" | "experience" | "experience-save"
+            )
             && let Some(target) = self.script_editors.documents.first().map(|e| e.target)
         {
-            if matches!(mode.as_str(), "indent" | "object-indent") {
+            if matches!(mode.as_str(), "tabstops" | "object-tabstops") {
+                self.script_editors.demo_tabstops(target, &self.egui_ctx);
+            } else if matches!(mode.as_str(), "indent" | "object-indent") {
                 self.script_editors.demo_indent(target, &self.egui_ctx, mode == "object-indent");
             } else if let Some(action) = self.script_editors.demo_experience(target, Uuid::from_u128(9001)) {
                 self.apply_script_action(action);

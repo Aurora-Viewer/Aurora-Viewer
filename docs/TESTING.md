@@ -167,7 +167,7 @@ Pour vérifier l'édition, ajouter `AURORA_DEMO_BUILD=move,object:90000` ou
 translucide et poignées de taille. `stretch,object:90000,fz,100,0` tire la face
 opposée à la base ; le flexible garde sa courbure pendant le changement de taille.
 
-**`AURORA_DEMO_SCRIPTS=inventory|object|both|save|object-save|error|readonly|syntax|object-syntax|syntax-readonly|indent|object-indent|experience|experience-save`** :
+**`AURORA_DEMO_SCRIPTS=inventory|object|both|save|object-save|error|readonly|syntax|object-syntax|syntax-readonly|indent|object-indent|tabstops|object-tabstops|experience|experience-save`** :
 ouvre un éditeur de script depuis l'inventaire, le contenu d'un objet ou
 les deux à l'image 280. `save` et `object-save` enregistrent une source
 modifiée puis ferment et rouvrent l'éditeur à l'image 360 avec un UUID
@@ -185,6 +185,12 @@ modifications pendant la saisie et les couleurs du thème actif.
 `indent` simule Entrée puis une saisie après une instruction indentée ;
 `object-indent` fait la même chose avec des tabulations dans un objet.
 Le commentaire ajouté doit être aligné sur l'instruction précédente.
+`tabstops` et `object-tabstops` placent le curseur après sept espaces,
+simulent Retour arrière (quatre espaces), Tab (huit espaces), puis une saisie
+et Entrée. Le commentaire et l'instruction doivent être alignés sur huit
+espaces. Tab ajoute des espaces jusqu'au prochain multiple de quatre ;
+Retour arrière revient au palier précédent quand les espaces le permettent,
+sans supprimer un caractère du code pour rejoindre ce palier.
 `experience` choisit et enregistre l'expérience simulée d'un script d'objet ;
 `experience-save` ferme ensuite l'éditeur et le rouvre avec cette association.
 Les autres démos d'objet commencent avec « Aucune ». Le sélecteur permet

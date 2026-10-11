@@ -167,8 +167,22 @@ impl Editors {
         else {
             return;
         };
-        let cursor = egui::text::CCursor::new(e.source[..line].chars().count());
-        let id = format!("script_editor_{}_{}", target.object, target.item);
+        Self::focus_source(e, ctx, line);
+    }
+
+    pub fn demo_tabstops(&mut self, target: ScriptTarget, ctx: &egui::Context) {
+        let Some(e) = self.documents.iter_mut().find(|e| e.target == target) else {
+            return;
+        };
+        e.source = e.source.replacen("        llSay(", "       llSay(", 1);
+        if let Some(position) = e.source.find("llSay(") {
+            Self::focus_source(e, ctx, position);
+        }
+    }
+
+    fn focus_source(e: &Editor, ctx: &egui::Context, byte: usize) {
+        let cursor = egui::text::CCursor::new(e.source[..byte].chars().count());
+        let id = format!("script_editor_{}_{}", e.target.object, e.target.item);
         let text_id = egui::Id::new((&id, "source_text"));
         if let Some(mut state) = egui::TextEdit::load_state(ctx, text_id) {
             state.cursor.set_char_range(Some(egui::text::CCursorRange::one(cursor)));
