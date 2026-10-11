@@ -314,6 +314,11 @@ pub struct App {
     lighting_was_open: bool,
     demo: bool,
     inventory_ui: ui::inventory::InventoryUi,
+    /// Inventory edits asked by the world (`World::take_inventory_edits`),
+    /// awaiting their reply.
+    world_edits: std::collections::HashSet<uuid::Uuid>,
+    /// AURORA_DEMO_INVENTORY=offer: folder the offered item was last shown in.
+    demo_offer_shown: Option<uuid::Uuid>,
     ao_ui: ui::ao::AoUi,
     ao_catalog: crate::ao::inventory::Catalog,
     ao_runtime: crate::ao::runtime::Runtime,
@@ -602,6 +607,8 @@ impl App {
             lighting_was_open: false,
             demo: false,
             inventory_ui: Default::default(),
+            world_edits: Default::default(),
+            demo_offer_shown: None,
             ao_ui: Default::default(),
             ao_catalog: Default::default(),
             ao_runtime: Default::default(),
@@ -898,12 +905,28 @@ impl App {
                 });
                 return;
             }
+            // the sample offer of the notification center is "already in the
+            // inventory", like a resident's offer on the grid
+            if let NetCommand::FetchItems { items, owner } = &cmd
+                && items.contains(&crate::demo::DEMO_OFFER)
+            {
+                let parent = crate::world::inventory::actions::system(&self.world.inventory, 6).unwrap_or(self.world.inventory.root);
+                self.world.inventory.add_items(vec![crate::demo::offered_item(parent, *owner)]);
+                return;
+            }
             for mut ev in crate::demo::demo_reply(&cmd) {
                 if matches!(cmd, NetCommand::ObjectRelease { .. }) {
                     crate::demo::hud::preserve_touch_transform(&self.world, &mut ev);
                 }
                 if let NetEvent::InventoryContents(contents) = &mut ev {
                     for c in contents {
+                        // the synthetic listing of its folder keeps the offered item
+                        if let Some(offer) = self.world.inventory.items.get(&crate::demo::DEMO_OFFER)
+                            && offer.parent == c.folder_id
+                            && c.items.iter().all(|it| it.id != offer.id)
+                        {
+                            c.items.push(offer.clone());
+                        }
                         if let Some(folder) = self.world.inventory.folders.get(&c.folder_id)
                             && matches!(folder.info.type_default, 46..=48)
                         {
@@ -1051,6 +1074,16 @@ impl App {
             return;
         }
         if let NetEvent::InventoryEdited { request, result } = ev {
+            if self.world_edits.remove(&request) {
+                match result {
+                    Ok(reply) => {
+                        self.world.inventory.remove(&reply.removed);
+                        self.world.inventory.apply(reply.contents);
+                    }
+                    Err(reason) => log::warn!("refused inventory offer not moved to the Trash: {reason}"),
+                }
+                return;
+            }
             if self.ao_ui.pending.as_ref().is_some_and(|p| p.request == request) {
                 self.ao_inventory_result(result);
                 return;
@@ -3413,6 +3446,12 @@ impl App {
             for cmd in self.world.take_social_commands() {
                 self.send(cmd);
             }
+            // refused offers: to the Trash, whatever the inventory window does
+            for change in self.world.take_inventory_edits() {
+                let request = uuid::Uuid::new_v4();
+                self.world_edits.insert(request);
+                self.send(NetCommand::EditInventory { request, change });
+            }
             // the environment selector's lists: library Environments, then the
             // inventory, once the selector has been opened
             if self.env_scan && self.env_ui.scan_left != 0 {
@@ -4548,6 +4587,35 @@ impl App {
         self.gfx = Some(gfx);
         self.demo_action_steps();
         self.demo_hud_drag_steps();
+        // AURORA_DEMO_INVENTORY=offer|offer-reject: the sample offer's item
+        // shown in the folder it reaches; the second rejects it at frame 700
+        if self.demo
+            && let Ok(mode) = std::env::var("AURORA_DEMO_INVENTORY")
+            && mode.starts_with("offer")
+        {
+            if self.frame_count == 700 && mode == "offer-reject" {
+                let offer = self
+                    .world
+                    .notifications
+                    .list
+                    .iter()
+                    .find(|n| n.kind == crate::world::notifications::Kind::Inventory);
+                if let Some(id) = offer.map(|n| n.id) {
+                    for cmd in self
+                        .world
+                        .respond_notification(id, crate::world::notifications::Response::Decline)
+                        .0
+                    {
+                        self.send(cmd);
+                    }
+                }
+            }
+            let folder = self.world.inventory.items.get(&crate::demo::DEMO_OFFER).map(|it| it.parent);
+            if folder.is_some() && folder != self.demo_offer_shown {
+                self.demo_offer_shown = folder;
+                self.inventory_ui.show_original(&self.world.inventory, crate::demo::DEMO_OFFER);
+            }
+        }
         if self.demo && std::env::var("AURORA_DEMO_HUDS").is_ok_and(|m| m == "touch") {
             if self.frame_count == 720
                 && let Some(view) = self.scene.lists.hud_view
@@ -6537,7 +6605,10 @@ impl ApplicationHandler for App {
                 self.panels.perf = false;
                 self.panels.appearance = false;
                 self.panels.minimap = false;
-                self.world.notifications = Default::default();
+                // "offer" modes keep the sample inventory offer to answer
+                if !view.starts_with("offer") {
+                    self.world.notifications = Default::default();
+                }
                 if let Some(id) = crate::world::inventory::demo::target(&view) {
                     self.inventory_ui.show_original(&self.world.inventory, id);
                     if view == "new-folder" {

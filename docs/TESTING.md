@@ -551,6 +551,13 @@ grille.
   Capturer `620,740,900,1120` pour vérifier contenu, repli, déplacement et
   dimensions restaurées. Le bouton « − » reste utilisable ; les autres
   boutons du titre et le contenu ne déclenchent pas le double-clic du titre.
+- **`AURORA_DEMO_NOTIF=1`** : l’offre « Lanterne aurorale » est celle d’un
+  résident : l’objet est déjà dans l’inventaire (dossier Objets) à l’arrivée
+  de l’offre. « Garder », ou fermer l’offre dans la liste, l’y laisse ;
+  « Rejeter » l’envoie à la corbeille. Avec `AURORA_DEMO_INVENTORY=offer`,
+  l’inventaire s’ouvre sur l’objet reçu et l’offre reste à répondre ;
+  `offer-reject` la rejette à l’image 700, puis montre l’objet dans la
+  corbeille. Capturer après l’image 900.
 - **`AURORA_DEMO_EXIT=1|cancel|logout|quit`** : ouvre la modale à l’image 650.
   `1` la laisse interactive ; les autres modes font le choix à l’image 800.
   Capturer `740,900` pour comparer le fond flouté puis la session reprise ou
@@ -739,6 +746,8 @@ racine ouverte et libellés alignés à gauche. Créations et mutations simulée
 hors ligne ; les fichiers et photos chargés en démo restent hors ligne.
 
 - `1` : l'inventaire seul.
+- `offer`, `offer-reject` : objet offert par un résident, gardé ou rejeté
+  (voir `AURORA_DEMO_NOTIF` plus haut).
 - `folder`, `object`, `animation`, `script`, `note`, `properties`, `nocopy`,
   `notransfer`, `link` : le menu de l'élément choisi, ou ses propriétés.
   `clothes`, `body`, `settings`, `uploads` sont des alias de `folder`, à

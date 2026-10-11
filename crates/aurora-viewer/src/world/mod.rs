@@ -177,6 +177,8 @@ pub struct World {
     /// Online status (away, do not disturb...) and automatic responses.
     pub status: status::Status,
     pub inventory: inventory::Inventory,
+    /// Refused offers to move to the Trash (`take_inventory_edits`).
+    inventory_edits: Vec<aurora_net::inventory::operations::Mutation>,
     /// Playing animations per avatar / animesh.
     pub animations: HashMap<Uuid, Vec<PlayingAnimation>>,
     /// AO remapping applies only to our rendered pose, never movement signals.
@@ -275,6 +277,7 @@ impl World {
             groups: groups::GroupChats::default(),
             status: status::Status::default(),
             inventory: inventory::Inventory::default(),
+            inventory_edits: Vec::new(),
             animations: HashMap::new(),
             ao_pose: None,
             local_preview: None,
@@ -1582,7 +1585,30 @@ impl World {
             }
             d::INVENTORY_OFFERED | d::TASK_INVENTORY_OFFERED => {
                 self.ui_sounds.push(UiSound::InventoryOffer);
+                let task = im.dialog == d::TASK_INVENTORY_OFFERED;
                 let asset_type = im.binary_bucket.first().map(|b| *b as i8).unwrap_or(-1);
+                // A resident's offer is in our inventory before we answer:
+                // prefetch it (inventory_offer_handler, llimprocessing.cpp),
+                // or it stays unseen until the next login. A folder cannot be
+                // fetched by id; it lands in the root, reloaded instead.
+                let object = (!task)
+                    .then(|| notifications::offered_object(&im.binary_bucket))
+                    .flatten()
+                    .map_or(Uuid::nil(), |(_, id)| id);
+                if !object.is_nil() {
+                    self.groups.out.push(if asset_type == notifications::AT_CATEGORY {
+                        aurora_net::NetCommand::FetchInventory {
+                            folders: vec![self.inventory.root],
+                            owner: self.agent_id,
+                            library: false,
+                        }
+                    } else {
+                        aurora_net::NetCommand::FetchItems {
+                            items: vec![object],
+                            owner: self.agent_id,
+                        }
+                    });
+                }
                 let what = if im.message.is_empty() {
                     aurora_i18n::tr!("world-mod-an-object").to_owned()
                 } else {
@@ -1596,7 +1622,8 @@ impl World {
                         from: im.from_agent_id,
                         tx: im.session_id,
                         asset_type,
-                        task: im.dialog == d::TASK_INVENTORY_OFFERED,
+                        object,
+                        task,
                     },
                 );
             }
@@ -1719,12 +1746,64 @@ impl World {
             .map(|t| (*t, folder_of(*t as i32)))
             .collect();
         let root = inv.root;
-        self.notifications.respond(
+        // refusing a resident's offer also discards what it already put in
+        // our inventory; closing the notification keeps it
+        let discard = match self.notifications.list.iter().find(|n| n.id == id).map(|n| &n.data) {
+            Some(notifications::Data::Inventory { asset_type, object, .. })
+                if !object.is_nil() && matches!(r, notifications::Response::Decline) =>
+            {
+                Some((*asset_type, *object))
+            }
+            _ => None,
+        };
+        let out = self.notifications.respond(
             id,
             r,
             |t| folders.iter().find(|(ft, _)| *ft == t).map(|(_, f)| *f).unwrap_or(root),
             calling,
-        )
+        );
+        if let Some((asset_type, object)) = discard {
+            self.discard_offer(asset_type, object);
+        }
+        out
+    }
+
+    /// A refused resident's offer is already in our inventory: it goes to
+    /// the Trash (LLDiscardAgentOffer, indra/newview/llviewermessage.cpp,
+    /// originally LGPL 2.1). The change is queued for the app and does not
+    /// need the item to be fetched yet.
+    pub(super) fn discard_offer(&mut self, asset_type: i8, object: Uuid) {
+        use aurora_net::inventory::operations::{Mutation, Operation};
+        use inventory::actions;
+        let inv = &self.inventory;
+        // 14: LLFolderType::FT_TRASH
+        let Some(trash) = actions::system(inv, 14) else {
+            log::warn!("refused inventory offer {object} left in place: no Trash folder");
+            return;
+        };
+        if actions::under(inv, object, trash) {
+            return;
+        }
+        // until it is fetched, it is where the server files its type (the
+        // root for a folder: both share their numbers with the asset types)
+        let from = actions::parent(inv, object)
+            .or_else(|| actions::system(inv, i32::from(asset_type)))
+            .unwrap_or(inv.root);
+        self.inventory_edits.push(Mutation {
+            operations: vec![Operation::Patch {
+                id: object,
+                folder: asset_type == notifications::AT_CATEGORY,
+                body: aurora_llsd::llsd_map! { "parent_id" => trash },
+            }],
+            refresh: vec![from, trash],
+            ..Default::default()
+        });
+    }
+
+    /// Inventory changes decided outside the inventory window, for the app
+    /// to send.
+    pub fn take_inventory_edits(&mut self) -> Vec<aurora_net::inventory::operations::Mutation> {
+        std::mem::take(&mut self.inventory_edits)
     }
 
     /// Name of an avatar by id (from its object name-values).
@@ -2421,6 +2500,135 @@ mod motion_tests {
         assert!(world.agent.is_sitting() && !world.agent.seated);
         world.apply(sit(me, crate::demo::IDLE_ANIM));
         assert!(!world.agent.is_sitting());
+    }
+
+    fn inventory_offer(world: &World, dialog: u8, bucket: Vec<u8>) -> NetEvent {
+        NetEvent::InstantMessage(aurora_net::InstantMessage {
+            from_agent_id: Uuid::from_u128(77),
+            from_name: "Giver Resident".into(),
+            to_agent_id: world.agent_id,
+            dialog,
+            session_id: Uuid::new_v4(),
+            message: "Alpha".into(),
+            offline: false,
+            from_group: false,
+            binary_bucket: bucket,
+        })
+    }
+
+    fn agent_bucket(asset_type: u8, object: Uuid) -> Vec<u8> {
+        let mut bucket = vec![asset_type];
+        bucket.extend_from_slice(object.as_bytes());
+        bucket
+    }
+
+    #[test]
+    fn resident_offer_is_fetched_on_arrival_and_trashed_when_refused() {
+        use aurora_net::NetCommand;
+        use aurora_net::inventory::operations::Operation;
+        use notifications::{Response, im};
+        let (mut world, _, _) = fixture();
+        let me = world.agent_id;
+        inventory::demo::seed(&mut world.inventory, me);
+        let trash = inventory::actions::system(&world.inventory, 14).expect("Trash");
+        let item = Uuid::from_u128(0xFEED);
+
+        world.apply(inventory_offer(&world, im::INVENTORY_OFFERED, agent_bucket(5, item)));
+        assert!(
+            world
+                .take_social_commands()
+                .iter()
+                .any(|c| matches!(c, NetCommand::FetchItems { items, owner } if items[..] == [item] && *owner == me))
+        );
+        let id = world.notifications.list.last().expect("offer").id;
+        let (cmds, _) = world.respond_notification(id, Response::Accept);
+        assert!(matches!(
+            &cmds[..],
+            [NetCommand::SendImDialog {
+                dialog: im::INVENTORY_ACCEPTED,
+                ..
+            }]
+        ));
+        assert!(world.take_inventory_edits().is_empty());
+
+        // refused before the fetch answered: the move does not need the item
+        world.apply(inventory_offer(&world, im::INVENTORY_OFFERED, agent_bucket(5, item)));
+        let id = world.notifications.list.last().expect("offer").id;
+        let (cmds, _) = world.respond_notification(id, Response::Decline);
+        assert!(matches!(
+            &cmds[..],
+            [NetCommand::SendImDialog {
+                dialog: im::INVENTORY_DECLINED,
+                ..
+            }]
+        ));
+        let edits = world.take_inventory_edits();
+        let [edit] = &edits[..] else {
+            panic!("one move to the Trash, got {}", edits.len());
+        };
+        assert!(matches!(&edit.operations[..],
+            [Operation::Patch { id, folder: false, body }] if *id == item && body["parent_id"].as_uuid() == trash));
+        assert!(edit.refresh.contains(&trash));
+    }
+
+    #[test]
+    fn folder_offer_reloads_the_root_and_object_offers_wait_for_the_server() {
+        use aurora_net::NetCommand;
+        use notifications::{Response, im};
+        let (mut world, _, _) = fixture();
+        let me = world.agent_id;
+        inventory::demo::seed(&mut world.inventory, me);
+        let root = world.inventory.root;
+        let folder = Uuid::from_u128(0xF01D);
+
+        world.apply(inventory_offer(
+            &world,
+            im::INVENTORY_OFFERED,
+            agent_bucket(notifications::AT_CATEGORY as u8, folder),
+        ));
+        assert!(
+            world
+                .take_social_commands()
+                .iter()
+                .any(|c| matches!(c, NetCommand::FetchInventory { folders, library: false, .. } if folders[..] == [root]))
+        );
+        // closing the notification keeps the folder: accepted, nothing moved
+        let id = world.notifications.list.last().expect("offer").id;
+        let (cmds, _) = world.respond_notification(id, Response::Dismiss);
+        assert!(
+            matches!(&cmds[..], [NetCommand::SendImDialog { dialog: im::INVENTORY_ACCEPTED, bucket, .. }] if bucket[..] == root.as_bytes()[..])
+        );
+        assert!(world.take_inventory_edits().is_empty());
+        world.apply(inventory_offer(
+            &world,
+            im::INVENTORY_OFFERED,
+            agent_bucket(notifications::AT_CATEGORY as u8, folder),
+        ));
+        let id = world.notifications.list.last().expect("offer").id;
+        world.respond_notification(id, Response::Decline);
+        assert!(matches!(&world.take_inventory_edits()[..],
+            [edit] if matches!(&edit.operations[..], [aurora_net::inventory::operations::Operation::Patch { id, folder: true, .. }] if *id == folder)));
+
+        // an object's offer only names the type: nothing exists before it is accepted
+        world.take_social_commands();
+        world.apply(inventory_offer(&world, im::TASK_INVENTORY_OFFERED, vec![6]));
+        assert!(
+            !world
+                .take_social_commands()
+                .iter()
+                .any(|c| matches!(c, NetCommand::FetchItems { .. } | NetCommand::FetchInventory { .. }))
+        );
+        let id = world.notifications.list.last().expect("offer").id;
+        assert!(world.notifications.list.last().is_some_and(|n| n.close_declines()));
+        let (cmds, _) = world.respond_notification(id, Response::Dismiss);
+        assert!(matches!(
+            &cmds[..],
+            [NetCommand::SendImDialog {
+                dialog: im::TASK_INVENTORY_DECLINED,
+                ..
+            }]
+        ));
+        assert!(world.take_inventory_edits().is_empty());
     }
 
     #[test]
