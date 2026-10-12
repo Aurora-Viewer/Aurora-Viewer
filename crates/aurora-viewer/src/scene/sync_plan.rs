@@ -299,6 +299,20 @@ impl SyncCtx<'_> {
         }
     }
 
+    /// The geometry the object's place and the camera ask for at this
+    /// moment (what a check of its detail level would want); None when it
+    /// cannot be placed.
+    pub(super) fn wanted_now(&self, idx: usize, o: &Object) -> Option<Option<GeomKey>> {
+        let (pos, _, hud) = self.transform(idx)?;
+        let lod = if hud {
+            3
+        } else {
+            let (radius, distance) = self.lod_metrics(idx, o, pos);
+            lod_for(radius, distance, self.lod_factor, self.fov_y)
+        };
+        Some(Scene::object_geom_key(o, lod))
+    }
+
     /// What this frame's sync does with an object. A transform-only update
     /// is planned here when nothing else changed: same geometry and detail
     /// level, no new faces, materials or skeleton; anything else is left to

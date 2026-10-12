@@ -6865,6 +6865,13 @@ impl ApplicationHandler for App {
                 for ev in crate::demo::crowd_events(n, rigged) {
                     self.world.apply(ev);
                 }
+                // (…,busy: flexible and spinning attachments, a large HUD,
+                // spinning objects on the ground)
+                if crate::demo::crowd_busy() {
+                    for ev in crate::demo::crowd_busy_events(n) {
+                        self.world.apply(ev);
+                    }
+                }
             }
             // AURORA_DEMO_GLYPHS=1|2: residents named and talking in the
             // characters of the grid's display names (system fallback fonts)

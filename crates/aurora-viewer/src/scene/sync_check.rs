@@ -3,8 +3,11 @@
 //! by the set that listed them (sync_sets.rs), by what they are, and for
 //! each kind how many only had their placement checked, had their records
 //! written again, or went through the full sync. Tells which objects keep
-//! the sync busy in a place at rest. Costs nothing when the variable is
-//! not set.
+//! the sync busy in a place at rest. The line ends with a check of every
+//! object, once per second: those whose wanted detail level is not the one
+//! their distance gives at that moment (a check the sync has not made
+//! yet), apart for what the GPU places from an avatar. Costs nothing when
+//! the variable is not set.
 
 use super::ObjGpu;
 use crate::world::World;
@@ -167,16 +170,26 @@ impl SyncCheck {
         self.by_kind[kind as usize][outcome as usize] += 1;
     }
 
-    /// Once per frame, after the sync; writes the second's line when it is
-    /// over.
-    pub fn frame(&mut self) {
+    /// Once per frame, after the sync: whether the second is over and its
+    /// line due ([`SyncCheck::write`]).
+    pub fn frame(&mut self) -> bool {
         self.frames += 1;
-        let now = Instant::now();
-        if now - self.since < Duration::from_secs(1) {
-            return;
-        }
-        log::info!("sync check: {}", self.line());
-        *self = SyncCheck::new(now);
+        self.since.elapsed() >= Duration::from_secs(1)
+    }
+
+    /// Write the second's line. `late`: objects at rest looked at and those
+    /// whose detail level is behind their distance, then the same for the
+    /// objects the GPU places from an avatar.
+    pub fn write(&mut self, late: [usize; 4]) {
+        log::info!(
+            "sync check: {} | detail level behind: {} of {} at rest, {} of {} placed by the GPU",
+            self.line(),
+            late[1],
+            late[0],
+            late[3],
+            late[2]
+        );
+        *self = SyncCheck::new(Instant::now());
     }
 
     /// Averages per frame over the period.

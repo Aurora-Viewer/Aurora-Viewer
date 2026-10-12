@@ -88,11 +88,14 @@ pub struct LodWatch {
 
 impl LodWatch {
     /// The camera of this frame and the settings of the detail levels. A
-    /// change of the settings makes every object due.
-    pub fn advance(&mut self, eye: Vec3, lod_factor: f32, fov_y: f32) {
+    /// change of the settings makes every object due. Tells whether the
+    /// camera moved, or the settings changed, since the last frame.
+    pub fn advance(&mut self, eye: Vec3, lod_factor: f32, fov_y: f32) -> bool {
+        let mut moved = false;
         if eye.is_finite() {
             if let Some(last) = self.eye {
                 self.travelled += last.distance(eye) as f64;
+                moved = last != eye;
             }
             self.eye = Some(eye);
         }
@@ -100,7 +103,9 @@ impl LodWatch {
         if self.settings != settings {
             self.settings = settings;
             self.travelled += EVERYTHING;
+            moved = true;
         }
+        moved
     }
 
     /// Object `idx` was checked: it is due again once the camera has
@@ -332,10 +337,10 @@ mod tests {
         assert_eq!(w.len(), 3);
         assert_eq!(w.pop_due(), None);
         // the camera at rest, or turning: nothing
-        w.advance(Vec3::ZERO, 2.0, 1.0);
+        assert!(!w.advance(Vec3::ZERO, 2.0, 1.0));
         assert_eq!(w.pop_due(), None);
         // 1.5 m: the object 1 m from a change
-        w.advance(Vec3::X * 1.5, 2.0, 1.0);
+        assert!(w.advance(Vec3::X * 1.5, 2.0, 1.0));
         assert_eq!(w.pop_due(), Some(4));
         assert_eq!(w.pop_due(), None);
         assert!(!w.is_watched(4) && w.is_watched(3));
@@ -357,7 +362,7 @@ mod tests {
             w.watch(idx, 50.0 + idx as f32);
         }
         w.watch(10, MAX_SLACK * 3.0);
-        w.advance(Vec3::ZERO, 2.0, 0.9);
+        assert!(w.advance(Vec3::ZERO, 2.0, 0.9));
         let mut due: Vec<usize> = std::iter::from_fn(|| w.pop_due()).collect();
         // soonest first; the longest wait too
         assert_eq!(due, (0..=10).collect::<Vec<_>>());

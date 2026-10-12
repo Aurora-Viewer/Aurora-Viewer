@@ -18,9 +18,11 @@
 //! - **Detail level checks** ([`LodChecks::Events`]): an object at rest is
 //!   visited when the camera has travelled far enough for its level to
 //!   change (lod_watch.rs); what the GPU places from an avatar moves with
-//!   it, and is visited in turn every [`LOD_SECONDS`]; and every object
-//!   every [`SWEEP_SECONDS`], a safety net for state changed behind the
-//!   store's back. Never more per frame than the slice below.
+//!   it, and is visited in turn: every [`LOD_PERIOD`] frames while the
+//!   camera moves, as by the slice below, every [`LOD_SECONDS`] while it
+//!   rests; and every object every [`SWEEP_SECONDS`], a safety net for
+//!   state changed behind the store's back. Never more per frame than the
+//!   slice below.
 //! - **LOD slice** ([`LodChecks::Slice`], `AURORA_SYNC_SLICE=1`): each
 //!   object visited every [`LOD_PERIOD`] frames, as before the checks
 //!   above. Only that frame's slice of the slab is walked.
@@ -41,8 +43,8 @@ use uuid::Uuid;
 pub const LOD_PERIOD: u32 = 24;
 
 /// Time between two visits of an object the GPU places from an avatar
-/// (worn, rigged): the slice's period at 60 frames per second, which a
-/// higher frame rate no longer shortens.
+/// (worn, rigged) while the camera rests: the slice's period at 60 frames
+/// per second, which a higher frame rate no longer shortens.
 pub const LOD_SECONDS: f32 = LOD_PERIOD as f32 / 60.0;
 
 /// Time between two visits of any object, whatever happened to it.
@@ -54,8 +56,12 @@ pub enum LodChecks<'a> {
     Slice,
     /// When their detail level can have changed (see the module
     /// documentation). `anchored`: the objects the GPU places; `dt`: time
-    /// since the last frame (s).
-    Events { anchored: &'a [usize], dt: f32 },
+    /// since the last frame (s); `camera_moved`: since the last frame.
+    Events {
+        anchored: &'a [usize],
+        dt: f32,
+        camera_moved: bool,
+    },
 }
 
 /// AURORA_SYNC_SLICE: the scene sync as before the checks by events (LOD
@@ -686,7 +692,11 @@ impl SyncSets {
                     self.push_check(objects, agent, idx, &mut list, state);
                 }
             }
-            LodChecks::Events { anchored, dt } => {
+            LodChecks::Events {
+                anchored,
+                dt,
+                camera_moved,
+            } => {
                 let most = n.div_ceil(LOD_PERIOD as usize);
                 // at rest: those the camera has travelled enough for
                 for _ in 0..most {
@@ -695,8 +705,14 @@ impl SyncSets {
                     };
                     self.push_check(objects, agent, idx, &mut list, state);
                 }
-                // placed by the GPU from an avatar: in turn
-                for _ in 0..round_share(&mut self.anchored_credit, anchored.len(), dt, LOD_SECONDS) {
+                // placed by the GPU from an avatar: in turn, at the slice's
+                // pace while the camera moves
+                let turn = if camera_moved {
+                    anchored.len().div_ceil(LOD_PERIOD as usize)
+                } else {
+                    round_share(&mut self.anchored_credit, anchored.len(), dt, LOD_SECONDS)
+                };
+                for _ in 0..turn {
                     if self.anchored_next >= anchored.len() {
                         self.anchored_next = 0;
                     }
@@ -933,6 +949,10 @@ mod tests {
         /// One frame with the detail level checks by events, `dt` after
         /// the last one; nothing is watched again by itself.
         fn frame_events(&mut self, state: &State, anchored: &[usize], dt: f32) -> Vec<usize> {
+            self.frame_checks(state, anchored, dt, false)
+        }
+
+        fn frame_checks(&mut self, state: &State, anchored: &[usize], dt: f32, camera_moved: bool) -> Vec<usize> {
             self.frame += 1;
             let agent = self.world.agent_id;
             let mut touched = Vec::new();
@@ -941,7 +961,11 @@ mod tests {
                 self.sets.touched(&self.world.objects, agent, idx, state.rigged(idx));
             }
             let n = self.world.objects.slots.len();
-            let checks = LodChecks::Events { anchored, dt };
+            let checks = LodChecks::Events {
+                anchored,
+                dt,
+                camera_moved,
+            };
             let list = self.sets.frame_list(&self.world.objects, agent, self.frame, n, state, checks);
             let mut out: Vec<usize> = list.items.iter().map(|i| i.0).collect();
             for &idx in &out {
@@ -1619,6 +1643,15 @@ mod tests {
             }
         }
         assert!(worn.iter().all(|&i| seen[i] >= 1), "{seen:?}");
+        // while the camera moves: every 24 frames whatever the frame rate,
+        // as by the slice
+        let mut seen = vec![0u32; n];
+        for _ in 0..LOD_PERIOD {
+            for idx in f.frame_checks(&state, &worn, dt, true) {
+                seen[idx] += 1;
+            }
+        }
+        assert!(worn.iter().all(|&i| (1..=2).contains(&seen[i])), "{seen:?}");
     }
 
     /// A HUD attachment stays where it is on the screen: it does not

@@ -1317,6 +1317,7 @@ impl Scene {
         self.last_origin = None;
         self.sets.clear();
         self.anchors.clear();
+        self.hud_roots.clear();
         self.posed_slots.clear();
         self.palette_slots.clear();
         self.motions.clear();
@@ -1637,7 +1638,7 @@ impl Scene {
         // detail level checks: by events, or the slice of every object
         let events = !sync_sets::slice_mode();
         let dt = self.last_sync.replace(now).map_or(0.0, |last| (now - last).as_secs_f32());
-        self.sets.lod.advance(view.eye, self.lod_factor, self.fov_y);
+        let camera_moved = self.sets.lod.advance(view.eye, self.lod_factor, self.fov_y);
         if events {
             self.note_hud_changes(world);
         }
@@ -1653,6 +1654,7 @@ impl Scene {
                 sync_sets::LodChecks::Events {
                     anchored: self.anchors.members(),
                     dt,
+                    camera_moved,
                 }
             } else {
                 sync_sets::LodChecks::Slice
@@ -1780,8 +1782,10 @@ impl Scene {
             &mut synced,
         );
         self.stats.sync_backlog = self.sets.backlog.len() + self.sets.arrivals.len();
-        if let Some(c) = &mut check {
-            c.frame();
+        if let Some(c) = &mut check
+            && c.frame()
+        {
+            c.write(self.lod_behind(world, &renderer.records, view.eye, now));
         }
         self.sync_check = check;
         let t_part = self.parts.lap(Part::SyncApply, t_part);
@@ -1973,6 +1977,36 @@ impl Scene {
             let slack = lod_watch::lod_slack(radius, distance, self.lod_factor, self.fov_y);
             self.sets.lod.watch(idx, slack);
         }
+    }
+
+    /// AURORA_SYNC_CHECK: a look at every object. Those at rest whose
+    /// detail level could be judged and those whose wanted geometry is not
+    /// what their distance asks for at this moment, then the same for the
+    /// objects the GPU places from an avatar. New objects and those whose
+    /// full sync waits for its turn are left out.
+    fn lod_behind(&self, world: &World, records: &aurora_render::arena::RecordStore, eye: Vec3, now: Instant) -> [usize; 4] {
+        let ctx = self.sync_ctx(world, records, eye, now);
+        let mut out = [0; 4];
+        for (idx, g) in self.gpu.iter().enumerate() {
+            let Some(o) = world.objects.get(idx) else {
+                continue;
+            };
+            if g.is_avatar || o.is_avatar() || g.hud || g.wanted_geom.is_none() {
+                continue;
+            }
+            if self.sets.arrivals.contains(idx) || self.sets.backlog.contains(idx) || self.sets.follows_motion(idx) {
+                continue;
+            }
+            let Some(wanted) = ctx.wanted_now(idx, o) else {
+                continue;
+            };
+            let at = if g.anchor.is_some() { 2 } else { 0 };
+            out[at] += 1;
+            if wanted != g.wanted_geom {
+                out[at + 1] += 1;
+            }
+        }
+        out
     }
 
     /// HUD attachments of our avatar are not placed again at each frame
@@ -4320,6 +4354,53 @@ mod tests {
         world.objects.remove_idx(huds[0]);
         assert_eq!(noted(&mut scene, &mut world), Vec::<usize>::new());
         assert_eq!(scene.hud_roots.len(), 7);
+    }
+
+    /// The busy crowd holds what its documentation says, each kind where
+    /// the sync treats it as such: nothing of it is placed by the GPU.
+    #[test]
+    fn the_busy_crowd_adds_what_the_sync_places_itself() {
+        let mut world = World::new(Arc::new(AvatarLibrary::load()));
+        world.agent_id = crate::demo::DEMO_AGENT;
+        let n = 3;
+        let events = crate::demo::events()
+            .into_iter()
+            .chain(crate::demo::crowd_events(n, false))
+            .collect::<Vec<_>>();
+        for ev in events {
+            world.apply(ev);
+        }
+        let before = world.objects.len();
+        for ev in crate::demo::crowd_busy_events(n) {
+            world.apply(ev);
+        }
+        let added = n * 4 + crate::demo::BUSY_SPINNERS * 2 + crate::demo::BUSY_HUD_PRIMS;
+        assert_eq!(world.objects.len(), before + added as usize);
+        let any = |_: &Object, slot: u8| Some(slot as u32);
+        let (mut flexible, mut spinning, mut below, mut hud) = (0, 0, 0, 0);
+        for idx in 0..world.objects.slots.len() {
+            let Some(o) = world.objects.get(idx) else {
+                continue;
+            };
+            let parent = world.objects.parent_of(o).and_then(|p| world.objects.get(p));
+            if world.hud_root(idx).is_some() {
+                hud += 1;
+                assert!(anchors::anchored(&world, o, any).is_none());
+            } else if o.is_flexible() {
+                flexible += 1;
+                assert!(parent.is_some_and(|p| p.is_avatar()) && anchors::anchored(&world, o, any).is_none());
+            } else if o.has_motion() {
+                spinning += 1;
+                assert!(anchors::anchored(&world, o, any).is_none());
+            } else if parent.is_some_and(|p| p.has_motion()) {
+                below += 1;
+                assert!(anchors::anchored(&world, o, any).is_none());
+            }
+        }
+        assert_eq!(hud, crate::demo::BUSY_HUD_PRIMS);
+        assert_eq!(flexible, n);
+        assert_eq!(spinning, n + crate::demo::BUSY_SPINNERS);
+        assert_eq!(below, 2 * n + crate::demo::BUSY_SPINNERS);
     }
 
     #[test]
