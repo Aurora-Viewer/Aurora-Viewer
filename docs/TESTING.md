@@ -121,6 +121,14 @@ ignorée). Le plafond inférieur en arrière-plan reste applicable hors captures
 | `AURORA_CAPTURE=<fichier.png>` | Enregistre une capture de l'image |
 | `AURORA_CAPTURE_FRAMES=<n>` | Image capturée (240 par défaut) |
 | `AURORA_CAPTURE_EXIT=1` | Quitte après la capture |
+| `AURORA_CAPTURE_LAYOUT=1` | La capture relit la disposition enregistrée (`ui_layout.ron`) |
+
+`AURORA_CAPTURE_LAYOUT` : une capture part sinon de la disposition par
+défaut, pour être reproductible. Avec cette variable elle relit celle de la
+session précédente (sans jamais l'écrire) : c'est ce qu'il faut pour voir ce
+que donne une disposition enregistrée dans une fenêtre d'une autre taille
+(les fenêtres gardent leur bord). Une disposition n'est écrite que par une
+sortie normale, par exemple `AURORA_DEMO_EXIT=quit` sans `AURORA_CAPTURE`.
 
 `AURORA_CAPTURE_FRAMES` : compter environ 620 pour passer le fondu de
 chargement. Plusieurs images séparées par des virgules (`2500,2600`)
@@ -466,7 +474,8 @@ des objets possédés y apparaissent également, après filtrage du bridge et
 des objets bloqués. La fenêtre permet de voir tous les objets ou un seul et
 d'effacer les messages affichés.
 
-**`AURORA_DEMO_ACTIONS`** — curseurs et clics d'objet comme Firestorm.
+**`AURORA_DEMO_ACTIONS`** — curseurs et clics d'objet comme Firestorm
+(mêmes règles ; curseurs dessinés à partir des icônes Tabler).
 Aucun L$ réel ni connexion à une grille.
 
 - `1` : tous les objets, pour un test manuel.
@@ -899,11 +908,14 @@ grille.
 | Variable | Effet |
 |---|---|
 | `AURORA_DEMO_WINDOWS=<mode>` | Repli, déplacement et restauration du titre de l’inventaire |
+| `AURORA_DEMO_SNAP=<mode>` | Fenêtres aimantées : guide, collage, déplacement groupé, redimensionnement |
 | `AURORA_DEMO_EXIT=<mode>` | Modale de fermeture et choix hors ligne |
 | `AURORA_DEMO_UI=<onglet>` | Ouvre Personnes (onglet), l'inventaire et le chat |
+| `AURORA_DEMO_RADAR=1` | Résidents autour de soi pour le radar de Personnes (toutes les portées) |
 | `AURORA_DEMO_OPTIONS=<section>` | Ouvre les préférences sur une section |
 | `AURORA_DEMO_PERF=compact` ou `full` | Ouvre la fenêtre Performances, compacte ou complète |
 | `AURORA_DEMO_LOGIN=<mode>` | Écran de connexion hors ligne |
+| `AURORA_NEWS_URL=<url>` | Actualités de la connexion lues ailleurs que sur `main` |
 | `AURORA_DEMO_CRASH=<mode>` | Plantage hors ligne et fenêtre de récupération |
 | `AURORA_DEMO_CRASH_DIR=<dossier>` | Isole les rapports de plantage des essais hors ligne |
 | `AURORA_CRASH_CAPTURE=<fichier.png>` | Capture de la fenêtre de récupération en démo |
@@ -914,9 +926,11 @@ grille.
 | `AURORA_UPDATE_TEST_VERSION=<tag>` | Compilation dev à version synthétique pour cet essai |
 | `AURORA_DEMO_BUG_REPORT=<mode>` | Rapport de bug public avec données de démo, sans envoi |
 | `AURORA_DEMO_MAP=1` ou `mini` | Carte du monde et mini-carte |
-| `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Liste des notifications, menu de statut, champ de lieu |
+| `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1`, `AURORA_DEMO_MICMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Liste des notifications, menu de statut, panneau du micro, champ de lieu |
+| `AURORA_DEMO_COLORPICK=1` | Ouvre le sélecteur de couleur compact de la première pastille affichée |
 | `AURORA_DEMO_CONV=1`, `AURORA_DEMO_TALK=1` | Conversation de groupe, micro ouvert |
 | `AURORA_DEMO_CONTACTS=<onglet>` | Onglet Contacts de Conversations |
+| `AURORA_DEMO_CHATLOG=<mode>` | Historique des conversations : fichiers, recherche, fenêtre Historique, IM hors ligne |
 | `AURORA_DEMO_GLYPHS=1` | Noms, titres et chat en caractères étendus (polices du système) |
 | `AURORA_DEMO_PROFILE=<avatar>[:onglet]` | Fenêtre de profil d'un avatar |
 | `AURORA_DEMO_FEED=<url>` | Onglet « Flux » du profil sur cette page |
@@ -930,6 +944,8 @@ grille.
 | `AURORA_DEMO_PLACE=<lieu>` | « Lieux » sur un profil de lieu |
 | `AURORA_DEMO_PLACES=<onglet>` | « Lieux » sur un onglet |
 | `AURORA_DEMO_PLACE_WINDOW=1` | Profils de lieu en fenêtres séparées |
+| `AURORA_DEMO_SEARCH=<onglet>[:texte]` | « Rechercher » sur un onglet, recherche faite |
+| `AURORA_DEMO_SEARCH_WEB=<page>` | Page chargée par l'onglet Web de « Rechercher » en démo |
 | `AURORA_DEMO_BAN=1` | Lignes d'interdiction |
 | `AURORA_DEMO_RESTRICTED=1` | Parcelle qui interdit tout |
 
@@ -1026,6 +1042,20 @@ grille.
   Capturer `620,740,900,1120` pour vérifier contenu, repli, déplacement et
   dimensions restaurées. Le bouton « − » reste utilisable ; les autres
   boutons du titre et le contenu ne déclenchent pas le double-clic du titre.
+- **`AURORA_DEMO_SNAP=1|groupe|taille`** : fait glisser la vraie fenêtre
+  Conversations par son titre jusqu'à côté de Personnes (les deux doivent être
+  ouvertes : disposition du premier lancement, ou `AURORA_DEMO_UI`). Image
+  700 : appui sur le titre ; jusqu'à l'image 900 la fenêtre est tenue à 6 px
+  du bord droit de Personnes et 5 px sous la ligne de son haut : le guide
+  violet (les deux bords qui vont se toucher, la ligne des hauts, le contour
+  de l'endroit où elle va se poser) et le rappel « Alt : ne pas coller »
+  apparaissent, la fenêtre reste sous le pointeur ; image 900 : relâchée,
+  elle se colle à 8 px de Personnes, hauts alignés. `groupe` déplace ensuite
+  Personnes de 70 × 50 entre les images 1000 et 1100 : Conversations suit, le
+  rappel dit « Alt : détacher cette fenêtre ». `taille` tire à la place le
+  bord bas de Conversations jusqu'à 4 px de la ligne du bas de Personnes : le
+  bord s'y colle sous le pointeur, avec sa ligne de guide. Capturer
+  `800,960,1060,1160` avec `AURORA_FPS_LIMIT=60`.
 - **`AURORA_DEMO_NOTIF=1`** : l’offre « Lanterne aurorale » est celle d’un
   résident : l’objet est déjà dans l’inventaire (dossier Objets) à l’arrivée
   de l’offre. « Garder », ou fermer l’offre dans la liste, l’y laisse ;
@@ -1042,6 +1072,12 @@ grille.
   désactivé. Les choix sont simulés hors ligne, sans requête de connexion.
 - **`AURORA_DEMO_OPTIONS=<section>`** : par exemple `8` pour Raccourcis
   (touche de déplacement des HUDs).
+- **`AURORA_DEMO_COLORPICK=1`** : à l'image 300, ouvre le sélecteur de
+  couleur compact (`widgets::color_button`) de la première pastille de
+  couleur dessinée. À combiner avec `AURORA_DEMO_OPTIONS=5` (Couleurs) : le
+  panneau s'ouvre sous « Mon nom », avec le champ saturation / valeur, la
+  barre de teinte, la nouvelle couleur au-dessus de l'ancienne, les champs
+  R V B et hexadécimal, et la pipette.
 - **`AURORA_DEMO_GLYPHS=1|2`** : huit résidents sur deux rangs devant
   l'avatar (le second rang en vol), un cube à texte flottant à droite et la
   fenêtre Conversations sur le chat local. Titre de groupe, nom d'affichage
@@ -1102,6 +1138,25 @@ grille.
 - **`AURORA_DEMO_LOGIN=remembered|empty`** : écran de connexion hors ligne
   avec un marqueur synthétique de mot de passe enregistré, ou un champ de
   mot de passe vide (aucun accès à une grille ni au coffre d'identifiants).
+  Les actualités y sont celles compilées dans le viewer (`news/<langue>.md`),
+  dans la langue de `--language`.
+- **`AURORA_NEWS_URL=<url du dossier>`**, hors démo : le viewer télécharge
+  `<url>/<langue>.md` au lieu du dossier `news/` de `main`. Deux formes sont
+  acceptées, toute autre est ignorée avec un avertissement dans le journal :
+  un serveur de cette machine (`http://127.0.0.1:<port>/`, `localhost` ou
+  `[::1]`), par exemple `python -m http.server 8123 --bind 127.0.0.1` lancé
+  dans le dossier `news/` du worktree ; ou une autre branche du dépôt
+  (`https://raw.githubusercontent.com/Aurora-Viewer/Aurora-Viewer/<branche>/news/`),
+  pour relire une actualité avant de fusionner sa PR. Ce qui est téléchargé
+  ainsi n'est pas gardé en cache. Le panneau montre d'abord les actualités
+  déjà connues, puis celles du fichier dès qu'il est reçu ; changer de langue
+  dans les préférences recharge celles de cette langue. Si le téléchargement
+  échoue (hors ligne, fichier absent, fichier sans actualité), le journal
+  indique `Login news not updated` et le panneau ne change pas : dernier
+  téléchargement (`news-<langue>.json` du dossier de cache) ou, à défaut,
+  fichiers compilés dans le viewer. La démo et l'installation de test des
+  mises à jour ne téléchargent jamais les actualités, même avec cette
+  variable.
 - **`AURORA_DEMO_UPDATE=1|progress|ready|ignored`**, avec `AURORA_DEMO=1` : proposition
   d'une version synthétique, téléchargement à 42 % ou téléchargement terminé.
   « Mettre à jour » anime une progression simulée ; « Annuler » revient à la
@@ -1157,6 +1212,38 @@ grille.
   Contacts de Conversations sur Amis, Groupes ou Cercles de contacts (cercles
   et surnoms de démo), la fenêtre Contacts détachée, ou le sélecteur de
   résident de « Ajouter... ».
+- **`AURORA_DEMO_CHATLOG=im|find|history[:find]|offline|long:<n>[:scroll]`** :
+  l'historique des conversations sans grille. La démo est sa propre
+  « grille » : ses fichiers sont dans
+  `config\demo\accounts\<uuid du compte de démo>\chat_logs\demo\`, jamais dans
+  le dossier d'un vrai compte, et le scénario les réécrit à chaque lancement
+  (sans cette variable, la démo n'écrit et ne relit aucun historique). Les
+  fenêtres sont placées à une taille connue.
+  - `im` : une conversation avec Nova dont le fichier contient deux journées
+    passées. À voir : ces lignes en gris, sans photo de profil, avec un repère
+    de date à chaque changement de jour, puis le nouveau message dans ses
+    couleurs normales ; le fichier `Nova Exemple.txt` reçoit ce message.
+  - `find` : la même, puis Ctrl+F (pointeur sur la fenêtre) et un mot tapés à
+    l'image 300. À voir : la
+    barre de recherche sous les lignes, « 5 / 5 », les occurrences sur fond
+    ambre et un trait ambre devant la ligne du résultat courant.
+  - `history` : la fenêtre Historique sur un fichier de 19 950 messages
+    (page 200 / 200, la plus récente) ; `history:find` y tape Ctrl+F et un
+    mot : compteur « 9976 / 9976 » une fois tout le fichier parcouru, dernier
+    résultat en vue.
+  - `offline` : les trois messages gardés par la « grille » pendant
+    l'absence, rendus par la demande faite après la connexion, chacun
+    précédé de « (Enregistré le … à …) », après l'historique en gris.
+  - `long:<n>` : une conversation de `n` lignes (2 000 au plus, la limite),
+    sans rien écrire, pour mesurer la vue des conversations avec
+    `AURORA_PROFILE=1` (étape `u_chat`) ; `long:<n>:scroll` y fait défiler la
+    molette vers le haut des images 320 à 380, à travers des lignes jamais
+    mises en page.
+
+  Pour ces essais, qui écrivent des fichiers, préférer un profil isolé
+  (« Installation réelle isolée » ci-dessus : exe copié dans
+  `<racine>\install`, `AURORA_UPDATE_TEST_ROOT=<racine>`) : les historiques
+  sont alors sous `<racine>\profile\accounts\`.
 - **`AURORA_DEMO_PROFILE=loup|nova|friend|self[:onglet]`** : une fenêtre de
   profil (onglet 0 Vie SL, 1 Flux, 2 Favoris, 3 Annonces, 4 Vie RL, 5 Notes).
 - **`AURORA_DEMO_FEED=<url>`** : le nom d'utilisateur et `/?feed_only=true`
@@ -1178,6 +1265,21 @@ grille.
 - **`AURORA_DEMO_PLACES=favoris|reperes|historique`** : les dossiers Favoris
   et Repères de la démo (avec un sous-dossier) et un historique de
   téléportation sur plusieurs mois.
+- **`AURORA_DEMO_SEARCH=web|people|groups|places|land|events|classifieds[:texte]`** :
+  la fenêtre « Rechercher » sur cet onglet, la recherche du texte déjà
+  lancée (`aurora` par défaut) : la liste est remplie par l'annuaire de la
+  démo, la première ligne est sélectionnée et sa fiche affichée à droite.
+  Pour `land`, le texte est la limite de prix (`land:25000`) ; sans lui le
+  champ garde son « 0 » par défaut et seules les enchères (0 L$) passent
+  la limite cochée par défaut.
+  Un texte contenant `page` (par exemple `people:page`) répond une page
+  pleine : « > 100 trouvé(s) » et le bouton Suivant ; un texte contenant
+  `xyz` ne trouve rien (« 'xyz' introuvable »).
+- **`AURORA_DEMO_SEARCH_WEB=<page>`** : l'adresse que charge l'onglet Web en
+  démo (une page locale `file:///…` suffit pour essayer précédent, suivant,
+  recharger et l'adresse). Sans elle l'onglet Web de la démo ne charge
+  rien : la page de recherche de la grille n'est ouverte qu'une fois
+  connecté.
 - **`AURORA_DEMO_PLACE_WINDOW=1`** : avec `AURORA_DEMO_PLACE`, les fenêtres
   de lieu séparées au lieu de « Lieux » (option « Repères et profils de
   lieux », non enregistrée).
@@ -1400,6 +1502,7 @@ Ce que l'inventaire doit montrer avec ces scénarios :
 | `AURORA_DEMO_MUSIC=<url>` ou `1` | Musique de la parcelle de démo |
 | `AURORA_DEMO_SOUND=1` | Sons du monde et de l'interface audibles |
 | `AURORA_DEMO_VOICE` | États vocaux et couleurs des deux étiquettes d'avatars |
+| `AURORA_DEMO_TAGS=voice`, `status` ou `cycle` | Plaques de nom dans tous leurs états, aux trois distances |
 
 ### Détails
 
@@ -1410,7 +1513,34 @@ Ce que l'inventaire doit montrer avec ces scénarios :
   `listening` garde les deux étiquettes neutres, `off` montre le micro barré rouge. `cycle`
   enchaîne 4 s de parole, 3 s d'écoute, 2 s hors vocal. Sans cette variable,
   notre contour suit le vrai micro quand son bouton / push-to-talk est actif
-  et la voix activée. Aucun réglage enregistré n'est changé.
+  et la voix activée. Aucun réglage enregistré n'est changé. Avec les
+  plaques de nom (style par défaut), le contour est vert dans le canal vocal
+  et un halo vert serré suit le niveau ; hors vocal, la plaque n'a ni contour
+  coloré ni badge.
+- **`AURORA_DEMO_TAGS`** : neuf résidents devant la position de départ
+  (`demo_tags.rs`), pour voir les plaques de nom sans grille. Cinq sont à
+  moins de 15 m de la caméra (plaque complète), deux vers 27 m (pastille
+  compacte), deux vers 50 m (nom seul). Un mur blanc se dresse derrière
+  les deux de gauche, pour juger le verre sur un fond clair à côté des
+  mêmes plaques sur la scène sombre. La fenêtre Personnes est fermée.
+  - `voice` : Nova hors du canal vocal ; Tess dans le canal, silencieuse
+    (contour vert, badge micro) et sans photo de profil (l'icône reste) ;
+    Orion, un ami, parle (halo qui suit le niveau, nom violet clair, badges
+    micro, cœur et triangle : il est montré comme trop complexe) ; Lune
+    écrit (trois points animés) et n'a pas de nom d'affichage (deux lignes) ;
+    La Brume est bloquée (plaque atténuée, nom en italique, badge interdit,
+    pas de pastille de statut). Plus loin, Sol parle et Iris écrit ; au-delà,
+    Vega est dans le canal (contour vert) et Atlas non.
+  - `status` : Nova absente (pastille ambre), Tess ne pas déranger (pastille
+    rouge), Orion hors du canal (cœur et triangle seuls), Lune écrit en
+    étant absente.
+  - `cycle` : passe de l'un à l'autre toutes les six secondes.
+  - Les photos sont des dégradés générés (`demo_tags::picture_pixels`),
+    demandées comme sur la grille : profil, puis texture, au plus quatre par
+    seconde, la plus proche d'abord ; notre avatar et La Brume ont la même.
+  - À combiner avec `AURORA_DEMO_VOICE` pour notre propre plaque et celle de
+    Loup Violet (bloqué dans la démo), et avec `AURORA_NAME_TAGS=classic`
+    pour comparer avec les étiquettes classiques.
 - **`AURORA_DEMO_MEDIA_CLICK`** : clic de focus à l'image 700 par défaut,
   deuxième clic 60 images après, clic facultatif sur le champ 120 images
   après, puis saisie « aurora ». `AURORA_DEMO_MEDIA_CLICK_FRAME` change
@@ -1435,6 +1565,7 @@ Ce que l'inventaire doit montrer avec ces scénarios :
 | `AURORA_CPU_ATTACH=1` | Objets portés et mesh riggés placés par la synchro, sans les ancres du GPU |
 | `AURORA_SYNC_SLICE=1` ou `alt` | Synchro de la scène par tranche de tous les objets, comme avant |
 | `AURORA_SYNC_CHECK=1` | Ce que la synchro de la scène visite à chaque image |
+| `AURORA_NAME_TAGS=classic`, `plate` ou `alt` | Style des étiquettes d'avatars de ce lancement |
 | `AURORA_TEXTURE_BC7=0` | Textures jamais compressées en BC7 |
 | `AURORA_TEXTURE_BC7_CACHE=0` | BC7 sans son cache disque |
 | `AURORA_RENDER_THREAD=0` | Images dessinées sur le thread principal |
@@ -1457,6 +1588,19 @@ Ce que l'inventaire doit montrer avec ces scénarios :
 
 ### Détails
 
+- **`AURORA_NAME_TAGS`** : `classic` ou `plate` impose le style des
+  étiquettes d'avatars (classiques ou plaques de nom) sans toucher au
+  réglage « Style des étiquettes ». `alt` alterne dans la même session, à
+  chaque ligne `perf summary` : une seconde avec les étiquettes classiques
+  (`xmode=old`), deux avec les plaques (`xmode=new`). C'est la mesure à faire
+  sur une machine partagée : mêmes avatars, même caméra, même charge
+  extérieure des deux côtés. À lire : `u_tags` (thread principal),
+  `r_tessellate`, `r_egui`, `ui_meshes` et `ui_vertices`. Scène de mesure :
+  `AURORA_DEMO_CROWD=40` avec `AURORA_DEMO_POS="135,134"` (dans la foule :
+  les huit plaques complètes, le reste en pastilles compactes) ou
+  `"129,134"` (devant la foule), `AURORA_FPS_LIMIT=120`. Caméra immobile, une plaque qui n'a
+  pas bougé est redessinée sans copie : le coût en mouvement se voit en
+  tournant la caméra pendant le relevé.
 - **`AURORA_TEXTURE_BUDGET_MB=<n>`** : les pages de textures ne doivent pas
   dépasser n Mo, quels que soient le réglage « Mémoire textures » et la
   mémoire vidéo que le pilote annonce (`scene/texture_budget.rs`). Sert à

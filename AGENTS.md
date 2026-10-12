@@ -221,10 +221,60 @@ la grille, 🔧 en cours, ⬜ à faire.
 
 ## 7. Interface et branding
 
-Interface plate, propre et moderne, palette Aurora, icônes Phosphor
-« regular » uniquement : voir [docs/BRANDING.md](docs/BRANDING.md). Jamais de
-couleur en dur : utilise la `Palette`. Réutilise les widgets de
-`ui/widgets.rs`.
+Toute l'interface suit le thème Aurora : plate, propre, moderne, angles
+presque carrés, verre discret. Un écran qui ne ressemble pas aux autres est un
+défaut, même s'il fonctionne. Les règles complètes sont dans
+[docs/BRANDING.md](docs/BRANDING.md) ; les points que tu dois respecter à
+chaque modification de l'interface :
+
+- **Couleurs** : jamais en dur, toujours la `Palette` (`p.violet`, `p.ink`…) ;
+  sur une face violette, texte et icônes en `p.on_accent`.
+- **Surfaces** : une fenêtre passe par `widgets::Floater`, un dialogue par
+  `widgets::Modal`, tout autre panneau par `widgets::overlay` (posé sur le
+  monde, avec le flou des fenêtres) ou `widgets::overlay_frame` (sans monde
+  derrière, comme la connexion). N'écris jamais à la main le fond, la
+  bordure, l'ombre ou le rayon d'un panneau.
+- **Boutons** : le thème leur donne une face pleine sans bordure. N'ajoute ni
+  `.fill()` ni `.corner_radius()` à un bouton, sauf pour l'action principale
+  (`widgets::primary_button_sized`, violet) ou destructrice (`danger`). Un
+  bouton avec icône utilise `widgets::action_button`.
+- **Rayons** : ceux du thème (`ui.visuals().window_corner_radius` pour les
+  cartes et pastilles, `ui.visuals().widgets.inactive.corner_radius` pour les
+  boutons), jamais un nombre dans le code, jamais plus arrondi. La plaque de
+  nom des avatars (`ui/nameplate.rs`), aux extrémités rondes, est une
+  exception voulue, pas un précédent.
+- **Icônes** : uniquement des icônes Tabler, choisies dans
+  `assets/tabler-icons/`. La version pleine (`nom-filled`) d'abord ; au trait
+  seulement pour un glyphe linéaire, une icône barrée ou une fonction sans
+  icône pleine qui convienne. Une fonction garde la même icône partout :
+  cherche celle qui existe avant d'en ajouter une. Les curseurs du monde et
+  les touches des raccourcis sont dessinés avec ces mêmes icônes.
+- **Pas de traits de séparation** entre des boutons : l'espacement et la
+  pastille du bouton survolé ou actif suffisent.
+- **Widgets partagés** : réutilise ceux de `ui/widgets.rs` (boutons,
+  interrupteurs, en-têtes de section, surfaces) au lieu d'en recréer. Une
+  progression passe par `widgets::progress` (elle glisse vers sa valeur),
+  jamais par `egui::ProgressBar` ; les touches d'un raccourci par
+  `widgets::keycap`. L'interrupteur est presque carré (`widgets::switch`,
+  `switch_labeled` pour un réglage isolé). Une case à cocher passe par
+  `widgets::checkbox`, un choix parmi plusieurs par `widgets::radio`
+  (`radio_value`), une section repliable par `widgets::collapsing`, une
+  couleur par `widgets::color_button`, un trait entre deux zones d'une
+  fenêtre par `widgets::divider` : jamais `ui.checkbox`, `ui.radio`,
+  `egui::CollapsingHeader`, `color_edit_button_*` ni `ui.separator()`. Les
+  menus s'écrivent avec les lignes de `ui/menu.rs` (`menu::item`, `check`,
+  `toggle`, `submenu`, `separator`) et reçoivent leur verre tout seuls.
+  `check.ps1` le vérifie : un test (`ui/theme_guard.rs`) échoue si une
+  fenêtre utilise directement l'un de ces widgets d'egui, ou écrit elle-même
+  un rayon ou une couleur (`rect_filled(…, 2.0, …)`, `Color32::WHITE`,
+  `Color32::from_rgb(…)`). Une ligne qui est du contenu et non de
+  l'habillage (couleur d'une légende, d'une classification) se déclare par
+  le commentaire `// theme-guard: content — la raison`, à sa fin ou seul sur
+  la ligne du dessus ; un fichier entier (une carte) par une entrée
+  d'`ALLOWED` dans le test.
+- **Vérifie à l'œil** : capture l'écran modifié en démo et compare-le à une
+  fenêtre voisine (mêmes fonds, mêmes boutons, mêmes rayons, icônes alignées
+  avec le texte) avant de demander la validation humaine.
 
 ## 8. Cycle d'une tâche, jusqu'à la fusion
 

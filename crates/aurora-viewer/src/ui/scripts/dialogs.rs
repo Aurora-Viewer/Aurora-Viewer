@@ -62,8 +62,8 @@ impl Search {
                 ui.add_enabled(editable, egui::TextEdit::singleline(&mut self.replacement).desired_width(280.0));
             });
             ui.horizontal(|ui| {
-                ui.checkbox(&mut self.insensitive, aurora_i18n::tr!("script-search-insensitive"));
-                ui.checkbox(&mut self.up, aurora_i18n::tr!("script-search-up"));
+                crate::ui::widgets::checkbox(ui, p, &mut self.insensitive, aurora_i18n::tr!("script-search-insensitive"));
+                crate::ui::widgets::checkbox(ui, p, &mut self.up, aurora_i18n::tr!("script-search-up"));
             });
             ui.horizontal(|ui| {
                 if flat_button(ui, p, aurora_i18n::tr!("script-search-find")).clicked() {
@@ -157,8 +157,8 @@ impl Preferences {
                     ui.label(aurora_i18n::tr!("script-preferences-colors"));
                     egui::Grid::new("script_colors").num_columns(4).show(ui, |ui| {
                         for (i, role) in ColorRole::ALL.into_iter().enumerate() {
-                            let mut color = settings.color(role, p);
-                            if ui.color_edit_button_srgba(&mut color).changed() { settings.colors.insert(role, color.to_srgba_unmultiplied()); }
+                            let mut color = settings.color(role, p).to_srgba_unmultiplied();
+                            if crate::ui::widgets::color_button(ui, p, ("script_color", i), &mut color, true).changed() { settings.colors.insert(role, color); }
                             ui.label(role.label());
                             if i % 2 == 1 { ui.end_row(); }
                         }
@@ -172,19 +172,20 @@ impl Preferences {
                     egui::Frame::new().fill(settings.color(ColorRole::Background, p)).inner_margin(6.0).show(ui, |ui| {
                         ui.add(egui::Label::new(self.preview.custom(preview, p, egui::FontId::monospace(settings.font_size.clamp(8.0,32.0)), settings, "", false)));
                     });
-                    ui.separator();
-                    ui.checkbox(&mut settings.convert_tabs, aurora_i18n::tr!("script-preferences-convert-tabs"));
-                    ui.checkbox(&mut settings.preprocessor, aurora_i18n::tr!("script-preferences-preprocessor"));
+                    crate::ui::widgets::divider(ui, p);
+                    crate::ui::widgets::switch_labeled(ui, p, &mut settings.convert_tabs, aurora_i18n::tr!("script-preferences-convert-tabs"));
+                    crate::ui::widgets::switch_labeled(ui, p, &mut settings.preprocessor, aurora_i18n::tr!("script-preferences-preprocessor"));
                     ui.add_enabled_ui(settings.preprocessor, |ui| {
-                        ui.checkbox(&mut settings.optimize, aurora_i18n::tr!("script-preferences-optimize"));
-                        ui.checkbox(&mut settings.switches, aurora_i18n::tr!("script-preferences-switches"));
-                        ui.checkbox(&mut settings.lazy_lists, aurora_i18n::tr!("script-preferences-lazy-lists"));
-                        ui.checkbox(&mut settings.disk_includes, aurora_i18n::tr!("script-preferences-disk-includes"));
+                        crate::ui::widgets::switch_labeled(ui, p, &mut settings.optimize, aurora_i18n::tr!("script-preferences-optimize"));
+                        crate::ui::widgets::switch_labeled(ui, p, &mut settings.switches, aurora_i18n::tr!("script-preferences-switches"));
+                        crate::ui::widgets::switch_labeled(ui, p, &mut settings.lazy_lists, aurora_i18n::tr!("script-preferences-lazy-lists"));
+                        crate::ui::widgets::switch_labeled(ui, p, &mut settings.disk_includes, aurora_i18n::tr!("script-preferences-disk-includes"));
                         ui.label(aurora_i18n::tr!("script-preferences-include-path"));
                         ui.add_enabled_ui(settings.disk_includes, |ui| {
                             ui.horizontal(|ui| {
                                 ui.add(egui::TextEdit::singleline(&mut settings.include_directory).desired_width(370.0));
-                                if ui.add_enabled(self.directory.is_none(), egui::Button::new("…")).clicked() {
+                                let choose = aurora_i18n::tr!("script-preferences-choose-directory");
+                                if crate::ui::widgets::icon_button(ui, p, "folder-open-filled", choose, self.directory.is_none()) {
                                     let (tx,rx) = std::sync::mpsc::channel();
                                     let directory = settings.include_directory.clone(); self.directory = Some(rx);
                                     std::thread::spawn(move || {
@@ -195,9 +196,9 @@ impl Preferences {
                             });
                         });
                     });
-                    ui.separator();
-                    ui.checkbox(&mut settings.owner_say_debug, aurora_i18n::tr!("script-preferences-owner-say"));
-                    ui.checkbox(&mut settings.recompile, aurora_i18n::tr!("script-preferences-recompile"));
+                    crate::ui::widgets::divider(ui, p);
+                    crate::ui::widgets::switch_labeled(ui, p, &mut settings.owner_say_debug, aurora_i18n::tr!("script-preferences-owner-say"));
+                    crate::ui::widgets::switch_labeled(ui, p, &mut settings.recompile, aurora_i18n::tr!("script-preferences-recompile"));
                     ui.label(aurora_i18n::tr!("script-preferences-external"));
                     ui.text_edit_singleline(&mut settings.external_editor);
                     ui.label(RichText::new(aurora_i18n::tr!("script-preferences-external-hint")).small().color(p.muted));
@@ -256,7 +257,7 @@ impl Help {
                     self.at += 1;
                     self.keyword.clone_from(&self.history[self.at]);
                 }
-                ui.checkbox(&mut settings.help_follows_cursor, aurora_i18n::tr!("script-help-follow"));
+                crate::ui::widgets::checkbox(ui, p, &mut settings.help_follows_cursor, aurora_i18n::tr!("script-help-follow"));
             });
             ui.text_edit_singleline(&mut self.filter);
             let mut selected = None;

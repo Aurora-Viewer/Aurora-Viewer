@@ -6,7 +6,7 @@
 //! send_rejecting_tp_offers_message, LLAgent::setAFK / setDoNotDisturb).
 
 use super::notifications::im as d;
-use super::{ChatKind, ChatLine, World};
+use super::{ChatKind, ChatLine, Origin, World};
 use aurora_net::{InstantMessage, NetCommand};
 use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
@@ -227,15 +227,16 @@ impl World {
                     if !im.from_name.is_empty() {
                         self.social.names.entry(from).or_insert_with(|| im.from_name.clone());
                     }
-                    let s = self.social.session_mut(from);
-                    s.lines.push(ChatLine {
+                    self.social.session_mut(from);
+                    let line = ChatLine {
                         time: SystemTime::now(),
                         from: im.from_name.clone(),
                         text: aurora_i18n::tr!("world-status-auto-response", value0 = im.message.to_string()),
                         kind: ChatKind::Im,
                         source: from,
-                    });
-                    s.unread += 1;
+                        origin: Origin::Live,
+                    };
+                    self.conversation_push(from, line, true);
                 }
                 true
             }
@@ -262,14 +263,16 @@ impl World {
             return;
         };
         self.auto_im(im.from_agent_id, im.session_id, &text);
-        let s = self.social.session_mut(im.from_agent_id);
-        s.lines.push(ChatLine {
+        self.social.session_mut(im.from_agent_id);
+        let line = ChatLine {
             time: SystemTime::now(),
             from: String::new(),
             text: aurora_i18n::tr!("world-status-auto-reply-sent", text = text.to_string()),
             kind: ChatKind::System,
             source: Uuid::nil(),
-        });
+            origin: Origin::Live,
+        };
+        self.conversation_push(im.from_agent_id, line, false);
     }
 }
 

@@ -13,12 +13,12 @@ use uuid::Uuid;
 /// Time constants in seconds: react quickly, then fade between syllables.
 const ATTACK: f32 = 0.035;
 const RELEASE: f32 = 0.10;
-const LEVEL_MIN: f32 = aurora_voice::SPEAKING_AUDIO_LEVEL;
+pub(super) const LEVEL_MIN: f32 = aurora_voice::SPEAKING_AUDIO_LEVEL;
 const LEVEL_AMBER: f32 = 0.48;
 // WebRTC's participant level peaks at ~0.632 for full-scale PCM, so the
 // legacy visualizer's 0.7 red threshold is unreachable locally. Red at
 // ~0.58 corresponds to -10 dBFS, the microphone meter's overdrive point.
-const LEVEL_MAX: f32 = 0.58;
+pub(super) const LEVEL_MAX: f32 = 0.58;
 /// Keep the previous voice tag width across speaking, listening and offline states.
 pub const TAG_EXTRA_WIDTH: f32 = 30.0;
 pub const ICON_SIZE: f32 = 14.0;

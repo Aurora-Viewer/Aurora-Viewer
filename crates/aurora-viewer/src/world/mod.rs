@@ -3,6 +3,7 @@
 pub mod appearance;
 pub mod blocking;
 pub mod body;
+pub mod chat_log;
 pub mod contact_sets;
 pub mod eep;
 pub mod eep_env;
@@ -22,11 +23,14 @@ pub mod objects;
 pub mod outfit;
 pub mod place_details;
 pub mod profiles;
+pub mod radar;
 pub mod script_debug;
+pub mod search;
 pub mod social;
 pub mod status;
 pub mod terrain;
 pub mod tphistory;
+pub mod transcripts;
 pub mod worldmap;
 
 use crate::agent::AgentState;
@@ -73,6 +77,19 @@ pub enum ChatKind {
     Own,
 }
 
+/// Where a line comes from: said during this session, or read back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Origin {
+    #[default]
+    Live,
+    /// The end of the conversation's transcript on disk, shown when it
+    /// opens (Firestorm's CHAT_STYLE_HISTORY).
+    Log,
+    /// The chat server's recent messages of a group
+    /// (CHAT_STYLE_SERVER_HISTORY).
+    ServerLog,
+}
+
 #[derive(Debug, Clone)]
 pub struct ChatLine {
     pub time: SystemTime,
@@ -80,6 +97,7 @@ pub struct ChatLine {
     pub text: String,
     pub kind: ChatKind,
     pub source: Uuid,
+    pub origin: Origin,
 }
 
 /// One simulator signal, with independent sequence and continuous clocks.
@@ -119,7 +137,13 @@ pub struct World {
     /// before its object, and the scene merges them when it builds the faces.
     pub gltf_overrides: HashMap<ObjKey, Arc<[(u8, aurora_assets::material::PbrOverride)]>>,
     pub chat: VecDeque<ChatLine>,
+    /// Follows `chat` for the view.
+    pub chat_clock: transcripts::LineClock,
     pub chat_unread: usize,
+    /// Conversation transcripts of the account logged in.
+    pub chat_log: chat_log::ChatLog,
+    /// History of the nearby chat (asked once per login).
+    nearby_history: transcripts::HistoryState,
     pub script_debug: script_debug::Messages,
     pub sun: Option<(SunInfo, Instant)>,
     pub agent: AgentState,
@@ -228,12 +252,37 @@ pub struct World {
     pub map: worldmap::WorldMap,
     /// Place details windows of place links (their parcel requests).
     pub place_details: place_details::PlaceDetails,
+    /// « Rechercher »: result lists and details of the directory search.
+    pub search: search::Search,
     arrived_once: bool,
+    /// The instant messages kept while offline were asked for (once per
+    /// login).
+    offline_im_requested: bool,
     /// Disk cache root (inventory cache).
     pub cache_dir: Option<std::path::PathBuf>,
 }
 
-const MAX_CHAT: usize = 500;
+/// Lines kept in memory for one conversation (the nearby chat is one). The
+/// view only lays out the lines in sight, so the bound is about memory;
+/// older lines are in the conversation's transcript.
+const MAX_CHAT: usize = 2000;
+
+/// "(Saved <date>) " before a message kept while we were offline, with the
+/// moment it was sent (Second Life time, like the times of the chat).
+fn saved_prefix(timestamp: u32) -> String {
+    if timestamp == 0 {
+        return String::new();
+    }
+    let t = chat_log::format::Slt::from_unix(i64::from(timestamp));
+    let month = crate::ui::land::months()[(t.month.clamp(1, 12) - 1) as usize];
+    aurora_i18n::tr!(
+        "world-im-saved",
+        day = t.day.to_string(),
+        month = month.to_string(),
+        year = t.year.to_string(),
+        time = format!("{:02}:{:02}", t.hour, t.minute)
+    ) + " "
+}
 
 impl World {
     pub fn new(avatar_lib: Arc<AvatarLibrary>) -> World {
@@ -252,7 +301,10 @@ impl World {
             objects: ObjectStore::default(),
             gltf_overrides: HashMap::new(),
             chat: VecDeque::new(),
+            chat_clock: Default::default(),
             chat_unread: 0,
+            chat_log: Default::default(),
+            nearby_history: Default::default(),
             script_debug: script_debug::Messages::default(),
             sun: None,
             agent: AgentState::default(),
@@ -308,19 +360,25 @@ impl World {
             landmarks: Default::default(),
             map: worldmap::WorldMap::default(),
             place_details: Default::default(),
+            search: Default::default(),
             notifications: notifications::Notifications::default(),
             profiles: profiles::Profiles::default(),
             arrived_once: false,
+            offline_im_requested: false,
             cache_dir: None,
         }
     }
 
+    /// Back to the login screen. Nothing said to the account that leaves
+    /// stays for the next one: the conversations and the nearby chat go, and
+    /// the transcripts close (only their writer and settings are kept).
     pub fn reset(&mut self) {
         let lib = self.avatar_lib.clone();
-        let chat = std::mem::take(&mut self.chat);
         let cache_dir = self.cache_dir.take();
+        let mut chat_log = std::mem::take(&mut self.chat_log);
+        chat_log.logout();
         *self = World::new(lib);
-        self.chat = chat;
+        self.chat_log = chat_log;
         self.cache_dir = cache_dir;
     }
 
@@ -383,6 +441,35 @@ impl World {
         let (x, y) = self.main_origin()?;
         let p = self.agent.position;
         Some(glam::DVec3::new(x as f64 + p.x as f64, y as f64 + p.y as f64, p.z as f64))
+    }
+
+    /// The content the agent may and wants to see (LLAgentAccess), from
+    /// the login reply.
+    pub fn agent_access(&self) -> aurora_net::search::AgentAccess {
+        self.login.as_ref().map_or_else(Default::default, |l| {
+            aurora_net::search::AgentAccess::from_login(
+                &l.raw["agent_access_max"].to_string_value(),
+                &l.raw["agent_region_access"].to_string_value(),
+            )
+        })
+    }
+
+    /// Every classified category of the grid, (id, name) by id.
+    pub fn classified_categories(&self) -> Vec<(u32, String)> {
+        let mut v: Vec<(u32, String)> = self
+            .login
+            .as_ref()
+            .map(|l| {
+                l.raw["classified_categories"]
+                    .as_array()
+                    .iter()
+                    .map(|c| (c["category_id"].as_i32().max(0) as u32, c["category_name"].to_string_value()))
+                    .filter(|(id, name)| *id != 0 && !name.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
+        v.sort();
+        v
     }
 
     /// Classified categories of the grid (login "classified_categories").
@@ -537,11 +624,8 @@ impl World {
     }
 
     fn push_chat(&mut self, line: ChatLine) {
-        self.chat.push_back(line);
+        self.nearby_push(line);
         self.chat_unread += 1;
-        while self.chat.len() > MAX_CHAT {
-            self.chat.pop_front();
-        }
     }
 
     /// Ask for an avatar's profile (once).
@@ -596,6 +680,7 @@ impl World {
             text: text.into(),
             kind: ChatKind::System,
             source: Uuid::nil(),
+            origin: Origin::Live,
         });
     }
 
@@ -726,6 +811,11 @@ impl World {
         match ev {
             NetEvent::LoggedIn(l) => {
                 self.agent_id = l.agent_id;
+                // the account is known: its transcripts open
+                self.chat_log.login(l.agent_id);
+                // LLVOAvatar::getFullname, sent when an offline friendship
+                // offer is accepted
+                self.notifications.own_name = format!("{} {}", l.first_name, l.last_name);
                 self.agent.position = Vec3::new(128.0, 128.0, 30.0);
                 self.agent.set_look_at(l.look_at);
                 self.social = social::Social::from_login(&l.raw);
@@ -949,6 +1039,16 @@ impl World {
             | NetEvent::ChatSessionReply { .. }) => self.on_group_event(ev),
             NetEvent::InstantMessage(im) => {
                 self.on_im(im);
+                None
+            }
+            NetEvent::OfflineMessagesFailed => {
+                // requestOfflineMessagesCoro: "Falling back to legacy method."
+                self.groups.out.push(aurora_net::NetCommand::RequestOfflineMessagesLegacy);
+                None
+            }
+            NetEvent::OfflineGroupInviteAccepted(_) => {
+                // response_group_invitation_coro: sendAgentDataUpdateRequest
+                self.groups.out.push(aurora_net::NetCommand::RequestGroups);
                 None
             }
             NetEvent::Appearance(a) => {
@@ -1374,6 +1474,22 @@ impl World {
                 self.profiles.parcels.insert(p.id, *p);
                 None
             }
+            NetEvent::DirReply(r) => {
+                self.search.apply_reply(&r);
+                None
+            }
+            NetEvent::EventInfo(e) => {
+                self.search.events.insert(e.id, *e);
+                None
+            }
+            NetEvent::GroupProfile(g) => {
+                self.search.groups.insert(g.id, *g);
+                None
+            }
+            NetEvent::ProductInfo(types) => {
+                self.search.apply_land_types(types);
+                None
+            }
             NetEvent::RemoteParcel { handle, position, result } => {
                 self.place_details.apply_remote_parcel(handle, position, result);
                 None
@@ -1546,6 +1662,7 @@ impl World {
             text: c.message,
             kind,
             source: c.source_id,
+            origin: Origin::Live,
         });
     }
 
@@ -1574,18 +1691,23 @@ impl World {
                 .avatar_names
                 .complete(&im.from_agent_id)
                 .unwrap_or_else(|| im.from_name.clone());
-            let s = self.social.session_mut(im.from_agent_id);
-            s.lines.push(ChatLine {
+            self.social.session_mut(im.from_agent_id);
+            // a message kept while we were offline says when it was sent
+            // ("(Saved <date>)" before the text, llimprocessing.cpp)
+            let text = if im.offline {
+                saved_prefix(im.timestamp) + &im.message
+            } else {
+                im.message.clone()
+            };
+            let line = ChatLine {
                 time: SystemTime::now(),
                 from,
-                text: im.message.clone(),
+                text,
                 kind: ChatKind::Im,
                 source: im.from_agent_id,
-            });
-            s.unread += 1;
-            if s.lines.len() > MAX_CHAT {
-                s.lines.remove(0);
-            }
+                origin: Origin::Live,
+            };
+            self.conversation_push(im.from_agent_id, line, true);
             self.send_autoresponse(&im, autoresponse);
             return;
         }
@@ -1596,12 +1718,19 @@ impl World {
         } else {
             im.from_name
         };
+        // an object's message kept while we were offline (IM_FROM_TASK)
+        let text = if im.offline && im.dialog == 19 {
+            saved_prefix(im.timestamp) + &im.message
+        } else {
+            im.message
+        };
         self.push_chat(ChatLine {
             time: SystemTime::now(),
             from,
-            text: im.message,
+            text,
             kind,
             source: im.from_agent_id,
+            origin: Origin::Live,
         });
     }
 
@@ -1637,6 +1766,7 @@ impl World {
                     Data::Friend {
                         from: im.from_agent_id,
                         tx: im.session_id,
+                        offline: im.offline,
                     },
                 );
             }
@@ -1693,6 +1823,7 @@ impl World {
                     Data::Group {
                         group: im.from_agent_id,
                         tx: im.session_id,
+                        offline: im.offline,
                     },
                 );
             }
@@ -1918,14 +2049,16 @@ impl World {
             .as_ref()
             .map(|l| social::format_name(&l.first_name, &l.last_name))
             .unwrap_or_default();
-        let s = self.social.session_mut(to);
-        s.lines.push(ChatLine {
+        self.social.session_mut(to);
+        let line = ChatLine {
             time: SystemTime::now(),
             from: me,
             text: text.to_owned(),
             kind: ChatKind::Own,
             source: Uuid::nil(),
-        });
+            origin: Origin::Live,
+        };
+        self.conversation_push(to, line, false);
     }
 
     /// Turn the drawn bodies of the standing avatars toward where they face
@@ -2581,6 +2714,7 @@ mod motion_tests {
             offline: false,
             from_group: false,
             binary_bucket: bucket,
+            timestamp: 0,
         })
     }
 

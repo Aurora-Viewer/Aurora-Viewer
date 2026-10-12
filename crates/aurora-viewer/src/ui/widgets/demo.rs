@@ -110,3 +110,66 @@ pub fn events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
     }
     Vec::new()
 }
+
+/// AURORA_DEMO_SNAP=1|groupe|taille: the Conversations window dragged by its
+/// title next to the People window, on the real windows. Frame 700: the
+/// title is pressed; until 900 it is held 6 px short of the right side of
+/// People and 5 px under the line of its top (the guide and the Alt hint
+/// show); 900: released, the window snaps and the two are glued. `groupe`
+/// then drags People by 70 x 50 from frame 1000 to 1100: Conversations
+/// follows. `taille` drags the bottom edge of Conversations to 4 px from
+/// the line of the bottom of People instead: the edge snaps under the
+/// pointer.
+pub fn snap_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
+    let Ok(mode) = std::env::var("AURORA_DEMO_SNAP") else {
+        return Vec::new();
+    };
+    let button = |pos, pressed| egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    let (chat, people) = (egui::Id::new("conversations"), egui::Id::new("people"));
+    let rect = |window: egui::Id| ctx.memory(|m| m.area_rect(window));
+    let title = |window: egui::Id| {
+        ctx.read_response(window.with("title_double_click"))
+            .map(|r| r.rect.left_center() + egui::vec2(60.0, 0.0))
+    };
+    // (where the pointer is pressed, where it is held)
+    let path = egui::Id::new("demo_snap_path");
+    let begin = |from: egui::Pos2, to: egui::Pos2| {
+        ctx.data_mut(|d| d.insert_temp(path, (from, to)));
+        vec![egui::Event::PointerMoved(from), button(from, true)]
+    };
+    let held = ctx.data(|d| d.get_temp::<(egui::Pos2, egui::Pos2)>(path));
+    let gap = crate::ui::layout::GAP;
+    match (frame, mode.as_str()) {
+        (700, _) => {
+            let (Some(from), Some(c), Some(r)) = (title(chat), rect(chat), rect(people)) else {
+                return Vec::new();
+            };
+            begin(from, from + (egui::pos2(r.right() + gap + 6.0, r.top() + 5.0) - c.min))
+        }
+        (1000, "groupe") => match title(people) {
+            Some(from) => begin(from, from + egui::vec2(70.0, 50.0)),
+            None => Vec::new(),
+        },
+        (1000, "taille") => {
+            let (Some(c), Some(r)) = (rect(chat), rect(people)) else {
+                return Vec::new();
+            };
+            let from = c.center_bottom();
+            begin(from, egui::pos2(from.x, r.bottom() + 4.0))
+        }
+        (701..=899 | 1001..=1099, _) => held.map_or(Vec::new(), |(_, to)| vec![egui::Event::PointerMoved(to)]),
+        (900 | 1100, _) => match held {
+            Some((_, to)) => {
+                ctx.data_mut(|d| d.remove::<(egui::Pos2, egui::Pos2)>(path));
+                vec![egui::Event::PointerMoved(to), button(to, false)]
+            }
+            None => Vec::new(),
+        },
+        _ => Vec::new(),
+    }
+}

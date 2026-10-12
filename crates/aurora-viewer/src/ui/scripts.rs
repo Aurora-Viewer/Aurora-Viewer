@@ -22,6 +22,7 @@ mod reference;
 pub mod settings;
 mod syntax;
 mod view;
+pub use view::editor_focused;
 
 pub enum Action {
     Debug,

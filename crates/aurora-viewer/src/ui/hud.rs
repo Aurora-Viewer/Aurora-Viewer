@@ -95,7 +95,93 @@ pub fn draw_attachments(ctx: &egui::Context, world: &World, scene: &Scene) {
     }
 }
 
+/// The name plate style of the avatar tags (`ui::nameplate`): what the
+/// plates remember and what they read besides the world.
+pub struct PlateFrame<'a> {
+    pub plates: &'a mut super::nameplate::Plates,
+    /// Profile pictures already loaded, by avatar.
+    pub pictures: &'a HashMap<uuid::Uuid, egui::TextureHandle>,
+    /// Avatars shown as silhouettes (object indices).
+    pub too_complex: &'a std::collections::HashSet<usize>,
+    /// Demo: an avatar whose plate is shown as too complex.
+    pub demo_too_complex: Option<uuid::Uuid>,
+}
+
+/// What a name plate says about the avatar `o`. The states are those of
+/// LLVOAvatar::idleUpdateNameTagText (away, do not disturb, typing, muted,
+/// friend); the names and the complexity are those of the classic tag.
+fn plate_content(
+    world: &World,
+    idx: usize,
+    o: &crate::world::objects::Object,
+    in_voice: bool,
+    complexity: Option<&TagComplexity<'_>>,
+    too_complex: bool,
+) -> super::nameplate::Content {
+    use super::nameplate::{Content, Detail, Presence, Role};
+    use crate::world::status::{ANIM_AWAY, ANIM_DO_NOT_DISTURB};
+    let id = o.full_id;
+    let own = id == world.agent_id;
+    let anims = world.animations_of(&id);
+    let playing = |anim: uuid::Uuid| anims.iter().any(|a| a.id == anim);
+    let presence = if playing(ANIM_DO_NOT_DISTURB) {
+        Presence::Busy
+    } else if playing(ANIM_AWAY) {
+        Presence::Away
+    } else {
+        Presence::Online
+    };
+    let names = &world.social.avatar_names;
+    let (name, username, legacy) = match names.get(&id) {
+        Some(n) => {
+            let (main, user) = n.tag_lines(&names.options);
+            (main, user, n.user_name_for_display(&names.options))
+        }
+        None => {
+            let legacy = o.display_name().unwrap_or_else(|| aurora_i18n::tr!("status-loading-2").into());
+            (legacy.clone(), None, legacy)
+        }
+    };
+    let blocked = !own && world.is_avatar_blocked(&id);
+    let friend = !own && world.social.is_friend(&id);
+    // the same rule as the classic tag (FSTagShowARW and its two options)
+    let detail = complexity.and_then(|tc| {
+        let shown = (own && tc.own) || (!own && (!tc.only_too_complex || tc.too_complex.contains(&idx)));
+        let c = *tc.values.get(&id).filter(|_| shown)?;
+        let figure = group_digits(c);
+        let mut full: String = aurora_i18n::tr!("common-complexity", value0 = figure.clone());
+        let mut short = figure;
+        let area = tc.areas.get(&id).copied().unwrap_or(0.0);
+        let over_area = tc.max > 0 && tc.max_area > 0.0 && area > tc.max_area;
+        if over_area {
+            let area: String = aurora_i18n::tr!("ui-hud-area-m2", value0 = group_digits(area as u32));
+            full = format!("{full} · {area}");
+            short = format!("{short} · {area}");
+        }
+        Some(Detail {
+            full,
+            short,
+            alert: !own && tc.max > 0 && (c > tc.max || over_area),
+        })
+    });
+    Content {
+        name,
+        username,
+        title: o.group_title(),
+        detail,
+        role: Role::of(own, blocked, super::colors::is_linden(&legacy), friend),
+        presence,
+        in_voice,
+        // FSShowTypingStateInNameTag: never on our own tag
+        typing: !own && playing(crate::world::radar::ANIM_AGENT_TYPE),
+        friend,
+        too_complex: !own && too_complex,
+        blocked,
+    }
+}
+
 /// `voice`: avatars in voice chat (level, speaking); absence means no voice.
+/// `plates`: the avatars get name plates instead of the classic tags.
 /// Returns the avatar name tags, far first as drawn (the last one on top).
 #[allow(clippy::too_many_arguments)]
 pub fn draw(
@@ -111,6 +197,7 @@ pub fn draw(
     voice_tags: &mut super::voice_tag::VoiceTags,
     complexity: Option<TagComplexity<'_>>,
     loading: Option<&HashMap<uuid::Uuid, f32>>,
+    plates: Option<PlateFrame<'_>>,
 ) -> Vec<NameTag> {
     let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("hud")));
     let now = Instant::now();
@@ -125,6 +212,11 @@ pub fn draw(
         Option<uuid::Uuid>,
     )> = Vec::new();
     let mut name_tags = Vec::new();
+    let (plates, plate_frame) = match plates {
+        Some(f) => (Some(f.plates), Some((f.pictures, f.too_complex, f.demo_too_complex))),
+        None => (None, None),
+    };
+    let mut plate_tags: Vec<super::nameplate::Tag<'_>> = Vec::new();
     // only the avatars and the objects with a text: a shop has thousands of
     // objects for a few dozen of these
     for (idx, o) in world.objects.avatars().chain(world.objects.texted()) {
@@ -143,6 +235,30 @@ pub fn draw(
             let Some((sp, _)) = proj.project(head) else {
                 continue;
             };
+            if let Some((pictures, too_complex, demo_too_complex)) = plate_frame {
+                use super::nameplate::Picture;
+                let id = o.full_id;
+                let in_voice = voice.get(&id).copied();
+                let too = too_complex.contains(&idx) || demo_too_complex == Some(id);
+                // a picture is asked for until the profile says there is none
+                let picture = match pictures.get(&id) {
+                    Some(texture) => Picture::Loaded(texture),
+                    None if world.profiles.get(&id).is_some_and(|pr| pr.sl_image.is_nil()) => Picture::None,
+                    None => Picture::Wanted,
+                };
+                plate_tags.push(super::nameplate::Tag {
+                    id,
+                    anchor: sp,
+                    distance: d,
+                    // the distance fade of the classic tags
+                    fade: (1.0 - (d - 40.0) / 24.0).clamp(0.35, 1.0),
+                    content: plate_content(world, idx, o, in_voice.is_some(), complexity.as_ref(), too),
+                    voice: in_voice,
+                    loading: loading.and_then(|l| l.get(&id).copied()),
+                    picture,
+                });
+                continue;
+            }
             let mut lines = Vec::new();
             // status line first, as LLVOAvatar::idleUpdateNameTagText: "(Absent, Bloqué(e))"
             {
@@ -203,9 +319,11 @@ pub fn draw(
                     let ratio_color = |v: f32, m: f32| {
                         let green = 1.0 - ((v - m) / m).clamp(0.0, 1.0);
                         let red = (v / m).min(1.0);
+                        // theme-guard: content — Firestorm's complexity ramp (complexity_color: red and green levels)
                         Color32::from_rgb((red * 255.0) as u8, (green * 255.0) as u8, 0)
                     };
                     let col = if tc.max == 0 || own {
+                        // theme-guard: content — Firestorm's complexity without a limit (LLColor4::grey1)
                         Color32::from_gray(190)
                     } else {
                         ratio_color(c as f32, tc.max as f32)
@@ -269,6 +387,8 @@ pub fn draw(
         }
     }
     let now_s = ctx.input(|i| i.time);
+    // the classic tag is a small card of the theme
+    let tag_radius = ctx.global_style().visuals.window_corner_radius;
     // far first so near tags draw on top
     tags.sort_by(|a, b| b.0.total_cmp(&a.0));
     for (d, sp, lines, in_voice, progress, avatar) in tags {
@@ -298,7 +418,7 @@ pub fn draw(
             }
             painter.rect_filled(
                 r,
-                3.0,
+                tag_radius,
                 Color32::from_rgba_unmultiplied(p.bar.r(), p.bar.g(), p.bar.b(), (190.0 * fade) as u8),
             );
             // still loading: thin progress bar along the bottom of the tag
@@ -308,7 +428,7 @@ pub fn draw(
                     Pos2::new(r.left() + 4.0, r.bottom() - 3.0),
                     Pos2::new(r.right() - 4.0, r.bottom() - 1.0),
                 );
-                painter.rect_filled(track, 1.0, p.field.gamma_multiply(fade));
+                painter.rect_filled(track, super::widgets::TRACK_RADIUS, p.field.gamma_multiply(fade));
                 let fill = egui::Rect::from_min_max(
                     track.min,
                     Pos2::new(track.left() + track.width() * f.clamp(0.02, 1.0), track.bottom()),
@@ -326,7 +446,7 @@ pub fn draw(
             if let Some(id) = avatar {
                 voice_tags.paint(&painter, p, id, r, in_voice, now_s, fade);
             }
-            if no_voice && let Some(icon) = icons.get("microphone-slash-fill") {
+            if no_voice && let Some(icon) = icons.get("microphone-off") {
                 let center = Pos2::new(r.left() + 6.0 + super::voice_tag::ICON_SIZE * 0.5, r.center().y);
                 let icon_rect = egui::Rect::from_center_size(center, egui::Vec2::splat(super::voice_tag::ICON_SIZE));
                 painter.image(
@@ -349,11 +469,18 @@ pub fn draw(
                     g.job.sections.first().map(|s| s.format.font_id.clone()).unwrap_or_default(),
                     Color32::from_black_alpha((a as f32 * 0.7) as u8),
                 );
-                painter.galley(rect.min + egui::vec2(1.0, 1.0), shadow, Color32::BLACK);
+                painter.galley(rect.min + egui::vec2(1.0, 1.0), shadow, Color32::PLACEHOLDER);
             }
-            painter.galley(rect.min, g, Color32::WHITE);
+            // every line was laid out with its own color: nothing to fall back on
+            painter.galley(rect.min, g, Color32::PLACEHOLDER);
             y += h;
         }
+    }
+    if let Some(plates) = plates {
+        plate_tags.sort_by(|a, b| b.distance.total_cmp(&a.distance));
+        plates.paint(&painter, p, icons, &plate_tags, now_s, |id, rect| {
+            name_tags.push(NameTag { id, rect })
+        });
     }
     voice_tags.prune(now_s);
     name_tags

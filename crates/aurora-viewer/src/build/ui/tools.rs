@@ -15,11 +15,11 @@ use egui::{Color32, RichText, Vec2};
 /// The tool buttons (icon, tooltip, tool).
 fn tools() -> [(&'static str, &'static str, Tool); 5] {
     [
-        ("magnifying-glass", aurora_i18n::tr!("build-ui-tools-focus-ctrl-1"), Tool::Focus),
-        ("hand-grabbing", aurora_i18n::tr!("build-ui-tools-move-ctrl-2"), Tool::Grab),
-        ("cursor", aurora_i18n::tr!("build-ui-tools-edit-ctrl-3"), Tool::Edit),
-        ("magic-wand", aurora_i18n::tr!("build-ui-tools-create-ctrl-4"), Tool::Create),
-        ("mountains", aurora_i18n::tr!("build-ui-tools-land-ctrl-5"), Tool::Land),
+        ("zoom-filled", aurora_i18n::tr!("build-ui-tools-focus-ctrl-1"), Tool::Focus),
+        ("hand-grab", aurora_i18n::tr!("build-ui-tools-move-ctrl-2"), Tool::Grab),
+        ("pointer-filled", aurora_i18n::tr!("build-ui-tools-edit-ctrl-3"), Tool::Edit),
+        ("wand", aurora_i18n::tr!("build-ui-tools-create-ctrl-4"), Tool::Create),
+        ("mountain-filled", aurora_i18n::tr!("build-ui-tools-land-ctrl-5"), Tool::Land),
     ]
 }
 
@@ -33,8 +33,8 @@ fn tool_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, width: f32
     } else {
         p.field
     };
-    ui.painter().rect_filled(rect, 3.0, fill);
-    let tint = if on { p.ink } else { p.muted };
+    ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, fill);
+    let tint = if on { p.on_accent } else { p.muted };
     if let Some(t) = crate::ui::icons::global(icon) {
         ui.painter().image(
             t.id(),
@@ -82,19 +82,19 @@ pub fn status_text(tool: &BuildTool, s: &BuildSettings, mods: Mods) -> &'static 
     }
 }
 
-fn radio(ui: &mut egui::Ui, on: bool, text: &str) -> bool {
-    ui.add(egui::RadioButton::new(on, RichText::new(text).size(12.0))).clicked()
+fn radio(ui: &mut egui::Ui, p: &Palette, on: bool, text: &str) -> bool {
+    crate::ui::widgets::radio(ui, p, on, RichText::new(text).size(12.0)).clicked()
 }
 
 /// Focus tool (focus_radio_group, slider zoom).
-pub fn focus_panel(ui: &mut egui::Ui, _p: &Palette, tool: &mut BuildTool, mods: Mods, env: &mut Env) {
+pub fn focus_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, mods: Mods, env: &mut Env) {
     let shown = match (mods.ctrl, mods.shift) {
         (true, true) => FocusMode::Pan,
         (true, false) => FocusMode::Orbit,
         _ => tool.focus_mode,
     };
     ui.horizontal(|ui| {
-        if radio(ui, shown == FocusMode::Zoom, aurora_i18n::tr!("common-zoom-2")) {
+        if radio(ui, p, shown == FocusMode::Zoom, aurora_i18n::tr!("common-zoom-2")) {
             tool.focus_mode = FocusMode::Zoom;
         }
         // slider zoom: getCameraZoomFraction() * 0.5, 0..0.5
@@ -110,11 +110,17 @@ pub fn focus_panel(ui: &mut egui::Ui, _p: &Palette, tool: &mut BuildTool, mods: 
             tool.ui.requests.push(Request::ZoomFraction(v * 2.0));
         }
     });
-    if radio(ui, shown == FocusMode::Orbit, aurora_i18n::tr!("build-ui-tools-orbit-camera-ctrl")) {
+    if radio(
+        ui,
+        p,
+        shown == FocusMode::Orbit,
+        aurora_i18n::tr!("build-ui-tools-orbit-camera-ctrl"),
+    ) {
         tool.focus_mode = FocusMode::Orbit;
     }
     if radio(
         ui,
+        p,
         shown == FocusMode::Pan,
         aurora_i18n::tr!("build-ui-tools-pan-camera-ctrl-shift"),
     ) {
@@ -123,15 +129,15 @@ pub fn focus_panel(ui: &mut egui::Ui, _p: &Palette, tool: &mut BuildTool, mods: 
 }
 
 /// Grab tool (move_radio_group).
-pub fn grab_panel(ui: &mut egui::Ui, _p: &Palette, tool: &mut BuildTool, mods: Mods) {
+pub fn grab_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, mods: Mods) {
     let shown = tool.effective_grab_mode(mods);
-    if radio(ui, shown == GrabMode::Move, aurora_i18n::tr!("build-ui-tools-move")) {
+    if radio(ui, p, shown == GrabMode::Move, aurora_i18n::tr!("build-ui-tools-move")) {
         tool.grab_mode = GrabMode::Move;
     }
-    if radio(ui, shown == GrabMode::Lift, aurora_i18n::tr!("build-ui-tools-lift-ctrl")) {
+    if radio(ui, p, shown == GrabMode::Lift, aurora_i18n::tr!("build-ui-tools-lift-ctrl")) {
         tool.grab_mode = GrabMode::Lift;
     }
-    if radio(ui, shown == GrabMode::Spin, aurora_i18n::tr!("build-ui-tools-rotate-ctrl-shift")) {
+    if radio(ui, p, shown == GrabMode::Spin, aurora_i18n::tr!("build-ui-tools-rotate-ctrl-shift")) {
         tool.grab_mode = GrabMode::Spin;
     }
 }
@@ -154,8 +160,8 @@ pub fn create_panel(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings) {
                     } else {
                         p.field
                     };
-                    ui.painter().rect_filled(rect, 3.0, fill);
-                    let col = if sel { Color32::WHITE } else { p.ink };
+                    ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, fill);
+                    let col = if sel { p.on_accent } else { p.ink };
                     let name = match i {
                         i if i < shapes().len() => {
                             let sh = &shapes()[i];
@@ -184,18 +190,33 @@ pub fn create_panel(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings) {
         ui.vertical(|ui| {
             ui.spacing_mut().item_spacing.y = 2.0;
             ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-            if let Some(v) = check(ui, s.rez_under_land_group, false, aurora_i18n::tr!("rez-under-land-group"), true) {
+            if let Some(v) = check(ui, p, s.rez_under_land_group, false, aurora_i18n::tr!("rez-under-land-group"), true) {
                 s.rez_under_land_group = v;
             }
-            if let Some(v) = check(ui, s.keep_tool, false, aurora_i18n::tr!("build-ui-tools-keep-selection-tool"), true) {
+            if let Some(v) = check(
+                ui,
+                p,
+                s.keep_tool,
+                false,
+                aurora_i18n::tr!("build-ui-tools-keep-selection-tool"),
+                true,
+            ) {
                 s.keep_tool = v;
             }
-            if let Some(v) = check(ui, s.copy_selection, false, aurora_i18n::tr!("build-ui-tools-copy-selection"), true) {
+            if let Some(v) = check(
+                ui,
+                p,
+                s.copy_selection,
+                false,
+                aurora_i18n::tr!("build-ui-tools-copy-selection"),
+                true,
+            ) {
                 s.copy_selection = v;
             }
             ui.indent("copy_opts", |ui| {
                 if let Some(v) = check(
                     ui,
+                    p,
                     s.copy_centers,
                     false,
                     aurora_i18n::tr!("build-ui-tools-center"),
@@ -203,7 +224,7 @@ pub fn create_panel(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings) {
                 ) {
                     s.copy_centers = v;
                 }
-                if let Some(v) = check(ui, s.copy_rotates, false, aurora_i18n::tr!("common-rotate"), s.copy_selection) {
+                if let Some(v) = check(ui, p, s.copy_rotates, false, aurora_i18n::tr!("common-rotate"), s.copy_selection) {
                     s.copy_rotates = v;
                 }
             });
@@ -275,13 +296,14 @@ pub fn land_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &
         ui.spacing_mut().item_spacing.y = 2.0;
         if radio(
             ui,
+            p,
             s.land_action > land_action::REVERT,
             aurora_i18n::tr!("build-ui-tools-select-land"),
         ) {
             s.land_action = 6;
         }
         for (i, n) in crate::build::land::action_names().iter().enumerate() {
-            if radio(ui, s.land_action as usize == i, n) {
+            if radio(ui, p, s.land_action as usize == i, n) {
                 s.land_action = i as u8;
             }
         }
@@ -379,6 +401,7 @@ pub fn parcel_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world:
     }
     if let Some(v) = check(
         ui,
+        p,
         s.show_parcel_owners,
         false,
         aurora_i18n::tr!("build-ui-tools-show-owners"),
@@ -389,12 +412,13 @@ pub fn parcel_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world:
     if s.show_parcel_owners {
         ui.horizontal_wrapped(|ui| {
             for (c, t) in [
+                // theme-guard: content — the colors of the parcel owner overlay
                 (Color32::from_rgb(0, 200, 0), aurora_i18n::tr!("build-ui-tools-yours")),
-                (Color32::from_rgb(0, 200, 200), "groupe"),
-                (Color32::from_rgb(220, 0, 0), "autres"),
+                (Color32::from_rgb(0, 200, 200), aurora_i18n::tr!("build-ui-tools-owner-group")),
+                (Color32::from_rgb(220, 0, 0), aurora_i18n::tr!("build-ui-tools-owner-others")),
                 (Color32::from_rgb(230, 230, 0), aurora_i18n::tr!("build-ui-tools-for-sale")),
                 (Color32::from_rgb(170, 60, 220), aurora_i18n::tr!("build-ui-tools-auctions")),
-                (Color32::from_gray(140), "public"),
+                (Color32::from_gray(140), aurora_i18n::tr!("build-ui-tools-owner-public")),
             ] {
                 crate::ui::widgets::status_dot(ui, c);
                 small(ui, p, t);

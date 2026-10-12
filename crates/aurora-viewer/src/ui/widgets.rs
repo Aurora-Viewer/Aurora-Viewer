@@ -5,14 +5,19 @@ use crate::theme::Palette;
 use egui::{Color32, CornerRadius, RichText, Sense, Stroke, Vec2};
 
 #[cfg(test)]
+mod check_tests;
+#[cfg(test)]
 mod collapse_tests;
+pub mod color;
 pub mod demo;
 #[cfg(test)]
 pub(crate) mod elide_tests;
+pub(crate) mod keycap;
 mod resize;
 mod workspace;
-pub use workspace::{Modal, glyph, navigation, section_header, stat, surface};
-pub(crate) use workspace::{inventory_item_label, inventory_spacing};
+pub use color::color_button;
+pub use workspace::{Modal, collapsing, collapsing_forced, glyph, navigation, section_header, stat, surface};
+pub(crate) use workspace::{finish_bar_glass, inventory_item_label, inventory_spacing, overlay, overlay_frame};
 
 /// Keep status suffixes at normal weight and slightly darker than the name.
 pub(crate) fn name_with_suffix(name: &str, suffix: &str, font_id: egui::FontId, color: Color32) -> egui::text::LayoutJob {
@@ -74,7 +79,7 @@ pub struct Floater<'a> {
     pub min_size: Vec2,
     pub resizable: bool,
     pub help: Option<&'a str>,
-    /// Extra title bar button: (Phosphor icon, tooltip, set when clicked).
+    /// Extra title bar button: (Tabler icon, tooltip, set when clicked).
     pub action: Option<(&'a str, &'a str, &'a mut bool)>,
     /// No open / close sounds (sound_flags="0", e.g. floater_tools).
     pub silent: bool,
@@ -208,11 +213,21 @@ impl<'a> Floater<'a> {
         } else if restore && !self.auto_height {
             w = w.fixed_size(expanded);
         }
+        // the viewer window changed size: the floater follows its edges;
+        // a placement asked this frame and a resize in progress come after
+        let slot = super::layout::slot(ctx, window_id);
+        if let Some(pos) = slot.pos {
+            w = w.current_pos(pos);
+        }
+        if let Some(limits) = slot.limits {
+            w = w.constrain_to(limits);
+        }
         if let Some(pos) = ctx.data_mut(|d| d.remove_temp::<egui::Pos2>(window_id.with(PLACE_POS))) {
             w = w.current_pos(pos);
         }
-        if let Some(drag) = resize_drag {
-            let rect = drag.rect();
+        // the edge dragged snaps to the other windows and to the work area
+        let resized = resize_drag.map(|drag| super::layout::resizing(ctx, p, window_id, drag.rect(), drag.edges(), drag.minimum()));
+        if let Some(rect) = resized {
             w = w.fixed_size(rect.size()).current_pos(rect.min);
         }
         let mut glass_slot = None;
@@ -267,7 +282,7 @@ impl<'a> Floater<'a> {
                             **clicked = true;
                         }
                         if let Some(h) = self.help {
-                            title_button(ui, p, "question").on_hover_text(h);
+                            title_button(ui, p, "help-circle-filled").on_hover_text(h);
                         }
                         buttons_left = ui.cursor().right();
                         if truncate {
@@ -306,8 +321,7 @@ impl<'a> Floater<'a> {
             };
             let mut title_rect = header.rect;
             if framed_header.is_some() {
-                ui.painter()
-                    .hline(header.rect.x_range(), header.rect.bottom(), Stroke::new(1.0, p.raised));
+                ui.painter().hline(header.rect.x_range(), header.rect.bottom(), divider_stroke(p));
             }
             title_rect.max.x = buttons_left;
             // Keep the title buttons outside the double-click target; Window
@@ -322,9 +336,9 @@ impl<'a> Floater<'a> {
                 if framed_header.is_none() {
                     if self.compact_header {
                         ui.painter()
-                            .hline(header.rect.x_range(), header.rect.bottom() + 2.0, Stroke::new(1.0, p.raised));
+                            .hline(header.rect.x_range(), header.rect.bottom() + 2.0, divider_stroke(p));
                     } else {
-                        ui.separator();
+                        divider(ui, p);
                         ui.add_space(5.0);
                     }
                 }
@@ -332,6 +346,7 @@ impl<'a> Floater<'a> {
             }
         });
         if let Some(response) = response {
+            slot.shown(ctx, response.response.rect, minimized);
             if let Some((painter, slot)) = glass_slot {
                 let radius = f32::from(ctx.global_style().visuals.window_corner_radius.nw);
                 workspace::finish_glass(
@@ -345,8 +360,8 @@ impl<'a> Floater<'a> {
             if !minimized {
                 ctx.data_mut(|d| d.insert_persisted(expanded_id, response.response.rect.size()));
             }
-            if let Some(drag) = resize_drag {
-                drag.finish(ctx, window_id, response.response.rect);
+            if let (Some(drag), Some(requested)) = (resize_drag, resized) {
+                drag.finish(ctx, window_id, requested, response.response.rect);
             }
             if resizable {
                 resize::handles(ctx, &response.response);
@@ -369,6 +384,58 @@ impl<'a> Floater<'a> {
     }
 }
 
+/// A window without a title bar, dragged by its whole surface (the
+/// mini-map): `frame` around `body`, which fills it. Like a floater it is
+/// placed by the layout (`layout::Slot`), snaps to the other windows when
+/// moved or resized, and is resized by the same edge handles.
+pub(crate) fn bare_window(
+    ctx: &egui::Context,
+    p: &Palette,
+    id: &str,
+    title: &str,
+    frame: egui::Frame,
+    default: egui::Rect,
+    min_size: Vec2,
+    body: impl FnOnce(&mut egui::Ui),
+) {
+    let window_id = egui::Id::new(id);
+    let drag = resize::Drag::prepare(ctx, window_id, min_size);
+    let mut w = egui::Window::new(title)
+        .id(window_id)
+        .title_bar(false)
+        .frame(frame)
+        .fade_in(false)
+        .fade_out(false)
+        .default_pos(default.min)
+        .default_size(default.size())
+        .min_size(min_size)
+        .resizable(false)
+        .constrain(true);
+    let slot = super::layout::slot(ctx, window_id);
+    if let Some(pos) = slot.pos {
+        w = w.current_pos(pos);
+    }
+    if let Some(limits) = slot.limits {
+        w = w.constrain_to(limits);
+    }
+    let resized = drag.map(|drag| super::layout::resizing(ctx, p, window_id, drag.rect(), drag.edges(), drag.minimum()));
+    if let Some(rect) = resized {
+        w = w.fixed_size(rect.size()).current_pos(rect.min);
+    }
+    let Some(shown) = w.show(ctx, |ui| {
+        // as a resizable egui::Window would: the body gets the whole size
+        ui.set_min_size(ui.available_size());
+        body(ui);
+    }) else {
+        return;
+    };
+    slot.shown(ctx, shown.response.rect, false);
+    if let (Some(drag), Some(requested)) = (drag, resized) {
+        drag.finish(ctx, window_id, requested, shown.response.rect);
+    }
+    resize::handles(ctx, &shown.response);
+}
+
 const PLACE_POS: &str = "place_pos";
 
 /// Move a dependent floater without changing its size or minimized state.
@@ -389,7 +456,13 @@ pub fn place_floater(ctx: &egui::Context, id: &str, pos: egui::Pos2, size: Vec2)
     });
 }
 
-/// Title bar button with a Phosphor icon (drawn by hand if it is missing).
+/// Minimize the floater `id` (LLFloater::setMinimized), as its title button
+/// does.
+pub fn minimize_floater(ctx: &egui::Context, id: &str) {
+    ctx.data_mut(|d| d.insert_persisted(egui::Id::new((id, "minimized")), true));
+}
+
+/// Title bar button with a Tabler icon (drawn by hand if it is missing).
 fn title_button(ui: &mut egui::Ui, p: &Palette, icon: &str) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(16.0, 16.0), Sense::click());
     let col = if resp.hovered() { p.ink } else { p.muted };
@@ -409,14 +482,14 @@ fn title_button(ui: &mut egui::Ui, p: &Palette, icon: &str) -> egui::Response {
         "minus" => {
             painter.line_segment([c + Vec2::new(-5.0, 1.0), c + Vec2::new(5.0, 1.0)], stroke);
         }
-        "question" => {
+        "help-circle-filled" => {
             painter.circle_stroke(c, 6.0, Stroke::new(1.2, col));
             painter.text(c, egui::Align2::CENTER_CENTER, "?", egui::FontId::proportional(10.0), col);
         }
         _ => {
             painter.rect_stroke(
                 egui::Rect::from_center_size(c, Vec2::splat(10.0)),
-                1.0,
+                inner_radius(ui.visuals()),
                 stroke,
                 egui::StrokeKind::Inside,
             );
@@ -425,8 +498,66 @@ fn title_button(ui: &mut egui::Ui, p: &Palette, icon: &str) -> egui::Response {
     resp
 }
 
-/// Flat on/off switch.
+/// Stroke of every divider of the interface: a thin line of a neutral
+/// hardly lighter than the panels.
+pub fn divider_stroke(p: &Palette) -> Stroke {
+    Stroke::new(1.0, p.raised)
+}
+
+/// Thin line between two zones of a window, across the layout (horizontal in
+/// a column, vertical in a row), in the room of egui's separator: a window
+/// keeps its layout. Not for buttons or toolbar items: their spacing and the
+/// pill of the hovered one tell them apart. A menu uses `menu::separator`.
+pub fn divider(ui: &mut egui::Ui, p: &Palette) -> egui::Response {
+    const ROOM: f32 = 6.0;
+    let across = !ui.layout().main_dir().is_horizontal();
+    let available = if ui.is_sizing_pass() {
+        Vec2::ZERO
+    } else {
+        ui.available_size_before_wrap()
+    };
+    let size = if across {
+        Vec2::new(available.x, ROOM)
+    } else {
+        Vec2::new(ROOM, available.y)
+    };
+    let (rect, resp) = ui.allocate_at_least(size, Sense::hover());
+    if ui.is_rect_visible(rect) {
+        if across {
+            ui.painter().hline(rect.x_range(), rect.center().y, divider_stroke(p));
+        } else {
+            ui.painter().vline(rect.center().x, rect.y_range(), divider_stroke(p));
+        }
+    }
+    resp
+}
+
+// theme-guard: content — a picture keeps its own colors
+/// Tint of a picture drawn with its own colors (texture, snapshot, emoji,
+/// web page): none.
+pub const PICTURE_TINT: Color32 = Color32::WHITE;
+
+// theme-guard: content — the same picture, darkened
+/// Tint of a picture whose control is disabled.
+pub const PICTURE_TINT_DISABLED: Color32 = Color32::from_gray(120);
+
+/// Corners of a small mark inside a control or a line (the knob of a switch,
+/// a key cap, a status square, a letter badge): one pixel tighter than the
+/// windows', so that a mark of a few pixels stays a square.
+pub fn inner_radius(visuals: &egui::Visuals) -> CornerRadius {
+    CornerRadius::same(visuals.window_corner_radius.nw.saturating_sub(1).max(1))
+}
+
+/// Ends of a thin bar (the track of a progress bar or of a level meter, a
+/// mark on a rail): the radius of the theme would turn a bar of a few pixels
+/// into a pill.
+pub const TRACK_RADIUS: f32 = 2.0;
+
+/// Flat on/off switch: a track with the corners of the theme, and a square
+/// knob that slides in it.
 pub fn switch(ui: &mut egui::Ui, p: &Palette, on: &mut bool) -> egui::Response {
+    // a whole number of pixels around the knob keeps its edges crisp
+    const KNOB: f32 = 14.0;
     let (rect, mut resp) = ui.allocate_exact_size(Vec2::new(34.0, 18.0), Sense::click());
     if resp.clicked() {
         *on = !*on;
@@ -434,11 +565,181 @@ pub fn switch(ui: &mut egui::Ui, p: &Palette, on: &mut bool) -> egui::Response {
     }
     let t = ui.ctx().animate_bool_responsive(resp.id, *on);
     let track = if *on { p.violet } else { p.raised };
+    let radius = ui.visuals().window_corner_radius;
     let painter = ui.painter();
-    painter.rect_filled(rect, CornerRadius::same(9), track);
-    let x = egui::lerp(rect.left() + 9.0..=rect.right() - 9.0, t);
-    painter.circle_filled(egui::pos2(x, rect.center().y), 6.5, if *on { Color32::WHITE } else { p.muted });
+    painter.rect_filled(rect, radius, track);
+    let half = rect.height() / 2.0;
+    let x = egui::lerp(rect.left() + half..=rect.right() - half, t);
+    let knob = egui::Rect::from_center_size(egui::pos2(x, rect.center().y), Vec2::splat(KNOB));
+    painter.rect_filled(knob, inner_radius(ui.visuals()), if *on { p.on_accent } else { p.muted });
     resp
+}
+
+/// Check box of the interface, with the contract of `ui.checkbox`: the
+/// response is `changed()` when a click flipped `on`. A flat square with the
+/// corners of the theme, violet and ticked when on; the square and its label
+/// are one clickable row.
+pub fn checkbox(ui: &mut egui::Ui, p: &Palette, on: &mut bool, label: impl Into<egui::WidgetText>) -> egui::Response {
+    check_row(ui, p, on, label.into(), false)
+}
+
+/// `checkbox` showing a dash instead of its tick while `mixed`: the objects
+/// of a selection do not agree.
+pub fn checkbox_mixed(ui: &mut egui::Ui, p: &Palette, on: &mut bool, label: impl Into<egui::WidgetText>, mixed: bool) -> egui::Response {
+    check_row(ui, p, on, label.into(), mixed)
+}
+
+/// The row shared by the check box and the radio button: the room of the
+/// mark, then the label, one clickable rectangle. The geometry of the stock
+/// ones: a window keeps its layout.
+fn mark_row(ui: &mut egui::Ui, label: egui::WidgetText) -> (egui::Rect, egui::Response, Option<std::sync::Arc<egui::Galley>>) {
+    let (side, gap) = (ui.spacing().icon_width, ui.spacing().icon_spacing);
+    let galley =
+        (!label.is_empty()).then(|| label.into_galley(ui, None, (ui.available_width() - side - gap).max(0.0), egui::TextStyle::Button));
+    let mut size = Vec2::new(side, 0.0);
+    if let Some(galley) = &galley {
+        size += Vec2::new(gap, 0.0) + galley.size();
+    }
+    let size = size.max(Vec2::splat(ui.spacing().interact_size.y));
+    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
+    (rect, resp, galley)
+}
+
+/// Where the mark of a `mark_row` goes: a square at the left of the row.
+fn mark_square(ui: &egui::Ui, row: egui::Rect) -> egui::Rect {
+    let side = ui.spacing().icon_width;
+    egui::Rect::from_center_size(egui::pos2(row.left() + side / 2.0, row.center().y), Vec2::splat(side))
+}
+
+/// Face of the mark: violet when on, the raised tone when off, both lighter
+/// under the pointer or with the keyboard focus.
+fn mark_fill(p: &Palette, on: bool, hot: bool) -> Color32 {
+    match (on, hot) {
+        (true, false) => p.violet,
+        (true, true) => p.violet_light,
+        (false, false) => p.raised,
+        (false, true) => p.raised.lerp_to_gamma(p.ink, 0.16),
+    }
+}
+
+fn mark_label(ui: &egui::Ui, p: &Palette, row: egui::Rect, mark: egui::Rect, galley: Option<std::sync::Arc<egui::Galley>>) {
+    if let Some(galley) = galley {
+        let text = egui::pos2(mark.right() + ui.spacing().icon_spacing, row.center().y - galley.size().y / 2.0);
+        ui.painter().galley(text, galley, p.ink);
+    }
+}
+
+fn check_row(ui: &mut egui::Ui, p: &Palette, on: &mut bool, label: egui::WidgetText, mixed: bool) -> egui::Response {
+    let (rect, mut resp, galley) = mark_row(ui, label);
+    if resp.clicked() {
+        *on = !*on;
+        resp.mark_changed();
+    }
+    let checked = *on;
+    resp.widget_info(|| {
+        let text = galley.as_ref().map_or("", |galley| galley.text());
+        egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), checked, text)
+    });
+    if ui.is_rect_visible(rect) {
+        let hot = resp.hovered() || resp.has_focus();
+        let square = mark_square(ui, rect);
+        let painter = ui.painter();
+        painter.rect_filled(square, ui.visuals().window_corner_radius, mark_fill(p, checked || mixed, hot));
+        if !(checked || mixed) {
+            // an empty box stays visible on a panel of nearly its own color
+            painter.rect_stroke(
+                square,
+                ui.visuals().window_corner_radius,
+                Stroke::new(1.0, p.muted_dim),
+                egui::StrokeKind::Inside,
+            );
+        }
+        let mark = Stroke::new(1.6, p.on_accent);
+        if mixed {
+            painter.hline(square.shrink(3.5).x_range(), square.center().y, mark);
+        } else if checked {
+            match super::icons::global("check") {
+                Some(icon) => {
+                    let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+                    painter.image(icon.id(), square.shrink(1.0), uv, p.on_accent);
+                }
+                // no icon theme: the tick is drawn
+                None => {
+                    let c = square.center();
+                    let tick = [c + Vec2::new(-3.5, 0.0), c + Vec2::new(-1.0, 2.5), c + Vec2::new(3.5, -2.5)];
+                    painter.line_segment([tick[0], tick[1]], mark);
+                    painter.line_segment([tick[1], tick[2]], mark);
+                }
+            }
+        }
+        mark_label(ui, p, rect, square, galley);
+    }
+    resp
+}
+
+/// Radio button of the interface, with the contract of `ui.radio`: the
+/// response is `clicked()` when its row was clicked, selected or not. The row
+/// of `checkbox` (same size, same label, same hover) around a round mark, so
+/// that one choice among several is never taken for a check box: a thin ring
+/// when empty, violet around a dot when selected. The one round control of
+/// the interface, with the status dots (docs/BRANDING.md).
+pub fn radio(ui: &mut egui::Ui, p: &Palette, selected: bool, label: impl Into<egui::WidgetText>) -> egui::Response {
+    let (rect, resp, galley) = mark_row(ui, label.into());
+    resp.widget_info(|| {
+        let text = galley.as_ref().map_or("", |galley| galley.text());
+        egui::WidgetInfo::selected(egui::WidgetType::RadioButton, ui.is_enabled(), selected, text)
+    });
+    if ui.is_rect_visible(rect) {
+        let hot = resp.hovered() || resp.has_focus();
+        let square = mark_square(ui, rect);
+        let (center, radius) = (square.center(), square.width() / 2.0);
+        let painter = ui.painter();
+        painter.circle_filled(center, radius, mark_fill(p, selected, hot));
+        if selected {
+            painter.circle_filled(center, radius * RADIO_DOT, p.on_accent);
+        } else {
+            // as the empty check box: visible on a panel of nearly its color
+            painter.circle_stroke(center, radius - 0.5, Stroke::new(1.0, p.muted_dim));
+        }
+        mark_label(ui, p, rect, square, galley);
+    }
+    resp
+}
+
+/// The dot of a selected radio button, as a share of its radius.
+const RADIO_DOT: f32 = 0.42;
+
+/// `radio` for one alternative of a value, with the contract of
+/// `ui.radio_value`: a click makes `current` this `alternative`, and the
+/// response is `changed()` when that changed it.
+pub fn radio_value<Value: PartialEq>(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    current: &mut Value,
+    alternative: Value,
+    label: impl Into<egui::WidgetText>,
+) -> egui::Response {
+    let mut resp = radio(ui, p, *current == alternative, label);
+    if resp.clicked() && *current != alternative {
+        *current = alternative;
+        resp.mark_changed();
+    }
+    resp
+}
+
+/// A switch followed by its label, both clickable: a lone on / off setting
+/// of a window. The response is `changed()` when either flipped `on`.
+pub fn switch_labeled(ui: &mut egui::Ui, p: &Palette, on: &mut bool, label: impl Into<egui::WidgetText>) -> egui::Response {
+    ui.horizontal(|ui| {
+        let mut resp = switch(ui, p, on);
+        let text = ui.add(egui::Label::new(label).sense(Sense::click()));
+        if text.clicked() {
+            *on = !*on;
+            resp.mark_changed();
+        }
+        resp.union(text)
+    })
+    .inner
 }
 
 /// Flat tab strip. Returns true when the selection changed.
@@ -450,7 +751,7 @@ pub fn tabs(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&st
         let font = egui::FontId::proportional(12.0);
         let text_w: Vec<f32> = labels
             .iter()
-            .map(|(l, _)| ui.fonts_mut(|f| f.layout_no_wrap((*l).to_owned(), font.clone(), Color32::WHITE).size().x) + 18.0)
+            .map(|(l, _)| ui.fonts_mut(|f| f.layout_no_wrap((*l).to_owned(), font.clone(), Color32::PLACEHOLDER).size().x) + 18.0)
             .collect();
         let gaps = (n - 1.0) * ui.spacing().item_spacing.x;
         let total: f32 = text_w.iter().sum::<f32>() + gaps;
@@ -466,7 +767,7 @@ pub fn tabs(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&st
                 } else {
                     p.raised.gamma_multiply(0.25)
                 };
-                ui.painter().rect_filled(rect, CornerRadius::same(4), fill);
+                ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, fill);
             }
             underline(ui, p, &resp, sel, *enabled);
             let col = if !*enabled {
@@ -519,12 +820,32 @@ pub fn search_field(ui: &mut egui::Ui, text: &mut String, hint: &str, width: f32
     ui.add(egui::TextEdit::singleline(text).hint_text(hint).desired_width(width))
 }
 
-/// Small flat button with a Phosphor icon (copy / paste / flip...).
+/// Small flat button with a Tabler icon (copy / paste / flip...).
 pub fn icon_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, enabled: bool) -> bool {
+    small_icon_button(ui, p, icon, tip, enabled, false)
+}
+
+/// `icon_button` that stays lit while `on` (a mode that is armed); true
+/// when clicked.
+pub fn icon_toggle(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, on: bool) -> bool {
+    small_icon_button(ui, p, icon, tip, true, on)
+}
+
+fn small_icon_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, enabled: bool, on: bool) -> bool {
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(20.0, 20.0), if enabled { Sense::click() } else { Sense::hover() });
-    let fill = if resp.hovered() && enabled { p.raised } else { p.field };
-    ui.painter().rect_filled(rect, 2.0, fill);
-    let col = if enabled { p.ink } else { p.muted_dim };
+    let fill = if on {
+        p.violet
+    } else if resp.hovered() && enabled {
+        p.raised
+    } else {
+        p.field
+    };
+    ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, fill);
+    let col = match (enabled, on) {
+        (false, _) => p.muted_dim,
+        (true, true) => p.on_accent,
+        (true, false) => p.ink,
+    };
     match super::icons::global(icon) {
         Some(t) => {
             ui.painter().image(
@@ -583,6 +904,13 @@ fn underline(ui: &egui::Ui, p: &Palette, response: &egui::Response, selected: bo
     );
 }
 
+/// Paint `galley` from `left_center`, centered vertically on its ink like
+/// an icon beside it (a font's line box sits lower than its letters).
+pub fn paint_ink_left(painter: &egui::Painter, galley: std::sync::Arc<egui::Galley>, left_center: egui::Pos2, color: Color32) {
+    let center = left_center + Vec2::new(galley.size().x / 2.0, 0.0);
+    paint_ink_centered(painter, galley, center, color);
+}
+
 /// Equal-sized dialog buttons; long script labels keep their full hover text.
 pub fn flat_button_sized(ui: &mut egui::Ui, p: &Palette, label: &str, size: Vec2) -> egui::Response {
     text_button(ui, p, label, Some(size)).on_hover_text(label)
@@ -591,35 +919,138 @@ pub fn flat_button_sized(ui: &mut egui::Ui, p: &Palette, label: &str, size: Vec2
 fn text_button(ui: &mut egui::Ui, p: &Palette, label: &str, size: Option<Vec2>) -> egui::Response {
     // Keep the button in the parent's layout so wrapped toolbars can break
     // before it. A child UI would wrap internally and enlarge narrow windows.
-    let style = ui.style().clone();
-    {
-        // A darker face stays identifiable even when panel and raised match.
-        let w = &mut ui.visuals_mut().widgets;
-        w.inactive.weak_bg_fill = p.field;
-        w.inactive.bg_fill = p.field;
-        w.inactive.bg_stroke = Stroke::new(1.0, p.muted_dim.gamma_multiply(0.65));
-        w.hovered.weak_bg_fill = p.raised;
-        w.hovered.bg_fill = p.raised;
-        w.hovered.bg_stroke = Stroke::new(1.0, p.violet_light.gamma_multiply(0.65));
-        w.active.weak_bg_fill = p.violet.gamma_multiply(0.28);
-        w.active.bg_fill = p.violet.gamma_multiply(0.28);
-        w.active.bg_stroke = Stroke::new(1.0, p.violet);
-    }
+    // The theme gives every button its plain filled face.
     let button = egui::Button::new(RichText::new(label).size(12.0).color(p.ink));
-    let response = match size {
+    match size {
         Some(size) => ui.add_sized(size, button.truncate()),
         None => ui.add(button.min_size(Vec2::new(0.0, 20.0))),
+    }
+}
+
+/// Progress bar of the interface: a flat track filled with the brand
+/// gradient (or `tint`), which glides to its value instead of jumping.
+/// `text` is written under it; `{}` in it is replaced by the percentage
+/// shown, so the figures glide with the bar.
+pub fn progress(ui: &mut egui::Ui, p: &Palette, id: &str, fraction: f32, width: f32, text: &str, tint: Option<Color32>) {
+    let shown = ui.ctx().animate_value_with_time(ui.id().with(id), fraction.clamp(0.0, 1.0), 0.45);
+    ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing.y = 4.0;
+        let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 6.0), Sense::hover());
+        // the track of the sliders: it shows on a window as on a group
+        ui.painter().rect_filled(rect, TRACK_RADIUS, p.raised);
+        let fill = egui::Rect::from_min_size(rect.min, Vec2::new(rect.width() * shown, rect.height()));
+        if fill.width() >= 1.0 {
+            match tint {
+                Some(color) => {
+                    ui.painter().rect_filled(fill, TRACK_RADIUS, color);
+                }
+                None => super::loading::gradient_rect(ui.painter(), fill, p.violet, p.teal, true),
+            }
+        }
+        if !text.is_empty() {
+            let percent = aurora_i18n::number_text(&format!("{:.0} %", shown * 100.0));
+            ui.label(RichText::new(text.replace("{}", &percent)).size(11.5).color(p.muted));
+        }
+    });
+}
+
+/// Level meter (microphone): the track of `progress` with a plain fill that
+/// follows its value closely, only smoothing the jitter between two samples.
+pub fn level(ui: &mut egui::Ui, p: &Palette, id: &str, value: f32, width: f32, color: Color32) {
+    let shown = ui.ctx().animate_value_with_time(ui.id().with(id), value.clamp(0.0, 1.0), 0.08);
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 6.0), Sense::hover());
+    ui.painter().rect_filled(rect, TRACK_RADIUS, p.raised);
+    let fill = egui::Rect::from_min_size(rect.min, Vec2::new(rect.width() * shown, rect.height()));
+    ui.painter().rect_filled(fill, TRACK_RADIUS, color);
+}
+
+/// Face of an `action_button`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ActionKind {
+    /// A neutral filled face, without a border.
+    Flat,
+    /// The accent: the action the screen is for.
+    Primary,
+    /// The danger color: a destructive action.
+    Danger,
+    /// The caution color: something to report or to look after.
+    Caution,
+    /// Flat until hovered, then the danger color.
+    FlatDanger,
+}
+
+/// Filled button with a Tabler icon before its label: every kind is a plain
+/// face without a border, like the login button (the human's choice). A zero
+/// width in `size` fits the content.
+pub fn action_button(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, kind: ActionKind, size: Vec2) -> egui::Response {
+    action_button_if(ui, p, icon, label, kind, size, true)
+}
+
+/// `action_button` greyed out when `enabled` is false. It stays in the
+/// parent's layout: the child UI of `add_enabled_ui` would wrap on its own in
+/// a wrapping row.
+pub fn action_button_if(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icon: &str,
+    label: &str,
+    kind: ActionKind,
+    size: Vec2,
+    enabled: bool,
+) -> egui::Response {
+    const ICON: f32 = 15.0;
+    const GAP: f32 = 7.0;
+    let enabled = enabled && ui.is_enabled();
+    let font = egui::FontId::proportional(12.5);
+    let width = |ui: &egui::Ui| {
+        ui.painter()
+            .layout_no_wrap(label.to_owned(), font.clone(), Color32::PLACEHOLDER)
+            .size()
+            .x
     };
-    ui.set_style(style);
-    response
+    let lead = if icon.is_empty() { 0.0 } else { ICON + GAP };
+    let content = lead + width(ui);
+    let desired = Vec2::new(if size.x > 0.0 { size.x } else { content + 24.0 }, size.y);
+    let (rect, resp) = ui.allocate_exact_size(desired, if enabled { Sense::click() } else { Sense::hover() });
+    let hot = enabled && (resp.hovered() || resp.has_focus());
+    let (fill, ink) = match kind {
+        ActionKind::Primary => (if hot { p.violet_light } else { p.violet }, p.on_accent),
+        ActionKind::Danger => (if hot { p.danger } else { p.danger.gamma_multiply(0.88) }, p.navy),
+        ActionKind::Caution => (if hot { p.amber } else { p.amber.gamma_multiply(0.88) }, p.navy),
+        ActionKind::FlatDanger if hot => (p.danger.gamma_multiply(0.88), p.navy),
+        ActionKind::Flat | ActionKind::FlatDanger => (if hot { p.raised.lerp_to_gamma(p.ink, 0.16) } else { p.raised }, p.ink),
+    };
+    let fade = if enabled { 1.0 } else { 0.45 };
+    let radius = ui.visuals().widgets.inactive.corner_radius;
+    ui.painter().rect_filled(rect, radius, fill.gamma_multiply(fade));
+    let ink = ink.gamma_multiply(fade);
+    let galley = ui.painter().layout_no_wrap(label.to_owned(), font, ink);
+    let left = rect.center().x - content / 2.0;
+    if let Some(texture) = super::icons::global(icon) {
+        ui.painter().image(
+            texture.id(),
+            egui::Rect::from_center_size(egui::pos2(left + ICON / 2.0, rect.center().y), Vec2::splat(ICON)),
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            ink,
+        );
+    }
+    // centered on the line, not on the ink: a row of buttons shares a baseline
+    let text = egui::pos2(left + lead, rect.center().y - galley.size().y / 2.0).round();
+    ui.painter().galley(text, galley, ink);
+    if hot {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
+    resp
 }
 
 /// Primary action using the Aurora accent and the flat button geometry.
 pub fn primary_button_sized(ui: &mut egui::Ui, p: &Palette, label: &str, size: Vec2) -> egui::Response {
     ui.add_sized(
         size,
-        egui::Button::new(RichText::new(label).size(12.0).strong().color(p.ink))
+        egui::Button::new(RichText::new(label).size(12.0).strong().color(p.on_accent))
             .fill(p.violet)
+            .stroke(Stroke::new(1.0, p.violet))
             .corner_radius(ui.visuals().widgets.inactive.corner_radius)
             .truncate(),
     )
@@ -632,28 +1063,31 @@ pub fn online_color(p: &Palette, online: bool) -> Color32 {
 }
 
 /// Region maturity badge (G / M / A), flat vector square in the Aurora style.
+/// Letter, background and letter color of a classification label.
+/// Fixed-meaning colors (kept from the official viewer): G violet, M white,
+/// A red.
+pub fn maturity_style(p: &Palette, maturity: &str) -> Option<(&'static str, Color32, Color32)> {
+    // theme-guard: content — the white and the red of the official maturity badges
+    const WHITE: Color32 = Color32::WHITE;
+    const ADULT: Color32 = Color32::from_rgb(0xD9, 0x2D, 0x2D);
+    match maturity {
+        "" => None,
+        value if value == aurora_i18n::text("common-general") => Some(("G", p.violet, WHITE)),
+        value if value == aurora_i18n::text("common-moderate") => Some(("M", WHITE, p.navy)),
+        value if value == aurora_i18n::text("common-adult") => Some(("A", ADULT, WHITE)),
+        _ => None,
+    }
+}
+
 pub fn maturity_badge(ui: &mut egui::Ui, p: &Palette, maturity: &str, size: f32) -> Option<egui::Response> {
-    // Fixed-meaning colors (kept from the official viewer): G violet, M white, A red.
-    let (letter, bg, fg, tip) = match maturity {
-        value if value == aurora_i18n::text("common-general") => (
-            "G",
-            p.violet,
-            Color32::WHITE,
-            aurora_i18n::tr!("ui-widgets-general-region-all-ages"),
-        ),
-        value if value == aurora_i18n::text("common-moderate") => {
-            ("M", Color32::WHITE, p.navy, aurora_i18n::tr!("ui-widgets-moderate-region"))
-        }
-        value if value == aurora_i18n::text("common-adult") => (
-            "A",
-            Color32::from_rgb(0xD9, 0x2D, 0x2D),
-            Color32::WHITE,
-            aurora_i18n::tr!("ui-widgets-adult-region"),
-        ),
-        _ => return None,
+    let (letter, bg, fg) = maturity_style(p, maturity)?;
+    let tip = match letter {
+        "G" => aurora_i18n::tr!("ui-widgets-general-region-all-ages"),
+        "M" => aurora_i18n::tr!("ui-widgets-moderate-region"),
+        _ => aurora_i18n::tr!("ui-widgets-adult-region"),
     };
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(size), Sense::hover());
-    ui.painter().rect_filled(rect, CornerRadius::same(2), bg);
+    ui.painter().rect_filled(rect, inner_radius(ui.visuals()), bg);
     // centered on the letter itself, not on the text row
     let galley = ui
         .painter()
@@ -683,7 +1117,7 @@ pub fn paint_ink_centered(painter: &egui::Painter, galley: std::sync::Arc<egui::
 }
 
 /// A picture fitted in `size` keeping its aspect, or a placeholder (a
-/// Phosphor `icon` over a caption) while there is none.
+/// Tabler `icon` over a caption) while there is none.
 pub fn picture(
     ui: &mut egui::Ui,
     p: &Palette,
@@ -693,7 +1127,7 @@ pub fn picture(
     placeholder: &str,
 ) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
-    ui.painter().rect_filled(rect, 2.0, p.field);
+    ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.field);
     match tex {
         Some(t) => {
             let [w, h] = t.size();
@@ -707,7 +1141,7 @@ pub fn picture(
                 t.id(),
                 egui::Rect::from_center_size(rect.center(), fit),
                 egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                Color32::WHITE,
+                PICTURE_TINT,
             );
         }
         None => {
@@ -729,18 +1163,24 @@ pub fn picture(
             );
         }
     }
-    ui.painter()
-        .rect_stroke(rect, 2.0, egui::Stroke::new(1.0, p.raised), egui::StrokeKind::Inside);
+    ui.painter().rect_stroke(
+        rect,
+        ui.visuals().window_corner_radius,
+        egui::Stroke::new(1.0, p.raised),
+        egui::StrokeKind::Inside,
+    );
     resp
 }
 
-/// A menu opened by a Phosphor icon button (menu_button with an image).
+/// A menu opened by a Tabler icon button, with the rows and the frame of the
+/// right-click menus (`menu::button`).
 pub fn icon_menu(ui: &mut egui::Ui, p: &Palette, name: &str, tip: &str, content: impl FnOnce(&mut egui::Ui)) {
-    let Some(t) = super::icons::global(name) else {
-        ui.menu_button(tip, content);
-        return;
+    let button = match super::icons::global(name) {
+        Some(t) => {
+            let img = egui::Image::from_texture(egui::load::SizedTexture::new(t.id(), Vec2::splat(14.0))).tint(p.muted);
+            egui::Button::image(img).frame(false)
+        }
+        None => egui::Button::new(tip),
     };
-    let img = egui::Image::from_texture(egui::load::SizedTexture::new(t.id(), Vec2::splat(14.0))).tint(p.muted);
-    let (resp, _) = egui::containers::menu::MenuButton::from_button(egui::Button::image(img).frame(false)).ui(ui, content);
-    resp.on_hover_text(tip);
+    super::menu::button(ui, p, button, content).on_hover_text(tip);
 }

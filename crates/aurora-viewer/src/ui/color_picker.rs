@@ -203,7 +203,7 @@ impl ColorPicker {
         )
         .fixed()
         .auto_height()
-        .framed_header("palette")
+        .framed_header("palette-filled")
         .help(aurora_i18n::tr!("color-picker-help"))
         .show(ctx, p, &mut open, |ui| {
             egui::Frame::new().inner_margin(10).show(ui, |ui| {
@@ -224,7 +224,7 @@ impl ColorPicker {
                 ui.label(RichText::new(aurora_i18n::tr!("color-picker-save-hint")).size(11.0).color(p.muted));
                 ui.horizontal(|ui| {
                     let label = RichText::new(aurora_i18n::tr!("color-picker-pipette")).size(12.0).color(p.ink);
-                    let button = if let Some(icon) = super::icons::global("eyedropper") {
+                    let button = if let Some(icon) = super::icons::global("color-picker") {
                         egui::Button::image_and_text(egui::Image::new((icon.id(), Vec2::splat(16.0))).tint(p.ink), label)
                     } else {
                         egui::Button::new(label)
@@ -253,9 +253,9 @@ impl ColorPicker {
                     [ui.available_width(), 16.0],
                     egui::Label::new(RichText::new(status).size(11.0).color(p.muted)),
                 );
-                ui.separator();
+                widgets::divider(ui, p);
                 ui.horizontal(|ui| {
-                    let apply = ui.checkbox(&mut prefs.apply, aurora_i18n::tr!("color-picker-apply"));
+                    let apply = widgets::checkbox(ui, p, &mut prefs.apply, aurora_i18n::tr!("color-picker-apply"));
                     self.record(Control::Apply, apply.rect);
                     apply.on_hover_text(aurora_i18n::tr!("color-picker-apply-hint"));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -349,7 +349,7 @@ impl ColorPicker {
             if let Some(parent) = self.parent {
                 ctx.layer_painter(egui::LayerId::new(egui::Order::Middle, parent)).rect_stroke(
                     origin.expand(2.0),
-                    3.0,
+                    ctx.global_style().visuals.window_corner_radius,
                     Stroke::new(1.5, p.violet.gamma_multiply(opacity)),
                     egui::StrokeKind::Outside,
                 );
@@ -437,7 +437,7 @@ impl ColorPicker {
             }
         }
         ui.add_space(3.0);
-        ui.separator();
+        widgets::divider(ui, p);
         let mut hsl = [draft.hsl[0] * 360.0, draft.hsl[1] * 100.0, draft.hsl[2] * 100.0];
         let mut changed = false;
         for (i, label) in [
@@ -493,8 +493,12 @@ impl ColorPicker {
         let marker = Pos2::new(rect.left() + draft.hsl[0] * width, rect.bottom() - draft.hsl[1] * height);
         ui.painter().circle_stroke(marker, 6.0, Stroke::new(3.0, p.field));
         ui.painter().circle_stroke(marker, 6.0, Stroke::new(1.0, p.ink));
-        ui.painter()
-            .rect_stroke(rect, 2.0, Stroke::new(1.0, p.raised), egui::StrokeKind::Inside);
+        ui.painter().rect_stroke(
+            rect,
+            ui.visuals().window_corner_radius,
+            Stroke::new(1.0, p.raised),
+            egui::StrokeKind::Inside,
+        );
         let (bar, response) = ui.allocate_exact_size(Vec2::new(18.0, height), Sense::click_and_drag());
         self.record(Control::Lightness, bar);
         let mut mesh = egui::Mesh::default();
@@ -518,8 +522,12 @@ impl ColorPicker {
         let y = bar.bottom() - draft.hsl[2] * height;
         ui.painter().hline(bar.x_range(), y, Stroke::new(3.0, p.field));
         ui.painter().hline(bar.x_range(), y, Stroke::new(1.0, p.ink));
-        ui.painter()
-            .rect_stroke(bar, 2.0, Stroke::new(1.0, p.raised), egui::StrokeKind::Inside);
+        ui.painter().rect_stroke(
+            bar,
+            ui.visuals().window_corner_radius,
+            Stroke::new(1.0, p.raised),
+            egui::StrokeKind::Inside,
+        );
         edited
     }
 
@@ -543,7 +551,7 @@ impl ColorPicker {
                         ui.allocate_exact_size(Vec2::new(width, 26.0), if current { Sense::drag() } else { Sense::hover() });
                     if !current && self.mixed {
                         // A mixed selection has no single original swatch.
-                        ui.painter().rect_filled(rect, 3.0, p.field);
+                        ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.field);
                         for col in 0..(width / 8.0).ceil() as usize {
                             for row in 0..4 {
                                 if (col + row) % 2 == 0 {
@@ -554,10 +562,14 @@ impl ColorPicker {
                             }
                         }
                     } else {
-                        ui.painter().rect_filled(rect, 3.0, color(rgb));
+                        ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, color(rgb));
                     }
-                    ui.painter()
-                        .rect_stroke(rect, 3.0, Stroke::new(1.0, p.raised), egui::StrokeKind::Inside);
+                    ui.painter().rect_stroke(
+                        rect,
+                        ui.visuals().window_corner_radius,
+                        Stroke::new(1.0, p.raised),
+                        egui::StrokeKind::Inside,
+                    );
                     if current {
                         self.record(Control::Current, rect);
                         response.dnd_set_drag_payload(draft.rgb);
@@ -581,11 +593,12 @@ impl ColorPicker {
                     let slot = row * 16 + col;
                     let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 19.0), Sense::click());
                     self.record(Control::Slot(slot), rect);
-                    ui.painter().rect_filled(rect, 2.0, color(prefs.palette[slot]));
+                    ui.painter()
+                        .rect_filled(rect, ui.visuals().window_corner_radius, color(prefs.palette[slot]));
                     let dropping = response.dnd_hover_payload::<Rgb>().is_some();
                     ui.painter().rect_stroke(
                         rect,
-                        2.0,
+                        ui.visuals().window_corner_radius,
                         Stroke::new(if dropping { 2.0 } else { 1.0 }, if dropping { p.violet } else { p.raised }),
                         egui::StrokeKind::Inside,
                     );
@@ -596,11 +609,10 @@ impl ColorPicker {
                         draft.set_rgb(prefs.palette[slot]);
                         edited = true;
                     }
-                    response.context_menu(|ui| {
-                        if ui.button(aurora_i18n::tr!("color-picker-save-slot")).clicked() {
+                    super::menu::context_menu(&response, p, |ui| {
+                        if super::menu::item(ui, p, "device-floppy-filled", aurora_i18n::tr!("color-picker-save-slot")) {
                             prefs.store(slot, draft.rgb);
                             self.notice = aurora_i18n::tr!("color-picker-saved").to_owned();
-                            ui.close();
                         }
                     });
                     response.on_hover_text(format!("#{}", hex(prefs.palette[slot])));

@@ -7,27 +7,35 @@ use crate::theme::Palette;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-/// Picker tabs: (label, Phosphor icon, Unicode group).
+/// Picker tabs: (label, Tabler icon, Unicode group).
 fn categories() -> &'static Vec<(&'static str, &'static str, emojis::Group)> {
     static TABLE: aurora_i18n::Localized<Vec<(&'static str, &'static str, emojis::Group)>> = aurora_i18n::Localized::new();
     TABLE.get(|| {
         vec![
-            (aurora_i18n::tr!("ui-emoji-smileys"), "smiley", emojis::Group::SmileysAndEmotion),
-            (aurora_i18n::tr!("common-people"), "hand-waving", emojis::Group::PeopleAndBody),
+            (
+                aurora_i18n::tr!("ui-emoji-smileys"),
+                "mood-smile-filled",
+                emojis::Group::SmileysAndEmotion,
+            ),
+            (aurora_i18n::tr!("common-people"), "user-filled", emojis::Group::PeopleAndBody),
             (
                 aurora_i18n::tr!("ui-emoji-animals-and-nature"),
-                "drop",
+                "paw-filled",
                 emojis::Group::AnimalsAndNature,
             ),
-            (aurora_i18n::tr!("ui-emoji-food"), "gift", emojis::Group::FoodAndDrink),
-            (aurora_i18n::tr!("ui-emoji-travel"), "airplane-tilt", emojis::Group::TravelAndPlaces),
+            (aurora_i18n::tr!("ui-emoji-food"), "apple-filled", emojis::Group::FoodAndDrink),
+            (
+                aurora_i18n::tr!("ui-emoji-travel"),
+                "plane-tilt-filled",
+                emojis::Group::TravelAndPlaces,
+            ),
             (
                 aurora_i18n::tr!("ui-emoji-activities"),
-                "person-simple-run",
+                "ball-bowling-filled",
                 emojis::Group::Activities,
             ),
-            (aurora_i18n::tr!("common-objects"), "cube", emojis::Group::Objects),
-            (aurora_i18n::tr!("ui-emoji-symbols"), "star", emojis::Group::Symbols),
+            (aurora_i18n::tr!("common-objects"), "bulb-filled", emojis::Group::Objects),
+            (aurora_i18n::tr!("ui-emoji-symbols"), "star-filled", emojis::Group::Symbols),
         ]
     })
 }
@@ -214,12 +222,28 @@ impl Emoji {
 
     /// Text with color emoji added to the current (wrapping) layout.
     pub fn inline(&mut self, ui: &mut egui::Ui, text: &str, size: f32, color: egui::Color32, italics: bool) {
+        self.inline_marked(ui, text, size, color, italics, None);
+    }
+
+    /// `inline`, on a background when one is given (a search match).
+    pub fn inline_marked(
+        &mut self,
+        ui: &mut egui::Ui,
+        text: &str,
+        size: f32,
+        color: egui::Color32,
+        italics: bool,
+        background: Option<egui::Color32>,
+    ) {
         let mut run = String::new();
         let flush = |ui: &mut egui::Ui, run: &mut String| {
             if !run.is_empty() {
                 let mut rt = egui::RichText::new(std::mem::take(run)).size(size).color(color);
                 if italics {
                     rt = rt.italics();
+                }
+                if let Some(bg) = background {
+                    rt = rt.background_color(bg);
                 }
                 ui.add(egui::Label::new(rt).wrap().selectable(true));
             }
@@ -258,9 +282,10 @@ impl Emoji {
                 let sel = self.tab == i;
                 let (rect, resp) = ui.allocate_exact_size(egui::vec2(26.0, 24.0), egui::Sense::click());
                 if sel {
-                    ui.painter().rect_filled(rect, 2.0, p.violet.gamma_multiply(0.3));
+                    ui.painter()
+                        .rect_filled(rect, ui.visuals().window_corner_radius, p.violet.gamma_multiply(0.3));
                 } else if resp.hovered() {
-                    ui.painter().rect_filled(rect, 2.0, p.raised);
+                    ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
                 }
                 if let Some(t) = icons.get(icon) {
                     let r = egui::Rect::from_center_size(rect.center(), egui::vec2(16.0, 16.0));
@@ -281,7 +306,7 @@ impl Emoji {
                 .hint_text(aurora_i18n::tr!("ui-emoji-search-emoji-name-or-code"))
                 .desired_width(f32::INFINITY),
         );
-        ui.separator();
+        crate::ui::widgets::divider(ui, p);
         let q = self.query.trim().trim_matches(':').to_lowercase();
         let list: Vec<char> = if q.is_empty() {
             self.lists.get(self.tab).cloned().unwrap_or_default()
@@ -309,7 +334,7 @@ impl Emoji {
                         for c in list.iter().skip(r * cols).take(cols) {
                             let (rect, resp) = ui.allocate_exact_size(egui::vec2(cell, cell), egui::Sense::click());
                             if resp.hovered() {
-                                ui.painter().rect_filled(rect, 3.0, p.raised);
+                                ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
                             }
                             if let Some(t) = self.texture(ui.ctx(), *c) {
                                 let ir = rect.shrink(3.0);
@@ -317,7 +342,7 @@ impl Emoji {
                                     t.id(),
                                     ir,
                                     egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                                    egui::Color32::WHITE,
+                                    crate::ui::widgets::PICTURE_TINT,
                                 );
                             }
                             // tooltip: shortcode to type it in chat

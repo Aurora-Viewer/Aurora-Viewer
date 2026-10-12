@@ -122,7 +122,7 @@ pub(super) fn show(
         super::key(ui, p, aurora_i18n::tr!("ui-land-media-replace-texture"));
         let size = Vec2::new(64.0, 80.0);
         let (rect, r) = ui.allocate_exact_size(size, if can { egui::Sense::click() } else { egui::Sense::hover() });
-        ui.painter().rect_filled(rect, 2.0, p.field);
+        ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.field);
         let id = parcel.media.media_id;
         if !id.is_nil() {
             s.wanted_images.insert(id);
@@ -131,7 +131,7 @@ pub(super) fn show(
                     t.id(),
                     rect,
                     egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                    egui::Color32::WHITE,
+                    super::super::widgets::PICTURE_TINT,
                 );
             }
         }
@@ -153,6 +153,7 @@ pub(super) fn show(
         ui.add_space(super::KEY_W);
         let (r, on) = check(
             ui,
+            p,
             can,
             parcel.media.auto_scale,
             aurora_i18n::tr!("ui-land-media-automatic-scaling"),
@@ -201,6 +202,7 @@ pub(super) fn show(
         // DEV-10042: no looping for static types
         let (r, on) = check(
             ui,
+            p,
             can && allow_loop,
             allow_loop && parcel.media.looping,
             aurora_i18n::tr!("ui-land-media-looping"),

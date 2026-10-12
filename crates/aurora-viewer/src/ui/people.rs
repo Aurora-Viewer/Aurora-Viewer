@@ -7,9 +7,12 @@ use super::widgets::{self, Floater};
 use crate::theme::Palette;
 use crate::world::World;
 use crate::world::mutes::{MuteType, flag};
-use egui::{Color32, RichText, Vec2};
+use egui::{RichText, Vec2};
 use glam::Vec3;
 use uuid::Uuid;
+
+mod radar;
+pub use radar::{RadarData, RadarSettings, age_days, radar_name};
 
 pub enum PeopleAction {
     OpenIm(Uuid),
@@ -32,7 +35,25 @@ pub enum PeopleAction {
         flag: u32,
         on: bool,
     },
+    /// Double click on an avatar of the radar that is not drawn
+    /// (ZoomToAvatarNotPossible).
+    TooFarToZoom,
 }
+
+/// Where the window opens before the user places it: the top left corner of
+/// the work area (`layout::work_area`), level with the mini-map window,
+/// which a first launch opens in the opposite corner
+/// (`minimap::default_rect`).
+pub(crate) fn default_pos(work: egui::Rect) -> egui::Pos2 {
+    work.left_top() + Vec2::splat(super::layout::GAP)
+}
+
+/// Its size then. Firestorm gives 400 x 570 to floater_people.xml and
+/// 400 x 440 to floater_fs_radar.xml, with the embedded map and a smaller
+/// font; here the map is hidden by default (`RadarSettings::show_minimap`):
+/// the width holds the ten columns of the radar and a name of some eighteen
+/// characters, the height a dozen avatars.
+pub(crate) const DEFAULT_SIZE: Vec2 = Vec2::new(440.0, 420.0);
 
 #[derive(Default)]
 pub struct PeopleUi {
@@ -40,49 +61,29 @@ pub struct PeopleUi {
     pub friends_tab: usize,
     /// Object name typed in "Bloquer par nom".
     pub block_name: String,
+    /// Avatars selected in the radar.
+    pub radar_selected: Vec<Uuid>,
 }
 
-/// Nearby avatars from coarse locations + loaded avatar objects.
+/// Nearby avatars, nearest first: the loaded ones at their exact place, the
+/// others from the coarse locations (the radar's sightings).
 pub fn nearby(world: &World) -> Vec<(Uuid, String, Vec3, f32)> {
     let me = world.agent.position;
-    let mut out: Vec<(Uuid, String, Vec3, f32)> = Vec::new();
-    for (h, list) in &world.coarse {
-        let Some(off) = world.region_offset(*h) else {
-            continue;
-        };
-        for (id, p) in list {
-            if *id == world.agent_id {
-                continue;
-            }
-            let pos = off + *p;
-            let name = world.person_name(id).unwrap_or_else(|| "…".into());
-            out.push((*id, name, pos, pos.truncate().distance(me.truncate())));
-        }
-    }
-    for (_, o) in world.objects.avatars() {
-        if o.full_id != world.agent_id
-            && !out.iter().any(|e| e.0 == o.full_id)
-            && let Some(off) = world.region_offset(o.key.region)
-        {
-            let pos = off + o.position;
-            out.push((o.full_id, world.person_name(&o.full_id).unwrap_or_default(), pos, pos.distance(me)));
-        }
-    }
+    let mut out: Vec<(Uuid, String, Vec3, f32)> = crate::world::radar::sightings(world)
+        .into_iter()
+        .map(|s| {
+            let name = world.person_name(&s.id).unwrap_or_else(|| "…".into());
+            // without an altitude, the distance on the ground
+            let distance = if s.altitude_known {
+                s.position.distance(me)
+            } else {
+                s.position.truncate().distance(me.truncate())
+            };
+            (s.id, name, s.position, distance)
+        })
+        .collect();
     out.sort_by(|a, b| a.3.total_cmp(&b.3));
     out
-}
-
-/// Width of the distance column of the nearby list.
-const DISTANCE_W: f32 = 70.0;
-
-fn distance_color(p: &Palette, d: f32) -> Color32 {
-    if d <= 20.0 {
-        p.success
-    } else if d <= 100.0 {
-        p.warn
-    } else {
-        p.muted
-    }
 }
 
 pub fn people_window(
@@ -91,19 +92,16 @@ pub fn people_window(
     world: &World,
     panels: &mut Panels,
     st: &mut PeopleUi,
+    radar: &mut RadarData,
     // the mini-map renderer (LLNetMap in the Nearby tab)
     map: &mut dyn FnMut(&mut egui::Ui, Vec2),
 ) -> Vec<PeopleAction> {
     let mut actions = Vec::new();
     let mut open = panels.people;
-    Floater::new(
-        "people",
-        aurora_i18n::tr!("common-people"),
-        egui::pos2(8.0, 70.0),
-        Vec2::new(410.0, 520.0),
-    )
-    .help(aurora_i18n::tr!("ui-people-nearby-avatars-and-friends-list"))
-    .show(ctx, p, &mut open, |ui| {
+    let help = aurora_i18n::tr!("ui-people-nearby-avatars-and-friends-list");
+    let pos = default_pos(super::layout::work_area(ctx));
+    let floater = Floater::new("people", aurora_i18n::tr!("common-people"), pos, DEFAULT_SIZE).help(help);
+    floater.show(ctx, p, &mut open, |ui| {
         let mut tab = panels.people_tab as usize;
         widgets::tabs(
             ui,
@@ -119,49 +117,19 @@ pub fn people_window(
         );
         panels.people_tab = tab as u8;
         ui.add_space(4.0);
+        if panels.people_tab == 0 {
+            // the radar lays out its own filter, beside its buttons
+            let mut blocked = false;
+            radar::tab(ui, p, world, radar, st, map, &mut actions, &mut blocked);
+            if blocked {
+                panels.people_tab = 4;
+            }
+            return;
+        }
         widgets::search_field(ui, &mut st.filter, aurora_i18n::tr!("ui-people-filter"), ui.available_width());
         ui.add_space(4.0);
         let filter = st.filter.trim().to_lowercase();
-        if panels.people_tab == 0 {
-            ui.vertical_centered(|ui| map(ui, Vec2::new(ui.available_width().min(320.0), 150.0)));
-            ui.add_space(4.0);
-            let list: Vec<_> = nearby(world)
-                .into_iter()
-                .filter(|e| filter.is_empty() || e.1.to_lowercase().contains(&filter))
-                .collect();
-            let w = ui.available_width();
-            let title = aurora_i18n::tr!("ui-people-name", value0 = format!("{}", list.len()));
-            widgets::header_row(
-                ui,
-                p,
-                &[(&title, w - DISTANCE_W), (aurora_i18n::tr!("common-distance"), DISTANCE_W)],
-            );
-            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                for (id, name, _, d) in list.iter().take(200) {
-                    ui.horizontal(|ui| {
-                        ui.set_min_height(18.0);
-                        // complete names can be long: cut before the distance
-                        // column (full name on hover)
-                        let name_w = (ui.available_width() - DISTANCE_W).max(60.0);
-                        let name = RichText::new(name).size(13.0).color(p.ink);
-                        let r = ui.add(widgets::elided_label(ui, name, name_w).sense(egui::Sense::click()));
-                        // menu_people_nearby.xml
-                        menu::context_menu(&r, p, |ui| context::avatar_list_menu(ui, p, world, *id, AvatarList::Nearby));
-                        if r.double_clicked() {
-                            actions.push(PeopleAction::OpenIm(*id));
-                        }
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(aurora_i18n::number(*d as f64, 2))
-                                    .size(12.0)
-                                    .strong()
-                                    .color(distance_color(p, *d)),
-                            );
-                        });
-                    });
-                }
-            });
-        } else if panels.people_tab == 2 {
+        if panels.people_tab == 2 {
             groups_tab(ui, p, world, &filter, &mut actions);
         } else if panels.people_tab == 4 {
             blocked_tab(ui, p, world, st, &filter, &mut actions);
@@ -204,34 +172,32 @@ pub fn people_window(
                         menu::context_menu(&r, p, |ui| context::avatar_list_menu(ui, p, world, f.id, AvatarList::Friend));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.spacing_mut().item_spacing.x = 4.0;
-                            if f.online
-                                && widgets::flat_button(ui, p, "TP")
-                                    .on_hover_text(aurora_i18n::tr!("common-offer-teleport"))
-                                    .clicked()
-                            {
+                            // the icons these actions have in the avatar menus
+                            if widgets::icon_button(ui, p, "send-filled", aurora_i18n::tr!("common-offer-teleport"), f.online) {
                                 actions.push(PeopleAction::OfferTeleport(f.id));
                             }
-                            if widgets::flat_button(ui, p, "IM")
-                                .on_hover_text(aurora_i18n::tr!("ui-people-instant-message-im"))
-                                .clicked()
-                            {
+                            if widgets::icon_button(ui, p, "message-filled", aurora_i18n::tr!("ui-people-instant-message-im"), true) {
                                 actions.push(PeopleAction::OpenIm(f.id));
                             }
-                            if widgets::flat_button(ui, p, "i")
-                                .on_hover_text(aurora_i18n::tr!("common-view-profile"))
-                                .clicked()
-                            {
+                            if widgets::icon_button(ui, p, "user-filled", aurora_i18n::tr!("common-view-profile"), true) {
                                 actions.push(PeopleAction::Profile(f.id));
                             }
-                            // Rights granted to me: 1 online status, 2 map location, 4 modify objects
-                            for (bit, ch, tip) in [
-                                (4, "M", aurora_i18n::tr!("ui-people-i-can-modify-their-objects")),
-                                (2, "C", aurora_i18n::tr!("extra-i-can-see-them-on-the-map")),
-                                (1, "E", aurora_i18n::tr!("ui-people-i-can-see-their-online-status")),
+                            ui.add_space(2.0);
+                            // Rights granted to me: 1 online status, 2 map location, 4 modify
+                            // objects, with the icons of the contacts window
+                            for (bit, icon, tip) in [
+                                (4, "pencil-filled", aurora_i18n::tr!("ui-people-i-can-modify-their-objects")),
+                                (2, "map-pin-filled", aurora_i18n::tr!("extra-i-can-see-them-on-the-map")),
+                                (1, "eye-filled", aurora_i18n::tr!("ui-people-i-can-see-their-online-status")),
                             ] {
                                 let on = f.rights_has & bit != 0;
-                                ui.label(RichText::new(ch).size(11.0).color(if on { p.violet_light } else { p.muted_dim }))
-                                    .on_hover_text(tip);
+                                let (cell, hover) = ui.allocate_exact_size(Vec2::splat(14.0), egui::Sense::hover());
+                                if let Some(texture) = super::icons::global(icon) {
+                                    let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+                                    let tint = if on { p.violet_light } else { p.muted_dim.gamma_multiply(0.6) };
+                                    ui.painter().image(texture.id(), cell.shrink(0.5), uv, tint);
+                                }
+                                hover.on_hover_text(tip);
                             }
                         });
                     });
@@ -384,15 +350,15 @@ fn blocked_tab(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut PeopleUi,
                 };
                 // menu_fs_block_list.xml
                 menu::context_menu(&r, p, |ui| {
-                    if menu::item(ui, p, "check-circle", aurora_i18n::tr!("common-stop-ignoring")) {
+                    if menu::item(ui, p, "circle-check-filled", aurora_i18n::tr!("common-stop-ignoring")) {
                         actions.push(PeopleAction::Unblock(m.id, m.name.clone()));
                     }
                     if m.kind != MuteType::ByName {
                         for (bit, icon, label) in [
-                            (flag::VOICE_CHAT, "microphone-slash", aurora_i18n::tr!("ui-people-block-voice")),
-                            (flag::TEXT_CHAT, "chat-teardrop-slash", aurora_i18n::tr!("ui-people-block-text")),
-                            (flag::PARTICLES, "sparkle", aurora_i18n::tr!("common-block-particles")),
-                            (flag::OBJECT_SOUNDS, "speaker-x", aurora_i18n::tr!("ui-people-block-object-sounds")),
+                            (flag::VOICE_CHAT, "microphone-off", aurora_i18n::tr!("ui-people-block-voice")),
+                            (flag::TEXT_CHAT, "message-off", aurora_i18n::tr!("ui-people-block-text")),
+                            (flag::PARTICLES, "sparkles-filled", aurora_i18n::tr!("common-block-particles")),
+                            (flag::OBJECT_SOUNDS, "volume-off", aurora_i18n::tr!("ui-people-block-object-sounds")),
                         ] {
                             // a set flag means « not blocked » (LLMute flags)
                             let mut on = m.flags & bit == 0;
@@ -408,7 +374,7 @@ fn blocked_tab(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut PeopleUi,
                         }
                     }
                     menu::separator(ui, p);
-                    if menu::item_if(ui, p, "user-circle", aurora_i18n::tr!("common-profile"), m.kind == MuteType::Agent) {
+                    if menu::item_if(ui, p, "user-filled", aurora_i18n::tr!("common-profile"), m.kind == MuteType::Agent) {
                         actions.push(PeopleAction::Profile(m.id));
                     }
                 });

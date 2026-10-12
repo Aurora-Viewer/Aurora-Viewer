@@ -15,6 +15,8 @@ use uuid::Uuid;
 const HANDLE: u64 = (256000u64 << 32) | 256000;
 
 /// EEP environment answers (AURORA_DEMO_EEP_PARCEL).
+#[path = "demo_chatlog.rs"]
+pub mod chatlog;
 #[path = "demo_eep.rs"]
 pub mod eep;
 /// Environment selector library and script (AURORA_DEMO_ENV_SELECT).
@@ -31,10 +33,16 @@ pub mod land;
 /// Place details of place links (AURORA_DEMO_PLACE).
 #[path = "demo_place.rs"]
 pub mod place;
+/// Directory answers of the search window (AURORA_DEMO_SEARCH).
+#[path = "demo_search.rs"]
+pub mod search;
 /// Streaming hitch test: objects and textures arriving in waves
 /// (AURORA_DEMO_STREAM).
 #[path = "demo_stream.rs"]
 pub mod stream;
+/// Name plates in every state and at each distance (AURORA_DEMO_TAGS).
+#[path = "demo_tags.rs"]
+pub mod tags;
 
 /// Walkable floor of the demo (plaza top, else the terrain), for the
 /// offline movement stand-in.
@@ -396,6 +404,9 @@ fn demo_raw() -> Llsd {
         .collect();
     let mut raw = llsd_map! {
         "inventory-root" => Llsd::Array(vec![llsd_map!{"folder_id" => u(1)}]),
+        // an adult account that wants every rating (the search window's boxes)
+        "agent_access_max" => "A",
+        "agent_region_access" => "A",
         "inventory-skeleton" => Llsd::Array(skel),
         "buddy-list" => Llsd::Array(buddies),
         "classified_categories" => Llsd::Array(
@@ -474,6 +485,7 @@ fn long_name_events(agent: Uuid) -> Vec<NetEvent> {
             offline: false,
             from_group: false,
             binary_bucket: Vec::new(),
+            timestamp: 0,
         })
     };
     vec![
@@ -508,6 +520,24 @@ fn long_name_events(agent: Uuid) -> Vec<NetEvent> {
     ]
 }
 
+/// AURORA_DEMO_RADAR=1: residents around us for the radar of the People
+/// window, at every kind of range (chat, shout, farther, unknown altitude).
+pub fn radar_events() -> Vec<NetEvent> {
+    vec![NetEvent::CoarseLocations {
+        handle: HANDLE,
+        positions: vec![
+            (DEMO_LOUP, Vec3::new(134.0, 132.0, 24.0)),
+            (DEMO_NOVA, Vec3::new(150.0, 140.0, 24.0)),
+            (DEMO_TESS, Vec3::new(96.0, 150.0, 28.0)),
+            (DEMO_LONG_NAME, Vec3::new(146.0, 132.0, 24.0)),
+            (DEMO_WIDE_NAME, Vec3::new(120.0, 150.0, 24.0)),
+            (u(100), Vec3::new(20.0, 240.0, 60.0)),
+            // no altitude: its range is unknown
+            (u(101), Vec3::new(200.0, 60.0, 0.0)),
+        ],
+    }]
+}
+
 /// AgentProfile reply of the demo residents (AURORA_DEMO_PROFILE).
 fn demo_profile(id: Uuid) -> aurora_net::AvatarProfile {
     use aurora_net::profile::{days_from_civil, flags};
@@ -532,6 +562,7 @@ fn demo_profile(id: Uuid) -> aurora_net::AvatarProfile {
         online: Some(true),
         flags: flags::IDENTIFIED,
         notes: Some(String::new()),
+        sl_image: tags::profile_picture(id),
         ..Default::default()
     };
     if id == DEMO_AGENT {
@@ -558,6 +589,13 @@ fn demo_profile(id: Uuid) -> aurora_net::AvatarProfile {
             (Uuid::from_u128(0x91C0_0002), aurora_i18n::tr!("demo-my-workshop").into()),
         ];
         p.notes = Some(aurora_i18n::tr!("demo-met-at-the-beach-very-friendly").into());
+    } else if id == DEMO_TESS {
+        // three days old, no payment info: the radar's age alert
+        let today = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0.0, |d| d.as_secs_f64());
+        p.born = Some(today - 3.5 * 86_400.0);
+        p.flags = 0;
     } else if id == DEMO_NOVA {
         p.partner = DEMO_LOUP;
         p.hide_age = Some(true);
@@ -610,6 +648,9 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
     if let Some(events) = hud::reply(cmd) {
         return events;
     }
+    if let Some(events) = search::reply(cmd) {
+        return events;
+    }
     use aurora_net::inventory::{FolderContents, InvItem};
     match cmd {
         aurora_net::NetCommand::AgentAnimation { anim, start: false } if *anim == SEAT_ANIM => {
@@ -654,6 +695,8 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                             ("Aurora", "Demo", "")
                         } else if let Some(long) = long_name(id) {
                             long
+                        } else if let Some(resident) = tags::name(id) {
+                            resident
                         } else if let Some((first, sample)) = &glyphs {
                             (first.as_str(), "Resident", sample.display_name)
                         } else {
@@ -796,6 +839,7 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
             } else {
                 text
             };
+            let text = text + &tags::mute_line().unwrap_or_default();
             vec![NetEvent::MuteList(aurora_net::MuteListSource::File(text))]
         }
         // two groups, and someone starts a chat in the first one
@@ -875,6 +919,7 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                         offline: false,
                         from_group: false,
                         binary_bucket: b"Aurora Builders\0".to_vec(),
+                        timestamp: 0,
                     }));
                     ev.push(NetEvent::InstantMessage(aurora_net::InstantMessage {
                         from_agent_id: DEMO_TESS,
@@ -886,6 +931,7 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                         offline: false,
                         from_group: false,
                         binary_bucket: b"Aurora Builders\0".to_vec(),
+                        timestamp: 0,
                     }));
                     ev
                 }
@@ -927,6 +973,12 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 aurora_net::SessionMethod::DeclineInvitation => Vec::new(),
             }
         }
+        // the request made once after login: what the grid kept while we
+        // were away (AURORA_DEMO_CHATLOG=offline), else nothing
+        aurora_net::NetCommand::RequestOfflineMessages => match chatlog::mode() {
+            Some(chatlog::Mode::Offline) => chatlog::offline_messages(DEMO_AGENT),
+            _ => Vec::new(),
+        },
         // opening a group chat ourselves
         aurora_net::NetCommand::SendImDialog { dialog: 15, id, .. } => vec![NetEvent::SessionStarted {
             temp_session: *id,
@@ -2474,6 +2526,7 @@ pub fn events() -> Vec<NetEvent> {
             offline: false,
             from_group: false,
             binary_bucket: bucket,
+            timestamp: 0,
         })
     };
     ev.push(im(22, aurora_i18n::tr!("demo-come-see-the-lagoon-at-sunset"), Vec::new()));
@@ -3845,6 +3898,9 @@ pub fn local_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
     if *id == TEX_HAIR {
         let (empty, period) = hair_demo().map_or((60, 16), |h| (h.empty, h.period));
         return Some(hair_texture(empty, period));
+    }
+    if let Some(picture) = tags::picture_pixels(id) {
+        return Some(picture);
     }
     const N: u32 = 64;
     let tau = std::f32::consts::TAU;

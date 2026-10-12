@@ -272,7 +272,7 @@ pub struct ChatMessage {
     pub message: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct InstantMessage {
     pub from_agent_id: Uuid,
     pub from_name: String,
@@ -284,6 +284,8 @@ pub struct InstantMessage {
     pub from_group: bool,
     /// Extra data (inventory offers: asset type + item id; group invites: fee...).
     pub binary_bucket: Vec<u8>,
+    /// When it was sent (Unix time); 0 when the simulator gave none.
+    pub timestamp: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -345,6 +347,12 @@ pub enum NetEvent {
         session: Uuid,
         reason: String,
     },
+    /// The ReadOfflineMsgs capability failed: Firestorm then asks by
+    /// message (`NetCommand::RequestOfflineMessagesLegacy`).
+    OfflineMessagesFailed,
+    /// An offline group invitation was accepted by capability: the group
+    /// list is to ask again.
+    OfflineGroupInviteAccepted(Uuid),
     /// Answer of the ChatSessionRequest capability (None = failed).
     ChatSessionReply {
         method: crate::social::SessionMethod,
@@ -577,6 +585,14 @@ pub enum NetEvent {
     ClassifiedInfo(Box<crate::ClassifiedInfo>),
     /// ParcelInfoReply (LLRemoteParcelInfoProcessor).
     ParcelInfo(Box<crate::ParcelSummary>),
+    /// One reply packet of a directory search (Dir*Reply).
+    DirReply(Box<crate::search::DirReply>),
+    /// EventInfoReply (LLEventInfo).
+    EventInfo(Box<crate::search::EventInfo>),
+    /// GroupProfileReply (LLGroupMgr::processGroupPropertiesReply).
+    GroupProfile(Box<crate::search::GroupProfile>),
+    /// Land types of the grid, (ProductSKU, description) (ProductInfoRequest).
+    ProductInfo(Vec<(String, String)>),
     /// RegionIDAndHandleReply (LLLandmark::processRegionIDAndHandle).
     RegionIdHandle {
         region_id: Uuid,
@@ -922,6 +938,31 @@ pub enum NetCommand {
     },
     /// Ask for our groups (AgentDataUpdateRequest).
     RequestGroups,
+    /// Ask for the instant messages kept while we were offline, once after
+    /// login (LLIMProcessing::requestOfflineMessages: the ReadOfflineMsgs
+    /// capability, else RetrieveInstantMessages).
+    RequestOfflineMessages,
+    /// The same by the RetrieveInstantMessages message only (after
+    /// `NetEvent::OfflineMessagesFailed`).
+    RequestOfflineMessagesLegacy,
+    /// Answer a friendship offer received while offline: by the
+    /// AcceptFriendship / DeclineFriendship capability, else by message when
+    /// it came with a transaction id.
+    AnswerOfflineFriendship {
+        from: Uuid,
+        transaction: Uuid,
+        /// Calling cards folder (the message's FolderData).
+        folder: Uuid,
+        accept: bool,
+        /// Our legacy full name, sent with the acceptance.
+        agent_name: String,
+    },
+    /// Answer a group invitation received while offline without a session
+    /// id (AcceptGroupInvite / DeclineGroupInvite capability).
+    AnswerOfflineGroupInvite {
+        group: Uuid,
+        accept: bool,
+    },
     /// Make a group active, nil for none (ActivateGroup).
     ActivateGroup(Uuid),
     /// Leave a group (LeaveGroupRequest; AgentDropGroup follows).
@@ -1072,6 +1113,19 @@ pub enum NetCommand {
     ClassifiedDelete(Uuid),
     /// ParcelInfoRequest (name and region of a pick's parcel, place details).
     ParcelInfoRequest(Uuid),
+    /// A directory search (search.rs): `id` names the query in its replies,
+    /// `start` is the first row of the page asked.
+    DirQuery {
+        id: Uuid,
+        start: i32,
+        query: crate::search::DirQuery,
+    },
+    /// EventInfoRequest: the details of an event found.
+    EventInfoRequest(u32),
+    /// GroupProfileRequest: the details of a group found.
+    GroupProfileRequest(Uuid),
+    /// The land types of the grid (ProductInfoRequest capability).
+    ProductInfoRequest,
     /// The parcel at a point of any region, by the RemoteParcelRequest
     /// capability of the agent's region (LLPanelPlaceInfo::displayParcelInfo
     /// for a place link): `handle` of the 256 m slot holding the point,

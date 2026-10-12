@@ -101,7 +101,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, state: &mut Interactions, world: &
                 } else {
                     permission_name(&props.name, props.next_owner_mask)
                 };
-                named_row(ui, p, "cube", &object_label);
+                named_row(ui, p, "box", &object_label);
                 ui.add_space(6.0);
                 ui.label(aurora_i18n::tr!("ui-object-actions-contents"));
                 egui::Frame::new()
@@ -141,7 +141,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, state: &mut Interactions, world: &
                     "ui-object-actions-buy-for-from",
                     value0 = money(props.sale_price).to_string()
                 ));
-                named_row(ui, p, "user", &seller);
+                named_row(ui, p, "user-filled", &seller);
                 if !affordable(props.sale_price) {
                     ui.label(RichText::new(aurora_i18n::tr!("common-insufficient-or-unknown-balance")).color(p.danger));
                 }
@@ -149,9 +149,9 @@ pub fn show(ctx: &egui::Context, p: &Palette, state: &mut Interactions, world: &
                     ui.label(RichText::new(aurora_i18n::tr!("ui-object-actions-this-object-is-no-longer-for-sale")).color(p.danger));
                 }
             } else {
-                named_row(ui, p, "user", &seller);
+                named_row(ui, p, "user-filled", &seller);
                 ui.label(RichText::new(aurora_i18n::tr!("ui-object-actions-via-object")).color(p.muted));
-                named_row(ui, p, "cube", &props.name);
+                named_row(ui, p, "box", &props.name);
                 ui.add_space(6.0);
                 if let Some((default, buttons)) = &d.prices {
                     if buttons.iter().any(|v| *v > 0) {
@@ -312,7 +312,7 @@ pub fn show_contents(
                 Some(Ok(items)) => {
                     egui::Frame::new()
                         .fill(p.field.gamma_multiply(0.72))
-                        .corner_radius(3)
+                        .corner_radius(ui.visuals().window_corner_radius)
                         .inner_margin(4)
                         .show(ui, |ui| {
                             super::widgets::inventory_spacing(ui);
@@ -341,7 +341,7 @@ pub fn show_contents(
                                                     if !item.desc.is_empty() {
                                                         ui.label(&item.desc);
                                                     }
-                                                    ui.separator();
+                                                    crate::ui::widgets::divider(ui, p);
                                                     ui.label(permissions.tooltip());
                                                 });
                                             if response.clicked() || response.secondary_clicked() {
@@ -370,10 +370,9 @@ pub fn show_contents(
                                                 if response.double_clicked() {
                                                     documents.push(document());
                                                 }
-                                                response.context_menu(|ui| {
-                                                    if ui.button(aurora_i18n::tr!("common-open")).clicked() {
+                                                super::menu::context_menu(&response, p, |ui| {
+                                                    if super::menu::item(ui, p, "folder-open-filled", aurora_i18n::tr!("common-open")) {
                                                         documents.push(document());
-                                                        ui.close();
                                                     }
                                                 });
                                             }

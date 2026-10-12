@@ -2,7 +2,7 @@
 //! Firestorm's LLContextMenu / LLMenuItemGL (indra/llui/llmenugl.cpp,
 //! originally LGPL 2.1): flat rows, label on the left, a ▸ for sub-menus,
 //! thin separators, unavailable entries greyed out rather than hidden.
-//! Aurora adds a Phosphor icon at the start of every row, and draws check
+//! Aurora adds a Tabler icon at the start of every row, and draws check
 //! marks at the right end (the left column holds the icon).
 //!
 //! Menus are egui popups (`Popup` / `SubMenu`): a menu closes when an
@@ -10,7 +10,7 @@
 //! greyed entry or a separator keeps it open, as in Firestorm.
 
 use crate::theme::Palette;
-use egui::{Color32, CornerRadius, FontId, Id, LayerId, Popup, PopupAnchor, PopupCloseBehavior, PopupKind, Sense, Stroke, Ui, Vec2};
+use egui::{Color32, FontId, Id, LayerId, Popup, PopupAnchor, PopupCloseBehavior, PopupKind, Sense, Stroke, Ui, Vec2};
 
 /// Row height and paddings (LLMenuItemGL: 20 px rows with a check column;
 /// a bit taller here for the icons).
@@ -27,10 +27,12 @@ pub fn not_yet() -> &'static str {
 
 /// What the right end of a row shows.
 #[derive(Clone, Copy, PartialEq)]
-enum End {
+enum End<'a> {
     None,
     Caret,
     Check(bool),
+    /// The keys of the entry's shortcut.
+    Keys(&'a str),
 }
 
 /// Rows of the menu opened with [`popup_at`], for the hover sounds of the
@@ -56,8 +58,55 @@ fn style(p: &Palette) -> egui::style::StyleModifier {
         s.spacing.menu_margin = egui::Margin::same(4);
         s.visuals.window_fill = fill;
         s.visuals.window_stroke = Stroke::new(1.0, border);
-        s.visuals.menu_corner_radius = CornerRadius::same(3);
+        s.visuals.menu_corner_radius = s.visuals.window_corner_radius;
     })
+}
+
+/// The rectangle and corner radius of a stock pop-up frame in `shape`: the
+/// theme's window face inside its `border`. The panels drawn with
+/// `widgets::overlay` have another border and bring their own glass.
+fn stock_frame(shape: &egui::Shape, faces: [Color32; 2], border: Color32) -> Option<(egui::Rect, f32)> {
+    match shape {
+        egui::Shape::Rect(r) if faces.contains(&r.fill) && r.stroke.color == border => Some((r.rect, f32::from(r.corner_radius.nw))),
+        egui::Shape::Vec(shapes) => shapes.iter().find_map(|s| stock_frame(s, faces, border)),
+        _ => None,
+    }
+}
+
+/// The windows' glass under every pop-up of the frame: menus and their
+/// sub-menus, right-click menus, the lists of the combo boxes. Each one is
+/// alone in its layer and egui paints its frame first there; the blur of the
+/// world and the windows' tint go over that face, inside its border. Called
+/// in world, once the interface of the frame is built: one place for all the
+/// menus instead of one call per menu. An opaque skin (panel_alpha = 255)
+/// keeps its plain menus.
+pub fn glaze(ctx: &egui::Context, p: &Palette) {
+    if p.panel_alpha == 255 {
+        return;
+    }
+    let tint = Color32::from_rgba_unmultiplied(p.panel.r(), p.panel.g(), p.panel.b(), p.panel_alpha);
+    let faces = [tint, p.panel];
+    let layers: Vec<LayerId> = ctx
+        .memory(|m| m.areas().visible_layer_ids())
+        .into_iter()
+        .filter(|layer| layer.order == egui::Order::Foreground)
+        .collect();
+    ctx.graphics_mut(|graphics| {
+        for layer in layers {
+            let Some(list) = graphics.get_mut(layer) else {
+                continue;
+            };
+            if list.is_empty() {
+                continue;
+            }
+            list.mutate_shape(egui::layers::ShapeIdx(0), |first| {
+                if let Some((rect, radius)) = stock_frame(&first.shape, faces, p.raised) {
+                    let frame = std::mem::replace(&mut first.shape, egui::Shape::Noop);
+                    first.shape = egui::Shape::Vec(vec![frame, aurora_render::glass_panel(rect.shrink(1.0), radius, tint)]);
+                }
+            });
+        }
+    });
 }
 
 /// Right-click menu of a widget (replaces `Response::context_menu`).
@@ -72,6 +121,31 @@ pub fn context_menu(resp: &egui::Response, p: &Palette, body: impl FnOnce(&mut U
         .style(style(p))
         .show(body)
         .is_some()
+}
+
+/// Menu opened by a click on the widget `resp` (a "more actions" button, a
+/// status light), with the rows and the frame of the right-click menus at
+/// every level. `close` is egui's rule for the clicks inside it: a stock
+/// `menu_button` closes on any of them, `CloseOnClickOutside` leaves the menu
+/// open until an entry closes it. Returns whether the menu is open.
+pub fn dropdown(resp: &egui::Response, p: &Palette, close: PopupCloseBehavior, body: impl FnOnce(&mut Ui)) -> bool {
+    use egui::containers::menu::MenuConfig;
+    // the tag hands the same style and rule to the sub-menus
+    let config = MenuConfig::new().close_behavior(close).style(style(p));
+    Popup::menu(resp)
+        .close_behavior(close)
+        .style(style(p))
+        .info(egui::UiStackInfo::new(egui::UiKind::Menu).with_tag_value(MenuConfig::MENU_CONFIG_TAG, config))
+        .show(body)
+        .is_some()
+}
+
+/// `button` opening a [`dropdown`] that closes on any click, like a stock
+/// `menu_button`.
+pub fn button(ui: &mut Ui, p: &Palette, button: egui::Button<'_>, body: impl FnOnce(&mut Ui)) -> egui::Response {
+    let resp = ui.add(button);
+    dropdown(&resp, p, PopupCloseBehavior::CloseOnClick, body);
+    resp
 }
 
 /// Menu opened at a screen position, not attached to a widget (the world
@@ -116,7 +190,15 @@ fn row(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enabled: bool, end: En
     let font = FontId::proportional(12.5);
     let ink = if enabled { p.ink } else { p.muted_dim };
     let galley = ui.painter().layout_no_wrap(label.to_owned(), font, ink);
-    let natural = (PAD + ICON + PAD + galley.size().x + RIGHT + PAD).max(MIN_W);
+    let keys = match end {
+        End::Keys(keys) => {
+            let color = if enabled { p.muted } else { p.muted_dim };
+            Some(ui.painter().layout_no_wrap(keys.to_owned(), FontId::proportional(11.5), color))
+        }
+        _ => None,
+    };
+    let right = keys.as_ref().map_or(RIGHT, |k| k.size().x + PAD * 2.0);
+    let natural = (PAD + ICON + PAD + galley.size().x + right + PAD).max(MIN_W);
     // natural width while egui measures the menu, then the menu's width
     let w = if ui.is_sizing_pass() {
         natural
@@ -132,7 +214,7 @@ fn row(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enabled: bool, end: En
     }
     let painter = ui.painter();
     if hot {
-        painter.rect_filled(rect, CornerRadius::same(2), p.violet.gamma_multiply(0.35));
+        painter.rect_filled(rect, ui.visuals().window_corner_radius, p.violet.gamma_multiply(0.35));
     }
     let tint = if !enabled {
         p.muted_dim
@@ -151,8 +233,14 @@ fn row(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enabled: bool, end: En
     let end_rect = egui::Rect::from_center_size(rect.right_center() - Vec2::new(PAD + 6.0, 0.0), Vec2::splat(12.0));
     match end {
         End::None | End::Check(false) => {}
-        End::Caret => paint_icon(painter, "caret-right", end_rect, if enabled { p.muted } else { p.muted_dim }),
+        End::Caret => paint_icon(painter, "caret-right-filled", end_rect, if enabled { p.muted } else { p.muted_dim }),
         End::Check(true) => paint_icon(painter, "check", end_rect, if enabled { p.violet_light } else { p.muted_dim }),
+        End::Keys(_) => {
+            if let Some(keys) = keys {
+                let pos = egui::pos2(rect.right() - PAD - keys.size().x, rect.center().y - keys.size().y * 0.5);
+                painter.galley(pos, keys, p.muted);
+            }
+        }
     }
     resp
 }
@@ -200,6 +288,30 @@ pub fn item_if(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enabled: bool)
     clicked && enabled
 }
 
+/// Entry with the keys of its shortcut at the right end; true when clicked
+/// (the menu closes).
+pub fn item_keys(ui: &mut Ui, p: &Palette, icon: &str, label: &str, keys: &str) -> bool {
+    let clicked = row(ui, p, icon, label, true, End::Keys(keys), false).clicked();
+    if clicked {
+        ui.close();
+    }
+    clicked
+}
+
+/// Entry with a tooltip (an empty `tip` shows none), greyed out when
+/// `enabled` is false; true when clicked (the menu closes).
+pub fn item_tip(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enabled: bool, tip: &str) -> bool {
+    let resp = row(ui, p, icon, label, enabled, End::None, false);
+    let clicked = resp.clicked();
+    if !tip.is_empty() {
+        resp.on_hover_text(tip);
+    }
+    if clicked {
+        ui.close();
+    }
+    clicked && enabled
+}
+
 /// Firestorm entry Aurora does not do yet: greyed, with a tooltip.
 pub fn todo(ui: &mut Ui, p: &Palette, icon: &str, label: &str) {
     row(ui, p, icon, label, false, End::None, false).on_hover_text(not_yet());
@@ -226,24 +338,45 @@ pub fn toggle(ui: &mut Ui, p: &Palette, icon: &str, label: &str, on: &mut bool) 
 
 /// Entry opening a sub-menu on hover (▸). A disabled sub-menu does not open.
 pub fn submenu(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enabled: bool, body: impl FnOnce(&mut Ui)) {
+    submenu_heading(ui, p, icon, label, enabled, body);
+}
+
+/// [`submenu`] that returns its own row, for a heading that is also an
+/// action when clicked (the import menu).
+pub fn submenu_heading(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enabled: bool, body: impl FnOnce(&mut Ui)) -> egui::Response {
     let id = ui.next_auto_id();
     let open = enabled && Popup::is_id_open(ui.ctx(), egui::containers::menu::SubMenu::id_from_widget_id(id));
     let resp = row(ui, p, icon, label, enabled, End::Caret, open);
     if enabled {
         egui::containers::menu::SubMenu::new().show(ui, &resp, body);
     }
+    resp
 }
 
 /// Entry whose icon is a color dot (the mini-map marks); true when clicked.
 pub fn swatch(ui: &mut Ui, p: &Palette, color: Color32, label: &str) -> bool {
     let resp = row(ui, p, "", label, true, End::None, false);
-    let c = resp.rect.left_center() + Vec2::new(PAD + ICON * 0.5, 0.0);
-    ui.painter().circle_filled(c, ICON * 0.38, color);
-    ui.painter().circle_stroke(c, ICON * 0.38, Stroke::new(1.0, p.raised));
+    dot(ui, p, &resp, color);
     if resp.clicked() {
         ui.close();
     }
     resp.clicked()
+}
+
+/// Color dot entry with a check mark, which leaves the menu open (one choice
+/// among several, like the availability of the status light); true when
+/// clicked.
+pub fn swatch_toggle(ui: &mut Ui, p: &Palette, color: Color32, label: &str, on: bool) -> bool {
+    let resp = row(ui, p, "", label, true, End::Check(on), false);
+    dot(ui, p, &resp, color);
+    resp.clicked()
+}
+
+/// The color dot of a swatch row, in the icon column.
+fn dot(ui: &Ui, p: &Palette, row: &egui::Response, color: Color32) {
+    let c = row.rect.left_center() + Vec2::new(PAD + ICON * 0.5, 0.0);
+    ui.painter().circle_filled(c, ICON * 0.38, color);
+    ui.painter().circle_stroke(c, ICON * 0.38, Stroke::new(1.0, p.raised));
 }
 
 /// Thin line between groups of entries.
@@ -251,7 +384,7 @@ pub fn separator(ui: &mut Ui, p: &Palette) {
     let w = if ui.is_sizing_pass() { MIN_W } else { ui.available_width() };
     let (rect, _) = ui.allocate_exact_size(Vec2::new(w, 7.0), Sense::hover());
     ui.painter()
-        .hline(rect.x_range().shrink(4.0), rect.center().y, Stroke::new(1.0, p.raised));
+        .hline(rect.x_range().shrink(4.0), rect.center().y, super::widgets::divider_stroke(p));
 }
 
 /// Muted line that is not an action (an avatar's complexity…).

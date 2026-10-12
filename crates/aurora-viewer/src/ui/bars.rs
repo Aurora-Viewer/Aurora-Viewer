@@ -4,6 +4,7 @@
 
 use super::Panels;
 use super::icons::Icons;
+use super::menu;
 use super::skin::Layout;
 use crate::theme::Palette;
 use egui::{Color32, RichText, Vec2};
@@ -104,16 +105,23 @@ fn slt_time() -> String {
     format!("{:02}:{:02}:{:02} SLT", t / 3600, (t / 60) % 60, t % 60)
 }
 
-fn bar_frame(p: &Palette, alpha: u8) -> egui::Frame {
+/// Frame of the top and bottom bars: the `bar` color at the panels'
+/// opacity, over the windows' blur (`widgets::finish_bar_glass`).
+fn bar_frame(p: &Palette) -> egui::Frame {
     egui::Frame::new()
-        .fill(Color32::from_rgba_unmultiplied(p.bar.r(), p.bar.g(), p.bar.b(), alpha))
+        .fill(Color32::from_rgba_unmultiplied(p.bar.r(), p.bar.g(), p.bar.b(), p.panel_alpha))
         .inner_margin(egui::Margin::symmetric(6, 0))
 }
 
+/// Slot and icon size shared by the buttons of the top bar, so they sit at
+/// a regular pitch whatever they draw.
+const TOP_SLOT: Vec2 = Vec2::new(22.0, 20.0);
+const TOP_ICON: f32 = 16.0;
+
 fn icon_button(ui: &mut egui::Ui, p: &Palette, icons: &Icons, icon: &str, tip: &str, size: f32) -> bool {
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(size + 6.0, size + 4.0), egui::Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(TOP_SLOT, egui::Sense::click());
     if resp.hovered() {
-        ui.painter().rect_filled(rect, 2.0, p.raised);
+        ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
     }
     if let Some(t) = icons.get(icon) {
         let tint = if resp.hovered() { p.ink } else { p.muted };
@@ -138,6 +146,14 @@ pub fn time_of_day() -> [&'static str; 5] {
         aurora_i18n::tr!("common-midnight"),
     ]
 }
+
+/// Icons of the status entries, shared by the "Online status" menu and the
+/// menu of the status light.
+const AUTO_REPLY: &str = "message-chatbot-filled";
+const NO_TELEPORT: &str = "plane-departure-filled";
+const NO_INVITE: &str = "users-plus";
+const NO_FRIENDSHIP: &str = "user-plus";
+const AD_HOC: &str = "messages-filled";
 
 /// Color of the online status: violet away, red do not disturb, orange
 /// automatic response, green available.
@@ -167,52 +183,44 @@ fn status_name(m: &crate::world::status::StatusModes) -> &'static str {
     }
 }
 
+/// Check row of a menu that flips `on`; true when it was clicked (the menu
+/// closes, as it did on a stock checkbox).
+fn flip(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, on: &mut bool, enabled: bool) -> bool {
+    let clicked = menu::check(ui, p, icon, label, *on, enabled);
+    if clicked {
+        *on = !*on;
+    }
+    clicked
+}
+
 /// Entries of Communiquer > Statut de connexion (Firestorm's menu).
-fn status_menu(ui: &mut egui::Ui, status: crate::world::status::StatusModes, action: &mut BarAction) {
+fn status_menu(ui: &mut egui::Ui, p: &Palette, status: crate::world::status::StatusModes, action: &mut BarAction) {
     let mut m = status;
     let mut c = false;
-    c |= ui.checkbox(&mut m.away, aurora_i18n::tr!("common-away")).changed();
-    c |= ui.checkbox(&mut m.dnd, aurora_i18n::tr!("common-do-not-disturb")).changed();
-    c |= ui.checkbox(&mut m.autorespond, aurora_i18n::tr!("ui-bars-auto-reply")).changed();
-    c |= ui
-        .checkbox(&mut m.autorespond_nonfriends, aurora_i18n::tr!("ui-bars-auto-reply-to-non-friends"))
-        .changed();
-    ui.separator();
-    c |= ui
-        .checkbox(
-            &mut m.reject_teleports,
-            aurora_i18n::tr!("ui-bars-reject-teleport-offers-and-requests"),
-        )
-        .changed();
-    c |= ui
-        .checkbox(
-            &mut m.reject_group_invites,
-            aurora_i18n::tr!("ui-bars-reject-all-group-invitations"),
-        )
-        .changed();
-    c |= ui
-        .checkbox(&mut m.reject_friendship, aurora_i18n::tr!("ui-bars-reject-all-friendship-requests"))
-        .changed();
-    ui.menu_button(aurora_i18n::tr!("ui-bars-ad-hoc-conferences"), |ui| {
-        c |= ui
-            .checkbox(&mut m.ignore_adhoc, aurora_i18n::tr!("ui-bars-ignore-all-and-exit-automatically"))
-            .changed();
-        ui.add_enabled_ui(m.ignore_adhoc, |ui| {
-            c |= ui
-                .checkbox(
-                    &mut m.report_ignored_adhoc,
-                    aurora_i18n::tr!("ui-bars-report-ignored-residents-in-nearby-chat"),
-                )
-                .changed();
-            c |= ui
-                .checkbox(&mut m.adhoc_from_friends, aurora_i18n::tr!("ui-bars-do-not-ignore-my-friends"))
-                .changed();
-        });
+    c |= flip(ui, p, "hourglass-filled", aurora_i18n::tr!("common-away"), &mut m.away, true);
+    c |= flip(ui, p, "bell-off", aurora_i18n::tr!("common-do-not-disturb"), &mut m.dnd, true);
+    c |= flip(ui, p, AUTO_REPLY, aurora_i18n::tr!("ui-bars-auto-reply"), &mut m.autorespond, true);
+    let non_friends = aurora_i18n::tr!("ui-bars-auto-reply-to-non-friends");
+    c |= flip(ui, p, AUTO_REPLY, non_friends, &mut m.autorespond_nonfriends, true);
+    menu::separator(ui, p);
+    let teleports = aurora_i18n::tr!("ui-bars-reject-teleport-offers-and-requests");
+    c |= flip(ui, p, NO_TELEPORT, teleports, &mut m.reject_teleports, true);
+    let invites = aurora_i18n::tr!("ui-bars-reject-all-group-invitations");
+    c |= flip(ui, p, NO_INVITE, invites, &mut m.reject_group_invites, true);
+    let friendship = aurora_i18n::tr!("ui-bars-reject-all-friendship-requests");
+    c |= flip(ui, p, NO_FRIENDSHIP, friendship, &mut m.reject_friendship, true);
+    menu::submenu(ui, p, AD_HOC, aurora_i18n::tr!("ui-bars-ad-hoc-conferences"), true, |ui| {
+        let ignore = aurora_i18n::tr!("ui-bars-ignore-all-and-exit-automatically");
+        c |= flip(ui, p, "message-off", ignore, &mut m.ignore_adhoc, true);
+        let enabled = m.ignore_adhoc;
+        let report = aurora_i18n::tr!("ui-bars-report-ignored-residents-in-nearby-chat");
+        c |= flip(ui, p, "message-circle-filled", report, &mut m.report_ignored_adhoc, enabled);
+        let friends = aurora_i18n::tr!("ui-bars-do-not-ignore-my-friends");
+        c |= flip(ui, p, "users", friends, &mut m.adhoc_from_friends, enabled);
     });
-    ui.separator();
-    if ui.button(aurora_i18n::tr!("ui-bars-auto-reply-messages")).clicked() {
+    menu::separator(ui, p);
+    if menu::item(ui, p, "settings-filled", aurora_i18n::tr!("ui-bars-auto-reply-messages")) {
         *action = BarAction::ChatPrefs;
-        ui.close();
         return;
     }
     if c {
@@ -223,10 +231,10 @@ fn status_menu(ui: &mut egui::Ui, status: crate::world::status::StatusModes, act
 /// Status dot next to the bell: its color tells the status, a click opens
 /// the status choices.
 fn status_dot(ui: &mut egui::Ui, p: &Palette, status: crate::world::status::StatusModes, action: &mut BarAction) {
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(20.0, 20.0), egui::Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(TOP_SLOT, egui::Sense::click());
     let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&resp));
     if resp.hovered() || open {
-        ui.painter().rect_filled(rect, 2.0, p.raised);
+        ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
     }
     let col = status_color(p, &status);
     ui.painter().circle_filled(rect.center(), 5.0, col);
@@ -253,303 +261,298 @@ fn status_dot(ui: &mut egui::Ui, p: &Palette, status: crate::world::status::Stat
     if *DEMO_OPEN.get_or_init(|| std::env::var_os("AURORA_DEMO_STATUSMENU").is_some()) && ui.ctx().cumulative_frame_nr() == 300 {
         egui::Popup::open_id(ui.ctx(), egui::Popup::default_response_id(&resp));
     }
-    egui::Popup::menu(&resp)
-        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-        .show(|ui| {
-            ui.set_min_width(250.0);
-            // availability: one of three, like a presence menu
-            let mut m = status;
-            let current = if m.dnd {
-                2
-            } else if m.away {
-                1
-            } else {
-                0
-            };
-            for (i, label, col) in [
-                (0, aurora_i18n::tr!("ui-bars-available"), p.success),
-                (1, aurora_i18n::tr!("common-away"), p.violet),
-                (2, aurora_i18n::tr!("common-do-not-disturb"), p.danger),
-            ] {
-                let r = ui.horizontal(|ui| {
-                    let (dot, _) = ui.allocate_exact_size(Vec2::new(14.0, 16.0), egui::Sense::hover());
-                    ui.painter().circle_filled(dot.center(), 4.5, col);
-                    ui.add(egui::Button::selectable(current == i, label))
-                });
-                if r.inner.clicked() && current != i {
-                    m.away = i == 1;
-                    m.dnd = i == 2;
-                    *action = BarAction::SetStatus(m);
-                }
+    menu::dropdown(&resp, p, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
+        ui.set_min_width(250.0);
+        // availability: one of three, like a presence menu
+        let mut m = status;
+        let current = if m.dnd {
+            2
+        } else if m.away {
+            1
+        } else {
+            0
+        };
+        for (i, label, col) in [
+            (0, aurora_i18n::tr!("ui-bars-available"), p.success),
+            (1, aurora_i18n::tr!("common-away"), p.violet),
+            (2, aurora_i18n::tr!("common-do-not-disturb"), p.danger),
+        ] {
+            if menu::swatch_toggle(ui, p, col, label, current == i) && current != i {
+                m.away = i == 1;
+                m.dnd = i == 2;
+                *action = BarAction::SetStatus(m);
             }
-            ui.separator();
-            let mut sub = BarAction::None;
-            // automatic responses and refusals: the same entries as the menu
-            let mut rest = status;
-            rest.away = m.away;
-            rest.dnd = m.dnd;
-            let mut c = false;
-            c |= ui.checkbox(&mut rest.autorespond, aurora_i18n::tr!("ui-bars-auto-reply")).changed();
-            c |= ui
-                .checkbox(
-                    &mut rest.autorespond_nonfriends,
-                    aurora_i18n::tr!("ui-bars-auto-reply-to-non-friends"),
-                )
-                .changed();
-            ui.separator();
-            c |= ui
-                .checkbox(&mut rest.reject_teleports, aurora_i18n::tr!("ui-bars-reject-teleports"))
-                .changed();
-            c |= ui
-                .checkbox(&mut rest.reject_group_invites, aurora_i18n::tr!("ui-bars-reject-group-invitations"))
-                .changed();
-            c |= ui
-                .checkbox(&mut rest.reject_friendship, aurora_i18n::tr!("ui-bars-reject-friendship-requests"))
-                .changed();
-            c |= ui
-                .checkbox(&mut rest.ignore_adhoc, aurora_i18n::tr!("ui-bars-ignore-ad-hoc-conferences"))
-                .changed();
-            if c {
-                sub = BarAction::SetStatus(rest);
-            }
-            ui.separator();
-            if ui.button(aurora_i18n::tr!("ui-bars-auto-reply-messages")).clicked() {
-                sub = BarAction::ChatPrefs;
-                ui.close();
-            }
-            if !matches!(sub, BarAction::None) {
-                *action = sub;
-            }
-        });
+        }
+        menu::separator(ui, p);
+        let mut sub = BarAction::None;
+        // automatic responses and refusals: the same entries as the menu
+        let mut rest = status;
+        rest.away = m.away;
+        rest.dnd = m.dnd;
+        let mut c = false;
+        c |= menu::toggle(ui, p, AUTO_REPLY, aurora_i18n::tr!("ui-bars-auto-reply"), &mut rest.autorespond);
+        let non_friends = aurora_i18n::tr!("ui-bars-auto-reply-to-non-friends");
+        c |= menu::toggle(ui, p, AUTO_REPLY, non_friends, &mut rest.autorespond_nonfriends);
+        menu::separator(ui, p);
+        let teleports = aurora_i18n::tr!("ui-bars-reject-teleports");
+        c |= menu::toggle(ui, p, NO_TELEPORT, teleports, &mut rest.reject_teleports);
+        let invites = aurora_i18n::tr!("ui-bars-reject-group-invitations");
+        c |= menu::toggle(ui, p, NO_INVITE, invites, &mut rest.reject_group_invites);
+        let friendship = aurora_i18n::tr!("ui-bars-reject-friendship-requests");
+        c |= menu::toggle(ui, p, NO_FRIENDSHIP, friendship, &mut rest.reject_friendship);
+        let ad_hoc = aurora_i18n::tr!("ui-bars-ignore-ad-hoc-conferences");
+        c |= menu::toggle(ui, p, AD_HOC, ad_hoc, &mut rest.ignore_adhoc);
+        if c {
+            sub = BarAction::SetStatus(rest);
+        }
+        menu::separator(ui, p);
+        if menu::item(ui, p, "settings-filled", aurora_i18n::tr!("ui-bars-auto-reply-messages")) {
+            sub = BarAction::ChatPrefs;
+        }
+        if !matches!(sub, BarAction::None) {
+            *action = sub;
+        }
+    });
 }
 
-/// Viewer menus: in the top bar, and as submenus of the wolf menu button
-/// of the navigation bar (without "Avancé").
+/// Viewer menus: the submenus of the wolf menu button of the navigation bar
+/// (without "Avancé" unless `advanced`). An entry carries the icon its
+/// function has in the bottom toolbar and in the world menus.
 fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusInfo, action: &mut BarAction, advanced: bool) {
-    ui.menu_button(small(aurora_i18n::tr!("common-me"), p.ink), |ui| {
-        ui.checkbox(&mut panels.appearance, aurora_i18n::tr!("ui-bars-appearance"));
-        if ui.button(aurora_i18n::tr!("ui-bars-profile")).clicked() {
+    menu::submenu(ui, p, "user-filled", aurora_i18n::tr!("common-me"), true, |ui| {
+        flip(
+            ui,
+            p,
+            "shirt-filled",
+            aurora_i18n::tr!("ui-bars-appearance"),
+            &mut panels.appearance,
+            true,
+        );
+        if menu::item(ui, p, "user-filled", aurora_i18n::tr!("ui-bars-profile")) {
             *action = BarAction::MyProfile;
-            ui.close();
         }
-        ui.separator();
-        if ui.button(aurora_i18n::tr!("common-go-home")).clicked() {
+        menu::separator(ui, p);
+        if menu::item(ui, p, "home-filled", aurora_i18n::tr!("common-go-home")) {
             *action = BarAction::TeleportHome;
-            ui.close();
         }
-        ui.separator();
-        if ui.button(aurora_i18n::tr!("ui-bars-sit-on-ground")).clicked() {
+        menu::separator(ui, p);
+        if menu::item(ui, p, "armchair", aurora_i18n::tr!("ui-bars-sit-on-ground")) {
             *action = BarAction::SitGround;
-            ui.close();
         }
-        if ui.button(aurora_i18n::tr!("common-stand-up")).clicked() {
+        if menu::item(ui, p, "man-filled", aurora_i18n::tr!("common-stand-up")) {
             *action = BarAction::StandUp;
-            ui.close();
         }
-        if ui
-            .button(if st.flying {
-                aurora_i18n::tr!("ui-bars-stop-flying")
-            } else {
-                aurora_i18n::tr!("common-fly")
-            })
-            .clicked()
-        {
+        let fly = if st.flying {
+            aurora_i18n::tr!("ui-bars-stop-flying")
+        } else {
+            aurora_i18n::tr!("common-fly")
+        };
+        if menu::item(ui, p, "plane-tilt-filled", fly) {
             *action = BarAction::ToggleFly;
-            ui.close();
         }
-        ui.separator();
-        if ui.button(aurora_i18n::tr!("ui-bars-preferences")).clicked() {
+        menu::separator(ui, p);
+        if menu::item(ui, p, "settings-filled", aurora_i18n::tr!("ui-bars-preferences")) {
             panels.settings = true;
-            ui.close();
         }
-        ui.separator();
-        if ui.button(aurora_i18n::tr!("ui-bars-log-out")).clicked() {
+        menu::separator(ui, p);
+        if menu::item(ui, p, "logout", aurora_i18n::tr!("ui-bars-log-out")) {
             *action = BarAction::Logout;
-            ui.close();
         }
-        if ui.button(aurora_i18n::tr!("ui-bars-quit-aurora-viewer")).clicked() {
+        if menu::item(ui, p, "power", aurora_i18n::tr!("ui-bars-quit-aurora-viewer")) {
             *action = BarAction::Quit;
-            ui.close();
         }
     });
-    ui.menu_button(small(aurora_i18n::tr!("ui-bars-communicate"), p.ink), |ui| {
-        ui.checkbox(&mut panels.chat, aurora_i18n::tr!("common-conversations"));
-        if ui.button(aurora_i18n::tr!("common-friends")).clicked() {
-            panels.people = true;
-            panels.people_tab = 1;
-            ui.close();
+    menu::submenu(ui, p, "messages-filled", aurora_i18n::tr!("ui-bars-communicate"), true, |ui| {
+        flip(
+            ui,
+            p,
+            "messages-filled",
+            aurora_i18n::tr!("common-conversations"),
+            &mut panels.chat,
+            true,
+        );
+        for (tab, icon, label) in [
+            (1, "users", aurora_i18n::tr!("common-friends")),
+            (0, "radar-filled", aurora_i18n::tr!("common-nearby-people")),
+            (2, "users-group", aurora_i18n::tr!("common-groups")),
+            (4, "forbid-filled", aurora_i18n::tr!("ui-bars-block-list")),
+        ] {
+            if menu::item(ui, p, icon, label) {
+                panels.people = true;
+                panels.people_tab = tab;
+            }
         }
-        if ui.button(aurora_i18n::tr!("common-nearby-people")).clicked() {
-            panels.people = true;
-            panels.people_tab = 0;
-            ui.close();
-        }
-        if ui.button(aurora_i18n::tr!("common-groups")).clicked() {
-            panels.people = true;
-            panels.people_tab = 2;
-            ui.close();
-        }
-        if ui.button(aurora_i18n::tr!("ui-bars-block-list")).clicked() {
-            panels.people = true;
-            panels.people_tab = 4;
-            ui.close();
-        }
-        ui.separator();
+        menu::separator(ui, p);
         // Firestorm "Online Status" menu
-        ui.menu_button(aurora_i18n::tr!("ui-bars-online-status"), |ui| status_menu(ui, st.status, action));
+        menu::submenu(ui, p, "circle-filled", aurora_i18n::tr!("ui-bars-online-status"), true, |ui| {
+            status_menu(ui, p, st.status, action)
+        });
     });
-    ui.menu_button(small(aurora_i18n::tr!("common-world"), p.ink), |ui| {
-        ui.menu_button("HUDs", |ui| {
+    menu::submenu(ui, p, "world-filled", aurora_i18n::tr!("common-world"), true, |ui| {
+        menu::submenu(ui, p, "device-desktop-filled", "HUDs", true, |ui| {
             let mut visible = st.show_huds;
-            if ui.checkbox(&mut visible, aurora_i18n::tr!("ui-bars-show-huds")).changed() {
+            if flip(ui, p, "eye-filled", aurora_i18n::tr!("ui-bars-show-huds"), &mut visible, true) {
                 *action = BarAction::ShowHuds(visible);
             }
-            for (zoom, label) in [
-                (1.0, aurora_i18n::tr!("ui-bars-normal-size")),
-                ((st.hud_zoom / 1.2).max(0.1), aurora_i18n::tr!("common-collapse")),
-                ((st.hud_zoom * 1.2).min(1.0), aurora_i18n::tr!("ui-bars-zoom-in")),
+            for (zoom, icon, label) in [
+                (1.0, "restore", aurora_i18n::tr!("ui-bars-normal-size")),
+                ((st.hud_zoom / 1.2).max(0.1), "zoom-out-filled", aurora_i18n::tr!("common-collapse")),
+                ((st.hud_zoom * 1.2).min(1.0), "zoom-in-filled", aurora_i18n::tr!("ui-bars-zoom-in")),
             ] {
-                if ui.button(label).clicked() {
+                if menu::item(ui, p, icon, label) {
                     *action = BarAction::HudZoom(zoom);
-                    ui.close();
                 }
             }
         });
         // menu_viewer.xml: Historique de téléportation (Alt+H), Lieux
-        if ui
-            .add(egui::Button::new(aurora_i18n::tr!("common-teleport-history")).shortcut_text("Alt+H"))
-            .clicked()
-        {
+        if menu::item_keys(ui, p, "history", aurora_i18n::tr!("common-teleport-history"), "Alt+H") {
             *action = BarAction::TeleportHistory;
-            ui.close();
         }
-        ui.checkbox(&mut panels.places, aurora_i18n::tr!("common-places"));
-        ui.checkbox(&mut panels.minimap, aurora_i18n::tr!("common-mini-map"));
-        ui.checkbox(&mut panels.world_map, aurora_i18n::tr!("common-world-map"));
-        ui.menu_button(aurora_i18n::tr!("ui-bars-ban-lines"), |ui| {
-            for (v, label) in [
-                (0u8, aurora_i18n::tr!("ui-bars-hidden")),
-                (1, aurora_i18n::tr!("ui-bars-on-collision")),
-                (2, aurora_i18n::tr!("common-nearby")),
+        flip(ui, p, "map-pin-filled", aurora_i18n::tr!("common-places"), &mut panels.places, true);
+        // menu_viewer.xml: Search (Ctrl+F)
+        if menu::item_keys(ui, p, "search-filled", aurora_i18n::tr!("search-title"), "Ctrl+F") {
+            panels.search = !panels.search;
+        }
+        flip(
+            ui,
+            p,
+            "compass-filled",
+            aurora_i18n::tr!("common-mini-map"),
+            &mut panels.minimap,
+            true,
+        );
+        flip(ui, p, "map", aurora_i18n::tr!("common-world-map"), &mut panels.world_map, true);
+        menu::submenu(ui, p, "barrier-block-filled", aurora_i18n::tr!("ui-bars-ban-lines"), true, |ui| {
+            for (v, icon, label) in [
+                (0u8, "eye-off", aurora_i18n::tr!("ui-bars-hidden")),
+                (1, "alert-triangle-filled", aurora_i18n::tr!("ui-bars-on-collision")),
+                (2, "radar-filled", aurora_i18n::tr!("common-nearby")),
             ] {
-                if ui.radio(st.ban_lines == v, label).clicked() {
+                if menu::check(ui, p, icon, label, st.ban_lines == v, true) {
                     *action = BarAction::BanLines(v);
-                    ui.close();
                 }
             }
         });
-        ui.menu_button(aurora_i18n::tr!("common-environment"), |ui| {
+        menu::submenu(ui, p, "sunset-2-filled", aurora_i18n::tr!("common-environment"), true, |ui| {
             // back to the region / parcel EEP cycle, in real time
             let shared = !st.local_env;
-            if ui
-                .add(egui::Button::new(aurora_i18n::tr!("ui-bars-use-shared-environments")).selected(shared))
-                .clicked()
-            {
+            if menu::check(
+                ui,
+                p,
+                "world-filled",
+                aurora_i18n::tr!("ui-bars-use-shared-environments"),
+                shared,
+                true,
+            ) {
                 panels.time_of_day = 0;
                 *action = BarAction::SharedEnvironment;
-                ui.close();
             }
-            ui.separator();
+            menu::separator(ui, p);
+            let icons = ["", "sunrise-filled", "sun-high-filled", "sunset-2-filled", "moon-filled"];
             for (i, label) in time_of_day().iter().enumerate().skip(1) {
-                if ui.radio(panels.time_of_day == i as u8, *label).clicked() {
+                if menu::check(ui, p, icons[i], label, panels.time_of_day == i as u8, true) {
                     panels.time_of_day = i as u8;
-                    ui.close();
                 }
             }
-            ui.separator();
+            menu::separator(ui, p);
             // Firestorm's quick preferences lists, and World > Environment >
             // Personal Lighting...
-            if ui.button(aurora_i18n::tr!("ui-bars-environment-picker")).clicked() {
+            if menu::item(ui, p, "sun-filled", aurora_i18n::tr!("ui-bars-environment-picker")) {
                 panels.environment = true;
-                ui.close();
             }
-            if ui.button(aurora_i18n::tr!("common-personal-lighting")).clicked() {
+            if menu::item(ui, p, "adjustments-filled", aurora_i18n::tr!("common-personal-lighting")) {
                 panels.personal_lighting = true;
-                ui.close();
             }
         });
-        ui.separator();
-        if ui.button(aurora_i18n::tr!("common-mouselook-m")).clicked() {
+        menu::separator(ui, p);
+        if menu::item(ui, p, "eye-filled", aurora_i18n::tr!("common-mouselook-m")) {
             *action = BarAction::ToggleMouselook;
-            ui.close();
         }
-        if ui.button(aurora_i18n::tr!("ui-bars-reset-camera-esc")).clicked() {
+        if menu::item(ui, p, "camera-filled", aurora_i18n::tr!("ui-bars-reset-camera-esc")) {
             *action = BarAction::ResetCamera;
-            ui.close();
         }
     });
-    ui.menu_button(small(aurora_i18n::tr!("common-build"), p.ink), |ui| {
-        if ui.button(aurora_i18n::tr!("ui-bars-build-ctrl-b")).clicked() {
-            *action = BarAction::Build(0);
-            ui.close();
-        }
-        if ui.button(aurora_i18n::tr!("ui-bars-edit-objects-ctrl-3")).clicked() {
-            *action = BarAction::Build(1);
-            ui.close();
-        }
-        if ui.button(aurora_i18n::tr!("ui-bars-create-prims-ctrl-4")).clicked() {
-            *action = BarAction::Build(2);
-            ui.close();
-        }
-        if ui.button(aurora_i18n::tr!("ui-bars-edit-land-ctrl-5")).clicked() {
-            *action = BarAction::Build(3);
-            ui.close();
+    menu::submenu(ui, p, "box", aurora_i18n::tr!("common-build"), true, |ui| {
+        for (mode, icon, label) in [
+            (0, "box", aurora_i18n::tr!("ui-bars-build-ctrl-b")),
+            (1, "pencil-filled", aurora_i18n::tr!("ui-bars-edit-objects-ctrl-3")),
+            (2, "circle-plus-filled", aurora_i18n::tr!("ui-bars-create-prims-ctrl-4")),
+            (3, "mountain-filled", aurora_i18n::tr!("ui-bars-edit-land-ctrl-5")),
+        ] {
+            if menu::item(ui, p, icon, label) {
+                *action = BarAction::Build(mode);
+            }
         }
     });
-    ui.menu_button(small(aurora_i18n::tr!("common-contents"), p.ink), |ui| {
-        ui.checkbox(&mut panels.inventory, aurora_i18n::tr!("common-inventory"));
-        import_menu(ui, action);
+    menu::submenu(ui, p, "briefcase-filled", aurora_i18n::tr!("common-contents"), true, |ui| {
+        flip(
+            ui,
+            p,
+            "briefcase-filled",
+            aurora_i18n::tr!("common-inventory"),
+            &mut panels.inventory,
+            true,
+        );
+        import_menu(ui, p, action);
     });
     if advanced {
-        ui.menu_button(small(aurora_i18n::tr!("common-advanced"), p.ink), |ui| {
-            ui.checkbox(&mut panels.perf, aurora_i18n::tr!("ui-bars-performance-ctrl-shift-1"));
-            ui.checkbox(&mut panels.settings, aurora_i18n::tr!("ui-bars-graphics-preferences"));
+        menu::submenu(ui, p, "adjustments-filled", aurora_i18n::tr!("common-advanced"), true, |ui| {
+            let perf = aurora_i18n::tr!("ui-bars-performance-ctrl-shift-1");
+            flip(ui, p, "gauge-filled", perf, &mut panels.perf, true);
+            let graphics = aurora_i18n::tr!("ui-bars-graphics-preferences");
+            flip(ui, p, "settings-filled", graphics, &mut panels.settings, true);
         });
     }
-    ui.menu_button(small(aurora_i18n::tr!("common-help"), p.ink), |ui| {
-        if crate::updater::checks_enabled() && ui.button(aurora_i18n::tr!("update-check")).clicked() {
+    menu::submenu(ui, p, "help-circle-filled", aurora_i18n::tr!("common-help"), true, |ui| {
+        if crate::updater::checks_enabled() && menu::item(ui, p, "download-filled", aurora_i18n::tr!("update-check")) {
             *action = BarAction::CheckUpdates;
-            ui.close();
         }
-        if ui.button(aurora_i18n::tr!("bug-title")).clicked() {
+        if menu::item(ui, p, "bug-filled", aurora_i18n::tr!("bug-title")) {
             *action = BarAction::ReportBug;
-            ui.close();
         }
-        ui.separator();
-        ui.label(small(
-            aurora_i18n::tr!("common-aurora-viewer", value0 = aurora_version::version().to_string()),
-            p.muted,
-        ));
-        ui.separator();
-        ui.label(small(aurora_i18n::tr!("ui-bars-walk-arrow-keys-double-tap-to-run"), p.ink));
-        ui.label(small(aurora_i18n::tr!("extra-jump-ascend-page-crouch-page-fly-home"), p.ink));
-        ui.label(small(aurora_i18n::tr!("ui-bars-mouselook-m-chat-enter"), p.ink));
-        ui.label(small(aurora_i18n::tr!("ui-bars-right-click-drag-orbit-wheel-zoom"), p.ink));
-        ui.label(small(aurora_i18n::tr!("ui-bars-editable-shortcuts-preferences-shortcuts"), p.muted));
+        menu::separator(ui, p);
+        let version = aurora_i18n::tr!("common-aurora-viewer", value0 = aurora_version::version().to_string());
+        menu::info(ui, p, "info-circle-filled", &version);
+        menu::separator(ui, p);
+        menu::info(ui, p, "walk", aurora_i18n::tr!("ui-bars-walk-arrow-keys-double-tap-to-run"));
+        menu::info(
+            ui,
+            p,
+            "plane-tilt-filled",
+            aurora_i18n::tr!("extra-jump-ascend-page-crouch-page-fly-home"),
+        );
+        menu::info(ui, p, "eye-filled", aurora_i18n::tr!("ui-bars-mouselook-m-chat-enter"));
+        menu::info(ui, p, "mouse-filled", aurora_i18n::tr!("ui-bars-right-click-drag-orbit-wheel-zoom"));
+        menu::info(
+            ui,
+            p,
+            "keyboard-filled",
+            aurora_i18n::tr!("ui-bars-editable-shortcuts-preferences-shortcuts"),
+        );
     });
 }
 
-fn import_menu(ui: &mut egui::Ui, action: &mut BarAction) {
+fn import_menu(ui: &mut egui::Ui, p: &Palette, action: &mut BarAction) {
     use crate::imports::Choice;
 
-    let menu = ui.menu_button(aurora_i18n::tr!("import-menu"), |ui| {
-        for choice in [
-            Choice::Texture,
-            Choice::Sound,
-            Choice::Animation,
-            Choice::Material,
-            Choice::Mesh,
-            Choice::Bulk,
-            Choice::Local,
+    let heading = menu::submenu_heading(ui, p, "file-upload-filled", aurora_i18n::tr!("import-menu"), true, |ui| {
+        // each kind keeps the icon it has in the inventory
+        for (choice, icon) in [
+            (Choice::Texture, "photo-filled"),
+            (Choice::Sound, "file-music-filled"),
+            (Choice::Animation, "run"),
+            (Choice::Material, "droplet-filled"),
+            (Choice::Mesh, "cube-3d-sphere"),
+            (Choice::Bulk, "files-filled"),
+            (Choice::Local, "eye-filled"),
         ] {
-            if ui.button(choice.label()).clicked() {
+            if menu::item(ui, p, icon, choice.label()) {
                 *action = BarAction::Import { choice, pick_files: true };
-                ui.close();
             }
         }
     });
     // Deliberate extension of Firestorm's upload submenu: its heading also opens the inspector.
-    if menu.response.clicked() {
+    if heading.clicked() {
         *action = BarAction::Import {
             choice: Choice::Texture,
             pick_files: false,
@@ -574,10 +577,10 @@ fn paint_icon(ui: &egui::Ui, icons: &Icons, name: &str, rect: egui::Rect, size: 
 /// Back / forward arrow of the navigation bar; `dest` is the history entry
 /// it leads to (None = disabled).
 fn nav_arrow(ui: &mut egui::Ui, p: &Palette, icons: &Icons, left: bool, dest: Option<&str>) -> bool {
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(20.0, 20.0), egui::Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(TOP_SLOT, egui::Sense::click());
     let enabled = dest.is_some();
     if enabled && resp.hovered() {
-        ui.painter().rect_filled(rect, 2.0, p.raised);
+        ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
     }
     let col = if !enabled {
         p.muted_dim.gamma_multiply(0.6)
@@ -586,7 +589,7 @@ fn nav_arrow(ui: &mut egui::Ui, p: &Palette, icons: &Icons, left: bool, dest: Op
     } else {
         p.muted
     };
-    paint_icon(ui, icons, if left { "arrow-left" } else { "arrow-right" }, rect, 15.0, col);
+    paint_icon(ui, icons, if left { "arrow-left" } else { "arrow-right" }, rect, TOP_ICON, col);
     let tip = match dest {
         Some(d) if left => aurora_i18n::tr!("ui-bars-back", d = d.to_string()),
         Some(d) => aurora_i18n::tr!("ui-bars-next", d = d.to_string()),
@@ -600,8 +603,23 @@ fn nav_arrow(ui: &mut egui::Ui, p: &Palette, icons: &Icons, left: bool, dest: Op
 fn info_button(ui: &mut egui::Ui, p: &Palette, icons: &Icons) -> bool {
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(16.0, 16.0), egui::Sense::click());
     let col = if resp.hovered() { p.ink } else { p.muted };
-    paint_icon(ui, icons, "info", rect, 16.0, col);
+    paint_icon(ui, icons, "info-circle-filled", rect, 16.0, col);
     resp.on_hover_text(aurora_i18n::tr!("common-about-land")).clicked()
+}
+
+/// Height of the chips of the top bar (voice light, flying, sitting).
+const CHIP_HEIGHT: f32 = 18.0;
+
+/// A state of our avatar (flying, sitting): the accent tint of an active
+/// toolbar button, its label centered on its letters.
+fn state_chip(ui: &mut egui::Ui, p: &Palette, text: &str) {
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text.to_owned(), egui::FontId::proportional(11.5), p.ink);
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(galley.size().x + 14.0, CHIP_HEIGHT), egui::Sense::hover());
+    let radius = ui.visuals().window_corner_radius;
+    ui.painter().rect_filled(rect, radius, p.violet.gamma_multiply(0.40));
+    super::widgets::paint_ink_centered(ui.painter(), galley, rect.center(), p.ink);
 }
 
 /// Voice connection light: green connected, orange connecting, red not
@@ -614,10 +632,27 @@ fn voice_light(ui: &mut egui::Ui, p: &Palette, icons: &Icons, light: crate::voic
         L::Down => (p.danger, aurora_i18n::tr!("ui-bars-voice-not-connected")),
         L::Off => (p.muted_dim, aurora_i18n::tr!("common-voice-disabled")),
     };
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(48.0, 18.0), egui::Sense::click());
+    // as wide as its content, with the same margin on both sides (the label
+    // changes with the language)
+    const MARGIN: f32 = 6.0;
+    const LABEL_AT: f32 = MARGIN + 25.0;
+    let font = egui::FontId::proportional(10.5);
+    let label_width = ui
+        .painter()
+        .layout_no_wrap(aurora_i18n::tr!("common-voice").to_owned(), font.clone(), p.muted)
+        .size()
+        .x;
+    let width = (LABEL_AT + label_width + MARGIN).ceil();
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, CHIP_HEIGHT), egui::Sense::click());
     let painter = ui.painter();
-    painter.rect_filled(rect, 9.0, if resp.hovered() { p.raised } else { p.field });
-    let dot = egui::pos2(rect.left() + 9.0, rect.center().y);
+    let radius = ui.visuals().window_corner_radius;
+    let face = if resp.hovered() {
+        p.raised.lerp_to_gamma(p.ink, 0.16)
+    } else {
+        p.raised
+    };
+    painter.rect_filled(rect, radius, face);
+    let dot = egui::pos2(rect.left() + MARGIN + 4.0, rect.center().y);
     if light == L::Connecting {
         // pulse while connecting
         let t = ui.input(|i| i.time) as f32;
@@ -630,22 +665,20 @@ fn voice_light(ui: &mut egui::Ui, p: &Palette, icons: &Icons, light: crate::voic
     if light == L::Connected {
         painter.circle_stroke(dot, 6.0, egui::Stroke::new(1.0, col.gamma_multiply(0.35)));
     }
-    let icon_rect = egui::Rect::from_center_size(egui::pos2(rect.left() + 23.0, rect.center().y), Vec2::splat(12.0));
+    let icon_rect = egui::Rect::from_center_size(egui::pos2(rect.left() + MARGIN + 17.0, rect.center().y), Vec2::splat(12.0));
     paint_icon(
         ui,
         icons,
-        "microphone",
+        "microphone-filled",
         icon_rect,
         12.0,
         if resp.hovered() { p.ink } else { p.muted },
     );
-    ui.painter().text(
-        egui::pos2(rect.left() + 31.0, rect.center().y),
-        egui::Align2::LEFT_CENTER,
-        aurora_i18n::tr!("common-voice"),
-        egui::FontId::proportional(10.5),
-        if resp.hovered() { p.ink } else { p.muted },
-    );
+    let color = if resp.hovered() { p.ink } else { p.muted };
+    let label = ui
+        .painter()
+        .layout_no_wrap(aurora_i18n::tr!("common-voice").to_owned(), font, color);
+    super::widgets::paint_ink_left(ui.painter(), label, egui::pos2(rect.left() + LABEL_AT, rect.center().y), color);
     let tip = if why.is_empty() || why == state {
         state.to_owned()
     } else {
@@ -755,10 +788,12 @@ pub fn top_bars(
 ) -> (BarAction, super::audio::AudioAction) {
     let mut action = BarAction::None;
     let mut audio_action = super::audio::AudioAction::None;
-    egui::Panel::top("nav_bar")
-        .frame(bar_frame(p, 245))
+    let mut glass = None;
+    let bar = egui::Panel::top("nav_bar")
+        .frame(bar_frame(p))
         .exact_size(layout.nav_bar_height)
         .show(ui, |ui| {
+            glass = Some((ui.painter().clone(), ui.painter().add(egui::Shape::Noop)));
             // the bar's background spans the whole window width
             ui.set_min_width(ui.available_width());
             ui.horizontal_centered(|ui| {
@@ -768,10 +803,9 @@ pub fn top_bars(
                 // Aurora menu (white wolf): Moi, Communiquer, Monde, Construire, Contenu, Avancé, Aide
                 if let Some(t) = icons.get("wolf") {
                     let img = egui::Image::new(t).fit_to_exact_size(Vec2::new(18.0, 18.0)).tint(p.ink);
-                    ui.menu_image_button(img, |ui| {
+                    menu::button(ui, p, egui::Button::image(img), |ui| {
                         main_menus(ui, p, panels, st, &mut action, true);
                     })
-                    .response
                     .on_hover_text(aurora_i18n::tr!("ui-bars-aurora-menu"));
                 }
                 // notification center (bell) next to the wolf
@@ -781,11 +815,10 @@ pub fn top_bars(
                     notif.open = !notif.open;
                 }
                 // online status (away, do not disturb, automatic responses)
-                if st.show_bug_report && icon_button(ui, p, icons, "bug", aurora_i18n::tr!("bug-title"), 17.0) {
+                if st.show_bug_report && icon_button(ui, p, icons, "bug-filled", aurora_i18n::tr!("bug-title"), TOP_ICON) {
                     action = BarAction::ReportBug;
                 }
                 status_dot(ui, p, st.status, &mut action);
-                ui.add_space(2.0);
                 // back / forward through the teleport history, home (Firestorm navigation bar)
                 if nav_arrow(ui, p, icons, true, st.tp_back.as_deref()) {
                     action = BarAction::TeleportBack;
@@ -793,7 +826,7 @@ pub fn top_bars(
                 if nav_arrow(ui, p, icons, false, st.tp_forward.as_deref()) {
                     action = BarAction::TeleportForward;
                 }
-                if icon_button(ui, p, icons, "Home_Off", aurora_i18n::tr!("common-go-home"), 15.0) {
+                if icon_button(ui, p, icons, "Home_Off", aurora_i18n::tr!("common-go-home"), TOP_ICON) {
                     action = BarAction::TeleportHome;
                 }
                 ui.add_space(6.0);
@@ -835,17 +868,13 @@ pub fn top_bars(
                         (st.seated, aurora_i18n::tr!("ui-bars-sitting")),
                     ] {
                         if on {
-                            egui::Frame::new()
-                                .fill(p.indigo)
-                                .corner_radius(egui::CornerRadius::same(2))
-                                .inner_margin(egui::Margin::symmetric(5, 0))
-                                .show(ui, |ui| ui.label(small(text, Color32::WHITE)));
+                            state_chip(ui, p, text);
                         }
                     }
                     ui.add_space(4.0);
                     egui::Frame::new()
                         .fill(p.field)
-                        .corner_radius(egui::CornerRadius::same(2))
+                        .corner_radius(ui.visuals().window_corner_radius)
                         .inner_margin(egui::Margin::symmetric(8, 1))
                         .show(ui, |ui| {
                             ui.set_width((ui.available_width() - 4.0).max(160.0));
@@ -916,6 +945,9 @@ pub fn top_bars(
                 });
             });
         });
+    if let Some((painter, slot)) = glass {
+        super::widgets::finish_bar_glass(&painter, slot, bar.response.rect, p);
+    }
     (action, audio_action)
 }
 
@@ -937,6 +969,7 @@ pub fn run_command(cmd: &str, panels: &mut Panels) -> BarAction {
         "minimap" => panels.minimap = !panels.minimap,
         "worldmap" => panels.world_map = !panels.world_map,
         "places" => panels.places = !panels.places,
+        "search" => panels.search = !panels.search,
         "performance" => panels.perf = !panels.perf,
         "preferences" => panels.settings = !panels.settings,
         "fly" => return BarAction::ToggleFly,
@@ -957,6 +990,7 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "minimap" => panels.minimap,
         "worldmap" => panels.world_map,
         "places" => panels.places,
+        "search" => panels.search,
         "performance" => panels.perf,
         "preferences" => panels.settings,
         "fly" => flying,
@@ -966,22 +1000,27 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
     }
 }
 
+/// Face of a toolbar button: a rounded pill, the accent while its window is
+/// open or its mode is on, a neutral one under the pointer, nothing at rest.
+/// The pills and the gap between them replace dividers.
+fn tool_fill(p: &Palette, active: bool, hovered: bool) -> Option<Color32> {
+    match (active, hovered) {
+        (true, true) => Some(p.violet.gamma_multiply(0.55)),
+        (true, false) => Some(p.violet.gamma_multiply(0.40)),
+        (false, true) => Some(p.raised),
+        (false, false) => None,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn tool_button(ui: &mut egui::Ui, p: &Palette, icons: &Icons, icon: &str, tip: &str, active: bool, width: f32, badge: bool) -> bool {
     let size = Vec2::new(width, 22.0);
     let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
     let icon_size = (width - 6.0).clamp(10.0, 16.0);
+    let radius = ui.visuals().window_corner_radius;
     let painter = ui.painter();
-    if active {
-        painter.rect_filled(rect, 1.0, p.violet.gamma_multiply(0.30));
-        painter.rect_stroke(
-            rect,
-            1.0,
-            egui::Stroke::new(1.0, p.violet.gamma_multiply(0.45)),
-            egui::StrokeKind::Inside,
-        );
-    } else if resp.hovered() {
-        painter.rect_filled(rect, 2.0, p.field);
+    if let Some(fill) = tool_fill(p, active, resp.hovered()) {
+        painter.rect_filled(rect, radius, fill);
     }
     if let Some(t) = icons.get(icon) {
         let tint = if active || resp.hovered() { p.ink } else { p.muted };
@@ -994,13 +1033,15 @@ fn tool_button(ui: &mut egui::Ui, p: &Palette, icons: &Icons, icon: &str, tip: &
         );
     }
     if icon == "AO" {
-        painter.text(
-            rect.center(),
-            egui::Align2::CENTER_CENTER,
-            "AO",
-            egui::FontId::proportional(12.0),
-            if active || resp.hovered() { p.ink } else { p.muted },
-        );
+        // centered on the letters' ink like the icons beside it: the line box
+        // of a font sits lower than its capitals
+        let color = if active || resp.hovered() { p.ink } else { p.muted };
+        let galley = painter.layout_no_wrap("AO".to_owned(), egui::FontId::proportional(12.0), color);
+        // bold like the worn names (LLFontGL BOLD_OFFSET): the letters weigh
+        // as much as the filled icons of the other buttons
+        let bold = super::widgets::bold_text_offset(ui);
+        super::widgets::paint_ink_centered(painter, galley.clone(), rect.center(), color);
+        super::widgets::paint_ink_centered(painter, galley, rect.center() + bold, color);
     }
     if badge {
         painter.circle_filled(
@@ -1014,7 +1055,7 @@ fn tool_button(ui: &mut egui::Ui, p: &Palette, icons: &Icons, icon: &str, tip: &
 
 /// Microphone button state (Firestorm "Parler" button with its arrow).
 #[derive(Default)]
-pub struct MicButton {
+pub struct MicButton<'a> {
     /// Toggle mode: microphone switched on.
     pub on: bool,
     /// Hold-to-talk mode (else click toggles).
@@ -1031,56 +1072,91 @@ pub struct MicButton {
     pub open_prefs: bool,
     /// Output: the mode switch changed.
     pub mode_changed: bool,
+    /// Key (or mouse button) of push-to-talk, shown with the hold mode.
+    pub key: Option<crate::keybinds::Binding>,
+    /// Microphone and audio output in use ("" = the system's default) and
+    /// the devices to choose from.
+    pub input_device: String,
+    pub output_device: String,
+    pub input_devices: &'a [String],
+    pub output_devices: &'a [String],
+    /// Output: a device was chosen.
+    pub devices_changed: bool,
+    /// Output: the panel opens, its lists of devices are to be read again.
+    pub list_devices: bool,
 }
 
+/// Width of the arrow's zone, right of the microphone.
+const MIC_ARROW: f32 = 14.0;
+
 fn mic_button(ui: &mut egui::Ui, p: &Palette, icons: &Icons, width: f32, mic: &mut MicButton) {
-    let caret_w = if width >= 30.0 { 9.0 } else { 0.0 };
     let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 22.0), egui::Sense::hover());
-    let main = egui::Rect::from_min_max(rect.min, egui::pos2(rect.right() - caret_w, rect.bottom()));
-    let resp = ui.interact(main, ui.id().with("mic_main"), egui::Sense::click_and_drag());
+    let icon_size = (width - 6.0).clamp(10.0, 16.0);
+    // the microphone stands in the middle of the button, in line with the
+    // icons of its neighbors, and the arrow right after it; a button too
+    // narrow for the arrow keeps the microphone, and a right click on it
+    // opens the panel
+    let with_arrow = width >= icon_size + 2.0 * (MIC_ARROW + 1.0);
+    let icon_rect = egui::Rect::from_center_size(rect.center(), Vec2::splat(icon_size));
+    let resp = ui.interact(rect, ui.id().with("mic_main"), egui::Sense::click_and_drag());
+    let arrow = with_arrow.then(|| {
+        let zone = egui::Rect::from_min_max(
+            egui::pos2(icon_rect.right(), rect.top()),
+            egui::pos2(icon_rect.right() + MIC_ARROW, rect.bottom()),
+        );
+        ui.interact(zone, ui.id().with("mic_arrow"), egui::Sense::click())
+    });
     if mic.hold {
-        mic.held = resp.is_pointer_button_down_on();
+        mic.held = resp.is_pointer_button_down_on() && ui.input(|i| i.pointer.primary_down());
     } else if resp.clicked() {
         mic.on = !mic.on;
     }
-    let painter = ui.painter();
+    // The panel keeps its open state itself. egui's memory holds a single
+    // open pop-up, and the list of a device combo is one: kept there, the
+    // panel would close as soon as such a list unfolds.
+    let open_id = ui.id().with("mic_panel_open");
+    let open = ui.ctx().data(|d| d.get_temp::<bool>(open_id)).unwrap_or(false);
+    let on_arrow = arrow.as_ref().is_some_and(|r| r.hovered());
+    let radius = ui.visuals().window_corner_radius;
     let live = mic.talking;
-    if live {
-        painter.rect_filled(rect, 1.0, p.violet.gamma_multiply(0.30));
-        painter.rect_stroke(
-            rect,
-            1.0,
-            egui::Stroke::new(1.0, p.violet.gamma_multiply(0.45)),
-            egui::StrokeKind::Inside,
+    if let Some(fill) = tool_fill(p, live, resp.hovered() || on_arrow || open) {
+        ui.painter().rect_filled(rect, radius, fill);
+    }
+    // own level, along the bottom of the button: it follows the voice
+    // closely, only smoothing the jitter between two samples
+    let level = if live { mic.level.clamp(0.0, 1.0) } else { 0.0 };
+    let level = ui.ctx().animate_value_with_time(ui.id().with("mic_level"), level, 0.08);
+    let level_width = (rect.width() - 6.0) * level;
+    if level_width > 0.5 {
+        ui.painter().rect_filled(
+            egui::Rect::from_min_size(egui::pos2(rect.left() + 3.0, rect.bottom() - 3.0), Vec2::new(level_width, 2.0)),
+            super::widgets::TRACK_RADIUS,
+            p.teal,
         );
-        // own level, bottom of the button
-        let w = (main.width() - 6.0) * mic.level.clamp(0.0, 1.0);
-        if w > 0.5 {
-            painter.rect_filled(
-                egui::Rect::from_min_size(egui::pos2(main.left() + 3.0, main.bottom() - 3.0), Vec2::new(w, 2.0)),
-                1.0,
-                p.teal,
-            );
-        }
-    } else if resp.hovered() {
-        painter.rect_filled(rect, 2.0, p.field);
     }
     let icon = if live || (!mic.hold && mic.on) {
-        "microphone"
+        "microphone-filled"
     } else {
-        "microphone-slash"
+        "microphone-off"
     };
-    if let Some(t) = icons.get(icon) {
-        let size = (main.width() - 6.0).clamp(10.0, 16.0);
-        let tint = if live || resp.hovered() { p.ink } else { p.muted };
-        let ir = egui::Rect::from_center_size(main.center(), Vec2::splat(size));
-        painter.image(
-            t.id(),
-            ir,
-            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-            tint,
-        );
+    let tint = if live || resp.hovered() {
+        p.ink
+    } else if mic.connected {
+        p.muted
+    } else {
+        p.muted_dim
+    };
+    paint_icon(ui, icons, icon, icon_rect, icon_size, tint);
+    if let Some(arrow) = &arrow {
+        // the arrow points to where its panel opens
+        let zone = arrow.rect.shrink2(Vec2::new(1.0, 3.0));
+        if on_arrow || open {
+            ui.painter().rect_filled(zone, radius, p.raised.lerp_to_gamma(p.ink, 0.16));
+        }
+        let tint = if on_arrow || open { p.ink } else { p.muted };
+        paint_icon(ui, icons, "caret-up-filled", zone, 10.0, tint);
     }
+
     let state = if !mic.connected {
         aurora_i18n::tr!("ui-bars-voice-not-connected-2")
     } else if live {
@@ -1093,44 +1169,191 @@ fn mic_button(ui: &mut egui::Ui, p: &Palette, icons: &Icons, width: f32, mic: &m
     } else {
         aurora_i18n::tr!("extra-click-to-enable-mute-microphone", state = state.to_string())
     };
-    resp.on_hover_text(tip);
+    let resp = resp.on_hover_text(tip);
+    let arrow = arrow.map(|r| {
+        if open {
+            r
+        } else {
+            r.on_hover_text(aurora_i18n::tr!("ui-bars-microphone-options"))
+        }
+    });
 
-    // arrow: mode switch and voice preferences
-    if caret_w > 0.0 {
-        let caret = egui::Rect::from_min_max(egui::pos2(main.right(), rect.top()), rect.max);
-        let cresp = ui.interact(caret, ui.id().with("mic_caret"), egui::Sense::click());
-        let col = if cresp.hovered() { p.ink } else { p.muted_dim };
-        paint_icon(ui, icons, "caret-down", caret, 8.0, col);
-        egui::Popup::menu(&cresp).align(egui::RectAlign::TOP_END).show(|ui| {
-            ui.set_min_width(210.0);
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(aurora_i18n::tr!("common-hold-to-talk")).size(12.5).color(p.ink));
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if super::widgets::switch(ui, p, &mut mic.hold).changed() {
-                        mic.mode_changed = true;
-                        mic.on = false;
-                    }
-                });
-            });
-            ui.label(
-                RichText::new(if mic.hold {
-                    aurora_i18n::tr!("ui-bars-talk-while-the-button-or-key-is-held-down")
-                } else {
-                    aurora_i18n::tr!("ui-bars-one-click-enables-the-microphone-another-disables-it")
-                })
-                .size(11.0)
-                .color(p.muted),
-            );
-            ui.separator();
-            if ui
-                .button(RichText::new(aurora_i18n::tr!("ui-bars-sound-and-voice-settings")).size(12.5))
-                .clicked()
-            {
-                mic.open_prefs = true;
-                ui.close();
-            }
-        });
+    // demo captures: AURORA_DEMO_MICMENU=1 opens the panel
+    static DEMO_OPEN: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let demo = *DEMO_OPEN.get_or_init(|| std::env::var_os("AURORA_DEMO_MICMENU").is_some()) && ui.ctx().cumulative_frame_nr() == 300;
+    let toggle = match &arrow {
+        Some(arrow) => arrow.clicked(),
+        None => resp.secondary_clicked(),
+    };
+    let toggled = toggle || demo;
+    mic.list_devices = toggled && !open;
+    let anchor = arrow.as_ref().unwrap_or(&resp);
+    // a click in the list of a device combo is a click outside the panel:
+    // the panel closes itself, and not while such a list is (or just was) open
+    let list_id = ui.id().with("mic_device_list");
+    let list_was_open = ui.ctx().data(|d| d.get_temp::<bool>(list_id)).unwrap_or(false);
+    let mut list_open = false;
+    let mut open_now = open != toggled;
+    // Escape and the panel's own `ui.close()` clear the flag
+    let shown = egui::Popup::from_response(anchor)
+        .open_bool(&mut open_now)
+        .align(egui::RectAlign::TOP_END)
+        .gap(7.0)
+        .frame(egui::Frame::NONE)
+        .close_behavior(egui::PopupCloseBehavior::IgnoreClicks)
+        .show(|ui| mic_panel(ui, p, icons, mic, &mut list_open));
+    let in_list = list_open || list_was_open;
+    if let Some(shown) = shown {
+        let away = open && shown.response.clicked_elsewhere() && anchor.clicked_elsewhere();
+        if away && !in_list {
+            open_now = false;
+        } else if !open_now && in_list && !mic.open_prefs {
+            // Escape with a list unfolded closes that list, not the panel
+            open_now = true;
+        }
     }
+    ui.ctx().data_mut(|d| {
+        d.insert_temp(list_id, list_open);
+        d.insert_temp(open_id, open_now);
+    });
+}
+
+/// Panel of the microphone's arrow: the state of the voice, the two ways to
+/// talk, the microphone and the audio output in use (one under the other:
+/// both ends of the same conversation) and the way to the sound
+/// preferences. `list_open`: the list of a device combo is unfolded.
+fn mic_panel(ui: &mut egui::Ui, p: &Palette, icons: &Icons, mic: &mut MicButton, list_open: &mut bool) {
+    super::widgets::overlay(ui, p, egui::Margin::same(10), |ui| {
+        ui.set_width(340.0);
+        ui.spacing_mut().item_spacing.y = 4.0;
+        ui.horizontal(|ui| {
+            super::widgets::glyph(ui, "microphone-filled", p.violet_light, 17.0);
+            ui.label(RichText::new(aurora_i18n::tr!("common-voice")).size(13.0).strong().color(p.ink));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 3.0;
+                let (state, color) = if mic.connected {
+                    (aurora_i18n::tr!("common-voice-connected"), p.success)
+                } else {
+                    (aurora_i18n::tr!("ui-bars-voice-not-connected"), p.muted_dim)
+                };
+                ui.label(RichText::new(state).size(11.0).color(p.muted));
+                super::widgets::status_dot(ui, color);
+            });
+        });
+        ui.add_space(4.0);
+        let modes = [
+            (
+                false,
+                "hand-click",
+                aurora_i18n::tr!("ui-bars-click-to-talk"),
+                aurora_i18n::tr!("ui-bars-one-click-enables-the-microphone-another-disables-it"),
+            ),
+            (
+                true,
+                "hand-finger",
+                aurora_i18n::tr!("common-hold-to-talk"),
+                aurora_i18n::tr!("ui-bars-talk-while-the-button-or-key-is-held-down"),
+            ),
+        ];
+        for (hold, icon, title, hint) in modes {
+            let key = if hold { mic.key.as_ref() } else { None };
+            if mic_mode(ui, p, icons, mic.hold == hold, icon, title, hint, key) && mic.hold != hold {
+                mic.hold = hold;
+                mic.mode_changed = true;
+                mic.on = false;
+            }
+        }
+        ui.add_space(4.0);
+        let devices = [
+            (
+                "microphone-filled",
+                aurora_i18n::tr!("ui-options-microphone"),
+                "mic_panel_input",
+                &mut mic.input_device,
+                mic.input_devices,
+            ),
+            (
+                "headphones-filled",
+                aurora_i18n::tr!("ui-options-audio-output"),
+                "mic_panel_output",
+                &mut mic.output_device,
+                mic.output_devices,
+            ),
+        ];
+        for (icon, name, id, device, list) in devices {
+            ui.horizontal(|ui| {
+                // the icons stand in the column of the modes' icons
+                ui.spacing_mut().item_spacing.x = 0.0;
+                ui.add_space(8.0);
+                let (slot, hover) = ui.allocate_exact_size(Vec2::splat(18.0), egui::Sense::hover());
+                paint_icon(ui, icons, icon, slot, 16.0, p.muted);
+                hover.on_hover_text(name);
+                ui.add_space(9.0);
+                let width = ui.available_width();
+                let (changed, open) = super::options::device_combo(ui, id, device, list, width);
+                mic.devices_changed |= changed;
+                *list_open |= open;
+            });
+        }
+        ui.add_space(4.0);
+        let size = Vec2::new(ui.available_width(), 28.0);
+        let label = aurora_i18n::tr!("ui-bars-sound-and-voice-settings");
+        if super::widgets::action_button(ui, p, "settings-filled", label, super::widgets::ActionKind::Flat, size).clicked() {
+            mic.open_prefs = true;
+            ui.close();
+        }
+    });
+}
+
+/// One of the two ways to talk: its icon, its name (followed by the key to
+/// hold, for the mode that has one) and what it does. The current one is
+/// lit like an active button of the bar, and ticked.
+#[allow(clippy::too_many_arguments)]
+fn mic_mode(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icons: &Icons,
+    selected: bool,
+    icon: &str,
+    title: &str,
+    hint: &str,
+    key: Option<&crate::keybinds::Binding>,
+) -> bool {
+    const PAD: f32 = 8.0;
+    const ICON: f32 = 18.0;
+    const TICK: f32 = 16.0;
+    let width = ui.available_width();
+    let text_left = PAD + ICON + 9.0;
+    let text_width = width - text_left - PAD - TICK - 6.0;
+    let title = ui
+        .painter()
+        .layout_no_wrap(title.to_owned(), egui::FontId::proportional(12.5), p.ink);
+    let hint = ui
+        .painter()
+        .layout(hint.to_owned(), egui::FontId::proportional(11.0), p.muted, text_width);
+    let height = PAD + title.size().y + 2.0 + hint.size().y + PAD;
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, height), egui::Sense::click());
+    if let Some(fill) = tool_fill(p, selected, resp.hovered()) {
+        ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, fill);
+    }
+    let lit = selected || resp.hovered();
+    let icon_rect = egui::Rect::from_center_size(egui::pos2(rect.left() + PAD + ICON / 2.0, rect.center().y), Vec2::splat(ICON));
+    paint_icon(ui, icons, icon, icon_rect, ICON, if lit { p.ink } else { p.muted });
+    let title_center = rect.top() + PAD + title.size().y / 2.0;
+    let title_right = rect.left() + text_left + title.size().x;
+    let hint_top = rect.top() + PAD + title.size().y + 2.0;
+    super::widgets::paint_ink_left(ui.painter(), title, egui::pos2(rect.left() + text_left, title_center), p.ink);
+    ui.painter().galley(egui::pos2(rect.left() + text_left, hint_top), hint, p.muted);
+    if let Some(key) = key {
+        // the caps stand on the panel, lit or not: their names take its color
+        let caps = super::widgets::keycap::caps(ui, key, p.panel);
+        super::widgets::keycap::paint_row(ui, p, &caps, egui::pos2(title_right + 8.0, title_center), p.panel);
+    }
+    if selected {
+        let tick = egui::Rect::from_center_size(egui::pos2(rect.right() - PAD - TICK / 2.0, rect.center().y), Vec2::splat(TICK));
+        paint_icon(ui, icons, "circle-check-filled", tick, TICK, p.violet_light);
+    }
+    resp.clicked()
 }
 
 /// Bottom bar: "Chat local" input on the left, feature buttons spread over
@@ -1154,10 +1377,12 @@ pub fn bottom_bar(
     let mut out = None;
     let mut action = BarAction::None;
     let mut width_committed = false;
+    let mut glass = None;
     let resp = egui::Panel::bottom("bottom_bar")
-        .frame(bar_frame(p, 245).inner_margin(egui::Margin::symmetric(8, 3)))
+        .frame(bar_frame(p).inner_margin(egui::Margin::symmetric(8, 3)))
         .exact_size(layout.bottom_bar_height)
         .show(ui, |ui| {
+            glass = Some((ui.painter().clone(), ui.painter().add(egui::Shape::Noop)));
             ui.set_min_width(ui.available_width());
             ui.horizontal_centered(|ui| {
                 let total = ui.available_width();
@@ -1200,22 +1425,13 @@ pub fn bottom_bar(
                 }
 
                 // buttons stretch over the whole remaining width (hover and
-                // click area included), a thin gap between them
+                // click area included); the gap and the pill drawn under the
+                // pointer show where each one starts and ends
                 let remaining = ui.available_width();
-                let gap = 2.0;
+                let gap = 4.0;
                 let btn_w = ((remaining - gap * (n - 1.0) - 1.0) / n).floor().max(MIN_BTN);
                 ui.spacing_mut().item_spacing.x = gap;
-                for (i, b) in layout.toolbar.iter().enumerate() {
-                    // subtle divider in the gap: where each button starts and ends
-                    if i > 0 {
-                        let r = ui.max_rect();
-                        let x = ui.cursor().left() - gap * 0.5;
-                        let h = r.height() * 0.3;
-                        ui.painter().line_segment(
-                            [egui::pos2(x, r.center().y - h), egui::pos2(x, r.center().y + h)],
-                            egui::Stroke::new(1.0, p.muted_dim.gamma_multiply(0.45)),
-                        );
-                    }
+                for b in &layout.toolbar {
                     if b.command == "speak" {
                         mic_button(ui, p, icons, btn_w, mic);
                         continue;
@@ -1240,7 +1456,187 @@ pub fn bottom_bar(
                 }
             });
         });
+    if let Some((painter, slot)) = glass {
+        super::widgets::finish_bar_glass(&painter, slot, resp.response.rect, p);
+    }
     (out, action, resp.response.rect.top(), width_committed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Where the microphone button stands in the test window, and its width.
+    const BUTTON: egui::Pos2 = egui::pos2(400.0, 560.0);
+    const WIDTH: f32 = 60.0;
+
+    /// The microphone button alone in a window, with two devices to choose.
+    #[derive(Default)]
+    struct Bench {
+        ctx: egui::Context,
+        input: String,
+        output: String,
+        /// Outputs of the last frame.
+        changed: bool,
+        listed: bool,
+        open_prefs: bool,
+    }
+
+    impl Bench {
+        fn frame(&mut self, events: Vec<egui::Event>) -> egui::FullOutput {
+            let p = crate::theme::Theme::default().palette();
+            let icons = Icons::default();
+            let devices = ["Device A".to_owned(), "Device B".to_owned()];
+            let mut mic = MicButton {
+                connected: true,
+                input_device: self.input.clone(),
+                output_device: self.output.clone(),
+                input_devices: &devices,
+                output_devices: &devices,
+                ..Default::default()
+            };
+            let mut output = self.ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(900.0, 600.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    let slot = egui::Rect::from_min_size(BUTTON, Vec2::new(WIDTH, 22.0));
+                    ui.scope_builder(egui::UiBuilder::new().max_rect(slot), |ui| {
+                        mic_button(ui, &p, &icons, WIDTH, &mut mic);
+                    });
+                },
+            );
+            output.textures_delta.clear();
+            self.input = mic.input_device.clone();
+            self.output = mic.output_device.clone();
+            self.changed = mic.devices_changed;
+            self.listed = mic.list_devices;
+            self.open_prefs = mic.open_prefs;
+            output
+        }
+
+        fn click(&mut self, pos: egui::Pos2) {
+            for pressed in [true, false] {
+                self.frame(vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: Default::default(),
+                    },
+                ]);
+            }
+        }
+
+        /// Where `label` is written this frame, from top to bottom.
+        fn texts(&mut self, label: &str) -> Vec<egui::Pos2> {
+            fn find(shape: &egui::Shape, label: &str, found: &mut Vec<egui::Pos2>) {
+                match shape {
+                    egui::Shape::Text(text) if text.galley.text() == label => found.push(text.pos + egui::vec2(3.0, 5.0)),
+                    egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| find(shape, label, found)),
+                    _ => {}
+                }
+            }
+            let mut found = Vec::new();
+            for shape in &self.frame(vec![]).shapes {
+                find(&shape.shape, label, &mut found);
+            }
+            found.sort_by(|a, b| a.y.total_cmp(&b.y));
+            found
+        }
+
+        fn panel_shown(&mut self) -> bool {
+            !self.texts(aurora_i18n::tr!("ui-bars-sound-and-voice-settings")).is_empty()
+        }
+
+        /// The arrow right of the microphone, which opens the panel.
+        fn arrow() -> egui::Pos2 {
+            BUTTON + egui::vec2(WIDTH / 2.0 + 8.0 + MIC_ARROW / 2.0, 11.0)
+        }
+    }
+
+    #[test]
+    fn microphone_panel_stays_open_while_its_device_lists_are_used() {
+        let default = aurora_i18n::tr!("ui-options-system-default");
+        let mut bench = Bench::default();
+        bench.frame(vec![]);
+        assert!(!bench.panel_shown());
+        bench.click(Bench::arrow());
+        assert!(bench.listed, "opening the panel reads the devices again");
+        assert!(bench.panel_shown());
+
+        // the microphone: its list unfolds over the panel, which stays
+        let combos = bench.texts(default);
+        assert_eq!(combos.len(), 2, "one combo per device, both on the system's default");
+        bench.click(combos[0]);
+        for _ in 0..3 {
+            assert!(bench.panel_shown(), "unfolding a device list must not close the panel");
+        }
+        let entry = *bench.texts("Device B").first().expect("the list of microphones is unfolded");
+        bench.click(entry);
+        assert!(bench.changed, "choosing a device is reported");
+        assert_eq!(bench.input, "Device B");
+        for _ in 0..3 {
+            assert!(bench.panel_shown(), "the panel stays open once a device is chosen");
+        }
+
+        // then the audio output, in the same visit of the panel
+        let combos = bench.texts(default);
+        assert_eq!(combos.len(), 1, "only the output is still on the system's default");
+        bench.click(combos[0]);
+        assert!(bench.panel_shown());
+        let entry = *bench.texts("Device A").first().expect("the list of outputs is unfolded");
+        bench.click(entry);
+        assert!(bench.changed);
+        assert_eq!((bench.input.as_str(), bench.output.as_str()), ("Device B", "Device A"));
+        for _ in 0..3 {
+            assert!(bench.panel_shown());
+        }
+
+        // a click away from the panel and its button closes it
+        bench.click(egui::pos2(50.0, 50.0));
+        assert!(!bench.panel_shown());
+    }
+
+    #[test]
+    fn microphone_panel_closes_on_its_arrow_escape_and_the_settings_button() {
+        let mut bench = Bench::default();
+        bench.frame(vec![]);
+        bench.click(Bench::arrow());
+        assert!(bench.panel_shown());
+        bench.click(Bench::arrow());
+        assert!(!bench.panel_shown(), "the arrow closes the panel it opened");
+
+        // Escape closes an unfolded device list first, then the panel
+        bench.click(Bench::arrow());
+        assert!(bench.panel_shown());
+        let combo = bench.texts(aurora_i18n::tr!("ui-options-system-default"))[0];
+        bench.click(combo);
+        assert!(!bench.texts("Device B").is_empty(), "the list is unfolded");
+        let escape = || {
+            vec![egui::Event::Key {
+                key: egui::Key::Escape,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Default::default(),
+            }]
+        };
+        bench.frame(escape());
+        assert!(bench.texts("Device B").is_empty(), "Escape folds the list");
+        assert!(bench.panel_shown(), "and leaves the panel open");
+        bench.frame(escape());
+        assert!(!bench.panel_shown(), "Escape closes the panel");
+
+        bench.click(Bench::arrow());
+        let settings = bench.texts(aurora_i18n::tr!("ui-bars-sound-and-voice-settings"))[0];
+        bench.click(settings);
+        assert!(bench.open_prefs, "the button opens the sound preferences");
+        assert!(!bench.panel_shown(), "and closes the panel");
+    }
 }
 
 #[cfg(test)]
@@ -1273,6 +1669,7 @@ mod import_menu_tests {
             Some(Choice::Local),
         ] {
             let ctx = egui::Context::default();
+            let p = crate::theme::Theme::default().palette();
             let mut time = 0.0;
             let mut frame = |events| {
                 time += 0.2;
@@ -1286,7 +1683,7 @@ mod import_menu_tests {
                     },
                     |ui| {
                         egui::MenuBar::new().ui(ui, |ui| {
-                            ui.menu_button(aurora_i18n::tr!("common-contents"), |ui| import_menu(ui, &mut action));
+                            ui.menu_button(aurora_i18n::tr!("common-contents"), |ui| import_menu(ui, &p, &mut action));
                         });
                     },
                 );

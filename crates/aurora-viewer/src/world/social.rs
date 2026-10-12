@@ -2,8 +2,9 @@
 
 use super::ChatLine;
 use super::names::AvatarNames;
+use super::transcripts::{LineClock, SessionLog};
 use aurora_llsd::Llsd;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use uuid::Uuid;
 
 /// LLRelationship rights bits.
@@ -25,10 +26,29 @@ pub struct Friend {
 #[derive(Debug, Clone)]
 pub struct ImSession {
     pub other: Uuid,
-    pub lines: Vec<ChatLine>,
+    /// The lines, oldest first, within `MAX_CHAT`: history read from the
+    /// transcript, then the chat server's, then this session's.
+    pub lines: VecDeque<ChatLine>,
+    /// Follows `lines` for the view.
+    pub clock: LineClock,
     pub unread: usize,
     #[allow(dead_code)] // draft of an IM session, not kept by the UI yet
     pub input: String,
+    /// Its transcript: file, history asked, lines waiting for the file.
+    pub log: SessionLog,
+}
+
+impl ImSession {
+    pub fn new(other: Uuid) -> ImSession {
+        ImSession {
+            other,
+            lines: VecDeque::new(),
+            clock: LineClock::default(),
+            unread: 0,
+            input: String::new(),
+            log: SessionLog::default(),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -157,12 +177,7 @@ impl Social {
             return &mut self.ims[i];
         }
         self.want_name(other);
-        self.ims.push(ImSession {
-            other,
-            lines: Vec::new(),
-            unread: 0,
-            input: String::new(),
-        });
+        self.ims.push(ImSession::new(other));
         let n = self.ims.len() - 1;
         &mut self.ims[n]
     }

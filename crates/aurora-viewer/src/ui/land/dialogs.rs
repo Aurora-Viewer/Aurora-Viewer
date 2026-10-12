@@ -245,7 +245,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, s: &mut LandUi, v: &View, w
                 ui.add(egui::Label::new(RichText::new(&msg).size(12.5).color(p.ink)).wrap());
                 ui.add_space(6.0);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    done = super::super::widgets::flat_button(ui, p, "OK").clicked();
+                    done = super::super::widgets::flat_button(ui, p, aurora_i18n::tr!("common-ok")).clicked();
                 });
             });
             (open && !done).then_some(Dialog::Message(msg))
@@ -258,7 +258,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, s: &mut LandUi, v: &View, w
             let (ok, cancel) = if matches!(c, Confirm::ResetEnvironment) {
                 (aurora_i18n::tr!("common-yes"), aurora_i18n::tr!("common-no"))
             } else {
-                ("OK", aurora_i18n::tr!("common-cancel"))
+                (aurora_i18n::tr!("common-ok"), aurora_i18n::tr!("common-cancel"))
             };
             let mut answer = None;
             let open = window(ctx, p, aurora_i18n::tr!("common-about-land"), 420.0, |ui| {
@@ -320,9 +320,9 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, s: &mut LandUi, v: &View, w
                         .size(12.0)
                         .color(p.muted),
                 );
-                ui.radio_value(&mut temporary, false, aurora_i18n::tr!("common-always"));
+                super::super::widgets::radio_value(ui, p, &mut temporary, false, aurora_i18n::tr!("common-always"));
                 ui.horizontal(|ui| {
-                    ui.radio_value(&mut temporary, true, aurora_i18n::tr!("common-temporary"));
+                    super::super::widgets::radio_value(ui, p, &mut temporary, true, aurora_i18n::tr!("common-temporary"));
                     ui.add_enabled(
                         temporary,
                         egui::DragValue::new(&mut hours)
@@ -331,7 +331,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, s: &mut LandUi, v: &View, w
                     );
                     dim(ui, p, "heures");
                 });
-                answer = buttons(ui, p, "OK", aurora_i18n::tr!("common-cancel"), true);
+                answer = buttons(ui, p, aurora_i18n::tr!("common-ok"), aurora_i18n::tr!("common-cancel"), true);
             });
             match answer {
                 Some(true) => {
@@ -382,7 +382,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, s: &mut LandUi, v: &View, w
                     if super::button(ui, p, aurora_i18n::tr!("common-clear"), !waiting).clicked() {
                         url.clear();
                     }
-                    if super::button(ui, p, "OK", !waiting).clicked() {
+                    if super::button(ui, p, aurora_i18n::tr!("common-ok"), !waiting).clicked() {
                         world.land.find_media_type(&url);
                     }
                 });
@@ -422,7 +422,7 @@ fn sell_form(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, world: &mut World, 
             )
         };
         ui.add(egui::Label::new(RichText::new(text).size(12.5).color(p.ink)).wrap());
-        match buttons(ui, p, "OK", aurora_i18n::tr!("common-cancel"), true) {
+        match buttons(ui, p, aurora_i18n::tr!("common-ok"), aurora_i18n::tr!("common-cancel"), true) {
             Some(true) => {
                 // onConfirmSale
                 let (to_user, buyer, with_objects) = (f.to == 2, f.buyer.unwrap_or_default(), f.with_objects);
@@ -499,12 +499,16 @@ fn sell_form(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, world: &mut World, 
             .size(12.5)
             .color(p.ink),
     );
-    ui.radio_value(
+    super::super::widgets::radio_value(
+        ui,
+        p,
         &mut f.with_objects,
         false,
         aurora_i18n::tr!("ui-land-dialogs-no-keep-object-ownership"),
     );
-    ui.radio_value(
+    super::super::widgets::radio_value(
+        ui,
+        p,
         &mut f.with_objects,
         true,
         aurora_i18n::tr!("ui-land-dialogs-yes-sell-objects-with-land"),

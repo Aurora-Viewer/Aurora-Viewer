@@ -28,6 +28,7 @@ pub struct Theme {
     pub warn: String,
     pub danger_dim: String,
     pub indigo_light: String,
+    pub on_accent: String,
     pub panel_alpha: u8,
     pub button_radius: u8,
     pub window_radius: u8,
@@ -59,6 +60,7 @@ impl Default for Theme {
             warn: "#FB923C".into(),
             danger_dim: "#A85252".into(),
             indigo_light: "#818CF8".into(),
+            on_accent: "#FFFFFF".into(),
             panel_alpha: 230,
             button_radius: 5,
             window_radius: 3,
@@ -101,6 +103,10 @@ pub struct Palette {
     #[allow(dead_code)] // part of the skin palette, not used by a widget yet
     pub danger_dim: Color32,
     pub indigo_light: Color32,
+    /// Text and icons on a face filled with the accent (primary button,
+    /// selected tool, checked box): `ink` belongs to the panels, and a skin
+    /// may give them a dark one.
+    pub on_accent: Color32,
     pub panel_alpha: u8,
 }
 
@@ -127,6 +133,7 @@ impl Theme {
             warn: hex(&self.warn),
             danger_dim: hex(&self.danger_dim),
             indigo_light: hex(&self.indigo_light),
+            on_accent: hex(&self.on_accent),
             panel_alpha: self.panel_alpha,
         }
     }
@@ -156,7 +163,7 @@ impl Theme {
         };
         v.popup_shadow = v.window_shadow;
         v.selection.bg_fill = p.violet;
-        v.selection.stroke = Stroke::new(1.0, p.ink);
+        v.selection.stroke = Stroke::new(1.0, p.on_accent);
 
         let w = &mut v.widgets;
         w.noninteractive.bg_fill = panel;
@@ -165,16 +172,20 @@ impl Theme {
         w.noninteractive.fg_stroke = Stroke::new(1.0, p.muted);
         w.noninteractive.corner_radius = br;
 
-        // also the slider rail / checkbox background
+        // Buttons and combo boxes are plain filled faces (the human's
+        // choice): their border has the color of the face, so only text
+        // fields and check boxes, drawn on a darker ground, show it.
+        // bg_fill is also the slider rail / checkbox background.
+        let hot = p.raised.lerp_to_gamma(p.ink, 0.16);
         w.inactive.bg_fill = p.raised;
-        w.inactive.weak_bg_fill = p.field;
+        w.inactive.weak_bg_fill = p.raised;
         w.inactive.bg_stroke = Stroke::new(1.0, p.raised);
         w.inactive.fg_stroke = Stroke::new(1.0, p.ink);
         w.inactive.corner_radius = br;
 
-        w.hovered.bg_fill = p.raised;
-        w.hovered.weak_bg_fill = p.raised;
-        w.hovered.bg_stroke = Stroke::new(1.0, p.violet_light);
+        w.hovered.bg_fill = hot;
+        w.hovered.weak_bg_fill = hot;
+        w.hovered.bg_stroke = Stroke::new(1.0, hot);
         w.hovered.fg_stroke = Stroke::new(1.0, p.ink);
         w.hovered.corner_radius = br;
         w.hovered.expansion = 0.0;
@@ -187,8 +198,6 @@ impl Theme {
         w.active.expansion = 0.0;
 
         w.open = w.hovered;
-        w.open.bg_fill = p.raised;
-        w.open.weak_bg_fill = p.raised;
 
         let mut style = egui::Style {
             visuals: v,

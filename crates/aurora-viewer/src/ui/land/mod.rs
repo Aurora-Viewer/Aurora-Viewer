@@ -336,15 +336,15 @@ impl LandUi {
                     egui::ScrollArea::vertical().id_salt("land_navigation").show(ui, |ui| {
                         for tab in tabs {
                             let icon = match tab {
-                                Tab::General => "house",
-                                Tab::Covenant => "file-text",
-                                Tab::Objects => "cube",
-                                Tab::Options => "gear-six",
-                                Tab::Media => "image",
-                                Tab::Sound => "speaker-high",
-                                Tab::Access => "users-three",
-                                Tab::Experiences => "flask",
-                                Tab::Environment => "leaf",
+                                Tab::General => "home-filled",
+                                Tab::Covenant => "file-description-filled",
+                                Tab::Objects => "box",
+                                Tab::Options => "settings-filled",
+                                Tab::Media => "device-tv-filled",
+                                Tab::Sound => "device-speaker-filled",
+                                Tab::Access => "key-filled",
+                                Tab::Experiences => "flask-filled",
+                                Tab::Environment => "leaf-filled",
                             };
                             if widgets::navigation(ui, p, icon, tab.label(), self.tab == tab).clicked() {
                                 self.tab = tab;
@@ -352,7 +352,7 @@ impl LandUi {
                         }
                     });
                 });
-                ui.separator();
+                widgets::divider(ui, p);
                 ui.vertical(|ui| {
                     ui.set_width(ui.available_width());
                     if let Some(parcel) = &view.parcel {
@@ -369,7 +369,7 @@ impl LandUi {
                                     aurora_i18n::tr!("common-area"),
                                     &format!("{} m²", aurora_i18n::integer(parcel.area as i64)),
                                 );
-                                ui.separator();
+                                widgets::divider(ui, p);
                                 widgets::stat(
                                     ui,
                                     p,
@@ -389,7 +389,7 @@ impl LandUi {
                         });
                     }
                     ui.add_space(6.0);
-                    widgets::section_header(ui, p, "sliders", self.tab.label());
+                    widgets::section_header(ui, p, "adjustments-filled", self.tab.label());
                     let body = egui::Rect::from_min_max(ui.cursor().min, ui.max_rect().max);
                     ui.allocate_rect(body, egui::Sense::hover());
                     let mut child = ui.new_child(
@@ -555,7 +555,7 @@ fn button(ui: &mut egui::Ui, p: &Palette, label: &str, enabled: bool) -> egui::R
     ui.add_enabled_ui(enabled, |ui| widgets::flat_button(ui, p, label)).inner
 }
 
-/// A small Phosphor icon button (refresh, +, −, copy).
+/// A small Tabler icon button (refresh, +, −, copy).
 fn icon_button(ui: &mut egui::Ui, p: &Palette, icon: &str, enabled: bool) -> egui::Response {
     let sense = if enabled { egui::Sense::click() } else { egui::Sense::hover() };
     let (rect, r) = ui.allocate_exact_size(Vec2::splat(22.0), sense);
@@ -564,7 +564,7 @@ fn icon_button(ui: &mut egui::Ui, p: &Palette, icon: &str, enabled: bool) -> egu
     } else {
         p.raised
     };
-    ui.painter().rect_filled(rect, 2.0, fill);
+    ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, fill);
     if let Some(t) = super::icons::global(icon) {
         ui.painter().image(
             t.id(),
@@ -577,8 +577,11 @@ fn icon_button(ui: &mut egui::Ui, p: &Palette, icon: &str, enabled: bool) -> egu
 }
 
 /// A checkbox that reports a click (the value is the parcel's, not kept).
-fn check(ui: &mut egui::Ui, enabled: bool, mut value: bool, label: &str) -> (egui::Response, bool) {
-    let r = ui.add_enabled(enabled, egui::Checkbox::new(&mut value, RichText::new(label).size(12.0)));
+fn check(ui: &mut egui::Ui, p: &Palette, enabled: bool, mut value: bool, label: &str) -> (egui::Response, bool) {
+    let label = RichText::new(label).size(12.0);
+    let r = ui
+        .add_enabled_ui(enabled, |ui| super::widgets::checkbox(ui, p, &mut value, label))
+        .inner;
     (r, value)
 }
 

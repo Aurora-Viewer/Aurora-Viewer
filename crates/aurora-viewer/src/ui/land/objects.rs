@@ -154,7 +154,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
     };
     row(ui, p, aurora_i18n::tr!("ui-land-objects-owners"), |ui| {
         let searching = matches!(owners, OwnerList::Searching);
-        if super::icon_button(ui, p, "arrows-clockwise", any && !searching)
+        if super::icon_button(ui, p, "refresh", any && !searching)
             .on_hover_text(aurora_i18n::tr!("ui-land-objects-refresh-object-list"))
             .clicked()
         {
@@ -269,7 +269,7 @@ fn owners_list(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, world: &mut World
                         };
                         ui.painter().rect_filled(rect, 0.0, fill);
                         let mut x = rect.left() + 6.0;
-                        let icon = if o.is_group { "users-three" } else { "user" };
+                        let icon = if o.is_group { "users-group" } else { "user" };
                         let tint = if o.is_group || online { p.ink } else { p.muted_dim };
                         if let Some(t) = super::super::icons::global(icon) {
                             let ir = egui::Rect::from_center_size(egui::pos2(x + 8.0, rect.center().y), Vec2::splat(14.0));

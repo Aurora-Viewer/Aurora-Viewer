@@ -24,7 +24,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, v: &View, world: &mut World) 
     egui::Frame::new()
         .fill(p.field)
         .stroke(egui::Stroke::new(1.0, p.raised))
-        .corner_radius(egui::CornerRadius::same(2))
+        .corner_radius(ui.visuals().window_corner_radius)
         .inner_margin(egui::Margin::same(6))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());

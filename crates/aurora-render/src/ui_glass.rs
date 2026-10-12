@@ -5,18 +5,40 @@ use std::sync::Arc;
 
 struct Region {
     radius: f32,
+    opacity: f32,
+    /// Brightness kept of the blurred scene (1: as it is).
+    shade: f32,
 }
 
 /// Insert below a window's contents. The viewer resolves the final rectangle
 /// after layout, so moving/resizing never samples last frame's position.
 pub fn glass_panel(rect: egui::Rect, radius: f32, tint: egui::Color32) -> egui::Shape {
+    glass_panel_faded(rect, radius, tint, 1.0)
+}
+
+/// `glass_panel` whose blur shows through at `opacity` (0 to 1), for a
+/// surface that fades in or out; `tint` carries its own alpha.
+pub fn glass_panel_faded(rect: egui::Rect, radius: f32, tint: egui::Color32, opacity: f32) -> egui::Shape {
     egui::Shape::Vec(vec![
-        egui::Shape::Callback(egui::PaintCallback {
-            rect,
-            callback: Arc::new(Region { radius }),
-        }),
+        glass_region(rect, radius, opacity, 1.0),
         egui::Shape::rect_filled(rect, radius, tint),
     ])
+}
+
+/// The blur alone, at `opacity`, for a surface that draws its own tint over
+/// it (the avatar name plates, whose pill is a mesh of its own). `shade`
+/// (0 to 1) is the brightness kept of the blurred scene: under a light tint,
+/// it keeps a small surface readable over a white wall or a bright sky
+/// without making it more opaque over the rest.
+pub fn glass_region(rect: egui::Rect, radius: f32, opacity: f32, shade: f32) -> egui::Shape {
+    egui::Shape::Callback(egui::PaintCallback {
+        rect,
+        callback: Arc::new(Region {
+            radius,
+            opacity: opacity.clamp(0.0, 1.0),
+            shade: shade.clamp(0.0, 1.0),
+        }),
+    })
 }
 
 pub(crate) fn requested(primitives: &[egui::ClippedPrimitive]) -> bool {
@@ -31,6 +53,10 @@ pub(crate) fn skip(primitives: &mut [egui::ClippedPrimitive]) {
     for primitive in primitives {
         if matches!(&primitive.primitive, egui::epaint::Primitive::Callback(c) if c.callback.is::<Region>()) {
             primitive.primitive = egui::epaint::Primitive::Mesh(egui::Mesh::default());
+            // An empty mesh must not reach the draw: egui-wgpu binds the
+            // index range of every mesh inside its clip, and wgpu panics on
+            // an empty buffer slice. An empty clip only advances its buffers.
+            primitive.clip_rect = egui::Rect::NOTHING;
         }
     }
 }
@@ -93,19 +119,22 @@ impl Glass {
             if let egui::epaint::Primitive::Callback(callback) = &primitive.primitive
                 && let Some(region) = callback.callback.downcast_ref::<Region>()
             {
-                primitive.primitive = egui::epaint::Primitive::Mesh(rounded_mesh(callback.rect, region.radius, self.texture, screen));
+                let level = (region.shade * 255.0).round() as u8;
+                let color = egui::Color32::from_gray(level).gamma_multiply(region.opacity);
+                primitive.primitive =
+                    egui::epaint::Primitive::Mesh(rounded_mesh(callback.rect, region.radius, self.texture, screen, color));
             }
         }
     }
 }
 
-fn rounded_mesh(rect: egui::Rect, radius: f32, texture: egui::TextureId, screen: egui::Vec2) -> egui::Mesh {
+fn rounded_mesh(rect: egui::Rect, radius: f32, texture: egui::TextureId, screen: egui::Vec2, color: egui::Color32) -> egui::Mesh {
     let mut mesh = egui::Mesh::with_texture(texture);
     let radius = radius.max(0.0).min(rect.width().min(rect.height()) * 0.5);
     let vertex = |pos: egui::Pos2| egui::epaint::Vertex {
         pos,
         uv: egui::pos2(pos.x / screen.x, pos.y / screen.y),
-        color: egui::Color32::WHITE,
+        color,
     };
     mesh.vertices.push(vertex(rect.center()));
     for (center, start) in [
@@ -135,7 +164,7 @@ mod tests {
         for scale in [1.0, 1.5, 2.0] {
             let screen = egui::vec2(1920.0, 1080.0) / scale;
             let rect = egui::Rect::from_min_size(egui::pos2(40.0, 70.0), egui::vec2(344.0, 548.0));
-            let mesh = rounded_mesh(rect, 8.0, egui::TextureId::User(7), screen);
+            let mesh = rounded_mesh(rect, 8.0, egui::TextureId::User(7), screen, egui::Color32::WHITE);
             assert!(mesh.is_valid());
             assert!(mesh.vertices.iter().all(|v| rect.expand(0.001).contains(v.pos)));
             for vertex in &mesh.vertices {
@@ -163,5 +192,33 @@ mod tests {
         skip(&mut primitives);
         assert_eq!(primitives.len(), count, "modal blur boundary indices stay valid");
         assert!(primitives.iter().all(|p| matches!(p.primitive, egui::epaint::Primitive::Mesh(_))));
+    }
+
+    /// On a surface that cannot be copied, a visible glass panel became an
+    /// empty mesh inside its clip: egui-wgpu bound its empty index range and
+    /// wgpu panicked ("buffer slice can not be empty").
+    #[test]
+    fn a_skipped_glass_panel_is_never_drawn() {
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(Default::default(), |ui| {
+            ui.painter().add(glass_panel(ui.max_rect().shrink(10.0), 8.0, egui::Color32::BLACK));
+        });
+        output.textures_delta.clear();
+        let mut primitives = ctx.tessellate(output.shapes, output.pixels_per_point);
+        assert!(requested(&primitives), "the panel is visible");
+        skip(&mut primitives);
+        let mut tints = 0;
+        for primitive in &primitives {
+            let egui::epaint::Primitive::Mesh(mesh) = &primitive.primitive else {
+                panic!("no callback is left");
+            };
+            if mesh.indices.is_empty() {
+                assert!(!primitive.clip_rect.is_positive(), "an empty mesh keeps an empty clip");
+            } else {
+                assert!(primitive.clip_rect.is_positive());
+                tints += 1;
+            }
+        }
+        assert!(tints > 0, "the tinted frame is still drawn");
     }
 }

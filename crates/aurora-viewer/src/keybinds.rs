@@ -210,6 +210,63 @@ impl Binding {
         s.push_str(&self.input.label());
         s
     }
+
+    /// The keys to hold, modifiers first, for the keycaps of the shortcuts
+    /// list.
+    pub fn caps(&self) -> Vec<KeyCap> {
+        let mut caps = Vec::new();
+        if self.ctrl {
+            caps.push(KeyCap::named(key_label("ControlLeft")));
+        }
+        if self.alt {
+            caps.push(KeyCap::named("Alt"));
+        }
+        if self.shift {
+            caps.push(KeyCap::named(key_label("ShiftLeft")));
+        }
+        let mut cap = KeyCap::named(self.input.label());
+        cap.mouse = matches!(self.input, Input::Mouse(_));
+        let arrow = match &self.input {
+            Input::Key(k) => k.strip_prefix("Arrow"),
+            Input::Mouse(_) => None,
+        };
+        if let Some(direction) = arrow {
+            cap.icon = Some(format!("square-arrow-{}-filled", direction.to_ascii_lowercase()));
+        }
+        caps.push(cap);
+        caps
+    }
+}
+
+/// One key of a binding, as the shortcuts list draws it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyCap {
+    pub label: String,
+    /// Tabler keycap icon (`square-letter-w-filled`...) when the key has one.
+    pub icon: Option<String>,
+    /// A mouse button: Tabler has one mouse icon and none per button, so the
+    /// cap shows it before the button's name.
+    pub mouse: bool,
+}
+
+impl KeyCap {
+    fn named(label: impl Into<String>) -> KeyCap {
+        let label = label.into();
+        let icon = key_icon(&label);
+        KeyCap { label, icon, mouse: false }
+    }
+}
+
+/// Tabler draws keycaps for single letters, digits and F1 to F9; the other
+/// keys (F10, accented letters, the numeric keypad...) keep their name.
+fn key_icon(label: &str) -> Option<String> {
+    let mut chars = label.chars();
+    match (chars.next(), chars.next(), chars.next()) {
+        (Some(c), None, _) if c.is_ascii_alphabetic() => Some(format!("square-letter-{}-filled", c.to_ascii_lowercase())),
+        (Some(c), None, _) if c.is_ascii_digit() => Some(format!("square-number-{c}-filled")),
+        (Some('F'), Some(digit @ '1'..='9'), None) => Some(format!("square-f{digit}-filled")),
+        _ => None,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -249,6 +306,8 @@ pub enum Action {
     WorldMap,
     /// Monde › Historique de téléportation (Firestorm Alt+H).
     TeleportHistory,
+    /// « Rechercher » (Firestorm Ctrl+F, menu_viewer.xml).
+    Search,
     Performance,
     Preferences,
     /// Aurora's held shortcut for dragging a visible HUD with the left button.
@@ -338,6 +397,7 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                     (Action::Minimap, aurora_i18n::tr!("common-mini-map")),
                     (Action::WorldMap, aurora_i18n::tr!("common-world-map")),
                     (Action::TeleportHistory, aurora_i18n::tr!("common-teleport-history")),
+                    (Action::Search, aurora_i18n::tr!("search-title")),
                     (Action::Performance, aurora_i18n::tr!("common-performance")),
                     (Action::Preferences, aurora_i18n::tr!("common-preferences")),
                 ],
@@ -459,6 +519,7 @@ impl KeyBindings {
                     None,
                 ],
             ),
+            (Action::Search, [kmod(K::KeyF, true, false), None]),
             (Action::Performance, [kmod(K::Digit1, true, true), None]),
             (Action::Preferences, [kmod(K::KeyP, true, false), None]),
             (Action::HudDrag, [k(K::AltLeft), None]),
@@ -672,6 +733,30 @@ impl KeyBindings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keycap_icons_exist_only_for_letters_digits_and_f1_to_f9() {
+        assert_eq!(key_icon("W").as_deref(), Some("square-letter-w-filled"));
+        assert_eq!(key_icon("7").as_deref(), Some("square-number-7-filled"));
+        assert_eq!(key_icon("F5").as_deref(), Some("square-f5-filled"));
+        for label in ["F10", "F0", "É", "&", "Alt", "Ctrl", ""] {
+            assert_eq!(key_icon(label), None, "{label}");
+        }
+        let binding = Binding {
+            input: Input::key(KeyCode::ArrowUp),
+            ctrl: true,
+            shift: false,
+            alt: true,
+        };
+        let caps = binding.caps();
+        assert_eq!(caps.len(), 3);
+        assert_eq!((caps[0].label.as_str(), caps[1].label.as_str()), ("Ctrl", "Alt"));
+        assert!(caps[0].icon.is_none() && caps[1].icon.is_none());
+        assert_eq!(caps[2].icon.as_deref(), Some("square-arrow-up-filled"));
+        assert!(caps.iter().all(|cap| !cap.mouse));
+        let middle = Binding::plain(Input::Mouse("Middle".into())).caps();
+        assert!(middle.len() == 1 && middle[0].mouse && middle[0].icon.is_none());
+    }
 
     #[test]
     fn hud_modifier_capture_accepts_either_side_without_duplicate_modifiers() {

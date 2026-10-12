@@ -43,6 +43,14 @@ mod social_net;
 /// About Land: parcel selection, lists, covenant (land.rs).
 #[path = "session_land.rs"]
 mod land_net;
+
+/// Instant messages kept while offline and the answers to offline offers.
+#[path = "session_offline.rs"]
+mod offline_net;
+
+/// Directory search: queries, replies, event and group details (search.rs).
+#[path = "session_search.rs"]
+mod search_net;
 use crate::build::BUILD_PARCEL_SEQ;
 
 const SIM_TIMEOUT: Duration = Duration::from_secs(60);
@@ -888,7 +896,7 @@ impl Session<'_> {
     // -------------------------------------------------------------- commands
 
     fn on_command(&mut self, c: NetCommand) {
-        if self.on_object_action_command(&c) || self.on_social_command(&c) {
+        if self.on_object_action_command(&c) || self.on_social_command(&c) || self.on_offline_command(&c) || self.on_search_command(&c) {
             return;
         }
         match c {
@@ -1802,6 +1810,16 @@ impl Session<'_> {
             | NetCommand::ObjectRelease { .. }
             | NetCommand::RequestTaskInventory { .. }
             | NetCommand::ChatSession { .. } => {}
+            // handled by on_offline_command
+            NetCommand::RequestOfflineMessages
+            | NetCommand::RequestOfflineMessagesLegacy
+            | NetCommand::AnswerOfflineFriendship { .. }
+            | NetCommand::AnswerOfflineGroupInvite { .. } => {}
+            // handled by on_search_command
+            NetCommand::DirQuery { .. }
+            | NetCommand::EventInfoRequest(_)
+            | NetCommand::GroupProfileRequest(_)
+            | NetCommand::ProductInfoRequest => {}
         }
     }
 
@@ -2206,7 +2224,11 @@ impl Session<'_> {
         if self.on_inventory_eq(&e) {
             return;
         }
-        if self.on_social_eq(&e.message, b) || self.on_land_eq(&e.message, b) || self.on_build_eq(&e.message, b) {
+        if self.on_social_eq(&e.message, b)
+            || self.on_land_eq(&e.message, b)
+            || self.on_search_eq(&e.message, b)
+            || self.on_build_eq(&e.message, b)
+        {
             return;
         }
         match e.message.as_str() {
@@ -2398,6 +2420,7 @@ impl Session<'_> {
             || self.dispatch_object_actions(from, pkt)?
             || self.dispatch_social(from, pkt)?
             || self.dispatch_land(from, pkt)?
+            || self.dispatch_search(from, pkt)?
             || self.dispatch_build(pkt)?
         {
             return Ok(());
@@ -2859,6 +2882,7 @@ impl Session<'_> {
                         offline: b.offline != 0,
                         from_group: b.from_group,
                         binary_bucket: b.binary_bucket.clone(),
+                        timestamp: b.timestamp,
                     }),
                 );
             }

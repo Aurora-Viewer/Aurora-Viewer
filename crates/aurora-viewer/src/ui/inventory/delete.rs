@@ -48,7 +48,8 @@ pub(super) fn shortcut(ui: &mut egui::Ui, inv: &Inventory, st: &mut InventoryUi,
 pub(super) fn button(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, st: &mut InventoryUi, prefs: &InventoryPreferences, facts: &Facts) {
     let ids: Vec<_> = st.selection.iter().copied().collect();
     let enabled = st.pending.is_none() && st.dialog.is_none() && allowed(inv, &ids, prefs, facts);
-    let button = ui.scope(|ui| super::super::widgets::icon_button(ui, p, "trash", aurora_i18n::tr!("inventory-delete-shortcut"), enabled));
+    let button =
+        ui.scope(|ui| super::super::widgets::icon_button(ui, p, "trash-filled", aurora_i18n::tr!("inventory-delete-shortcut"), enabled));
     if cfg!(test) || demo_mode().is_some() {
         ui.ctx()
             .data_mut(|data| data.insert_temp(egui::Id::new(("inventory_delete_button", st.ui_id)), button.response.rect));

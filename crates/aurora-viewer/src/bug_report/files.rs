@@ -370,6 +370,71 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    /// The conversation transcripts are never part of a report: the bundle
+    /// copies a closed list of files, and the transcripts live under the
+    /// settings folder, outside what a report reads.
+    #[test]
+    fn conversation_transcripts_never_enter_a_bundle() {
+        use crate::world::chat_log::store::{Identity, folder};
+        let root = std::env::temp_dir().join(format!("aurora-report-chatlog-test-{}", uuid::Uuid::new_v4()));
+        // transcripts dropped right next to the session log, the worst case
+        let session = root.join("session");
+        std::fs::create_dir_all(&session).unwrap();
+        std::fs::write(session.join("session.log"), "[INFO aurora_viewer] started\n").unwrap();
+        for name in ["chat.txt", "Jane Doe.txt", "Les Loups (group).txt"] {
+            std::fs::write(session.join(name), "[2026/10/12 14:05]  Jane Doe: PRIVATE_CHAT_LINE\n").unwrap();
+        }
+        let report = Report {
+            title: "Example".into(),
+            ..Default::default()
+        };
+        let mut saved = save_in(&root, &report, None, false, Some(&session.join("session.log")), Some(&session)).unwrap();
+        prepare_private_logs(&mut saved).unwrap();
+        let bundle = saved.public_dir.parent().unwrap().to_path_buf();
+        fn files(dir: &Path, out: &mut Vec<PathBuf>) {
+            for e in std::fs::read_dir(dir).unwrap().flatten() {
+                if e.path().is_dir() {
+                    files(&e.path(), out);
+                } else {
+                    out.push(e.path());
+                }
+            }
+        }
+        let mut written = Vec::new();
+        files(&bundle, &mut written);
+        assert!(!written.is_empty());
+        for path in &written {
+            let name = path.file_name().unwrap().to_string_lossy().into_owned();
+            assert!(
+                ["report.md", "diagnostics.md", "README.txt", "session.log", "logs.zip"].contains(&name.as_str()),
+                "unexpected file in a report: {name}"
+            );
+            assert!(!String::from_utf8_lossy(&std::fs::read(path).unwrap()).contains("PRIVATE_CHAT_LINE"));
+        }
+        let mut archive = zip::ZipArchive::new(Cursor::new(saved.logs.as_ref().unwrap())).unwrap();
+        let names: Vec<String> = archive.file_names().map(|n| n.unwrap().into_owned()).collect();
+        assert!(!names.is_empty());
+        for name in names {
+            assert!(["session.log", "diagnostics.md", "README.txt"].contains(&name.as_str()), "{name}");
+            let mut text = String::new();
+            archive.by_name(&name).unwrap().read_to_string(&mut text).unwrap();
+            assert!(!text.contains("PRIVATE_CHAT_LINE"));
+        }
+        // where the transcripts really are: not under the logs, the crash
+        // sessions or the saved reports
+        let transcripts = folder(
+            &crate::settings::accounts_dir(),
+            &Identity {
+                grid: "agni".into(),
+                agent: uuid::Uuid::from_u128(1),
+            },
+        );
+        let logs = crate::logging::logs_dir();
+        assert!(!transcripts.starts_with(&logs));
+        assert!(!transcripts.starts_with(logs.parent().unwrap().join("bug-reports")));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn capture_is_reencoded_with_bounded_preview_and_no_source_metadata() {
         let image = capture(2, 1, vec![255; 8]).unwrap();

@@ -77,6 +77,19 @@ enum Command {
     ExpandAll,
 }
 
+fn focus_frame_id() -> Id {
+    Id::new("script_editor_focus_frame")
+}
+
+/// A script editor had the keyboard on the last frame drawn: its own
+/// shortcuts (Ctrl+F to find in the script) go before the viewer's on the
+/// same keys, as a floater's accelerators do in Firestorm.
+pub fn editor_focused(ctx: &egui::Context) -> bool {
+    let now = ctx.cumulative_frame_nr();
+    ctx.data(|d| d.get_temp::<u64>(focus_frame_id()))
+        .is_some_and(|frame| frame + 1 >= now)
+}
+
 fn visible_id(id: Id, processed: bool) -> Id {
     if processed { id.with("processed") } else { id }
 }
@@ -217,13 +230,13 @@ pub(super) fn body(
     egui::MenuBar::new().ui(ui, |ui| {
         ui.menu_button(aurora_i18n::tr!("script-menu-file"), |ui| {
             for (command, icon, label) in [
-                (Command::Save, "floppy-disk", aurora_i18n::tr!("common-save")),
-                (Command::Revert, "arrow-counter-clockwise", aurora_i18n::tr!("script-menu-revert")),
-                (Command::Reload, "arrows-clockwise", aurora_i18n::tr!("build-ui-contents-refresh")),
-                (Command::Open, "folder-open", aurora_i18n::tr!("script-menu-open")),
-                (Command::Export, "download-simple", aurora_i18n::tr!("script-menu-export")),
-                (Command::External, "arrow-square-out", aurora_i18n::tr!("script-menu-external")),
-                (Command::Preferences, "gear-six", aurora_i18n::tr!("script-menu-preferences")),
+                (Command::Save, "device-floppy-filled", aurora_i18n::tr!("common-save")),
+                (Command::Revert, "restore", aurora_i18n::tr!("script-menu-revert")),
+                (Command::Reload, "refresh", aurora_i18n::tr!("build-ui-contents-refresh")),
+                (Command::Open, "folder-open-filled", aurora_i18n::tr!("script-menu-open")),
+                (Command::Export, "download-filled", aurora_i18n::tr!("script-menu-export")),
+                (Command::External, "external-link-filled", aurora_i18n::tr!("script-menu-external")),
+                (Command::Preferences, "settings-filled", aurora_i18n::tr!("script-menu-preferences")),
             ] {
                 if menu::item_if(ui, p, icon, label, enabled(command, e, &ctx, id)) {
                     chosen = Some(command);
@@ -235,10 +248,10 @@ pub(super) fn body(
         });
         ui.menu_button(aurora_i18n::tr!("script-menu-help"), |ui| {
             for (command, icon, label) in [
-                (Command::Help, "question", aurora_i18n::tr!("script-menu-help")),
-                (Command::Keyword, "book-open", aurora_i18n::tr!("script-help-keyword")),
-                (Command::Library, "code", aurora_i18n::tr!("script-help-library")),
-                (Command::Debug, "bug", aurora_i18n::tr!("script-debug-title")),
+                (Command::Help, "help-circle-filled", aurora_i18n::tr!("script-menu-help")),
+                (Command::Keyword, "book-filled", aurora_i18n::tr!("script-help-keyword")),
+                (Command::Library, "library-filled", aurora_i18n::tr!("script-help-library")),
+                (Command::Debug, "bug-filled", aurora_i18n::tr!("script-debug-title")),
             ] {
                 if menu::item_if(ui, p, icon, label, enabled(command, e, &ctx, id)) {
                     chosen = Some(command);
@@ -248,17 +261,17 @@ pub(super) fn body(
     });
     ui.horizontal(|ui| {
         for (command, icon, label) in [
-            (Command::Save, "floppy-disk", aurora_i18n::tr!("common-save")),
-            (Command::Export, "download-simple", aurora_i18n::tr!("script-menu-export")),
-            (Command::Open, "folder-open", aurora_i18n::tr!("script-menu-open")),
-            (Command::External, "arrow-square-out", aurora_i18n::tr!("script-menu-external")),
-            (Command::Cut, "scissors", aurora_i18n::tr!("script-edit-cut")),
-            (Command::Copy, "copy", aurora_i18n::tr!("script-edit-copy")),
-            (Command::Paste, "clipboard-text", aurora_i18n::tr!("script-edit-paste")),
-            (Command::Undo, "arrow-counter-clockwise", aurora_i18n::tr!("script-edit-undo")),
-            (Command::Redo, "arrow-clockwise", aurora_i18n::tr!("script-edit-redo")),
-            (Command::Find, "magnifying-glass", aurora_i18n::tr!("script-search-title")),
-            (Command::Preferences, "gear-six", aurora_i18n::tr!("script-menu-preferences")),
+            (Command::Save, "device-floppy-filled", aurora_i18n::tr!("common-save")),
+            (Command::Export, "download-filled", aurora_i18n::tr!("script-menu-export")),
+            (Command::Open, "folder-open-filled", aurora_i18n::tr!("script-menu-open")),
+            (Command::External, "external-link-filled", aurora_i18n::tr!("script-menu-external")),
+            (Command::Cut, "cut", aurora_i18n::tr!("script-edit-cut")),
+            (Command::Copy, "copy-filled", aurora_i18n::tr!("script-edit-copy")),
+            (Command::Paste, "clipboard-text-filled", aurora_i18n::tr!("script-edit-paste")),
+            (Command::Undo, "arrow-back-up", aurora_i18n::tr!("script-edit-undo")),
+            (Command::Redo, "arrow-forward-up", aurora_i18n::tr!("script-edit-redo")),
+            (Command::Find, "search-filled", aurora_i18n::tr!("script-search-title")),
+            (Command::Preferences, "settings-filled", aurora_i18n::tr!("script-menu-preferences")),
         ] {
             if icon_button(ui, p, icon, label, enabled(command, e, &ctx, id)) {
                 chosen = Some(command);
@@ -283,6 +296,9 @@ pub(super) fn body(
         run(command, e, &ctx, id, settings, prefs, actions);
     }
     if ctx.memory(|m| m.has_focus(visible_id(id, e.tools.processed))) {
+        // read outside the closure: the context is locked inside it
+        let frame = ctx.cumulative_frame_nr();
+        ctx.data_mut(|d| d.insert_temp(focus_frame_id(), frame));
         for (key, command) in [
             (egui::Key::S, Command::Save),
             (egui::Key::F, Command::Find),
@@ -351,7 +367,7 @@ fn footer(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, actions: &mut 
                     actions.push(Action::Reset(e.target));
                 }
                 let mut running = e.running.unwrap_or(false);
-                if ui.checkbox(&mut running, aurora_i18n::tr!("script-running")).changed() {
+                if crate::ui::widgets::checkbox(ui, p, &mut running, aurora_i18n::tr!("script-running")).changed() {
                     actions.push(Action::Running { target: e.target, running });
                 }
             });
@@ -359,7 +375,7 @@ fn footer(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, actions: &mut 
         ui.add_enabled_ui(
             e.can_edit && e.loaded && e.saving.is_none() && (e.target.object.is_nil() || e.running.is_some()),
             |ui| {
-                ui.checkbox(&mut e.mono, "Mono").on_hover_text(aurora_i18n::tr!("script-mono-hint"));
+                crate::ui::widgets::checkbox(ui, p, &mut e.mono, "Mono").on_hover_text(aurora_i18n::tr!("script-mono-hint"));
             },
         );
     });
@@ -404,21 +420,25 @@ fn footer(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, actions: &mut 
 
 fn edit_menu(ui: &mut egui::Ui, p: &Palette, e: &Editor, id: Id, chosen: &mut Option<Command>) {
     for (command, icon, label) in [
-        (Command::Undo, "arrow-counter-clockwise", aurora_i18n::tr!("script-edit-undo")),
-        (Command::Redo, "arrow-clockwise", aurora_i18n::tr!("script-edit-redo")),
-        (Command::Cut, "scissors", aurora_i18n::tr!("script-edit-cut")),
-        (Command::Copy, "copy", aurora_i18n::tr!("script-edit-copy")),
-        (Command::Paste, "clipboard-text", aurora_i18n::tr!("script-edit-paste")),
-        (Command::SelectAll, "selection-all", aurora_i18n::tr!("script-edit-select-all")),
-        (Command::Deselect, "selection", aurora_i18n::tr!("script-edit-deselect")),
-        (Command::Find, "magnifying-glass", aurora_i18n::tr!("script-search-title")),
-        (Command::Goto, "arrow-line-down", aurora_i18n::tr!("script-goto")),
-        (Command::LineComment, "code", aurora_i18n::tr!("script-edit-line-comment")),
-        (Command::BlockComment, "code", aurora_i18n::tr!("script-edit-block-comment")),
-        (Command::Indent, "arrow-right", aurora_i18n::tr!("script-edit-indent")),
-        (Command::Outdent, "arrow-left", aurora_i18n::tr!("script-edit-outdent")),
-        (Command::FoldAll, "caret-right", aurora_i18n::tr!("script-fold-all")),
-        (Command::ExpandAll, "caret-down", aurora_i18n::tr!("script-expand-all")),
+        (Command::Undo, "arrow-back-up", aurora_i18n::tr!("script-edit-undo")),
+        (Command::Redo, "arrow-forward-up", aurora_i18n::tr!("script-edit-redo")),
+        (Command::Cut, "cut", aurora_i18n::tr!("script-edit-cut")),
+        (Command::Copy, "copy-filled", aurora_i18n::tr!("script-edit-copy")),
+        (Command::Paste, "clipboard-text-filled", aurora_i18n::tr!("script-edit-paste")),
+        (Command::SelectAll, "select-all", aurora_i18n::tr!("script-edit-select-all")),
+        (Command::Deselect, "deselect", aurora_i18n::tr!("script-edit-deselect")),
+        (Command::Find, "search-filled", aurora_i18n::tr!("script-search-title")),
+        (Command::Goto, "arrow-bar-to-down", aurora_i18n::tr!("script-goto")),
+        (Command::LineComment, "slashes", aurora_i18n::tr!("script-edit-line-comment")),
+        (
+            Command::BlockComment,
+            "code-asterisk",
+            aurora_i18n::tr!("script-edit-block-comment"),
+        ),
+        (Command::Indent, "indent-increase", aurora_i18n::tr!("script-edit-indent")),
+        (Command::Outdent, "indent-decrease", aurora_i18n::tr!("script-edit-outdent")),
+        (Command::FoldAll, "caret-right-filled", aurora_i18n::tr!("script-fold-all")),
+        (Command::ExpandAll, "caret-down-filled", aurora_i18n::tr!("script-expand-all")),
     ] {
         if menu::item_if(ui, p, icon, label, enabled(command, e, ui.ctx(), id)) {
             *chosen = Some(command);
@@ -603,7 +623,7 @@ fn insertion(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id) {
                     if !e.tools.insertion_open {
                         field.request_focus();
                     }
-                    ui.separator();
+                    crate::ui::widgets::divider(ui, p);
                     // Only the results scroll, keeping the search field visible.
                     let mut results = egui::ScrollArea::vertical().id_salt((id, "insert_results")).max_height(220.0);
                     if field.changed() {

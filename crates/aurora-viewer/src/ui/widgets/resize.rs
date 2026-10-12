@@ -77,6 +77,21 @@ pub(super) struct Drag {
 }
 
 impl Drag {
+    /// The edges that follow the pointer, for the snapping (`layout::resizing`).
+    pub(super) fn edges(self) -> crate::ui::snap::Edges {
+        crate::ui::snap::Edges {
+            left: self.edge.left(),
+            right: self.edge.right(),
+            top: self.edge.top(),
+            bottom: self.edge.bottom(),
+        }
+    }
+
+    /// The least size of the window, as known so far in this gesture.
+    pub(super) fn minimum(self) -> Vec2 {
+        self.minimum
+    }
+
     pub(super) fn rect(self) -> Rect {
         let mut rect = self.start;
         if self.edge.left() {
@@ -127,8 +142,9 @@ impl Drag {
         drag
     }
 
-    pub(super) fn finish(mut self, ctx: &Context, window: Id, actual: Rect) {
-        let requested = self.rect();
+    /// `requested` is the rect asked of the window this frame (`rect`, or
+    /// its snapped version), `actual` the one it took.
+    pub(super) fn finish(mut self, ctx: &Context, window: Id, requested: Rect, actual: Rect) {
         // Content can require more room than the configured minimum. Repeat
         // layout at that size while this gesture owns the pointer, preserving
         // the opposite edge even for a newly reflowed toolbar or dialog.

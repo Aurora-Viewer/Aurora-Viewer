@@ -68,6 +68,8 @@ pub struct Settings {
     pub camera: crate::camera::CameraSettings,
     /// Contacts window (Amis / Groupes / Cercles).
     pub contacts: crate::ui::contacts::ContactsSettings,
+    /// Radar of the People window.
+    pub radar: crate::ui::people::RadarSettings,
     pub inventory: crate::ui::inventory::InventoryPreferences,
     pub imports: crate::imports::Preferences,
     pub ao: crate::ao::Settings,
@@ -110,6 +112,9 @@ pub struct Settings {
     pub ui_scale: f32,
     /// Firestorm UsePieMenu. Keep Aurora's existing list menu by default.
     pub use_pie_menu: bool,
+    /// Windows snap to each other and to the edges while they are moved or
+    /// resized (Firestorm SnapEnabled, on).
+    pub snap_windows: bool,
     pub show_perf: bool,
     pub show_chat: bool,
     pub show_minimap: bool,
@@ -120,6 +125,8 @@ pub struct Settings {
     pub landmarks_by_date: bool,
     /// Mini-map and world map options (Firestorm MiniMap* / Map* settings).
     pub maps: MapSettings,
+    /// « Rechercher »: last tab, rating boxes and land limits.
+    pub search: crate::world::search::SearchSettings,
     /// Other panels open at exit (restored at startup) and the People tab.
     pub show_people: bool,
     pub people_tab: u8,
@@ -132,7 +139,8 @@ pub struct Settings {
     pub window_width: u32,
     pub window_height: u32,
     /// Last window position (outer, physical pixels) and maximized state
-    /// (Firestorm WindowX / WindowY / WindowMaximized).
+    /// (Firestorm WindowX / WindowY / WindowMaximized). A first launch opens
+    /// maximized (`window_starts_maximized`).
     pub window_x: Option<i32>,
     pub window_y: Option<i32>,
     pub window_maximized: bool,
@@ -143,6 +151,15 @@ pub struct Settings {
     pub font_scale: f32,
     pub chat_timestamps: bool,
     pub chat_toast_seconds: f32,
+    /// Write instant messages, group chats and conferences to text files in
+    /// the account's folder (Firestorm KeepConversationLogTranscripts = 2).
+    pub log_im: bool,
+    /// Write the nearby chat too (Firestorm LogNearbyChat, off).
+    pub log_nearby: bool,
+    /// Show the end of a conversation's file when it opens (LogShowHistory).
+    pub log_show_history: bool,
+    /// Date in the names of these files (LogFileNamewithDate, off).
+    pub log_dated_names: bool,
     /// Ask before opening a web link outside the trusted domains (the box
     /// « Ne plus me prévenir » of the warning turns it off).
     pub warn_external_links: bool,
@@ -159,6 +176,9 @@ pub struct Settings {
     /// Commandes).
     pub chat_commands: crate::cmdline::ChatCommandSettings,
     pub name_tag_distance: f32,
+    /// Avatar name tags drawn as before the name plates (`ui::nameplate`):
+    /// lines of text on a flat tag, in the tag colors of the preferences.
+    pub classic_name_tags: bool,
     pub invert_mouse: bool,
     pub arrows_strafe: bool,
     /// Our avatar's head and eyes follow the cursor and what we point at,
@@ -449,6 +469,7 @@ impl Default for Settings {
             build: Default::default(),
             camera: Default::default(),
             contacts: Default::default(),
+            radar: Default::default(),
             inventory: Default::default(),
             imports: Default::default(),
             script_editor: Default::default(),
@@ -475,13 +496,20 @@ impl Default for Settings {
             texture_budget_mb: 1536,
             ui_scale: 1.0,
             use_pie_menu: false,
+            snap_windows: true,
+            // First launch (no settings file): the radar (People on its
+            // first tab, top left), the mini-map (top right), Performance
+            // under it and Conversations (bottom right) are open, as asked
+            // by the human; the other windows wait for their button. A
+            // saved file keeps what was open at exit.
             show_perf: true,
             show_chat: true,
             show_minimap: true,
             standalone_place_details: false,
             landmarks_by_date: true,
             maps: MapSettings::default(),
-            show_people: false,
+            search: Default::default(),
+            show_people: true,
             people_tab: 0,
             show_inventory: false,
             show_appearance: false,
@@ -500,6 +528,10 @@ impl Default for Settings {
             font_scale: 1.0,
             chat_timestamps: true,
             chat_toast_seconds: 20.0,
+            log_im: true,
+            log_nearby: false,
+            log_show_history: true,
+            log_dated_names: false,
             warn_external_links: true,
             mute_all_groups: false,
             mute_groups_without_notices: false,
@@ -507,6 +539,7 @@ impl Default for Settings {
             autoresponse: Default::default(),
             chat_commands: Default::default(),
             name_tag_distance: 64.0,
+            classic_name_tags: false,
             invert_mouse: false,
             arrows_strafe: false,
             look_at: false,
@@ -581,7 +614,23 @@ fn for_mode(dir: PathBuf) -> PathBuf {
     }
 }
 
+/// Unit tests never read or write the user's folders: theirs are in the
+/// build folder of the worktree.
+fn unit_test_root() -> Option<PathBuf> {
+    #[cfg(test)]
+    {
+        Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/unit-test-user-data"))
+    }
+    #[cfg(not(test))]
+    {
+        None
+    }
+}
+
 pub fn config_dir() -> PathBuf {
+    if let Some(root) = unit_test_root() {
+        return root.join("config");
+    }
     if let Some(test) = aurora_updater::test_environment() {
         return test.root.join("profile");
     }
@@ -595,10 +644,20 @@ pub fn config_dir() -> PathBuf {
 /// Files of one account (LL_PATH_PER_SL_ACCOUNT): contact sets, pinned
 /// groups.
 pub fn account_dir(agent: &uuid::Uuid) -> PathBuf {
-    config_dir().join("accounts").join(agent.to_string())
+    accounts_dir().join(agent.to_string())
+}
+
+/// The folder that holds one folder per account id. An account id says
+/// nothing of the grid: what must not cross from one grid to another (the
+/// conversation transcripts) adds the grid under it.
+pub fn accounts_dir() -> PathBuf {
+    config_dir().join("accounts")
 }
 
 pub fn cache_dir() -> PathBuf {
+    if let Some(root) = unit_test_root() {
+        return root.join("cache");
+    }
     if let Some(test) = aurora_updater::test_environment() {
         return test.root.join("cache");
     }
@@ -607,6 +666,25 @@ pub fn cache_dir() -> PathBuf {
             .map(|d| d.cache_dir().to_path_buf())
             .unwrap_or_else(|| PathBuf::from("cache")),
     )
+}
+
+/// What a settings file says of the viewer window: (its maximized state,
+/// whether it gives a size).
+fn saved_window_state(file: &serde_json::Value) -> (Option<bool>, bool) {
+    let maximized = file.get("window_maximized").and_then(serde_json::Value::as_bool);
+    let size = file.get("window_width").is_some() || file.get("window_height").is_some();
+    (maximized, size)
+}
+
+/// Whether the viewer window opens maximized. The state saved at the last
+/// exit when there is one: the user who restored the window keeps its size,
+/// the one who left it maximized finds it maximized. Without it: maximized
+/// on a first launch (no settings file, or one that says nothing of the
+/// window), but not when the file gives a size and no state, a size chosen
+/// by a script or a test. Never when the size is forced for the run
+/// (`forced`: a capture, which needs its exact window).
+pub(crate) fn window_starts_maximized(saved_maximized: Option<bool>, saved_size: bool, forced: bool) -> bool {
+    !forced && saved_maximized.unwrap_or(!saved_size)
 }
 
 impl Settings {
@@ -637,10 +715,13 @@ impl Settings {
     }
 
     pub fn load() -> Settings {
-        let s = std::fs::read(Self::path())
+        // what the file says of the window: nothing on a first launch
+        let mut saved_window = (None, false);
+        let mut s = std::fs::read(Self::path())
             .ok()
             .and_then(|b| {
                 let value: serde_json::Value = serde_json::from_slice(&b).ok()?;
+                saved_window = saved_window_state(&value);
                 // Select before serde fills missing fields: default auto-replies
                 // must use the saved locale too, without replacing custom text.
                 aurora_i18n::select(
@@ -650,6 +731,8 @@ impl Settings {
                 serde_json::from_value::<Settings>(value).ok()
             })
             .unwrap_or_default();
+        let forced = std::env::var_os("AURORA_CAPTURE").is_some();
+        s.window_maximized = window_starts_maximized(saved_window.0, saved_window.1, forced);
         s.sanitized()
     }
 
@@ -1078,6 +1161,44 @@ mod tests {
             let loaded: Settings = serde_json::from_value(json).expect("settings with a stale key");
             assert_eq!(loaded.sanitized().keybinds.get(Action::HudDrag), slots);
         }
+    }
+
+    /// A first launch opens the viewer window maximized; afterwards the
+    /// window is what the user left.
+    #[test]
+    fn the_first_launch_window_is_maximized() {
+        let state = |json: &str| {
+            let file: serde_json::Value = serde_json::from_str(json).expect("synthetic settings");
+            let (maximized, size) = saved_window_state(&file);
+            (
+                window_starts_maximized(maximized, size, false),
+                window_starts_maximized(maximized, size, true),
+            )
+        };
+        // no settings file (nothing read), a blank one, one without a word of the window
+        assert!(window_starts_maximized(None, false, false));
+        assert_eq!(state("{}"), (true, false));
+        assert_eq!(state(r#"{"language":"fr","show_chat":true}"#), (true, false));
+        // the state saved at exit
+        assert_eq!(
+            state(r#"{"window_width":1600,"window_height":900,"window_maximized":false}"#),
+            (false, false)
+        );
+        assert_eq!(
+            state(r#"{"window_width":1600,"window_height":900,"window_maximized":true}"#),
+            (true, false)
+        );
+        // a size alone: forced by a script or a test
+        assert_eq!(state(r#"{"window_width":1280,"window_height":720}"#), (false, false));
+        // what a session writes always says both: a restored window stays restored
+        let mut left = Settings::default();
+        assert!(!left.window_maximized, "the default is the saved state of a restored window");
+        left.window_width = 1280;
+        let json = serde_json::to_string(&left).expect("serialize synthetic settings");
+        assert_eq!(state(&json), (false, false));
+        left.window_maximized = true;
+        let json = serde_json::to_string(&left).expect("serialize synthetic settings");
+        assert_eq!(state(&json), (true, false));
     }
 
     #[test]

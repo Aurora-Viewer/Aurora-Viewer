@@ -6,10 +6,10 @@ mod commands;
 
 use super::fonts::{self, SystemFont};
 use super::icons::Icons;
-use super::widgets::Floater;
+use super::widgets::{Floater, keycap};
 use crate::settings::Settings;
 use crate::theme::Palette;
-use egui::{Color32, CornerRadius, RichText, Sense, Vec2};
+use egui::{RichText, Sense, Vec2};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Capture {
@@ -43,6 +43,13 @@ pub struct OptionsUi {
     confirm_reset: bool,
     /// Sound assets being typed (Firestorm name -> text).
     ui_sound_text: std::collections::HashMap<&'static str, String>,
+    /// Folder of the conversation transcripts of the account logged in
+    /// (set by the app; none on the login screen).
+    pub chat_log_dir: Option<std::path::PathBuf>,
+    /// What the last erasing of the transcripts did (set by the app).
+    pub chat_log_status: String,
+    /// "Effacer les historiques" confirmation open.
+    confirm_erase_logs: bool,
 }
 
 impl OptionsUi {
@@ -88,23 +95,29 @@ pub struct OptionsResult {
     pub refresh_devices: bool,
     /// Every setting went back to its default.
     pub reset: bool,
+    /// The camera settings went back to their defaults: the view follows.
+    pub reset_camera: bool,
+    /// Show the folder of the conversation transcripts.
+    pub open_chat_logs: bool,
+    /// Erase the conversation transcripts of the account (confirmed).
+    pub erase_chat_logs: bool,
 }
 
 /// Category tabs (index = `OptionsUi::tab`).
 fn categories() -> [(&'static str, &'static str); 12] {
     [
-        (aurora_i18n::tr!("ui-options-graphics"), "Command_Environments_Icon"),
-        (aurora_i18n::tr!("common-interface"), "Command_Appearance_Icon"),
-        (aurora_i18n::tr!("ui-options-fonts"), "Command_Chat_Icon"),
-        (aurora_i18n::tr!("common-chat"), "nearbychat_18"),
-        (aurora_i18n::tr!("ui-options-controls"), "Command_Move_Icon"),
-        (aurora_i18n::tr!("ui-options-colors"), "drop"),
-        (aurora_i18n::tr!("ui-options-network-and-cache"), "Command_Inventory_Icon"),
-        (aurora_i18n::tr!("ui-options-sound-and-voice"), "speaker-high"),
-        (aurora_i18n::tr!("ui-options-shortcuts"), "keyboard"),
-        (aurora_i18n::tr!("common-debug"), "code"),
-        (aurora_i18n::tr!("common-camera"), "camera"),
-        (aurora_i18n::tr!("ui-options-commands"), "terminal-window"),
+        (aurora_i18n::tr!("ui-options-graphics"), "device-desktop-filled"),
+        (aurora_i18n::tr!("common-interface"), "app-window-filled"),
+        (aurora_i18n::tr!("ui-options-fonts"), "file-typography-filled"),
+        (aurora_i18n::tr!("common-chat"), "messages-filled"),
+        (aurora_i18n::tr!("ui-options-controls"), "device-gamepad-filled"),
+        (aurora_i18n::tr!("ui-options-colors"), "palette-filled"),
+        (aurora_i18n::tr!("ui-options-network-and-cache"), "cloud-data-connection-filled"),
+        (aurora_i18n::tr!("ui-options-sound-and-voice"), "headset-filled"),
+        (aurora_i18n::tr!("ui-options-shortcuts"), "keyboard-filled"),
+        (aurora_i18n::tr!("common-debug"), "code-circle-filled"),
+        (aurora_i18n::tr!("common-camera"), "camera-filled"),
+        (aurora_i18n::tr!("ui-options-commands"), "square-rounded-chevron-right-filled"),
     ]
 }
 
@@ -123,50 +136,49 @@ fn category(ui: &mut egui::Ui, p: &Palette, _icons: &Icons, label: &str, icon: &
 }
 
 /// A titled group of settings drawn as a flat card.
-/// Phosphor icon of a settings group (by its title).
+/// Tabler icon of a settings group (by its title).
 fn group_icon(title: &str) -> Option<&'static str> {
     Some(match title {
-        value if value == aurora_i18n::text("ui-options-quality") => "sliders",
-        value if value == aurora_i18n::text("common-light") => "sun",
-        value if value == aurora_i18n::text("ui-options-reflections") => "drop",
-        value if value == aurora_i18n::text("common-image") => "image",
-        value if value == aurora_i18n::text("ui-options-smoothness") => "speedometer",
-        value if value == aurora_i18n::text("ui-options-layout") => "layout",
-        value if value == aurora_i18n::text("preferences-group-skin") => "palette",
-        value if value == aurora_i18n::text("ui-options-size-and-preview") => "text-aa",
-        value if value == aurora_i18n::text("ui-options-bundled-fonts") => "text-t",
-        value if value == aurora_i18n::text("ui-options-system-fonts") => "monitor",
-        value if value == aurora_i18n::text("common-nearby-chat") => "chat-circle-dots",
-        value if value == aurora_i18n::text("ui-options-messages") => "chat-text",
-        value if value == aurora_i18n::text("ui-options-emitter") => "user-circle",
+        value if value == aurora_i18n::text("ui-options-quality") => "adjustments-filled",
+        value if value == aurora_i18n::text("common-light") => "sun-filled",
+        value if value == aurora_i18n::text("ui-options-reflections") => "droplet-filled",
+        value if value == aurora_i18n::text("common-image") => "photo-filled",
+        value if value == aurora_i18n::text("ui-options-smoothness") => "dashboard-filled",
+        value if value == aurora_i18n::text("ui-options-layout") => "layout-filled",
+        value if value == aurora_i18n::text("preferences-group-skin") => "paint-filled",
+        value if value == aurora_i18n::text("ui-options-size-and-preview") => "text-size",
+        value if value == aurora_i18n::text("ui-options-bundled-fonts") => "typography",
+        value if value == aurora_i18n::text("ui-options-system-fonts") => "device-desktop-filled",
+        value if value == aurora_i18n::text("common-nearby-chat") => "message-circle-filled",
+        value if value == aurora_i18n::text("ui-options-messages") => "message-filled",
+        value if value == aurora_i18n::text("ui-options-chat-logs") => "history",
+        value if value == aurora_i18n::text("ui-options-emitter") => "user-filled",
         value if value == aurora_i18n::text("ui-options-chat-mentions") => "at",
-        value if value == aurora_i18n::text("ui-options-mouse") => "mouse",
-        value if value == aurora_i18n::text("preferences-group-huds") => "hand-grabbing",
-        value if value == aurora_i18n::text("ui-options-keyboard") => "keyboard",
-        value if value == aurora_i18n::text("ui-options-name-tag-color") => "tag",
-        value if value == aurora_i18n::text("ui-options-mini-map-markers") => "map-trifold",
-        value if value == aurora_i18n::text("ui-options-disk-cache") => "hard-drives",
-        value if value == aurora_i18n::text("ui-options-devices") => "speaker-hifi",
-        value if value == aurora_i18n::text("ui-options-volumes") => "speaker-high",
-        value if value == aurora_i18n::text("common-voice") => "waveform",
-        value if value == aurora_i18n::text("ui-options-push-to-talk") => "microphone",
-        value if value == aurora_i18n::text("common-movement") => "person-simple-walk",
-        value if value == aurora_i18n::text("common-camera") || value == aurora_i18n::text("common-viewpoint") => "camera",
-        value if value == aurora_i18n::text("common-camera-movement") => "sliders",
-        value if value == aurora_i18n::text("common-behavior") => "arrows-clockwise",
-        value if value == aurora_i18n::text("common-limits") => "prohibit",
+        value if value == aurora_i18n::text("ui-options-mouse") => "mouse-filled",
+        value if value == aurora_i18n::text("preferences-group-huds") => "hand-grab",
+        value if value == aurora_i18n::text("ui-options-keyboard") => "keyboard-filled",
+        value if value == aurora_i18n::text("ui-options-name-tag-color") => "tag-filled",
+        value if value == aurora_i18n::text("ui-options-mini-map-markers") => "map",
+        value if value == aurora_i18n::text("ui-options-disk-cache") => "database-filled",
+        value if value == aurora_i18n::text("ui-options-devices") => "device-speaker-filled",
+        value if value == aurora_i18n::text("ui-options-volumes") => "volume",
+        value if value == aurora_i18n::text("common-voice") => "wave-sine",
+        value if value == aurora_i18n::text("ui-options-push-to-talk") => "microphone-filled",
+        value if value == aurora_i18n::text("common-movement") => "walk",
+        value if value == aurora_i18n::text("common-camera") || value == aurora_i18n::text("common-viewpoint") => "camera-filled",
+        value if value == aurora_i18n::text("common-camera-movement") => "adjustments-filled",
+        value if value == aurora_i18n::text("common-behavior") => "toggle-right-filled",
+        value if value == aurora_i18n::text("common-limits") => "barrier-block-filled",
         value if value == aurora_i18n::text("common-mouselook") => "crosshair",
-        value if value == aurora_i18n::text("ui-options-look-at") => "eye",
-        value if value == aurora_i18n::text("common-communication") => "chats-circle",
-        value if value == aurora_i18n::text("ui-options-groups-and-blocking") => "prohibit",
-        value if value == aurora_i18n::text("ui-options-auto-replies") => "paper-plane-tilt",
-        value if value == aurora_i18n::text("ui-options-automatic-rejections") => "hand-waving",
-        value if value == aurora_i18n::text("common-command-line") || value == aurora_i18n::text("common-other-commands") => {
-            "terminal-window"
-        }
-        value if value == aurora_i18n::text("common-teleport-commands") => "map-pin",
-        value if value == aurora_i18n::text("common-camera-and-display-commands") => "camera",
-        value if value == aurora_i18n::text("common-windows") => "squares-four",
+        value if value == aurora_i18n::text("ui-options-look-at") => "eye-filled",
+        value if value == aurora_i18n::text("common-communication") => "messages-filled",
+        value if value == aurora_i18n::text("ui-options-groups-and-blocking") => "forbid-filled",
+        value if value == aurora_i18n::text("ui-options-auto-replies") => "message-chatbot-filled",
+        value if value == aurora_i18n::text("ui-options-automatic-rejections") => "thumb-down-filled",
+        value if value == aurora_i18n::text("common-command-line") || value == aurora_i18n::text("common-other-commands") => "terminal-2",
+        value if value == aurora_i18n::text("common-teleport-commands") => "map-pin-filled",
+        value if value == aurora_i18n::text("common-camera-and-display-commands") => "camera-filled",
+        value if value == aurora_i18n::text("common-windows") => "layout-grid-filled",
         _ => return None,
     })
 }
@@ -188,7 +200,7 @@ fn group(ui: &mut egui::Ui, p: &Palette, title: &str, body: impl FnOnce(&mut egu
     ui.add_space(2.0);
     egui::Frame::new()
         .fill(p.field)
-        .corner_radius(CornerRadius::same(3))
+        .corner_radius(ui.visuals().window_corner_radius)
         .stroke(egui::Stroke::new(1.0, p.raised))
         .inner_margin(egui::Margin::symmetric(10, 8))
         .show(ui, |ui| {
@@ -199,18 +211,34 @@ fn group(ui: &mut egui::Ui, p: &Palette, title: &str, body: impl FnOnce(&mut egu
     ui.add_space(10.0);
 }
 
+/// Room kept between a label that fills its column and the control.
+const LABEL_GAP: f32 = 4.0;
+
+/// The label of a row, in a cell `LABEL_W` wide so that the controls of a
+/// page stand in one column. A label longer than the column (a translation,
+/// a larger font) goes on at the line below instead of running under the
+/// control: the row grows for it alone, the column does not move.
+fn row_label(ui: &mut egui::Ui, p: &Palette, label: &str) -> egui::Response {
+    // the spacing before the control is room for the text too, less a gap
+    let room = LABEL_W + ui.spacing().item_spacing.x - LABEL_GAP;
+    let galley = egui::WidgetText::from(RichText::new(label).size(13.0).color(p.ink)).into_galley(
+        ui,
+        Some(egui::TextWrapMode::Wrap),
+        room,
+        egui::TextStyle::Body,
+    );
+    let height = galley.size().y.max(22.0);
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(LABEL_W, height), Sense::hover());
+    let top = rect.center().y - galley.size().y * 0.5;
+    ui.painter().galley(egui::pos2(rect.left(), top), galley, p.ink);
+    resp
+}
+
 /// One row: label (with optional hint) on the left, control on the right.
 fn row(ui: &mut egui::Ui, p: &Palette, label: &str, hint: &str, control: impl FnOnce(&mut egui::Ui) -> bool) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
-        let (rect, resp) = ui.allocate_exact_size(Vec2::new(LABEL_W, 22.0), Sense::hover());
-        ui.painter().text(
-            rect.left_center(),
-            egui::Align2::LEFT_CENTER,
-            label,
-            egui::FontId::proportional(13.0),
-            p.ink,
-        );
+        let resp = row_label(ui, p, label);
         if !hint.is_empty() {
             resp.on_hover_text(hint);
         }
@@ -248,31 +276,61 @@ fn stepped(ui: &mut egui::Ui, p: &Palette, v: &mut u8, labels: &[&str]) -> bool 
     r.changed()
 }
 
-/// Color swatch with a picker popup (opaque).
-fn swatch(ui: &mut egui::Ui, v: &mut crate::settings::Rgba) -> bool {
-    let mut col = Color32::from_rgba_unmultiplied(v[0], v[1], v[2], v[3]);
+/// Color swatch opening the compact picker (opaque); `id` tells the
+/// swatches of a page apart.
+fn swatch(ui: &mut egui::Ui, p: &Palette, id: impl egui::AsIdSalt, v: &mut crate::settings::Rgba) -> bool {
     ui.spacing_mut().interact_size = Vec2::new(38.0, 18.0);
-    let changed = egui::widgets::color_picker::color_edit_button_srgba(ui, &mut col, egui::widgets::color_picker::Alpha::Opaque).changed();
-    if changed {
-        *v = col.to_array();
-    }
-    changed
+    super::widgets::color_button(ui, p, id, v, false).changed()
 }
 
 /// Grid of labelled swatches, three per row (Firestorm color preferences).
-fn swatches(ui: &mut egui::Ui, id: &str, items: &mut [(&str, &mut crate::settings::Rgba)]) -> bool {
+fn swatches(ui: &mut egui::Ui, p: &Palette, id: &str, items: &mut [(&str, &mut crate::settings::Rgba)]) -> bool {
     let mut changed = false;
     egui::Grid::new(id).num_columns(3).spacing([24.0, 8.0]).show(ui, |ui| {
         for (i, (label, v)) in items.iter_mut().enumerate() {
             ui.horizontal(|ui| {
                 ui.set_min_width(150.0);
-                changed |= swatch(ui, v);
+                changed |= swatch(ui, p, (id, i), v);
                 ui.label(RichText::new(*label).size(12.5));
             });
             if i % 3 == 2 {
                 ui.end_row();
             }
         }
+    });
+    changed
+}
+
+/// The name tag colors are those of the classic tags: the name plates take
+/// theirs from the theme (the human's choice; Firestorm's are configurable).
+fn tag_colors_used(s: &Settings) -> bool {
+    s.classic_name_tags
+}
+
+/// The name tag colors of the Colors page. Greyed rather than hidden while
+/// the name plates are the style, so that the page keeps its shape.
+fn tag_colors(ui: &mut egui::Ui, p: &Palette, k: &mut crate::settings::ColorSettings, used: bool) -> bool {
+    let mut changed = false;
+    group(ui, p, aurora_i18n::tr!("ui-options-name-tag-color"), |ui| {
+        if !used {
+            let note = aurora_i18n::tr!("ui-options-tag-colors-classic-only");
+            ui.label(RichText::new(note).size(11.5).color(p.muted));
+        }
+        ui.add_enabled_ui(used, |ui| {
+            changed |= swatches(
+                ui,
+                p,
+                "tags",
+                &mut [
+                    (aurora_i18n::tr!("ui-options-my-name"), &mut k.tag_me),
+                    (aurora_i18n::tr!("common-friends"), &mut k.tag_friend),
+                    (aurora_i18n::tr!("ui-options-ignored"), &mut k.tag_muted),
+                    ("Linden Lab", &mut k.tag_linden),
+                    (aurora_i18n::tr!("ui-options-matches"), &mut k.tag_match),
+                    (aurora_i18n::tr!("ui-options-non-matches"), &mut k.tag_mismatch),
+                ],
+            );
+        });
     });
     changed
 }
@@ -461,9 +519,9 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
                             TAB_AUDIO => audio_page(ui, p, s, st, &mut r.audio_changed, &mut r.refresh_devices),
                             8 => keys_page(ui, p, s, st),
                             9 => debug_page(ui, p, s),
-                            TAB_CAMERA => camera::page(ui, p, s),
+                            TAB_CAMERA => camera::page(ui, p, s, &mut r.reset_camera),
                             TAB_COMMANDS => commands::page(ui, p, &mut s.chat_commands),
-                            _ => content(ui, p, s, st, &mut r.font_changed, &mut r.clear_cache),
+                            _ => content(ui, p, s, st, &mut r),
                         };
                     });
             });
@@ -488,11 +546,9 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
             );
             ui.add_space(10.0);
             ui.horizontal(|ui| {
-                let yes = ui.add(
-                    egui::Button::new(RichText::new(aurora_i18n::tr!("common-reset")).color(Color32::WHITE))
-                        .fill(p.danger)
-                        .corner_radius(CornerRadius::same(2)),
-                );
+                use super::widgets::{ActionKind, action_button};
+                let size = Vec2::new(0.0, 26.0);
+                let yes = action_button(ui, p, "restore", aurora_i18n::tr!("common-reset"), ActionKind::Danger, size);
                 if yes.clicked() {
                     s.reset_keeping_account();
                     st.capture = None;
@@ -502,7 +558,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
                     r.reset = true;
                     st.confirm_reset = false;
                 }
-                if super::widgets::flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked() {
+                if action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {
                     st.confirm_reset = false;
                 }
             });
@@ -511,11 +567,181 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
             st.confirm_reset = false;
         }
     }
+    if st.confirm_erase_logs && *open {
+        let modal = crate::ui::widgets::Modal::new(egui::Id::new("options_erase_chat_logs")).show(ctx, |ui| {
+            ui.set_width(360.0);
+            ui.label(
+                RichText::new(aurora_i18n::tr!("ui-options-chat-logs-erase-title"))
+                    .size(15.0)
+                    .strong()
+                    .color(p.ink),
+            );
+            ui.add_space(6.0);
+            ui.label(
+                RichText::new(aurora_i18n::tr!("ui-options-chat-logs-erase-text"))
+                    .size(12.5)
+                    .color(p.muted),
+            );
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                use super::widgets::{ActionKind, action_button};
+                let size = Vec2::new(0.0, 26.0);
+                if action_button(
+                    ui,
+                    p,
+                    "trash-filled",
+                    aurora_i18n::tr!("ui-options-chat-logs-erase-confirm"),
+                    ActionKind::Danger,
+                    size,
+                )
+                .clicked()
+                {
+                    r.erase_chat_logs = true;
+                    st.confirm_erase_logs = false;
+                }
+                if action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {
+                    st.confirm_erase_logs = false;
+                }
+            });
+        });
+        if modal.should_close() {
+            st.confirm_erase_logs = false;
+        }
+    }
     r
 }
 
-fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi, font_changed: &mut bool, clear_cache: &mut bool) -> bool {
+/// Préférences › Chat › Historique des conversations: what is written to
+/// the account's transcripts and where they are (Firestorm: Préférences ›
+/// Confidentialité, « Journaux et transcriptions »).
+fn chat_logs_group(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi, r: &mut OptionsResult) -> bool {
     let mut c = false;
+    group(ui, p, aurora_i18n::tr!("ui-options-chat-logs"), |ui| {
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-chat-logs-im"),
+            aurora_i18n::tr!("ui-options-chat-logs-im-help"),
+            |ui| toggle(ui, p, &mut s.log_im),
+        );
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-chat-logs-nearby"),
+            aurora_i18n::tr!("ui-options-chat-logs-nearby-help"),
+            |ui| toggle(ui, p, &mut s.log_nearby),
+        );
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-chat-logs-show"),
+            aurora_i18n::tr!("ui-options-chat-logs-show-help"),
+            |ui| toggle(ui, p, &mut s.log_show_history),
+        );
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-chat-logs-dated"),
+            aurora_i18n::tr!("ui-options-chat-logs-dated-help"),
+            |ui| toggle(ui, p, &mut s.log_dated_names),
+        );
+        ui.label(
+            RichText::new(aurora_i18n::tr!("ui-options-chat-logs-note"))
+                .size(11.5)
+                .color(p.muted),
+        );
+        match &st.chat_log_dir {
+            Some(dir) => {
+                // without the verbatim prefix Windows gives a canonical path
+                let path = dir.display().to_string();
+                let path = path.strip_prefix(r"\\?\").unwrap_or(&path).to_owned();
+                ui.add(super::widgets::elided_label(
+                    ui,
+                    RichText::new(&path).size(11.5).color(p.muted_dim),
+                    ui.available_width(),
+                ))
+                .on_hover_text(&path);
+                ui.horizontal(|ui| {
+                    use super::widgets::{ActionKind, action_button};
+                    let size = Vec2::new(0.0, 24.0);
+                    if action_button(
+                        ui,
+                        p,
+                        "folder-open-filled",
+                        aurora_i18n::tr!("ui-options-chat-logs-open"),
+                        ActionKind::Flat,
+                        size,
+                    )
+                    .clicked()
+                    {
+                        r.open_chat_logs = true;
+                    }
+                    if action_button(
+                        ui,
+                        p,
+                        "trash-filled",
+                        aurora_i18n::tr!("ui-options-chat-logs-erase"),
+                        ActionKind::FlatDanger,
+                        size,
+                    )
+                    .clicked()
+                    {
+                        st.confirm_erase_logs = true;
+                    }
+                });
+                if !st.chat_log_status.is_empty() {
+                    ui.label(RichText::new(&st.chat_log_status).size(11.5).color(p.muted));
+                }
+            }
+            None => {
+                ui.label(
+                    RichText::new(aurora_i18n::tr!("ui-options-chat-logs-no-account"))
+                        .size(11.5)
+                        .color(p.muted_dim),
+                );
+            }
+        }
+    });
+    c
+}
+
+/// First group of the Chat page.
+fn chat_page_head(ui: &mut egui::Ui, p: &Palette, s: &mut Settings) -> bool {
+    let mut c = false;
+    group(ui, p, aurora_i18n::tr!("common-nearby-chat"), |ui| {
+        c |= row(ui, p, aurora_i18n::tr!("ui-options-show-time"), "", |ui| {
+            toggle(ui, p, &mut s.chat_timestamps)
+        });
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-chat-bubble-duration"),
+            aurora_i18n::tr!("ui-options-0-no-chat-bubbles-above-the-chat-bar"),
+            |ui| slider(ui, &mut s.chat_toast_seconds, 0.0..=60.0, " s"),
+        );
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-warn-before-external-links"),
+            aurora_i18n::tr!("ui-options-warn-before-opening-a-link-to-a-site-that"),
+            |ui| toggle(ui, p, &mut s.warn_external_links),
+        );
+        c |= row(ui, p, aurora_i18n::tr!("ui-options-conversations-at-startup"), "", |ui| {
+            toggle(ui, p, &mut s.show_chat)
+        });
+    });
+    c
+}
+
+fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi, r: &mut OptionsResult) -> bool {
+    let mut c = false;
+    let (mut font, mut cache) = (false, false);
+    let (font_changed, clear_cache) = (&mut font, &mut cache);
+    if st.tab == TAB_CHAT {
+        // drawn after the first group of the page, below
+        c |= chat_page_head(ui, p, s);
+        c |= chat_logs_group(ui, p, s, st, r);
+    }
     match st.tab {
         0 => {
             group(ui, p, aurora_i18n::tr!("ui-options-quality"), |ui| {
@@ -1084,6 +1310,13 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                 c |= row(
                     ui,
                     p,
+                    aurora_i18n::tr!("ui-options-snap-windows"),
+                    aurora_i18n::tr!("ui-options-snap-windows-help"),
+                    |ui| toggle(ui, p, &mut s.snap_windows),
+                );
+                c |= row(
+                    ui,
+                    p,
                     aurora_i18n::tr!("ui-options-context-menu"),
                     aurora_i18n::tr!("ui-options-context-menu-help"),
                     |ui| {
@@ -1119,6 +1352,26 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     aurora_i18n::tr!("ui-options-name-distance"),
                     aurora_i18n::tr!("ui-options-0-hide-avatar-names"),
                     |ui| slider(ui, &mut s.name_tag_distance, 0.0..=128.0, " m"),
+                );
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-name-tag-style"),
+                    aurora_i18n::tr!("ui-options-name-tag-style-help"),
+                    |ui| {
+                        let mut changed = false;
+                        let (plate, classic) = (
+                            aurora_i18n::tr!("ui-options-name-tags-plate"),
+                            aurora_i18n::tr!("ui-options-name-tags-classic"),
+                        );
+                        egui::ComboBox::from_id_salt("name-tag-style")
+                            .selected_text(if s.classic_name_tags { classic } else { plate })
+                            .show_ui(ui, |ui| {
+                                changed |= ui.selectable_value(&mut s.classic_name_tags, false, plate).changed();
+                                changed |= ui.selectable_value(&mut s.classic_name_tags, true, classic).changed();
+                            });
+                        changed
+                    },
                 );
                 c |= row(
                     ui,
@@ -1226,7 +1479,7 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     } else {
                         builtin.to_owned()
                     };
-                    if ui.radio(sel, RichText::new(label).size(13.0)).clicked() && !sel {
+                    if super::widgets::radio(ui, p, sel, RichText::new(label).size(13.0)).clicked() && !sel {
                         s.font = builtin.to_owned();
                         *font_changed = true;
                         c = true;
@@ -1246,7 +1499,7 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     for f in list.iter().filter(|f| filter.is_empty() || f.name.to_lowercase().contains(&filter)) {
                         let key = format!("system:{}", f.path.display());
                         let sel = s.font == key;
-                        if ui.radio(sel, RichText::new(&f.name).size(13.0)).clicked() && !sel {
+                        if super::widgets::radio(ui, p, sel, RichText::new(&f.name).size(13.0)).clicked() && !sel {
                             s.font = key;
                             *font_changed = true;
                             c = true;
@@ -1268,28 +1521,6 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
             });
         }
         3 => {
-            group(ui, p, aurora_i18n::tr!("common-nearby-chat"), |ui| {
-                c |= row(ui, p, aurora_i18n::tr!("ui-options-show-time"), "", |ui| {
-                    toggle(ui, p, &mut s.chat_timestamps)
-                });
-                c |= row(
-                    ui,
-                    p,
-                    aurora_i18n::tr!("ui-options-chat-bubble-duration"),
-                    aurora_i18n::tr!("ui-options-0-no-chat-bubbles-above-the-chat-bar"),
-                    |ui| slider(ui, &mut s.chat_toast_seconds, 0.0..=60.0, " s"),
-                );
-                c |= row(
-                    ui,
-                    p,
-                    aurora_i18n::tr!("ui-options-warn-before-external-links"),
-                    aurora_i18n::tr!("ui-options-warn-before-opening-a-link-to-a-site-that"),
-                    |ui| toggle(ui, p, &mut s.warn_external_links),
-                );
-                c |= row(ui, p, aurora_i18n::tr!("ui-options-conversations-at-startup"), "", |ui| {
-                    toggle(ui, p, &mut s.show_chat)
-                });
-            });
             group(ui, p, aurora_i18n::tr!("ui-options-groups-and-blocking"), |ui| {
                 c |= row(
                     ui,
@@ -1443,24 +1674,13 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
             });
         }
         5 => {
+            let classic_tags = tag_colors_used(s);
             let k = &mut s.colors;
-            group(ui, p, aurora_i18n::tr!("ui-options-name-tag-color"), |ui| {
-                c |= swatches(
-                    ui,
-                    "tags",
-                    &mut [
-                        (aurora_i18n::tr!("ui-options-my-name"), &mut k.tag_me),
-                        (aurora_i18n::tr!("common-friends"), &mut k.tag_friend),
-                        (aurora_i18n::tr!("ui-options-ignored"), &mut k.tag_muted),
-                        ("Linden Lab", &mut k.tag_linden),
-                        (aurora_i18n::tr!("ui-options-matches"), &mut k.tag_match),
-                        (aurora_i18n::tr!("ui-options-non-matches"), &mut k.tag_mismatch),
-                    ],
-                );
-            });
+            c |= tag_colors(ui, p, k, classic_tags);
             group(ui, p, aurora_i18n::tr!("ui-options-mini-map-markers"), |ui| {
                 c |= swatches(
                     ui,
+                    p,
                     "map",
                     &mut [
                         (aurora_i18n::tr!("common-me"), &mut k.map_me),
@@ -1471,14 +1691,15 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     ],
                 );
                 ui.add_space(4.0);
-                c |= ui
-                    .checkbox(
-                        &mut k.map_ranges,
-                        RichText::new(aurora_i18n::tr!("ui-options-show-whisper-normal-chat-and-shout-ranges-on-the"))
-                            .size(12.5)
-                            .color(p.ink),
-                    )
-                    .changed();
+                c |= super::widgets::switch_labeled(
+                    ui,
+                    p,
+                    &mut k.map_ranges,
+                    RichText::new(aurora_i18n::tr!("ui-options-show-whisper-normal-chat-and-shout-ranges-on-the"))
+                        .size(12.5)
+                        .color(p.ink),
+                )
+                .changed();
                 ui.add_enabled_ui(k.map_ranges, |ui| {
                     egui::Grid::new("ranges").num_columns(3).spacing([24.0, 6.0]).show(ui, |ui| {
                         for (label, on, col) in [
@@ -1487,8 +1708,8 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                             (aurora_i18n::tr!("ui-options-shout"), &mut k.map_shout_on, &mut k.map_shout),
                         ] {
                             ui.horizontal(|ui| {
-                                c |= ui.checkbox(on, "").changed();
-                                c |= swatch(ui, col);
+                                c |= super::widgets::checkbox(ui, p, on, "").changed();
+                                c |= swatch(ui, p, ("map_range", label), col);
                                 ui.label(RichText::new(label).size(12.5).color(p.ink));
                             });
                         }
@@ -1499,6 +1720,7 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
             group(ui, p, aurora_i18n::tr!("ui-options-messages"), |ui| {
                 c |= swatches(
                     ui,
+                    p,
                     "msgs",
                     &mut [
                         (aurora_i18n::tr!("ui-options-my-messages"), &mut k.chat_mine),
@@ -1520,6 +1742,7 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
             group(ui, p, aurora_i18n::tr!("ui-options-emitter"), |ui| {
                 c |= swatches(
                     ui,
+                    p,
                     "sender",
                     &mut [
                         (aurora_i18n::tr!("ui-options-avatars"), &mut k.sender_avatar),
@@ -1530,6 +1753,7 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
             group(ui, p, aurora_i18n::tr!("ui-options-chat-mentions"), |ui| {
                 c |= swatches(
                     ui,
+                    p,
                     "mentions",
                     &mut [
                         (aurora_i18n::tr!("ui-options-font"), &mut k.mention_text),
@@ -1575,11 +1799,8 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                         let used = st.cache_usage;
                         let limit = s.cache_size_mb as u64 * 1024 * 1024;
                         let frac = (used as f32 / limit.max(1) as f32).clamp(0.0, 1.0);
-                        ui.add(egui::ProgressBar::new(frac).desired_width(SLIDER_W).fill(p.violet).text(format!(
-                            "{} / {}",
-                            format_bytes(used),
-                            format_bytes(limit)
-                        )));
+                        let text = format!("{} / {}", format_bytes(used), format_bytes(limit));
+                        super::widgets::progress(ui, p, "cache_usage", frac, SLIDER_W, &text, None);
                         false
                     },
                 );
@@ -1636,19 +1857,22 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
             });
         }
     }
+    r.font_changed |= font;
+    r.clear_cache |= cache;
     c
 }
 
-/// Device combo: "" = system default.
-fn device_combo(ui: &mut egui::Ui, id: &str, value: &mut String, devices: &[String]) -> bool {
+/// Device combo: "" = system default. Returns (a device was chosen, the
+/// list is unfolded).
+pub(super) fn device_combo(ui: &mut egui::Ui, id: &str, value: &mut String, devices: &[String], width: f32) -> (bool, bool) {
     let mut changed = false;
     let shown = if value.is_empty() {
         aurora_i18n::tr!("ui-options-system-default").to_owned()
     } else {
         value.clone()
     };
-    egui::ComboBox::from_id_salt(id)
-        .width(SLIDER_W)
+    let list = egui::ComboBox::from_id_salt(id)
+        .width(width)
         .selected_text(shown)
         .truncate()
         .show_ui(ui, |ui| {
@@ -1666,7 +1890,7 @@ fn device_combo(ui: &mut egui::Ui, id: &str, value: &mut String, devices: &[Stri
                 );
             }
         });
-    changed
+    (changed, list.inner.is_some())
 }
 
 /// "Son et voix": devices, the volumes of the top-right panel (same
@@ -1680,14 +1904,14 @@ fn audio_page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut Options
             p,
             aurora_i18n::tr!("ui-options-audio-output"),
             aurora_i18n::tr!("ui-options-speakers-or-headset-used-by-the-viewer"),
-            |ui| device_combo(ui, "audio_out", &mut a.output_device, &st.output_devices),
+            |ui| device_combo(ui, "audio_out", &mut a.output_device, &st.output_devices, SLIDER_W).0,
         );
         let inp = row(
             ui,
             p,
             aurora_i18n::tr!("ui-options-microphone"),
             aurora_i18n::tr!("ui-options-input-used-for-voice"),
-            |ui| device_combo(ui, "audio_in", &mut a.input_device, &st.input_devices),
+            |ui| device_combo(ui, "audio_in", &mut a.input_device, &st.input_devices, SLIDER_W).0,
         );
         c |= out | inp;
         *audio_changed |= out | inp;
@@ -1726,8 +1950,7 @@ fn audio_page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut Options
                     ch = true;
                 }
                 if i > 0 {
-                    ch |= ui
-                        .checkbox(&mut a.enabled[i], "")
+                    ch |= super::widgets::checkbox(ui, p, &mut a.enabled[i], "")
                         .on_hover_text(aurora_i18n::tr!("ui-options-enable-this-channel"))
                         .changed();
                 }
@@ -1818,7 +2041,7 @@ fn audio_page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut Options
                 } else {
                     p.teal
                 };
-                ui.add(egui::ProgressBar::new(lvl).desired_width(SLIDER_W).desired_height(8.0).fill(col));
+                super::widgets::level(ui, p, "mic_level", lvl, SLIDER_W, col);
                 false
             },
         );
@@ -1925,7 +2148,14 @@ fn audio_page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut Options
             )
         };
         row(ui, p, aurora_i18n::tr!("ui-options-plugins"), "", |ui| {
-            ui.label(RichText::new(status).size(12.0).color(p.muted));
+            // the path of a folder, of any length: cut to the row (whole on
+            // hover), it made the window wider on this tab
+            let room = ui.available_width();
+            ui.add(super::widgets::elided_label(
+                ui,
+                RichText::new(status).size(12.0).color(p.muted),
+                room,
+            ));
             false
         });
     });
@@ -1947,20 +2177,28 @@ fn binding_cell(
 ) {
     let capturing = st.capture == Some(Capture::Binding(a, slot));
     let b = kb.get(a)[slot].clone();
-    let (text, col) = if capturing {
-        (aurora_i18n::tr!("common-press-a-key").to_owned(), Color32::WHITE)
-    } else if let Some(b) = &b {
-        (b.label(), p.ink)
-    } else {
-        ("—".to_owned(), p.muted_dim)
-    };
     let fill = if capturing { p.violet } else { p.raised };
+    // a bound key is drawn as keycaps over an empty button of their width
+    let caps = match &b {
+        Some(b) if !capturing => keycap::caps(ui, b, fill),
+        _ => Vec::new(),
+    };
+    let (text, col) = if capturing {
+        (aurora_i18n::tr!("common-press-a-key"), p.on_accent)
+    } else if b.is_some() {
+        ("", p.ink)
+    } else {
+        ("—", p.muted_dim)
+    };
+    let caps_width = keycap::row_width(&caps);
     let resp = ui.add(
         egui::Button::new(RichText::new(text).size(12.0).color(col))
             .fill(fill)
-            .corner_radius(CornerRadius::same(2))
-            .min_size(Vec2::new(132.0, 20.0)),
+            .corner_radius(ui.visuals().widgets.inactive.corner_radius)
+            .min_size(Vec2::new((caps_width + 12.0).max(132.0), 20.0)),
     );
+    let caps_left = egui::pos2(resp.rect.center().x - caps_width / 2.0, resp.rect.center().y);
+    keycap::paint_row(ui, p, &caps, caps_left, fill);
     if resp.clicked() {
         st.capture_modifier = None;
         st.capture = if capturing { None } else { Some(Capture::Binding(a, slot)) };
@@ -2008,14 +2246,7 @@ fn keys_page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsU
             }
             for (a, label) in actions.iter() {
                 ui.horizontal(|ui| {
-                    let (rect, _) = ui.allocate_exact_size(Vec2::new(LABEL_W, 22.0), Sense::hover());
-                    ui.painter().text(
-                        rect.left_center(),
-                        egui::Align2::LEFT_CENTER,
-                        *label,
-                        egui::FontId::proportional(13.0),
-                        p.ink,
-                    );
+                    row_label(ui, p, label);
                     for slot in 0..2 {
                         binding_cell(ui, p, &kb, st, *a, slot);
                     }
@@ -2105,13 +2336,8 @@ fn ui_sounds_group(ui: &mut egui::Ui, p: &Palette, a: &mut crate::settings::Audi
                 .changed()
             },
         );
-        egui::CollapsingHeader::new(
-            RichText::new(aurora_i18n::tr!("ui-options-per-sound-choices"))
-                .size(13.0)
-                .color(p.ink),
-        )
-        .id_salt("ui_sounds_each")
-        .show(ui, |ui| {
+        let each = aurora_i18n::tr!("ui-options-per-sound-choices");
+        super::widgets::collapsing(ui, p, "ui_sounds_each", each, false, |ui| {
             for e in CATALOG
                 .iter()
                 .filter(|e| !e.sound.caller_gated() || e.sound == UiSound::TrackerBeacon)
@@ -2201,6 +2427,76 @@ mod tests {
         assert_eq!(ui.capture_key(KeyCode::KeyB, true, false), Some(Some(Input::key(KeyCode::KeyB))));
         ui.take_capture();
         assert_eq!(ui.capture_key(KeyCode::ControlLeft, false, false), None);
+    }
+
+    /// Draw the tag colors of the Colors page, then click along the column
+    /// of the first swatches; whether a color picker opened, and whether the
+    /// line about the classic tags is written.
+    fn tag_colors_frame(settings: &mut Settings) -> (bool, bool) {
+        let ctx = egui::Context::default();
+        let p = crate::theme::Theme::default().palette();
+        let note = aurora_i18n::tr!("ui-options-tag-colors-classic-only");
+        let picker = aurora_i18n::tr!("color-picker-title");
+        let (mut opened, mut noted) = (false, false);
+        let frame = |events: Vec<egui::Event>, settings: &mut Settings| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(700.0, 500.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    let used = tag_colors_used(settings);
+                    tag_colors(ui, &p, &mut settings.colors, used);
+                },
+            );
+            output.textures_delta.clear();
+            fn has(shape: &egui::Shape, text: &str) -> bool {
+                match shape {
+                    egui::Shape::Text(t) => t.galley.text() == text,
+                    egui::Shape::Vec(shapes) => shapes.iter().any(|s| has(s, text)),
+                    _ => false,
+                }
+            }
+            (
+                output.shapes.iter().any(|s| has(&s.shape, picker)),
+                output.shapes.iter().any(|s| has(&s.shape, note)),
+            )
+        };
+        noted |= frame(vec![], settings).1;
+        // the first swatch of each row is near the left edge of the group
+        for y in (20..120).step_by(4) {
+            let pos = egui::pos2(30.0, y as f32);
+            for pressed in [true, false] {
+                let click = egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: Default::default(),
+                };
+                frame(vec![egui::Event::PointerMoved(pos), click], settings);
+            }
+            opened |= frame(vec![], settings).0;
+            if opened {
+                break;
+            }
+        }
+        (opened, noted)
+    }
+
+    #[test]
+    fn the_tag_colors_are_greyed_exactly_while_the_name_plates_are_the_style() {
+        let mut settings = Settings::default();
+        assert!(!settings.classic_name_tags, "the name plates are the default style");
+        let colors = settings.colors;
+        let (opened, noted) = tag_colors_frame(&mut settings);
+        assert!(!opened, "a greyed swatch does not open its picker");
+        assert!(noted, "the page says the colors belong to the classic tags");
+        assert_eq!(settings.colors, colors);
+        // the classic style: the same rows, live at once
+        settings.classic_name_tags = true;
+        let (opened, noted) = tag_colors_frame(&mut settings);
+        assert!(opened && !noted);
     }
 
     #[test]
