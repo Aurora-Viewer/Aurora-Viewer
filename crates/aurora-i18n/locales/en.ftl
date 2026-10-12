@@ -3649,6 +3649,7 @@ script-goto-go = Go
 script-position = Line { $line }, column { $column }
 script-insert = Insert…
 script-insert-filter = Filter functions
+script-insert-empty = No matching functions
 script-help-keyword = Keyword help
 script-help-library = LSL library
 script-help-follow = Follow the cursor
@@ -3886,3 +3887,15 @@ workspace-outfit-items = { $count } items in this outfit
 
 ui-inventory-received-purchases = Received purchases
 ui-inventory-no-received-purchases = No received purchases yet.
+
+script-color-hint = Possible color: click to open the color picker.
+script-edit-line-comment = Toggle line comments (Ctrl+K or Ctrl+/)
+script-edit-block-comment = Toggle block comment (Ctrl+Shift+K)
+script-edit-indent = Increase indentation (Tab)
+script-edit-outdent = Decrease indentation (Shift+Tab)
+script-selection-edit-failed = Cannot edit: source too large or existing block comment. Use // for nested comments.
+script-fold-collapse = Collapse block
+script-fold-expand = Expand block
+script-fold-lines = lines
+script-fold-all = Collapse all
+script-expand-all = Expand all

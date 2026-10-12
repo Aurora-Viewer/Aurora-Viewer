@@ -53,6 +53,7 @@ pub(crate) enum Control {
 
 #[derive(Default)]
 pub struct ColorPicker {
+    window_id: String,
     draft: Option<Draft>,
     mixed: bool,
     pub pipette: bool,
@@ -72,6 +73,16 @@ pub struct ColorPicker {
 }
 
 impl ColorPicker {
+    pub fn named(window_id: String) -> Self {
+        Self {
+            window_id,
+            ..Self::default()
+        }
+    }
+
+    fn window_id(&self) -> &str {
+        if self.window_id.is_empty() { WINDOW_ID } else { &self.window_id }
+    }
     pub fn open(&mut self, rgb: Rgb, mixed: bool) {
         self.draft = Some(Draft::new(rgb));
         self.mixed = mixed;
@@ -146,7 +157,13 @@ impl ColorPicker {
         }
     }
 
+    pub(crate) fn track_controls(&mut self) {
+        self.track_controls = true;
+    }
+
     pub fn show(&mut self, ctx: &egui::Context, p: &Palette, prefs: &mut Preferences) -> Option<Event> {
+        let window_id = self.window_id().to_owned();
+        let window_id = window_id.as_str();
         let mut draft = self.draft.take()?;
         prefs.normalize();
         self.controls.clear();
@@ -158,7 +175,7 @@ impl ColorPicker {
         let screen = ctx.content_rect();
         let size = Vec2::new((screen.width() - 32.0).clamp(360.0, 460.0), 420.0);
         let parent = self.parent.and_then(|id| ctx.memory(|m| m.area_rect(id)));
-        let moving = ctx.is_being_dragged(egui::Id::new(WINDOW_ID).with("move"));
+        let moving = ctx.is_being_dragged(egui::Id::new(window_id).with("move"));
         if moving {
             // LLFloater::translate only moves dependents still snapped to it.
             // Keep the color owner for the context cone, even while detached.
@@ -167,19 +184,19 @@ impl ColorPicker {
         let following = self.dock.is_some() && (self.opening || parent != self.parent_rect || self.screen_rect != Some(screen));
         if let Some(parent) = parent.filter(|_| following) {
             let height = ctx
-                .memory(|m| m.area_rect(egui::Id::new(WINDOW_ID)))
+                .memory(|m| m.area_rect(egui::Id::new(window_id)))
                 .map_or(size.y, |rect| rect.height());
             let measured = Vec2::new(size.x, height);
             let (pos, side) = adjacent_position(screen, parent, measured, self.dock.unwrap_or(DockSide::Right));
             self.dock = Some(side);
             if self.opening {
-                widgets::place_floater(ctx, WINDOW_ID, pos, size);
+                widgets::place_floater(ctx, window_id, pos, size);
             } else {
-                widgets::move_floater(ctx, WINDOW_ID, pos);
+                widgets::move_floater(ctx, window_id, pos);
             }
         }
         Floater::new(
-            WINDOW_ID,
+            window_id,
             aurora_i18n::tr!("color-picker-title"),
             screen.center() - size * 0.5,
             size,
@@ -255,26 +272,26 @@ impl ColorPicker {
             });
         });
         if let Some(parent) = parent.filter(|_| following)
-            && let Some(rect) = ctx.memory(|m| m.area_rect(egui::Id::new(WINDOW_ID)))
+            && let Some(rect) = ctx.memory(|m| m.area_rect(egui::Id::new(window_id)))
         {
             // Auto-height is known after the first layout. Correct the screen
             // constraint in another pass so opening near the bottom stays visible.
             let (pos, side) = adjacent_position(screen, parent, rect.size(), self.dock.unwrap_or(DockSide::Right));
             self.dock = Some(side);
             if rect.min.distance(pos) > 0.5 {
-                widgets::move_floater(ctx, WINDOW_ID, pos);
+                widgets::move_floater(ctx, window_id, pos);
                 ctx.request_discard("position color picker beside its parent");
             }
         }
         if self.dragging
             && !moving
             && let Some(parent) = parent
-            && let Some(rect) = ctx.memory(|m| m.area_rect(egui::Id::new(WINDOW_ID)))
+            && let Some(rect) = ctx.memory(|m| m.area_rect(egui::Id::new(window_id)))
             && let Some(side) = nearby_snap(screen, parent, rect)
         {
             self.dock = Some(side);
             let (pos, _) = adjacent_position(screen, parent, rect.size(), side);
-            widgets::move_floater(ctx, WINDOW_ID, pos);
+            widgets::move_floater(ctx, window_id, pos);
             ctx.request_discard("snap color picker to its parent");
         }
         self.dragging = moving;
@@ -307,7 +324,7 @@ impl ColorPicker {
     /// LLFloater::drawConeToOwner / LLFloaterColorPicker::draw (Firestorm,
     /// originally LGPL 2.1): fade a context cone while moving the dialog.
     fn draw_owner_link(&mut self, ctx: &egui::Context, p: &Palette) {
-        let id = egui::Id::new(WINDOW_ID);
+        let id = egui::Id::new(self.window_id());
         if let Some(rect) = ctx.memory(|m| m.area_rect(id)) {
             self.record(Control::Title, Rect::from_min_size(rect.min, Vec2::new(rect.width() - 100.0, 40.0)));
         }

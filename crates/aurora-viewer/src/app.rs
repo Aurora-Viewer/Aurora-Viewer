@@ -2731,7 +2731,7 @@ impl App {
 
     /// Left press while building: handles, selection, create, terraform.
     fn build_mouse_down(&mut self) -> bool {
-        if self.build.ui.color_picker.pipette {
+        if self.color_pipette() {
             self.left_down = true;
             self.sample_build_color();
             return true;
@@ -2830,12 +2830,13 @@ impl App {
     }
 
     fn on_left_release(&mut self) {
-        if self.left_down && self.build.ui.color_picker.pipette {
+        if self.left_down && self.color_pipette() {
             if !self.egui_ctx.is_pointer_over_egui() {
                 self.sample_build_color();
             }
-            self.build.ui.color_picker.pipette = false;
-            self.build.ui.color_picker.sampled = None;
+            let picker = self.active_color_picker();
+            picker.pipette = false;
+            picker.sampled = None;
         }
         self.update_hud_drag(self.scene.lists.hud_view);
         if let Some(cmd) = self.hud_drag.take().and_then(|drag| drag.release(&self.world)) {
@@ -3602,7 +3603,7 @@ impl App {
 
         self.frame_profile.lap(Lap::Social);
         // Coalesce OS pointer moves before taking the renderer for this frame.
-        if self.left_down && self.build.ui.color_picker.pipette && !self.egui_ctx.is_pointer_over_egui() {
+        if self.left_down && self.color_pipette() && !self.egui_ctx.is_pointer_over_egui() {
             self.sample_build_color();
         }
         let Some(mut gfx) = self.gfx.take() else {
@@ -4562,7 +4563,7 @@ impl App {
             full.platform_output.cursor_icon = cursor;
             full.platform_output.cursor_image = None;
         }
-        if self.build.ui.color_picker.pipette && !ctx.is_pointer_over_egui() {
+        if self.color_pipette() && !ctx.is_pointer_over_egui() {
             full.platform_output.cursor_icon = egui::CursorIcon::Crosshair;
             full.platform_output.cursor_image = self.cursors.pipette();
         }
@@ -5507,7 +5508,10 @@ impl App {
                 );
                 self.sync_remembered_password();
                 // Keep disconnected script drafts accessible for copying.
-                for action in self.script_editors.show(&ctx, &p, &mut self.settings.script_editor) {
+                for action in self
+                    .script_editors
+                    .show(&ctx, &p, &mut self.settings.script_editor, &mut self.settings.build.color_picker)
+                {
                     self.apply_script_action(action);
                 }
             }
@@ -7174,7 +7178,7 @@ impl ApplicationHandler for App {
                     let pressed = ke.state == ElementState::Pressed;
                     // The color dialog owns Escape before camera shortcuts.
                     // egui already received the event above.
-                    if pressed && code == KeyCode::Escape && self.build.ui.color_picker.is_open() {
+                    if pressed && code == KeyCode::Escape && (self.build.ui.color_picker.is_open() || self.script_editors.color_open()) {
                         return;
                     }
                     // learn the keyboard layout for the shortcut labels
