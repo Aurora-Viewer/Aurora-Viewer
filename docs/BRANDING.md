@@ -57,7 +57,10 @@ Dans le code, on utilise toujours la `Palette` résolue (`p.violet`, `p.ink`…)
   sur l'écran de connexion), jamais avec un fond, une bordure ou un rayon
   écrits à la main. Les barres gardent la couleur `bar` comme teinte
   (`widgets::finish_bar_glass`) ; la mini-carte garde l'opacité de Firestorm
-  avec la bordure et l'ombre des fenêtres.
+  avec la bordure et l'ombre des fenêtres. Les menus, sous-menus, menus du
+  clic droit et listes déroulantes reçoivent ce verre d'un seul endroit
+  (`menu::glaze`, en fin d'image, dans le monde) : un nouveau menu n'a rien
+  à faire pour l'avoir.
   Les dégradés sont réservés aux éléments de marque (fond de connexion,
   aurores, remplissage de la barre de progression).
 - **Écran de connexion.** C'est la vitrine du viewer. Le flou des fenêtres

@@ -124,7 +124,7 @@ pub fn top_controls(
                 ui,
                 p,
                 icons,
-                "device-tv-filled",
+                "brand-youtube-filled",
                 if !media.media_available {
                     aurora_i18n::tr!("ui-audio-no-media-on-this-parcel")
                 } else if media.media_playing {

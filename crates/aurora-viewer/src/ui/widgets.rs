@@ -653,6 +653,8 @@ pub enum ActionKind {
     Primary,
     /// The danger color: a destructive action.
     Danger,
+    /// The caution color: something to report or to look after.
+    Caution,
     /// Flat until hovered, then the danger color.
     FlatDanger,
 }
@@ -674,6 +676,7 @@ pub fn action_button(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, ki
     let (fill, ink) = match kind {
         ActionKind::Primary => (if hot { p.violet_light } else { p.violet }, p.ink),
         ActionKind::Danger => (if hot { p.danger } else { p.danger.gamma_multiply(0.88) }, p.navy),
+        ActionKind::Caution => (if hot { p.amber } else { p.amber.gamma_multiply(0.88) }, p.navy),
         ActionKind::FlatDanger if hot => (p.danger.gamma_multiply(0.88), p.navy),
         ActionKind::Flat | ActionKind::FlatDanger => (if hot { p.raised.lerp_to_gamma(p.ink, 0.16) } else { p.raised }, p.ink),
     };

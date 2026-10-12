@@ -4546,6 +4546,10 @@ impl App {
             if inventory_drop.is_none() {
                 inventory_drop = self.inventory_drag_input(ui.ctx(), &gfx.renderer);
             }
+            // the glass blurs the world: there is none behind the login screen
+            if self.in_world() {
+                ui::menu::glaze(ui.ctx(), &self.palette);
+            }
             windows_ms += t.elapsed().as_secs_f32() * 1000.0;
         });
         // interface sounds of the widgets; the sounds are SL assets, loaded

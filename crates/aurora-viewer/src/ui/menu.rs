@@ -60,6 +60,53 @@ fn style(p: &Palette) -> egui::style::StyleModifier {
     })
 }
 
+/// The rectangle and corner radius of a stock pop-up frame in `shape`: the
+/// theme's window face inside its `border`. The panels drawn with
+/// `widgets::overlay` have another border and bring their own glass.
+fn stock_frame(shape: &egui::Shape, faces: [Color32; 2], border: Color32) -> Option<(egui::Rect, f32)> {
+    match shape {
+        egui::Shape::Rect(r) if faces.contains(&r.fill) && r.stroke.color == border => Some((r.rect, f32::from(r.corner_radius.nw))),
+        egui::Shape::Vec(shapes) => shapes.iter().find_map(|s| stock_frame(s, faces, border)),
+        _ => None,
+    }
+}
+
+/// The windows' glass under every pop-up of the frame: menus and their
+/// sub-menus, right-click menus, the lists of the combo boxes. Each one is
+/// alone in its layer and egui paints its frame first there; the blur of the
+/// world and the windows' tint go over that face, inside its border. Called
+/// in world, once the interface of the frame is built: one place for all the
+/// menus instead of one call per menu. An opaque skin (panel_alpha = 255)
+/// keeps its plain menus.
+pub fn glaze(ctx: &egui::Context, p: &Palette) {
+    if p.panel_alpha == 255 {
+        return;
+    }
+    let tint = Color32::from_rgba_unmultiplied(p.panel.r(), p.panel.g(), p.panel.b(), p.panel_alpha);
+    let faces = [tint, p.panel];
+    let layers: Vec<LayerId> = ctx
+        .memory(|m| m.areas().visible_layer_ids())
+        .into_iter()
+        .filter(|layer| layer.order == egui::Order::Foreground)
+        .collect();
+    ctx.graphics_mut(|graphics| {
+        for layer in layers {
+            let Some(list) = graphics.get_mut(layer) else {
+                continue;
+            };
+            if list.is_empty() {
+                continue;
+            }
+            list.mutate_shape(egui::layers::ShapeIdx(0), |first| {
+                if let Some((rect, radius)) = stock_frame(&first.shape, faces, p.raised) {
+                    let frame = std::mem::replace(&mut first.shape, egui::Shape::Noop);
+                    first.shape = egui::Shape::Vec(vec![frame, aurora_render::glass_panel(rect.shrink(1.0), radius, tint)]);
+                }
+            });
+        }
+    });
+}
+
 /// Right-click menu of a widget (replaces `Response::context_menu`).
 /// Returns whether the menu is open.
 pub fn context_menu(resp: &egui::Response, p: &Palette, body: impl FnOnce(&mut Ui)) -> bool {
