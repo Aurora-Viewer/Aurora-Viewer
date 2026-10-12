@@ -596,11 +596,10 @@ impl ColorPicker {
                         draft.set_rgb(prefs.palette[slot]);
                         edited = true;
                     }
-                    response.context_menu(|ui| {
-                        if ui.button(aurora_i18n::tr!("color-picker-save-slot")).clicked() {
+                    super::menu::context_menu(&response, p, |ui| {
+                        if super::menu::item(ui, p, "device-floppy-filled", aurora_i18n::tr!("color-picker-save-slot")) {
                             prefs.store(slot, draft.rgb);
                             self.notice = aurora_i18n::tr!("color-picker-saved").to_owned();
-                            ui.close();
                         }
                     });
                     response.on_hover_text(format!("#{}", hex(prefs.palette[slot])));

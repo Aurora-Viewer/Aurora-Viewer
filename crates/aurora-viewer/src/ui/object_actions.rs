@@ -358,10 +358,9 @@ pub fn show_contents(
                                                 if response.double_clicked() {
                                                     documents.push(document());
                                                 }
-                                                response.context_menu(|ui| {
-                                                    if ui.button(aurora_i18n::tr!("common-open")).clicked() {
+                                                super::menu::context_menu(&response, p, |ui| {
+                                                    if super::menu::item(ui, p, "folder-open-filled", aurora_i18n::tr!("common-open")) {
                                                         documents.push(document());
-                                                        ui.close();
                                                     }
                                                 });
                                             }

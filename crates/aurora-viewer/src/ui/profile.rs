@@ -8,6 +8,7 @@
 //! "Notes". Our own profile can be edited (texts, pictures, picks, show in
 //! search, full birth date); notes can be written on anyone.
 
+use super::menu;
 use super::texture_picker::TexturePicker;
 use super::web_view::WebView;
 use super::widgets::{self, Floater, flat_button};
@@ -711,24 +712,29 @@ fn second_life_tab(
             if own && let Some(pr) = profile {
                 // menu_fs_profile_image_actions.xml
                 widgets::icon_menu(ui, p, "settings-filled", aurora_i18n::tr!("ui-profile-profile-picture"), |ui| {
-                    ui.add_enabled(false, egui::Button::new(aurora_i18n::tr!("ui-profile-upload-picture")))
-                        .on_disabled_hover_text(aurora_i18n::tr!("ui-profile-coming-soon"));
-                    if ui.button(aurora_i18n::tr!("ui-profile-change-picture")).clicked() {
+                    let soon = aurora_i18n::tr!("ui-profile-coming-soon");
+                    menu::item_tip(
+                        ui,
+                        p,
+                        "file-upload-filled",
+                        aurora_i18n::tr!("ui-profile-upload-picture"),
+                        false,
+                        soon,
+                    );
+                    if menu::item(ui, p, "photo-filled", aurora_i18n::tr!("ui-profile-change-picture")) {
                         *pick_picture = Some((PictureSlot::SecondLife, pr.sl_image));
-                        ui.close();
                     }
-                    if ui
-                        .add_enabled(
-                            !pr.sl_image.is_nil(),
-                            egui::Button::new(aurora_i18n::tr!("ui-profile-delete-photo")),
-                        )
-                        .clicked()
-                    {
+                    if menu::item_if(
+                        ui,
+                        p,
+                        "trash-filled",
+                        aurora_i18n::tr!("ui-profile-delete-photo"),
+                        !pr.sl_image.is_nil(),
+                    ) {
                         actions.push(ProfileAction::Save {
                             target: id,
                             data: llsd_map! { "sl_image_id" => Uuid::nil() },
                         });
-                        ui.close();
                     }
                 });
             }
@@ -1026,42 +1032,35 @@ fn action_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, w: &Window, is_
 /// menu_fs_profile_overflow.xml.
 fn overflow_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid, blocked: bool, actions: &mut Vec<ProfileAction>) {
     widgets::icon_menu(ui, p, "menu-2-filled", aurora_i18n::tr!("ui-profile-more"), |ui| {
-        for label in [
-            aurora_i18n::tr!("common-map"),
-            aurora_i18n::tr!("common-pay"),
-            aurora_i18n::tr!("common-share"),
-            aurora_i18n::tr!("ui-profile-call"),
+        let soon = aurora_i18n::tr!("ui-profile-coming-soon");
+        for (icon, label) in [
+            ("map", aurora_i18n::tr!("common-map")),
+            ("coin-filled", aurora_i18n::tr!("common-pay")),
+            ("share", aurora_i18n::tr!("common-share")),
+            ("phone-filled", aurora_i18n::tr!("ui-profile-call")),
         ] {
-            ui.add_enabled(false, egui::Button::new(label))
-                .on_disabled_hover_text(aurora_i18n::tr!("ui-profile-coming-soon"));
+            menu::item_tip(ui, p, icon, label, false, soon);
         }
-        if ui
-            .button(if blocked {
-                aurora_i18n::tr!("common-unblock")
-            } else {
-                aurora_i18n::tr!("common-block")
-            })
-            .clicked()
-        {
+        let block = if blocked {
+            aurora_i18n::tr!("common-unblock")
+        } else {
+            aurora_i18n::tr!("common-block")
+        };
+        if menu::item(ui, p, "forbid-filled", block) {
             actions.push(ProfileAction::ToggleBlock(id));
-            ui.close();
         }
-        ui.separator();
-        if ui.button(aurora_i18n::tr!("common-copy-name")).clicked() {
+        menu::separator(ui, p);
+        if menu::item(ui, p, "copy-filled", aurora_i18n::tr!("common-copy-name")) {
             ui.ctx().copy_text(world.social.name_of(&id));
-            ui.close();
         }
-        if ui.button(aurora_i18n::tr!("ui-profile-copy-uri")).clicked() {
+        if menu::item(ui, p, "link-filled", aurora_i18n::tr!("ui-profile-copy-uri")) {
             ui.ctx().copy_text(format!("secondlife:///app/agent/{id}/about"));
-            ui.close();
         }
-        if ui.button(aurora_i18n::tr!("ui-profile-copy-agent-uuid-key")).clicked() {
+        if menu::item(ui, p, "key-filled", aurora_i18n::tr!("ui-profile-copy-agent-uuid-key")) {
             ui.ctx().copy_text(id.to_string());
-            ui.close();
         }
-        ui.separator();
-        ui.add_enabled(false, egui::Button::new(aurora_i18n::tr!("common-report")))
-            .on_disabled_hover_text(aurora_i18n::tr!("ui-profile-coming-soon"));
+        menu::separator(ui, p);
+        menu::item_tip(ui, p, "flag-filled", aurora_i18n::tr!("common-report"), false, soon);
     });
 }
 
@@ -1071,30 +1070,18 @@ fn copy_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid) {
     let display = names.get(&id).map(|n| n.display(&names.options));
     let legacy = world.legacy_name(&id);
     widgets::icon_menu(ui, p, "link-filled", aurora_i18n::tr!("common-copy-2"), |ui| {
-        if ui
-            .add_enabled(
-                display.is_some(),
-                egui::Button::new(aurora_i18n::tr!("ui-profile-copy-display-name")),
-            )
-            .clicked()
-        {
+        let display_name = aurora_i18n::tr!("ui-profile-copy-display-name");
+        if menu::item_if(ui, p, "id-filled", display_name, display.is_some()) {
             ui.ctx().copy_text(display.clone().unwrap_or_default());
-            ui.close();
         }
-        if ui
-            .add_enabled(legacy.is_some(), egui::Button::new(aurora_i18n::tr!("common-copy-name")))
-            .clicked()
-        {
+        if menu::item_if(ui, p, "copy-filled", aurora_i18n::tr!("common-copy-name"), legacy.is_some()) {
             ui.ctx().copy_text(legacy.clone().unwrap_or_default());
-            ui.close();
         }
-        if ui.button(aurora_i18n::tr!("ui-profile-copy-agent-uuid-key")).clicked() {
+        if menu::item(ui, p, "key-filled", aurora_i18n::tr!("ui-profile-copy-agent-uuid-key")) {
             ui.ctx().copy_text(id.to_string());
-            ui.close();
         }
-        if ui.button(aurora_i18n::tr!("ui-profile-copy-uri")).clicked() {
+        if menu::item(ui, p, "link-filled", aurora_i18n::tr!("ui-profile-copy-uri")) {
             ui.ctx().copy_text(format!("secondlife:///app/agent/{id}/about"));
-            ui.close();
         }
     });
 }

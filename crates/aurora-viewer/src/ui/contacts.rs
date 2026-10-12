@@ -1527,16 +1527,15 @@ fn set_buttons(
     }
     let move_btn = side_button_resp(ui, p, aurora_i18n::tr!("ui-contacts-move"), mutable && has_sel)
         .on_hover_text(aurora_i18n::tr!("ui-contacts-move-this-resident-to-another-contact-set"));
-    egui::Popup::menu(&move_btn).show(|ui| {
+    menu::dropdown(&move_btn, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
         let others: Vec<&String> = set_names.iter().filter(|s| s.as_str() != choice).collect();
         if others.is_empty() {
-            ui.add_enabled(false, egui::Button::new(aurora_i18n::tr!("ui-contacts-no-other-contact-sets")));
+            menu::item_if(ui, p, "users-group", aurora_i18n::tr!("ui-contacts-no-other-contact-sets"), false);
         }
         for to in others {
-            if ui.button(to).clicked() {
+            if menu::item(ui, p, "users-group", to) {
                 let social = &world.social;
                 world.contact_sets.move_to_set(&sel, choice, to, |id| social.is_friend(id));
-                ui.close();
             }
         }
     });

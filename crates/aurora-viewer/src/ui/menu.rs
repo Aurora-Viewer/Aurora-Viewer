@@ -298,6 +298,20 @@ pub fn item_keys(ui: &mut Ui, p: &Palette, icon: &str, label: &str, keys: &str) 
     clicked
 }
 
+/// Entry with a tooltip (an empty `tip` shows none), greyed out when
+/// `enabled` is false; true when clicked (the menu closes).
+pub fn item_tip(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enabled: bool, tip: &str) -> bool {
+    let resp = row(ui, p, icon, label, enabled, End::None, false);
+    let clicked = resp.clicked();
+    if !tip.is_empty() {
+        resp.on_hover_text(tip);
+    }
+    if clicked {
+        ui.close();
+    }
+    clicked && enabled
+}
+
 /// Firestorm entry Aurora does not do yet: greyed, with a tooltip.
 pub fn todo(ui: &mut Ui, p: &Palette, icon: &str, label: &str) {
     row(ui, p, icon, label, false, End::None, false).on_hover_text(not_yet());

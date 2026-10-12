@@ -1,7 +1,7 @@
 //! Appearance floater, following LLSidepanelAppearance, LLPanelOutfitsInventory,
 //! LLOutfitGallery and LLPanelOutfitEdit (Firestorm indra/newview, LGPL 2.1).
 
-use super::{icons, widgets};
+use super::{icons, menu, widgets};
 use crate::{
     theme::Palette,
     world::{World, appearance as model},
@@ -113,7 +113,7 @@ fn icon_button(ui: &mut egui::Ui, p: &Palette, name: &str, tip: &str) -> egui::R
 
 fn icon_menu(ui: &mut egui::Ui, p: &Palette, name: &str, tip: &str, body: impl FnOnce(&mut egui::Ui)) {
     let response = icon_button(ui, p, name, tip);
-    egui::Popup::menu(&response).show(body);
+    menu::dropdown(&response, p, egui::PopupCloseBehavior::CloseOnClick, body);
 }
 
 fn row(ui: &mut egui::Ui, p: &Palette, it: &InvItem, desc: &str, selected: bool, worn: Option<&str>) -> egui::Response {
@@ -177,19 +177,15 @@ fn row(ui: &mut egui::Ui, p: &Palette, it: &InvItem, desc: &str, selected: bool,
     })
 }
 
-fn item_menu(response: &egui::Response, it: &InvItem, actions: &mut Vec<Action>) {
-    response.context_menu(|ui| {
-        if it.asset_type != 13
-            && ui
-                .button(if it.asset_type == 6 {
-                    aurora_i18n::tr!("common-detach")
-                } else {
-                    aurora_i18n::tr!("common-remove")
-                })
-                .clicked()
-        {
+fn item_menu(response: &egui::Response, p: &Palette, it: &InvItem, actions: &mut Vec<Action>) {
+    menu::context_menu(response, p, |ui| {
+        let label = if it.asset_type == 6 {
+            aurora_i18n::tr!("common-detach")
+        } else {
+            aurora_i18n::tr!("common-remove")
+        };
+        if it.asset_type != 13 && menu::item(ui, p, "circle-x-filled", label) {
             actions.push(Action::Remove(it.id));
-            ui.close();
         }
     });
 }
@@ -433,7 +429,7 @@ fn worn_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceU
             if resp.clicked() {
                 st.selected_item = Some(it.id);
             }
-            item_menu(&resp, it, actions);
+            item_menu(&resp, p, it, actions);
             if edit && st.selected_item == Some(it.id) {
                 ui.horizontal(|ui| {
                     if it.asset_type != 13
@@ -734,19 +730,13 @@ pub fn show(
                     "sort-ascending-2-filled",
                     aurora_i18n::tr!("ui-appearance-sort-outfits"),
                     |ui| {
-                        if ui
-                            .selectable_label(!st.reverse_sort, aurora_i18n::tr!("ui-appearance-name-a-z"))
-                            .clicked()
-                        {
-                            st.reverse_sort = false;
-                            ui.close();
-                        }
-                        if ui
-                            .selectable_label(st.reverse_sort, aurora_i18n::tr!("ui-appearance-name-z-a"))
-                            .clicked()
-                        {
-                            st.reverse_sort = true;
-                            ui.close();
+                        for (reverse, icon, label) in [
+                            (false, "sort-ascending-letters", aurora_i18n::tr!("ui-appearance-name-a-z")),
+                            (true, "sort-descending-letters", aurora_i18n::tr!("ui-appearance-name-z-a")),
+                        ] {
+                            if menu::check(ui, p, icon, label, st.reverse_sort == reverse, true) {
+                                st.reverse_sort = reverse;
+                            }
                         }
                     },
                 );
@@ -871,19 +861,12 @@ pub fn show(
         ui.add_space(4.0);
         ui.horizontal(|ui| {
             icon_menu(ui, p, "settings-filled", aurora_i18n::tr!("ui-appearance-outfit-options"), |ui| {
-                if ui.button(aurora_i18n::tr!("ui-appearance-refresh")).clicked() {
+                if menu::item(ui, p, "refresh", aurora_i18n::tr!("ui-appearance-refresh")) {
                     st.refresh(&mut world.inventory);
-                    ui.close();
                 }
-                if ui
-                    .add_enabled(
-                        base.is_some() && st.pending.is_none(),
-                        egui::Button::new(aurora_i18n::tr!("ui-appearance-restore-saved-outfit")),
-                    )
-                    .clicked()
-                {
+                let restore = aurora_i18n::tr!("ui-appearance-restore-saved-outfit");
+                if menu::item_if(ui, p, "restore", restore, base.is_some() && st.pending.is_none()) {
                     actions.push(Action::Revert);
-                    ui.close();
                 }
             });
             if !st.editing && st.tab < 2 {

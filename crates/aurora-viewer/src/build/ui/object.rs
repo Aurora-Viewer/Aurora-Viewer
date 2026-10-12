@@ -8,6 +8,7 @@ use super::{Env, Request, ShapeClip};
 use crate::build::{BuildSettings, BuildTool, MAX_PRIM_SCALE, MIN_PRIM_SCALE};
 use crate::scene::Scene;
 use crate::theme::Palette;
+use crate::ui::menu;
 use crate::world::World;
 use aurora_net::build::{perm, perm_field};
 use aurora_prim::params::*;
@@ -293,6 +294,9 @@ pub fn parse_vector(t: &str) -> Option<Vec3> {
 }
 
 /// Axis fields with the per-vector copy / paste commands in their menu.
+/// Icon of the paste entries, the one of the paste buttons.
+const PASTE: &str = "clipboard-text-filled";
+
 #[allow(clippy::too_many_arguments)]
 fn vec_block(
     ui: &mut egui::Ui,
@@ -354,30 +358,16 @@ fn vec_block(
     });
     // Keep the per-vector C / P / system paste commands in the row menu,
     // while the visible heading actions follow the active manipulator.
-    row.response.context_menu(|ui| {
-        if ui
-            .add_enabled(enabled, egui::Button::new(aurora_i18n::tr!("build-compact-copy-vector")))
-            .clicked()
-        {
+    menu::context_menu(&row.response, p, |ui| {
+        if menu::item_if(ui, p, "copy-filled", aurora_i18n::tr!("build-compact-copy-vector"), enabled) {
             copy = true;
-            ui.close();
         }
-        if ui
-            .add_enabled(
-                enabled && tool.ui.vec_clipboard[which].is_some(),
-                egui::Button::new(aurora_i18n::tr!("build-compact-paste-vector")),
-            )
-            .clicked()
-        {
+        let stored = enabled && tool.ui.vec_clipboard[which].is_some();
+        if menu::item_if(ui, p, PASTE, aurora_i18n::tr!("build-compact-paste-vector"), stored) {
             paste = tool.ui.vec_clipboard[which];
-            ui.close();
         }
-        if ui
-            .add_enabled(enabled, egui::Button::new(aurora_i18n::tr!("build-compact-paste-system")))
-            .clicked()
-        {
+        if menu::item_if(ui, p, PASTE, aurora_i18n::tr!("build-compact-paste-system"), enabled) {
             tool.ui.requests.push(Request::PasteVector(which));
-            ui.close();
         }
     });
     ui.add_space(3.0);
@@ -444,18 +434,12 @@ pub fn show_transform(
         if paste.clicked() {
             tool.ui.requests.push(Request::PasteVector(which));
         }
-        paste.context_menu(|ui| {
-            if ui
-                .add_enabled(
-                    can_copy && tool.ui.vec_clipboard[which].is_some(),
-                    egui::Button::new(aurora_i18n::tr!("build-compact-paste-vector")),
-                )
-                .clicked()
+        menu::context_menu(&paste, p, |ui| {
+            let stored = can_copy && tool.ui.vec_clipboard[which].is_some();
+            if menu::item_if(ui, p, PASTE, aurora_i18n::tr!("build-compact-paste-vector"), stored)
+                && let Some(v) = tool.ui.vec_clipboard[which]
             {
-                if let Some(v) = tool.ui.vec_clipboard[which] {
-                    tool.paste_vector(world, s, which, &vector_text(v, decimals));
-                }
-                ui.close();
+                tool.paste_vector(world, s, which, &vector_text(v, decimals));
             }
         });
         if super::compact::icon_button(

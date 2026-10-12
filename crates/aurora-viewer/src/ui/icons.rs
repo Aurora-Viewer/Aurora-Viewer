@@ -77,6 +77,7 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "slashes",
     "snowflake",
     "sort-ascending-letters",
+    "sort-descending-letters",
     "terminal-2",
     "text-size",
     "typography",

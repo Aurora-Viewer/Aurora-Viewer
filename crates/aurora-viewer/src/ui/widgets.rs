@@ -840,13 +840,15 @@ pub fn picture(
     resp
 }
 
-/// A menu opened by a Tabler icon button (menu_button with an image).
+/// A menu opened by a Tabler icon button, with the rows and the frame of the
+/// right-click menus (`menu::button`).
 pub fn icon_menu(ui: &mut egui::Ui, p: &Palette, name: &str, tip: &str, content: impl FnOnce(&mut egui::Ui)) {
-    let Some(t) = super::icons::global(name) else {
-        ui.menu_button(tip, content);
-        return;
+    let button = match super::icons::global(name) {
+        Some(t) => {
+            let img = egui::Image::from_texture(egui::load::SizedTexture::new(t.id(), Vec2::splat(14.0))).tint(p.muted);
+            egui::Button::image(img).frame(false)
+        }
+        None => egui::Button::new(tip),
     };
-    let img = egui::Image::from_texture(egui::load::SizedTexture::new(t.id(), Vec2::splat(14.0))).tint(p.muted);
-    let (resp, _) = egui::containers::menu::MenuButton::from_button(egui::Button::image(img).frame(false)).ui(ui, content);
-    resp.on_hover_text(tip);
+    super::menu::button(ui, p, button, content).on_hover_text(tip);
 }
