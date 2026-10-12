@@ -1317,8 +1317,8 @@ pub fn show(
                 }
                 let input_h = 30.0;
                 // Ctrl+F opens the find bar of the conversation shown, when
-                // the keyboard is in this window (or nowhere) and this
-                // window is the one in front
+                // the keyboard is in this window, or nowhere with the
+                // pointer over it
                 let conv_input = egui::Id::new("conv_input");
                 let search = st.searches.entry(st.selected).or_default();
                 if find::wants_shortcut(ui, &[conv_input, find::field_id(), find::filter_id()]) {

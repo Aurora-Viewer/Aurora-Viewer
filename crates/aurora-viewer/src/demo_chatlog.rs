@@ -5,8 +5,8 @@
 //!
 //! - `im`: a conversation with history from two earlier days, greyed, then
 //!   a new message;
-//! - `find`: the same, then Ctrl+F and a word typed at frame 300: the find
-//!   bar and its matches;
+//! - `find`: the same, then Ctrl+F (pointer over the window) and a word
+//!   typed at frame 300: the find bar and its matches;
 //! - `history`: the History window on a transcript of 20 000 messages
 //!   (`history:find`: Ctrl+F and a word typed at frame 300, searched in the
 //!   whole file);
@@ -176,6 +176,8 @@ pub fn input_events(frame: u64) -> Vec<egui::Event> {
         _ => return Vec::new(),
     };
     match frame {
+        // the pointer over the lines of the window, then the shortcut
+        296 if find => vec![egui::Event::PointerMoved(egui::pos2(300.0, 300.0))],
         300 if find => vec![egui::Event::Key {
             key: egui::Key::F,
             physical_key: None,

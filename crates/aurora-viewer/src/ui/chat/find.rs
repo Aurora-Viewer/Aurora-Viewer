@@ -94,15 +94,16 @@ pub fn filter_id() -> egui::Id {
 }
 
 /// Ctrl+F was pressed for the window this `ui` is in: the keyboard is in
-/// one of `own` fields, or nowhere while this window is the one in front.
-/// Another window with the keyboard (the script editor, a search field)
-/// keeps its shortcut. The key is consumed when taken.
+/// one of `own` fields, or it is nowhere while the pointer is over this
+/// window. Another window with the keyboard (the script editor, a search
+/// field) keeps its shortcut, and so does whatever Ctrl+F does when the
+/// pointer is over the world or another window. The key is consumed when
+/// taken.
 pub fn wants_shortcut(ui: &egui::Ui, own: &[egui::Id]) -> bool {
     let ctx = ui.ctx();
-    let focused = ctx.memory(|m| m.focused());
-    let ours = match focused {
+    let ours = match ctx.memory(|m| m.focused()) {
         Some(id) => own.contains(&id),
-        None => ctx.memory(|m| m.areas().top_layer_id(egui::Order::Middle)) == Some(ui.layer_id()),
+        None => ctx.pointer_latest_pos().and_then(|pos| ctx.layer_id_at(pos)) == Some(ui.layer_id()),
     };
     ours && ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::F))
 }

@@ -977,7 +977,8 @@ grille.
     passées. À voir : ces lignes en gris, sans photo de profil, avec un repère
     de date à chaque changement de jour, puis le nouveau message dans ses
     couleurs normales ; le fichier `Nova Exemple.txt` reçoit ce message.
-  - `find` : la même, puis Ctrl+F et un mot tapés à l'image 300. À voir : la
+  - `find` : la même, puis Ctrl+F (pointeur sur la fenêtre) et un mot tapés à
+    l'image 300. À voir : la
     barre de recherche sous les lignes, « 5 / 5 », les occurrences sur fond
     ambre et un trait ambre devant la ligne du résultat courant.
   - `history` : la fenêtre Historique sur un fichier de 19 950 messages
