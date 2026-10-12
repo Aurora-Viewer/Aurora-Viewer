@@ -232,7 +232,10 @@ pub fn paste(
     if cut {
         return move_selection(inv, ids, to, protected, worn);
     }
-    let mut change = Mutation::default();
+    let mut change = Mutation {
+        defer_folder_contents: true,
+        ..Default::default()
+    };
     for id in roots(inv, ids) {
         if id == to || under(inv, to, id) {
             return Err(aurora_i18n::tr!("world-inventory-actions-a-folder-cannot-be-copied-into-itself").into());

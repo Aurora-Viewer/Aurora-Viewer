@@ -54,6 +54,9 @@ pub struct Mutation {
     pub copies: Vec<CopyItem>,
     pub refresh: Vec<Uuid>,
     pub removed: Vec<Uuid>,
+    /// Interactive inventory commands can display AIS-created folders before
+    /// fetching their contents. Dependent construction jobs keep readback.
+    pub defer_folder_contents: bool,
 }
 
 impl Mutation {
@@ -188,7 +191,7 @@ where
                 folders.push(super::InvFolder {
                     id: actual,
                     parent,
-                    name: name.clone(),
+                    name: folder_name(name),
                     type_default: *type_default,
                     version: 1,
                     ..Default::default()
@@ -247,9 +250,12 @@ where
             c
         })
         .collect();
-    if (!copies.is_empty() || !change.operations.is_empty()) && change.operations.iter().all(|op| matches!(op, Operation::Folder { .. })) {
-        // AIS already returned every new folder ID. Read once the item copies
-        // arrive, rather than waiting for an empty snapshot before sending them.
+    if (change.defer_folder_contents || !copies.is_empty())
+        && (!copies.is_empty() || !change.operations.is_empty())
+        && change.operations.iter().all(|op| matches!(op, Operation::Folder { .. }))
+    {
+        // AIS already returned every new folder ID. Item callbacks populate
+        // the folders; neither an initial nor a final snapshot gates the copy.
         return Ok(Reply {
             contents: Vec::new(),
             folders,
@@ -1069,6 +1075,62 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn interactive_folder_trees_use_ais_acknowledgments_without_fetching_even_when_empty() {
+        for copy_item in [false, true] {
+            let mut change = folder_change("  Copies | temporaires  ");
+            change.defer_folder_contents = true;
+            for (client, parent) in [(101, 100), (102, 101)] {
+                change.operations.push(Operation::Folder {
+                    id: id(client),
+                    parent: id(parent),
+                    name: "Child".into(),
+                    type_default: -1,
+                });
+                change.refresh.push(id(client));
+            }
+            if copy_item {
+                change.copies.push(CopyItem {
+                    item: id(300),
+                    owner: id(2),
+                    parent: id(102),
+                    name: String::new(),
+                });
+            }
+            let (url, task) = move_server(
+                [200, 201, 202]
+                    .into_iter()
+                    .map(|actual| llsd_map! { "_created_categories" => Llsd::Array(vec![id(actual).into()]) })
+                    .collect(),
+            )
+            .await;
+            let reply = mutate_with_progress(
+                &reqwest::Client::new(),
+                &url,
+                "invalid fetch capability must not be used",
+                id(2),
+                change,
+                |_| std::future::ready(Err("unexpected move".into())),
+                |_| {},
+            )
+            .await
+            .expect("AIS alone confirms the interactive tree");
+            assert!(reply.contents.is_empty());
+            assert_eq!(reply.folders.len(), 3);
+            assert_eq!(reply.folders[0].name, "Copies   temporaires");
+            assert_eq!(reply.folders[1].parent, id(200));
+            assert_eq!(reply.folders[2].parent, id(201));
+            if copy_item {
+                assert_eq!(reply.copies[0].parent, id(202));
+            }
+            let requests = task.await.expect("AIS requests");
+            assert_eq!(requests.len(), 3);
+            assert!(requests[0].0.starts_with("POST /category/00000000-0000-0000-0000-000000000001?"));
+            assert!(requests[1].0.contains(&id(200).to_string()));
+            assert!(requests[2].0.contains(&id(201).to_string()));
+        }
+    }
+
+    #[tokio::test]
     async fn folder_creation_uses_the_inventory_name_corrected_by_firestorm() {
         let name = "Remplacement de prim     copies temporaires";
         let (url, task) = move_server(vec![
@@ -1232,6 +1294,7 @@ mod tests {
                         Vec::new()
                     },
                     refresh: vec![id(1), id(100), id(101)],
+                    defer_folder_contents: true,
                     ..Default::default()
                 },
             )

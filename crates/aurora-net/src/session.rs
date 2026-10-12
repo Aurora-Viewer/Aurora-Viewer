@@ -1364,10 +1364,11 @@ impl Session<'_> {
                     emit(self.sh, NetEvent::InventoryEdited { request, result });
                     return;
                 }
-                let folder_creation = change
-                    .operations
-                    .iter()
-                    .all(|op| matches!(op, crate::inventory::operations::Operation::Folder { .. }));
+                let folder_creation = (change.defer_folder_contents || !change.copies.is_empty())
+                    && change
+                        .operations
+                        .iter()
+                        .all(|op| matches!(op, crate::inventory::operations::Operation::Folder { .. }));
                 let fetch = if folder_creation {
                     Some(String::new())
                 } else {

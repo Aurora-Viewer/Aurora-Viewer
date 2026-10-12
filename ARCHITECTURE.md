@@ -214,6 +214,11 @@ peut ainsi recevoir leurs items immédiatement. `session/inventory_copies.rs`
 envoie les copies fiables et suit leurs confirmations ; le nom vide est encodé
 avec une longueur nulle, comme `LLTemplateMessageBuilder::addString(std::string)`.
 La réception des items complète la copie, sans imposer un second snapshot HTTP.
+Les créations sans copie des appelants de `mutate` / `mutate_with_moves`,
+notamment le remplacement de prims, gardent leur confirmation par relecture
+avant de poursuivre leur travail.
+Les dossiers publiés directement dans l'inventaire utilisent le nom normalisé
+envoyé au serveur, avec les mêmes règles de caractères et de longueur.
 
 `session/inventory_updates.rs` reçoit `UpdateCreateInventoryItem` et
 `BulkUpdateInventory` directement par HTTP, comme `LLEventPollImpl` de Firestorm,

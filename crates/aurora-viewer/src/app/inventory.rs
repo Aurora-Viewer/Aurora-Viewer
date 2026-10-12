@@ -117,7 +117,7 @@ impl App {
 
     pub(super) fn apply_inventory_action(&mut self, action: InvAction) {
         match action {
-            InvAction::Edit(change) => {
+            InvAction::Edit(mut change) => {
                 if self.inventory_ui.pending.is_some() {
                     return;
                 }
@@ -129,6 +129,7 @@ impl App {
                     return;
                 }
                 let request = Uuid::new_v4();
+                change.defer_folder_contents = true;
                 log::info!(
                     "inventory mutation: {} operations, {} item copies",
                     change.operations.len(),

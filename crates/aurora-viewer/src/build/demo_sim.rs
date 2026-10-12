@@ -272,7 +272,12 @@ impl DemoSim {
                 vec![NetEvent::InventoryContents(vec![aurora_net::inventory::FolderContents {
                     folder_id: *folder_id,
                     owner_id: world.agent_id,
-                    version: 1,
+                    // A new item advances storage's snapshot version too.
+                    version: world
+                        .inventory
+                        .folders
+                        .get(folder_id)
+                        .map_or(1, |f| f.info.version.max(0).saturating_add(1)),
                     folders: Vec::new(),
                     items,
                 }])]
