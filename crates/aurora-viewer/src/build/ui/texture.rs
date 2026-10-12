@@ -10,7 +10,7 @@
 use super::common::{Edit, check, color_swatch, combo, label, row, same, small, spin, swatch};
 use super::{Confirm, Env, FaceClip, PickTarget};
 use crate::build::materials::{GltfUpdate, MF_HAS_MEDIA};
-use crate::build::{BuildSettings, BuildTool};
+use crate::build::{BuildSettings, BuildTool, EditMode};
 use crate::scene::legacy_mat::{LegacyMaterial, alpha_mode};
 use crate::theme::Palette;
 use crate::ui::widgets::tabs;
@@ -255,22 +255,18 @@ fn selected(tool: &BuildTool, world: &World) -> Vec<Sel> {
 }
 
 pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings, env: &mut Env) {
-    let sel = selected(tool, world);
-    if sel.is_empty() {
-        small(ui, p, aurora_i18n::tr!("build-ui-texture-no-editable-face-selected"));
-        return;
-    }
+    let mut sel = selected(tool, world);
     super::compact::heading(ui, p, "paint-brush", aurora_i18n::tr!("build-compact-materials"), |ui| {
         if super::common::icon_button(
             ui,
             p,
             "clipboard-text",
             aurora_i18n::tr!("build-ui-texture-paste-texture-settings-from-the-clipboard"),
-            tool.ui.face_clipboard.is_some(),
+            !sel.is_empty() && tool.ui.face_clipboard.is_some(),
         ) {
             paste_faces(tool, world, &sel);
         }
-        let one_object = sel.iter().all(|x| x.idx == sel[0].idx);
+        let one_object = !sel.is_empty() && sel.iter().all(|x| x.idx == sel[0].idx);
         if super::common::icon_button(
             ui,
             p,
@@ -289,6 +285,22 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
             tool.ui.face_clipboard = Some(clip);
         }
     });
+    // Face selection is a material operation in Aurora's section layout.
+    if let Some(face) = check(
+        ui,
+        tool.edit_mode == EditMode::Face,
+        false,
+        aurora_i18n::tr!("build-compact-face"),
+        true,
+    ) {
+        tool.set_edit_mode(world, s, if face { EditMode::Face } else { EditMode::Move });
+        sel = selected(tool, world);
+    }
+    ui.add_space(6.0);
+    if sel.is_empty() {
+        small(ui, p, aurora_i18n::tr!("build-ui-texture-no-editable-face-selected"));
+        return;
+    }
     tabs(
         ui,
         p,

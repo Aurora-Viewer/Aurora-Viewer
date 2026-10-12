@@ -3801,9 +3801,6 @@ build-compact-contents = Contenu
 build-compact-multiple = Sélection multiple
 build-compact-selection = Objet sélectionné
 build-compact-select-hint = Clique sur un objet pour commencer.
-build-compact-waiting = Propriétés en cours de chargement…
-build-compact-editable = Modifiable
-build-compact-readonly = Lecture seule
 build-compact-counts = { $objects ->
     [one] { $objects } objet
    *[other] { $objects } objets
