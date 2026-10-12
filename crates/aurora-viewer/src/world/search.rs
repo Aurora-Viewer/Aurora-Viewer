@@ -852,15 +852,31 @@ fn escape(text: &str) -> String {
     out
 }
 
-/// The search page of the web tab, after Firestorm's SearchURL
-/// ("https://search.[GRID]/viewer/?query_term=[QUERY]&search_type=[TYPE]
-/// [COLLECTION]&maturity=[MATURITY]&lang=[LANGUAGE]&sid=[SESSION_ID]",
-/// FSPanelSearchWeb::loadURL, LLFloaterSearch::initiateSearch): the standard
-/// search over every collection, the maturity the agent prefers ("g", "gm",
-/// "gma") and the interface language. Aurora leaves out `sid`, the agent's
-/// session id that Firestorm puts in the address: the page is opened
-/// without identifying the session.
-pub fn web_url(grid_domain: &str, query: &str, access: search::AgentAccess, language: &str) -> String {
+/// SearchURL of Firestorm's settings.xml: the search page of a Second Life
+/// grid, with the substitutions of LLWeb::expandURLSubstitutions.
+const SEARCH_URL: &str =
+    "https://search.[GRID]/viewer/?query_term=[QUERY]&search_type=[TYPE][COLLECTION]&maturity=[MATURITY]&lang=[LANGUAGE]&sid=[SESSION_ID]";
+
+/// The search page of the web tab, built like FSPanelSearchWeb::loadURL on
+/// a Second Life grid: "&maturity=" with what the agent prefers ("g", "gm",
+/// "gma") and "&" with the (empty) path of the default category are appended
+/// to SearchURL, then LLWeb::expandURLSubstitutions fills [GRID], [QUERY]
+/// (LLURI::escape), [MATURITY] and [CATEGORY] (both empty on Second Life),
+/// [LANGUAGE] and [SESSION_ID], and escapes spaces and backslashes
+/// (LLWeb::escapeURL). Firestorm's panel gives no value to [TYPE] and
+/// [COLLECTION] (only LLFloaterSearch::initiateSearch does) and
+/// LLStringUtil::format leaves a token without substitution as it is: they
+/// stay in the address, as Firestorm sends it.
+///
+/// `session` is the agent's session id (`sid`): it identifies the session
+/// to the grid's own search page, the way Firestorm does. It only goes into
+/// an address of that host (`is_search_host`), and an address built without
+/// a session has no `sid` at all. Never log or save the result.
+pub fn web_url(grid_domain: &str, query: &str, access: search::AgentAccess, language: &str, session: Option<Uuid>) -> String {
+    expand(SEARCH_URL, grid_domain, query, access, language, session)
+}
+
+fn expand(template: &str, grid_domain: &str, query: &str, access: search::AgentAccess, language: &str, session: Option<Uuid>) -> String {
     let maturity = if access.prefers_adult() {
         "gma"
     } else if access.prefers_mature() {
@@ -868,11 +884,65 @@ pub fn web_url(grid_domain: &str, query: &str, access: search::AgentAccess, lang
     } else {
         "g"
     };
-    format!(
-        "https://search.{grid_domain}/viewer/?query_term={}&search_type=standard&maturity={maturity}&lang={}",
-        escape(query),
-        escape(language)
-    )
+    let query = escape(query);
+    let mut url = format!("{template}&maturity={maturity}&");
+    for (token, value) in [
+        ("[GRID]", grid_domain),
+        ("[QUERY]", query.as_str()),
+        ("[MATURITY]", ""),
+        ("[CATEGORY]", ""),
+        ("[LANGUAGE]", language),
+    ] {
+        url = url.replace(token, value);
+    }
+    url = match session.filter(|_| is_search_host(&url, grid_domain)) {
+        Some(id) => url.replace("[SESSION_ID]", &id.to_string()),
+        None => without_session(&url.replace("[SESSION_ID]", ""), None),
+    };
+    url.replace(' ', "%20").replace('\\', "%5C")
+}
+
+/// Whether `url` is a page of the grid's search site: https, and the host
+/// "search.<grid domain>" exactly (no user info, no port, no look-alike
+/// prefix or suffix). The session id is put in no other address.
+pub fn is_search_host(url: &str, grid_domain: &str) -> bool {
+    let Some(rest) = url.strip_prefix("https://") else {
+        return false;
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    !grid_domain.is_empty() && authority.eq_ignore_ascii_case(&format!("search.{grid_domain}"))
+}
+
+/// `url` as it may be shown, copied or handed to another program: without
+/// its `sid` parameter, and without the text of `session` anywhere else.
+pub fn without_session(url: &str, session: Option<Uuid>) -> String {
+    let (main, fragment) = match url.split_once('#') {
+        Some((m, f)) => (m, Some(f)),
+        None => (url, None),
+    };
+    let mut out = match main.split_once('?') {
+        Some((base, query)) => {
+            let kept: Vec<&str> = query
+                .split('&')
+                .filter(|p| !(p.eq_ignore_ascii_case("sid") || p.get(..4).is_some_and(|k| k.eq_ignore_ascii_case("sid="))))
+                .collect();
+            format!("{base}?{}", kept.join("&"))
+        }
+        None => main.to_owned(),
+    };
+    if let Some(f) = fragment {
+        out.push('#');
+        out.push_str(f);
+    }
+    if let Some(id) = session {
+        // whatever form a page gave it in another parameter
+        for form in [id.hyphenated().to_string(), id.simple().to_string()] {
+            while let Some(at) = out.to_ascii_lowercase().find(&form) {
+                out.replace_range(at..at + form.len(), "");
+            }
+        }
+    }
+    out
 }
 
 /// "string.duration": hours and minutes of an event ("%d:%.2d").
@@ -1292,16 +1362,102 @@ mod tests {
     }
 
     #[test]
-    fn durations_ratings_and_tab_names() {
+    fn web_address_is_the_one_firestorm_builds() {
+        let session = Uuid::from_u128(0x5E55_1011_0000_4000_8000_0000_0000_00A1);
+        // FSPanelSearchWeb::loadURL at the opening of the floater: no query,
+        // the default category, an agent who prefers adult content
         assert_eq!(
-            web_url("secondlife.com", "club de jazz & co", ACCESS, "fr"),
-            "https://search.secondlife.com/viewer/?query_term=club%20de%20jazz%20%26%20co&search_type=standard&maturity=gma&lang=fr"
+            web_url("secondlife.com", "", ACCESS, "fr", Some(session)),
+            format!(
+                "https://search.secondlife.com/viewer/?query_term=&search_type=[TYPE][COLLECTION]&maturity=&lang=fr&sid={session}&maturity=gma&"
+            )
         );
-        assert!(web_url("secondlife.com", "", AgentAccess::default(), "en").ends_with("&maturity=g&lang=en"));
-        assert!(
-            !web_url("secondlife.com", "", ACCESS, "fr").contains("sid="),
-            "no session id in the address"
+        // the query is escaped like LLURI::escape, the maturity follows the
+        // preference
+        let url = web_url("secondlife.com", "club de jazz & co", AgentAccess::default(), "en", Some(session));
+        assert!(url.contains("?query_term=club%20de%20jazz%20%26%20co&"));
+        assert!(url.ends_with(&format!("&lang=en&sid={session}&maturity=g&")));
+        // without a session there is no sid at all
+        let anonymous = web_url("secondlife.com", "", ACCESS, "fr", None);
+        assert_eq!(
+            anonymous,
+            "https://search.secondlife.com/viewer/?query_term=&search_type=[TYPE][COLLECTION]&maturity=&lang=fr&maturity=gma&"
         );
+        assert!(!anonymous.contains("sid"));
+    }
+
+    #[test]
+    fn the_session_only_goes_to_the_search_host() {
+        let session = Uuid::from_u128(0x5E55_1011_0000_4000_8000_0000_0000_00A1);
+        assert!(is_search_host("https://search.secondlife.com/viewer/?a=b", "secondlife.com"));
+        assert!(is_search_host("https://SEARCH.secondlife.com", "secondlife.com"));
+        for other in [
+            "http://search.secondlife.com/viewer/",
+            "https://search.secondlife.com.example.org/viewer/",
+            "https://evil.example/search.secondlife.com/",
+            "https://user@search.secondlife.com/",
+            "https://search.secondlife.com:8443/",
+            "https://xsearch.secondlife.com/",
+            "https://secondlife.com/",
+            "file:///C:/page.html",
+        ] {
+            assert!(!is_search_host(other, "secondlife.com"), "{other}");
+        }
+        assert!(!is_search_host("https://search./", ""));
+        // a template that would send the address elsewhere gets no session
+        for template in [
+            "https://search.example.org/?q=[QUERY]&sid=[SESSION_ID]",
+            "http://search.[GRID]/viewer/?q=[QUERY]&sid=[SESSION_ID]",
+            "https://search.[GRID].example.org/?sid=[SESSION_ID]&q=[QUERY]",
+        ] {
+            let url = expand(template, "secondlife.com", "x", ACCESS, "fr", Some(session));
+            assert!(!url.contains(&session.to_string()), "{url}");
+            assert!(!url.contains("sid="), "{url}");
+        }
+    }
+
+    #[test]
+    fn the_address_shown_never_carries_the_session() {
+        let session = Uuid::from_u128(0x5E55_1011_0000_4000_8000_0000_0000_00A1);
+        let home = web_url("secondlife.com", "aurora", ACCESS, "fr", Some(session));
+        assert!(home.contains(&session.to_string()));
+        let shown = without_session(&home, Some(session));
+        assert_eq!(shown, web_url("secondlife.com", "aurora", ACCESS, "fr", None));
+        assert!(!shown.contains(&session.to_string()) && !shown.contains("sid="));
+        // wherever a page of the site puts it afterwards
+        for (url, expected) in [
+            (
+                format!("https://search.secondlife.com/viewer/?sid={session}"),
+                "https://search.secondlife.com/viewer/?".to_owned(),
+            ),
+            (
+                format!("https://search.secondlife.com/viewer/x?a=1&SID={session}&b=2#top"),
+                "https://search.secondlife.com/viewer/x?a=1&b=2#top".to_owned(),
+            ),
+            (
+                format!(
+                    "https://search.secondlife.com/r?next={}&c=3",
+                    session.simple().to_string().to_uppercase()
+                ),
+                "https://search.secondlife.com/r?next=&c=3".to_owned(),
+            ),
+            (
+                format!("https://search.secondlife.com/p/{session}/x"),
+                "https://search.secondlife.com/p//x".to_owned(),
+            ),
+            (
+                "https://search.secondlife.com/viewer/".to_owned(),
+                "https://search.secondlife.com/viewer/".to_owned(),
+            ),
+        ] {
+            assert_eq!(without_session(&url, Some(session)), expected);
+        }
+        // a sid is hidden even when the session is not known
+        assert_eq!(without_session("https://a.example/?sid=abc&x=1", None), "https://a.example/?x=1");
+    }
+
+    #[test]
+    fn durations_ratings_and_tab_names() {
         assert_eq!(event_duration(90), "1:30");
         assert_eq!(event_duration(5), "0:05");
         assert_eq!(event_rating(event_flags::ADULT), search::SIM_ACCESS_ADULT);

@@ -1087,6 +1087,10 @@ impl App {
         self.hud_drag = None;
         self.media.clear();
         self.media.openid.clear();
+        // the search window's browser and its page, opened with the session
+        // that ends here
+        self.search_ui = Default::default();
+        self.panels.search = false;
         self.save_local_environment();
         self.env_ui = Default::default();
         self.env_scan = false;
@@ -5651,13 +5655,17 @@ impl App {
     }
 
     /// The search page of the web tab (FSPanelSearchWeb::loadURL), None on
-    /// a grid without one. AURORA_DEMO_SEARCH_WEB=<page>: a page of the
-    /// tester's choice in demo, which loads nothing by itself.
+    /// a grid without one. On Second Life it carries the session id of the
+    /// agent, as Firestorm's does: it is only given to the embedded browser,
+    /// never logged, shown or saved. AURORA_DEMO_SEARCH_WEB=<page>: a page of
+    /// the tester's choice in demo, which loads nothing by itself and has no
+    /// session.
     fn search_home(&self) -> Option<String> {
+        // LLWeb::expandURLSubstitutions: [GRID] is "secondlife.com" for every
+        // grid but Linden Lab's staging one
         let domain = match self.settings.grid {
             _ if self.demo => return std::env::var("AURORA_DEMO_SEARCH_WEB").ok().filter(|u| !u.trim().is_empty()),
-            crate::settings::GridChoice::SecondLife => "secondlife.com",
-            crate::settings::GridChoice::SecondLifeBeta => "secondlife-staging.com",
+            crate::settings::GridChoice::SecondLife | crate::settings::GridChoice::SecondLifeBeta => "secondlife.com",
             crate::settings::GridChoice::Custom => return None,
         };
         Some(crate::world::search::web_url(
@@ -5665,7 +5673,17 @@ impl App {
             "",
             self.world.agent_access(),
             aurora_i18n::language(),
+            self.search_session(),
         ))
+    }
+
+    /// The session id the web tab's search page is opened with; none in
+    /// demo.
+    fn search_session(&self) -> Option<uuid::Uuid> {
+        if self.demo {
+            return None;
+        }
+        self.world.login.as_ref().map(|l| l.session_id).filter(|id| !id.is_nil())
     }
 
     /// What the search window asked for.
@@ -6455,6 +6473,8 @@ impl App {
                 }
                 // « Rechercher »
                 let search_home = self.panels.search.then(|| self.search_home()).flatten();
+                let search_session = self.search_session();
+                let demo = self.demo;
                 let mut c = ui::place_details::Ctx {
                     p: &p,
                     world: &self.world,
@@ -6467,7 +6487,10 @@ impl App {
                 let search_web = ui::search::WebEnv {
                     paths: paths.as_ref(),
                     browser: &browser,
+                    // nothing of a session in demo
+                    cookie: cookie.as_ref().filter(|_| !demo),
                     home: search_home,
+                    session: search_session,
                 };
                 let mut open = self.panels.search;
                 let search_acts = self

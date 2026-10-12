@@ -54,8 +54,28 @@ pub enum SearchAction {
 pub struct WebEnv<'a> {
     pub paths: Option<&'a aurora_media::PluginPaths>,
     pub browser: &'a aurora_media::BrowserSettings,
-    /// The search page of the grid, None when it has none (or offline).
+    /// The OpenID cookie of the session, given to the browser before its
+    /// first page like LLViewerMedia::getOpenIDCookie does for the search
+    /// floater's "webbrowser"; the browser only sends it to its own domain.
+    pub cookie: Option<&'a aurora_media::Cookie>,
+    /// The search page of the grid, None when it has none (or offline). On a
+    /// grid it carries the session id (`sid`): loaded, never shown.
     pub home: Option<String>,
+    /// The session id to keep out of every address shown or handed over.
+    pub session: Option<Uuid>,
+}
+
+/// The address of the web tab's field: the page's, without the session.
+fn shown_address(location: &str, session: Option<Uuid>) -> String {
+    crate::world::search::without_session(location, session)
+}
+
+/// What « Ouvrir dans le navigateur » opens: the page shown, or the search
+/// page, as an anonymous address (the system browser never gets the
+/// session).
+fn external_address(location: &str, home: &str, session: Option<Uuid>) -> String {
+    let url = if location.is_empty() { home } else { location };
+    crate::world::search::without_session(url, session)
 }
 
 pub struct SearchUi {
@@ -82,6 +102,9 @@ pub struct SearchUi {
     web: WebView,
     /// The address being typed in the web tab (None: follows the page).
     web_edit: Option<String>,
+    /// The search page the browser was started on: another one (a new
+    /// session) is loaded in its place.
+    web_home: String,
     /// Profile pictures of the residents shown.
     pub wanted_pics: HashSet<Uuid>,
 }
@@ -105,6 +128,7 @@ impl Default for SearchUi {
             was_open: false,
             web: WebView::default(),
             web_edit: None,
+            web_home: String::new(),
             wanted_pics: HashSet::new(),
         }
     }
@@ -680,9 +704,14 @@ impl SearchUi {
             });
             return;
         };
-        // loadURL(SearchQuery()) in postBuild: the search page at once
-        if !self.web.running() && self.web.location.is_empty() {
-            self.web.navigate(home);
+        // loadURL(SearchQuery()): the search page at once. Firestorm loads it
+        // each time the floater opens, whatever the tab; Aurora waits for the
+        // web tab to be shown (no browser and no request before that). A page
+        // of an earlier session is replaced.
+        if self.web_home != home {
+            self.web_home = home.to_owned();
+            self.web_edit = None;
+            self.web.navigate_again(home);
         }
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
@@ -708,8 +737,12 @@ impl SearchUi {
                 .size()
                 .x
                 + 62.0;
-            // the address follows the page until it is edited
-            let mut address = self.web_edit.clone().unwrap_or_else(|| self.web.location.clone());
+            // the address follows the page until it is edited; the session
+            // id of the search page is never part of what is shown
+            let mut address = self
+                .web_edit
+                .clone()
+                .unwrap_or_else(|| shown_address(&self.web.location, env.session));
             let field = ui.add(
                 egui::TextEdit::singleline(&mut address)
                     .desired_width((ui.available_width() - reserve).max(120.0))
@@ -729,13 +762,13 @@ impl SearchUi {
                 self.web_edit = None;
             }
             if widgets::action_button(ui, p, "external-link-filled", label, ActionKind::Flat, external).clicked() {
-                let url = if self.web.location.is_empty() { home } else { &self.web.location };
-                super::context::request(ui.ctx(), super::context::CtxAction::OpenUrl(url.to_owned()));
+                let url = external_address(&self.web.location, home, env.session);
+                super::context::request(ui.ctx(), super::context::CtxAction::OpenUrl(url));
             }
         });
         ui.add_space(4.0);
         let size = Vec2::new(ui.available_width(), (ui.available_height() - 2.0).max(120.0));
-        self.web.show(ui, p, env.paths, env.browser, None, size);
+        self.web.show(ui, p, env.paths, env.browser, env.cookie, size);
     }
 }
 
@@ -962,6 +995,25 @@ mod tests {
             })
         ));
         assert_eq!(ui.request(Tab::Web, &settings), None);
+    }
+
+    #[test]
+    fn the_web_tab_never_shows_or_hands_over_the_session() {
+        let session = Uuid::from_u128(0x5E55_1011_0000_4000_8000_0000_0000_00A1);
+        let access = AgentAccess::default();
+        let home = crate::world::search::web_url("secondlife.com", "", access, "fr", Some(session));
+        assert!(home.contains(&session.to_string()), "the page itself is loaded with it");
+        let anonymous = crate::world::search::web_url("secondlife.com", "", access, "fr", None);
+        // the field, before and after the first page reported its address
+        assert_eq!(shown_address(&home, Some(session)), anonymous);
+        assert_eq!(shown_address("", Some(session)), "");
+        // the system browser gets the anonymous address
+        assert_eq!(external_address("", &home, Some(session)), anonymous);
+        assert_eq!(external_address(&home, &home, Some(session)), anonymous);
+        let page = format!("https://search.secondlife.com/viewer/p?x=1&sid={session}");
+        let external = external_address(&page, &home, Some(session));
+        assert_eq!(external, "https://search.secondlife.com/viewer/p?x=1");
+        assert!(!external.contains(&session.to_string()));
     }
 
     #[test]
