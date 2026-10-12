@@ -530,8 +530,10 @@ pub fn checkbox_mixed(ui: &mut egui::Ui, p: &Palette, on: &mut bool, label: impl
     check_row(ui, p, on, label.into(), mixed)
 }
 
-fn check_row(ui: &mut egui::Ui, p: &Palette, on: &mut bool, label: egui::WidgetText, mixed: bool) -> egui::Response {
-    // the geometry of the stock check box: a window keeps its layout
+/// The row shared by the check box and the radio button: the room of the
+/// mark, then the label, one clickable rectangle. The geometry of the stock
+/// ones: a window keeps its layout.
+fn mark_row(ui: &mut egui::Ui, label: egui::WidgetText) -> (egui::Rect, egui::Response, Option<std::sync::Arc<egui::Galley>>) {
     let (side, gap) = (ui.spacing().icon_width, ui.spacing().icon_spacing);
     let galley =
         (!label.is_empty()).then(|| label.into_galley(ui, None, (ui.available_width() - side - gap).max(0.0), egui::TextStyle::Button));
@@ -540,7 +542,36 @@ fn check_row(ui: &mut egui::Ui, p: &Palette, on: &mut bool, label: egui::WidgetT
         size += Vec2::new(gap, 0.0) + galley.size();
     }
     let size = size.max(Vec2::splat(ui.spacing().interact_size.y));
-    let (rect, mut resp) = ui.allocate_exact_size(size, Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
+    (rect, resp, galley)
+}
+
+/// Where the mark of a `mark_row` goes: a square at the left of the row.
+fn mark_square(ui: &egui::Ui, row: egui::Rect) -> egui::Rect {
+    let side = ui.spacing().icon_width;
+    egui::Rect::from_center_size(egui::pos2(row.left() + side / 2.0, row.center().y), Vec2::splat(side))
+}
+
+/// Face of the mark: violet when on, the raised tone when off, both lighter
+/// under the pointer or with the keyboard focus.
+fn mark_fill(p: &Palette, on: bool, hot: bool) -> Color32 {
+    match (on, hot) {
+        (true, false) => p.violet,
+        (true, true) => p.violet_light,
+        (false, false) => p.raised,
+        (false, true) => p.raised.lerp_to_gamma(p.ink, 0.16),
+    }
+}
+
+fn mark_label(ui: &egui::Ui, p: &Palette, row: egui::Rect, mark: egui::Rect, galley: Option<std::sync::Arc<egui::Galley>>) {
+    if let Some(galley) = galley {
+        let text = egui::pos2(mark.right() + ui.spacing().icon_spacing, row.center().y - galley.size().y / 2.0);
+        ui.painter().galley(text, galley, p.ink);
+    }
+}
+
+fn check_row(ui: &mut egui::Ui, p: &Palette, on: &mut bool, label: egui::WidgetText, mixed: bool) -> egui::Response {
+    let (rect, mut resp, galley) = mark_row(ui, label);
     if resp.clicked() {
         *on = !*on;
         resp.mark_changed();
@@ -552,15 +583,9 @@ fn check_row(ui: &mut egui::Ui, p: &Palette, on: &mut bool, label: egui::WidgetT
     });
     if ui.is_rect_visible(rect) {
         let hot = resp.hovered() || resp.has_focus();
-        let square = egui::Rect::from_center_size(egui::pos2(rect.left() + side / 2.0, rect.center().y), Vec2::splat(side));
-        let fill = match (checked || mixed, hot) {
-            (true, false) => p.violet,
-            (true, true) => p.violet_light,
-            (false, false) => p.raised,
-            (false, true) => p.raised.lerp_to_gamma(p.ink, 0.16),
-        };
+        let square = mark_square(ui, rect);
         let painter = ui.painter();
-        painter.rect_filled(square, ui.visuals().window_corner_radius, fill);
+        painter.rect_filled(square, ui.visuals().window_corner_radius, mark_fill(p, checked || mixed, hot));
         if !(checked || mixed) {
             // an empty box stays visible on a panel of nearly its own color
             painter.rect_stroke(
@@ -588,10 +613,57 @@ fn check_row(ui: &mut egui::Ui, p: &Palette, on: &mut bool, label: egui::WidgetT
                 }
             }
         }
-        if let Some(galley) = galley {
-            let text = egui::pos2(square.right() + gap, rect.center().y - galley.size().y / 2.0);
-            painter.galley(text, galley, p.ink);
+        mark_label(ui, p, rect, square, galley);
+    }
+    resp
+}
+
+/// Radio button of the interface, with the contract of `ui.radio`: the
+/// response is `clicked()` when its row was clicked, selected or not. The row
+/// of `checkbox` (same size, same label, same hover) around a round mark, so
+/// that one choice among several is never taken for a check box: a thin ring
+/// when empty, violet around a dot when selected. The one round control of
+/// the interface, with the status dots (docs/BRANDING.md).
+pub fn radio(ui: &mut egui::Ui, p: &Palette, selected: bool, label: impl Into<egui::WidgetText>) -> egui::Response {
+    let (rect, resp, galley) = mark_row(ui, label.into());
+    resp.widget_info(|| {
+        let text = galley.as_ref().map_or("", |galley| galley.text());
+        egui::WidgetInfo::selected(egui::WidgetType::RadioButton, ui.is_enabled(), selected, text)
+    });
+    if ui.is_rect_visible(rect) {
+        let hot = resp.hovered() || resp.has_focus();
+        let square = mark_square(ui, rect);
+        let (center, radius) = (square.center(), square.width() / 2.0);
+        let painter = ui.painter();
+        painter.circle_filled(center, radius, mark_fill(p, selected, hot));
+        if selected {
+            painter.circle_filled(center, radius * RADIO_DOT, p.ink);
+        } else {
+            // as the empty check box: visible on a panel of nearly its color
+            painter.circle_stroke(center, radius - 0.5, Stroke::new(1.0, p.muted_dim));
         }
+        mark_label(ui, p, rect, square, galley);
+    }
+    resp
+}
+
+/// The dot of a selected radio button, as a share of its radius.
+const RADIO_DOT: f32 = 0.42;
+
+/// `radio` for one alternative of a value, with the contract of
+/// `ui.radio_value`: a click makes `current` this `alternative`, and the
+/// response is `changed()` when that changed it.
+pub fn radio_value<Value: PartialEq>(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    current: &mut Value,
+    alternative: Value,
+    label: impl Into<egui::WidgetText>,
+) -> egui::Response {
+    let mut resp = radio(ui, p, *current == alternative, label);
+    if resp.clicked() && *current != alternative {
+        *current = alternative;
+        resp.mark_changed();
     }
     resp
 }

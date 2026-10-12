@@ -320,9 +320,9 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, s: &mut LandUi, v: &View, w
                         .size(12.0)
                         .color(p.muted),
                 );
-                ui.radio_value(&mut temporary, false, aurora_i18n::tr!("common-always"));
+                super::super::widgets::radio_value(ui, p, &mut temporary, false, aurora_i18n::tr!("common-always"));
                 ui.horizontal(|ui| {
-                    ui.radio_value(&mut temporary, true, aurora_i18n::tr!("common-temporary"));
+                    super::super::widgets::radio_value(ui, p, &mut temporary, true, aurora_i18n::tr!("common-temporary"));
                     ui.add_enabled(
                         temporary,
                         egui::DragValue::new(&mut hours)
@@ -499,12 +499,16 @@ fn sell_form(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, world: &mut World, 
             .size(12.5)
             .color(p.ink),
     );
-    ui.radio_value(
+    super::super::widgets::radio_value(
+        ui,
+        p,
         &mut f.with_objects,
         false,
         aurora_i18n::tr!("ui-land-dialogs-no-keep-object-ownership"),
     );
-    ui.radio_value(
+    super::super::widgets::radio_value(
+        ui,
+        p,
         &mut f.with_objects,
         true,
         aurora_i18n::tr!("ui-land-dialogs-yes-sell-objects-with-land"),

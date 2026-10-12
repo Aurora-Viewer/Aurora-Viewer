@@ -82,19 +82,19 @@ pub fn status_text(tool: &BuildTool, s: &BuildSettings, mods: Mods) -> &'static 
     }
 }
 
-fn radio(ui: &mut egui::Ui, on: bool, text: &str) -> bool {
-    ui.add(egui::RadioButton::new(on, RichText::new(text).size(12.0))).clicked()
+fn radio(ui: &mut egui::Ui, p: &Palette, on: bool, text: &str) -> bool {
+    crate::ui::widgets::radio(ui, p, on, RichText::new(text).size(12.0)).clicked()
 }
 
 /// Focus tool (focus_radio_group, slider zoom).
-pub fn focus_panel(ui: &mut egui::Ui, _p: &Palette, tool: &mut BuildTool, mods: Mods, env: &mut Env) {
+pub fn focus_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, mods: Mods, env: &mut Env) {
     let shown = match (mods.ctrl, mods.shift) {
         (true, true) => FocusMode::Pan,
         (true, false) => FocusMode::Orbit,
         _ => tool.focus_mode,
     };
     ui.horizontal(|ui| {
-        if radio(ui, shown == FocusMode::Zoom, aurora_i18n::tr!("common-zoom-2")) {
+        if radio(ui, p, shown == FocusMode::Zoom, aurora_i18n::tr!("common-zoom-2")) {
             tool.focus_mode = FocusMode::Zoom;
         }
         // slider zoom: getCameraZoomFraction() * 0.5, 0..0.5
@@ -110,11 +110,17 @@ pub fn focus_panel(ui: &mut egui::Ui, _p: &Palette, tool: &mut BuildTool, mods: 
             tool.ui.requests.push(Request::ZoomFraction(v * 2.0));
         }
     });
-    if radio(ui, shown == FocusMode::Orbit, aurora_i18n::tr!("build-ui-tools-orbit-camera-ctrl")) {
+    if radio(
+        ui,
+        p,
+        shown == FocusMode::Orbit,
+        aurora_i18n::tr!("build-ui-tools-orbit-camera-ctrl"),
+    ) {
         tool.focus_mode = FocusMode::Orbit;
     }
     if radio(
         ui,
+        p,
         shown == FocusMode::Pan,
         aurora_i18n::tr!("build-ui-tools-pan-camera-ctrl-shift"),
     ) {
@@ -123,15 +129,15 @@ pub fn focus_panel(ui: &mut egui::Ui, _p: &Palette, tool: &mut BuildTool, mods: 
 }
 
 /// Grab tool (move_radio_group).
-pub fn grab_panel(ui: &mut egui::Ui, _p: &Palette, tool: &mut BuildTool, mods: Mods) {
+pub fn grab_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, mods: Mods) {
     let shown = tool.effective_grab_mode(mods);
-    if radio(ui, shown == GrabMode::Move, aurora_i18n::tr!("build-ui-tools-move")) {
+    if radio(ui, p, shown == GrabMode::Move, aurora_i18n::tr!("build-ui-tools-move")) {
         tool.grab_mode = GrabMode::Move;
     }
-    if radio(ui, shown == GrabMode::Lift, aurora_i18n::tr!("build-ui-tools-lift-ctrl")) {
+    if radio(ui, p, shown == GrabMode::Lift, aurora_i18n::tr!("build-ui-tools-lift-ctrl")) {
         tool.grab_mode = GrabMode::Lift;
     }
-    if radio(ui, shown == GrabMode::Spin, aurora_i18n::tr!("build-ui-tools-rotate-ctrl-shift")) {
+    if radio(ui, p, shown == GrabMode::Spin, aurora_i18n::tr!("build-ui-tools-rotate-ctrl-shift")) {
         tool.grab_mode = GrabMode::Spin;
     }
 }
@@ -290,13 +296,14 @@ pub fn land_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &
         ui.spacing_mut().item_spacing.y = 2.0;
         if radio(
             ui,
+            p,
             s.land_action > land_action::REVERT,
             aurora_i18n::tr!("build-ui-tools-select-land"),
         ) {
             s.land_action = 6;
         }
         for (i, n) in crate::build::land::action_names().iter().enumerate() {
-            if radio(ui, s.land_action as usize == i, n) {
+            if radio(ui, p, s.land_action as usize == i, n) {
                 s.land_action = i as u8;
             }
         }

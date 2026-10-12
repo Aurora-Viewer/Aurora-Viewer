@@ -1227,7 +1227,7 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     } else {
                         builtin.to_owned()
                     };
-                    if ui.radio(sel, RichText::new(label).size(13.0)).clicked() && !sel {
+                    if super::widgets::radio(ui, p, sel, RichText::new(label).size(13.0)).clicked() && !sel {
                         s.font = builtin.to_owned();
                         *font_changed = true;
                         c = true;
@@ -1247,7 +1247,7 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     for f in list.iter().filter(|f| filter.is_empty() || f.name.to_lowercase().contains(&filter)) {
                         let key = format!("system:{}", f.path.display());
                         let sel = s.font == key;
-                        if ui.radio(sel, RichText::new(&f.name).size(13.0)).clicked() && !sel {
+                        if super::widgets::radio(ui, p, sel, RichText::new(&f.name).size(13.0)).clicked() && !sel {
                             s.font = key;
                             *font_changed = true;
                             c = true;

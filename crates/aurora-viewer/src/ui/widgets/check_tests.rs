@@ -104,3 +104,93 @@ fn labeled_switch_flips_from_its_switch_and_from_its_label() {
     bench.frame(vec![]);
     assert!(!bench.changed);
 }
+
+/// Three radio buttons for one value, each at a known place.
+fn radio_frame(
+    ctx: &egui::Context,
+    events: Vec<egui::Event>,
+    choice: &mut u8,
+    enabled: bool,
+) -> ([egui::Rect; 3], [bool; 3], Vec<egui::WidgetInfo>) {
+    let p = crate::theme::Theme::default().palette();
+    let mut rects = [egui::Rect::NOTHING; 3];
+    let mut changed = [false; 3];
+    let mut output = ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(400.0, 200.0))),
+            events,
+            ..Default::default()
+        },
+        |ui| {
+            ui.add_enabled_ui(enabled, |ui| {
+                for (index, label) in ["One", "Two", "Three"].into_iter().enumerate() {
+                    let resp = radio_value(ui, &p, choice, index as u8, label);
+                    rects[index] = resp.rect;
+                    changed[index] = resp.changed();
+                }
+            });
+        },
+    );
+    output.textures_delta.clear();
+    let infos = output
+        .platform_output
+        .events
+        .iter()
+        .map(|event| match event {
+            egui::output::OutputEvent::Clicked(info)
+            | egui::output::OutputEvent::DoubleClicked(info)
+            | egui::output::OutputEvent::TripleClicked(info)
+            | egui::output::OutputEvent::FocusGained(info)
+            | egui::output::OutputEvent::TextSelectionChanged(info)
+            | egui::output::OutputEvent::ValueChanged(info) => info.clone(),
+        })
+        .collect();
+    (rects, changed, infos)
+}
+
+#[test]
+fn radio_keeps_the_contract_of_the_stock_one() {
+    let ctx = egui::Context::default();
+    let mut choice = 0u8;
+    let (rects, ..) = radio_frame(&ctx, vec![], &mut choice, true);
+    // the row of the check box: same height, the mark then the label
+    let mut bench = Bench::new(false);
+    bench.frame(vec![]);
+    assert_eq!(rects[0].height(), bench.rect.height());
+    assert!(rects[1].top() > rects[0].bottom() - 0.5, "one row per choice");
+    let click = |ctx: &egui::Context, pos: egui::Pos2, choice: &mut u8, enabled: bool| {
+        let mut changed = [false; 3];
+        let mut infos = Vec::new();
+        for pressed in [true, false] {
+            let button = egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            };
+            let (_, now, said) = radio_frame(ctx, vec![egui::Event::PointerMoved(pos), button], choice, enabled);
+            for (all, one) in changed.iter_mut().zip(now) {
+                *all |= one;
+            }
+            infos.extend(said);
+        }
+        (changed, infos)
+    };
+    // the label of the third choice selects it, and only it reports a change
+    let (changed, infos) = click(&ctx, rects[2].right_center() - Vec2::new(4.0, 0.0), &mut choice, true);
+    assert_eq!((choice, changed), (2, [false, false, true]));
+    // announced as a radio button with its label, for the click sound and
+    // the screen readers
+    let info = infos.first().expect("a click is announced");
+    assert_eq!(info.typ, egui::WidgetType::RadioButton);
+    assert_eq!(info.label.as_deref(), Some("Three"));
+    // the mark of the first one; clicking the selected choice changes nothing
+    let mark = rects[0].left_center() + Vec2::new(6.0, 0.0);
+    let (changed, _) = click(&ctx, mark, &mut choice, true);
+    assert_eq!((choice, changed), (0, [true, false, false]));
+    let (changed, _) = click(&ctx, mark, &mut choice, true);
+    assert_eq!((choice, changed), (0, [false; 3]));
+    // disabled: drawn, but a click does nothing
+    let (changed, _) = click(&ctx, rects[1].left_center() + Vec2::new(6.0, 0.0), &mut choice, false);
+    assert_eq!((choice, changed), (0, [false; 3]));
+}
