@@ -6961,14 +6961,16 @@ impl ApplicationHandler for App {
             }
             // AURORA_DEMO_SEARCH=<tab>[:text]: « Rechercher » on a tab, its
             // search done ("page" in the text: a full page, "xyz": nothing;
-            // for land the text is the price limit, empty as in Firestorm)
+            // for land the text is the price limit, 0 by default)
             if let Ok(v) = std::env::var("AURORA_DEMO_SEARCH") {
                 let (name, text) = v.split_once(':').unwrap_or((v.as_str(), "aurora"));
-                let land = name.trim().eq_ignore_ascii_case("land");
-                let text = if land && !v.contains(':') { "" } else { text };
+                // land without a text keeps the default price field ("0")
+                let typed = !name.trim().eq_ignore_ascii_case("land") || v.contains(':');
                 if let Some(tab) = crate::world::search::Tab::from_name(name) {
                     self.search_ui.open_tab(tab);
-                    self.search_ui.set_text(tab, text);
+                    if typed {
+                        self.search_ui.set_text(tab, text);
+                    }
                     self.panels.search = true;
                     self.panels.perf = false;
                     if let Some(request) = self.search_ui.request(tab, &self.settings.search) {

@@ -123,7 +123,11 @@ impl Default for SearchUi {
             classifieds_category: 0,
             land_sort: LandSort::Name,
             land_ascending: false,
-            land_price: String::new(),
+            // the price box is ticked by default and limits to 0 L$: the
+            // released Firestorm shows that 0 (its sources leave "edit_price"
+            // empty, which sends the same 0); an empty field would read as
+            // "no limit"
+            land_price: "0".into(),
             land_area: String::new(),
             events_by_day: false,
             events_day: 0,
@@ -957,13 +961,22 @@ mod tests {
                 category: PLACE_CATEGORY_ANY
             })
         );
-        // as Firestorm first shows the panel: FindLandPrice on over an empty
-        // field (price 0), FindLandArea off
+        // as Firestorm first shows the panel: FindLandPrice on over a field
+        // that shows the 0 it limits to, FindLandArea off over an empty field
+        assert_eq!((ui.land_price.as_str(), ui.land_area.as_str()), ("0", ""));
         let Some(Request::Land { filter, .. }) = ui.request(Tab::Land, &settings) else {
             panic!("land");
         };
         assert_eq!(filter, LandFilter::default());
         assert!(filter.limit_price && !filter.limit_area);
+        assert_eq!((filter.price, filter.area), (0, 0));
+        // a cleared price field still sends 0, and is not filled again
+        ui.land_price.clear();
+        let Some(Request::Land { filter: cleared, .. }) = ui.request(Tab::Land, &settings) else {
+            panic!("land");
+        };
+        assert_eq!(cleared, filter);
+        assert_eq!(ui.land_price, "");
         ui.land_price = "5000".into();
         ui.land_area = "512".into();
         let Some(Request::Land { filter, .. }) = ui.request(Tab::Land, &settings) else {
