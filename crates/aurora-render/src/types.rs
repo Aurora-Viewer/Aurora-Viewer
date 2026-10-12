@@ -321,11 +321,17 @@ pub struct ImpostorCapture {
     pub blend: Vec<DrawCmd>,
 }
 
+/// Flag of `ImpostorSprite::tile`: the picture is all fullbright (the
+/// silhouette of an avatar over the complexity limit), so its card takes no
+/// haze on a classic sky, as the silhouette drawn in full.
+pub const IMPOSTOR_FULLBRIGHT: u32 = 1 << 31;
+
 /// Impostor card: `center ± right ± up` (half extents, world space).
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub struct ImpostorSprite {
     pub center: [f32; 3],
+    /// Atlas tile, with `IMPOSTOR_FULLBRIGHT`.
     pub tile: u32,
     pub right: [f32; 3],
     pub up: [f32; 3],

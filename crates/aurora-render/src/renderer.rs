@@ -3554,6 +3554,11 @@ impl Backend {
             let mut u = self.frame_uniforms(&cf, c.view, None, &cascades, &splits);
             u.misc = [0.0, 0.0, 0.0, 1.0];
             u.clip_plane = [0.0; 4];
+            // neither haze (a classic sky's grows with its distance
+            // multiplier) nor fog over the few metres to the picture's
+            // eye: the card takes those of its real distance
+            u.sky_ll[1] = 0.0;
+            u.fog[3] = 0.0;
             let r = IMPOSTOR_TILE as f32;
             u.screen = [r, r, 1.0 / r, 1.0 / r];
             self.queue.write_buffer(&self.refl_buffers[3 + i], 0, bytemuck::bytes_of(&u));

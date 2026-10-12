@@ -2281,15 +2281,34 @@ pub fn events() -> Vec<NetEvent> {
         sec_per_day: 14400,
         usec_since_start: 0,
     }));
-    // AURORA_DEMO_SKY=<gamma>: a classic EEP sky (no reflection probe
-    // ambiance) with the given sky gamma and a sunlight color above 1, as most
-    // Second Life skies carry: shows the legacy gamma and the normalized
-    // object light (Firestorm mSunDiffuse) without a grid
-    if let Some(gamma) = std::env::var("AURORA_DEMO_SKY").ok().and_then(|v| v.trim().parse::<f64>().ok()) {
+    // AURORA_DEMO_SKY=<gamma>[,<haze distance>]: a classic EEP sky (no
+    // reflection probe ambiance) with the given sky gamma and a sunlight color
+    // above 1, as most Second Life skies carry: shows the legacy gamma and
+    // the normalized object light (Firestorm mSunDiffuse) without a grid.
+    // With a haze distance multiplier (0.8 by default, 37 in a misty sky),
+    // what is a few tens of metres away is hazed
+    let sky = std::env::var("AURORA_DEMO_SKY").ok().and_then(|v| {
+        let mut values = v.split(',').map(|s| s.trim().parse::<f64>().ok());
+        Some((values.next()??, values.next().flatten()))
+    });
+    if let Some((gamma, haze_distance)) = sky {
+        // an EEP region: without the ExtEnvironment capability its day is
+        // not shown (the simulator sun is)
+        ev.push(NetEvent::Capabilities {
+            handle: HANDLE,
+            caps: Arc::new(
+                [
+                    ("GetDisplayNames".to_owned(), "demo://names".to_owned()),
+                    ("ExtEnvironment".to_owned(), "demo://environment".to_owned()),
+                ]
+                .into_iter()
+                .collect(),
+            ),
+        });
         ev.push(NetEvent::Environment {
             handle: HANDLE,
             parcel_id: -1,
-            environment: demo_sky(Vec3::new(0.55, 0.35, 0.6).normalize(), gamma),
+            environment: demo_sky(Vec3::new(0.55, 0.35, 0.6).normalize(), gamma, haze_distance),
         });
     }
     ev.push(NetEvent::FriendsOnline {
@@ -3459,20 +3478,21 @@ pub fn seat_animation() -> aurora_assets::Animation {
 }
 
 /// Day cycle with a single classic sky frame (see AURORA_DEMO_SKY).
-fn demo_sky(sun: Vec3, gamma: f64) -> Llsd {
+fn demo_sky(sun: Vec3, gamma: f64, haze_distance: Option<f64>) -> Llsd {
     use aurora_llsd::llsd_map;
     let q = Quat::from_rotation_arc(Vec3::X, sun);
     let arr = |v: &[f64]| Llsd::Array(v.iter().map(|x| Llsd::Real(*x)).collect());
+    let mut sky = llsd_map! {
+        "type" => "sky",
+        "sun_rotation" => arr(&[q.x as f64, q.y as f64, q.z as f64, q.w as f64]),
+        "sunlight_color" => arr(&[2.2, 2.34, 2.7]),
+        "gamma" => gamma,
+    };
+    if let (Some(d), Llsd::Map(m)) = (haze_distance, &mut sky) {
+        m.insert("legacy_haze".into(), llsd_map! { "distance_multiplier" => d });
+    }
     let mut frames = aurora_llsd::Map::new();
-    frames.insert(
-        "sky".into(),
-        llsd_map! {
-            "type" => "sky",
-            "sun_rotation" => arr(&[q.x as f64, q.y as f64, q.z as f64, q.w as f64]),
-            "sunlight_color" => arr(&[2.2, 2.34, 2.7]),
-            "gamma" => gamma,
-        },
-    );
+    frames.insert("sky".into(), sky);
     // a valid day needs a water track too (Firestorm recordEnvironment)
     frames.insert("water".into(), llsd_map! { "type" => "water" });
     let key = |name: &str| Llsd::Array(vec![llsd_map! { "key_keyframe" => 0.0, "key_name" => name }]);

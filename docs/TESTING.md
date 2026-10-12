@@ -480,7 +480,7 @@ grille.
 | `AURORA_DEMO_PLANAR=1` | Dalles en mapping de texture planaire |
 | `AURORA_DEMO_PBR_OVERRIDE=1` | Override de matériau GLTF |
 | `AURORA_DEMO_TEXANIM=1` | Animations de texture (llSetTextureAnim) |
-| `AURORA_DEMO_SKY=<gamma>` | Ciel EEP classique avec ce gamma |
+| `AURORA_DEMO_SKY=<gamma>[,<brume>]` | Ciel EEP classique avec ce gamma |
 | `AURORA_DEMO_OCCLUSION=1` | Mur avec des objets cachés (test d'occlusion) |
 | `AURORA_DEMO_DEBUG="<calques>"` | Calques de débogage |
 | `AURORA_DEMO_EEP_PARCEL=<mode>` | Environnement EEP de la région et de la parcelle |
@@ -504,10 +504,15 @@ grille.
   panneaux alpha — défilement lisse, grille de 4 × 4 images, ping-pong,
   rotation, échelle (masque alpha : prépasse et ombres), un cube animé sur
   une seule face, un matériau legacy (la normal map suit) et une face PBR.
-- **`AURORA_DEMO_SKY=<gamma>`** : ciel EEP classique (sans ambiance des
-  sondes de reflets) avec ce gamma de ciel et une couleur du soleil
+- **`AURORA_DEMO_SKY=<gamma>[,<brume>]`** : ciel EEP classique (sans ambiance
+  des sondes de reflets) avec ce gamma de ciel et une couleur du soleil
   supérieure à 1 : gamma legacy et lumière des objets normalisée comme
-  Firestorm.
+  Firestorm. `brume` : multiplicateur de distance de la brume (0,8 par
+  défaut ; `37` donne un ciel brumeux comme en portent beaucoup de régions,
+  où ce qui est à quelques dizaines de mètres est voilé). Avec
+  `AURORA_DEMO_CROWD=40` et `AURORA_MAX_AVATARS=4`, les imposteurs doivent
+  être voilés comme les avatars dessinés en entier à côté d'eux
+  (`AURORA_MAX_AVATARS=60` pour comparer).
 - **`AURORA_DEMO_DEBUG`** : liste séparée par des virgules parmi `bounds`,
   `culling`, `lights`, `probes`, `skeletons`, `alpha`, `wire`, `complexity`,
   `glow`, `glow_view`, `freeze`.
