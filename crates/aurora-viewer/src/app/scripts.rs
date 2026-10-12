@@ -62,6 +62,10 @@ impl App {
             return;
         }
         let Ok(mode) = std::env::var("AURORA_DEMO_SCRIPTS") else { return };
+        if matches!(mode.as_str(), "insert-filter" | "insert-empty") {
+            raw.events
+                .extend(self.script_editors.demo_insertion_events(&self.egui_ctx, self.frame_count, &mode));
+        }
         if matches!(mode.as_str(), "folding" | "object-folding") {
             raw.events.extend(self.script_editors.demo_folding_events(self.frame_count));
         }
@@ -142,6 +146,8 @@ impl App {
                 | "syntax-readonly"
                 | "workbench"
                 | "object-workbench"
+                | "insert-filter"
+                | "insert-empty"
                 | "search"
                 | "preferences"
                 | "help"

@@ -21,6 +21,8 @@ pub(super) struct Tools {
     pub search: Search,
     pub help: Help,
     pub insert_filter: String,
+    pub insert_button: Option<egui::Rect>,
+    insertion_open: bool,
     pub library: bool,
     pub goto: bool,
     pub goto_line: usize,
@@ -586,22 +588,47 @@ fn insertion(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id) {
     ui.add_enabled_ui(
         e.loaded && e.can_edit && e.saving.is_none() && !e.tools.processed && !e.colors.active(),
         |ui| {
-            egui::ComboBox::from_id_salt((id, "insert"))
+            let popup = egui::ComboBox::from_id_salt((id, "insert"))
                 .selected_text(aurora_i18n::tr!("script-insert"))
                 .width(155.0)
-                .height(220.0)
+                .height(280.0)
+                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
                 .show_ui(ui, |ui| {
-                    ui.add(egui::TextEdit::singleline(&mut e.tools.insert_filter).hint_text(aurora_i18n::tr!("script-insert-filter")));
-                    let filter = e.tools.insert_filter.to_lowercase();
-                    for entry in reference::all()
-                        .iter()
-                        .filter(|e| e.group == "functions" && e.name.to_lowercase().contains(&filter))
-                    {
-                        if ui.selectable_label(false, &entry.name).on_hover_text(&entry.signature).clicked() {
-                            chosen = Some(entry.name.clone());
-                        }
+                    let field = ui.add(
+                        egui::TextEdit::singleline(&mut e.tools.insert_filter)
+                            .id(id.with("insert_filter"))
+                            .desired_width(260.0)
+                            .hint_text(aurora_i18n::tr!("script-insert-filter")),
+                    );
+                    if !e.tools.insertion_open {
+                        field.request_focus();
                     }
+                    ui.separator();
+                    // Only the results scroll, keeping the search field visible.
+                    let mut results = egui::ScrollArea::vertical().id_salt((id, "insert_results")).max_height(220.0);
+                    if field.changed() {
+                        results = results.vertical_scroll_offset(0.0);
+                    }
+                    let filter = e.tools.insert_filter.trim().to_lowercase();
+                    results.show(ui, |ui| {
+                        let mut found = false;
+                        for entry in reference::all()
+                            .iter()
+                            .filter(|e| e.group == "functions" && e.name.to_lowercase().contains(&filter))
+                        {
+                            found = true;
+                            if ui.selectable_label(false, &entry.name).on_hover_text(&entry.signature).clicked() {
+                                chosen = Some(entry.name.clone());
+                                ui.close();
+                            }
+                        }
+                        if !found {
+                            ui.label(RichText::new(aurora_i18n::tr!("script-insert-empty")).color(p.muted));
+                        }
+                    });
                 });
+            e.tools.insert_button = Some(popup.response.rect);
+            e.tools.insertion_open = popup.inner.is_some();
         },
     );
     if let Some(name) = chosen {
@@ -614,7 +641,6 @@ fn insertion(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id) {
             e.status = aurora_i18n::tr!("script-source-too-large").into();
         }
     }
-    let _ = p;
 }
 
 pub(super) fn dialogs(

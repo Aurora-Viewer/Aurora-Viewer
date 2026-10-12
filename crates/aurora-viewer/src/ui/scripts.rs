@@ -287,6 +287,44 @@ impl Editors {
         }
     }
 
+    pub fn demo_insertion_events(&self, ctx: &egui::Context, frame: u64, mode: &str) -> Vec<egui::Event> {
+        let Some(e) = self.documents.first() else { return Vec::new() };
+        if matches!(frame, 323 | 324) {
+            let Some(rect) = e.tools.insert_button else { return Vec::new() };
+            let pos = rect.center();
+            return vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: frame == 323,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ];
+        }
+        if (frame == 400 && mode == "insert-filter") || (frame == 326 && mode == "insert-empty") {
+            return vec![egui::Event::Text(
+                if mode == "insert-empty" { "no_matching_function" } else { "color" }.into(),
+            )];
+        }
+        if frame == 350 && mode == "insert-filter" {
+            let id = format!("script_editor_{}_{}", e.target.object, e.target.item);
+            let id = egui::Id::new((&id, "source_text")).with("insert_filter");
+            if let Some(field) = ctx.read_response(id) {
+                return vec![
+                    egui::Event::PointerMoved(field.rect.center_bottom() + Vec2::new(0.0, 90.0)),
+                    egui::Event::MouseWheel {
+                        unit: egui::MouseWheelUnit::Point,
+                        delta: Vec2::new(0.0, -240.0),
+                        modifiers: egui::Modifiers::NONE,
+                        phase: egui::TouchPhase::Move,
+                    },
+                ];
+            }
+        }
+        Vec::new()
+    }
+
     pub fn demo_folding_events(&self, frame: u64) -> Vec<egui::Event> {
         if !matches!(frame, 323 | 324) {
             return Vec::new();

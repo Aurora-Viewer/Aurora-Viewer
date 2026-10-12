@@ -3635,6 +3635,7 @@ script-goto-go = Aller
 script-position = Ligne { $line }, colonne { $column }
 script-insert = Insérer…
 script-insert-filter = Filtrer les fonctions
+script-insert-empty = Aucune fonction correspondante
 script-help-keyword = Aide par mot-clé
 script-help-library = Bibliothèque LSL
 script-help-follow = Suivre le curseur

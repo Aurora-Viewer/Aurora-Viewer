@@ -279,7 +279,7 @@ Pour vérifier l'édition, ajouter `AURORA_DEMO_BUILD=move,object:90000` ou
 translucide et poignées de taille. `stretch,object:90000,fz,100,0` tire la face
 opposée à la base ; le flexible garde sa courbure pendant le changement de taille.
 
-**`AURORA_DEMO_SCRIPTS=inventory|object|both|save|object-save|error|readonly|syntax|object-syntax|syntax-readonly|indent|object-indent|tabstops|object-tabstops|close-brace|object-close-brace|colors|color-picker|color-accept|color-cancel|comment-lines|comment-block|multiline-indent|multiline-outdent|folding|object-folding|experience|experience-save|workbench|object-workbench|search|preferences|help|preprocessor|object-preprocessor|processed|preprocessor-error`** :
+**`AURORA_DEMO_SCRIPTS=inventory|object|both|save|object-save|error|readonly|syntax|object-syntax|syntax-readonly|indent|object-indent|tabstops|object-tabstops|close-brace|object-close-brace|colors|color-picker|color-accept|color-cancel|comment-lines|comment-block|multiline-indent|multiline-outdent|folding|object-folding|experience|experience-save|workbench|object-workbench|insert-filter|insert-empty|search|preferences|help|preprocessor|object-preprocessor|processed|preprocessor-error`** :
 ouvre un éditeur de script depuis l'inventaire, le contenu d'un objet ou
 les deux à l'image 280. `save` et `object-save` enregistrent une source
 modifiée puis ferment et rouvrent l'éditeur à l'image 360 avec un UUID
@@ -336,6 +336,9 @@ ne propose pas d'association d'expérience, comme Firestorm.
 
 `workbench` et `object-workbench` montrent les menus Fichier / Édition / Aide,
 la barre d'outils, les numéros de ligne, le curseur et le sélecteur de fonctions.
+`insert-filter` ouvre Insérer, fait défiler les résultats puis saisit `color` :
+le filtre doit rester visible et la source inchangée. `insert-empty` saisit
+un nom absent et affiche « Aucune fonction correspondante ».
 `search`, `preferences` et `help` ouvrent respectivement la recherche/remplacement,
 les couleurs/options avec aperçu et l'aide locale de `llSay` avec sa signature.
 Les commandes de saisie utilisent l'historique natif ; les réglages ne sont
