@@ -257,12 +257,21 @@ fn rating_box(ui: &mut egui::Ui, p: &Palette, on: &mut bool, rating: &str, allow
     let rtl = ui.layout().prefer_right_to_left();
     let mut shown = *on && allowed;
     let mut check = |ui: &mut egui::Ui| {
-        let resp = ui.add_enabled(allowed, egui::Checkbox::without_text(&mut shown));
+        let resp = ui
+            .add_enabled_ui(allowed, |ui| {
+                // a box without a label is as wide as a row is high, its mark
+                // at the left: here only as wide as the mark, so that the
+                // badge stands against the box it belongs to
+                ui.spacing_mut().interact_size.y = ui.spacing().icon_width;
+                widgets::checkbox(ui, p, &mut shown, "")
+            })
+            .inner;
         let changed = resp.changed();
         let _ = resp.on_disabled_hover_text(aurora_i18n::tr!("search-rating-not-allowed"));
         changed
     };
-    let spacing = std::mem::replace(&mut ui.spacing_mut().item_spacing.x, 2.0);
+    // box and badge close together, the pairs apart
+    let spacing = std::mem::replace(&mut ui.spacing_mut().item_spacing.x, 5.0);
     let changed = if rtl {
         ui.add_space(6.0);
         widgets::maturity_badge(ui, p, rating, 16.0);
@@ -601,7 +610,7 @@ impl SearchUi {
                     }
                     let mut limit = |ui: &mut egui::Ui, on: &mut bool, label: &str, text: &mut String| {
                         let mut go = false;
-                        if ui.checkbox(on, label).changed() {
+                        if widgets::checkbox(ui, p, on, label).changed() {
                             saved = true;
                             go = true;
                         }
@@ -634,9 +643,7 @@ impl SearchUi {
                         (LandSort::Area, aurora_i18n::tr!("search-col-area")),
                     ];
                     find |= combo(ui, "search-land-sort", &mut self.land_sort, &sorts, 130.0);
-                    find |= ui
-                        .checkbox(&mut self.land_ascending, aurora_i18n::tr!("search-land-ascending"))
-                        .changed();
+                    find |= widgets::checkbox(ui, p, &mut self.land_ascending, aurora_i18n::tr!("search-land-ascending")).changed();
                     ui.add_space(8.0);
                     if rating_boxes(ui, p, &mut settings.land, access) {
                         saved = true;
@@ -651,8 +658,8 @@ impl SearchUi {
                 ui.horizontal(|ui| {
                     // "events_search_mode": the day buttons only work by date
                     let mut by_day = self.events_by_day;
-                    ui.radio_value(&mut by_day, false, aurora_i18n::tr!("search-events-current"));
-                    ui.radio_value(&mut by_day, true, aurora_i18n::tr!("search-events-by-date"));
+                    widgets::radio_value(ui, p, &mut by_day, false, aurora_i18n::tr!("search-events-current"));
+                    widgets::radio_value(ui, p, &mut by_day, true, aurora_i18n::tr!("search-events-by-date"));
                     self.events_by_day = by_day;
                     ui.add_space(6.0);
                     let step = |ui: &mut egui::Ui, icon: &str, tip: &str| widgets::icon_button(ui, p, icon, tip, by_day);
@@ -821,7 +828,8 @@ fn results(ui: &mut egui::Ui, c: &mut Ctx, list: &List, actions: &mut Vec<Search
         if let Some((_, descending)) = sorted {
             let arrow = if descending { "caret-down-filled" } else { "caret-up-filled" };
             if let Some(t) = super::icons::global(arrow) {
-                let at = Rect::from_center_size(egui::pos2(cell.right() - 9.0, cell.center().y), Vec2::splat(8.0));
+                // where the radar puts the arrow of its name column
+                let at = Rect::from_center_size(egui::pos2(cell.right() - 10.0, cell.center().y), Vec2::splat(8.0));
                 let uv = Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
                 ui.painter().image(t.id(), at, uv, p.violet_light);
             }

@@ -85,7 +85,7 @@ fn button_rows(ui: &egui::Ui, buttons: &[Btn], width: f32) -> Vec<Vec<usize>> {
     for (i, b) in buttons.iter().enumerate() {
         let text = ui
             .painter()
-            .layout_no_wrap(b.label.to_owned(), font.clone(), egui::Color32::WHITE)
+            .layout_no_wrap(b.label.to_owned(), font.clone(), egui::Color32::PLACEHOLDER)
             .size()
             .x;
         let w = text + 22.0 + 24.0;

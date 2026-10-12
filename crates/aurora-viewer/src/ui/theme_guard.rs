@@ -80,9 +80,11 @@ const RULES: &[Rule] = &[
         "egui::ProgressBar",
         "widgets::progress (it glides to its value), or widgets::level for a meter",
     ),
-    stock("ui.checkbox(", "widgets::checkbox, or widgets::switch_labeled for a lone setting"),
+    // the method alone: a call chain often puts it on its own line
+    stock(".checkbox(", "widgets::checkbox, or widgets::switch_labeled for a lone setting"),
+    // `new` and `without_text`
     stock(
-        "egui::Checkbox::new",
+        "egui::Checkbox::",
         "widgets::checkbox, or widgets::switch_labeled for a lone setting",
     ),
     stock(".radio(", "widgets::radio"),
@@ -456,6 +458,15 @@ mod tests {
         count("ui/example.rs", "widgets::radio(ui, p, on, label);\nmenu::separator(ui, p);"),
         0
     );
+    // a stock check box on its own line of a call chain, or without a label
+    assert_eq!(
+        count(
+            "ui/example.rs",
+            "let changed = ui\n    .checkbox(&mut on, label)\n    .changed();\nui.add(egui::Checkbox::without_text(&mut on));"
+        ),
+        2
+    );
+    assert_eq!(count("ui/example.rs", "widgets::checkbox(ui, p, &mut on, label);"), 0);
 }
 
 #[test]
