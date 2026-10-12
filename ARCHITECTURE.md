@@ -100,6 +100,26 @@ GetMetadata / GetCreatorExperiences / GetExperienceInfo en arrière-plan.
 L'association choisie fait partie du document et de l'instantané enregistré :
 la sauvegarde n'a plus besoin de relire les métadonnées.
 
+La saisie de `}` aligne son retrait sur le `{` correspondant, hors chaînes,
+commentaires et directives. `ui/scripts/colors.rs` affiche des pastilles
+près des vecteurs numériques entre 0 et 1 inclus, détectés et mis en cache
+par `syntax.rs`. Le nuancier commun garde un identifiant de fenêtre propre
+à chaque document et partage les préférences de palette avec la construction.
+L'aperçu est local, Annuler restaure les octets d'origine et OK forme une seule
+action dans l'historique natif. La saisie de la source et l'enregistrement
+attendent la fermeture du nuancier ; une modification externe ferme la session
+sans écraser le nouveau texte.
+
+`ui/scripts/editing.rs` regroupe les transformations sur les lignes sélectionnées
+et les bascules de commentaires, avec une seule étape Annuler / Rétablir et
+conservation du sens de la sélection. Les commandes clavier arrivées après une
+saisie ou un déplacement natif attendent le curseur réellement calculé par egui.
+`ui/scripts/folding.rs` suit les paires d'accolades hors commentaires / chaînes,
+remappe les replis après les modifications et réduit à zéro la hauteur des lignes
+cachées dans le layout. Le texte et ses indices restent complets ; les actions
+de copie, sauvegarde, compilation et annulation n'utilisent aucune projection.
+La navigation / recherche vers un caractère caché rouvre son bloc.
+
 `ui/scripts/syntax.rs` colore la source LSL des deux éditeurs, aussi en lecture
 seule. Le catalogue des noms natifs de Firestorm est embarqué dans
 `assets/lsl/keywords.json`. L'analyse lexicale et les formats restent en cache
