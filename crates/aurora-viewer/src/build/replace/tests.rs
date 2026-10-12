@@ -22,6 +22,7 @@ struct Harness {
     drop_script_reply: bool,
     script_transfers: Vec<(Uuid, TaskItem)>,
     fail_task_listing_once: bool,
+    fail_folder_creation: bool,
 }
 
 impl Harness {
@@ -70,6 +71,7 @@ impl Harness {
             drop_script_reply: false,
             script_transfers: Vec::new(),
             fail_task_listing_once: false,
+            fail_folder_creation: false,
         }
     }
 
@@ -249,7 +251,11 @@ impl Harness {
                         self.deliver(NetEvent::ObjectUpdates { handle, objects });
                     }
                     NetCommand::EditInventory { request, change } => {
-                        let result = crate::world::inventory::actions::demo_mutate(&mut self.server.inventory, self.world.agent_id, change);
+                        let result = if self.fail_folder_creation {
+                            Err(aurora_i18n::tr!("inventory-operations-the-server-did-not-confirm-every-change-the-folders").into())
+                        } else {
+                            crate::world::inventory::actions::demo_mutate(&mut self.server.inventory, self.world.agent_id, change)
+                        };
                         if let Ok(reply) = &result {
                             self.world.inventory.apply(reply.contents.clone());
                         }
@@ -635,6 +641,27 @@ fn fresh_server_permissions_refuse_replacement_before_unlinking_or_stopping_scri
         assert!(before.matches(&h.server));
         assert!(h.script_changes.is_empty());
     }
+}
+
+#[test]
+fn unconfirmed_copy_folder_reports_the_stage_and_restores_the_original_script() {
+    let mut h = Harness::new(demo::TARGET);
+    h.only_target_script();
+    h.tool.replacement.options.contents = true;
+    h.fail_folder_creation = true;
+    let original = h.ids(demo::ROOT);
+    let source = h.world.objects.index_of_uuid(&demo::id(demo::SOURCE)).unwrap();
+    let before = Prim::capture(&h.tool, &h.world, source).unwrap();
+    assert_eq!(h.run(), Stage::Failed);
+    let message = &h.tool.replacement.job.as_ref().unwrap().message;
+    assert!(message.contains(&aurora_i18n::tr!("replace-folder-failed", reason = "")));
+    assert_eq!(h.ids(demo::ROOT), original);
+    assert!(before.matches(&h.server));
+    assert!(h.script_transfers.is_empty());
+    assert_eq!(
+        h.script_changes,
+        vec![(demo::id(demo::TARGET), false), (demo::id(demo::TARGET), true)]
+    );
 }
 
 #[test]

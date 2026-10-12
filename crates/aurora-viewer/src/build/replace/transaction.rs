@@ -67,7 +67,7 @@ impl Stage {
             Self::Read => aurora_i18n::tr!("replace-stage-read"),
             Self::ReadScripts => aurora_i18n::tr!("replace-stage-read-scripts"),
             Self::StopScripts => aurora_i18n::tr!("replace-stage-stop"),
-            Self::Folder => aurora_i18n::tr!("replace-stage-copy"),
+            Self::Folder => aurora_i18n::tr!("replace-stage-folder"),
             Self::CopyOut(_) => aurora_i18n::tr!("replace-stage-copy-out"),
             Self::CopyIn(_) => aurora_i18n::tr!("replace-stage-copy-in"),
             Self::Delink => aurora_i18n::tr!("replace-stage-unlink"),
@@ -636,8 +636,18 @@ impl Job {
                     );
                 }
                 if let Some(result) = self.inventory_result.take() {
-                    let reply = result?;
                     self.inventory_request = None;
+                    let reply = match result {
+                        Ok(reply) => reply,
+                        Err(reason) => {
+                            tool.out.push(NetCommand::FetchInventory {
+                                folders: vec![world.inventory.root],
+                                owner: world.agent_id,
+                                library: false,
+                            });
+                            return Err(aurora_i18n::tr!("replace-folder-failed", reason = reason));
+                        }
+                    };
                     let id = reply
                         .created
                         .get(&self.requested_folder)

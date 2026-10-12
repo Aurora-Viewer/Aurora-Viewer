@@ -72,6 +72,22 @@ pub fn metadata_thumbnail(id: Uuid) -> Llsd {
     llsd_map! { "thumbnail" => if id.is_nil() { Llsd::default() } else { llsd_map! { "asset_id" => id.to_string() } } }
 }
 
+/// LLInventoryObject::correctInventoryName (llinventory.cpp): inventory
+/// names are ASCII bytes, without pipes, trimmed and limited to 63 bytes.
+fn folder_name(name: &str) -> String {
+    let ascii: String = name
+        .bytes()
+        .map(|b| {
+            if b == b'|' || ((b as i8) < 32 && b != b'\n') {
+                ' '
+            } else {
+                char::from(b)
+            }
+        })
+        .collect();
+    ascii.trim().chars().take(63).collect()
+}
+
 /// Sequential operations preserve parent-before-child ordering. Client UUIDs
 /// for new folders are replaced with the UUIDs actually assigned by AIS.
 pub async fn mutate(http: &reqwest::Client, cap: &str, fetch_cap: &str, owner: Uuid, change: Mutation) -> Result<Reply, String> {
@@ -110,7 +126,7 @@ where
             } => {
                 let parent = resolve(&created, *parent);
                 let body = llsd_map! { "categories" => Llsd::Array(vec![llsd_map! {
-                    "category_id" => Uuid::nil(), "parent_id" => parent, "name" => name.clone(), "type_default" => *type_default,
+                    "category_id" => Uuid::nil(), "parent_id" => parent, "name" => folder_name(name), "type_default" => *type_default,
                 }]) };
                 let reply = crate::outfits::send(http.post(format!("{cap}/category/{parent}?tid={}", Uuid::new_v4())), &body).await?;
                 let actual = reply["_created_categories"].at(0).as_uuid();
@@ -165,7 +181,7 @@ where
     refresh.sort();
     refresh.dedup();
     let mut contents = Vec::new();
-    let retries = if moved { 5 } else { 0 };
+    let retries = if moved || !created.is_empty() { 5 } else { 0 };
     for attempt in 0..=retries {
         contents.clear();
         let mut complete = true;
@@ -187,8 +203,8 @@ where
                 aurora_i18n::tr!("inventory-operations-read-back-incomplete-reload-inventory-before-trying-again").into()
             });
         }
-        // The reliable UDP packet can reach inventory storage after the first
-        // HTTP read. Retry reads only; a move is never submitted a second time.
+        // AIS creation and reliable UDP moves can become visible to the fetch
+        // service after the first HTTP read. Retry reads, never the mutation.
         tokio::time::sleep(std::time::Duration::from_millis(200 << attempt.min(3))).await;
     }
     // Parent metadata must precede its descendants (including new folders).
@@ -230,7 +246,8 @@ fn confirmed(operations: &[Operation], created: &HashMap<Uuid, Uuid>, contents: 
                 name,
                 type_default,
             } => {
-                if !folder(resolve(*id)).is_some_and(|f| f.parent == resolve(*parent) && f.name == *name && f.type_default == *type_default)
+                if !folder(resolve(*id))
+                    .is_some_and(|f| f.parent == resolve(*parent) && f.name == folder_name(name) && f.type_default == *type_default)
                 {
                     return false;
                 }
@@ -920,6 +937,89 @@ mod tests {
         .await;
         assert_eq!(result.expect_err("not sent"), "closed session");
         assert_eq!(sent, 1, "stop at the first failed move");
+    }
+
+    fn folder_change(name: &str) -> Mutation {
+        Mutation {
+            operations: vec![Operation::Folder {
+                id: id(100),
+                parent: id(1),
+                name: name.into(),
+                type_default: -1,
+            }],
+            refresh: vec![id(1), id(100)],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn new_folder_names_follow_the_protocol_length_and_character_rules() {
+        assert_eq!(folder_name("  Copies | temporaires\t "), "Copies   temporaires");
+        assert_eq!(folder_name(&"a".repeat(70)), "a".repeat(63));
+        assert_eq!(folder_name("Étape"), "tape");
+    }
+
+    fn folder_readback(name: &str, present: bool) -> Llsd {
+        llsd_map! { "folders" => Llsd::Array(vec![
+            llsd_map! { "folder_id" => id(1), "version" => 2, "categories" => Llsd::Array(if present { vec![
+                llsd_map! { "category_id" => id(200), "parent_id" => id(1), "type_default" => -1, "name" => name }
+            ] } else { Vec::new() }) },
+            llsd_map! { "folder_id" => id(200), "version" => 1 }
+        ]) }
+    }
+
+    #[tokio::test]
+    async fn folder_creation_uses_the_inventory_name_corrected_by_firestorm() {
+        let name = "Remplacement de prim     copies temporaires";
+        let (url, task) = move_server(vec![
+            llsd_map! { "_created_categories" => Llsd::Array(vec![id(200).into()]) },
+            folder_readback(name, true),
+        ])
+        .await;
+        let reply = mutate(
+            &reqwest::Client::new(),
+            &url,
+            &url,
+            id(2),
+            folder_change("Remplacement de prim — copies temporaires"),
+        )
+        .await
+        .expect("confirmed normalized name");
+        assert_eq!(reply.created[&id(100)], id(200));
+        let requests = task.await.expect("requests");
+        assert_eq!(requests[0].1["categories"].at(0)["name"].as_str(), name);
+    }
+
+    #[tokio::test]
+    async fn folder_creation_waits_for_readback_without_creating_a_second_folder() {
+        let name = "Copies temporaires";
+        let (url, task) = move_server(vec![
+            llsd_map! { "_created_categories" => Llsd::Array(vec![id(200).into()]) },
+            folder_readback(name, false),
+            folder_readback(name, true),
+        ])
+        .await;
+        let reply = mutate(&reqwest::Client::new(), &url, &format!("{url}/fetch"), id(2), folder_change(name))
+            .await
+            .expect("eventual creation confirmation");
+        assert_eq!(reply.created[&id(100)], id(200));
+        let requests = task.await.expect("requests");
+        assert_eq!(requests.len(), 3);
+        assert!(requests[0].0.starts_with("POST /category/"));
+        assert!(requests[1..].iter().all(|r| r.0.starts_with("POST /fetch ")));
+    }
+
+    #[tokio::test]
+    async fn a_created_folder_with_permanently_wrong_metadata_still_fails() {
+        let mut replies = vec![llsd_map! { "_created_categories" => Llsd::Array(vec![id(200).into()]) }];
+        replies.extend(vec![folder_readback("Wrong folder", true); 6]);
+        let (url, task) = move_server(replies).await;
+        assert!(
+            mutate(&reqwest::Client::new(), &url, &url, id(2), folder_change("Expected folder"))
+                .await
+                .is_err()
+        );
+        assert_eq!(task.await.expect("bounded requests").len(), 7);
     }
 
     #[tokio::test]
