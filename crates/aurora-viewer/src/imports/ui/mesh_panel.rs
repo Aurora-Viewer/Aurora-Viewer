@@ -84,7 +84,7 @@ fn preview_controls(ui: &mut egui::Ui, p: &Palette, entry: &mut Entry, prefs: &m
         checkbox(ui, p, &mut draft.preview_physics, aurora_i18n::tr!("import-physics-preview"))
             .on_hover_text(aurora_i18n::tr!("import-physics-preview-help"));
     });
-    ui.collapsing(aurora_i18n::tr!("import-preview-tools"), |ui| {
+    fold(ui, p, aurora_i18n::tr!("import-preview-tools"), false, |ui| {
         checkbox(ui, p, &mut entry.view.uv, aurora_i18n::tr!("import-uv-guide"));
         let skinned = draft.scene.models.iter().any(|model| model.skin.is_some());
         ui.add_enabled_ui(skinned, |ui| {
@@ -102,7 +102,7 @@ fn preview_controls(ui: &mut egui::Ui, p: &Palette, entry: &mut Entry, prefs: &m
 fn preview(ui: &mut egui::Ui, p: &Palette, entry: &mut Entry, prefs: &Preferences, width: f32) {
     let Some(Source::Mesh(draft)) = &entry.source else { return };
     ui.horizontal(|ui| {
-        widgets::section_header(ui, p, "eye", aurora_i18n::tr!("import-preview"));
+        widgets::section_header(ui, p, "eye-filled", aurora_i18n::tr!("import-preview"));
         if entry.preview_pending || entry.preview_not_before.is_some() {
             ui.add(egui::Spinner::new().size(12.0));
         }
@@ -155,7 +155,7 @@ fn mesh_controls(
     let mut changed = false;
     let triangles = draft.scene.models.iter().map(|m| m.triangles()).sum::<usize>();
     ui.horizontal(|ui| {
-        widgets::section_header(ui, p, "cube", aurora_i18n::tr!("import-mesh"));
+        widgets::section_header(ui, p, "cube-3d-sphere", aurora_i18n::tr!("import-mesh"));
         ui.label(
             RichText::new(aurora_i18n::tr!(
                 "import-mesh-info",
@@ -172,7 +172,7 @@ fn mesh_controls(
         ui.label(RichText::new(aurora_i18n::tr!("import-degenerate-physics", count = prepared.degenerate_triangles)).color(p.warn));
     }
     if !draft.scene.warnings.is_empty() {
-        ui.collapsing(aurora_i18n::tr!("import-log"), |ui| {
+        fold(ui, p, aurora_i18n::tr!("import-log"), false, |ui| {
             for warning in &draft.scene.warnings {
                 ui.label(RichText::new(warning).color(p.warn));
             }
@@ -226,7 +226,7 @@ fn mesh_controls(
                                 p.muted_dim.gamma_multiply(0.65)
                             },
                         ))
-                        .corner_radius(4)
+                        .corner_radius(ui.visuals().window_corner_radius)
                         .inner_margin(3)
                         .show(ui, |ui| {
                             ui.set_min_width(ui.available_width());
@@ -467,45 +467,41 @@ fn mesh_controls(
 }
 
 fn upload_options(ui: &mut egui::Ui, p: &Palette, id: Uuid, draft: &mut mesh::Draft, actions: &mut Vec<Action>) {
-    egui::CollapsingHeader::new(aurora_i18n::tr!("import-modifiers"))
-        .default_open(true)
-        .show(ui, |ui| {
-            let (_, limit) = draft.dimensions_and_limit();
-            ui.add(
-                egui::Slider::new(&mut draft.options.scale, 0.01..=limit.max(0.01))
-                    .logarithmic(true)
-                    .text(aurora_i18n::tr!("import-scale")),
-            );
-            let (dimensions, _) = draft.dimensions_and_limit();
-            ui.label(aurora_i18n::tr!(
-                "import-dimensions",
-                x = format!("{:.3}", dimensions.x),
-                y = format!("{:.3}", dimensions.y),
-                z = format!("{:.3}", dimensions.z)
-            ));
-            checkbox(ui, p, &mut draft.options.textures, aurora_i18n::tr!("import-include-textures"));
-        });
+    fold(ui, p, aurora_i18n::tr!("import-modifiers"), true, |ui| {
+        let (_, limit) = draft.dimensions_and_limit();
+        ui.add(
+            egui::Slider::new(&mut draft.options.scale, 0.01..=limit.max(0.01))
+                .logarithmic(true)
+                .text(aurora_i18n::tr!("import-scale")),
+        );
+        let (dimensions, _) = draft.dimensions_and_limit();
+        ui.label(aurora_i18n::tr!(
+            "import-dimensions",
+            x = format!("{:.3}", dimensions.x),
+            y = format!("{:.3}", dimensions.y),
+            z = format!("{:.3}", dimensions.z)
+        ));
+        checkbox(ui, p, &mut draft.options.textures, aurora_i18n::tr!("import-include-textures"));
+    });
     let has_skin = draft.scene.models.iter().any(|m| m.skin.is_some());
-    egui::CollapsingHeader::new(aurora_i18n::tr!("import-rigging"))
-        .default_open(false)
-        .show(ui, |ui| {
-            ui.add_enabled_ui(has_skin, |ui| {
-                checkbox(ui, p, &mut draft.options.skin, aurora_i18n::tr!("import-include-weights"));
-                ui.add_enabled_ui(draft.options.skin, |ui| {
-                    checkbox(ui, p, &mut draft.options.joints, aurora_i18n::tr!("import-include-joints"));
-                    ui.add_enabled_ui(draft.options.joints, |ui| {
-                        checkbox(ui, p, &mut draft.options.lock_scale, aurora_i18n::tr!("import-lock-scale"));
-                        ui.horizontal(|ui| {
-                            ui.label(aurora_i18n::tr!("import-pelvis-offset"));
-                            ui.add(egui::DragValue::new(&mut draft.options.pelvis).range(-3.0..=3.0).speed(0.01));
-                        });
+    fold(ui, p, aurora_i18n::tr!("import-rigging"), false, |ui| {
+        ui.add_enabled_ui(has_skin, |ui| {
+            checkbox(ui, p, &mut draft.options.skin, aurora_i18n::tr!("import-include-weights"));
+            ui.add_enabled_ui(draft.options.skin, |ui| {
+                checkbox(ui, p, &mut draft.options.joints, aurora_i18n::tr!("import-include-joints"));
+                ui.add_enabled_ui(draft.options.joints, |ui| {
+                    checkbox(ui, p, &mut draft.options.lock_scale, aurora_i18n::tr!("import-lock-scale"));
+                    ui.horizontal(|ui| {
+                        ui.label(aurora_i18n::tr!("import-pelvis-offset"));
+                        ui.add(egui::DragValue::new(&mut draft.options.pelvis).range(-3.0..=3.0).speed(0.01));
                     });
                 });
-                for skin in draft.scene.models.iter().filter_map(|m| m.skin.as_ref()) {
-                    ui.label(skin.names.join(", "));
-                }
             });
+            for skin in draft.scene.models.iter().filter_map(|m| m.skin.as_ref()) {
+                ui.label(skin.names.join(", "));
+            }
         });
+    });
     if flat_button(ui, p, aurora_i18n::tr!("import-reset-settings")).clicked() {
         actions.push(Action::ResetMesh(id));
     }
@@ -520,76 +516,72 @@ fn source_path(ui: &mut egui::Ui, p: &Palette, path: Option<&std::path::Path>) {
     }
 }
 fn load_options(ui: &mut egui::Ui, p: &Palette, prefs: &mut Preferences) {
-    egui::CollapsingHeader::new(aurora_i18n::tr!("import-load-settings"))
-        .default_open(true)
-        .show(ui, |ui| {
-            ui.label(RichText::new(aurora_i18n::tr!("import-suffix-help")).color(p.muted));
-            checkbox(ui, p, &mut prefs.mesh_auto_weights, aurora_i18n::tr!("import-auto-weights"));
-            checkbox(
-                ui,
-                p,
-                &mut prefs.mesh_auto_preview_weights,
-                aurora_i18n::tr!("import-auto-preview-weights"),
-            );
-            checkbox(ui, p, &mut prefs.mesh_reliable_default, aurora_i18n::tr!("import-default-reliable"));
-        });
+    fold(ui, p, aurora_i18n::tr!("import-load-settings"), true, |ui| {
+        ui.label(RichText::new(aurora_i18n::tr!("import-suffix-help")).color(p.muted));
+        checkbox(ui, p, &mut prefs.mesh_auto_weights, aurora_i18n::tr!("import-auto-weights"));
+        checkbox(
+            ui,
+            p,
+            &mut prefs.mesh_auto_preview_weights,
+            aurora_i18n::tr!("import-auto-preview-weights"),
+        );
+        checkbox(ui, p, &mut prefs.mesh_reliable_default, aurora_i18n::tr!("import-default-reliable"));
+    });
 }
 
 fn load_settings(ui: &mut egui::Ui, p: &Palette, prefs: &mut Preferences) {
-    egui::CollapsingHeader::new(aurora_i18n::tr!("import-file-associations"))
-        .default_open(true)
-        .show(ui, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                for (label, values) in [
-                    (aurora_i18n::tr!("import-suffix-sl"), ["LOD0", "LOD1", "LOD2", "", "PHYS"]),
-                    (aurora_i18n::tr!("import-suffix-games"), ["LOD3", "LOD2", "LOD1", "LOD0", "PHYS"]),
-                    (aurora_i18n::tr!("import-suffix-words"), ["lowest", "low", "med", "high", "phys"]),
-                ] {
-                    if flat_button(ui, p, label).clicked() {
-                        prefs.mesh_suffixes = values.map(String::from);
+    fold(ui, p, aurora_i18n::tr!("import-file-associations"), true, |ui| {
+        ui.horizontal_wrapped(|ui| {
+            for (label, values) in [
+                (aurora_i18n::tr!("import-suffix-sl"), ["LOD0", "LOD1", "LOD2", "", "PHYS"]),
+                (aurora_i18n::tr!("import-suffix-games"), ["LOD3", "LOD2", "LOD1", "LOD0", "PHYS"]),
+                (aurora_i18n::tr!("import-suffix-words"), ["lowest", "low", "med", "high", "phys"]),
+            ] {
+                if flat_button(ui, p, label).clicked() {
+                    prefs.mesh_suffixes = values.map(String::from);
+                }
+            }
+        });
+        let labels = [
+            lod_label(3),
+            lod_label(2),
+            lod_label(1),
+            lod_label(0),
+            aurora_i18n::tr!("import-physics"),
+        ];
+        let font = egui::TextStyle::Body.resolve(ui.style());
+        let label_width = ui.fonts_mut(|fonts| {
+            labels
+                .iter()
+                .map(|label| fonts.layout_no_wrap((*label).into(), font.clone(), p.ink).size().x)
+                .sum::<f32>()
+        });
+        let room = ui.available_width() - label_width - 9.0 * ui.spacing().item_spacing.x;
+        let pairs = if room >= 400.0 { 5 } else { 3 };
+        let field_width = if pairs == 5 { (room / 5.0).min(120.0) } else { 100.0 };
+        egui::Grid::new("mesh_suffixes")
+            .num_columns(pairs * 2)
+            .min_col_width(0.0)
+            .spacing(Vec2::new(8.0, 6.0))
+            .show(ui, |ui| {
+                for (index, level) in [3, 2, 1, 0, 4].into_iter().enumerate() {
+                    ui.label(labels[index]);
+                    ui.add_sized(
+                        Vec2::new(field_width, ui.spacing().interact_size.y),
+                        egui::TextEdit::singleline(&mut prefs.mesh_suffixes[level])
+                            .char_limit(32)
+                            .desired_width(field_width),
+                    );
+                    if (index + 1) % pairs == 0 || index == 4 {
+                        ui.end_row();
                     }
                 }
             });
-            let labels = [
-                lod_label(3),
-                lod_label(2),
-                lod_label(1),
-                lod_label(0),
-                aurora_i18n::tr!("import-physics"),
-            ];
-            let font = egui::TextStyle::Body.resolve(ui.style());
-            let label_width = ui.fonts_mut(|fonts| {
-                labels
-                    .iter()
-                    .map(|label| fonts.layout_no_wrap((*label).into(), font.clone(), p.ink).size().x)
-                    .sum::<f32>()
-            });
-            let room = ui.available_width() - label_width - 9.0 * ui.spacing().item_spacing.x;
-            let pairs = if room >= 400.0 { 5 } else { 3 };
-            let field_width = if pairs == 5 { (room / 5.0).min(120.0) } else { 100.0 };
-            egui::Grid::new("mesh_suffixes")
-                .num_columns(pairs * 2)
-                .min_col_width(0.0)
-                .spacing(Vec2::new(8.0, 6.0))
-                .show(ui, |ui| {
-                    for (index, level) in [3, 2, 1, 0, 4].into_iter().enumerate() {
-                        ui.label(labels[index]);
-                        ui.add_sized(
-                            Vec2::new(field_width, ui.spacing().interact_size.y),
-                            egui::TextEdit::singleline(&mut prefs.mesh_suffixes[level])
-                                .char_limit(32)
-                                .desired_width(field_width),
-                        );
-                        if (index + 1) % pairs == 0 || index == 4 {
-                            ui.end_row();
-                        }
-                    }
-                });
-            ui.horizontal(|ui| {
-                ui.label(aurora_i18n::tr!("import-user-physics"));
-                ui.add(egui::TextEdit::singleline(&mut prefs.mesh_physics_preset).desired_width(ui.available_width()));
-            });
+        ui.horizontal(|ui| {
+            ui.label(aurora_i18n::tr!("import-user-physics"));
+            ui.add(egui::TextEdit::singleline(&mut prefs.mesh_physics_preset).desired_width(ui.available_width()));
         });
+    });
 }
 
 #[cfg(test)]

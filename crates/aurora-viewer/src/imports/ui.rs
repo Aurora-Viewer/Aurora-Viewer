@@ -4,7 +4,7 @@
 use super::*;
 use crate::{
     theme::Palette,
-    ui::widgets::{self, Floater, flat_button},
+    ui::widgets::{self, ActionKind, Floater, action_button, action_button_if, checkbox, flat_button},
 };
 use egui::{RichText, Vec2};
 
@@ -44,17 +44,38 @@ fn selection<T: PartialEq>(ui: &mut egui::Ui, current: &mut T, value: T, label: 
     }
 }
 
-fn checkbox(ui: &mut egui::Ui, p: &Palette, checked: &mut bool, label: impl Into<egui::WidgetText>) -> egui::Response {
-    ui.scope(|ui| {
-        let w = &mut ui.visuals_mut().widgets;
-        for visuals in [&mut w.inactive, &mut w.hovered, &mut w.active] {
-            visuals.corner_radius = egui::CornerRadius::same(2);
-            visuals.bg_stroke = egui::Stroke::new(1.0, p.muted);
-            visuals.bg_fill = if *checked { p.violet } else { p.field };
+/// Collapsible section under its title: the shared header, with the id a
+/// stock `ui.collapsing` gave to the same title.
+fn fold(ui: &mut egui::Ui, p: &Palette, title: &str, default_open: bool, body: impl FnOnce(&mut egui::Ui)) {
+    widgets::collapsing(ui, p, title, title, default_open, body);
+}
+
+/// A flat text button of the toolbar, greyed out when `enabled` is false.
+fn tool_button(ui: &mut egui::Ui, p: &Palette, label: &str, enabled: bool) -> egui::Response {
+    ui.add_enabled_ui(enabled, |ui| flat_button(ui, p, label)).inner
+}
+
+/// Swatch and picker of a glTF factor: linear components with a straight
+/// alpha, edited as the sRGB bytes of the shared color picker. The factor is
+/// written only when the user changes it, so an untouched one keeps its
+/// exact value.
+fn factor_swatch(ui: &mut egui::Ui, p: &Palette, id_salt: impl egui::AsIdSalt, factor: &mut [f32], alpha: bool) {
+    use egui::ecolor::{gamma_u8_from_linear_f32, linear_f32_from_gamma_u8, linear_u8_from_linear_f32};
+    let mut srgba = [255u8; 4];
+    for (byte, linear) in srgba.iter_mut().zip(factor.iter()).take(3) {
+        *byte = gamma_u8_from_linear_f32(*linear);
+    }
+    if let Some(a) = factor.get(3) {
+        srgba[3] = linear_u8_from_linear_f32(*a);
+    }
+    if widgets::color_button(ui, p, id_salt, &mut srgba, alpha).changed() {
+        for (linear, byte) in factor.iter_mut().zip(srgba).take(3) {
+            *linear = linear_f32_from_gamma_u8(byte);
         }
-        ui.checkbox(checked, label.into())
-    })
-    .inner
+        if let Some(a) = factor.get_mut(3) {
+            *a = f32::from(srgba[3]) / 255.0;
+        }
+    }
 }
 
 fn column_label(ui: &mut egui::Ui, label: impl Into<egui::WidgetText>, width: f32) -> egui::Response {
@@ -166,7 +187,7 @@ fn file_status(ui: &mut egui::Ui, p: &Palette, entry: &Entry) {
                 }
                 Status::Done(_) => widgets::glyph(ui, "check", p.success, 16.0),
                 Status::Cancelled => widgets::glyph(ui, "x", p.muted, 16.0),
-                Status::Error(_) => widgets::glyph(ui, "warning", p.danger, 16.0),
+                Status::Error(_) => widgets::glyph(ui, "alert-triangle-filled", p.danger, 16.0),
             },
         )
         .response;
@@ -287,7 +308,7 @@ pub fn show(
         }
         ui.separator();
         if imports.choice == Choice::Local {
-            ui.collapsing(aurora_i18n::tr!("import-local-settings"), |ui| {
+            fold(ui, p, aurora_i18n::tr!("import-local-settings"), false, |ui| {
                 ui.horizontal_wrapped(|ui| {
                     checkbox(ui, p, &mut prefs.local_assume_meters, aurora_i18n::tr!("import-local-meters"));
                     checkbox(ui, p, &mut prefs.local_mesh_auto_reload, aurora_i18n::tr!("import-local-live"));
@@ -300,17 +321,14 @@ pub fn show(
             });
         }
         ui.horizontal(|ui| {
-            if ui
-                .add_enabled(
-                    !busy && imports.pending_files.is_none(),
-                    egui::Button::new(if imports.choice == Choice::Mesh {
-                        aurora_i18n::tr!("import-mesh-choose-high")
-                    } else {
-                        aurora_i18n::tr!("import-choose-files")
-                    }),
-                )
-                .clicked()
-            {
+            let choose = if imports.choice == Choice::Mesh {
+                aurora_i18n::tr!("import-mesh-choose-high")
+            } else {
+                aurora_i18n::tr!("import-choose-files")
+            };
+            let size = Vec2::new(0.0, ui.spacing().interact_size.y);
+            let can_choose = !busy && imports.pending_files.is_none();
+            if action_button_if(ui, p, "folder-open-filled", choose, ActionKind::Flat, size, can_choose).clicked() {
                 actions.push(Action::Files);
             }
             if imports.pending_files.is_some() {
@@ -318,23 +336,15 @@ pub fn show(
                 ui.label(aurora_i18n::tr!("import-loading"));
             }
             if let Some(id) = imports.active {
-                if ui
-                    .add_enabled(!busy, egui::Button::new(aurora_i18n::tr!("import-reload")))
-                    .clicked()
-                {
+                if tool_button(ui, p, aurora_i18n::tr!("import-reload"), !busy).clicked() {
                     actions.push(Action::Reload(id));
                 }
-                if ui
-                    .add_enabled(!busy, egui::Button::new(aurora_i18n::tr!("common-remove")))
-                    .clicked()
-                {
+                if tool_button(ui, p, aurora_i18n::tr!("common-remove"), !busy).clicked() {
                     actions.push(Action::Remove(id));
                 }
             }
             if imports.entries.iter().any(|e| matches!(e.status, Status::Cancelled))
-                && ui
-                    .add_enabled(!busy, egui::Button::new(aurora_i18n::tr!("import-resume")))
-                    .clicked()
+                && tool_button(ui, p, aurora_i18n::tr!("import-resume"), !busy).clicked()
             {
                 actions.push(Action::Resume);
             }
@@ -354,7 +364,7 @@ pub fn show(
         ui.horizontal_top(|ui| {
             ui.allocate_ui_with_layout(Vec2::new(225.0, height), egui::Layout::top_down(egui::Align::Min), |ui| {
                 ui.set_width(225.0);
-                widgets::section_header(ui, p, "files", aurora_i18n::tr!("import-files"));
+                widgets::section_header(ui, p, "files-filled", aurora_i18n::tr!("import-files"));
                 egui::ScrollArea::vertical()
                     .id_salt("import_files")
                     .max_height(height - 30.0)
@@ -419,9 +429,7 @@ pub fn show(
                             }
                             if entry.source.is_some()
                                 && matches!(entry.status, Status::Error(_))
-                                && ui
-                                    .add_enabled(!busy, egui::Button::new(aurora_i18n::tr!("import-restore-draft")))
-                                    .clicked()
+                                && tool_button(ui, p, aurora_i18n::tr!("import-restore-draft"), !busy).clicked()
                             {
                                 actions.push(Action::RestoreDraft(entry.id));
                             }
@@ -467,7 +475,7 @@ pub fn show(
                                             &mut entry.view,
                                         ),
                                         Source::Sound(sound) => {
-                                            widgets::section_header(ui, p, "speaker-high", aurora_i18n::tr!("import-sound"));
+                                            widgets::section_header(ui, p, "volume", aurora_i18n::tr!("import-sound"));
                                             ui.label(aurora_i18n::tr!(
                                                 "import-sound-info",
                                                 duration = format!("{:.2}", sound.duration()),
@@ -622,7 +630,7 @@ pub fn show(
         ui.separator();
         if imports.choice != Choice::Local {
             ui.add_enabled_ui(!busy, |ui| {
-                ui.collapsing(aurora_i18n::tr!("import-permissions"), |ui| {
+                fold(ui, p, aurora_i18n::tr!("import-permissions"), false, |ui| {
                     ui.horizontal(|ui| {
                         ui.label(aurora_i18n::tr!("inventory-permissions-next-owner"));
                         checkbox(ui, p, &mut prefs.next_modify, aurora_i18n::tr!("inventory-permissions-modify"));
@@ -630,10 +638,9 @@ pub fn show(
                         if !prefs.next_copy {
                             prefs.next_transfer = true;
                         }
-                        ui.add_enabled(
-                            prefs.next_copy,
-                            egui::Checkbox::new(&mut prefs.next_transfer, aurora_i18n::tr!("inventory-permissions-transfer")),
-                        );
+                        ui.add_enabled_ui(prefs.next_copy, |ui| {
+                            checkbox(ui, p, &mut prefs.next_transfer, aurora_i18n::tr!("inventory-permissions-transfer"));
+                        });
                     });
                     ui.horizontal(|ui| {
                         checkbox(ui, p, &mut prefs.share_group, aurora_i18n::tr!("import-share-group"));
@@ -676,14 +683,20 @@ pub fn show(
             );
             let selected = imports.entries.iter().any(|e| e.selected && matches!(e.status, Status::Ready));
             let can_upload = !busy && selected && total.is_some_and(|cost| cost == 0 || world.balance.is_some_and(|b| b >= cost));
+            // a wrapping row: the buttons stay in its layout
+            let size = Vec2::new(0.0, ui.spacing().interact_size.y);
             if local {
                 if let Some(entry) = imports.active.and_then(|id| imports.entries.iter().find(|e| e.id == id))
-                    && ui
-                        .add_enabled(
-                            !entry.local_pending && entry.source.is_some(),
-                            egui::Button::new(aurora_i18n::tr!("import-local-apply")),
-                        )
-                        .clicked()
+                    && action_button_if(
+                        ui,
+                        p,
+                        "check",
+                        aurora_i18n::tr!("import-local-apply"),
+                        ActionKind::Primary,
+                        size,
+                        !entry.local_pending && entry.source.is_some(),
+                    )
+                    .clicked()
                 {
                     actions.push(Action::Local(entry.id));
                 }
@@ -703,19 +716,21 @@ pub fn show(
                 if imports.choice == Choice::Mesh
                     && let Some(entry) = imports.active.and_then(|id| imports.entries.iter().find(|e| e.id == id))
                     && let Some(Source::Mesh(draft)) = &entry.source
-                    && ui
-                        .add_enabled(
-                            !busy && draft.pending.is_none(),
-                            egui::Button::new(aurora_i18n::tr!("import-calculate-fee")),
-                        )
-                        .clicked()
+                    && action_button_if(
+                        ui,
+                        p,
+                        "coin-filled",
+                        aurora_i18n::tr!("import-calculate-fee"),
+                        ActionKind::Flat,
+                        size,
+                        !busy && draft.pending.is_none(),
+                    )
+                    .clicked()
                 {
                     actions.push(Action::Quote(entry.id));
                 }
-                if ui
-                    .add_enabled(can_upload, egui::Button::new(aurora_i18n::tr!("import-upload")))
-                    .clicked()
-                {
+                let upload = aurora_i18n::tr!("import-upload");
+                if action_button_if(ui, p, "file-upload-filled", upload, ActionKind::Primary, size, can_upload).clicked() {
                     imports.confirm = true;
                 }
             }
@@ -756,11 +771,13 @@ pub fn show(
                 ui.label(aurora_i18n::tr!("import-confirm-price", cost = cost));
             }
             ui.horizontal(|ui| {
-                if flat_button(ui, p, aurora_i18n::tr!("import-upload")).clicked() {
+                let size = Vec2::new(0.0, 26.0);
+                let upload = aurora_i18n::tr!("import-upload");
+                if action_button(ui, p, "file-upload-filled", upload, ActionKind::Primary, size).clicked() {
                     actions.push(Action::Start);
                     imports.confirm = false;
                 }
-                if flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked() {
+                if action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {
                     imports.confirm = false;
                 }
             });
@@ -784,7 +801,7 @@ fn lod_label(level: usize) -> &'static str {
 // LLFloaterModelPreview color swatches; Aurora's palette supplies defaults
 // so previews follow the active theme until a color is explicitly saved.
 fn preview_colors(ui: &mut egui::Ui, p: &Palette, prefs: &mut Preferences) {
-    ui.collapsing(aurora_i18n::tr!("import-preview-colors"), |ui| {
+    fold(ui, p, aurora_i18n::tr!("import-preview-colors"), false, |ui| {
         for (label, stored, default) in [
             (
                 aurora_i18n::tr!("import-preview-background"),
@@ -814,9 +831,10 @@ fn preview_colors(ui: &mut egui::Ui, p: &Palette, prefs: &mut Preferences) {
             ),
         ] {
             ui.horizontal(|ui| {
-                let mut color = color32(stored.unwrap_or_else(|| palette_color(default)));
-                if ui.color_edit_button_srgba(&mut color).changed() {
-                    *stored = Some(palette_color(color));
+                // stored as straight sRGB components in 0..=1
+                let mut srgba = color32(stored.unwrap_or_else(|| palette_color(default))).to_srgba_unmultiplied();
+                if widgets::color_button(ui, p, ("import_preview_color", label), &mut srgba, true).changed() {
+                    *stored = Some(srgba.map(|v| f32::from(v) / 255.0));
                 }
                 ui.label(label);
             });
@@ -857,7 +875,7 @@ fn texture(
     model: &Option<Arc<aurora_render::preview::Model>>,
     view: &mut aurora_render::preview::View,
 ) {
-    widgets::section_header(ui, p, "image", aurora_i18n::tr!("import-preview"));
+    widgets::section_header(ui, p, "photo-filled", aurora_i18n::tr!("import-preview"));
     let old = *options;
     let old_target = *target;
     let labels = [
@@ -1001,7 +1019,7 @@ fn animation_transport(
 }
 
 fn animation_controls(ui: &mut egui::Ui, p: &Palette, animation: &mut Animation, bvh: Option<&BvhInfo>, joint_count: usize) {
-    widgets::section_header(ui, p, "person-simple-run", aurora_i18n::tr!("import-animation"));
+    widgets::section_header(ui, p, "run", aurora_i18n::tr!("import-animation"));
     ui.label(aurora_i18n::tr!(
         "import-animation-info",
         duration = format!("{:.3}", animation.duration),
@@ -1013,7 +1031,7 @@ fn animation_controls(ui: &mut egui::Ui, p: &Palette, animation: &mut Animation,
             frames = bvh.frames,
             rate = format!("{:.2}", 1.0 / bvh.frame_time)
         ));
-        ui.collapsing(aurora_i18n::tr!("import-animation-settings"), |ui| {
+        fold(ui, p, aurora_i18n::tr!("import-animation-settings"), false, |ui| {
             ui.horizontal(|ui| {
                 ui.label(aurora_i18n::tr!("import-priority"));
                 if ui.add(egui::DragValue::new(&mut animation.base_priority).range(0..=6)).changed() {
@@ -1099,7 +1117,7 @@ fn material(
     actions: &mut Vec<Action>,
     preview: Option<(&Arc<aurora_render::preview::Model>, &mut aurora_render::preview::View)>,
 ) {
-    widgets::section_header(ui, p, "cube", aurora_i18n::tr!("import-material"));
+    widgets::section_header(ui, p, "droplet-filled", aurora_i18n::tr!("import-material"));
     ui.horizontal_top(|ui| {
         if let Some((model, view)) = preview {
             aurora_render::preview::paint(
@@ -1118,10 +1136,10 @@ fn material(
                 .spacing(Vec2::new(8.0, 6.0))
                 .show(ui, |ui| {
                     ui.label(aurora_i18n::tr!("import-base-color"));
-                    ui.color_edit_button_rgba_unmultiplied(&mut material.base_color_factor);
+                    factor_swatch(ui, p, "import_base_color", &mut material.base_color_factor, true);
                     ui.end_row();
                     ui.label(aurora_i18n::tr!("import-emissive"));
-                    ui.color_edit_button_rgb(&mut material.emissive_factor);
+                    factor_swatch(ui, p, "import_emissive", &mut material.emissive_factor, false);
                     ui.end_row();
                     ui.label(aurora_i18n::tr!("import-metallic"));
                     ui.add(egui::Slider::new(&mut material.metallic_factor, 0.0..=1.0));

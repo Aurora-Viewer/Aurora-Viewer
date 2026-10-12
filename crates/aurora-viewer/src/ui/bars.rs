@@ -539,8 +539,8 @@ fn import_menu(ui: &mut egui::Ui, p: &Palette, action: &mut BarAction) {
             (Choice::Animation, "run"),
             (Choice::Material, "droplet-filled"),
             (Choice::Mesh, "cube-3d-sphere"),
-            (Choice::Bulk, "folder-open-filled"),
-            (Choice::Local, "device-desktop-filled"),
+            (Choice::Bulk, "files-filled"),
+            (Choice::Local, "eye-filled"),
         ] {
             if menu::item(ui, p, icon, choice.label()) {
                 *action = BarAction::Import { choice, pick_files: true };
