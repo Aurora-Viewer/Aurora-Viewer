@@ -17,6 +17,11 @@ struct Harness {
     suppress_copy_confirmation: bool,
     shuffle_link_reply: bool,
     script_changes: Vec<(Uuid, bool)>,
+    delay_script_writes: bool,
+    pending_script_writes: Vec<BuildCmd>,
+    drop_script_reply: bool,
+    script_transfers: Vec<(Uuid, TaskItem)>,
+    fail_task_listing_once: bool,
 }
 
 impl Harness {
@@ -60,10 +65,29 @@ impl Harness {
             suppress_copy_confirmation: false,
             shuffle_link_reply: false,
             script_changes: Vec::new(),
+            delay_script_writes: false,
+            pending_script_writes: Vec::new(),
+            drop_script_reply: false,
+            script_transfers: Vec::new(),
+            fail_task_listing_once: false,
         }
     }
 
     fn deliver(&mut self, mut event: NetEvent) {
+        if self.fail_task_listing_once
+            && let NetEvent::TaskInventory { object, result, .. } = &mut event
+            && *object == demo::id(demo::TARGET)
+        {
+            self.fail_task_listing_once = false;
+            *result = Err("test inventory failure".into());
+        }
+        if self.drop_script_reply
+            && matches!(&event, NetEvent::ScriptRunning { object_id, .. } if *object_id == demo::id(demo::TARGET))
+            && self.tool.replacement.job.as_ref().is_some_and(|j| j.stage == Stage::ReadScripts)
+        {
+            self.drop_script_reply = false;
+            return;
+        }
         if let Some((owner, mask)) = self.source_permissions
             && let NetEvent::ObjectProperties(props) = &mut event
             && let Some(props) = props.iter_mut().find(|props| props.object_id == demo::id(demo::SOURCE))
@@ -103,6 +127,13 @@ impl Harness {
                         .on_task_inventory(&self.world, object, serial, items.into_iter().filter(|i| !i.is_folder).collect());
                 }
                 NetEvent::CapReply { tag, result } => self.tool.on_cap_reply(&mut self.world, tag, result),
+                NetEvent::TaskInventory {
+                    object,
+                    result: Err(reason),
+                    ..
+                } => {
+                    self.tool.replacement_task_inventory_error(object, reason);
+                }
                 NetEvent::ScriptRunning {
                     object_id,
                     item_id,
@@ -118,6 +149,10 @@ impl Harness {
 
     fn step(&mut self) {
         self.clock += Duration::from_secs(1);
+        // The script engine commits state changes after the first status reply.
+        for command in std::mem::take(&mut self.pending_script_writes) {
+            self.sim.reply(&self.server, &command);
+        }
         self.tool.update_replacement(&mut self.world, self.clock);
         // Drain commands produced by replies too, as the app does over frames.
         for _ in 0..4 {
@@ -130,6 +165,13 @@ impl Harness {
                     NetCommand::Build(command) => {
                         if let BuildCmd::SetScriptRunning { object_id, running, .. } = &command {
                             self.script_changes.push((*object_id, *running));
+                            if self.delay_script_writes {
+                                self.pending_script_writes.push(command);
+                                continue;
+                            }
+                        }
+                        if let BuildCmd::RezScript { group_id, item, .. } = &command {
+                            self.script_transfers.push((*group_id, (**item).clone()));
                         }
                         let is_link = matches!(command, BuildCmd::Link { .. });
                         let previous_children: Vec<_> = if let BuildCmd::Link { handle, local_ids } = &command {
@@ -239,6 +281,36 @@ impl Harness {
             .map(|i| self.world.objects.get(*i).unwrap().full_id)
             .collect()
     }
+
+    fn only_target_script(&mut self) {
+        for local in (demo::ROOT..demo::ROOT + 15).chain(std::iter::once(demo::SOURCE)) {
+            let object_id = demo::id(local);
+            let handle = self.server.main_region.unwrap();
+            for event in self.sim.reply(
+                &self.server,
+                &BuildCmd::RequestTaskInventory {
+                    handle,
+                    local_id: local,
+                    object_id,
+                },
+            ) {
+                if let NetEvent::TaskInventory { result: Ok(items), .. } = event {
+                    for item in items.into_iter().filter(|i| !i.is_folder) {
+                        if local != demo::TARGET || item.asset_type != crate::build::contents::AT_LSL_TEXT {
+                            self.sim.reply(
+                                &self.server,
+                                &BuildCmd::RemoveTaskInventory {
+                                    handle,
+                                    local_id: local,
+                                    item_id: item.item_id,
+                                },
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[test]
@@ -304,6 +376,7 @@ fn position_rotation_size_and_pause_options_are_independent() {
 #[test]
 fn contents_copy_uses_confirmed_agent_items_and_restores_copied_scripts() {
     let mut h = Harness::new(demo::TARGET);
+    h.world.groups.active = crate::demo::DEMO_GROUP1;
     h.tool.replacement.options.contents = true;
     assert_eq!(h.run(), Stage::Done, "{:?}", h.tool.replacement.job);
     let source = &h.tool.contents.objects[&demo::id(demo::SOURCE)].items;
@@ -311,6 +384,74 @@ fn contents_copy_uses_confirmed_agent_items_and_restores_copied_scripts() {
     assert_eq!(source.len(), target.len());
     assert!(source.iter().all(|i| !target.iter().any(|old| old.item_id == i.item_id)));
     assert!(h.script_changes.contains(&(demo::id(demo::SOURCE), true)));
+    let (group, packet) = &h.script_transfers[0];
+    assert_eq!(*group, crate::demo::DEMO_GROUP1);
+    let staged = &h.world.inventory.items[&packet.item_id];
+    assert!(!staged.last_owner.is_nil());
+    assert_eq!(packet.last_owner_id, staged.last_owner);
+    assert_eq!(packet.parent_id, demo::id(demo::SOURCE));
+}
+
+#[test]
+fn script_only_content_copy_confirms_delayed_script_state_changes() {
+    for (pause, lost_reply) in [(true, false), (true, true), (false, false)] {
+        let mut h = Harness::new(demo::TARGET);
+        h.only_target_script();
+        h.tool.replacement.options.contents = true;
+        h.tool.replacement.options.pause_scripts = pause;
+        h.delay_script_writes = true;
+        h.drop_script_reply = lost_reply;
+        assert_eq!(h.run(), Stage::Done, "{:?}", h.tool.replacement.job);
+        let copied = &h.tool.contents.objects[&demo::id(demo::SOURCE)].items;
+        assert_eq!(copied.len(), 1);
+        assert_eq!(copied[0].asset_type, crate::build::contents::AT_LSL_TEXT);
+        assert_eq!(
+            h.script_changes
+                .iter()
+                .filter(|(id, running)| *id == demo::id(demo::TARGET) && !running)
+                .count(),
+            usize::from(pause)
+        );
+        assert_eq!(
+            h.script_changes
+                .iter()
+                .filter(|(id, running)| *id == demo::id(demo::SOURCE) && *running)
+                .count(),
+            1
+        );
+    }
+}
+
+#[test]
+fn task_inventory_error_is_reported_before_any_unlink_or_script_stop() {
+    let mut h = Harness::new(demo::TARGET);
+    h.tool.replacement.options.contents = true;
+    h.fail_task_listing_once = true;
+    let original = h.ids(demo::ROOT);
+    assert_eq!(h.run(), Stage::Failed);
+    assert!(h.tool.replacement.job.as_ref().unwrap().message.contains("test inventory failure"));
+    assert_eq!(h.ids(demo::ROOT), original);
+    assert!(h.script_changes.is_empty());
+}
+
+#[test]
+fn a_successful_listing_supersedes_an_older_inventory_request_error() {
+    let mut h = Harness::new(demo::TARGET);
+    h.tool.apply_replacement(&h.world);
+    h.step();
+    h.tool
+        .replacement_task_inventory_error(demo::id(demo::TARGET), "test inventory failure".into());
+    let items = h.tool.contents.objects[&demo::id(demo::TARGET)].items.clone();
+    h.tool.on_task_inventory(&h.world, demo::id(demo::TARGET), Some(1), items);
+    assert!(h.tool.replacement.job.as_ref().unwrap().inventory_error.is_none());
+    for _ in 0..180 {
+        h.step();
+        if h.tool.replacement.job.as_ref().unwrap().stage.terminal() {
+            assert_eq!(h.tool.replacement.job.as_ref().unwrap().stage, Stage::Done);
+            return;
+        }
+    }
+    panic!("replacement never completed");
 }
 
 #[test]

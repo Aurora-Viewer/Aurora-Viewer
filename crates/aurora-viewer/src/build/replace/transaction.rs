@@ -64,9 +64,12 @@ impl Stage {
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::Read | Self::ReadScripts => aurora_i18n::tr!("replace-stage-read"),
+            Self::Read => aurora_i18n::tr!("replace-stage-read"),
+            Self::ReadScripts => aurora_i18n::tr!("replace-stage-read-scripts"),
             Self::StopScripts => aurora_i18n::tr!("replace-stage-stop"),
-            Self::Folder | Self::CopyOut(_) | Self::CopyIn(_) => aurora_i18n::tr!("replace-stage-copy"),
+            Self::Folder => aurora_i18n::tr!("replace-stage-copy"),
+            Self::CopyOut(_) => aurora_i18n::tr!("replace-stage-copy-out"),
+            Self::CopyIn(_) => aurora_i18n::tr!("replace-stage-copy-in"),
             Self::Delink => aurora_i18n::tr!("replace-stage-unlink"),
             Self::Transform => aurora_i18n::tr!("replace-stage-transform"),
             Self::Link => aurora_i18n::tr!("replace-stage-link"),
@@ -122,6 +125,7 @@ pub struct Job {
     pub message: String,
     pub inventory_request: Option<Uuid>,
     pub inventory_result: Option<Result<Reply, String>>,
+    pub inventory_error: Option<(Uuid, String)>,
     members: Vec<Prim>,
     replacement: Prim,
     planned: Prim,
@@ -162,6 +166,7 @@ impl Job {
         match self.stage {
             Stage::CopyOut(i) | Stage::CopyIn(i) => aurora_i18n::tr!(
                 "replace-copy-progress",
+                stage = self.stage.label(),
                 current = (i + 1).to_string(),
                 total = self.items.len().to_string()
             ),
@@ -238,6 +243,7 @@ impl Job {
             message: String::new(),
             inventory_request: None,
             inventory_result: None,
+            inventory_error: None,
             members,
             replacement,
             planned,
@@ -358,6 +364,30 @@ impl Job {
             })
     }
 
+    /// UDP delivery is not a script-engine acknowledgement. Re-read only
+    /// missing or mismatching states; never repeat the state-changing command.
+    fn poll_script_states(&mut self, tool: &mut BuildTool, now: Instant, restore: Option<bool>) {
+        if now.saturating_duration_since(self.poll_at) < Duration::from_secs(1) {
+            return;
+        }
+        self.poll_at = now;
+        for script in &self.scripts {
+            let state = tool.contents.running.get(&(script.object, script.item));
+            let pending = match restore {
+                None => state.is_none(),
+                Some(true) => script.touched && !(self.recovering && script.copied) && state.is_none_or(|s| s.0 != script.running),
+                Some(false) => script.running && state.is_none_or(|s| s.0),
+            };
+            if pending {
+                tool.send(BuildCmd::GetScriptRunning {
+                    handle: self.handle(),
+                    object_id: script.object,
+                    item_id: script.item,
+                });
+            }
+        }
+    }
+
     fn mutate_inventory(&mut self, tool: &mut BuildTool, change: Mutation) {
         let request = Uuid::new_v4();
         self.inventory_request = Some(request);
@@ -405,6 +435,10 @@ impl Job {
     }
 
     pub fn tick(&mut self, tool: &mut BuildTool, world: &mut World, now: Instant) {
+        if let Some((_, error)) = self.inventory_error.take() {
+            self.fail(error, now);
+            return;
+        }
         if self.all().any(|p| {
             world
                 .objects
@@ -548,6 +582,15 @@ impl Job {
             Stage::ReadScripts => {
                 if first {
                     self.query_scripts(tool, false, false);
+                    self.poll_at = now;
+                }
+                if self
+                    .scripts
+                    .iter()
+                    .any(|s| !tool.contents.running.contains_key(&(s.object, s.item)))
+                {
+                    self.poll_script_states(tool, now, None);
+                    return Ok(None);
                 }
                 for script in &mut self.scripts {
                     let Some(state) = tool.contents.running.get(&(script.object, script.item)) else {
@@ -565,8 +608,13 @@ impl Job {
             Stage::StopScripts => {
                 if first {
                     self.query_scripts(tool, true, false);
+                    self.poll_at = now;
                 }
-                Ok(self.scripts_confirmed(tool, false).then(|| self.content_stage()))
+                let confirmed = self.scripts_confirmed(tool, false);
+                if !confirmed {
+                    self.poll_script_states(tool, now, Some(false));
+                }
+                Ok(confirmed.then(|| self.content_stage()))
             }
             Stage::Folder => {
                 if first {
@@ -646,7 +694,7 @@ impl Job {
                             handle,
                             local_id: self.replacement.key.local_id,
                             enabled: false,
-                            group_id: Uuid::nil(),
+                            group_id: world.groups.active,
                             item,
                         });
                     } else {
@@ -699,8 +747,13 @@ impl Job {
                         }
                     }
                     self.query_scripts(tool, true, false);
+                    self.poll_at = now;
                 }
-                Ok(self.scripts_confirmed(tool, false).then_some(Stage::RecoverDelink))
+                let confirmed = self.scripts_confirmed(tool, false);
+                if !confirmed {
+                    self.poll_script_states(tool, now, Some(false));
+                }
+                Ok(confirmed.then_some(Stage::RecoverDelink))
             }
             Stage::Delink | Stage::RecoverDelink => {
                 if first {
@@ -909,8 +962,10 @@ impl Job {
             Stage::RestoreScripts => {
                 if first {
                     self.query_scripts(tool, false, true);
+                    self.poll_at = now;
                 }
                 if !self.scripts_confirmed(tool, true) {
+                    self.poll_script_states(tool, now, Some(true));
                     return Ok(None);
                 }
                 if self.recovering {

@@ -155,6 +155,7 @@ pub fn task_from_item(item: &InvItem, object: Uuid) -> TaskItem {
         parent_id: object,
         creator_id: item.creator,
         owner_id: item.owner,
+        last_owner_id: item.last_owner,
         group_id: item.group_id,
         group_owned: item.group_owned,
         base_mask: item.base_mask,
@@ -321,6 +322,25 @@ impl BuildTool {
         }
         job.inventory_result = Some(result.clone());
         true
+    }
+
+    pub fn replacement_task_inventory_error(&mut self, object: Uuid, reason: String) {
+        if let Some(inv) = self.contents.objects.get_mut(&object) {
+            inv.loading = false;
+        }
+        if let Some(job) = self.replacement.job.as_mut()
+            && !job.stage.terminal()
+            && match job.stage {
+                Stage::Read => job.inventory_ids().contains(&object),
+                Stage::CopyIn(_) | Stage::RecoverContents => object == job.source,
+                _ => false,
+            }
+        {
+            job.inventory_error = Some((
+                object,
+                aurora_i18n::tr!("replace-inventory-read-failed", stage = job.stage.label(), reason = reason),
+            ));
+        }
     }
 
     pub fn update_replacement(&mut self, world: &mut World, now: Instant) {

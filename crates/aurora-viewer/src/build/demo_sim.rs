@@ -18,6 +18,7 @@ pub struct DemoSim {
     props: HashMap<Uuid, ObjectProps>,
     contents: HashMap<Uuid, (i16, Vec<TaskItem>)>,
     running: HashMap<(Uuid, Uuid), (bool, bool)>,
+    pending_running: HashMap<(Uuid, Uuid), bool>,
     physics: HashMap<Uuid, PhysicsParams>,
 }
 
@@ -27,6 +28,7 @@ fn demo_item(object: Uuid, n: u128, name: &str, asset_type: i8, inv_type: i8) ->
         parent_id: object,
         creator_id: DEMO_CREATOR,
         owner_id: crate::demo::DEMO_AGENT,
+        last_owner_id: DEMO_CREATOR,
         base_mask: PERM_ALL,
         owner_mask: PERM_ALL
             & if object == super::replace::demo::id(super::replace::demo::TARGET) {
@@ -48,6 +50,10 @@ fn demo_item(object: Uuid, n: u128, name: &str, asset_type: i8, inv_type: i8) ->
         creation_date: 1_700_000_000,
         ..Default::default()
     }
+}
+
+fn script_copy_demo() -> bool {
+    std::env::var("AURORA_DEMO_REPLACE_PRIM").is_ok_and(|mode| mode == "script")
 }
 
 impl DemoSim {
@@ -104,6 +110,19 @@ impl DemoSim {
             return self.contents.entry(id).or_insert((1, Vec::new()));
         }
         self.contents.entry(id).or_insert_with(|| {
+            if script_copy_demo()
+                && (super::replace::demo::id(super::replace::demo::ROOT)..=super::replace::demo::id(super::replace::demo::ROOT + 14))
+                    .contains(&id)
+            {
+                return (
+                    1,
+                    if id == super::replace::demo::id(super::replace::demo::TARGET) {
+                        vec![demo_item(id, 1, aurora_i18n::tr!("build-demo-sim-door-script"), 10, 10)]
+                    } else {
+                        Vec::new()
+                    },
+                );
+            }
             (
                 1,
                 vec![
@@ -239,6 +258,9 @@ impl DemoSim {
                     asset_id: task.asset_id,
                     creator: task.creator_id,
                     owner: task.owner_id,
+                    last_owner: task.last_owner_id,
+                    group_id: task.group_id,
+                    group_owned: task.group_owned,
                     base_mask: task.base_mask,
                     owner_mask: task.owner_mask,
                     group_mask: task.group_mask,
@@ -403,12 +425,21 @@ impl DemoSim {
                 running,
                 ..
             } => {
-                self.running.entry((*object_id, *item_id)).or_insert((true, true)).0 = *running;
+                if script_copy_demo() {
+                    self.pending_running.insert((*object_id, *item_id), *running);
+                } else {
+                    self.running.entry((*object_id, *item_id)).or_insert((true, true)).0 = *running;
+                }
                 Vec::new()
             }
             BuildCmd::GetScriptRunning { object_id, item_id, .. } => {
                 let initial = *object_id != super::replace::demo::id(super::replace::demo::ROOT + 6);
                 let (running, mono) = self.running.get(&(*object_id, *item_id)).copied().unwrap_or((initial, true));
+                // First reply observes the previous state; the next query
+                // confirms the asynchronous script-engine operation.
+                if let Some(next) = self.pending_running.remove(&(*object_id, *item_id)) {
+                    self.running.insert((*object_id, *item_id), (next, mono));
+                }
                 vec![NetEvent::ScriptRunning {
                     object_id: *object_id,
                     item_id: *item_id,

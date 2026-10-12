@@ -166,6 +166,16 @@ sans son ni particules sur la grille : les indicateurs de permission et les
 réponses `ObjectProperties` confirment qu'ils appartiennent au résident.
 Le choix du remplaçant et l'opération doivent fonctionner dans ce cas.
 
+`AURORA_DEMO_REPLACE_PRIM=script` garde un seul script dans la pile de cartes,
+avec les autres contenus vides. Le moteur simulé confirme les changements
+d'état des scripts seulement après une première réponse portant l'ancien état.
+Avec `AURORA_DEMO_BUILD=replace-copy,object:99688`, vérifier la copie du script,
+la conservation de l'original et le retour à leur état actif, sans blocage.
+Capturer le résultat à l'image 900 pour laisser les confirmations arriver.
+L'avancement distingue la lecture des états, la copie vers l'inventaire et
+l'insertion dans le remplaçant ; les erreurs de lecture du contenu remontent
+directement, avec l'étape concernée.
+
 À combiner avec `AURORA_DEMO_BUILD` :
 
 - `replace-button,object:99688` : une partie liée sélectionnée, bouton dans la fenêtre de construction ;
@@ -205,6 +215,7 @@ automatiquement les données Linkset Data.
 | `AURORA_DEMO_ACTIONS=<mode>` | Curseurs, clics d'objet, achat et paiement |
 | `AURORA_DEMO_DIALOG=<mode>` | Menu llDialog |
 | `AURORA_DEMO_BUILD="<script>"` | Script des outils de construction |
+| `AURORA_DEMO_REPLACE_PRIM=1\|script` | Plateau de remplacement, cas du script seul |
 | `AURORA_DEMO_BUILD_FRAME=<n>` | Image de départ du script de construction |
 | `AURORA_DEMO_BUILD_FOCUS=off\|on` | Focus et suivi caméra pendant l’édition |
 | `AURORA_DEMO_BUILD_EDGE=<bord>` | Déplacement jusqu’au bord, maintien puis relâchement |

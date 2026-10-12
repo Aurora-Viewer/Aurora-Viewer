@@ -99,6 +99,12 @@ impl BuildTool {
         }
         inv.items = items;
         inv.loading = false;
+        // A newer successful listing supersedes an earlier request error.
+        if let Some(job) = self.replacement.job.as_mut()
+            && job.inventory_error.as_ref().is_some_and(|(id, _)| *id == object_id)
+        {
+            job.inventory_error = None;
+        }
         if std::mem::take(&mut inv.reset_pending)
             && let Some(idx) = world.objects.index_of_uuid(&object_id)
         {

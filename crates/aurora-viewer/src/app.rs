@@ -1226,6 +1226,8 @@ impl App {
                 if let Ok(items) = result {
                     self.build.on_task_inventory(&self.world, object, serial, items);
                     self.flush_build();
+                } else if let Err(reason) = result {
+                    self.build.replacement_task_inventory_error(object, reason);
                 }
             }
             NetEvent::CapReply { tag, result } => self.build.on_cap_reply(&mut self.world, tag, result),
