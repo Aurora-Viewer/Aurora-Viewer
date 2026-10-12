@@ -1483,6 +1483,41 @@ pub fn face_selection_events(invisible: bool) -> Vec<NetEvent> {
     vec![NetEvent::ObjectUpdates { handle: HANDLE, objects }]
 }
 
+pub const FACE_SELECTION_MESH: Uuid = Uuid::from_u128(0xa0e0_fa00_0000_0000_0000_0000_0000_0001);
+
+/// Closed curved face, three disconnected islands of one mesh TE, and a
+/// hollow cut cylinder, all in the ordinary build selection event path.
+pub fn complex_face_selection_events() -> Vec<NetEvent> {
+    let mut events = face_selection_events(false);
+    for event in &mut events {
+        if let NetEvent::ObjectUpdates { objects, .. } = event {
+            for object in objects {
+                object.volume = match object.local_id {
+                    99620 => crate::build::shapes::shapes()[10].params(),
+                    99621 => aurora_prim::VolumeParams {
+                        sculpt: Some(SculptParams {
+                            texture: FACE_SELECTION_MESH,
+                            sculpt_type: LL_SCULPT_TYPE_MESH,
+                        }),
+                        ..Default::default()
+                    },
+                    _ => shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_CIRCLE, 100, 30000, 8000),
+                };
+                if object.local_id == 99620 {
+                    object.volume.path.scale = [0.45, 0.20];
+                }
+                object.rotation = if object.local_id == 99621 {
+                    object.position = Vec3::new(3.0, 0.0, 0.0);
+                    Quat::IDENTITY
+                } else {
+                    Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)
+                };
+            }
+        }
+    }
+    events
+}
+
 /// AURORA_DEMO_BAN: the south-east lot (x >= 192 m, y < 64 m) is banned.
 pub fn ban_collision() -> NetEvent {
     let mut bitmap = vec![0u8; 64 * 64 / 8];

@@ -228,18 +228,27 @@ préférences d’avertissement persistantes (objet ordinaire ou contenant des s
 
 La sélection de faces garde un masque d’indices TextureEntry par prim dans
 `scene/mod.rs`. Les listes de dessin monde et HUD portent une passe de surlignage
-avec de petits repères espacés, colorés par la palette, sans modifier les matériaux. Chaque dessin
+des faces visibles, colorées par la palette, sans modifier les matériaux. Chaque dessin
 conserve son véritable indice de face, même quand des faces transparentes sont
 omises. Sélectionner une face opaque ne reconstruit pas ses enregistrements ;
 une face totalement transparente sélectionnée reçoit temporairement un
 enregistrement destiné au seul surlignage.
 
-`scene/face_edges.rs` prépare les contours des faces sur le worker de géométrie :
-triangles internes et coutures UV exclus, poids de skinning conservés lors du
-soudage des positions. Les indices de lignes suivent les triangles dans leur
-allocation, sans copie supplémentaire des sommets. Une passe monde / HUD les
-pose sur le GPU avec le même shader que la surface. Les primitives flexibles
-conservent leurs indices et ne recalculent pas les contours à chaque image.
+`aurora-render/src/selection.rs` et `shaders/selection.wgsl` calculent un halo
+extérieur à partir de la couverture des triangles sélectionnés, avec la profondeur
+du monde ou du HUD et la géométrie posée habituelle. Deux passes séparables sur
+le GPU suivent les silhouettes, les trous et les morceaux discontinus, y compris
+une face fermée sans arête de bord. Le halo est composé après le post-traitement,
+sans toucher à l’intérieur des faces ; une brève teinte au clic s’efface en 0,7 s.
+« Revoir la sélection » relance cette teinte sans modifier les objets.
+`scene/selection_demo.rs` fournit le mesh hors ligne à îlots courbes séparés
+du scénario `faces-complex`, à côté d’une primitive torique fermée.
+
+`ui/texture_picker/tree.rs` partage le cache de recherche et l’arborescence virtuelle
+de `ui/inventory/view.rs`. Les dossiers se chargent par lots bornés ; les états
+dépliés de recherche et de navigation restent séparés. `ui/texture_picker.rs`
+présente les lignes visibles, les noms longs tronqués avec infobulle, un aperçu
+borné, une séparation ajustable et les commandes en bas de la fenêtre.
 
 Le sélecteur `ui/inventory/move_to.rs` propose les destinations de
 « Déplacer vers… » pour la sélection d’origine, avec filtre par nom et

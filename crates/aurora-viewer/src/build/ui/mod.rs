@@ -169,6 +169,7 @@ pub struct FloaterState {
     pub probe_warned: bool,
     /// Images the swatches want loaded (drained by the app).
     pub wanted_images: HashSet<Uuid>,
+    pub reveal_faces: bool,
     pub requests: Vec<Request>,
     /// The selection seen last frame (drafts are dropped when it changes).
     last_selection: Vec<ObjKey>,

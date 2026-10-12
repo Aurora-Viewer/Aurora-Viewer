@@ -11,6 +11,7 @@
 //!   three prims of two objects (ready stops before the face clicks).
 //!   faces-picker: select one face and keep its texture picker open.
 //!   faces-close: close view of one selected face for material readability.
+//!   faces-complex: closed torus and disconnected mesh islands, with holes.
 //!   create-delete | create-ready: create and select a basic prim, then
 //!   delete it (ready leaves the new prim for the human).
 //!   contents-copy | contents-move | contents-move-plain | contents-ready:
@@ -167,6 +168,47 @@ pub fn apply_tab(tool: &mut BuildTool) {
     };
 }
 
+pub fn texture_inventory(world: &mut World) {
+    use crate::world::inventory::{FetchState, Folder};
+    use aurora_net::inventory::{InvFolder, InvItem};
+    use uuid::Uuid;
+    let project = Uuid::from_u128(99870);
+    let wood = Uuid::from_u128(99872);
+    for (id, parent, name) in [
+        (project, world.inventory.root, aurora_i18n::tr!("demo-picker-texture-project")),
+        (wood, project, aurora_i18n::tr!("build-demo-sim-light-wood")),
+    ] {
+        world.inventory.folders.insert(
+            id,
+            Folder {
+                info: InvFolder {
+                    id,
+                    parent,
+                    name: name.to_owned(),
+                    type_default: -1,
+                    ..Default::default()
+                },
+                children: Vec::new(),
+                items: Vec::new(),
+                state: FetchState::Fetched,
+                library: false,
+            },
+        );
+        if let Some(folder) = world.inventory.folders.get_mut(&parent) {
+            folder.children.push(id);
+        }
+    }
+    world.inventory.add_items(vec![InvItem {
+        id: Uuid::from_u128(99871),
+        parent: wood,
+        asset_id: aurora_prim::te::BLANK_TEXTURE,
+        inv_type: 0,
+        name: aurora_i18n::tr!("build-demo-sim-light-wood").repeat(20),
+        ..Default::default()
+    }]);
+    world.inventory.generation += 1;
+}
+
 /// Optional direct object selection, used for animated-shape captures.
 pub fn target_index(spec: &str, world: &World) -> Option<usize> {
     let id = spec.split(',').nth(1)?.trim().strip_prefix("object:")?.parse::<u32>().ok()?;
@@ -258,12 +300,15 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
             215 => vec![Step::Open(Tool::Edit, EditMode::Face, 6), Step::Linked(false)],
             220 => object.into_iter().map(Step::Select).collect(),
             227 => vec![Step::Focus(false)],
-            235 if matches!(parts[0], "faces-close" | "faces-picker") => vec![Step::CloseView],
+            235 if matches!(parts[0], "faces-close" | "faces-picker" | "faces-complex") => vec![Step::CloseView],
             _ if parts[0] == "faces-ready" => Vec::new(),
+            240 if parts[0] == "faces-complex" => pick(99620, 0, false),
             240 => pick(99620, u8::MAX, false),
             250 if parts[0] == "faces-picker" => vec![Step::TexturePicker],
             _ if parts[0] == "faces-close" => Vec::new(),
             _ if parts[0] == "faces-picker" => Vec::new(),
+            260 if parts[0] == "faces-complex" => pick(99621, 0, true),
+            _ if parts[0] == "faces-complex" => Vec::new(),
             260 => pick(99620, 0, true),
             280 => pick(99621, u8::MAX, true),
             300 => pick(99622, u8::MAX, true),

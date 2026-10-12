@@ -24,7 +24,7 @@ mod progress;
 mod properties;
 pub(crate) mod task_drop;
 pub mod thumbnail;
-mod view;
+pub(crate) mod view;
 pub use controls::preferences;
 pub use view::InventoryPreferences;
 
@@ -104,6 +104,7 @@ pub enum InvAction {
     },
 }
 
+#[derive(Default)]
 pub struct Facts {
     pub agent: Uuid,
     pub worn: HashSet<Uuid>,

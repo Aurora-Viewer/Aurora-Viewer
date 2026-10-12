@@ -750,54 +750,16 @@ fn fs_debug_flat(in: VsOut) -> @location(0) vec4<f32> {
     return vec4<f32>(debug_r, debug_g, debug_b, debug_a);
 }
 
-// Sparse marks identify even a closed material face without tinting its
-// surface. Border lines use the same posed vertices, not texture UVs.
-fn selected_face_color(pixel: vec2<f32>) -> vec4<f32> {
-    let cell = fract(pixel / 40.0) * 40.0 - vec2<f32>(20.0);
-    let d = abs(cell);
-    if (!(min(d.x, d.y) < 0.65 && max(d.x, d.y) < 3.5)) { discard; }
-    // A dark half keeps marks legible even on the selection hue itself.
-    return vec4<f32>(frame.selection_color.rgb * select(0.12, 1.0, cell.x + cell.y >= 0.0), 0.65 * frame.selection_color.a);
-}
-
-fn selected_edge_color(pixel: vec2<f32>) -> vec4<f32> {
-    let light = (u32(floor(pixel.x / 7.0 + pixel.y / 11.0)) & 1u) == 0u;
-    return vec4<f32>(frame.selection_color.rgb * select(0.12, 1.0, light), frame.selection_color.a);
-}
-
-@vertex
-fn vs_select_edge(in: VsIn) -> VsOut {
-    let rec = records[in.instance];
-    var out: VsOut;
-    out.clip = frame.eye_view_proj * eye_model(rec, in) * vec4<f32>(in.pos, 1.0);
-    // Line topology has no fixed-function depth bias. A relative reverse-Z
-    // offset avoids fighting the face while retaining occlusion by objects.
-    out.clip.z *= 1.00001;
-    return out;
-}
-
+// Selection is a separate coverage mask, never an interior grid. Keep
+// masked texture holes but retain invisible faces for editing their TE.
 @fragment
-fn fs_select_edge(in: VsOut) -> @location(0) vec4<f32> {
-    return selected_edge_color(in.clip.xy);
-}
-
-@fragment
-fn fs_hud_select_edge(in: VsOut) -> @location(0) vec4<f32> {
-    var color = selected_edge_color(in.clip.xy);
-    if (!HUD_SRGB_TARGET) { color = vec4<f32>(ll_linear_to_srgb(color.rgb), color.a); }
-    return color;
-}
-
-@fragment
-fn fs_select_face(in: VsOut) -> @location(0) vec4<f32> {
-    return selected_face_color(in.clip.xy);
-}
-
-@fragment
-fn fs_hud_select_face(in: VsOut) -> @location(0) vec4<f32> {
-    var color = selected_face_color(in.clip.xy);
-    if (!HUD_SRGB_TARGET) { color = vec4<f32>(ll_linear_to_srgb(color.rgb), color.a); }
-    return color;
+fn fs_selection_mask(in: VsOut) -> @location(0) vec4<f32> {
+    let rec = records[in.record];
+    if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u) {
+        let alpha = sample_tex(rec.tex.x, in.uv).a * rec.base_color.a;
+        if (rec.base_color.a >= 0.004 && alpha < rec.params.w) { discard; }
+    }
+    return vec4<f32>(1.0, 0.0, 0.0, 1.0);
 }
 
 // Glow suppression of a face LL draws in its alpha pool: the glow under it

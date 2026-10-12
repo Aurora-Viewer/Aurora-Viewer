@@ -342,9 +342,9 @@ une sur A2 à 665, une sur B à 685, puis retire les deux premières faces
 ajoutées à 705 et 725. Un clic simple sélectionne seulement le dessus de B à 745.
 Maj retire cette dernière face à 765 : la sélection et le surlignage disparaissent,
 et « Choisir une face » reste accessible pour quitter ce mode.
-Capturer juste après ces étapes : un contour violet et quelques petits repères
-identifient les seules faces sélectionnées, en laissant textures et couleurs
-lisibles. Les diagonales de triangles et coutures UV sont exclues du contour.
+Capturer juste après ces étapes : une brève surbrillance repère les faces au clic,
+puis un halo extérieur violet les identifie sans recouvrir les matériaux.
+Le halo suit leur couverture visible, sans diagonales de triangles ni coutures UV.
 `faces-invisible` reprend ces gestes sur des prims entièrement transparents :
 seules les faces sélectionnées deviennent visibles par leur marquage.
 `faces-ready` s’arrête avant les clics pour le test humain. Maj + clic ajoute
@@ -352,14 +352,22 @@ ou retire une face, y compris sur un autre objet ; retirer la dernière face
 d’un prim le désélectionne. Sans Maj, la sélection précédente est remplacée.
 
 `faces-close,object:99620` cadre le cube de près puis sélectionne une face :
-la surface conserve sa couleur ; seuls ses bords et quelques petites croix
-espacées signalent la sélection. Capture à 660 pour vérifier sa lisibilité.
+la surbrillance s’efface en 0,7 s et seul le halo extérieur reste. Capturer à 626
+et 700 pour comparer la teinte brève et la surface entièrement dégagée.
+Le bouton œil « Revoir la sélection » dans Matériaux relance le repérage.
+
+`faces-complex,object:99620` ajoute un tore fermé, un mesh dont une seule face
+comprend trois îlots courbes avec des trous, et un cylindre creux coupé.
+Il sélectionne le tore à 625 et ajoute la face du mesh avec Maj à 645.
+Capturer à 646 puis 730 : surbrillance temporaire, silhouettes intérieures et
+extérieures des deux faces sélectionnées, matériaux inchangés après le fondu.
 
 `faces-picker,object:99620` sélectionne une face à 625 et ouvre son sélecteur
-de textures à 635, avec un nom très long dans la liste. Capturer à 660 puis 960 :
-la fenêtre garde sa largeur de 500 points, sans croissance autonome. Les noms
-sont tronqués et leur infobulle affiche le texte entier ; le redimensionnement
-manuel et les boutons Défaut / Vierge / Transparent restent disponibles.
+de textures à 635, avec un nom très long dans un sous-dossier « Textures du projet ».
+Capturer à 660 puis 960 : la fenêtre garde sa largeur initiale de 680 points,
+sans croissance autonome. La liste conserve les dossiers, les noms sont tronqués
+et leur infobulle affiche le texte entier. Le séparateur ajuste la place donnée
+aux noms, l’aperçu reste borné et les commandes sont regroupées en bas.
 
 `AURORA_DEMO_FLEXIBLE` remplace les objets de la place par six prims avec
 quatre niveaux de souplesse, profils carrés / circulaires, creux, torsion et

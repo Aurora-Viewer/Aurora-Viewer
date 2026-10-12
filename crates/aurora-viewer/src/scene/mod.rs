@@ -8,8 +8,6 @@ pub mod avatar;
 pub mod banlines;
 pub mod complexity;
 pub mod drawn;
-
-mod face_edges;
 mod flexible;
 pub mod hover;
 pub mod hud;
@@ -23,6 +21,7 @@ pub mod particles;
 mod pick_accel;
 pub mod picking;
 pub mod probes;
+mod selection_demo;
 pub mod settings;
 pub mod shape;
 mod skin_binds;
@@ -69,8 +68,6 @@ pub enum GeomKey {
 
 pub struct GpuGeom {
     pub faces: Vec<Option<MeshAlloc>>,
-    /// Boundary indices follow the face's triangles in the same allocation.
-    pub outlines: Vec<std::ops::Range<u32>>,
     pub min: Vec3,
     pub max: Vec3,
     pub joint_bounds: Vec<animesh::JointBounds>,
@@ -172,7 +169,6 @@ impl Pass {
 /// Cached per-face draw info.
 #[derive(Debug, Clone, Copy)]
 pub struct FaceDraw {
-    pub outline: Option<DrawCmd>,
     /// Texture-entry index; omitted transparent geometry leaves holes.
     pub te_index: u8,
     pub record: u32,
@@ -552,6 +548,7 @@ pub struct Scene {
     pub selection_silhouettes: HashSet<usize>,
     /// Selected texture-entry bits for each prim, in face-editing mode.
     pub selection_faces: HashMap<usize, u32>,
+    selection_changed: Option<Instant>,
     /// Far avatars drawn as pictures (RenderAvatarMaxNonImpostors).
     impostors: impostors::Impostors,
     /// Avatars still loading (clouds).
@@ -812,6 +809,10 @@ impl Scene {
     /// Ordinary transparent faces keep their zero-record path. Changing an
     /// opaque face selection never rebuilds its geometry or material records.
     pub fn set_face_selection(&mut self, world: &mut World, selected: HashMap<usize, u32>) {
+        if self.selection_faces == selected {
+            return;
+        }
+        self.selection_changed = Some(Instant::now());
         for &idx in self.selection_faces.keys().chain(selected.keys()) {
             let changed = self.selection_faces.get(&idx).copied().unwrap_or(0) ^ selected.get(&idx).copied().unwrap_or(0);
             let invisible = changed != 0
@@ -826,6 +827,22 @@ impl Scene {
             }
         }
         self.selection_faces = selected;
+    }
+
+    pub fn reveal_selected_faces(&mut self) {
+        if !self.selection_faces.is_empty() {
+            self.selection_changed = Some(Instant::now());
+        }
+    }
+
+    pub fn selection_pulse(&self, now: Instant) -> f32 {
+        if self.selection_faces.is_empty() {
+            return 0.0;
+        }
+        self.selection_changed.map_or(0.0, |at| {
+            let remaining = (1.0 - now.saturating_duration_since(at).as_secs_f32() / 0.7).clamp(0.0, 1.0);
+            0.18 * remaining * remaining
+        })
     }
 
     pub fn new(cache_dir: std::path::PathBuf, avatar_lib: Arc<AvatarLibrary>) -> Scene {
@@ -875,6 +892,7 @@ impl Scene {
             selection_wire: HashMap::new(),
             selection_silhouettes: HashSet::new(),
             selection_faces: HashMap::new(),
+            selection_changed: None,
             debug_alpha: None,
             last_cull: None,
             impostors: Default::default(),
@@ -1087,7 +1105,6 @@ impl Scene {
             .collect();
         let g = Arc::new(GpuGeom {
             faces: gfaces,
-            outlines: geom.outlines,
             min: geom.min,
             max: geom.max,
             joint_bounds: geom.joint_bounds,
@@ -2603,19 +2620,11 @@ impl Scene {
             rec.set_hud_zoom(hud_zoom);
             rec.set_anchor(anchor.map(|a| a.matrix));
             let record = renderer.records.alloc(rec);
-            let edges = geom.outlines.get(fi).cloned().unwrap_or(alloc.index_count..alloc.index_count);
             g.faces.push(FaceDraw {
-                outline: (!edges.is_empty()).then_some(DrawCmd {
-                    index_count: edges.end - edges.start,
-                    first_index: alloc.index_offset + edges.start,
-                    base_vertex: alloc.vertex_offset as i32,
-                    record,
-                    bounds: [0.0; 4],
-                }),
                 te_index: fi as u8,
                 record,
                 cmd: DrawCmd {
-                    index_count: edges.start,
+                    index_count: alloc.index_count,
                     first_index: alloc.index_offset,
                     base_vertex: alloc.vertex_offset as i32,
                     record,
@@ -2769,7 +2778,6 @@ impl Scene {
                 rec.set_anchor(anchor);
                 let record = renderer.records.alloc(rec);
                 g.faces.push(FaceDraw {
-                    outline: None,
                     te_index: 0,
                     record,
                     cmd: DrawCmd {
@@ -3105,7 +3113,6 @@ impl Scene {
             select_root: Vec<DrawCmd>,
             select_child: Vec<DrawCmd>,
             select_faces: Vec<DrawCmd>,
-            select_edges: Vec<DrawCmd>,
             debug_blue: Vec<DrawCmd>,
             casters: Vec<ShadowCaster>,
             refl: Vec<ShadowCaster>,
@@ -3126,7 +3133,6 @@ impl Scene {
             select_root: Vec::new(),
             select_child: Vec::new(),
             select_faces: Vec::new(),
-            select_edges: Vec::new(),
             debug_blue: Vec::new(),
             casters: Vec::new(),
             refl: Vec::new(),
@@ -3230,9 +3236,6 @@ impl Scene {
                         .is_some_and(|mask| mask & 1u32.checked_shl(f.te_index.into()).unwrap_or(0) != 0)
                     {
                         l.select_faces.push(cmd);
-                        if let Some(edge) = f.outline {
-                            l.select_edges.push(edge.with_bounds(sc, sr));
-                        }
                     }
                 }
                 if pass == Pass::Hidden {
@@ -3297,7 +3300,6 @@ impl Scene {
             a.select_root.append(&mut b.select_root);
             a.select_child.append(&mut b.select_child);
             a.select_faces.append(&mut b.select_faces);
-            a.select_edges.append(&mut b.select_edges);
             a.casters.append(&mut b.casters);
             a.refl.append(&mut b.refl);
             a.probe.append(&mut b.probe);
@@ -3321,7 +3323,6 @@ impl Scene {
         self.lists.probe = result.probe;
         self.lists.glow = result.glow;
         self.lists.select_faces = result.select_faces;
-        self.lists.select_edges = result.select_edges;
         self.lists.glow_alpha = result.glow_alpha;
         for (slot, cmd, blend) in result.impostor {
             if let Some(c) = plan.captures.get_mut(slot) {
@@ -4543,7 +4544,6 @@ mod tests {
 
     fn test_face(p: Pass, glow: bool) -> FaceDraw {
         FaceDraw {
-            outline: None,
             te_index: 0,
             record: 0,
             cmd: DrawCmd {
@@ -4594,6 +4594,25 @@ mod tests {
         assert!(!world.objects.get(idx).unwrap().render.needs_records);
         scene.set_face_selection(&mut world, HashMap::new());
         assert!(world.objects.get(idx).unwrap().render.needs_records);
+    }
+
+    #[test]
+    fn selection_pulse_ends_and_unchanged_frames_do_not_restart_it() {
+        let lib = Arc::new(AvatarLibrary::load());
+        let mut world = World::new(lib.clone());
+        let mut scene = Scene::new(Default::default(), lib);
+        let selected = HashMap::from([(7, 1 << 3)]);
+        scene.set_face_selection(&mut world, selected.clone());
+        let at = scene.selection_changed.unwrap();
+        assert!((scene.selection_pulse(at) - 0.18).abs() < 1e-6);
+        assert!(scene.selection_pulse(at + std::time::Duration::from_millis(350)) < 0.05);
+        scene.set_face_selection(&mut world, selected);
+        assert_eq!(scene.selection_changed, Some(at));
+        assert_eq!(scene.selection_pulse(at + std::time::Duration::from_millis(700)), 0.0);
+        scene.reveal_selected_faces();
+        assert!(scene.selection_pulse(Instant::now()) > 0.17);
+        scene.set_face_selection(&mut world, HashMap::new());
+        assert_eq!(scene.selection_pulse(Instant::now()), 0.0);
     }
 
     /// The GPU culling (reference of cull.wgsl, `gpu_cull::face_bins`) takes

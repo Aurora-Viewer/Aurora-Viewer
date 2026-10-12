@@ -43,7 +43,6 @@ impl Scene {
         self.lists.hud_blend.clear();
         self.hud_own.clear();
         self.lists.hud_select_faces.clear();
-        self.lists.hud_select_edges.clear();
         if !visible {
             return;
         }
@@ -73,9 +72,6 @@ impl Scene {
                     .is_some_and(|mask| mask & 1u32.checked_shl(face.te_index.into()).unwrap_or(0) != 0)
                 {
                     self.lists.hud_select_faces.push(face.cmd);
-                    if let Some(edge) = face.outline {
-                        self.lists.hud_select_edges.push(edge);
-                    }
                 }
                 match face.pass {
                     Pass::Hidden => {}

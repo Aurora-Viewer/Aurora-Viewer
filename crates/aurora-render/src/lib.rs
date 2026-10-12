@@ -20,6 +20,7 @@ pub mod present;
 pub mod probes;
 mod render_thread;
 mod renderer;
+mod selection;
 pub mod shadow_cull;
 pub mod tex_anim;
 pub mod textures;
@@ -145,6 +146,11 @@ mod shader_tests {
     #[test]
     fn post_shader_is_valid() {
         validate(include_str!("shaders/post.wgsl"));
+    }
+
+    #[test]
+    fn selection_overlay_shader_is_valid() {
+        validate(include_str!("shaders/selection.wgsl"));
     }
 
     #[test]

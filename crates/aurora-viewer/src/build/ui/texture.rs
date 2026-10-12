@@ -260,6 +260,15 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         if super::common::icon_button(
             ui,
             p,
+            "eye",
+            aurora_i18n::tr!("build-review-face-selection"),
+            tool.edit_mode == EditMode::Face && s.show_highlight && !tool.sel_te(world).is_empty(),
+        ) {
+            tool.ui.reveal_faces = true;
+        }
+        if super::common::icon_button(
+            ui,
+            p,
             "clipboard-text",
             aurora_i18n::tr!("build-ui-texture-paste-texture-settings-from-the-clipboard"),
             !sel.is_empty() && tool.ui.face_clipboard.is_some(),

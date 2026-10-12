@@ -3889,6 +3889,9 @@ impl App {
             self.scene.selection_silhouettes = self.build.silhouette_selection(&self.world, &self.settings.build);
             let selected_faces = self.build.face_selection(&self.world, &self.settings.build);
             self.scene.set_face_selection(&mut self.world, selected_faces);
+            if std::mem::take(&mut self.build.ui.reveal_faces) {
+                self.scene.reveal_selected_faces();
+            }
             self.flush_build();
             let camera_changed = edit_camera_frame.is_some() || panned;
             if let Some(frame) = edit_camera_frame {
@@ -4293,6 +4296,8 @@ impl App {
         };
         let fp = FrameParams {
             selection_color: egui::Rgba::from(self.palette.violet_light).to_array(),
+            selection_pulse: self.scene.selection_pulse(Instant::now()),
+            selection_scale: self.egui_ctx.pixels_per_point(),
             view,
             proj,
             camera_pos: self.camera.position,
@@ -5148,14 +5153,7 @@ impl App {
                             false,
                         );
                         self.build.ui.pick_target = Some(crate::build::ui::PickTarget::Diffuse);
-                        self.world.inventory.add_items(vec![aurora_net::inventory::InvItem {
-                            id: uuid::Uuid::from_u128(99871),
-                            parent: self.world.inventory.root,
-                            asset_id: aurora_prim::te::BLANK_TEXTURE,
-                            inv_type: 0,
-                            name: aurora_i18n::tr!("build-demo-sim-light-wood").repeat(20),
-                            ..Default::default()
-                        }]);
+                        crate::build::demo::texture_inventory(&mut self.world);
                     }
                     crate::build::demo::Step::TakeTask(copy) => {
                         if let Some(idx) = self.build.contents_target(&self.world)
@@ -6222,7 +6220,7 @@ impl App {
                     &mut self.emoji,
                     &self.avatar_pics,
                     &self.ui_images,
-                    &self.world,
+                    &mut self.world,
                     &mut self.chat_ui.wanted_names,
                     &web,
                 );
@@ -6842,7 +6840,16 @@ impl ApplicationHandler for App {
             }
             if std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("faces")) {
                 let invisible = std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("faces-invisible,"));
-                for event in crate::demo::face_selection_events(invisible) {
+                let complex = std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("faces-complex,"));
+                let events = if complex {
+                    crate::demo::complex_face_selection_events()
+                } else {
+                    crate::demo::face_selection_events(invisible)
+                };
+                if complex && let Some(gfx) = &mut self.gfx {
+                    self.scene.install_demo_selection_mesh(&mut gfx.renderer);
+                }
+                for event in events {
                     self.world.apply(event);
                 }
             }
