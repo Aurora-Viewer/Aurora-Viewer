@@ -53,6 +53,10 @@ pub(crate) fn skip(primitives: &mut [egui::ClippedPrimitive]) {
     for primitive in primitives {
         if matches!(&primitive.primitive, egui::epaint::Primitive::Callback(c) if c.callback.is::<Region>()) {
             primitive.primitive = egui::epaint::Primitive::Mesh(egui::Mesh::default());
+            // An empty mesh must not reach the draw: egui-wgpu binds the
+            // index range of every mesh inside its clip, and wgpu panics on
+            // an empty buffer slice. An empty clip only advances its buffers.
+            primitive.clip_rect = egui::Rect::NOTHING;
         }
     }
 }
@@ -188,5 +192,33 @@ mod tests {
         skip(&mut primitives);
         assert_eq!(primitives.len(), count, "modal blur boundary indices stay valid");
         assert!(primitives.iter().all(|p| matches!(p.primitive, egui::epaint::Primitive::Mesh(_))));
+    }
+
+    /// On a surface that cannot be copied, a visible glass panel became an
+    /// empty mesh inside its clip: egui-wgpu bound its empty index range and
+    /// wgpu panicked ("buffer slice can not be empty").
+    #[test]
+    fn a_skipped_glass_panel_is_never_drawn() {
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(Default::default(), |ui| {
+            ui.painter().add(glass_panel(ui.max_rect().shrink(10.0), 8.0, egui::Color32::BLACK));
+        });
+        output.textures_delta.clear();
+        let mut primitives = ctx.tessellate(output.shapes, output.pixels_per_point);
+        assert!(requested(&primitives), "the panel is visible");
+        skip(&mut primitives);
+        let mut tints = 0;
+        for primitive in &primitives {
+            let egui::epaint::Primitive::Mesh(mesh) = &primitive.primitive else {
+                panic!("no callback is left");
+            };
+            if mesh.indices.is_empty() {
+                assert!(!primitive.clip_rect.is_positive(), "an empty mesh keeps an empty clip");
+            } else {
+                assert!(primitive.clip_rect.is_positive());
+                tints += 1;
+            }
+        }
+        assert!(tints > 0, "the tinted frame is still drawn");
     }
 }
