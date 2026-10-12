@@ -29,12 +29,12 @@ pub struct NotifUi {
 pub fn bell(ui: &mut egui::Ui, p: &Palette, icons: &Icons, unread: usize, open: bool) -> (bool, egui::Rect) {
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(22.0, 20.0), egui::Sense::click());
     if resp.hovered() || open {
-        ui.painter().rect_filled(rect, 2.0, p.raised);
+        ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
     }
     let col = if unread > 0 || resp.hovered() || open { p.ink } else { p.muted };
     let icon = if unread > 0 { "bell-ringing-filled" } else { "bell-filled" };
     if let Some(t) = icons.get(icon) {
-        let r = egui::Rect::from_center_size(rect.center(), Vec2::splat(15.0));
+        let r = egui::Rect::from_center_size(rect.center(), Vec2::splat(16.0));
         ui.painter()
             .image(t.id(), r, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), col);
     }

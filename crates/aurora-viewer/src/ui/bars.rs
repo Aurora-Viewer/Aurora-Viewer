@@ -108,10 +108,15 @@ fn bar_frame(p: &Palette) -> egui::Frame {
         .inner_margin(egui::Margin::symmetric(6, 0))
 }
 
+/// Slot and icon size shared by the buttons of the top bar, so they sit at
+/// a regular pitch whatever they draw.
+const TOP_SLOT: Vec2 = Vec2::new(22.0, 20.0);
+const TOP_ICON: f32 = 16.0;
+
 fn icon_button(ui: &mut egui::Ui, p: &Palette, icons: &Icons, icon: &str, tip: &str, size: f32) -> bool {
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(size + 6.0, size + 4.0), egui::Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(TOP_SLOT, egui::Sense::click());
     if resp.hovered() {
-        ui.painter().rect_filled(rect, 2.0, p.raised);
+        ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
     }
     if let Some(t) = icons.get(icon) {
         let tint = if resp.hovered() { p.ink } else { p.muted };
@@ -221,10 +226,10 @@ fn status_menu(ui: &mut egui::Ui, status: crate::world::status::StatusModes, act
 /// Status dot next to the bell: its color tells the status, a click opens
 /// the status choices.
 fn status_dot(ui: &mut egui::Ui, p: &Palette, status: crate::world::status::StatusModes, action: &mut BarAction) {
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(20.0, 20.0), egui::Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(TOP_SLOT, egui::Sense::click());
     let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&resp));
     if resp.hovered() || open {
-        ui.painter().rect_filled(rect, 2.0, p.raised);
+        ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
     }
     let col = status_color(p, &status);
     ui.painter().circle_filled(rect.center(), 5.0, col);
@@ -542,10 +547,10 @@ fn paint_icon(ui: &egui::Ui, icons: &Icons, name: &str, rect: egui::Rect, size: 
 /// Back / forward arrow of the navigation bar; `dest` is the history entry
 /// it leads to (None = disabled).
 fn nav_arrow(ui: &mut egui::Ui, p: &Palette, icons: &Icons, left: bool, dest: Option<&str>) -> bool {
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(20.0, 20.0), egui::Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(TOP_SLOT, egui::Sense::click());
     let enabled = dest.is_some();
     if enabled && resp.hovered() {
-        ui.painter().rect_filled(rect, 2.0, p.raised);
+        ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
     }
     let col = if !enabled {
         p.muted_dim.gamma_multiply(0.6)
@@ -554,7 +559,7 @@ fn nav_arrow(ui: &mut egui::Ui, p: &Palette, icons: &Icons, left: bool, dest: Op
     } else {
         p.muted
     };
-    paint_icon(ui, icons, if left { "arrow-left" } else { "arrow-right" }, rect, 15.0, col);
+    paint_icon(ui, icons, if left { "arrow-left" } else { "arrow-right" }, rect, TOP_ICON, col);
     let tip = match dest {
         Some(d) if left => aurora_i18n::tr!("ui-bars-back", d = d.to_string()),
         Some(d) => aurora_i18n::tr!("ui-bars-next", d = d.to_string()),
@@ -572,6 +577,21 @@ fn info_button(ui: &mut egui::Ui, p: &Palette, icons: &Icons) -> bool {
     resp.on_hover_text(aurora_i18n::tr!("common-about-land")).clicked()
 }
 
+/// Height of the chips of the top bar (voice light, flying, sitting).
+const CHIP_HEIGHT: f32 = 18.0;
+
+/// A state of our avatar (flying, sitting): the accent tint of an active
+/// toolbar button, its label centered on its letters.
+fn state_chip(ui: &mut egui::Ui, p: &Palette, text: &str) {
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text.to_owned(), egui::FontId::proportional(11.5), p.ink);
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(galley.size().x + 14.0, CHIP_HEIGHT), egui::Sense::hover());
+    let radius = ui.visuals().window_corner_radius;
+    ui.painter().rect_filled(rect, radius, p.violet.gamma_multiply(0.40));
+    super::widgets::paint_ink_centered(ui.painter(), galley, rect.center(), p.ink);
+}
+
 /// Voice connection light: green connected, orange connecting, red not
 /// connected, grey turned off. Returns true when clicked (voice settings).
 fn voice_light(ui: &mut egui::Ui, p: &Palette, icons: &Icons, light: crate::voice::VoiceLight, why: &str) -> bool {
@@ -582,7 +602,7 @@ fn voice_light(ui: &mut egui::Ui, p: &Palette, icons: &Icons, light: crate::voic
         L::Down => (p.danger, aurora_i18n::tr!("ui-bars-voice-not-connected")),
         L::Off => (p.muted_dim, aurora_i18n::tr!("common-voice-disabled")),
     };
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(48.0, 18.0), egui::Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(48.0, CHIP_HEIGHT), egui::Sense::click());
     let painter = ui.painter();
     let radius = ui.visuals().window_corner_radius;
     let face = if resp.hovered() {
@@ -755,11 +775,10 @@ pub fn top_bars(
                     notif.open = !notif.open;
                 }
                 // online status (away, do not disturb, automatic responses)
-                if st.show_bug_report && icon_button(ui, p, icons, "bug-filled", aurora_i18n::tr!("bug-title"), 17.0) {
+                if st.show_bug_report && icon_button(ui, p, icons, "bug-filled", aurora_i18n::tr!("bug-title"), TOP_ICON) {
                     action = BarAction::ReportBug;
                 }
                 status_dot(ui, p, st.status, &mut action);
-                ui.add_space(2.0);
                 // back / forward through the teleport history, home (Firestorm navigation bar)
                 if nav_arrow(ui, p, icons, true, st.tp_back.as_deref()) {
                     action = BarAction::TeleportBack;
@@ -767,7 +786,7 @@ pub fn top_bars(
                 if nav_arrow(ui, p, icons, false, st.tp_forward.as_deref()) {
                     action = BarAction::TeleportForward;
                 }
-                if icon_button(ui, p, icons, "Home_Off", aurora_i18n::tr!("common-go-home"), 15.0) {
+                if icon_button(ui, p, icons, "Home_Off", aurora_i18n::tr!("common-go-home"), TOP_ICON) {
                     action = BarAction::TeleportHome;
                 }
                 ui.add_space(6.0);
@@ -809,11 +828,7 @@ pub fn top_bars(
                         (st.seated, aurora_i18n::tr!("ui-bars-sitting")),
                     ] {
                         if on {
-                            egui::Frame::new()
-                                .fill(p.indigo)
-                                .corner_radius(ui.visuals().window_corner_radius)
-                                .inner_margin(egui::Margin::symmetric(5, 0))
-                                .show(ui, |ui| ui.label(small(text, Color32::WHITE)));
+                            state_chip(ui, p, text);
                         }
                     }
                     ui.add_space(4.0);

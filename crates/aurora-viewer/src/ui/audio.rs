@@ -38,7 +38,7 @@ const ICON_GAP: f32 = 2.0;
 fn icon_toggle(ui: &mut egui::Ui, p: &Palette, icons: &Icons, icon: &str, tip: &str, active: bool, enabled: bool) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(20.0, 18.0), egui::Sense::click());
     if enabled && resp.hovered() {
-        ui.painter().rect_filled(rect, 2.0, p.raised);
+        ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
     }
     if let Some(t) = icons.get(icon) {
         let tint = if !enabled {

@@ -114,7 +114,15 @@ fn splash(
     let mut shadow = visuals.window_shadow;
     shadow.color = shadow.color.gamma_multiply(a);
     painter.add(shadow.as_shape(card, radius));
-    let fill = Color32::from_rgba_unmultiplied(p.panel.r(), p.panel.g(), p.panel.b(), p.panel_alpha);
+    // What is behind is already blurred (the last view) or soft (the aurora):
+    // a lighter tint than the windows' lets it show through, the windows' glass
+    // without their blur pass. An opaque skin stays opaque.
+    let tint = if p.panel_alpha < 255 {
+        (f32::from(p.panel_alpha) * 0.78) as u8
+    } else {
+        255
+    };
+    let fill = Color32::from_rgba_unmultiplied(p.panel.r(), p.panel.g(), p.panel.b(), tint);
     painter.rect_filled(card, radius, fill.gamma_multiply(a));
     painter.rect_stroke(
         card,
