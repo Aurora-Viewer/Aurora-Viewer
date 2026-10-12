@@ -577,6 +577,14 @@ pub enum NetEvent {
     ClassifiedInfo(Box<crate::ClassifiedInfo>),
     /// ParcelInfoReply (LLRemoteParcelInfoProcessor).
     ParcelInfo(Box<crate::ParcelSummary>),
+    /// One reply packet of a directory search (Dir*Reply).
+    DirReply(Box<crate::search::DirReply>),
+    /// EventInfoReply (LLEventInfo).
+    EventInfo(Box<crate::search::EventInfo>),
+    /// GroupProfileReply (LLGroupMgr::processGroupPropertiesReply).
+    GroupProfile(Box<crate::search::GroupProfile>),
+    /// Land types of the grid, (ProductSKU, description) (ProductInfoRequest).
+    ProductInfo(Vec<(String, String)>),
     /// RegionIDAndHandleReply (LLLandmark::processRegionIDAndHandle).
     RegionIdHandle {
         region_id: Uuid,
@@ -1063,6 +1071,19 @@ pub enum NetCommand {
     ClassifiedDelete(Uuid),
     /// ParcelInfoRequest (name and region of a pick's parcel, place details).
     ParcelInfoRequest(Uuid),
+    /// A directory search (search.rs): `id` names the query in its replies,
+    /// `start` is the first row of the page asked.
+    DirQuery {
+        id: Uuid,
+        start: i32,
+        query: crate::search::DirQuery,
+    },
+    /// EventInfoRequest: the details of an event found.
+    EventInfoRequest(u32),
+    /// GroupProfileRequest: the details of a group found.
+    GroupProfileRequest(Uuid),
+    /// The land types of the grid (ProductInfoRequest capability).
+    ProductInfoRequest,
     /// The parcel at a point of any region, by the RemoteParcelRequest
     /// capability of the agent's region (LLPanelPlaceInfo::displayParcelInfo
     /// for a place link): `handle` of the 256 m slot holding the point,

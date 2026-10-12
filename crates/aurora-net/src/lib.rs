@@ -13,6 +13,7 @@ pub mod objects;
 pub mod outfits;
 pub mod profile;
 pub mod scripts;
+pub mod search;
 mod session;
 pub mod social;
 pub mod stats;
