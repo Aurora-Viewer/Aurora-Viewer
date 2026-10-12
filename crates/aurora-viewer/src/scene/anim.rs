@@ -15,8 +15,16 @@ use uuid::Uuid;
 
 pub const FETCH_KIND_ANIM: u64 = 4 << 60;
 
-/// Palette entries reserved per skeleton instance.
-pub const PALETTE_JOINTS: usize = 192;
+/// Palette entries reserved per skeleton instance: its joints, then the
+/// anchors of the objects it wears (anchors.rs).
+pub const PALETTE_JOINTS: usize = 208;
+
+/// First anchor matrix of a palette; the joints are below it.
+pub const ANCHOR_BASE: usize = aurora_render::SKELETON_ANCHOR as usize;
+
+/// Anchor matrices per palette: the wearer's root, then one per attachment
+/// point of the body (47 in avatar_lad.xml).
+pub const ANCHORS: usize = PALETTE_JOINTS - ANCHOR_BASE;
 
 pub struct Rig {
     pub parent: Vec<Option<usize>>,
@@ -35,7 +43,7 @@ pub struct Rig {
 
 impl Rig {
     pub fn new(sk: &Skeleton) -> Rig {
-        let n = sk.joints.len().min(PALETTE_JOINTS);
+        let n = sk.joints.len().min(ANCHOR_BASE);
         let mut names = HashMap::new();
         let mut parent = Vec::with_capacity(n);
         let mut local_pos = Vec::with_capacity(n);

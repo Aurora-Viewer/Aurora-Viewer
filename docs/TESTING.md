@@ -996,6 +996,7 @@ Ce que l'inventaire doit montrer avec ces scénarios :
 | `AURORA_NOVSYNC=1` | Coupe la synchronisation verticale |
 | `AURORA_PRESENT_MODE=<mode>` | Force le mode de présentation de la swapchain |
 | `AURORA_CPU_CULL=1` | Listes de dessin construites sur le CPU |
+| `AURORA_CPU_ATTACH=1` | Objets portés et mesh riggés placés par la synchro, sans les ancres du GPU |
 | `AURORA_TEXTURE_BC7=0` | Textures jamais compressées en BC7 |
 | `AURORA_TEXTURE_BC7_CACHE=0` | BC7 sans son cache disque |
 | `AURORA_RENDER_THREAD=0` | Images dessinées sur le thread principal |
@@ -1069,6 +1070,21 @@ Ce que l'inventaire doit montrer avec ces scénarios :
   (le repli quand le GPU n'a pas `MULTI_DRAW_INDIRECT_COUNT`) au lieu de les
   trier sur le GPU, pour comparer ; `cull=cpu|gpu` dans la ligne
   `perf summary`.
+- **`AURORA_CPU_ATTACH=1`** : replace à chaque image, sur le thread
+  principal, tout ce que portent les avatars et tous les mesh riggés,
+  comme avant les ancres (`scene/anchors.rs`), pour comparer l'image et les
+  mesures. Par défaut, un objet porté sur le corps est placé une fois par
+  rapport à son point d'attache, un mesh riggé (porté, bento, animesh) et
+  le corps d'un avatar par rapport à leur squelette, et le GPU fait le
+  reste, sphères de culling des mesh riggés comprises ; les HUDs, les prims
+  flexibles et les objets qui tournent d'eux-mêmes restent à la synchro. À
+  lire dans `perf summary` : `anchored` (objets placés par le GPU, 0 avec
+  la variable), `synced`, `sync` et ses parties `s_sync_*`, `records_kb`,
+  `journal_kb`. À combiner avec `AURORA_DEMO_CROWD=<n>` et
+  `AURORA_DEMO_ANIMESH=1`. Seul écart attendu sur les draws : les faces
+  transparentes des mesh riggés, que le CPU liste, sont testées avec
+  l'étendue de leur squelette et non plus avec leurs propres limites
+  (`blend` un peu plus élevé).
 - **`AURORA_RENDER_THREAD=0`** : dessine les images sur le thread principal,
   comme avant le thread de rendu, pour comparer et déboguer. Par défaut, le
   thread principal remet chaque image au thread de rendu sous la forme d'un
@@ -1186,8 +1202,10 @@ thread principal est déjà sur l'image suivante. Avec
   - les parties de la synchro de la scène (dans `sync`) : `sync_list` objets
     retirés et modifiés et liste de l'image, `sync_plan` leur placement,
     `sync_apply` déplacements et synchros complètes qui tiennent dans le
-    budget de temps de l'image, `sync_alpha` faces reclassées après le
-    changement de classe alpha d'une texture ;
+    budget de temps de l'image, `sync_anchors` ancres des squelettes et des
+    points d'attache (écriture, envoi avec les palettes posées, centre des
+    objets ancrés), `sync_alpha` faces reclassées après le changement de
+    classe alpha d'une texture ;
   - les parties de l'interface (`u_*`, dans `ui`) : `bars` barres du haut et
     du bas, `tags` étiquettes des avatars et textes flottants, `overlays`
     balise, textes des HUDs, outils de construction, débogage et bulles du
@@ -1205,7 +1223,9 @@ thread principal est déjà sur l'image suivante. Avec
   - le temps GPU par élément (`g_*`), les draws et commandes de dessin, les
     objets synchronisés / reconstruits (`synced`, `rebuilt` : des moyennes
     **par image** ; `rebuilt=0.2` à 175 images/s, ce sont 35 reconstructions
-    par seconde, `AURORA_STILL_CHECK=1` dit lesquelles), les avatars posés, les octets
+    par seconde, `AURORA_STILL_CHECK=1` dit lesquelles), les objets portés et
+    mesh riggés placés par le GPU (`anchored`, que la synchro ne visite
+    plus), les avatars posés, les octets
     d'enregistrements et de palettes envoyés au GPU et ceux de tout le
     journal d'écritures de l'image (`journal_kb`), la mémoire des textures
     (textures vivantes, pages de textures et leur mémoire allouée), la

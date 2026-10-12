@@ -152,6 +152,9 @@ pub enum Part {
     SyncPlan,
     /// `Scene::sync`: moves applied, full syncs within the time budget.
     SyncApply,
+    /// `Scene::sync`: anchors of the worn objects the GPU places, palettes
+    /// uploaded, centres of the anchored objects.
+    SyncAnchors,
     /// `Scene::sync`: faces classified again after a texture changed alpha
     /// class.
     SyncAlpha,
@@ -188,7 +191,7 @@ pub enum Part {
 }
 
 impl Part {
-    pub const ALL: [Part; 27] = [
+    pub const ALL: [Part; 28] = [
         Part::Fetched,
         Part::Geometry,
         Part::Decoded,
@@ -202,6 +205,7 @@ impl Part {
         Part::SyncList,
         Part::SyncPlan,
         Part::SyncApply,
+        Part::SyncAnchors,
         Part::SyncAlpha,
         Part::UiBars,
         Part::UiTags,
@@ -238,6 +242,7 @@ impl Part {
             Part::SyncList => "sync_list",
             Part::SyncPlan => "sync_plan",
             Part::SyncApply => "sync_apply",
+            Part::SyncAnchors => "sync_anchors",
             Part::SyncAlpha => "sync_alpha",
             Part::UiBars => "bars",
             Part::UiTags => "tags",
@@ -312,6 +317,8 @@ pub struct SceneCounts {
     pub geom_pending: usize,
     /// Objects whose full sync waits for a frame with time left.
     pub sync_backlog: usize,
+    /// Worn objects placed by the GPU: not visited by the sync.
+    pub anchored: usize,
 }
 
 /// Sums over the current period.
@@ -356,7 +363,7 @@ struct Period {
     texture_pages: u32,
     texture_page_bytes: u64,
     geometry_bytes: u64,
-    scene: [u64; 11],
+    scene: [u64; 12],
     /// Interface: egui shapes, meshes and vertices, and the most vertices
     /// in a single frame.
     ui: [u64; 3],
@@ -501,6 +508,7 @@ impl FrameProfile {
             s.jobs,
             s.geom_pending,
             s.sync_backlog,
+            s.anchored,
         ]) {
             *sum += v as u64;
         }
@@ -652,7 +660,7 @@ fn summary(p: &Period, elapsed: Duration) -> String {
     let _ = write!(
         out,
         " | draws={:.0} calls={:.0} tris_k={:.0} shadow_draws={:.0} particles={:.0} occluded={:.0} cull={} \
-         blend={:.0} blend_glow={:.0} glow_alpha={:.0} | objects={:.0} visible={:.0} synced={:.0} rebuilt={:.1} posed={:.1} \
+         blend={:.0} blend_glow={:.0} glow_alpha={:.0} | objects={:.0} visible={:.0} synced={:.0} anchored={:.0} rebuilt={:.1} posed={:.1} \
          records_kb={:.1} palettes_kb={:.1} journal_kb={:.1} | textures={} texture_mb={} texture_pages={} pages_mb={} geometry_mb={} \
          jobs={:.0} geom_pending={:.0} sync_backlog={:.0}",
         count(p.draws),
@@ -668,6 +676,7 @@ fn summary(p: &Period, elapsed: Duration) -> String {
         count(s[0]),
         count(s[1]),
         count(s[2]),
+        count(s[11]),
         count(s[3]),
         count(s[4]),
         count(p.records_bytes) / 1024.0,
@@ -732,6 +741,7 @@ mod tests {
         };
         let scene = SceneCounts {
             synced: 30,
+            anchored: 7,
             posed: 2,
             ..Default::default()
         };
@@ -747,7 +757,7 @@ mod tests {
         assert!(l.starts_with("fps=51.0 frame=19.61"), "{l}");
         assert!(l.contains(" calls=40 "), "{l}");
         assert!(l.contains(" r_finish=0.00 ") && l.contains(" g_objects=0.000 "), "{l}");
-        assert!(l.contains(" synced=30 "), "{l}");
+        assert!(l.contains(" synced=30 anchored=7 "), "{l}");
         assert!(l.contains(" posed=2.0 "), "{l}");
         assert!(l.contains(" records_kb=2.0 "), "{l}");
         assert!(
@@ -789,7 +799,7 @@ mod tests {
         assert!(l.contains(" s_upload=0.12 "), "{l}");
         // the parts of the scene sync are listed with the streaming ones
         assert!(
-            l.contains(" s_sync_list=0.00 s_sync_plan=0.00 s_sync_apply=0.50 s_sync_alpha=0.00 "),
+            l.contains(" s_sync_list=0.00 s_sync_plan=0.00 s_sync_apply=0.50 s_sync_anchors=0.00 s_sync_alpha=0.00 "),
             "{l}"
         );
         assert!(l.ends_with(" sync_backlog=0"), "{l}");

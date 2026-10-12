@@ -1,6 +1,9 @@
-// GPU-driven draw lists (gpu_cull.rs). Every drawable face (one per draw
-// record, table kept up to date by the scene) is tested against each view
-// of the frame and appended to the bins it belongs to:
+// GPU-driven draw lists (gpu_cull.rs). The world sphere of every object is
+// computed first (cs_spheres): what an avatar wears follows it, and a rigged
+// mesh is enclosed as its skeleton poses it, without the scene sending new
+// bounds. Every drawable face (one per draw record, table kept up to date by
+// the scene) is then tested against each view of the frame and appended to
+// the bins it belongs to:
 //   0..3  main view: opaque, opaque two-sided, masked, masked two-sided
 //   4..6  shadow cascades
 //   7..9  water reflection, mirror, reflection probe face
@@ -49,6 +52,13 @@ const OBJ_AVATAR: u32 = 2u;
 const OBJ_RIGGED: u32 = 4u;
 const OBJ_HUD: u32 = 8u;
 const OBJ_NO_PROBE: u32 = 16u;
+const OBJ_POSED: u32 = 32u;
+
+// a skeleton's own anchor, from the first joint of its palette (common.wgsl)
+const SKELETON_ANCHOR: u32 = 160u;
+// a posed sphere beyond these comes from a palette that is not a pose
+const POSED_RADIUS_MAX: f32 = 64.0;
+const POSED_COORD_MAX: f32 = 1.0e6;
 
 // CullObject.state (avatars)
 const AV_FULL: u32 = 1u;
@@ -75,13 +85,34 @@ struct CullFace {
 }
 
 struct CullObject {
-    // bounding sphere (avatars: their posed body)
+    // bounding sphere (avatars: their posed body), in the world or in the
+    // space of `anchor`
     sphere: vec4<f32>,
     flags: u32,
     // avatar whose state applies (itself, or the wearer), or none
     avatar: u32,
     state: u32,
+    // worn object placed by the GPU: index + 1 of its anchor matrix in
+    // `palettes` (0: none); a posed object's is its skeleton's
+    anchor: u32,
+    // posed objects: joint boxes of the geometry, skin bindings of the mesh
+    boxes: u32,
+    box_count: u32,
+    binds: u32,
     _p: u32,
+}
+
+// bind-space box of the vertices a mesh joint influences
+struct JointBox {
+    min: vec3<f32>,
+    joint: u32,
+    max: vec3<f32>,
+    _p: u32,
+}
+
+struct SkinBind {
+    inverse_bind: mat4x4<f32>,
+    joint: vec4<u32>,
 }
 
 struct CullFrame {
@@ -122,6 +153,75 @@ struct OcclParams {
 @group(0) @binding(7) var<storage, read_write> args: array<u32>;
 @group(0) @binding(8) var<uniform> occl: OcclParams;
 @group(0) @binding(9) var hiz: texture_2d<f32>;
+// joint palettes, with the anchors of what the skeletons wear
+@group(0) @binding(10) var<storage, read> palettes: array<mat4x4<f32>>;
+@group(0) @binding(11) var<storage, read> skin_binds: array<SkinBind>;
+@group(0) @binding(12) var<storage, read> joint_boxes: array<JointBox>;
+// world sphere of each object this frame (cs_spheres)
+@group(0) @binding(13) var<storage, read_write> spheres: array<vec4<f32>>;
+
+// World bounding sphere of an object (kept line for line with
+// CullObject::world_sphere). A worn object's follows its anchor (a rigid
+// matrix: the radius is kept). A posed object's encloses its joint boxes as
+// its skeleton poses them, or is the anchored sphere when that gives
+// nothing sane.
+fn world_sphere(o: CullObject) -> vec4<f32> {
+    if (o.anchor == 0u || o.anchor > arrayLength(&palettes)) {
+        return o.sphere;
+    }
+    let anchor = palettes[o.anchor - 1u];
+    let rest = vec4<f32>((anchor * vec4<f32>(o.sphere.xyz, 1.0)).xyz, o.sphere.w);
+    if ((o.flags & OBJ_POSED) == 0u || o.anchor - 1u < SKELETON_ANCHOR || o.box_count == 0u) {
+        return rest;
+    }
+    let base = o.anchor - 1u - SKELETON_ANCHOR;
+    var lo = vec3<f32>(3.4e38);
+    var hi = vec3<f32>(-3.4e38);
+    var sane = true;
+    for (var k = 0u; k < o.box_count; k++) {
+        if (o.boxes + k >= arrayLength(&joint_boxes)) {
+            return rest;
+        }
+        let b = joint_boxes[o.boxes + k];
+        if (o.binds + b.joint >= arrayLength(&skin_binds)) {
+            return rest;
+        }
+        let bind = skin_binds[o.binds + b.joint];
+        if (base + bind.joint.x >= arrayLength(&palettes)) {
+            return rest;
+        }
+        let m = anchor * palettes[base + bind.joint.x] * bind.inverse_bind;
+        for (var corner = 0u; corner < 8u; corner++) {
+            let local = vec3<f32>(
+                select(b.min.x, b.max.x, (corner & 1u) != 0u),
+                select(b.min.y, b.max.y, (corner & 2u) != 0u),
+                select(b.min.z, b.max.z, (corner & 4u) != 0u),
+            );
+            let p = (m * vec4<f32>(local, 1.0)).xyz;
+            // (a NaN fails the comparison)
+            sane = sane && all(abs(p) < vec3<f32>(POSED_COORD_MAX));
+            lo = min(lo, p);
+            hi = max(hi, p);
+        }
+    }
+    if (!sane) {
+        return rest;
+    }
+    let center = (lo + hi) * 0.5;
+    let radius = max(length((hi - lo) * 0.5), 0.05);
+    if (radius < POSED_RADIUS_MAX && distance(center, rest.xyz) < POSED_RADIUS_MAX) {
+        return vec4<f32>(center, radius);
+    }
+    return rest;
+}
+
+@compute @workgroup_size(64)
+fn cs_spheres(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let i = gid.x;
+    if (i < frame.sizes.y && i < arrayLength(&spheres)) {
+        spheres[i] = world_sphere(objects[i]);
+    }
+}
 
 fn sphere_in(planes: array<vec4<f32>, 6>, c: vec3<f32>, r: f32) -> bool {
     var p = planes;
@@ -163,8 +263,9 @@ fn face_mask(i: u32) -> u32 {
             return 0u;
         }
     }
-    let c = o.sphere.xyz;
-    let r = o.sphere.w;
+    let sphere = spheres[f.object];
+    let c = sphere.xyz;
+    let r = sphere.w;
     let d = length(c - frame.eye.xyz);
     if (d - r > frame.eye.w && !is_avatar) {
         return 0u;
@@ -376,7 +477,7 @@ fn cs_occlude(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(workgroup_
     let f = faces[rec];
     var vis = true;
     if (f.object < frame.sizes.y) {
-        vis = hiz_sphere_visible(hiz, objects[f.object].sphere, occl.view_proj, occl.screen, occl.levels);
+        vis = hiz_sphere_visible(hiz, spheres[f.object], occl.view_proj, occl.screen, occl.levels);
     }
     args[a + 1u] = select(0u, 1u, vis);
     // drawn by phase 1 = visible last frame (cs_scatter)

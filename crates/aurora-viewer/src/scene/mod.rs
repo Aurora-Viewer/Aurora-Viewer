@@ -1,6 +1,7 @@
 //! GPU scene synchronisation: geometry cache, per-face draw records,
 //! texture/mesh/material streaming, culling and draw-list building.
 
+pub mod anchors;
 pub mod anim;
 pub mod animesh;
 pub mod avatar;
@@ -215,6 +216,19 @@ pub struct ObjGpu {
     pub posed_sphere: Option<(Vec3, f32)>,
     /// Avatars: `gpu_cull::avatar_state` of the last lists.
     pub cull_state: u32,
+    /// Placed by the GPU (anchors.rs): the records are placed from this
+    /// anchor (a worn object's attachment point, a rigged mesh's skeleton),
+    /// and the sync no longer visits the object while only its wearer moves.
+    pub anchor: Option<anchors::AnchorRef>,
+    /// Anchored: `center` in the anchor's space (`center` itself is brought
+    /// up to date from the anchor at each frame).
+    pub local_center: Vec3,
+    /// Anchored rigged mesh: what the GPU poses its bounds from.
+    pub posed: Option<anchors::Posed>,
+    /// Anchored rigged mesh: sphere of its skeleton this frame, which the
+    /// lists built by the CPU test it with (its own bounds are only as
+    /// fresh as its last visit).
+    pub wide: Option<(Vec3, f32)>,
 }
 
 impl ObjGpu {
@@ -224,8 +238,14 @@ impl ObjGpu {
         if self.is_avatar {
             self.posed_sphere.unwrap_or((self.center, 2.5))
         } else {
-            (self.center, self.radius)
+            self.wide.unwrap_or((self.center, self.radius))
         }
+    }
+
+    /// Rigged mesh the sync places again at each frame with its skeleton
+    /// (one the GPU places needs no visit).
+    pub fn moves_with_skeleton(&self) -> bool {
+        self.rigged && self.anchor.is_none()
     }
 
     /// Avatar whose limits apply: itself, or the wearer of an attachment.
@@ -244,6 +264,14 @@ impl ObjGpu {
             };
         }
         let (c, r) = self.sphere();
+        // on the GPU, a worn object's sphere follows its anchor, and a
+        // rigged mesh's is posed from its joint boxes (else its skeleton's)
+        let (sphere, anchor) = match (self.anchor, self.posed) {
+            (Some(a), Some(p)) => (p.rest, a.matrix + 1),
+            (Some(a), None) => (self.local_center.extend(self.radius).to_array(), a.matrix + 1),
+            (None, _) => ([c.x, c.y, c.z, r], 0),
+        };
+        let posed = self.posed.filter(|p| anchor != 0 && p.count > 0);
         let avatar = self.avatar(idx);
         let mut fl = object_flags::ACTIVE;
         for (on, bit) in [
@@ -251,16 +279,21 @@ impl ObjGpu {
             (self.rigged, object_flags::RIGGED),
             (self.hud, object_flags::HUD),
             (avatar.is_some() || self.skeleton_owner.is_some(), object_flags::NO_PROBE),
+            (posed.is_some(), object_flags::POSED),
         ] {
             if on {
                 fl |= bit;
             }
         }
         CullObject {
-            sphere: [c.x, c.y, c.z, r],
+            sphere,
             flags: fl,
             avatar: avatar.map_or(NO_OBJECT, |a| a as u32),
             state: self.cull_state,
+            anchor,
+            boxes: posed.map_or(0, |p| p.boxes),
+            box_count: posed.map_or(0, |p| p.count),
+            binds: posed.map_or(0, |p| p.binds),
             _pad: 0,
         }
     }
@@ -396,6 +429,8 @@ pub struct SceneStats {
     pub sync_backlog: usize,
     /// Skeleton owners posed this frame.
     pub posed: usize,
+    /// Worn objects placed by the GPU (anchors.rs): not visited by the sync.
+    pub anchored: usize,
 }
 
 pub struct Scene {
@@ -423,6 +458,13 @@ pub struct Scene {
     sets: SyncSets,
     /// Transforms placed this frame (parents of the next levels).
     xf_cache: XfCache,
+    /// Anchors of what the GPU places (worn objects, rigged meshes), and
+    /// the joint boxes of the rigged geometries it poses.
+    anchors: anchors::Anchors,
+    joint_boxes: anchors::JointBoxes,
+    /// Palettes posed by this frame's `update_poses`, uploaded with their
+    /// anchors once the sync has placed their owners.
+    posed_slots: Vec<usize>,
     touched_tmp: Vec<usize>,
     /// Geometries whose last reference went away, oldest first (key, frame).
     geom_zero: VecDeque<(GeomKey, u32)>,
@@ -734,6 +776,9 @@ impl Scene {
             too_complex: Default::default(),
             sets: SyncSets::default(),
             xf_cache: XfCache::default(),
+            anchors: Default::default(),
+            joint_boxes: Default::default(),
+            posed_slots: Vec::new(),
             touched_tmp: Vec::new(),
             geom_zero: VecDeque::new(),
             geom_pending: 0,
@@ -870,6 +915,7 @@ impl Scene {
                     for f in g.faces.iter().flatten() {
                         renderer.free_mesh(*f);
                     }
+                    self.joint_boxes.release(&key);
                     self.geom_trash.push(g);
                 }
                 Some(GeomState::Pending) => self.geom_pending = self.geom_pending.saturating_sub(1),
@@ -968,6 +1014,7 @@ impl Scene {
                     for f in old.faces.iter().flatten() {
                         renderer.free_mesh(*f);
                     }
+                    self.joint_boxes.release(&key);
                     self.geom_trash.push(old);
                 }
                 GeomState::Pending => self.geom_pending = self.geom_pending.saturating_sub(1),
@@ -1189,6 +1236,7 @@ impl Scene {
         }
         self.removal_pending[i] = false;
         self.sets.forget(i);
+        self.anchors.forget(i);
         self.pick.remove(i);
         if let Some(mut g) = self.gpu.get_mut(i).map(std::mem::take) {
             self.release_obj(renderer, i, &mut g);
@@ -1225,6 +1273,8 @@ impl Scene {
         self.particles.clear(&mut self.textures);
         self.last_origin = None;
         self.sets.clear();
+        self.anchors.clear();
+        self.posed_slots.clear();
         self.palette_slots.clear();
         self.motions.clear();
         self.palette_free.clear();
@@ -1426,28 +1476,16 @@ impl Scene {
             None => Self::object_transform_in(world, pidx, now, depth + 1, cache)?,
         };
         if parent.is_avatar() && o.state != 0 {
-            // attachment root: relative to the attachment point
-            let point = o.attachment_point();
-            let lib = &world.avatar_lib;
-            let ap = lib.attach_points.get(&point).copied();
-            let hud = ap.is_some_and(|a| a.hud) || (31..=38).contains(&point);
-            let (mut apos, mut arot) = ap.map(|a| (a.position, a.rotation)).unwrap_or((Vec3::ZERO, Quat::IDENTITY));
+            // attachment root: relative to the attachment point (the frame
+            // the GPU places worn objects from, anchors.rs)
+            let anchors::AttachFrame { pos: apos, rot: arot, hud } = anchors::attach_frame(world, parent, o.attachment_point());
             if hud {
-                apos.y *= world.hud_aspect;
                 let offset = if parent.full_id == world.agent_id {
                     world.hud_scales.offset(o.full_id)
                 } else {
                     Vec3::ZERO
                 };
                 return Some((apos + arot * p + offset, arot * r, true));
-            }
-            // follow the animated bone (LLViewerJointAttachment under its joint)
-            if let Some((a, j)) = ap.and_then(|a| Some((a, a.joint?)))
-                && let Some(m) = world.avatar_poses.get(&parent.full_id).and_then(|p| p.get(j))
-            {
-                let (_, jrot, _) = m.to_scale_rotation_translation();
-                apos = m.transform_point3(a.skel_position) - lib.pelvis;
-                arot = jrot.normalize() * arot;
             }
             let pos = pp + pr * (apos + arot * p);
             return Some((pos, pr * arot * r, hud));
@@ -1466,7 +1504,8 @@ impl Scene {
     /// is computed in parallel, parents' level first so children reuse the
     /// parents' transforms; transform-only updates are then applied in turn
     /// (unchanged records are not uploaded again), the rest goes through the
-    /// full `sync_object`.
+    /// full `sync_object`. What an avatar wears is placed by the GPU from
+    /// the anchors written here (anchors.rs) and is not visited.
     pub fn sync(&mut self, renderer: &mut Renderer, world: &mut World, view: &CullView) {
         use crate::frame_profile::Part;
         let t0 = Instant::now();
@@ -1529,7 +1568,7 @@ impl Scene {
         for &idx in &touched {
             // a new object in the slot of a removed one not released yet
             self.release_slot(renderer, idx);
-            let rigged = self.gpu.get(idx).is_some_and(|g| g.rigged);
+            let rigged = self.gpu.get(idx).is_some_and(|g| g.moves_with_skeleton());
             self.sets.touched(&world.objects, agent, idx, rigged);
             // (its click action or flags may have changed)
             self.pick.changed(idx);
@@ -1629,6 +1668,9 @@ impl Scene {
             budget.spend(started.elapsed());
         }
         self.stats.sync_backlog = self.sets.backlog.len();
+        let t_part = self.parts.lap(Part::SyncApply, t_part);
+        self.update_anchors(renderer, world, now);
+        let t_part = self.parts.lap(Part::SyncAnchors, t_part);
         self.sync_flexibles(renderer, world, &synced, now, view);
         // GPU object table: bounds and flags of what was synced (unchanged
         // entries are not uploaded); the same bounds for the hover search
@@ -1752,18 +1794,25 @@ impl Scene {
     /// model matrix (records uploaded only when it changed).
     fn apply_move(&mut self, renderer: &mut Renderer, world: &mut World, idx: usize, m: MoveSync) {
         self.note_light(world, idx);
+        let posed = self.posed_of(renderer, self.gpu.get(idx).and_then(|g| g.geom), m.posed_rest);
         let Some(g) = self.gpu.get_mut(idx) else {
             return;
         };
+        g.posed = posed;
+        g.wide = g.wide.filter(|_| posed.is_some());
         g.hud = m.xf.2;
         g.owner_avatar = m.owner_avatar;
         g.mirror = m.mirror;
         g.center = m.center;
         g.radius = m.radius;
+        g.anchor = m.anchor;
+        g.local_center = m.local_center;
         if m.changed {
             if let Some(still) = &mut self.still
                 && !g.hud
                 && let Some(old) = g.faces.first().and_then(|f| renderer.records.get(f.record))
+                // (same space: not a record passing to or from an anchor)
+                && old.anchor() == m.anchor.map(|a| a.matrix)
                 && let Some(o) = world.objects.get(idx)
             {
                 let moved = Vec3::from_slice(&old.model[3][..3]).distance(Vec3::from_slice(&m.model[3][..3]));
@@ -1773,10 +1822,11 @@ impl Scene {
                 if g.hud {
                     renderer.records.set_hud_model(f.record, m.model, world.hud_scale(idx));
                 } else {
-                    renderer.records.set_model(f.record, m.model);
+                    renderer.records.set_placement(f.record, m.model, m.anchor.map(|a| a.matrix));
                 }
             }
         }
+        self.anchors.placed(world, idx, m.anchor);
         if m.clear_flags
             && let Some(o) = world.objects.get_mut_untracked(idx)
         {
@@ -1809,7 +1859,7 @@ impl Scene {
         } else {
             self.sets.material_users.insert(idx);
         }
-        let rigged = g.rigged;
+        let rigged = g.moves_with_skeleton();
         self.sets.synced(&world.objects, world.agent_id, idx, rigged);
     }
 
@@ -1906,6 +1956,9 @@ impl Scene {
             let g = &mut self.gpu[idx];
             g.center = pos;
             g.radius = radius;
+            g.anchor = None;
+            g.posed = None;
+            g.wide = None;
             if let Some(o) = world.objects.get_mut_untracked(idx) {
                 o.render.needs_records = false;
                 o.shape_dirty = false;
@@ -1925,6 +1978,9 @@ impl Scene {
             radius,
             rigged,
             skeleton_owner,
+            anchor,
+            local_center,
+            posed_rest,
         } = self
             .sync_ctx(world, &renderer.records, view.eye, now)
             .placement(idx, o, (pos, rot, hud), geom_key, &geom);
@@ -1954,7 +2010,7 @@ impl Scene {
                     )
                 });
             }
-            self.rebuild_faces(renderer, world, idx, &geom, model);
+            self.rebuild_faces(renderer, world, idx, &geom, model, anchor);
         } else {
             // transform-only update; an unchanged record is not uploaded again
             let model = model.to_cols_array_2d();
@@ -1962,13 +2018,20 @@ impl Scene {
                 if hud {
                     renderer.records.set_hud_model(f.record, model, world.hud_scale(idx));
                 } else {
-                    renderer.records.set_model(f.record, model);
+                    renderer.records.set_placement(f.record, model, anchor.map(|a| a.matrix));
                 }
             }
         }
+        self.anchors.placed(world, idx, anchor);
+        // (after the faces: a rigged mesh gets its skin bindings with them)
+        let posed = self.posed_of(renderer, Some(geom_key), posed_rest);
         let g = &mut self.gpu[idx];
         g.center = center;
         g.radius = radius;
+        g.anchor = anchor;
+        g.local_center = local_center;
+        g.posed = posed;
+        g.wide = g.wide.filter(|_| posed.is_some());
         g.rigged = rigged;
         g.skeleton_owner = skeleton_owner.map(|p| p.0);
         g.is_avatar = false;
@@ -1978,6 +2041,32 @@ impl Scene {
             o.shape_dirty = false;
             o.material_dirty = false;
         }
+    }
+
+    /// What the GPU poses the bounds of a rigged mesh from, when it places
+    /// it (`rest`: the sphere of its skeleton, `Placement::posed_rest`):
+    /// the joint boxes of its geometry, given their place in the GPU table
+    /// here, and the skin bindings of its mesh. Without them the skeleton's
+    /// sphere stands for its bounds until its next visit.
+    fn posed_of(&mut self, renderer: &mut Renderer, key: Option<GeomKey>, rest: Option<[f32; 4]>) -> Option<anchors::Posed> {
+        let mut posed = anchors::Posed {
+            boxes: 0,
+            count: 0,
+            binds: 0,
+            rest: rest?,
+        };
+        if let Some(key @ GeomKey::Mesh { id, .. }) = key
+            && let Some(binds) = self.skin_binds.base_of(&id)
+            && let Some(GeomState::Ready(geom)) = self.geoms.get(&key).map(|e| &e.state)
+            && let Some((boxes, count)) = self
+                .joint_boxes
+                .range(key, &geom.joint_bounds, |i, b| renderer.cull.boxes.set(i, b))
+        {
+            posed.boxes = boxes;
+            posed.count = count;
+            posed.binds = binds;
+        }
+        Some(posed)
     }
 
     /// The object owning the skeleton that drives a rigged mesh: the wearing
@@ -1999,7 +2088,17 @@ impl Scene {
         slot * anim::PALETTE_JOINTS as u32
     }
 
-    fn rebuild_faces(&mut self, renderer: &mut Renderer, world: &World, idx: usize, geom: &GpuGeom, model: Mat4) {
+    /// `model`: the object's placement, relative to `anchor` when the GPU
+    /// places it (a worn object, anchors.rs).
+    fn rebuild_faces(
+        &mut self,
+        renderer: &mut Renderer,
+        world: &World,
+        idx: usize,
+        geom: &GpuGeom,
+        model: Mat4,
+        anchor: Option<anchors::AnchorRef>,
+    ) {
         let Some(o) = world.objects.get(idx) else {
             return;
         };
@@ -2199,6 +2298,7 @@ impl Scene {
                 rec.anim_xf = a.constants;
             }
             rec.set_hud_zoom(hud_zoom);
+            rec.set_anchor(anchor.map(|a| a.matrix));
             let record = renderer.records.alloc(rec);
             g.faces.push(FaceDraw {
                 record,
@@ -2283,6 +2383,15 @@ impl Scene {
         // parts are in skeleton space: put the pelvis at the avatar position
         let avatar_model = Mat4::from_rotation_translation(rot, pos) * Mat4::from_translation(-lib.pelvis);
         let palette = self.palette_base(o.full_id);
+        // its records read the skeleton's place in the palette (anchors.rs):
+        // nothing to write again when the avatar moves or turns
+        let anchor = anchors::enabled()
+            .then(|| Self::anchor_matrix(&self.palette_slots, self.palettes.len(), o, 0))
+            .flatten();
+        if anchor.is_some() {
+            self.anchors.keep(idx as u32, o.full_id, 0);
+        }
+        let record_model = if anchor.is_some() { Mat4::IDENTITY } else { avatar_model }.to_cols_array_2d();
         let system_binds = self.skin_binds.system(&self.avatar_lib.rig);
         let appearance_gen = world.appearance_generation(&o.full_id);
         // bakes used by attachments (checked every 30 frames)
@@ -2326,7 +2435,7 @@ impl Scene {
                     hidden || bom_mask & (1u64 << part.bake_te.min(63)) != 0
                 };
                 let mut rec = DrawRecord {
-                    model: avatar_model.to_cols_array_2d(),
+                    model: record_model,
                     params: [0.0, 0.0, 0.8, 0.5],
                     flags: [flags::SKINNED, palette, system_binds, 0],
                     ..Default::default()
@@ -2345,6 +2454,7 @@ impl Scene {
                     rec.base_color = [0.62, 0.58, 0.66, 1.0];
                 }
                 rec.tex[0] = slot;
+                rec.set_anchor(anchor);
                 let record = renderer.records.alloc(rec);
                 g.faces.push(FaceDraw {
                     record,
@@ -2379,10 +2489,9 @@ impl Scene {
             self.finish_faces(renderer, idx, &mut g);
             self.gpu[idx] = g;
         } else {
-            // an avatar standing still keeps its records: not uploaded again
-            let model = avatar_model.to_cols_array_2d();
+            // (unchanged records are not uploaded again)
             for f in &self.gpu[idx].faces {
-                renderer.records.set_model(f.record, model);
+                renderer.records.set_placement(f.record, record_model, anchor);
             }
         }
         let posed = self.posed_avatar_sphere(o.full_id, palette, system_binds, avatar_model, pos);
@@ -2996,10 +3105,11 @@ impl Scene {
         )
     }
 
-    /// Evaluate skeleton poses of every palette owner near the camera and
-    /// upload the joint palettes. Only our avatar reports timed animation stops
+    /// Evaluate skeleton poses of every palette owner near the camera; the
+    /// sync of the same frame uploads their joint palettes
+    /// (`update_anchors`). Only our avatar reports timed animation stops
     /// to the simulator (LLVOAvatarSelf::requestStopMotion).
-    pub fn update_poses(&mut self, renderer: &mut Renderer, world: &mut World, eye: Vec3, now: Instant) -> Vec<Uuid> {
+    pub fn update_poses(&mut self, world: &mut World, eye: Vec3, now: Instant) -> Vec<Uuid> {
         let mut completed = Vec::new();
         // free palettes of owners that disappeared
         if self.last_palette_gc.elapsed().as_secs_f32() > 2.0 {
@@ -3125,7 +3235,8 @@ impl Scene {
             .filter_map(|w| chunks.get_mut(w.0).and_then(|c| c.take()).map(|c| (c, w)))
             .collect();
         frame_par::for_each_mut(&mut jobs, POSES_GRAIN, |(chunk, (_, motions, base, _))| {
-            for m in chunk.iter_mut().skip(rig.len()) {
+            // (the anchors after the joints are the sync's)
+            for m in chunk.iter_mut().take(anim::ANCHOR_BASE).skip(rig.len()) {
                 *m = Mat4::IDENTITY.to_cols_array_2d();
             }
             motions.evaluate(&rig, now, Some(base), chunk);
@@ -3147,7 +3258,11 @@ impl Scene {
             let skeletons = &self.skeletons;
             self.skeleton_member_of.retain(|_, owner| skeletons.contains_key(owner));
         }
-        let posed_slots: Vec<usize> = posed.iter().map(|p| p.1).collect();
+        // only the skeletons posed this frame are uploaded (the others
+        // keep their last pose), by the sync: with the anchors of what they
+        // wear, which need their owner's place in this frame
+        self.posed_slots.clear();
+        self.posed_slots.extend(posed.iter().map(|p| p.1));
         for (owner, slot) in posed {
             let base = slot * anim::PALETTE_JOINTS;
             let Some(src) = self.palettes.get(base..base + joints) else {
@@ -3162,8 +3277,6 @@ impl Scene {
                     .map(|(m, inv)| Mat4::from_cols_array_2d(m) * *inv),
             );
         }
-        // only the skeletons posed this frame (the others keep their last pose)
-        renderer.set_palette_slots(&self.palettes, &posed_slots, anim::PALETTE_JOINTS);
         completed
     }
 }
@@ -4013,6 +4126,12 @@ mod tests {
             Pass::Hidden,
         ];
         let n = 4000usize;
+        // anchors of worn objects (whole metres: the same sum to the bit
+        // on both sides)
+        let anchor_at: Vec<Vec3> = (0..32)
+            .map(|_| Vec3::new(rand(100) as f32, rand(100) as f32, rand(20) as f32))
+            .collect();
+        let palettes: Vec<[[f32; 4]; 4]> = anchor_at.iter().map(|t| Mat4::from_translation(*t).to_cols_array_2d()).collect();
         let mut gpu: Vec<ObjGpu> = (0..n).map(|_| ObjGpu::default()).collect();
         for (i, g) in gpu.iter_mut().enumerate() {
             g.center = eye + Vec3::new(rand(400) as f32 - 200.0, rand(400) as f32 - 200.0, rand(60) as f32 - 30.0);
@@ -4022,7 +4141,15 @@ mod tests {
                 g.posed_sphere = (rand(2) == 0).then(|| (g.center + Vec3::Z, 0.9));
             } else if rand(4) == 0 {
                 // an attachment, sometimes of an index that is no avatar
-                g.owner_avatar = Some(rand(n as u32) as usize);
+                let wearer = rand(n as u32);
+                g.owner_avatar = Some(wearer as usize);
+                if rand(2) == 0 {
+                    // placed by the GPU: the table holds its sphere
+                    // relative to the anchor
+                    let matrix = rand(anchor_at.len() as u32);
+                    g.anchor = Some(anchors::AnchorRef { wearer, slot: 1, matrix });
+                    g.local_center = g.center - anchor_at[matrix as usize];
+                }
             }
             g.rigged = rand(6) == 0;
             g.hud = rand(40) == 0;
@@ -4074,6 +4201,7 @@ mod tests {
         frame.probe = frame.water;
         frame.sizes[1] = n as u32;
         let objects: Vec<CullObject> = gpu.iter().enumerate().map(|(i, g)| g.cull_object(i)).collect();
+        let spheres = aurora_render::gpu_cull::world_spheres(&objects, &palettes, &[], &[]);
         let mut faces = Vec::new();
         let mut owner = Vec::new();
         for (i, g) in gpu.iter().enumerate() {
@@ -4086,7 +4214,7 @@ mod tests {
         for (k, &(i, fi)) in owner.iter().enumerate() {
             let g = &gpu[i];
             let f = &g.faces[fi];
-            let (m, visible) = face_bins(&frame, &faces, &objects, k);
+            let (m, visible) = face_bins(&frame, &faces, &objects, &spheres, k);
             let vis = object_visibility(g, i, &ctx, |a| full.get(a).copied().unwrap_or(true), |a| complex[a], |a| loading[a]);
             let solid = matches!(f.pass, Pass::Opaque | Pass::OpaqueTwoSided | Pass::Mask | Pass::MaskTwoSided);
             let (main, casts, refl, probe, in_view) = match &vis {

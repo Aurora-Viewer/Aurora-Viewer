@@ -3633,9 +3633,7 @@ impl App {
             }
             self.update_ao(now);
             // poses first: attachments follow their bone in the same frame
-            let completed = self
-                .scene
-                .update_poses(&mut gfx.renderer, &mut self.world, self.camera.position, now);
+            let completed = self.scene.update_poses(&mut self.world, self.camera.position, now);
             for anim in completed {
                 self.ao_runtime.finished(anim);
                 // LLAgent::requestStopMotion: stop the finished non-looping
@@ -5095,6 +5093,7 @@ impl App {
             jobs: st.jobs,
             geom_pending: st.geom_pending,
             sync_backlog: if in_world { st.sync_backlog } else { 0 },
+            anchored: if in_world { st.anchored } else { 0 },
         };
         let mut parts = std::mem::take(&mut self.scene.parts);
         parts.merge(&std::mem::take(&mut self.ui_parts));

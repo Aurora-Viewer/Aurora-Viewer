@@ -462,15 +462,20 @@ impl RecordStore {
         }
     }
 
-    /// Replace a record's model matrix only when it differs (moving objects:
-    /// no copy of the whole record, and an unchanged one is not uploaded).
-    pub fn set_model(&mut self, id: u32, model: [[f32; 4]; 4]) {
-        if let Some(slot) = self.mirror.get_mut(id as usize)
-            && (slot.model != model || slot.flags[0] >> 16 != 0)
-        {
-            slot.model = model;
+    /// Place a record: its model matrix, in the world or placed from anchor
+    /// matrix `anchor` (`flags::ANCHORED`: what an avatar wears keeps the
+    /// same record while its wearer moves). Only what differs is written
+    /// (no copy of the whole record), and an unchanged record is not
+    /// uploaded again.
+    pub fn set_placement(&mut self, id: u32, model: [[f32; 4]; 4], anchor: Option<u32>) {
+        if let Some(slot) = self.mirror.get_mut(id as usize) {
+            let old_flags = slot.flags;
             slot.set_hud_zoom(1.0);
-            self.mark(id as usize);
+            slot.set_anchor(anchor);
+            if slot.model != model || slot.flags != old_flags {
+                slot.model = model;
+                self.mark(id as usize);
+            }
         }
     }
 

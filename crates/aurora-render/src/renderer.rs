@@ -3879,8 +3879,13 @@ impl Backend {
             self.cull.encode(
                 &self.device,
                 &mut encoder,
-                &scene.faces,
-                &scene.objects,
+                &crate::gpu_cull::CullInputs {
+                    faces: &scene.faces,
+                    objects: &scene.objects,
+                    palettes: &scene.palettes,
+                    skin_binds: &scene.skin_binds,
+                    boxes: &scene.joint_boxes,
+                },
                 self.occlusion.visibility(),
                 ts,
             );

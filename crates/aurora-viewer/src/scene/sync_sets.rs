@@ -6,7 +6,8 @@
 //!   them (linkset children, attachments and their prims). Only the objects
 //!   moving by themselves are stored; the followers are found each frame
 //!   through the store's child lists, so links, unlinks, attachments and
-//!   detachments need no bookkeeping.
+//!   detachments need no bookkeeping. What the GPU places from its wearer's
+//!   attachment point (anchors.rs) follows without a visit.
 //! - **Dirty**: objects changed through the store (`ObjectStore::take_touched`),
 //!   material users on a new material generation, and objects whose last
 //!   sync could not finish. An object updated with `needs_records` brings
@@ -130,6 +131,10 @@ impl FrameMarks {
         self.stamp[idx] = self.frame;
         first
     }
+
+    fn is_marked(&self, idx: usize) -> bool {
+        self.stamp.get(idx) == Some(&self.frame)
+    }
 }
 
 /// Transforms computed this frame, so the prims of an attachment or a
@@ -211,8 +216,15 @@ impl FrameList {
 
 /// What the frame list needs to know about objects beyond the store.
 pub trait SyncState {
-    /// Rigged mesh: deformed by its skeleton, placed again every frame.
+    /// Rigged mesh the sync places again every frame with its skeleton
+    /// (not one the GPU places).
     fn rigged(&self, idx: usize) -> bool;
+    /// Placed by the GPU from an anchor of its wearer's palette (a worn
+    /// object from its attachment point, a rigged mesh from its skeleton):
+    /// neither it nor what is linked below it follows a moving ancestor
+    /// through the sync (what moves by itself below it is listed on its
+    /// own).
+    fn anchored(&self, idx: usize) -> bool;
     /// Must be synced: changed, or its last sync could not finish.
     fn needs_sync(&self, idx: usize, o: &Object) -> bool;
     /// Pending geometry: None when nothing is pending any more, else
@@ -336,7 +348,9 @@ pub struct SyncSets {
     /// Where the next frame goes on in `pending`.
     pending_next: usize,
     listed: FrameMarks,
+    /// Subtrees listed this frame: but for what the GPU places, and whole.
     expanded: FrameMarks,
+    expanded_whole: FrameMarks,
     /// Stack of `push_tree`, kept for its room.
     tree_stack: Vec<(usize, u8)>,
 }
@@ -380,13 +394,14 @@ impl SyncSets {
     pub fn frame_list(&mut self, objects: &ObjectStore, agent: Uuid, frame: u32, n: usize, state: &impl SyncState) -> FrameList {
         self.listed.next_frame(n);
         self.expanded.next_frame(n);
+        self.expanded_whole.next_frame(n);
         let mut list = FrameList::default();
         let mut i = 0;
         while i < self.own_moving.len() {
             let idx = self.own_moving.items[i];
             match objects.get(idx) {
                 Some(o) if moves_by_itself(o, agent, state.rigged(idx)) => {
-                    self.push_tree(objects, idx, &mut list);
+                    self.push_followers(objects, idx, &mut list, state);
                     i += 1;
                 }
                 // stopped, or removed: swap-removed, the next one takes its place
@@ -402,8 +417,13 @@ impl SyncSets {
             if !state.needs_sync(idx, o) {
                 continue;
             }
-            if o.render.needs_records {
-                self.push_tree(objects, idx, &mut list);
+            if o.render.needs_records && o.is_avatar() {
+                // what it wears is placed relative to its attachment
+                // points, not to it: the anchored objects stay put
+                self.push_followers(objects, idx, &mut list, state);
+            } else if o.render.needs_records {
+                // (anchored objects too: they are placed relative to it)
+                self.push_whole(objects, idx, &mut list);
             } else {
                 self.push_one(objects, idx, &mut list);
             }
@@ -455,9 +475,11 @@ impl SyncSets {
         }
     }
 
-    /// An object and everything below it (children, attachments, their prims).
-    fn push_tree(&mut self, objects: &ObjectStore, root: usize, list: &mut FrameList) {
-        if !self.expanded.mark(root) {
+    /// A moving object and what follows it through the sync: everything
+    /// below it (children, attachments, their prims) but the subtrees of
+    /// the objects the GPU places.
+    fn push_followers(&mut self, objects: &ObjectStore, root: usize, list: &mut FrameList, state: &impl SyncState) {
+        if self.expanded_whole.is_marked(root) || !self.expanded.mark(root) {
             return;
         }
         // (one allocation per call showed when thousands of objects arrive
@@ -475,8 +497,35 @@ impl SyncSets {
                 continue;
             }
             for &c in objects.children_of(&o.key) {
-                // a subtree already listed whole (another moving object)
-                if self.expanded.mark(c) {
+                // a subtree already listed (another moving object)
+                if !state.anchored(c) && !self.expanded_whole.is_marked(c) && self.expanded.mark(c) {
+                    stack.push((c, d + 1));
+                }
+            }
+        }
+        self.tree_stack = stack;
+    }
+
+    /// An object and everything below it, the objects the GPU places too.
+    fn push_whole(&mut self, objects: &ObjectStore, root: usize, list: &mut FrameList) {
+        if !self.expanded_whole.mark(root) {
+            return;
+        }
+        let mut stack = std::mem::take(&mut self.tree_stack);
+        stack.push((root, depth(objects, root)));
+        while let Some((idx, d)) = stack.pop() {
+            if self.listed.mark(idx) {
+                list.items.push((idx, d));
+            }
+            let Some(o) = objects.get(idx) else {
+                continue;
+            };
+            if d >= MAX_DEPTH {
+                continue;
+            }
+            for &c in objects.children_of(&o.key) {
+                // a subtree already listed whole (another updated object)
+                if self.expanded_whole.mark(c) {
                     stack.push((c, d + 1));
                 }
             }
@@ -500,6 +549,7 @@ mod tests {
     #[derive(Default)]
     struct State {
         rigged: HashSet<usize>,
+        anchored: HashSet<usize>,
         extra: HashSet<usize>,
         pending: Vec<(usize, bool)>,
         /// Answer for the objects that are not in `pending`.
@@ -511,6 +561,9 @@ mod tests {
     impl SyncState for State {
         fn rigged(&self, idx: usize) -> bool {
             self.rigged.contains(&idx)
+        }
+        fn anchored(&self, idx: usize) -> bool {
+            self.anchored.contains(&idx)
         }
         fn needs_sync(&self, idx: usize, o: &Object) -> bool {
             o.render.needs_records || o.shape_dirty || o.material_dirty || self.extra.contains(&idx)
@@ -751,6 +804,109 @@ mod tests {
             f.sets.forget(idx);
         }
         assert_eq!(f.quiet_frame(&[still], &state), Vec::<usize>::new());
+    }
+
+    /// What the GPU places from its wearer's attachment point is not
+    /// visited while only the wearer moves; it is when it changes itself,
+    /// or an object between it and the point.
+    #[test]
+    fn anchored_attachments_are_left_to_the_gpu() {
+        let mut f = Fixture::new();
+        let mut state = State::default();
+        let avatar = f.add(9000, 0, true);
+        let att = f.add(9001, 9000, false);
+        let att_child = f.add(9002, 9001, false);
+        let hud = f.add(9003, 9000, false);
+        let all = [avatar, att, att_child, hud];
+        f.frame(&state);
+        assert_eq!(f.quiet_frame(&all, &state), vec![avatar, att, att_child, hud]);
+        // the sync anchored the linkset (not the HUD)
+        state.anchored.extend([att, att_child]);
+        assert_eq!(f.quiet_frame(&all, &state), vec![avatar, hud]);
+        // the avatar is updated (it walks): what it wears stays put
+        f.update(avatar, |u| u.velocity = Vec3::X);
+        assert_eq!(f.frame(&state), vec![avatar, hud]);
+        // the attachment is moved on its point: its prims are placed again
+        if let Some(o) = f.world.objects.get_mut(att) {
+            o.render.needs_records = true;
+        }
+        assert_eq!(f.quiet_frame(&all, &state), vec![avatar, att, att_child, hud]);
+        assert_eq!(f.quiet_frame(&all, &state), vec![avatar, hud]);
+        // a prim alone changes
+        if let Some(o) = f.world.objects.get_mut(att_child) {
+            o.material_dirty = true;
+        }
+        assert_eq!(f.quiet_frame(&all, &state), vec![avatar, att_child, hud]);
+        // the detail level check still comes round
+        while !(f.frame + 1 + att_child as u32).is_multiple_of(LOD_PERIOD) {
+            f.frame(&state);
+        }
+        assert!(f.frame(&state).contains(&att_child));
+        // the attachment starts spinning: the sync takes the linkset back
+        f.update(att, |u| u.angular_velocity = Vec3::Z);
+        assert_eq!(f.frame(&state), vec![avatar, att, att_child, hud]);
+        state.anchored.clear();
+        assert_eq!(f.quiet_frame(&all, &state), vec![avatar, att, att_child, hud]);
+    }
+
+    /// A rigged root moves by itself and its plain prims are anchored: an
+    /// update of the root still reaches them, though the root was already
+    /// listed with its followers.
+    #[test]
+    fn an_updated_moving_root_reaches_its_anchored_prims() {
+        let mut f = Fixture::new();
+        let mut state = State::default();
+        let avatar = f.add(9000, 0, true);
+        let mesh = f.add(9001, 9000, false);
+        let prim = f.add(9002, 9001, false);
+        let all = [avatar, mesh, prim];
+        f.frame(&state);
+        state.rigged.insert(mesh);
+        f.sets.synced(&f.world.objects, f.world.agent_id, mesh, true);
+        state.anchored.insert(prim);
+        assert_eq!(f.quiet_frame(&all, &state), vec![avatar, mesh]);
+        if let Some(o) = f.world.objects.get_mut(mesh) {
+            o.render.needs_records = true;
+        }
+        assert_eq!(f.quiet_frame(&all, &state), vec![avatar, mesh, prim]);
+        assert_eq!(f.quiet_frame(&all, &state), vec![avatar, mesh]);
+    }
+
+    /// A rigged mesh the GPU places stops being visited at each frame,
+    /// with the prims anchored below it; one the sync places is back.
+    #[test]
+    fn rigged_meshes_placed_by_the_gpu_are_not_visited() {
+        let mut f = Fixture::new();
+        let mut state = State::default();
+        let avatar = f.add(9000, 0, true);
+        let mesh = f.add(9001, 9000, false);
+        let prim = f.add(9002, 9001, false);
+        let all = [avatar, mesh, prim];
+        f.frame(&state);
+        // found rigged, placed by the sync (no palette yet, a HUD...)
+        state.rigged.insert(mesh);
+        f.sets.synced(&f.world.objects, f.world.agent_id, mesh, true);
+        assert_eq!(f.quiet_frame(&all, &state), vec![avatar, mesh, prim]);
+        // then by the GPU, with its prim
+        state.rigged.remove(&mesh);
+        state.anchored.extend([mesh, prim]);
+        assert_eq!(f.quiet_frame(&all, &state), vec![avatar]);
+        assert!(!f.sets.own_moving.contains(mesh));
+        // its texture changes: it alone
+        if let Some(o) = f.world.objects.get_mut(mesh) {
+            o.material_dirty = true;
+        }
+        assert_eq!(f.quiet_frame(&all, &state), vec![avatar, mesh]);
+        // the sync takes it back (its palette changed place): the detail
+        // level check finds it moving again
+        state.anchored.clear();
+        state.rigged.insert(mesh);
+        while !(f.frame + 1 + mesh as u32).is_multiple_of(LOD_PERIOD) {
+            f.frame(&state);
+        }
+        f.frame(&state);
+        assert!(f.sets.own_moving.contains(mesh));
+        assert_eq!(f.quiet_frame(&all, &state), vec![avatar, mesh, prim]);
     }
 
     #[test]

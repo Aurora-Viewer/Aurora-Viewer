@@ -76,6 +76,8 @@ pub(crate) struct SceneGpu {
     pub face_count: usize,
     pub objects: wgpu::Buffer,
     pub object_count: usize,
+    /// Joint boxes of the rigged geometries the culling poses.
+    pub joint_boxes: wgpu::Buffer,
     /// Record ids handed out so far (sizes the occlusion's visibility flags).
     pub record_slots: usize,
     /// Texture pages, sampler and locations.
