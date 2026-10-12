@@ -80,10 +80,10 @@ const TEX_GEN_PLANAR: u8 = 0x02;
 
 /// One selected face.
 #[derive(Debug, Clone, Copy)]
-struct Sel {
-    idx: usize,
-    face: u8,
-    te: TextureFace,
+pub(super) struct Sel {
+    pub idx: usize,
+    pub face: u8,
+    pub te: TextureFace,
 }
 
 const W: f32 = 64.0;
@@ -175,13 +175,12 @@ impl BuildTool {
         }
     }
 
-    /// A texture chosen in the picker for the Texture tab.
-    pub fn on_texture_picked(&mut self, world: &mut World, env: &mut Env, target: PickTarget, id: Uuid) {
-        let sel = selected(self, world);
+    /// Apply a picker choice to the dialog's original faces.
+    pub(super) fn apply_texture(&mut self, world: &mut World, env: &mut Env, target: PickTarget, id: Uuid, sel: &[Sel]) {
         match target {
-            PickTarget::Diffuse => self.edit_faces(world, |f, _, _| f.texture = id),
-            PickTarget::Normal => self.edit_legacy(env, world, &sel, |m| m.normal_map = id),
-            PickTarget::Specular => self.edit_legacy(env, world, &sel, |m| m.specular_map = id),
+            PickTarget::Diffuse => self.set_diffuse(world, sel, |_, f| f.texture = id),
+            PickTarget::Normal => self.edit_legacy(env, world, sel, |m| m.normal_map = id),
+            PickTarget::Specular => self.edit_legacy(env, world, sel, |m| m.specular_map = id),
             PickTarget::PbrMaterial => {
                 // keep the transform of the override, else the Blinn-Phong one
                 let updates = sel
@@ -214,7 +213,7 @@ impl BuildTool {
             }
             PickTarget::PbrMap(i) => {
                 let tex = if id.is_nil() { OVERRIDE_NULL_UUID } else { id };
-                self.edit_gltf(world, &sel, |o| o.textures[i] = tex);
+                self.edit_gltf(world, sel, |o| o.textures[i] = tex);
             }
             PickTarget::Sculpt => {
                 if let Some(idx) = sel.first().map(|s| s.idx)
@@ -243,7 +242,7 @@ impl BuildTool {
 }
 
 /// The selected faces of modifiable volume prims.
-fn selected(tool: &BuildTool, world: &World) -> Vec<Sel> {
+pub(super) fn selected(tool: &BuildTool, world: &World) -> Vec<Sel> {
     tool.sel_te(world)
         .into_iter()
         .filter(|(i, _)| tool.can_modify(world, *i))

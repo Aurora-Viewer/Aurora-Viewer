@@ -2974,6 +2974,7 @@ ui-land-dialogs-media-url = Media URL
 ui-inventory-thumbnail-image-uuid = Image UUID
 ui-inventory-thumbnail-invalid-image-uuid = Invalid image UUID.
 ui-texture-picker-invalid-uuid = Invalid UUID
+ui-texture-picker-confirm-no-copy = No-copy texture: confirm with OK.
 ui-texture-picker-preview = Preview
 ui-texture-picker-adjust-list-width = Adjust list width
 build-review-face-selection = Show selection again

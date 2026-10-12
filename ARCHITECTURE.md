@@ -249,6 +249,12 @@ de `ui/inventory/view.rs`. Les dossiers se chargent par lots bornés ; les état
 dépliés de recherche et de navigation restent séparés. `ui/texture_picker.rs`
 présente les lignes visibles, les noms longs tronqués avec infobulle, un aperçu
 borné, une séparation ajustable et les commandes en bas de la fenêtre.
+Ses choix intentionnels sont distincts de la confirmation :
+`build/ui/texture_preview.rs` applique l’aperçu immédiat à la sélection capturée,
+conserve les textures et matériaux d’origine de chaque face, confirme sans
+renvoi avec « OK » ou restaure avec « Annuler ». Les autres utilisateurs du
+sélecteur gardent leur confirmation habituelle ; les textures d’inventaire
+non copiables ne produisent pas d’aperçu, comme dans Firestorm.
 
 Le sélecteur `ui/inventory/move_to.rs` propose les destinations de
 « Déplacer vers… » pour la sélection d’origine, avec filtre par nom et

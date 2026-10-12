@@ -37,6 +37,13 @@ fn inventory_asset(inv: &Inventory, id: Uuid, materials: bool) -> Option<Uuid> {
     }
 }
 
+fn can_preview(inv: &Inventory, id: Uuid) -> bool {
+    let Some(original) = actions::original(inv, id) else { return false };
+    inv.items
+        .get(&original)
+        .is_some_and(|item| item.owner_mask & actions::COPY != 0 || actions::library(inv, original))
+}
+
 #[derive(Default)]
 pub struct TexturePicker {
     pub open: bool,
@@ -57,6 +64,9 @@ pub struct TexturePicker {
     allow_none: bool,
     extra_buttons: bool,
     uuid_text: String,
+    /// Intentional choices, separate from OK so callers can opt into preview.
+    preview: Option<Uuid>,
+    pub(crate) generation: u64,
 }
 
 impl TexturePicker {
@@ -74,6 +84,8 @@ impl TexturePicker {
         self.extra_buttons = false;
         self.uuid_text.clear();
         self.footer_height = 0.0;
+        self.preview = None;
+        self.generation = self.generation.wrapping_add(1);
     }
 
     /// The build floater's picker: « Défaut » (`default`), « Vierge »,
@@ -93,6 +105,16 @@ impl TexturePicker {
         self.extra_buttons = true;
     }
 
+    pub(crate) fn take_preview(&mut self) -> Option<Uuid> {
+        self.preview.take()
+    }
+
+    fn select(&mut self, asset: Uuid, item: Option<Uuid>, preview: bool) {
+        self.selected = Some(asset);
+        self.selected_item = item;
+        self.preview = preview.then_some(asset);
+    }
+
     /// The asset chosen with "OK" (the picker closes). Nil: « Aucune ».
     pub fn show(
         &mut self,
@@ -101,6 +123,7 @@ impl TexturePicker {
         world: &mut World,
         images: &HashMap<Uuid, egui::TextureHandle>,
     ) -> Option<Uuid> {
+        self.preview = None;
         if !self.open {
             return None;
         }
@@ -244,6 +267,7 @@ impl TexturePicker {
                                 if let Some(asset) = asset {
                                     self.selected = Some(asset);
                                     self.selected_item = Some(row.id);
+                                    self.preview = can_preview(&world.inventory, row.id).then_some(asset);
                                 }
                             }
                         }
@@ -321,21 +345,18 @@ impl TexturePicker {
                         if let Some(default) = self.default
                             && widgets::flat_button_sized(ui, p, aurora_i18n::tr!("common-default"), Vec2::new(half, 24.0)).clicked()
                         {
-                            self.selected = Some(default);
-                            self.selected_item = None;
+                            self.select(default, None, true);
                         }
                         let width = if self.default.is_some() { half } else { ui.available_width() };
                         if widgets::flat_button_sized(ui, p, aurora_i18n::tr!("common-blank"), Vec2::new(width, 24.0)).clicked() {
-                            self.selected = Some(if self.materials { BLANK_MATERIAL } else { BLANK_TEXTURE });
-                            self.selected_item = None;
+                            self.select(if self.materials { BLANK_MATERIAL } else { BLANK_TEXTURE }, None, true);
                         }
                     });
                     if !self.materials
                         && widgets::flat_button_sized(ui, p, aurora_i18n::tr!("common-transparent"), Vec2::new(ui.available_width(), 24.0))
                             .clicked()
                     {
-                        self.selected = Some(TRANSPARENT_TEXTURE);
-                        self.selected_item = None;
+                        self.select(TRANSPARENT_TEXTURE, None, true);
                     }
                     if self.allow_none
                         && widgets::flat_button_sized(ui, p, aurora_i18n::tr!("common-none-2"), Vec2::new(ui.available_width(), 24.0))
@@ -348,7 +369,9 @@ impl TexturePicker {
             // All footer rows live outside the columns. Their widths depend
             // on the window only, never on texture names or preview content.
             ui.add_space(6.0);
-            let message = if self.tree.loading {
+            let message = if self.selected_item.is_some_and(|id| !can_preview(&world.inventory, id)) {
+                aurora_i18n::tr!("ui-texture-picker-confirm-no-copy")
+            } else if self.tree.loading {
                 aurora_i18n::tr!("common-loading-2")
             } else if self.tree.view.results.is_empty() {
                 if self.materials {
@@ -377,8 +400,7 @@ impl TexturePicker {
                     if widgets::flat_button_sized(ui, p, aurora_i18n::tr!("common-apply"), Vec2::new(96.0, 24.0)).clicked() {
                         match Uuid::parse_str(self.uuid_text.trim()) {
                             Ok(id) => {
-                                self.selected = Some(id);
-                                self.selected_item = None;
+                                self.select(id, None, true);
                             }
                             Err(_) => self.uuid_text = aurora_i18n::tr!("ui-texture-picker-invalid-uuid").into(),
                         }
@@ -447,6 +469,28 @@ mod tests {
         assert_eq!(inventory_asset(&inv, material, false), None);
         inv.items.get_mut(&texture).unwrap().asset_id = Uuid::nil();
         assert_eq!(inventory_asset(&inv, link, false), None);
+        // Firestorm defers no-copy inventory textures until OK; links must
+        // check the original item's rights, and library textures can preview.
+        assert!(!can_preview(&inv, link));
+        inv.items.get_mut(&texture).unwrap().owner_mask = actions::COPY;
+        assert!(can_preview(&inv, link));
+        inv.items.get_mut(&texture).unwrap().owner_mask = 0;
+        let library = Uuid::from_u128(5);
+        inv.items.get_mut(&texture).unwrap().parent = library;
+        inv.folders.insert(
+            library,
+            crate::world::inventory::Folder {
+                info: aurora_net::inventory::InvFolder {
+                    id: library,
+                    ..Default::default()
+                },
+                children: vec![],
+                items: vec![texture],
+                state: crate::world::inventory::FetchState::Fetched,
+                library: true,
+            },
+        );
+        assert!(can_preview(&inv, link));
     }
 
     #[test]

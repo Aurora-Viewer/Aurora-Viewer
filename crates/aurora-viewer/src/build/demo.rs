@@ -203,6 +203,7 @@ pub fn texture_inventory(world: &mut World) {
         parent: wood,
         asset_id: aurora_prim::te::BLANK_TEXTURE,
         inv_type: 0,
+        owner_mask: aurora_net::build::perm::COPY,
         name: aurora_i18n::tr!("build-demo-sim-light-wood").repeat(20),
         ..Default::default()
     }]);

@@ -369,6 +369,16 @@ sans croissance autonome. La liste conserve les dossiers, les noms sont tronqué
 et leur infobulle affiche le texte entier. Le séparateur ajuste la place donnée
 aux noms, l’aperçu reste borné et les commandes sont regroupées en bas.
 
+Dans le sélecteur de construction, un clic sur une texture copiable, un matériau,
+« Défaut », « Vierge », « Transparent » ou « Appliquer » pour l’UUID applique
+immédiatement le choix aux faces sélectionnées. « OK » conserve cet aperçu sans
+renvoi ; « Annuler » et la croix restaurent la texture propre à chaque face.
+Un changement de sélection annule également l’aperçu précédent. Vérifier sur
+grille avec plusieurs objets et des faces ayant des textures différentes.
+Comme dans Firestorm, une texture d’inventaire non copiable attend « OK » et
+affiche cette indication. Les sélecteurs de profil et de terrain gardent leur
+validation habituelle.
+
 `AURORA_DEMO_FLEXIBLE` remplace les objets de la place par six prims avec
 quatre niveaux de souplesse, profils carrés / circulaires, creux, torsion et
 tailles non uniformes. La dernière suit une racine en rotation. `rigid` donne

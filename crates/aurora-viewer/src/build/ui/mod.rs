@@ -16,6 +16,7 @@ mod general;
 mod object;
 mod replace;
 mod texture;
+mod texture_preview;
 mod tools;
 
 use super::{BuildSettings, BuildTool, EditMode, Tool};
@@ -153,6 +154,7 @@ pub struct FloaterState {
     pub confirm: Option<Confirm>,
     pub picker: TexturePicker,
     pub pick_target: Option<PickTarget>,
+    texture_edit: Option<texture_preview::Session>,
     /// ObjectMedia data fetched for the selection, and the objects asked.
     pub media_data: HashMap<Uuid, ObjectMediaData>,
     pub media_asked: HashSet<Uuid>,
@@ -260,6 +262,7 @@ pub fn show(
     env: &mut Env,
 ) -> bool {
     if !tool.open {
+        tool.cancel_texture_picker(world, env);
         tool.cancel_color_picker(world);
         tool.commit_color_edit();
         return false;
@@ -325,6 +328,7 @@ pub fn show(
     color::show(ctx, p, tool, world, s);
     color::finish_gesture(ctx, tool);
     if !open {
+        tool.cancel_texture_picker(world, env);
         tool.close(world, s);
     }
     *s != before
