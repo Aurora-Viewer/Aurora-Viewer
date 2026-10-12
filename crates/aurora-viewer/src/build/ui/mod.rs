@@ -6,6 +6,7 @@
 //! (menu_viewer.xml) and the secondary floaters (grid options, weights,
 //! media settings).
 
+mod color;
 mod common;
 mod compact;
 mod contents;
@@ -29,6 +30,7 @@ use glam::Vec3;
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
+pub(super) use color::ColorTarget;
 pub use floaters::MediaSettingsState;
 
 /// What the floater needs from the rest of the viewer.
@@ -120,6 +122,9 @@ pub enum Confirm {
 /// State of the floater kept between frames.
 #[derive(Default)]
 pub struct FloaterState {
+    pub color_picker: crate::ui::color_picker::ColorPicker,
+    color_edit: Option<color::Session>,
+    color_focused: bool,
     /// Texture tab: 0 PBR, 1 Blinn-Phong, 2 Media.
     pub tex_tab: usize,
     /// PBR transform channel (Tous, Couleur, Normale, (O)RM, Émissive).
@@ -212,6 +217,7 @@ pub fn shortcuts(ctx: &egui::Context, tool: &mut BuildTool, world: &mut World, s
             (Key::Num5, true, false) => tool.open_build(Tool::Land),
             (Key::B, true, true) => tool.ui.grid_options_open = !tool.ui.grid_options_open,
             _ if !tool.open => {}
+            (Key::Escape, false, false) if tool.ui.color_picker.is_open() => {}
             (Key::Escape, false, false) => tool.close(world, s),
             (Key::Delete, false, false) => tool.delete(world),
             (Key::D, true, false) => tool.duplicate(world, Vec3::new(0.5, 0.5, 0.0), true),
@@ -251,12 +257,14 @@ pub fn show(
     env: &mut Env,
 ) -> bool {
     if !tool.open {
+        tool.cancel_color_picker(world);
         tool.commit_color_edit();
         return false;
     }
     let before = s.clone();
     // drafts belong to the selection they were typed for
     if tool.ui.last_selection != tool.selection {
+        tool.cancel_color_picker(world);
         tool.commit_color_edit();
         tool.ui.last_selection = tool.selection.clone();
         tool.ui.edits.clear();
@@ -278,9 +286,22 @@ pub fn show(
     .silent();
     floater.show(ctx, p, &mut open, |ui| compact::body(ui, p, tool, world, s, mods, env));
     floaters::secondary(ctx, p, tool, world, s, env);
-    if ctx.input(|i| !i.focused || !i.pointer.any_down()) {
-        tool.commit_color_edit();
+    let demo_picker = egui::Id::new("demo_color_picker_opened");
+    if env.demo
+        && crate::ui::color_picker::demo::mode().is_some()
+        && !ctx.data(|d| d.get_temp::<bool>(demo_picker).unwrap_or(false))
+        && let Some((idx, face)) = tool.sel_te(world).first().copied()
+        && let Some(rgb) = world
+            .objects
+            .get(idx)
+            .and_then(|o| o.te.as_ref())
+            .map(|te| te.face(face as usize).color)
+    {
+        tool.open_color_picker(world, env, ColorTarget::Diffuse, [rgb[0], rgb[1], rgb[2]]);
+        ctx.data_mut(|d| d.insert_temp(demo_picker, true));
     }
+    color::show(ctx, p, tool, world, s);
+    color::finish_gesture(ctx, tool);
     if !open {
         tool.close(world, s);
     }

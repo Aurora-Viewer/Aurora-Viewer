@@ -111,6 +111,15 @@ impl BuildTool {
         self.out.append(&mut self.color_preview);
     }
 
+    /// Discard superseded preview messages before reverting a color dialog.
+    pub fn discard_color_edit(&mut self) {
+        for command in self.color_preview.drain(..) {
+            if let NetCommand::Build(BuildCmd::Cap { tag, .. }) = command {
+                self.caps.remove(&tag);
+            }
+        }
+    }
+
     /// A tag for a capability request.
     pub fn cap(&mut self, handle: RegionHandle, cap: &str, put: bool, body: aurora_llsd::Llsd, purpose: CapPurpose) -> u64 {
         let tag = self.next_tag;

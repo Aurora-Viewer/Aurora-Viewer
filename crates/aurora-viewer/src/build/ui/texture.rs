@@ -118,7 +118,7 @@ impl BuildTool {
     /// Blinn-Phong material of a face as the panel sees it: the one just
     /// sent (until the simulator's new material id arrives), else the
     /// region's, else none.
-    fn face_legacy(&self, env: &Env, world: &World, idx: usize, face: u8, te: &TextureFace) -> Option<LegacyMaterial> {
+    pub(super) fn face_legacy(&self, env: &Env, world: &World, idx: usize, face: u8, te: &TextureFace) -> Option<LegacyMaterial> {
         let id = world.objects.get(idx)?.full_id;
         if let Some((old, m)) = self.ui.legacy_pending.get(&(id, face))
             && *old == te.material_id
@@ -471,15 +471,8 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
                     super::common::linear_to_srgb(bc[1]),
                     super::common::linear_to_srgb(bc[2]),
                 ];
-                if let Some(c) = color_swatch(ui, p, srgb, aurora_i18n::tr!("build-ui-texture-tint"), 40.0, editable) {
-                    let lin = [
-                        super::common::srgb_to_linear(c[0]),
-                        super::common::srgb_to_linear(c[1]),
-                        super::common::srgb_to_linear(c[2]),
-                    ];
-                    tool.preview_color_edit(|tool| {
-                        tool.edit_gltf(world, sel, |o| o.base_color_factor = Some([lin[0], lin[1], lin[2], bc[3]]));
-                    });
+                if color_swatch(ui, p, srgb, aurora_i18n::tr!("build-ui-texture-tint"), 40.0, editable) {
+                    tool.open_color_picker(world, env, super::ColorTarget::PbrBase, srgb);
                 }
             });
             ui.horizontal(|ui| {
@@ -510,13 +503,8 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
                     super::common::linear_to_srgb(e[1]),
                     super::common::linear_to_srgb(e[2]),
                 ];
-                if let Some(c) = color_swatch(ui, p, srgb, aurora_i18n::tr!("build-ui-texture-tint"), 40.0, editable) {
-                    let lin = [
-                        super::common::srgb_to_linear(c[0]),
-                        super::common::srgb_to_linear(c[1]),
-                        super::common::srgb_to_linear(c[2]),
-                    ];
-                    tool.preview_color_edit(|tool| tool.edit_gltf(world, sel, |o| o.emissive_factor = Some(lin)));
+                if color_swatch(ui, p, srgb, aurora_i18n::tr!("build-ui-texture-tint"), 40.0, editable) {
+                    tool.open_color_picker(world, env, super::ColorTarget::PbrEmissive, srgb);
                 }
             });
         });
@@ -623,15 +611,8 @@ fn blinn_phong(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut
         }
         let (col, _) = same(sel.iter().map(|x| [x.te.color[0], x.te.color[1], x.te.color[2]]));
         let col = col.unwrap_or([1.0; 3]);
-        if let Some(c) = color_swatch(ui, p, col, aurora_i18n::tr!("build-ui-texture-tint"), 40.0, editable) {
-            // selectionSetColorOnly: the alpha stays
-            tool.preview_color_edit(|tool| {
-                tool.edit_faces(world, |f, _, _| {
-                    f.color[0] = c[0];
-                    f.color[1] = c[1];
-                    f.color[2] = c[2];
-                });
-            });
+        if color_swatch(ui, p, col, aurora_i18n::tr!("build-ui-texture-tint"), 40.0, editable) {
+            tool.open_color_picker(world, env, super::ColorTarget::Diffuse, col);
         }
         ui.vertical(|ui| {
             let (fb, fb_mixed) = same(sel.iter().map(|x| x.te.bump_shiny_fullbright & TEM_FULLBRIGHT != 0));
@@ -793,7 +774,7 @@ fn blinn_phong(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut
                 }
                 let sc = legacy[0].as_ref().map(|m| m.specular_color).unwrap_or([255; 4]);
                 let rgb = [sc[0] as f32 / 255.0, sc[1] as f32 / 255.0, sc[2] as f32 / 255.0];
-                if let Some(c) = color_swatch(
+                if color_swatch(
                     ui,
                     p,
                     rgb,
@@ -801,10 +782,7 @@ fn blinn_phong(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut
                     40.0,
                     editable && spec.is_some(),
                 ) {
-                    let b = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
-                    tool.preview_color_edit(|tool| {
-                        tool.edit_legacy(env, world, sel, |m| m.specular_color = [b(c[0]), b(c[1]), b(c[2]), sc[3]]);
-                    });
+                    tool.open_color_picker(world, env, super::ColorTarget::Specular, rgb);
                 }
                 ui.vertical(|ui| {
                     let (gl, gl_mixed) = same(legacy.iter().map(|m| m.as_ref().map(|m| m.specular_exp).unwrap_or(51)));

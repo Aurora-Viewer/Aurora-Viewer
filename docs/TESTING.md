@@ -212,11 +212,26 @@ capture.
 | `AURORA_DEMO_BUILD_FOCUS=off\|on` | Focus et suivi caméra pendant l’édition |
 | `AURORA_DEMO_BUILD_EDGE=<bord>` | Déplacement jusqu’au bord, maintien puis relâchement |
 | `AURORA_DEMO_BUILD_TAB=<onglet>` | Onglet de la fenêtre de construction |
+| `AURORA_DEMO_COLOR_PICKER=<mode>` | Sélecteur de couleur et gestes hors ligne |
 | `AURORA_DEMO_SCRIPTS=<mode>` | Édition et enregistrement de scripts hors ligne |
 | `AURORA_DEMO_LSL_BRIDGE=1` | Messages du bridge LSL de Firestorm (cachés) |
 | `AURORA_DEMO_FLEXIBLE=1` | Prims flexibles : gravité, tension, vent, force et parent mobile |
 
 ### Détails
+
+`AURORA_DEMO_COLOR_PICKER=1|lsl|hex|invalid|drag|cancel|no-apply|palette|pipette`
+ouvre le nuancier de la sélection, avec `AURORA_DEMO_BUILD=move,object:118`
+et `AURORA_DEMO_BUILD_TAB=texture:bp`. Les modes LSL / Hexa changent le format
+par ses vrais boutons ; Hexa saisit `33AA66`, invalid saisit `GG0000` (OK
+désactivé). Capturer vers l'image 740. Les modes drag / cancel / no-apply
+glissent sur 100 images : capturer à 780 pendant le geste, 830 au relâchement,
+900 après OK / Annuler. L'aperçu suit immédiatement, le serveur reçoit la
+couleur finale au relâchement ; no-apply attend OK. Palette glisse l'aperçu
+actuel dans la case 32 : capture 880 et réouverture pour vérifier sa sauvegarde.
+Pipette arme l'outil ; cliquer une face visible pour prendre sa teinte (aucun
+changement de sélection), relâcher pour quitter l'outil. Échap quitte d'abord
+la pipette, puis annule le nuancier. Les gestes sont en coordonnées des contrôles
+réels, sans dépendance à la position enregistrée de la fenêtre.
 
 En mode Modifier, maintenir CTRL et tourner la molette parcourt les objets
 réellement sous le pointeur : défilement vers le bas pour aller plus loin,

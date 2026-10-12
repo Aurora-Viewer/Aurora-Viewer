@@ -27,6 +27,7 @@ use winit::window::{CursorGrabMode, Window, WindowId};
 mod ao;
 mod bug_report;
 mod chat_commands;
+mod color_picker;
 mod context_menu;
 mod hud_drag;
 mod inventory;
@@ -654,6 +655,11 @@ impl App {
     fn send(&mut self, cmd: NetCommand) {
         if self.demo {
             match &cmd {
+                NetCommand::Build(aurora_net::build::BuildCmd::SetTextures { local_id, .. })
+                    if ui::color_picker::demo::mode().is_some() =>
+                {
+                    log::info!("demo color ObjectImage: prim={local_id}");
+                }
                 NetCommand::TeleportTo { handle, position, look_at } => {
                     if Some(*handle) == self.world.main_region {
                         self.world.apply(NetEvent::TeleportLocal {
@@ -2695,6 +2701,11 @@ impl App {
 
     /// Left press while building: handles, selection, create, terraform.
     fn build_mouse_down(&mut self) -> bool {
+        if self.build.ui.color_picker.pipette {
+            self.left_down = true;
+            self.sample_build_color();
+            return true;
+        }
         if !self.build.open
             || self.alt
             || (self.hud_drag_requested() && self.settings.show_huds && self.scene.hud_move_pick(&self.world, self.cursor_pos).is_some())
@@ -2789,6 +2800,13 @@ impl App {
     }
 
     fn on_left_release(&mut self) {
+        if self.left_down && self.build.ui.color_picker.pipette {
+            if !self.egui_ctx.is_pointer_over_egui() {
+                self.sample_build_color();
+            }
+            self.build.ui.color_picker.pipette = false;
+            self.build.ui.color_picker.sampled = None;
+        }
         self.update_hud_drag(self.scene.lists.hud_view);
         if let Some(cmd) = self.hud_drag.take().and_then(|drag| drag.release(&self.world)) {
             if self.demo {
@@ -3553,6 +3571,10 @@ impl App {
         }
 
         self.frame_profile.lap(Lap::Social);
+        // Coalesce OS pointer moves before taking the renderer for this frame.
+        if self.left_down && self.build.ui.color_picker.pipette && !self.egui_ctx.is_pointer_over_egui() {
+            self.sample_build_color();
+        }
         let Some(mut gfx) = self.gfx.take() else {
             return;
         };
@@ -4229,12 +4251,13 @@ impl App {
         // native window or taking the user's keyboard (with_active(false)).
         if self.demo
             && self.capture.is_some()
-            && std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|v| {
-                matches!(
-                    v.as_str(),
-                    "rename" | "new-script" | "new-note" | "new-folder" | "resize-left" | "resize-right"
-                ) || v.starts_with("note-")
-            })
+            && (ui::color_picker::demo::mode().is_some()
+                || std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|v| {
+                    matches!(
+                        v.as_str(),
+                        "rename" | "new-script" | "new-note" | "new-folder" | "resize-left" | "resize-right"
+                    ) || v.starts_with("note-")
+                }))
         {
             raw.focused = true;
             raw.events.retain(|e| !matches!(e, egui::Event::WindowFocused(false)));
@@ -4313,6 +4336,8 @@ impl App {
         let ctx = self.egui_ctx.clone();
         if self.demo {
             raw.events.extend(ui::widgets::demo::events(&ctx, self.frame_count));
+            raw.events
+                .extend(ui::color_picker::demo::events(&self.build.ui.color_picker, self.frame_count));
             for d in self.task_notecards.values_mut() {
                 raw.events
                     .extend(ui::inventory::document_demo_events(&ctx, self.frame_count, &mut d.state));
@@ -4497,6 +4522,10 @@ impl App {
         }
         if let Some(cursor) = self.inventory_drag.cursor {
             full.platform_output.cursor_icon = cursor;
+            full.platform_output.cursor_image = None;
+        }
+        if self.build.ui.color_picker.pipette && !ctx.is_pointer_over_egui() {
+            full.platform_output.cursor_icon = egui::CursorIcon::Crosshair;
             full.platform_output.cursor_image = None;
         }
         gfx.egui_state
@@ -7089,6 +7118,11 @@ impl ApplicationHandler for App {
                 }
                 if let PhysicalKey::Code(code) = ke.physical_key {
                     let pressed = ke.state == ElementState::Pressed;
+                    // The color dialog owns Escape before camera shortcuts.
+                    // egui already received the event above.
+                    if pressed && code == KeyCode::Escape && self.build.ui.color_picker.is_open() {
+                        return;
+                    }
                     // learn the keyboard layout for the shortcut labels
                     if pressed
                         && !self.shift

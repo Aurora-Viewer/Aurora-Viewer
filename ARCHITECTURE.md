@@ -213,6 +213,15 @@ renvoie encore l’ancien parent. Les autres champs restent modifiés par AIS.
 dialogues et les lignes de l'inventaire utilisateur et des contenus d'objets
 (densité, survol, sélection et style du nom). `build/ui/compact.rs` agence la
 construction en six sections dans un inspecteur étroit.
+`ui/color_picker.rs` compose le sélecteur commun (RVB / LSL / Hexa, TSL,
+aperçus, palette de 32 cases et pipette) ; `ui/color_picker/model.rs` garde
+les conversions et préférences sérialisées, `demo.rs` les gestes hors ligne.
+`build/ui/color.rs` capture les couleurs par objet et face, applique les
+aperçus et restaure seulement le RGB à l'annulation. Les envois intermédiaires
+sont regroupés dans `build/edits.rs` jusqu'au relâchement. `app/color_picker.rs`
+route la pipette vers `Scene::color_at_ray` : candidats de l'index spatial,
+triangles réels en parallèle et teinte de la face, sans lecture GPU ni effet
+de l'éclairage. Elle ne change pas la sélection.
 `aurora-render/src/ui_glass.rs` produit un fond dépoli partagé
 par les fenêtres visibles : copie et deux passes de flou sur le GPU, puis
 échantillonnage dans leurs seuls rectangles arrondis. Les ressources sont
