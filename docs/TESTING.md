@@ -148,6 +148,15 @@ capture.
 
 ### Remplacer un prim
 
+Pour contrôler le passage à « Modifier les parties liées », combiner
+`AURORA_DEMO_REPLACE_PRIM=1` et
+`AURORA_DEMO_BUILD=linked-click,object:99688` : objet entier sélectionné,
+activation de la modification liée à l'image 625, puis clic sur la partie #9
+à l'image 635 (départ 600 par défaut). Capturer à 630 puis à 650 : 15 parties
+sélectionnées deviennent une seule, avec « Numéro de lien : 9 » et le bouton
+de remplacement. `linked-click-ready,object:99688` s'arrête sur l'objet entier
+pour que l'humain puisse cocher l'option puis cliquer lui-même sur la partie.
+
 `AURORA_DEMO_REPLACE_PRIM=1` ajoute un jeu de 15 prims (racine `99680`,
 pile de cartes au lien 9 : `99688`) et un remplaçant indépendant (`99700`).
 Le remplaçant a une rotation et des dimensions différentes ; son contenu est

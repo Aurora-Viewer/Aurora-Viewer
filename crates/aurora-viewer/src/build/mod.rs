@@ -24,6 +24,8 @@ pub mod land;
 pub mod manip;
 pub mod materials;
 pub mod replace;
+#[cfg(test)]
+mod selection_tests;
 pub mod shapes;
 pub mod silhouette;
 pub mod ui;
@@ -735,7 +737,9 @@ impl BuildTool {
             } else {
                 self.add(world, unit);
             }
-        } else if !self.is_selected(&unit) {
+        } else if !self.is_selected(&unit) || (s.edit_linked && self.selection.len() > 1) {
+            // LLToolSelect::handleObjectSelection clears the other selected
+            // parts when ignore_group is true, even if this part is selected.
             self.deselect_all(world);
             self.add(world, unit);
         } else {
