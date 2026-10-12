@@ -7,6 +7,7 @@ mod build_cmds;
 mod inventory_copies;
 mod inventory_moves;
 mod inventory_preview;
+mod inventory_updates;
 mod inventory_upload;
 mod object_actions;
 mod scripts;
@@ -24,7 +25,7 @@ use aurora_msg::msgs::{self, *};
 use aurora_msg::{IncomingPacket, Msg, field_str, parse_packet, str_field};
 use glam::Vec3;
 use parking_lot::Mutex;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -1330,9 +1331,17 @@ impl Session<'_> {
                 let owner = self.agent_id();
                 let moves = self.inventory_move_tx.clone();
                 tokio::spawn(async move {
-                    let result = crate::inventory::operations::mutate_with_moves(&http, &cap, &fetch_cap, owner, change, |movement| {
-                        inventory_moves::submit(moves.clone(), movement)
-                    })
+                    let result = crate::inventory::operations::mutate_with_progress(
+                        &http,
+                        &cap,
+                        &fetch_cap,
+                        owner,
+                        change,
+                        |movement| inventory_moves::submit(moves.clone(), movement),
+                        |progress| {
+                            let _ = events.send(NetEvent::InventoryProgress { request, progress });
+                        },
+                    )
                     .await;
                     let _ = events.send(NetEvent::InventoryEdited { request, result });
                 });
@@ -2122,6 +2131,9 @@ impl Session<'_> {
     fn on_eq_event(&mut self, e: EqEvent) {
         log::debug!("EQ {} from {}", e.message, e.sim);
         let b = &e.body;
+        if self.on_inventory_eq(&e) {
+            return;
+        }
         if self.on_social_eq(&e.message, b) || self.on_land_eq(&e.message, b) || self.on_build_eq(&e.message, b) {
             return;
         }
@@ -2980,6 +2992,16 @@ impl Session<'_> {
                     online: false,
                 },
             );
+        } else if id == GenericMessage::ID {
+            let m: GenericMessage = pkt.decode()?;
+            if let Some(parameter) = m.param_list.first() {
+                self.on_inventory_generic(m.agent_data.agent_id, &m.method_data.method, &parameter.parameter);
+            }
+        } else if id == LargeGenericMessage::ID {
+            let m: LargeGenericMessage = pkt.decode()?;
+            if let Some(parameter) = m.param_list.first() {
+                self.on_inventory_generic(m.agent_data.agent_id, &m.method_data.method, &parameter.parameter);
+            }
         } else if id == UpdateCreateInventoryItem::ID {
             let m: UpdateCreateInventoryItem = pkt.decode()?;
             if m.agent_data.agent_id == self.agent_id() {
@@ -2989,9 +3011,7 @@ impl Session<'_> {
                     .iter()
                     .map(|it| {
                         let item = crate::inventory::operations::item_from_udp(it);
-                        if let Some(completion) = self.inventory_copies.accept(it.callback_id, &item) {
-                            self.finish_inventory_copies(completion);
-                        }
+                        self.accept_inventory_copy(it.callback_id, &item);
                         if let Some((editor, notecard, open)) = self.notecard_copies.remove(&it.callback_id) {
                             emit(
                                 self.sh,
@@ -3017,6 +3037,12 @@ impl Session<'_> {
         } else if id == BulkUpdateInventory::ID {
             let m: BulkUpdateInventory = pkt.decode()?;
             if m.agent_data.agent_id == self.agent_id() {
+                let copied_parents: HashSet<_> = m
+                    .item_data
+                    .iter()
+                    .filter(|it| self.inventory_copies.request_for(it.callback_id).is_some())
+                    .map(|it| it.folder_id)
+                    .collect();
                 let mut parents = Vec::new();
                 let mut created = Vec::new();
                 let items = m
@@ -3048,9 +3074,7 @@ impl Session<'_> {
                             created_at: i64::from(it.creation_date),
                             ..Default::default()
                         };
-                        if let Some(completion) = self.inventory_copies.accept(it.callback_id, &item) {
-                            self.finish_inventory_copies(completion);
-                        }
+                        self.accept_inventory_copy(it.callback_id, &item);
                         if new {
                             created.push(item.clone());
                         }
@@ -3075,6 +3099,7 @@ impl Session<'_> {
                 parents.extend(m.folder_data.iter().map(|f| f.parent_id).filter(|id| !id.is_nil()));
                 parents.sort();
                 parents.dedup();
+                parents.retain(|parent| !copied_parents.contains(parent));
                 if !parents.is_empty() {
                     self.fetch_inventory(parents, self.agent_id(), false);
                 }

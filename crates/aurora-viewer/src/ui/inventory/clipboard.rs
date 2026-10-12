@@ -165,6 +165,10 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryUi) -> Vec
         return Vec::new();
     };
     let window = mode == "clipboard-window";
+    if mode == "clipboard-progress" {
+        super::progress::demo(frame, st);
+        return Vec::new();
+    }
     if frame == 640 {
         super::super::widgets::place_floater(ctx, "inventory", egui::pos2(20.0, 56.0), egui::vec2(680.0, 850.0));
         for (index, w) in st.windows.iter().enumerate() {

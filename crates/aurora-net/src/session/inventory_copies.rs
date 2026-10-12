@@ -5,7 +5,7 @@
 use super::*;
 use crate::inventory::{
     InvItem,
-    operations::{CopyItem, Reply},
+    operations::{CopyItem, Phase, Progress, Reply},
 };
 
 const TIMEOUT: Duration = Duration::from_secs(60);
@@ -30,6 +30,18 @@ pub(super) struct Completion {
 }
 
 impl Pending {
+    pub(super) fn request_for(&self, callback: u32) -> Option<Uuid> {
+        self.callbacks.get(&callback).map(|(request, _)| *request)
+    }
+
+    fn progress(&self, request: Uuid) -> Option<Progress> {
+        let batch = self.batches.get(&request)?;
+        Some(Progress {
+            phase: Phase::Copying,
+            completed: batch.received.len(),
+            total: batch.callbacks.len(),
+        })
+    }
     fn begin(&mut self, request: Uuid, mut reply: Reply, copies: Vec<(u32, CopyItem)>) {
         reply.copies.clear();
         let callbacks = copies.iter().map(|(cb, _)| *cb).collect();
@@ -102,6 +114,16 @@ pub(super) fn message(agent: Uuid, session: Uuid, callback: u32, copy: &CopyItem
 }
 
 impl Session<'_> {
+    pub(super) fn accept_inventory_copy(&mut self, callback: u32, item: &InvItem) {
+        let request = self.inventory_copies.request_for(callback);
+        if let Some(completion) = self.inventory_copies.accept(callback, item) {
+            self.finish_inventory_copies(completion);
+        } else if let Some(request) = request
+            && let Some(progress) = self.inventory_copies.progress(request)
+        {
+            emit(self.sh, NetEvent::InventoryProgress { request, progress });
+        }
+    }
     pub(super) fn start_inventory_copies(&mut self, request: Uuid, reply: Reply) {
         if reply.copies.is_empty() || self.main_cap("FetchInventoryDescendents2").is_none() {
             emit(
@@ -120,6 +142,17 @@ impl Session<'_> {
             .collect();
         log::info!("inventory copy: sending {} item copies", copies.len());
         self.inventory_copies.begin(request, reply, copies.clone());
+        emit(
+            self.sh,
+            NetEvent::InventoryProgress {
+                request,
+                progress: Progress {
+                    phase: Phase::Copying,
+                    completed: 0,
+                    total: copies.len(),
+                },
+            },
+        );
         for (callback, copy) in copies {
             self.send_main(&message(self.agent_id(), self.session_id(), callback, &copy), true);
         }
@@ -148,6 +181,14 @@ impl Session<'_> {
             let result = match result {
                 Ok((reply, items)) => {
                     log::info!("inventory copy: {} item copies acknowledged; reading folders back", items.len());
+                    let _ = events.send(NetEvent::InventoryProgress {
+                        request,
+                        progress: Progress {
+                            phase: Phase::Verifying,
+                            completed: 0,
+                            total: reply.refresh.len(),
+                        },
+                    });
                     crate::inventory::operations::complete_copies(&http, &fetch, owner, reply, &items).await
                 }
                 Err(reason) => Err(reason),
@@ -169,6 +210,7 @@ mod tests {
     fn reply() -> Reply {
         Reply {
             contents: Vec::new(),
+            refresh: Vec::new(),
             copies: Vec::new(),
             removed: Vec::new(),
             created: HashMap::from([(id(10), id(100))]),

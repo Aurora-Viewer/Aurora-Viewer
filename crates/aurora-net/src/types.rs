@@ -672,6 +672,10 @@ pub enum NetEvent {
         sources: Vec<Uuid>,
     },
     InventoryContents(Vec<crate::inventory::FolderContents>),
+    InventoryProgress {
+        request: Uuid,
+        progress: crate::inventory::operations::Progress,
+    },
     InventoryEdited {
         request: Uuid,
         result: Result<crate::inventory::operations::Reply, String>,

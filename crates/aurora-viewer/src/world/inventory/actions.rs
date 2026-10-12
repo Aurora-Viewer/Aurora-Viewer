@@ -426,8 +426,8 @@ pub fn demo_mutate(inv: &mut Inventory, agent: Uuid, change: Mutation) -> Result
     inv.sort_all();
     let contents = change
         .refresh
-        .into_iter()
-        .filter_map(|id| inv.folders.get(&id))
+        .iter()
+        .filter_map(|id| inv.folders.get(id))
         .map(|f| aurora_net::inventory::FolderContents {
             folder_id: f.info.id,
             owner_id: agent,
@@ -442,6 +442,7 @@ pub fn demo_mutate(inv: &mut Inventory, agent: Uuid, change: Mutation) -> Result
         .collect();
     Ok(aurora_net::inventory::operations::Reply {
         contents,
+        refresh: change.refresh,
         copies: change.copies,
         removed,
         created,

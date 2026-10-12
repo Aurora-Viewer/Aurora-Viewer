@@ -891,6 +891,14 @@ ui-chat-click-profile = Clic : profil
 ui-bars-right-click-drag-orbit-wheel-zoom = Clic droit + glisser : orbiter   ·   Molette : zoom
 ui-inventory-right-click-item-actions-ctrl-shift-multi-select = Clic droit : actions de l’élément. Ctrl / Maj : sélection multiple. Ctrl+C : copier, Ctrl+X : couper, Ctrl+V : coller dans le dossier sélectionné ou le dossier de l’élément.
 inventory-copy-unconfirmed = La copie du contenu n’a pas été entièrement confirmée. Rechargez le dossier de destination avant de réessayer.
+inventory-progress-updating = Modification : { $completed }/{ $total }
+inventory-progress-copying = { $total ->
+    [one] Copie : { $completed }/{ $total } élément confirmé
+   *[other] Copie : { $completed }/{ $total } éléments confirmés
+    }
+inventory-progress-verifying = Vérification du contenu…
+inventory-progress-elapsed = { $message } · { $seconds } s
+inventory-operation-complete = Modification terminée
 inventory-demo-nested-folder = Niveau { $level }
 inventory-demo-destination = Destination de test
 keybinds-middle-click = Clic molette

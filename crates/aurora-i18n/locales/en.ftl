@@ -891,6 +891,14 @@ ui-chat-click-profile = Click: profile
 ui-bars-right-click-drag-orbit-wheel-zoom = Right-click + drag: orbit   ·   Wheel: zoom
 ui-inventory-right-click-item-actions-ctrl-shift-multi-select = Right-click: item actions. Ctrl / Shift: multi-select. Ctrl+C: copy, Ctrl+X: cut, Ctrl+V: paste into the selected folder or the item's folder.
 inventory-copy-unconfirmed = The contents copy has not been fully confirmed. Reload the destination folder before trying again.
+inventory-progress-updating = Updating: { $completed }/{ $total }
+inventory-progress-copying = { $total ->
+    [one] Copying: { $completed }/{ $total } item confirmed
+   *[other] Copying: { $completed }/{ $total } items confirmed
+    }
+inventory-progress-verifying = Verifying contents…
+inventory-progress-elapsed = { $message } · { $seconds } s
+inventory-operation-complete = Update completed
 inventory-demo-nested-folder = Level { $level }
 inventory-demo-destination = Test destination
 keybinds-middle-click = Middle click

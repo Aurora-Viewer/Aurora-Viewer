@@ -59,9 +59,25 @@ pub struct Mutation {
 #[derive(Debug, Clone)]
 pub struct Reply {
     pub contents: Vec<FolderContents>,
+    /// Affected folders to read after deferred copies, including empty children.
+    pub refresh: Vec<Uuid>,
     pub copies: Vec<CopyItem>,
     pub removed: Vec<Uuid>,
     pub created: HashMap<Uuid, Uuid>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Phase {
+    Updating,
+    Copying,
+    Verifying,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Progress {
+    pub phase: Phase,
+    pub completed: usize,
+    pub total: usize,
 }
 
 pub fn metadata_favorite(on: bool) -> Llsd {
@@ -109,6 +125,23 @@ where
     F: FnMut(InventoryMove) -> Fut,
     Fut: std::future::Future<Output = Result<(), String>>,
 {
+    mutate_with_progress(http, cap, fetch_cap, owner, change, &mut send_move, |_| {}).await
+}
+
+pub(crate) async fn mutate_with_progress<F, Fut, P>(
+    http: &reqwest::Client,
+    cap: &str,
+    fetch_cap: &str,
+    owner: Uuid,
+    change: Mutation,
+    mut send_move: F,
+    mut progress: P,
+) -> Result<Reply, String>
+where
+    F: FnMut(InventoryMove) -> Fut,
+    Fut: std::future::Future<Output = Result<(), String>>,
+    P: FnMut(Progress),
+{
     if change.operations.len() > 2048 || change.copies.len() > 2048 || change.refresh.is_empty() {
         return Err(aurora_i18n::tr!("inventory-operations-the-selection-is-empty-or-too-large").into());
     }
@@ -116,7 +149,12 @@ where
     let mut created = HashMap::new();
     let mut moved = false;
     let resolve = |ids: &HashMap<Uuid, Uuid>, id: Uuid| ids.get(&id).copied().unwrap_or(id);
-    for op in &change.operations {
+    for (index, op) in change.operations.iter().enumerate() {
+        progress(Progress {
+            phase: Phase::Updating,
+            completed: index,
+            total: change.operations.len(),
+        });
         match op {
             Operation::Folder {
                 id,
@@ -180,6 +218,30 @@ where
     let mut refresh: Vec<_> = change.refresh.into_iter().map(|id| resolve(&created, id)).collect();
     refresh.sort();
     refresh.dedup();
+    let copies: Vec<_> = change
+        .copies
+        .into_iter()
+        .map(|mut c| {
+            c.parent = resolve(&created, c.parent);
+            c
+        })
+        .collect();
+    if !copies.is_empty() && change.operations.iter().all(|op| matches!(op, Operation::Folder { .. })) {
+        // AIS already returned every new folder ID. Read once the item copies
+        // arrive, rather than waiting for an empty snapshot before sending them.
+        return Ok(Reply {
+            contents: Vec::new(),
+            refresh,
+            copies,
+            removed: change.removed,
+            created,
+        });
+    }
+    progress(Progress {
+        phase: Phase::Verifying,
+        completed: 0,
+        total: refresh.len(),
+    });
     let mut contents = Vec::new();
     let retries = if moved || !created.is_empty() { 5 } else { 0 };
     for attempt in 0..=retries {
@@ -209,16 +271,9 @@ where
     }
     // Parent metadata must precede its descendants (including new folders).
     sort_contents_parent_first(&mut contents);
-    let copies = change
-        .copies
-        .into_iter()
-        .map(|mut c| {
-            c.parent = resolve(&created, c.parent);
-            c
-        })
-        .collect();
     Ok(Reply {
         contents,
+        refresh,
         copies,
         removed: change.removed,
         created,
@@ -235,12 +290,7 @@ pub(crate) async fn complete_copies(
     mut reply: Reply,
     items: &[InvItem],
 ) -> Result<Reply, String> {
-    let mut folders: Vec<_> = reply
-        .contents
-        .iter()
-        .map(|c| c.folder_id)
-        .chain(items.iter().map(|it| it.parent))
-        .collect();
+    let mut folders: Vec<_> = reply.refresh.iter().copied().chain(items.iter().map(|it| it.parent)).collect();
     folders.sort();
     folders.dedup();
     for attempt in 0..=5 {
@@ -254,6 +304,10 @@ pub(crate) async fn complete_copies(
         let complete = folders
             .iter()
             .all(|id| contents.iter().any(|c| c.folder_id == *id && c.version >= 0))
+            && reply
+                .created
+                .values()
+                .all(|id| contents.iter().flat_map(|c| &c.folders).any(|f| f.id == *id))
             && items.iter().all(|item| {
                 contents
                     .iter()
@@ -1167,15 +1221,9 @@ mod tests {
 
     #[tokio::test]
     async fn nested_folders_and_deferred_copies_use_the_server_assigned_ids() {
-        let doc = llsd_map! { "folders" => Llsd::Array(vec![
-            llsd_map! { "folder_id" => id(1), "version" => 2, "categories" => Llsd::Array(vec![llsd_map! { "category_id" => id(200), "parent_id" => id(1), "name" => "Dossier", "type_default" => -1 }]) },
-            llsd_map! { "folder_id" => id(200), "version" => 1, "categories" => Llsd::Array(vec![llsd_map! { "category_id" => id(201), "parent_id" => id(200), "name" => "Enfant", "type_default" => -1 }]) },
-            llsd_map! { "folder_id" => id(201), "version" => 1 }
-        ]) };
         let (url, task) = server(vec![
             (200, llsd_map! { "_created_categories" => Llsd::Array(vec![id(200).into()]) }),
             (200, llsd_map! { "_created_categories" => Llsd::Array(vec![id(201).into()]) }),
-            (200, doc),
         ])
         .await;
         let result = mutate(
@@ -1211,20 +1259,50 @@ mod tests {
         .await
         .expect("confirmed hierarchy");
         assert_eq!(result.copies[0].parent, id(201));
+        assert!(result.contents.is_empty(), "no empty snapshot is published before item copies");
+        assert_eq!(result.refresh, vec![id(1), id(200), id(201)]);
         let requests = task.await.expect("requests");
+        assert_eq!(requests.len(), 2, "only folder creations, without redundant reads");
         assert!(requests[1].0.contains(&format!("/category/{}?", id(200))));
         assert_eq!(requests[1].1["categories"].at(0)["parent_id"].as_uuid(), id(200));
     }
 
     #[tokio::test]
+    async fn item_copies_are_sent_without_waiting_for_an_empty_http_snapshot() {
+        let reply = mutate(
+            &reqwest::Client::new(),
+            "invalid",
+            "invalid",
+            id(2),
+            Mutation {
+                copies: vec![CopyItem {
+                    item: id(3),
+                    owner: id(2),
+                    parent: id(4),
+                    name: String::new(),
+                }],
+                refresh: vec![id(4)],
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("no HTTP request needed before UDP copies");
+        assert_eq!(reply.copies.len(), 1);
+        assert_eq!(reply.refresh, vec![id(4)]);
+        assert!(reply.contents.is_empty());
+    }
+
+    #[tokio::test]
     async fn folder_copy_waits_for_all_nested_contents_after_a_stale_empty_snapshot() {
         let empty = llsd_map! { "folders" => Llsd::Array(vec![
+            llsd_map! { "folder_id" => id(190), "version" => 1 },
             llsd_map! { "folder_id" => id(200), "version" => 1 },
             llsd_map! { "folder_id" => id(201), "version" => 1 }
         ]) };
         let filled = llsd_map! { "folders" => Llsd::Array(vec![
-            llsd_map! { "folder_id" => id(200), "version" => 2, "items" => Llsd::Array(vec![llsd_map! { "item_id" => id(300), "parent_id" => id(200), "type" => 6 }]) },
-            llsd_map! { "folder_id" => id(201), "version" => 2, "items" => Llsd::Array(vec![llsd_map! { "item_id" => id(301), "parent_id" => id(201), "type" => 7 }]) }
+            llsd_map! { "folder_id" => id(201), "version" => 2, "items" => Llsd::Array(vec![llsd_map! { "item_id" => id(301), "parent_id" => id(201), "type" => 7 }]) },
+            llsd_map! { "folder_id" => id(200), "version" => 2, "categories" => Llsd::Array(vec![llsd_map! { "category_id" => id(201), "parent_id" => id(200) }]), "items" => Llsd::Array(vec![llsd_map! { "item_id" => id(300), "parent_id" => id(200), "type" => 6 }]) },
+            llsd_map! { "folder_id" => id(190), "version" => 2, "categories" => Llsd::Array(vec![llsd_map! { "category_id" => id(200), "parent_id" => id(190) }]) }
         ]) };
         let (url, task) = server(vec![(200, empty), (200, filled)]).await;
         let items = vec![
@@ -1245,6 +1323,7 @@ mod tests {
             id(2),
             Reply {
                 contents: Vec::new(),
+                refresh: vec![id(190), id(200), id(201)],
                 copies: Vec::new(),
                 removed: Vec::new(),
                 created: HashMap::from([(id(100), id(200)), (id(101), id(201))]),
@@ -1254,6 +1333,10 @@ mod tests {
         .await
         .expect("all nested contents confirmed");
         assert!(reply.copies.is_empty());
+        assert_eq!(
+            reply.contents.iter().map(|c| c.folder_id).collect::<Vec<_>>(),
+            vec![id(190), id(200), id(201)]
+        );
         assert_eq!(reply.created[&id(101)], id(201));
         assert!(items.iter().all(|item| {
             reply
@@ -1307,6 +1390,7 @@ mod tests {
                 id(2),
                 Reply {
                     contents: Vec::new(),
+                    refresh: Vec::new(),
                     copies: Vec::new(),
                     removed: Vec::new(),
                     created: HashMap::new(),

@@ -800,7 +800,7 @@ impl App {
                     .collect();
                 self.world.inventory.add_items(items);
                 let change = aurora_net::inventory::operations::Mutation {
-                    refresh: reply.contents.iter().map(|c| c.folder_id).collect(),
+                    refresh: reply.refresh.clone(),
                     ..Default::default()
                 };
                 let result = crate::world::inventory::actions::demo_mutate(&mut self.world.inventory, self.world.agent_id, change).map(
@@ -1134,6 +1134,10 @@ impl App {
         }
         if let NetEvent::InventoryOperationFailed(reason) = ev {
             self.inventory_ui.message = reason;
+            return;
+        }
+        if let NetEvent::InventoryProgress { request, progress } = ev {
+            self.inventory_ui.update_mutation_progress(request, progress);
             return;
         }
         if let NetEvent::InventoryEdited { request, result } = ev {

@@ -18,6 +18,7 @@ mod embedded;
 mod move_to;
 pub use document::document_demo_events;
 pub(crate) mod permissions;
+mod progress;
 mod properties;
 pub mod thumbnail;
 mod view;
@@ -262,6 +263,8 @@ pub struct InventoryUi {
     pub merchant_requested: bool,
     pub merchant: bool,
     pub pending: Option<Uuid>,
+    progress: Option<progress::State>,
+    notice: Option<(String, std::time::Instant)>,
     pub message: String,
     pub dialog: Option<EditDialog>,
     move_to: Option<move_to::MoveTo>,
@@ -807,10 +810,16 @@ fn status(
     actions: &mut Vec<InvAction>,
     filtered: bool,
 ) {
-    let (message, color) = if !st.message.is_empty() {
+    let now = std::time::Instant::now();
+    let pending_message = st.pending.is_some().then(|| st.pending_status(now));
+    let (message, color) = if let Some(message) = &pending_message {
+        (message.as_str(), p.ink)
+    } else if !st.message.is_empty() {
         (st.message.as_str(), p.warn)
-    } else if st.pending.is_some() {
-        (aurora_i18n::tr!("ui-inventory-changing"), p.muted)
+    } else if let Some((message, finished)) = &st.notice
+        && now.duration_since(*finished) < progress::NOTICE_DURATION
+    {
+        (message.as_str(), p.success)
     } else if st.fetch_all {
         (aurora_i18n::tr!("ui-inventory-search-loading-folders"), p.muted)
     } else {
@@ -849,6 +858,9 @@ fn status(
                 .color(p.muted),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if st.pending.is_some() {
+                ui.add(egui::Spinner::new().size(14.0).color(p.violet));
+            }
             let label = if message.is_empty() { &count } else { &message };
             ui.add_sized(
                 [ui.available_width(), 20.0],
@@ -1298,6 +1310,8 @@ pub fn show(
         w.state.clipboard.clone_from(&st.clipboard);
         w.state.cut = st.cut;
         w.state.pending = st.pending;
+        w.state.progress.clone_from(&st.progress);
+        w.state.notice.clone_from(&st.notice);
         w.state.merchant = st.merchant;
         w.state.playing = st.playing;
         let before = (w.state.clipboard.clone(), w.state.cut);

@@ -134,7 +134,7 @@ impl App {
                     change.operations.len(),
                     change.copies.len()
                 );
-                self.inventory_ui.pending = Some(request);
+                self.inventory_ui.begin_mutation(request, &change);
                 self.inventory_ui.pending_refresh.clone_from(&change.refresh);
                 self.inventory_ui.created_selection = change.operations.iter().find_map(|op| {
                     if let aurora_net::inventory::operations::Operation::Folder { id, .. } = op {
@@ -352,7 +352,7 @@ impl App {
             }
             result => result,
         };
-        self.inventory_ui.pending = None;
+        self.inventory_ui.finish_mutation(result.is_ok());
         self.finish_inventory_image(request, result.as_ref().err().cloned());
         match result {
             Ok(reply) => {

@@ -957,8 +957,13 @@ hors ligne ; les fichiers et photos chargés en démo restent hors ligne.
   ouverture du dossier de destination ; capture après 800. Aucune activation
   de la fenêtre native ni lecture du presse-papiers du système pendant ces
   scénarios automatiques.
-  En ligne, la copie doit rester « Modification en cours » jusqu’à confirmation
-  de tous les items ; une copie non confirmée affiche une erreur demandant de
+  `clipboard-progress` simule uniquement les étapes visibles d’une opération
+  lente : modification aux images 650–749, copie avec compteur 2/3 aux images
+  800–849, vérification aux images 850–919, puis confirmation de fin dès 920.
+  Capturer 700,820,890,940 ; l’animation, le compteur et le temps écoulé doivent
+  rester visibles dans la ligne de statut, sans agrandir la fenêtre.
+  En ligne, le statut doit montrer les étapes, le compteur d’items confirmés et
+  le temps écoulé, puis « Modification terminée » ; une copie non confirmée affiche une erreur demandant de
   recharger la destination. Tester des dossiers avec plusieurs niveaux, attendre
   la fin puis recharger les dossiers et vérifier les originaux et les copies.
 - `move-menu` : menu d’un élément avec « Déplacer vers… » ; `move-item`,

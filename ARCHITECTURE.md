@@ -218,6 +218,15 @@ inverse ou sur plusieurs lots. Les anciennes réponses d’inventaire et
 les métadonnées de versions inférieures n’écrasent pas les contenus confirmés
 dans `world/inventory.rs`.
 
+`session/inventory_updates.rs` traite aussi les confirmations
+`BulkUpdateInventory` sérialisées en LLSD dans `LargeGenericMessage` de la file
+HTTP, ainsi que leur transport UDP. Les copies suivies partagent une seule
+relecture finale ; leurs dossiers ne sont pas relus à chaque accusé et la
+création AIS ne déclenche plus de relecture vide avant l’envoi des copies.
+Les événements `InventoryProgress` transmettent l’étape et les compteurs réels
+à `ui/inventory/progress.rs`. La ligne de statut commune aux fenêtres indique
+l’activité, le temps écoulé et la fin de l’opération sans modifier leur taille.
+
 ### Surfaces des fenêtres
 
 `ui/widgets/workspace.rs` partage la navigation, les panneaux de détails, les
