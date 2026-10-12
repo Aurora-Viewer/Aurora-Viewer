@@ -58,7 +58,12 @@ Dans le code, on utilise toujours la `Palette` résolue (`p.violet`, `p.ink`…)
   écrits à la main. Les barres gardent la couleur `bar` comme teinte
   (`widgets::finish_bar_glass`) ; la mini-carte garde l'opacité de Firestorm
   avec la bordure et l'ombre des fenêtres.
-  Les dégradés sont réservés aux éléments de marque (fond de connexion, aurores).
+  Les dégradés sont réservés aux éléments de marque (fond de connexion,
+  aurores, remplissage de la barre de progression).
+- **Chargement et téléportation.** Même composition que la connexion : le
+  logo et sa lumière au-dessus d'une carte au style des fenêtres, qui donne
+  le titre, la progression en chiffres, la destination avec son repère, une
+  barre de progression plate et l'étape en cours (`ui/loading.rs`).
 - **Arrondis discrets.** Design plat, angles presque carrés. Boutons :
   rayon 5 ; fenêtres, cartes et pastilles de la barre d'outils : rayon 3,
   avec des coins proches de ceux de la construction, y compris au repli.

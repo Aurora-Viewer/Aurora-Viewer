@@ -1,10 +1,11 @@
 //! Loading (after login) and teleport screens: one shared "splash" (logo
-//! with a soft light, title, subtitle, gradient progress bar, detail line)
-//! over the last view blurred, or the aurora background.
+//! with a soft light above a card with the windows' surface: title, place,
+//! flat gradient progress bar, detail line) over the last view blurred, or
+//! the aurora background.
 
 use crate::theme::Palette;
 use egui::epaint::{Mesh, Vertex, WHITE_UV};
-use egui::{Color32, Pos2, Rect, RichText, Shape, Vec2};
+use egui::{Color32, Pos2, Rect, Shape, Vec2};
 
 pub struct LoadingInfo<'a> {
     pub stage: &'a str,
@@ -29,11 +30,6 @@ pub fn draw_backdrop(ui: &egui::Ui, p: &Palette, backdrop: Option<&super::backdr
     }
 }
 
-fn additive(c: Color32, k: f32) -> Color32 {
-    let k = k.clamp(0.0, 1.0);
-    Color32::from_rgba_premultiplied((c.r() as f32 * k) as u8, (c.g() as f32 * k) as u8, (c.b() as f32 * k) as u8, 0)
-}
-
 /// Horizontal gradient bar (violet → teal) with rounded look and a glow.
 fn gradient_rect(painter: &egui::Painter, r: Rect, a: Color32, b: Color32) {
     let mut m = Mesh::default();
@@ -47,11 +43,11 @@ fn gradient_rect(painter: &egui::Painter, r: Rect, a: Color32, b: Color32) {
     painter.add(Shape::mesh(m));
 }
 
-/// Progress bar (track, gradient fill, glow). `fraction` None = moving
-/// segment (unknown duration).
+/// Progress bar: a flat track with the brand gradient as fill. `fraction`
+/// None = moving segment (unknown duration).
 pub fn paint_progress(painter: &egui::Painter, p: &Palette, r: Rect, fraction: Option<f32>, t: f32, alpha: f32) {
     let a = alpha.clamp(0.0, 1.0);
-    painter.rect_filled(r, r.height() * 0.5, Color32::from_white_alpha((22.0 * a) as u8));
+    painter.rect_filled(r, 2.0, p.field.gamma_multiply(a));
     let fill = match fraction {
         Some(f) => Rect::from_min_size(r.min, Vec2::new(r.width() * f.clamp(0.0, 1.0), r.height())),
         None => {
@@ -63,48 +59,47 @@ pub fn paint_progress(painter: &egui::Painter, p: &Palette, r: Rect, fraction: O
     if fill.width() < 1.0 {
         return;
     }
-    // glow under the fill
-    painter.rect_filled(fill.expand2(Vec2::new(4.0, 5.0)), 8.0, additive(p.violet, 0.22 * a));
-    let (c0, c1) = (p.violet.gamma_multiply(a), p.teal.gamma_multiply(a));
-    // rounded ends: caps + gradient body
-    let rad = r.height() * 0.5;
-    painter.circle_filled(Pos2::new(fill.left() + rad, fill.center().y), rad, c0);
-    painter.circle_filled(Pos2::new(fill.right() - rad, fill.center().y), rad, c1);
-    if fill.width() > r.height() {
-        gradient_rect(painter, fill.shrink2(Vec2::new(rad, 0.0)), c0, c1);
-    }
+    gradient_rect(painter, fill, p.violet.gamma_multiply(a), p.teal.gamma_multiply(a));
 }
 
 /// Progress bar laid out in a `Ui` (login card).
 pub fn progress_bar(ui: &mut egui::Ui, p: &Palette, width: f32, fraction: Option<f32>, t: f32) {
-    let (r, _) = ui.allocate_exact_size(Vec2::new(width, 6.0), egui::Sense::hover());
+    let (r, _) = ui.allocate_exact_size(Vec2::new(width, 4.0), egui::Sense::hover());
     paint_progress(ui.painter(), p, r, fraction, t, 1.0);
     ui.ctx().request_repaint();
 }
 
-/// The shared splash, centered in `screen`. Returns the rect under the
-/// detail line (for an optional button).
+const CARD_WIDTH: f32 = 460.0;
+const CARD_HEIGHT: f32 = 124.0;
+const CARD_MARGIN: f32 = 20.0;
+
+/// The shared splash, centered in `screen`: the brand block of the login
+/// screen (logo and its light) above a card with the windows' surface, which
+/// names what is loading, where, and how far it is. Painted by hand so the
+/// whole splash fades with `alpha`. Returns the point under the card (for
+/// an optional button).
 #[allow(clippy::too_many_arguments)]
 fn splash(
+    ctx: &egui::Context,
     painter: &egui::Painter,
     p: &Palette,
     screen: Rect,
     logo: Option<&egui::TextureHandle>,
     title: &str,
-    subtitle: &str,
+    place: &str,
     fraction: Option<f32>,
     detail: &str,
     t: f32,
     alpha: f32,
 ) -> Pos2 {
     let a = alpha.clamp(0.0, 1.0);
-    let c = screen.center() - Vec2::new(0.0, 30.0);
+    let c = screen.center();
     if let Some(l) = logo {
-        let lc = c - Vec2::new(0.0, 80.0);
+        let lc = c - Vec2::new(0.0, 112.0);
         // breathing light behind the logo
         let breathe = 0.85 + 0.15 * (t * 1.4).sin();
-        super::aurora_bg::radial_glow(painter, lc, 160.0, p.violet, 0.45 * breathe * a);
-        let lr = Rect::from_center_size(lc, Vec2::splat(140.0));
+        super::aurora_bg::radial_glow(painter, lc, 150.0, p.violet, 0.42 * breathe * a);
+        let lr = Rect::from_center_size(lc, Vec2::splat(128.0));
         painter.image(
             l.id(),
             lr,
@@ -112,34 +107,78 @@ fn splash(
             Color32::WHITE.gamma_multiply(a),
         );
     }
-    painter.text(
-        c + Vec2::new(0.0, 22.0),
-        egui::Align2::CENTER_CENTER,
+    let width = CARD_WIDTH.min(screen.width() - 32.0);
+    let card = Rect::from_center_size(c + Vec2::new(0.0, 34.0), Vec2::new(width, CARD_HEIGHT));
+    let visuals = &ctx.global_style().visuals;
+    let radius = visuals.window_corner_radius;
+    let mut shadow = visuals.window_shadow;
+    shadow.color = shadow.color.gamma_multiply(a);
+    painter.add(shadow.as_shape(card, radius));
+    let fill = Color32::from_rgba_unmultiplied(p.panel.r(), p.panel.g(), p.panel.b(), p.panel_alpha);
+    painter.rect_filled(card, radius, fill.gamma_multiply(a));
+    painter.rect_stroke(
+        card,
+        radius,
+        egui::Stroke::new(1.0, p.muted_dim.gamma_multiply(0.6 * a)),
+        egui::StrokeKind::Inside,
+    );
+    let inner = card.shrink(CARD_MARGIN);
+    let text = painter.with_clip_rect(inner.expand(2.0));
+    // title, with the progress in figures at the right
+    let mut title_right = inner.right();
+    if let Some(f) = fraction {
+        let percent = aurora_i18n::number_text(&format!("{:.0}", f.clamp(0.0, 1.0) * 100.0));
+        let r = text.text(
+            Pos2::new(inner.right(), inner.top() + 11.0),
+            egui::Align2::RIGHT_CENTER,
+            format!("{percent} %"),
+            egui::FontId::proportional(13.0),
+            p.muted.gamma_multiply(a),
+        );
+        title_right = r.left() - 10.0;
+    }
+    let clip = Rect::from_min_max(card.left_top(), Pos2::new(title_right, card.bottom()));
+    painter.with_clip_rect(clip).text(
+        Pos2::new(inner.left(), inner.top() + 11.0),
+        egui::Align2::LEFT_CENTER,
         title,
-        egui::FontId::proportional(26.0),
+        egui::FontId::proportional(17.0),
         p.ink.gamma_multiply(a),
     );
-    if !subtitle.is_empty() {
-        painter.text(
-            c + Vec2::new(0.0, 52.0),
-            egui::Align2::CENTER_CENTER,
-            subtitle,
-            egui::FontId::proportional(14.0),
-            p.violet_pale.gamma_multiply(a),
+    // the place, with its pin
+    let line = inner.top() + 36.0;
+    let mut x = inner.left();
+    if !place.is_empty() {
+        if let Some(pin) = super::icons::global("map-pin-filled") {
+            let r = Rect::from_center_size(Pos2::new(x + 7.0, line), Vec2::splat(14.0));
+            painter.image(
+                pin.id(),
+                r,
+                Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                p.violet_light.gamma_multiply(a),
+            );
+            x += 20.0;
+        }
+        text.text(
+            Pos2::new(x, line),
+            egui::Align2::LEFT_CENTER,
+            place,
+            egui::FontId::proportional(13.0),
+            p.violet_light.gamma_multiply(a),
         );
     }
-    let bar = Rect::from_center_size(c + Vec2::new(0.0, 82.0), Vec2::new(380.0, 6.0));
+    let bar = Rect::from_min_size(Pos2::new(inner.left(), inner.top() + 56.0), Vec2::new(inner.width(), 4.0));
     paint_progress(painter, p, bar, fraction, t, a);
     if !detail.is_empty() {
-        painter.text(
-            c + Vec2::new(0.0, 104.0),
-            egui::Align2::CENTER_CENTER,
+        text.text(
+            Pos2::new(inner.left(), bar.bottom() + 15.0),
+            egui::Align2::LEFT_CENTER,
             detail,
             egui::FontId::proportional(12.0),
             p.muted.gamma_multiply(a),
         );
     }
-    c + Vec2::new(0.0, 126.0)
+    Pos2::new(c.x, card.bottom() + 14.0)
 }
 
 /// Loading screen between login and the first rendered frames.
@@ -173,6 +212,7 @@ pub fn show(
         )
     };
     let below = splash(
+        &ctx,
         &painter,
         p,
         screen,
@@ -188,9 +228,12 @@ pub fn show(
     let mut cancel = false;
     if info.elapsed > 20.0 {
         egui::Area::new(egui::Id::new("loading_cancel"))
-            .fixed_pos(below - Vec2::new(30.0, 0.0))
+            .pivot(egui::Align2::CENTER_TOP)
+            .fixed_pos(below)
             .show(&ctx, |ui| {
-                if ui.link(RichText::new(aurora_i18n::tr!("common-cancel")).color(p.muted)).clicked() {
+                let label = aurora_i18n::tr!("common-cancel");
+                let kind = super::widgets::ActionKind::Flat;
+                if super::widgets::action_button(ui, p, "x", label, kind, Vec2::new(0.0, 28.0)).clicked() {
                     cancel = true;
                 }
             });
@@ -227,7 +270,7 @@ pub fn teleport_overlay(
             if !backdrop.is_some_and(|b| b.paint(&painter, p, r, a)) {
                 super::aurora_bg::paint(&painter, p, r, t, a);
             }
-            splash(&painter, p, r, logo, title, dest, fraction, detail, t, a);
+            splash(ctx, &painter, p, r, logo, title, dest, fraction, detail, t, a);
         });
     ctx.request_repaint();
 }
