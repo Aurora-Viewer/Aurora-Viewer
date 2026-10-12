@@ -353,6 +353,11 @@ impl Anchors {
     pub fn forget(&mut self, idx: usize) {
         self.members.remove(idx);
     }
+
+    /// The objects placed from an anchor (as the last frame left them).
+    pub fn members(&self) -> &[usize] {
+        self.members.as_slice()
+    }
 }
 
 impl Scene {

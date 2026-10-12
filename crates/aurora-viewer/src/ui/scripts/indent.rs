@@ -1,6 +1,8 @@
 //! LLTextEditor::autoIndent, removeCharOrTab and handleSpecialKey (Firestorm
 //! indra/llui/lltexteditor.cpp, originally LGPL 2.1): four-column tab stops.
 //! Insert spaces for new tabs; preserve imported indentation and pasted text.
+//! Closing braces follow unindentLineBeforeCloseBrace, but match their opener
+//! instead of blindly removing one stop (also supports imported literal tabs).
 
 use egui::{
     Event, Id, TextBuffer,
@@ -38,6 +40,7 @@ struct Buffer<'a> {
     source: &'a mut String,
     enter: Option<&'a str>,
     tab: Option<&'a str>,
+    close: Option<&'a str>,
 }
 
 impl TextBuffer for Buffer<'_> {
@@ -59,6 +62,29 @@ impl TextBuffer for Buffer<'_> {
             self.source.insert_text(&insertion, at)
         } else {
             self.source.insert_text(text, at)
+        }
+    }
+    fn insert_text_at(&mut self, cursor: &mut CCursor, text: &str, limit: usize) {
+        if Some(text) == self.close {
+            let at = self.source.byte_index_from_char_index(cursor.index).0;
+            let line = line_before(self.source, cursor.index);
+            let start = at - line.len();
+            let whitespace = line.chars().all(|c| c == ' ' || c == '\t');
+            cursor.index += self.source.insert_text("}", cursor.index);
+            if whitespace && let Some(open) = super::syntax::matching_open_brace(self.source, at) {
+                let opener = self.source[..open].rsplit('\n').next().unwrap_or_default();
+                let indent = &opener[..opener.find(|c| c != ' ' && c != '\t').unwrap_or(opener.len())];
+                if column(&self.source[start..at]) > column(indent) {
+                    let indent = indent.to_owned();
+                    let removed = self.source[start..at].chars().count();
+                    self.source.replace_range(start..at, &indent);
+                    cursor.index = CharIndex(cursor.index.0 - removed + indent.chars().count());
+                }
+            }
+        } else {
+            let cutoff = limit.saturating_sub(self.source.chars().count());
+            let text = text.char_indices().nth(cutoff).map_or(text, |(i, _)| &text[..i]);
+            cursor.index += self.insert_text(text, cursor.index);
         }
     }
     fn delete_char_range(&mut self, range: Range<CharIndex>) {
@@ -83,6 +109,7 @@ impl TextBuffer for Buffer<'_> {
 }
 
 pub(super) fn edit<R>(ui: &mut egui::Ui, id: Id, source: &mut String, show: impl FnOnce(&mut egui::Ui, &mut dyn TextBuffer) -> R) -> R {
+    super::editing::keyboard(ui, id, source);
     let active = ui.memory(|m| m.has_focus(id))
         && ui.input(|i| {
             i.events.iter().any(|event| {
@@ -106,16 +133,21 @@ pub(super) fn edit<R>(ui: &mut egui::Ui, id: Id, source: &mut String, show: impl
     // undo then include the whole insertion atomically. Real paste is untouched.
     let tokens = ui.input(|i| i.events.iter().any(|e| insertion(e).is_some())).then(|| {
         let id = uuid::Uuid::new_v4();
-        (format!("\0aurora-return-{id}\0"), format!("\0aurora-tab-{id}\0"))
+        [
+            format!("\0aurora-return-{id}\0"),
+            format!("\0aurora-tab-{id}\0"),
+            format!("\0aurora-close-{id}\0"),
+        ]
     });
     let mut keys = ui.input_mut(|i| {
         i.events
             .iter_mut()
             .filter_map(|event| {
-                let (enter, tab) = tokens.as_ref()?;
+                let [enter, tab, close] = tokens.as_ref()?;
                 let token = match insertion(event)? {
                     Insertion::Newline => enter,
                     Insertion::Tab => tab,
+                    Insertion::CloseBrace => close,
                 };
                 Some(std::mem::replace(event, Event::Paste(token.clone())))
             })
@@ -126,13 +158,14 @@ pub(super) fn edit<R>(ui: &mut egui::Ui, id: Id, source: &mut String, show: impl
         ui,
         &mut Buffer {
             source,
-            enter: tokens.as_ref().map(|t| t.0.as_str()),
-            tab: tokens.as_ref().map(|t| t.1.as_str()),
+            enter: tokens.as_ref().map(|t| t[0].as_str()),
+            tab: tokens.as_ref().map(|t| t[1].as_str()),
+            close: tokens.as_ref().map(|t| t[2].as_str()),
         },
     );
     ui.input_mut(|i| {
         for event in &mut i.events {
-            if matches!(event, Event::Paste(text) if tokens.as_ref().is_some_and(|(enter, tab)| text == enter || text == tab))
+            if matches!(event, Event::Paste(text) if tokens.as_ref().is_some_and(|tokens| tokens.contains(text)))
                 && let Some(key) = keys.next()
             {
                 *event = key;
@@ -145,10 +178,12 @@ pub(super) fn edit<R>(ui: &mut egui::Ui, id: Id, source: &mut String, show: impl
 enum Insertion {
     Newline,
     Tab,
+    CloseBrace,
 }
 
 fn insertion(event: &Event) -> Option<Insertion> {
     match event {
+        Event::Text(text) if text == "}" => Some(Insertion::CloseBrace),
         Event::Key {
             key,
             pressed: true,
@@ -212,6 +247,102 @@ mod tests {
         // Let code_editor register its focus filter before sending Tab, as it
         // does on the real mouse-focus frame in the viewer.
         frame(ctx, source, vec![], 0.01);
+    }
+
+    #[test]
+    fn real_keyboard_multiline_tab_comments_and_undo_preserve_the_selection() {
+        let ctx = egui::Context::default();
+        let mut source = "éあ\n  second\nthird".to_owned();
+        setup(&ctx, &mut source, 0, 12);
+        frame(&ctx, &mut source, vec![key(Key::Tab, Modifiers::NONE)], 0.1);
+        assert_eq!(source, "    éあ\n      second\nthird");
+        frame(&ctx, &mut source, vec![key(Key::Tab, Modifiers::SHIFT)], 0.2);
+        assert_eq!(source, "éあ\n  second\nthird");
+        frame(&ctx, &mut source, vec![key(Key::K, Modifiers::COMMAND)], 0.3);
+        assert_eq!(source, "// éあ\n  // second\nthird");
+        frame(&ctx, &mut source, vec![key(Key::K, Modifiers::COMMAND)], 0.4);
+        assert_eq!(source, "éあ\n  second\nthird");
+        frame(&ctx, &mut source, vec![key(Key::K, Modifiers::COMMAND | Modifiers::SHIFT)], 0.5);
+        assert_eq!(source, "/*éあ\n  second\n*/third");
+        frame(&ctx, &mut source, vec![key(Key::Z, Modifiers::COMMAND)], 0.6);
+        assert_eq!(source, "éあ\n  second\nthird");
+    }
+
+    #[test]
+    fn commands_after_native_selection_changes_wait_for_the_actual_cursor() {
+        let ctx = egui::Context::default();
+        let mut source = "first\nsecond\n".into();
+        setup(&ctx, &mut source, 0, 0);
+        frame(
+            &ctx,
+            &mut source,
+            vec![key(Key::A, Modifiers::COMMAND), key(Key::Tab, Modifiers::NONE)],
+            0.1,
+        );
+        frame(&ctx, &mut source, vec![], 0.2);
+        assert_eq!(source, "    first\n    second\n");
+    }
+
+    #[test]
+    fn close_brace_matches_nested_openers_tabs_and_unicode_and_undo_is_atomic() {
+        for (original, expected) in [
+            ("default {\n    event() {\n        ", "default {\n    event() {\n    }"),
+            ("\t{\r\n\t\t\t", "\t{\r\n\t}"),
+            ("   if (TRUE) {\n        ", "   if (TRUE) {\n   }"),
+            (
+                "// éあ\ndefault {\n    llSay(0, \"{\\\"}\"); // {\n    /* { } */\n        ",
+                "// éあ\ndefault {\n    llSay(0, \"{\\\"}\"); // {\n    /* { } */\n}",
+            ),
+        ] {
+            let ctx = egui::Context::default();
+            let mut source = original.to_owned();
+            let end = source.chars().count();
+            setup(&ctx, &mut source, end, end);
+            let cursor = frame(&ctx, &mut source, vec![Event::Text("}".into()), Event::Text(" // fin".into())], 0.1);
+            assert_eq!(source, format!("{expected} // fin"));
+            assert_eq!(cursor.primary.index.0, source.chars().count());
+            frame(&ctx, &mut source, vec![key(Key::Z, Modifiers::COMMAND)], 0.2);
+            assert_eq!(source, original);
+            frame(&ctx, &mut source, vec![key(Key::Y, Modifiers::COMMAND)], 0.3);
+            assert_eq!(source, format!("{expected} // fin"));
+        }
+    }
+
+    #[test]
+    fn close_brace_keeps_inline_code_paste_unmatched_and_non_code_contexts() {
+        for original in ["    ", "{ code ", "    {\n  ", "{\n    /*\n        ", "{\n    \"line\n        "] {
+            let ctx = egui::Context::default();
+            let mut source = original.to_owned();
+            let end = source.chars().count();
+            setup(&ctx, &mut source, end, end);
+            frame(&ctx, &mut source, vec![Event::Text("}".into())], 0.1);
+            assert_eq!(source, format!("{original}}}"));
+        }
+        let ctx = egui::Context::default();
+        let mut source = "{\n    ".to_owned();
+        setup(&ctx, &mut source, 6, 6);
+        frame(&ctx, &mut source, vec![Event::Paste("}".into())], 0.1);
+        assert_eq!(source, "{\n    }");
+    }
+
+    #[test]
+    fn enter_tab_selection_and_multiple_closers_use_the_current_buffer() {
+        let ctx = egui::Context::default();
+        let mut source = "{\n    {\n        selected".to_owned();
+        setup(&ctx, &mut source, 16, 24);
+        let cursor = frame(
+            &ctx,
+            &mut source,
+            vec![
+                Event::Text("}".into()),
+                key(Key::Enter, Modifiers::NONE),
+                key(Key::Tab, Modifiers::NONE),
+                Event::Text("}".into()),
+            ],
+            0.1,
+        );
+        assert_eq!(source, "{\n    {\n    }\n}");
+        assert_eq!(cursor.primary.index.0, source.chars().count());
     }
 
     #[test]

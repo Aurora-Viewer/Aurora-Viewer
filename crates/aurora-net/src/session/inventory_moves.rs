@@ -27,16 +27,28 @@ pub(super) async fn submit(tx: mpsc::UnboundedSender<Request>, movement: Invento
 
 impl Session<'_> {
     pub(super) fn inventory_move(&mut self, request: Request) {
+        let result = self.queue_inventory_move(request.movement);
+        let _ = request.reply.send(result);
+    }
+
+    pub(super) fn queue_inventory_move(&mut self, movement: InventoryMove) -> Result<(), String> {
         let agent = self.agent_id();
         let session = self.session_id();
-        let result = match self.main.and_then(|addr| self.sims.get_mut(&addr)) {
+        match self.main.and_then(|addr| self.sims.get_mut(&addr)) {
             Some(sim) if self.logout_started.is_none() => {
-                send(&mut sim.circuit, &self.sock, &self.sh.stats, agent, session, request.movement);
+                send(&mut sim.circuit, &self.sock, &self.sh.stats, agent, session, movement);
+                super::emit(
+                    self.sh,
+                    super::NetEvent::InventoryMoved {
+                        id: movement.id,
+                        parent: movement.parent,
+                        folder: movement.folder,
+                    },
+                );
                 Ok(())
             }
             _ => Err(aurora_i18n::tr!("inventory-move-connection-unavailable").into()),
-        };
-        let _ = request.reply.send(result);
+        }
     }
 }
 

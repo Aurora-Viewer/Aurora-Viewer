@@ -7,6 +7,286 @@ use egui::{
 };
 use std::ops::Range;
 
+#[derive(Clone, Copy)]
+pub(super) enum SelectionCommand {
+    Indent,
+    Outdent,
+    LineComment,
+    BlockComment,
+}
+
+struct Replacement {
+    bytes: Range<usize>,
+    text: String,
+}
+
+fn selected_lines(source: &str, range: Range<usize>) -> Range<usize> {
+    let start = source[..range.start].rfind('\n').map_or(0, |n| n + 1);
+    let last = if range.end > range.start {
+        source[..range.end].char_indices().next_back().map_or(range.start, |(i, _)| i)
+    } else {
+        range.end
+    };
+    let end = source[last..].find('\n').map_or(source.len(), |n| last + n);
+    start..end
+}
+
+fn replacements(source: &str, selection: Range<usize>, command: SelectionCommand) -> Option<Vec<Replacement>> {
+    let lines = selected_lines(source, selection.clone());
+    if matches!(command, SelectionCommand::BlockComment) {
+        let empty = selection.is_empty();
+        let at = selection.start;
+        let mut range = if empty { lines } else { selection };
+        if let Some(comment) = super::syntax::block_comment_at(source, if empty { at } else { range.start })
+            && (empty || range.end <= comment.end)
+        {
+            range = comment;
+        }
+        let text = &source[range.clone()];
+        let trimmed = text.trim();
+        if trimmed.starts_with("/*") && trimmed.ends_with("*/") && trimmed.len() >= 4 {
+            let start = range.start + text.len() - text.trim_start().len();
+            let end = range.end - (text.len() - text.trim_end().len());
+            return Some(vec![
+                Replacement {
+                    bytes: start..start + 2,
+                    text: String::new(),
+                },
+                Replacement {
+                    bytes: end - 2..end,
+                    text: String::new(),
+                },
+            ]);
+        }
+        if range.start >= 2 && source[..range.start].ends_with("/*") && source[range.end..].starts_with("*/") {
+            range.start -= 2;
+            range.end += 2;
+            return Some(vec![
+                Replacement {
+                    bytes: range.start..range.start + 2,
+                    text: String::new(),
+                },
+                Replacement {
+                    bytes: range.end - 2..range.end,
+                    text: String::new(),
+                },
+            ]);
+        }
+        // LSL block comments do not nest. Refuse an early terminator rather
+        // than making the rest of the selected code unexpectedly executable.
+        if text.contains("/*") || text.contains("*/") {
+            return None;
+        }
+        return Some(vec![
+            Replacement {
+                bytes: range.start..range.start,
+                text: "/*".into(),
+            },
+            Replacement {
+                bytes: range.end..range.end,
+                text: "*/".into(),
+            },
+        ]);
+    }
+    let mut offset = lines.start;
+    let line_ranges: Vec<_> = source[lines]
+        .split('\n')
+        .map(|line| {
+            let start = offset;
+            offset += line.len() + 1;
+            (start, line)
+        })
+        .collect();
+    let uncomment = line_ranges
+        .iter()
+        .filter(|(_, l)| !l.trim().is_empty())
+        .all(|(_, l)| l.trim_start().starts_with("//"));
+    let mut edits = Vec::new();
+    for (start, line) in line_ranges {
+        let indent = line.bytes().take_while(|b| matches!(b, b' ' | b'\t')).count();
+        match command {
+            SelectionCommand::Indent => edits.push(Replacement {
+                bytes: start..start,
+                text: "    ".into(),
+            }),
+            SelectionCommand::Outdent => {
+                let count = if line.starts_with('\t') {
+                    1
+                } else {
+                    line.bytes().take_while(|b| *b == b' ').take(4).count()
+                };
+                if count != 0 {
+                    edits.push(Replacement {
+                        bytes: start..start + count,
+                        text: String::new(),
+                    });
+                }
+            }
+            SelectionCommand::LineComment => {
+                if line.trim().is_empty() && !selection.is_empty() {
+                    continue;
+                }
+                let at = start + indent;
+                if uncomment && line[indent..].starts_with("//") {
+                    let count = if line[indent..].starts_with("// ") { 3 } else { 2 };
+                    edits.push(Replacement {
+                        bytes: at..at + count,
+                        text: String::new(),
+                    });
+                } else {
+                    edits.push(Replacement {
+                        bytes: at..at,
+                        text: "// ".into(),
+                    });
+                }
+            }
+            SelectionCommand::BlockComment => unreachable!("handled above"),
+        }
+    }
+    Some(edits)
+}
+
+/// One history entry for the whole operation, including its final selection.
+/// Keeping both cursors also preserves backward selections and repeated Tab.
+pub(super) fn selection_command(ctx: &egui::Context, id: Id, source: &mut String, command: SelectionCommand) -> bool {
+    let before = cursor(ctx, id);
+    let selection = bytes(source, before);
+    let Some(edits) = replacements(source, selection.clone(), command) else {
+        return false;
+    };
+    if edits.is_empty() {
+        return true;
+    }
+    let mut updated = source.clone();
+    for edit in edits.iter().rev() {
+        updated.replace_range(edit.bytes.clone(), &edit.text);
+    }
+    if updated.len() > aurora_net::scripts::MAX_SOURCE {
+        return false;
+    }
+    let map = |mut cursor: CCursor| {
+        let at = source.byte_index_from_char_index(cursor.index).0;
+        let mut delta = 0_isize;
+        for edit in &edits {
+            let start = source[..edit.bytes.start].chars().count();
+            let removed = source[edit.bytes.clone()].chars().count();
+            let added = edit.text.chars().count();
+            if at >= edit.bytes.end {
+                delta += added as isize - removed as isize;
+            } else if at >= edit.bytes.start {
+                cursor.index = CharIndex(start + added);
+                break;
+            }
+        }
+        cursor.index = CharIndex(cursor.index.0.saturating_add_signed(delta));
+        cursor
+    };
+    let mut after = CCursorRange {
+        primary: map(before.primary),
+        secondary: map(before.secondary),
+        ..before
+    };
+    if !selection.is_empty() && matches!(command, SelectionCommand::BlockComment) && edits.first().is_some_and(|e| e.text == "/*") {
+        // Keep the delimiters selected so repeating the shortcut removes the
+        // same wrapper, also when the selection was made backwards.
+        if before.primary.index < before.secondary.index {
+            after.primary.index = before.primary.index;
+        } else {
+            after.secondary.index = before.secondary.index;
+        }
+    }
+    let mut state = egui::TextEdit::load_state(ctx, id).unwrap_or_default();
+    let mut undo = state.undoer();
+    undo.add_undo(&(before, source.clone()));
+    *source = updated;
+    state.cursor.set_char_range(Some(after));
+    undo.add_undo(&(after, source.clone()));
+    state.set_undoer(undo);
+    state.store(ctx, id);
+    ctx.data_mut(|d| d.insert_temp(Id::new((id, "history_dirty")), true));
+    ctx.memory_mut(|m| m.request_focus(id));
+    true
+}
+
+/// Commands run at an input boundary. If native cursor movement / typing came
+/// first, defer the suffix to the next frame so it uses egui's actual cursor.
+pub(super) fn keyboard(ui: &mut egui::Ui, id: Id, source: &mut String) {
+    if !ui.memory(|m| m.has_focus(id)) {
+        return;
+    }
+    let queue_id = id.with("selection_keys");
+    let mut events = ui
+        .ctx()
+        .data_mut(|d| d.remove_temp::<Vec<egui::Event>>(queue_id))
+        .unwrap_or_default();
+    events.extend(ui.input_mut(|i| std::mem::take(&mut i.events)));
+    let mut native = Vec::new();
+    let mut events = events.into_iter();
+    while let Some(event) = events.next() {
+        let candidate = match &event {
+            egui::Event::Key {
+                key: egui::Key::K,
+                pressed: true,
+                modifiers,
+                ..
+            } if modifiers.command && !modifiers.alt => Some(if modifiers.shift {
+                SelectionCommand::BlockComment
+            } else {
+                SelectionCommand::LineComment
+            }),
+            egui::Event::Key {
+                key: egui::Key::Slash,
+                pressed: true,
+                modifiers,
+                ..
+            } if modifiers.command && !modifiers.alt => Some(SelectionCommand::LineComment),
+            egui::Event::Key {
+                key: egui::Key::Tab,
+                pressed: true,
+                modifiers,
+                ..
+            } if !modifiers.command && !modifiers.ctrl && !modifiers.alt => Some(if modifiers.shift {
+                SelectionCommand::Outdent
+            } else {
+                SelectionCommand::Indent
+            }),
+            _ => None,
+        };
+        if let Some(command) = candidate {
+            let selected = bytes(source, cursor(ui.ctx(), id));
+            let selection_input = native.iter().any(|e| {
+                matches!(e,
+                    egui::Event::Key { modifiers, pressed: true, .. } if modifiers.shift || modifiers.command
+                ) || matches!(e, egui::Event::PointerButton { pressed: true, .. })
+            });
+            if matches!(command, SelectionCommand::Indent) && !source[selected].contains('\n') && !selection_input {
+                native.push(event);
+                continue;
+            }
+            if native.iter().any(|e| {
+                matches!(
+                    e,
+                    egui::Event::Text(_)
+                        | egui::Event::Paste(_)
+                        | egui::Event::Key { pressed: true, .. }
+                        | egui::Event::PointerButton { pressed: true, .. }
+                )
+            }) {
+                let tail = std::iter::once(event).chain(events).collect::<Vec<_>>();
+                ui.ctx().data_mut(|d| d.insert_temp(queue_id, tail));
+                ui.ctx().request_repaint();
+                break;
+            }
+            if !selection_command(ui.ctx(), id, source, command) {
+                ui.ctx().data_mut(|d| d.insert_temp(id.with("selection_error"), true));
+            }
+        } else {
+            native.push(event);
+        }
+    }
+    ui.input_mut(|i| i.events = native);
+}
+
 pub(super) fn cursor(ctx: &egui::Context, id: Id) -> CCursorRange {
     egui::TextEdit::load_state(ctx, id)
         .and_then(|s| s.cursor.char_range())
@@ -162,6 +442,93 @@ pub(super) fn next_match(ranges: &[Range<usize>], selection: Range<usize>, up: b
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn multiline_indent_keeps_backward_selection_and_excludes_the_final_line_at_column_zero() {
+        let ctx = egui::Context::default();
+        let id = Id::new("lines");
+        let original = "éあ\r\n  second\r\nthird";
+        let mut source = original.to_owned();
+        let end = original[..original.find("third").expect("third")].chars().count();
+        select(&ctx, id, end..0, false);
+        assert!(selection_command(&ctx, id, &mut source, SelectionCommand::Indent));
+        assert_eq!(source, "    éあ\r\n      second\r\nthird");
+        assert!(cursor(&ctx, id).primary.index < cursor(&ctx, id).secondary.index);
+        assert!(selection_command(&ctx, id, &mut source, SelectionCommand::Outdent));
+        assert_eq!(source, original);
+        undo(&ctx, id, &mut source, false);
+        assert_eq!(source, "    éあ\r\n      second\r\nthird");
+        undo(&ctx, id, &mut source, false);
+        assert_eq!(source, original);
+    }
+
+    #[test]
+    fn outdent_handles_literal_tabs_short_indentation_and_unindented_code() {
+        let ctx = egui::Context::default();
+        let id = Id::new("outdent");
+        let mut source = "\tfirst\n  second\nthird\n".to_owned();
+        let len = source.chars().count();
+        select(&ctx, id, 0..len, false);
+        selection_command(&ctx, id, &mut source, SelectionCommand::Outdent);
+        assert_eq!(source, "first\nsecond\nthird\n");
+    }
+
+    #[test]
+    fn line_comments_toggle_current_or_selected_lines_and_restore_spacing_exactly() {
+        let ctx = egui::Context::default();
+        let id = Id::new("comments");
+        let original = "    éあ\r\n\t// existing\r\n\r\nlast";
+        let mut source = original.to_owned();
+        let end = original[..original.find("last").expect("last")].chars().count();
+        select(&ctx, id, 0..end, false);
+        selection_command(&ctx, id, &mut source, SelectionCommand::LineComment);
+        assert_eq!(source, "    // éあ\r\n\t// // existing\r\n\r\nlast");
+        selection_command(&ctx, id, &mut source, SelectionCommand::LineComment);
+        assert_eq!(source, original);
+        let at = source.chars().count();
+        select(&ctx, id, at..at, false);
+        selection_command(&ctx, id, &mut source, SelectionCommand::LineComment);
+        assert!(source.ends_with("// last"));
+        selection_command(&ctx, id, &mut source, SelectionCommand::LineComment);
+        assert_eq!(source, original);
+    }
+
+    #[test]
+    fn indented_block_comments_toggle_at_the_caret_and_keep_surrounding_whitespace() {
+        let ctx = egui::Context::default();
+        let id = Id::new("indented_comment");
+        let mut source = "    /* code */ tail".to_owned();
+        select(&ctx, id, 8..8, false);
+        assert!(selection_command(&ctx, id, &mut source, SelectionCommand::BlockComment));
+        assert_eq!(source, "     code  tail");
+        let mut source = "\t/*\néあ\n*/\r\n".to_owned();
+        let len = source.chars().count();
+        select(&ctx, id, 0..len, false);
+        assert!(selection_command(&ctx, id, &mut source, SelectionCommand::BlockComment));
+        assert_eq!(source, "\t\néあ\n\r\n");
+    }
+
+    #[test]
+    fn block_comment_wraps_selection_and_toggles_from_inside_without_nesting() {
+        let ctx = egui::Context::default();
+        let id = Id::new("block");
+        let original = "éあ\n  code;\nlast";
+        let mut source = original.to_owned();
+        select(&ctx, id, 0..10, false);
+        selection_command(&ctx, id, &mut source, SelectionCommand::BlockComment);
+        assert_eq!(source, "/*éあ\n  code;*/\nlast");
+        selection_command(&ctx, id, &mut source, SelectionCommand::BlockComment);
+        assert_eq!(source, original);
+        let mut source = "/*\n  code;\n*/".into();
+        select(&ctx, id, 5..5, false);
+        selection_command(&ctx, id, &mut source, SelectionCommand::BlockComment);
+        assert_eq!(source, "\n  code;\n");
+        let mut source = "code; /* existing */ rest".to_owned();
+        let len = source.chars().count();
+        select(&ctx, id, 0..len, false);
+        assert!(!selection_command(&ctx, id, &mut source, SelectionCommand::BlockComment));
+        assert_eq!(source, "code; /* existing */ rest");
+    }
 
     #[test]
     fn command_edits_share_native_undo_and_redo_and_reject_oversized_input() {

@@ -107,7 +107,13 @@ impl Inventory {
 
     fn upsert_folder(&mut self, f: InvFolder, library: bool) {
         match self.folders.get_mut(&f.id) {
-            Some(existing) => existing.info = f,
+            Some(existing) => {
+                // A parent listing can carry older/unknown child versions.
+                // Keep the version of the contents already confirmed locally.
+                let version = existing.info.version;
+                existing.info = f;
+                existing.info.version = existing.info.version.max(version);
+            }
             None => {
                 self.folders.insert(
                     f.id,
@@ -175,6 +181,16 @@ impl Inventory {
     pub fn apply(&mut self, contents: Vec<FolderContents>) {
         self.generation += 1;
         for c in contents {
+            // Inventory versions advance as copies arrive (Firestorm's
+            // LLInventoryModel::accountForUpdate). A delayed pre-copy HTTP
+            // snapshot must not replace the newer, populated folder.
+            if self
+                .folders
+                .get(&c.folder_id)
+                .is_some_and(|f| f.state == FetchState::Fetched && c.version < f.info.version)
+            {
+                continue;
+            }
             let library = self.folders.get(&c.folder_id).map(|f| f.library).unwrap_or(false);
             let child_ids: Vec<Uuid> = c.folders.iter().map(|f| f.id).collect();
             for f in c.folders {
@@ -217,6 +233,84 @@ impl Inventory {
         }
         for id in changed {
             self.sort_children(id);
+        }
+    }
+
+    /// LLInventoryModel::accountForUpdate / updateItem / updateCategory:
+    /// apply server changes immediately, and advance each loaded parent's
+    /// version once per update. Repeated records do not advance it again.
+    pub fn server_updated(&mut self, folders: Vec<InvFolder>, mut items: Vec<InvItem>) {
+        items.retain(|item| !item.id.is_nil());
+        let mut changed = HashSet::new();
+        for folder in folders {
+            let id = folder.id;
+            let parent = folder.parent;
+            if let Some(old) = self.folders.get(&id) {
+                if old.info.parent != parent || old.info.name != folder.name {
+                    changed.insert(old.info.parent);
+                    changed.insert(parent);
+                }
+                let old_parent = old.info.parent;
+                if old_parent != parent
+                    && let Some(old) = self.folders.get_mut(&old_parent)
+                {
+                    old.children.retain(|child| *child != id);
+                }
+            } else {
+                changed.insert(parent);
+            }
+            self.upsert_folder(folder, false);
+            if let Some(parent) = self.folders.get_mut(&parent)
+                && !parent.children.contains(&id)
+            {
+                parent.children.push(id);
+            }
+        }
+        for item in &items {
+            if self.items.get(&item.id) != Some(item) {
+                changed.insert(item.parent);
+                if let Some(old) = self.items.get(&item.id) {
+                    changed.insert(old.parent);
+                }
+            }
+        }
+        for id in &changed {
+            if let Some(folder) = self.folders.get_mut(id)
+                && folder.state == FetchState::Fetched
+                && folder.info.version >= 0
+            {
+                folder.info.version = folder.info.version.saturating_add(1);
+            }
+        }
+        self.add_items(items);
+        for id in changed {
+            self.sort_children(id);
+        }
+        self.generation += 1;
+    }
+
+    /// AIS has acknowledged these new, empty categories. Subsequent server
+    /// item updates can populate them without waiting for a folder fetch.
+    pub fn created_folders(&mut self, folders: Vec<InvFolder>) {
+        for folder in folders {
+            if let Some(existing) = self.folders.get_mut(&folder.id) {
+                // Bulk notifications can precede the AIS response (also
+                // handled by Firestorm's createNewCategory callback). Keep
+                // already received children/items while completing its state.
+                if existing.state != FetchState::Fetched {
+                    let known_descendants = existing.children.len().saturating_add(existing.items.len());
+                    let version = folder.version.saturating_add(known_descendants.min(i32::MAX as usize) as i32);
+                    existing.info.version = existing.info.version.max(version);
+                    existing.state = FetchState::Fetched;
+                    self.generation += 1;
+                }
+                continue;
+            }
+            let id = folder.id;
+            self.server_updated(vec![folder], Vec::new());
+            if let Some(folder) = self.folders.get_mut(&id) {
+                folder.state = FetchState::Fetched;
+            }
         }
     }
 
@@ -519,6 +613,113 @@ mod tests {
         inv.add_items(vec![item.clone(), item.clone()]);
         assert!(!inv.folders[&old].items.contains(&item.id));
         assert_eq!(inv.folders[&item.parent].items, vec![item.id]);
+    }
+
+    #[test]
+    fn new_copy_folders_and_items_appear_without_a_snapshot_and_survive_stale_reads() {
+        for early_notification in [false, true] {
+            let mut inv = fixture();
+            let parent = Uuid::from_u128(9700);
+            let child = Uuid::from_u128(9701);
+            if early_notification {
+                inv.server_updated(
+                    vec![
+                        InvFolder {
+                            id: parent,
+                            parent: inv.root,
+                            name: "Copied folder".into(),
+                            type_default: -1,
+                            version: -1,
+                            ..Default::default()
+                        },
+                        InvFolder {
+                            id: child,
+                            parent,
+                            name: "Nested folder".into(),
+                            type_default: -1,
+                            version: -1,
+                            ..Default::default()
+                        },
+                    ],
+                    Vec::new(),
+                );
+            }
+            inv.created_folders(vec![
+                InvFolder {
+                    id: parent,
+                    parent: inv.root,
+                    name: "Copied folder".into(),
+                    type_default: -1,
+                    version: 1,
+                    ..Default::default()
+                },
+                InvFolder {
+                    id: child,
+                    parent,
+                    name: "Nested folder".into(),
+                    type_default: -1,
+                    version: 1,
+                    ..Default::default()
+                },
+            ]);
+            assert_eq!(inv.folders[&parent].children, vec![child]);
+            assert_eq!(inv.folders[&parent].state, FetchState::Fetched);
+            assert_eq!(inv.folders[&parent].info.version, 2);
+            let mut copied = inv.items[&Uuid::from_u128(723)].clone();
+            copied.id = Uuid::from_u128(9900);
+            copied.parent = child;
+            inv.server_updated(Vec::new(), vec![copied.clone()]);
+            assert_eq!(inv.folders[&child].items, vec![copied.id]);
+            assert_eq!(inv.folders[&child].info.version, 2);
+            inv.server_updated(Vec::new(), vec![copied.clone()]);
+            assert_eq!(
+                inv.folders[&child].info.version, 2,
+                "duplicate records do not invent a newer version"
+            );
+            inv.apply(vec![FolderContents {
+                folder_id: child,
+                owner_id: Uuid::from_u128(1),
+                version: 1,
+                folders: Vec::new(),
+                items: Vec::new(),
+            }]);
+            assert_eq!(inv.folders[&child].items, vec![copied.id]);
+            assert!(inv.items.contains_key(&Uuid::from_u128(723)), "copy keeps the original");
+        }
+    }
+
+    #[test]
+    fn stale_folder_snapshots_do_not_erase_confirmed_copy_contents() {
+        let mut inv = fixture();
+        let folder = Uuid::from_u128(704);
+        let mut copied = inv.items[&Uuid::from_u128(723)].clone();
+        copied.id = Uuid::from_u128(9999);
+        copied.parent = folder;
+        inv.apply(vec![FolderContents {
+            folder_id: folder,
+            owner_id: Uuid::from_u128(1),
+            version: 5,
+            folders: Vec::new(),
+            items: vec![copied.clone()],
+        }]);
+        let mut metadata = inv.folders[&folder].info.clone();
+        metadata.version = 1;
+        inv.apply(vec![FolderContents {
+            folder_id: metadata.parent,
+            owner_id: Uuid::from_u128(1),
+            version: 6,
+            folders: vec![metadata],
+            items: Vec::new(),
+        }]);
+        inv.apply(vec![FolderContents {
+            folder_id: folder,
+            owner_id: Uuid::from_u128(1),
+            version: 4,
+            folders: Vec::new(),
+            items: Vec::new(),
+        }]);
+        assert_eq!(inv.folders[&folder].info.version, 5);
+        assert_eq!(inv.folders[&folder].items, vec![copied.id]);
     }
 
     #[test]

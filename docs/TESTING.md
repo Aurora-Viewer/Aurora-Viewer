@@ -78,6 +78,7 @@ processus du viewer. Pour un test avec intervention humaine, garder le titre
 | `AURORA_DEMO_TOD=0..4` | Heure du jour |
 | `AURORA_DEMO_ALTITUDE=<m>` | Place tout le lieu de démo à cette altitude |
 | `AURORA_FPS_LIMIT=<n>` | Plafond d'images/s pour les essais (10–500) |
+| `AURORA_WINDOW_SIZE="l,h"` | Taille de la fenêtre pour ce lancement |
 | `AURORA_LOG_NAME=<nom>` | Nom du fichier journal |
 | `AURORA_EMOJI_FONT=<chemin>` | Utilise une autre police emoji |
 | `AURORA_MAX_AVATARS`, `AURORA_MAX_COMPLEXITY`, `AURORA_AA`, `AURORA_SHADOWS` | Remplacent ces réglages |
@@ -100,6 +101,14 @@ masquées comprises. Un changement des vertex shaders ou des passes se
 vérifie donc aussi avec `AURORA_AA=6` : c'est avec lui que le terrain
 laissait voir le ciel par taches (`AURORA_DEMO_POS="60,128"`,
 `AURORA_DEMO_ALTITUDE=86`).
+
+`AURORA_WINDOW_SIZE` : largeur et hauteur de la zone de rendu, en pixels
+logiques (au moins 800 × 560), pour mesurer selon la taille de la fenêtre :
+sans elle, la démo s'ouvre à la taille qu'avait la fenêtre du dernier
+lancement fermé, quel que soit l'agent qui l'a lancé. La fenêtre est placée
+comme celle d'une capture (ni position ni agrandissement enregistrés) et sa
+taille n'est pas retenue pour le lancement suivant. La taille réelle est en
+tête de la ligne `perf settings`.
 
 `AURORA_FPS_LIMIT` : plafond utilisateur pour les essais (10–500 images/s ;
 les valeurs positives sont ramenées à cette plage, une valeur invalide est
@@ -133,7 +142,8 @@ capture.
 | `AURORA_DEMO_RCLICK="x,y"` ou `tag` | Clic droit (menu contextuel) |
 | `AURORA_DEMO_PIE=1` | Menu circulaire du clic droit |
 | `AURORA_DEMO_POINTER=<points>` | Déplace le pointeur sur l'interface |
-| `AURORA_DEMO_HOVER=1` | Balayage du curseur au survol |
+| `AURORA_DEMO_HOVER=1` ou `"x,y"` | Curseur balayé, ou posé sur un pixel, au survol |
+| `AURORA_DEMO_CLICKS=<ms>` | Clics sur le monde à cadence régulière |
 | `AURORA_DEMO_LOOKAT=1` | Suivi du regard et regard d'un autre avatar |
 | `AURORA_DEMO_KEYBOARD=<disposition>` | Touches de déplacement selon la disposition |
 | `AURORA_DEMO_CHATCMD="<commandes>"` | Tape des commandes dans la barre de chat |
@@ -190,8 +200,45 @@ capture.
 - **`AURORA_DEMO_HOVER=1`** : à partir de l'image 300, le curseur balaie la
   fenêtre pendant 120 images, reste immobile 120 images, et ainsi de suite
   (recherche de l'objet sous le curseur et réponses gardées d'une image à
-  l'autre, `scene/hover.rs`). Lire `hover` dans le profil ; à combiner avec
-  `AURORA_HOVER_CHECK=1`, `AURORA_DEMO_ACTIONS=1` ou une scène de charge.
+  l'autre, `scene/hover.rs`). Avec `"x,y"`, le curseur reste sur ce pixel
+  de la fenêtre à partir de l'image 300 (sur un avatar de la foule, sur le
+  sol à côté). Lire `hover` et les lignes `hover summary` dans le profil ; à
+  combiner avec `AURORA_HOVER_CHECK=1`, `AURORA_DEMO_ACTIONS=1` ou une
+  scène de charge.
+- **`AURORA_DEMO_CLICKS="<ms>[,x,y|sweep|rigged][,left|alt|menu|build|focus]"`** :
+  un clic sur le monde toutes les `ms` millisecondes (250 si la valeur n'est
+  pas un nombre) une fois le monde affiché, bouton tenu 60 ms, par le même
+  chemin qu'un bouton de la souris (`app/click_pick.rs`), sans jamais
+  prendre le vrai curseur (Alt + clic, clic sur notre avatar). Une ligne
+  `demo clicks: the click before is not over` signale un clic dont le
+  relâchement n'a pas été traité avant le suivant. Au pixel (x, y) de la
+  fenêtre (un quart de la largeur, près du bas, par défaut : le sol), ou
+  avec `sweep` à un nouvel endroit de la fenêtre à chaque clic, ou avec
+  `rigged` sur les mesh riggés à l'écran, tour à tour (au milieu de leurs
+  limites posées). `left` (par
+  défaut) : clic gauche ; `alt` : Alt + clic (caméra) ; `menu` : clic droit ;
+  `build` et `focus` : clic avec l'outil Modifier ou l'outil Focus de la
+  construction. Sert à mesurer ce qu'un clic coûte à l'image dans une scène
+  chargée (`AURORA_DEMO_CROWD=250`, `AURORA_DEMO_ANIMESH=1`,
+  `AURORA_MAX_AVATARS=300`, `AURORA_AA=6` : le GPU y est la limite) : avec
+  `AURORA_PROFILE=1`, lire `between` dans `max:` et `off_cpu:`, et les
+  lignes `click pick:` (une par clic : images et millisecondes avant la
+  réponse). À combiner avec `AURORA_CLICK_PICK=wait` ou `check`.
+  - Clics sur ce qui est riggé : `AURORA_DEMO_ANIMESH=1`,
+    `AURORA_DEMO_CROWD=4`, `AURORA_DEMO_POS="131,126.6"` et
+    `AURORA_DEMO_CLICKS=150,rigged,menu` (ou `left`, `build`) mettent à
+    l'écran un animesh posé (objets 9200 et 9202), un animesh porté par un
+    autre avatar (9203), le mesh riggé de la foule et un mesh riggé porté
+    par notre avatar (9210, ajouté par ce mode), tous rendus sensibles au
+    toucher. Chaque clic écrit une ligne `demo drawn pick` : l'objet visé
+    (`aimed at … : OK` ou `MISSED`, ce dernier quand autre chose le cache),
+    l'objet désigné, sa face, et `inside its posed bounds` (`OUTSIDE`
+    serait un défaut : le point lu sur le GPU n'est pas dans les limites
+    que le CPU connaît de l'objet). Suivent `demo menu: …` (menu ouvert)
+    ou `demo click action: Touch, object=…`. Avec `3000,rigged,menu` et
+    `AURORA_CAPTURE_FRAMES=1100,1460`, les captures montrent le menu d'un
+    objet porté par un autre avatar puis celui d'un objet porté par nous,
+    l'objet entouré de son contour.
 - **`AURORA_DEMO_LOOKAT=1`** : suivi du regard activé (en mémoire seulement)
   et regard d'un avatar distant.
 - **`AURORA_DEMO_KEYBOARD=system|wasd|zqsd|fallback`** : valeurs par défaut
@@ -209,15 +256,50 @@ capture.
 | `AURORA_DEMO_ACTIONS=<mode>` | Curseurs, clics d'objet, achat et paiement |
 | `AURORA_DEMO_DIALOG=<mode>` | Menu llDialog |
 | `AURORA_DEMO_BUILD="<script>"` | Script des outils de construction |
+| `AURORA_DEMO_REPLACE_PRIM=1\|script` | Plateau de remplacement, cas du script seul |
 | `AURORA_DEMO_BUILD_FRAME=<n>` | Image de départ du script de construction |
 | `AURORA_DEMO_BUILD_FOCUS=off\|on` | Focus et suivi caméra pendant l’édition |
 | `AURORA_DEMO_BUILD_EDGE=<bord>` | Déplacement jusqu’au bord, maintien puis relâchement |
 | `AURORA_DEMO_BUILD_TAB=<onglet>` | Onglet de la fenêtre de construction |
+| `AURORA_DEMO_COLOR_PICKER=<mode>` | Sélecteur de couleur et gestes hors ligne |
 | `AURORA_DEMO_SCRIPTS=<mode>` | Édition et enregistrement de scripts hors ligne |
 | `AURORA_DEMO_LSL_BRIDGE=1` | Messages du bridge LSL de Firestorm (cachés) |
 | `AURORA_DEMO_FLEXIBLE=1` | Prims flexibles : gravité, tension, vent, force et parent mobile |
 
 ### Détails
+
+`AURORA_DEMO_COLOR_PICKER=1|left|follow|link|toggle|dock|lsl|hex|invalid|drag|cancel|no-apply|palette|pipette`
+ouvre le nuancier de la sélection, avec `AURORA_DEMO_BUILD=move,object:118`
+et `AURORA_DEMO_BUILD_TAB=texture:bp`.
+
+La palette s'ouvre contre le bord droit de la construction, au même niveau en
+haut. `left` place la construction près du bord droit de l'écran : la palette
+s'ouvre alors contre son bord gauche. Capturer vers l'image 660. Déplacer la
+construction avec la palette ouverte : celle-ci suit, bascule de côté si la
+place manque et reste visible. Le mode `follow` effectue ce glissement vers la
+droite puis revient à gauche : captures 800 et 920, sans réouverture du nuancier.
+Le mode `link` déplace séparément la palette : capture 800 pour le cône vers la
+pastille d'origine et son contour violet, 880 pour son extinction au relâchement.
+Le mode `toggle` clique trois fois sur la pastille : palette fermée à 710,
+rouverte à 750 puis fermée à 790. La fermeture reprend les règles d'Annuler.
+Le mode `dock` détache la palette (760), déplace la construction seule (840),
+réaccroche à droite (920), vérifie le suivi et le basculement (1000), détache à
+nouveau (1080), réaccroche à gauche (1160) et vérifie le suivi de ce côté (1240).
+Le rapprochement doit être à 10 points du bord et du haut ; l'accrochage se
+fait au relâchement. « Appliquer » est coché sans choix antérieur ; le décocher,
+fermer puis rouvrir la palette conserve ce choix, y compris au redémarrage.
+
+Les modes LSL / Hexa changent le format
+par ses vrais boutons ; Hexa saisit `33AA66`, invalid saisit `GG0000` (OK
+désactivé). Capturer vers l'image 740. Les modes drag / cancel / no-apply
+glissent sur 100 images : capturer à 780 pendant le geste, 830 au relâchement,
+900 après OK / Annuler. L'aperçu suit immédiatement, le serveur reçoit la
+couleur finale au relâchement ; no-apply attend OK. Palette glisse l'aperçu
+actuel dans la case 32 : capture 880 et réouverture pour vérifier sa sauvegarde.
+Pipette arme l'outil ; cliquer une face visible pour prendre sa teinte (aucun
+changement de sélection), relâcher pour quitter l'outil. Échap quitte d'abord
+la pipette, puis annule le nuancier. Les gestes sont en coordonnées des contrôles
+réels, sans dépendance à la position enregistrée de la fenêtre.
 
 En mode Modifier, maintenir CTRL et tourner la molette parcourt les objets
 réellement sous le pointeur : défilement vers le bas pour aller plus loin,
@@ -246,7 +328,7 @@ Pour vérifier l'édition, ajouter `AURORA_DEMO_BUILD=move,object:90000` ou
 translucide et poignées de taille. `stretch,object:90000,fz,100,0` tire la face
 opposée à la base ; le flexible garde sa courbure pendant le changement de taille.
 
-**`AURORA_DEMO_SCRIPTS=inventory|object|both|save|object-save|error|readonly|syntax|object-syntax|syntax-readonly|indent|object-indent|tabstops|object-tabstops|experience|experience-save|workbench|object-workbench|search|preferences|help|preprocessor|object-preprocessor|processed|preprocessor-error`** :
+**`AURORA_DEMO_SCRIPTS=inventory|object|both|save|object-save|error|readonly|syntax|object-syntax|syntax-readonly|indent|object-indent|tabstops|object-tabstops|close-brace|object-close-brace|colors|color-picker|color-accept|color-cancel|comment-lines|comment-block|multiline-indent|multiline-outdent|folding|object-folding|experience|experience-save|workbench|object-workbench|insert-filter|insert-empty|search|preferences|help|preprocessor|object-preprocessor|processed|preprocessor-error`** :
 ouvre un éditeur de script depuis l'inventaire, le contenu d'un objet ou
 les deux à l'image 280. `save` et `object-save` enregistrent une source
 modifiée puis ferment et rouvrent l'éditeur à l'image 360 avec un UUID
@@ -270,6 +352,31 @@ et Entrée. Le commentaire et l'instruction doivent être alignés sur huit
 espaces. Tab ajoute des espaces jusqu'au prochain multiple de quatre ;
 Retour arrière revient au palier précédent quand les espaces le permettent,
 sans supprimer un caractère du code pour rejoindre ce palier.
+`close-brace` et `object-close-brace` ferment deux blocs imbriqués par saisie
+de `}`, avec espaces ou tabulations importées : les fermetures doivent être
+alignées sur leurs ouvertures. Le collage conserve exactement ses retraits.
+`colors` montre cinq pastilles près des vecteurs numériques entre 0 et 1
+inclus ; position hors plage, rotation, chaîne et commentaire n'en ont pas.
+`color-picker` ouvre la première pastille et choisit le vert ; `color-accept`
+valide et `color-cancel` restaure exactement les valeurs d'origine. Le texte
+reste sélectionnable pendant l'aperçu ; OK rend l'édition et l'enregistrement
+disponibles et produit une seule action Annuler / Rétablir.
+`comment-lines` et `comment-block` sélectionnent deux déclarations puis utilisent
+Ctrl+K et Ctrl+Maj+K : `//` est ajouté après le retrait, ou la sélection est
+encadrée par `/*` et `*/`. Répéter le raccourci retire les commentaires. Les
+commentaires de bloc ne sont pas imbriqués ; utiliser les lignes `//` si la
+sélection contient déjà un commentaire de bloc.
+`multiline-indent` ajoute quatre espaces aux lignes sélectionnées ;
+`multiline-outdent` les retire. Une sélection finissant au début d'une ligne
+n'inclut pas celle-ci ; le sens de la sélection et Annuler / Rétablir restent
+conservés. Maj+Tab retire aussi une tabulation littérale ou un retrait incomplet.
+`folding` et `object-folding` cliquent sur la flèche du bloc `default` dans la
+marge. Ses lignes disparaissent visuellement, leurs numéros sautent et un
+libellé indique le nombre de lignes cachées. Cliquer à nouveau ou sur le libellé
+déplie le bloc. Le menu Édition contient Tout replier / Tout déplier. La source
+reste identique, y compris lors de la sauvegarde ou de la copie ; la recherche
+et la navigation vers un caractère caché rouvrent son bloc. Les blocs des chaînes
+et commentaires n'ont pas de flèche.
 `experience` choisit et enregistre l'expérience simulée d'un script d'objet ;
 `experience-save` ferme ensuite l'éditeur et le rouvre avec cette association.
 Les autres démos d'objet commencent avec « Aucune ». Le sélecteur permet
@@ -278,6 +385,9 @@ ne propose pas d'association d'expérience, comme Firestorm.
 
 `workbench` et `object-workbench` montrent les menus Fichier / Édition / Aide,
 la barre d'outils, les numéros de ligne, le curseur et le sélecteur de fonctions.
+`insert-filter` ouvre Insérer, fait défiler les résultats puis saisit `color` :
+le filtre doit rester visible et la source inchangée. `insert-empty` saisit
+un nom absent et affiche « Aucune fonction correspondante ».
 `search`, `preferences` et `help` ouvrent respectivement la recherche/remplacement,
 les couleurs/options avec aperçu et l'aide locale de `llSay` avec sa signature.
 Les commandes de saisie utilisent l'historique natif ; les réglages ne sont
@@ -362,6 +472,70 @@ suivi activé conservent leur comportement.
 **`AURORA_DEMO_LSL_BRIDGE=1`** — messages du bridge LSL de Firestorm
 (cachés) entre deux lignes « owner say ».
 
+#### Remplacer un prim
+
+Pour contrôler le passage à « Modifier les parties liées », combiner
+`AURORA_DEMO_REPLACE_PRIM=1` et
+`AURORA_DEMO_BUILD=linked-click,object:99688` : objet entier sélectionné,
+activation de la modification liée à l'image 625, puis clic sur la partie #9
+à l'image 635 (départ 600 par défaut). Capturer à 630 puis à 650 : 15 parties
+sélectionnées deviennent une seule, avec « Numéro de lien : 9 » et le bouton
+de remplacement. `linked-click-ready,object:99688` s'arrête sur l'objet entier
+pour que l'humain puisse cocher l'option puis cliquer lui-même sur la partie.
+
+`AURORA_DEMO_REPLACE_PRIM=1` ajoute un jeu de 15 prims (racine `99680`,
+pile de cartes au lien 9 : `99688`) et un remplaçant indépendant (`99700`).
+Le remplaçant a une rotation et des dimensions différentes ; son contenu est
+vide. Un script du plateau démarre arrêté pour vérifier qu'il reste arrêté.
+Les mises à jour des prims ne renseignent pas `OwnerID`, comme pour un prim
+sans son ni particules sur la grille : les indicateurs de permission et les
+réponses `ObjectProperties` confirment qu'ils appartiennent au résident.
+Le choix du remplaçant et l'opération doivent fonctionner dans ce cas.
+
+`AURORA_DEMO_REPLACE_PRIM=script` garde un seul script dans la pile de cartes,
+avec les autres contenus vides. Le moteur simulé confirme les changements
+d'état des scripts seulement après une première réponse portant l'ancien état.
+Avec `AURORA_DEMO_BUILD=replace-copy,object:99688`, vérifier la copie du script,
+la conservation de l'original et le retour à leur état actif, sans blocage.
+Capturer le résultat à l'image 900 pour laisser les confirmations arriver.
+L'avancement distingue la lecture des états, la copie vers l'inventaire et
+l'insertion dans le remplaçant ; les erreurs de lecture du contenu remontent
+directement, avec l'étape concernée.
+
+À combiner avec `AURORA_DEMO_BUILD` :
+
+- `replace-button,object:99688` : une partie liée sélectionnée, bouton dans la fenêtre de construction ;
+- `replace-edit,object:99688` : remplaçant choisi, cinq options indépendantes, sans mutation ;
+- `replace-run,object:99688` : remplacement avec les valeurs par défaut ;
+- `replace-copy,object:99688` : copie du contenu et de la taille, puis remplacement ;
+- `replace-run,object:99680` : remplacement de la racine et contrôle des positions des enfants.
+
+Les scripts de construction commencent à l'image `AURORA_DEMO_BUILD_FRAME`
+(600 par défaut). Le choix du remplaçant se fait à +35 images, la validation
+à +55 pour les scénarios qui exécutent l'opération. Le simulateur renvoie les
+changements de parentage, le contenu et les états des scripts par les mêmes
+événements que le réseau. Sur la grille, contrôler aussi les numéros avec
+LSL, les droits de copie et les confirmations lors d'une connexion lente.
+Le protocole renvoie le parent des prims, sans numéro de lien : après
+confirmation du parentage, Aurora conserve l'ordre envoyé dans ObjectLink,
+indépendamment de l'ordre d'arrivée des paquets. Les 256 prims sont rattachés
+par groupes confirmés, depuis la fin de la liste vers son début.
+
+Le bouton apparaît sous les informations de sélection de l'inspecteur compact.
+Le panneau reprend son cadre, ses titres et ses marges ; les actions de validation
+restent hors de la zone défilante.
+
+Le remplacement place l'ancien prim à la position initiale du remplaçant,
+en conservant sa rotation et sa taille. Avec « Copier la position » activé,
+les deux prims échangent donc leurs positions. Les objets
+doivent être posés dans le monde, modifiables, appartenir au résident, sans
+physique, caractère temporaire ni avatar assis. Maximum : 256 prims et
+1 024 éléments copiés / scripts observés. Les conflits de noms et les contenus
+non copiables arrêtent l'opération avant toute déliaison. Copier un script
+ne conserve pas sa mémoire d'exécution ; remplacer la racine ne copie pas
+automatiquement les données Linkset Data.
+
+
 ## HUDs
 
 | Variable | Effet |
@@ -442,6 +616,7 @@ grille.
 | `AURORA_DEMO_ANIM_LOOP=1` | Boucles d'animation, séquences et arrêts |
 | `AURORA_DEMO_AO=1` | AO intégré et inventaire d’animations synthétique |
 | `AURORA_DEMO_ANIMESH=1` | Objets animés (animesh) |
+| `AURORA_DEMO_ANIMESH_TRIS=<n>` | Triangles ajoutés au mesh riggé de la démo |
 | `AURORA_DEMO_CLOUD=1` | Nuages de chargement des avatars |
 | `AURORA_DEMO_DISPLAYNAME="<nom>"` | Changement de nom d'affichage (simulé) |
 | `AURORA_DEMO_DISPLAYNAME_ERROR=<error_tag>` | Erreur du serveur au changement de nom |
@@ -465,6 +640,13 @@ grille.
   autres aussi, et la ligne `demo animesh: skin bindings <en service> used
   of <dans la liste>` du log (toutes les 120 images) doit cesser de croître
   une fois les premiers mesh libérés (600 images après leur dernier usage).
+- **`AURORA_DEMO_ANIMESH_TRIS=<n>`** : avec `AURORA_DEMO_ANIMESH`, ajoute
+  environ n triangles au mesh riggé de la démo, en faces opaques de 45 000
+  (un tube fin autour du torse chacune, 7 faces au plus). Avec
+  `AURORA_DEMO_CROWD=<n>`, chaque avatar de la foule porte ce mesh : 200000
+  donne des avatars du poids de ceux de la grille (3,6 millions de
+  triangles à l'écran pour 16 avatars dessinés en entier), ce qu'il faut
+  pour mesurer les passes qui redessinent les avatars (ombres, prépasse).
 - **`AURORA_DEMO_CLOUD=1|self`** : `1` active hors ligne les nuages et les
   barres de chargement. `self` habille en plus notre avatar comme ceux qui
   restaient en nuage pendant les 60 s de la limite (issue #121) : bake de
@@ -541,9 +723,11 @@ grille.
 |---|---|
 | `AURORA_DEMO_TEXTURES=<n>` | Test de charge des textures : n cubes |
 | `AURORA_DEMO_TEXTURES_CHURN=1` | Avec `AURORA_DEMO_TEXTURES` : textures renouvelées |
-| `AURORA_DEMO_CROWD=<n>` | Test de charge de la synchro : n avatars |
+| `AURORA_DEMO_CROWD=<n>[,busy]` ou `<n>,<portés>[,<triangles>]` | Test de charge de la synchro : n avatars ; avec `busy` ce que la synchro place encore elle-même, avec `<portés>` des avatars habillés de mesh riggés |
 | `AURORA_DEMO_OVERDRAW=<n>` | Test de recouvrement : n rangées de murs opaques |
 | `AURORA_DEMO_STREAM=<n>[,<vague>][,leave][,j2k=<dossier>]` | Test des à-coups du streaming |
+| `AURORA_DEMO_HAIR=<couches>[,<segments>[,<vide>[,<période>]]]` | Charge des faces transparentes : coques superposées sur les avatars |
+| `AURORA_DEMO_LIGHTS=<n>` | Charge des lumières locales : n petites lumières dans la foule |
 
 ### Détails
 
@@ -560,6 +744,50 @@ grille.
   un nombre) qui jouent l'animation d'attente, chacun portant huit linksets
   de sept prims sur des os de tout le corps (avec `AURORA_DEMO_ANIMESH`,
   aussi le mesh riggé de la démo), comme dans une boutique fréquentée.
+  Avec `<portés>` (300 au plus) et `AURORA_DEMO_ANIMESH`, la foule d'un
+  club : chaque avatar danse (tout le corps se déplace d'un demi-mètre,
+  ce qu'il porte bouge à chaque image) et porte en plus `<portés>` mesh
+  riggés, dont un sur cent a un script de toucher, des faces transparentes
+  et `<triangles>` triangles (20 000 par défaut). C'est la charge de la
+  recherche de l'objet sous le curseur parmi des avatars habillés :
+  `AURORA_DEMO_CROWD=52,200` donne 13 500 objets dont 10 500 mesh riggés ;
+  à combiner avec `AURORA_DEMO_HOVER=1`, `AURORA_DEMO_POS=129,134` et
+  `AURORA_FPS_LIMIT=160` (ce qui bouge de plus de 2 mm par image près du
+  rayon du curseur fait refaire la recherche : le nombre d'images/s compte).
+  Avec `,busy` après le nombre, s'ajoute ce que la synchro place encore
+  elle-même dans un lieu plein d'avatars : sur chaque avatar un ruban
+  flexible et un ornement qui tourne avec deux prims liés, sur notre avatar
+  un HUD de 250 prims (en bas à gauche de l'écran), et au sol 60 objets qui
+  tournent avec un prim lié. À combiner avec `AURORA_DEMO_STREAM=12000,400`
+  pour les objets immobiles ; `AURORA_SYNC_CHECK=1` donne ce que la synchro
+  visite, `AURORA_SYNC_SLICE=alt` compare avec l'ancien chemin.
+- **`AURORA_DEMO_HAIR=<couches>[,<segments>[,<vide>[,<période>]]]`** : notre
+  avatar et chaque avatar de `AURORA_DEMO_CROWD` portent `couches` mesh
+  riggés (8 par défaut, 32 au plus), chacun une coque autour de la tête et
+  une autour du torse, un peu plus grandes d'une couche à la suivante : les
+  mèches superposées d'une chevelure mesh et les vêtements en couches, soit
+  `couches` fragments transparents par pixel couvert. `segments` (24 par
+  défaut, 4 à 180) fixe les triangles : 4 × segments² par couche et par
+  avatar. La texture est faite de mèches verticales espacées de `période`
+  texels (16 par défaut, 4 à 256, sur 256), dont `vide` pour cent sont
+  entièrement transparents (60 par défaut, 0 à 90).
+  - À lire dans `perf summary` : `g_transparent` + `g_post` (voir
+    [Profilage](#profilage)), `blend`, `blend_tris_k`. `32` avec
+    `AURORA_DEMO_CROWD=40` et `AURORA_DEMO_POS="129,134"` donne ~970 faces
+    transparentes (17 avatars dessinés en entier).
+  - Pour l'abandon précoce des fragments invisibles
+    (`AURORA_BLEND_EARLY_DISCARD`) : il ne rapporte que là où des zones
+    vides sont d'un seul tenant à l'écran. `32,24,90,256` (grandes plages
+    vides) le montre, `32,24,60,16` (mèches fines) ne gagne rien.
+- **`AURORA_DEMO_LIGHTS=<n>`** : n petites lumières locales (64 si la valeur
+  n'est pas un nombre, 256 au plus), des sphères lumineuses de 6 cm à
+  hauteur de tête, espacées de 1,6 m sur la place de la foule et au-delà,
+  de 3 m de rayon (4,5 m une fois étendues comme les lumières différées de
+  Firestorm) : les « face lights » d'une foule et les lampes d'un club. Le
+  rendu prend les 64 plus proches (`lights=` dans `perf summary`). Avec
+  `AURORA_DEMO_POS="129,134"` elles sont devant la caméra, à 9 m et plus ;
+  avec `"140,134"`, la caméra est au milieu d'elles. Sert à mesurer
+  `AURORA_LIGHT_TILES`.
 - **`AURORA_DEMO_OVERDRAW=<n>`** : n rangées de murs opaques (12 si la
   valeur n'est pas un nombre, 40 au plus) à l'est de la place, l'une
   derrière l'autre et chacune plus haute que celle de devant, envoyées de la
@@ -855,6 +1083,46 @@ racine ouverte et libellés alignés à gauche. Créations et mutations simulée
 hors ligne ; les fichiers et photos chargés en démo restent hors ligne.
 
 - `1` : l'inventaire seul.
+- `delete-key`, `delete-button` : sélectionnent un dossier contenant trois
+  niveaux et leurs items, puis ouvrent la confirmation par Suppr ou le bouton
+  de corbeille du pied de fenêtre. Capturer 660 (sélection et corbeille à droite
+  du compteur), puis 720 (confirmation identique au menu contextuel). Supprimer
+  déplace le dossier complet dans la corbeille ; Annuler le garde à sa place.
+  Vérifier aussi une sélection multiple, un objet porté / protégé (commande
+  indisponible), un champ de texte (Suppr édite le texte) et une fenêtre de
+  dossier. Une sélection entièrement dans la corbeille demande confirmation
+  avant suppression définitive.
+- `clipboard` : inventaire déplié pour tester Ctrl+C / Ctrl+X / Ctrl+V sur
+  les éléments, les dossiers et les sélections multiples. Choisir le dossier
+  de destination (ou un de ses éléments) avant de coller. Les champs de
+  recherche et de renommage gardent leurs raccourcis de texte.
+  `clipboard-copy` sélectionne deux éléments, copie puis colle deux fois dans
+  le sous-dossier ; `clipboard-cut` déplace deux objets, dont un non copiable
+  et un non transférable ; `clipboard-folder` copie le sous-dossier, ses deux
+  niveaux imbriqués et leurs trois items dans « Destination de test ».
+  `clipboard-cut-folder` déplace la même arborescence, avec un objet non copiable
+  dans un sous-dossier : tous les éléments doivent rester présents avec les
+  mêmes identifiants. `clipboard-window` copie depuis une fenêtre de
+  dossier puis colle dans une autre, vide. Gestes aux images 650–781, puis
+  ouverture du dossier de destination ; capture après 800. Aucune activation
+  de la fenêtre native ni lecture du presse-papiers du système pendant ces
+  scénarios automatiques.
+  `clipboard-progress` illustre les états possibles de la ligne de statut :
+  modification aux images 650–749, copie avec compteur 2/3 aux images
+  800–849, vérification aux images 850–919, puis confirmation de fin dès 920.
+  Capturer 700,820,890,940 ; l’animation, le compteur et le temps écoulé doivent
+  rester visibles dans la ligne de statut, sans agrandir la fenêtre.
+  La vérification concerne les mutations de métadonnées ; une copie réelle
+  est terminée par la réception de ses items, sans relecture finale du dossier.
+  En ligne, le statut doit montrer les étapes, le compteur d’items confirmés et
+  le temps écoulé, puis « Modification terminée ». Les items apparaissent dès leur
+  arrivée ; il doit être possible de lancer une autre copie ou de déplacer un
+  autre item pendant une copie en cours. Un couper/coller change l'arborescence
+  dès l'envoi fiable et affiche « Déplacement demandé » sans attendre de relecture
+  HTTP. Tester deux copies successives, des dossiers avec plusieurs niveaux,
+  puis recharger et vérifier les originaux, les copies et les déplacements.
+  Une copie non confirmée demande de recharger la destination ; des références
+  incomplètes demandent de recharger la source au lieu d'attendre une expiration.
 - `move-menu` : menu d’un élément avec « Déplacer vers… » ; `move-item`,
   `move-folder`, `move-multi` : fenêtre de destination pour un élément, un
   dossier ou trois objets (dont un non copiable et un non transférable).
@@ -1027,20 +1295,27 @@ Ce que l'inventaire doit montrer avec ces scénarios :
 | `AURORA_PRESENT_MODE=<mode>` | Force le mode de présentation de la swapchain |
 | `AURORA_CPU_CULL=1` | Listes de dessin construites sur le CPU |
 | `AURORA_CPU_ATTACH=1` | Objets portés et mesh riggés placés par la synchro, sans les ancres du GPU |
+| `AURORA_SYNC_SLICE=1` ou `alt` | Synchro de la scène par tranche de tous les objets, comme avant |
+| `AURORA_SYNC_CHECK=1` | Ce que la synchro de la scène visite à chaque image |
 | `AURORA_TEXTURE_BC7=0` | Textures jamais compressées en BC7 |
 | `AURORA_TEXTURE_BC7_CACHE=0` | BC7 sans son cache disque |
 | `AURORA_RENDER_THREAD=0` | Images dessinées sur le thread principal |
 | `AURORA_EYE_RELATIVE=0` | Sommets des objets et du terrain calculés en coordonnées de région |
+| `AURORA_SHADOW_LEGACY=1` | Ombres dessinées par l'ancien chemin |
 | `AURORA_PROFILE=1` | Profilage dans le journal (voir [Profilage](#profilage)) |
 | `AURORA_PROFILE_FRAMES=1` | Profil détaillé de chaque image |
 | `AURORA_GPU_VALIDATION=1` | Couches de validation de wgpu |
 | `AURORA_HOVER_CHECK=1` | Diagnostic du curseur de survol |
+| `AURORA_CLICK_PICK=wait` ou `check` | Profondeur sous un clic lue en attendant le GPU, ou contrôlée |
+| `AURORA_HOVER_LEGACY=1` ou `ab` | Recherche de l'objet sous le curseur comme avant les classes et les hiérarchies de triangles |
 | `AURORA_STILL_CHECK=1` | Ce qui change quand l'image devrait être immobile |
 | `AURORA_DEBUG_GLOW=1` | Diagnostic du glow |
 | `AURORA_GLOW_SKIP=<masque>` | Retire une famille de faces du glow |
 | `AURORA_MEDIA_DEBUG=1` | Diagnostic des médias |
 | `AURORA_FONT_FALLBACK=0` | Sans les polices de repli du système |
 | `AURORA_TEXTURE_BUDGET_MB=<n>` | Force le budget mémoire des textures |
+| `AURORA_LIGHT_TILES=0`, `alt` ou `check` | Lumières locales sans tri par case d'écran, ou contrôle du tri |
+| `AURORA_BLEND_EARLY_DISCARD=0` ou `alt` | Fragments invisibles des faces transparentes éclairés avant d'être abandonnés |
 
 ### Détails
 
@@ -1065,6 +1340,38 @@ Ce que l'inventaire doit montrer avec ces scénarios :
     (caméra rapprochée après une réduction). Une valeur énorme (1000000)
     retire toute pression, pour comparer.
 
+- **`AURORA_LIGHT_TILES=0|alt|check`** : par défaut, un fragment éclairé ne
+  parcourt que les lumières locales qui couvrent à la fois sa colonne
+  d'écran, sa rangée et sa tranche de profondeur (32 de chaque ; ensembles
+  calculés à chaque image sur le thread de rendu,
+  `aurora-render/src/light_tiles.rs`), dans l'ordre de la liste : même
+  image, les lumières qui atteignent le fragment sont additionnées comme
+  avant et dans le même ordre.
+  - `0` : chaque fragment parcourt toute la liste (jusqu'à 64 lumières),
+    comme avant, pour comparer.
+  - `alt` (avec `AURORA_PROFILE=1`) : l'ancien parcours pendant une ligne
+    `perf summary` sur trois, le nouveau pendant les deux autres, dans la
+    même session et sur la même scène ; `light_tiles=1.00` ou `0.00` dans
+    la ligne dit lequel (une valeur intermédiaire : la seconde du
+    changement). Comparer `g_objects`, `g_terrain_sky` et
+    `g_transparent` + `g_post` des deux groupes de lignes, avec
+    `AURORA_FPS_LIMIT=120` ; `lights=` donne la longueur de la liste.
+  - `check` : les shaders peignent en magenta tout fragment qu'une lumière
+    de la liste atteint sans figurer dans ses ensembles. Il ne doit y en
+    avoir aucun, où que l'on regarde (coûteux : chaque fragment reparcourt
+    toute la liste).
+  - Les reflets, les faces de sondes et les photos d'imposteurs gardent
+    toute la liste.
+  - En démo : `AURORA_DEMO_LIGHTS=64` avec `AURORA_DEMO_CROWD=40`.
+- **`AURORA_BLEND_EARLY_DISCARD=0|alt`** : par défaut, un fragment de face
+  transparente dont l'alpha est sous 0,004 est abandonné avant l'éclairage
+  (ombres, lumières, brume, sondes) ; il l'était après. `alphaF.glsl` de
+  Firestorm l'abandonne de même avant la brume, les sondes et les lumières.
+  Même image. `0` : l'ancien ordre, pour comparer ; `alt` :
+  l'ancien ordre pendant une ligne `perf summary` sur trois (`blend_early=`
+  dans la ligne), comme `AURORA_LIGHT_TILES=alt` — n'alterner qu'une des
+  deux variables à la fois, elles changent aux mêmes secondes. Le gain
+  dépend du contenu : voir `AURORA_DEMO_HAIR`.
 - **`AURORA_FONT_FALLBACK=0`** : n'utilise que les polices embarquées, comme
   avant l'ajout des polices de repli du système : les caractères qu'elles
   n'ont pas (géorgien, CJK, arabe, lettres mathématiques…) redeviennent des
@@ -1115,6 +1422,46 @@ Ce que l'inventaire doit montrer avec ces scénarios :
   transparentes des mesh riggés, que le CPU liste, sont testées avec
   l'étendue de leur squelette et non plus avec leurs propres limites
   (`blend` un peu plus élevé).
+- **`AURORA_SYNC_SLICE=1`** : la synchro de la scène revient à chaque objet
+  toutes les 24 images (tranche de LOD), replace les HUDs portés à chaque
+  image et envoie les enregistrements par blocs entiers de 64, comme avant,
+  pour comparer l'image et les mesures. Par défaut, un objet immobile n'est
+  revu que lorsque la caméra a parcouru la distance qui peut changer son
+  niveau de détail (`scene/lod_watch.rs` : jamais caméra immobile) ; ce que
+  le GPU place depuis un avatar (objets portés, mesh riggés) est revu à
+  tour de rôle, toutes les 24 images tant que la caméra bouge (comme
+  avant) et toutes les 0,4 s caméra immobile, et tout objet toutes les
+  10 s ; un HUD
+  porté n'est replacé qu'à ses mises à jour et quand sa place à l'écran
+  change (fenêtre redimensionnée, zoom ou décalage local) ; seuls les
+  enregistrements modifiés sont envoyés.
+  - `AURORA_SYNC_SLICE=alt` alterne dans la même session, à chaque ligne
+    `perf summary` : une seconde par l'ancien chemin, deux par le nouveau,
+    la ligne se terminant par `xmode=old` ou `xmode=new`. C'est la mesure à
+    faire sur une machine partagée ou sur la grille : mêmes objets, même
+    caméra, même charge extérieure des deux côtés.
+  - À lire : `synced`, `sync` et ses parties `s_sync_*`, `records_kb`,
+    `cull_kb`, `journal_kb`, `r_resources`. À combiner avec
+    `AURORA_DEMO_CROWD=40,busy`, `AURORA_DEMO_ANIMESH=1` et
+    `AURORA_DEMO_STREAM=12000,400`.
+- **`AURORA_SYNC_CHECK=1`** : une ligne `sync check` par seconde, en
+  moyennes par image : les objets listés par la synchro selon ce qui les y
+  a mis (`moving` : ce qui bouge de lui-même et ce qui le suit ; `changed` :
+  mises à jour ; `geometry` : géométrie arrivée ; `lod` : contrôles du
+  niveau de détail), puis par nature d'objet (`avatar`, `hud`, `flexible`,
+  `moving` — vitesse ou rotation donnée par le simulateur —, `rigged` — mesh
+  riggé que le GPU ne place pas —, `anchored` — placé par le GPU —, `worn`
+  — porté et placé par la synchro —, `follower` — lié sous un objet qui
+  bouge —, `still`) ce qu'il en est sorti : placement vérifié sans rien
+  écrire / enregistrements réécrits / synchro complète / synchro complète
+  remise à plus tard (`scene/sync_check.rs`). Dit quels objets occupent la
+  synchro dans un lieu au repos. La ligne se termine par un contrôle de
+  tous les objets, fait une fois par seconde : `detail level behind: a of b
+  at rest, c of d placed by the GPU` compte ceux dont le niveau de détail
+  demandé n'est pas, à cet instant, celui que donne leur distance (un
+  contrôle que la synchro n'a pas encore fait) ; à lire caméra en
+  mouvement, avec et sans `AURORA_SYNC_SLICE=1`. Ce contrôle coûte un
+  parcours de tous les objets par seconde. En démo comme sur la grille.
 - **`AURORA_RENDER_THREAD=0`** : dessine les images sur le thread principal,
   comme avant le thread de rendu, pour comparer et déboguer. Par défaut, le
   thread principal remet chaque image au thread de rendu sous la forme d'un
@@ -1158,6 +1505,29 @@ Ce que l'inventaire doit montrer avec ces scénarios :
   `AURORA_DEMO_CAMERA=drift,690,420,84` sur des captures consécutives
   (images 800 à 899) : le bord du panneau dérive régulièrement, ou sautille
   avec `0`.
+- **`AURORA_SHADOW_LEGACY=1|splits|ab`** : pour comparer l'image et les
+  mesures des ombres. Par défaut, chaque cascade ne dessine que les objets
+  dont l'ombre peut tomber sur ce que la vue y lit
+  (`aurora-render/src/shadow_cull.rs`), les faces opaques sont dessinées
+  sans fragment shader, et la cascade d'un pixel est choisie d'après sa
+  propre distance à la caméra.
+  - `1` : l'ancien chemin. Tous les objets du carré de chaque cascade,
+    toutes les faces avec le test alpha, et la cascade choisie d'après la
+    distance interpolée entre les sommets du triangle.
+  - `splits` : seulement l'ancien choix de la cascade. L'image est alors
+    celle de l'ancien chemin au pixel près ; les objets proches de la
+    caméra restent dessinés dans les cascades lointaines.
+  - `ab` : avec `AURORA_PROFILE=1`, l'ancien chemin, le nouveau et `splits`
+    à tour de rôle, une seconde chacun, dans la même session et sous la
+    même charge extérieure. `shadow_path=legacy|new|splits` dans la ligne
+    `perf summary` dit lequel a dessiné la seconde ; comparer
+    `shadow_draws`, `g_shadows_depth` et `gpu`, avec `AURORA_FPS_LIMIT=120`
+    pour les temps GPU.
+  - Seule différence d'image attendue avec `1` : sur un triangle qui couvre
+    plusieurs cascades (grand sol, grand mur), la limite entre deux
+    cascades se déplace, et les ombres proches de la caméra y sont plus
+    nettes (elles lisaient une cascade plus lointaine que le terrain et les
+    petits objets voisins).
 - **`AURORA_PROFILE=1`** : une ligne `perf summary` par seconde, plus une
   ligne `perf settings` quand les réglages changent. Le plafond d'images/s
   en arrière-plan (« Limiter hors focus ») est ignoré : une fenêtre sans le
@@ -1169,8 +1539,43 @@ Ce que l'inventaire doit montrer avec ces scénarios :
   (gardée d'une image précédente, ou cherchée parmi les candidats de l'index
   de picking) est comparée à la recherche complète dans la scène ; les
   différences sont journalisées sous `hover check`, avec toutes les dix
-  secondes les recherches faites et les réponses réutilisées. Coûte la
-  recherche complète à chaque image.
+  secondes les recherches faites et les réponses réutilisées. Chaque
+  recherche vérifie aussi l'index lui-même contre la scène : les sphères
+  qu'il tient (`index entries … unlike their object`) et les classes des
+  objets testés quel que soit le rayon (`classes unlike their object`) ;
+  tous ces compteurs doivent rester à 0. Coûte la recherche complète à
+  chaque image.
+- **`AURORA_HOVER_LEGACY=1`** : la recherche de l'objet sous le curseur
+  redevient celle d'avant (`scene/hover.rs`) : tout objet testé quel que
+  soit le rayon (avatar, mesh riggé) est candidat à chaque étape, chaque
+  triangle d'un objet rencontré est testé, et le pick des HUDs regarde tous
+  les objets de la scène. `ab` alterne les deux façons,
+  une seconde chacune dans la même session : c'est la comparaison à faire
+  sur une machine chargée. À lire dans les lignes `hover summary` du profil
+  (`search=new|old`, voir [Profilage](#profilage)).
+- **`AURORA_CLICK_PICK=wait|check`** : par défaut, un clic sur le monde
+  (clic gauche, Alt + clic, clic droit, outils de construction) demande la
+  profondeur sous son pixel sans l'attendre : la demande part avec l'image
+  suivante, la réponse revient une à trois images plus tard (une ou deux
+  avec un plafond d'images/s, trois quand le GPU est la limite), et le clic
+  est alors traité avec le curseur et les touches qu'il avait ; ce qui le
+  suit (relâchement, autres boutons, mouvement de la souris qui déplace la
+  caméra) attend derrière lui, dans l'ordre (`app/click_pick.rs`).
+  - `wait` : la profondeur est lue tout de suite en attendant le GPU, comme
+    avant, pour comparer (sans la lecture des faces dessinées : un mesh
+    riggé n'est alors pas désigné, comme avant aussi) : dans une scène où le GPU est la limite, le
+    thread principal attend alors 16 à 30 ms à chaque clic (`between` dans
+    `max:` et `off_cpu:` de `perf summary`).
+  - `check` : les deux lectures sont faites et comparées, une ligne `click
+    check` par clic : `depth identical` (c'est le même texel de la même
+    image : `DIFFERENT` est un défaut), `target identical` (le point et
+    l'objet que le clic trouve ; `DIFFERENT` seulement si ce qui est sous le
+    curseur a changé pendant les images d'attente), le temps
+    de la lecture qui attend et le délai de la réponse. Coûte l'attente de
+    `wait` à chaque clic.
+  - Avec `AURORA_PROFILE=1` (ou `AURORA_DEMO_CLICKS`), chaque clic écrit
+    une ligne `click pick:` : `answered after 2 frames, 9.14 ms`, ou `the
+    read waited 25.56 ms` avec `wait`. En démo comme sur la grille.
 
 - **`AURORA_STILL_CHECK=1`** : une ligne `still check` par seconde, pour
   trouver la cause d'une image qui tremble alors que rien ne devrait bouger
@@ -1286,22 +1691,92 @@ thread principal est déjà sur l'image suivante. Avec
     (un dessin par mesh) et `ui_vertices` par image, et `ui_vertices_max`,
     le plus grand nombre de sommets d'une image de la seconde : un pic de
     `r_tessellate` sans pic de sommets n'est pas du travail en plus ;
-  - le temps GPU par élément (`g_*`) puis, à part, celui des deux prépasses
-    de profondeur, déjà compté dans `g_shadows_depth` : `g_depth` (prépasse
-    à un échantillon et occlusion) et `g_depth_msaa` (prépasse de la
-    profondeur multi-échantillonnée, 0 hors MSAA) ; les draws et commandes
-    de dessin, les
+  - le temps GPU par élément (`g_*`). Les marques posées à l'intérieur
+    d'une passe n'attendent pas la fin du travail des dessins qui les
+    précèdent : quand les faces transparentes sont lourdes, une partie de
+    leur éclairage est comptée dans `g_post` (mesuré en démo : une part
+    qui change d'une seconde à l'autre). Pour elles, lire la somme
+    `g_transparent` + `g_post`. `g_transparent` couvre les faces
+    transparentes triées, leur glow intercalé, les calques de débogage et de
+    sélection, les particules et la fin de la passe (en MSAA, la résolution
+    de l'image) ; l'eau, le glow des faces opaques et les imposteurs n'en
+    font pas partie ;
+  - ce que les faces transparentes dessinent : `blend` (faces),
+    `blend_tris_k` (leurs triangles, en milliers), `blend_glow`,
+    `blend_early` (part des images où leurs fragments invisibles sont
+    abandonnés avant l'éclairage) ; ce que chaque fragment éclairé peut
+    avoir à parcourir : `lights` (lumières locales de l'image, 64 au plus),
+    `light_tiles` (part des images où il ne parcourt que celles de sa case
+    d'écran et de sa profondeur) et `probes` (sondes de reflets) ;
+  - le détail de `g_shadows_depth` : `g_cull` (culling GPU de toutes les
+    vues), `g_shadow0` à `g_shadow2` (les cascades d'ombres, de la plus
+    proche à la plus lointaine) et `g_depth` (prépasse de profondeur et
+    occlusion). Ce partage est indicatif : le GPU chevauche les dessins
+    voisins, et le travail des sommets d'une cascade déborde sur ce qui la
+    suit ; pour comparer deux chemins, lire leur somme `g_shadows_depth`.
+    Puis, par cascade (suffixe 0 à 2), ce que les ombres
+    dessinent : `sd` draws, `sd_cpu` ceux des listes du CPU (le terrain),
+    `st_k` milliers de triangles, `sd_rig` et `st_rig_k` la part des
+    avatars et des mesh riggés (les triangles ne comptent que les draws des
+    listes du GPU). `shadow_path` : le chemin des ombres de la seconde
+    (`AURORA_SHADOW_LEGACY`) ;
+  - `g_depth_msaa` : avec le MSAA, la prépasse de la profondeur
+    multi-échantillonnée dont part la passe de scène (0 hors MSAA),
+    comptée elle aussi dans `g_shadows_depth` ;
+  - les draws et commandes de dessin, les
     objets synchronisés / reconstruits (`synced`, `rebuilt` : des moyennes
     **par image** ; `rebuilt=0.2` à 175 images/s, ce sont 35 reconstructions
     par seconde, `AURORA_STILL_CHECK=1` dit lesquelles), les objets portés et
     mesh riggés placés par le GPU (`anchored`, que la synchro ne visite
     plus), les avatars posés, les octets
-    d'enregistrements et de palettes envoyés au GPU et ceux de tout le
+    d'enregistrements et de palettes envoyés au GPU, ceux des tables du
+    culling (`cull_kb` : faces, objets, boîtes par os) et des sommets
+    déformés sur place (`vertices_kb` : prims flexibles), et ceux de tout le
     journal d'écritures de l'image (`journal_kb`), la mémoire des textures
     (textures vivantes, pages de textures et leur mémoire allouée), la
     mémoire de la géométrie, et les objets dont la synchro complète attend
     une image qui a du temps (`sync_backlog` : nouveaux objets en attente
-    de leur première synchro compris).
+    de leur première synchro compris) ;
+  - `xmode=old|new` en fin de ligne avec `AURORA_SYNC_SLICE=alt` : le chemin
+    de la synchro pendant cette seconde.
+
+### Objet sous le curseur
+
+Avec `AURORA_PROFILE=1`, une ligne `hover summary` par seconde tant que le
+curseur est sur le monde (aucune quand il est sur l'interface, en vue
+subjective ou qu'Alt, Ctrl ou Maj est enfoncé) : ce que la recherche de
+l'objet sous le curseur a fait (`scene/hover.rs`), à part de l'étape
+`hover` de `perf summary`, qui compte aussi les HUDs et la pose du curseur.
+
+- `search=new|old` : la façon de chercher de cette seconde
+  (`AURORA_HOVER_LEGACY`) ;
+- `hud_ms_per_frame` : le temps du pick des HUDs, fait à chaque image
+  avant de chercher dans le monde ;
+- `asked` : les images qui ont demandé l'objet, `searches` : celles où il a
+  fallu le chercher (les autres ont gardé la réponse), `ms_per_frame` : le
+  temps de recherche ramené à chaque image, `longest_ms` : la recherche la
+  plus longue ;
+- `why:` pourquoi la réponse gardée ne tenait plus (une recherche peut
+  compter dans plusieurs) : `none` aucune réponse, `ray` le curseur ou la
+  caméra a bougé, `depth` la profondeur lue sous le curseur a changé,
+  `index` un objet a bougé ou changé près du rayon, `refresh` la réponse
+  avait 100 ms ;
+- `index:` ce qui a dérangé l'index en premier : `bounded` un objet avec
+  ses limites, `always` un objet testé quel que soit le rayon (avatar, mesh
+  riggé), `changed` un objet mis à jour sans bouger, `reset` tout a été
+  retiré ;
+- `per search:` par recherche, les candidats de chaque étape — `ignore`
+  (objets IGNORE qui arrêtent le rayon), `see_through` (faces transparentes
+  avec une action), `point` (objet au point trouvé) —, le temps de la passe
+  sur l'index (`index_ms`, classes à établir comprises), de la recherche du
+  point (`point_ms`) et de l'objet à ce point (`object_ms`), puis les tests
+  exacts : `tested` objets dont on a demandé les triangles, `boxes` ceux
+  dont le rayon rencontre la boîte, `triangles` triangles testés un par un,
+  `hierarchies` faces passées par leur hiérarchie à la place ;
+- `ignored` : les recherches qui ont rencontré un objet IGNORE (elles
+  reprennent tous les candidats), `classes_set` : les classes établies dans
+  la seconde, `repaired` : les classes trouvées fausses par la vérification
+  tournante depuis le lancement (doit rester à 0).
 
 ### Chargement des textures
 

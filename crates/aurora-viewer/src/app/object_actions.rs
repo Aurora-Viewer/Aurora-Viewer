@@ -5,6 +5,19 @@ use crate::interaction::{self, Action, Contents, Held, Target};
 
 impl App {
     pub(super) fn activate_object_action(&mut self, target: Target, idx: usize, point: Vec3, ray: Option<(Vec3, Vec3)>) {
+        self.activate_object_action_at(target, idx, point, ray, None);
+    }
+
+    /// `shown`: the touched surface when it was read from the faces the GPU
+    /// drew (a rigged mesh, which the CPU cannot trace: scene/drawn.rs).
+    pub(super) fn activate_object_action_at(
+        &mut self,
+        target: Target,
+        idx: usize,
+        point: Vec3,
+        ray: Option<(Vec3, Vec3)>,
+        shown: Option<aurora_net::TouchSurface>,
+    ) {
         let now = Instant::now();
         match target.action {
             Action::Disabled => {}
@@ -42,8 +55,8 @@ impl App {
             }
             Action::Play => self.media.toggle_parcel(&self.world, &self.settings.media),
             Action::OpenMedia => {
-                let face = ray
-                    .and_then(|r| self.scene.touch_surface(&self.world, idx, r))
+                let face = shown
+                    .or_else(|| ray.and_then(|r| self.scene.touch_surface(&self.world, idx, r)))
                     .map_or(-1, |s| s.face);
                 self.interactions.media_url = self.media.click_open_media(&self.world, idx, face, &self.settings.media);
             }
@@ -71,7 +84,9 @@ impl App {
                 // Firestorm starts from the root center, not the surface hit,
                 // so dragging a child does not make a linked object jump.
                 let offset = rot.inverse() * (pos - clicked) / self.world.hud_scale(idx);
-                let surface = ray.and_then(|r| self.scene.touch_surface(&self.world, idx, r)).unwrap_or_default();
+                let surface = shown
+                    .or_else(|| ray.and_then(|r| self.scene.touch_surface(&self.world, idx, r)))
+                    .unwrap_or_default();
                 let physical = self
                     .world
                     .objects
@@ -82,6 +97,7 @@ impl App {
                     offset,
                     position: pos,
                     surface,
+                    shown: shown.is_some(),
                     cursor: self.cursor_pos,
                     last: now,
                     physical,
@@ -112,6 +128,7 @@ impl App {
                 .world
                 .objects
                 .index_of(&h.target.key)
+                .filter(|_| !h.shown)
                 .and_then(|idx| {
                     let ray = self
                         .gfx
@@ -153,11 +170,14 @@ impl App {
         if h.last.elapsed() < Duration::from_millis(100) {
             return;
         }
-        let surface = self
-            .scene
-            .object_cursor_ray(idx, self.cursor_pos, renderer.cursor_ray(self.cursor_pos.0, self.cursor_pos.1))
-            .and_then(|ray| self.scene.touch_surface(&self.world, idx, ray))
-            .unwrap_or_default();
+        let surface = if h.shown {
+            h.surface
+        } else {
+            self.scene
+                .object_cursor_ray(idx, self.cursor_pos, renderer.cursor_ray(self.cursor_pos.0, self.cursor_pos.1))
+                .and_then(|ray| self.scene.touch_surface(&self.world, idx, ray))
+                .unwrap_or_default()
+        };
         if self.cursor_pos == h.cursor && surface == h.surface {
             return;
         }

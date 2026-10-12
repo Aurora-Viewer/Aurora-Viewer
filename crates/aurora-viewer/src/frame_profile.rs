@@ -17,7 +17,8 @@
 //! for the render thread (`wait_render`, both inside the `render` lap) and
 //! how long the render thread waited for a packet (`rt_idle`).
 
-use aurora_render::{GpuElement, RENDER_PHASES, RenderStats, thread_cpu};
+use aurora_render::light_tiles::LightCulling;
+use aurora_render::{BlendDiscard, GpuElement, RENDER_PHASES, RenderStats, thread_cpu};
 use std::fmt::Write;
 use std::time::{Duration, Instant};
 
@@ -395,7 +396,24 @@ struct Period {
     /// Depth prepasses alone: single-sample, multisampled.
     gpu_depth: [f32; 2],
     gpu_frames: u32,
+    /// Parts of the shadows and depth GPU time (`ShadowStats::gpu_ms`).
+    gpu_shadow: [f32; 5],
+    gpu_shadow_frames: u32,
+    /// Shadow casters by cascade: draws, those of the CPU lists, triangles
+    /// of the GPU casters, rigged casters and their triangles.
+    shadow: [[u64; 3]; 5],
+    /// Shadow path of the period's frames (`shadow_cull::path`).
+    shadow_path: u32,
     draws: u64,
+    blend_triangles: u64,
+    /// Frames whose blended faces dropped their invisible fragments before
+    /// the lighting.
+    blend_early: u32,
+    lights: u64,
+    probes: u64,
+    /// Frames whose fragments walked the lights of their screen tile and
+    /// depth only.
+    light_tiles: u32,
     calls: u64,
     triangles: u64,
     shadow_draws: u64,
@@ -403,6 +421,8 @@ struct Period {
     occluded: u64,
     records_bytes: u64,
     palette_bytes: u64,
+    cull_bytes: u64,
+    vertex_bytes: u64,
     textures: u32,
     /// GPU memory of the textures and the geometry at the end (bytes).
     texture_bytes: u64,
@@ -427,8 +447,13 @@ pub struct FrameProfile {
     last_cycles: u64,
     started: Option<Instant>,
     period: Period,
+    /// Summaries written so far.
+    periods: u64,
     /// Settings line last logged (logged again when they change).
     settings: String,
+    /// Added to the summary lines: the variant an A/B run was on during
+    /// the line's second (`xmode=`).
+    mark: &'static str,
 }
 
 impl Default for FrameProfile {
@@ -447,12 +472,36 @@ impl FrameProfile {
             last_cycles: 0,
             started: None,
             period: Period::default(),
+            periods: 0,
             settings: String::new(),
+            mark: "",
         }
+    }
+
+    /// The variant the next summary lines are measured on (` | xmode=…`,
+    /// or nothing).
+    pub fn set_mark(&mut self, mark: &'static str) {
+        self.mark = mark;
     }
 
     pub fn enabled(&self) -> bool {
         self.enabled
+    }
+
+    /// AURORA_BLEND_EARLY_DISCARD=alt: the blended faces take the old path
+    /// (invisible fragments lit, then dropped) during one summary in three,
+    /// so that one run measures both paths on the same scene, second after
+    /// second (`blend_early=` in the summary tells them apart). Three rather
+    /// than two: work that comes back every other second would otherwise
+    /// always fall on the same path.
+    pub fn blend_late_discard(&self) -> bool {
+        self.enabled && BlendDiscard::from_env() == BlendDiscard::Alternate && self.periods.is_multiple_of(3)
+    }
+
+    /// AURORA_LIGHT_TILES=alt: likewise, the fragments walk the whole light
+    /// list during one summary in three (`light_tiles=` in the summary).
+    pub fn all_lights(&self) -> bool {
+        self.enabled && LightCulling::from_env() == LightCulling::Alternate && self.periods.is_multiple_of(3)
     }
 
     /// End a step of the frame now.
@@ -492,13 +541,16 @@ impl FrameProfile {
         }
     }
 
-    /// End the frame (after the `Tail` lap); logs the summary once a second.
-    pub fn end_frame(&mut self, render: &RenderStats, scene: &SceneCounts, parts: &Parts) {
+    /// End the frame (after the `Tail` lap); logs the summary once a
+    /// second, and tells when it did.
+    pub fn end_frame(&mut self, render: &RenderStats, scene: &SceneCounts, parts: &Parts) -> bool {
         if self.enabled
             && let Some(line) = self.end_frame_at(render, scene, parts, Instant::now())
         {
-            log::info!("perf summary: {line}");
+            log::info!("perf summary: {line}{}", self.mark);
+            return true;
         }
+        false
     }
 
     fn end_frame_at(&mut self, render: &RenderStats, scene: &SceneCounts, parts: &Parts, now: Instant) -> Option<String> {
@@ -532,13 +584,34 @@ impl FrameProfile {
             add(&mut p.gpu_depth, &d);
         }
         p.draws += render.draws as u64;
+        p.blend_triangles += render.blend_triangles;
+        p.blend_early += render.blend_early_discard as u32;
+        p.lights += render.lights as u64;
+        p.probes += render.probes as u64;
+        p.light_tiles += render.light_tiles as u32;
         p.calls += render.draw_calls as u64;
         p.triangles += render.triangles;
         p.shadow_draws += render.shadow_draws as u64;
+        let sh = &render.shadow;
+        if let Some(g) = sh.gpu_ms {
+            add(&mut p.gpu_shadow, &g);
+            p.gpu_shadow_frames += 1;
+        }
+        for (sum, v) in p
+            .shadow
+            .iter_mut()
+            .zip([sh.draws, sh.cpu_draws, sh.triangles, sh.rigged_draws, sh.rigged_triangles])
+        {
+            for k in 0..3 {
+                sum[k] += v[k] as u64;
+            }
+        }
         p.particles += render.particles as u64;
         p.occluded += render.occluded.unwrap_or(0) as u64;
         p.records_bytes += render.records_uploaded;
         p.palette_bytes += render.palettes_uploaded;
+        p.cull_bytes += render.cull_uploaded;
+        p.vertex_bytes += render.vertices_uploaded;
         p.textures = render.textures;
         p.texture_bytes = render.texture_bytes;
         p.texture_pages = render.texture_pages;
@@ -571,7 +644,10 @@ impl FrameProfile {
             return None;
         }
         self.started = Some(now);
-        let p = std::mem::take(&mut self.period);
+        self.periods += 1;
+        let mut p = std::mem::take(&mut self.period);
+        // (with AURORA_SHADOW_LEGACY=ab, the next period compares the other path)
+        p.shadow_path = aurora_render::shadow_cull::next_path();
         Some(summary(&p, elapsed))
     }
 }
@@ -712,19 +788,32 @@ fn summary(p: &Period, elapsed: Duration) -> String {
     for (el, ms) in GpuElement::ALL.iter().zip(p.gpu) {
         let _ = write!(out, " g_{}={:.3}", el.key(), ms / gpu_n);
     }
+    // shadows and depth in detail: culling, cascades, prepass; then the
+    // casters of each cascade
+    let shadow_n = p.gpu_shadow_frames.max(1) as f32;
+    for (key, ms) in ["cull", "shadow0", "shadow1", "shadow2", "depth"].iter().zip(p.gpu_shadow) {
+        let _ = write!(out, " g_{key}={:.3}", ms / shadow_n);
+    }
+    let _ = write!(out, " | shadow_path={}", aurora_render::shadow_cull::path_name(p.shadow_path));
+    for (key, by_cascade, unit) in [
+        ("sd", p.shadow[0], 1.0),
+        ("sd_cpu", p.shadow[1], 1.0),
+        ("st_k", p.shadow[2], 1000.0),
+        ("sd_rig", p.shadow[3], 1.0),
+        ("st_rig_k", p.shadow[4], 1000.0),
+    ] {
+        for (k, v) in by_cascade.iter().enumerate() {
+            let _ = write!(out, " {key}{k}={:.0}", count(*v) / unit);
+        }
+    }
     // (both inside g_shadows_depth)
-    let _ = write!(
-        out,
-        " g_depth={:.3} g_depth_msaa={:.3}",
-        p.gpu_depth[0] / gpu_n,
-        p.gpu_depth[1] / gpu_n
-    );
+    let _ = write!(out, " g_depth_msaa={:.3}", p.gpu_depth[1] / gpu_n);
     let s = &p.scene;
     let _ = write!(
         out,
         " | draws={:.0} calls={:.0} tris_k={:.0} shadow_draws={:.0} particles={:.0} occluded={:.0} cull={} \
-         blend={:.0} blend_glow={:.0} glow_alpha={:.0} | objects={:.0} visible={:.0} synced={:.0} anchored={:.0} rebuilt={:.1} posed={:.1} \
-         records_kb={:.1} palettes_kb={:.1} journal_kb={:.1} | textures={} texture_mb={} texture_pages={} pages_mb={} geometry_mb={} \
+         blend={:.0} blend_tris_k={:.0} blend_early={:.2} blend_glow={:.0} glow_alpha={:.0} lights={:.0} light_tiles={:.2} probes={:.0} | objects={:.0} visible={:.0} synced={:.0} anchored={:.0} rebuilt={:.1} posed={:.1} \
+         records_kb={:.1} palettes_kb={:.1} cull_kb={:.1} vertices_kb={:.1} journal_kb={:.1} | textures={} texture_mb={} texture_pages={} pages_mb={} geometry_mb={} \
          jobs={:.0} geom_pending={:.0} sync_backlog={:.0}",
         count(p.draws),
         count(p.calls),
@@ -734,8 +823,13 @@ fn summary(p: &Period, elapsed: Duration) -> String {
         count(p.occluded),
         if p.gpu_cull { "gpu" } else { "cpu" },
         count(s[5]),
+        count(p.blend_triangles) / 1000.0,
+        p.blend_early as f32 / n,
         count(s[6]),
         count(s[7]),
+        count(p.lights),
+        p.light_tiles as f32 / n,
+        count(p.probes),
         count(s[0]),
         count(s[1]),
         count(s[2]),
@@ -744,6 +838,8 @@ fn summary(p: &Period, elapsed: Duration) -> String {
         count(s[4]),
         count(p.records_bytes) / 1024.0,
         count(p.palette_bytes) / 1024.0,
+        count(p.cull_bytes) / 1024.0,
+        count(p.vertex_bytes) / 1024.0,
         count(p.journal_bytes) / 1024.0,
         p.textures,
         p.texture_bytes >> 20,
@@ -829,6 +925,44 @@ mod tests {
             "{l}"
         );
         assert!(l.contains(" texture_mb=3 texture_pages=12 pages_mb=5 "), "{l}");
+    }
+
+    /// What the blended faces draw and what a lit fragment may walk, and
+    /// which of the compared paths drew the frames.
+    #[test]
+    fn summary_counts_the_blended_faces_and_the_lights() {
+        let mut p = FrameProfile::new(true);
+        let t = Instant::now();
+        let scene = SceneCounts {
+            blend: 318,
+            blend_glow: 21,
+            ..Default::default()
+        };
+        let mut lines = Vec::new();
+        for i in 0..=50u64 {
+            let render = RenderStats {
+                blend_triangles: 250_000,
+                blend_early_discard: i % 2 == 0,
+                lights: 64,
+                light_tiles: true,
+                probes: 16,
+                ..Default::default()
+            };
+            if let Some(l) = p.end_frame_at(&render, &scene, &Parts::default(), t + ms(i * 20)) {
+                lines.push(l);
+            }
+        }
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        // (26 of the 51 frames dropped the invisible fragments early)
+        assert!(
+            lines[0].contains(
+                " blend=318 blend_tris_k=250 blend_early=0.51 blend_glow=21 glow_alpha=0 lights=64 light_tiles=1.00 probes=16 | objects="
+            ),
+            "{}",
+            lines[0]
+        );
+        // the paths compared by `alt` change with the summaries, one in three
+        assert_eq!(p.periods, 1);
     }
 
     #[test]

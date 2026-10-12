@@ -1412,6 +1412,24 @@ impl World {
                 self.inventory.add_items(items);
                 None
             }
+            NetEvent::InventoryUpdated { folders, items } => {
+                self.inventory.server_updated(folders, items);
+                None
+            }
+            NetEvent::InventoryMoved { id, parent, folder } => {
+                if folder {
+                    if let Some(f) = self.inventory.folders.get(&id) {
+                        let mut moved = f.info.clone();
+                        moved.parent = parent;
+                        self.inventory.server_updated(vec![moved], Vec::new());
+                    }
+                } else if let Some(item) = self.inventory.items.get(&id) {
+                    let mut moved = item.clone();
+                    moved.parent = parent;
+                    self.inventory.server_updated(Vec::new(), vec![moved]);
+                }
+                None
+            }
             NetEvent::InventoryItemsFailed { items } => {
                 log::warn!("{} inventory items could not be fetched", items.len());
                 None

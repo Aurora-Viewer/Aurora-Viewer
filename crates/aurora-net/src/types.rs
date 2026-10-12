@@ -672,6 +672,20 @@ pub enum NetEvent {
         sources: Vec<Uuid>,
     },
     InventoryContents(Vec<crate::inventory::FolderContents>),
+    /// Unsolicited server changes, distinct from snapshots fetched by the client.
+    InventoryUpdated {
+        folders: Vec<crate::inventory::InvFolder>,
+        items: Vec<crate::inventory::InvItem>,
+    },
+    InventoryMoved {
+        id: Uuid,
+        parent: Uuid,
+        folder: bool,
+    },
+    InventoryProgress {
+        request: Uuid,
+        progress: crate::inventory::operations::Progress,
+    },
     InventoryEdited {
         request: Uuid,
         result: Result<crate::inventory::operations::Reply, String>,
@@ -1137,6 +1151,11 @@ pub enum NetCommand {
         change: crate::inventory::operations::Mutation,
     },
     CopyInventoryItems(Vec<crate::inventory::operations::CopyItem>),
+    /// Track a mutation's deferred item copies while its folders remain visible.
+    FinishInventoryCopies {
+        request: Uuid,
+        reply: crate::inventory::operations::Reply,
+    },
     CreateInventoryItem {
         parent: Uuid,
         kind: crate::inventory::operations::NewItem,
