@@ -373,6 +373,11 @@ impl ChangeFeed {
 /// its own feed (`take_media_changes`): the same objects, plus the slots of
 /// removed objects.
 ///
+/// A new object that is not an avatar is also marked as an arrival
+/// (`is_arrival`) until the scene has synced it once (`settle`): the sync
+/// tells the objects it never saw from the changed ones without reading
+/// each of them, when they arrive by thousands.
+///
 /// The interface labels few of the objects (name tags of the avatars, hover
 /// text of the prims, dots of the maps): `avatars` and `texted` list them,
 /// kept from a third feed, so that no window walks every object each frame.
@@ -395,6 +400,8 @@ pub struct ObjectStore {
     pub removed_slots: Vec<usize>,
     /// Objects changed since the scene last took them, each once.
     touched: ChangeFeed,
+    /// By slot: a new object the scene has not synced yet.
+    arrival: Vec<bool>,
     /// Objects changed, added or removed since the media manager last took
     /// them (a slot may hold another object since, or none).
     media_changes: ChangeFeed,
@@ -450,6 +457,19 @@ impl ObjectStore {
     /// The objects changed since the last call (appended to `out`).
     pub fn take_touched(&mut self, out: &mut Vec<usize>) {
         self.touched.take(out);
+    }
+
+    /// Whether the slot holds a new object, not an avatar, that the scene
+    /// has not synced yet.
+    pub fn is_arrival(&self, idx: usize) -> bool {
+        self.arrival.get(idx).copied().unwrap_or(false)
+    }
+
+    /// The scene has synced the object once: no longer an arrival.
+    pub fn settle(&mut self, idx: usize) {
+        if let Some(a) = self.arrival.get_mut(idx) {
+            *a = false;
+        }
     }
 
     /// The slots changed, filled or emptied since the last call (appended to
@@ -639,6 +659,10 @@ impl ObjectStore {
                 self.slots.len() - 1
             }
         };
+        if self.arrival.len() <= idx {
+            self.arrival.resize(idx + 1, false);
+        }
+        self.arrival[idx] = !obj.is_avatar();
         self.by_uuid.insert(obj.full_id, idx);
         self.slots[idx] = Some(obj);
         self.by_key.insert(key, idx);
@@ -658,6 +682,7 @@ impl ObjectStore {
             self.by_uuid.remove(&obj.full_id);
         }
         self.free.push(idx);
+        self.settle(idx);
         self.removed_slots.push(idx);
         self.media_changes.note(idx);
         self.label_changes.note(idx);
@@ -844,6 +869,36 @@ mod tests {
         assert_eq!(reused, emitter);
         assert_eq!(taken(&mut s, true), [emitter]);
         assert!(s.get(reused).unwrap().particle_update.is_some());
+    }
+
+    #[test]
+    fn new_objects_are_arrivals_until_settled() {
+        use aurora_prim::params::{LL_PCODE_LEGACY_AVATAR as AVATAR, LL_PCODE_VOLUME as PRIM};
+        let mut s = ObjectStore::default();
+        let prim = s.upsert(1, update(10, PRIM, ""));
+        let avatar = s.upsert(1, update(11, AVATAR, ""));
+        // an avatar is never put off
+        assert!(s.is_arrival(prim) && !s.is_arrival(avatar) && !s.is_arrival(999));
+        // updated again before its first sync: still new
+        s.upsert(1, update(10, PRIM, "text"));
+        assert!(s.is_arrival(prim));
+        s.settle(prim);
+        s.settle(999);
+        assert!(!s.is_arrival(prim));
+        // an update of a known object does not make it new again
+        s.upsert(1, update(10, PRIM, ""));
+        assert!(!s.is_arrival(prim));
+        // removed before its first sync: the slot is no arrival, until a
+        // new object takes it
+        let gone = s.upsert(1, update(12, PRIM, ""));
+        s.remove(&ObjKey { region: 1, local_id: 12 });
+        assert!(!s.is_arrival(gone));
+        let again = s.upsert(1, update(13, AVATAR, ""));
+        assert_eq!(again, gone);
+        assert!(!s.is_arrival(again));
+        s.remove(&ObjKey { region: 1, local_id: 13 });
+        let again = s.upsert(1, update(14, PRIM, ""));
+        assert!(again == gone && s.is_arrival(again));
     }
 
     #[test]

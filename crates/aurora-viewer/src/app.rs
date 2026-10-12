@@ -131,6 +131,8 @@ pub struct App {
     /// tessellates them (aurora-render, ui_frame.rs).
     egui_hand_over: EguiHandOver,
     last_frame: Instant,
+    /// Duration of the frame before the last one (s).
+    prev_dt: f32,
     start: Instant,
     right_drag: bool,
     cursor_grabbed: bool,
@@ -492,6 +494,7 @@ impl App {
             ui_parts: Parts::default(),
             egui_hand_over: EguiHandOver::default(),
             last_frame: Instant::now(),
+            prev_dt: 0.0,
             start: Instant::now(),
             right_drag: false,
             cursor_grabbed: false,
@@ -3640,7 +3643,11 @@ impl App {
             // finished jobs only leave cheap work to the main thread (their
             // data is staged for the GPU by the jobs): a short budget is
             // enough, and keeps a burst of results from stretching a frame
-            let frame_time = Duration::from_secs_f32(dt);
+            // The shorter of the last two frames: one long frame (objects
+            // arriving by thousands, a stall) is not a slow frame rate, and
+            // gave the next one three times the budget, making it long too.
+            let frame_time = Duration::from_secs_f32(dt.min(self.prev_dt));
+            self.prev_dt = dt;
             let results_budget = crate::scene::textures::frame_share(frame_time, Duration::from_millis(1));
             // the full syncs of arriving objects get the same share; more
             // behind a loading or teleport screen, whose frames show nothing

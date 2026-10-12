@@ -1257,7 +1257,8 @@ thread principal est déjà sur l'image suivante. Avec
     journal d'écritures de l'image (`journal_kb`), la mémoire des textures
     (textures vivantes, pages de textures et leur mémoire allouée), la
     mémoire de la géométrie, et les objets dont la synchro complète attend
-    une image qui a du temps (`sync_backlog`).
+    une image qui a du temps (`sync_backlog` : nouveaux objets en attente
+    de leur première synchro compris).
 
 ### Chargement des textures
 
