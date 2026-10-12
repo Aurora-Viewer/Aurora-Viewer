@@ -392,6 +392,8 @@ struct Period {
     parts: Parts,
     parts_max: Parts,
     gpu: [f32; GPU],
+    /// Depth prepasses alone: single-sample, multisampled.
+    gpu_depth: [f32; 2],
     gpu_frames: u32,
     draws: u64,
     calls: u64,
@@ -525,6 +527,9 @@ impl FrameProfile {
         if let Some(g) = render.gpu_elements {
             add(&mut p.gpu, &g);
             p.gpu_frames += 1;
+        }
+        if let Some(d) = render.gpu_depth {
+            add(&mut p.gpu_depth, &d);
         }
         p.draws += render.draws as u64;
         p.calls += render.draw_calls as u64;
@@ -707,6 +712,13 @@ fn summary(p: &Period, elapsed: Duration) -> String {
     for (el, ms) in GpuElement::ALL.iter().zip(p.gpu) {
         let _ = write!(out, " g_{}={:.3}", el.key(), ms / gpu_n);
     }
+    // (both inside g_shadows_depth)
+    let _ = write!(
+        out,
+        " g_depth={:.3} g_depth_msaa={:.3}",
+        p.gpu_depth[0] / gpu_n,
+        p.gpu_depth[1] / gpu_n
+    );
     let s = &p.scene;
     let _ = write!(
         out,
@@ -808,6 +820,7 @@ mod tests {
         assert!(l.starts_with("fps=51.0 frame=19.61"), "{l}");
         assert!(l.contains(" calls=40 "), "{l}");
         assert!(l.contains(" r_finish=0.00 ") && l.contains(" g_objects=0.000 "), "{l}");
+        assert!(l.contains(" g_post=0.000 g_depth=0.000 g_depth_msaa=0.000 | draws=100 "), "{l}");
         assert!(l.contains(" synced=30 anchored=7 "), "{l}");
         assert!(l.contains(" posed=2.0 "), "{l}");
         assert!(l.contains(" records_kb=2.0 "), "{l}");

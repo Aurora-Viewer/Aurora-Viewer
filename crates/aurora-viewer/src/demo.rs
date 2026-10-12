@@ -1773,6 +1773,31 @@ pub fn events() -> Vec<NetEvent> {
             }
         }
     }
+    // AURORA_DEMO_OVERDRAW=<n>: overdraw test, n rows of opaque walls (12
+    // if the value is not a number) one behind another east of the plaza,
+    // each taller than the one in front, sent from the farthest to the
+    // nearest. Every wall shows above the next one, so the occlusion
+    // culling keeps them all, and a scene pass that starts from an empty
+    // depth shades each of them in full before the nearer ones cover it
+    if let Ok(v) = std::env::var("AURORA_DEMO_OVERDRAW") {
+        let n = v.trim().parse::<u32>().unwrap_or(12).clamp(1, 40);
+        let base = g(160.0, 128.0);
+        for k in (0..n).rev() {
+            let h = 4.0 + 1.5 * k as f32;
+            let c = [0.35 + 0.02 * (k % 8) as f32, 0.4, 0.55 - 0.02 * (k % 6) as f32, 1.0];
+            add(prim(
+                id,
+                Vec3::new(160.0 + 2.0 * k as f32, 128.0, base + h * 0.5),
+                Quat::IDENTITY,
+                Vec3::new(0.5, 64.0, h),
+                boxp,
+                te(c, (k % 4) as u8, false, 0.0),
+                ExtraParams::default(),
+                "",
+            ));
+            id += 1;
+        }
+    }
     // AURORA_DEMO_PLANAR=1: planar texgen test, floor slabs of different
     // sizes ahead of the start position. The planar ones (two tile repeats
     // per metre, centers 0.5 m apart) must line up across slabs; the strip at
