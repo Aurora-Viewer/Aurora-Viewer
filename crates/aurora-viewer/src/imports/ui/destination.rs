@@ -180,7 +180,7 @@ mod tests {
         let mut selected = Uuid::from_u128(2);
         let mut result_position = None;
         for step in 0..4 {
-            let output = ctx.run_ui(
+            let mut output = ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(600.0, 500.0))),
                     events: if step == 2 {
@@ -197,6 +197,7 @@ mod tests {
                     picker.show(ui, &theme.palette(), &inventory, &HashSet::new(), &mut selected);
                 },
             );
+            output.textures_delta.clear();
             result_position = output
                 .shapes
                 .iter()
@@ -213,7 +214,7 @@ mod tests {
         assert_eq!(picker.visible.len(), 1);
         let position = result_position.expect("filtered result visible");
         for pressed in [Some(true), Some(false), None] {
-            let output = ctx.run_ui(
+            let mut output = ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(600.0, 500.0))),
                     events: pressed.map_or_else(Vec::new, |pressed| {
@@ -233,6 +234,7 @@ mod tests {
                     picker.show(ui, &theme.palette(), &inventory, &HashSet::new(), &mut selected);
                 },
             );
+            output.textures_delta.clear();
             drop(output);
         }
         assert_eq!(selected, Uuid::from_u128(3));

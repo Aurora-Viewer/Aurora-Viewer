@@ -111,9 +111,11 @@ mod tests {
         };
         drag.before(&mut raw, 2.0);
         let mut rect = egui::Rect::NOTHING;
-        let output = ctx.run_ui(raw, |ui| {
+        let mut output = ctx.run_ui(raw, |ui| {
             rect = ui.add(egui::DragValue::new(value).speed(1.0).range(0.0..=10000.0)).rect;
         });
+        // No renderer is attached to these UI-only tests.
+        output.textures_delta.clear();
         let anchor = drag.after(ctx, &output.platform_output.events, focused);
         (rect, anchor)
     }
@@ -228,11 +230,12 @@ mod tests {
                 };
                 drag.before(&mut raw, 1.0);
                 let mut rect = egui::Rect::NOTHING;
-                let output = ctx.run_ui(raw, |ui| {
+                let mut output = ctx.run_ui(raw, |ui| {
                     rect = ui
                         .add(egui::Slider::new(&mut value, 0.0..=10000.0).drag_value_speed(1.0).fixed_decimals(0))
                         .rect;
                 });
+                output.textures_delta.clear();
                 let anchor = drag.after(&ctx, &output.platform_output.events, true);
                 (output, rect, anchor)
             };

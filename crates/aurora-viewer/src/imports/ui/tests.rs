@@ -34,7 +34,7 @@ fn every_local_asset_exposes_the_same_three_actions_without_a_footer_close_butto
         };
         let mut frame = |events| {
             let mut actions = Vec::new();
-            let output = ctx.run_ui(
+            let mut output = ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1280.0, 900.0))),
                     events,
@@ -42,6 +42,7 @@ fn every_local_asset_exposes_the_same_three_actions_without_a_footer_close_butto
                 },
                 |ui| actions = show(ui.ctx(), &theme.palette(), &mut imports, &mut prefs, &world, &Default::default()),
             );
+            output.textures_delta.clear();
             (output, actions)
         };
         for _ in 0..3 {
@@ -107,7 +108,7 @@ fn menu_file_request_is_emitted_once_and_tab_changes_do_not_reopen_the_picker() 
     };
     let mut frame = |imports: &mut Imports| {
         let mut actions = Vec::new();
-        let output = ctx.run_ui(
+        let mut output = ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1280.0, 900.0))),
                 ..Default::default()
@@ -123,6 +124,7 @@ fn menu_file_request_is_emitted_once_and_tab_changes_do_not_reopen_the_picker() 
                 );
             },
         );
+        output.textures_delta.clear();
         drop(output);
         actions
     };
@@ -201,7 +203,7 @@ fn clicking_an_animation_selects_and_restarts_its_preview() {
     let mut position = None;
     let mut frame = |events: Vec<egui::Event>, imports: &mut Imports| {
         let mut actions = Vec::new();
-        let output = ctx.run_ui(
+        let mut output = ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1280.0, 900.0))),
                 events,
@@ -218,6 +220,7 @@ fn clicking_an_animation_selects_and_restarts_its_preview() {
                 );
             },
         );
+        output.textures_delta.clear();
         (output, actions)
     };
     for frame_index in 0..3 {
@@ -288,7 +291,7 @@ fn popup_rows_keep_their_rectangles_when_hover_changes() {
         for _ in 0..3 {
             let pointer = hover.map(|index| rectangles[index].center());
             let mut current = Vec::new();
-            let output = ctx.run_ui(
+            let mut output = ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(600.0, 500.0))),
                     events: pointer.map_or_else(Vec::new, |pos| vec![egui::Event::PointerMoved(pos)]),
@@ -302,6 +305,7 @@ fn popup_rows_keep_their_rectangles_when_hover_changes() {
                     }
                 },
             );
+            output.textures_delta.clear();
             drop(output);
             if !rectangles.is_empty() {
                 assert_eq!(current, rectangles);

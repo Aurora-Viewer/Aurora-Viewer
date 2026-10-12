@@ -635,7 +635,7 @@ mod tests {
         let mut entry = Entry::new("mesh.dae".into(), Ok(Source::Mesh(Box::new(draft))), Default::default());
         let mut prefs = Preferences::default();
         let mut frame = |events, entry: &mut Entry| {
-            ctx.run_ui(
+            let mut output = ctx.run_ui(
                 egui::RawInput {
                     events,
                     screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1280.0, 900.0))),
@@ -645,7 +645,9 @@ mod tests {
                     ui.set_width(1000.0);
                     show(ui, &theme.palette(), entry, &mut prefs, &mut Vec::new(), |_, _| {});
                 },
-            )
+            );
+            output.textures_delta.clear();
+            output
         };
         let mut output = frame(Vec::new(), &mut entry);
         for _ in 0..3 {
@@ -724,7 +726,7 @@ mod tests {
         }));
         let mut prefs = Preferences::default();
         let mut frame = |entry: &mut Entry| {
-            let output = ctx.run_ui(
+            let mut output = ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1280.0, 900.0))),
                     ..Default::default()
@@ -734,6 +736,7 @@ mod tests {
                     show(ui, &theme.palette(), entry, &mut prefs, &mut Vec::new(), |_, _| {});
                 },
             );
+            output.textures_delta.clear();
             text_position(&output, &aurora_i18n::tr!("import-lod-level", level = lod_label(3)), false).y
         };
         let mut original = 0.0;
@@ -782,7 +785,7 @@ mod tests {
         let mut prefs = Preferences::default();
         let mut frame = |events, entry: &mut Entry| {
             let mut actions = Vec::new();
-            let output = ctx.run_ui(
+            let mut output = ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1280.0, 900.0))),
                     events,
@@ -793,6 +796,7 @@ mod tests {
                     show(ui, &theme.palette(), entry, &mut prefs, &mut actions, |_, _| {});
                 },
             );
+            output.textures_delta.clear();
             (output, actions)
         };
         let events = |pos, pressed| {
