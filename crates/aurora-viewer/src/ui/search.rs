@@ -67,7 +67,6 @@ pub struct SearchUi {
     places_category: i8,
     events_category: u32,
     classifieds_category: u32,
-    land_kind: LandKind,
     land_sort: LandSort,
     land_ascending: bool,
     land_price: String,
@@ -96,7 +95,6 @@ impl Default for SearchUi {
             places_category: PLACE_CATEGORY_ANY,
             events_category: 0,
             classifieds_category: 0,
-            land_kind: LandKind::All,
             land_sort: LandSort::Name,
             land_ascending: false,
             land_price: String::new(),
@@ -352,9 +350,12 @@ impl SearchUi {
             .flatten()
     }
 
-    /// Demo: the text typed in the tab's field.
+    /// Demo: the text typed in the tab's field (the price field of the land
+    /// sales, which have no search field).
     pub fn set_text(&mut self, tab: Tab, text: &str) {
-        if let Some(t) = self.texts.get_mut(tab.index()) {
+        if tab == Tab::Land {
+            self.land_price = text.to_owned();
+        } else if let Some(t) = self.texts.get_mut(tab.index()) {
             *t = text.to_owned();
         }
     }
@@ -376,13 +377,14 @@ impl SearchUi {
             Tab::Land => Request::Land {
                 ratings: settings.land.ratings(),
                 filter: LandFilter {
-                    kind: self.land_kind,
+                    kind: LandKind::from_setting(settings.land_type),
                     sort: self.land_sort,
                     ascending: self.land_ascending,
-                    // an empty field is no limit (Firestorm would ask for a
-                    // price of at most 0)
-                    max_price: settings.land_limit_price.then(|| self.land_price.trim().parse().ok()).flatten(),
-                    min_area: settings.land_limit_area.then(|| self.land_area.trim().parse().ok()).flatten(),
+                    limit_price: settings.land_limit_price,
+                    limit_area: settings.land_limit_area,
+                    // childGetValue(...).asInteger(): 0 for an empty field
+                    price: self.land_price.trim().parse().unwrap_or(0),
+                    area: self.land_area.trim().parse().unwrap_or(0),
                 },
             },
             Tab::Events => Request::Events {
@@ -553,7 +555,13 @@ impl SearchUi {
                         (LandKind::Mainland, aurora_i18n::tr!("search-land-mainland")),
                         (LandKind::Estate, aurora_i18n::tr!("search-land-estate")),
                     ];
-                    find |= combo(ui, "search-land-kind", &mut self.land_kind, &kinds, 170.0);
+                    // "land_category", kept in FindLandType
+                    let mut kind = LandKind::from_setting(settings.land_type);
+                    if combo(ui, "search-land-kind", &mut kind, &kinds, 170.0) {
+                        settings.land_type = kind.setting();
+                        saved = true;
+                        find = true;
+                    }
                     let mut limit = |ui: &mut egui::Ui, on: &mut bool, label: &str, text: &mut String| {
                         let mut go = false;
                         if ui.checkbox(on, label).changed() {
@@ -896,22 +904,33 @@ mod tests {
                 category: PLACE_CATEGORY_ANY
             })
         );
-        // FindLandPrice is on by default, but an empty field is no limit
+        // as Firestorm first shows the panel: FindLandPrice on over an empty
+        // field (price 0), FindLandArea off
         let Some(Request::Land { filter, .. }) = ui.request(Tab::Land, &settings) else {
             panic!("land");
         };
         assert_eq!(filter, LandFilter::default());
+        assert!(filter.limit_price && !filter.limit_area);
         ui.land_price = "5000".into();
         ui.land_area = "512".into();
         let Some(Request::Land { filter, .. }) = ui.request(Tab::Land, &settings) else {
             panic!("land");
         };
-        assert_eq!((filter.max_price, filter.min_area), (Some(5000), None), "FindLandArea is off");
+        // the area goes out even with its box unticked
+        assert_eq!(
+            (filter.limit_price, filter.price, filter.limit_area, filter.area),
+            (true, 5000, false, 512)
+        );
+        settings.land_limit_price = false;
         settings.land_limit_area = true;
+        settings.land_type = LandKind::Estate.setting();
         let Some(Request::Land { filter, .. }) = ui.request(Tab::Land, &settings) else {
             panic!("land");
         };
-        assert_eq!(filter.min_area, Some(512));
+        assert_eq!(
+            (filter.limit_price, filter.price, filter.limit_area, filter.area, filter.kind),
+            (false, 5000, true, 512, LandKind::Estate)
+        );
         // events: current and upcoming unless a day is chosen
         assert!(matches!(
             ui.request(Tab::Events, &settings),

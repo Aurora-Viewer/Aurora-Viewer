@@ -118,6 +118,8 @@ pub struct SearchSettings {
     /// FindLandPrice / FindLandArea.
     pub land_limit_price: bool,
     pub land_limit_area: bool,
+    /// FindLandType: 0 all, 1 auction, 2 mainland, 3 estate.
+    pub land_type: u8,
     /// FSLegacySearchActionOnTeleport: 0 nothing, 1 close the window,
     /// 2 minimize it.
     pub teleport_action: u8,
@@ -134,6 +136,7 @@ impl Default for SearchSettings {
             classifieds: RatingBoxes::default(),
             land_limit_price: true,
             land_limit_area: false,
+            land_type: 0,
             teleport_action: 1,
         }
     }
@@ -452,10 +455,9 @@ impl List {
                     if !r.parcel.is_nil() && !search::land_row_kept(&self.land, r.price, r.area) {
                         continue;
                     }
-                    // an auction has no price per meter ("1.0" in Firestorm's
-                    // hidden sort value)
+                    // Firestorm writes "1.0" for an auction
                     let per_meter = if r.auction {
-                        Value::None
+                        Value::Real(1.0)
                     } else if r.area > 0 {
                         Value::Real(r.price as f64 / r.area as f64)
                     } else {
@@ -1090,8 +1092,10 @@ mod tests {
     fn land_is_filtered_and_typed() {
         let mut s = Search::default();
         let filter = LandFilter {
-            max_price: Some(3000),
-            min_area: Some(512),
+            limit_price: true,
+            limit_area: true,
+            price: 3000,
+            area: 512,
             ..Default::default()
         };
         let id = searching(
@@ -1136,7 +1140,7 @@ mod tests {
             ]
         );
         assert_eq!(list.rows[1].icon, RowIcon::Auction);
-        assert_eq!(list.rows[1].values[3], Value::None);
+        assert_eq!(list.rows[1].values[3], Value::Real(1.0), "Firestorm's figure for an auction");
         assert!(matches!(&s.take_commands()[..], [NetCommand::ParcelInfoRequest(p)] if *p == Uuid::from_u128(1)));
         // the types are asked once
         searching(

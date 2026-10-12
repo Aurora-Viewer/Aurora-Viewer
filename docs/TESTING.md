@@ -1109,6 +1109,9 @@ grille.
   la fenêtre « Rechercher » sur cet onglet, la recherche du texte déjà
   lancée (`aurora` par défaut) : la liste est remplie par l'annuaire de la
   démo, la première ligne est sélectionnée et sa fiche affichée à droite.
+  Pour `land`, le texte est la limite de prix (`land:25000`) ; sans lui le
+  champ reste vide comme dans Firestorm et seules les enchères (0 L$)
+  passent la limite cochée par défaut.
   Un texte contenant `page` (par exemple `people:page`) répond une page
   pleine : « > 100 trouvé(s) » et le bouton Suivant ; un texte contenant
   `xyz` ne trouve rien (« 'xyz' introuvable »).

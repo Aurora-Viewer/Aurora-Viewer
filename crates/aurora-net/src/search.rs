@@ -340,16 +340,61 @@ pub enum LandSort {
     Area,
 }
 
-/// The filters of a land sales search.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+impl LandKind {
+    /// FindLandType as Aurora saves it: 0 all, 1 auction, 2 mainland,
+    /// 3 estate.
+    pub fn from_setting(value: u8) -> LandKind {
+        match value {
+            1 => LandKind::Auction,
+            2 => LandKind::Mainland,
+            3 => LandKind::Estate,
+            _ => LandKind::All,
+        }
+    }
+
+    pub fn setting(self) -> u8 {
+        match self {
+            LandKind::All => 0,
+            LandKind::Auction => 1,
+            LandKind::Mainland => 2,
+            LandKind::Estate => 3,
+        }
+    }
+}
+
+/// The filters of a land sales search, as FSPanelSearchLand::find reads its
+/// controls.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LandFilter {
     pub kind: LandKind,
     pub sort: LandSort,
     pub ascending: bool,
-    /// FindLandPrice with "edit_price": at most this price.
-    pub max_price: Option<i32>,
-    /// FindLandArea with "edit_area": at least this area.
-    pub min_area: Option<i32>,
+    /// "price_check" (FindLandPrice): limit by price.
+    pub limit_price: bool,
+    /// "area_check" (FindLandArea): limit by area.
+    pub limit_area: bool,
+    /// "edit_price" as an integer, 0 for an empty field; sent whether its
+    /// box is ticked or not.
+    pub price: i32,
+    /// "edit_area" as an integer, 0 for an empty field.
+    pub area: i32,
+}
+
+impl Default for LandFilter {
+    /// The panel as Firestorm first shows it: every type, sorted by name
+    /// (the first entry of "land_sort_combo"), descending, FindLandPrice on
+    /// and FindLandArea off (settings.xml), both fields empty.
+    fn default() -> Self {
+        LandFilter {
+            kind: LandKind::All,
+            sort: LandSort::Name,
+            ascending: false,
+            limit_price: true,
+            limit_area: false,
+            price: 0,
+            area: 0,
+        }
+    }
 }
 
 /// FSPanelSearchLand::find.
@@ -373,24 +418,27 @@ pub fn land_query(inc: Ratings, filter: LandFilter, access: AgentAccess) -> Resu
     if filter.ascending {
         flags |= dfq::SORT_ASC;
     }
-    if filter.max_price.is_some() {
+    if filter.limit_price {
         flags |= dfq::LIMIT_BY_PRICE;
     }
-    if filter.min_area.is_some() {
+    if filter.limit_area {
         flags |= dfq::LIMIT_BY_AREA;
     }
+    // the values of both fields go out whatever their boxes say
     Ok(DirQuery::Land {
         flags,
         search_type,
-        price: filter.max_price.unwrap_or(0),
-        area: filter.min_area.unwrap_or(0),
+        price: filter.price,
+        area: filter.area,
     })
 }
 
 /// FSPanelSearchLand::processSearchReply filters the rows again on the
-/// viewer: over the price limit or under the area limit, a row is dropped.
+/// viewer ("use_price && price > limit_price", "use_area && area <
+/// limit_area"): with the price box ticked and its field empty, only rows
+/// priced 0 stay, which is what auctions are listed at.
 pub fn land_row_kept(filter: &LandFilter, price: i32, area: i32) -> bool {
-    !filter.max_price.is_some_and(|max| price > max) && !filter.min_area.is_some_and(|min| area < min)
+    !(filter.limit_price && price > filter.price) && !(filter.limit_area && area < filter.area)
 }
 
 /// "events_search_mode": events going on and to come, or those of a day
@@ -1006,22 +1054,55 @@ mod tests {
 
     #[test]
     fn land_flags_and_viewer_filter() {
-        let default = land_query(Ratings::default(), LandFilter::default(), ADULT);
+        // Firestorm's defaults: the price box ticked over an empty field
+        let default = LandFilter::default();
         assert_eq!(
-            default,
+            land_query(Ratings::default(), default, ADULT),
             Ok(DirQuery::Land {
-                flags: dfq::INC_PG | dfq::NAME_SORT,
+                flags: dfq::INC_PG | dfq::NAME_SORT | dfq::LIMIT_BY_PRICE,
                 search_type: sell_type::ALL,
                 price: 0,
                 area: 0
             })
         );
+        // only what costs nothing passes the viewer's own filter
+        assert!(land_row_kept(&default, 0, 16));
+        assert!(!land_row_kept(&default, 1, 65_536));
+        // the four combinations of the two boxes; the fields are always sent
+        for (limit_price, limit_area, expected) in [
+            (false, false, 0),
+            (true, false, dfq::LIMIT_BY_PRICE),
+            (false, true, dfq::LIMIT_BY_AREA),
+            (true, true, dfq::LIMIT_BY_PRICE | dfq::LIMIT_BY_AREA),
+        ] {
+            let f = LandFilter {
+                limit_price,
+                limit_area,
+                price: 2500,
+                area: 1024,
+                ..Default::default()
+            };
+            assert_eq!(
+                land_query(Ratings::default(), f, ADULT),
+                Ok(DirQuery::Land {
+                    flags: dfq::INC_PG | dfq::NAME_SORT | expected,
+                    search_type: sell_type::ALL,
+                    price: 2500,
+                    area: 1024
+                })
+            );
+            assert_eq!(land_row_kept(&f, 2501, 2048), !limit_price);
+            assert_eq!(land_row_kept(&f, 100, 1023), !limit_area);
+            assert!(land_row_kept(&f, 2500, 1024));
+        }
         let f = LandFilter {
             kind: LandKind::Mainland,
             sort: LandSort::PerMeter,
             ascending: true,
-            max_price: Some(5000),
-            min_area: Some(512),
+            limit_price: true,
+            limit_area: true,
+            price: 5000,
+            area: 512,
         };
         assert_eq!(
             land_query(ALL, f, ADULT),
@@ -1035,7 +1116,9 @@ mod tests {
         assert!(land_row_kept(&f, 5000, 512));
         assert!(!land_row_kept(&f, 5001, 512));
         assert!(!land_row_kept(&f, 100, 511));
-        assert!(land_row_kept(&LandFilter::default(), i32::MAX, 0));
+        for kind in [LandKind::All, LandKind::Auction, LandKind::Mainland, LandKind::Estate] {
+            assert_eq!(LandKind::from_setting(kind.setting()), kind);
+        }
     }
 
     #[test]

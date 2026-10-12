@@ -165,12 +165,14 @@ fn query_reply(query_id: Uuid, start: i32, query: &DirQuery) -> DirReply {
             let rows = super::place::directory()
                 .into_iter()
                 .enumerate()
+                // the first parcel is for sale, the others are auctions (listed
+                // at 0, what Firestorm's default price limit lets through)
                 .map(|(i, (parcel, name, _, area))| LandRow {
                     parcel,
                     name,
-                    auction: i == 2,
-                    for_sale: i != 2,
-                    price: if i == 2 { 0 } else { area * (3 + i as i32) / 2 },
+                    auction: i != 0,
+                    for_sale: i == 0,
+                    price: if i == 0 { area * 3 / 2 } else { 0 },
                     area,
                     sku: if i % 2 == 0 { "023" } else { "029" }.to_owned(),
                 })
@@ -336,7 +338,10 @@ mod tests {
             },
             Request::Land {
                 ratings: all,
-                filter: LandFilter::default(),
+                filter: LandFilter {
+                    limit_price: false,
+                    ..Default::default()
+                },
             },
             Request::Events {
                 text: String::new(),
