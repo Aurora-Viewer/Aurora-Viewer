@@ -150,3 +150,22 @@ interdites. L'icône devant les liens web du chat et des profils est
 `circle-check-filled` en `success` (site de confiance), `alert-triangle-filled`
 en `amber` (lien externe) ou `circle-x-filled` en `danger` (lien dangereux),
 aussi dans leurs avertissements.
+
+## Curseurs
+
+Les curseurs du monde sont dessinés à partir des mêmes icônes Tabler au trait,
+à la couleur `ink` cernée de `bar` pour rester lisibles sur n'importe quel
+décor (`crates/aurora-viewer/src/cursors.rs`). Les règles sont celles de
+Firestorm, seuls les dessins changent :
+
+| Situation | Curseur |
+|---|---|
+| Objet à toucher | `hand-finger` seule, le bout du doigt est le point cliqué |
+| S'asseoir, acheter, payer, ouvrir | flèche + pastille `armchair`, `shopping-cart`, `coin`, `package` |
+| Média : lire, mettre en pause, ouvrir | flèche + pastille `player-play`, `player-pause`, `device-tv` |
+| Zoomer sur l'objet | flèche + pastille `zoom-in` |
+| Saisir un objet physique, déplacer un HUD | `hand-grab` seule |
+| Caméra : Alt, Ctrl + Alt, Ctrl + Alt + Maj | `focus-centered`, `view-360`, `arrows-move`, centrés sur le point visé |
+| Pipette du nuancier | `color-picker`, la pointe est le point prélevé |
+
+Avec la flèche + pastille, la pointe de la flèche est le point cliqué.

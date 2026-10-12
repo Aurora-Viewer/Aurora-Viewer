@@ -390,7 +390,8 @@ des objets possédés y apparaissent également, après filtrage du bridge et
 des objets bloqués. La fenêtre permet de voir tous les objets ou un seul et
 d'effacer les messages affichés.
 
-**`AURORA_DEMO_ACTIONS`** — curseurs et clics d'objet comme Firestorm.
+**`AURORA_DEMO_ACTIONS`** — curseurs et clics d'objet comme Firestorm
+(mêmes règles ; curseurs dessinés à partir des icônes Tabler).
 Aucun L$ réel ni connexion à une grille.
 
 - `1` : tous les objets, pour un test manuel.

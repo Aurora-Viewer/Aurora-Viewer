@@ -4612,7 +4612,7 @@ impl App {
                 full.platform_output.cursor_image = self.cursors.image(crate::interaction::Action::Grab, false);
             } else {
                 full.platform_output.cursor_icon = egui::CursorIcon::PointingHand;
-                full.platform_output.cursor_image = None;
+                full.platform_output.cursor_image = self.cursors.image(crate::interaction::Action::Touch, false);
             }
         }
         if let Some(mode) = self.camera_tool_hover(&ctx) {
