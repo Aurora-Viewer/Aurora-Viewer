@@ -40,6 +40,18 @@ pub enum PeopleAction {
     TooFarToZoom,
 }
 
+/// Where the window opens before the user places it: the top left corner,
+/// under the top bar and level with the mini-map window, which a first
+/// launch opens in the opposite corner (`minimap::default_rect`).
+pub(crate) const DEFAULT_POS: egui::Pos2 = egui::pos2(8.0, 56.0);
+
+/// Its size then. Firestorm gives 400 x 570 to floater_people.xml and
+/// 400 x 440 to floater_fs_radar.xml, with the embedded map and a smaller
+/// font; here the map is hidden by default (`RadarSettings::show_minimap`):
+/// the width holds the ten columns of the radar and a name of some eighteen
+/// characters, the height a dozen avatars.
+pub(crate) const DEFAULT_SIZE: Vec2 = Vec2::new(440.0, 420.0);
+
 #[derive(Default)]
 pub struct PeopleUi {
     pub filter: String,
@@ -83,14 +95,9 @@ pub fn people_window(
 ) -> Vec<PeopleAction> {
     let mut actions = Vec::new();
     let mut open = panels.people;
-    Floater::new(
-        "people",
-        aurora_i18n::tr!("common-people"),
-        egui::pos2(8.0, 70.0),
-        Vec2::new(470.0, 540.0),
-    )
-    .help(aurora_i18n::tr!("ui-people-nearby-avatars-and-friends-list"))
-    .show(ctx, p, &mut open, |ui| {
+    let help = aurora_i18n::tr!("ui-people-nearby-avatars-and-friends-list");
+    let floater = Floater::new("people", aurora_i18n::tr!("common-people"), DEFAULT_POS, DEFAULT_SIZE).help(help);
+    floater.show(ctx, p, &mut open, |ui| {
         let mut tab = panels.people_tab as usize;
         widgets::tabs(
             ui,

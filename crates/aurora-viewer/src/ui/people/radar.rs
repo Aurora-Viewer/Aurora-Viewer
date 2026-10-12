@@ -121,7 +121,9 @@ impl Column {
 pub struct RadarSettings {
     /// FSRadarColumnConfig: bits of the columns shown.
     pub columns: u32,
-    /// ShowRadarMinimap.
+    /// ShowRadarMinimap. Off by default, unlike Firestorm (asked by the
+    /// human): a first launch opens the mini-map window beside the radar,
+    /// which would show the same map twice. The options menu turns it on.
     pub show_minimap: bool,
     /// LimitRadarByRange, with NearMeRange.
     pub limit_range: bool,
@@ -156,7 +158,7 @@ impl Default for RadarSettings {
     fn default() -> Self {
         RadarSettings {
             columns: 1023,
-            show_minimap: true,
+            show_minimap: false,
             limit_range: false,
             range: 162.0,
             show_muted: true,
@@ -833,6 +835,22 @@ mod tests {
         for pair in cells.windows(2) {
             assert!((pair[0].1.right() - pair[1].1.left()).abs() < 0.01);
         }
+    }
+
+    /// The People window opens wide enough for every column, the name
+    /// keeping some eighteen characters (13 px font, ellipsis beyond).
+    #[test]
+    fn the_default_window_shows_every_column_beside_a_readable_name() {
+        // the floater keeps a 10 px margin on each side of the list
+        let width = super::super::DEFAULT_SIZE.x - 20.0;
+        let row = Rect::from_min_size(egui::pos2(0.0, 0.0), Vec2::new(width, 22.0));
+        let settings = RadarSettings::default();
+        assert!(!settings.show_minimap, "the mini-map window shows the map on a first launch");
+        let cells = cells(&settings, row);
+        assert_eq!(cells.len(), Column::ALL.len());
+        let last = cells.last().expect("ten columns");
+        assert!(last.1.right() <= row.right() + 0.01, "the range is not pushed out of the list");
+        assert!(cells[0].1.width() >= 140.0, "name column: {}", cells[0].1.width());
     }
 
     #[test]

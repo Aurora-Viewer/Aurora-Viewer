@@ -30,6 +30,10 @@ pub use view::InventoryPreferences;
 // Keep the existing tab indices: slot 1 was unused after the single-tree layout.
 const RECEIVED_TAB: usize = 1;
 
+/// Size of the window before the user resizes it: one folder tree, like
+/// Firestorm's (floater_my_inventory.xml, 333 x 570 with its smaller font).
+const DEFAULT_SIZE: Vec2 = Vec2::new(440.0, 570.0);
+
 /// The shared editor and unsaved-changes confirmation, without an inventory
 /// tree. Object notecards keep their own item model and document state.
 pub fn show_document(
@@ -1270,8 +1274,8 @@ pub fn show(
     super::widgets::Floater::new(
         "inventory",
         aurora_i18n::tr!("common-inventory"),
-        egui::pos2(screen.right() - 700.0, 56.0),
-        Vec2::new(680.0, 610.0),
+        egui::pos2(screen.right() - DEFAULT_SIZE.x - 20.0, 56.0),
+        DEFAULT_SIZE,
     )
     .compact_header()
     .help(aurora_i18n::tr!("ui-inventory-right-click-item-actions-ctrl-shift-multi-select"))
@@ -1771,7 +1775,7 @@ mod tests {
 
     #[test]
     fn inventory_size_stays_stable_during_loading_filtering_and_tab_changes() {
-        for window_size in [Vec2::new(440.0, 550.0), Vec2::new(680.0, 610.0), Vec2::new(1000.0, 700.0)] {
+        for window_size in [DEFAULT_SIZE, Vec2::new(680.0, 610.0), Vec2::new(1000.0, 700.0)] {
             let ctx = egui::Context::default();
             crate::theme::Theme::default().apply(&ctx, 1.0);
             let mut inv = view_inventory(false);

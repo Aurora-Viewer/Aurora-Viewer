@@ -476,13 +476,17 @@ impl Default for Settings {
             texture_budget_mb: 1536,
             ui_scale: 1.0,
             use_pie_menu: false,
-            show_perf: true,
-            show_chat: true,
+            // First launch (no settings file): only the radar (People on
+            // its first tab, top left) and the mini-map (top right) are
+            // open, as asked by the human; the other windows wait for their
+            // button. A saved file keeps what was open at exit.
+            show_perf: false,
+            show_chat: false,
             show_minimap: true,
             standalone_place_details: false,
             landmarks_by_date: true,
             maps: MapSettings::default(),
-            show_people: false,
+            show_people: true,
             people_tab: 0,
             show_inventory: false,
             show_appearance: false,

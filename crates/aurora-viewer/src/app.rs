@@ -445,26 +445,7 @@ impl App {
             }
         });
 
-        let panels = Panels {
-            chat: settings.show_chat,
-            perf: settings.show_perf,
-            people: settings.show_people,
-            minimap: settings.show_minimap,
-            world_map: false,
-            settings: false,
-            time_of_day: settings.time_of_day,
-            environment: false,
-            personal_lighting: false,
-            inventory: settings.show_inventory,
-            appearance: settings.show_appearance,
-            ao: settings.show_ao,
-            people_tab: settings.people_tab.min(1),
-            contacts: false,
-            about_land: false,
-            places: false,
-            nav_edit: None,
-            nav_edit_new: false,
-        };
+        let panels = Panels::from_settings(&settings);
         let mut scene = Scene::new(cache, lib.clone());
         scene.draw_distance = settings.draw_distance;
         scene.lod_factor = settings.lod_factor;

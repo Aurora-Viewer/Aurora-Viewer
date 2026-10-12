@@ -23,6 +23,14 @@ use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI, TAU};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
+/// The window before the user moves or resizes it: the 200 x 200 map of
+/// floater_map.xml in the top right corner, under the top bar. A first
+/// launch opens it there, the radar in the opposite corner
+/// (`people::DEFAULT_POS`).
+pub(crate) fn default_rect(screen: Rect) -> Rect {
+    Rect::from_min_size(pos2(screen.right() - 216.0, 56.0), Vec2::splat(200.0))
+}
+
 pub const MAP_SCALE_MIN: f32 = 32.0;
 pub const MAP_SCALE_MAX: f32 = 4096.0;
 const MAP_SCALE_FAR: f32 = 32.0;
@@ -396,8 +404,8 @@ impl MiniMap {
             .frame(frame)
             .fade_in(false)
             .fade_out(false)
-            .default_pos(pos2(screen.right() - 216.0, 56.0))
-            .default_size(vec2(200.0, 200.0))
+            .default_pos(default_rect(screen).min)
+            .default_size(default_rect(screen).size())
             .min_size(vec2(64.0, 64.0))
             .resizable(true)
             .constrain(true)
