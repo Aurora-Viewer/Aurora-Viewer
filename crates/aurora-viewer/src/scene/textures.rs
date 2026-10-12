@@ -670,6 +670,12 @@ impl TextureStreamer {
         out.append(&mut self.alpha_changes);
     }
 
+    /// The same slots, left for the sync to take: what the hover search
+    /// must not trust between two syncs (hover.rs).
+    pub fn pending_alpha_changes(&self) -> &[u32] {
+        &self.alpha_changes
+    }
+
     /// The transcoded chain of a texture (`texture_cache.rs`).
     fn transcoded_path(cache_dir: &std::path::Path, id: &Uuid) -> PathBuf {
         cache_dir.join("tex").join(format!("{id}.bc7"))

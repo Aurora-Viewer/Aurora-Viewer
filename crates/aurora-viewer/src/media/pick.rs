@@ -24,6 +24,48 @@ pub struct FaceHit {
     pub binormal: Vec3,
 }
 
+/// Where the line `o + t d` crosses a triangle: `t` (of any sign), the
+/// barycentric coordinates of the point and the two edges from `p0`.
+pub struct TriangleHit {
+    pub t: f32,
+    pub u: f32,
+    pub v: f32,
+    pub e1: Vec3,
+    pub e2: Vec3,
+}
+
+/// Möller–Trumbore. The one triangle test of the picking code: the
+/// hierarchy of the hover search (scene/pick_accel.rs) must find the same
+/// distances as `ray_faces`, to the last bit.
+#[inline]
+pub fn ray_triangle(o: Vec3, d: Vec3, p0: Vec3, p1: Vec3, p2: Vec3, two_sided: bool) -> Option<TriangleHit> {
+    let e1 = p1 - p0;
+    let e2 = p2 - p0;
+    let pv = d.cross(e2);
+    let det = e1.dot(pv);
+    if det.abs() < 1e-12 || (!two_sided && det < 0.0) {
+        return None;
+    }
+    let inv_det = 1.0 / det;
+    let tv = o - p0;
+    let u = tv.dot(pv) * inv_det;
+    if !(0.0..=1.0).contains(&u) {
+        return None;
+    }
+    let qv = tv.cross(e1);
+    let v = d.dot(qv) * inv_det;
+    if v < 0.0 || u + v > 1.0 {
+        return None;
+    }
+    Some(TriangleHit {
+        t: e2.dot(qv) * inv_det,
+        u,
+        v,
+        e1,
+        e2,
+    })
+}
+
 /// Nearest intersection of a world ray with the faces (two-sided).
 pub fn ray_faces<'a>(faces: impl Iterator<Item = FaceTris<'a>>, model: Mat4, origin: Vec3, dir: Vec3) -> Option<FaceHit> {
     ray_faces_with_sidedness(faces, model, origin, dir, |_| true)
@@ -50,26 +92,9 @@ pub fn ray_faces_with_sidedness<'a>(
                 continue;
             };
             let (p0, p1, p2) = (Vec3::from_array(*p0), Vec3::from_array(*p1), Vec3::from_array(*p2));
-            // Möller–Trumbore
-            let e1 = p1 - p0;
-            let e2 = p2 - p0;
-            let pv = d.cross(e2);
-            let det = e1.dot(pv);
-            if det.abs() < 1e-12 || (!two && det < 0.0) {
+            let Some(TriangleHit { t, u, v, e1, e2 }) = ray_triangle(o, d, p0, p1, p2, two) else {
                 continue;
-            }
-            let inv_det = 1.0 / det;
-            let tv = o - p0;
-            let u = tv.dot(pv) * inv_det;
-            if !(0.0..=1.0).contains(&u) {
-                continue;
-            }
-            let qv = tv.cross(e1);
-            let v = d.dot(qv) * inv_det;
-            if v < 0.0 || u + v > 1.0 {
-                continue;
-            }
-            let t = e2.dot(qv) * inv_det;
+            };
             if t <= 0.0 || best.is_some_and(|b| t >= b.t) {
                 continue;
             }

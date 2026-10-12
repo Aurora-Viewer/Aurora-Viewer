@@ -1,15 +1,30 @@
 //! LLVOVolume::lineSegmentIntersect: CLICK_ACTION_IGNORE is excluded outside
 //! build mode (Firestorm llvovolume.cpp / llspatialpartition.cpp, LGPL 2.1).
 //! CPU triangles share the lifetime of the uploaded geometry, including sculpts.
+use super::pick_accel::{self, PickAccel};
 use super::*;
 use crate::media::pick::{self, FaceTris};
 use aurora_net::TouchSurface;
 use glam::Vec2;
+use std::sync::atomic::Ordering::Relaxed;
 
 pub struct PickFace {
     pub positions: Vec<[f32; 3]>,
     pub uvs: Vec<[f32; 2]>,
     pub indices: Vec<u16>,
+    /// Hierarchy of the triangles, for the hover search (built on demand).
+    pub accel: PickAccel,
+}
+
+impl PickFace {
+    pub fn new(positions: Vec<[f32; 3]>, uvs: Vec<[f32; 2]>, indices: Vec<u16>) -> PickFace {
+        PickFace {
+            positions,
+            uvs,
+            indices,
+            accel: PickAccel::default(),
+        }
+    }
 }
 
 /// Whether a ray can meet an object, from its world bounding sphere kept by
@@ -253,7 +268,10 @@ impl Scene {
         let (pos, rot, _) = Self::object_transform(world, idx, now, 0)?;
         let model = Mat4::from_scale_rotation_translation(world.visual_scale(idx), rot, pos);
         let inv = model.inverse();
+        let counts = &self.exact_tests;
+        counts.objects.fetch_add(1, Relaxed);
         ray_box(inv.transform_point3(ray.0), inv.transform_vector3(ray.1), geom.min, geom.max)?;
+        counts.boxes.fetch_add(1, Relaxed);
         let faces = geom.pick_faces.iter().enumerate().filter_map(|(face, f)| {
             if inventory_pick {
                 let draw = geom
@@ -269,6 +287,7 @@ impl Scene {
                 return None;
             }
             let f = f.as_ref()?;
+            counts.triangles.fetch_add(f.indices.len() as u64 / 3, Relaxed);
             Some(FaceTris {
                 face,
                 positions: &f.positions,
@@ -328,6 +347,85 @@ impl Scene {
             }
             material.double_sided
         })
+    }
+
+    /// The distance at which the ray meets the triangles of an object
+    /// (`face_hit(…).t`). For the candidates of the hover search (`among`),
+    /// through the hierarchies of its large faces when they are built.
+    fn hit_distance(
+        &self,
+        world: &World,
+        idx: usize,
+        ray: (Vec3, Vec3),
+        now: Instant,
+        include_hidden: bool,
+        among: Option<&[usize]>,
+    ) -> Option<f32> {
+        if among.is_some() && !self.hover.legacy() && self.gpu.get(idx).is_some_and(|g| !g.hud) {
+            self.face_distance(world, idx, ray, now, include_hidden)
+        } else {
+            self.face_hit(world, idx, ray, now, include_hidden).map(|h| h.t)
+        }
+    }
+
+    /// `face_hit(…).t` of an object of the world (not a HUD): the same
+    /// box, the same faces, the same test of the same triangles, except
+    /// those the hierarchy of a face rules out (pick_accel.rs). A large
+    /// face of a mesh or a sculpt without its hierarchy asks for it and is
+    /// tested triangle by triangle meanwhile. (Not the prims: a flexible
+    /// one replaces its triangles at each frame.)
+    fn face_distance(&self, world: &World, idx: usize, ray: (Vec3, Vec3), now: Instant, include_hidden: bool) -> Option<f32> {
+        let o = world.objects.get(idx)?;
+        let key = self.gpu.get(idx)?.geom?;
+        let geom = self.geom_ready(&key)?;
+        let (pos, rot, _) = Self::object_transform(world, idx, now, 0)?;
+        let model = Mat4::from_scale_rotation_translation(world.visual_scale(idx), rot, pos);
+        let inv = model.inverse();
+        // (the ray in object space, as `pick::ray_faces` takes it there)
+        let (origin, dir) = (inv.transform_point3(ray.0), inv.transform_vector3(ray.1));
+        let counts = &self.exact_tests;
+        counts.objects.fetch_add(1, Relaxed);
+        ray_box(origin, dir, geom.min, geom.max)?;
+        counts.boxes.fetch_add(1, Relaxed);
+        let large = !matches!(key, GeomKey::Prim { .. });
+        let mut best = f32::INFINITY;
+        for (face, f) in geom.pick_faces.iter().enumerate() {
+            if !include_hidden && o.te.as_ref().is_some_and(|te| te.face(face).color[3] < 0.004) {
+                continue;
+            }
+            let Some(f) = f else { continue };
+            let accel = if large && f.indices.len() >= pick_accel::MIN_TRIANGLES * 3 {
+                f.accel.get_or_ask(|| {
+                    let geom = geom.clone();
+                    self.jobs.run(move || {
+                        if let Some(Some(f)) = geom.pick_faces.get(face) {
+                            f.accel.build(&f.positions, &f.indices);
+                        }
+                    });
+                })
+            } else {
+                None
+            };
+            if let Some(accel) = accel {
+                counts.hierarchies.fetch_add(1, Relaxed);
+                best = accel.nearest(&f.positions, &f.indices, origin, dir, best);
+                continue;
+            }
+            counts.triangles.fetch_add(f.indices.len() as u64 / 3, Relaxed);
+            for tri in f.indices.as_chunks::<3>().0 {
+                let p = |i: u16| f.positions.get(i as usize).map(|p| Vec3::from_array(*p));
+                let (Some(p0), Some(p1), Some(p2)) = (p(tri[0]), p(tri[1]), p(tri[2])) else {
+                    continue;
+                };
+                if let Some(hit) = pick::ray_triangle(origin, dir, p0, p1, p2, true)
+                    && hit.t > 0.0
+                    && hit.t < best
+                {
+                    best = hit.t;
+                }
+            }
+        }
+        (best < f32::INFINITY).then_some(best)
     }
 
     /// Same coordinate conventions as object.wgsl, evaluated only for a hit
@@ -468,8 +566,25 @@ impl Scene {
         }
         let ray = ray?;
         let now = Instant::now();
+        if !self.ignored_before(world, ray, depth, far, now, among) {
+            return self.transparent_action_point(world, ray, depth, false, far, among);
+        }
+        self.point_behind_ignored(world, ray, far, now, among)
+    }
+
+    /// First step of `interaction_point`: whether the triangles of an
+    /// object set to IGNORE meet the ray before the depth point.
+    pub(super) fn ignored_before(
+        &self,
+        world: &World,
+        ray: (Vec3, Vec3),
+        depth: Option<Vec3>,
+        far: f32,
+        now: Instant,
+        among: Option<&[usize]>,
+    ) -> bool {
         let limit = depth.map_or(far, |p| (p - ray.0).dot(ray.1) + 0.1);
-        let ignored = self.pick_objects(among).any(|(idx, g)| {
+        self.pick_objects(among).any(|(idx, g)| {
             !g.faces.is_empty()
                 && !g.hud
                 && world
@@ -477,11 +592,20 @@ impl Scene {
                     .get(idx)
                     .is_some_and(|o| o.click_action == crate::interaction::code::IGNORE)
                 && ray_may_hit(g, ray)
-                && self.face_hit(world, idx, ray, now, true).is_some_and(|h| h.t <= limit)
-        });
-        if !ignored {
-            return self.transparent_action_point(world, ray, depth, false, far, among);
-        }
+                && self.hit_distance(world, idx, ray, now, true, among).is_some_and(|t| t <= limit)
+        })
+    }
+
+    /// `interaction_point` once an ignored object is in the way: the
+    /// nearest surface that is not ignored, traced on the CPU.
+    pub(super) fn point_behind_ignored(
+        &self,
+        world: &World,
+        ray: (Vec3, Vec3),
+        far: f32,
+        now: Instant,
+        among: Option<&[usize]>,
+    ) -> Option<Vec3> {
         let mut nearest = far;
         let mut found = false;
         for (idx, g) in self.pick_objects(among) {
@@ -500,7 +624,7 @@ impl Scene {
                     g.center + Vec3::new(0.35, 0.35, 1.0),
                 )
             } else {
-                self.face_hit(world, idx, ray, now, false).map(|h| h.t)
+                self.hit_distance(world, idx, ray, now, false, among)
             };
             if let Some(t) = t
                 && t > 0.0
@@ -539,7 +663,7 @@ impl Scene {
 
     /// Firestorm also picks actionable transparent faces: they do not write
     /// the GPU depth buffer. Hidden touch panels take clicks but no hover.
-    fn transparent_action_point(
+    pub(super) fn transparent_action_point(
         &self,
         world: &World,
         ray: (Vec3, Vec3),
@@ -556,30 +680,38 @@ impl Scene {
             if g.hud || g.is_avatar || o.click_action == crate::interaction::code::IGNORE || !ray_may_hit(g, ray) {
                 continue;
             }
-            if !g.faces.iter().any(|f| {
-                let alpha = self
-                    .textures
-                    .alpha_by_slot
-                    .get(f.base_slot as usize)
-                    .copied()
-                    .unwrap_or(AlphaKind::Opaque);
-                match classify(f, alpha) {
-                    Pass::Blend => true,
-                    Pass::Hidden => include_hidden && o.click_action != crate::interaction::code::DISABLED,
-                    _ => false,
-                }
-            }) || crate::interaction::target(world, idx, &props).is_none()
+            if !self.see_through_face(g, include_hidden && o.click_action != crate::interaction::code::DISABLED)
+                || crate::interaction::target(world, idx, &props).is_none()
             {
                 continue;
             }
-            if let Some(hit) = self.face_hit(world, idx, ray, Instant::now(), include_hidden)
-                && hit.t < nearest
+            if let Some(t) = self.hit_distance(world, idx, ray, Instant::now(), include_hidden, among)
+                && t < nearest
             {
-                nearest = hit.t;
+                nearest = t;
                 found = true;
             }
         }
         if found { Some(ray.0 + ray.1 * nearest) } else { depth }
+    }
+
+    /// Whether an object has a face `transparent_action_point` looks at:
+    /// blended (absent from the GPU depth), or hidden when `hidden` counts.
+    /// By the alpha class of its texture as it is now.
+    pub(super) fn see_through_face(&self, g: &ObjGpu, hidden: bool) -> bool {
+        g.faces.iter().any(|f| {
+            let alpha = self
+                .textures
+                .alpha_by_slot
+                .get(f.base_slot as usize)
+                .copied()
+                .unwrap_or(AlphaKind::Opaque);
+            match classify(f, alpha) {
+                Pass::Blend => true,
+                Pass::Hidden => hidden,
+                _ => false,
+            }
+        })
     }
 
     pub fn action_point(&self, world: &World, ray: Option<(Vec3, Vec3)>, depth: Option<Vec3>, build: bool, far: f32) -> Option<Vec3> {
@@ -638,10 +770,10 @@ impl Scene {
             if !ray_box(inv.transform_point3(ray.0), inv.transform_vector3(ray.1), geom.min, geom.max).is_some_and(|t| t < nearest) {
                 continue;
             }
-            if let Some(hit) = self.face_hit(world, idx, ray, now, include_hidden)
-                && hit.t < nearest
+            if let Some(t) = self.hit_distance(world, idx, ray, now, include_hidden, among)
+                && t < nearest
             {
-                nearest = hit.t;
+                nearest = t;
                 picked = Some(idx);
             }
         }
@@ -650,7 +782,7 @@ impl Scene {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     #[test]
     fn sphere_test_keeps_what_the_ray_can_reach() {
@@ -678,7 +810,7 @@ mod tests {
         assert!(ray_box(Vec3::new(-2.0, 3.0, 0.0), Vec3::X, -Vec3::ONE, Vec3::ONE).is_none());
         assert!(ray_box(Vec3::new(-2.0, 0.0, 0.0), -Vec3::X, -Vec3::ONE, Vec3::ONE).is_none());
     }
-    fn scene_with_two_objects() -> (World, Scene, usize, usize) {
+    pub(in crate::scene) fn scene_with_two_objects() -> (World, Scene, usize, usize) {
         let lib = Arc::new(AvatarLibrary::load());
         let mut world = World::new(lib.clone());
         for ev in crate::demo::events().into_iter().chain(crate::demo::action_events()) {
@@ -710,11 +842,11 @@ mod tests {
                     min: -Vec3::splat(0.5),
                     max: Vec3::splat(0.5),
                     joint_bounds: Vec::new(),
-                    pick_faces: vec![Some(PickFace {
-                        positions: vec![[-0.5, -0.5, -0.5], [-0.5, 0.5, -0.5], [-0.5, 0.5, 0.5], [-0.5, -0.5, 0.5]],
-                        uvs: vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
-                        indices: vec![0, 2, 1, 0, 3, 2],
-                    })],
+                    pick_faces: vec![Some(PickFace::new(
+                        vec![[-0.5, -0.5, -0.5], [-0.5, 0.5, -0.5], [-0.5, 0.5, 0.5], [-0.5, -0.5, 0.5]],
+                        vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+                        vec![0, 2, 1, 0, 3, 2],
+                    ))],
                 })),
             },
         );
@@ -1186,11 +1318,11 @@ mod tests {
                     min: -Vec3::splat(0.5),
                     max: Vec3::splat(0.5),
                     joint_bounds: Vec::new(),
-                    pick_faces: vec![Some(PickFace {
-                        positions: vec![[-0.5, -0.5, 0.2], [0.5, -0.5, 0.2], [0.5, 0.5, 0.2], [-0.5, 0.5, 0.2]],
-                        uvs: vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
-                        indices: vec![0, 1, 2, 0, 2, 3],
-                    })],
+                    pick_faces: vec![Some(PickFace::new(
+                        vec![[-0.5, -0.5, 0.2], [0.5, -0.5, 0.2], [0.5, 0.5, 0.2], [-0.5, 0.5, 0.2]],
+                        vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+                        vec![0, 1, 2, 0, 2, 3],
+                    ))],
                 })),
             },
         );
@@ -1238,11 +1370,11 @@ mod tests {
                         min: Vec3::new(2.0, -0.5, -0.5),
                         max: Vec3::new(2.0, 0.5, 0.5),
                         joint_bounds: Vec::new(),
-                        pick_faces: vec![Some(PickFace {
-                            positions: vec![[2.0, -0.5, -0.5], [2.0, 0.5, -0.5], [2.0, 0.5, 0.5], [2.0, -0.5, 0.5]],
-                            uvs: vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
-                            indices: vec![0, 1, 2, 0, 2, 3],
-                        })],
+                        pick_faces: vec![Some(PickFace::new(
+                            vec![[2.0, -0.5, -0.5], [2.0, 0.5, -0.5], [2.0, 0.5, 0.5], [2.0, -0.5, 0.5]],
+                            vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+                            vec![0, 1, 2, 0, 2, 3],
+                        ))],
                     })),
                 },
             );

@@ -4554,19 +4554,15 @@ impl App {
             && self.media_cursor.is_none()
             && !ctx.is_pointer_over_egui()
             && !ctx.egui_wants_pointer_input()
-            && let Some(idx) = self
-                .scene
-                .hud_pick(&self.world, self.cursor_pos, false)
-                .map(|(idx, _, _)| idx)
-                .or_else(|| {
-                    // Preserve the world hover cache (scene/hover.rs).
-                    self.scene.hover_object(
-                        &self.world,
-                        gfx.renderer.cursor_ray(self.cursor_pos.0, self.cursor_pos.1),
-                        gfx.renderer.hover_pick(self.cursor_pos.0, self.cursor_pos.1),
-                        self.settings.draw_distance,
-                    )
-                })
+            && let Some(idx) = self.scene.hover_hud(&self.world, self.cursor_pos).or_else(|| {
+                // Preserve the world hover cache (scene/hover.rs).
+                self.scene.hover_object(
+                    &self.world,
+                    gfx.renderer.cursor_ray(self.cursor_pos.0, self.cursor_pos.1),
+                    gfx.renderer.hover_pick(self.cursor_pos.0, self.cursor_pos.1),
+                    self.settings.draw_distance,
+                )
+            })
             && let Some(target) = crate::interaction::target(&self.world, idx, &std::collections::HashMap::new())
         {
             if let Some(cmd) = self.interactions.hover_request(target) {
@@ -7054,6 +7050,18 @@ impl ApplicationHandler for App {
             // their animated bones (scene sync stress test)
             if let Some(n) = crate::demo::crowd_count() {
                 let rigged = std::env::var_os("AURORA_DEMO_ANIMESH").is_some();
+                // (<n>,<worn>: dancers dressed in rigged meshes)
+                if let Some((_, triangles)) = crate::demo::crowd_worn().filter(|_| rigged) {
+                    if let Some(g) = &mut self.gfx {
+                        self.scene
+                            .install_demo_rigged_mesh(&mut g.renderer, crate::demo::CROWD_DENSE_MESH, Some(triangles));
+                    }
+                    let rig = self.scene.avatar_lib.rig.clone();
+                    self.scene.anims.insert(
+                        crate::demo::CROWD_DANCE_ANIM,
+                        Arc::new(crate::scene::anim::BoundAnim::bind(crate::demo::crowd_dance_animation(), &rig)),
+                    );
+                }
                 for ev in crate::demo::crowd_events(n, rigged) {
                     self.world.apply(ev);
                 }

@@ -18,6 +18,7 @@ pub mod loading;
 mod lod_watch;
 pub mod meshes;
 pub mod particles;
+mod pick_accel;
 pub mod picking;
 pub mod probes;
 pub mod settings;
@@ -513,6 +514,13 @@ pub struct Scene {
     /// (hover.rs).
     pick: hover::PickIndex,
     pub hover: hover::HoverCache,
+    /// Our own HUD objects with a geometry, in index order, as
+    /// `build_huds` found them for the HUD view of the frame: what a HUD
+    /// pick looks at.
+    hud_own: Vec<usize>,
+    /// Exact picking tests done since the hover search last took them
+    /// (profile).
+    exact_tests: hover::ExactTests,
     /// Slots of removed objects whose GPU state is still to be released,
     /// oldest first, and whether a slot is among them.
     removals: VecDeque<usize>,
@@ -827,6 +835,8 @@ impl Scene {
             geom_trash: Default::default(),
             pick: Default::default(),
             hover: Default::default(),
+            hud_own: Vec::new(),
+            exact_tests: Default::default(),
             removals: VecDeque::new(),
             removal_pending: Vec::new(),
             system_bounds: Vec::new(),
