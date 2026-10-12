@@ -1,12 +1,15 @@
-//! Login screen: animated aurora background, brand block and a glass login
+//! Login screen: animated aurora background, brand block and the login
 //! card in the middle, version and news panels on the right, community
-//! links at the bottom left.
+//! links at the bottom left. Cards and buttons use the surfaces of the
+//! in-world windows (`widgets::overlay_frame`, `widgets::action_button`);
+//! their blur needs a world behind, the aurora is soft enough without it.
 
 use super::icons::Icons;
 use super::news::{LoginInfo, VersionState};
+use super::widgets::{self, ActionKind};
 use crate::settings::{GridChoice, Settings};
 use crate::theme::Palette;
-use egui::{Color32, CornerRadius, Frame, Margin, RichText, Sense, Stroke, TextEdit, Vec2};
+use egui::{Color32, Frame, Margin, RichText, Sense, Stroke, TextEdit, Vec2};
 
 const REMEMBERED_PASSWORD_MASK: &str = "••••••••••••••••";
 
@@ -82,12 +85,12 @@ fn field(
     let stroke = if focused {
         Stroke::new(1.0, p.violet)
     } else {
-        Stroke::new(1.0, p.raised)
+        Stroke::new(1.0, p.muted_dim.gamma_multiply(0.65))
     };
     Frame::new()
         .fill(p.field)
         .stroke(stroke)
-        .corner_radius(CornerRadius::same(6))
+        .corner_radius(ui.visuals().widgets.inactive.corner_radius)
         .inner_margin(Margin::symmetric(10, 7))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
@@ -140,79 +143,35 @@ fn caption(ui: &mut egui::Ui, p: &Palette, text: &str) {
     ui.add_space(-2.0);
 }
 
-/// Round icon button (community links); `url` empty = not configured.
-fn link_button(ui: &mut egui::Ui, p: &Palette, icons: &Icons, icon: &str, name: &str, url: &str) {
-    let (r, resp) = ui.allocate_exact_size(Vec2::splat(38.0), Sense::click());
+/// Height of the buttons along the bottom of the screen.
+const BAR_BUTTON: f32 = 30.0;
+
+/// Community link with its icon and name; `url` empty = not configured.
+fn link_button(ui: &mut egui::Ui, p: &Palette, icon: &str, name: &str, url: &str) {
     let enabled = !url.is_empty();
-    let hot = enabled && resp.hovered();
-    ui.painter().circle_filled(
-        r.center(),
-        19.0,
-        if hot {
-            p.violet.gamma_multiply(0.85)
-        } else {
-            Color32::from_rgba_unmultiplied(p.panel.r(), p.panel.g(), p.panel.b(), 170)
-        },
-    );
-    ui.painter()
-        .circle_stroke(r.center(), 19.0, Stroke::new(1.0, if hot { p.violet_light } else { p.raised }));
-    let tint = if !enabled {
-        p.muted
-    } else if hot {
-        Color32::WHITE
-    } else {
-        p.ink
-    };
-    img(ui, icons, icon, egui::Rect::from_center_size(r.center(), Vec2::splat(18.0)), tint);
-    let tip = if enabled {
-        name.to_owned()
-    } else {
-        aurora_i18n::tr!("ui-login-pending-link", name = name.to_string())
-    };
-    if resp.on_hover_text(tip).clicked() && enabled {
+    let resp = ui
+        .add_enabled_ui(enabled, |ui| {
+            widgets::action_button(ui, p, icon, name, ActionKind::Flat, Vec2::new(0.0, BAR_BUTTON))
+        })
+        .inner;
+    let resp = resp
+        .on_hover_text(url)
+        .on_disabled_hover_text(aurora_i18n::tr!("ui-login-pending-link", name = name.to_string()));
+    if resp.clicked() && enabled {
         ui.ctx().open_url(egui::OpenUrl::new_tab(url));
     }
 }
 
-/// Glass panel used by the card and the side panels.
-fn glass(p: &Palette, radius: u8, margin: i8) -> Frame {
-    Frame::new()
-        .fill({
-            // night-blue glass: the panel color tinted with the sky
-            let m = |a: u8, b: u8| ((a as u16 + b as u16 * 2) / 3) as u8;
-            Color32::from_rgba_unmultiplied(
-                m(p.panel.r(), p.navy.r()),
-                m(p.panel.g(), p.navy.g()),
-                m(p.panel.b(), p.navy.b()),
-                205,
-            )
-        })
-        .stroke(Stroke::new(1.0, p.violet.gamma_multiply(0.28)))
-        .corner_radius(CornerRadius::same(radius))
-        .inner_margin(Margin::same(margin))
-        .shadow(egui::Shadow {
-            offset: [0, 10],
-            blur: 36,
-            spread: 0,
-            color: Color32::from_black_alpha(110),
-        })
-}
-
-fn panel_title(ui: &mut egui::Ui, p: &Palette, icons: &Icons, icon: &str, title: &str) {
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 7.0;
-        let (r, _) = ui.allocate_exact_size(Vec2::splat(16.0), Sense::hover());
-        img(ui, icons, icon, r, p.violet_light);
-        ui.label(RichText::new(title.to_uppercase()).size(11.5).strong().color(p.violet_light));
-    });
-    ui.add_space(4.0);
+/// Card of the login screen: the surface of the in-world windows.
+fn card(ui: &egui::Ui, p: &Palette, margin: i8) -> Frame {
+    widgets::overlay_frame(ui.ctx(), p).inner_margin(Margin::same(margin))
 }
 
 fn version_panel(ui: &mut egui::Ui, p: &Palette, icons: &Icons, info: &LoginInfo) -> bool {
     let mut check_updates = false;
-    glass(p, 10, 16).show(ui, |ui| {
+    card(ui, p, 16).show(ui, |ui| {
         ui.set_width(ui.available_width());
-        panel_title(ui, p, icons, "tag-filled", aurora_i18n::tr!("ui-login-version"));
+        widgets::section_header(ui, p, "tag-filled", aurora_i18n::tr!("ui-login-version"));
         let current = aurora_version::version();
         ui.horizontal(|ui| {
             ui.label(RichText::new(aurora_i18n::tr!("ui-login-installed")).size(12.5).color(p.muted));
@@ -255,15 +214,9 @@ fn version_panel(ui: &mut egui::Ui, p: &Palette, icons: &Icons, info: &LoginInfo
             && !url.is_empty()
         {
             ui.add_space(8.0);
-            let b = egui::Button::new(
-                RichText::new(aurora_i18n::tr!("ui-login-download-update"))
-                    .size(13.0)
-                    .color(Color32::WHITE),
-            )
-            .fill(p.violet)
-            .corner_radius(CornerRadius::same(6))
-            .min_size(Vec2::new(ui.available_width(), 30.0));
-            if ui.add(b).clicked() && !url.is_empty() {
+            let size = Vec2::new(ui.available_width(), 30.0);
+            let label = aurora_i18n::tr!("ui-login-download-update");
+            if widgets::action_button(ui, p, "download-filled", label, ActionKind::Primary, size).clicked() {
                 ui.ctx().open_url(egui::OpenUrl::new_tab(url));
             }
         }
@@ -272,9 +225,9 @@ fn version_panel(ui: &mut egui::Ui, p: &Palette, icons: &Icons, info: &LoginInfo
 }
 
 fn news_panel(ui: &mut egui::Ui, p: &Palette, icons: &Icons, info: &LoginInfo, max_h: f32) {
-    glass(p, 10, 16).show(ui, |ui| {
+    card(ui, p, 16).show(ui, |ui| {
         ui.set_width(ui.available_width());
-        panel_title(ui, p, icons, "article-filled", aurora_i18n::tr!("ui-login-news"));
+        widgets::section_header(ui, p, "article-filled", aurora_i18n::tr!("ui-login-news"));
         egui::ScrollArea::vertical()
             .max_height(max_h)
             .min_scrolled_height(max_h)
@@ -360,7 +313,7 @@ pub fn show(
                 );
                 ui.add_space(18.0);
             });
-            glass(p, 12, 24).show(ui, |ui| {
+            card(ui, p, 24).show(ui, |ui| {
                 ui.set_width(card_w - 48.0);
                 ui.spacing_mut().item_spacing.y = 6.0;
                 let enabled = !form.busy;
@@ -496,7 +449,7 @@ pub fn show(
                         && !settings.username.trim().is_empty()
                         && (!form.password.is_empty() || form.stored.is_some());
                     let (r, resp) = ui.allocate_exact_size(
-                        Vec2::new(ui.available_width(), 42.0),
+                        Vec2::new(ui.available_width(), 38.0),
                         if can { Sense::click() } else { Sense::hover() },
                     );
                     // Requested UX: focus the first missing field, or Connect
@@ -519,19 +472,11 @@ pub fn show(
                     } else {
                         p.violet
                     };
-                    ui.painter().rect_filled(r, CornerRadius::same(8), fill);
-                    if hot {
-                        ui.painter().rect_stroke(
-                            r.expand(2.0),
-                            CornerRadius::same(10),
-                            Stroke::new(2.0, p.violet.gamma_multiply(0.35)),
-                            egui::StrokeKind::Outside,
-                        );
-                    }
+                    ui.painter().rect_filled(r, ui.visuals().widgets.inactive.corner_radius, fill);
                     let txt_col = if can { Color32::WHITE } else { Color32::WHITE.gamma_multiply(0.5) };
                     let galley = ui.painter().layout_no_wrap(
                         aurora_i18n::tr!("ui-login-log-in").to_owned(),
-                        egui::FontId::proportional(16.0),
+                        egui::FontId::proportional(15.0),
                         txt_col,
                     );
                     let total = galley.size().x + 26.0;
@@ -630,20 +575,14 @@ pub fn show(
             );
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 10.0;
-                link_button(ui, p, icons, "brand-github-filled", "GitHub", crate::links::GITHUB);
-                link_button(ui, p, icons, "brand-discord-filled", "Discord", crate::links::DISCORD);
-                if super::widgets::flat_button(ui, p, aurora_i18n::tr!("bug-title")).clicked() {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                link_button(ui, p, "brand-discord-filled", "Discord", crate::links::DISCORD);
+                link_button(ui, p, "brand-github-filled", "GitHub", crate::links::GITHUB);
+                link_button(ui, p, "world-filled", aurora_i18n::tr!("ui-login-website"), crate::links::WEBSITE);
+                let label = aurora_i18n::tr!("bug-title");
+                if widgets::action_button(ui, p, "bug-filled", label, ActionKind::Flat, Vec2::new(0.0, BAR_BUTTON)).clicked() {
                     action = LoginAction::ReportBug;
                 }
-                link_button(
-                    ui,
-                    p,
-                    icons,
-                    "world-filled",
-                    aurora_i18n::tr!("ui-login-website"),
-                    crate::links::WEBSITE,
-                );
             });
         });
 
@@ -661,36 +600,8 @@ pub fn show(
                     .size(11.5)
                     .color(p.muted_dim),
                 );
-                let (r, resp) = ui.allocate_exact_size(Vec2::new(92.0, 30.0), Sense::click());
-                let hot = resp.hovered();
-                ui.painter().rect_filled(
-                    r,
-                    CornerRadius::same(6),
-                    if hot {
-                        p.danger.gamma_multiply(0.8)
-                    } else {
-                        Color32::from_rgba_unmultiplied(p.panel.r(), p.panel.g(), p.panel.b(), 170)
-                    },
-                );
-                ui.painter().rect_stroke(
-                    r,
-                    CornerRadius::same(6),
-                    Stroke::new(1.0, if hot { p.danger } else { p.raised }),
-                    egui::StrokeKind::Inside,
-                );
-                let col = if hot { Color32::WHITE } else { p.muted };
-                img(
-                    ui,
-                    icons,
-                    "power",
-                    egui::Rect::from_center_size(egui::pos2(r.left() + 20.0, r.center().y), Vec2::splat(15.0)),
-                    col,
-                );
-                let galley = ui
-                    .painter()
-                    .layout_no_wrap(aurora_i18n::tr!("common-quit").to_owned(), egui::FontId::proportional(13.0), col);
-                super::widgets::paint_ink_centered(ui.painter(), galley, egui::pos2(r.left() + 56.0, r.center().y), col);
-                if resp.clicked() {
+                let label = aurora_i18n::tr!("common-quit");
+                if widgets::action_button(ui, p, "power", label, ActionKind::FlatDanger, Vec2::new(0.0, BAR_BUTTON)).clicked() {
                     action = LoginAction::Quit;
                 }
             });

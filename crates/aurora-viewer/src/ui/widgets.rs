@@ -12,7 +12,7 @@ pub(crate) mod elide_tests;
 mod resize;
 mod workspace;
 pub use workspace::{Modal, glyph, navigation, section_header, stat, surface};
-pub(crate) use workspace::{inventory_item_label, inventory_spacing};
+pub(crate) use workspace::{inventory_item_label, inventory_spacing, overlay, overlay_frame};
 
 /// Keep status suffixes at normal weight and slightly darker than the name.
 pub(crate) fn name_with_suffix(name: &str, suffix: &str, font_id: egui::FontId, color: Color32) -> egui::text::LayoutJob {
@@ -612,6 +612,62 @@ fn text_button(ui: &mut egui::Ui, p: &Palette, label: &str, size: Option<Vec2>) 
     };
     ui.set_style(style);
     response
+}
+
+/// Face of an `action_button`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ActionKind {
+    /// A neutral filled face, without a border.
+    Flat,
+    /// The accent: the action the screen is for.
+    Primary,
+    /// The danger color: a destructive action.
+    Danger,
+    /// Flat until hovered, then the danger color.
+    FlatDanger,
+}
+
+/// Filled button with a Tabler icon before its label: every kind is a plain
+/// face without a border, like the login button (the human's choice). A zero
+/// width in `size` fits the content.
+pub fn action_button(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, kind: ActionKind, size: Vec2) -> egui::Response {
+    const ICON: f32 = 15.0;
+    const GAP: f32 = 7.0;
+    let enabled = ui.is_enabled();
+    let font = egui::FontId::proportional(12.5);
+    let width = |ui: &egui::Ui| ui.painter().layout_no_wrap(label.to_owned(), font.clone(), Color32::WHITE).size().x;
+    let content = ICON + GAP + width(ui);
+    let desired = Vec2::new(if size.x > 0.0 { size.x } else { content + 24.0 }, size.y);
+    let (rect, resp) = ui.allocate_exact_size(desired, if enabled { Sense::click() } else { Sense::hover() });
+    let hot = enabled && (resp.hovered() || resp.has_focus());
+    let (fill, ink) = match kind {
+        ActionKind::Primary => (if hot { p.violet_light } else { p.violet }, p.ink),
+        ActionKind::Danger => (if hot { p.danger } else { p.danger.gamma_multiply(0.88) }, p.navy),
+        ActionKind::FlatDanger if hot => (p.danger.gamma_multiply(0.88), p.navy),
+        ActionKind::Flat | ActionKind::FlatDanger => (if hot { p.raised.lerp_to_gamma(p.ink, 0.16) } else { p.raised }, p.ink),
+    };
+    let fade = if enabled { 1.0 } else { 0.45 };
+    let radius = ui.visuals().widgets.inactive.corner_radius;
+    ui.painter().rect_filled(rect, radius, fill.gamma_multiply(fade));
+    let ink = ink.gamma_multiply(fade);
+    let galley = ui.painter().layout_no_wrap(label.to_owned(), font, ink);
+    let left = rect.center().x - content / 2.0;
+    if let Some(texture) = super::icons::global(icon) {
+        ui.painter().image(
+            texture.id(),
+            egui::Rect::from_center_size(egui::pos2(left + ICON / 2.0, rect.center().y), Vec2::splat(ICON)),
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            ink,
+        );
+    }
+    // centered on the line, not on the ink: a row of buttons shares a baseline
+    let text = egui::pos2(left + ICON + GAP, rect.center().y - galley.size().y / 2.0).round();
+    ui.painter().galley(text, galley, ink);
+    if hot {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
+    resp
 }
 
 /// Primary action using the Aurora accent and the flat button geometry.

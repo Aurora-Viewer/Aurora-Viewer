@@ -152,12 +152,52 @@ pub(crate) fn finish_glass(painter: &egui::Painter, slot: egui::layers::ShapeIdx
     }
 }
 
+/// Frame of a panel drawn outside a window (toasts, drop-down panels, the
+/// login cards): the windows' tint, border, corners and shadow.
+pub(crate) fn overlay_frame(ctx: &egui::Context, p: &Palette) -> egui::Frame {
+    let visuals = &ctx.global_style().visuals;
+    egui::Frame::new()
+        .fill(Color32::from_rgba_unmultiplied(
+            p.panel.r(),
+            p.panel.g(),
+            p.panel.b(),
+            p.panel_alpha,
+        ))
+        .stroke(Stroke::new(1.0, p.muted_dim.gamma_multiply(0.6)))
+        .corner_radius(visuals.window_corner_radius)
+        .shadow(visuals.window_shadow)
+}
+
+/// `overlay_frame` over the windows' blur of the world behind it.
+pub(crate) fn overlay<R>(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    margin: egui::Margin,
+    body: impl FnOnce(&mut egui::Ui) -> R,
+) -> egui::InnerResponse<R> {
+    let mut glass_slot = None;
+    let response = overlay_frame(ui.ctx(), p).inner_margin(margin).show(ui, |ui| {
+        glass_slot = Some((ui.painter().clone(), ui.painter().add(egui::Shape::Noop)));
+        body(ui)
+    });
+    if let Some((painter, slot)) = glass_slot {
+        let radius = f32::from(ui.ctx().global_style().visuals.window_corner_radius.nw);
+        finish_glass(&painter, slot, response.response.rect, p, radius);
+    }
+    response
+}
+
 /// Modal dialogs use the same surface and spacing as regular windows.
 pub struct Modal(egui::Modal);
 
 impl Modal {
     pub fn new(id: egui::Id) -> Self {
         Self(egui::Modal::new(id))
+    }
+    /// For a modal that blurs what is behind it (`aurora_render::blurred_backdrop`)
+    /// instead of dimming it.
+    pub fn transparent_backdrop(self) -> Self {
+        Self(self.0.backdrop_color(Color32::TRANSPARENT))
     }
     pub fn show<T>(self, ctx: &egui::Context, body: impl FnOnce(&mut egui::Ui) -> T) -> egui::ModalResponse<T> {
         // Theme supplies skin colors and radii; per-modal frames remain local.

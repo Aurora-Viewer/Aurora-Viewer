@@ -1,7 +1,11 @@
 //! Recovery UI uses the viewer's theme, fonts, Tabler icons and Fluent
 //! catalogues, but runs in a separate process with a CPU-only painter.
 
-use crate::ui::{fonts, icons::Icons, widgets};
+use crate::ui::{
+    fonts,
+    icons::Icons,
+    widgets::{self, ActionKind},
+};
 use egui::{RichText, Vec2};
 use std::{
     num::NonZeroU32,
@@ -92,40 +96,55 @@ impl Recovery {
                 if self.bug_report.open {
                     return;
                 }
+                let radius = ui.visuals().window_corner_radius;
                 ui.horizontal(|ui| {
                     if let Some(icon) = self.icons.get("alert-triangle-filled") {
-                        ui.add(egui::Image::new(icon).fit_to_exact_size(Vec2::splat(58.0)).tint(p.amber));
+                        ui.add(egui::Image::new(icon).fit_to_exact_size(Vec2::splat(44.0)).tint(p.amber));
                     }
-                    ui.add_space(14.0);
+                    ui.add_space(10.0);
                     ui.vertical(|ui| {
-                        ui.label(RichText::new(aurora_i18n::tr!("crash-heading")).size(25.0).strong().color(p.ink));
-                        ui.add_space(5.0);
+                        ui.label(RichText::new(aurora_i18n::tr!("crash-heading")).size(20.0).strong().color(p.ink));
+                        ui.add_space(3.0);
                         ui.label(RichText::new(aurora_i18n::tr!("crash-explanation")).color(p.muted));
                     });
                 });
-                ui.add_space(22.0);
-                egui::Frame::new().fill(p.field).inner_margin(14.0).corner_radius(3).show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.horizontal_wrapped(|ui| {
-                        ui.label(RichText::new(format!("Aurora Viewer {}", self.record.version)).strong());
-                        ui.label(
-                            RichText::new(format!("· {} · {}", self.record.profile, self.record.language.to_uppercase())).color(p.muted),
-                        );
-                        ui.label(RichText::new(self.reason).color(p.amber));
+                ui.add_space(18.0);
+                egui::Frame::new()
+                    .fill(p.field)
+                    .inner_margin(14.0)
+                    .corner_radius(radius)
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(RichText::new(format!("Aurora Viewer {}", self.record.version)).strong());
+                            ui.label(
+                                RichText::new(format!("· {} · {}", self.record.profile, self.record.language.to_uppercase()))
+                                    .color(p.muted),
+                            );
+                            ui.label(RichText::new(self.reason).color(p.amber));
+                        });
+                        ui.label(RichText::new(aurora_i18n::tr!("crash-local-only")).color(p.muted));
                     });
-                    ui.label(RichText::new(aurora_i18n::tr!("crash-local-only")).color(p.muted));
-                });
                 ui.add_space(18.0);
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new(aurora_i18n::tr!("crash-details")).strong());
+                    if let Some(icon) = self.icons.get("code") {
+                        ui.add(egui::Image::new(icon).fit_to_exact_size(Vec2::splat(17.0)).tint(p.violet_light));
+                    }
+                    ui.label(RichText::new(aurora_i18n::tr!("crash-details")).size(13.0).strong().color(p.ink));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if widgets::flat_button(ui, &p, aurora_i18n::tr!("crash-open-folder")).clicked()
+                        let small = Vec2::new(0.0, 26.0);
+                        let open = aurora_i18n::tr!("crash-open-folder");
+                        if widgets::action_button(ui, &p, "folder-open-filled", open, ActionKind::Flat, small).clicked()
                             && let Err(error) = open_folder(&self.dir)
                         {
                             self.action_error = Some(error.to_string());
                         }
+                        let copy = aurora_i18n::tr!("crash-copy-trace");
                         if ui
-                            .add_enabled(!self.trace.is_empty(), egui::Button::new(aurora_i18n::tr!("crash-copy-trace")))
+                            .add_enabled_ui(!self.trace.is_empty(), |ui| {
+                                widgets::action_button(ui, &p, "copy-filled", copy, ActionKind::Flat, small)
+                            })
+                            .inner
                             .clicked()
                         {
                             self.context.copy_text(self.trace.clone());
@@ -134,25 +153,29 @@ impl Recovery {
                     });
                 });
                 ui.add_space(8.0);
-                let height = (ui.available_height() - 106.0).max(140.0);
-                egui::Frame::new().fill(p.field).inner_margin(12.0).corner_radius(3).show(ui, |ui| {
-                    egui::ScrollArea::both()
-                        .id_salt("crash-trace")
-                        .auto_shrink([false, false])
-                        .max_height(height)
-                        .min_scrolled_height(height)
-                        .show(ui, |ui| {
-                            if self.trace.is_empty() {
-                                ui.label(RichText::new(aurora_i18n::tr!("crash-no-trace")).color(p.muted));
-                            } else {
-                                ui.add(
-                                    egui::Label::new(RichText::new(&self.trace).monospace().size(12.0))
-                                        .selectable(true)
-                                        .wrap_mode(egui::TextWrapMode::Extend),
-                                );
-                            }
-                        });
-                });
+                let height = (ui.available_height() - 104.0).max(140.0);
+                egui::Frame::new()
+                    .fill(p.field)
+                    .inner_margin(12.0)
+                    .corner_radius(radius)
+                    .show(ui, |ui| {
+                        egui::ScrollArea::both()
+                            .id_salt("crash-trace")
+                            .auto_shrink([false, false])
+                            .max_height(height)
+                            .min_scrolled_height(height)
+                            .show(ui, |ui| {
+                                if self.trace.is_empty() {
+                                    ui.label(RichText::new(aurora_i18n::tr!("crash-no-trace")).color(p.muted));
+                                } else {
+                                    ui.add(
+                                        egui::Label::new(RichText::new(&self.trace).monospace().size(12.0))
+                                            .selectable(true)
+                                            .wrap_mode(egui::TextWrapMode::Extend),
+                                    );
+                                }
+                            });
+                    });
                 ui.add_space(10.0);
                 ui.label(
                     RichText::new(if self.copied {
@@ -168,10 +191,12 @@ impl Recovery {
                     ui.colored_label(p.danger, aurora_i18n::tr!("crash-folder-error"));
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if widgets::flat_button_sized(ui, &p, aurora_i18n::tr!("crash-close"), Vec2::new(110.0, 34.0)).clicked() {
+                    let big = Vec2::new(0.0, 32.0);
+                    if widgets::action_button(ui, &p, "x", aurora_i18n::tr!("crash-close"), ActionKind::Flat, big).clicked() {
                         event_loop.exit();
                     }
-                    if widgets::flat_button_sized(ui, &p, aurora_i18n::tr!("crash-send-report"), Vec2::new(232.0, 34.0)).clicked() {
+                    let send = aurora_i18n::tr!("crash-send-report");
+                    if widgets::action_button(ui, &p, "send-filled", send, ActionKind::Primary, big).clicked() {
                         self.open_report();
                     }
                 });
