@@ -133,13 +133,7 @@ impl UpdateDemo {
                     Phase::Downloading(fraction) => {
                         ui.add_space(9.0);
                         ui.label(RichText::new(aurora_i18n::tr!("update-downloading")).size(13.0).color(p.ink));
-                        ui.add(
-                            egui::ProgressBar::new(fraction)
-                                .desired_width(width)
-                                .corner_radius(ui.visuals().window_corner_radius)
-                                .fill(p.violet)
-                                .show_percentage(),
-                        );
+                        super::widgets::progress(ui, p, "update_download_demo", fraction, width, "{}", None);
                         ui.label(
                             RichText::new(aurora_i18n::tr!(
                                 "update-transfer",
@@ -158,12 +152,7 @@ impl UpdateDemo {
                             icon(ui, icons, "circle-check-filled", rect, p.success);
                             ui.label(RichText::new(aurora_i18n::tr!("update-ready")).size(14.0).color(p.ink));
                         });
-                        ui.add(
-                            egui::ProgressBar::new(1.0)
-                                .desired_width(width)
-                                .corner_radius(ui.visuals().window_corner_radius)
-                                .fill(p.success),
-                        );
+                        super::widgets::progress(ui, p, "update_ready", 1.0, width, "", Some(p.success));
                         ui.add_space(20.0);
                     }
                 }
@@ -308,13 +297,7 @@ pub fn show_real(
                         aurora_i18n::tr!("update-downloading")
                     });
                     let fraction = progress.received as f32 / progress.total.max(1) as f32;
-                    ui.add(
-                        egui::ProgressBar::new(fraction)
-                            .desired_width(width)
-                            .corner_radius(ui.visuals().window_corner_radius)
-                            .fill(p.violet)
-                            .show_percentage(),
-                    );
+                    super::widgets::progress(ui, p, "update_download", fraction, width, "{}", None);
                     ui.label(
                         RichText::new(aurora_i18n::tr!(
                             "update-transfer",

@@ -60,6 +60,27 @@ Dans le code, on utilise toujours la `Palette` résolue (`p.violet`, `p.ink`…)
   avec la bordure et l'ombre des fenêtres.
   Les dégradés sont réservés aux éléments de marque (fond de connexion,
   aurores, remplissage de la barre de progression).
+- **Écran de connexion.** C'est la vitrine du viewer. Le flou des fenêtres
+  ne connaît que la scène 3D, absente ici : chaque carte (`login::card`)
+  redessine donc sous sa teinte le ciel qu'elle recouvre, hors de mise au
+  point (`aurora_bg::frosted` : sans étoiles, rayons des aurores fondus,
+  crêtes adoucies), avec deux lueurs de l'aurore (violet, turquoise) qui
+  débordent autour d'elle. Son bord supérieur accroche la lumière ; la carte
+  de connexion porte le filet au dégradé de la marque. Les boutons du bas
+  et le numéro de version partagent la même ligne.
+- **Barres de progression.** `widgets::progress` : une piste plate (celle
+  des curseurs) remplie au dégradé de la marque, qui glisse vers sa valeur
+  au lieu de sauter ; le pourcentage écrit dessous glisse avec elle. Les
+  bandeaux de chargement et de téléportation glissent de la même façon. Un
+  niveau instantané (micro) passe par `widgets::level`, qui ne lisse que le
+  tremblement entre deux mesures. Jamais `egui::ProgressBar`.
+- **Bouton et panneau du micro.** Le micro reste au centre de son bouton,
+  comme les icônes voisines ; la flèche qui le suit pointe vers le panneau
+  qu'elle ouvre au-dessus de la barre. Le panneau (verre des fenêtres)
+  donne l'état de la voix, les deux façons de parler en cartes (celle en
+  cours allumée comme un bouton actif de la barre et cochée, la touche à
+  maintenir dessinée en touche), puis le micro et la sortie audio l'un sous
+  l'autre, et l'accès aux préférences.
 - **Chargement et téléportation.** Un « bandeau cinéma » sans panneau
   (`ui/loading.rs`) : la dernière vue floutée occupe tout l'écran, le nom de
   la région s'écrit en grand en bas à gauche avec ce qu'on sait d'elle

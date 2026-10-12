@@ -6,7 +6,7 @@ mod commands;
 
 use super::fonts::{self, SystemFont};
 use super::icons::Icons;
-use super::widgets::Floater;
+use super::widgets::{Floater, keycap};
 use crate::settings::Settings;
 use crate::theme::Palette;
 use egui::{Color32, RichText, Sense, Vec2};
@@ -1573,11 +1573,8 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                         let used = st.cache_usage;
                         let limit = s.cache_size_mb as u64 * 1024 * 1024;
                         let frac = (used as f32 / limit.max(1) as f32).clamp(0.0, 1.0);
-                        ui.add(egui::ProgressBar::new(frac).desired_width(SLIDER_W).fill(p.violet).text(format!(
-                            "{} / {}",
-                            format_bytes(used),
-                            format_bytes(limit)
-                        )));
+                        let text = format!("{} / {}", format_bytes(used), format_bytes(limit));
+                        super::widgets::progress(ui, p, "cache_usage", frac, SLIDER_W, &text, None);
                         false
                     },
                 );
@@ -1637,16 +1634,17 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
     c
 }
 
-/// Device combo: "" = system default.
-fn device_combo(ui: &mut egui::Ui, id: &str, value: &mut String, devices: &[String]) -> bool {
+/// Device combo: "" = system default. Returns (a device was chosen, the
+/// list is unfolded).
+pub(super) fn device_combo(ui: &mut egui::Ui, id: &str, value: &mut String, devices: &[String], width: f32) -> (bool, bool) {
     let mut changed = false;
     let shown = if value.is_empty() {
         aurora_i18n::tr!("ui-options-system-default").to_owned()
     } else {
         value.clone()
     };
-    egui::ComboBox::from_id_salt(id)
-        .width(SLIDER_W)
+    let list = egui::ComboBox::from_id_salt(id)
+        .width(width)
         .selected_text(shown)
         .truncate()
         .show_ui(ui, |ui| {
@@ -1664,7 +1662,7 @@ fn device_combo(ui: &mut egui::Ui, id: &str, value: &mut String, devices: &[Stri
                 );
             }
         });
-    changed
+    (changed, list.inner.is_some())
 }
 
 /// "Son et voix": devices, the volumes of the top-right panel (same
@@ -1678,14 +1676,14 @@ fn audio_page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut Options
             p,
             aurora_i18n::tr!("ui-options-audio-output"),
             aurora_i18n::tr!("ui-options-speakers-or-headset-used-by-the-viewer"),
-            |ui| device_combo(ui, "audio_out", &mut a.output_device, &st.output_devices),
+            |ui| device_combo(ui, "audio_out", &mut a.output_device, &st.output_devices, SLIDER_W).0,
         );
         let inp = row(
             ui,
             p,
             aurora_i18n::tr!("ui-options-microphone"),
             aurora_i18n::tr!("ui-options-input-used-for-voice"),
-            |ui| device_combo(ui, "audio_in", &mut a.input_device, &st.input_devices),
+            |ui| device_combo(ui, "audio_in", &mut a.input_device, &st.input_devices, SLIDER_W).0,
         );
         c |= out | inp;
         *audio_changed |= out | inp;
@@ -1816,7 +1814,7 @@ fn audio_page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut Options
                 } else {
                     p.teal
                 };
-                ui.add(egui::ProgressBar::new(lvl).desired_width(SLIDER_W).desired_height(8.0).fill(col));
+                super::widgets::level(ui, p, "mic_level", lvl, SLIDER_W, col);
                 false
             },
         );
@@ -1934,73 +1932,6 @@ fn audio_page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut Options
     c
 }
 
-/// Height of a keycap, and of the square of Tabler's key icons.
-const KEYCAP: f32 = 14.0;
-const KEYCAP_GAP: f32 = 3.0;
-
-/// Width taken by the mouse icon of a mouse button's cap.
-const KEYCAP_MOUSE: f32 = 12.0;
-
-/// A key of a binding: Tabler's filled key icon when the key has one, else a
-/// cap of the same shape around the key's name (after the mouse icon for a
-/// mouse button), the name in the button's color like the cut-out letter of
-/// the icons.
-enum Keycap {
-    Icon(egui::TextureHandle),
-    Text(Option<egui::TextureHandle>, std::sync::Arc<egui::Galley>),
-}
-
-impl Keycap {
-    fn width(&self) -> f32 {
-        match self {
-            Keycap::Icon(_) => KEYCAP,
-            Keycap::Text(mouse, galley) => {
-                let mouse = if mouse.is_some() { KEYCAP_MOUSE } else { 0.0 };
-                (mouse + galley.size().x + 8.0).max(KEYCAP)
-            }
-        }
-    }
-
-    fn paint(&self, ui: &egui::Ui, p: &Palette, rect: egui::Rect, button: Color32) {
-        match self {
-            Keycap::Icon(texture) => {
-                // the icon's square spans 20 of its 24 units
-                let image = egui::Rect::from_center_size(rect.center(), Vec2::splat(KEYCAP * 24.0 / 20.0));
-                let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
-                ui.painter().image(texture.id(), image, uv, p.ink);
-            }
-            Keycap::Text(mouse, galley) => {
-                ui.painter().rect_filled(rect, 2.0, p.ink);
-                let mut text = rect;
-                if let Some(texture) = mouse {
-                    let image = egui::Rect::from_center_size(
-                        egui::pos2(rect.left() + 3.0 + KEYCAP_MOUSE / 2.0, rect.center().y),
-                        Vec2::splat(KEYCAP_MOUSE),
-                    );
-                    let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
-                    ui.painter().image(texture.id(), image, uv, button);
-                    text.min.x += KEYCAP_MOUSE;
-                }
-                ui.painter().galley(text.center() - galley.size() / 2.0, galley.clone(), button);
-            }
-        }
-    }
-}
-
-fn keycaps(ui: &egui::Ui, binding: &crate::keybinds::Binding, button: Color32) -> Vec<Keycap> {
-    binding
-        .caps()
-        .into_iter()
-        .map(|cap| match cap.icon.as_deref().and_then(super::icons::global) {
-            Some(texture) => Keycap::Icon(texture),
-            None => Keycap::Text(
-                cap.mouse.then(|| super::icons::global("mouse-filled")).flatten(),
-                ui.painter().layout_no_wrap(cap.label, egui::FontId::proportional(10.5), button),
-            ),
-        })
-        .collect()
-}
-
 /// One binding button: click to capture, right click to clear.
 fn binding_cell(
     ui: &mut egui::Ui,
@@ -2015,7 +1946,7 @@ fn binding_cell(
     let fill = if capturing { p.violet } else { p.raised };
     // a bound key is drawn as keycaps over an empty button of their width
     let caps = match &b {
-        Some(b) if !capturing => keycaps(ui, b, fill),
+        Some(b) if !capturing => keycap::caps(ui, b, fill),
         _ => Vec::new(),
     };
     let (text, col) = if capturing {
@@ -2025,19 +1956,15 @@ fn binding_cell(
     } else {
         ("—", p.muted_dim)
     };
-    let caps_width = caps.iter().map(Keycap::width).sum::<f32>() + KEYCAP_GAP * caps.len().saturating_sub(1) as f32;
+    let caps_width = keycap::row_width(&caps);
     let resp = ui.add(
         egui::Button::new(RichText::new(text).size(12.0).color(col))
             .fill(fill)
             .corner_radius(ui.visuals().widgets.inactive.corner_radius)
             .min_size(Vec2::new((caps_width + 12.0).max(132.0), 20.0)),
     );
-    let mut x = resp.rect.center().x - caps_width / 2.0;
-    for cap in &caps {
-        let rect = egui::Rect::from_min_size(egui::pos2(x, resp.rect.center().y - KEYCAP / 2.0), Vec2::new(cap.width(), KEYCAP));
-        cap.paint(ui, p, rect, fill);
-        x += cap.width() + KEYCAP_GAP;
-    }
+    let caps_left = egui::pos2(resp.rect.center().x - caps_width / 2.0, resp.rect.center().y);
+    keycap::paint_row(ui, p, &caps, caps_left, fill);
     if resp.clicked() {
         st.capture_modifier = None;
         st.capture = if capturing { None } else { Some(Capture::Binding(a, slot)) };

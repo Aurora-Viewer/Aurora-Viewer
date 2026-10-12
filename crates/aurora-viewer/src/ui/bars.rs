@@ -1024,7 +1024,7 @@ fn tool_button(ui: &mut egui::Ui, p: &Palette, icons: &Icons, icon: &str, tip: &
 
 /// Microphone button state (Firestorm "Parler" button with its arrow).
 #[derive(Default)]
-pub struct MicButton {
+pub struct MicButton<'a> {
     /// Toggle mode: microphone switched on.
     pub on: bool,
     /// Hold-to-talk mode (else click toggles).
@@ -1041,51 +1041,88 @@ pub struct MicButton {
     pub open_prefs: bool,
     /// Output: the mode switch changed.
     pub mode_changed: bool,
+    /// Key (or mouse button) of push-to-talk, shown with the hold mode.
+    pub key: Option<crate::keybinds::Binding>,
+    /// Microphone and audio output in use ("" = the system's default) and
+    /// the devices to choose from.
+    pub input_device: String,
+    pub output_device: String,
+    pub input_devices: &'a [String],
+    pub output_devices: &'a [String],
+    /// Output: a device was chosen.
+    pub devices_changed: bool,
+    /// Output: the panel opens, its lists of devices are to be read again.
+    pub list_devices: bool,
 }
 
+/// Width of the arrow's zone, right of the microphone.
+const MIC_ARROW: f32 = 14.0;
+
 fn mic_button(ui: &mut egui::Ui, p: &Palette, icons: &Icons, width: f32, mic: &mut MicButton) {
-    let caret_w = if width >= 30.0 { 9.0 } else { 0.0 };
     let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 22.0), egui::Sense::hover());
-    let main = egui::Rect::from_min_max(rect.min, egui::pos2(rect.right() - caret_w, rect.bottom()));
-    let resp = ui.interact(main, ui.id().with("mic_main"), egui::Sense::click_and_drag());
+    let icon_size = (width - 6.0).clamp(10.0, 16.0);
+    // the microphone stands in the middle of the button, in line with the
+    // icons of its neighbors, and the arrow right after it; a button too
+    // narrow for the arrow keeps the microphone, and a right click on it
+    // opens the panel
+    let with_arrow = width >= icon_size + 2.0 * (MIC_ARROW + 1.0);
+    let icon_rect = egui::Rect::from_center_size(rect.center(), Vec2::splat(icon_size));
+    let resp = ui.interact(rect, ui.id().with("mic_main"), egui::Sense::click_and_drag());
+    let arrow = with_arrow.then(|| {
+        let zone = egui::Rect::from_min_max(
+            egui::pos2(icon_rect.right(), rect.top()),
+            egui::pos2(icon_rect.right() + MIC_ARROW, rect.bottom()),
+        );
+        ui.interact(zone, ui.id().with("mic_arrow"), egui::Sense::click())
+    });
     if mic.hold {
-        mic.held = resp.is_pointer_button_down_on();
+        mic.held = resp.is_pointer_button_down_on() && ui.input(|i| i.pointer.primary_down());
     } else if resp.clicked() {
         mic.on = !mic.on;
     }
+    let anchor = arrow.as_ref().unwrap_or(&resp);
+    let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(anchor));
+    let on_arrow = arrow.as_ref().is_some_and(|r| r.hovered());
     let radius = ui.visuals().window_corner_radius;
-    let painter = ui.painter();
     let live = mic.talking;
-    if let Some(fill) = tool_fill(p, live, resp.hovered()) {
-        painter.rect_filled(rect, radius, fill);
+    if let Some(fill) = tool_fill(p, live, resp.hovered() || on_arrow || open) {
+        ui.painter().rect_filled(rect, radius, fill);
     }
-    if live {
-        // own level, bottom of the button
-        let w = (main.width() - 6.0) * mic.level.clamp(0.0, 1.0);
-        if w > 0.5 {
-            painter.rect_filled(
-                egui::Rect::from_min_size(egui::pos2(main.left() + 3.0, main.bottom() - 3.0), Vec2::new(w, 2.0)),
-                1.0,
-                p.teal,
-            );
-        }
+    // own level, along the bottom of the button: it follows the voice
+    // closely, only smoothing the jitter between two samples
+    let level = if live { mic.level.clamp(0.0, 1.0) } else { 0.0 };
+    let level = ui.ctx().animate_value_with_time(ui.id().with("mic_level"), level, 0.08);
+    let level_width = (rect.width() - 6.0) * level;
+    if level_width > 0.5 {
+        ui.painter().rect_filled(
+            egui::Rect::from_min_size(egui::pos2(rect.left() + 3.0, rect.bottom() - 3.0), Vec2::new(level_width, 2.0)),
+            1.0,
+            p.teal,
+        );
     }
     let icon = if live || (!mic.hold && mic.on) {
         "microphone-filled"
     } else {
         "microphone-off"
     };
-    if let Some(t) = icons.get(icon) {
-        let size = (main.width() - 6.0).clamp(10.0, 16.0);
-        let tint = if live || resp.hovered() { p.ink } else { p.muted };
-        let ir = egui::Rect::from_center_size(main.center(), Vec2::splat(size));
-        painter.image(
-            t.id(),
-            ir,
-            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-            tint,
-        );
+    let tint = if live || resp.hovered() {
+        p.ink
+    } else if mic.connected {
+        p.muted
+    } else {
+        p.muted_dim
+    };
+    paint_icon(ui, icons, icon, icon_rect, icon_size, tint);
+    if let Some(arrow) = &arrow {
+        // the arrow points to where its panel opens
+        let zone = arrow.rect.shrink2(Vec2::new(1.0, 3.0));
+        if on_arrow || open {
+            ui.painter().rect_filled(zone, radius, p.raised.lerp_to_gamma(p.ink, 0.16));
+        }
+        let tint = if on_arrow || open { p.ink } else { p.muted };
+        paint_icon(ui, icons, "caret-up-filled", zone, 10.0, tint);
     }
+
     let state = if !mic.connected {
         aurora_i18n::tr!("ui-bars-voice-not-connected-2")
     } else if live {
@@ -1098,44 +1135,181 @@ fn mic_button(ui: &mut egui::Ui, p: &Palette, icons: &Icons, width: f32, mic: &m
     } else {
         aurora_i18n::tr!("extra-click-to-enable-mute-microphone", state = state.to_string())
     };
-    resp.on_hover_text(tip);
+    let resp = resp.on_hover_text(tip);
+    let arrow = arrow.map(|r| {
+        if open {
+            r
+        } else {
+            r.on_hover_text(aurora_i18n::tr!("ui-bars-microphone-options"))
+        }
+    });
 
-    // arrow: mode switch and voice preferences
-    if caret_w > 0.0 {
-        let caret = egui::Rect::from_min_max(egui::pos2(main.right(), rect.top()), rect.max);
-        let cresp = ui.interact(caret, ui.id().with("mic_caret"), egui::Sense::click());
-        let col = if cresp.hovered() { p.ink } else { p.muted_dim };
-        paint_icon(ui, icons, "caret-down-filled", caret, 8.0, col);
-        egui::Popup::menu(&cresp).align(egui::RectAlign::TOP_END).show(|ui| {
-            ui.set_min_width(210.0);
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(aurora_i18n::tr!("common-hold-to-talk")).size(12.5).color(p.ink));
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if super::widgets::switch(ui, p, &mut mic.hold).changed() {
-                        mic.mode_changed = true;
-                        mic.on = false;
-                    }
-                });
-            });
-            ui.label(
-                RichText::new(if mic.hold {
-                    aurora_i18n::tr!("ui-bars-talk-while-the-button-or-key-is-held-down")
-                } else {
-                    aurora_i18n::tr!("ui-bars-one-click-enables-the-microphone-another-disables-it")
-                })
-                .size(11.0)
-                .color(p.muted),
-            );
-            ui.separator();
-            if ui
-                .button(RichText::new(aurora_i18n::tr!("ui-bars-sound-and-voice-settings")).size(12.5))
-                .clicked()
-            {
-                mic.open_prefs = true;
-                ui.close();
-            }
-        });
+    // demo captures: AURORA_DEMO_MICMENU=1 opens the panel
+    static DEMO_OPEN: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let demo = *DEMO_OPEN.get_or_init(|| std::env::var_os("AURORA_DEMO_MICMENU").is_some()) && ui.ctx().cumulative_frame_nr() == 300;
+    let toggle = match &arrow {
+        Some(arrow) => arrow.clicked(),
+        None => resp.secondary_clicked(),
+    };
+    mic.list_devices = (toggle || demo) && !open;
+    let anchor = arrow.as_ref().unwrap_or(&resp);
+    // a click in the list of a device combo is a click outside the panel:
+    // the panel closes itself, and not while such a list is (or just was) open
+    let list_id = ui.id().with("mic_device_list");
+    let list_was_open = ui.ctx().data(|d| d.get_temp::<bool>(list_id)).unwrap_or(false);
+    let mut list_open = false;
+    let shown = egui::Popup::from_response(anchor)
+        .open_memory((toggle || demo).then_some(egui::SetOpenCommand::Toggle))
+        .align(egui::RectAlign::TOP_END)
+        .gap(7.0)
+        .frame(egui::Frame::NONE)
+        .close_behavior(egui::PopupCloseBehavior::IgnoreClicks)
+        .show(|ui| mic_panel(ui, p, icons, mic, &mut list_open));
+    ui.ctx().data_mut(|d| d.insert_temp(list_id, list_open));
+    if let Some(shown) = shown {
+        let away = open && shown.response.clicked_elsewhere() && anchor.clicked_elsewhere();
+        if away && !list_open && !list_was_open {
+            egui::Popup::close_id(ui.ctx(), egui::Popup::default_response_id(anchor));
+        }
     }
+}
+
+/// Panel of the microphone's arrow: the state of the voice, the two ways to
+/// talk, the microphone and the audio output in use (one under the other:
+/// both ends of the same conversation) and the way to the sound
+/// preferences. `list_open`: the list of a device combo is unfolded.
+fn mic_panel(ui: &mut egui::Ui, p: &Palette, icons: &Icons, mic: &mut MicButton, list_open: &mut bool) {
+    super::widgets::overlay(ui, p, egui::Margin::same(10), |ui| {
+        ui.set_width(340.0);
+        ui.spacing_mut().item_spacing.y = 4.0;
+        ui.horizontal(|ui| {
+            super::widgets::glyph(ui, "microphone-filled", p.violet_light, 17.0);
+            ui.label(RichText::new(aurora_i18n::tr!("common-voice")).size(13.0).strong().color(p.ink));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 3.0;
+                let (state, color) = if mic.connected {
+                    (aurora_i18n::tr!("common-voice-connected"), p.success)
+                } else {
+                    (aurora_i18n::tr!("ui-bars-voice-not-connected"), p.muted_dim)
+                };
+                ui.label(RichText::new(state).size(11.0).color(p.muted));
+                super::widgets::status_dot(ui, color);
+            });
+        });
+        ui.add_space(4.0);
+        let modes = [
+            (
+                false,
+                "hand-click",
+                aurora_i18n::tr!("ui-bars-click-to-talk"),
+                aurora_i18n::tr!("ui-bars-one-click-enables-the-microphone-another-disables-it"),
+            ),
+            (
+                true,
+                "hand-finger",
+                aurora_i18n::tr!("common-hold-to-talk"),
+                aurora_i18n::tr!("ui-bars-talk-while-the-button-or-key-is-held-down"),
+            ),
+        ];
+        for (hold, icon, title, hint) in modes {
+            let key = if hold { mic.key.as_ref() } else { None };
+            if mic_mode(ui, p, icons, mic.hold == hold, icon, title, hint, key) && mic.hold != hold {
+                mic.hold = hold;
+                mic.mode_changed = true;
+                mic.on = false;
+            }
+        }
+        ui.add_space(4.0);
+        let devices = [
+            (
+                "microphone-filled",
+                aurora_i18n::tr!("ui-options-microphone"),
+                "mic_panel_input",
+                &mut mic.input_device,
+                mic.input_devices,
+            ),
+            (
+                "headphones-filled",
+                aurora_i18n::tr!("ui-options-audio-output"),
+                "mic_panel_output",
+                &mut mic.output_device,
+                mic.output_devices,
+            ),
+        ];
+        for (icon, name, id, device, list) in devices {
+            ui.horizontal(|ui| {
+                // the icons stand in the column of the modes' icons
+                ui.spacing_mut().item_spacing.x = 0.0;
+                ui.add_space(8.0);
+                let (slot, hover) = ui.allocate_exact_size(Vec2::splat(18.0), egui::Sense::hover());
+                paint_icon(ui, icons, icon, slot, 16.0, p.muted);
+                hover.on_hover_text(name);
+                ui.add_space(9.0);
+                let width = ui.available_width();
+                let (changed, open) = super::options::device_combo(ui, id, device, list, width);
+                mic.devices_changed |= changed;
+                *list_open |= open;
+            });
+        }
+        ui.add_space(4.0);
+        let size = Vec2::new(ui.available_width(), 28.0);
+        let label = aurora_i18n::tr!("ui-bars-sound-and-voice-settings");
+        if super::widgets::action_button(ui, p, "settings-filled", label, super::widgets::ActionKind::Flat, size).clicked() {
+            mic.open_prefs = true;
+            ui.close();
+        }
+    });
+}
+
+/// One of the two ways to talk: its icon, its name (followed by the key to
+/// hold, for the mode that has one) and what it does. The current one is
+/// lit like an active button of the bar, and ticked.
+#[allow(clippy::too_many_arguments)]
+fn mic_mode(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icons: &Icons,
+    selected: bool,
+    icon: &str,
+    title: &str,
+    hint: &str,
+    key: Option<&crate::keybinds::Binding>,
+) -> bool {
+    const PAD: f32 = 8.0;
+    const ICON: f32 = 18.0;
+    const TICK: f32 = 16.0;
+    let width = ui.available_width();
+    let text_left = PAD + ICON + 9.0;
+    let text_width = width - text_left - PAD - TICK - 6.0;
+    let title = ui
+        .painter()
+        .layout_no_wrap(title.to_owned(), egui::FontId::proportional(12.5), p.ink);
+    let hint = ui
+        .painter()
+        .layout(hint.to_owned(), egui::FontId::proportional(11.0), p.muted, text_width);
+    let height = PAD + title.size().y + 2.0 + hint.size().y + PAD;
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, height), egui::Sense::click());
+    if let Some(fill) = tool_fill(p, selected, resp.hovered()) {
+        ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, fill);
+    }
+    let lit = selected || resp.hovered();
+    let icon_rect = egui::Rect::from_center_size(egui::pos2(rect.left() + PAD + ICON / 2.0, rect.center().y), Vec2::splat(ICON));
+    paint_icon(ui, icons, icon, icon_rect, ICON, if lit { p.ink } else { p.muted });
+    let title_center = rect.top() + PAD + title.size().y / 2.0;
+    let title_right = rect.left() + text_left + title.size().x;
+    let hint_top = rect.top() + PAD + title.size().y + 2.0;
+    super::widgets::paint_ink_left(ui.painter(), title, egui::pos2(rect.left() + text_left, title_center), p.ink);
+    ui.painter().galley(egui::pos2(rect.left() + text_left, hint_top), hint, p.muted);
+    if let Some(key) = key {
+        // the caps stand on the panel, lit or not: their names take its color
+        let caps = super::widgets::keycap::caps(ui, key, p.panel);
+        super::widgets::keycap::paint_row(ui, p, &caps, egui::pos2(title_right + 8.0, title_center), p.panel);
+    }
+    if selected {
+        let tick = egui::Rect::from_center_size(egui::pos2(rect.right() - PAD - TICK / 2.0, rect.center().y), Vec2::splat(TICK));
+        paint_icon(ui, icons, "circle-check-filled", tick, TICK, p.violet_light);
+    }
+    resp.clicked()
 }
 
 /// Bottom bar: "Chat local" input on the left, feature buttons spread over

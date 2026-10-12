@@ -4233,7 +4233,7 @@ impl App {
                 }
             };
             // glide toward the target, never backwards
-            let k = 1.0 - (-7.0 * dt).exp();
+            let k = 1.0 - (-2.6 * dt).exp();
             o.shown = (o.shown + (target - o.shown) * k).max(o.shown).min(1.0);
             if target >= 1.0 && o.shown > 0.985 {
                 o.end.get_or_insert(Instant::now());
@@ -5713,6 +5713,17 @@ impl App {
                     talking: self.talking(),
                     level: self.voice_level,
                     connected: self.voice_connected,
+                    key: self
+                        .settings
+                        .keybinds
+                        .get(crate::keybinds::Action::PushToTalk)
+                        .into_iter()
+                        .flatten()
+                        .next(),
+                    input_device: self.settings.audio.input_device.clone(),
+                    output_device: self.settings.audio.output_device.clone(),
+                    input_devices: &self.options_ui.input_devices,
+                    output_devices: &self.options_ui.output_devices,
                     ..Default::default()
                 };
                 let (chat, bar2, bottom_top, chat_width_set) = ui::bars::bottom_bar(
@@ -5735,11 +5746,19 @@ impl App {
                 }
                 self.mic_on = mic.on;
                 self.mic_button_held = mic.held;
-                if mic.mode_changed {
+                if mic.mode_changed || mic.devices_changed {
+                    // the audio engine and the voice follow the settings
                     self.settings.audio.mic_hold = mic.hold;
+                    self.settings.audio.input_device = std::mem::take(&mut mic.input_device);
+                    self.settings.audio.output_device = std::mem::take(&mut mic.output_device);
                     self.settings.save();
                 }
-                if mic.open_prefs {
+                let (open_prefs, list_devices) = (mic.open_prefs, mic.list_devices);
+                if list_devices {
+                    self.options_ui.output_devices = aurora_audio::output_devices();
+                    self.options_ui.input_devices = aurora_audio::input_devices();
+                }
+                if open_prefs {
                     self.panels.settings = true;
                     self.options_ui.tab = ui::options::TAB_AUDIO;
                 }

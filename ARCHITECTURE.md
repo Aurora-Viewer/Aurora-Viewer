@@ -257,7 +257,8 @@ les dossiers concernés, sans rejouer les copies ni les déplacements.
 
 ### Surfaces des fenêtres
 
-`ui/widgets/workspace.rs` partage la navigation, les panneaux de détails, les
+`ui/widgets/keycap.rs` dessine les touches d'un raccourci (liste des
+raccourcis, panneau du micro). `ui/widgets/workspace.rs` partage la navigation, les panneaux de détails, les
 dialogues et les lignes de l'inventaire utilisateur et des contenus d'objets
 (densité, survol, sélection et style du nom). `build/ui/compact.rs` agence la
 construction en six sections dans un inspecteur étroit.

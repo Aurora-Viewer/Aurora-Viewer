@@ -144,7 +144,8 @@ pub fn panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut W
                     &aurora_i18n::tr!("replace-source", name = object_name(tool, world, job.source)),
                 );
                 ui.add_space(8.0);
-                ui.add(egui::ProgressBar::new(job.progress()).text(job.progress_text()).fill(p.violet));
+                let width = ui.available_width();
+                crate::ui::widgets::progress(ui, p, "replace_progress", job.progress(), width, &job.progress_text(), None);
                 if !terminal {
                     ui.horizontal(|ui| {
                         ui.spinner();

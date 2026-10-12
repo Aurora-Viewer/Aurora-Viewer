@@ -9,6 +9,7 @@ mod collapse_tests;
 pub mod demo;
 #[cfg(test)]
 pub(crate) mod elide_tests;
+pub(crate) mod keycap;
 mod resize;
 mod workspace;
 pub use workspace::{Modal, glyph, navigation, section_header, stat, surface};
@@ -604,6 +605,43 @@ fn text_button(ui: &mut egui::Ui, p: &Palette, label: &str, size: Option<Vec2>) 
         Some(size) => ui.add_sized(size, button.truncate()),
         None => ui.add(button.min_size(Vec2::new(0.0, 20.0))),
     }
+}
+
+/// Progress bar of the interface: a flat track filled with the brand
+/// gradient (or `tint`), which glides to its value instead of jumping.
+/// `text` is written under it; `{}` in it is replaced by the percentage
+/// shown, so the figures glide with the bar.
+pub fn progress(ui: &mut egui::Ui, p: &Palette, id: &str, fraction: f32, width: f32, text: &str, tint: Option<Color32>) {
+    let shown = ui.ctx().animate_value_with_time(ui.id().with(id), fraction.clamp(0.0, 1.0), 0.45);
+    ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing.y = 4.0;
+        let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 6.0), Sense::hover());
+        // the track of the sliders: it shows on a window as on a group
+        ui.painter().rect_filled(rect, 2.0, p.raised);
+        let fill = egui::Rect::from_min_size(rect.min, Vec2::new(rect.width() * shown, rect.height()));
+        if fill.width() >= 1.0 {
+            match tint {
+                Some(color) => {
+                    ui.painter().rect_filled(fill, 2.0, color);
+                }
+                None => super::loading::gradient_rect(ui.painter(), fill, p.violet, p.teal, true),
+            }
+        }
+        if !text.is_empty() {
+            let percent = aurora_i18n::number_text(&format!("{:.0} %", shown * 100.0));
+            ui.label(RichText::new(text.replace("{}", &percent)).size(11.5).color(p.muted));
+        }
+    });
+}
+
+/// Level meter (microphone): the track of `progress` with a plain fill that
+/// follows its value closely, only smoothing the jitter between two samples.
+pub fn level(ui: &mut egui::Ui, p: &Palette, id: &str, value: f32, width: f32, color: Color32) {
+    let shown = ui.ctx().animate_value_with_time(ui.id().with(id), value.clamp(0.0, 1.0), 0.08);
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 6.0), Sense::hover());
+    ui.painter().rect_filled(rect, 2.0, p.raised);
+    let fill = egui::Rect::from_min_size(rect.min, Vec2::new(rect.width() * shown, rect.height()));
+    ui.painter().rect_filled(fill, 2.0, color);
 }
 
 /// Face of an `action_button`.

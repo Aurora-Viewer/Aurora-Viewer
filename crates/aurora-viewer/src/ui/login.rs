@@ -162,14 +162,88 @@ fn link_button(ui: &mut egui::Ui, p: &Palette, icon: &str, name: &str, url: &str
     }
 }
 
-/// Card of the login screen: the surface of the in-world windows.
-fn card(ui: &egui::Ui, p: &Palette, margin: i8) -> Frame {
-    widgets::overlay_frame(ui.ctx(), p).inner_margin(Margin::same(margin))
+/// Share of the windows' opacity kept by the tint of a card: the pane lets
+/// the frosted sky through as much as an in-world window lets the scene.
+const CARD_TINT: f32 = 0.56;
+
+/// A strip whose color runs through `stops` (position 0..1, color) from left
+/// to right.
+fn strip(r: egui::Rect, stops: &[(f32, Color32)]) -> egui::Shape {
+    let mut mesh = egui::Mesh::default();
+    for (at, color) in stops {
+        let x = egui::lerp(r.left()..=r.right(), *at);
+        mesh.colored_vertex(egui::pos2(x, r.top()), *color);
+        mesh.colored_vertex(egui::pos2(x, r.bottom()), *color);
+    }
+    for i in 0..stops.len().saturating_sub(1) as u32 {
+        let n = i * 2;
+        mesh.add_triangle(n, n + 2, n + 1);
+        mesh.add_triangle(n + 1, n + 2, n + 3);
+    }
+    egui::Shape::mesh(mesh)
+}
+
+/// Card of the login screen: a pane of frosted glass. Under the tint of the
+/// in-world windows it shows the sky behind it out of focus
+/// (`aurora_bg::frosted`) and two lights of the aurora, which also spill
+/// around the card; its top edge catches the light, and the card the screen
+/// is for (`accent`) wears the brand line. An opaque skin (panel_alpha =
+/// 255) keeps its plain surface.
+fn card<R>(ui: &mut egui::Ui, p: &Palette, margin: i8, accent: bool, body: impl FnOnce(&mut egui::Ui) -> R) -> egui::InnerResponse<R> {
+    let behind = (ui.painter().clone(), ui.painter().add(egui::Shape::Noop));
+    let mut pane = None;
+    let response = widgets::overlay_frame(ui.ctx(), p)
+        .inner_margin(Margin::same(margin))
+        .show(ui, |ui| {
+            pane = Some((ui.painter().clone(), ui.painter().add(egui::Shape::Noop)));
+            body(ui)
+        });
+    if let Some((painter, slot)) = pane.filter(|_| p.panel_alpha < 255) {
+        let ctx = ui.ctx();
+        let outer = response.response.rect;
+        // inside the border of the frame
+        let rect = outer.shrink(1.0);
+        let strength = if accent { 1.0 } else { 0.6 };
+        let lights = vec![
+            super::aurora_bg::radial_glow_shape(
+                outer.left_top() + Vec2::new(outer.width() * 0.18, outer.height() * 0.12),
+                outer.width() * 0.95,
+                p.violet,
+                0.24 * strength,
+            ),
+            super::aurora_bg::radial_glow_shape(
+                outer.right_bottom() - Vec2::new(outer.width() * 0.12, outer.height() * 0.14),
+                outer.width() * 0.8,
+                p.teal,
+                0.13 * strength,
+            ),
+        ];
+        behind.0.set(behind.1, egui::Shape::Vec(lights.clone()));
+        let mut shapes = super::aurora_bg::frosted(p, ctx.content_rect(), ctx.input(|i| i.time) as f32);
+        shapes.extend(lights);
+        let alpha = (f32::from(p.panel_alpha) * CARD_TINT) as u8;
+        let tint = Color32::from_rgba_unmultiplied(p.panel.r(), p.panel.g(), p.panel.b(), alpha);
+        shapes.push(egui::Shape::rect_filled(rect, 0.0, tint));
+        let top = |height: f32| egui::Rect::from_min_size(rect.min, Vec2::new(rect.width(), height));
+        if accent {
+            shapes.push(strip(top(2.0), &[(0.0, p.violet), (1.0, p.teal)]));
+        } else {
+            let lit = p.ink.gamma_multiply(0.30);
+            shapes.push(strip(
+                top(1.0),
+                &[(0.0, Color32::TRANSPARENT), (0.3, lit), (1.0, Color32::TRANSPARENT)],
+            ));
+        }
+        painter
+            .with_clip_rect(rect.intersect(painter.clip_rect()))
+            .set(slot, egui::Shape::Vec(shapes));
+    }
+    response
 }
 
 fn version_panel(ui: &mut egui::Ui, p: &Palette, icons: &Icons, info: &LoginInfo) -> bool {
     let mut check_updates = false;
-    card(ui, p, 16).show(ui, |ui| {
+    card(ui, p, 16, false, |ui| {
         ui.set_width(ui.available_width());
         widgets::section_header(ui, p, "tag-filled", aurora_i18n::tr!("ui-login-version"));
         let current = aurora_version::version();
@@ -225,7 +299,7 @@ fn version_panel(ui: &mut egui::Ui, p: &Palette, icons: &Icons, info: &LoginInfo
 }
 
 fn news_panel(ui: &mut egui::Ui, p: &Palette, icons: &Icons, info: &LoginInfo, max_h: f32) {
-    card(ui, p, 16).show(ui, |ui| {
+    card(ui, p, 16, false, |ui| {
         ui.set_width(ui.available_width());
         widgets::section_header(ui, p, "article-filled", aurora_i18n::tr!("ui-login-news"));
         egui::ScrollArea::vertical()
@@ -313,7 +387,7 @@ pub fn show(
                 );
                 ui.add_space(18.0);
             });
-            card(ui, p, 24).show(ui, |ui| {
+            card(ui, p, 24, true, |ui| {
                 ui.set_width(card_w - 48.0);
                 ui.spacing_mut().item_spacing.y = 6.0;
                 let enabled = !form.busy;
@@ -528,7 +602,7 @@ pub fn show(
                 }
                 if let Some((msg, frac)) = progress {
                     ui.add_space(10.0);
-                    super::loading::progress_bar(ui, p, ui.available_width(), Some(frac), ctx.input(|i| i.time) as f32);
+                    widgets::progress(ui, p, "login_progress", frac, ui.available_width(), "", None);
                     ui.label(RichText::new(msg).size(12.0).color(p.violet_pale));
                 }
                 if let Some(err) = &form.error {
@@ -588,18 +662,15 @@ pub fn show(
 
     // ---- version + quit (bottom right)
     egui::Area::new(egui::Id::new("login_quit"))
-        .anchor(egui::Align2::RIGHT_BOTTOM, Vec2::new(-32.0, -30.0))
+        .anchor(egui::Align2::RIGHT_BOTTOM, Vec2::new(-32.0, -28.0))
         .show(&ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 14.0;
-                ui.label(
-                    RichText::new(aurora_i18n::tr!(
-                        "ui-login-aurora-viewer-v",
-                        value0 = aurora_version::version().to_string()
-                    ))
-                    .size(11.5)
-                    .color(p.muted_dim),
-                );
+                // the version stands on the line of the buttons' labels
+                let version = aurora_i18n::tr!("ui-login-aurora-viewer-v", value0 = aurora_version::version().to_string());
+                let version = ui.painter().layout_no_wrap(version, egui::FontId::proportional(11.5), p.muted_dim);
+                let (line, _) = ui.allocate_exact_size(Vec2::new(version.size().x, BAR_BUTTON), Sense::hover());
+                widgets::paint_ink_left(ui.painter(), version, line.left_center(), p.muted_dim);
                 let label = aurora_i18n::tr!("common-quit");
                 if widgets::action_button(ui, p, "power", label, ActionKind::FlatDanger, Vec2::new(0.0, BAR_BUTTON)).clicked() {
                     action = LoginAction::Quit;

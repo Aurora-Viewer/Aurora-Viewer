@@ -249,7 +249,10 @@ chaque modification de l'interface :
 - **Pas de traits de séparation** entre des boutons : l'espacement et la
   pastille du bouton survolé ou actif suffisent.
 - **Widgets partagés** : réutilise ceux de `ui/widgets.rs` (boutons,
-  interrupteurs, en-têtes de section, surfaces) au lieu d'en recréer.
+  interrupteurs, en-têtes de section, surfaces) au lieu d'en recréer. Une
+  progression passe par `widgets::progress` (elle glisse vers sa valeur),
+  jamais par `egui::ProgressBar` ; les touches d'un raccourci par
+  `widgets::keycap`.
 - **Vérifie à l'œil** : capture l'écran modifié en démo et compare-le à une
   fenêtre voisine (mêmes fonds, mêmes boutons, mêmes rayons, icônes alignées
   avec le texte) avant de demander la validation humaine.

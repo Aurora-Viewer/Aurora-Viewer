@@ -45,6 +45,20 @@ fn gradient(mesh: &mut Mesh, r: Rect, top: Color32, bottom: Color32) {
 
 /// Paint the background over `rect`; `t` = time in seconds, `alpha` fades it.
 pub fn paint(painter: &egui::Painter, p: &Palette, rect: Rect, t: f32, alpha: f32) {
+    painter.extend(shapes(p, rect, t, alpha, false));
+}
+
+/// The background as a frosted pane shows it: the same sky at the same
+/// moment, out of focus (no stars, the rays of the curtains melted together,
+/// their edges and the ridgelines feathered). The cards of the login screen
+/// draw it under their tint: the blur of the in-world windows only knows the
+/// 3D scene, and there is none behind them.
+pub fn frosted(p: &Palette, rect: Rect, t: f32) -> Vec<Shape> {
+    shapes(p, rect, t, 1.0, true)
+}
+
+fn shapes(p: &Palette, rect: Rect, t: f32, alpha: f32, soft: bool) -> Vec<Shape> {
+    let mut out = Vec::new();
     let a = alpha.clamp(0.0, 1.0);
     let (w, h) = (rect.width(), rect.height());
     let fade = |c: Color32| c.gamma_multiply(a);
@@ -62,10 +76,11 @@ pub fn paint(painter: &egui::Painter, p: &Palette, rect: Rect, t: f32, alpha: f3
         fade(night),
         fade(horizon),
     );
-    painter.add(Shape::mesh(sky));
+    out.push(Shape::mesh(sky));
 
     // ---- stars (upper sky), twinkling
-    for i in 0..170u32 {
+    let stars = if soft { 0 } else { 170u32 };
+    for i in 0..stars {
         let x = rect.left() + hash(i * 3) * w;
         let y = rect.top() + hash(i * 3 + 1).powf(1.6) * h * 0.72;
         let s = 0.5 + hash(i * 3 + 2) * 1.2;
@@ -77,7 +92,7 @@ pub fn paint(painter: &egui::Painter, p: &Palette, rect: Rect, t: f32, alpha: f3
         } else {
             Color32::WHITE
         };
-        painter.circle_filled(Pos2::new(x, y), s, glow(c, 0.55 * tw * a));
+        out.push(Shape::circle_filled(Pos2::new(x, y), s, glow(c, 0.55 * tw * a)));
     }
 
     // ---- aurora curtains (additive)
@@ -100,17 +115,23 @@ pub fn paint(painter: &egui::Painter, p: &Palette, rect: Rect, t: f32, alpha: f3
                 + (u * 2.1 + t * 0.03 + phase).sin() * 0.03;
             let y = rect.top() + (base + wave) * h;
             // vertical "rays": brightness varies along the curtain
-            let rays = 0.55 + 0.45 * ((u * 38.0 + t * 0.35 + phase * 3.0).sin() * 0.5 + 0.5).powf(1.5);
+            let rays = if soft {
+                0.74
+            } else {
+                0.55 + 0.45 * ((u * 38.0 + t * 0.35 + phase * 3.0).sin() * 0.5 + 0.5).powf(1.5)
+            };
             let ends = (u * std::f32::consts::PI).sin().powf(0.6); // dims at the edges
             let breathe = 0.8 + 0.2 * (t * 0.25 + phase + u * 3.0).sin();
             let strength = (0.34 - k as f32 * 0.05) * rays * ends * breathe * a;
             let tint = mix(*top_c, *low_c, 0.5 + 0.5 * (u * 3.0 + phase + t * 0.05).sin());
             let ht = height * h * (0.75 + 0.25 * (u * 7.0 + phase + t * 0.1).sin());
+            // out of focus, the lower edge spreads and loses its brightness
+            let (below, peak) = if soft { (0.11, 0.8) } else { (0.035, 1.0) };
             // top (faint, tall), bright lower edge, quick fade below
             aur.vertices.push(v(Pos2::new(x, y - ht), glow(tint, 0.0)));
             aur.vertices.push(v(Pos2::new(x, y - ht * 0.35), glow(tint, strength * 0.55)));
-            aur.vertices.push(v(Pos2::new(x, y), glow(*low_c, strength)));
-            aur.vertices.push(v(Pos2::new(x, y + h * 0.035), glow(*low_c, 0.0)));
+            aur.vertices.push(v(Pos2::new(x, y), glow(*low_c, strength * peak)));
+            aur.vertices.push(v(Pos2::new(x, y + h * below), glow(*low_c, 0.0)));
         }
         for s in 0..N as u32 {
             let i = start + s * 4;
@@ -121,7 +142,7 @@ pub fn paint(painter: &egui::Painter, p: &Palette, rect: Rect, t: f32, alpha: f3
             }
         }
     }
-    painter.add(Shape::mesh(aur));
+    out.push(Shape::mesh(aur));
 
     // ---- horizon glow
     let mut haze = Mesh::default();
@@ -136,12 +157,14 @@ pub fn paint(painter: &egui::Painter, p: &Palette, rect: Rect, t: f32, alpha: f3
     haze.vertices.push(v(hz.left_bottom(), glow(p.indigo, 0.10 * a)));
     haze.add_triangle(i, i + 1, i + 2);
     haze.add_triangle(i, i + 2, i + 3);
-    painter.add(Shape::mesh(haze));
+    out.push(Shape::mesh(haze));
 
     // ---- mountains: two ridgelines (far lighter, near darker)
-    let ridge = |seed: f32, base: f32, amp: f32, color: Color32| {
+    let mut ridge = |seed: f32, base: f32, amp: f32, color: Color32| {
         let mut m = Mesh::default();
         const R: usize = 96;
+        // out of focus, the crest fades in over this height
+        let feather = if soft { h * 0.035 } else { 0.0 };
         for s in 0..=R {
             let u = s as f32 / R as f32;
             let x = rect.left() + u * w;
@@ -150,23 +173,32 @@ pub fn paint(painter: &egui::Painter, p: &Palette, rect: Rect, t: f32, alpha: f3
                 + (u * 17.0 + seed * 3.0).sin() * 0.12
                 + ((u * 41.0 + seed).sin() * 0.06);
             let y = rect.top() + (base - amp * (0.5 + 0.5 * n)) * h;
-            m.vertices.push(v(Pos2::new(x, y), color));
-            m.vertices.push(v(Pos2::new(x, rect.bottom()), color));
+            m.vertices.push(v(Pos2::new(x, y - feather), Color32::TRANSPARENT));
+            m.vertices.push(v(Pos2::new(x, y + feather), color));
+            m.vertices.push(v(Pos2::new(x, rect.bottom().max(y + feather)), color));
         }
         for s in 0..R as u32 {
-            let i = s * 2;
-            m.add_triangle(i, i + 2, i + 1);
-            m.add_triangle(i + 1, i + 2, i + 3);
+            let i = s * 3;
+            for r in 0..2 {
+                m.add_triangle(i + r, i + 3 + r, i + r + 1);
+                m.add_triangle(i + r + 1, i + 3 + r, i + 4 + r);
+            }
         }
-        painter.add(Shape::mesh(m));
+        out.push(Shape::mesh(m));
     };
     ridge(0.7, 0.86, 0.16, fade(mix(p.navy, p.indigo, 0.16)));
     ridge(2.9, 0.93, 0.13, fade(mix(p.navy, Color32::BLACK, 0.35)));
+    out
 }
 
 /// Soft radial light (additive): `intensity` at the center fading to zero
 /// at `radius`, smooth (no visible rings).
 pub fn radial_glow(painter: &egui::Painter, center: Pos2, radius: f32, color: Color32, intensity: f32) {
+    painter.add(radial_glow_shape(center, radius, color, intensity));
+}
+
+/// `radial_glow` as a shape, for a caller that orders its own shapes.
+pub fn radial_glow_shape(center: Pos2, radius: f32, color: Color32, intensity: f32) -> Shape {
     let mut m = Mesh::default();
     const SEG: usize = 48;
     const RINGS: [(f32, f32); 4] = [(0.0, 1.0), (0.35, 0.62), (0.7, 0.22), (1.0, 0.0)];
@@ -185,5 +217,5 @@ pub fn radial_glow(painter: &egui::Painter, center: Pos2, radius: f32, color: Co
             m.add_triangle(a0, b1, a1);
         }
     }
-    painter.add(Shape::mesh(m));
+    Shape::mesh(m)
 }

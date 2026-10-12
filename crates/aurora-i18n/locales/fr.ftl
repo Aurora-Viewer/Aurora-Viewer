@@ -3908,3 +3908,5 @@ loading-residents = { $count ->
     [one] { $count } résident présent
    *[other] { $count } résidents présents
     }
+ui-bars-click-to-talk = Clic pour activer
+ui-bars-microphone-options = Options du micro

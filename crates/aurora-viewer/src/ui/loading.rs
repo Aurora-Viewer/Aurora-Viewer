@@ -131,7 +131,7 @@ pub fn draw_backdrop(ui: &egui::Ui, p: &Palette, backdrop: Option<&super::backdr
 
 /// Rectangle blending two colors: left to right when `horizontal`, else top
 /// to bottom.
-fn gradient_rect(painter: &egui::Painter, r: Rect, a: Color32, b: Color32, horizontal: bool) {
+pub(crate) fn gradient_rect(painter: &egui::Painter, r: Rect, a: Color32, b: Color32, horizontal: bool) {
     let mut m = Mesh::default();
     let v = |pos: Pos2, color: Color32| Vertex { pos, uv: WHITE_UV, color };
     let (right_top, left_bottom) = if horizontal { (b, a) } else { (a, b) };
@@ -155,23 +155,6 @@ fn progress_fill(r: Rect, fraction: Option<f32>, t: f32) -> Rect {
             Rect::from_min_size(Pos2::new(r.left() + (r.width() - seg) * u, r.top()), Vec2::new(seg, r.height()))
         }
     }
-}
-
-/// Progress bar: a flat track with the brand gradient as fill.
-pub fn paint_progress(painter: &egui::Painter, p: &Palette, r: Rect, fraction: Option<f32>, t: f32, alpha: f32) {
-    let a = alpha.clamp(0.0, 1.0);
-    painter.rect_filled(r, 2.0, p.field.gamma_multiply(a));
-    let fill = progress_fill(r, fraction, t);
-    if fill.width() >= 1.0 {
-        gradient_rect(painter, fill, p.violet.gamma_multiply(a), p.teal.gamma_multiply(a), true);
-    }
-}
-
-/// Progress bar laid out in a `Ui` (login card).
-pub fn progress_bar(ui: &mut egui::Ui, p: &Palette, width: f32, fraction: Option<f32>, t: f32) {
-    let (r, _) = ui.allocate_exact_size(Vec2::new(width, 4.0), egui::Sense::hover());
-    paint_progress(ui.painter(), p, r, fraction, t, 1.0);
-    ui.ctx().request_repaint();
 }
 
 /// The lit part of the banner's progress line: the brand gradient, a small
