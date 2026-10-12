@@ -40,14 +40,7 @@ pub(super) fn show(
     });
     ui.add_space(8.0);
     let Some(Source::Mesh(draft)) = &mut entry.source else { return };
-    let changed = mesh_controls(ui, p, entry.id, draft, actions);
-    let section = ui
-        .ctx()
-        .data_mut(|data| data.get_temp::<usize>(egui::Id::new(("mesh_section", entry.id))))
-        .unwrap_or(0);
-    if section == 2 {
-        load_settings(ui, p, prefs);
-    }
+    let changed = mesh_controls(ui, p, entry.id, draft, prefs, actions);
     if changed
         || old_preview
             != (
@@ -122,22 +115,23 @@ fn preview(ui: &mut egui::Ui, p: &Palette, entry: &mut Entry, prefs: &Preference
     if draft.preview_physics {
         entry.view.edge_color = prefs.preview_physics_edges.unwrap_or_else(|| palette_color(p.ink));
     }
-    if let Some(model) = &entry.model {
+    let response = if let Some(model) = &entry.model {
         aurora_render::preview::paint(
             ui,
             egui::Id::new(("mesh_preview", entry.id)),
             model.clone(),
             &mut entry.view,
             Vec2::new(width, 180.0),
-        );
+        )
     } else {
-        let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 180.0), egui::Sense::hover());
+        let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 180.0), egui::Sense::hover());
         ui.painter().rect_filled(rect, 0.0, p.field);
         if entry.preview_pending {
             ui.put(rect, egui::Spinner::new());
         }
-    }
-    ui.label(RichText::new(aurora_i18n::tr!("import-preview-camera-help")).small().color(p.muted));
+        response
+    };
+    response.on_hover_text(aurora_i18n::tr!("import-preview-camera-help"));
 }
 fn lod_source(source: mesh::LodSource) -> &'static str {
     match source {
@@ -149,7 +143,14 @@ fn lod_source(source: mesh::LodSource) -> &'static str {
         mesh::LodSource::Above => aurora_i18n::tr!("import-lod-above"),
     }
 }
-fn mesh_controls(ui: &mut egui::Ui, p: &Palette, id: Uuid, draft: &mut mesh::Draft, actions: &mut Vec<Action>) -> bool {
+fn mesh_controls(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    id: Uuid,
+    draft: &mut mesh::Draft,
+    prefs: &mut Preferences,
+    actions: &mut Vec<Action>,
+) -> bool {
     let old = draft.options.clone();
     let mut changed = false;
     let triangles = draft.scene.models.iter().map(|m| m.triangles()).sum::<usize>();
@@ -162,7 +163,6 @@ fn mesh_controls(ui: &mut egui::Ui, p: &Palette, id: Uuid, draft: &mut mesh::Dra
                 instances = draft.scene.instances.len(),
                 triangles = triangles
             ))
-            .small()
             .color(p.muted),
         );
     });
@@ -209,7 +209,7 @@ fn mesh_controls(ui: &mut egui::Ui, p: &Palette, id: Uuid, draft: &mut mesh::Dra
     }
     ui.add_space(2.0);
     if section == 0 {
-        ui.label(RichText::new(aurora_i18n::tr!("import-lods-help")).small().color(p.muted));
+        ui.label(RichText::new(aurora_i18n::tr!("import-lods-help")).color(p.muted));
         ui.scope(|ui| {
             ui.spacing_mut().item_spacing.y = 4.0;
             ui.spacing_mut().interact_size.y = 24.0;
@@ -317,11 +317,7 @@ fn mesh_controls(ui: &mut egui::Ui, p: &Palette, id: Uuid, draft: &mut mesh::Dra
                                     };
                                 }
                                 if let Some(count) = actual {
-                                    ui.label(
-                                        RichText::new(aurora_i18n::tr!("import-lod-count", count = count))
-                                            .small()
-                                            .color(p.muted),
-                                    );
+                                    ui.label(RichText::new(aurora_i18n::tr!("import-lod-count", count = count)).color(p.muted));
                                 }
                             });
                         });
@@ -335,7 +331,7 @@ fn mesh_controls(ui: &mut egui::Ui, p: &Palette, id: Uuid, draft: &mut mesh::Dra
         });
     }
     if section == 1 {
-        ui.label(RichText::new(aurora_i18n::tr!("import-physics-help")).small().color(p.muted));
+        ui.label(RichText::new(aurora_i18n::tr!("import-physics-help")).color(p.muted));
         ui.scope(|ui| {
             ui.label(aurora_i18n::tr!("import-physics-source"));
             let labels = [
@@ -422,27 +418,66 @@ fn mesh_controls(ui: &mut egui::Ui, p: &Palette, id: Uuid, draft: &mut mesh::Dra
         });
     }
     if section == 2 {
-        ui.label(RichText::new(aurora_i18n::tr!("import-upload-options-help")).small().color(p.muted));
-        egui::CollapsingHeader::new(aurora_i18n::tr!("import-modifiers"))
-            .default_open(true)
+        ui.label(RichText::new(aurora_i18n::tr!("import-upload-options-help")).color(p.muted));
+        ui.add_space(4.0);
+        ui.columns(2, |columns| {
+            upload_options(&mut columns[0], p, id, draft, actions);
+            load_options(&mut columns[1], p, prefs);
+        });
+        ui.add_space(6.0);
+        load_settings(ui, p, prefs);
+    }
+    if section == 2
+        && let Some(quote) = &draft.quote
+    {
+        ui.label(aurora_i18n::tr!("import-total", cost = quote.cost));
+        egui::Grid::new("mesh_costs")
+            .num_columns(4)
+            .spacing(Vec2::new(12.0, 6.0))
             .show(ui, |ui| {
-                let (_, limit) = draft.dimensions_and_limit();
-                ui.add(
-                    egui::Slider::new(&mut draft.options.scale, 0.01..=limit.max(0.01))
-                        .logarithmic(true)
-                        .text(aurora_i18n::tr!("import-scale")),
-                );
-                let (dimensions, _) = draft.dimensions_and_limit();
-                ui.label(aurora_i18n::tr!(
-                    "import-dimensions",
-                    x = format!("{:.3}", dimensions.x),
-                    y = format!("{:.3}", dimensions.y),
-                    z = format!("{:.3}", dimensions.z)
-                ));
-                checkbox(ui, p, &mut draft.options.textures, aurora_i18n::tr!("import-include-textures"));
+                for (index, (key, label)) in [
+                    ("resource_cost", aurora_i18n::tr!("import-land-impact")),
+                    ("model_streaming_cost", aurora_i18n::tr!("import-streaming-cost")),
+                    ("simulation_cost", aurora_i18n::tr!("import-server-cost")),
+                    ("physics_cost", aurora_i18n::tr!("import-physics-cost")),
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    ui.label(label);
+                    ui.label(format!("{:.3}", quote.data[key].as_f64()));
+                    if index % 2 == 1 {
+                        ui.end_row();
+                    }
+                }
             });
-        ui.collapsing(aurora_i18n::tr!("import-rigging"), |ui| {
-            let has_skin = draft.scene.models.iter().any(|m| m.skin.is_some());
+    }
+    draft.finish_edit(&old, changed)
+}
+
+fn upload_options(ui: &mut egui::Ui, p: &Palette, id: Uuid, draft: &mut mesh::Draft, actions: &mut Vec<Action>) {
+    egui::CollapsingHeader::new(aurora_i18n::tr!("import-modifiers"))
+        .default_open(true)
+        .show(ui, |ui| {
+            let (_, limit) = draft.dimensions_and_limit();
+            ui.add(
+                egui::Slider::new(&mut draft.options.scale, 0.01..=limit.max(0.01))
+                    .logarithmic(true)
+                    .text(aurora_i18n::tr!("import-scale")),
+            );
+            let (dimensions, _) = draft.dimensions_and_limit();
+            ui.label(aurora_i18n::tr!(
+                "import-dimensions",
+                x = format!("{:.3}", dimensions.x),
+                y = format!("{:.3}", dimensions.y),
+                z = format!("{:.3}", dimensions.z)
+            ));
+            checkbox(ui, p, &mut draft.options.textures, aurora_i18n::tr!("import-include-textures"));
+        });
+    let has_skin = draft.scene.models.iter().any(|m| m.skin.is_some());
+    egui::CollapsingHeader::new(aurora_i18n::tr!("import-rigging"))
+        .default_open(false)
+        .show(ui, |ui| {
             ui.add_enabled_ui(has_skin, |ui| {
                 checkbox(ui, p, &mut draft.options.skin, aurora_i18n::tr!("import-include-weights"));
                 ui.add_enabled_ui(draft.options.skin, |ui| {
@@ -460,29 +495,9 @@ fn mesh_controls(ui: &mut egui::Ui, p: &Palette, id: Uuid, draft: &mut mesh::Dra
                 }
             });
         });
-        ui.horizontal(|ui| {
-            if flat_button(ui, p, aurora_i18n::tr!("import-reset-settings")).clicked() {
-                actions.push(Action::ResetMesh(id));
-            }
-        });
+    if flat_button(ui, p, aurora_i18n::tr!("import-reset-settings")).clicked() {
+        actions.push(Action::ResetMesh(id));
     }
-    if section == 2
-        && let Some(quote) = &draft.quote
-    {
-        ui.label(aurora_i18n::tr!("import-total", cost = quote.cost));
-        for (key, label) in [
-            ("resource_cost", aurora_i18n::tr!("import-land-impact")),
-            ("model_streaming_cost", aurora_i18n::tr!("import-streaming-cost")),
-            ("simulation_cost", aurora_i18n::tr!("import-server-cost")),
-            ("physics_cost", aurora_i18n::tr!("import-physics-cost")),
-        ] {
-            ui.horizontal(|ui| {
-                ui.label(label);
-                ui.label(format!("{:.3}", quote.data[key].as_f64()));
-            });
-        }
-    }
-    draft.finish_edit(&old, changed)
 }
 
 fn source_path(ui: &mut egui::Ui, p: &Palette, path: Option<&std::path::Path>) {
@@ -493,41 +508,77 @@ fn source_path(ui: &mut egui::Ui, p: &Palette, path: Option<&std::path::Path>) {
         ui.label(RichText::new(aurora_i18n::tr!("import-no-source-file")).color(p.warn));
     }
 }
-fn load_settings(ui: &mut egui::Ui, p: &Palette, prefs: &mut Preferences) {
-    ui.collapsing(aurora_i18n::tr!("import-load-settings"), |ui| {
-        ui.label(RichText::new(aurora_i18n::tr!("import-suffix-help")).small().color(p.muted));
-        checkbox(ui, p, &mut prefs.mesh_auto_weights, aurora_i18n::tr!("import-auto-weights"));
-        checkbox(
-            ui,
-            p,
-            &mut prefs.mesh_auto_preview_weights,
-            aurora_i18n::tr!("import-auto-preview-weights"),
-        );
-        checkbox(ui, p, &mut prefs.mesh_reliable_default, aurora_i18n::tr!("import-default-reliable"));
-        ui.horizontal_wrapped(|ui| {
-            for (label, values) in [
-                (aurora_i18n::tr!("import-suffix-sl"), ["LOD0", "LOD1", "LOD2", "", "PHYS"]),
-                (aurora_i18n::tr!("import-suffix-games"), ["LOD3", "LOD2", "LOD1", "LOD0", "PHYS"]),
-                (aurora_i18n::tr!("import-suffix-words"), ["lowest", "low", "med", "high", "phys"]),
-            ] {
-                if flat_button(ui, p, label).clicked() {
-                    prefs.mesh_suffixes = values.map(String::from);
-                }
-            }
+fn load_options(ui: &mut egui::Ui, p: &Palette, prefs: &mut Preferences) {
+    egui::CollapsingHeader::new(aurora_i18n::tr!("import-load-settings"))
+        .default_open(true)
+        .show(ui, |ui| {
+            ui.label(RichText::new(aurora_i18n::tr!("import-suffix-help")).color(p.muted));
+            checkbox(ui, p, &mut prefs.mesh_auto_weights, aurora_i18n::tr!("import-auto-weights"));
+            checkbox(
+                ui,
+                p,
+                &mut prefs.mesh_auto_preview_weights,
+                aurora_i18n::tr!("import-auto-preview-weights"),
+            );
+            checkbox(ui, p, &mut prefs.mesh_reliable_default, aurora_i18n::tr!("import-default-reliable"));
         });
-        for (level, suffix) in prefs.mesh_suffixes.iter_mut().enumerate() {
-            ui.horizontal(|ui| {
-                ui.label(if level < 4 {
-                    lod_label(level)
-                } else {
-                    aurora_i18n::tr!("import-physics")
-                });
-                ui.add(egui::TextEdit::singleline(suffix).char_limit(32).desired_width(120.0));
+}
+
+fn load_settings(ui: &mut egui::Ui, p: &Palette, prefs: &mut Preferences) {
+    egui::CollapsingHeader::new(aurora_i18n::tr!("import-file-associations"))
+        .default_open(true)
+        .show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                for (label, values) in [
+                    (aurora_i18n::tr!("import-suffix-sl"), ["LOD0", "LOD1", "LOD2", "", "PHYS"]),
+                    (aurora_i18n::tr!("import-suffix-games"), ["LOD3", "LOD2", "LOD1", "LOD0", "PHYS"]),
+                    (aurora_i18n::tr!("import-suffix-words"), ["lowest", "low", "med", "high", "phys"]),
+                ] {
+                    if flat_button(ui, p, label).clicked() {
+                        prefs.mesh_suffixes = values.map(String::from);
+                    }
+                }
             });
-        }
-        ui.label(aurora_i18n::tr!("import-user-physics"));
-        ui.add(egui::TextEdit::singleline(&mut prefs.mesh_physics_preset).desired_width(ui.available_width()));
-    });
+            let labels = [
+                lod_label(3),
+                lod_label(2),
+                lod_label(1),
+                lod_label(0),
+                aurora_i18n::tr!("import-physics"),
+            ];
+            let font = egui::TextStyle::Body.resolve(ui.style());
+            let label_width = ui.fonts_mut(|fonts| {
+                labels
+                    .iter()
+                    .map(|label| fonts.layout_no_wrap((*label).into(), font.clone(), p.ink).size().x)
+                    .sum::<f32>()
+            });
+            let room = ui.available_width() - label_width - 9.0 * ui.spacing().item_spacing.x;
+            let pairs = if room >= 400.0 { 5 } else { 3 };
+            let field_width = if pairs == 5 { (room / 5.0).min(120.0) } else { 100.0 };
+            egui::Grid::new("mesh_suffixes")
+                .num_columns(pairs * 2)
+                .min_col_width(0.0)
+                .spacing(Vec2::new(8.0, 6.0))
+                .show(ui, |ui| {
+                    for (index, level) in [3, 2, 1, 0, 4].into_iter().enumerate() {
+                        ui.label(labels[index]);
+                        ui.add_sized(
+                            Vec2::new(field_width, ui.spacing().interact_size.y),
+                            egui::TextEdit::singleline(&mut prefs.mesh_suffixes[level])
+                                .char_limit(32)
+                                .desired_width(field_width),
+                        );
+                        if (index + 1) % pairs == 0 || index == 4 {
+                            ui.end_row();
+                        }
+                    }
+                });
+            ui.horizontal(|ui| {
+                ui.label(aurora_i18n::tr!("import-user-physics"));
+                ui.add(egui::TextEdit::singleline(&mut prefs.mesh_physics_preset).desired_width(ui.available_width()));
+            });
+        });
 }
 
 #[cfg(test)]

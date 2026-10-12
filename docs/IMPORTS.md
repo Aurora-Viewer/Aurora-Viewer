@@ -123,6 +123,11 @@ Sources : `llmaterialeditor.cpp`, `panel_gltf_material.xml`,
   La fenêtre présente l’aperçu à droite des champs nom, description et
   destination ; trois sections LOD, Collisions et Import se trouvent dessous.
   Le LOD Haut est affiché par défaut, sans second sélecteur de niveau.
+  Aides, compteurs et statistiques utilisent la taille normale du texte.
+  Dans Import, les options du modèle et celles de chargement occupent
+  deux colonnes ; les cinq suffixes sont alignés dessous dans une grille
+  adaptée à la largeur disponible. Le préréglage physique reste sur une
+  ligne complète. Les commandes de caméra sont indiquées au survol du modèle.
   Chaque LOD possède un bloc encadré avec titre, source, fichier et nombre de
   triangles ; cliquer son niveau l’affiche dans l’aperçu. Les outils de
   visualisation et les réglages avancés restent accessibles sans masquer

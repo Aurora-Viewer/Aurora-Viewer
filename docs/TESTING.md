@@ -606,8 +606,11 @@ grille.
   le seuil d’erreur porte une unité en pourcentage et une aide au survol.
   `mesh-error` montre un refus HTTP 400 avec code de validation et
   explication de la forme physique, sans aucune requête réseau.
-  `mesh-options` ouvre la troisième section (taille, textures, squelette,
-  association des fichiers). Dans la liste des animations, cliquer un fichier
+  `mesh-options` ouvre et cadre la troisième section (taille, textures, squelette,
+  association des fichiers) : deux colonnes de réglages, suffixes alignés
+  et aides à la taille normale. Vérifier la lecture de tous les champs sans
+  couper leur texte, et leur disposition après réduction de la fenêtre.
+  Dans la liste des animations, cliquer un fichier
   lance sa lecture, même si on avait déjà joué cette animation.
   `bulk-upload` exécute automatiquement le lot sur ce serveur hors ligne :
   quatre lignes réussies, création des dépendances du matériau et reçu total
