@@ -105,7 +105,9 @@ impl State {
                 let limit = ranges.peek().map_or(end, |r| end.min(if hidden { r.end } else { r.start }));
                 let mut format = section.format.clone();
                 if hidden {
-                    format.font_id.size = 0.0;
+                    // epaint requires a strictly positive glyph scale, even
+                    // when the row is transparent and has no layout height.
+                    format.font_id.size = f32::EPSILON;
                     format.line_height = Some(0.0);
                     format.color = egui::Color32::TRANSPARENT;
                     format.background = egui::Color32::TRANSPARENT;
@@ -252,6 +254,10 @@ mod tests {
                 original.size().y
             );
             assert_eq!(folded.rows.len(), original.rows.len());
+            assert_eq!(
+                folded.rows.iter().map(|r| r.glyphs.len()).sum::<usize>(),
+                source.chars().filter(|c| *c != '\n').count()
+            );
             assert!(folded.rows.iter().filter(|r| r.height() < 1.0).count() >= 4);
         });
         output.textures_delta.clear();
