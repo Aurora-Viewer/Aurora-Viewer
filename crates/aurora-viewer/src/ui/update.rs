@@ -8,7 +8,7 @@ use super::news::LoginInfo;
 use super::widgets::{flat_button_sized, primary_button_sized};
 use crate::settings::Settings;
 use crate::theme::Palette;
-use egui::{CornerRadius, Frame, Margin, RichText, Sense, Stroke, Vec2};
+use egui::{Frame, Margin, RichText, Sense, Vec2};
 use std::time::Instant;
 
 enum Phase {
@@ -86,23 +86,15 @@ impl UpdateDemo {
         }
         let width = (ctx.content_rect().width() - 64.0).clamp(280.0, 620.0);
         aurora_render::blurred_backdrop(ctx, egui::Modal::default_area(egui::Id::new("viewer_update")).layer());
-        let response = egui::Modal::new(egui::Id::new("viewer_update"))
-            .backdrop_color(egui::Color32::TRANSPARENT)
-            .frame(
-                Frame::new()
-                    .fill(p.panel)
-                    .stroke(Stroke::new(1.0, p.raised))
-                    .corner_radius(ctx.global_style().visuals.window_corner_radius)
-                    .shadow(ctx.global_style().visuals.window_shadow)
-                    .inner_margin(Margin::same(26)),
-            )
+        let response = super::widgets::Modal::new(egui::Id::new("viewer_update"))
+            .transparent_backdrop()
             .show(ctx, |ui| {
                 ui.set_width(width);
                 ui.spacing_mut().item_spacing = Vec2::new(10.0, 9.0);
                 ui.horizontal(|ui| {
                     let (rect, _) = ui.allocate_exact_size(Vec2::splat(48.0), Sense::hover());
                     ui.painter().rect_filled(rect, 2.0, p.field);
-                    icon(ui, icons, "download-simple", rect.shrink(10.0), p.violet_light);
+                    icon(ui, icons, "download-filled", rect.shrink(10.0), p.violet_light);
                     ui.vertical(|ui| {
                         ui.label(RichText::new(aurora_i18n::tr!("update-demo-badge")).size(10.0).color(p.amber));
                         let title = match self.phase {
@@ -141,13 +133,7 @@ impl UpdateDemo {
                     Phase::Downloading(fraction) => {
                         ui.add_space(9.0);
                         ui.label(RichText::new(aurora_i18n::tr!("update-downloading")).size(13.0).color(p.ink));
-                        ui.add(
-                            egui::ProgressBar::new(fraction)
-                                .desired_width(width)
-                                .corner_radius(CornerRadius::same(3))
-                                .fill(p.violet)
-                                .show_percentage(),
-                        );
+                        super::widgets::progress(ui, p, "update_download_demo", fraction, width, "{}", None);
                         ui.label(
                             RichText::new(aurora_i18n::tr!(
                                 "update-transfer",
@@ -163,15 +149,10 @@ impl UpdateDemo {
                         ui.add_space(9.0);
                         ui.horizontal(|ui| {
                             let (rect, _) = ui.allocate_exact_size(Vec2::splat(22.0), Sense::hover());
-                            icon(ui, icons, "check-circle", rect, p.success);
+                            icon(ui, icons, "circle-check-filled", rect, p.success);
                             ui.label(RichText::new(aurora_i18n::tr!("update-ready")).size(14.0).color(p.ink));
                         });
-                        ui.add(
-                            egui::ProgressBar::new(1.0)
-                                .desired_width(width)
-                                .corner_radius(CornerRadius::same(3))
-                                .fill(p.success),
-                        );
+                        super::widgets::progress(ui, p, "update_ready", 1.0, width, "", Some(p.success));
                         ui.add_space(20.0);
                     }
                 }
@@ -248,23 +229,15 @@ pub fn show_real(
     let width = (ctx.content_rect().width() - 64.0).clamp(280.0, 620.0);
     let required = updater.required();
     aurora_render::blurred_backdrop(ctx, egui::Modal::default_area(egui::Id::new("viewer_update")).layer());
-    let response = egui::Modal::new(egui::Id::new("viewer_update"))
-        .backdrop_color(egui::Color32::TRANSPARENT)
-        .frame(
-            Frame::new()
-                .fill(p.panel)
-                .stroke(Stroke::new(1.0, p.raised))
-                .corner_radius(ctx.global_style().visuals.window_corner_radius)
-                .shadow(ctx.global_style().visuals.window_shadow)
-                .inner_margin(Margin::same(26)),
-        )
+    let response = super::widgets::Modal::new(egui::Id::new("viewer_update"))
+        .transparent_backdrop()
         .show(ctx, |ui| {
             ui.set_width(width);
             ui.spacing_mut().item_spacing = Vec2::new(10.0, 9.0);
             ui.horizontal(|ui| {
                 let (rect, _) = ui.allocate_exact_size(Vec2::splat(48.0), Sense::hover());
                 ui.painter().rect_filled(rect, 2.0, p.field);
-                icon(ui, icons, "download-simple", rect.shrink(10.0), p.violet_light);
+                icon(ui, icons, "download-filled", rect.shrink(10.0), p.violet_light);
                 let title = match updater.state {
                     State::Checking => aurora_i18n::tr!("ui-login-checking"),
                     State::Downloading(_) | State::Handoff => aurora_i18n::tr!("update-downloading-title"),
@@ -324,13 +297,7 @@ pub fn show_real(
                         aurora_i18n::tr!("update-downloading")
                     });
                     let fraction = progress.received as f32 / progress.total.max(1) as f32;
-                    ui.add(
-                        egui::ProgressBar::new(fraction)
-                            .desired_width(width)
-                            .corner_radius(3)
-                            .fill(p.violet)
-                            .show_percentage(),
-                    );
+                    super::widgets::progress(ui, p, "update_download", fraction, width, "{}", None);
                     ui.label(
                         RichText::new(aurora_i18n::tr!(
                             "update-transfer",

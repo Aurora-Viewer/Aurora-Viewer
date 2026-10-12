@@ -42,7 +42,7 @@ pub(super) fn context_menu(
         if menu::item_if(
             ui,
             p,
-            "t-shirt",
+            "shirt-filled",
             aurora_i18n::tr!("ui-appearance-gallery-replace-your-outfit"),
             idle && ready && nonempty && (!current || model::dirty(inv)),
         ) {
@@ -71,7 +71,7 @@ pub(super) fn context_menu(
             actions.push(Action::RemoveOutfit(id));
         }
         menu::separator(ui, p);
-        if menu::item_if(ui, p, "image", aurora_i18n::tr!("common-image-2"), idle) {
+        if menu::item_if(ui, p, "photo-filled", aurora_i18n::tr!("common-image-2"), idle) {
             st.gallery.picker.open_with_defaults(
                 aurora_i18n::tr!("ui-appearance-gallery-outfit-picture"),
                 folder.info.thumbnail,
@@ -83,7 +83,7 @@ pub(super) fn context_menu(
         if menu::item_if(
             ui,
             p,
-            "star",
+            "star-filled",
             if folder.info.favorite {
                 aurora_i18n::tr!("ui-appearance-gallery-remove-from-favorites")
             } else {
@@ -93,13 +93,21 @@ pub(super) fn context_menu(
         ) {
             actions.push(Action::Category(id, Update::Favorite(!folder.info.favorite)));
         }
-        if current && menu::item_if(ui, p, "wrench", aurora_i18n::tr!("ui-appearance-gallery-edit-your-outfit"), idle) {
+        if current
+            && menu::item_if(
+                ui,
+                p,
+                "edit-filled",
+                aurora_i18n::tr!("ui-appearance-gallery-edit-your-outfit"),
+                idle,
+            )
+        {
             st.open(0, true);
         }
         if menu::item_if(
             ui,
             p,
-            "pencil-simple",
+            "pencil-filled",
             aurora_i18n::tr!("ui-appearance-gallery-rename-your-outfit"),
             idle,
         ) {
@@ -109,7 +117,7 @@ pub(super) fn context_menu(
         if menu::item_if(
             ui,
             p,
-            "floppy-disk",
+            "device-floppy-filled",
             aurora_i18n::tr!("ui-appearance-gallery-save-to-this-outfit"),
             idle && ready,
         ) {
@@ -119,7 +127,7 @@ pub(super) fn context_menu(
         if menu::item_if(
             ui,
             p,
-            "trash",
+            "trash-filled",
             aurora_i18n::tr!("ui-appearance-gallery-delete-outfit"),
             idle && ready && !current && model::system_folder(inv, 14).is_some(),
         ) {
@@ -129,7 +137,7 @@ pub(super) fn context_menu(
         menu::submenu(
             ui,
             p,
-            "t-shirt",
+            "shirt-filled",
             aurora_i18n::tr!("ui-appearance-gallery-new-clothing"),
             true,
             |ui| {
@@ -147,14 +155,14 @@ pub(super) fn context_menu(
                     aurora_i18n::tr!("ui-appearance-gallery-new-physics"),
                     aurora_i18n::tr!("common-new-tattoo"),
                 ] {
-                    menu::todo(ui, p, "t-shirt", label);
+                    menu::todo(ui, p, "shirt-filled", label);
                 }
             },
         );
         menu::submenu(
             ui,
             p,
-            "person",
+            "man-filled",
             aurora_i18n::tr!("ui-appearance-gallery-new-body-part"),
             true,
             |ui| {
@@ -164,7 +172,7 @@ pub(super) fn context_menu(
                     aurora_i18n::tr!("common-new-hair"),
                     aurora_i18n::tr!("common-new-eyes"),
                 ] {
-                    menu::todo(ui, p, "person", label);
+                    menu::todo(ui, p, "man-filled", label);
                 }
             },
         );
@@ -204,13 +212,15 @@ pub(super) fn dialogs(
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 let valid = !name.trim().is_empty() && st.pending.is_none();
-                if ui.add_enabled(valid, egui::Button::new("OK").fill(p.violet)).clicked()
+                use widgets::{ActionKind, action_button, action_button_if};
+                let size = egui::Vec2::new(0.0, 26.0);
+                if action_button_if(ui, p, "check", aurora_i18n::tr!("common-ok"), ActionKind::Primary, size, valid).clicked()
                     || (valid && ui.input(|i| i.key_pressed(egui::Key::Enter)))
                 {
                     actions.push(Action::Category(id, Update::Rename(name.trim().into())));
                     close = true;
                 }
-                if widgets::flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked() {
+                if action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {
                     close = true;
                 }
             });
@@ -242,18 +252,15 @@ pub(super) fn dialogs(
             });
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                if ui
-                    .add_enabled(
-                        st.pending.is_none(),
-                        egui::Button::new(if delete {
-                            aurora_i18n::tr!("common-delete")
-                        } else {
-                            aurora_i18n::tr!("common-save")
-                        })
-                        .fill(p.violet),
-                    )
-                    .clicked()
-                {
+                use widgets::{ActionKind, action_button, action_button_if};
+                let size = egui::Vec2::new(0.0, 26.0);
+                // moving an outfit to the trash is the destructive answer
+                let (icon, label, kind) = if delete {
+                    ("trash-filled", aurora_i18n::tr!("common-delete"), ActionKind::Danger)
+                } else {
+                    ("device-floppy-filled", aurora_i18n::tr!("common-save"), ActionKind::Primary)
+                };
+                if action_button_if(ui, p, icon, label, kind, size, st.pending.is_none()).clicked() {
                     if delete {
                         if let Some(trash) = model::system_folder(&world.inventory, 14) {
                             actions.push(Action::Category(id, Update::Trash(trash)));
@@ -263,7 +270,7 @@ pub(super) fn dialogs(
                     }
                     close = true;
                 }
-                if widgets::flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked() {
+                if action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {
                     close = true;
                 }
             });

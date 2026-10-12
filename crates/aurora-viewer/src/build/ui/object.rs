@@ -321,7 +321,7 @@ fn vec_block(
                 egui::Frame::new()
                     .fill(p.field)
                     .stroke(egui::Stroke::new(1.0, p.raised))
-                    .corner_radius(3)
+                    .corner_radius(ui.visuals().window_corner_radius)
                     .inner_margin(egui::Margin {
                         left: 6,
                         right: 4,
@@ -433,11 +433,11 @@ pub fn show_transform(
     };
     let mut rot = [wrap(x), wrap(y), wrap(z)];
     let current = [if hud { local_pos } else { wp - off }, scale, Vec3::from_array(rot)][which];
-    super::compact::heading(ui, p, "arrows-out-cardinal", aurora_i18n::tr!("build-compact-transform"), |ui| {
+    super::compact::heading(ui, p, "arrows-move", aurora_i18n::tr!("build-compact-transform"), |ui| {
         let paste = super::compact::icon_button(
             ui,
             p,
-            "clipboard-text",
+            "clipboard-text-filled",
             &aurora_i18n::tr!("build-ui-object-paste", n = vector_name),
             can_copy,
         );
@@ -458,7 +458,15 @@ pub fn show_transform(
                 ui.close();
             }
         });
-        if super::compact::icon_button(ui, p, "copy", &aurora_i18n::tr!("build-ui-object-copy", n = vector_name), can_copy).clicked() {
+        if super::compact::icon_button(
+            ui,
+            p,
+            "copy-filled",
+            &aurora_i18n::tr!("build-ui-object-copy", n = vector_name),
+            can_copy,
+        )
+        .clicked()
+        {
             copy_vector(ui, tool, which, current, decimals);
         }
     });
@@ -613,12 +621,12 @@ pub fn show_shape(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &
     let (volume, flexible) = (o.volume, o.extra.flexible.is_some());
     let editable = tool.can_modify(world, idx);
     let single = tool.sel_prims(world).len() == 1 || tool.roots(world).len() == 1;
-    super::compact::heading(ui, p, "cube", aurora_i18n::tr!("build-compact-shape"), |ui| {
+    super::compact::heading(ui, p, "box", aurora_i18n::tr!("build-compact-shape"), |ui| {
         let mesh = volume.is_mesh();
         if super::common::icon_button(
             ui,
             p,
-            "clipboard-text",
+            "clipboard-text-filled",
             aurora_i18n::tr!("build-ui-object-paste-object-settings-from-the-clipboard"),
             editable && single && !mesh && tool.ui.shape_clipboard.is_some(),
         ) && let Some(c) = tool.ui.shape_clipboard
@@ -628,7 +636,7 @@ pub fn show_shape(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &
         if super::common::icon_button(
             ui,
             p,
-            "copy",
+            "copy-filled",
             aurora_i18n::tr!("build-ui-object-copy-object-settings-to-clipboard"),
             editable && single && !mesh,
         ) {

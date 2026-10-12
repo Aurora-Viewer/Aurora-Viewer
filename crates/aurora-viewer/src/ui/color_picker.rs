@@ -203,7 +203,7 @@ impl ColorPicker {
         )
         .fixed()
         .auto_height()
-        .framed_header("palette")
+        .framed_header("palette-filled")
         .help(aurora_i18n::tr!("color-picker-help"))
         .show(ctx, p, &mut open, |ui| {
             egui::Frame::new().inner_margin(10).show(ui, |ui| {
@@ -224,7 +224,7 @@ impl ColorPicker {
                 ui.label(RichText::new(aurora_i18n::tr!("color-picker-save-hint")).size(11.0).color(p.muted));
                 ui.horizontal(|ui| {
                     let label = RichText::new(aurora_i18n::tr!("color-picker-pipette")).size(12.0).color(p.ink);
-                    let button = if let Some(icon) = super::icons::global("eyedropper") {
+                    let button = if let Some(icon) = super::icons::global("color-picker") {
                         egui::Button::image_and_text(egui::Image::new((icon.id(), Vec2::splat(16.0))).tint(p.ink), label)
                     } else {
                         egui::Button::new(label)

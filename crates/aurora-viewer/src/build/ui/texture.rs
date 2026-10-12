@@ -255,11 +255,11 @@ pub(super) fn selected(tool: &BuildTool, world: &World) -> Vec<Sel> {
 
 pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings, env: &mut Env) {
     let mut sel = selected(tool, world);
-    super::compact::heading(ui, p, "paint-brush", aurora_i18n::tr!("build-compact-materials"), |ui| {
+    super::compact::heading(ui, p, "paint-filled", aurora_i18n::tr!("build-compact-materials"), |ui| {
         if super::common::icon_button(
             ui,
             p,
-            "eye",
+            "eye-filled",
             aurora_i18n::tr!("build-review-face-selection"),
             tool.edit_mode == EditMode::Face && s.show_highlight && !tool.sel_te(world).is_empty(),
         ) {
@@ -268,7 +268,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         if super::common::icon_button(
             ui,
             p,
-            "clipboard-text",
+            "clipboard-text-filled",
             aurora_i18n::tr!("build-ui-texture-paste-texture-settings-from-the-clipboard"),
             !sel.is_empty() && tool.ui.face_clipboard.is_some(),
         ) {
@@ -278,7 +278,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         if super::common::icon_button(
             ui,
             p,
-            "copy",
+            "copy-filled",
             aurora_i18n::tr!("build-ui-texture-copy-texture-settings-to-clipboard"),
             one_object,
         ) {
@@ -559,7 +559,7 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
                 for k in 0..2 {
                     row(ui, p, ["U", "V"][k], 20.0, |ui| {
                         e = e.or(spin(ui, &mut nt.scale[k], 0.1, -10000.0..=10000.0, 5, W, mixed));
-                        if super::common::icon_button(ui, p, "arrows-left-right", aurora_i18n::tr!("common-rotate"), true) {
+                        if super::common::icon_button(ui, p, "arrows-exchange", aurora_i18n::tr!("common-rotate"), true) {
                             flip[k] = true;
                         }
                     });
@@ -873,7 +873,7 @@ fn blinn_phong(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut
                 for i in 0..2 {
                     row(ui, p, ["H", "V"][i], 20.0, |ui| {
                         e = e.or(spin(ui, &mut v[i], 0.1, -10000.0..=10000.0, decimals, W, mixed(i)));
-                        if super::common::icon_button(ui, p, "arrows-left-right", aurora_i18n::tr!("common-rotate"), true) {
+                        if super::common::icon_button(ui, p, "arrows-exchange", aurora_i18n::tr!("common-rotate"), true) {
                             flip[i] = true;
                         }
                     });
@@ -1103,18 +1103,22 @@ fn media(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World
     } else {
         url.flatten().unwrap_or("").to_owned()
     };
-    egui::Frame::new().fill(p.field).corner_radius(2).inner_margin(6).show(ui, |ui| {
-        ui.set_min_width(ui.available_width());
-        ui.label(
-            RichText::new(if text.is_empty() {
-                aurora_i18n::tr!("build-ui-texture-the-selected-media-url-if-any-goes-here")
-            } else {
-                &text
-            })
-            .size(12.0)
-            .color(if text.is_empty() { p.muted_dim } else { p.ink }),
-        );
-    });
+    egui::Frame::new()
+        .fill(p.field)
+        .corner_radius(ui.visuals().window_corner_radius)
+        .inner_margin(6)
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.label(
+                RichText::new(if text.is_empty() {
+                    aurora_i18n::tr!("build-ui-texture-the-selected-media-url-if-any-goes-here")
+                } else {
+                    &text
+                })
+                .size(12.0)
+                .color(if text.is_empty() { p.muted_dim } else { p.ink }),
+            );
+        });
     let has_media = entries.iter().any(|e| e.is_some());
     ui.horizontal(|ui| {
         if ui

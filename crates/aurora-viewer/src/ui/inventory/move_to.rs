@@ -201,7 +201,7 @@ pub(super) fn show(
                         } else if response.hovered() {
                             ui.painter().rect_filled(rect, 2.0, p.raised);
                         }
-                        if let Some(icon) = icons.get("folder") {
+                        if let Some(icon) = icons.get("folder-filled") {
                             ui.painter().image(
                                 icon.id(),
                                 egui::Rect::from_min_size(rect.min + egui::vec2(6.0, 5.0), Vec2::splat(16.0)),

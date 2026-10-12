@@ -150,7 +150,7 @@ impl EnvironmentUi {
                     if widgets::icon_button(
                         ui,
                         p,
-                        "arrow-counter-clockwise",
+                        "restore",
                         aurora_i18n::tr!("ui-environment-return-to-shared-environment"),
                         true,
                     ) {
@@ -182,7 +182,7 @@ impl EnvironmentUi {
                     let text = RichText::new(*name).size(12.0).color(if on { p.ink } else { p.muted });
                     let b = egui::Button::new(text)
                         .fill(if on { p.violet } else { p.raised })
-                        .corner_radius(egui::CornerRadius::same(3))
+                        .corner_radius(ui.visuals().window_corner_radius)
                         .min_size(Vec2::new(0.0, 20.0));
                     if ui.add(b).on_hover_text(super::bars::time_of_day()[preset as usize]).clicked() {
                         // FSRepeatedEnvTogglesShared is off by default: the
@@ -261,10 +261,10 @@ impl EnvironmentUi {
                     }
                 }
             });
-        if widgets::icon_button(ui, p, "caret-left", aurora_i18n::tr!("common-previous"), !list.is_empty()) {
+        if widgets::icon_button(ui, p, "caret-left-filled", aurora_i18n::tr!("common-previous"), !list.is_empty()) {
             picked = env_select::step(list, env_select::shown_index(list, shown), false);
         }
-        if widgets::icon_button(ui, p, "caret-right", aurora_i18n::tr!("common-next"), !list.is_empty()) {
+        if widgets::icon_button(ui, p, "caret-right-filled", aurora_i18n::tr!("common-next"), !list.is_empty()) {
             picked = env_select::step(list, env_select::shown_index(list, shown), true);
         }
         picked.map(|id| EnvAction::Pick(kind, id))

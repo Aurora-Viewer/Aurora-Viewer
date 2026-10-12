@@ -6,10 +6,10 @@ mod commands;
 
 use super::fonts::{self, SystemFont};
 use super::icons::Icons;
-use super::widgets::Floater;
+use super::widgets::{Floater, keycap};
 use crate::settings::Settings;
 use crate::theme::Palette;
-use egui::{Color32, CornerRadius, RichText, Sense, Vec2};
+use egui::{Color32, RichText, Sense, Vec2};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Capture {
@@ -93,18 +93,18 @@ pub struct OptionsResult {
 /// Category tabs (index = `OptionsUi::tab`).
 fn categories() -> [(&'static str, &'static str); 12] {
     [
-        (aurora_i18n::tr!("ui-options-graphics"), "Command_Environments_Icon"),
-        (aurora_i18n::tr!("common-interface"), "Command_Appearance_Icon"),
-        (aurora_i18n::tr!("ui-options-fonts"), "Command_Chat_Icon"),
-        (aurora_i18n::tr!("common-chat"), "nearbychat_18"),
-        (aurora_i18n::tr!("ui-options-controls"), "Command_Move_Icon"),
-        (aurora_i18n::tr!("ui-options-colors"), "drop"),
-        (aurora_i18n::tr!("ui-options-network-and-cache"), "Command_Inventory_Icon"),
-        (aurora_i18n::tr!("ui-options-sound-and-voice"), "speaker-high"),
-        (aurora_i18n::tr!("ui-options-shortcuts"), "keyboard"),
-        (aurora_i18n::tr!("common-debug"), "code"),
-        (aurora_i18n::tr!("common-camera"), "camera"),
-        (aurora_i18n::tr!("ui-options-commands"), "terminal-window"),
+        (aurora_i18n::tr!("ui-options-graphics"), "device-desktop-filled"),
+        (aurora_i18n::tr!("common-interface"), "app-window-filled"),
+        (aurora_i18n::tr!("ui-options-fonts"), "file-typography-filled"),
+        (aurora_i18n::tr!("common-chat"), "messages-filled"),
+        (aurora_i18n::tr!("ui-options-controls"), "device-gamepad-filled"),
+        (aurora_i18n::tr!("ui-options-colors"), "palette-filled"),
+        (aurora_i18n::tr!("ui-options-network-and-cache"), "cloud-data-connection-filled"),
+        (aurora_i18n::tr!("ui-options-sound-and-voice"), "headset-filled"),
+        (aurora_i18n::tr!("ui-options-shortcuts"), "keyboard-filled"),
+        (aurora_i18n::tr!("common-debug"), "code-circle-filled"),
+        (aurora_i18n::tr!("common-camera"), "camera-filled"),
+        (aurora_i18n::tr!("ui-options-commands"), "square-rounded-chevron-right-filled"),
     ]
 }
 
@@ -123,50 +123,48 @@ fn category(ui: &mut egui::Ui, p: &Palette, _icons: &Icons, label: &str, icon: &
 }
 
 /// A titled group of settings drawn as a flat card.
-/// Phosphor icon of a settings group (by its title).
+/// Tabler icon of a settings group (by its title).
 fn group_icon(title: &str) -> Option<&'static str> {
     Some(match title {
-        value if value == aurora_i18n::text("ui-options-quality") => "sliders",
-        value if value == aurora_i18n::text("common-light") => "sun",
-        value if value == aurora_i18n::text("ui-options-reflections") => "drop",
-        value if value == aurora_i18n::text("common-image") => "image",
-        value if value == aurora_i18n::text("ui-options-smoothness") => "speedometer",
-        value if value == aurora_i18n::text("ui-options-layout") => "layout",
-        value if value == aurora_i18n::text("preferences-group-skin") => "palette",
-        value if value == aurora_i18n::text("ui-options-size-and-preview") => "text-aa",
-        value if value == aurora_i18n::text("ui-options-bundled-fonts") => "text-t",
-        value if value == aurora_i18n::text("ui-options-system-fonts") => "monitor",
-        value if value == aurora_i18n::text("common-nearby-chat") => "chat-circle-dots",
-        value if value == aurora_i18n::text("ui-options-messages") => "chat-text",
-        value if value == aurora_i18n::text("ui-options-emitter") => "user-circle",
+        value if value == aurora_i18n::text("ui-options-quality") => "adjustments-filled",
+        value if value == aurora_i18n::text("common-light") => "sun-filled",
+        value if value == aurora_i18n::text("ui-options-reflections") => "droplet-filled",
+        value if value == aurora_i18n::text("common-image") => "photo-filled",
+        value if value == aurora_i18n::text("ui-options-smoothness") => "dashboard-filled",
+        value if value == aurora_i18n::text("ui-options-layout") => "layout-filled",
+        value if value == aurora_i18n::text("preferences-group-skin") => "paint-filled",
+        value if value == aurora_i18n::text("ui-options-size-and-preview") => "text-size",
+        value if value == aurora_i18n::text("ui-options-bundled-fonts") => "typography",
+        value if value == aurora_i18n::text("ui-options-system-fonts") => "device-desktop-filled",
+        value if value == aurora_i18n::text("common-nearby-chat") => "message-circle-filled",
+        value if value == aurora_i18n::text("ui-options-messages") => "message-filled",
+        value if value == aurora_i18n::text("ui-options-emitter") => "user-filled",
         value if value == aurora_i18n::text("ui-options-chat-mentions") => "at",
-        value if value == aurora_i18n::text("ui-options-mouse") => "mouse",
-        value if value == aurora_i18n::text("preferences-group-huds") => "hand-grabbing",
-        value if value == aurora_i18n::text("ui-options-keyboard") => "keyboard",
-        value if value == aurora_i18n::text("ui-options-name-tag-color") => "tag",
-        value if value == aurora_i18n::text("ui-options-mini-map-markers") => "map-trifold",
-        value if value == aurora_i18n::text("ui-options-disk-cache") => "hard-drives",
-        value if value == aurora_i18n::text("ui-options-devices") => "speaker-hifi",
-        value if value == aurora_i18n::text("ui-options-volumes") => "speaker-high",
-        value if value == aurora_i18n::text("common-voice") => "waveform",
-        value if value == aurora_i18n::text("ui-options-push-to-talk") => "microphone",
-        value if value == aurora_i18n::text("common-movement") => "person-simple-walk",
-        value if value == aurora_i18n::text("common-camera") || value == aurora_i18n::text("common-viewpoint") => "camera",
-        value if value == aurora_i18n::text("common-camera-movement") => "sliders",
-        value if value == aurora_i18n::text("common-behavior") => "arrows-clockwise",
-        value if value == aurora_i18n::text("common-limits") => "prohibit",
+        value if value == aurora_i18n::text("ui-options-mouse") => "mouse-filled",
+        value if value == aurora_i18n::text("preferences-group-huds") => "hand-grab",
+        value if value == aurora_i18n::text("ui-options-keyboard") => "keyboard-filled",
+        value if value == aurora_i18n::text("ui-options-name-tag-color") => "tag-filled",
+        value if value == aurora_i18n::text("ui-options-mini-map-markers") => "map",
+        value if value == aurora_i18n::text("ui-options-disk-cache") => "database-filled",
+        value if value == aurora_i18n::text("ui-options-devices") => "device-speaker-filled",
+        value if value == aurora_i18n::text("ui-options-volumes") => "volume",
+        value if value == aurora_i18n::text("common-voice") => "wave-sine",
+        value if value == aurora_i18n::text("ui-options-push-to-talk") => "microphone-filled",
+        value if value == aurora_i18n::text("common-movement") => "walk",
+        value if value == aurora_i18n::text("common-camera") || value == aurora_i18n::text("common-viewpoint") => "camera-filled",
+        value if value == aurora_i18n::text("common-camera-movement") => "adjustments-filled",
+        value if value == aurora_i18n::text("common-behavior") => "toggle-right-filled",
+        value if value == aurora_i18n::text("common-limits") => "barrier-block-filled",
         value if value == aurora_i18n::text("common-mouselook") => "crosshair",
-        value if value == aurora_i18n::text("ui-options-look-at") => "eye",
-        value if value == aurora_i18n::text("common-communication") => "chats-circle",
-        value if value == aurora_i18n::text("ui-options-groups-and-blocking") => "prohibit",
-        value if value == aurora_i18n::text("ui-options-auto-replies") => "paper-plane-tilt",
-        value if value == aurora_i18n::text("ui-options-automatic-rejections") => "hand-waving",
-        value if value == aurora_i18n::text("common-command-line") || value == aurora_i18n::text("common-other-commands") => {
-            "terminal-window"
-        }
-        value if value == aurora_i18n::text("common-teleport-commands") => "map-pin",
-        value if value == aurora_i18n::text("common-camera-and-display-commands") => "camera",
-        value if value == aurora_i18n::text("common-windows") => "squares-four",
+        value if value == aurora_i18n::text("ui-options-look-at") => "eye-filled",
+        value if value == aurora_i18n::text("common-communication") => "messages-filled",
+        value if value == aurora_i18n::text("ui-options-groups-and-blocking") => "forbid-filled",
+        value if value == aurora_i18n::text("ui-options-auto-replies") => "message-chatbot-filled",
+        value if value == aurora_i18n::text("ui-options-automatic-rejections") => "thumb-down-filled",
+        value if value == aurora_i18n::text("common-command-line") || value == aurora_i18n::text("common-other-commands") => "terminal-2",
+        value if value == aurora_i18n::text("common-teleport-commands") => "map-pin-filled",
+        value if value == aurora_i18n::text("common-camera-and-display-commands") => "camera-filled",
+        value if value == aurora_i18n::text("common-windows") => "layout-grid-filled",
         _ => return None,
     })
 }
@@ -188,7 +186,7 @@ fn group(ui: &mut egui::Ui, p: &Palette, title: &str, body: impl FnOnce(&mut egu
     ui.add_space(2.0);
     egui::Frame::new()
         .fill(p.field)
-        .corner_radius(CornerRadius::same(3))
+        .corner_radius(ui.visuals().window_corner_radius)
         .stroke(egui::Stroke::new(1.0, p.raised))
         .inner_margin(egui::Margin::symmetric(10, 8))
         .show(ui, |ui| {
@@ -488,11 +486,9 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
             );
             ui.add_space(10.0);
             ui.horizontal(|ui| {
-                let yes = ui.add(
-                    egui::Button::new(RichText::new(aurora_i18n::tr!("common-reset")).color(Color32::WHITE))
-                        .fill(p.danger)
-                        .corner_radius(CornerRadius::same(2)),
-                );
+                use super::widgets::{ActionKind, action_button};
+                let size = Vec2::new(0.0, 26.0);
+                let yes = action_button(ui, p, "restore", aurora_i18n::tr!("common-reset"), ActionKind::Danger, size);
                 if yes.clicked() {
                     s.reset_keeping_account();
                     st.capture = None;
@@ -502,7 +498,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
                     r.reset = true;
                     st.confirm_reset = false;
                 }
-                if super::widgets::flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked() {
+                if action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {
                     st.confirm_reset = false;
                 }
             });
@@ -1575,11 +1571,8 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                         let used = st.cache_usage;
                         let limit = s.cache_size_mb as u64 * 1024 * 1024;
                         let frac = (used as f32 / limit.max(1) as f32).clamp(0.0, 1.0);
-                        ui.add(egui::ProgressBar::new(frac).desired_width(SLIDER_W).fill(p.violet).text(format!(
-                            "{} / {}",
-                            format_bytes(used),
-                            format_bytes(limit)
-                        )));
+                        let text = format!("{} / {}", format_bytes(used), format_bytes(limit));
+                        super::widgets::progress(ui, p, "cache_usage", frac, SLIDER_W, &text, None);
                         false
                     },
                 );
@@ -1639,16 +1632,17 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
     c
 }
 
-/// Device combo: "" = system default.
-fn device_combo(ui: &mut egui::Ui, id: &str, value: &mut String, devices: &[String]) -> bool {
+/// Device combo: "" = system default. Returns (a device was chosen, the
+/// list is unfolded).
+pub(super) fn device_combo(ui: &mut egui::Ui, id: &str, value: &mut String, devices: &[String], width: f32) -> (bool, bool) {
     let mut changed = false;
     let shown = if value.is_empty() {
         aurora_i18n::tr!("ui-options-system-default").to_owned()
     } else {
         value.clone()
     };
-    egui::ComboBox::from_id_salt(id)
-        .width(SLIDER_W)
+    let list = egui::ComboBox::from_id_salt(id)
+        .width(width)
         .selected_text(shown)
         .truncate()
         .show_ui(ui, |ui| {
@@ -1666,7 +1660,7 @@ fn device_combo(ui: &mut egui::Ui, id: &str, value: &mut String, devices: &[Stri
                 );
             }
         });
-    changed
+    (changed, list.inner.is_some())
 }
 
 /// "Son et voix": devices, the volumes of the top-right panel (same
@@ -1680,14 +1674,14 @@ fn audio_page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut Options
             p,
             aurora_i18n::tr!("ui-options-audio-output"),
             aurora_i18n::tr!("ui-options-speakers-or-headset-used-by-the-viewer"),
-            |ui| device_combo(ui, "audio_out", &mut a.output_device, &st.output_devices),
+            |ui| device_combo(ui, "audio_out", &mut a.output_device, &st.output_devices, SLIDER_W).0,
         );
         let inp = row(
             ui,
             p,
             aurora_i18n::tr!("ui-options-microphone"),
             aurora_i18n::tr!("ui-options-input-used-for-voice"),
-            |ui| device_combo(ui, "audio_in", &mut a.input_device, &st.input_devices),
+            |ui| device_combo(ui, "audio_in", &mut a.input_device, &st.input_devices, SLIDER_W).0,
         );
         c |= out | inp;
         *audio_changed |= out | inp;
@@ -1818,7 +1812,7 @@ fn audio_page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut Options
                 } else {
                     p.teal
                 };
-                ui.add(egui::ProgressBar::new(lvl).desired_width(SLIDER_W).desired_height(8.0).fill(col));
+                super::widgets::level(ui, p, "mic_level", lvl, SLIDER_W, col);
                 false
             },
         );
@@ -1947,20 +1941,28 @@ fn binding_cell(
 ) {
     let capturing = st.capture == Some(Capture::Binding(a, slot));
     let b = kb.get(a)[slot].clone();
-    let (text, col) = if capturing {
-        (aurora_i18n::tr!("common-press-a-key").to_owned(), Color32::WHITE)
-    } else if let Some(b) = &b {
-        (b.label(), p.ink)
-    } else {
-        ("—".to_owned(), p.muted_dim)
-    };
     let fill = if capturing { p.violet } else { p.raised };
+    // a bound key is drawn as keycaps over an empty button of their width
+    let caps = match &b {
+        Some(b) if !capturing => keycap::caps(ui, b, fill),
+        _ => Vec::new(),
+    };
+    let (text, col) = if capturing {
+        (aurora_i18n::tr!("common-press-a-key"), Color32::WHITE)
+    } else if b.is_some() {
+        ("", p.ink)
+    } else {
+        ("—", p.muted_dim)
+    };
+    let caps_width = keycap::row_width(&caps);
     let resp = ui.add(
         egui::Button::new(RichText::new(text).size(12.0).color(col))
             .fill(fill)
-            .corner_radius(CornerRadius::same(2))
-            .min_size(Vec2::new(132.0, 20.0)),
+            .corner_radius(ui.visuals().widgets.inactive.corner_radius)
+            .min_size(Vec2::new((caps_width + 12.0).max(132.0), 20.0)),
     );
+    let caps_left = egui::pos2(resp.rect.center().x - caps_width / 2.0, resp.rect.center().y);
+    keycap::paint_row(ui, p, &caps, caps_left, fill);
     if resp.clicked() {
         st.capture_modifier = None;
         st.capture = if capturing { None } else { Some(Capture::Binding(a, slot)) };

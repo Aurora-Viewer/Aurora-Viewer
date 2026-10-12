@@ -55,7 +55,7 @@ impl UiTest {
                         Vec2::new(300.0, 120.0),
                     )
                     .auto_height()
-                    .framed_header("cube")
+                    .framed_header("box")
                     .show(ui.ctx(), &crate::theme::Theme::default().palette(), &mut open, |ui| {
                         ui.label("owner");
                         let (rect, _) = ui.allocate_exact_size(Vec2::splat(40.0), Sense::click());

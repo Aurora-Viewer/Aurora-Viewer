@@ -43,7 +43,7 @@ pub use textures::{MipLevel, build_mips};
 pub use types::*;
 pub use ui_blur::blurred_backdrop;
 pub use ui_frame::{EguiFrame, EguiHandOver};
-pub use ui_glass::glass_panel;
+pub use ui_glass::{glass_panel, glass_panel_faded};
 pub use upload::{StagedMesh, StagedTexture, StagingPool, TexelFormat};
 
 pub use egui;

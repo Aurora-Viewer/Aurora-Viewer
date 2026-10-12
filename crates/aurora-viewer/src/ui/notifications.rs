@@ -7,7 +7,7 @@
 use super::icons::Icons;
 use crate::theme::Palette;
 use crate::world::notifications::{Data, Kind, Notification, Notifications, Response};
-use egui::{Color32, CornerRadius, RichText, Vec2};
+use egui::{Color32, RichText, Vec2};
 
 /// Seconds a toast stays: information / waiting for an answer.
 const TOAST_INFO: f64 = 7.0;
@@ -29,12 +29,12 @@ pub struct NotifUi {
 pub fn bell(ui: &mut egui::Ui, p: &Palette, icons: &Icons, unread: usize, open: bool) -> (bool, egui::Rect) {
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(22.0, 20.0), egui::Sense::click());
     if resp.hovered() || open {
-        ui.painter().rect_filled(rect, 2.0, p.raised);
+        ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
     }
     let col = if unread > 0 || resp.hovered() || open { p.ink } else { p.muted };
-    let icon = if unread > 0 { "bell-ringing" } else { "bell" };
+    let icon = if unread > 0 { "bell-ringing-filled" } else { "bell-filled" };
     if let Some(t) = icons.get(icon) {
-        let r = egui::Rect::from_center_size(rect.center(), Vec2::splat(15.0));
+        let r = egui::Rect::from_center_size(rect.center(), Vec2::splat(16.0));
         ui.painter()
             .image(t.id(), r, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), col);
     }
@@ -54,15 +54,15 @@ pub fn bell(ui: &mut egui::Ui, p: &Palette, icons: &Icons, unread: usize, open: 
 
 fn kind_style(p: &Palette, kind: Kind) -> (&'static str, Color32) {
     match kind {
-        Kind::Info => ("info", p.muted),
-        Kind::Alert => ("warning", p.amber),
-        Kind::Teleport => ("airplane-takeoff", p.teal),
-        Kind::Friendship => ("handshake", p.violet_light),
-        Kind::Inventory => ("gift", p.violet_light),
-        Kind::Group => ("users-three", p.indigo_light),
-        Kind::Script => ("scroll", p.teal),
-        Kind::Permissions => ("key", p.amber),
-        Kind::Url => ("globe", p.teal),
+        Kind::Info => ("info-circle-filled", p.muted),
+        Kind::Alert => ("alert-triangle-filled", p.amber),
+        Kind::Teleport => ("plane-departure-filled", p.teal),
+        Kind::Friendship => ("heart-handshake", p.violet_light),
+        Kind::Inventory => ("gift-filled", p.violet_light),
+        Kind::Group => ("users-group", p.indigo_light),
+        Kind::Script => ("code", p.teal),
+        Kind::Permissions => ("key-filled", p.amber),
+        Kind::Url => ("world-filled", p.teal),
     }
 }
 
@@ -70,14 +70,15 @@ fn kind_style(p: &Palette, kind: Kind) -> (&'static str, Color32) {
 fn card(ui: &mut egui::Ui, p: &Palette, icons: &Icons, n: &mut Notification, toast: bool) -> Option<Response> {
     let mut out = None;
     let (icon, accent) = kind_style(p, n.kind);
-    let fill = if toast || !n.read { p.panel } else { p.bar };
+    // in the list, an unread card is lighter than a read one
+    let fill = if n.read {
+        p.field.gamma_multiply(0.8)
+    } else {
+        p.raised.gamma_multiply(0.55)
+    };
     let script = matches!(n.data, Data::Dialog { .. });
-    egui::Frame::new()
-        .fill(fill)
-        .stroke(egui::Stroke::new(1.0, if toast { accent.gamma_multiply(0.6) } else { p.raised }))
-        .corner_radius(CornerRadius::same(3))
-        .inner_margin(egui::Margin::same(8))
-        .show(ui, |ui| {
+    let body = |ui: &mut egui::Ui| {
+        {
             ui.set_width(WIDTH - 18.0);
             if script {
                 ui.spacing_mut().interact_size.y = 24.0;
@@ -179,7 +180,7 @@ fn card(ui: &mut egui::Ui, p: &Palette, icons: &Icons, n: &mut Notification, toa
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 6.0;
                             for index in row.clone() {
-                                if super::widgets::flat_button_sized(ui, p, &b[index], Vec2::new(width, 24.0)).clicked() {
+                                if button_sized(ui, p, &b[index], false, Some(Vec2::new(width, 24.0))).clicked() {
                                     out = Some(Response::Button(index));
                                 }
                             }
@@ -191,13 +192,11 @@ fn card(ui: &mut egui::Ui, p: &Palette, icons: &Icons, n: &mut Notification, toa
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if super::widgets::flat_button_sized(ui, p, aurora_i18n::tr!("common-ignore"), Vec2::new(72.0, 22.0)).clicked()
-                            {
+                            if button_sized(ui, p, aurora_i18n::tr!("common-ignore"), false, Some(Vec2::new(72.0, 22.0))).clicked() {
                                 out = Some(Response::Dismiss);
                             }
                             if !own_object
-                                && super::widgets::flat_button_sized(ui, p, aurora_i18n::tr!("common-block"), Vec2::new(72.0, 22.0))
-                                    .clicked()
+                                && button_sized(ui, p, aurora_i18n::tr!("common-block"), false, Some(Vec2::new(72.0, 22.0))).clicked()
                             {
                                 out = Some(Response::Block);
                             }
@@ -232,18 +231,36 @@ fn card(ui: &mut egui::Ui, p: &Palette, icons: &Icons, n: &mut Notification, toa
                     }
                 });
             }
-        });
+        }
+    };
+    if toast {
+        // a toast floats over the world: the windows' glass
+        super::widgets::overlay(ui, p, egui::Margin::same(8), body);
+    } else {
+        egui::Frame::new()
+            .fill(fill)
+            .corner_radius(ui.visuals().window_corner_radius)
+            .inner_margin(egui::Margin::same(8))
+            .show(ui, body);
+    }
     out
 }
 
 fn button(ui: &mut egui::Ui, p: &Palette, label: &str, primary: bool) -> egui::Response {
-    let (fill, ink) = if primary { (p.violet, Color32::WHITE) } else { (p.raised, p.ink) };
-    ui.add(
-        egui::Button::new(RichText::new(label).size(12.0).color(ink))
-            .fill(fill)
-            .corner_radius(CornerRadius::same(2))
-            .min_size(Vec2::new(64.0, 20.0)),
-    )
+    button_sized(ui, p, label, primary, None)
+}
+
+/// Button of a card: a plain filled face for every kind of notification, the
+/// accent for the expected answer. A sized button cuts a long script label
+/// and shows it whole when hovered.
+fn button_sized(ui: &mut egui::Ui, p: &Palette, label: &str, primary: bool, size: Option<Vec2>) -> egui::Response {
+    let button = egui::Button::new(RichText::new(label).size(12.0).color(p.ink))
+        .fill(if primary { p.violet } else { p.raised })
+        .corner_radius(ui.visuals().widgets.inactive.corner_radius);
+    match size {
+        Some(size) => ui.add_sized(size, button.truncate()).on_hover_text(label),
+        None => ui.add(button.min_size(Vec2::new(72.0, 22.0))),
+    }
 }
 
 /// List under the bell and toasts; returns the answers to apply.
@@ -281,12 +298,8 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, list: &mut Notifica
             .fixed_pos(anchor + Vec2::new(0.0, 2.0))
             .constrain(true)
             .show(ctx, |ui| {
-                egui::Frame::new()
-                    .fill(p.bar)
-                    .stroke(egui::Stroke::new(1.0, p.raised))
-                    .corner_radius(CornerRadius::same(3))
-                    .inner_margin(egui::Margin::same(6))
-                    .show(ui, |ui| {
+                super::widgets::overlay(ui, p, egui::Margin::same(6), |ui| {
+                    {
                         ui.set_width(WIDTH);
                         ui.horizontal(|ui| {
                             ui.label(
@@ -341,7 +354,8 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, list: &mut Notifica
                                     }
                                 }
                             });
-                    });
+                    }
+                });
             });
         // click outside closes the list (not on the bell: it toggles itself)
         let clicked_out = ctx.input(|i| i.pointer.any_pressed())

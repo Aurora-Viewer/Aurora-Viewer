@@ -384,15 +384,15 @@ fn blocked_tab(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut PeopleUi,
                 };
                 // menu_fs_block_list.xml
                 menu::context_menu(&r, p, |ui| {
-                    if menu::item(ui, p, "check-circle", aurora_i18n::tr!("common-stop-ignoring")) {
+                    if menu::item(ui, p, "circle-check-filled", aurora_i18n::tr!("common-stop-ignoring")) {
                         actions.push(PeopleAction::Unblock(m.id, m.name.clone()));
                     }
                     if m.kind != MuteType::ByName {
                         for (bit, icon, label) in [
-                            (flag::VOICE_CHAT, "microphone-slash", aurora_i18n::tr!("ui-people-block-voice")),
-                            (flag::TEXT_CHAT, "chat-teardrop-slash", aurora_i18n::tr!("ui-people-block-text")),
-                            (flag::PARTICLES, "sparkle", aurora_i18n::tr!("common-block-particles")),
-                            (flag::OBJECT_SOUNDS, "speaker-x", aurora_i18n::tr!("ui-people-block-object-sounds")),
+                            (flag::VOICE_CHAT, "microphone-off", aurora_i18n::tr!("ui-people-block-voice")),
+                            (flag::TEXT_CHAT, "message-off", aurora_i18n::tr!("ui-people-block-text")),
+                            (flag::PARTICLES, "sparkles-filled", aurora_i18n::tr!("common-block-particles")),
+                            (flag::OBJECT_SOUNDS, "volume-off", aurora_i18n::tr!("ui-people-block-object-sounds")),
                         ] {
                             // a set flag means « not blocked » (LLMute flags)
                             let mut on = m.flags & bit == 0;
@@ -408,7 +408,7 @@ fn blocked_tab(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut PeopleUi,
                         }
                     }
                     menu::separator(ui, p);
-                    if menu::item_if(ui, p, "user-circle", aurora_i18n::tr!("common-profile"), m.kind == MuteType::Agent) {
+                    if menu::item_if(ui, p, "user-filled", aurora_i18n::tr!("common-profile"), m.kind == MuteType::Agent) {
                         actions.push(PeopleAction::Profile(m.id));
                     }
                 });

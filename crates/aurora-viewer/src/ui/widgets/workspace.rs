@@ -86,7 +86,7 @@ pub fn surface<R>(ui: &mut egui::Ui, p: &Palette, body: impl FnOnce(&mut egui::U
     egui::Frame::new()
         .fill(p.field.gamma_multiply(0.8))
         .stroke(Stroke::new(1.0, p.raised))
-        .corner_radius(3)
+        .corner_radius(ui.visuals().window_corner_radius)
         .inner_margin(10)
         .show(ui, body)
         .inner
@@ -110,30 +110,33 @@ pub fn stat(ui: &mut egui::Ui, p: &Palette, label: &str, value: &str) {
 
 pub(super) fn window_icon(id: &str) -> &'static str {
     if id.starts_with("inventory") {
-        return "folder";
+        return "folder-filled";
     }
     if id.starts_with("profile") {
-        return "user";
+        return "user-filled";
+    }
+    if id.starts_with("bug_report") {
+        return "bug-filled";
     }
     if id.contains("texture") || id.contains("thumbnail") {
-        return "image";
+        return "photo-filled";
     }
     if id.contains("script") {
         return "code";
     }
     if id.contains("place") || id.contains("land") {
-        return "map-pin";
+        return "map-pin-filled";
     }
     match id {
-        "appearance" => "t-shirt",
-        "conversations" | "contacts" => "chats-circle",
-        "people" | "avatar_picker" => "users-three",
-        "options" => "gear-six",
-        "worldmap" | "minimap" => "map-trifold",
-        "environment_selector" | "personal_lighting" => "sun",
-        "performance" => "chart-bar",
-        "ao" => "person",
-        _ => "squares-four",
+        "appearance" => "shirt-filled",
+        "conversations" | "contacts" => "messages-filled",
+        "people" | "avatar_picker" => "users-group",
+        "options" => "settings-filled",
+        "worldmap" | "minimap" => "map",
+        "environment_selector" | "personal_lighting" => "sun-filled",
+        "performance" => "gauge-filled",
+        "ao" => "man-filled",
+        _ => "layout-grid-filled",
     }
 }
 
@@ -152,12 +155,60 @@ pub(crate) fn finish_glass(painter: &egui::Painter, slot: egui::layers::ShapeIdx
     }
 }
 
+/// Glass of the top and bottom bars: the windows' blur under the `bar` color.
+pub(crate) fn finish_bar_glass(painter: &egui::Painter, slot: egui::layers::ShapeIdx, rect: egui::Rect, p: &Palette) {
+    if p.panel_alpha < 255 {
+        let tint = Color32::from_rgba_unmultiplied(p.bar.r(), p.bar.g(), p.bar.b(), p.panel_alpha);
+        painter.with_clip_rect(rect).set(slot, aurora_render::glass_panel(rect, 0.0, tint));
+    }
+}
+
+/// Frame of a panel drawn outside a window (toasts, drop-down panels, the
+/// login cards): the windows' tint, border, corners and shadow.
+pub(crate) fn overlay_frame(ctx: &egui::Context, p: &Palette) -> egui::Frame {
+    let visuals = &ctx.global_style().visuals;
+    egui::Frame::new()
+        .fill(Color32::from_rgba_unmultiplied(
+            p.panel.r(),
+            p.panel.g(),
+            p.panel.b(),
+            p.panel_alpha,
+        ))
+        .stroke(Stroke::new(1.0, p.muted_dim.gamma_multiply(0.6)))
+        .corner_radius(visuals.window_corner_radius)
+        .shadow(visuals.window_shadow)
+}
+
+/// `overlay_frame` over the windows' blur of the world behind it.
+pub(crate) fn overlay<R>(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    margin: egui::Margin,
+    body: impl FnOnce(&mut egui::Ui) -> R,
+) -> egui::InnerResponse<R> {
+    let mut glass_slot = None;
+    let response = overlay_frame(ui.ctx(), p).inner_margin(margin).show(ui, |ui| {
+        glass_slot = Some((ui.painter().clone(), ui.painter().add(egui::Shape::Noop)));
+        body(ui)
+    });
+    if let Some((painter, slot)) = glass_slot {
+        let radius = f32::from(ui.ctx().global_style().visuals.window_corner_radius.nw);
+        finish_glass(&painter, slot, response.response.rect, p, radius);
+    }
+    response
+}
+
 /// Modal dialogs use the same surface and spacing as regular windows.
 pub struct Modal(egui::Modal);
 
 impl Modal {
     pub fn new(id: egui::Id) -> Self {
         Self(egui::Modal::new(id))
+    }
+    /// For a modal that blurs what is behind it (`aurora_render::blurred_backdrop`)
+    /// instead of dimming it.
+    pub fn transparent_backdrop(self) -> Self {
+        Self(self.0.backdrop_color(Color32::TRANSPARENT))
     }
     pub fn show<T>(self, ctx: &egui::Context, body: impl FnOnce(&mut egui::Ui) -> T) -> egui::ModalResponse<T> {
         // Theme supplies skin colors and radii; per-modal frames remain local.

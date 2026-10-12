@@ -165,16 +165,20 @@ impl Theme {
         w.noninteractive.fg_stroke = Stroke::new(1.0, p.muted);
         w.noninteractive.corner_radius = br;
 
-        // also the slider rail / checkbox background
+        // Buttons and combo boxes are plain filled faces (the human's
+        // choice): their border has the color of the face, so only text
+        // fields and check boxes, drawn on a darker ground, show it.
+        // bg_fill is also the slider rail / checkbox background.
+        let hot = p.raised.lerp_to_gamma(p.ink, 0.16);
         w.inactive.bg_fill = p.raised;
-        w.inactive.weak_bg_fill = p.field;
+        w.inactive.weak_bg_fill = p.raised;
         w.inactive.bg_stroke = Stroke::new(1.0, p.raised);
         w.inactive.fg_stroke = Stroke::new(1.0, p.ink);
         w.inactive.corner_radius = br;
 
-        w.hovered.bg_fill = p.raised;
-        w.hovered.weak_bg_fill = p.raised;
-        w.hovered.bg_stroke = Stroke::new(1.0, p.violet_light);
+        w.hovered.bg_fill = hot;
+        w.hovered.weak_bg_fill = hot;
+        w.hovered.bg_stroke = Stroke::new(1.0, hot);
         w.hovered.fg_stroke = Stroke::new(1.0, p.ink);
         w.hovered.corner_radius = br;
         w.hovered.expansion = 0.0;
@@ -187,8 +191,6 @@ impl Theme {
         w.active.expansion = 0.0;
 
         w.open = w.hovered;
-        w.open.bg_fill = p.raised;
-        w.open.weak_bg_fill = p.raised;
 
         let mut style = egui::Style {
             visuals: v,

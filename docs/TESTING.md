@@ -466,7 +466,8 @@ des objets possédés y apparaissent également, après filtrage du bridge et
 des objets bloqués. La fenêtre permet de voir tous les objets ou un seul et
 d'effacer les messages affichés.
 
-**`AURORA_DEMO_ACTIONS`** — curseurs et clics d'objet comme Firestorm.
+**`AURORA_DEMO_ACTIONS`** — curseurs et clics d'objet comme Firestorm
+(mêmes règles ; curseurs dessinés à partir des icônes Tabler).
 Aucun L$ réel ni connexion à une grille.
 
 - `1` : tous les objets, pour un test manuel.
@@ -914,7 +915,7 @@ grille.
 | `AURORA_UPDATE_TEST_VERSION=<tag>` | Compilation dev à version synthétique pour cet essai |
 | `AURORA_DEMO_BUG_REPORT=<mode>` | Rapport de bug public avec données de démo, sans envoi |
 | `AURORA_DEMO_MAP=1` ou `mini` | Carte du monde et mini-carte |
-| `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Liste des notifications, menu de statut, champ de lieu |
+| `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1`, `AURORA_DEMO_MICMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Liste des notifications, menu de statut, panneau du micro, champ de lieu |
 | `AURORA_DEMO_CONV=1`, `AURORA_DEMO_TALK=1` | Conversation de groupe, micro ouvert |
 | `AURORA_DEMO_CONTACTS=<onglet>` | Onglet Contacts de Conversations |
 | `AURORA_DEMO_GLYPHS=1` | Noms, titres et chat en caractères étendus (polices du système) |

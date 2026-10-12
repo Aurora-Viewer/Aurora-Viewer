@@ -146,15 +146,15 @@ pub(super) fn draw_list(ui: &mut egui::Ui, p: &crate::theme::Palette, entries: &
 fn object_menu(ui: &mut Builder, f: &Facts, key: ObjKey, id: Uuid, offset: Vec3, point: Vec3) {
     let o = &f.object;
     ui.item_if(
-        "hand-pointing",
+        "click-filled",
         aurora_i18n::tr!("ui-context-touch"),
         o.touch,
         CtxAction::Touch(key.local_id),
     );
-    ui.item("pencil-simple", aurora_i18n::tr!("common-edit"), CtxAction::Edit(id));
-    ui.todo("paint-brush", aurora_i18n::tr!("ui-context-edit-pbr-material"));
+    ui.item("pencil-filled", aurora_i18n::tr!("common-edit"), CtxAction::Edit(id));
+    ui.todo("paint-filled", aurora_i18n::tr!("ui-context-edit-pbr-material"));
     // Object.Build: the Create tool (LLToolCompCreate), like the land menu
-    ui.item("cube", aurora_i18n::tr!("common-build"), CtxAction::Build);
+    ui.item("box", aurora_i18n::tr!("common-build"), CtxAction::Build);
     ui.item_if("package", aurora_i18n::tr!("common-open"), o.open, CtxAction::Open(id));
     ui.separator();
     ui.item_if(
@@ -164,81 +164,77 @@ fn object_menu(ui: &mut Builder, f: &Facts, key: ObjKey, id: Uuid, offset: Vec3,
         CtxAction::Sit { target: id, offset },
     );
     ui.separator();
-    ui.item_if("person", aurora_i18n::tr!("common-stand-up"), o.stand, CtxAction::StandUp);
+    ui.item_if("man-filled", aurora_i18n::tr!("common-stand-up"), o.stand, CtxAction::StandUp);
     ui.separator();
-    ui.submenu("cube", aurora_i18n::tr!("common-object"), true, |ui| {
-        ui.todo("info", aurora_i18n::tr!("common-profile"));
-        ui.todo("magnifying-glass", aurora_i18n::tr!("ui-context-inspect-2"));
+    ui.submenu("box", aurora_i18n::tr!("common-object"), true, |ui| {
+        ui.todo("info-circle-filled", aurora_i18n::tr!("common-profile"));
+        ui.todo("zoom-scan-filled", aurora_i18n::tr!("ui-context-inspect-2"));
         ui.todo("code", aurora_i18n::tr!("ui-context-script-information"));
         ui.separator();
         // linking needs two selected objects: build tools only
         ui.disabled("link", aurora_i18n::tr!("ui-context-link"));
-        ui.item_if("link-break", aurora_i18n::tr!("ui-context-unlink"), o.unlink, CtxAction::Unlink(id));
+        ui.item_if("unlink", aurora_i18n::tr!("ui-context-unlink"), o.unlink, CtxAction::Unlink(id));
         ui.check(
-            "cube-transparent",
+            "cube-3d-sphere",
             aurora_i18n::tr!("ui-context-edit-linked-parts"),
             f.edit_linked,
             true,
             CtxAction::EditLinkedParts(!f.edit_linked),
         );
         ui.separator();
-        ui.todo("arrows-clockwise", aurora_i18n::tr!("ui-context-reset-scripts"));
-        ui.todo("play", aurora_i18n::tr!("ui-context-run-scripts"));
-        ui.todo("stop-circle", aurora_i18n::tr!("ui-context-stop-scripts"));
-        ui.todo("trash", aurora_i18n::tr!("ui-context-remove-scripts"));
+        ui.todo("refresh", aurora_i18n::tr!("ui-context-reset-scripts"));
+        ui.todo("player-play-filled", aurora_i18n::tr!("ui-context-run-scripts"));
+        ui.todo("player-stop-filled", aurora_i18n::tr!("ui-context-stop-scripts"));
+        ui.todo("trash-filled", aurora_i18n::tr!("ui-context-remove-scripts"));
     });
-    ui.item("magnifying-glass-plus", aurora_i18n::tr!("common-zoom-2"), CtxAction::Zoom(point));
+    ui.item("zoom-in-filled", aurora_i18n::tr!("common-zoom-2"), CtxAction::Zoom(point));
     ui.separator();
-    ui.submenu("t-shirt", aurora_i18n::tr!("ui-context-wear"), true, |ui| {
-        ui.todo("t-shirt", aurora_i18n::tr!("common-wear"));
-        ui.todo("plus-circle", aurora_i18n::tr!("common-add"));
+    ui.submenu("shirt-filled", aurora_i18n::tr!("ui-context-wear"), true, |ui| {
+        ui.todo("shirt-filled", aurora_i18n::tr!("common-wear"));
+        ui.todo("circle-plus-filled", aurora_i18n::tr!("common-add"));
         ui.todo("paperclip", aurora_i18n::tr!("common-attach-to"));
         ui.todo("paperclip", aurora_i18n::tr!("common-attach-to-hud"));
     });
-    ui.submenu("warning", aurora_i18n::tr!("ui-context-disturbance"), true, |ui| {
-        ui.todo("flag", aurora_i18n::tr!("common-report"));
+    ui.submenu("alert-triangle-filled", aurora_i18n::tr!("ui-context-disturbance"), true, |ui| {
+        ui.todo("flag-filled", aurora_i18n::tr!("common-report"));
         let (icon, label) = if o.blocked {
-            ("check-circle", aurora_i18n::tr!("common-stop-ignoring"))
+            ("circle-check-filled", aurora_i18n::tr!("common-stop-ignoring"))
         } else {
-            ("prohibit", aurora_i18n::tr!("common-ignore"))
+            ("forbid-filled", aurora_i18n::tr!("common-ignore"))
         };
         ui.item(icon, label, CtxAction::ToggleBlockObject { id, name: o.name.clone() });
     });
     ui.separator();
-    ui.todo("arrows-clockwise", aurora_i18n::tr!("ui-context-refresh-textures"));
-    ui.todo("eye-slash", aurora_i18n::tr!("ui-context-derender"));
+    ui.todo("refresh", aurora_i18n::tr!("ui-context-refresh-textures"));
+    ui.todo("eye-off", aurora_i18n::tr!("ui-context-derender"));
     ui.todo("eye-closed", aurora_i18n::tr!("ui-context-derender-blacklist"));
-    ui.todo("arrow-u-up-left", aurora_i18n::tr!("ui-context-return"));
-    ui.item_if("hand-grabbing", aurora_i18n::tr!("ui-context-take"), o.take, CtxAction::Take(id));
+    ui.todo("arrow-back-up", aurora_i18n::tr!("ui-context-return"));
+    ui.item_if("hand-grab", aurora_i18n::tr!("ui-context-take"), o.take, CtxAction::Take(id));
     ui.item_if(
-        "copy",
+        "copy-filled",
         aurora_i18n::tr!("ui-context-take-copy"),
         o.take_copy,
         CtxAction::TakeCopy(id),
     );
-    ui.item_if("hand-coins", aurora_i18n::tr!("common-pay"), o.pay, CtxAction::Pay(id));
-    ui.item_if("shopping-cart", aurora_i18n::tr!("common-buy"), o.buy, CtxAction::Buy(id));
-    ui.todo("floppy-disk", aurora_i18n::tr!("common-save-as"));
+    ui.item_if("coin-filled", aurora_i18n::tr!("common-pay"), o.pay, CtxAction::Pay(id));
+    ui.item_if("shopping-cart-filled", aurora_i18n::tr!("common-buy"), o.buy, CtxAction::Buy(id));
+    ui.todo("device-floppy-filled", aurora_i18n::tr!("common-save-as"));
     ui.separator();
-    ui.item_if("trash", aurora_i18n::tr!("common-delete"), o.delete, CtxAction::Delete(id));
+    ui.item_if("trash-filled", aurora_i18n::tr!("common-delete"), o.delete, CtxAction::Delete(id));
     ui.separator();
-    ui.todo("sparkle", aurora_i18n::tr!("ui-context-ignore-particle-owner"));
+    ui.todo("sparkles-filled", aurora_i18n::tr!("ui-context-ignore-particle-owner"));
 }
 
 /// menu_attachment_self.xml
 fn attachment_self_menu(ui: &mut Builder, f: &Facts, key: ObjKey) {
     if let Some(scale) = f.object.local_hud_scale {
         ui.info(
-            "magnifying-glass",
+            "zoom-filled",
             &aurora_i18n::tr!("hud-local-scale", percent = format!("{:.0}", scale * 100.0)),
         );
-        ui.item(
-            "arrow-counter-clockwise",
-            aurora_i18n::tr!("hud-local-scale-reset"),
-            CtxAction::ResetHudScale(key),
-        );
+        ui.item("restore", aurora_i18n::tr!("hud-local-scale-reset"), CtxAction::ResetHudScale(key));
         ui.item_if(
-            "eraser",
+            "backspace-filled",
             aurora_i18n::tr!("hud-local-scale-forget"),
             f.object.saved_hud_scale,
             CtxAction::ForgetHudScale(key),
@@ -246,24 +242,24 @@ fn attachment_self_menu(ui: &mut Builder, f: &Facts, key: ObjKey) {
         ui.separator();
     }
     ui.item_if(
-        "hand-pointing",
+        "click-filled",
         aurora_i18n::tr!("ui-context-touch"),
         f.object.touch,
         CtxAction::Touch(key.local_id),
     );
     ui.item_if(
-        "backpack",
+        "briefcase-filled",
         aurora_i18n::tr!("ui-context-show-in-inventory"),
         f.object.attachment_item.is_some(),
         CtxAction::AttachmentInventory(f.object.attachment_item.unwrap_or_default()),
     );
     ui.item_if(
-        "pencil-simple",
+        "pencil-filled",
         aurora_i18n::tr!("common-edit"),
         f.object.edit_hud,
         CtxAction::EditAttachment(key),
     );
-    ui.todo("paint-brush", aurora_i18n::tr!("ui-context-edit-pbr-material"));
+    ui.todo("paint-filled", aurora_i18n::tr!("ui-context-edit-pbr-material"));
     ui.item_if(
         "paperclip",
         aurora_i18n::tr!("common-detach"),
@@ -284,67 +280,67 @@ fn attachment_self_menu(ui: &mut Builder, f: &Facts, key: ObjKey) {
     );
     // enable_fly_land: flying already, or not sitting (LLAgent::enableFlying)
     ui.item_if(
-        "airplane-takeoff",
+        "plane-departure-filled",
         aurora_i18n::tr!("extra-fly-land-8"),
         f.flying || !f.seated,
         CtxAction::ToggleFly,
     );
-    ui.todo("stop-circle", aurora_i18n::tr!("ui-context-stop-animations"));
+    ui.todo("player-stop-filled", aurora_i18n::tr!("ui-context-stop-animations"));
     ui.separator();
     community_submenu(ui, f.me);
-    ui.todo("info", aurora_i18n::tr!("ui-context-object-profile"));
-    ui.todo("magnifying-glass", aurora_i18n::tr!("ui-context-inspect"));
+    ui.todo("info-circle-filled", aurora_i18n::tr!("ui-context-object-profile"));
+    ui.todo("zoom-scan-filled", aurora_i18n::tr!("ui-context-inspect"));
     ui.todo("code", aurora_i18n::tr!("ui-context-script-information"));
-    ui.todo("eye-slash", aurora_i18n::tr!("ui-context-derender-temporarily"));
+    ui.todo("eye-off", aurora_i18n::tr!("ui-context-derender-temporarily"));
     ui.todo("eye-closed", aurora_i18n::tr!("ui-context-derender-blacklist"));
-    ui.todo("image", aurora_i18n::tr!("ui-context-show-textures"));
-    ui.todo("arrows-clockwise", aurora_i18n::tr!("ui-context-refresh-textures"));
+    ui.todo("photo-filled", aurora_i18n::tr!("ui-context-show-textures"));
+    ui.todo("refresh", aurora_i18n::tr!("ui-context-refresh-textures"));
     ui.separator();
     // « Supprimer » drops the attachment on the ground (Attachment.Drop)
-    ui.todo("trash", aurora_i18n::tr!("common-delete"));
+    ui.todo("trash-filled", aurora_i18n::tr!("common-delete"));
     ui.separator();
-    ui.todo("sparkle", aurora_i18n::tr!("ui-context-block-particle-owner"));
+    ui.todo("sparkles-filled", aurora_i18n::tr!("ui-context-block-particle-owner"));
 }
 
 /// menu_avatar_other.xml
 fn avatar_menu(ui: &mut Builder, f: &Facts, id: Uuid, point: Vec3) {
-    ui.item("user-circle", aurora_i18n::tr!("common-view-profile"), CtxAction::Profile(id));
+    ui.item("user-filled", aurora_i18n::tr!("common-view-profile"), CtxAction::Profile(id));
     ui.item_if(
         "user-plus",
         aurora_i18n::tr!("common-become-friends"),
         !f.friend,
         CtxAction::AddFriend(id),
     );
-    ui.todo("users-three", aurora_i18n::tr!("ui-context-add-to-contact-set"));
-    ui.item("chat-text", aurora_i18n::tr!("ui-context-send-im"), CtxAction::Im(id));
-    ui.todo("identification-card", aurora_i18n::tr!("ui-context-give-my-calling-card"));
-    ui.todo("phone", aurora_i18n::tr!("common-voice-call"));
-    ui.todo("user-circle-plus", aurora_i18n::tr!("ui-context-invite-to-group"));
+    ui.todo("users-group", aurora_i18n::tr!("ui-context-add-to-contact-set"));
+    ui.item("message-filled", aurora_i18n::tr!("ui-context-send-im"), CtxAction::Im(id));
+    ui.todo("id-filled", aurora_i18n::tr!("ui-context-give-my-calling-card"));
+    ui.todo("phone-filled", aurora_i18n::tr!("common-voice-call"));
+    ui.todo("users-plus", aurora_i18n::tr!("ui-context-invite-to-group"));
     ui.item(
-        "paper-plane-tilt",
+        "send-filled",
         aurora_i18n::tr!("common-offer-teleport"),
         CtxAction::OfferTeleport(id),
     );
     ui.separator();
-    ui.todo("eye", aurora_i18n::tr!("common-look-toward-avatar"));
+    ui.todo("eye-filled", aurora_i18n::tr!("common-look-toward-avatar"));
     ui.separator();
-    ui.todo("bone", aurora_i18n::tr!("ui-context-reset-skeleton"));
-    ui.todo("person-simple-run", aurora_i18n::tr!("ui-context-reset-skeleton-and-animations"));
-    ui.todo("arrow-counter-clockwise", aurora_i18n::tr!("ui-context-reset-mesh-lod-2"));
+    ui.todo("bone-filled", aurora_i18n::tr!("ui-context-reset-skeleton"));
+    ui.todo("run", aurora_i18n::tr!("ui-context-reset-skeleton-and-animations"));
+    ui.todo("restore", aurora_i18n::tr!("ui-context-reset-mesh-lod-2"));
     ui.separator();
-    ui.submenu("warning", aurora_i18n::tr!("ui-context-disturbance"), true, |ui| {
+    ui.submenu("alert-triangle-filled", aurora_i18n::tr!("ui-context-disturbance"), true, |ui| {
         let (icon, label) = if f.blocked {
-            ("check-circle", aurora_i18n::tr!("common-stop-ignoring"))
+            ("circle-check-filled", aurora_i18n::tr!("common-stop-ignoring"))
         } else {
-            ("prohibit", aurora_i18n::tr!("common-ignore"))
+            ("forbid-filled", aurora_i18n::tr!("common-ignore"))
         };
         ui.item(icon, label, CtxAction::ToggleBlock(id));
-        ui.todo("flag", aurora_i18n::tr!("common-report"));
+        ui.todo("flag-filled", aurora_i18n::tr!("common-report"));
         ui.todo("snowflake", aurora_i18n::tr!("ui-context-freeze"));
-        ui.todo("door-open", aurora_i18n::tr!("ui-context-eject"));
+        ui.todo("player-eject-filled", aurora_i18n::tr!("ui-context-eject"));
     });
-    ui.item("magnifying-glass-plus", aurora_i18n::tr!("common-zoom-2"), CtxAction::Zoom(point));
-    ui.todo("currency-circle-dollar", aurora_i18n::tr!("common-pay"));
+    ui.item("zoom-in-filled", aurora_i18n::tr!("common-zoom-2"), CtxAction::Zoom(point));
+    ui.todo("coin-filled", aurora_i18n::tr!("common-pay"));
     ui.separator();
     // Firestorm « Rendu toujours complet / Aucun rendu / Rendu selon vos préférences »
     if let Some((c, silhouette)) = f.complexity {
@@ -353,23 +349,27 @@ fn avatar_menu(ui: &mut Builder, f: &Facts, id: Uuid, point: Vec3) {
             value0 = crate::ui::hud::group_digits(c).to_string(),
             value1 = (if silhouette { " (silhouette)" } else { "" }).to_string()
         );
-        ui.info("gauge", &text);
+        ui.info("gauge-filled", &text);
     }
     for (mode, icon, label) in [
-        (2u8, "user-focus", aurora_i18n::tr!("ui-context-always-show-full-detail")),
-        (1, "ghost", aurora_i18n::tr!("ui-context-never-fully-render")),
-        (0, "sliders", aurora_i18n::tr!("ui-context-display-according-to-your-preferences")),
+        (2u8, "user-scan", aurora_i18n::tr!("ui-context-always-show-full-detail")),
+        (1, "ghost-filled", aurora_i18n::tr!("ui-context-never-fully-render")),
+        (
+            0,
+            "adjustments-filled",
+            aurora_i18n::tr!("ui-context-display-according-to-your-preferences"),
+        ),
     ] {
         ui.check(icon, label, f.render == mode, true, CtxAction::SetRender(id, mode));
     }
-    ui.todo("magnifying-glass", aurora_i18n::tr!("ui-context-inspect-2"));
+    ui.todo("zoom-scan-filled", aurora_i18n::tr!("ui-context-inspect-2"));
     ui.todo("code", aurora_i18n::tr!("ui-context-script-information"));
-    ui.todo("eye-slash", aurora_i18n::tr!("ui-context-derender-temporarily"));
+    ui.todo("eye-off", aurora_i18n::tr!("ui-context-derender-temporarily"));
     ui.todo("eye-closed", aurora_i18n::tr!("ui-context-derender-blacklist"));
-    ui.todo("image", aurora_i18n::tr!("ui-context-show-textures"));
-    ui.todo("arrows-clockwise", aurora_i18n::tr!("ui-context-refresh-textures"));
+    ui.todo("photo-filled", aurora_i18n::tr!("ui-context-show-textures"));
+    ui.todo("refresh", aurora_i18n::tr!("ui-context-refresh-textures"));
     ui.separator();
-    ui.todo("sparkle", aurora_i18n::tr!("common-block-particles"));
+    ui.todo("sparkles-filled", aurora_i18n::tr!("common-block-particles"));
 }
 
 /// menu_attachment_other.xml: the avatar's entries, then those of the
@@ -378,48 +378,48 @@ fn avatar_menu(ui: &mut Builder, f: &Facts, id: Uuid, point: Vec3) {
 /// rights, Remove From Display Exceptions without an exception) are left
 /// out the same way.
 fn attachment_other_menu(ui: &mut Builder, f: &Facts, id: Uuid, point: Vec3) {
-    ui.item("user-circle", aurora_i18n::tr!("common-view-profile"), CtxAction::Profile(id));
+    ui.item("user-filled", aurora_i18n::tr!("common-view-profile"), CtxAction::Profile(id));
     ui.item_if(
         "user-plus",
         aurora_i18n::tr!("common-become-friends"),
         !f.friend,
         CtxAction::AddFriend(id),
     );
-    ui.todo("users-three", aurora_i18n::tr!("ui-context-add-to-contact-set"));
-    ui.item("chat-text", aurora_i18n::tr!("ui-context-send-im"), CtxAction::Im(id));
-    ui.todo("identification-card", aurora_i18n::tr!("ui-context-give-my-calling-card"));
-    ui.todo("phone", aurora_i18n::tr!("common-voice-call"));
-    ui.todo("user-circle-plus", aurora_i18n::tr!("ui-context-invite-to-group"));
-    ui.todo("eye", aurora_i18n::tr!("common-look-toward-avatar"));
+    ui.todo("users-group", aurora_i18n::tr!("ui-context-add-to-contact-set"));
+    ui.item("message-filled", aurora_i18n::tr!("ui-context-send-im"), CtxAction::Im(id));
+    ui.todo("id-filled", aurora_i18n::tr!("ui-context-give-my-calling-card"));
+    ui.todo("phone-filled", aurora_i18n::tr!("common-voice-call"));
+    ui.todo("users-plus", aurora_i18n::tr!("ui-context-invite-to-group"));
+    ui.todo("eye-filled", aurora_i18n::tr!("common-look-toward-avatar"));
     ui.separator();
-    ui.todo("bone", aurora_i18n::tr!("ui-context-reset-skeleton"));
-    ui.todo("person-simple-run", aurora_i18n::tr!("ui-context-reset-skeleton-and-animations"));
-    ui.todo("arrow-counter-clockwise", aurora_i18n::tr!("ui-context-reset-mesh-lod-2"));
+    ui.todo("bone-filled", aurora_i18n::tr!("ui-context-reset-skeleton"));
+    ui.todo("run", aurora_i18n::tr!("ui-context-reset-skeleton-and-animations"));
+    ui.todo("restore", aurora_i18n::tr!("ui-context-reset-mesh-lod-2"));
     ui.separator();
-    ui.submenu("warning", aurora_i18n::tr!("ui-context-disturbance"), true, |ui| {
+    ui.submenu("alert-triangle-filled", aurora_i18n::tr!("ui-context-disturbance"), true, |ui| {
         let (icon, label) = if f.blocked {
-            ("check-circle", aurora_i18n::tr!("common-stop-ignoring"))
+            ("circle-check-filled", aurora_i18n::tr!("common-stop-ignoring"))
         } else {
-            ("prohibit", aurora_i18n::tr!("common-ignore"))
+            ("forbid-filled", aurora_i18n::tr!("common-ignore"))
         };
         ui.item(icon, label, CtxAction::ToggleBlock(id));
-        ui.todo("flag", aurora_i18n::tr!("common-report"));
+        ui.todo("flag-filled", aurora_i18n::tr!("common-report"));
     });
-    ui.item("magnifying-glass-plus", aurora_i18n::tr!("common-zoom-2"), CtxAction::Zoom(point));
-    ui.todo("currency-circle-dollar", aurora_i18n::tr!("common-pay"));
+    ui.item("zoom-in-filled", aurora_i18n::tr!("common-zoom-2"), CtxAction::Zoom(point));
+    ui.todo("coin-filled", aurora_i18n::tr!("common-pay"));
     ui.separator();
-    ui.todo("info", aurora_i18n::tr!("ui-context-object-profile"));
+    ui.todo("info-circle-filled", aurora_i18n::tr!("ui-context-object-profile"));
     ui.separator();
     // Avatar.SetImpostorMode 2 / 1, and 0 once there is an exception
     ui.check(
-        "user-focus",
+        "user-scan",
         aurora_i18n::tr!("ui-context-always-show-full-detail"),
         f.render == 2,
         true,
         CtxAction::SetRender(id, 2),
     );
     ui.check(
-        "ghost",
+        "ghost-filled",
         aurora_i18n::tr!("ui-context-never-fully-render"),
         f.render == 1,
         true,
@@ -427,26 +427,26 @@ fn attachment_other_menu(ui: &mut Builder, f: &Facts, id: Uuid, point: Vec3) {
     );
     if f.render != 0 {
         ui.item(
-            "sliders",
+            "adjustments-filled",
             aurora_i18n::tr!("ui-context-remove-from-display-exceptions"),
             CtxAction::SetRender(id, 0),
         );
     }
-    ui.todo("magnifying-glass", aurora_i18n::tr!("ui-context-inspect-2"));
+    ui.todo("zoom-scan-filled", aurora_i18n::tr!("ui-context-inspect-2"));
     ui.todo("code", aurora_i18n::tr!("ui-context-script-info"));
-    ui.todo("eye-slash", aurora_i18n::tr!("ui-context-derender-temporarily"));
+    ui.todo("eye-off", aurora_i18n::tr!("ui-context-derender-temporarily"));
     ui.todo("eye-closed", aurora_i18n::tr!("ui-context-derender-blacklist"));
-    ui.todo("image", aurora_i18n::tr!("ui-context-show-textures"));
-    ui.todo("arrows-clockwise", aurora_i18n::tr!("ui-context-refresh-textures"));
+    ui.todo("photo-filled", aurora_i18n::tr!("ui-context-show-textures"));
+    ui.todo("refresh", aurora_i18n::tr!("ui-context-refresh-textures"));
     save_as_submenu(ui);
 }
 
 /// « Enregistrer sous » (Export Menu): the export has its own task and
 /// rules of rights; its two entries wait for it.
 fn save_as_submenu(ui: &mut Builder) {
-    ui.submenu("floppy-disk", aurora_i18n::tr!("common-save-as"), true, |ui| {
-        ui.todo("floppy-disk", aurora_i18n::tr!("ui-context-save-backup"));
-        ui.todo("cube", aurora_i18n::tr!("ui-context-save-collada"));
+    ui.submenu("device-floppy-filled", aurora_i18n::tr!("common-save-as"), true, |ui| {
+        ui.todo("device-floppy-filled", aurora_i18n::tr!("ui-context-save-backup"));
+        ui.todo("box", aurora_i18n::tr!("ui-context-save-collada"));
     });
 }
 
@@ -458,7 +458,11 @@ fn self_menu(ui: &mut Builder, f: &Facts, id: Uuid) {
     community_submenu(ui, id);
     // not in Firestorm's menu: kept from Aurora's (fly is in menu_attachment_self.xml)
     ui.item(
-        if f.flying { "airplane-landing" } else { "airplane-takeoff" },
+        if f.flying {
+            "plane-arrival-filled"
+        } else {
+            "plane-departure-filled"
+        },
         if f.flying {
             aurora_i18n::tr!("ui-context-land")
         } else {
@@ -466,83 +470,83 @@ fn self_menu(ui: &mut Builder, f: &Facts, id: Uuid) {
         },
         CtxAction::ToggleFly,
     );
-    ui.item("camera", aurora_i18n::tr!("ui-context-reset-camera"), CtxAction::ResetCamera);
+    ui.item("camera-filled", aurora_i18n::tr!("ui-context-reset-camera"), CtxAction::ResetCamera);
     ui.todo("code", aurora_i18n::tr!("ui-context-script-information"));
-    ui.todo("image", aurora_i18n::tr!("ui-context-show-textures"));
-    ui.todo("arrows-clockwise", aurora_i18n::tr!("ui-context-refresh-textures"));
+    ui.todo("photo-filled", aurora_i18n::tr!("ui-context-show-textures"));
+    ui.todo("refresh", aurora_i18n::tr!("ui-context-refresh-textures"));
 }
 
 /// « S'asseoir » (on the ground, Self.SitDown) and « Se lever ».
 fn sit_stand(ui: &mut Builder, f: &Facts) {
     ui.item_if("armchair", aurora_i18n::tr!("status-sit"), !f.seated, CtxAction::SitGround);
-    ui.item_if("person", aurora_i18n::tr!("common-stand-up"), f.seated, CtxAction::StandUp);
+    ui.item_if("man-filled", aurora_i18n::tr!("common-stand-up"), f.seated, CtxAction::StandUp);
 }
 
 fn take_off_submenu(ui: &mut Builder) {
-    ui.submenu("t-shirt", aurora_i18n::tr!("common-remove"), true, |ui| {
-        ui.todo("t-shirt", aurora_i18n::tr!("common-clothing"));
-        ui.todo("monitor", "HUD");
+    ui.submenu("shirt-filled", aurora_i18n::tr!("common-remove"), true, |ui| {
+        ui.todo("shirt-filled", aurora_i18n::tr!("common-clothing"));
+        ui.todo("device-desktop-filled", "HUD");
         ui.todo("paperclip", aurora_i18n::tr!("common-detach"));
-        ui.todo("x-circle", aurora_i18n::tr!("ui-context-detach-all"));
+        ui.todo("circle-x-filled", aurora_i18n::tr!("ui-context-detach-all"));
     });
 }
 
 fn appearance_submenu(ui: &mut Builder) {
-    ui.submenu("person", aurora_i18n::tr!("common-appearance"), true, |ui| {
+    ui.submenu("man-filled", aurora_i18n::tr!("common-appearance"), true, |ui| {
         ui.item(
-            "t-shirt",
+            "shirt-filled",
             aurora_i18n::tr!("common-current-outfit"),
             CtxAction::OpenAppearance { tab: 2, editing: false },
         );
         ui.item(
-            "backpack",
+            "hanger-2-filled",
             aurora_i18n::tr!("ui-context-change-outfit"),
             CtxAction::OpenAppearance { tab: 0, editing: false },
         );
-        ui.todo("person", aurora_i18n::tr!("ui-context-edit-shape"));
+        ui.todo("man-filled", aurora_i18n::tr!("ui-context-edit-shape"));
         ui.item(
-            "pencil-simple",
+            "pencil-filled",
             aurora_i18n::tr!("ui-context-edit-outfit"),
             CtxAction::OpenAppearance { tab: 2, editing: true },
         );
-        ui.todo("arrows-out-cardinal", aurora_i18n::tr!("ui-context-flutter"));
+        ui.todo("arrows-vertical", aurora_i18n::tr!("ui-context-flutter"));
         ui.separator();
-        ui.todo("bone", aurora_i18n::tr!("ui-context-reset-skeleton"));
-        ui.todo("person-simple-run", aurora_i18n::tr!("ui-context-reset-skeleton-and-animations"));
-        ui.todo("arrow-counter-clockwise", aurora_i18n::tr!("ui-context-reset-mesh-lod"));
+        ui.todo("bone-filled", aurora_i18n::tr!("ui-context-reset-skeleton"));
+        ui.todo("run", aurora_i18n::tr!("ui-context-reset-skeleton-and-animations"));
+        ui.todo("restore", aurora_i18n::tr!("ui-context-reset-mesh-lod"));
     });
 }
 
 fn community_submenu(ui: &mut Builder, me: Uuid) {
-    ui.submenu("users-three", aurora_i18n::tr!("ui-context-community"), true, |ui| {
+    ui.submenu("users-group", aurora_i18n::tr!("ui-context-community"), true, |ui| {
         ui.item("users", aurora_i18n::tr!("common-friends"), CtxAction::OpenPeople(1));
-        ui.item("users-three", aurora_i18n::tr!("common-groups"), CtxAction::OpenPeople(2));
-        ui.item("user-circle", aurora_i18n::tr!("common-profile"), CtxAction::Profile(me));
-        ui.item(
-            "identification-card",
-            aurora_i18n::tr!("ui-context-display-name"),
-            CtxAction::DisplayName,
-        );
+        ui.item("users-group", aurora_i18n::tr!("common-groups"), CtxAction::OpenPeople(2));
+        ui.item("user-filled", aurora_i18n::tr!("common-profile"), CtxAction::Profile(me));
+        ui.item("id-filled", aurora_i18n::tr!("ui-context-display-name"), CtxAction::DisplayName);
     });
 }
 
 /// menu_land.xml
 fn land_menu(ui: &mut Builder, f: &Facts, point: Vec3) {
-    ui.item("info", aurora_i18n::tr!("common-about-land"), CtxAction::AboutLand(point));
+    ui.item(
+        "info-circle-filled",
+        aurora_i18n::tr!("common-about-land"),
+        CtxAction::AboutLand(point),
+    );
     // Land.Sit walks there first (autopilot): not in Aurora yet
     ui.todo("armchair", aurora_i18n::tr!("ui-context-sit-here"));
     if f.seated {
-        ui.item("person", aurora_i18n::tr!("common-stand-up"), CtxAction::StandUp);
+        ui.item("man-filled", aurora_i18n::tr!("common-stand-up"), CtxAction::StandUp);
     }
-    ui.item("magnifying-glass-plus", aurora_i18n::tr!("common-zoom-2"), CtxAction::Zoom(point));
+    ui.item("zoom-in-filled", aurora_i18n::tr!("common-zoom-2"), CtxAction::Zoom(point));
     ui.separator();
-    ui.todo("shopping-cart", aurora_i18n::tr!("ui-context-buy-this-land"));
-    ui.todo("ticket", aurora_i18n::tr!("ui-context-buy-access"));
+    ui.todo("shopping-cart-filled", aurora_i18n::tr!("ui-context-buy-this-land"));
+    ui.todo("ticket-filled", aurora_i18n::tr!("ui-context-buy-access"));
     ui.separator();
-    ui.item("cube", aurora_i18n::tr!("common-build"), CtxAction::Build);
-    ui.item("mountains", aurora_i18n::tr!("ui-context-edit-land"), CtxAction::EditTerrain);
+    ui.item("box", aurora_i18n::tr!("common-build"), CtxAction::Build);
+    ui.item("mountain-filled", aurora_i18n::tr!("ui-context-edit-land"), CtxAction::EditTerrain);
     ui.separator();
-    ui.todo("sparkle", aurora_i18n::tr!("ui-context-ignore-particle-owner"));
+    ui.todo("sparkles-filled", aurora_i18n::tr!("ui-context-ignore-particle-owner"));
 }
 
 #[cfg(test)]

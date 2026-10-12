@@ -68,14 +68,14 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
             if super::common::icon_button(
                 ui,
                 p,
-                "clipboard-text",
+                "clipboard-text-filled",
                 aurora_i18n::tr!("build-ui-features-paste-attributes"),
                 enabled && tool.ui.features_clipboard.is_some(),
             ) && let Some(c) = tool.ui.features_clipboard
             {
                 paste_features(tool, world, idx, c);
             }
-            if super::common::icon_button(ui, p, "copy", aurora_i18n::tr!("build-ui-features-copy-attributes"), enabled) {
+            if super::common::icon_button(ui, p, "copy-filled", aurora_i18n::tr!("build-ui-features-copy-attributes"), enabled) {
                 tool.ui.features_clipboard = Some(FeaturesClip {
                     flexible: extra.flexible,
                     light: extra.light,
@@ -170,7 +170,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                 if let Some(t) = combo(ui, "physics_shape", phys.map(|x| x.shape_type), &physics_shapes(), 110.0, editable) {
                     tool.set_physics(world, |x| x.shape_type = t);
                 }
-                let eye = if s.show_physics_shape { "eye" } else { "eye-slash" };
+                let eye = if s.show_physics_shape { "eye-filled" } else { "eye-off" };
                 if super::common::icon_button(
                     ui,
                     p,

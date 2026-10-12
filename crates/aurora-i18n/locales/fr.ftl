@@ -166,7 +166,7 @@ exit-login-body = Voulez-vous quitter Aurora Viewer ?
 exit-waiting = Déconnexion en cours…
 exit-logout = Déconnecter
 exit-logout-hint = Terminer la session et revenir à l’écran de connexion.
-exit-quit = QUITTER
+exit-quit = Quitter
 bug-browser-mode = Dans mon navigateur
 bug-direct-mode = Envoyer depuis Aurora
 bug-open-github = Continuer sur GitHub
@@ -691,6 +691,7 @@ color-picker-copied = Valeur LSL copiée.
 color-picker-apply = Appliquer
 color-picker-apply-hint = Afficher la couleur sur l’objet pendant le choix.
 color-picker-ok = OK
+common-ok = OK
 color-picker-open = Ouvrir la palette de couleur
 ui-people-partial-block-right-click-for-details = Blocage partiel (clic droit pour le détail)
 common-block = Bloquer
@@ -3921,3 +3922,9 @@ script-fold-expand = Déplier le bloc
 script-fold-lines = lignes
 script-fold-all = Tout replier
 script-expand-all = Tout déplier
+loading-residents = { $count ->
+    [one] { $count } résident présent
+   *[other] { $count } résidents présents
+    }
+ui-bars-click-to-talk = Clic pour activer
+ui-bars-microphone-options = Options du micro

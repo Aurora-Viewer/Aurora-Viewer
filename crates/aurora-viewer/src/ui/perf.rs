@@ -304,9 +304,9 @@ pub fn set_full(ctx: &egui::Context, full: bool) {
 pub fn show(ctx: &egui::Context, p: &Palette, v: &PerfView, open: &mut bool) {
     let full = ctx.data_mut(|d| d.get_persisted::<bool>(full_id())).unwrap_or(false);
     let (icon, tip) = if full {
-        ("corners-in", aurora_i18n::tr!("ui-perf-compact-version"))
+        ("arrows-minimize", aurora_i18n::tr!("ui-perf-compact-version"))
     } else {
-        ("corners-out", aurora_i18n::tr!("ui-perf-show-details"))
+        ("arrows-maximize", aurora_i18n::tr!("ui-perf-show-details"))
     };
     let width = if full { FULL_W } else { COMPACT_W };
     let screen = ctx.content_rect();

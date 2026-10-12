@@ -1,12 +1,15 @@
-//! Login screen: animated aurora background, brand block and a glass login
+//! Login screen: animated aurora background, brand block and the login
 //! card in the middle, version and news panels on the right, community
-//! links at the bottom left.
+//! links at the bottom left. Cards and buttons use the surfaces of the
+//! in-world windows (`widgets::overlay_frame`, `widgets::action_button`);
+//! their blur needs a world behind, the aurora is soft enough without it.
 
 use super::icons::Icons;
 use super::news::{LoginInfo, VersionState};
+use super::widgets::{self, ActionKind};
 use crate::settings::{GridChoice, Settings};
 use crate::theme::Palette;
-use egui::{Color32, CornerRadius, Frame, Margin, RichText, Sense, Stroke, TextEdit, Vec2};
+use egui::{Color32, Frame, Margin, RichText, Sense, Stroke, TextEdit, Vec2};
 
 const REMEMBERED_PASSWORD_MASK: &str = "••••••••••••••••";
 
@@ -82,12 +85,12 @@ fn field(
     let stroke = if focused {
         Stroke::new(1.0, p.violet)
     } else {
-        Stroke::new(1.0, p.raised)
+        Stroke::new(1.0, p.muted_dim.gamma_multiply(0.65))
     };
     Frame::new()
         .fill(p.field)
         .stroke(stroke)
-        .corner_radius(CornerRadius::same(6))
+        .corner_radius(ui.visuals().widgets.inactive.corner_radius)
         .inner_margin(Margin::symmetric(10, 7))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
@@ -116,7 +119,7 @@ fn field(
                 if let Some(show) = password {
                     let (r, eye) = ui.allocate_exact_size(Vec2::splat(18.0), if remembered { Sense::hover() } else { Sense::click() });
                     let col = if !remembered && eye.hovered() { p.ink } else { p.muted };
-                    img(ui, icons, if *show && !remembered { "eye-slash" } else { "eye" }, r, col);
+                    img(ui, icons, if *show && !remembered { "eye-off" } else { "eye-filled" }, r, col);
                     let tip = if remembered {
                         aurora_i18n::tr!("ui-login-password-remembered-enter-a-new-one-to-replace-it")
                     } else if *show {
@@ -140,79 +143,109 @@ fn caption(ui: &mut egui::Ui, p: &Palette, text: &str) {
     ui.add_space(-2.0);
 }
 
-/// Round icon button (community links); `url` empty = not configured.
-fn link_button(ui: &mut egui::Ui, p: &Palette, icons: &Icons, icon: &str, name: &str, url: &str) {
-    let (r, resp) = ui.allocate_exact_size(Vec2::splat(38.0), Sense::click());
+/// Height of the buttons along the bottom of the screen.
+const BAR_BUTTON: f32 = 30.0;
+
+/// Community link with its icon and name; `url` empty = not configured.
+fn link_button(ui: &mut egui::Ui, p: &Palette, icon: &str, name: &str, url: &str) {
     let enabled = !url.is_empty();
-    let hot = enabled && resp.hovered();
-    ui.painter().circle_filled(
-        r.center(),
-        19.0,
-        if hot {
-            p.violet.gamma_multiply(0.85)
-        } else {
-            Color32::from_rgba_unmultiplied(p.panel.r(), p.panel.g(), p.panel.b(), 170)
-        },
-    );
-    ui.painter()
-        .circle_stroke(r.center(), 19.0, Stroke::new(1.0, if hot { p.violet_light } else { p.raised }));
-    let tint = if !enabled {
-        p.muted
-    } else if hot {
-        Color32::WHITE
-    } else {
-        p.ink
-    };
-    img(ui, icons, icon, egui::Rect::from_center_size(r.center(), Vec2::splat(18.0)), tint);
-    let tip = if enabled {
-        name.to_owned()
-    } else {
-        aurora_i18n::tr!("ui-login-pending-link", name = name.to_string())
-    };
-    if resp.on_hover_text(tip).clicked() && enabled {
+    let resp = ui
+        .add_enabled_ui(enabled, |ui| {
+            widgets::action_button(ui, p, icon, name, ActionKind::Flat, Vec2::new(0.0, BAR_BUTTON))
+        })
+        .inner;
+    let resp = resp
+        .on_hover_text(url)
+        .on_disabled_hover_text(aurora_i18n::tr!("ui-login-pending-link", name = name.to_string()));
+    if resp.clicked() && enabled {
         ui.ctx().open_url(egui::OpenUrl::new_tab(url));
     }
 }
 
-/// Glass panel used by the card and the side panels.
-fn glass(p: &Palette, radius: u8, margin: i8) -> Frame {
-    Frame::new()
-        .fill({
-            // night-blue glass: the panel color tinted with the sky
-            let m = |a: u8, b: u8| ((a as u16 + b as u16 * 2) / 3) as u8;
-            Color32::from_rgba_unmultiplied(
-                m(p.panel.r(), p.navy.r()),
-                m(p.panel.g(), p.navy.g()),
-                m(p.panel.b(), p.navy.b()),
-                205,
-            )
-        })
-        .stroke(Stroke::new(1.0, p.violet.gamma_multiply(0.28)))
-        .corner_radius(CornerRadius::same(radius))
-        .inner_margin(Margin::same(margin))
-        .shadow(egui::Shadow {
-            offset: [0, 10],
-            blur: 36,
-            spread: 0,
-            color: Color32::from_black_alpha(110),
-        })
+/// Share of the windows' opacity kept by the tint of a card: the pane lets
+/// the frosted sky through as much as an in-world window lets the scene.
+const CARD_TINT: f32 = 0.56;
+
+/// A strip whose color runs through `stops` (position 0..1, color) from left
+/// to right.
+fn strip(r: egui::Rect, stops: &[(f32, Color32)]) -> egui::Shape {
+    let mut mesh = egui::Mesh::default();
+    for (at, color) in stops {
+        let x = egui::lerp(r.left()..=r.right(), *at);
+        mesh.colored_vertex(egui::pos2(x, r.top()), *color);
+        mesh.colored_vertex(egui::pos2(x, r.bottom()), *color);
+    }
+    for i in 0..stops.len().saturating_sub(1) as u32 {
+        let n = i * 2;
+        mesh.add_triangle(n, n + 2, n + 1);
+        mesh.add_triangle(n + 1, n + 2, n + 3);
+    }
+    egui::Shape::mesh(mesh)
 }
 
-fn panel_title(ui: &mut egui::Ui, p: &Palette, icons: &Icons, icon: &str, title: &str) {
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 7.0;
-        let (r, _) = ui.allocate_exact_size(Vec2::splat(16.0), Sense::hover());
-        img(ui, icons, icon, r, p.violet_light);
-        ui.label(RichText::new(title.to_uppercase()).size(11.5).strong().color(p.violet_light));
-    });
-    ui.add_space(4.0);
+/// Card of the login screen: a pane of frosted glass. Under the tint of the
+/// in-world windows it shows the sky behind it out of focus
+/// (`aurora_bg::frosted`) and two lights of the aurora, which also spill
+/// around the card; its top edge catches the light, and the card the screen
+/// is for (`accent`) wears the brand line. An opaque skin (panel_alpha =
+/// 255) keeps its plain surface.
+fn card<R>(ui: &mut egui::Ui, p: &Palette, margin: i8, accent: bool, body: impl FnOnce(&mut egui::Ui) -> R) -> egui::InnerResponse<R> {
+    let behind = (ui.painter().clone(), ui.painter().add(egui::Shape::Noop));
+    let mut pane = None;
+    let response = widgets::overlay_frame(ui.ctx(), p)
+        .inner_margin(Margin::same(margin))
+        .show(ui, |ui| {
+            pane = Some((ui.painter().clone(), ui.painter().add(egui::Shape::Noop)));
+            body(ui)
+        });
+    if let Some((painter, slot)) = pane.filter(|_| p.panel_alpha < 255) {
+        let ctx = ui.ctx();
+        let outer = response.response.rect;
+        // inside the border of the frame
+        let rect = outer.shrink(1.0);
+        let strength = if accent { 1.0 } else { 0.6 };
+        let lights = vec![
+            super::aurora_bg::radial_glow_shape(
+                outer.left_top() + Vec2::new(outer.width() * 0.18, outer.height() * 0.12),
+                outer.width() * 0.95,
+                p.violet,
+                0.24 * strength,
+            ),
+            super::aurora_bg::radial_glow_shape(
+                outer.right_bottom() - Vec2::new(outer.width() * 0.12, outer.height() * 0.14),
+                outer.width() * 0.8,
+                p.teal,
+                0.13 * strength,
+            ),
+        ];
+        behind.0.set(behind.1, egui::Shape::Vec(lights.clone()));
+        let mut shapes = super::aurora_bg::frosted(p, ctx.content_rect(), ctx.input(|i| i.time) as f32);
+        shapes.extend(lights);
+        let alpha = (f32::from(p.panel_alpha) * CARD_TINT) as u8;
+        let tint = Color32::from_rgba_unmultiplied(p.panel.r(), p.panel.g(), p.panel.b(), alpha);
+        shapes.push(egui::Shape::rect_filled(rect, 0.0, tint));
+        let top = |height: f32| egui::Rect::from_min_size(rect.min, Vec2::new(rect.width(), height));
+        if accent {
+            shapes.push(strip(top(2.0), &[(0.0, p.violet), (1.0, p.teal)]));
+        } else {
+            let lit = p.ink.gamma_multiply(0.30);
+            shapes.push(strip(
+                top(1.0),
+                &[(0.0, Color32::TRANSPARENT), (0.3, lit), (1.0, Color32::TRANSPARENT)],
+            ));
+        }
+        painter
+            .with_clip_rect(rect.intersect(painter.clip_rect()))
+            .set(slot, egui::Shape::Vec(shapes));
+    }
+    response
 }
 
 fn version_panel(ui: &mut egui::Ui, p: &Palette, icons: &Icons, info: &LoginInfo) -> bool {
     let mut check_updates = false;
-    glass(p, 10, 16).show(ui, |ui| {
+    card(ui, p, 16, false, |ui| {
         ui.set_width(ui.available_width());
-        panel_title(ui, p, icons, "tag", aurora_i18n::tr!("ui-login-version"));
+        widgets::section_header(ui, p, "tag-filled", aurora_i18n::tr!("ui-login-version"));
         let current = aurora_version::version();
         ui.horizontal(|ui| {
             ui.label(RichText::new(aurora_i18n::tr!("ui-login-installed")).size(12.5).color(p.muted));
@@ -222,15 +255,19 @@ fn version_panel(ui: &mut egui::Ui, p: &Palette, icons: &Icons, info: &LoginInfo
         });
         ui.add_space(2.0);
         let (icon, text, col) = match &info.version {
-            VersionState::UpToDate => ("check-circle", aurora_i18n::tr!("ui-login-up-to-date").to_owned(), p.success),
+            VersionState::UpToDate => ("circle-check-filled", aurora_i18n::tr!("ui-login-up-to-date").to_owned(), p.success),
             VersionState::Available { version, .. } => (
-                "sparkle",
+                "sparkles-filled",
                 aurora_i18n::tr!("status-v-version-available", version = version.to_string()),
                 p.amber,
             ),
-            VersionState::Checking => ("arrows-clockwise", aurora_i18n::tr!("ui-login-checking").to_owned(), p.muted),
-            VersionState::Failed => ("arrows-clockwise", aurora_i18n::tr!("ui-login-unable-to-check").to_owned(), p.muted),
-            VersionState::NotConfigured => ("check-circle", aurora_i18n::tr!("ui-login-development-version").to_owned(), p.muted),
+            VersionState::Checking => ("refresh", aurora_i18n::tr!("ui-login-checking").to_owned(), p.muted),
+            VersionState::Failed => ("refresh", aurora_i18n::tr!("ui-login-unable-to-check").to_owned(), p.muted),
+            VersionState::NotConfigured => (
+                "circle-check-filled",
+                aurora_i18n::tr!("ui-login-development-version").to_owned(),
+                p.muted,
+            ),
         };
         ui.horizontal(|ui| {
             ui.label(RichText::new(aurora_i18n::tr!("ui-login-latest")).size(12.5).color(p.muted));
@@ -251,15 +288,9 @@ fn version_panel(ui: &mut egui::Ui, p: &Palette, icons: &Icons, info: &LoginInfo
             && !url.is_empty()
         {
             ui.add_space(8.0);
-            let b = egui::Button::new(
-                RichText::new(aurora_i18n::tr!("ui-login-download-update"))
-                    .size(13.0)
-                    .color(Color32::WHITE),
-            )
-            .fill(p.violet)
-            .corner_radius(CornerRadius::same(6))
-            .min_size(Vec2::new(ui.available_width(), 30.0));
-            if ui.add(b).clicked() && !url.is_empty() {
+            let size = Vec2::new(ui.available_width(), 30.0);
+            let label = aurora_i18n::tr!("ui-login-download-update");
+            if widgets::action_button(ui, p, "download-filled", label, ActionKind::Primary, size).clicked() {
                 ui.ctx().open_url(egui::OpenUrl::new_tab(url));
             }
         }
@@ -267,14 +298,18 @@ fn version_panel(ui: &mut egui::Ui, p: &Palette, icons: &Icons, info: &LoginInfo
     check_updates
 }
 
-fn news_panel(ui: &mut egui::Ui, p: &Palette, icons: &Icons, info: &LoginInfo, max_h: f32) {
-    glass(p, 10, 16).show(ui, |ui| {
+/// News card, `height` tall whatever the number of news (the list scrolls).
+fn news_panel(ui: &mut egui::Ui, p: &Palette, icons: &Icons, info: &LoginInfo, height: f32) {
+    const MARGIN: i8 = 16;
+    card(ui, p, MARGIN, false, |ui| {
         ui.set_width(ui.available_width());
-        panel_title(ui, p, icons, "newspaper", aurora_i18n::tr!("ui-login-news"));
+        ui.set_height(height - 2.0 * f32::from(MARGIN));
+        widgets::section_header(ui, p, "article-filled", aurora_i18n::tr!("ui-login-news"));
+        let rest = ui.available_height();
         egui::ScrollArea::vertical()
-            .max_height(max_h)
-            .min_scrolled_height(max_h)
-            .auto_shrink([false, true])
+            .max_height(rest)
+            .min_scrolled_height(rest)
+            .auto_shrink([false, false])
             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 4.0;
                 for (i, n) in info.news.iter().enumerate() {
@@ -295,7 +330,7 @@ fn news_panel(ui: &mut egui::Ui, p: &Palette, icons: &Icons, info: &LoginInfo, m
                                 ui.add(egui::Label::new(RichText::new(&n.title).size(14.0).strong().color(p.ink)).wrap());
                                 if has_url {
                                     let (r, _) = ui.allocate_exact_size(Vec2::splat(13.0), Sense::hover());
-                                    img(ui, icons, "arrow-square-out", r, p.muted);
+                                    img(ui, icons, "external-link-filled", r, p.muted);
                                 }
                             });
                             if !n.summary.is_empty() {
@@ -336,6 +371,7 @@ pub fn show(
     let card_w = 380.0f32.min(screen.width() - 32.0);
 
     // ---- brand + login card (center)
+    let mut login_card = egui::Rect::NOTHING;
     egui::Area::new(egui::Id::new("login_area"))
         .anchor(egui::Align2::CENTER_CENTER, Vec2::new(0.0, -10.0))
         .show(&ctx, |ui| {
@@ -356,7 +392,7 @@ pub fn show(
                 );
                 ui.add_space(18.0);
             });
-            glass(p, 12, 24).show(ui, |ui| {
+            login_card = card(ui, p, 24, true, |ui| {
                 ui.set_width(card_w - 48.0);
                 ui.spacing_mut().item_spacing.y = 6.0;
                 let enabled = !form.busy;
@@ -369,7 +405,7 @@ pub fn show(
                         p,
                         icons,
                         "login_user",
-                        "user",
+                        "user-filled",
                         aurora_i18n::tr!("extra-first-last-or-username"),
                         &mut settings.username,
                         None,
@@ -386,7 +422,7 @@ pub fn show(
                         p,
                         icons,
                         "login_pass",
-                        "lock-key",
+                        "lock-filled",
                         hint,
                         &mut form.password,
                         Some(&mut form.show_password),
@@ -399,7 +435,16 @@ pub fn show(
                                 .size(11.5)
                                 .color(p.amber),
                         );
-                        mfa = Some(field(ui, p, icons, "login_mfa", "lock-key", "000000", &mut form.mfa_token, None));
+                        mfa = Some(field(
+                            ui,
+                            p,
+                            icons,
+                            "login_mfa",
+                            "shield-lock-filled",
+                            "000000",
+                            &mut form.mfa_token,
+                            None,
+                        ));
                     }
 
                     ui.add_space(6.0);
@@ -446,7 +491,7 @@ pub fn show(
                             p,
                             icons,
                             "login_grid",
-                            "globe-simple",
+                            "world-filled",
                             "http://grille.exemple:8002/",
                             &mut settings.custom_login_uri,
                             None,
@@ -458,7 +503,7 @@ pub fn show(
                             p,
                             icons,
                             "login_region",
-                            "map-pin",
+                            "map-pin-filled",
                             aurora_i18n::tr!("ui-login-region-name"),
                             &mut settings.start_region,
                             None,
@@ -483,7 +528,7 @@ pub fn show(
                         && !settings.username.trim().is_empty()
                         && (!form.password.is_empty() || form.stored.is_some());
                     let (r, resp) = ui.allocate_exact_size(
-                        Vec2::new(ui.available_width(), 42.0),
+                        Vec2::new(ui.available_width(), 38.0),
                         if can { Sense::click() } else { Sense::hover() },
                     );
                     // Requested UX: focus the first missing field, or Connect
@@ -506,19 +551,11 @@ pub fn show(
                     } else {
                         p.violet
                     };
-                    ui.painter().rect_filled(r, CornerRadius::same(8), fill);
-                    if hot {
-                        ui.painter().rect_stroke(
-                            r.expand(2.0),
-                            CornerRadius::same(10),
-                            Stroke::new(2.0, p.violet.gamma_multiply(0.35)),
-                            egui::StrokeKind::Outside,
-                        );
-                    }
+                    ui.painter().rect_filled(r, ui.visuals().widgets.inactive.corner_radius, fill);
                     let txt_col = if can { Color32::WHITE } else { Color32::WHITE.gamma_multiply(0.5) };
                     let galley = ui.painter().layout_no_wrap(
                         aurora_i18n::tr!("ui-login-log-in").to_owned(),
-                        egui::FontId::proportional(16.0),
+                        egui::FontId::proportional(15.0),
                         txt_col,
                     );
                     let total = galley.size().x + 26.0;
@@ -526,7 +563,7 @@ pub fn show(
                     img(
                         ui,
                         icons,
-                        if form.block_reason.is_some() { "lock-simple" } else { "sign-in" },
+                        if form.block_reason.is_some() { "lock-filled" } else { "login-2" },
                         egui::Rect::from_center_size(egui::pos2(x0 + 9.0, r.center().y), Vec2::splat(18.0)),
                         txt_col,
                     );
@@ -570,28 +607,38 @@ pub fn show(
                 }
                 if let Some((msg, frac)) = progress {
                     ui.add_space(10.0);
-                    super::loading::progress_bar(ui, p, ui.available_width(), Some(frac), ctx.input(|i| i.time) as f32);
+                    widgets::progress(ui, p, "login_progress", frac, ui.available_width(), "", None);
                     ui.label(RichText::new(msg).size(12.0).color(p.violet_pale));
                 }
                 if let Some(err) = &form.error {
                     ui.add_space(8.0);
                     ui.label(RichText::new(err).size(12.5).color(p.danger));
                 }
-            });
+            })
+            .response
+            .rect;
         });
 
     // ---- version + news (right)
     if wide {
+        // the news stand beside the login card, on its line and of its
+        // height; the version sits on top of them
         let col_w = 330.0;
-        egui::Area::new(egui::Id::new("login_side"))
-            .anchor(egui::Align2::RIGHT_CENTER, Vec2::new(-48.0, -10.0))
+        let left = screen.right() - 48.0 - col_w;
+        egui::Area::new(egui::Id::new("login_news"))
+            .fixed_pos(egui::pos2(left, login_card.top()))
+            .show(&ctx, |ui| {
+                ui.set_width(col_w);
+                news_panel(ui, p, icons, info, login_card.height());
+            });
+        egui::Area::new(egui::Id::new("login_version"))
+            .pivot(egui::Align2::LEFT_BOTTOM)
+            .fixed_pos(egui::pos2(left, login_card.top() - 14.0))
             .show(&ctx, |ui| {
                 ui.set_width(col_w);
                 if version_panel(ui, p, icons, info) {
                     action = LoginAction::CheckUpdates;
                 }
-                ui.add_space(14.0);
-                news_panel(ui, p, icons, info, (screen.height() * 0.42).clamp(160.0, 420.0));
             });
     } else if info.can_check_updates {
         egui::Area::new(egui::Id::new("login_check_updates"))
@@ -617,67 +664,32 @@ pub fn show(
             );
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 10.0;
-                link_button(ui, p, icons, "github-logo", "GitHub", crate::links::GITHUB);
-                link_button(ui, p, icons, "discord-logo", "Discord", crate::links::DISCORD);
-                if super::widgets::flat_button(ui, p, aurora_i18n::tr!("bug-title")).clicked() {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                link_button(ui, p, "brand-discord-filled", "Discord", crate::links::DISCORD);
+                link_button(ui, p, "brand-github-filled", "GitHub", crate::links::GITHUB);
+                link_button(ui, p, "world-filled", aurora_i18n::tr!("ui-login-website"), crate::links::WEBSITE);
+                let label = aurora_i18n::tr!("bug-title");
+                if widgets::action_button(ui, p, "bug-filled", label, ActionKind::Caution, Vec2::new(0.0, BAR_BUTTON)).clicked() {
                     action = LoginAction::ReportBug;
                 }
-                link_button(
-                    ui,
-                    p,
-                    icons,
-                    "globe-simple",
-                    aurora_i18n::tr!("ui-login-website"),
-                    crate::links::WEBSITE,
-                );
             });
         });
 
     // ---- version + quit (bottom right)
     egui::Area::new(egui::Id::new("login_quit"))
-        .anchor(egui::Align2::RIGHT_BOTTOM, Vec2::new(-32.0, -30.0))
+        .anchor(egui::Align2::RIGHT_BOTTOM, Vec2::new(-32.0, -28.0))
         .show(&ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 14.0;
-                ui.label(
-                    RichText::new(aurora_i18n::tr!(
-                        "ui-login-aurora-viewer-v",
-                        value0 = aurora_version::version().to_string()
-                    ))
-                    .size(11.5)
-                    .color(p.muted_dim),
-                );
-                let (r, resp) = ui.allocate_exact_size(Vec2::new(92.0, 30.0), Sense::click());
-                let hot = resp.hovered();
-                ui.painter().rect_filled(
-                    r,
-                    CornerRadius::same(6),
-                    if hot {
-                        p.danger.gamma_multiply(0.8)
-                    } else {
-                        Color32::from_rgba_unmultiplied(p.panel.r(), p.panel.g(), p.panel.b(), 170)
-                    },
-                );
-                ui.painter().rect_stroke(
-                    r,
-                    CornerRadius::same(6),
-                    Stroke::new(1.0, if hot { p.danger } else { p.raised }),
-                    egui::StrokeKind::Inside,
-                );
-                let col = if hot { Color32::WHITE } else { p.muted };
-                img(
-                    ui,
-                    icons,
-                    "power",
-                    egui::Rect::from_center_size(egui::pos2(r.left() + 20.0, r.center().y), Vec2::splat(15.0)),
-                    col,
-                );
-                let galley = ui
-                    .painter()
-                    .layout_no_wrap(aurora_i18n::tr!("common-quit").to_owned(), egui::FontId::proportional(13.0), col);
-                super::widgets::paint_ink_centered(ui.painter(), galley, egui::pos2(r.left() + 56.0, r.center().y), col);
-                if resp.clicked() {
+                // the version stands on the line of the buttons' labels
+                let version = aurora_i18n::tr!("ui-login-aurora-viewer-v", value0 = aurora_version::version().to_string());
+                let version = ui.painter().layout_no_wrap(version, egui::FontId::proportional(11.5), p.muted_dim);
+                let (line, _) = ui.allocate_exact_size(Vec2::new(version.size().x, BAR_BUTTON), Sense::hover());
+                // on the line box, like the labels of the buttons beside it
+                let at = egui::pos2(line.left(), line.center().y - version.size().y / 2.0).round();
+                ui.painter().galley(at, version, p.muted_dim);
+                let label = aurora_i18n::tr!("common-quit");
+                if widgets::action_button(ui, p, "power", label, ActionKind::FlatDanger, Vec2::new(0.0, BAR_BUTTON)).clicked() {
                     action = LoginAction::Quit;
                 }
             });
@@ -848,7 +860,7 @@ mod tests {
                         &p,
                         &icons,
                         "test_pass",
-                        "lock-key",
+                        "lock-filled",
                         hint,
                         &mut password,
                         Some(&mut show_password),

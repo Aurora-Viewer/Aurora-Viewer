@@ -386,7 +386,7 @@ struct TabCtx<'a> {
 fn unsaved_bar(ui: &mut egui::Ui, p: &Palette, w: &mut Window, actions: &mut Vec<ProfileAction>) {
     egui::Frame::new()
         .fill(p.warn.gamma_multiply(0.18))
-        .corner_radius(egui::CornerRadius::same(3))
+        .corner_radius(ui.visuals().window_corner_radius)
         .inner_margin(egui::Margin::same(6))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -456,7 +456,7 @@ fn inset<R>(ui: &mut egui::Ui, p: &Palette, width: f32, height: f32, body: impl 
     egui::Frame::new()
         .fill(p.field.gamma_multiply(0.82))
         .stroke(egui::Stroke::new(1.0, p.raised))
-        .corner_radius(egui::CornerRadius::same(3))
+        .corner_radius(ui.visuals().window_corner_radius)
         .inner_margin(egui::Margin::symmetric(4, 2))
         .show(ui, |ui| {
             ui.set_width((width - 10.0).max(10.0));
@@ -538,7 +538,7 @@ fn save_buttons(ui: &mut egui::Ui, p: &Palette, edit: &mut Edit) -> bool {
     save
 }
 
-/// A Phosphor icon `size` px wide that can be clicked.
+/// A Tabler icon `size` px wide that can be clicked.
 fn icon(ui: &mut egui::Ui, p: &Palette, name: &str, size: f32, tint: Color32) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(size), egui::Sense::click());
     if resp.hovered() {
@@ -557,7 +557,7 @@ fn icon(ui: &mut egui::Ui, p: &Palette, name: &str, size: f32, tint: Color32) ->
 
 /// The eye toggle of the editable texts (btn_preview).
 fn preview_toggle(ui: &mut egui::Ui, p: &Palette, on: &mut bool) {
-    let icon = if *on { "eye" } else { "eye-slash" };
+    let icon = if *on { "eye-filled" } else { "eye-off" };
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(20.0), egui::Sense::click());
     if resp.hovered() {
         ui.painter().rect_filled(rect, 2.0, p.raised);
@@ -648,7 +648,7 @@ fn second_life_tab(
             });
         });
         if own
-            && icon(ui, p, "sliders", 20.0, p.muted)
+            && icon(ui, p, "pencil-filled", 20.0, p.muted)
                 .on_hover_text(aurora_i18n::tr!("common-set-display-name"))
                 .clicked()
         {
@@ -660,21 +660,21 @@ fn second_life_tab(
             clicked |= rights_icon(
                 ui,
                 p,
-                "eye",
+                "eye-filled",
                 f.rights_given & 1 != 0,
                 aurora_i18n::tr!("ui-profile-see-when-i-am-online"),
             );
             clicked |= rights_icon(
                 ui,
                 p,
-                "map-pin",
+                "map-pin-filled",
                 f.rights_given & 2 != 0,
                 aurora_i18n::tr!("ui-profile-find-me-on-map"),
             );
             clicked |= rights_icon(
                 ui,
                 p,
-                "cube",
+                "box",
                 f.rights_given & 4 != 0,
                 aurora_i18n::tr!("ui-profile-modify-delete-or-take-my-objects"),
             );
@@ -710,7 +710,7 @@ fn second_life_tab(
         ui.allocate_ui_with_layout(Vec2::new(52.0, 162.0), egui::Layout::top_down(egui::Align::Max), |ui| {
             if own && let Some(pr) = profile {
                 // menu_fs_profile_image_actions.xml
-                widgets::icon_menu(ui, p, "gear-six", aurora_i18n::tr!("ui-profile-profile-picture"), |ui| {
+                widgets::icon_menu(ui, p, "settings-filled", aurora_i18n::tr!("ui-profile-profile-picture"), |ui| {
                     ui.add_enabled(false, egui::Button::new(aurora_i18n::tr!("ui-profile-upload-picture")))
                         .on_disabled_hover_text(aurora_i18n::tr!("ui-profile-coming-soon"));
                     if ui.button(aurora_i18n::tr!("ui-profile-change-picture")).clicked() {
@@ -738,7 +738,7 @@ fn second_life_tab(
             p,
             pics.get(&id),
             Vec2::splat(162.0),
-            "user-circle",
+            "user-filled",
             aurora_i18n::tr!("ui-profile-profile-picture"),
         );
         if own
@@ -766,7 +766,7 @@ fn second_life_tab(
                 Some(pr) => {
                     ui.horizontal_top(|ui| {
                         if let Some(b) = profiles::badge(pr) {
-                            icon(ui, p, "star", 18.0, p.amber).on_hover_text(b);
+                            icon(ui, p, "star-filled", 18.0, p.amber).on_hover_text(b);
                         }
                         ui.label(RichText::new(profiles::account_text(pr)).size(12.0).color(p.ink));
                     });
@@ -1020,7 +1020,7 @@ fn action_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, w: &Window, is_
 
 /// menu_fs_profile_overflow.xml.
 fn overflow_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid, blocked: bool, actions: &mut Vec<ProfileAction>) {
-    widgets::icon_menu(ui, p, "list", aurora_i18n::tr!("ui-profile-more"), |ui| {
+    widgets::icon_menu(ui, p, "menu-2-filled", aurora_i18n::tr!("ui-profile-more"), |ui| {
         for label in [
             aurora_i18n::tr!("common-map"),
             aurora_i18n::tr!("common-pay"),
@@ -1065,7 +1065,7 @@ fn copy_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid) {
     let names = &world.social.avatar_names;
     let display = names.get(&id).map(|n| n.display(&names.options));
     let legacy = world.legacy_name(&id);
-    widgets::icon_menu(ui, p, "link", aurora_i18n::tr!("common-copy-2"), |ui| {
+    widgets::icon_menu(ui, p, "link-filled", aurora_i18n::tr!("common-copy-2"), |ui| {
         if ui
             .add_enabled(
                 display.is_some(),
@@ -1129,7 +1129,7 @@ fn rights_dialog(ctx: &egui::Context, p: &Palette, w: &mut Window, name: &str, r
             if flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked() {
                 done = true;
             }
-            if flat_button(ui, p, "OK").clicked() {
+            if flat_button(ui, p, aurora_i18n::tr!("common-ok")).clicked() {
                 if r != rights {
                     actions.push(ProfileAction::Net(NetCommand::GrantUserRights { friend: w.id, rights: r }));
                 }
@@ -1421,7 +1421,7 @@ fn pick_detail(
         p,
         c.images.get(&snapshot),
         Vec2::new(width, width * 179.0 / 290.0),
-        "user-circle",
+        "user-filled",
         "",
     );
     ui.label(RichText::new(aurora_i18n::tr!("common-name-2")).size(12.0).strong().color(p.ink));
@@ -1639,7 +1639,7 @@ fn classified_detail(
         p,
         c.images.get(&info.snapshot),
         Vec2::new(width, width * 161.0 / 260.0),
-        "user-circle",
+        "user-filled",
         "",
     );
     ui.label(RichText::new(&info.name).size(14.0).strong().color(p.ink));
@@ -1722,7 +1722,7 @@ fn first_life_tab(
             p,
             c.images.get(&pr.fl_image),
             Vec2::splat(200.0),
-            "user-circle",
+            "user-filled",
             aurora_i18n::tr!("ui-profile-rl-picture"),
         );
         if c.own && r.on_hover_text(aurora_i18n::tr!("ui-profile-click-change-image")).clicked() {

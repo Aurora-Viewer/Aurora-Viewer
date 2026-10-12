@@ -354,7 +354,7 @@ impl WorldMapUi {
         if let Some((hx, hy, _)) = world.map.home {
             let sp = view.to_screen(hx, hy);
             if rect.contains(sp) {
-                draw_icon(&painter, "house", sp, 16.0, Color32::from_rgb(255, 214, 102));
+                draw_icon(&painter, "home-filled", sp, 16.0, Color32::from_rgb(255, 214, 102));
             }
         }
 
@@ -559,7 +559,7 @@ impl WorldMapUi {
                 p,
                 &mut opts.world_infohubs,
                 aurora_i18n::tr!("ui-worldmap-infohubs"),
-                Some("info"),
+                Some("info-circle-filled"),
                 item_icon(ItemKind::Infohub, p).1,
             );
             legend_check(
@@ -567,7 +567,7 @@ impl WorldMapUi {
                 p,
                 &mut opts.world_telehubs,
                 aurora_i18n::tr!("ui-worldmap-telehubs"),
-                Some("broadcast"),
+                Some("building-broadcast-tower-filled"),
                 item_icon(ItemKind::Telehub, p).1,
             );
             legend_check(
@@ -575,7 +575,7 @@ impl WorldMapUi {
                 p,
                 &mut opts.world_land_for_sale,
                 aurora_i18n::tr!("common-land-for-sale"),
-                Some("tag"),
+                Some("tag-filled"),
                 item_icon(ItemKind::ForSale, p).1,
             );
             legend_check(
@@ -583,7 +583,7 @@ impl WorldMapUi {
                 p,
                 &mut opts.world_events,
                 aurora_i18n::tr!("ui-worldmap-events"),
-                Some("calendar-dots"),
+                Some("calendar-event-filled"),
                 item_icon(ItemKind::EventPg, p).1,
             );
             ui.add_enabled_ui(opts.world_events, |ui| {
@@ -911,13 +911,13 @@ fn item_type(kind: ItemKind) -> u32 {
 
 fn item_icon(kind: ItemKind, p: &Palette) -> (&'static str, Color32) {
     match kind {
-        ItemKind::Infohub => ("info", Color32::from_rgb(120, 200, 255)),
-        ItemKind::Telehub => ("broadcast", Color32::from_rgb(200, 200, 255)),
-        ItemKind::ForSale => ("tag", Color32::from_rgb(255, 230, 0)),
-        ItemKind::ForSaleAdult => ("tag", Color32::from_rgb(255, 140, 0)),
-        ItemKind::EventPg => ("calendar-dots", p.success),
-        ItemKind::EventMature => ("calendar-dots", p.amber),
-        ItemKind::EventAdult => ("calendar-dots", p.rose),
+        ItemKind::Infohub => ("info-circle-filled", Color32::from_rgb(120, 200, 255)),
+        ItemKind::Telehub => ("building-broadcast-tower-filled", Color32::from_rgb(200, 200, 255)),
+        ItemKind::ForSale => ("tag-filled", Color32::from_rgb(255, 230, 0)),
+        ItemKind::ForSaleAdult => ("tag-filled", Color32::from_rgb(255, 140, 0)),
+        ItemKind::EventPg => ("calendar-event-filled", p.success),
+        ItemKind::EventMature => ("calendar-event-filled", p.amber),
+        ItemKind::EventAdult => ("calendar-event-filled", p.rose),
     }
 }
 

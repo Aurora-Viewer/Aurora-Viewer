@@ -21,7 +21,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
     let estate_manager = v.region.as_ref().is_some_and(|r| r.estate_manager);
     let can_identity = v.can(powers::LAND_CHANGE_IDENTITY);
 
-    crate::ui::widgets::section_header(ui, p, "note", aurora_i18n::tr!("workspace-land-identity"));
+    crate::ui::widgets::section_header(ui, p, "file-info-filled", aurora_i18n::tr!("workspace-land-identity"));
     row(ui, p, aurora_i18n::tr!("common-name-2"), |ui| {
         s.name.sync(&parcel.name);
         let r = ui.add_enabled(
@@ -148,7 +148,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
     });
 
     ui.add_space(10.0);
-    crate::ui::widgets::section_header(ui, p, "tag", aurora_i18n::tr!("workspace-land-sale"));
+    crate::ui::widgets::section_header(ui, p, "tag-filled", aurora_i18n::tr!("workspace-land-sale"));
     // sale
     let region_xfer = !v.region_flag(rf::BLOCK_LAND_RESELL);
     let estate_sellable = parcel.auction_id == 0 && estate_manager && v.region.as_ref().is_some_and(|r| parcel.owner_id == r.owner);
@@ -252,7 +252,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
     });
 
     ui.add_space(10.0);
-    crate::ui::widgets::section_header(ui, p, "warning", aurora_i18n::tr!("workspace-land-actions"));
+    crate::ui::widgets::section_header(ui, p, "alert-triangle-filled", aurora_i18n::tr!("workspace-land-actions"));
     // buttons (bottom of floater_about_land.xml)
     ui.add_space(6.0);
     let can_access = true;

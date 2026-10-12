@@ -2,8 +2,9 @@
 //! follow LLAppViewer::requestQuit/sendLogoutRequest (llappviewer.cpp,
 //! originally LGPL 2.1); the three-way prompt is Aurora's requested behavior.
 
+use super::widgets::{self, ActionKind};
 use crate::theme::Palette;
-use egui::{Frame, Id, Margin, RichText, Stroke, Vec2};
+use egui::{Id, RichText, Vec2};
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -51,65 +52,50 @@ impl ExitPrompt {
         aurora_render::blurred_backdrop(ctx, egui::Modal::default_area(id).layer());
         let busy = self.pending.is_some();
         let mut action = None;
-        let width = (ctx.content_rect().width() - 80.0).clamp(240.0, 490.0);
-        let response = egui::Modal::new(id)
-            .backdrop_color(egui::Color32::TRANSPARENT)
-            .frame(
-                Frame::new()
-                    .fill(p.panel)
-                    .stroke(Stroke::new(1.0, p.raised))
-                    .corner_radius(ctx.global_style().visuals.window_corner_radius)
-                    .shadow(ctx.global_style().visuals.window_shadow)
-                    .inner_margin(Margin::same(24)),
-            )
-            .show(ctx, |ui| {
-                ui.set_width(width);
-                ui.spacing_mut().item_spacing = Vec2::new(12.0, 12.0);
+        let width = (ctx.content_rect().width() - 80.0).clamp(240.0, 440.0);
+        // the dialogs' surface (widgets::Modal), over this prompt's own
+        // blurred backdrop instead of a dimmed one
+        let response = widgets::Modal::new(id).transparent_backdrop().show(ctx, |ui| {
+            ui.set_width(width);
+            ui.spacing_mut().item_spacing = Vec2::new(8.0, 10.0);
+            ui.horizontal(|ui| {
+                widgets::glyph(ui, "power", p.danger, 20.0);
+                ui.label(RichText::new(aurora_i18n::tr!("exit-title")).size(17.0).strong().color(p.ink));
+            });
+            ui.label(
+                RichText::new(if busy {
+                    aurora_i18n::tr!("exit-waiting")
+                } else if can_logout {
+                    aurora_i18n::tr!("exit-world-body")
+                } else {
+                    aurora_i18n::tr!("exit-login-body")
+                })
+                .size(13.0)
+                .color(p.muted),
+            );
+            ui.add_space(6.0);
+            ui.add_enabled_ui(!busy, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new(aurora_i18n::tr!("exit-title")).size(23.0).strong().color(p.ink));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if super::widgets::icon_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), !busy) {
-                            action = Some(Action::Cancel);
-                        }
-                    });
-                });
-                ui.label(
-                    RichText::new(if busy {
-                        aurora_i18n::tr!("exit-waiting")
-                    } else if can_logout {
-                        aurora_i18n::tr!("exit-world-body")
-                    } else {
-                        aurora_i18n::tr!("exit-login-body")
-                    })
-                    .size(13.0)
-                    .color(p.muted),
-                );
-                ui.add_space(8.0);
-                ui.add_enabled_ui(!busy, |ui| {
-                    ui.horizontal(|ui| {
-                        let size = Vec2::new((width - 24.0) / 3.0, 38.0);
-                        if super::widgets::flat_button_sized(ui, p, aurora_i18n::tr!("common-cancel"), size).clicked() {
-                            action = Some(Action::Cancel);
-                        }
-                        if ui
-                            .add_enabled_ui(can_logout, |ui| {
-                                super::widgets::flat_button_sized(ui, p, aurora_i18n::tr!("exit-logout"), size)
-                            })
-                            .inner
-                            .on_hover_text(aurora_i18n::tr!("exit-logout-hint"))
-                            .clicked()
-                        {
-                            action = Some(Action::Logout);
-                        }
-                        let mut danger = *p;
-                        danger.violet = p.danger;
-                        danger.ink = p.navy;
-                        if super::widgets::primary_button_sized(ui, &danger, aurora_i18n::tr!("exit-quit"), size).clicked() {
-                            action = Some(Action::Quit);
-                        }
-                    });
+                    let size = Vec2::new((width - 16.0) / 3.0, 32.0);
+                    if widgets::action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {
+                        action = Some(Action::Cancel);
+                    }
+                    if ui
+                        .add_enabled_ui(can_logout, |ui| {
+                            widgets::action_button(ui, p, "logout", aurora_i18n::tr!("exit-logout"), ActionKind::Flat, size)
+                        })
+                        .inner
+                        .on_hover_text(aurora_i18n::tr!("exit-logout-hint"))
+                        .clicked()
+                    {
+                        action = Some(Action::Logout);
+                    }
+                    if widgets::action_button(ui, p, "power", aurora_i18n::tr!("exit-quit"), ActionKind::Danger, size).clicked() {
+                        action = Some(Action::Quit);
+                    }
                 });
             });
+        });
         // Clicking the blurred backdrop leaves the choice open. Escape is
         // cancel only, never a destructive default; ignore it while logging out.
         if !busy && response.is_top_modal && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {

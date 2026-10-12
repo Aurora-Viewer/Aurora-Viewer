@@ -54,7 +54,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
         }
         // the combo's drop-down: the parcel's URL, then the saved streams
         ui.add_enabled_ui(can_media, |ui| {
-            let img = super::super::icons::global("caret-down")
+            let img = super::super::icons::global("caret-down-filled")
                 .map(|t| egui::Image::from_texture(egui::load::SizedTexture::new(t.id(), egui::Vec2::splat(14.0))).tint(p.muted));
             let button = match img {
                 Some(img) => egui::Button::image(img),
@@ -96,7 +96,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
             streams.retain(|x| *x != current && !(!x.contains("://") && *x == no_http));
             streams_changed |= streams.len() != before;
         }
-        if super::icon_button(ui, p, "copy", true)
+        if super::icon_button(ui, p, "copy-filled", true)
             .on_hover_text(aurora_i18n::tr!("ui-land-sound-copy-music-stream-url-to-clipboard"))
             .clicked()
             && !current.is_empty()

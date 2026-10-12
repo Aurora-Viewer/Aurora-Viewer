@@ -28,8 +28,8 @@ const GP_LAND_ALLOW_CREATE: u64 = 1 << 25;
 /// One ability of the current parcel.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParcelIcon {
-    /// Phosphor icon name, "fill" weight (chosen by the user: the small
-    /// shapes read better in green / red on the bar than the regular outline).
+    /// Tabler icon name: filled where Tabler has one (the small shapes read
+    /// better in green / red on the bar), outline otherwise.
     pub icon: &'static str,
     /// Green when true, red when false.
     pub ok: bool,
@@ -63,7 +63,7 @@ pub fn parcel_icons(s: &ParcelState) -> Vec<ParcelIcon> {
     // allowAgentVoice: region voice and parcel voice
     let voice = region(rf::ALLOW_VOICE) && parcel(pf::ALLOW_VOICE_CHAT);
     out.push(icon(
-        "microphone-fill",
+        "microphone-filled",
         voice,
         if voice {
             aurora_i18n::tr!("ui-parcel-icons-voice-allowed")
@@ -77,7 +77,7 @@ pub fn parcel_icons(s: &ParcelState) -> Vec<ParcelIcon> {
     // allowAgentFly
     let fly = !region(rf::BLOCK_FLY) && parcel(pf::ALLOW_FLY);
     out.push(icon(
-        "airplane-tilt-fill",
+        "plane-tilt-filled",
         fly,
         if fly {
             aurora_i18n::tr!("ui-parcel-icons-flight-allowed")
@@ -91,7 +91,7 @@ pub fn parcel_icons(s: &ParcelState) -> Vec<ParcelIcon> {
     // allowAgentPush: pushes by others' scripts (llPushObject)
     let push = !region(rf::RESTRICT_PUSHOBJECT) && !parcel(pf::RESTRICT_PUSHOBJECT);
     out.push(icon(
-        "hand-palm-fill",
+        "hand-stop",
         push,
         if push {
             aurora_i18n::tr!("ui-parcel-icons-pushing-allowed-other-people-s-scripts-can-push-you")
@@ -107,7 +107,7 @@ pub fn parcel_icons(s: &ParcelState) -> Vec<ParcelIcon> {
         .is_some_and(|g| parcel(pf::CREATE_GROUP_OBJECTS) || g.powers & GP_LAND_ALLOW_CREATE != 0);
     let build = owner || parcel(pf::CREATE_OBJECTS) || group_create;
     out.push(icon(
-        "cube-fill",
+        "box",
         build,
         if build && parcel(pf::CREATE_OBJECTS) {
             aurora_i18n::tr!("ui-parcel-icons-building-allowed-for-everyone-you-can-create-and-rez")
@@ -124,7 +124,7 @@ pub fn parcel_icons(s: &ParcelState) -> Vec<ParcelIcon> {
     // onParcelIconClick
     let scripts = !region(rf::SKIP_SCRIPTS) && !region(rf::ESTATE_SKIP_SCRIPTS) && parcel(pf::ALLOW_OTHER_SCRIPTS);
     out.push(icon(
-        "code-fill",
+        "code",
         scripts,
         if scripts {
             aurora_i18n::tr!("ui-parcel-icons-scripts-allowed")
@@ -143,7 +143,7 @@ pub fn parcel_icons(s: &ParcelState) -> Vec<ParcelIcon> {
     let damage = region(rf::ALLOW_DAMAGE) || parcel(pf::ALLOW_DAMAGE);
     let health = s.health.clamp(0.0, 100.0) as i32;
     let mut d = icon(
-        "heart-fill",
+        "heart-filled",
         !damage,
         &if damage {
             aurora_i18n::tr!(
@@ -161,7 +161,7 @@ pub fn parcel_icons(s: &ParcelState) -> Vec<ParcelIcon> {
     // LLParcel::getSeeAVs
     let see = s.parcel.see_avatars;
     out.push(icon(
-        if see { "eye-fill" } else { "eye-slash-fill" },
+        if see { "eye-filled" } else { "eye-off" },
         see,
         if see {
             aurora_i18n::tr!("ui-parcel-icons-avatars-visible-people-on-other-parcels-can-see-and")
@@ -176,7 +176,7 @@ fn icon(icon: &'static str, ok: bool, tip: &str) -> ParcelIcon {
     ParcelIcon {
         icon,
         ok,
-        strike: !ok && !icon.contains("-slash"),
+        strike: !ok && !icon.ends_with("-off"),
         label: None,
         tip: tip.to_owned(),
     }
@@ -219,7 +219,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, icons: &Icons, items: &[ParcelIcon],
             ui.painter().image(t.id(), ir, uv, col);
         }
         if it.strike {
-            // Phosphor-style slash: a gap in the background color, then the line
+            // Tabler-style slash: a gap in the background color, then the line
             let a = ir.left_top() + Vec2::splat(0.5);
             let b = ir.right_bottom() - Vec2::splat(0.5);
             let under = if resp.hovered() { p.raised } else { bg };
@@ -287,13 +287,13 @@ mod tests {
         assert_eq!(
             oks(&icons),
             vec![
-                ("microphone-fill", false),
-                ("airplane-tilt-fill", false),
-                ("hand-palm-fill", false),
-                ("cube-fill", false),
-                ("code-fill", false),
-                ("heart-fill", false),
-                ("eye-fill", true),
+                ("microphone-filled", false),
+                ("plane-tilt-filled", false),
+                ("hand-stop", false),
+                ("box", false),
+                ("code", false),
+                ("heart-filled", false),
+                ("eye-filled", true),
             ]
         );
         assert!(icons[4].tip == aurora_i18n::tr!("ui-parcel-icons-an-administrator-has-temporarily-stopped-scripts-in-this-region"));
@@ -361,6 +361,6 @@ mod tests {
         let icons = parcel_icons(&s);
         assert_eq!(icons[5].label.as_deref(), Some("72%"));
         assert!(!icons[5].strike);
-        assert_eq!((icons[6].icon, icons[6].ok, icons[6].strike), ("eye-slash-fill", false, false));
+        assert_eq!((icons[6].icon, icons[6].ok, icons[6].strike), ("eye-off", false, false));
     }
 }

@@ -97,7 +97,7 @@ impl ThumbnailUi {
                 if toolbar_button(
                     ui,
                     p,
-                    "arrow-square-out",
+                    "file-upload-filled",
                     aurora_i18n::tr!("ui-inventory-thumbnail-upload-from-your-computer"),
                     ready,
                     &mut caption,
@@ -107,7 +107,7 @@ impl ThumbnailUi {
                 if toolbar_button(
                     ui,
                     p,
-                    "camera",
+                    "camera-filled",
                     aurora_i18n::tr!("ui-inventory-thumbnail-take-snapshot"),
                     ready,
                     &mut caption,
@@ -118,7 +118,7 @@ impl ThumbnailUi {
                 if toolbar_button(
                     ui,
                     p,
-                    "image",
+                    "photo-filled",
                     aurora_i18n::tr!("ui-inventory-thumbnail-choose-image"),
                     ready,
                     &mut caption,
@@ -131,7 +131,7 @@ impl ThumbnailUi {
                 if toolbar_button(
                     ui,
                     p,
-                    "copy",
+                    "copy-filled",
                     aurora_i18n::tr!("ui-inventory-thumbnail-copy-to-clipboard"),
                     !asset.is_nil(),
                     &mut caption,
@@ -142,7 +142,7 @@ impl ThumbnailUi {
                 if toolbar_button(
                     ui,
                     p,
-                    "clipboard-text",
+                    "clipboard-text-filled",
                     aurora_i18n::tr!("ui-inventory-thumbnail-paste-from-clipboard"),
                     ready,
                     &mut caption,
@@ -152,7 +152,7 @@ impl ThumbnailUi {
                 if toolbar_button(
                     ui,
                     p,
-                    "trash",
+                    "trash-filled",
                     aurora_i18n::tr!("ui-inventory-thumbnail-remove-image"),
                     ready && !asset.is_nil(),
                     &mut caption,
@@ -301,7 +301,10 @@ impl ThumbnailUi {
                     }
                 });
                 ui.horizontal(|ui| {
-                    if ui.add_enabled(ready && self.selected.is_some(), egui::Button::new("OK")).clicked() {
+                    if ui
+                        .add_enabled(ready && self.selected.is_some(), egui::Button::new(aurora_i18n::tr!("common-ok")))
+                        .clicked()
+                    {
                         chosen = self.selected;
                     }
                     if flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked() {
@@ -366,7 +369,7 @@ pub(super) fn picture(
                 p.muted,
             );
         }
-    } else if let Some(camera) = crate::ui::icons::global("camera") {
+    } else if let Some(camera) = crate::ui::icons::global("camera-filled") {
         let camera_rect = egui::Rect::from_center_size(rect.center(), Vec2::splat(size * 0.28));
         ui.painter().image(
             camera.id(),

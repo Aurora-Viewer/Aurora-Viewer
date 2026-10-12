@@ -134,7 +134,7 @@ pub fn show(
                             }
                         }
                     });
-                if widgets::icon_button(ui, p, "arrow-clockwise", aurora_i18n::tr!("ao-reload"), !state.busy()) {
+                if widgets::icon_button(ui, p, "reload", aurora_i18n::tr!("ao-reload"), !state.busy()) {
                     out.push(Action::Reload);
                 }
             });
@@ -153,7 +153,7 @@ pub fn show(
                             state.name = set.name.clone();
                             state.new_dialog = Some(SetDialog::Clone);
                         }
-                        if widgets::icon_button(ui, p, "trash", aurora_i18n::tr!("common-delete"), true) {
+                        if widgets::icon_button(ui, p, "trash-filled", aurora_i18n::tr!("common-delete"), true) {
                             state.remove = Some(set.id);
                         }
                     }
@@ -245,10 +245,16 @@ pub fn show(
                 state.container = None;
             }
             ui.horizontal(|ui| {
-                if widgets::icon_button(ui, p, "caret-left", aurora_i18n::tr!("ao-previous"), !config.steps.is_empty()) {
+                if widgets::icon_button(
+                    ui,
+                    p,
+                    "caret-left-filled",
+                    aurora_i18n::tr!("ao-previous"),
+                    !config.steps.is_empty(),
+                ) {
                     runtime.cycle(state.state, &config, true);
                 }
-                if widgets::icon_button(ui, p, "caret-right", aurora_i18n::tr!("ao-next"), !config.steps.is_empty()) {
+                if widgets::icon_button(ui, p, "caret-right-filled", aurora_i18n::tr!("ao-next"), !config.steps.is_empty()) {
                     runtime.cycle(state.state, &config, false);
                 }
                 ui.add_enabled_ui(!state.busy(), |ui| {
@@ -292,19 +298,25 @@ pub fn show(
                                         runtime.choose(state.state, config.folder, index);
                                     }
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        if widgets::icon_button(ui, p, "trash", aurora_i18n::tr!("common-remove"), !state.busy()) {
+                                        if widgets::icon_button(ui, p, "trash-filled", aurora_i18n::tr!("common-remove"), !state.busy()) {
                                             state.remove = Some(step.id);
                                         }
                                         if widgets::icon_button(
                                             ui,
                                             p,
-                                            "caret-down",
+                                            "caret-down-filled",
                                             aurora_i18n::tr!("ao-down"),
                                             !state.busy() && index + 1 < config.steps.len(),
                                         ) {
                                             push(&mut out, state, inventory::order(inv, &config, index, true));
                                         }
-                                        if widgets::icon_button(ui, p, "caret-up", aurora_i18n::tr!("ao-up"), !state.busy() && index > 0) {
+                                        if widgets::icon_button(
+                                            ui,
+                                            p,
+                                            "caret-up-filled",
+                                            aurora_i18n::tr!("ao-up"),
+                                            !state.busy() && index > 0,
+                                        ) {
                                             push(&mut out, state, inventory::order(inv, &config, index, false));
                                         }
                                     });
@@ -327,7 +339,7 @@ pub fn show(
                                         state.container = Some(track.id);
                                         state.cycle_edit = None;
                                     }
-                                    if widgets::icon_button(ui, p, "trash", aurora_i18n::tr!("common-remove"), !state.busy()) {
+                                    if widgets::icon_button(ui, p, "trash-filled", aurora_i18n::tr!("common-remove"), !state.busy()) {
                                         state.remove = Some(track.id);
                                     }
                                 });
@@ -340,13 +352,14 @@ pub fn show(
                                             {
                                                 runtime.choose(state.state, track.id, index);
                                             }
-                                            if widgets::icon_button(ui, p, "trash", aurora_i18n::tr!("common-remove"), !state.busy()) {
+                                            if widgets::icon_button(ui, p, "trash-filled", aurora_i18n::tr!("common-remove"), !state.busy())
+                                            {
                                                 push(&mut out, state, inventory::remove(inv, a.link));
                                             }
                                             if widgets::icon_button(
                                                 ui,
                                                 p,
-                                                "caret-up",
+                                                "caret-up-filled",
                                                 aurora_i18n::tr!("ao-up"),
                                                 !state.busy() && index > 0,
                                             ) {
@@ -355,7 +368,7 @@ pub fn show(
                                             if widgets::icon_button(
                                                 ui,
                                                 p,
-                                                "caret-down",
+                                                "caret-down-filled",
                                                 aurora_i18n::tr!("ao-down"),
                                                 !state.busy() && index + 1 < track.members.len(),
                                             ) {
@@ -445,16 +458,16 @@ fn member_rows(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, members: &[crate
     for (index, a) in members.iter().enumerate() {
         ui.horizontal(|ui| {
             ui.label(&a.name);
-            if widgets::icon_button(ui, p, "trash", aurora_i18n::tr!("common-remove"), !state.busy()) {
+            if widgets::icon_button(ui, p, "trash-filled", aurora_i18n::tr!("common-remove"), !state.busy()) {
                 push(out, state, inventory::remove(inv, a.link));
             }
-            if widgets::icon_button(ui, p, "caret-up", aurora_i18n::tr!("ao-up"), !state.busy() && index > 0) {
+            if widgets::icon_button(ui, p, "caret-up-filled", aurora_i18n::tr!("ao-up"), !state.busy() && index > 0) {
                 push(out, state, inventory::member_order(inv, members, index, false));
             }
             if widgets::icon_button(
                 ui,
                 p,
-                "caret-down",
+                "caret-down-filled",
                 aurora_i18n::tr!("ao-down"),
                 !state.busy() && index + 1 < members.len(),
             ) {
@@ -584,7 +597,7 @@ fn dialogs(ctx: &egui::Context, p: &Palette, inv: &mut Inventory, catalog: &inve
             inv.request(state.folder);
             if let Some(folder) = inv.folders.get(&state.folder).cloned() {
                 ui.horizontal(|ui| {
-                    if widgets::icon_button(ui, p, "caret-up", aurora_i18n::tr!("ao-up"), state.folder != inv.root) {
+                    if widgets::icon_button(ui, p, "caret-up-filled", aurora_i18n::tr!("ao-up"), state.folder != inv.root) {
                         state.folder = folder.info.parent;
                     }
                     ui.label(&folder.info.name);
