@@ -1494,6 +1494,36 @@ impl App {
 
     // ------------------------------------------------------------------ input
 
+    /// The camera drag a left click would start under the pointer, like
+    /// LLToolCamera::handleHover (lltoolfocus.cpp): Alt held over the world,
+    /// or the build Focus tool. AltGr alone (right Alt, typed as Ctrl + Alt)
+    /// is a character key, not the camera.
+    fn camera_tool_hover(&self, ctx: &egui::Context) -> Option<crate::camera::ToolMode> {
+        use crate::camera::ToolMode;
+        let focus_tool = self.build.open && self.build.tool == crate::build::Tool::Focus;
+        let alt_gr = self.down.contains(&Input::key(KeyCode::AltRight)) && !self.down.contains(&Input::key(KeyCode::AltLeft));
+        let dragging = self.mouse_mode == MouseMode::FocusOrbit;
+        if !dragging
+            && (!matches!(self.screen, Screen::World)
+                || self.mouse_mode != MouseMode::None
+                || self.camera.mouselook()
+                || !(focus_tool || (self.alt && !alt_gr))
+                || ctx.is_pointer_over_egui()
+                || ctx.egui_wants_pointer_input())
+        {
+            return None;
+        }
+        Some(if focus_tool && !self.ctrl && !self.shift {
+            match self.build.focus_mode {
+                crate::build::FocusMode::Zoom => ToolMode::Zoom,
+                crate::build::FocusMode::Orbit => ToolMode::Orbit,
+                crate::build::FocusMode::Pan => ToolMode::Pan,
+            }
+        } else {
+            ToolMode::from_mods(self.ctrl, self.shift)
+        })
+    }
+
     fn set_mouselook_grab(&mut self, on: bool) {
         let Some(g) = &self.gfx else {
             return;
@@ -4584,6 +4614,14 @@ impl App {
                 full.platform_output.cursor_icon = egui::CursorIcon::PointingHand;
                 full.platform_output.cursor_image = None;
             }
+        }
+        if let Some(mode) = self.camera_tool_hover(&ctx) {
+            full.platform_output.cursor_icon = match mode {
+                crate::camera::ToolMode::Zoom => egui::CursorIcon::ZoomIn,
+                crate::camera::ToolMode::Orbit => egui::CursorIcon::AllScroll,
+                crate::camera::ToolMode::Pan => egui::CursorIcon::Move,
+            };
+            full.platform_output.cursor_image = self.cursors.camera(mode);
         }
         if self.hud_drag.is_some()
             || (self.hud_drag_requested()

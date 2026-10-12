@@ -1,7 +1,8 @@
 //! Original Firestorm Windows cursors: res/toolsit.cur and res/toolbuy.cur
 //! (LGPL 2.1), exported as RGBA PNG with their original hotspots.
 //! Firestorm's modern Pay cursor uses the same artwork as Buy.
-//! Tabler outline HUD / pipette cursors use the skin's ink and dark outline.
+//! Tabler outline HUD / pipette / camera cursors use the skin's ink and dark
+//! outline.
 use crate::interaction::Action;
 
 pub struct Cursors {
@@ -15,6 +16,8 @@ pub struct Cursors {
     grab: Option<egui::CustomCursorImage>,
     hud_drag: Option<egui::CustomCursorImage>,
     pipette: Option<egui::CustomCursorImage>,
+    /// Zoom, orbit, pan (`ToolMode` order).
+    camera: [Option<egui::CustomCursorImage>; 3],
 }
 impl Default for Cursors {
     fn default() -> Self {
@@ -46,6 +49,7 @@ impl Default for Cursors {
             grab: load(include_bytes!("../assets/cursors/grab.png"), [2, 13]),
             hud_drag: hud_drag_image(&crate::theme::Theme::default().palette()),
             pipette: pipette_image(&crate::theme::Theme::default().palette()),
+            camera: camera_images(&crate::theme::Theme::default().palette()),
         }
     }
 }
@@ -54,6 +58,7 @@ impl Cursors {
         Self {
             hud_drag: hud_drag_image(palette),
             pipette: pipette_image(palette),
+            camera: camera_images(palette),
             ..Self::default()
         }
     }
@@ -61,6 +66,7 @@ impl Cursors {
     pub fn set_palette(&mut self, palette: &crate::theme::Palette) {
         self.hud_drag = hud_drag_image(palette);
         self.pipette = pipette_image(palette);
+        self.camera = camera_images(palette);
     }
     /// Windows maps the system Grabbing icon to arrows, so use the existing
     /// Tabler outline grasping hand with a contrasting native-cursor outline.
@@ -70,6 +76,18 @@ impl Cursors {
     /// LLToolPipette uses UI_CURSOR_PIPETTE; the tip of the Tabler pipette is the hotspot.
     pub fn pipette(&self) -> Option<egui::CustomCursorImage> {
         self.pipette.clone()
+    }
+    /// LLToolCamera::handleHover shows which drag the modifiers give
+    /// (UI_CURSOR_TOOLZOOMIN / TOOLCAMERA / TOOLPAN); the middle of the icon
+    /// is the point the camera locks on.
+    pub fn camera(&self, mode: crate::camera::ToolMode) -> Option<egui::CustomCursorImage> {
+        use crate::camera::ToolMode;
+        let index = match mode {
+            ToolMode::Zoom => 0,
+            ToolMode::Orbit => 1,
+            ToolMode::Pan => 2,
+        };
+        self.camera[index].clone()
     }
     pub fn image(&self, action: Action, playing: bool) -> Option<egui::CustomCursorImage> {
         match action {
@@ -92,6 +110,18 @@ fn hud_drag_image(palette: &crate::theme::Palette) -> Option<egui::CustomCursorI
 
 fn pipette_image(palette: &crate::theme::Palette) -> Option<egui::CustomCursorImage> {
     tabler_image(include_bytes!("../assets/icons/tabler/outline/color-picker.svg"), palette, [5, 27])
+}
+
+fn camera_images(palette: &crate::theme::Palette) -> [Option<egui::CustomCursorImage>; 3] {
+    [
+        tabler_image(
+            include_bytes!("../assets/icons/tabler/outline/focus-centered.svg"),
+            palette,
+            [16, 16],
+        ),
+        tabler_image(include_bytes!("../assets/icons/tabler/outline/view-360.svg"), palette, [16, 16]),
+        tabler_image(include_bytes!("../assets/icons/tabler/outline/arrows-move.svg"), palette, [16, 16]),
+    ]
 }
 
 /// A Tabler outline icon (24 px grid, 2 px stroke) as a 32 px cursor: a wide
@@ -148,6 +178,15 @@ mod tests {
         assert_eq!(pipette.hotspot, [5, 27]);
         assert!(pipette.rgba[(27 * 32 + 5) * 4 + 3] > 0, "the hotspot must lie on the pipette tip");
         assert!(std::sync::Arc::ptr_eq(&pipette.rgba, &c.pipette().unwrap().rgba));
+        use crate::camera::ToolMode;
+        let zoom = c.camera(ToolMode::Zoom).unwrap();
+        assert_eq!((zoom.size, zoom.hotspot), ([32, 32], [16, 16]));
+        assert!(zoom.rgba[(16 * 32 + 16) * 4 + 3] > 0, "the hotspot must lie on the focus dot");
+        for mode in [ToolMode::Orbit, ToolMode::Pan] {
+            let image = c.camera(mode).unwrap();
+            assert_eq!(image.hotspot, [16, 16]);
+            assert_ne!(image.rgba, zoom.rgba);
+        }
         let buy = c.image(Action::Buy, false).unwrap();
         assert_eq!(buy.hotspot, [20, 15]);
         assert_eq!(buy.size, [32, 32]);
