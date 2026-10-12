@@ -211,9 +211,8 @@ pub fn textured_quad(painter: &egui::Painter, tex: egui::TextureId, corners: [Po
 pub fn avatars(world: &World) -> Vec<(Uuid, Vec3, bool)> {
     let now = Instant::now();
     let mut out: Vec<(Uuid, Vec3, bool)> = Vec::new();
-    for (idx, o) in world.objects.iter() {
-        if o.is_avatar()
-            && o.full_id != world.agent_id
+    for (idx, o) in world.objects.avatars() {
+        if o.full_id != world.agent_id
             && let Some((p, _, _)) = Scene::object_transform(world, idx, now, 0)
         {
             out.push((o.full_id, p, true));

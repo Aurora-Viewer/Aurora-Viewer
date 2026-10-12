@@ -4,7 +4,7 @@ use aurora_net::RegionHandle;
 use aurora_net::objects::{ObjectUpdate, ParticleUpdate, TerseUpdate, TextureAnim};
 use aurora_prim::{ExtraParams, TextureEntry, VolumeParams};
 use glam::{Quat, Vec3};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 use std::time::Instant;
 use uuid::Uuid;
@@ -372,6 +372,10 @@ impl ChangeFeed {
 /// The media manager runs after the sync has taken those changes, so it has
 /// its own feed (`take_media_changes`): the same objects, plus the slots of
 /// removed objects.
+///
+/// The interface labels few of the objects (name tags of the avatars, hover
+/// text of the prims, dots of the maps): `avatars` and `texted` list them,
+/// kept from a third feed, so that no window walks every object each frame.
 #[derive(Default)]
 pub struct ObjectStore {
     pub slots: Vec<Option<Object>>,
@@ -390,6 +394,12 @@ pub struct ObjectStore {
     /// Objects changed, added or removed since the media manager last took
     /// them (a slot may hold another object since, or none).
     media_changes: ChangeFeed,
+    /// The same, since `refresh_labelled`.
+    label_changes: ChangeFeed,
+    /// Slots of the avatars, and of the other objects with a hover text
+    /// (llSetText), as of the last `refresh_labelled`.
+    avatar_slots: BTreeSet<usize>,
+    texted_slots: BTreeSet<usize>,
 }
 
 impl ObjectStore {
@@ -420,6 +430,7 @@ impl ObjectStore {
         }
         self.touched.note(idx);
         self.media_changes.note(idx);
+        self.label_changes.note(idx);
     }
 
     /// The objects changed since the scene sync last took them.
@@ -436,6 +447,49 @@ impl ObjectStore {
     /// `out`), for the media manager.
     pub fn take_media_changes(&mut self, out: &mut Vec<usize>) {
         self.media_changes.take(out);
+    }
+
+    /// Bring the lists behind [`Self::avatars`] and [`Self::texted`] up to
+    /// date with the objects changed, added or removed since the last call.
+    /// Once a frame, before the interface.
+    pub fn refresh_labelled(&mut self) {
+        for i in 0..self.label_changes.list.len() {
+            let idx = self.label_changes.list[i];
+            self.label_changes.mark[idx] = false;
+            let (avatar, texted) = match self.slots.get(idx).and_then(|o| o.as_ref()) {
+                Some(o) => (o.is_avatar(), !o.is_avatar() && !o.text.is_empty()),
+                None => (false, false),
+            };
+            for (set, member) in [(&mut self.avatar_slots, avatar), (&mut self.texted_slots, texted)] {
+                if member {
+                    set.insert(idx);
+                } else {
+                    set.remove(&idx);
+                }
+            }
+        }
+        self.label_changes.list.clear();
+    }
+
+    /// Listed slots that still satisfy `keep`, in slot order, then the
+    /// slots changed since the last `refresh_labelled` that do: right at
+    /// any time, in slot order once refreshed.
+    fn labelled<'a>(&'a self, listed: &'a BTreeSet<usize>, keep: fn(&Object) -> bool) -> impl Iterator<Item = (usize, &'a Object)> {
+        let changed = self.label_changes.list.iter().filter(move |idx| !listed.contains(idx));
+        listed
+            .iter()
+            .chain(changed)
+            .filter_map(move |&idx| self.get(idx).filter(|o| keep(o)).map(|o| (idx, o)))
+    }
+
+    /// The avatars, without a walk over every object.
+    pub fn avatars(&self) -> impl Iterator<Item = (usize, &Object)> {
+        self.labelled(&self.avatar_slots, Object::is_avatar)
+    }
+
+    /// The objects with a hover text (llSetText) that are not avatars.
+    pub fn texted(&self) -> impl Iterator<Item = (usize, &Object)> {
+        self.labelled(&self.texted_slots, |o| !o.is_avatar() && !o.text.is_empty())
     }
 
     pub fn index_of(&self, key: &ObjKey) -> Option<usize> {
@@ -571,6 +625,7 @@ impl ObjectStore {
         self.free.push(idx);
         self.removed_slots.push(idx);
         self.media_changes.note(idx);
+        self.label_changes.note(idx);
         self.count -= 1;
         // Children of a removed object are removed too (linkset / attachments).
         let kids = self.children.remove(&obj.key).unwrap_or_default();
@@ -628,6 +683,81 @@ mod tests {
     }
 
     const SMOOTH_ON: u8 = TextureAnim::ON | TextureAnim::SMOOTH | TextureAnim::LOOP;
+
+    fn update(local_id: u32, pcode: u8, text: &str) -> ObjectUpdate {
+        ObjectUpdate {
+            local_id,
+            full_id: Uuid::from_u128(local_id as u128),
+            parent_id: 0,
+            pcode,
+            state: 0,
+            crc: 0,
+            material: 3,
+            click_action: 0,
+            scale: Vec3::ONE,
+            position: Vec3::ZERO,
+            rotation: Quat::IDENTITY,
+            velocity: Vec3::ZERO,
+            acceleration: Vec3::ZERO,
+            angular_velocity: Vec3::ZERO,
+            update_flags: 0,
+            owner_id: Uuid::nil(),
+            volume: VolumeParams::default(),
+            texture_entry: None,
+            extra: ExtraParams::default(),
+            name_values: String::new(),
+            text: text.to_owned(),
+            text_color: [255; 4],
+            media_url: String::new(),
+            tree_species: None,
+            texture_anim: None,
+            foot_plane: None,
+            particles: Default::default(),
+            sound: Default::default(),
+        }
+    }
+
+    #[test]
+    fn avatars_and_texted_objects_are_listed_without_a_walk() {
+        use aurora_prim::params::{LL_PCODE_LEGACY_AVATAR as AVATAR, LL_PCODE_VOLUME as PRIM};
+        let ids = |it: &mut dyn Iterator<Item = (usize, &Object)>| it.map(|(_, o)| o.key.local_id).collect::<Vec<_>>();
+        let mut s = ObjectStore::default();
+        s.upsert(1, update(10, PRIM, ""));
+        s.upsert(1, update(11, AVATAR, ""));
+        s.upsert(1, update(12, PRIM, "Vendor"));
+        // an avatar's own text is not a hover text
+        s.upsert(1, update(13, AVATAR, "ignored"));
+        // right before the first refresh, and the same after it
+        for refreshed in [false, true] {
+            if refreshed {
+                s.refresh_labelled();
+                assert!(s.label_changes.list.is_empty());
+            }
+            assert_eq!(ids(&mut s.avatars()), [11, 13], "refreshed: {refreshed}");
+            assert_eq!(ids(&mut s.texted()), [12], "refreshed: {refreshed}");
+        }
+        // changes through `get_mut` and full updates are seen at once: a
+        // text set, a text cleared, an avatar gone
+        let plain = s.index_of(&ObjKey { region: 1, local_id: 10 }).unwrap();
+        s.get_mut(plain).unwrap().text = "Open".into();
+        s.upsert(1, update(12, PRIM, ""));
+        s.remove(&ObjKey { region: 1, local_id: 11 });
+        assert_eq!(ids(&mut s.avatars()), [13]);
+        assert_eq!(ids(&mut s.texted()), [10]);
+        // the freed slot goes to a prim: it is not taken for the avatar
+        let reused = s.upsert(1, update(14, PRIM, ""));
+        assert_eq!(s.get(reused).unwrap().key.local_id, 14);
+        assert_eq!(ids(&mut s.avatars()), [13]);
+        s.refresh_labelled();
+        assert_eq!(ids(&mut s.avatars()), [13]);
+        assert_eq!(ids(&mut s.texted()), [10]);
+        assert_eq!((s.avatar_slots.len(), s.texted_slots.len()), (1, 1));
+        // a region left takes its objects out of the lists
+        s.remove_region(1);
+        s.refresh_labelled();
+        assert_eq!(s.avatars().count() + s.texted().count(), 0);
+        assert!(s.avatar_slots.is_empty() && s.texted_slots.is_empty());
+    }
 
     #[test]
     fn tex_anim_clock_follows_firestorm() {

@@ -4,8 +4,10 @@
 //! steps, the GPU time by element and counters (draws, synced objects,
 //! posed avatars, bytes sent to the GPU). Besides the averages, the line
 //! gives the longest time of each step over the second (`max:`), so that a
-//! slow frame among fast ones can be pinned on the step that caused it.
-//! Off without the variable.
+//! slow frame among fast ones can be pinned on the step that caused it,
+//! and the longest time a step spent off the processor (`off_cpu:`,
+//! aurora-render's thread_cpu.rs): a slow step that waited (a lock, a core)
+//! rather than worked. Off without the variable.
 //!
 //! Two threads: the laps are the main thread's; the renderer's steps
 //! (`r_*`) and their total (`rt_frame`) are the render thread's when there
@@ -15,7 +17,7 @@
 //! for the render thread (`wait_render`, both inside the `render` lap) and
 //! how long the render thread waited for a packet (`rt_idle`).
 
-use aurora_render::{GpuElement, RENDER_PHASES, RenderStats};
+use aurora_render::{GpuElement, RENDER_PHASES, RenderStats, thread_cpu};
 use std::fmt::Write;
 use std::time::{Duration, Instant};
 
@@ -54,8 +56,6 @@ pub enum Lap {
     Ui,
     /// What is under the cursor: hover cursor, touch / sit targets.
     Hover,
-    /// egui shapes to triangles.
-    Tessellate,
     /// Interface actions, avatar pictures, maps.
     Actions,
     /// `Renderer::render`: the frame packet and the wait for the render
@@ -69,7 +69,7 @@ pub enum Lap {
 }
 
 impl Lap {
-    const ALL: [Lap; 22] = [
+    const ALL: [Lap; 21] = [
         Lap::Between,
         Lap::Start,
         Lap::Events,
@@ -87,7 +87,6 @@ impl Lap {
         Lap::UiPrep,
         Lap::Ui,
         Lap::Hover,
-        Lap::Tessellate,
         Lap::Actions,
         Lap::Render,
         Lap::Limiter,
@@ -113,7 +112,6 @@ impl Lap {
             Lap::UiPrep => "ui_prep",
             Lap::Ui => "ui",
             Lap::Hover => "hover",
-            Lap::Tessellate => "tessellate",
             Lap::Actions => "actions",
             Lap::Render => "render",
             Lap::Limiter => "limiter",
@@ -122,9 +120,10 @@ impl Lap {
     }
 }
 
-/// Sub-steps of the streaming work on the main thread (`s_*` in the
-/// summary): what `Results`, `Stream` and `Sync` spend their time on, so
-/// that a slow frame while content loads names its cause.
+/// Sub-steps of the main thread's laps. Streaming (`s_*` in the summary):
+/// what `Results`, `Stream` and `Sync` spend their time on, so that a slow
+/// frame while content loads names its cause. Interface (`u_*`): what the
+/// `Ui` lap spends its time on, by group of windows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Part {
     /// Downloads handed to the streamers (`Results`).
@@ -156,10 +155,40 @@ pub enum Part {
     /// `Scene::sync`: faces classified again after a texture changed alpha
     /// class.
     SyncAlpha,
+    /// Top and bottom bars.
+    UiBars,
+    /// Avatar name tags and hover text of the prims.
+    UiTags,
+    /// Beacon, HUD text, build overlay and window, debug overlay, chat
+    /// toasts.
+    UiOverlays,
+    /// Conversations and contacts.
+    UiChat,
+    /// People window and its map.
+    UiPeople,
+    /// Inventory, appearance, animation overrider.
+    UiInventory,
+    /// Context menu, confirmations, media, object windows, notecards,
+    /// scripts, notifications.
+    UiMenus,
+    /// About land, profiles, places.
+    UiPlaces,
+    /// Minimap and world map.
+    UiMaps,
+    /// Performance window.
+    UiPerf,
+    /// Environment and preferences.
+    UiOptions,
+    /// Teleport screen, bug report, exit prompt; the whole screen outside
+    /// the world (login, loading).
+    UiRest,
+    /// egui around the windows: start and end of the pass (shapes gathered
+    /// from the layers), interface sounds.
+    UiPass,
 }
 
 impl Part {
-    pub const ALL: [Part; 14] = [
+    pub const ALL: [Part; 27] = [
         Part::Fetched,
         Part::Geometry,
         Part::Decoded,
@@ -174,7 +203,25 @@ impl Part {
         Part::SyncPlan,
         Part::SyncApply,
         Part::SyncAlpha,
+        Part::UiBars,
+        Part::UiTags,
+        Part::UiOverlays,
+        Part::UiChat,
+        Part::UiPeople,
+        Part::UiInventory,
+        Part::UiMenus,
+        Part::UiPlaces,
+        Part::UiMaps,
+        Part::UiPerf,
+        Part::UiOptions,
+        Part::UiRest,
+        Part::UiPass,
     ];
+
+    /// Prefix of the part's key in the summary: its segment.
+    fn prefix(self) -> &'static str {
+        if (self as usize) < Part::UiBars as usize { "s_" } else { "u_" }
+    }
 
     fn key(self) -> &'static str {
         match self {
@@ -192,6 +239,19 @@ impl Part {
             Part::SyncPlan => "sync_plan",
             Part::SyncApply => "sync_apply",
             Part::SyncAlpha => "sync_alpha",
+            Part::UiBars => "bars",
+            Part::UiTags => "tags",
+            Part::UiOverlays => "overlays",
+            Part::UiChat => "chat",
+            Part::UiPeople => "people",
+            Part::UiInventory => "inventory",
+            Part::UiMenus => "menus",
+            Part::UiPlaces => "places",
+            Part::UiMaps => "maps",
+            Part::UiPerf => "perf",
+            Part::UiOptions => "options",
+            Part::UiRest => "rest",
+            Part::UiPass => "pass",
         }
     }
 }
@@ -199,7 +259,7 @@ impl Part {
 const PARTS: usize = Part::ALL.len();
 
 /// Time of each [`Part`] in the current frame (ms), filled by the scene and
-/// taken by [`FrameProfile::end_frame`].
+/// by the interface and taken by [`FrameProfile::end_frame`].
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Parts([f32; PARTS]);
 
@@ -213,6 +273,11 @@ impl Parts {
         let now = Instant::now();
         self.add(part, (now - since).as_secs_f32() * 1000.0);
         now
+    }
+
+    /// Add the times of `other`, filled apart for the same frame.
+    pub fn merge(&mut self, other: &Parts) {
+        add(&mut self.0, &other.0);
     }
 }
 
@@ -268,6 +333,9 @@ struct Period {
     phases: [f32; PHASES],
     /// Longest time of each step in a single frame.
     laps_max: [f32; LAPS],
+    /// Longest time of each step off the processor in a single frame.
+    laps_off_max: [f32; LAPS],
+    phases_off_max: [f32; PHASES],
     phases_max: [f32; PHASES],
     parts: [f32; PARTS],
     parts_max: [f32; PARTS],
@@ -289,6 +357,10 @@ struct Period {
     texture_page_bytes: u64,
     geometry_bytes: u64,
     scene: [u64; 11],
+    /// Interface: egui shapes, meshes and vertices, and the most vertices
+    /// in a single frame.
+    ui: [u64; 3],
+    ui_vertices_max: u32,
 }
 
 pub struct FrameProfile {
@@ -296,6 +368,9 @@ pub struct FrameProfile {
     last: Option<Instant>,
     /// Laps of the frame being measured (ms).
     frame: [f32; LAPS],
+    /// Cycles the thread ran in each lap of the frame being measured.
+    frame_cycles: [u64; LAPS],
+    last_cycles: u64,
     started: Option<Instant>,
     period: Period,
     /// Settings line last logged (logged again when they change).
@@ -314,6 +389,8 @@ impl FrameProfile {
             enabled,
             last: None,
             frame: [0.0; LAPS],
+            frame_cycles: [0; LAPS],
+            last_cycles: 0,
             started: None,
             period: Period::default(),
             settings: String::new(),
@@ -327,15 +404,26 @@ impl FrameProfile {
     /// End a step of the frame now.
     pub fn lap(&mut self, lap: Lap) {
         if self.enabled {
-            self.lap_at(lap, Instant::now());
+            self.lap_cpu_at(lap, Instant::now(), thread_cpu::cycles());
         }
     }
 
+    /// A lap that ran the whole of its time (tests).
+    #[cfg(test)]
     fn lap_at(&mut self, lap: Lap, now: Instant) {
+        let ms = self.last.map_or(0.0, |last| (now - last).as_secs_f64() * 1000.0);
+        let cycles = self.last_cycles + (ms * thread_cpu::cycles_per_ms()) as u64;
+        self.lap_cpu_at(lap, now, cycles);
+    }
+
+    /// `cycles`: what the thread has run so far ([`thread_cpu::cycles`]).
+    fn lap_cpu_at(&mut self, lap: Lap, now: Instant, cycles: u64) {
         if let Some(last) = self.last {
             self.frame[lap as usize] += (now - last).as_secs_f32() * 1000.0;
+            self.frame_cycles[lap as usize] += cycles.wrapping_sub(self.last_cycles);
         }
         self.last = Some(now);
+        self.last_cycles = cycles;
     }
 
     /// Log the settings that change the frame cost, when they change.
@@ -362,12 +450,18 @@ impl FrameProfile {
     fn end_frame_at(&mut self, render: &RenderStats, scene: &SceneCounts, parts: &Parts, now: Instant) -> Option<String> {
         let started = *self.started.get_or_insert(now);
         let frame = std::mem::replace(&mut self.frame, [0.0; LAPS]);
+        let cycles = std::mem::replace(&mut self.frame_cycles, [0; LAPS]);
         let p = &mut self.period;
         p.frames += 1;
         p.frame_ms.push(frame.iter().sum());
         add(&mut p.laps, &frame);
         add(&mut p.phases, &render.cpu_phases);
         keep_max(&mut p.laps_max, &frame);
+        keep_max(
+            &mut p.laps_off_max,
+            &std::array::from_fn(|i| thread_cpu::waited_ms(frame[i], cycles[i])),
+        );
+        keep_max(&mut p.phases_off_max, &render.cpu_waits);
         keep_max(&mut p.phases_max, &render.cpu_phases);
         add(&mut p.parts, &parts.0);
         keep_max(&mut p.parts_max, &parts.0);
@@ -410,6 +504,10 @@ impl FrameProfile {
         ]) {
             *sum += v as u64;
         }
+        for (sum, v) in p.ui.iter_mut().zip([render.ui_shapes, render.ui_meshes, render.ui_vertices]) {
+            *sum += v as u64;
+        }
+        p.ui_vertices_max = p.ui_vertices_max.max(render.ui_vertices);
         let elapsed = now - started;
         if elapsed < PERIOD {
             return None;
@@ -458,11 +556,15 @@ fn slow_frames(frames: &[f32]) -> usize {
 }
 
 /// One line: averages per frame over the period (times in ms); renderer
-/// steps prefixed with `r_`, streaming parts with `s_`, GPU elements with
-/// `g_`. The `max:` segment lists the steps (`r_*`, `s_*` and the `thread`
-/// segment's included) whose longest single-frame time reached
-/// [`MAX_SHOWN_MS`], longest first (`-` when none did). The `thread`
-/// segment comes before the renderer steps it totals.
+/// steps prefixed with `r_`, streaming parts with `s_`, interface parts
+/// with `u_` (followed by the interface's counts), GPU elements with `g_`.
+/// The `max:` segment lists the steps (`r_*`, `s_*`, `u_*` and the
+/// `thread` segment's included) whose longest single-frame time reached
+/// [`MAX_SHOWN_MS`], longest first (`-` when none did); `off_cpu:` does
+/// the same for the time the steps of the two threads spent off the
+/// processor, those that wait by design left out (`render`, `limiter`,
+/// `r_acquire`, `r_present`). The `thread` segment comes before the
+/// renderer steps it totals.
 fn summary(p: &Period, elapsed: Duration) -> String {
     let n = p.frames.max(1) as f32;
     let avg = |v: f32| v / n;
@@ -484,7 +586,7 @@ fn summary(p: &Period, elapsed: Duration) -> String {
         .zip(p.laps_max)
         .map(|(lap, ms)| ("", lap.key(), ms))
         .chain(RENDER_PHASES.iter().zip(p.phases_max).map(|(key, ms)| ("r_", *key, ms)))
-        .chain(Part::ALL.iter().zip(p.parts_max).map(|(part, ms)| ("s_", part.key(), ms)))
+        .chain(Part::ALL.iter().zip(p.parts_max).map(|(part, ms)| (part.prefix(), part.key(), ms)))
         .chain(THREAD_KEYS.iter().zip(p.thread_max).map(|(key, ms)| ("", *key, ms)))
         .filter(|(_, _, ms)| *ms >= MAX_SHOWN_MS)
         .collect();
@@ -495,6 +597,28 @@ fn summary(p: &Period, elapsed: Duration) -> String {
     for (prefix, key, ms) in slow {
         let _ = write!(out, " {prefix}{key}={ms:.2}");
     }
+    out.push_str(" | off_cpu:");
+    let mut waited: Vec<(&str, &str, f32)> = Lap::ALL
+        .iter()
+        .zip(p.laps_off_max)
+        .filter(|(lap, _)| !matches!(lap, Lap::Render | Lap::Limiter))
+        .map(|(lap, ms)| ("", lap.key(), ms))
+        .chain(
+            RENDER_PHASES
+                .iter()
+                .zip(p.phases_off_max)
+                .filter(|(key, _)| !matches!(**key, "acquire" | "present"))
+                .map(|(key, ms)| ("r_", *key, ms)),
+        )
+        .filter(|(_, _, ms)| *ms >= MAX_SHOWN_MS)
+        .collect();
+    waited.sort_by(|a, b| b.2.total_cmp(&a.2));
+    if waited.is_empty() {
+        out.push_str(" -");
+    }
+    for (prefix, key, ms) in waited {
+        let _ = write!(out, " {prefix}{key}={ms:.2}");
+    }
     let _ = write!(out, " | thread={}", if p.threaded { "on" } else { "off" });
     for (key, ms) in THREAD_KEYS.iter().zip(p.thread) {
         let _ = write!(out, " {key}={:.2}", avg(ms));
@@ -503,10 +627,22 @@ fn summary(p: &Period, elapsed: Duration) -> String {
     for (key, ms) in RENDER_PHASES.iter().zip(p.phases) {
         let _ = write!(out, " r_{key}={:.2}", avg(ms));
     }
-    out.push_str(" |");
+    let mut segment = "";
     for (part, ms) in Part::ALL.iter().zip(p.parts) {
-        let _ = write!(out, " s_{}={:.2}", part.key(), avg(ms));
+        if part.prefix() != segment {
+            segment = part.prefix();
+            out.push_str(" |");
+        }
+        let _ = write!(out, " {segment}{}={:.2}", part.key(), avg(ms));
     }
+    let _ = write!(
+        out,
+        " ui_shapes={:.0} ui_meshes={:.0} ui_vertices={:.0} ui_vertices_max={}",
+        count(p.ui[0]),
+        count(p.ui[1]),
+        count(p.ui[2]),
+        p.ui_vertices_max
+    );
     let gpu_n = p.gpu_frames.max(1) as f32;
     let _ = write!(out, " | gpu={:.2}", p.gpu.iter().sum::<f32>() / gpu_n);
     for (el, ms) in GpuElement::ALL.iter().zip(p.gpu) {
@@ -555,6 +691,10 @@ mod tests {
 
     fn ms(m: u64) -> Duration {
         Duration::from_millis(m)
+    }
+
+    fn phase(key: &str) -> usize {
+        RENDER_PHASES.iter().position(|k| *k == key).expect("a step of the renderer")
     }
 
     #[test]
@@ -663,6 +803,7 @@ mod tests {
     fn summary_tells_the_two_threads_apart() {
         let mut p = FrameProfile::new(true);
         let t = Instant::now();
+        let finish = phase("finish");
         let mut lines = Vec::new();
         let mut at = t;
         for i in 0..1000u64 {
@@ -686,7 +827,7 @@ mod tests {
                 journal_bytes: 4096,
                 ..Default::default()
             };
-            render.cpu_phases[13] = 2.5;
+            render.cpu_phases[finish] = 2.5;
             if let Some(l) = p.end_frame_at(&render, &SceneCounts::default(), &Parts::default(), at) {
                 lines.push(l);
                 break;
@@ -695,7 +836,6 @@ mod tests {
         // 245 frames of 4.1 ms (one of 7.1) in the second
         assert_eq!(lines.len(), 1, "{lines:?}");
         let l = &lines[0];
-        assert_eq!(RENDER_PHASES[13], "finish");
         // the main thread laps: `render` holds the packet and the wait
         assert!(l.contains(" sync=3.00 "), "{l}");
         assert!(l.contains(" render=1.11 "), "{l}");
@@ -710,6 +850,57 @@ mod tests {
         let max = l.split(" | max: ").nth(1).and_then(|s| s.split(" |").next()).unwrap_or_default();
         assert!(max.contains("rt_frame=7.00") && max.contains("wait_render=4.00"), "{max}");
         assert!(max.contains("render=4.10"), "{max}");
+    }
+
+    #[test]
+    fn summary_details_the_interface_and_names_the_steps_that_waited() {
+        let mut p = FrameProfile::new(true);
+        let rate = thread_cpu::cycles_per_ms();
+        let mut lines = Vec::new();
+        let (mut at, mut cycles) = (Instant::now(), 0u64);
+        for i in 0..=50u64 {
+            p.lap_cpu_at(Lap::Sync, at, cycles);
+            // the interface works 1 ms a frame; in one frame it also waits
+            // 5 ms (for a lock, for a core)
+            at += ms(if i == 7 { 6 } else { 1 });
+            cycles += rate as u64;
+            p.lap_cpu_at(Lap::Ui, at, cycles);
+            // the limiter sleeps: a wait by design, not reported
+            at += ms(19);
+            p.lap_cpu_at(Lap::Limiter, at, cycles);
+            let mut parts = Parts::default();
+            parts.add(Part::UiTags, 0.25);
+            parts.add(Part::UiPass, if i == 7 { 5.75 } else { 0.75 });
+            // render thread: one `finish` waited 2.5 ms; the swapchain wait
+            // of `acquire` is by design too
+            let mut render = RenderStats {
+                ui_shapes: 600,
+                ui_meshes: 40,
+                ui_vertices: if i == 3 { 90_000 } else { 20_000 },
+                ..Default::default()
+            };
+            render.cpu_waits[phase("finish")] = if i == 9 { 2.5 } else { 0.0 };
+            render.cpu_waits[phase("acquire")] = 8.0;
+            if let Some(l) = p.end_frame_at(&render, &SceneCounts::default(), &parts, at) {
+                lines.push(l);
+            }
+        }
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        let l = &lines[0];
+        // the parts of the interface have their own segment, with its counts
+        assert!(l.contains(" s_sync_alpha=0.00 | u_bars=0.00 u_tags=0.25 "), "{l}");
+        assert!(
+            l.contains(" u_pass=0.85 ui_shapes=600 ui_meshes=40 ui_vertices=21373 ui_vertices_max=90000 | gpu="),
+            "{l}"
+        );
+        let segment = |name: &str| l.split(name).nth(1).and_then(|s| s.split(" |").next()).unwrap_or_default();
+        assert!(segment(" | max: ").contains(" u_pass=5.75"), "{l}");
+        // where the thread's CPU time is unknown, only the render thread's
+        // waits (given here) are listed
+        let waited = if rate > 0.0 { "ui=5.00 r_finish=2.50" } else { "r_finish=2.50" };
+        assert_eq!(segment(" | off_cpu: "), waited, "{l}");
+        let quiet = summary(&Period::default(), PERIOD);
+        assert!(quiet.contains(" | off_cpu: - | thread=off "), "{quiet}");
     }
 
     #[test]

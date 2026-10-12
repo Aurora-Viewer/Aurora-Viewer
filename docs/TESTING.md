@@ -1137,6 +1137,16 @@ thread principal est déjà sur l'image suivante. Avec
   `thread` compris, ou `-` s'il n'y en a aucune. Une image lente périodique
   y apparaît avec l'étape qui l'a causée, par exemple
   `max: media=6.10 render=2.31`, alors que sa moyenne reste minuscule.
+- `off_cpu:` : sur le même principe, les étapes des deux threads qui ont
+  passé au moins 1 ms **hors du processeur** dans une image (temps écoulé
+  moins temps processeur du thread, Windows seulement), la plus longue
+  d'abord. Une étape lente qui y figure a attendu au lieu de travailler : un
+  verrou (le tas pendant que les tâches de fond allouent, par exemple), ou
+  un cœur pris par un autre thread quand la machine est chargée. Les étapes
+  qui confient du travail au pool (`sync`, `lists`, `poses`, `r_finish`) y
+  attendent leurs threads par construction ; celles qui attendent par
+  nature (`render`, `limiter`, `r_acquire`, `r_present`) n'y sont pas
+  listées.
 - `thread=on|off`, puis la rencontre des deux threads :
   - `packet` (thread principal, dans `render`) : la clôture de l'image —
     les plages modifiées des tables de la scène dans le journal d'écritures
@@ -1159,7 +1169,8 @@ thread principal est déjà sur l'image suivante. Avec
   derrière lui quand `r_acquire` ou `r_present` tiennent l'essentiel de
   `rt_frame`.
 - **Thread de rendu** (thread principal avec `thread=off`) : les étapes du
-  renderer (`r_*` : `resources` — la relecture du journal d'écritures —,
+  renderer (`r_*` : `tessellate` — les formes d'egui découpées en
+  triangles —, `resources` — la relecture du journal d'écritures —,
   passes, egui, `finish`, `submit`, `present`, `acquire`, l'attente de
   l'image de la swapchain). Avec le thread de rendu, ce sont celles de
   l'image précédente : le résultat d'une image revient avec la remise
@@ -1177,6 +1188,20 @@ thread principal est déjà sur l'image suivante. Avec
     `sync_apply` déplacements et synchros complètes qui tiennent dans le
     budget de temps de l'image, `sync_alpha` faces reclassées après le
     changement de classe alpha d'une texture ;
+  - les parties de l'interface (`u_*`, dans `ui`) : `bars` barres du haut et
+    du bas, `tags` étiquettes des avatars et textes flottants, `overlays`
+    balise, textes des HUDs, outils de construction, débogage et bulles du
+    chat, `chat` conversations et contacts, `people`, `inventory`
+    (inventaire, apparence, AO), `menus` (menu contextuel, confirmations,
+    médias, fenêtres d'objets, notes, scripts, notifications), `places`
+    (terrain, profils, lieux), `maps` (mini-carte et carte du monde),
+    `perf`, `options` (environnement et préférences), `rest` (écran de
+    téléportation, rapport de bug, fermeture ; tout l'écran hors du monde)
+    et `pass`, ce qu'egui ajoute autour des fenêtres. Une fenêtre fermée y
+    compte ce que son code fait quand même. Puis `ui_shapes`, `ui_meshes`
+    (un dessin par mesh) et `ui_vertices` par image, et `ui_vertices_max`,
+    le plus grand nombre de sommets d'une image de la seconde : un pic de
+    `r_tessellate` sans pic de sommets n'est pas du travail en plus ;
   - le temps GPU par élément (`g_*`), les draws et commandes de dessin, les
     objets synchronisés / reconstruits (`synced`, `rebuilt` : des moyennes
     **par image** ; `rebuilt=0.2` à 175 images/s, ce sont 35 reconstructions

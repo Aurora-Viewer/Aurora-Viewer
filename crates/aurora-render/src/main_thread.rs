@@ -35,7 +35,7 @@
 
 use crate::arena::{GeometryArena, MeshAlloc, RecordStore};
 use crate::gpu_cull::{CullTables, GpuCull};
-use crate::packet::{EguiFrame, FramePacket, FrameResult, SceneGpu, Spent, SurfaceState, capture_for};
+use crate::packet::{FramePacket, FrameResult, SceneGpu, Spent, SurfaceState, capture_for};
 use crate::render_thread::{Done, Host, Job, thread_wanted};
 use crate::renderer::{Backend, BackendInit, RenderError};
 use crate::textures::{MipLevel, TextureTable};
@@ -615,7 +615,7 @@ impl Renderer {
     /// returns at once, with the statistics of that frame before; without,
     /// the frame is drawn here. A frame that carries a capture is waited
     /// for: `captured` holds it when this returns.
-    pub fn render(&mut self, params: FrameParams, lists: &DrawLists, ui: Option<EguiFrame>) -> RenderStats {
+    pub fn render(&mut self, params: FrameParams, lists: &DrawLists, ui: Option<crate::EguiFrame>) -> RenderStats {
         let t0 = Instant::now();
         // ---- the scene's mirrors join the journal of this frame
         self.records.flush(&self.device, &mut self.writes);

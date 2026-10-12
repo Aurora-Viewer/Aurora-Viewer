@@ -73,8 +73,8 @@ pub fn draw_attachments(ctx: &egui::Context, world: &World, scene: &Scene) {
         ppp,
     };
     let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("attachment_text")));
-    for (idx, o) in world.objects.iter() {
-        if o.text.is_empty() || o.text_color[3] == 0 || !scene.gpu.get(idx).is_some_and(|g| g.hud && g.owner_avatar == own) {
+    for (idx, o) in world.objects.texted() {
+        if o.text_color[3] == 0 || !scene.gpu.get(idx).is_some_and(|g| g.hud && g.owner_avatar == own) {
             continue;
         }
         let Some((pos, _, _)) = Scene::object_transform(world, idx, Instant::now(), 0) else {
@@ -125,7 +125,9 @@ pub fn draw(
         Option<uuid::Uuid>,
     )> = Vec::new();
     let mut name_tags = Vec::new();
-    for (idx, o) in world.objects.iter() {
+    // only the avatars and the objects with a text: a shop has thousands of
+    // objects for a few dozen of these
+    for (idx, o) in world.objects.avatars().chain(world.objects.texted()) {
         if o.is_avatar() {
             if o.full_id == world.agent_id && !show_own {
                 continue;
@@ -226,7 +228,7 @@ pub fn draw(
             let in_voice = voice.get(&o.full_id).copied();
             let progress = loading.and_then(|l| l.get(&o.full_id).copied());
             tags.push((d, sp, lines, in_voice, progress, Some(o.full_id)));
-        } else if !o.text.is_empty() {
+        } else {
             let Some((pos, _, hud)) = Scene::object_transform(world, idx, now, 0) else {
                 continue;
             };
