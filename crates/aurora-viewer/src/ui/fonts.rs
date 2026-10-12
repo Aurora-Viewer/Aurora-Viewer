@@ -12,6 +12,7 @@ pub const NOTO: &str = "Noto Sans";
 pub const ROBOTO: &str = "Roboto";
 
 static INTER_TTF: &[u8] = include_bytes!("../../assets/fonts/Inter-Regular.ttf");
+static INTER_SEMIBOLD_TTF: &[u8] = include_bytes!("../../assets/fonts/Inter-SemiBold.ttf");
 static NOTO_TTF: &[u8] = include_bytes!("../../assets/fonts/NotoSans-Regular.ttf");
 static ROBOTO_TTF: &[u8] = include_bytes!("../../assets/fonts/Roboto-Regular.ttf");
 
@@ -157,8 +158,44 @@ pub fn apply(ctx: &egui::Context, choice: &str) -> bool {
         egui::FontData::from_static(NOTO_TTF)
     });
     let system = fallback::ready();
-    ctx.set_fonts(definitions(data, system.unwrap_or_default()));
+    let mut defs = definitions(data, system.unwrap_or_default());
+    // the embedded sans-serifs are close enough to share Inter's semi-bold
+    // face; a system font keeps its own design (and its `wght` axis when it
+    // is a variable font, see `semibold_format`)
+    if matches!(choice, INTER | NOTO | ROBOTO | "") {
+        let mut face = egui::FontData::from_static(INTER_SEMIBOLD_TTF);
+        face.tweak.y_offset_factor = optical_center_offset(&face.font);
+        defs.font_data.insert(SEMIBOLD.into(), Arc::new(face));
+        if let Some(f) = defs.families.get_mut(&semibold_family()) {
+            f.insert(0, SEMIBOLD.into());
+        }
+    }
+    ctx.set_fonts(defs);
     system.is_some()
+}
+
+/// Name of the semi-bold family and of its face.
+const SEMIBOLD: &str = "aurora-semibold";
+
+fn semibold_family() -> egui::FontFamily {
+    egui::FontFamily::Name(SEMIBOLD.into())
+}
+
+/// Family of the semi-bold texts (the name on an avatar's name plate):
+/// Inter SemiBold with the embedded fonts, else the interface font. A
+/// context without the viewer's fonts (tests) gets the proportional
+/// family, since egui panics on a family it does not know.
+pub fn semibold(ctx: &egui::Context) -> egui::FontFamily {
+    let known = ctx.fonts(|f| f.definitions().families.contains_key(&semibold_family()));
+    if known { semibold_family() } else { egui::FontFamily::Proportional }
+}
+
+/// Format of a text in the `semibold` family. The `wght` axis makes a
+/// variable system font semi-bold too; a static font ignores it.
+pub fn semibold_format(family: &egui::FontFamily, size: f32, color: egui::Color32) -> egui::TextFormat {
+    let mut format = egui::TextFormat::simple(egui::FontId::new(size, family.clone()), color);
+    format.coords = egui::epaint::text::VariationCoords::new([(b"wght", 600.0)]);
+    format
 }
 
 /// `primary` first for proportional text and after egui's own fonts for
@@ -178,6 +215,10 @@ fn definitions(mut primary: egui::FontData, system: &[fallback::SystemFace]) -> 
     if let Some(f) = defs.families.get_mut(&egui::FontFamily::Monospace) {
         f.push("aurora-main".into());
     }
+    // the semi-bold family starts as the proportional one: `apply` puts
+    // its own face first when it has one
+    let proportional = defs.families.get(&egui::FontFamily::Proportional).cloned().unwrap_or_default();
+    defs.families.insert(semibold_family(), proportional);
     for face in system {
         defs.font_data.insert(face.key.clone(), Arc::new(face.font_data(row, shift)));
         for family in defs.families.values_mut() {

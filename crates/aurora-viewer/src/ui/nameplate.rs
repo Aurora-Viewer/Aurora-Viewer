@@ -1,0 +1,653 @@
+//! Avatar name plates: the rounded glass plate floating above an avatar,
+//! with its profile picture, a status dot, up to three lines and round
+//! badges (docs/BRANDING.md, « Plaque de nom »). `ui::hud` decides which
+//! avatars get one and where; this module holds what a plate shows at each
+//! distance level, its layout, and what it remembers of an avatar from one
+//! frame to the next (level, voice envelope, picture request).
+//!
+//! The states are those of LLVOAvatar::idleUpdateNameTagText
+//! (indra/newview/llvoavatar.cpp, originally LGPL 2.1): away, do not
+//! disturb, typing, muted, friend, too complex. The presentation is
+//! Aurora's own: Firestorm writes them in a status line above the name.
+
+use crate::theme::Palette;
+use egui::{Color32, Pos2, Rect, Vec2};
+use std::collections::{HashMap, HashSet};
+use uuid::Uuid;
+
+mod mesh;
+mod paint;
+#[cfg(test)]
+mod tests;
+
+/// Size of the display name on a full plate: the name size of the classic
+/// tags. The mockup the plate comes from is drawn larger (17 px names);
+/// every other measure follows in proportion.
+pub const NAME_PT: f32 = 13.0;
+const MOCKUP_NAME_PX: f32 = 17.0;
+/// Mockup pixels to points.
+pub const SCALE: f32 = NAME_PT / MOCKUP_NAME_PX;
+
+/// Camera distance up to which a plate is complete.
+pub const FULL_DISTANCE: f32 = 15.0;
+/// Camera distance up to which a plate is a compact pill; beyond, the name
+/// alone.
+pub const COMPACT_DISTANCE: f32 = 40.0;
+/// How far past a threshold the distance must go before a plate changes
+/// level: an avatar standing at 15 m does not flip between two plates.
+pub const LEVEL_MARGIN: f32 = 1.5;
+/// Seconds a plate takes to glide from one level to the next.
+pub const LEVEL_EASE: f64 = 0.18;
+/// Complete plates shown at once, nearest first. In a crowd the others
+/// are compact pills: forty complete plates would hide each other and the
+/// people under them.
+pub const MAX_FULL: usize = 8;
+/// A complete plate keeps its place until this many more avatars are
+/// nearer than the limit allows: two avatars at the same distance do not
+/// swap their plates back and forth.
+pub const FULL_RANK_MARGIN: usize = 2;
+/// Full and compact plates that blur the world behind them, nearest first;
+/// the others (and the far pills) only tint it.
+pub const MAX_GLASS: usize = 16;
+/// Pictures asked per second (profile, then texture): like the radar's
+/// profiles per sweep, a crowd does not fire dozens of requests at once.
+pub const PICTURES_PER_SECOND: u32 = 4;
+/// Widest text of a plate, in mockup pixels; longer lines are elided.
+const MAX_TEXT_PX: f32 = 250.0;
+
+/// What a plate shows, by distance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Level {
+    /// Picture, status dot, three lines, floating badges.
+    Full,
+    /// The display name and the badges in a smaller pill.
+    Compact,
+    /// The display name alone.
+    Far,
+}
+
+/// Level of a plate at `distance`, given the level it had: it changes only
+/// `LEVEL_MARGIN` past a threshold.
+pub fn level_for(distance: f32, previous: Option<Level>) -> Level {
+    let m = LEVEL_MARGIN;
+    let (full, compact) = match previous {
+        None => (FULL_DISTANCE, COMPACT_DISTANCE),
+        Some(Level::Full) => (FULL_DISTANCE + m, COMPACT_DISTANCE + m),
+        Some(Level::Compact) => (FULL_DISTANCE - m, COMPACT_DISTANCE + m),
+        Some(Level::Far) => (FULL_DISTANCE - m, COMPACT_DISTANCE - m),
+    };
+    if distance <= full {
+        Level::Full
+    } else if distance <= compact {
+        Level::Compact
+    } else {
+        Level::Far
+    }
+}
+
+/// Level of a plate among the others: `level` is what its distance gives,
+/// `rank` its place among the plates near enough to be complete (0 for the
+/// nearest), `was_full` whether it was complete in the last frame.
+pub fn crowd_level(level: Level, rank: usize, was_full: bool) -> Level {
+    let limit = if was_full { MAX_FULL + FULL_RANK_MARGIN } else { MAX_FULL };
+    if level == Level::Full && rank >= limit {
+        Level::Compact
+    } else {
+        level
+    }
+}
+
+/// Status dot of the picture (ANIM_AGENT_AWAY / ANIM_AGENT_DO_NOT_DISTURB).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Presence {
+    Online,
+    Away,
+    Busy,
+}
+
+/// Who the avatar is to us: the color and style of its display name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Role {
+    Resident,
+    Own,
+    Friend,
+    Linden,
+    Blocked,
+}
+
+impl Role {
+    /// A blocked resident reads as blocked whoever it is; then Linden Lab
+    /// staff, then friends (the order of LLVOAvatar::getNameTagColor).
+    pub fn of(own: bool, blocked: bool, linden: bool, friend: bool) -> Role {
+        if own {
+            Role::Own
+        } else if blocked {
+            Role::Blocked
+        } else if linden {
+            Role::Linden
+        } else if friend {
+            Role::Friend
+        } else {
+            Role::Resident
+        }
+    }
+
+    /// Color of the display name. Fixed by the theme: the tag colors of the
+    /// preferences belong to the classic tags (the human's choice).
+    pub fn name_color(self, p: &Palette) -> Color32 {
+        match self {
+            Role::Resident | Role::Own => p.ink,
+            Role::Friend => p.violet_light,
+            Role::Linden => p.rose,
+            Role::Blocked => p.muted_dim,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Badge {
+    /// In the voice channel.
+    Voice,
+    Typing,
+    Friend,
+    /// Drawn as a silhouette: over the complexity or surface limit.
+    TooComplex,
+    Blocked,
+}
+
+/// The badges of a plate, in drawing order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Badges {
+    list: [Option<Badge>; 5],
+    len: usize,
+}
+
+impl Badges {
+    fn push(&mut self, badge: Badge) {
+        self.list[self.len] = Some(badge);
+        self.len += 1;
+    }
+
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = Badge> + '_ {
+        self.list.iter().flatten().copied()
+    }
+}
+
+/// Complexity of the avatar (Firestorm FSTagShowARW), when the options show it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Detail {
+    /// On a line of its own: « Complexité : 245 000 ».
+    pub full: String,
+    /// After the username when the plate already has its three lines.
+    pub short: String,
+    /// Over the limit: in the color of the too-complex badge.
+    pub alert: bool,
+}
+
+/// Everything a plate says about an avatar.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Content {
+    pub name: String,
+    pub username: Option<String>,
+    pub title: Option<String>,
+    pub detail: Option<Detail>,
+    pub role: Role,
+    pub presence: Presence,
+    pub in_voice: bool,
+    pub typing: bool,
+    pub friend: bool,
+    pub too_complex: bool,
+    pub blocked: bool,
+}
+
+/// A line under the display name.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SubLine<'a> {
+    /// The username, followed by the short complexity when the group title
+    /// takes the third line.
+    Username(&'a str, Option<&'a Detail>),
+    Title(&'a str),
+    Detail(&'a Detail),
+}
+
+/// The lines under the name: none below the full level; at most two, a
+/// missing one leaving no empty line.
+pub fn sub_lines(level: Level, c: &Content) -> [Option<SubLine<'_>>; 2] {
+    if level != Level::Full {
+        return [None, None];
+    }
+    let (user, title, detail) = (c.username.as_deref(), c.title.as_deref(), c.detail.as_ref());
+    match (user, title, detail) {
+        (Some(u), Some(t), d) => [Some(SubLine::Username(u, d)), Some(SubLine::Title(t))],
+        (Some(u), None, d) => [Some(SubLine::Username(u, None)), d.map(SubLine::Detail)],
+        (None, Some(t), d) => [Some(SubLine::Title(t)), d.map(SubLine::Detail)],
+        (None, None, d) => [d.map(SubLine::Detail), None],
+    }
+}
+
+/// The badges of a plate: none on the far pill.
+pub fn badges(level: Level, c: &Content) -> Badges {
+    let mut b = Badges::default();
+    if level == Level::Far {
+        return b;
+    }
+    for (on, badge) in [
+        (c.in_voice, Badge::Voice),
+        (c.typing, Badge::Typing),
+        (c.friend, Badge::Friend),
+        (c.too_complex, Badge::TooComplex),
+        (c.blocked, Badge::Blocked),
+    ] {
+        if on {
+            b.push(badge);
+        }
+    }
+    b
+}
+
+/// The status dot: on the picture only, and not for a blocked resident.
+pub fn status_dot(level: Level, c: &Content) -> Option<Presence> {
+    (level == Level::Full && !c.blocked).then_some(c.presence)
+}
+
+/// Measures of a plate in points, from the mockup's pixels.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Metrics {
+    pub height: f32,
+    /// From the plate's left edge to its picture or text, border included.
+    pub pad_left: f32,
+    pub pad_right: f32,
+    /// Between the picture and the text, the text and the inline badges.
+    pub gap: f32,
+    pub name_pt: f32,
+    pub sub_pt: f32,
+    /// Diameter of the picture; 0 without one.
+    pub photo: f32,
+    pub badge: f32,
+    pub badge_icon: f32,
+    pub badge_gap: f32,
+    pub max_text: f32,
+    /// Mockup pixels to points, for the small fixed measures.
+    pub scale: f32,
+}
+
+impl Metrics {
+    pub fn of(level: Level, scale: f32) -> Metrics {
+        // (height, left, right, gap, name, photo, badge, badge icon)
+        let (h, l, r, gap, name, photo, badge, icon) = match level {
+            Level::Full => (66.0, 7.0, 23.0, 12.0, MOCKUP_NAME_PX, 54.0, 25.0, 14.0),
+            Level::Compact => (40.0, 15.0, 15.0, 8.0, 14.5, 0.0, 21.0, 12.0),
+            Level::Far => (26.0, 12.0, 12.0, 0.0, 12.5, 0.0, 0.0, 0.0),
+        };
+        Metrics {
+            // an even height: the pill's ends are exact half circles
+            height: (h * scale * 0.5).round() * 2.0,
+            pad_left: l * scale,
+            pad_right: r * scale,
+            gap: gap * scale,
+            name_pt: name * scale,
+            sub_pt: 11.5 * scale,
+            photo: photo * scale,
+            badge: badge * scale,
+            badge_icon: icon * scale,
+            badge_gap: 5.0 * scale,
+            max_text: MAX_TEXT_PX * scale,
+            scale,
+        }
+    }
+}
+
+/// Line box of a text of `size`, as the mockup's `line-height: 1.18`.
+const LINE_HEIGHT: f32 = 1.18;
+
+/// Sizes of the laid out lines of a plate.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct TextSize {
+    pub name: Vec2,
+    pub subs: [Option<Vec2>; 2],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Circle {
+    pub center: Pos2,
+    pub radius: f32,
+}
+
+/// Where everything goes, relative to the plate's top left corner.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Layout {
+    pub size: Vec2,
+    pub photo: Option<Circle>,
+    /// The status dot with its ring in the plate's color.
+    pub dot: Option<Circle>,
+    /// Top left of the name and of the lines under it.
+    pub name: Pos2,
+    pub subs: [Option<Pos2>; 2],
+    /// Left and right of the text column.
+    pub text_x: (f32, f32),
+    pub badges: [Rect; 5],
+}
+
+/// Lay a plate out: the picture at the left of a full plate, the lines
+/// stacked and centered in its height, the badges floating over the top
+/// right edge (full) or after the name (compact).
+pub fn layout(level: Level, m: &Metrics, text: &TextSize, badges: usize) -> Layout {
+    let s = m.scale;
+    let h = m.height;
+    let text_left = if m.photo > 0.0 { m.pad_left + m.photo + m.gap } else { m.pad_left };
+    let text_w = text.subs.iter().flatten().map(|v| v.x).fold(text.name.x, f32::max);
+    let row = if badges > 0 {
+        badges as f32 * m.badge + (badges - 1) as f32 * m.badge_gap
+    } else {
+        0.0
+    };
+    let inline = if level == Level::Compact && badges > 0 { m.gap + row } else { 0.0 };
+    let mut width = text_left + text_w + inline + m.pad_right;
+    if level == Level::Full {
+        // room for the floating badges, which start right of the picture
+        width = width.max(text_left + row + 21.0 * s);
+    }
+    let width = width.ceil();
+
+    // the lines, each centered in its line box, the block in the height
+    let name_box = m.name_pt * LINE_HEIGHT;
+    let sub_box = m.sub_pt * LINE_HEIGHT;
+    let lines = text.subs.iter().flatten().count() as f32;
+    let mut y = (h - name_box - lines * sub_box) * 0.5;
+    let name = Pos2::new(text_left, y + (name_box - text.name.y) * 0.5);
+    y += name_box;
+    let mut subs = [None, None];
+    for (slot, size) in subs.iter_mut().zip(text.subs.iter().flatten()) {
+        *slot = Some(Pos2::new(text_left, y + (sub_box - size.y) * 0.5));
+        y += sub_box;
+    }
+
+    let photo = (m.photo > 0.0).then(|| Circle {
+        center: Pos2::new(m.pad_left + m.photo * 0.5, h * 0.5),
+        radius: m.photo * 0.5,
+    });
+    // a 15 px disc (3 px of ring) in the bottom right corner of the picture
+    let dot = photo.map(|c| Circle {
+        center: c.center + Vec2::splat(c.radius - 7.5 * s),
+        radius: 7.5 * s,
+    });
+
+    let mut rects = [Rect::NOTHING; 5];
+    let (mut x, top) = match level {
+        // 15 px above the inner top edge, 20 px from the inner right edge
+        Level::Full => (width - 21.0 * s - row, -14.0 * s),
+        _ => (text_left + text_w + m.gap, (h - m.badge) * 0.5),
+    };
+    for r in rects.iter_mut().take(badges) {
+        *r = Rect::from_min_size(Pos2::new(x, top), Vec2::splat(m.badge));
+        x += m.badge + m.badge_gap;
+    }
+    Layout {
+        size: Vec2::new(width, h),
+        photo,
+        dot,
+        name,
+        subs,
+        text_x: (text_left, text_left + text_w),
+        badges: rects,
+    }
+}
+
+/// Voice level of a speaking avatar (0 to 1), smoothed: fast attack, slower
+/// release, and a gate that closes the halo when it stops speaking.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct VoiceEnvelope {
+    pub gate: f32,
+    pub level: f32,
+}
+
+const VOICE_ATTACK: f32 = 0.04;
+const VOICE_RELEASE: f32 = 0.28;
+const GATE_RELEASE: f32 = 0.22;
+
+/// Raw participant level (what `aurora_voice` reports) to 0..1 over the
+/// range a voice really covers, as the classic tag's outline.
+pub fn voice_level(raw: f32) -> f32 {
+    let (min, max) = (super::voice_tag::LEVEL_MIN, super::voice_tag::LEVEL_MAX);
+    if raw.is_finite() {
+        ((raw - min) / (max - min)).clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
+}
+
+impl VoiceEnvelope {
+    /// One frame later (`dt` seconds): `level` is 0..1 (`voice_level`).
+    pub fn update(&mut self, level: f32, speaking: bool, dt: f32) {
+        let toward = |value: f32, target: f32, tau: f32| value + (target - value) * (1.0 - (-dt / tau).exp());
+        let target = if speaking { level.clamp(0.0, 1.0) } else { 0.0 };
+        let tau = if target > self.level { VOICE_ATTACK } else { VOICE_RELEASE };
+        self.level = toward(self.level, target, tau);
+        self.gate = toward(
+            self.gate,
+            if speaking { 1.0 } else { 0.0 },
+            if speaking { VOICE_ATTACK } else { GATE_RELEASE },
+        );
+        if self.gate < 0.01 && !speaking {
+            *self = VoiceEnvelope::default();
+        }
+    }
+
+    /// The halo to draw now; None when silent.
+    pub fn halo(&self, scale: f32) -> Option<Halo> {
+        (self.gate > 0.0).then(|| {
+            let l = self.level;
+            // the mockup's `.speak.thin` rule
+            Halo {
+                blur: (3.0 + 11.0 * l) * scale,
+                spread: 2.0 * l * scale,
+                alpha: self.gate * (0.30 + 0.55 * l),
+            }
+        })
+    }
+}
+
+/// A tight glow around the plate, in points.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Halo {
+    pub blur: f32,
+    pub spread: f32,
+    pub alpha: f32,
+}
+
+/// One of the three typing dots at `time` seconds: (opacity, lift in mockup
+/// pixels). The mockup's `dot` keyframes: a dot rises and lights up in the
+/// first 30 % of its 1.1 s, comes back by 60 %, then rests; each dot starts
+/// 0.18 s after the previous one.
+pub fn typing_dot(time: f64, index: usize) -> (f32, f32) {
+    let phase = ((time - index as f64 * 0.18) / 1.1).rem_euclid(1.0) as f32;
+    let up = if phase < 0.3 {
+        phase / 0.3
+    } else if phase < 0.6 {
+        1.0 - (phase - 0.3) / 0.3
+    } else {
+        0.0
+    };
+    // ease in and out, as the CSS default
+    let up = up * up * (3.0 - 2.0 * up);
+    (0.3 + 0.7 * up, -2.5 * up)
+}
+
+/// The profile picture of a plate.
+#[derive(Clone, Copy)]
+pub enum Picture<'a> {
+    Loaded(&'a egui::TextureHandle),
+    /// Not there yet: asked for when the plate is complete.
+    Wanted,
+    /// The resident has none (or we do not ask): the placeholder stays.
+    None,
+}
+
+/// A name plate to draw this frame.
+pub struct Tag<'a> {
+    pub id: Uuid,
+    /// Bottom center of the plate, in points.
+    pub anchor: Pos2,
+    /// Distance to the camera.
+    pub distance: f32,
+    /// Opacity of the whole plate (the distance fade of the name tags).
+    pub fade: f32,
+    pub content: Content,
+    /// (raw level, speaking) while in the voice channel.
+    pub voice: Option<(f32, bool)>,
+    /// Still loading: progress 0..1.
+    pub loading: Option<f32>,
+    pub picture: Picture<'a>,
+}
+
+/// What a plate keeps of its avatar between two frames.
+struct Entry {
+    level: Level,
+    /// Level it is leaving, while `changed` is recent.
+    from: Level,
+    changed: f64,
+    voice: VoiceEnvelope,
+    /// 1 when the plate blurs the world, 0 when it only tints it.
+    glass: f32,
+    picture_asked: bool,
+    seen: f64,
+    /// Its geometry, kept while its state does not change.
+    cache: paint::Cache,
+}
+
+/// At most `PICTURES_PER_SECOND` new pictures a second.
+#[derive(Debug, Default)]
+pub struct PictureBudget {
+    window: f64,
+    used: u32,
+}
+
+impl PictureBudget {
+    /// May one more picture be asked for at `now`?
+    pub fn take(&mut self, now: f64) -> bool {
+        if now - self.window >= 1.0 || now < self.window {
+            self.window = now;
+            self.used = 0;
+        }
+        let ok = self.used < PICTURES_PER_SECOND;
+        if ok {
+            self.used += 1;
+        }
+        ok
+    }
+}
+
+/// The name plates of the avatars on screen.
+#[derive(Default)]
+pub struct Plates {
+    entries: HashMap<Uuid, Entry>,
+    budget: PictureBudget,
+    /// Avatars whose picture a complete plate is waiting for (drained by
+    /// the viewer, which asks for the profile and the texture).
+    pub wanted_pics: HashSet<Uuid>,
+    /// Kept from frame to frame: the level of each plate, which ones blur
+    /// the world, and the complete ones still without their picture.
+    levels: Vec<Level>,
+    glass: Vec<bool>,
+    waiting: Vec<Uuid>,
+}
+
+impl Plates {
+    /// Draw `tags` (far first, the last one on top) and report the rectangle
+    /// of each plate, which takes the clicks like its avatar.
+    pub fn paint(
+        &mut self,
+        painter: &egui::Painter,
+        p: &Palette,
+        icons: &super::icons::Icons,
+        tags: &[Tag<'_>],
+        now: f64,
+        mut placed: impl FnMut(Uuid, Rect),
+    ) {
+        let env = paint::Env::new(painter, p, icons, now);
+        // nearest first (`tags` ends with them): the level of each plate,
+        // the complete ones limited in number, and the blur for the first ones
+        let mut glass_left = if p.panel_alpha < 255 { MAX_GLASS } else { 0 };
+        let mut glass = std::mem::take(&mut self.glass);
+        glass.clear();
+        glass.resize(tags.len(), false);
+        let mut levels = std::mem::take(&mut self.levels);
+        levels.clear();
+        levels.resize(tags.len(), Level::Far);
+        let mut rank = 0;
+        for (i, tag) in tags.iter().enumerate().rev() {
+            let previous = self.entries.get(&tag.id).map(|e| e.level);
+            let mut level = level_for(tag.distance, previous);
+            if level == Level::Full {
+                level = crowd_level(level, rank, previous == Some(Level::Full));
+                rank += 1;
+            }
+            levels[i] = level;
+            if level != Level::Far && glass_left > 0 {
+                glass_left -= 1;
+                glass[i] = true;
+            }
+        }
+        let mut waiting = std::mem::take(&mut self.waiting);
+        waiting.clear();
+        for ((tag, glass), level) in tags.iter().zip(glass.iter().copied()).zip(levels.iter().copied()) {
+            let entry = self.entries.entry(tag.id).or_insert_with(|| Entry {
+                level,
+                from: level,
+                changed: f64::NEG_INFINITY,
+                voice: VoiceEnvelope::default(),
+                glass: if glass { 1.0 } else { 0.0 },
+                picture_asked: false,
+                seen: now,
+                cache: paint::Cache::default(),
+            });
+            let dt = (now - entry.seen).clamp(0.0, 0.25) as f32;
+            entry.seen = now;
+            if level != entry.level {
+                entry.from = entry.level;
+                entry.level = level;
+                entry.changed = now;
+            }
+            match tag.voice {
+                Some((raw, speaking)) => entry.voice.update(voice_level(raw), speaking, dt),
+                None => entry.voice = VoiceEnvelope::default(),
+            }
+            // the blur comes and goes over the level's ease, not in one frame
+            let step = dt / LEVEL_EASE as f32;
+            entry.glass = if glass {
+                (entry.glass + step).min(1.0)
+            } else {
+                (entry.glass - step).max(0.0)
+            };
+            let progress = ((now - entry.changed) / LEVEL_EASE).clamp(0.0, 1.0) as f32;
+            let state = paint::State {
+                level: entry.level,
+                from: (progress < 1.0).then_some(entry.from),
+                progress: progress * progress * (3.0 - 2.0 * progress),
+                halo: entry.voice.halo(SCALE),
+                glass: entry.glass,
+            };
+            placed(tag.id, paint::plate(&env, tag, &state, &mut entry.cache));
+            if entry.level == Level::Full && matches!(tag.picture, Picture::Wanted) {
+                waiting.push(tag.id);
+            }
+        }
+        // nearest first, a few new ones a second
+        for id in waiting.iter().rev() {
+            let Some(entry) = self.entries.get_mut(id) else { continue };
+            if !entry.picture_asked && self.budget.take(now) {
+                entry.picture_asked = true;
+            }
+            if entry.picture_asked {
+                self.wanted_pics.insert(*id);
+            }
+        }
+        (self.levels, self.glass, self.waiting) = (levels, glass, waiting);
+        // avatars that left the screen
+        self.entries.retain(|_, e| now - e.seen < 5.0);
+    }
+}

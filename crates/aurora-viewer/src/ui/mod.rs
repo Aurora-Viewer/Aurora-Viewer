@@ -30,6 +30,7 @@ pub mod map_tiles;
 pub mod media;
 pub mod menu;
 pub mod minimap;
+pub mod nameplate;
 pub mod news;
 pub mod notifications;
 pub mod object_actions;

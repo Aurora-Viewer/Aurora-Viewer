@@ -20,7 +20,8 @@ const SWEEP_INTERVAL: f64 = 1.0;
 /// requests at once (Firestorm asks for all of them as the entries appear).
 const PROFILES_PER_SWEEP: usize = 4;
 
-const ANIM_AGENT_TYPE: Uuid = Uuid::from_u128(0xc541c47f_e0c0_058b_ad1a_d6ae3a4584d9);
+/// The typing animation (ANIM_AGENT_TYPE).
+pub const ANIM_AGENT_TYPE: Uuid = Uuid::from_u128(0xc541c47f_e0c0_058b_ad1a_d6ae3a4584d9);
 const ANIM_AGENT_SIT_GROUND: Uuid = Uuid::from_u128(0x1c7600d6_661f_b87b_efe2_d7421eb93c86);
 
 /// An avatar as one sweep sees it.

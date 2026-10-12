@@ -6,6 +6,8 @@ use std::sync::Arc;
 struct Region {
     radius: f32,
     opacity: f32,
+    /// Brightness kept of the blurred scene (1: as it is).
+    shade: f32,
 }
 
 /// Insert below a window's contents. The viewer resolves the final rectangle
@@ -18,15 +20,25 @@ pub fn glass_panel(rect: egui::Rect, radius: f32, tint: egui::Color32) -> egui::
 /// surface that fades in or out; `tint` carries its own alpha.
 pub fn glass_panel_faded(rect: egui::Rect, radius: f32, tint: egui::Color32, opacity: f32) -> egui::Shape {
     egui::Shape::Vec(vec![
-        egui::Shape::Callback(egui::PaintCallback {
-            rect,
-            callback: Arc::new(Region {
-                radius,
-                opacity: opacity.clamp(0.0, 1.0),
-            }),
-        }),
+        glass_region(rect, radius, opacity, 1.0),
         egui::Shape::rect_filled(rect, radius, tint),
     ])
+}
+
+/// The blur alone, at `opacity`, for a surface that draws its own tint over
+/// it (the avatar name plates, whose pill is a mesh of its own). `shade`
+/// (0 to 1) is the brightness kept of the blurred scene: under a light tint,
+/// it keeps a small surface readable over a white wall or a bright sky
+/// without making it more opaque over the rest.
+pub fn glass_region(rect: egui::Rect, radius: f32, opacity: f32, shade: f32) -> egui::Shape {
+    egui::Shape::Callback(egui::PaintCallback {
+        rect,
+        callback: Arc::new(Region {
+            radius,
+            opacity: opacity.clamp(0.0, 1.0),
+            shade: shade.clamp(0.0, 1.0),
+        }),
+    })
 }
 
 pub(crate) fn requested(primitives: &[egui::ClippedPrimitive]) -> bool {
@@ -103,7 +115,8 @@ impl Glass {
             if let egui::epaint::Primitive::Callback(callback) = &primitive.primitive
                 && let Some(region) = callback.callback.downcast_ref::<Region>()
             {
-                let color = egui::Color32::WHITE.gamma_multiply(region.opacity);
+                let level = (region.shade * 255.0).round() as u8;
+                let color = egui::Color32::from_gray(level).gamma_multiply(region.opacity);
                 primitive.primitive =
                     egui::epaint::Primitive::Mesh(rounded_mesh(callback.rect, region.radius, self.texture, screen, color));
             }
