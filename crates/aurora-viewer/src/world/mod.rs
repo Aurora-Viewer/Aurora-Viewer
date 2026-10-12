@@ -186,6 +186,8 @@ pub struct World {
     /// AO remapping applies only to our rendered pose, never movement signals.
     pub ao_pose: Option<Vec<PlayingAnimation>>,
     local_preview: Option<PlayingAnimation>,
+    /// (motion, start, sample) for the importer's locally controlled timeline.
+    pub animation_preview_clock: Option<(Uuid, Instant, Instant)>,
     preview_server_motion: Option<PlayingAnimation>,
     /// Our animation sources, kept until the simulator stops the motion.
     animation_sources: HashMap<Uuid, HashSet<Uuid>>,
@@ -285,6 +287,7 @@ impl World {
             animations: HashMap::new(),
             ao_pose: None,
             local_preview: None,
+            animation_preview_clock: None,
             preview_server_motion: None,
             animation_sources: HashMap::new(),
             animation_stops: Vec::new(),
@@ -1976,20 +1979,31 @@ impl World {
     /// LLPreviewAnim::play locally: keep the motion across server signals,
     /// and restore a server-owned motion with the same UUID when stopping.
     pub fn preview_animation(&mut self, id: Uuid, start: bool) {
+        if start && let Some(previous) = self.local_preview {
+            self.preview_animation(previous.id, false);
+        }
         let motions = self.animations.entry(self.agent_id).or_default();
         if start {
+            self.animation_preview_clock = None;
             self.preview_server_motion = motions.iter().find(|a| a.id == id).copied();
             let preview = PlayingAnimation::from_signal(id, 0, Instant::now(), None);
             self.local_preview = Some(preview);
             motions.retain(|a| a.id != id);
             motions.push(preview);
         } else if self.local_preview.is_some_and(|a| a.id == id) {
+            self.animation_preview_clock = None;
             motions.retain(|a| a.id != id);
             if let Some(motion) = self.preview_server_motion.take() {
                 motions.push(motion);
             }
             self.local_preview = None;
         }
+    }
+
+    /// LLFloaterBvhPreview::onSliderMove/onBtnPlayPause (LGPL 2.1):
+    /// keep preview time independent of server motion signals.
+    pub fn set_animation_preview_clock(&mut self, id: Uuid, start: Instant, sample: Instant) {
+        self.animation_preview_clock = self.local_preview.filter(|p| p.id == id).map(|_| (id, start, sample));
     }
 
     /// Port of LLVOAvatar::getOffObject / LLVOAvatarSelf::stopMotionFromSource

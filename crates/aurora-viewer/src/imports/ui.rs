@@ -15,11 +15,15 @@ pub enum Action {
     Preview(Uuid),
     Play(Uuid, bool),
     Reload(Uuid),
+    RestoreDraft(Uuid),
+    ResetMesh(Uuid),
     Quote(Uuid),
     MeshFile(Uuid, usize),
     PhysicsPreset(Uuid, bool),
     Open(Uuid),
     Local(Uuid),
+    ClearLocalMesh,
+    RezLocalMesh(Uuid),
     MapFile(Uuid, usize),
     MapInventory(Uuid, usize),
     Remove(Uuid),
@@ -78,10 +82,6 @@ pub fn show(
     let busy = imports.busy() || imports.confirm;
     let old_permissions = prefs.clone();
     let window_id = egui::Id::new("asset_imports_v3");
-    let window_height = ctx
-        .data_mut(|d| d.get_persisted::<Vec2>(window_id.with("expanded_size")))
-        .map_or(650.0, |s| s.y);
-    let height = (window_height - 230.0).clamp(160.0, (ctx.content_rect().height() - 260.0).max(160.0));
     let mut floater = Floater::new(
         "asset_imports_v3",
         aurora_i18n::tr!("import-title"),
@@ -109,6 +109,20 @@ pub fn show(
             }
         });
         ui.separator();
+        if imports.choice == Choice::Local {
+            ui.horizontal_wrapped(|ui| {
+                ui.checkbox(&mut prefs.local_meshes, aurora_i18n::tr!("import-local-mesh-files"));
+                if prefs.local_meshes {
+                    ui.checkbox(&mut prefs.local_assume_meters, aurora_i18n::tr!("import-local-meters"));
+                    ui.checkbox(&mut prefs.local_mesh_auto_reload, aurora_i18n::tr!("import-local-live"));
+                    ui.add(
+                        egui::DragValue::new(&mut prefs.local_reload_seconds)
+                            .range(0.1..=3600.0)
+                            .suffix(" s"),
+                    );
+                }
+            });
+        }
         ui.horizontal(|ui| {
             if ui
                 .add_enabled(
@@ -150,6 +164,13 @@ pub fn show(
                 });
             }
         });
+        // Reserve the actual footer, independently of the outer Window's
+        // remembered size. Subtracting a fixed margin from that size creates
+        // a growth loop when a receipt, message or permission row appears.
+        let extra_rows = usize::from(!imports.message.is_empty()) + usize::from(prefs.show_payment && imports.spent > 0);
+        let extra_height = extra_rows as f32 * (ui.spacing().interact_size.y + ui.spacing().item_spacing.y);
+        let footer_base = ctx.data_mut(|d| d.get_temp::<f32>(window_id.with("footer_base"))).unwrap_or(90.0);
+        let height = (ui.available_height() - footer_base - extra_height).max(100.0);
         ui.horizontal_top(|ui| {
             ui.allocate_ui_with_layout(Vec2::new(225.0, height), egui::Layout::top_down(egui::Align::Min), |ui| {
                 ui.set_width(225.0);
@@ -196,8 +217,13 @@ pub fn show(
                         .max_height(height)
                         .show(ui, |ui| {
                             if let Some(entry) = imports.active.and_then(|id| imports.entries.iter_mut().find(|e| e.id == id)) {
-                                entry.view.edge_color = egui::Rgba::from(p.teal).to_array();
+                                entry.view.background = prefs.preview_background.unwrap_or_else(|| palette_color(p.field));
+                                entry.view.edge_color = prefs.preview_edges.unwrap_or_else(|| palette_color(p.teal));
                                 entry.view.ambient = [0.2; 3];
+                                entry.view.diagnostic_colors = [
+                                    linear_color(prefs.preview_degenerate_fill.unwrap_or_else(|| palette_color(p.danger))),
+                                    prefs.preview_degenerate_edges.unwrap_or_else(|| palette_color(p.warn)),
+                                ];
                                 let metadata = (entry.name.clone(), entry.description.clone(), entry.folder);
                                 if entry.local {
                                     ui.checkbox(&mut entry.local_live, aurora_i18n::tr!("import-local-live"));
@@ -207,6 +233,14 @@ pub fn show(
                                 {
                                     actions.push(Action::Open(item));
                                 }
+                                if entry.source.is_some()
+                                    && matches!(entry.status, Status::Error(_))
+                                    && ui
+                                        .add_enabled(!busy, egui::Button::new(aurora_i18n::tr!("import-restore-draft")))
+                                        .clicked()
+                                {
+                                    actions.push(Action::RestoreDraft(entry.id));
+                                }
                                 ui.add_enabled_ui(!busy && matches!(entry.status, Status::Ready), |ui| {
                                     egui::Grid::new("import_metadata")
                                         .num_columns(2)
@@ -215,42 +249,44 @@ pub fn show(
                                             ui.label(aurora_i18n::tr!("common-name"));
                                             ui.add(egui::TextEdit::singleline(&mut entry.name).desired_width(360.0).char_limit(63));
                                             ui.end_row();
-                                            ui.label(aurora_i18n::tr!("common-description"));
-                                            ui.add(
-                                                egui::TextEdit::singleline(&mut entry.description)
-                                                    .desired_width(360.0)
-                                                    .char_limit(127),
-                                            );
-                                            ui.end_row();
-                                            ui.label(aurora_i18n::tr!("import-destination"));
-                                            let current = world
-                                                .inventory
-                                                .folders
-                                                .get(&entry.folder)
-                                                .map(|f| f.info.name.as_str())
-                                                .unwrap_or(aurora_i18n::tr!("import-no-folder"));
-                                            egui::ComboBox::from_id_salt("import_folder")
-                                                .selected_text(current)
-                                                .width(360.0)
-                                                .show_ui(ui, |ui| {
-                                                    let mut folders: Vec<_> = world
-                                                        .inventory
-                                                        .folders
-                                                        .values()
-                                                        .filter(|folder| {
-                                                            crate::world::inventory::actions::destination(
-                                                                &world.inventory,
-                                                                folder.info.id,
-                                                                &inventory_prefs.protected,
-                                                            )
-                                                        })
-                                                        .collect();
-                                                    folders.sort_by(|a, b| a.info.name.cmp(&b.info.name));
-                                                    for folder in folders {
-                                                        ui.selectable_value(&mut entry.folder, folder.info.id, &folder.info.name);
-                                                    }
-                                                });
-                                            ui.end_row();
+                                            if !entry.local {
+                                                ui.label(aurora_i18n::tr!("common-description"));
+                                                ui.add(
+                                                    egui::TextEdit::singleline(&mut entry.description)
+                                                        .desired_width(360.0)
+                                                        .char_limit(127),
+                                                );
+                                                ui.end_row();
+                                                ui.label(aurora_i18n::tr!("import-destination"));
+                                                let current = world
+                                                    .inventory
+                                                    .folders
+                                                    .get(&entry.folder)
+                                                    .map(|f| f.info.name.as_str())
+                                                    .unwrap_or(aurora_i18n::tr!("import-no-folder"));
+                                                egui::ComboBox::from_id_salt("import_folder")
+                                                    .selected_text(current)
+                                                    .width(360.0)
+                                                    .show_ui(ui, |ui| {
+                                                        let mut folders: Vec<_> = world
+                                                            .inventory
+                                                            .folders
+                                                            .values()
+                                                            .filter(|folder| {
+                                                                crate::world::inventory::actions::destination(
+                                                                    &world.inventory,
+                                                                    folder.info.id,
+                                                                    &inventory_prefs.protected,
+                                                                )
+                                                            })
+                                                            .collect();
+                                                        folders.sort_by(|a, b| a.info.name.cmp(&b.info.name));
+                                                        for folder in folders {
+                                                            ui.selectable_value(&mut entry.folder, folder.info.id, &folder.info.name);
+                                                        }
+                                                    });
+                                                ui.end_row();
+                                            }
                                         });
                                     ui.add_space(12.0);
                                     if let Some(source) = &mut entry.source {
@@ -286,8 +322,9 @@ pub fn show(
                                                 }
                                             }
                                             Source::Animation { animation, bvh, .. } => {
+                                                let position =
+                                                    animation_transport(ui, p, entry.id, &mut entry.player, animation, &mut actions);
                                                 if let Some(model) = &entry.model {
-                                                    entry.view.background = palette_color(p.field);
                                                     aurora_render::preview::paint_with_pose(
                                                         ui,
                                                         egui::Id::new(("animation_preview", entry.id)),
@@ -321,6 +358,12 @@ pub fn show(
                                                         header.emote_name.clone(),
                                                     );
                                                 if changed {
+                                                    if animation.hand_pose != header.hand_pose || animation.emote_name != header.emote_name
+                                                    {
+                                                        entry.model = None;
+                                                        entry.preview_generation += 1;
+                                                        entry.preview_error = None;
+                                                    }
                                                     let current = Arc::make_mut(animation);
                                                     header.joints = std::mem::take(&mut current.joints);
                                                     if current.base_priority != header.base_priority {
@@ -332,29 +375,6 @@ pub fn show(
                                                 }
                                                 if changed && entry.player.bound.is_some() {
                                                     actions.push(Action::Play(entry.id, true));
-                                                }
-                                                ui.horizontal(|ui| {
-                                                    if flat_button(ui, p, aurora_i18n::tr!("common-play")).clicked() {
-                                                        actions.push(Action::Play(entry.id, true));
-                                                    }
-                                                    if flat_button(ui, p, aurora_i18n::tr!("common-stop")).clicked() {
-                                                        entry.player.playing = false;
-                                                        entry.player.seek(0.0);
-                                                        actions.push(Action::Play(entry.id, false));
-                                                    }
-                                                    if flat_button(ui, p, aurora_i18n::tr!("import-pause")).clicked() {
-                                                        entry.player.playing = !entry.player.playing;
-                                                    }
-                                                    if flat_button(ui, p, aurora_i18n::tr!("import-reload")).clicked() {
-                                                        actions.push(Action::Reload(entry.id));
-                                                    }
-                                                });
-                                                let mut position = animation.local_time(f64::from(entry.player.position)) as f32;
-                                                if ui
-                                                    .add(egui::Slider::new(&mut position, 0.0..=animation.duration).suffix(" s"))
-                                                    .changed()
-                                                {
-                                                    entry.player.seek(position);
                                                 }
                                                 let old_base = entry.player.base;
                                                 ui.checkbox(&mut entry.preview_on_avatar, aurora_i18n::tr!("import-preview-own-avatar"));
@@ -378,12 +398,6 @@ pub fn show(
                                             Source::Material { value, images } => {
                                                 if let Some(model) = &entry.model {
                                                     entry.view.material = Some(super::preview::material(value));
-                                                    entry.view.background = [
-                                                        p.field.r() as f32 / 255.0,
-                                                        p.field.g() as f32 / 255.0,
-                                                        p.field.b() as f32 / 255.0,
-                                                        1.0,
-                                                    ];
                                                     aurora_render::preview::paint(
                                                         ui,
                                                         egui::Id::new(("material_preview", entry.id)),
@@ -405,13 +419,39 @@ pub fn show(
                                                 }
                                             }
                                             Source::Mesh(draft) => {
+                                                if entry.local {
+                                                    egui::ComboBox::from_id_salt("local_mesh_instance")
+                                                        .selected_text(
+                                                            draft
+                                                                .scene
+                                                                .instances
+                                                                .get(entry.local_model)
+                                                                .map(|i| i.name.as_str())
+                                                                .unwrap_or(aurora_i18n::tr!("import-mesh")),
+                                                        )
+                                                        .show_ui(ui, |ui| {
+                                                            for (index, instance) in draft.scene.instances.iter().enumerate() {
+                                                                ui.selectable_value(&mut entry.local_model, index, &instance.name);
+                                                            }
+                                                        });
+                                                    ui.checkbox(&mut entry.local_use_scale, aurora_i18n::tr!("import-local-mesh-scale"));
+                                                }
+                                                entry.view.material = draft.preview_physics.then(|| aurora_render::preview::Material {
+                                                    color: linear_color(
+                                                        prefs.preview_physics_fill.unwrap_or_else(|| palette_color(p.teal)),
+                                                    ),
+                                                    alpha_mode: if prefs.preview_physics_fill.is_some_and(|c| c[3] < 1.0) {
+                                                        1
+                                                    } else {
+                                                        0
+                                                    },
+                                                    ..Default::default()
+                                                });
+                                                if draft.preview_physics {
+                                                    entry.view.edge_color =
+                                                        prefs.preview_physics_edges.unwrap_or_else(|| palette_color(p.ink));
+                                                }
                                                 if let Some(model) = &entry.model {
-                                                    entry.view.background = [
-                                                        p.field.r() as f32 / 255.0,
-                                                        p.field.g() as f32 / 255.0,
-                                                        p.field.b() as f32 / 255.0,
-                                                        1.0,
-                                                    ];
                                                     aurora_render::preview::paint(
                                                         ui,
                                                         egui::Id::new(("mesh_preview", entry.id)),
@@ -420,8 +460,7 @@ pub fn show(
                                                         Vec2::new(ui.available_width(), 220.0),
                                                     );
                                                 }
-                                                if mesh_controls(ui, p, entry.id, draft, &mut actions) {
-                                                    draft.invalidate();
+                                                if mesh_controls(ui, p, entry.id, draft, entry.local, &mut actions) {
                                                     entry.preview_generation += 1;
                                                     entry.model = None;
                                                 }
@@ -481,6 +520,9 @@ pub fn show(
                                     }
                                     entry.preview_generation += 1;
                                 }
+                                if !matches!(entry.source, Some(Source::Sound(_))) {
+                                    preview_colors(ui, p, prefs);
+                                }
                                 if matches!(entry.source, Some(Source::Mesh(_))) {
                                     ui.collapsing(aurora_i18n::tr!("import-load-settings"), |ui| {
                                         ui.checkbox(&mut prefs.mesh_auto_weights, aurora_i18n::tr!("import-auto-weights"));
@@ -526,35 +568,38 @@ pub fn show(
                 },
             );
         });
+        let footer_start = ui.cursor().top();
         ui.separator();
-        ui.add_enabled_ui(!busy, |ui| {
-            ui.collapsing(aurora_i18n::tr!("import-permissions"), |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(aurora_i18n::tr!("inventory-permissions-next-owner"));
-                    ui.checkbox(&mut prefs.next_modify, aurora_i18n::tr!("inventory-permissions-modify"));
-                    ui.checkbox(&mut prefs.next_copy, aurora_i18n::tr!("inventory-permissions-copy"));
-                    if !prefs.next_copy {
-                        prefs.next_transfer = true;
-                    }
-                    ui.add_enabled(
-                        prefs.next_copy,
-                        egui::Checkbox::new(&mut prefs.next_transfer, aurora_i18n::tr!("inventory-permissions-transfer")),
-                    );
-                });
-                ui.horizontal(|ui| {
-                    ui.checkbox(&mut prefs.share_group, aurora_i18n::tr!("import-share-group"));
-                    ui.checkbox(&mut prefs.everyone_copy, aurora_i18n::tr!("import-everyone-copy"));
-                    ui.checkbox(&mut prefs.show_payment, aurora_i18n::tr!("import-show-payment"));
+        if imports.choice != Choice::Local {
+            ui.add_enabled_ui(!busy, |ui| {
+                ui.collapsing(aurora_i18n::tr!("import-permissions"), |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(aurora_i18n::tr!("inventory-permissions-next-owner"));
+                        ui.checkbox(&mut prefs.next_modify, aurora_i18n::tr!("inventory-permissions-modify"));
+                        ui.checkbox(&mut prefs.next_copy, aurora_i18n::tr!("inventory-permissions-copy"));
+                        if !prefs.next_copy {
+                            prefs.next_transfer = true;
+                        }
+                        ui.add_enabled(
+                            prefs.next_copy,
+                            egui::Checkbox::new(&mut prefs.next_transfer, aurora_i18n::tr!("inventory-permissions-transfer")),
+                        );
+                    });
+                    ui.horizontal(|ui| {
+                        ui.checkbox(&mut prefs.share_group, aurora_i18n::tr!("import-share-group"));
+                        ui.checkbox(&mut prefs.everyone_copy, aurora_i18n::tr!("import-everyone-copy"));
+                        ui.checkbox(&mut prefs.show_payment, aurora_i18n::tr!("import-show-payment"));
+                    });
                 });
             });
-        });
+        }
         if !imports.message.is_empty() {
             ui.label(RichText::new(&imports.message).color(p.danger));
         }
         if prefs.show_payment && imports.spent > 0 {
             ui.label(RichText::new(aurora_i18n::tr!("import-paid", cost = imports.spent)).color(p.success));
         }
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             let total = imports.total(&prices);
             let local = imports.choice == Choice::Local;
             ui.label(
@@ -575,17 +620,35 @@ pub fn show(
                 .strong(),
             );
             let selected = imports.entries.iter().any(|e| e.selected && matches!(e.status, Status::Ready));
-            let can_upload = !busy && selected && total.is_some_and(|cost| world.balance.is_some_and(|b| b >= cost));
+            let can_upload = !busy && selected && total.is_some_and(|cost| cost == 0 || world.balance.is_some_and(|b| b >= cost));
             if local {
                 if let Some(entry) = imports.active.and_then(|id| imports.entries.iter().find(|e| e.id == id))
                     && ui
                         .add_enabled(
                             !entry.local_pending && entry.source.is_some(),
-                            egui::Button::new(aurora_i18n::tr!("import-local-apply")),
+                            egui::Button::new(if matches!(entry.source, Some(Source::Mesh(_))) {
+                                aurora_i18n::tr!("import-local-mesh-apply")
+                            } else {
+                                aurora_i18n::tr!("import-local-apply")
+                            }),
                         )
                         .clicked()
                 {
                     actions.push(Action::Local(entry.id));
+                }
+                if imports
+                    .active
+                    .and_then(|id| imports.entries.iter().find(|e| e.id == id))
+                    .is_some_and(|e| matches!(e.source, Some(Source::Mesh(_))))
+                    && flat_button(ui, p, aurora_i18n::tr!("import-local-mesh-clear")).clicked()
+                {
+                    actions.push(Action::ClearLocalMesh);
+                }
+                if let Some(entry) = imports.active.and_then(|id| imports.entries.iter().find(|e| e.id == id))
+                    && matches!(entry.source, Some(Source::Mesh(_)))
+                    && flat_button(ui, p, aurora_i18n::tr!("import-local-mesh-rez")).clicked()
+                {
+                    actions.push(Action::RezLocalMesh(entry.id));
                 }
             } else {
                 if imports.choice == Choice::Mesh
@@ -616,6 +679,12 @@ pub fn show(
             if flat_button(ui, p, aurora_i18n::tr!("common-close")).clicked() {
                 close_requested = true;
             }
+        });
+        ctx.data_mut(|d| {
+            d.insert_temp(
+                window_id.with("footer_base"),
+                (ui.cursor().top() - footer_start - extra_height).max(0.0),
+            )
         });
     });
     imports.open = open && !close_requested;
@@ -666,13 +735,67 @@ fn lod_label(level: usize) -> &'static str {
     }
 }
 
+// LLFloaterModelPreview color swatches; Aurora's palette supplies defaults
+// so previews follow the active theme until a color is explicitly saved.
+fn preview_colors(ui: &mut egui::Ui, p: &Palette, prefs: &mut Preferences) {
+    ui.collapsing(aurora_i18n::tr!("import-preview-colors"), |ui| {
+        for (label, stored, default) in [
+            (
+                aurora_i18n::tr!("import-preview-background"),
+                &mut prefs.preview_background,
+                p.field,
+            ),
+            (aurora_i18n::tr!("import-edges"), &mut prefs.preview_edges, p.teal),
+            (
+                aurora_i18n::tr!("import-preview-physics-fill"),
+                &mut prefs.preview_physics_fill,
+                p.teal,
+            ),
+            (
+                aurora_i18n::tr!("import-preview-physics-edges"),
+                &mut prefs.preview_physics_edges,
+                p.ink,
+            ),
+            (
+                aurora_i18n::tr!("import-preview-degenerate-fill"),
+                &mut prefs.preview_degenerate_fill,
+                p.danger,
+            ),
+            (
+                aurora_i18n::tr!("import-preview-degenerate-edges"),
+                &mut prefs.preview_degenerate_edges,
+                p.warn,
+            ),
+        ] {
+            ui.horizontal(|ui| {
+                let mut color = color32(stored.unwrap_or_else(|| palette_color(default)));
+                if ui.color_edit_button_srgba(&mut color).changed() {
+                    *stored = Some(palette_color(color));
+                }
+                ui.label(label);
+            });
+        }
+        if flat_button(ui, p, aurora_i18n::tr!("common-reset")).clicked() {
+            prefs.preview_background = None;
+            prefs.preview_edges = None;
+            prefs.preview_physics_fill = None;
+            prefs.preview_physics_edges = None;
+            prefs.preview_degenerate_fill = None;
+            prefs.preview_degenerate_edges = None;
+        }
+    });
+}
+
 fn palette_color(color: egui::Color32) -> [f32; 4] {
-    [
-        f32::from(color.r()) / 255.0,
-        f32::from(color.g()) / 255.0,
-        f32::from(color.b()) / 255.0,
-        1.0,
-    ]
+    color.to_srgba_unmultiplied().map(|v| f32::from(v) / 255.0)
+}
+fn color32(color: [f32; 4]) -> egui::Color32 {
+    let [r, g, b, a] = color.map(|v| (v.clamp(0.0, 1.0) * 255.0).round() as u8);
+    egui::Color32::from_rgba_unmultiplied(r, g, b, a)
+}
+fn linear_color(color: [f32; 4]) -> [f32; 4] {
+    // The egui preview target stores gamma RGB. PBR factors use linear RGB.
+    egui::Rgba::from(color32(color)).to_rgba_unmultiplied()
 }
 fn lod_source(source: mesh::LodSource) -> &'static str {
     match source {
@@ -684,11 +807,16 @@ fn lod_source(source: mesh::LodSource) -> &'static str {
         mesh::LodSource::Above => aurora_i18n::tr!("import-lod-above"),
     }
 }
-fn mesh_controls(ui: &mut egui::Ui, p: &Palette, id: Uuid, draft: &mut mesh::Draft, actions: &mut Vec<Action>) -> bool {
+fn mesh_controls(ui: &mut egui::Ui, p: &Palette, id: Uuid, draft: &mut mesh::Draft, local: bool, actions: &mut Vec<Action>) -> bool {
     let old = draft.options.clone();
     let mut changed = false;
     widgets::section_header(ui, p, "cube", aurora_i18n::tr!("import-mesh"));
     let triangles = draft.scene.models.iter().map(|m| m.triangles()).sum::<usize>();
+    if let Some(prepared) = &draft.prepared
+        && prepared.degenerate_triangles > 0
+    {
+        ui.label(RichText::new(aurora_i18n::tr!("import-degenerate-physics", count = prepared.degenerate_triangles)).color(p.warn));
+    }
     ui.label(aurora_i18n::tr!(
         "import-mesh-info",
         models = draft.scene.models.len(),
@@ -828,11 +956,19 @@ fn mesh_controls(ui: &mut egui::Ui, p: &Palette, id: Uuid, draft: &mut mesh::Dra
         });
     });
     ui.collapsing(aurora_i18n::tr!("import-modifiers"), |ui| {
+        let (_, limit) = draft.dimensions_and_limit();
         ui.add(
-            egui::Slider::new(&mut draft.options.scale, 0.01..=64.0)
+            egui::Slider::new(&mut draft.options.scale, 0.01..=limit.max(0.01))
                 .logarithmic(true)
                 .text(aurora_i18n::tr!("import-scale")),
         );
+        let (dimensions, _) = draft.dimensions_and_limit();
+        ui.label(aurora_i18n::tr!(
+            "import-dimensions",
+            x = format!("{:.3}", dimensions.x),
+            y = format!("{:.3}", dimensions.y),
+            z = format!("{:.3}", dimensions.z)
+        ));
         ui.checkbox(&mut draft.options.textures, aurora_i18n::tr!("import-include-textures"));
     });
     ui.collapsing(aurora_i18n::tr!("import-rigging"), |ui| {
@@ -845,7 +981,7 @@ fn mesh_controls(ui: &mut egui::Ui, p: &Palette, id: Uuid, draft: &mut mesh::Dra
                     ui.checkbox(&mut draft.options.lock_scale, aurora_i18n::tr!("import-lock-scale"));
                     ui.horizontal(|ui| {
                         ui.label(aurora_i18n::tr!("import-pelvis-offset"));
-                        ui.add(egui::DragValue::new(&mut draft.options.pelvis).range(-10.0..=10.0).speed(0.01));
+                        ui.add(egui::DragValue::new(&mut draft.options.pelvis).range(-3.0..=3.0).speed(0.01));
                     });
                 });
             });
@@ -855,9 +991,13 @@ fn mesh_controls(ui: &mut egui::Ui, p: &Palette, id: Uuid, draft: &mut mesh::Dra
         });
     });
     ui.horizontal(|ui| {
-        if ui
-            .add_enabled(draft.pending.is_none(), egui::Button::new(aurora_i18n::tr!("import-calculate-fee")))
-            .clicked()
+        if flat_button(ui, p, aurora_i18n::tr!("import-reset-settings")).clicked() {
+            actions.push(Action::ResetMesh(id));
+        }
+        if !local
+            && ui
+                .add_enabled(draft.pending.is_none(), egui::Button::new(aurora_i18n::tr!("import-calculate-fee")))
+                .clicked()
         {
             actions.push(Action::Quote(id));
         }
@@ -886,7 +1026,7 @@ fn mesh_controls(ui: &mut egui::Ui, p: &Palette, id: Uuid, draft: &mut mesh::Dra
             });
         }
     }
-    changed || old != draft.options
+    draft.finish_edit(&old, changed)
 }
 
 fn texture(
@@ -957,12 +1097,6 @@ fn texture(
     }
     if *target != 0 {
         if let Some(model) = model {
-            view.background = [
-                p.field.r() as f32 / 255.0,
-                p.field.g() as f32 / 255.0,
-                p.field.b() as f32 / 255.0,
-                1.0,
-            ];
             aurora_render::preview::paint(
                 ui,
                 egui::Id::new(("texture_preview", id)),
@@ -1013,6 +1147,40 @@ fn texture(
     } else {
         ui.spinner();
     }
+}
+
+fn animation_transport(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    id: Uuid,
+    player: &mut super::animation::Player,
+    animation: &Animation,
+    actions: &mut Vec<Action>,
+) -> f32 {
+    ui.horizontal(|ui| {
+        if flat_button(ui, p, aurora_i18n::tr!("common-play")).clicked() {
+            actions.push(Action::Play(id, true));
+        }
+        if flat_button(ui, p, aurora_i18n::tr!("common-stop")).clicked() {
+            player.playing = false;
+            player.seek(0.0);
+            actions.push(Action::Play(id, false));
+        }
+        if flat_button(ui, p, aurora_i18n::tr!("import-pause")).clicked() {
+            player.playing = !player.playing;
+        }
+        if flat_button(ui, p, aurora_i18n::tr!("import-reload")).clicked() {
+            actions.push(Action::Reload(id));
+        }
+    });
+    let mut position = animation.local_time(f64::from(player.position)) as f32;
+    if ui
+        .add(egui::Slider::new(&mut position, 0.0..=animation.duration).suffix(" s"))
+        .changed()
+    {
+        player.seek(position);
+    }
+    position
 }
 
 fn animation_controls(ui: &mut egui::Ui, p: &Palette, animation: &mut Animation, bvh: Option<&BvhInfo>, joint_count: usize) {

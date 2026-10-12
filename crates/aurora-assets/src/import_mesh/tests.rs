@@ -47,6 +47,12 @@ fn collada_units_row_major_transform_and_normalized_geometry_preserve_positions(
         .transform_point3(Vec3::from_array(model.faces[0].vertices[1].position));
     assert!((world - Vec3::new(1.02, 0.03, 0.04)).length() < 0.00001);
     assert_eq!(model.faces[0].indices, [0, 1, 2]);
+    let meters = collada::parse_with_meters(DAE, &crate::Skeleton::default(), true).expect("forced meters");
+    let model = &meters.models[0];
+    let point = meters.instances[0]
+        .transform
+        .transform_point3(Vec3::from_array(model.faces[0].vertices[1].position));
+    assert!((point - Vec3::new(102.0, 3.0, 4.0)).length() < 0.0001);
     let malformed = String::from_utf8_lossy(DAE).replace("0 1 2</p>", "0 1 9</p>");
     assert!(collada::parse(malformed.as_bytes(), &crate::Skeleton::default()).is_err());
 }
@@ -174,4 +180,53 @@ fn lod_skin_names_are_remapped_and_unweighted_vertices_use_nearest_source() {
     assert_eq!(low.faces[0].vertices[1].joints[0], 1);
     assert_eq!(low.faces[0].vertices[1].weights, [1.0, 0.0, 0.0, 0.0]);
     assert_eq!(low.skin.as_ref().expect("skin").names, high.skin.as_ref().expect("skin").names);
+}
+
+#[test]
+fn gltf_palette_pruning_preserves_weighted_joints_and_active_groups() {
+    let skeleton = crate::Skeleton::parse(include_bytes!("../../../aurora-viewer/assets/character/avatar_skeleton.xml")).expect("skeleton");
+    let names: Vec<_> = skeleton
+        .joints
+        .iter()
+        .filter(|j| !j.is_collision_volume)
+        .map(|j| j.name.clone())
+        .collect();
+    assert!(names.len() > 110);
+    let source = names.iter().position(|name| name == "mHandRing3Left").expect("weighted joint");
+    let mut skin = Skin {
+        inverse_bind: vec![Mat4::IDENTITY; names.len()],
+        alternate_bind: vec![Mat4::IDENTITY; names.len()],
+        names,
+        bind_shape: Mat4::IDENTITY,
+        pelvis_offset: 0.0,
+    };
+    let mut model = cube();
+    for vertex in &mut model.faces[0].vertices {
+        vertex.joints = [source as u8, 0, 0, 0];
+        vertex.weights = [0.7, 0.0, 0.0, 0.0];
+    }
+    skin::prune_gltf(&mut model.faces, &mut skin, &skeleton).expect("prune");
+    assert!(skin.names.len() <= 110);
+    assert_eq!(skin.names[0], "mHandRing3Left");
+    assert!(skin.names.iter().any(|name| name == "mPelvis"));
+    assert_eq!(model.faces[0].vertices[0].joints[0], 0);
+    assert_eq!(model.faces[0].vertices[0].weights, [1.0, 0.0, 0.0, 0.0]);
+    skin.names = vec!["Unsupported".into(), "mPelvis".into()];
+    skin.inverse_bind = vec![Mat4::IDENTITY; 2];
+    skin.alternate_bind = skin.inverse_bind.clone();
+    for vertex in &mut model.faces[0].vertices {
+        vertex.joints = [0, 1, 0, 0];
+        vertex.weights = [0.8, 0.2, 0.0, 0.0];
+    }
+    skin::prune_gltf(&mut model.faces, &mut skin, &skeleton).expect("unsupported pruning");
+    assert_eq!(skin.names, ["mPelvis"]);
+    assert_eq!(model.faces[0].vertices[0].weights, [0.0, 1.0, 0.0, 0.0]);
+}
+
+#[test]
+fn physics_degeneracy_distinguishes_small_balanced_and_thin_triangles() {
+    assert!(!process::degenerate([Vec3::ZERO, Vec3::X * 0.005, Vec3::Y * 0.005]));
+    assert!(process::degenerate([Vec3::ZERO, Vec3::X, Vec3::Y * 0.00001]));
+    assert!(process::degenerate([Vec3::ZERO, Vec3::X, Vec3::X * 2.0]));
+    assert!(!process::degenerate([Vec3::ZERO, Vec3::X, Vec3::Y]));
 }

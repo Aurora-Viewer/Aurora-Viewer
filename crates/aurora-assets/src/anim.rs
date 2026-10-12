@@ -131,8 +131,11 @@ fn parse(data: &[u8], upload: bool) -> Result<Animation, AssetError> {
         return Err(AssetError::invalid("bad animation timing"));
     }
     let hand_pose = r.u32("hand_pose")?;
-    if upload && (hand_pose > 13 || loop_in < 0.0 || loop_out < loop_in || loop_out > duration || ease_in < 0.0 || ease_out < 0.0) {
-        return Err(AssetError::invalid("animation timing or hand pose"));
+    // LLKeyframeMotion::deserialize accepts finite loop/ease values, including
+    // exporter -1 markers when looping is disabled. Bounds are normalized only
+    // for sampling; native uploads keep the original bytes. NUM_HAND_POSES is 14.
+    if upload && hand_pose > 14 {
+        return Err(AssetError::invalid("animation hand pose"));
     }
     let num_joints = r.u32("num_joints")? as usize;
     if num_joints > MAX_JOINTS || (upload && num_joints > 216) {
@@ -443,6 +446,25 @@ mod tests {
         let last = constrained.len() - 4;
         constrained[last..].copy_from_slice(&f32::NAN.to_le_bytes());
         assert!(parse_animation_upload(&constrained).is_err());
+    }
+
+    #[test]
+    fn native_upload_accepts_finite_exporter_loop_markers() {
+        let mut bytes = build();
+        bytes[13..17].copy_from_slice(&(-1.0f32).to_le_bytes());
+        bytes[17..21].copy_from_slice(&(-1.0f32).to_le_bytes());
+        bytes[21..25].copy_from_slice(&0i32.to_le_bytes());
+        let parsed = parse_animation_upload(&bytes).expect("disabled exporter loop markers");
+        assert!(!parsed.looping);
+        assert_eq!((parsed.loop_in, parsed.loop_out), (0.0, 0.0));
+        bytes[17..21].copy_from_slice(&3.0f32.to_le_bytes());
+        bytes[33..37].copy_from_slice(&14u32.to_le_bytes());
+        assert!(parse_animation_upload(&bytes).is_ok());
+        bytes[33..37].copy_from_slice(&15u32.to_le_bytes());
+        assert!(parse_animation_upload(&bytes).is_err());
+        bytes[33..37].copy_from_slice(&0u32.to_le_bytes());
+        bytes[13..17].copy_from_slice(&f32::NAN.to_le_bytes());
+        assert!(parse_animation_upload(&bytes).is_err());
     }
 
     #[test]

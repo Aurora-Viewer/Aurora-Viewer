@@ -1036,6 +1036,12 @@ impl App {
         if let Some(gfx) = &mut self.gfx {
             let mut slots = HashSet::new();
             for entry in &imports.entries {
+                for asset in &entry.local_mesh_ids {
+                    self.scene.meshes.remove_local(asset);
+                }
+                if entry.local_published {
+                    self.scene.materials.remove_local(&entry.id);
+                }
                 for (asset, slot) in &entry.local_slots {
                     self.scene.textures.unregister_local(asset);
                     if slots.insert(*slot) {

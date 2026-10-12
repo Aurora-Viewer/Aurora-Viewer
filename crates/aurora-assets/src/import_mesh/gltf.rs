@@ -283,7 +283,7 @@ pub fn parse(doc: &Document, skeleton: &crate::Skeleton) -> Result<Scene, AssetE
             let mesh = doc.json["meshes"]
                 .get(mesh_index)
                 .ok_or_else(|| AssetError::invalid("mesh index"))?;
-            let skin = if let Some(index) = skin_index {
+            let mut skin = if let Some(index) = skin_index {
                 Some(read_skin(doc, index, nodes, basis, skeleton, &mut scene.warnings)?)
             } else {
                 None
@@ -393,6 +393,9 @@ pub fn parse(doc: &Document, skeleton: &crate::Skeleton) -> Result<Scene, AssetE
                     }
                 }
                 faces.extend(split);
+            }
+            if let Some(skin) = &mut skin {
+                super::skin::prune_gltf(&mut faces, skin, skeleton)?;
             }
             let mut models = Vec::new();
             let (center, size) = normalization(&faces)?;

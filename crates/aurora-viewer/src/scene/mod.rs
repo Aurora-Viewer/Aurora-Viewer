@@ -1213,10 +1213,10 @@ impl Scene {
                 }
                 continue;
             }
-            if g.owner_avatar.is_some() && o.volume.is_mesh() {
+            if g.owner_avatar.is_some() && o.visual_volume().is_mesh() {
                 continue; // rigged / worn mesh: the avatar capsule handles it
             }
-            let scale = o.scale.max(Vec3::splat(0.01));
+            let scale = o.visual_scale().max(Vec3::splat(0.01));
             // the geometry centre lies in the prim box: farther than the box
             // diagonal plus the tolerance, the point cannot be inside
             if !g.rigged && g.radius > 0.0 && (point - g.center).length() > scale.length() + 0.2 {
@@ -1278,7 +1278,7 @@ impl Scene {
                 continue;
             };
             let d = pos.distance(view.eye);
-            if hud || d > self.draw_distance || !view.sphere_visible(pos, (o.scale * 0.5).length()) {
+            if hud || d > self.draw_distance || !view.sphere_visible(pos, (o.visual_scale() * 0.5).length()) {
                 continue;
             }
             let normal = rot * Vec3::Z;
@@ -1288,7 +1288,7 @@ impl Scene {
             if best.as_ref().is_some_and(|(bd, _)| *bd <= d) {
                 continue;
             }
-            let to_box = Mat4::from_scale_rotation_translation(o.scale.max(Vec3::splat(0.01)), rot, pos).inverse();
+            let to_box = Mat4::from_scale_rotation_translation(o.visual_scale().max(Vec3::splat(0.01)), rot, pos).inverse();
             best = Some((
                 d,
                 aurora_render::MirrorParams {
@@ -1305,24 +1305,24 @@ impl Scene {
         if o.is_avatar() || o.is_tree() || o.pcode != aurora_prim::params::LL_PCODE_VOLUME {
             return None;
         }
-        if o.volume.is_mesh() {
-            return o.volume.sculpt.map(|s| GeomKey::Mesh { id: s.texture, lod });
+        if o.visual_volume().is_mesh() {
+            return o.visual_volume().sculpt.map(|s| GeomKey::Mesh { id: s.texture, lod });
         }
         if o.is_flexible() {
             return Some(GeomKey::Flexible {
                 id: o.full_id,
-                hash: o.volume.cache_key(),
+                hash: o.visual_volume().cache_key(),
                 lod,
             });
         }
-        if o.volume.is_sculpt() {
+        if o.visual_volume().is_sculpt() {
             return Some(GeomKey::Sculpt {
-                hash: o.volume.cache_key(),
+                hash: o.visual_volume().cache_key(),
                 lod,
             });
         }
         Some(GeomKey::Prim {
-            hash: o.volume.cache_key(),
+            hash: o.visual_volume().cache_key(),
             lod,
         })
     }
@@ -1765,7 +1765,7 @@ impl Scene {
             return;
         };
         let is_avatar = o.is_avatar();
-        let scale = o.scale.max(Vec3::splat(0.001));
+        let scale = o.visual_scale().max(Vec3::splat(0.001));
         let radius = (scale * 0.5).length().max(0.05);
 
         // ---- avatar
@@ -1799,7 +1799,7 @@ impl Scene {
         }
         let mut sculpt_wait = None;
         if let Some(GeomKey::Sculpt { .. }) = wanted
-            && let Some(s) = o.volume.sculpt
+            && let Some(s) = o.visual_volume().sculpt
         {
             sculpt_wait = Some(s.texture);
         }
@@ -2956,7 +2956,7 @@ impl Scene {
         let rig = self.avatar_lib.rig.clone();
         // gather work: (slot, anims)
         #[allow(clippy::type_complexity)]
-        let mut work: Vec<(usize, anim::Controller, Arc<anim::SkeletonBase>, Uuid)> = Vec::new();
+        let mut work: Vec<(usize, anim::Controller, Arc<anim::SkeletonBase>, Uuid, Instant)> = Vec::new();
         let mut root_dz: Vec<(Uuid, f32)> = Vec::new();
         let mut posed: Vec<(Uuid, usize)> = Vec::new();
         let owners: Vec<(Uuid, u32)> = self.palette_slots.iter().map(|(k, v)| (*k, *v)).collect();
@@ -3005,6 +3005,13 @@ impl Scene {
                 }
             });
             motions.control = control;
+            let preview = if owner == world.agent_id {
+                world.animation_preview_clock
+            } else {
+                None
+            };
+            let pose_now = preview.map_or(now, |(_, _, sample)| sample);
+            motions.set_preview_clock(preview.map(|(id, start, _)| (Some(id), start)));
             match look {
                 Some((true, _)) => motions.look_cleared = true,
                 Some((false, None)) => {
@@ -3022,7 +3029,7 @@ impl Scene {
                 let playing = self.object_signals.entry(owner).or_default().update(world, idx, now);
                 motions.sync(&playing, now, |id| anims.get(id));
             } else {
-                let stopped = motions.sync(world.animations_of(&owner), now, |id| anims.get(id));
+                let stopped = motions.sync(world.animations_of(&owner), pose_now, |id| anims.get(id));
                 if owner == world.agent_id {
                     completed.extend(stopped);
                 }
@@ -3036,23 +3043,26 @@ impl Scene {
                 None => self.skeleton_of(world, owner, idx, now),
             };
             root_dz.push((owner, dz));
-            work.push((slot as usize, motions, base, owner));
+            work.push((slot as usize, motions, base, owner, pose_now));
             posed.push((owner, slot as usize));
         }
         self.stats.posed = work.len();
         let pal = &mut self.palettes;
         let mut chunks: Vec<Option<&mut [[[f32; 4]; 4]]>> = pal.chunks_mut(anim::PALETTE_JOINTS).map(Some).collect();
-        let jobs: Vec<(&mut [[[f32; 4]; 4]], &mut (usize, anim::Controller, Arc<anim::SkeletonBase>, Uuid))> = work
+        let jobs: Vec<(
+            &mut [[[f32; 4]; 4]],
+            &mut (usize, anim::Controller, Arc<anim::SkeletonBase>, Uuid, Instant),
+        )> = work
             .iter_mut()
             .filter_map(|w| chunks.get_mut(w.0).and_then(|c| c.take()).map(|c| (c, w)))
             .collect();
-        jobs.into_par_iter().for_each(|(chunk, (_, motions, base, _))| {
+        jobs.into_par_iter().for_each(|(chunk, (_, motions, base, _, pose_now))| {
             for m in chunk.iter_mut().skip(rig.len()) {
                 *m = Mat4::IDENTITY.to_cols_array_2d();
             }
-            motions.evaluate(&rig, now, Some(base), chunk);
+            motions.evaluate(&rig, *pose_now, Some(base), chunk);
         });
-        for (_, motions, _, owner) in work {
+        for (_, motions, _, owner, _) in work {
             self.motions.insert(owner, motions);
         }
         let slots = &self.palette_slots;
@@ -3158,7 +3168,7 @@ impl Scene {
         for &i in &members {
             if let Some(o) = world.objects.get(i) {
                 (o.full_id, o.pcode, o.parent_id, o.extra.extended_mesh_flags).hash(&mut signature);
-                if let Some(s) = o.volume.sculpt {
+                if let Some(s) = o.visual_volume().sculpt {
                     s.texture.hash(&mut signature);
                     if let Some(skin) = self.meshes.meta(&s.texture).and_then(|m| m.skin) {
                         (Arc::as_ptr(&skin) as usize).hash(&mut signature);
@@ -3186,10 +3196,15 @@ impl Scene {
             let Some(o) = world.objects.get(i) else {
                 continue;
             };
-            if !o.volume.is_mesh() {
+            if !o.visual_volume().is_mesh() {
                 continue;
             }
-            let Some(skin) = o.volume.sculpt.and_then(|s| self.meshes.meta(&s.texture)).and_then(|m| m.skin) else {
+            let Some(skin) = o
+                .visual_volume()
+                .sculpt
+                .and_then(|s| self.meshes.meta(&s.texture))
+                .and_then(|m| m.skin)
+            else {
                 continue;
             };
             if skin.alt_inverse_bind.is_empty() || skin.alt_inverse_bind.len() != skin.joint_names.len() {
@@ -3346,9 +3361,9 @@ impl Scene {
                 let Some(o) = world.objects.get(i) else {
                     continue;
                 };
-                if o.volume.is_mesh() {
+                if o.visual_volume().is_mesh() {
                     meshes += 1;
-                    if o.volume
+                    if o.visual_volume()
                         .sculpt
                         .and_then(|s| self.meshes.meta(&s.texture))
                         .is_some_and(|m| m.skin.is_some())
@@ -3422,7 +3437,7 @@ impl Scene {
                         ));
                     }
                     if g.faces.is_empty() {
-                        line = format!(" no faces (geometry {:?}, mesh {})", g.geom, o.volume.is_mesh());
+                        line = format!(" no faces (geometry {:?}, mesh {})", g.geom, o.visual_volume().is_mesh());
                     }
                     log::info!("  head prim {}:{line}", o.full_id);
                 }
@@ -3535,9 +3550,9 @@ impl Scene {
                 "object {} local {}: {} material {} scale {:.2?} center {:.1?}, {} faces, light {:?}",
                 o.full_id,
                 o.key.local_id,
-                if o.volume.is_mesh() { "mesh" } else { "prim" },
+                if o.visual_volume().is_mesh() { "mesh" } else { "prim" },
                 o.prim_material,
-                o.scale,
+                o.visual_scale(),
                 g.center,
                 g.faces.len(),
                 o.extra.light

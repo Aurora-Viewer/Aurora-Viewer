@@ -7,6 +7,8 @@ use std::time::{Duration, Instant};
 
 pub struct Player {
     pub bound: Option<Arc<BoundAnim>>,
+    pub request: Option<Uuid>,
+    pub started: bool,
     pub playing: bool,
     pub position: f32,
     pub speed: f32,
@@ -21,6 +23,8 @@ impl Default for Player {
         let now = Instant::now();
         Self {
             bound: None,
+            request: None,
+            started: false,
             playing: false,
             position: 0.0,
             speed: 1.0,
@@ -35,8 +39,14 @@ impl Default for Player {
 impl Player {
     pub fn seek(&mut self, position: f32) {
         self.position = position;
+        self.epoch = Instant::now()
+            .checked_sub(Duration::from_secs_f32(position.max(0.0)))
+            .unwrap_or_else(Instant::now);
         self.controller = Controller::for_control_avatar();
         self.pose = None;
+    }
+    pub fn clock(&self) -> (Instant, Instant) {
+        (self.epoch, self.epoch + Duration::from_secs_f32(self.position.max(0.0)))
     }
     pub fn tick(&mut self, id: Uuid, rig: &Rig, streamer: &mut AnimStreamer) {
         let now = Instant::now();
@@ -57,6 +67,7 @@ impl Player {
             return;
         }
         let sample = self.epoch + Duration::from_secs_f32(self.position.max(0.0));
+        self.controller.set_preview_clock(Some((None, self.epoch)));
         let base = match self.base {
             1 => Uuid::from_u128(0x6ed24bd8_91aa_4b12_ccc7_c97c857ab4e0),
             2 => Uuid::from_u128(0x1a5fe8ac_a804_8a5d_7cbd_56bd83184568),

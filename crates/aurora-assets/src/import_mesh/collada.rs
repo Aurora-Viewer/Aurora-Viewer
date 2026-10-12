@@ -112,6 +112,10 @@ fn source(id: &str, ids: &HashMap<String, &Element>, cache: &mut HashMap<String,
 }
 
 pub fn parse(data: &[u8], skeleton: &crate::Skeleton) -> Result<Scene, AssetError> {
+    parse_with_meters(data, skeleton, false)
+}
+/// FSLocalMeshScaleAlwaysMeters deliberately overrides the declared unit.
+pub fn parse_with_meters(data: &[u8], skeleton: &crate::Skeleton, assume_meters: bool) -> Result<Scene, AssetError> {
     if data.len() > 64 * 1024 * 1024 {
         return Err(AssetError::TooLarge("Collada file"));
     }
@@ -128,6 +132,7 @@ pub fn parse(data: &[u8], skeleton: &crate::Skeleton) -> Result<Scene, AssetErro
         .unwrap_or("1")
         .parse::<f32>()
         .map_err(|_| AssetError::invalid("Collada units"))?;
+    let meter = if assume_meters { 1.0 } else { meter };
     if !meter.is_finite() || meter <= 0.0 {
         return Err(AssetError::invalid("Collada unit scale"));
     }

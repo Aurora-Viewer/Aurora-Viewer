@@ -71,6 +71,7 @@ pub struct Scene {
     pub materials: Vec<Material>,
     pub warnings: Vec<String>,
     pub image_uris: std::collections::HashMap<usize, String>,
+    pub source_uris: Vec<String>,
 }
 
 impl Face {

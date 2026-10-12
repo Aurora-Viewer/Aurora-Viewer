@@ -67,6 +67,7 @@ impl Default for Material {
 }
 #[derive(Clone)]
 pub struct Part {
+    pub diagnostic: bool,
     pub vertices: Arc<[Vertex]>,
     pub indices: Arc<[u32]>,
     pub textures: [Option<Arc<Image>>; 4],
@@ -86,6 +87,7 @@ pub struct View {
     pub pan: [f32; 2],
     pub background: [f32; 4],
     pub edge_color: [f32; 4],
+    pub diagnostic_colors: [[f32; 4]; 2],
     pub ambient: [f32; 3],
     pub edges: bool,
     pub uv: bool,
@@ -100,6 +102,7 @@ impl Default for View {
             pan: [0.0; 2],
             background: [0.0, 0.0, 0.0, 1.0],
             edge_color: [1.0; 4],
+            diagnostic_colors: [[1.0; 4]; 2],
             ambient: [0.2; 3],
             edges: false,
             uv: false,
@@ -520,7 +523,15 @@ impl Target {
                     .collect::<Vec<_>>();
                 queue.write_buffer(&part.bones, 0, bytemuck::cast_slice(&matrices));
             }
-            let material = view.material.unwrap_or(source.material);
+            let material = if source.diagnostic {
+                Material {
+                    color: view.diagnostic_colors[0],
+                    alpha_mode: if view.diagnostic_colors[0][3] < 1.0 { 1 } else { 0 },
+                    ..Default::default()
+                }
+            } else {
+                view.material.unwrap_or(source.material)
+            };
             let uniforms = Uniform {
                 projection: projection.to_cols_array_2d(),
                 eye: [eye.x, eye.y, eye.z, 1.0],
@@ -532,7 +543,11 @@ impl Target {
                     material.alpha_mode as f32,
                     if view.uv { 1.0 } else { 0.0 },
                 ],
-                edge_color: view.edge_color,
+                edge_color: if source.diagnostic {
+                    view.diagnostic_colors[1]
+                } else {
+                    view.edge_color
+                },
                 ambient: [view.ambient[0], view.ambient[1], view.ambient[2], 1.0],
                 surface: [material.normal_scale, if material.double_sided { 1.0 } else { 0.0 }, 0.0, 0.0],
             };
@@ -573,9 +588,12 @@ impl Target {
             pass.set_index_buffer(part.indices.slice(..), wgpu::IndexFormat::Uint32);
             pass.draw_indexed(0..part.count, 0, 0..1);
         }
-        if view.edges {
+        if view.edges || self.model.parts.iter().any(|p| p.diagnostic) {
             pass.set_pipeline(&pipeline.edges);
             for part in &self.parts {
+                if !view.edges && !self.model.parts[part.source].diagnostic {
+                    continue;
+                }
                 pass.set_bind_group(0, &part.group, &[]);
                 pass.set_vertex_buffer(0, part.vertices.slice(..));
                 pass.set_index_buffer(part.edges.slice(..), wgpu::IndexFormat::Uint32);

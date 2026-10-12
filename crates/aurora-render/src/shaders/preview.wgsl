@@ -21,7 +21,14 @@ struct Vertex {
     if sum > 0.00001 {
         let j = min(joints,vec4<u32>(arrayLength(&bones)-1u));
         let m = (bones[j.x]*weights.x + bones[j.y]*weights.y + bones[j.z]*weights.z + bones[j.w]*weights.w) * (1.0/sum);
-        p = (m * vec4(position,1.0)).xyz; n = normalize((m * vec4(normal,0.0)).xyz);
+        p = (m * vec4(position,1.0)).xyz;
+        // Inverse transpose is required for the model's anisotropic
+        // normalization and imported joint scales; a rotation-only product
+        // applies the normalization scale twice to skinned normals.
+        let a=m[0].xyz; let b=m[1].xyz; let c=m[2].xyz;
+        let cofactors=mat3x3(cross(b,c),cross(c,a),cross(a,b));
+        let determinant=dot(a,cross(b,c));
+        if abs(determinant)>0.0000001 {n=normalize((cofactors*normal)/determinant);}
     }
     var out: Vertex; out.clip = u.projection * vec4(p, 1.0);
     out.position = p; out.normal = n; out.uv = uv; return out;
@@ -56,7 +63,7 @@ struct Vertex {
     let geometry = n_dot_l / (n_dot_l * (1.0 - k) + k) * n_dot_v / (n_dot_v * (1.0 - k) + k);
     let specular = distribution * geometry * fresnel / max(4.0 * n_dot_l * n_dot_v, 0.001);
     let diffuse = (vec3<f32>(1.0) - fresnel) * (1.0 - metallic) * base_color.rgb / 3.14159265;
-    var color = (diffuse + specular) * n_dot_l * 2.4 + base_color.rgb * u.ambient.rgb * (1.0 - metallic) + f0 * 0.15;
+    var color = (diffuse + specular) * n_dot_l * 2.4 + (base_color.rgb * u.ambient.rgb * (1.0 - metallic) + f0 * 0.15) * metallic_roughness.r;
     color += textureSample(emissive_map, samp, v.uv).rgb * u.emissive_metallic.xyz;
     color = color / (vec3<f32>(1.0) + color);
     if u.params.w > 0.5 {

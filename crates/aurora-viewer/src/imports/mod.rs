@@ -88,6 +88,16 @@ pub struct Preferences {
     pub mesh_reliable_default: bool,
     pub mesh_suffixes: [String; 5],
     pub mesh_physics_preset: String,
+    pub local_meshes: bool,
+    pub local_assume_meters: bool,
+    pub local_mesh_auto_reload: bool,
+    pub local_reload_seconds: f32,
+    pub preview_background: Option<[f32; 4]>,
+    pub preview_edges: Option<[f32; 4]>,
+    pub preview_physics_fill: Option<[f32; 4]>,
+    pub preview_physics_edges: Option<[f32; 4]>,
+    pub preview_degenerate_fill: Option<[f32; 4]>,
+    pub preview_degenerate_edges: Option<[f32; 4]>,
 }
 impl Default for Preferences {
     fn default() -> Self {
@@ -106,6 +116,16 @@ impl Default for Preferences {
             mesh_reliable_default: false,
             mesh_suffixes: ["LOD0".into(), "LOD1".into(), "LOD2".into(), String::new(), "PHYS".into()],
             mesh_physics_preset: String::new(),
+            local_meshes: false,
+            local_assume_meters: false,
+            local_mesh_auto_reload: false,
+            local_reload_seconds: 3.0,
+            preview_background: None,
+            preview_edges: None,
+            preview_physics_fill: None,
+            preview_physics_edges: None,
+            preview_degenerate_fill: None,
+            preview_degenerate_edges: None,
         }
     }
 }
@@ -248,6 +268,7 @@ pub struct Entry {
     pub preview: Option<egui::TextureHandle>,
     pub preview_generation: u64,
     pub preview_pending: bool,
+    pub reloading: bool,
     pub preview_job_generation: u64,
     pub preview_error: Option<String>,
     pub model: Option<Arc<aurora_render::preview::Model>>,
@@ -259,7 +280,11 @@ pub struct Entry {
     pub local_pending: bool,
     pub local_published: bool,
     pub local_generation: u64,
+    pub local_failed_generation: Option<u64>,
     pub local_slots: HashMap<Uuid, u32>,
+    pub local_mesh_ids: Vec<Uuid>,
+    pub local_model: usize,
+    pub local_use_scale: bool,
     pub watch: Option<local::Watch>,
     pub material_index: usize,
     pub empty_alpha: bool,
@@ -294,6 +319,7 @@ impl Entry {
             preview: None,
             preview_generation: 0,
             preview_pending: false,
+            reloading: false,
             preview_job_generation: 0,
             preview_error: None,
             model: None,
@@ -305,7 +331,11 @@ impl Entry {
             local_pending: false,
             local_published: false,
             local_generation: 0,
+            local_failed_generation: None,
             local_slots: HashMap::new(),
+            local_mesh_ids: Vec::new(),
+            local_model: 0,
+            local_use_scale: false,
             watch: None,
             material_index: 0,
             local_live: true,
@@ -341,7 +371,6 @@ pub(super) enum Worker {
 }
 pub enum Playback {
     Audio(aurora_audio::SoundClip),
-    Animation(Uuid, Arc<crate::scene::anim::BoundAnim>),
 }
 
 struct Step {
@@ -379,10 +408,17 @@ pub struct Imports {
     pub map_target: Option<(Uuid, usize)>,
     pub pending_remote: HashSet<Uuid>,
     pub demo_started: bool,
+    pub demo_mode: String,
+    pub demo_local_applied: bool,
+    pub demo_upload_started: bool,
+    pub demo_animation_positioned: bool,
+    pub own_avatar_preview: Option<Uuid>,
     pub load_preferences: Preferences,
     cost_overrides: HashMap<(Kind, bool), i32>,
     pub spent: i32,
     pub discarded_quotes: Vec<Uuid>,
+    pub local_targets: HashMap<Uuid, local::Target>,
+    pub local_rez: Option<local::Rez>,
 }
 impl Default for Imports {
     fn default() -> Self {
@@ -409,10 +445,17 @@ impl Default for Imports {
             map_target: None,
             pending_remote: HashSet::new(),
             demo_started: false,
+            demo_mode: String::new(),
+            demo_local_applied: false,
+            demo_upload_started: false,
+            demo_animation_positioned: false,
+            own_avatar_preview: None,
             load_preferences: Default::default(),
             cost_overrides: HashMap::new(),
             spent: 0,
             discarded_quotes: Vec::new(),
+            local_targets: HashMap::new(),
+            local_rez: None,
         }
     }
 }
@@ -508,7 +551,7 @@ impl Imports {
             self.message = aurora_i18n::tr!("import-price-unavailable").into();
             return;
         };
-        if world.balance.is_none_or(|balance| balance < total) {
+        if total > 0 && world.balance.is_none_or(|balance| balance < total) {
             self.message = aurora_i18n::tr!("import-insufficient-balance").into();
             return;
         }
@@ -598,6 +641,26 @@ impl Imports {
         // An in-flight paid upload runs to its confirmed result. Cancelling a
         // future step never discards the current server acknowledgement.
     }
+    pub fn restore_draft(&mut self, id: Uuid) {
+        if self.busy() {
+            return;
+        }
+        if let Some(entry) = self
+            .entries
+            .iter_mut()
+            .find(|e| e.id == id && e.source.is_some() && matches!(e.status, Status::Error(_)))
+        {
+            if let Some(Source::Mesh(draft)) = &mut entry.source {
+                draft.invalidate_quote();
+            }
+            entry.status = Status::Ready;
+            entry.preview_error = None;
+            entry.preview_pending = false;
+            entry.preview_generation += 1;
+        }
+        // Keep the outcome/verification warning visible. Restoring editing
+        // never sends a request; a new paid upload requires confirmation.
+    }
     pub fn uploaded(&mut self, request: Uuid, result: Result<Receipt, Error>) -> Option<aurora_net::inventory::InvItem> {
         if self.current.as_ref().is_none_or(|(id, _)| *id != request) {
             return None;
@@ -661,9 +724,14 @@ impl Imports {
                 }
                 Worker::Reloaded(id, result) => {
                     if let Some(entry) = self.entries.iter_mut().find(|e| e.id == id) {
+                        entry.reloading = false;
                         match result {
                             Ok(mut loaded) if entry.material_index < loaded.len() => {
                                 let mut updated = loaded.remove(entry.material_index);
+                                if let Some(Source::Mesh(draft)) = &mut entry.source {
+                                    draft.invalidate_quote();
+                                    self.discarded_quotes.append(&mut draft.discarded_quotes);
+                                }
                                 jobs.discard(entry.source.take());
                                 entry.source = updated.source.take();
                                 entry.status = Status::Ready;
@@ -736,6 +804,7 @@ impl Imports {
                                 Ok(prepared) => self.local_uploads.push(prepared),
                                 Err(error) => {
                                     entry.local_pending = false;
+                                    entry.local_failed_generation = Some(generation);
                                     self.message = error;
                                 }
                             }
@@ -826,6 +895,11 @@ impl Imports {
                                 }
                                 entry.preview_generation += 1;
                                 entry.model = None;
+                                if entry.local {
+                                    let live = entry.local_live;
+                                    files::localize(std::slice::from_mut(entry), &self.load_preferences);
+                                    entry.local_live = live;
+                                }
                             }
                             Err(error) => self.message = error,
                         }
@@ -834,9 +908,7 @@ impl Imports {
                 Worker::Audio(request, clip) if self.play_request == Some(request) => self.playback.push(Playback::Audio(clip)),
                 Worker::Animation(request, id, animation) if self.play_request == Some(request) => {
                     if let Some(entry) = self.entries.iter_mut().find(|e| e.id == id) {
-                        if entry.preview_on_avatar {
-                            self.playback.push(Playback::Animation(request, animation.clone()));
-                        }
+                        entry.player.request = Some(request);
                         entry.player.bound = Some(animation);
                         entry.player.seek(0.0);
                         entry.player.playing = true;
@@ -935,7 +1007,18 @@ impl Imports {
             return;
         };
         let request = Uuid::new_v4();
+        if let Some(entry) = self.entries.iter_mut().find(|e| e.id == id) {
+            entry.player.started = true;
+        }
         self.play_request = Some(request);
+        if let Some(entry) = self.entries.iter().find(|entry| entry.id == id)
+            && let (Some(Source::Animation { animation, .. }), Some(bound)) = (&entry.source, &entry.player.bound)
+            && animation::metadata(animation) == animation::metadata(&bound.anim)
+        {
+            let _ = self.tx.send(Worker::Animation(request, id, bound.clone()));
+            ctx.request_repaint();
+            return;
+        }
         let tx = self.tx.clone();
         let wake = ctx.clone();
         jobs.execute(move || {

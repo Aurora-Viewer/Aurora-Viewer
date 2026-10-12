@@ -98,8 +98,40 @@ pub struct Prepared {
     pub lods: Vec<[Option<Model>; 4]>,
     pub physics: Vec<Option<Model>>,
     pub hulls: Vec<process::Physics>,
+    pub degenerate_triangles: usize,
 }
 impl Draft {
+    /// LLModelPreview::rebuildUploadData: per-prim scale and whole-scene span
+    /// both constrain the upload factor (64 m prims, 240 m linkset span on SL).
+    pub fn dimensions_and_limit(&self) -> (glam::Vec3, f32) {
+        let mut min = glam::Vec3::splat(f32::MAX);
+        let mut max = glam::Vec3::splat(f32::MIN);
+        let mut prim_scale = 0.0f32;
+        for instance in &self.scene.instances {
+            let matrix = instance.transform;
+            prim_scale = prim_scale
+                .max(matrix.x_axis.truncate().length())
+                .max(matrix.y_axis.truncate().length())
+                .max(matrix.z_axis.truncate().length());
+            for x in [-0.5, 0.5] {
+                for y in [-0.5, 0.5] {
+                    for z in [-0.5, 0.5] {
+                        let point = matrix.transform_point3(glam::Vec3::new(x, y, z));
+                        min = min.min(point);
+                        max = max.max(point);
+                    }
+                }
+            }
+        }
+        let span = max - min;
+        if !span.is_finite() || prim_scale <= 0.0 {
+            return (glam::Vec3::ZERO, 64.0);
+        }
+        (
+            span * self.options.scale,
+            (64.0 / prim_scale).min(240.0 / span.max_element().max(f32::EPSILON)),
+        )
+    }
     pub fn new(scene: Scene, images: HashMap<usize, LocalImage>) -> Self {
         let triangles = scene.models.iter().map(Model::triangles).sum::<usize>();
         let skin = scene.models.iter().any(|m| m.skin.is_some());
@@ -139,6 +171,25 @@ impl Draft {
     pub fn invalidate(&mut self) {
         self.invalidate_quote();
         self.prepared = None;
+    }
+    pub fn finish_edit(&mut self, previous: &Options, lod_changed: bool) -> bool {
+        if !lod_changed && *previous == self.options {
+            return false;
+        }
+        let mut geometry = previous.clone();
+        // These affect the instance resources or skin header, not the LODs
+        // or convex geometry already computed on the workers.
+        geometry.scale = self.options.scale;
+        geometry.textures = self.options.textures;
+        geometry.joints = self.options.joints;
+        geometry.lock_scale = self.options.lock_scale;
+        geometry.pelvis = self.options.pelvis;
+        if lod_changed || geometry != self.options {
+            self.invalidate();
+        } else {
+            self.invalidate_quote();
+        }
+        true
     }
     pub fn invalidate_quote(&mut self) {
         self.cancel.store(true, Ordering::Relaxed);
@@ -245,7 +296,8 @@ fn hex_model(high: &Model) -> Model {
 pub fn prepare(draft: &Draft) -> Result<Prepared, AssetError> {
     let options = &draft.options;
     if !options.scale.is_finite()
-        || !(0.01..=64.0).contains(&options.scale)
+        || options.scale < 0.01
+        || options.scale > draft.dimensions_and_limit().1
         || draft.scene.models.is_empty()
         || draft.scene.models.len() > 256
         || draft.scene.instances.len() > 256
@@ -257,6 +309,7 @@ pub fn prepare(draft: &Draft) -> Result<Prepared, AssetError> {
         lods: Vec::new(),
         physics: Vec::new(),
         hulls: Vec::new(),
+        degenerate_triangles: 0,
     };
     let results: Result<Vec<_>, AssetError> = draft
         .scene
@@ -379,6 +432,25 @@ pub fn prepare(draft: &Draft) -> Result<Prepared, AssetError> {
         })
         .collect();
     for (lods, physics, hulls) in results? {
+        if hulls.hulls.is_empty()
+            && let Some(model) = &physics
+        {
+            prepared.degenerate_triangles += model
+                .faces
+                .iter()
+                .map(|face| {
+                    face.indices
+                        .as_chunks::<3>()
+                        .0
+                        .iter()
+                        .filter(|t| {
+                            **t != [0; 3]
+                                && process::degenerate(t.map(|i| glam::Vec3::from_array(face.vertices[i as usize].position) * 0.5))
+                        })
+                        .count()
+                })
+                .sum::<usize>();
+        }
         prepared.lods.push(lods);
         prepared.physics.push(physics);
         prepared.hulls.push(hulls);
@@ -401,6 +473,12 @@ pub fn request(
 ) -> Result<aurora_net::inventory::mesh_upload::Request, AssetError> {
     if name.trim().is_empty() || name.len() > 63 || description.len() > 127 || name.contains('\0') || description.contains('\0') {
         return Err(AssetError::invalid("mesh name or description"));
+    }
+    if prepared.degenerate_triangles > 0 {
+        return Err(AssetError::invalid(aurora_i18n::tr!(
+            "import-degenerate-physics",
+            count = prepared.degenerate_triangles
+        )));
     }
     let meshes = prepared
         .lods
@@ -524,7 +602,7 @@ impl Imports {
         rights: Permissions,
     ) {
         let textures = Self::default_folder(world, prefs, Kind::Texture);
-        let Some(entry) = self.entries.iter_mut().find(|e| e.id == id) else {
+        let Some(entry) = self.entries.iter_mut().find(|e| e.id == id && !e.reloading) else {
             return;
         };
         let Some(Source::Mesh(draft)) = &mut entry.source else {

@@ -1,5 +1,6 @@
-//! Local bitmap/material previews, following LLLocalBitmap and
-//! LLLocalGLTFMaterial. File checks, decoding, mips and staging are worker jobs.
+//! Local previews, following LLLocalBitmap, LLLocalGLTFMaterial and
+//! VJLocalMeshObject (indra/newview, originally LGPL 2.1). File checks,
+//! decoding, geometry, mips and staging are worker jobs.
 
 use super::*;
 use aurora_render::{StagedTexture, StagingPool};
@@ -16,6 +17,23 @@ pub struct Prepared {
     pub generation: u64,
     pub textures: Vec<Texture>,
     pub material: Option<PbrMaterial>,
+    pub meshes: Vec<Mesh>,
+}
+pub struct Mesh {
+    pub id: Uuid,
+    pub data: Arc<Vec<u8>>,
+    pub header: aurora_assets::MeshHeader,
+    pub skin: Option<Arc<aurora_assets::SkinInfo>>,
+}
+pub struct Target {
+    pub entry: Uuid,
+    pub model: usize,
+    pub use_scale: bool,
+}
+pub struct Rez {
+    pub entry: Uuid,
+    pub model: usize,
+    pub known: HashSet<Uuid>,
 }
 pub type Stamp = Vec<(PathBuf, Option<(SystemTime, u64)>)>;
 pub fn stamp(paths: &[PathBuf]) -> Stamp {
@@ -55,6 +73,7 @@ fn prepare(id: Uuid, generation: u64, source: &Source, options: import_texture::
         generation,
         textures: Vec::new(),
         material: None,
+        meshes: Vec::new(),
     };
     let mut textures = Vec::new();
     match source {
@@ -80,6 +99,51 @@ fn prepare(id: Uuid, generation: u64, source: &Source, options: import_texture::
             value.metallic_roughness_texture = ids[2];
             value.emissive_texture = ids[3];
             prepared.material = Some(value);
+        }
+        Source::Mesh(draft) => {
+            use aurora_assets::import_mesh::{encode, process};
+            use sha2::{Digest, Sha256};
+            let models = draft
+                .prepared
+                .as_ref()
+                .map_or_else(|| super::mesh::prepare(draft).map(Arc::new), |p| Ok(p.clone()))
+                .map_err(|e| e.to_string())?;
+            for (index, lods) in models.lods.iter().enumerate() {
+                let data = encode::asset(
+                    lods,
+                    None,
+                    &process::Physics::default(),
+                    encode::Options {
+                        skin: draft.options.skin,
+                        joints: draft.options.joints,
+                        lock_scale: draft.options.lock_scale,
+                        pelvis_offset: draft.options.pelvis,
+                        ..Default::default()
+                    },
+                )
+                .map_err(|e| e.to_string())?;
+                let header = aurora_assets::parse_mesh_header(&data).map_err(|e| e.to_string())?;
+                let skin = header
+                    .skin
+                    .and_then(|range| aurora_assets::mesh::section_bytes(&data, range))
+                    .map(aurora_assets::decode_skin)
+                    .transpose()
+                    .map_err(|e| e.to_string())?
+                    .map(Arc::new);
+                let mut hash = Sha256::new();
+                hash.update(id.as_bytes());
+                hash.update(generation.to_le_bytes());
+                hash.update(index.to_le_bytes());
+                let digest = hash.finalize();
+                let mut bytes = [0u8; 16];
+                bytes.copy_from_slice(&digest[..16]);
+                prepared.meshes.push(Mesh {
+                    id: Uuid::from_bytes(bytes),
+                    data: Arc::new(data),
+                    header,
+                    skin,
+                });
+            }
         }
         _ => return Err(aurora_i18n::tr!("import-local-images-only").into()),
     }
@@ -113,6 +177,7 @@ impl Imports {
             return;
         };
         entry.local_pending = true;
+        entry.local_failed_generation = None;
         let generation = entry.preview_generation;
         let options = entry.options;
         let tx = self.tx.clone();
@@ -136,7 +201,7 @@ impl Imports {
                 continue;
             }
             watch.pending = true;
-            watch.next = now + Duration::from_secs(3);
+            watch.next = now + Duration::from_secs_f32(self.load_preferences.local_reload_seconds.clamp(0.1, 3600.0));
             let paths = watch.paths.clone();
             let id = entry.id;
             let tx = self.tx.clone();

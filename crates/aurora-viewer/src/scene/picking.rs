@@ -305,7 +305,7 @@ impl Scene {
         let tf = o.te.as_ref().map(|te| *te.face(hit.face)).unwrap_or_default();
         let mut st = hit.uv;
         if tf.planar() {
-            let p = model.inverse().transform_point3(ray.0 + ray.1 * hit.t) * o.scale;
+            let p = model.inverse().transform_point3(ray.0 + ray.1 * hit.t) * o.visual_scale();
             let n = model.transpose().transform_vector3(hit.normal).normalize_or_zero();
             let b = if n.x.abs() >= 0.5 {
                 Vec3::new(0.0, if n.x < 0.0 { -1.0 } else { 1.0 }, 0.0)
@@ -579,7 +579,7 @@ impl Scene {
             if g.faces.is_empty()
                 || g.hud
                 || g.is_avatar
-                || (g.owner_avatar.is_some() && o.volume.is_mesh())
+                || (g.owner_avatar.is_some() && o.visual_volume().is_mesh())
                 || o.click_action == crate::interaction::code::IGNORE
             {
                 continue;
@@ -593,7 +593,7 @@ impl Scene {
             let Some((pos, rot, _)) = Self::object_transform(world, idx, now, 0) else {
                 continue;
             };
-            let inv = Mat4::from_scale_rotation_translation(o.scale, rot, pos).inverse();
+            let inv = Mat4::from_scale_rotation_translation(o.visual_scale(), rot, pos).inverse();
             if !ray_box(inv.transform_point3(ray.0), inv.transform_vector3(ray.1), geom.min, geom.max).is_some_and(|t| t < nearest) {
                 continue;
             }
@@ -704,6 +704,30 @@ mod tests {
             scene.gpu[idx].faces.push(face);
         }
         (world, scene, front, back)
+    }
+
+    #[test]
+    fn local_mesh_geometry_uses_an_overlay_and_preserves_server_shape() {
+        let (mut world, _, front, _) = scene_with_two_objects();
+        let object = world.objects.get_mut(front).expect("object");
+        let original = object.volume;
+        let original_scale = object.scale;
+        let asset = Uuid::new_v4();
+        let mut volume = original;
+        volume.sculpt = Some(aurora_prim::params::SculptParams {
+            texture: asset,
+            sculpt_type: aurora_prim::params::LL_SCULPT_TYPE_MESH,
+        });
+        object.render.local_volume = Some(Box::new(volume));
+        object.render.local_scale = Some(Vec3::splat(2.0));
+        assert_eq!(Scene::object_geom_key(object, 3), Some(GeomKey::Mesh { id: asset, lod: 3 }));
+        assert_eq!(object.volume, original);
+        assert_eq!(object.scale, original_scale);
+        assert_eq!(object.visual_scale(), Vec3::splat(2.0));
+        object.render.local_volume = None;
+        object.render.local_scale = None;
+        assert!(matches!(Scene::object_geom_key(object, 3), Some(GeomKey::Prim { .. })));
+        assert_eq!(object.visual_scale(), original_scale);
     }
 
     #[test]

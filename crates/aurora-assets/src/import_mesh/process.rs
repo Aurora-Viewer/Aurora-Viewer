@@ -52,6 +52,16 @@ pub struct Physics {
     pub base: Option<Hull>,
 }
 
+/// Port of ll_is_degenerate (indra/llprimitive/llmodel.cpp, LGPL 2.1).
+/// The asymmetric edge comparisons match the reference's tolerance rule.
+pub fn degenerate([a, b, c]: [Vec3; 3]) -> bool {
+    let (ab, ac, cb) = (a - b, a - c, c - b);
+    let (x, y, z) = (ab.length_squared(), ac.length_squared(), cb.length_squared());
+    let balanced = x <= 100.0 * y && x <= 100.0 * z && y <= 100.0 * x && x <= 100.0 * z && z <= 100.0 * x && x <= 100.0 * y;
+    let tolerance = if balanced { 1e-11 } else { 1e-7 };
+    ab.cross(ac).length_squared() < tolerance || (b - a).cross(b - c).length_squared() < tolerance || x * z - ab.dot(cb).powi(2) == 0.0
+}
+
 pub fn lod(model: &Model, options: LodOptions, cancel: &AtomicBool) -> Result<Model, AssetError> {
     if !options.error.is_finite() || !(0.0..=1.0).contains(&options.error) {
         return Err(AssetError::invalid("LOD error threshold"));

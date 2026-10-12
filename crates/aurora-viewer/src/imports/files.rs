@@ -21,7 +21,7 @@ fn read(path: &Path) -> Result<Vec<u8>, AssetError> {
     Ok(bytes)
 }
 
-fn relative_path(root: &Path, uri: &str) -> Result<PathBuf, AssetError> {
+fn decode_uri(uri: &str) -> Result<String, AssetError> {
     // glTF URI percent escapes are bytes, then UTF-8; '+' remains a literal.
     let mut decoded = Vec::new();
     let mut bytes = uri.bytes();
@@ -40,7 +40,10 @@ fn relative_path(root: &Path, uri: &str) -> Result<PathBuf, AssetError> {
             byte
         });
     }
-    let decoded = String::from_utf8(decoded).map_err(|_| AssetError::invalid("resource URI encoding"))?;
+    String::from_utf8(decoded).map_err(|_| AssetError::invalid("resource URI encoding"))
+}
+fn relative_path(root: &Path, uri: &str) -> Result<PathBuf, AssetError> {
+    let decoded = decode_uri(uri)?;
     if decoded.contains(':') || decoded.starts_with(['/', '\\']) {
         return Err(AssetError::invalid("resource must be a relative file"));
     }
@@ -52,6 +55,21 @@ fn relative_path(root: &Path, uri: &str) -> Result<PathBuf, AssetError> {
 }
 fn relative(root: &Path, uri: &str) -> Result<Vec<u8>, AssetError> {
     read(&relative_path(root, uri)?)
+}
+fn collada_image_path(root: &Path, uri: &str) -> Result<PathBuf, AssetError> {
+    // LLDAELoader accepts both relative texture paths and exporter file URIs.
+    // Only local files are resolved; remote/UNC resources never trigger I/O.
+    let raw = uri.strip_prefix("file:///").or_else(|| uri.strip_prefix("file:/")).unwrap_or(uri);
+    let decoded = decode_uri(raw)?;
+    if decoded.starts_with(['/', '\\']) || decoded.contains("://") {
+        return Err(AssetError::invalid("texture resource must be a local file"));
+    }
+    let path = PathBuf::from(decoded);
+    if path.is_absolute() {
+        path.canonicalize().map_err(|_| AssetError::invalid("texture resource not found"))
+    } else {
+        relative_path(root, raw)
+    }
 }
 fn dependencies(doc: &Document, root: &Path, path: &Path) -> Vec<PathBuf> {
     let mut paths = vec![path.to_owned()];
@@ -86,7 +104,11 @@ pub(super) fn local_image(pixels: DecodedImage, name: String) -> LocalImage {
         name,
     }
 }
-fn mesh_scene(path: &Path, data: &[u8]) -> Result<(aurora_assets::import_mesh::Scene, HashMap<usize, LocalImage>), AssetError> {
+fn mesh_scene(
+    path: &Path,
+    data: &[u8],
+    assume_meters: bool,
+) -> Result<(aurora_assets::import_mesh::Scene, HashMap<usize, LocalImage>), AssetError> {
     let root = path
         .parent()
         .ok_or_else(|| AssetError::invalid("mesh directory"))?
@@ -95,9 +117,12 @@ fn mesh_scene(path: &Path, data: &[u8]) -> Result<(aurora_assets::import_mesh::S
     let skeleton = aurora_assets::Skeleton::parse(include_bytes!("../../assets/character/avatar_skeleton.xml"))?;
     let mut images = HashMap::new();
     let scene = if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("dae")) {
-        let mut scene = aurora_assets::import_mesh::collada::parse(data, &skeleton)?;
+        let mut scene = aurora_assets::import_mesh::collada::parse_with_meters(data, &skeleton, assume_meters)?;
         for (index, uri) in &scene.image_uris {
-            match relative(&root, uri).and_then(|bytes| import_texture::decode_map(&bytes)) {
+            match collada_image_path(&root, uri)
+                .and_then(|path| read(&path))
+                .and_then(|bytes| import_texture::decode_map(&bytes))
+            {
                 Ok(pixels) => {
                     images.insert(*index, local_image(pixels, uri.clone()));
                 }
@@ -108,6 +133,16 @@ fn mesh_scene(path: &Path, data: &[u8]) -> Result<(aurora_assets::import_mesh::S
     } else {
         let doc = Document::parse(data, |uri| relative(&root, uri))?;
         let mut scene = aurora_assets::import_mesh::gltf::parse(&doc, &skeleton)?;
+        for key in ["buffers", "images"] {
+            for resource in doc.json[key].as_array().into_iter().flatten() {
+                if let Some(uri) = resource["uri"].as_str()
+                    && !uri.starts_with("data:")
+                    && Uuid::parse_str(uri).is_err()
+                {
+                    scene.source_uris.push(uri.into());
+                }
+            }
+        }
         for material in &scene.materials {
             for index in material.images.iter().flatten() {
                 if !images.contains_key(index) {
@@ -129,12 +164,13 @@ fn mesh_scene(path: &Path, data: &[u8]) -> Result<(aurora_assets::import_mesh::S
     Ok((scene, images))
 }
 
-fn load(
+pub(super) fn load(
     path: &Path,
     choice: Choice,
     options: import_texture::Options,
     sound_limit: u32,
     prefs: &Preferences,
+    local: bool,
 ) -> Result<Vec<Entry>, AssetError> {
     let data = read(path)?;
     let extension = path
@@ -158,8 +194,9 @@ fn load(
     }
     let source = match extension.as_str() {
         "dae" | "gltf" | "glb" if choice == Choice::Mesh => {
-            let (scene, images) = mesh_scene(path, &data)?;
+            let (scene, images) = mesh_scene(path, &data, local && prefs.local_assume_meters)?;
             let mut draft = mesh::Draft::new(scene, images);
+            draft.lods[3].path = Some(path.to_owned());
             draft.options.skin &= prefs.mesh_auto_weights;
             draft.preview_weights &= prefs.mesh_auto_preview_weights && draft.options.skin;
             if prefs.mesh_reliable_default {
@@ -168,6 +205,12 @@ fn load(
                 }
             }
             let stem = path.file_stem().unwrap_or_default().to_string_lossy();
+            let high_suffix = format!("_{}", prefs.mesh_suffixes[3]);
+            let stem = if prefs.mesh_suffixes[3].is_empty() {
+                stem.as_ref()
+            } else {
+                stem.strip_suffix(&high_suffix).unwrap_or(stem.as_ref())
+            };
             for level in [2, 1, 0, 4] {
                 let suffix = &prefs.mesh_suffixes[level];
                 if suffix.is_empty() || suffix.contains(['/', '\\', ':']) {
@@ -175,7 +218,7 @@ fn load(
                 }
                 let candidate = path.with_file_name(format!("{stem}_{suffix}.{extension}"));
                 if candidate.is_file() {
-                    match read(&candidate).and_then(|data| mesh_scene(&candidate, &data)) {
+                    match read(&candidate).and_then(|data| mesh_scene(&candidate, &data, local && prefs.local_assume_meters)) {
                         Ok((scene, _)) => {
                             if level < 4 {
                                 draft.lods[level].file = Some(Arc::new(scene));
@@ -355,6 +398,50 @@ fn load(
     Ok(vec![entry])
 }
 
+pub(super) fn localize(entries: &mut [Entry], prefs: &Preferences) {
+    for entry in entries {
+        entry.local = true;
+        if let Some(Source::Mesh(draft)) = &entry.source {
+            entry.local_live = prefs.local_mesh_auto_reload;
+            let mut paths = mesh_dependencies(&entry.path, &draft.scene);
+            for lod in &draft.lods {
+                if let Some(path) = &lod.path {
+                    paths.extend(
+                        lod.file
+                            .as_ref()
+                            .map_or_else(|| vec![path.clone()], |scene| mesh_dependencies(path, scene)),
+                    );
+                }
+            }
+            if let Some(path) = &draft.physics_path {
+                paths.extend(
+                    draft
+                        .physics_file
+                        .as_ref()
+                        .map_or_else(|| vec![path.clone()], |scene| mesh_dependencies(path, scene)),
+                );
+            }
+            paths.sort();
+            paths.dedup();
+            entry.watch = Some(super::local::Watch::new(paths));
+        }
+    }
+}
+
+fn mesh_dependencies(path: &Path, scene: &aurora_assets::import_mesh::Scene) -> Vec<PathBuf> {
+    let mut paths = vec![path.to_owned()];
+    if let Some(root) = path.parent() {
+        paths.extend(
+            scene
+                .source_uris
+                .iter()
+                .chain(scene.image_uris.values())
+                .filter_map(|uri| collada_image_path(root, uri).ok()),
+        );
+    }
+    paths
+}
+
 pub(super) fn encode(source: &Source, options: import_texture::Options) -> Result<Vec<u8>, String> {
     let result = match source {
         Source::Texture(pixels) => import_texture::prepare(pixels, options).and_then(|image| import_texture::encode(&image, options)),
@@ -399,6 +486,7 @@ impl Imports {
         });
     }
     pub fn mesh_file(&mut self, id: Uuid, level: usize, jobs: &crate::scene::jobs::Jobs, ctx: &egui::Context) {
+        let meters = self.load_preferences.local_assume_meters && self.entries.iter().any(|e| e.id == id && e.local);
         let tx = self.tx.clone();
         let wake = ctx.clone();
         jobs.execute(move || {
@@ -408,7 +496,7 @@ impl Imports {
                 .pick_file()
             {
                 let result = read(&path)
-                    .and_then(|data| mesh_scene(&path, &data))
+                    .and_then(|data| mesh_scene(&path, &data, meters))
                     .map(|(scene, images)| (Arc::new(scene), images, path))
                     .map_err(|e| e.to_string());
                 let _ = tx.send(Worker::MeshFile(id, level, result));
@@ -417,11 +505,12 @@ impl Imports {
         });
     }
     pub fn mesh_file_path(&mut self, id: Uuid, path: PathBuf, jobs: &crate::scene::jobs::Jobs, ctx: &egui::Context) {
+        let meters = self.load_preferences.local_assume_meters && self.entries.iter().any(|e| e.id == id && e.local);
         let tx = self.tx.clone();
         let wake = ctx.clone();
         jobs.execute(move || {
             let result = read(&path)
-                .and_then(|data| mesh_scene(&path, &data))
+                .and_then(|data| mesh_scene(&path, &data, meters))
                 .map(|(scene, images)| (Arc::new(scene), images, path))
                 .map_err(|e| e.to_string());
             let _ = tx.send(Worker::MeshFile(id, 8, result));
@@ -432,14 +521,19 @@ impl Imports {
         if self.busy() {
             return;
         }
-        let Some(entry) = self.entries.iter().find(|e| e.id == id) else {
+        let Some(entry) = self.entries.iter_mut().find(|e| e.id == id && !e.reloading) else {
             return;
         };
+        entry.reloading = true;
+        entry.status = Status::Preparing;
         let path = entry.path.clone();
         let options = entry.options;
         let sound_limit = self.sound_limit;
         let prefs = self.load_preferences.clone();
-        let choice = if entry.local {
+        let local = entry.local;
+        let choice = if entry.local && matches!(entry.source, Some(Source::Mesh(_))) {
+            Choice::Mesh
+        } else if entry.local {
             Choice::Local
         } else {
             match entry.source.as_ref().map(Source::kind) {
@@ -452,7 +546,14 @@ impl Imports {
         jobs.execute(move || {
             let _ = tx.send(Worker::Reloaded(
                 id,
-                load(&path, choice, options, sound_limit, &prefs).map_err(|e| e.to_string()),
+                load(&path, choice, options, sound_limit, &prefs, local)
+                    .map(|mut entries| {
+                        if local {
+                            localize(&mut entries, &prefs);
+                        }
+                        entries
+                    })
+                    .map_err(|e| e.to_string()),
             ));
             wake.request_repaint();
         });
@@ -463,7 +564,12 @@ impl Imports {
         }
         let request = Uuid::new_v4();
         self.pending_files = Some(request);
-        let choice = self.choice;
+        let local = self.choice == Choice::Local;
+        let choice = if local && self.load_preferences.local_meshes {
+            Choice::Mesh
+        } else {
+            self.choice
+        };
         let sound_limit = self.sound_limit;
         let prefs = self.load_preferences.clone();
         let mut retained = self
@@ -496,7 +602,7 @@ impl Imports {
                     entries.push(Entry::new(path, Err(aurora_i18n::tr!("import-batch-limit").into()), options));
                     break;
                 }
-                match load(&path, choice, options, sound_limit, &prefs) {
+                match load(&path, choice, options, sound_limit, &prefs, local) {
                     Ok(mut loaded) => {
                         let size = loaded
                             .iter()
@@ -515,8 +621,269 @@ impl Imports {
                     Err(error) => entries.push(Entry::new(path, Err(error.to_string()), options)),
                 }
             }
+            if local {
+                localize(&mut entries, &prefs);
+            }
             let _ = tx.send(Worker::Loaded(request, entries));
             wake.request_repaint();
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "requires AURORA_IMPORT_TEST_DIR local asset fixtures"]
+    fn local_asset_directory_loads_and_prepares_supported_files() {
+        let root = PathBuf::from(std::env::var_os("AURORA_IMPORT_TEST_DIR").expect("fixture directory"));
+        let prefs = Preferences {
+            mesh_suffixes: ["lowest".into(), "low".into(), "medium".into(), "high".into(), "physics".into()],
+            ..Default::default()
+        };
+        let mut counts = [0usize; 4];
+        let mut errors = Vec::new();
+        let mut paths = Vec::new();
+        for dir in [root.clone(), root.join("meshes"), root.join("textures")] {
+            if dir.is_dir() {
+                paths.extend(std::fs::read_dir(dir).expect("directory").map(|e| e.expect("entry").path()));
+            }
+        }
+        paths.sort();
+        for path in paths {
+            let ext = path.extension().unwrap_or_default().to_string_lossy().to_ascii_lowercase();
+            let choice = match ext.as_str() {
+                "dae" if path.file_stem().is_some_and(|s| s.to_string_lossy().ends_with("_high")) => Choice::Mesh,
+                "png" | "jpg" | "jpeg" | "bmp" | "tga" | "j2c" | "j2k" | "jp2" => Choice::Texture,
+                "wav" => Choice::Sound,
+                "bvh" | "anim" => Choice::Animation,
+                "gltf" | "glb" => Choice::Material,
+                _ => continue,
+            };
+            let result = load(&path, choice, prefs.texture(), 30, &prefs, false).map_err(|e| e.to_string());
+            let result = result.and_then(|entries| {
+                for entry in entries {
+                    let source = entry.source.as_ref().ok_or("missing source")?;
+                    if let Source::Mesh(draft) = source {
+                        if !draft.scene.warnings.is_empty() {
+                            return Err(format!("mesh warnings: {:?}", draft.scene.warnings));
+                        }
+                        let prepared = mesh::prepare(draft).map_err(|e| e.to_string())?;
+                        let triangles: Vec<_> = (0..4)
+                            .map(|level| {
+                                prepared
+                                    .lods
+                                    .iter()
+                                    .filter_map(|m| m[level].as_ref())
+                                    .map(|m| m.triangles())
+                                    .sum::<usize>()
+                            })
+                            .collect();
+                        for (level, lod) in draft.lods.iter().enumerate().take(3) {
+                            if let Some(file) = &lod.file {
+                                assert_eq!(triangles[level], file.models.iter().map(|m| m.triangles()).sum::<usize>());
+                            }
+                        }
+                        mesh::request(
+                            draft,
+                            &prepared,
+                            Uuid::new_v4(),
+                            Uuid::new_v4(),
+                            "Fixture",
+                            "",
+                            Permissions::default(),
+                            prefs.texture(),
+                        )
+                        .map_err(|e| e.to_string())?;
+                        counts[0] += 1;
+                    } else {
+                        let data = encode(source, entry.options)?;
+                        assert!(!data.is_empty());
+                        let index = match source {
+                            Source::Texture(_) => 1,
+                            Source::Sound(_) => 2,
+                            Source::Animation { animation, bvh, .. } => {
+                                if bvh.is_none() {
+                                    assert!(
+                                        data == read(&entry.path).expect("original bytes"),
+                                        "native animation bytes were altered"
+                                    );
+                                }
+                                let rig = crate::scene::anim::Rig::new(
+                                    &aurora_assets::Skeleton::parse(include_bytes!("../../assets/character/avatar_skeleton.xml"))
+                                        .expect("skeleton"),
+                                );
+                                let bound = Arc::new(crate::scene::anim::BoundAnim::bind(animation.as_ref().clone(), &rig));
+                                assert!(bound.joints.iter().any(Option::is_some), "no recognized animation joints");
+                                let mut player = super::super::animation::Player::default();
+                                player.bound = Some(bound);
+                                player.seek(animation.duration * 0.5);
+                                player.tick(entry.id, &rig, &mut crate::scene::anim::AnimStreamer::new(PathBuf::new()));
+                                assert!(player.pose.expect("sampled pose").iter().flatten().flatten().all(|v| v.is_finite()));
+                                3
+                            }
+                            _ => 3,
+                        };
+                        counts[index] += 1;
+                    }
+                }
+                Ok(())
+            });
+            if let Err(error) = result {
+                // Local fixture traces intentionally omit personal names/paths.
+                errors.push(format!(
+                    "fixture {} ({ext}): {error}",
+                    counts.iter().sum::<usize>() + errors.len() + 1
+                ));
+            }
+        }
+        println!(
+            "Loaded: {} meshes, {} textures, {} sounds, {} animations/materials",
+            counts[0], counts[1], counts[2], counts[3]
+        );
+        assert!(errors.is_empty(), "{}", errors.join("\n"));
+        assert!(counts.iter().sum::<usize>() > 0, "no supported fixture files");
+    }
+
+    struct Files(PathBuf);
+    impl Files {
+        fn new() -> Self {
+            let root = std::env::temp_dir().join(format!("aurora-import-files-{}", Uuid::new_v4()));
+            super::super::demo::fixtures(&root).expect("fixtures");
+            Self(root)
+        }
+        fn load(&self, name: &str, choice: Choice) -> Vec<Entry> {
+            load(
+                &self.0.join(name),
+                choice,
+                Default::default(),
+                30,
+                &Preferences::default(),
+                choice == Choice::Local,
+            )
+            .expect("load")
+        }
+    }
+    impl Drop for Files {
+        fn drop(&mut self) {
+            // Only this test's freshly created UUID directory is removed.
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    #[test]
+    fn disk_files_follow_filters_codecs_and_mesh_reload() {
+        let files = Files::new();
+        assert!(matches!(
+            files.load("texture-demo.png", Choice::Texture)[0].source,
+            Some(Source::Texture(_))
+        ));
+        assert!(matches!(
+            files.load("sound-demo.wav", Choice::Sound)[0].source,
+            Some(Source::Sound(_))
+        ));
+        assert!(matches!(
+            files.load("animation-demo.bvh", Choice::Animation)[0].source,
+            Some(Source::Animation { bvh: Some(_), .. })
+        ));
+        let native = files.load("animation-demo.anim", Choice::Bulk).remove(0);
+        assert_eq!(
+            encode(native.source.as_ref().expect("animation"), native.options).expect("encode"),
+            read(&native.path).expect("bytes")
+        );
+        assert!(
+            load(
+                &files.0.join("animation-demo.bvh"),
+                Choice::Bulk,
+                Default::default(),
+                30,
+                &Preferences::default(),
+                false
+            )
+            .is_err()
+        );
+        assert!(
+            load(
+                &files.0.join("mesh-demo.dae"),
+                Choice::Bulk,
+                Default::default(),
+                30,
+                &Preferences::default(),
+                false
+            )
+            .is_err()
+        );
+        let mut mesh = files.load("mesh-demo.dae", Choice::Mesh);
+        localize(&mut mesh, &Preferences::default());
+        let Some(Source::Mesh(draft)) = &mesh[0].source else {
+            panic!("mesh")
+        };
+        assert_eq!(draft.scene.models[0].triangles(), 12);
+        assert_eq!(draft.lods[3].path.as_ref(), Some(&mesh[0].path));
+        assert!(!mesh[0].local_live);
+        assert_eq!(mesh[0].watch.as_ref().expect("watch").paths, [mesh[0].path.clone()]);
+    }
+    #[test]
+    fn material_dependency_changes_reload_pixels_with_stable_local_ids() {
+        let files = Files::new();
+        let before = files.load("material-demo.gltf", Choice::Local).remove(0);
+        let watch = before.watch.as_ref().expect("watch");
+        assert!(
+            watch
+                .paths
+                .contains(&files.0.join("texture-demo.png").canonicalize().expect("path"))
+        );
+        let Some(Source::Material { images: original, .. }) = before.source else {
+            panic!("material")
+        };
+        image::save_buffer(
+            files.0.join("texture-demo.png"),
+            &[180u8; 16 * 16 * 4],
+            16,
+            16,
+            image::ColorType::Rgba8,
+        )
+        .expect("image");
+        assert_ne!(watch.stamp, super::super::local::stamp(&watch.paths));
+        let after = files.load("material-demo.gltf", Choice::Local).remove(0);
+        let Some(Source::Material { images: updated, .. }) = after.source else {
+            panic!("material")
+        };
+        let (a, b) = (original[0].as_ref().expect("map"), updated[0].as_ref().expect("map"));
+        assert_eq!(a.key, b.key);
+        assert_eq!(b.pixels.width, 16);
+        assert_ne!(a.pixels.data, b.pixels.data);
+        std::fs::remove_file(files.0.join("texture-demo.png")).expect("remove fixture");
+        assert!(
+            load(
+                &files.0.join("material-demo.gltf"),
+                Choice::Local,
+                Default::default(),
+                30,
+                &Preferences::default(),
+                true
+            )
+            .is_err()
+        );
+    }
+    #[cfg(windows)]
+    #[test]
+    fn collada_resolves_local_exporter_file_uris_and_rejects_remote_resources() {
+        let files = Files::new();
+        let path = files.0.join("texture-demo.png").canonicalize().expect("path");
+        let without_prefix = path.to_string_lossy().trim_start_matches(r"\\?\").replace('\\', "/");
+        assert_eq!(
+            collada_image_path(&files.0, &format!("file:///{without_prefix}")).expect("file URI"),
+            path
+        );
+        for uri in [
+            "https://example.invalid/image.png",
+            "file://server/share/image.png",
+            r"\\server\share\image.png",
+        ] {
+            assert!(collada_image_path(&files.0, uri).is_err());
+        }
+        assert!(relative_path(&files.0, &without_prefix).is_err());
+        assert_eq!(decode_uri("carte%20%C3%A9t%C3%A9+1.png").expect("UTF-8"), "carte été+1.png");
     }
 }

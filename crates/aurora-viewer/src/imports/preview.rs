@@ -90,6 +90,91 @@ fn bounds(parts: &[Part]) -> (Vec3, f32) {
     }
 }
 
+fn classic_morphs(vertices: &mut [Vertex], part: &str, hand: u32, emote: &str) {
+    // Port of LLHandMotion (indra/llcharacter/llhandmotion.cpp) and
+    // LLPolyMorphTarget (indra/newview/llpolymorph.cpp), originally LGPL 2.1.
+    // Deltas are static between edits; apply them once on the worker.
+    const HANDS: [&str; 14] = [
+        "",
+        "Hands_Relaxed",
+        "Hands_Point",
+        "Hands_Fist",
+        "Hands_Relaxed_L",
+        "Hands_Point_L",
+        "Hands_Fist_L",
+        "Hands_Relaxed_R",
+        "Hands_Point_R",
+        "Hands_Fist_R",
+        "Hands_Salute_R",
+        "Hands_Typing",
+        "Hands_Peace_R",
+        "Hands_Spread_R",
+    ];
+    let hand = HANDS.get(hand as usize).copied().unwrap_or("");
+    if hand.is_empty() && emote.is_empty() {
+        return;
+    }
+    let file = match part {
+        "head" => "avatar_head.llm",
+        "upper" => "avatar_upper_body.llm",
+        "lower" => "avatar_lower_body.llm",
+        _ => return,
+    };
+    let Ok(data) = std::fs::read(crate::scene::avatar::AvatarLibrary::data_dir().join(file)) else {
+        return;
+    };
+    let Ok(mesh) = aurora_assets::parse_llm(&data) else { return };
+    let mut remaps: HashMap<u32, Vec<usize>> = HashMap::new();
+    for (from, to) in &mesh.vertex_remaps {
+        if *from >= 0 && *to >= 0 {
+            remaps.entry(*from as u32).or_default().push(*to as usize);
+        }
+    }
+    for morph in mesh
+        .morphs
+        .iter()
+        .filter(|m| (!hand.is_empty() && m.name == hand) || (!emote.is_empty() && m.name.eq_ignore_ascii_case(emote)))
+    {
+        for (slot, index) in morph.vertex_indices.iter().enumerate() {
+            let apply = |vertex: &mut Vertex| {
+                if let Some(delta) = morph.d_positions.get(slot) {
+                    vertex.position = (Vec3::from_array(vertex.position) + Vec3::from_array(*delta)).to_array();
+                }
+                if let Some(delta) = morph.d_normals.get(slot) {
+                    vertex.normal = (Vec3::from_array(vertex.normal) + Vec3::from_array(*delta))
+                        .normalize_or_zero()
+                        .to_array();
+                }
+            };
+            if let Some(vertex) = vertices.get_mut(*index as usize) {
+                apply(vertex);
+            }
+            for to in remaps.get(index).into_iter().flatten() {
+                if let Some(vertex) = vertices.get_mut(*to) {
+                    apply(vertex);
+                }
+            }
+        }
+    }
+}
+
+fn mesh_joint_world(
+    rig: &crate::scene::anim::Rig,
+    skin: &aurora_assets::import_mesh::Skin,
+    imported: bool,
+    pelvis: f32,
+) -> Vec<glam::Mat4> {
+    let mut positions = rig.local_pos.clone();
+    if imported {
+        for (name, bind) in skin.names.iter().zip(&skin.alternate_bind) {
+            if let Some(&joint) = rig.names.get(name) {
+                positions[joint] = bind.w_axis.truncate();
+            }
+        }
+    }
+    rig.world_with(&rig.local_rot, Vec3::Z * pelvis, &positions, &rig.scale)
+}
+
 fn build(
     source: &Source,
     target: usize,
@@ -123,10 +208,12 @@ fn build(
                 if draft.preview_physics
                     && let Some(physics) = draft.prepared.as_ref().and_then(|p| p.hulls.get(instance.model))
                 {
-                    let hulls: Vec<_> = if physics.hulls.is_empty() {
+                    let hulls: Vec<_> = if !physics.hulls.is_empty() {
+                        physics.hulls.iter().collect()
+                    } else if draft.prepared.as_ref().is_some_and(|p| p.physics[instance.model].is_none()) {
                         physics.base.iter().collect()
                     } else {
-                        physics.hulls.iter().collect()
+                        Vec::new()
                     };
                     for hull in hulls {
                         let center = hull.vertices.iter().map(|p| Vec3::from_array(*p)).fold(Vec3::ZERO, |a, b| a + b)
@@ -146,6 +233,7 @@ fn build(
                             })
                             .collect::<Vec<_>>();
                         parts.push(Part {
+                            diagnostic: false,
                             vertices: vertices.into(),
                             indices: hull.indices.iter().flatten().copied().collect::<Vec<_>>().into(),
                             textures: std::array::from_fn(|_| None),
@@ -165,11 +253,8 @@ fn build(
                             .map(|name| avatars.rig.names.get(name).copied())
                             .collect::<Option<Vec<_>>>()?;
                         let inverse = skin.inverse_bind.iter().map(|m| *m * skin.bind_shape).collect::<Vec<_>>();
-                        let rest = joints
-                            .iter()
-                            .zip(&inverse)
-                            .map(|(j, m)| avatars.rig.default_world_inv[*j].inverse() * *m)
-                            .collect();
+                        let world = mesh_joint_world(&avatars.rig, skin, draft.options.joints, draft.options.pelvis);
+                        let rest = joints.iter().zip(&inverse).map(|(j, m)| world[*j] * *m).collect();
                         Some(Arc::new(aurora_render::preview::Skin {
                             joints,
                             inverse_bind: inverse,
@@ -221,30 +306,53 @@ fn build(
                             weights: if skin.is_some() { v.weights } else { [0.0; 4] },
                         })
                         .collect::<Vec<_>>();
+                    let mut diagnostic_part = None;
+                    if draft.preview_physics {
+                        let mut diagnostic = Vec::new();
+                        for triangle in face.indices.as_chunks::<3>().0 {
+                            if *triangle != [0; 3]
+                                && aurora_assets::import_mesh::process::degenerate(
+                                    triangle.map(|i| Vec3::from_array(face.vertices[i as usize].position) * 0.5),
+                                )
+                            {
+                                diagnostic.extend(triangle.iter().map(|i| vertices[*i as usize]));
+                            }
+                        }
+                        if !diagnostic.is_empty() {
+                            let indices = (0..diagnostic.len() as u32).collect::<Vec<_>>();
+                            diagnostic_part = Some(Part {
+                                diagnostic: true,
+                                vertices: diagnostic.into(),
+                                indices: indices.into(),
+                                textures: std::array::from_fn(|_| None),
+                                material: Material::default(),
+                                skin: None,
+                            });
+                        }
+                    }
                     parts.push(Part {
+                        diagnostic: false,
                         vertices: vertices.into(),
                         indices: face.indices.clone().into(),
                         textures: maps,
                         material: value.map(|v| material(&v.value)).unwrap_or_default(),
                         skin: skin.clone(),
                     });
+                    parts.extend(diagnostic_part);
                 }
                 if (draft.show_joints || draft.show_overrides)
                     && let Some(skin) = &high.skin
                 {
-                    let binds = if draft.show_overrides {
-                        &skin.alternate_bind
-                    } else {
-                        &skin.inverse_bind
-                    };
-                    for bind in binds {
-                        let center =
-                            transform.transform_point3(skin.bind_shape.inverse().transform_point3(bind.inverse().w_axis.truncate()));
+                    let world = mesh_joint_world(&avatars.rig, skin, draft.show_overrides, draft.options.pelvis);
+                    for name in &skin.names {
+                        let Some(&joint) = avatars.rig.names.get(name) else { continue };
+                        let center = world[joint].w_axis.truncate();
                         let (mut vertices, indices) = sphere();
                         for vertex in &mut vertices {
                             vertex.position = (Vec3::from_array(vertex.position) * 0.015 + center).to_array();
                         }
                         parts.push(Part {
+                            diagnostic: false,
                             vertices: vertices.into(),
                             indices: indices.into(),
                             textures: std::array::from_fn(|_| None),
@@ -272,6 +380,7 @@ fn build(
             }
             let (vertices, indices) = sphere();
             parts.push(Part {
+                diagnostic: false,
                 vertices: vertices.into(),
                 indices: indices.into(),
                 textures: maps,
@@ -301,6 +410,7 @@ fn build(
                     })
                     .collect::<Vec<_>>();
                 parts.push(Part {
+                    diagnostic: false,
                     vertices: vertices.into(),
                     indices: face.indices.iter().map(|i| u32::from(*i)).collect::<Vec<_>>().into(),
                     textures: std::array::from_fn(|_| None),
@@ -380,6 +490,7 @@ fn build(
                     }
                 }
                 parts.push(Part {
+                    diagnostic: false,
                     vertices: vertices.into(),
                     indices: part.indices.iter().map(|i| u32::from(*i)).collect::<Vec<_>>().into(),
                     textures: [Some(map.clone()), None, None, None],
@@ -388,7 +499,7 @@ fn build(
                 });
             }
         }
-        Source::Animation { .. } => {
+        Source::Animation { animation, .. } => {
             let rig = &avatars.rig;
             let mut inverse = rig.default_world_inv.clone();
             inverse.push(glam::Mat4::IDENTITY);
@@ -398,7 +509,7 @@ fn build(
                 inverse_bind: inverse,
             });
             for part in avatars.parts.iter().filter(|p| p.name != "skirt") {
-                let vertices = part
+                let mut vertices = part
                     .vertices
                     .iter()
                     .enumerate()
@@ -416,7 +527,9 @@ fn build(
                         }
                     })
                     .collect::<Vec<_>>();
+                classic_morphs(&mut vertices, part.name, animation.hand_pose, &animation.emote_name);
                 parts.push(Part {
+                    diagnostic: false,
                     vertices: vertices.into(),
                     indices: part.indices.iter().map(|i| u32::from(*i)).collect::<Vec<_>>().into(),
                     textures: std::array::from_fn(|_| None),

@@ -10,6 +10,77 @@ struct Node<'a> {
     left: Option<usize>,
     right: Option<usize>,
 }
+/// LLGLTFLoader::populateModelFromMesh / FIRE-36838: supported joints keep
+/// source order for small palettes. Large palettes put weighted joints first,
+/// then keep unused joints in active skeletal groups (maximum 110).
+pub fn prune_gltf(faces: &mut [Face], skin: &mut Skin, skeleton: &crate::Skeleton) -> Result<(), AssetError> {
+    if skin.inverse_bind.len() != skin.names.len() || skin.alternate_bind.len() != skin.names.len() {
+        return Err(AssetError::invalid("skin bind matrix count"));
+    }
+    let supported: Vec<_> = skin.names.iter().map(|name| skeleton.find(name)).collect();
+    let mut used = vec![false; skin.names.len()];
+    for vertex in faces.iter().flat_map(|face| &face.vertices) {
+        for (joint, weight) in vertex.joints.iter().zip(vertex.weights) {
+            if !weight.is_finite() || weight < 0.0 {
+                return Err(AssetError::invalid("negative or nonfinite skin weight"));
+            }
+            if weight > 0.0 && supported.get(*joint as usize).is_some_and(Option::is_some) {
+                used[*joint as usize] = true;
+            }
+        }
+    }
+    let mut selected = Vec::new();
+    if supported.iter().filter(|joint| joint.is_some()).count() <= 110 {
+        selected.extend(supported.iter().enumerate().filter_map(|(i, joint)| joint.map(|_| i)));
+    } else {
+        let mut active = std::collections::HashSet::from(["Torso"]);
+        for (i, joint) in supported.iter().enumerate() {
+            if used[i] {
+                let bone = &skeleton.joints[joint.expect("supported weighted joint")];
+                active.insert(bone.group.as_str());
+                if let Some(parent) = bone.parent {
+                    active.insert(skeleton.joints[parent].group.as_str());
+                }
+                selected.push(i);
+            }
+        }
+        if selected.len() > 110 {
+            return Err(AssetError::TooLarge("weighted mesh joints"));
+        }
+        for (i, joint) in supported.iter().enumerate() {
+            if selected.len() == 110 {
+                break;
+            }
+            if !used[i] && joint.is_some_and(|j| active.contains(skeleton.joints[j].group.as_str())) {
+                selected.push(i);
+            }
+        }
+    }
+    let mut remap = vec![None; skin.names.len()];
+    for (index, source) in selected.iter().enumerate() {
+        remap[*source] = Some(index as u8);
+    }
+    for vertex in faces.iter_mut().flat_map(|face| &mut face.vertices) {
+        for (joint, weight) in vertex.joints.iter_mut().zip(&mut vertex.weights) {
+            if let Some(Some(mapped)) = remap.get(*joint as usize) {
+                *joint = *mapped;
+            } else {
+                *joint = 0;
+                *weight = 0.0;
+            }
+        }
+        let sum: f32 = vertex.weights.iter().sum();
+        if sum > 0.0 {
+            for weight in &mut vertex.weights {
+                *weight /= sum;
+            }
+        }
+    }
+    skin.names = selected.iter().map(|i| skin.names[*i].clone()).collect();
+    skin.inverse_bind = selected.iter().map(|i| skin.inverse_bind[*i]).collect();
+    skin.alternate_bind = selected.iter().map(|i| skin.alternate_bind[*i]).collect();
+    Ok(())
+}
 fn tree<'a>(points: &mut [&'a Vertex], depth: usize, nodes: &mut Vec<Node<'a>>) -> Option<usize> {
     if points.is_empty() {
         return None;

@@ -8,6 +8,90 @@ fn prices() -> Prices {
         animation: Some(10),
     }
 }
+
+#[test]
+fn mesh_import_factor_obeys_prim_size_and_linkset_span() {
+    use aurora_assets::import_mesh::{Instance, Scene};
+    use glam::{Mat4, Vec3};
+    let instance = |x| Instance {
+        model: 0,
+        name: "Part".into(),
+        materials: Vec::new(),
+        transform: Mat4::from_scale_rotation_translation(Vec3::splat(2.0), glam::Quat::IDENTITY, Vec3::X * x),
+    };
+    let mut draft = mesh::Draft::new(
+        Scene {
+            instances: vec![instance(0.0)],
+            ..Default::default()
+        },
+        HashMap::new(),
+    );
+    draft.options.scale = 2.0;
+    assert_eq!(draft.dimensions_and_limit(), (Vec3::splat(4.0), 32.0));
+    Arc::make_mut(&mut draft.scene).instances.push(instance(239.0));
+    let (dimensions, limit) = draft.dimensions_and_limit();
+    assert_eq!(dimensions, Vec3::new(482.0, 4.0, 4.0));
+    assert!((limit - 240.0 / 241.0).abs() < 0.00001);
+}
+
+#[test]
+fn instance_edits_retire_the_quote_and_keep_prepared_geometry() {
+    let mut draft = mesh::Draft::new(Default::default(), HashMap::new());
+    let prepared = Arc::new(mesh::Prepared {
+        lods: Vec::new(),
+        physics: Vec::new(),
+        hulls: Vec::new(),
+        degenerate_triangles: 0,
+    });
+    draft.prepared = Some(prepared.clone());
+    let token = Uuid::new_v4();
+    draft.quote = Some(aurora_net::inventory::mesh_upload::Quote {
+        token,
+        cost: 10,
+        data: aurora_llsd::Llsd::Undef,
+    });
+    let before = draft.options.clone();
+    draft.options.scale = 0.5;
+    draft.options.pelvis = 0.2;
+    assert!(draft.finish_edit(&before, false));
+    assert!(Arc::ptr_eq(draft.prepared.as_ref().expect("geometry"), &prepared));
+    assert!(draft.quote.is_none());
+    assert_eq!(draft.discarded_quotes, [token]);
+    let before = draft.options.clone();
+    draft.options.normals = true;
+    assert!(draft.finish_edit(&before, false));
+    assert!(draft.prepared.is_none());
+}
+
+#[test]
+fn restoring_a_failed_draft_keeps_material_edits_without_sending_or_clearing_the_warning() {
+    let mut imports = Imports::default();
+    let material = PbrMaterial {
+        roughness_factor: 0.123,
+        base_color_factor: [0.2, 0.4, 0.6, 1.0],
+        ..Default::default()
+    };
+    let mut entry = Entry::new(
+        "material.gltf".into(),
+        Ok(Source::Material {
+            value: material.clone(),
+            images: Box::new([None, None, None, None]),
+        }),
+        Default::default(),
+    );
+    entry.status = Status::Error("Unknown result".into());
+    let id = entry.id;
+    imports.entries.push(entry);
+    imports.message = "Verify inventory before retrying".into();
+    imports.restore_draft(id);
+    let Some(Source::Material { value, .. }) = &imports.entries[0].source else {
+        panic!("material")
+    };
+    assert_eq!(*value, material);
+    assert!(matches!(imports.entries[0].status, Status::Ready));
+    assert!(imports.current.is_none() && imports.queue.is_empty());
+    assert_eq!(imports.message, "Verify inventory before retrying");
+}
 fn image(w: u32, h: u32) -> Arc<DecodedImage> {
     Arc::new(DecodedImage {
         width: w,

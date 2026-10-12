@@ -19,6 +19,9 @@ pub struct ObjKey {
 #[derive(Debug, Default)]
 #[allow(dead_code)] // geometry keys kept for diagnostics
 pub struct RenderState {
+    /// Client-only local mesh preview; server volume/scale remain authoritative.
+    pub local_volume: Option<Box<VolumeParams>>,
+    pub local_scale: Option<Vec3>,
     /// Geometry cache key currently bound (and its LOD).
     pub geom: Option<crate::scene::GeomKey>,
     /// Geometry requested but not ready yet.
@@ -116,6 +119,14 @@ pub struct Object {
 }
 
 impl Object {
+    #[inline]
+    pub fn visual_volume(&self) -> VolumeParams {
+        self.render.local_volume.as_deref().copied().unwrap_or(self.volume)
+    }
+    #[inline]
+    pub fn visual_scale(&self) -> Vec3 {
+        self.render.local_scale.unwrap_or(self.scale)
+    }
     /// Ordinary flexible volumes use a simulated path; sculpt/mesh assets
     /// retain their own geometry even if they carry stale flexible parameters.
     pub fn is_flexible(&self) -> bool {
@@ -123,7 +134,7 @@ impl Object {
             && self.volume.path.curve_type == aurora_prim::params::LL_PCODE_PATH_FLEXIBLE
             && self.extra.flexible.is_some()
             && !self.volume.is_sculpt()
-            && !self.volume.is_mesh()
+            && !self.visual_volume().is_mesh()
     }
 
     pub fn from_update(region: RegionHandle, u: ObjectUpdate) -> Object {
@@ -177,6 +188,10 @@ impl Object {
 
     /// Apply a full update; flags what changed.
     pub fn apply_full(&mut self, u: ObjectUpdate) {
+        if !u.full_id.is_nil() && self.full_id != u.full_id {
+            self.render.local_volume = None;
+            self.render.local_scale = None;
+        }
         match &u.particles {
             ParticleUpdate::Keep => {}
             p => self.particle_update = Some(p.clone()),

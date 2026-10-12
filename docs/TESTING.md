@@ -572,6 +572,7 @@ grille.
 | `AURORA_DEMO_APPEARANCE=<mode>` | Fenêtre Apparence et tenues |
 | `AURORA_DEMO_INVENTORY=<mode>` | Inventaire synthétique, menus et fenêtres |
 | `AURORA_DEMO_IMPORTS=<mode>` | Fenêtre d’import et assets synthétiques |
+| `AURORA_DEMO_IMPORT_FILE=<chemin>` | Asset local à ouvrir dans le parcours de démo |
 | `AURORA_DEMO_REZ=<mode>` | Rez par glisser-déposer depuis l’inventaire |
 | `AURORA_DEMO_LAND=<onglet>[:owner]` | « À propos du terrain » sur un onglet |
 | `AURORA_DEMO_PLACE=<lieu>` | « Lieux » sur un profil de lieu |
@@ -582,13 +583,37 @@ grille.
 
 ### Détails
 
-- **`AURORA_DEMO_IMPORTS=texture|material|mesh|animation|sound|bulk|local`** :
-  ouvre le parcours choisi avec une image RGBA, un matériau PBR, un cube,
-  une animation BVH et un son synthétique. Vérifier les paramètres, les
+- **`AURORA_DEMO_IMPORTS=texture|material|mesh|mesh-physics|mesh-degenerate|animation|animation-own|sound|bulk|bulk-upload|local|local-mesh|local-mesh-applied`** :
+  écrit des fichiers propres à ce lancement dans `.scratch/import-demo/<uuid>/`
+  puis ouvre le parcours choisi : image RGBA, matériau PBR, cube Collada,
+  animations BVH / `.anim` et son WAV synthétique. Vérifier les paramètres, les
   aperçus, la caméra, les permissions, la sélection et la confirmation.
   Le devis et les envois restent entièrement dans le serveur de démo.
-  Pour la surveillance locale, charger un vrai fichier depuis cette fenêtre,
-  activer son aperçu puis enregistrer une modification du fichier.
+  `bulk-upload` exécute automatiquement le lot sur ce serveur hors ligne :
+  quatre lignes réussies, création des dépendances du matériau et reçu total
+  de 40 L$ fictifs attendus ; aucun transfert ni paiement réel.
+  `mesh-physics` affiche la forme physique et ses arêtes ; `mesh-degenerate`
+  injecte un défaut de triangles, qui doit apparaître dans l’aperçu et bloquer
+  le devis avec un diagnostic. L’analyse convexe doit permettre de le résoudre.
+  Le bouton Recharger relit ces fichiers par le parcours normal. Pour la
+  surveillance locale, activer l’aperçu puis modifier son fichier ou une carte
+  de matériau ; l’identifiant local de la carte doit rester stable.
+  `local-mesh-applied`, avec `AURORA_DEMO_ACTIONS=1`, applique automatiquement
+  le cube local à la boîte de test sélectionnée ; son volume serveur reste
+  inchangé. Le bouton de retrait doit restaurer son apparence d’origine.
+  `animation-own` place l’aperçu à 0,75 s, en pause, également sur l’avatar
+  de démo. Le curseur et la pose doivent rester fixes jusqu’à Reprendre.
+  `AURORA_DEMO_IMPORT_FILE` remplace les fixtures par un fichier existant,
+  lu sans modification ; choisir le mode correspondant à son type.
+
+- **Fixtures locales d’import** : le test ignoré
+  `local_asset_directory_loads_and_prepares_supported_files` lit le dossier
+  désigné par `AURORA_IMPORT_TEST_DIR`, ainsi que ses sous-dossiers `meshes`
+  et `textures`. Les LOD `lowest/low/medium/high` et la physique `physics`
+  sont associés par suffixe ; les fichiers sources restent intacts.
+  Le résultat est agrégé, sans noms ni chemins personnels. Les animations
+  natives conservent leurs octets et leurs poses sont échantillonnées.
+  Lancer `cargo test -p aurora-viewer local_asset_directory -- --ignored --nocapture`.
 
 - **Parcours de la refonte des fenêtres** : ouvrir l'inventaire et sélectionner
   un dossier dans l'arborescence, puis un élément ; vérifier recherche, permissions,

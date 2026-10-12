@@ -9,6 +9,9 @@ Périmètre confirmé le 12/10/2026 : textures, matériaux, meshes, sons,
 animations, lots et aperçus locaux. Les imports de linksets, EEP et
 Windlight sont recensés pour des tâches ultérieures dans `TASKS.md`.
 
+Référence consultée : Firestorm `d942e1118d01c3383ef7d6b64f248af77452b0dc`
+(12/10/2026). Les choix visibles suivent cette révision des sources.
+
 ## Parcours commun
 
 - Choisir un ou plusieurs fichiers ; nom et description ; dossier de
@@ -39,8 +42,11 @@ Sources : `llviewermenufile.cpp`, `llviewerassetupload.cpp`,
   conservation volontaire après avertissement.
 - Aperçu image avec déplacement/zoom ; cheveux, tête/corps masculin ou
   féminin, jupe et sculpted prim avec rotation/zoom.
-- Texture temporaire gratuite seulement sur une région sans server-side
-  baking et si le chargement normal est payant.
+- Ancienne case de texture temporaire : visible dans Firestorm seulement sans
+  server-side baking, mais `TemporaryUpload` n’est plus lu par son parcours
+  d’envoi dans cette révision. Les régions SL actuelles utilisent le baking ;
+  aucun faux chargement gratuit n’est proposé par Aurora. Les aperçus locaux
+  restent gratuits et n’envoient aucun asset au serveur.
 
 Sources : `llfloaterimagepreview.cpp`, `floater_image_preview.xml`,
 `llviewertexturelist.cpp`, `llimageraw.cpp`.
@@ -57,12 +63,16 @@ Sources : `llfloaternamedesc.cpp`, `llaudio/llvorbisencode.cpp`,
 ## Animations
 
 - `.anim` : validation sans altération des données, notamment des contraintes.
+  Les marqueurs de boucle négatifs et autres valeurs temporelles finies des
+  exporteurs sont acceptés comme par `LLKeyframeMotion::deserialize`.
 - BVH : hiérarchie, canaux et ordre des axes, pose de référence, traduction
   des articulations, suppression des pistes fixes, réduction des clés.
 - Priorité 2 par défaut ; boucle désactivée ; entrée/sortie en pourcentage
   ou en images ; fondus de 0,3 s ; poses des mains et expressions.
 - Aperçu local : debout/marche/assis/vol, lecture/pause/arrêt, curseur temporel,
   caméra, rechargement du fichier, statistiques et erreurs de parsing.
+  La pause et le curseur pilotent également l’aperçu sur notre avatar ;
+  les fins de ces mouvements locaux ne produisent aucun arrêt réseau.
 - Imports par lot : `.anim` acceptés, BVH exclus comme Firestorm.
 
 Sources : `llfloaterbvhpreview.cpp`,
@@ -98,6 +108,8 @@ Sources : `llmaterialeditor.cpp`, `panel_gltf_material.xml`,
   des faces/instances, suffixes et recherche des fichiers associés.
 - Génération de LOD : méthodes, triangles, erreur et normales lissées ;
   valeurs et presets de la fenêtre de référence.
+- Palettes glTF : articulations reconnues, joints pondérés prioritaires puis
+  joints inutilisés des groupes actifs, limite de 110 comme la référence.
 - Physique : fichier/LOD/préréglage, analyse convexe, simplification,
   paramètres des méthodes, progression et annulation ; limites des coques,
   sommets, triangles dégénérés et objets minces.
@@ -105,6 +117,9 @@ Sources : `llmaterialeditor.cpp`, `panel_gltf_material.xml`,
   positions des articulations, verrouillage de l’échelle et décalage du bassin.
 - Aperçu : LOD, arêtes, textures, guide UV, physique éclatée, poids,
   articulations et overrides ; caméra et couleurs enregistrées.
+- Triangles de physique dégénérés : tolérance `ll_is_degenerate`, diagnostic
+  et couleurs de surbrillance ; devis refusé tant que la physique brute reste
+  invalide. Les paramètres d’instance gardent les LOD et coques en cache.
 - Calcul serveur préalable des poids et du prix, détail du prix/streaming/
   physique, état d’autorisation du compte, remise à zéro et journal.
 - Envoi de l’asset et de ses instances par le protocole mesh Firestorm.
@@ -119,6 +134,9 @@ Sources : `llfloatermodelpreview.cpp`, `llmodelpreview.cpp`,
   total avant confirmation, limitation 1K, progression et erreurs individuelles.
 - Chargements locaux de textures, matériaux et meshes : réactualisation
   après modification du fichier et aucune facturation.
+- Mesh local : choix du modèle, unités en mètres optionnelles, dimensions
+  importées, application/retrait de la sélection et prim support ; surveillance
+  désactivée par défaut, période de 3 s réglable dès 0,1 s comme Firestorm.
 - Environnements : réglages EEP et anciens presets Windlight, imports multiples.
 - Sauvegardes de linksets Firestorm : reconstruction des prims et du contenu,
   réutilisation/envoi des assets, options de textures temporaires, décalage.
@@ -137,13 +155,61 @@ local pour négociation/envoi/confirmation/refus ; captures des fenêtres et
 parcours de démo ; puis essais par l’humain des prix, droits et résultats sur
 grille. Aucune connexion ni opération réelle sur grille par l’agent.
 
-État : implémentation en cours dans le worktree `import-assets`. Les codecs,
+État : parcours implémentés dans le worktree `import-assets`, en attente des
+essais humains. Les codecs,
 les parcours réseau HTTP/UDP, les brouillons et les aperçus GPU sont présents.
-Les captures texture, son, animation, matériau et mesh ont été examinées ;
-les ajustements de disposition continuent. Les tests couvrent notamment
-la préparation ORM, les trois modes V-HACD, les poids de LOD et la conservation
-des accusés après annulation. Le bilan final de parité et les essais de grille
-restent à réaliser. Aucun import réel n’a été validé sur une grille.
+Les captures texture, son, animation, matériau, mesh et application locale ont
+été examinées : aperçu au-dessus des paramètres, actions et coût accessibles
+dans le pied de fenêtre. Les tests couvrent notamment
+la préparation ORM, les trois modes V-HACD, les poids de LOD, les palettes glTF,
+les limites d’échelle, le rechargement des dépendances et la conservation
+des accusés après annulation. Prix, permissions, inventaire créé et rendu des
+assets importés doivent encore être vérifiés par l’humain sur grille.
+Aucun import réel n’a été validé sur une grille.
+
+Vérifications locales : `check.ps1` vert, 1 193 tests réussis, 17 ignorés,
+Clippy sans avertissement. Profilage de la scène démo : moyenne CPU de
+l’interface sur les trois dernières périodes, 0,37 ms sans la fenêtre puis
+0,57 ms avec l’aperçu PBR (0,51 ms animation, 0,51 ms mesh local). Les
+traitements des fichiers et de la physique restent sur les workers.
+
+Les fixtures humaines ont aussi été lues et préparées hors ligne : neuf
+meshes avec leurs quatre LOD et leur physique, 58 textures, une image
+1024 × 1536 et un WAV de 0,3 s. Les fichiers associés sont chargés avec les
+suffixes personnalisés `lowest/low/medium/high/physics`. Les triangles de
+chaque LOD sont conservés et les requêtes mesh sont encodées sans envoi.
+Un autre lot de 79 animations natives a été validé : octets originaux
+conservés et poses calculées sans valeur non finie. Les comptes agrégés
+restent distincts de `check.ps1` ; les fichiers personnels et leur inventaire
+ne sont pas incorporés aux fixtures du dépôt ni aux traces publiées.
+
+### Essais humains
+
+Ouvrir **Contenu → Importer…**, puis parcourir les onglets :
+
+- **Textures / matériaux** : choisir un fichier, vérifier dimensions et
+  alpha, modifier les cartes et facteurs PBR, faire pivoter et zoomer
+  l’aperçu. Les matériaux d’inventaire utilisent glTF/GLB ; les recettes
+  JSON d’un paquet d’assemblage ne sont pas des assets glTF importables.
+- **Meshes** : ouvrir un HIGH, choisir ses LOD et sa physique, vérifier
+  compteurs, dimensions, normales, analyse convexe et couleurs. Pour les
+  associations automatiques, régler les cinq suffixes dans les préférences
+  d’import avant d’ouvrir le fichier. Modifier un paramètre après un devis
+  doit imposer un nouveau calcul, sans réutiliser une offre périmée.
+- **Animations / sons** : lecture, arrêt et rechargement ; pour une
+  animation, pause, curseur, boucle et aperçu sur notre avatar. La pose
+  doit suivre le curseur immédiatement et rester fixe pendant la pause.
+- **Lots / local** : vérifier le total et la confirmation, annuler les
+  fichiers restants, conserver les reçus acquis. Pour un mesh local,
+  appliquer puis retirer sur un objet sélectionné ; le retrait restitue
+  son apparence d’origine. Tester une modification du fichier avec
+  surveillance activée.
+
+Sur la grille, l’humain se connecte puis valide prix et débit du solde,
+dossiers, droits et assets réellement créés pour chaque type. Contrôler
+aussi le refus serveur et la reprise du brouillon : les réglages restent
+présents, avec l’avertissement de vérifier l’inventaire lorsque l’issue
+d’un transfert payant est inconnue.
 
 La physique utilise la branche libre V-HACD 4.1 de Firestorm : résolution en
 nombre de voxels, limite de coques/sommets, erreur de volume et modes

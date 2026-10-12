@@ -90,6 +90,25 @@ impl MeshStreamer {
     }
 
     /// In-memory mesh metadata for offline geometry fixtures; no asset fetch.
+    pub fn insert_local(&mut self, id: Uuid, data: Arc<Vec<u8>>, header: MeshHeader, skin: Option<Arc<SkinInfo>>) {
+        self.entries.insert(
+            id,
+            MeshEntry {
+                data: Some(data),
+                header: Some(header),
+                skin,
+                state: 3,
+                ..Default::default()
+            },
+        );
+        self.meta_generation += 1;
+    }
+    pub fn remove_local(&mut self, id: &Uuid) {
+        if self.entries.remove(id).is_some() {
+            self.meta_generation += 1;
+        }
+    }
+
     pub fn insert_demo_skin(&mut self, id: Uuid, skin: SkinInfo) {
         self.meta_generation += 1;
         self.entries.insert(
