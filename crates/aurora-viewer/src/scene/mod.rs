@@ -502,7 +502,7 @@ pub struct Scene {
     /// readers check the object again.
     pub light_objects: std::collections::BTreeSet<usize>,
     /// Objects flagged as mirrors by their last sync, for `find_mirror`: as
-    /// for the lights, it may hold stale indices and readers check `mirror`.
+    /// for the lights, it may hold removed indices and readers check `mirror`.
     mirror_objects: std::collections::BTreeSet<usize>,
     /// Build tools: selected mesh / sculpted objects drawn as wireframes
     /// (object index -> root color).
@@ -1808,10 +1808,14 @@ impl Scene {
         g.wide = g.wide.filter(|_| posed.is_some());
         g.hud = m.xf.2;
         g.owner_avatar = m.owner_avatar;
-        if m.mirror {
-            self.mirror_objects.insert(idx);
+        if m.mirror != g.mirror {
+            g.mirror = m.mirror;
+            if m.mirror {
+                self.mirror_objects.insert(idx);
+            } else {
+                self.mirror_objects.remove(&idx);
+            }
         }
-        g.mirror = m.mirror;
         g.center = m.center;
         g.radius = m.radius;
         g.anchor = m.anchor;
@@ -1908,9 +1912,14 @@ impl Scene {
         g.hud = hud;
         g.owner_avatar = owner_avatar;
         // reflection probe with the box and mirror flags (LLReflectionProbeParams)
-        g.mirror = o.extra.reflection_probe.is_some_and(|p| p.flags & 0x4 != 0 && p.flags & 0x1 != 0);
-        if g.mirror {
-            self.mirror_objects.insert(idx);
+        let mirror = o.extra.reflection_probe.is_some_and(|p| p.flags & 0x4 != 0 && p.flags & 0x1 != 0);
+        if mirror != g.mirror {
+            g.mirror = mirror;
+            if mirror {
+                self.mirror_objects.insert(idx);
+            } else {
+                self.mirror_objects.remove(&idx);
+            }
         }
         let shape_dirty = o.shape_dirty;
         if wanted != g.wanted_geom || shape_dirty {

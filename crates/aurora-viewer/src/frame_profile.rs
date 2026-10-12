@@ -640,7 +640,12 @@ fn summary(p: &Period, elapsed: Duration) -> String {
         .zip(p.laps_max)
         .map(|(lap, ms)| ("", lap.key(), ms))
         .chain(RENDER_PHASES.iter().zip(p.phases_max).map(|(key, ms)| ("r_", *key, ms)))
-        .chain(Part::ALL.iter().zip(p.parts_max.0).map(|(part, ms)| (part.prefix(), part.key(), ms)))
+        .chain(
+            Part::ALL
+                .iter()
+                .zip(p.parts_max.0)
+                .map(|(part, ms)| (part.prefix(), part.key(), ms)),
+        )
         .chain(THREAD_KEYS.iter().zip(p.thread_max).map(|(key, ms)| ("", *key, ms)))
         .filter(|(_, _, ms)| *ms >= MAX_SHOWN_MS)
         .collect();

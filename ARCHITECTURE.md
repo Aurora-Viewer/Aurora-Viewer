@@ -174,7 +174,7 @@ Les scripts utilisent un éditeur commun (`ui/scripts.rs`, actions dans `app/scr
 | `logging.rs`, `cache.rs`, `credentials.rs` | Logs, cache disque, mot de passe retenu (coffre de l'OS) |
 | `bug_report/`, `ui/bug_report.rs`, `ui/bug_report/tests.rs`, `app/bug_report.rs` | Rapport de bug : instantané explicite des données autorisées, formulaire avec onglets Description / Image / Données, valeurs localisées et décochables, export aux titres anglais ; diagnostics publics à vocabulaire fermé et images réencodées hors du thread principal. Export local avec dossiers public / privé séparés ; lien GitHub prérempli avec repli presse-papiers, ou création d’issue après Device Flow d’une GitHub App. `uploads.rs` déclare les empreintes et envoie l’image publique et le ZIP privé facultatif vers l’API PHP / Cellar, puis ajoute les liens ; échec partiel repris sur la même issue. L’autorisation GitHub reste uniquement en mémoire dans `github.rs` et n’est pas transmise à l’API Aurora. Aucun secret de connexion SL, chat ou IM n’entre dans le modèle public. |
 | `screen_rate.rs` | Fréquence de l'écran sous la fenêtre, relue une fois par seconde (déplacement de la fenêtre, changement de mode de l'écran) : plafond de l'écran de connexion et images déjà cadencées par la synchronisation verticale |
-| `frame_profile.rs` | Profil des images (AURORA_PROFILE) : temps de chaque étape de l'image, ligne de synthèse par seconde dans le log (moyenne et maximum de chaque étape, nombre d'images lentes ; détail du streaming sur le thread principal, `s_*`, et de l'interface par groupe de fenêtres, `u_*` ; temps passé hors du processeur par étape, `off_cpu:` ; rencontre du thread principal et du thread de rendu, segment `thread`) |
+| `frame_profile.rs` | Profil des images (AURORA_PROFILE) : temps de chaque étape de l'image, ligne de synthèse par seconde dans le log (moyenne et maximum de chaque étape, nombre d'images lentes ; détail du streaming sur le thread principal, `s_*`, des paramètres de l'image, `p_*`, et de l'interface par groupe de fenêtres, `u_*` ; temps passé hors du processeur par étape, `off_cpu:` ; rencontre du thread principal et du thread de rendu, segment `thread`) |
 | `scene/animesh.rs` | Squelettes autonomes des objets animés, animations du linkset, limites des poses pour le culling et les ombres, scénario de démo |
 | `scene/skin_binds.rs` | Liaisons de skin envoyées au GPU (matrice inverse et os de la palette de chaque os d'un mesh riggé, squelette par défaut en tête) : une plage par mesh, rendue quand sa dernière géométrie est libérée et reprise par les mesh suivants ; seules les plages modifiées sont envoyées |
 | `scene/sync_sets.rs` | Objets que la synchro de la scène visite à chaque image, tenus à jour par événements (objets modifiés notés par `ObjectStore`, ensemble des objets qui bougent d'eux-mêmes et de ce qui les suit, géométries en attente, tranche de LOD) au lieu d'un parcours de tous les objets ; file d'attente des synchros complètes qui n'ont pas tenu dans le budget de temps de l'image, servie du plus proche au plus lointain (`Backlog`, `FullSyncBudget`) |
@@ -303,6 +303,13 @@ Le rez depuis l’inventaire passe par `ui/inventory.rs` (charge utile et relâc
    flottants et les points des cartes lisent les listes d'avatars et d'objets
    à texte de l'`ObjectStore` (`world/objects.rs`), tenues à jour par les
    changements : aucune fenêtre ne parcourt tous les objets à chaque image.
+
+Les autres passes de l'image suivent la même règle. Les systèmes de
+particules et les sons attachés qu'apportent les mises à jour d'objets sont
+relevés par deux flux de l'`ObjectStore` (`take_particle_changes`,
+`take_sound_changes`) ; les miroirs sont listés par la synchro comme les
+lumières ; l'orientation des corps et le chargement des avatars lisent la
+liste des avatars.
 
 Les traitements lourds (décodage d'images, maillage, sons) passent par des
 tâches en arrière-plan (`scene/jobs.rs`, rayon, en priorité basse) pour
