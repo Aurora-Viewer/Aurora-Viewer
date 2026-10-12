@@ -23,6 +23,7 @@ pub mod outfit;
 pub mod place_details;
 pub mod profiles;
 pub mod script_debug;
+pub mod search;
 pub mod social;
 pub mod status;
 pub mod terrain;
@@ -224,6 +225,8 @@ pub struct World {
     pub map: worldmap::WorldMap,
     /// Place details windows of place links (their parcel requests).
     pub place_details: place_details::PlaceDetails,
+    /// « Rechercher »: result lists and details of the directory search.
+    pub search: search::Search,
     arrived_once: bool,
     /// Disk cache root (inventory cache).
     pub cache_dir: Option<std::path::PathBuf>,
@@ -301,6 +304,7 @@ impl World {
             landmarks: Default::default(),
             map: worldmap::WorldMap::default(),
             place_details: Default::default(),
+            search: Default::default(),
             notifications: notifications::Notifications::default(),
             profiles: profiles::Profiles::default(),
             arrived_once: false,
@@ -376,6 +380,35 @@ impl World {
         let (x, y) = self.main_origin()?;
         let p = self.agent.position;
         Some(glam::DVec3::new(x as f64 + p.x as f64, y as f64 + p.y as f64, p.z as f64))
+    }
+
+    /// The content the agent may and wants to see (LLAgentAccess), from
+    /// the login reply.
+    pub fn agent_access(&self) -> aurora_net::search::AgentAccess {
+        self.login.as_ref().map_or_else(Default::default, |l| {
+            aurora_net::search::AgentAccess::from_login(
+                &l.raw["agent_access_max"].to_string_value(),
+                &l.raw["agent_region_access"].to_string_value(),
+            )
+        })
+    }
+
+    /// Every classified category of the grid, (id, name) by id.
+    pub fn classified_categories(&self) -> Vec<(u32, String)> {
+        let mut v: Vec<(u32, String)> = self
+            .login
+            .as_ref()
+            .map(|l| {
+                l.raw["classified_categories"]
+                    .as_array()
+                    .iter()
+                    .map(|c| (c["category_id"].as_i32().max(0) as u32, c["category_name"].to_string_value()))
+                    .filter(|(id, name)| *id != 0 && !name.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
+        v.sort();
+        v
     }
 
     /// Classified categories of the grid (login "classified_categories").
@@ -1365,6 +1398,22 @@ impl World {
             }
             NetEvent::ParcelInfo(p) => {
                 self.profiles.parcels.insert(p.id, *p);
+                None
+            }
+            NetEvent::DirReply(r) => {
+                self.search.apply_reply(&r);
+                None
+            }
+            NetEvent::EventInfo(e) => {
+                self.search.events.insert(e.id, *e);
+                None
+            }
+            NetEvent::GroupProfile(g) => {
+                self.search.groups.insert(g.id, *g);
+                None
+            }
+            NetEvent::ProductInfo(types) => {
+                self.search.apply_land_types(types);
                 None
             }
             NetEvent::RemoteParcel { handle, position, result } => {

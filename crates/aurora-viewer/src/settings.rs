@@ -119,6 +119,8 @@ pub struct Settings {
     pub landmarks_by_date: bool,
     /// Mini-map and world map options (Firestorm MiniMap* / Map* settings).
     pub maps: MapSettings,
+    /// « Rechercher »: last tab, rating boxes and land limits.
+    pub search: crate::world::search::SearchSettings,
     /// Other panels open at exit (restored at startup) and the People tab.
     pub show_people: bool,
     pub people_tab: u8,
@@ -479,6 +481,7 @@ impl Default for Settings {
             standalone_place_details: false,
             landmarks_by_date: true,
             maps: MapSettings::default(),
+            search: Default::default(),
             show_people: false,
             people_tab: 0,
             show_inventory: false,
