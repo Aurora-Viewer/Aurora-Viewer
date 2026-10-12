@@ -26,7 +26,8 @@ fn offset(ui: &mut egui::Ui, v: &mut [f32; 3]) -> bool {
     changed
 }
 
-pub(super) fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings) -> bool {
+/// `reset_view`: the live view is to go back behind the avatar too.
+pub(super) fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, reset_view: &mut bool) -> bool {
     let c = &mut s.camera;
     let mut changed = false;
     ui.label(
@@ -34,6 +35,25 @@ pub(super) fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings) -> bool {
             .size(12.0)
             .color(p.muted),
     );
+    ui.add_space(6.0);
+    // everything on this page back to its default: the shortcuts that move
+    // the follow camera (offsets, angle of view, distance) write these
+    // settings, and nothing else brought them all back at once
+    let reset_all = crate::ui::widgets::action_button(
+        ui,
+        p,
+        "restore",
+        aurora_i18n::tr!("ui-options-camera-reset-all"),
+        crate::ui::widgets::ActionKind::Flat,
+        egui::Vec2::new(0.0, 26.0),
+    )
+    .on_hover_text(aurora_i18n::tr!("ui-options-camera-reset-all-tip"))
+    .clicked();
+    if reset_all {
+        *c = CameraSettings::default();
+        *reset_view = true;
+        changed = true;
+    }
     ui.add_space(8.0);
     group(ui, p, aurora_i18n::tr!("common-viewpoint"), |ui| {
         changed |= row(

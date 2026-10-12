@@ -88,6 +88,8 @@ pub struct OptionsResult {
     pub refresh_devices: bool,
     /// Every setting went back to its default.
     pub reset: bool,
+    /// The camera settings went back to their defaults: the view follows.
+    pub reset_camera: bool,
 }
 
 /// Category tabs (index = `OptionsUi::tab`).
@@ -455,7 +457,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
                             TAB_AUDIO => audio_page(ui, p, s, st, &mut r.audio_changed, &mut r.refresh_devices),
                             8 => keys_page(ui, p, s, st),
                             9 => debug_page(ui, p, s),
-                            TAB_CAMERA => camera::page(ui, p, s),
+                            TAB_CAMERA => camera::page(ui, p, s, &mut r.reset_camera),
                             TAB_COMMANDS => commands::page(ui, p, &mut s.chat_commands),
                             _ => content(ui, p, s, st, &mut r.font_changed, &mut r.clear_cache),
                         };

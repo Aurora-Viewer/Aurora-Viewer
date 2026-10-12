@@ -3972,3 +3972,5 @@ radar-age-alert = { $days ->
 radar-too-far-to-zoom = Cet avatar est trop loin pour que la caméra aille jusqu'à lui.
 radar-col-seen-short = Vu
 radar-col-range-short = Dist.
+ui-options-camera-reset-all = Réinitialiser la caméra
+ui-options-camera-reset-all-tip = Remet tous les réglages de cette page à leur valeur par défaut : vue arrière, position et point visé, angle de vue, distance, lissage, limites et vue subjective.

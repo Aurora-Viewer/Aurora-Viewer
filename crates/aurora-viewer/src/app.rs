@@ -6462,6 +6462,9 @@ impl App {
                 if res.refresh_devices {
                     self.devices_listed = false;
                 }
+                if res.reset_camera {
+                    self.camera.reset_to_defaults(&mut self.world.agent, &self.settings.camera);
+                }
                 if res.reset {
                     // the panels must not write the old time of day back
                     self.panels.time_of_day = self.settings.time_of_day;
