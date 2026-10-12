@@ -8,6 +8,8 @@ use aurora_net::inventory::operations::{Mutation, NewItem};
 use egui::{RichText, Vec2};
 use std::collections::HashSet;
 use uuid::Uuid;
+mod clipboard;
+pub use clipboard::demo_events as clipboard_demo_events;
 mod context;
 mod controls;
 mod dialogs;
@@ -371,6 +373,7 @@ impl InventoryUi {
         ids
     }
     fn select(&mut self, ui: &egui::Ui, id: Uuid, secondary: bool) {
+        ui.memory_mut(|m| m.request_focus(clipboard::focus_id(self)));
         if secondary && self.selection.contains(&id) {
             self.selected = Some(id);
             return;
@@ -489,6 +492,7 @@ fn item_row(
         // One response handles clicks and dragging; a separate drag-source
         // interaction overlay used to consume secondary clicks on the label.
         r.dnd_set_drag_payload(InvDrag(it.id));
+        clipboard::demo_row(&r, st, it.id);
         super::widgets::demo::rez_row(&r, it.id);
         let date = if it.created_at > 0 {
             aurora_net::inventory::created_date(it.created_at)
@@ -589,6 +593,7 @@ fn folder_row(
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         let (r, resp) = ui.allocate_exact_size(Vec2::splat(12.0), egui::Sense::click());
+        clipboard::demo_caret(&resp, state, id);
         let c = r.center();
         let pts = if *open {
             vec![c + egui::vec2(-4.0, -2.0), c + egui::vec2(4.0, -2.0), c + egui::vec2(0.0, 3.0)]
@@ -615,6 +620,7 @@ fn folder_row(
                 .left_text(RichText::new(label).size(13.0).color(p.ink))
                 .wrap_mode(egui::TextWrapMode::Extend),
         );
+        clipboard::demo_row(&r, state, id);
         if first_open {
             scroll_to_row(ui, &r, egui::Align::Min);
         }
@@ -730,6 +736,7 @@ fn folder_window_contents(
     }
     let list_h = list_height(ui);
     egui::Frame::new().fill(p.field).show(ui, |ui| {
+        clipboard::list_focus(ui, st, list_h);
         if filtered {
             prepare_result_tree(st, inv, root);
             search_scroll(ui, p, icons, inv, st, prefs, facts, actions, list_h);
@@ -741,6 +748,7 @@ fn folder_window_contents(
         });
     });
     status(ui, p, inv, st, prefs, actions, filtered);
+    clipboard::shortcuts(ui, inv, root, st, prefs, facts, actions);
 }
 
 fn tree_spacing(ui: &mut egui::Ui) {
@@ -1151,6 +1159,7 @@ fn inventory_contents(
         .inner_margin(4)
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
+            clipboard::list_focus(ui, st, list_h);
             if root.is_nil() {
                 list_scroll(ui, list_h).show(ui, |ui| {
                     let text = if st.tab == RECEIVED_TAB {
@@ -1177,6 +1186,7 @@ fn inventory_contents(
             });
         });
     status(ui, p, inv, st, prefs, actions, filtered);
+    clipboard::shortcuts(ui, inv, root, st, prefs, facts, actions);
 }
 
 pub fn show(

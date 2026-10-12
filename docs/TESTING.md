@@ -942,6 +942,18 @@ racine ouverte et libellés alignés à gauche. Créations et mutations simulée
 hors ligne ; les fichiers et photos chargés en démo restent hors ligne.
 
 - `1` : l'inventaire seul.
+- `clipboard` : inventaire déplié pour tester Ctrl+C / Ctrl+X / Ctrl+V sur
+  les éléments, les dossiers et les sélections multiples. Choisir le dossier
+  de destination (ou un de ses éléments) avant de coller. Les champs de
+  recherche et de renommage gardent leurs raccourcis de texte.
+  `clipboard-copy` sélectionne deux éléments, copie puis colle deux fois dans
+  le sous-dossier ; `clipboard-cut` déplace deux objets, dont un non copiable
+  et un non transférable ; `clipboard-folder` copie le sous-dossier et son
+  contenu dans le dossier parent. `clipboard-window` copie depuis une fenêtre de
+  dossier puis colle dans une autre, vide. Gestes aux images 650–781, puis
+  ouverture du dossier de destination ; capture après 800. Aucune activation
+  de la fenêtre native ni lecture du presse-papiers du système pendant ces
+  scénarios automatiques.
 - `move-menu` : menu d’un élément avec « Déplacer vers… » ; `move-item`,
   `move-folder`, `move-multi` : fenêtre de destination pour un élément, un
   dossier ou trois objets (dont un non copiable et un non transférable).

@@ -191,7 +191,8 @@ pub fn target(view: &str) -> Option<Uuid> {
         | "move-folder"
         | "folder-window-search" => 8000,
         "move-item" | "move-multi" | "move-filter" | "move-window" | "move-menu" => 8100,
-        "object" | "properties" | "rename" | "multi-add" | "multi-detach" | "delete" => 8100,
+        "object" | "properties" | "rename" | "multi-add" | "multi-detach" | "delete" | "clipboard" | "clipboard-copy" | "clipboard-cut"
+        | "clipboard-folder" | "clipboard-window" => 8100,
         "animation" | "animation-open" | "animation-properties" | "image" | "image-photo" | "image-picker" | "image-photo-save" => 8101,
         "script" => 8102,
         "note" | "note-open" | "note-edit" | "note-save" | "note-close" | "note-error" | "note-readonly" | "note-embedded" | "note-new"

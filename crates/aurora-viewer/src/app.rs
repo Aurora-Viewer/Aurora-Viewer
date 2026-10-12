@@ -4257,6 +4257,7 @@ impl App {
                         v.as_str(),
                         "rename" | "new-script" | "new-note" | "new-folder" | "resize-left" | "resize-right"
                     ) || v.starts_with("note-")
+                        || v.starts_with("clipboard-")
                 }))
         {
             raw.focused = true;
@@ -4347,6 +4348,8 @@ impl App {
             }
             raw.events
                 .extend(ui::inventory::document_demo_events(&ctx, self.frame_count, &mut self.inventory_ui));
+            raw.events
+                .extend(ui::inventory::clipboard_demo_events(&ctx, self.frame_count, &self.inventory_ui));
         }
         let projector = ui::hud::Projector {
             view_proj: vp,
@@ -6795,7 +6798,17 @@ impl ApplicationHandler for App {
                 }
                 if let Some(id) = crate::world::inventory::demo::target(&view) {
                     self.inventory_ui.show_original(&self.world.inventory, id);
-                    if view == "new-folder" {
+                    if view.starts_with("clipboard") {
+                        if view == "clipboard-window" {
+                            self.inventory_ui.open_folder_window(uuid::Uuid::from_u128(8000));
+                            self.inventory_ui.open_folder_window(uuid::Uuid::from_u128(8001));
+                        } else {
+                            let mut item = self.world.inventory.items[&uuid::Uuid::from_u128(8104)].clone();
+                            item.id = uuid::Uuid::from_u128(8220);
+                            item.parent = uuid::Uuid::from_u128(8001);
+                            self.world.inventory.add_items(vec![item]);
+                        }
+                    } else if view == "new-folder" {
                         if let Ok(change) = crate::world::inventory::actions::create_folder(id, aurora_i18n::tr!("common-new-folder")) {
                             self.apply_inventory_action(ui::inventory::InvAction::Edit(change));
                         }
