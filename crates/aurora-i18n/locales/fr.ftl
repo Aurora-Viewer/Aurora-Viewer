@@ -889,7 +889,20 @@ ui-options-click-change-right-click-clear-also-used-by = { "Clic : changer · Cl
 ui-worldmap-click-place-marker-double-click-teleport-wheel-zoom-drag = Clic : placer un repère · double-clic : se téléporter · molette : zoom · glisser : déplacer
 ui-chat-click-profile = Clic : profil
 ui-bars-right-click-drag-orbit-wheel-zoom = Clic droit + glisser : orbiter   ·   Molette : zoom
-ui-inventory-right-click-item-actions-ctrl-shift-multi-select = Clic droit : actions de l’élément. Ctrl / Maj : sélection multiple.
+ui-inventory-right-click-item-actions-ctrl-shift-multi-select = Clic droit : actions de l’élément. Ctrl / Maj : sélection multiple. Ctrl+C : copier, Ctrl+X : couper, Ctrl+V : coller dans le dossier sélectionné ou le dossier de l’élément.
+inventory-copy-unconfirmed = La copie du contenu n’a pas été entièrement confirmée. Rechargez le dossier de destination avant de réessayer.
+inventory-progress-updating = Modification : { $completed }/{ $total }
+inventory-progress-copying = { $total ->
+    [one] Copie : { $completed }/{ $total } élément confirmé
+   *[other] Copie : { $completed }/{ $total } éléments confirmés
+    }
+inventory-progress-verifying = Vérification du contenu…
+inventory-progress-elapsed = { $message } · { $seconds } s
+inventory-operation-complete = Modification terminée
+inventory-moves-queued = Déplacement demandé
+inventory-copy-owner-unknown = Les informations des éléments à copier sont incomplètes. Rechargez le dossier source.
+inventory-demo-nested-folder = Niveau { $level }
+inventory-demo-destination = Destination de test
 keybinds-middle-click = Clic molette
 ui-options-camera-click-my-avatar-keep-camera = Clic sur mon avatar : garder la caméra
 ui-login-second-life-client-rust-vulkan = Client Second Life  ·  Rust  ·  Vulkan
@@ -3214,6 +3227,7 @@ ui-environment-skies-waters-day-cycles = { $value0 }{ " ciels · " }{ $value1 }{
 ui-land-access-entries-imported = { $value0 }{ " entrées importées." }
 build-mod-object-s-sent-to-trash = { $value0 }{ " objet(s) envoyé(s) à la corbeille" }
 ui-inventory-objects-loaded = { $value0 }{ " objets chargés" }
+inventory-delete-shortcut = Supprimer la sélection (Suppr)
 build-mod-objects-linked = { $value0 }{ " objets liés" }
 ui-perf-per-frame = { $value0 }{ " par image" }
 ui-perf-ready = { $value0 }{ " prêtes / " }{ $value1 }

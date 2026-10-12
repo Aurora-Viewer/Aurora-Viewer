@@ -942,6 +942,46 @@ racine ouverte et libellés alignés à gauche. Créations et mutations simulée
 hors ligne ; les fichiers et photos chargés en démo restent hors ligne.
 
 - `1` : l'inventaire seul.
+- `delete-key`, `delete-button` : sélectionnent un dossier contenant trois
+  niveaux et leurs items, puis ouvrent la confirmation par Suppr ou le bouton
+  de corbeille du pied de fenêtre. Capturer 660 (sélection et corbeille à droite
+  du compteur), puis 720 (confirmation identique au menu contextuel). Supprimer
+  déplace le dossier complet dans la corbeille ; Annuler le garde à sa place.
+  Vérifier aussi une sélection multiple, un objet porté / protégé (commande
+  indisponible), un champ de texte (Suppr édite le texte) et une fenêtre de
+  dossier. Une sélection entièrement dans la corbeille demande confirmation
+  avant suppression définitive.
+- `clipboard` : inventaire déplié pour tester Ctrl+C / Ctrl+X / Ctrl+V sur
+  les éléments, les dossiers et les sélections multiples. Choisir le dossier
+  de destination (ou un de ses éléments) avant de coller. Les champs de
+  recherche et de renommage gardent leurs raccourcis de texte.
+  `clipboard-copy` sélectionne deux éléments, copie puis colle deux fois dans
+  le sous-dossier ; `clipboard-cut` déplace deux objets, dont un non copiable
+  et un non transférable ; `clipboard-folder` copie le sous-dossier, ses deux
+  niveaux imbriqués et leurs trois items dans « Destination de test ».
+  `clipboard-cut-folder` déplace la même arborescence, avec un objet non copiable
+  dans un sous-dossier : tous les éléments doivent rester présents avec les
+  mêmes identifiants. `clipboard-window` copie depuis une fenêtre de
+  dossier puis colle dans une autre, vide. Gestes aux images 650–781, puis
+  ouverture du dossier de destination ; capture après 800. Aucune activation
+  de la fenêtre native ni lecture du presse-papiers du système pendant ces
+  scénarios automatiques.
+  `clipboard-progress` illustre les états possibles de la ligne de statut :
+  modification aux images 650–749, copie avec compteur 2/3 aux images
+  800–849, vérification aux images 850–919, puis confirmation de fin dès 920.
+  Capturer 700,820,890,940 ; l’animation, le compteur et le temps écoulé doivent
+  rester visibles dans la ligne de statut, sans agrandir la fenêtre.
+  La vérification concerne les mutations de métadonnées ; une copie réelle
+  est terminée par la réception de ses items, sans relecture finale du dossier.
+  En ligne, le statut doit montrer les étapes, le compteur d’items confirmés et
+  le temps écoulé, puis « Modification terminée ». Les items apparaissent dès leur
+  arrivée ; il doit être possible de lancer une autre copie ou de déplacer un
+  autre item pendant une copie en cours. Un couper/coller change l'arborescence
+  dès l'envoi fiable et affiche « Déplacement demandé » sans attendre de relecture
+  HTTP. Tester deux copies successives, des dossiers avec plusieurs niveaux,
+  puis recharger et vérifier les originaux, les copies et les déplacements.
+  Une copie non confirmée demande de recharger la destination ; des références
+  incomplètes demandent de recharger la source au lieu d'attendre une expiration.
 - `move-menu` : menu d’un élément avec « Déplacer vers… » ; `move-item`,
   `move-folder`, `move-multi` : fenêtre de destination pour un élément, un
   dossier ou trois objets (dont un non copiable et un non transférable).

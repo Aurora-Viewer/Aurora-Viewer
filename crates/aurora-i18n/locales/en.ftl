@@ -889,7 +889,20 @@ ui-options-click-change-right-click-clear-also-used-by = { "Click: change · Rig
 ui-worldmap-click-place-marker-double-click-teleport-wheel-zoom-drag = Click: place marker · Double-click: teleport · Wheel: zoom · Drag: pan
 ui-chat-click-profile = Click: profile
 ui-bars-right-click-drag-orbit-wheel-zoom = Right-click + drag: orbit   ·   Wheel: zoom
-ui-inventory-right-click-item-actions-ctrl-shift-multi-select = Right-click: item actions. Ctrl / Shift: multi-select.
+ui-inventory-right-click-item-actions-ctrl-shift-multi-select = Right-click: item actions. Ctrl / Shift: multi-select. Ctrl+C: copy, Ctrl+X: cut, Ctrl+V: paste into the selected folder or the item's folder.
+inventory-copy-unconfirmed = The contents copy has not been fully confirmed. Reload the destination folder before trying again.
+inventory-progress-updating = Updating: { $completed }/{ $total }
+inventory-progress-copying = { $total ->
+    [one] Copying: { $completed }/{ $total } item confirmed
+   *[other] Copying: { $completed }/{ $total } items confirmed
+    }
+inventory-progress-verifying = Verifying contents…
+inventory-progress-elapsed = { $message } · { $seconds } s
+inventory-operation-complete = Update completed
+inventory-moves-queued = Move requested
+inventory-copy-owner-unknown = Information about the items to copy is incomplete. Reload the source folder.
+inventory-demo-nested-folder = Level { $level }
+inventory-demo-destination = Test destination
 keybinds-middle-click = Middle click
 ui-options-camera-click-my-avatar-keep-camera = Click my avatar: keep camera
 ui-login-second-life-client-rust-vulkan = Second Life client  ·  Rust  ·  Vulkan
@@ -3214,6 +3227,7 @@ ui-environment-skies-waters-day-cycles = { $value0 }{ " skies · " }{ $value1 }{
 ui-land-access-entries-imported = { $value0 }{ " entries imported." }
 build-mod-object-s-sent-to-trash = { $value0 }{ " object(s) sent to Trash" }
 ui-inventory-objects-loaded = { $value0 }{ " objects loaded" }
+inventory-delete-shortcut = Delete selection (Delete)
 build-mod-objects-linked = { $value0 }{ " objects linked" }
 ui-perf-per-frame = { $value0 }{ " per frame" }
 ui-perf-ready = { $value0 }{ " ready / " }{ $value1 }
