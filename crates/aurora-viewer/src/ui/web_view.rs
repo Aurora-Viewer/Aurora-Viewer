@@ -1,15 +1,27 @@
 //! A web page inside a window, like LLMediaCtrl: a CEF plugin of its own
 //! (`aurora-media`), its pixels in an egui texture, mouse, wheel and (once
 //! clicked) keyboard sent to the page. Used by the "Flux" tab of the
-//! profiles (LLPanelProfileWeb).
+//! profiles (LLPanelProfileWeb) and by the web tab of the search window
+//! (FSPanelSearchWeb), which also follows the page's address and goes back
+//! and forward in its history. The search tab's browser is a private one
+//! (`WebView::private`): its cache, history and log go to a profile of its
+//! own that is deleted with the browser (`media/private_profile.rs`).
 
+use crate::media::private_profile::PrivateProfile;
 use aurora_media::{BrowserSettings, Cookie, MediaEvent, MediaPlugin, Modifiers, MouseEvent, PluginPaths};
 use egui::{Color32, Vec2};
+use std::path::PathBuf;
 use std::time::Instant;
 
 #[derive(Default)]
 pub struct WebView {
+    // dropped first: the browser stops before its profile is removed
     plugin: Option<MediaPlugin>,
+    /// Where this browser's private profiles are made; None for a browser
+    /// on the shared cache.
+    private_root: Option<PathBuf>,
+    /// The profile of the running private browser.
+    profile: Option<PrivateProfile>,
     texture: Option<egui::TextureHandle>,
     /// Page to show (loaded once the plugin runs).
     url: String,
@@ -23,9 +35,23 @@ pub struct WebView {
     pub load_secs: Option<f32>,
     cursor: String,
     scratch: Vec<Color32>,
+    /// Address of the page shown, as the browser reports it (it follows the
+    /// links clicked in the page).
+    pub location: String,
+    /// A page is loading (between NavigateBegin and NavigateComplete).
+    pub loading: bool,
 }
 
 impl WebView {
+    /// A browser that leaves nothing behind: each time it starts it gets a
+    /// new profile under `root`, deleted when it stops.
+    pub fn private(root: PathBuf) -> WebView {
+        WebView {
+            private_root: Some(root),
+            ..Default::default()
+        }
+    }
+
     pub fn navigate(&mut self, url: &str) {
         if self.url != url {
             self.url = url.to_owned();
@@ -36,12 +62,45 @@ impl WebView {
     /// Stop the browser (window closed).
     pub fn close(&mut self) {
         self.plugin = None;
+        // after the browser: the profile is removed once it lets go
+        self.profile = None;
         self.texture = None;
         self.focused = false;
     }
 
     pub fn plugin_mut(&mut self) -> Option<&mut MediaPlugin> {
         self.plugin.as_mut()
+    }
+
+    /// The browser runs (a page was asked and the plugin started).
+    pub fn running(&self) -> bool {
+        self.plugin.is_some()
+    }
+
+    /// LLMediaCtrl::navigateBack / navigateForward / reload.
+    pub fn back(&mut self) {
+        if let Some(p) = self.plugin.as_mut() {
+            p.browse_back();
+        }
+    }
+
+    pub fn forward(&mut self) {
+        if let Some(p) = self.plugin.as_mut() {
+            p.browse_forward();
+        }
+    }
+
+    pub fn reload(&mut self) {
+        if let Some(p) = self.plugin.as_mut() {
+            p.browse_reload(false);
+        }
+    }
+
+    /// Load `url` even when it is the page asked last ("home" after links
+    /// were followed inside the page).
+    pub fn navigate_again(&mut self, url: &str) {
+        self.url = url.to_owned();
+        self.nav_pending = true;
     }
 
     /// Draw the page in `size` points (starting the browser if needed).
@@ -59,8 +118,32 @@ impl WebView {
         let px = ((size.x * ppp).round().max(16.0) as i32, (size.y * ppp).round().max(16.0) as i32);
         ui.painter().rect_filled(rect, 0.0, pal.field);
         if self.plugin.is_none() && self.failed.is_none() && !self.url.is_empty() {
-            match paths {
-                Some(paths) => match MediaPlugin::launch(paths, "media_plugin_cef", px.0, px.1, browser, "") {
+            // a private browser never falls back on the shared cache
+            let private = match &self.private_root {
+                Some(root) => match PrivateProfile::create(root) {
+                    Ok(profile) => {
+                        let settings = profile.settings(browser);
+                        self.profile = Some(profile);
+                        Ok(Some(settings))
+                    }
+                    Err(e) => Err(e),
+                },
+                None => Ok(None),
+            };
+            let launched = match (&private, paths) {
+                (Err(e), _) => Some(Err(std::io::Error::new(e.kind(), e.to_string()))),
+                (Ok(settings), Some(paths)) => Some(MediaPlugin::launch(
+                    paths,
+                    "media_plugin_cef",
+                    px.0,
+                    px.1,
+                    settings.as_ref().unwrap_or(browser),
+                    "",
+                )),
+                (Ok(_), None) => None,
+            };
+            match launched {
+                Some(launched) => match launched {
                     Ok(mut p) => {
                         // LLViewerMedia::getOpenIDCookie before the first page
                         if let Some(c) = cookie {
@@ -76,6 +159,10 @@ impl WebView {
                     }
                 },
                 None => self.failed = Some(aurora_i18n::tr!("extra-browser-unavailable-slplugin-cef-plugins").into()),
+            }
+            // no browser, no profile to keep
+            if self.plugin.is_none() {
+                self.profile = None;
             }
         }
         let Some(p) = self.plugin.as_mut() else {
@@ -100,16 +187,29 @@ impl WebView {
             p.load_uri(&self.url);
             self.nav_started = Some(Instant::now());
             self.load_secs = None;
+            self.location = self.url.clone();
+            self.loading = true;
         }
         p.idle();
         for ev in p.take_events() {
             match ev {
-                MediaEvent::NavigateComplete { .. } => {
+                MediaEvent::NavigateComplete { uri, .. } => {
                     // the first page of a new browser may complete twice
                     if let Some(t) = self.nav_started.take() {
                         self.load_secs = Some(t.elapsed().as_secs_f32());
                     }
+                    if !uri.is_empty() {
+                        self.location = uri;
+                    }
+                    self.loading = false;
                 }
+                MediaEvent::NavigateBegin(uri) => {
+                    if !uri.is_empty() {
+                        self.location = uri;
+                    }
+                    self.loading = true;
+                }
+                MediaEvent::LocationChanged(uri) if !uri.is_empty() => self.location = uri,
                 MediaEvent::CursorChanged(c) => self.cursor = c,
                 MediaEvent::PluginFailed(e) => {
                     log::warn!("web view: browser stopped: {e}");
@@ -120,6 +220,7 @@ impl WebView {
         }
         if self.failed.is_some() {
             self.plugin = None;
+            self.profile = None;
             return resp;
         }
         // pixels: whole page when it changed (small windows)

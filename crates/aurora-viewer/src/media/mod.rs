@@ -28,6 +28,7 @@ mod interact;
 pub mod keys;
 pub mod openid;
 pub mod pick;
+pub mod private_profile;
 mod update;
 
 use crate::scene::sync_sets::IndexSet;

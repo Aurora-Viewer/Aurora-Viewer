@@ -306,6 +306,8 @@ pub enum Action {
     WorldMap,
     /// Monde › Historique de téléportation (Firestorm Alt+H).
     TeleportHistory,
+    /// « Rechercher » (Firestorm Ctrl+F, menu_viewer.xml).
+    Search,
     Performance,
     Preferences,
     /// Aurora's held shortcut for dragging a visible HUD with the left button.
@@ -395,6 +397,7 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                     (Action::Minimap, aurora_i18n::tr!("common-mini-map")),
                     (Action::WorldMap, aurora_i18n::tr!("common-world-map")),
                     (Action::TeleportHistory, aurora_i18n::tr!("common-teleport-history")),
+                    (Action::Search, aurora_i18n::tr!("search-title")),
                     (Action::Performance, aurora_i18n::tr!("common-performance")),
                     (Action::Preferences, aurora_i18n::tr!("common-preferences")),
                 ],
@@ -516,6 +519,7 @@ impl KeyBindings {
                     None,
                 ],
             ),
+            (Action::Search, [kmod(K::KeyF, true, false), None]),
             (Action::Performance, [kmod(K::Digit1, true, true), None]),
             (Action::Preferences, [kmod(K::KeyP, true, false), None]),
             (Action::HudDrag, [k(K::AltLeft), None]),

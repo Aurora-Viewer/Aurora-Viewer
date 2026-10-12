@@ -43,6 +43,7 @@ pub mod place_details;
 pub mod places;
 pub mod profile;
 pub mod scripts;
+pub mod search;
 pub mod skin;
 pub mod snap;
 pub mod sound_cues;
@@ -81,6 +82,8 @@ pub struct Panels {
     pub about_land: bool,
     /// « Lieux » (favorites, landmarks, teleport history, place profiles).
     pub places: bool,
+    /// « Rechercher » (Firestorm's legacy search floater, Ctrl+F).
+    pub search: bool,
     /// Navigation bar location being edited (text) and "just opened" (select all).
     pub nav_edit: Option<String>,
     pub nav_edit_new: bool,
@@ -109,6 +112,7 @@ impl Panels {
             contacts: false,
             about_land: false,
             places: false,
+            search: false,
             nav_edit: None,
             nav_edit_new: false,
         }
@@ -137,6 +141,7 @@ mod tests {
             ("contacts", panels.contacts),
             ("about_land", panels.about_land),
             ("places", panels.places),
+            ("search", panels.search),
         ]
         .into_iter()
         .filter_map(|(name, open)| open.then_some(name))

@@ -77,6 +77,19 @@ enum Command {
     ExpandAll,
 }
 
+fn focus_frame_id() -> Id {
+    Id::new("script_editor_focus_frame")
+}
+
+/// A script editor had the keyboard on the last frame drawn: its own
+/// shortcuts (Ctrl+F to find in the script) go before the viewer's on the
+/// same keys, as a floater's accelerators do in Firestorm.
+pub fn editor_focused(ctx: &egui::Context) -> bool {
+    let now = ctx.cumulative_frame_nr();
+    ctx.data(|d| d.get_temp::<u64>(focus_frame_id()))
+        .is_some_and(|frame| frame + 1 >= now)
+}
+
 fn visible_id(id: Id, processed: bool) -> Id {
     if processed { id.with("processed") } else { id }
 }
@@ -283,6 +296,9 @@ pub(super) fn body(
         run(command, e, &ctx, id, settings, prefs, actions);
     }
     if ctx.memory(|m| m.has_focus(visible_id(id, e.tools.processed))) {
+        // read outside the closure: the context is locked inside it
+        let frame = ctx.cumulative_frame_nr();
+        ctx.data_mut(|d| d.insert_temp(focus_frame_id(), frame));
         for (key, command) in [
             (egui::Key::S, Command::Save),
             (egui::Key::F, Command::Find),

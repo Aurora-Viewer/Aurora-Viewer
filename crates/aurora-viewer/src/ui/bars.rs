@@ -409,6 +409,10 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             *action = BarAction::TeleportHistory;
         }
         flip(ui, p, "map-pin-filled", aurora_i18n::tr!("common-places"), &mut panels.places, true);
+        // menu_viewer.xml: Search (Ctrl+F)
+        if menu::item_keys(ui, p, "search-filled", aurora_i18n::tr!("search-title"), "Ctrl+F") {
+            panels.search = !panels.search;
+        }
         flip(
             ui,
             p,
@@ -965,6 +969,7 @@ pub fn run_command(cmd: &str, panels: &mut Panels) -> BarAction {
         "minimap" => panels.minimap = !panels.minimap,
         "worldmap" => panels.world_map = !panels.world_map,
         "places" => panels.places = !panels.places,
+        "search" => panels.search = !panels.search,
         "performance" => panels.perf = !panels.perf,
         "preferences" => panels.settings = !panels.settings,
         "fly" => return BarAction::ToggleFly,
@@ -985,6 +990,7 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "minimap" => panels.minimap,
         "worldmap" => panels.world_map,
         "places" => panels.places,
+        "search" => panels.search,
         "performance" => panels.perf,
         "preferences" => panels.settings,
         "fly" => flying,

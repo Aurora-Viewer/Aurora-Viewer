@@ -330,6 +330,8 @@ pub struct App {
     place_ui: ui::place_details::PlaceDetailsUi,
     /// « Lieux ».
     places_ui: ui::places::PlacesUi,
+    /// « Rechercher ».
+    search_ui: ui::search::SearchUi,
     /// AURORA_DEMO_PLACE=repere|historique, opened once logged in.
     demo_place: Option<crate::world::place_details::Source>,
     /// AURORA_DEMO_STREAM: objects and textures arriving in waves.
@@ -630,6 +632,7 @@ impl App {
             profile_ui: Default::default(),
             place_ui: Default::default(),
             places_ui: Default::default(),
+            search_ui: Default::default(),
             place_images: Default::default(),
             demo_place: None,
             stream_demo: None,
@@ -1172,6 +1175,10 @@ impl App {
         self.hud_drag = None;
         self.media.clear();
         self.media.openid.clear();
+        // the search window's browser and its page, opened with the session
+        // that ends here
+        self.search_ui = Default::default();
+        self.panels.search = false;
         self.save_local_environment();
         self.env_ui = Default::default();
         self.env_scan = false;
@@ -1932,6 +1939,7 @@ impl App {
             Action::Minimap => self.panels.minimap = !self.panels.minimap,
             Action::WorldMap => self.panels.world_map = !self.panels.world_map,
             Action::TeleportHistory => self.toggle_teleport_history(),
+            Action::Search => self.panels.search = !self.panels.search,
             Action::Performance => self.panels.perf = !self.panels.perf,
             Action::Preferences => self.panels.settings = !self.panels.settings,
             Action::ShowTransparency => {
@@ -3527,6 +3535,7 @@ impl App {
         wanted.extend(self.profile_ui.wanted_pics.drain());
         wanted.extend(self.contacts_ui.wanted_pics.drain());
         wanted.extend(self.plates.wanted_pics.drain());
+        wanted.extend(self.search_ui.wanted_pics.drain());
         for agent in wanted {
             if self.avatar_pics.contains_key(&agent) {
                 continue;
@@ -3647,6 +3656,12 @@ impl App {
         self.world.place_details.update(&self.world.map, &mut self.world.landmarks, now);
         let mut cmds = self.world.place_details.take_commands();
         cmds.extend(self.world.landmarks.take_commands());
+        // « Rechercher »: a key typed in the people tab waits for its name
+        let names = &self.world.social.avatar_names;
+        if let Some(id) = self.world.search.resolve_key(|id| names.complete(id), now) {
+            names.want(&id);
+        }
+        cmds.extend(self.world.search.take_commands());
         for c in cmds {
             self.send(c);
         }
@@ -5863,6 +5878,84 @@ impl App {
         }
     }
 
+    /// The grid of the session for the web search: only the main grid's
+    /// session is known to search.secondlife.com.
+    fn search_grid(&self) -> crate::world::search::SearchGrid {
+        use crate::world::search::SearchGrid;
+        match self.settings.grid {
+            crate::settings::GridChoice::SecondLife => SearchGrid::Main,
+            crate::settings::GridChoice::SecondLifeBeta => SearchGrid::Beta,
+            crate::settings::GridChoice::Custom => SearchGrid::Other,
+        }
+    }
+
+    /// The search page of the web tab (FSPanelSearchWeb::loadURL), None on
+    /// a grid without one. On the main grid it carries the session id of the
+    /// agent, as Firestorm's does: it is only given to the embedded browser,
+    /// never logged, shown or saved; on the beta grid it is anonymous.
+    /// AURORA_DEMO_SEARCH_WEB=<page>: a page of the tester's choice in demo,
+    /// which loads nothing by itself and has no session.
+    fn search_home(&self) -> Option<crate::world::search::WebHome> {
+        if self.demo {
+            let url = std::env::var("AURORA_DEMO_SEARCH_WEB").ok().filter(|u| !u.trim().is_empty())?;
+            return Some(crate::world::search::WebHome { url, identified: false });
+        }
+        crate::world::search::web_home(
+            self.search_grid(),
+            self.world.agent_access(),
+            aurora_i18n::language(),
+            self.search_session(),
+        )
+    }
+
+    /// The session id the web tab's search page is opened with; none in
+    /// demo.
+    fn search_session(&self) -> Option<uuid::Uuid> {
+        if self.demo {
+            return None;
+        }
+        self.world.login.as_ref().map(|l| l.session_id).filter(|id| !id.is_nil())
+    }
+
+    /// What the search window asked for.
+    fn apply_search_actions(&mut self, ctx: &egui::Context, actions: Vec<ui::search::SearchAction>) {
+        use ui::search::SearchAction;
+        let mut save = false;
+        for a in actions {
+            match a {
+                SearchAction::Find(request) => {
+                    let access = self.world.agent_access();
+                    self.world.search.find(request, access, Instant::now());
+                }
+                SearchAction::Page(tab, forward) => self.world.search.turn_page(tab, forward),
+                SearchAction::Select(tab, key) => self.world.search.select(tab, key),
+                SearchAction::Sort(tab, column) => {
+                    if let Some(list) = self.world.search.list_mut(tab) {
+                        list.sort_by(column);
+                    }
+                }
+                SearchAction::RefreshGroup(id) => self.send(NetCommand::GroupProfileRequest(id)),
+                SearchAction::ShowOnMap(g) => {
+                    self.world.map.track_location(g.x, g.y, g.z as f32, false);
+                    self.panels.world_map = true;
+                }
+                SearchAction::Teleport(g) => {
+                    self.world.map.track_location(g.x, g.y, g.z as f32, true);
+                    // FSLegacySearchActionOnTeleport
+                    match self.settings.search.teleport_action {
+                        1 => self.panels.search = false,
+                        2 => ui::widgets::minimize_floater(ctx, ui::search::WINDOW),
+                        _ => {}
+                    }
+                }
+                SearchAction::SettingsChanged => save = true,
+            }
+        }
+        if save {
+            self.settings.save();
+        }
+    }
+
     /// toggleTeleportHistory (llviewermenu.cpp) without the standalone
     /// history floater: hide Lieux when shown, else open it on the history.
     fn toggle_teleport_history(&mut self) {
@@ -6663,6 +6756,36 @@ impl App {
                         }
                     }
                 }
+                // « Rechercher »
+                let search_home = self.panels.search.then(|| self.search_home()).flatten();
+                let search_session = self.search_session();
+                // the session's cookie only goes with a page opened with the
+                // session (main grid; never in demo)
+                let search_identified = search_home.as_ref().is_some_and(|h| h.identified);
+                let search_anonymous = !self.demo && self.search_grid() == crate::world::search::SearchGrid::Beta;
+                let mut c = ui::place_details::Ctx {
+                    p: &p,
+                    world: &self.world,
+                    images: &self.ui_images,
+                    emoji: &mut self.emoji,
+                    want_names: &mut self.chat_ui.wanted_names,
+                    wanted_images: &mut self.place_images,
+                    want_groups: &mut self.place_groups,
+                };
+                let search_web = ui::search::WebEnv {
+                    paths: paths.as_ref(),
+                    browser: &browser,
+                    cookie: cookie.as_ref().filter(|_| search_identified),
+                    home: search_home.map(|h| h.url),
+                    session: search_session,
+                    anonymous: search_anonymous,
+                };
+                let mut open = self.panels.search;
+                let search_acts = self
+                    .search_ui
+                    .show(&ctx, &mut c, &self.avatar_pics, &mut self.settings.search, &search_web, &mut open);
+                self.panels.search = open;
+                self.apply_search_actions(&ctx, search_acts);
                 t = self.ui_parts.lap(Part::UiPlaces, t);
                 let mut open = self.panels.minimap;
                 mini.extend(self.minimap_ui.window(
@@ -7179,6 +7302,26 @@ impl ApplicationHandler for App {
                 self.places_ui.open_tab(tab);
                 self.panels.places = true;
                 self.panels.perf = false;
+            }
+            // AURORA_DEMO_SEARCH=<tab>[:text]: « Rechercher » on a tab, its
+            // search done ("page" in the text: a full page, "xyz": nothing;
+            // for land the text is the price limit, 0 by default)
+            if let Ok(v) = std::env::var("AURORA_DEMO_SEARCH") {
+                let (name, text) = v.split_once(':').unwrap_or((v.as_str(), "aurora"));
+                // land without a text keeps the default price field ("0")
+                let typed = !name.trim().eq_ignore_ascii_case("land") || v.contains(':');
+                if let Some(tab) = crate::world::search::Tab::from_name(name) {
+                    self.search_ui.open_tab(tab);
+                    if typed {
+                        self.search_ui.set_text(tab, text);
+                    }
+                    self.panels.search = true;
+                    self.panels.perf = false;
+                    if let Some(request) = self.search_ui.request(tab, &self.settings.search) {
+                        let access = self.world.agent_access();
+                        self.world.search.find(request, access, Instant::now());
+                    }
+                }
             }
             // AURORA_DEMO_PLACE_WINDOW=1: the standalone windows instead
             if std::env::var_os("AURORA_DEMO_PLACE_WINDOW").is_some() {
@@ -7916,7 +8059,11 @@ impl ApplicationHandler for App {
                     // Releases always go through so keys never get stuck.
                     let typing = self.egui_ctx.egui_wants_keyboard_input();
                     // a profile's web page that was clicked gets the keyboard
-                    if !typing && let Some(p) = self.profile_ui.focused_web() {
+                    let web = match self.profile_ui.focused_web() {
+                        Some(p) => Some(p),
+                        None => self.search_ui.focused_web(),
+                    };
+                    if !typing && let Some(p) = web {
                         use winit::platform::scancode::PhysicalKeyExtScancode;
                         let scancode = ke.physical_key.to_scancode().unwrap_or(0);
                         let mods = aurora_media::Modifiers {
@@ -7946,11 +8093,16 @@ impl ApplicationHandler for App {
                     // accelerators go before the focused field
                     // (LLViewerWindow::handleKey); the field keeps its own
                     // editing shortcuts (copy, paste, undo, words...)
+                    // (the script editor keeps Ctrl+F for its own search)
                     let shortcut = pressed
                         && typing
                         && (self.ctrl || self.alt)
                         && !crate::keybinds::is_text_edit_key(code)
-                        && self.settings.keybinds.triggered(&Input::key(code), self.mods()).is_some();
+                        && self
+                            .settings
+                            .keybinds
+                            .triggered(&Input::key(code), self.mods())
+                            .is_some_and(|a| a != Action::Search || !ui::scripts::editor_focused(&self.egui_ctx));
                     if (!pressed || (!resp.consumed && !typing) || shortcut) && !(pressed && ke.repeat) {
                         self.on_input(Input::key(code), pressed);
                     }

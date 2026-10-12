@@ -943,6 +943,8 @@ grille.
 | `AURORA_DEMO_PLACE=<lieu>` | « Lieux » sur un profil de lieu |
 | `AURORA_DEMO_PLACES=<onglet>` | « Lieux » sur un onglet |
 | `AURORA_DEMO_PLACE_WINDOW=1` | Profils de lieu en fenêtres séparées |
+| `AURORA_DEMO_SEARCH=<onglet>[:texte]` | « Rechercher » sur un onglet, recherche faite |
+| `AURORA_DEMO_SEARCH_WEB=<page>` | Page chargée par l'onglet Web de « Rechercher » en démo |
 | `AURORA_DEMO_BAN=1` | Lignes d'interdiction |
 | `AURORA_DEMO_RESTRICTED=1` | Parcelle qui interdit tout |
 
@@ -1243,6 +1245,21 @@ grille.
 - **`AURORA_DEMO_PLACES=favoris|reperes|historique`** : les dossiers Favoris
   et Repères de la démo (avec un sous-dossier) et un historique de
   téléportation sur plusieurs mois.
+- **`AURORA_DEMO_SEARCH=web|people|groups|places|land|events|classifieds[:texte]`** :
+  la fenêtre « Rechercher » sur cet onglet, la recherche du texte déjà
+  lancée (`aurora` par défaut) : la liste est remplie par l'annuaire de la
+  démo, la première ligne est sélectionnée et sa fiche affichée à droite.
+  Pour `land`, le texte est la limite de prix (`land:25000`) ; sans lui le
+  champ garde son « 0 » par défaut et seules les enchères (0 L$) passent
+  la limite cochée par défaut.
+  Un texte contenant `page` (par exemple `people:page`) répond une page
+  pleine : « > 100 trouvé(s) » et le bouton Suivant ; un texte contenant
+  `xyz` ne trouve rien (« 'xyz' introuvable »).
+- **`AURORA_DEMO_SEARCH_WEB=<page>`** : l'adresse que charge l'onglet Web en
+  démo (une page locale `file:///…` suffit pour essayer précédent, suivant,
+  recharger et l'adresse). Sans elle l'onglet Web de la démo ne charge
+  rien : la page de recherche de la grille n'est ouverte qu'une fois
+  connecté.
 - **`AURORA_DEMO_PLACE_WINDOW=1`** : avec `AURORA_DEMO_PLACE`, les fenêtres
   de lieu séparées au lieu de « Lieux » (option « Repères et profils de
   lieux », non enregistrée).

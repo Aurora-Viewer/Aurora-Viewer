@@ -456,6 +456,12 @@ pub fn place_floater(ctx: &egui::Context, id: &str, pos: egui::Pos2, size: Vec2)
     });
 }
 
+/// Minimize the floater `id` (LLFloater::setMinimized), as its title button
+/// does.
+pub fn minimize_floater(ctx: &egui::Context, id: &str) {
+    ctx.data_mut(|d| d.insert_persisted(egui::Id::new((id, "minimized")), true));
+}
+
 /// Title bar button with a Tabler icon (drawn by hand if it is missing).
 fn title_button(ui: &mut egui::Ui, p: &Palette, icon: &str) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(16.0, 16.0), Sense::click());

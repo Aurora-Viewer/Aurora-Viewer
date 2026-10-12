@@ -185,7 +185,7 @@ exemple ; l’envoi est simulé et le navigateur reste fermé. Voir
 
 **Not there yet**
 
-- Search, snapshots, gestures, RLVa, the shape and clothing editors, group
+- Snapshots, gestures, RLVa, the shape and clothing editors, group
   profiles, and the full sky / water editors.
 - Voice is WebRTC only (no Vivox).
 - Linux and macOS builds: the code is portable but not validated.
