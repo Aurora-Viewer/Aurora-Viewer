@@ -18,8 +18,8 @@
 //! and it alone uses the queue.
 
 use crate::gpu_cull::{
-    BIN_PROBE, BIN_REFL_MIRROR, BIN_REFL_WATER, BIN_SHADOW, COUNT_PRE1, COUNT_PRE2, CullFrame, GpuCull, MAIN_BINS, REGION_PRE1,
-    REGION_PRE2, frame_flags,
+    BIN_PROBE, BIN_REFL_MIRROR, BIN_REFL_WATER, BIN_SHADOW, BIN_SHADOW_ALPHA, COUNT_PRE1, COUNT_PRE2, CullFrame, GpuCull, MAIN_BINS,
+    REGION_PRE1, REGION_PRE2, frame_flags,
 };
 use crate::helpers::Helpers;
 use crate::packet::{Capture, FramePacket, FrameResult, SceneGpu, Spent, SurfaceState};
@@ -667,7 +667,10 @@ struct Pipelines {
     refl_sky: wgpu::RenderPipeline,
     refl_terrain: wgpu::RenderPipeline,
     refl_obj: wgpu::RenderPipeline,
+    /// Shadow casters with the alpha test of `fs_shadow`.
     shadow: wgpu::RenderPipeline,
+    /// Opaque shadow casters: the same vertices, no fragment shader.
+    shadow_depth: wgpu::RenderPipeline,
     post: wgpu::RenderPipeline,
 }
 
@@ -690,11 +693,14 @@ struct GpuTimer {
     marks: bool,
     /// Last breakdown by kind of element (ms), in [`GpuElement::ALL`] order.
     last_elements: Option<[f32; GpuElement::ALL.len()]>,
+    /// Last breakdown of `GpuElement::ShadowsDepth` (ms), in
+    /// [`GPU_SHADOW_PARTS`] order.
+    last_shadow_parts: Option<[f32; 5]>,
 }
 
 /// Timestamps of a frame: 0 first pass, 1 end of post / HUDs, then the marks.
 const GPU_TIMESTAMPS: u32 = 2 + GPU_MARKS;
-const GPU_MARKS: u32 = 15;
+const GPU_MARKS: u32 = 18;
 /// Mark indices, in frame order. Those inside the scene passes split them
 /// by draw group; a timestamp there waits for the draws before it, so the
 /// split is close but not exact (the GPU overlaps neighbouring draws).
@@ -722,6 +728,21 @@ const MARK_GLOW_END: u32 = 14;
 const MARK_BLEND_END: u32 = 15;
 /// After scene pass B (particles).
 const MARK_SCENE_END: u32 = 16;
+/// Before the shadow pass (after the culling), then inside it after the
+/// first and the second cascade.
+const MARK_SHADOW_BEGIN: u32 = 17;
+const MARK_SHADOW_C0_END: u32 = 18;
+const MARK_SHADOW_C1_END: u32 = 19;
+/// What `GpuElement::ShadowsDepth` is made of (`ShadowStats::gpu_ms`): the
+/// GPU culling, the three cascades, then the depth prepass with the
+/// occlusion.
+const GPU_SHADOW_PARTS: [(u32, u32); 5] = [
+    (0, MARK_SHADOW_BEGIN),
+    (MARK_SHADOW_BEGIN, MARK_SHADOW_C0_END),
+    (MARK_SHADOW_C0_END, MARK_SHADOW_C1_END),
+    (MARK_SHADOW_C1_END, MARK_SHADOWS_END),
+    (MARK_SHADOWS_END, MARK_DEPTH_END),
+];
 /// GPU time ranges `(from, to)` of each kind of element, in
 /// [`GpuElement::ALL`] order; together they cover the whole frame.
 const GPU_ELEMENTS: [&[(u32, u32)]; GpuElement::ALL.len()] = [
@@ -788,6 +809,7 @@ impl GpuTimer {
                 .features()
                 .contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS | wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES),
             last_elements: None,
+            last_shadow_parts: None,
         }
     }
 
@@ -809,6 +831,7 @@ impl GpuTimer {
                                 *t = ranges.iter().map(|&(a, b)| ms(a, b)).sum();
                             }
                             self.last_elements = Some(e);
+                            self.last_shadow_parts = Some(GPU_SHADOW_PARTS.map(|(a, b)| ms(a, b)));
                         }
                     }
                 }
@@ -985,6 +1008,8 @@ pub(crate) struct Backend {
     /// Texture animation clock (tex_anim.rs) and its value for this frame.
     anim_clock: crate::tex_anim::AnimClock,
     anim_now: [u32; 2],
+    /// `shadow_cull::path` bits of the frame being drawn.
+    shadow_path: u32,
     /// Inverse view-projection of the last rendered frame (picking).
     last_inv_vp: Mat4,
     msaa_supported: Vec<u32>,
@@ -1615,7 +1640,10 @@ struct Ranges {
     refl_terrain_mirror: (u64, u32),
     refl_terrain_probe: (u64, u32),
     probe: (u64, u32),
+    /// CPU casters of each cascade drawn depth only, then those drawn with
+    /// the alpha test.
     shadow: [(u64, u32); CASCADES],
+    shadow_alpha: [(u64, u32); CASCADES],
 }
 
 impl Backend {
@@ -2043,6 +2071,7 @@ impl Backend {
             frame_index: 0,
             anim_clock,
             anim_now: [0, 0],
+            shadow_path: crate::shadow_cull::path::NEW,
             last_inv_vp: Mat4::IDENTITY,
             msaa_supported,
         };
@@ -2412,34 +2441,34 @@ impl Backend {
         });
         let refl_terrain = refl("reflection terrain", "vs_terrain", "fs_terrain", Vb::Mesh);
         let refl_obj = refl("reflection objects", "vs_main", "fs_reflect", Vb::Mesh);
-        let shadow = make_pipeline(
-            device,
-            &module,
-            &shadow_pl,
-            PipeDesc {
-                label: "shadow",
-                vs: "vs_shadow",
-                fs: Some("fs_shadow"),
-                vb: Vb::Mesh,
-                cull: None,
-                blend: None,
-                write_mask: wgpu::ColorWrites::ALL,
-                depth_write: true,
-                depth_compare: wgpu::CompareFunction::LessEqual,
-                a2c: false,
-                samples: 1,
-                format: None,
-                gbuf: false,
-                depth_format: Some(SHADOW_FORMAT),
-                depth_bias: wgpu::DepthBiasState {
-                    constant: 2,
-                    slope_scale: 2.0,
-                    clamp: 0.0,
-                },
-                constants: &[],
-                polygon_line: false,
+        let shadow_desc = |label, fs| PipeDesc {
+            label,
+            vs: "vs_shadow",
+            fs,
+            vb: Vb::Mesh,
+            cull: None,
+            blend: None,
+            write_mask: wgpu::ColorWrites::ALL,
+            depth_write: true,
+            depth_compare: wgpu::CompareFunction::LessEqual,
+            a2c: false,
+            samples: 1,
+            format: None,
+            gbuf: false,
+            depth_format: Some(SHADOW_FORMAT),
+            depth_bias: wgpu::DepthBiasState {
+                constant: 2,
+                slope_scale: 2.0,
+                clamp: 0.0,
             },
-        );
+            constants: &[],
+            polygon_line: false,
+        };
+        let shadow = make_pipeline(device, &module, &shadow_pl, shadow_desc("shadow", Some("fs_shadow")));
+        // opaque casters: `fs_shadow` discards nothing of them, so the same
+        // vertex shader alone writes the same depth, without a texture read
+        // per fragment
+        let shadow_depth = make_pipeline(device, &module, &shadow_pl, shadow_desc("shadow depth", None));
         let post_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("post"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/post.wgsl").into()),
@@ -2502,6 +2531,7 @@ impl Backend {
             refl_terrain,
             refl_obj,
             shadow,
+            shadow_depth,
             post,
         }
     }
@@ -3219,7 +3249,8 @@ impl Backend {
         u.fog = f.fog_color.extend(f.fog_density).to_array();
         let n_lights = f.lights.len().min(MAX_LIGHTS);
         u.params = [f.exposure, f.water_height, if f.shadows { 1.0 } else { 0.0 }, n_lights as f32];
-        u.cascade_splits = [splits[0], splits[1], splits[2], 0.0];
+        let pixel_splits = self.shadow_path & crate::shadow_cull::path::PIXEL_SPLITS != 0;
+        u.cascade_splits = [splits[0], splits[1], splits[2], if pixel_splits { 1.0 } else { 0.0 }];
         u.screen = [
             self.config.width as f32,
             self.config.height as f32,
@@ -3443,6 +3474,7 @@ impl Backend {
 
         // one texture animation time for every pass of the frame
         self.anim_now = self.anim_clock.now(Instant::now());
+        self.shadow_path = crate::shadow_cull::current_path();
         let (cascades, splits) = self.cascade_matrices(f);
         let unjittered_vp = f.proj * f.view;
         let jittered;
@@ -3651,18 +3683,46 @@ impl Backend {
                 .write_buffer(&self.particle_buffer, 0, bytemuck::cast_slice(&lists.particles));
         }
 
-        // ---- shadow caster culling per cascade
+        // ---- shadow caster culling per cascade (CPU lists: the terrain,
+        // and every caster without the GPU lists). Each cascade keeps the
+        // casters that can shadow what the view samples in it
+        // (shadow_cull.rs); opaque ones are drawn depth only.
+        let shadow_path = self.shadow_path;
+        let caster_planes = if f.shadows && shadow_path & crate::shadow_cull::path::TIGHT != 0 {
+            let (near, far) = crate::shadow_cull::cascade_reach(splits, shadow_path & crate::shadow_cull::path::PIXEL_SPLITS != 0);
+            crate::shadow_cull::cascade_caster_planes(
+                &crate::shadow_cull::ReceiverView {
+                    inv_view: f.view.inverse(),
+                    tan_x: 1.0 / f.proj.x_axis.x.abs().max(1e-6),
+                    tan_y: 1.0 / f.proj.y_axis.y.abs().max(1e-6),
+                    near: f.near,
+                },
+                -f.sun_dir.normalize_or(Vec3::Z),
+                near,
+                far,
+                // (orthographic: the first row of a cascade's matrix is the
+                // light's right axis over its half extent)
+                cascades.map(|m| 2.0 / (m.row(0).truncate().length().max(1e-6) * self.shadow_size as f32)),
+            )
+        } else {
+            [crate::shadow_cull::CASTER_PLANES_ALL; CASCADES]
+        };
+        let shadow_depth_only = shadow_path & crate::shadow_cull::path::DEPTH_ONLY != 0;
         let mut shadow_lists: [Vec<DrawCmd>; CASCADES] = Default::default();
+        let mut shadow_alpha_lists: [Vec<DrawCmd>; CASCADES] = Default::default();
         if f.shadows {
             for (ci, m) in cascades.iter().enumerate() {
                 for c in &lists.shadow_casters {
-                    let p = *m * c.center.extend(1.0);
-                    // ortho: w == 1, radius in clip units ~ r / half-extent
-                    let r = c.radius * m.x_axis.truncate().length();
-                    if p.x + r < -1.0 || p.x - r > 1.0 || p.y + r < -1.0 || p.y - r > 1.0 || p.z - r > 1.0 {
+                    if !crate::gpu_cull::in_cascade(m, c.center, c.radius)
+                        || !crate::shadow_cull::casts_into(&caster_planes[ci], c.center, c.radius)
+                    {
                         continue;
                     }
-                    shadow_lists[ci].push(c.cmd);
+                    if c.alpha || !shadow_depth_only {
+                        shadow_alpha_lists[ci].push(c.cmd);
+                    } else {
+                        shadow_lists[ci].push(c.cmd);
+                    }
                 }
             }
         }
@@ -3742,12 +3802,14 @@ impl Backend {
                 (mirror.is_some(), frame_flags::MIRROR),
                 (probe.is_some(), frame_flags::PROBE),
                 (occl, frame_flags::OCCLUSION),
+                (profile(), frame_flags::SHADOW_STATS),
+                (!shadow_depth_only, frame_flags::SHADOW_ALPHA_ALL),
             ] {
                 if on {
                     flags |= bit;
                 }
             }
-            let frame = CullFrame::new(g, &cascades, [water_vp, mirror_vp, probe_vp], flags);
+            let frame = CullFrame::new(g, &cascades, &caster_planes, [water_vp, mirror_vp, probe_vp], flags);
             self.cull
                 .prepare(&self.device, &self.queue, scene.face_count, scene.object_count, frame);
         }
@@ -3779,8 +3841,9 @@ impl Backend {
         if mirror.is_some() {
             rg.refl_terrain_mirror = push(cpu, &cull_cmds_to_view(mirror_vp, &lists.reflection_terrain));
         }
-        for (i, sl) in shadow_lists.iter().enumerate() {
-            rg.shadow[i] = push(cpu, sl);
+        for i in 0..CASCADES {
+            rg.shadow[i] = push(cpu, &shadow_lists[i]);
+            rg.shadow_alpha[i] = push(cpu, &shadow_alpha_lists[i]);
         }
         let needed = (self.indirect_cpu.len() * std::mem::size_of::<DrawIndexedIndirect>()) as u64;
         if needed > self.indirect.size() {
@@ -3802,7 +3865,10 @@ impl Backend {
             stats.triangles += d.index_count as u64 / 3;
         }
         stats.draws = lists.total() as u32;
-        stats.shadow_draws = shadow_lists.iter().map(|l| l.len() as u32).sum();
+        let cpu_casters: [u32; CASCADES] = std::array::from_fn(|i| (shadow_lists[i].len() + shadow_alpha_lists[i].len()) as u32);
+        stats.shadow_draws = cpu_casters.iter().sum();
+        stats.shadow.draws = cpu_casters;
+        stats.shadow.cpu_draws = cpu_casters;
         stats.particles = n_particles;
         stats.occluded = occl.then_some(self.occlusion.last_hidden);
         if gpu.is_some() {
@@ -3810,6 +3876,12 @@ impl Backend {
             let c = self.cull.last;
             stats.draws += c.main_draws();
             stats.shadow_draws += c.shadow_draws();
+            for k in 0..CASCADES {
+                stats.shadow.draws[k] += c.cascade_draws(k);
+            }
+            stats.shadow.triangles = c.shadow_triangles;
+            stats.shadow.rigged_draws = c.shadow_rigged;
+            stats.shadow.rigged_triangles = c.shadow_rigged_triangles;
             stats.triangles += c.triangles as u64;
             stats.occluded = occl.then_some(self.occlusion.last_hidden + c.hidden);
             stats.visible_objects = Some(c.visible_objects);
@@ -3915,6 +3987,11 @@ impl Backend {
             }
         };
         // ---- shadows
+        mark(&mut encoder, MARK_SHADOW_BEGIN);
+        if !f.shadows {
+            mark(&mut encoder, MARK_SHADOW_C0_END);
+            mark(&mut encoder, MARK_SHADOW_C1_END);
+        }
         if f.shadows {
             // one pass for all cascades, each in its atlas tile
             let ts = if take_first() { ts_begin(&self.timer) } else { None };
@@ -3933,8 +4010,7 @@ impl Backend {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            if gpu_on || rg.shadow.iter().any(|r| r.1 > 0) {
-                pass.set_pipeline(&self.pipelines.shadow);
+            if gpu_on || rg.shadow.iter().chain(&rg.shadow_alpha).any(|r| r.1 > 0) {
                 pass.set_bind_group(1, &self.records_bind_group, &[]);
                 pass.set_bind_group(2, &scene.textures, &[]);
                 pass.set_vertex_buffer(0, scene.vertices.slice(..));
@@ -3943,19 +4019,31 @@ impl Backend {
             }
             let size = self.shadow_size;
             for ci in 0..CASCADES {
-                let (off, count) = rg.shadow[ci];
-                if count == 0 && !gpu_on {
-                    continue;
-                }
                 let (x, y) = ((ci as u32 % 2) * size, (ci as u32 / 2) * size);
                 pass.set_viewport(x as f32, y as f32, size as f32, size as f32, 0.0, 1.0);
                 pass.set_scissor_rect(x, y, size, size);
                 pass.set_bind_group(3, &self.shadow_bind_groups[ci], &[]);
-                if count > 0 {
-                    pass.multi_draw_indexed_indirect(&self.indirect, off, count);
-                    calls.set(calls.get() + 1);
+                // depth only, then alpha tested: the depth kept is the
+                // nearest whatever the order
+                for (pipe, (off, count), bin) in [
+                    (&self.pipelines.shadow_depth, rg.shadow[ci], BIN_SHADOW + ci),
+                    (&self.pipelines.shadow, rg.shadow_alpha[ci], BIN_SHADOW_ALPHA + ci),
+                ] {
+                    if count == 0 && !gpu_on {
+                        continue;
+                    }
+                    pass.set_pipeline(pipe);
+                    if count > 0 {
+                        pass.multi_draw_indexed_indirect(&self.indirect, off, count);
+                        calls.set(calls.get() + 1);
+                    }
+                    draw_bin(&mut pass, None, bin, bin);
                 }
-                draw_bin(&mut pass, None, BIN_SHADOW + ci, BIN_SHADOW + ci);
+                match ci {
+                    0 => pass_mark(&mut pass, MARK_SHADOW_C0_END),
+                    1 => pass_mark(&mut pass, MARK_SHADOW_C1_END),
+                    _ => {}
+                }
             }
         }
 
@@ -4772,6 +4860,7 @@ impl Backend {
 
         stats.gpu_ms = self.timer.as_ref().and_then(|t| t.last_ms);
         stats.gpu_elements = self.timer.as_ref().and_then(|t| t.last_elements);
+        stats.shadow.gpu_ms = self.timer.as_ref().and_then(|t| t.last_shadow_parts);
         if profile_frames && let Some(e) = stats.gpu_elements {
             let mut out = String::new();
             for (el, ms) in GpuElement::ALL.iter().zip(e) {

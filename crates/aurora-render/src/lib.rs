@@ -18,6 +18,7 @@ pub mod present;
 pub mod probes;
 mod render_thread;
 mod renderer;
+pub mod shadow_cull;
 pub mod tex_anim;
 pub mod textures;
 pub mod thread_cpu;

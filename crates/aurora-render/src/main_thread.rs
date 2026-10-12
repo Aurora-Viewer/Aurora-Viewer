@@ -739,6 +739,10 @@ impl Renderer {
             stats = RenderStats {
                 gpu_ms: self.last_stats.gpu_ms,
                 gpu_elements: self.last_stats.gpu_elements,
+                shadow: ShadowStats {
+                    gpu_ms: self.last_stats.shadow.gpu_ms,
+                    ..Default::default()
+                },
                 occluded: self.last_stats.occluded,
                 visible_objects: self.last_stats.visible_objects,
                 gpu_cull: self.last_stats.gpu_cull,
