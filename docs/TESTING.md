@@ -279,7 +279,7 @@ Pour vérifier l'édition, ajouter `AURORA_DEMO_BUILD=move,object:90000` ou
 translucide et poignées de taille. `stretch,object:90000,fz,100,0` tire la face
 opposée à la base ; le flexible garde sa courbure pendant le changement de taille.
 
-**`AURORA_DEMO_SCRIPTS=inventory|object|both|save|object-save|error|readonly|syntax|object-syntax|syntax-readonly|indent|object-indent|tabstops|object-tabstops|close-brace|object-close-brace|colors|color-picker|color-accept|color-cancel|experience|experience-save|workbench|object-workbench|search|preferences|help|preprocessor|object-preprocessor|processed|preprocessor-error`** :
+**`AURORA_DEMO_SCRIPTS=inventory|object|both|save|object-save|error|readonly|syntax|object-syntax|syntax-readonly|indent|object-indent|tabstops|object-tabstops|close-brace|object-close-brace|colors|color-picker|color-accept|color-cancel|comment-lines|comment-block|multiline-indent|multiline-outdent|folding|object-folding|experience|experience-save|workbench|object-workbench|search|preferences|help|preprocessor|object-preprocessor|processed|preprocessor-error`** :
 ouvre un éditeur de script depuis l'inventaire, le contenu d'un objet ou
 les deux à l'image 280. `save` et `object-save` enregistrent une source
 modifiée puis ferment et rouvrent l'éditeur à l'image 360 avec un UUID
@@ -312,6 +312,22 @@ inclus ; position hors plage, rotation, chaîne et commentaire n'en ont pas.
 valide et `color-cancel` restaure exactement les valeurs d'origine. Le texte
 reste sélectionnable pendant l'aperçu ; OK rend l'édition et l'enregistrement
 disponibles et produit une seule action Annuler / Rétablir.
+`comment-lines` et `comment-block` sélectionnent deux déclarations puis utilisent
+Ctrl+K et Ctrl+Maj+K : `//` est ajouté après le retrait, ou la sélection est
+encadrée par `/*` et `*/`. Répéter le raccourci retire les commentaires. Les
+commentaires de bloc ne sont pas imbriqués ; utiliser les lignes `//` si la
+sélection contient déjà un commentaire de bloc.
+`multiline-indent` ajoute quatre espaces aux lignes sélectionnées ;
+`multiline-outdent` les retire. Une sélection finissant au début d'une ligne
+n'inclut pas celle-ci ; le sens de la sélection et Annuler / Rétablir restent
+conservés. Maj+Tab retire aussi une tabulation littérale ou un retrait incomplet.
+`folding` et `object-folding` cliquent sur la flèche du bloc `default` dans la
+marge. Ses lignes disparaissent visuellement, leurs numéros sautent et un
+libellé indique le nombre de lignes cachées. Cliquer à nouveau ou sur le libellé
+déplie le bloc. Le menu Édition contient Tout replier / Tout déplier. La source
+reste identique, y compris lors de la sauvegarde ou de la copie ; la recherche
+et la navigation vers un caractère caché rouvrent son bloc. Les blocs des chaînes
+et commentaires n'ont pas de flèche.
 `experience` choisit et enregistre l'expérience simulée d'un script d'objet ;
 `experience-save` ferme ensuite l'éditeur et le rouvre avec cette association.
 Les autres démos d'objet commencent avec « Aucune ». Le sélecteur permet

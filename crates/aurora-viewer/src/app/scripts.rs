@@ -62,6 +62,29 @@ impl App {
             return;
         }
         let Ok(mode) = std::env::var("AURORA_DEMO_SCRIPTS") else { return };
+        if matches!(mode.as_str(), "folding" | "object-folding") {
+            raw.events.extend(self.script_editors.demo_folding_events(self.frame_count));
+        }
+        if self.frame_count == 321
+            && matches!(
+                mode.as_str(),
+                "comment-lines" | "comment-block" | "multiline-indent" | "multiline-outdent"
+            )
+        {
+            let (key, modifiers) = match mode.as_str() {
+                "comment-lines" => (egui::Key::K, egui::Modifiers::COMMAND),
+                "comment-block" => (egui::Key::K, egui::Modifiers::COMMAND | egui::Modifiers::SHIFT),
+                "multiline-outdent" => (egui::Key::Tab, egui::Modifiers::SHIFT),
+                _ => (egui::Key::Tab, egui::Modifiers::NONE),
+            };
+            raw.events.push(egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers,
+            });
+        }
         if matches!(mode.as_str(), "color-picker" | "color-accept" | "color-cancel") {
             raw.events.extend(self.script_editors.demo_color_events(self.frame_count, &mode));
         }
@@ -126,6 +149,12 @@ impl App {
                 | "color-picker"
                 | "color-accept"
                 | "color-cancel"
+                | "comment-lines"
+                | "comment-block"
+                | "multiline-indent"
+                | "multiline-outdent"
+                | "folding"
+                | "object-folding"
         );
         if self.frame_count == 280 {
             self.panels.perf = false;
@@ -140,6 +169,7 @@ impl App {
                     | "object-indent"
                     | "object-tabstops"
                     | "object-close-brace"
+                    | "object-folding"
                     | "experience"
                     | "experience-save"
                     | "object-workbench"
@@ -185,6 +215,7 @@ impl App {
                     | "object-indent"
                     | "object-tabstops"
                     | "object-close-brace"
+                    | "object-folding"
                     | "experience"
                     | "experience-save"
                     | "both"
@@ -221,6 +252,14 @@ impl App {
                     }
                 }
             }
+        }
+        if self.frame_count == 320
+            && matches!(
+                mode.as_str(),
+                "comment-lines" | "comment-block" | "multiline-indent" | "multiline-outdent"
+            )
+        {
+            self.script_editors.demo_selection(&self.egui_ctx, mode == "multiline-outdent");
         }
         if self.frame_count == 300 && matches!(mode.as_str(), "preprocessor" | "processed" | "object-preprocessor") {
             crate::world::inventory::demo::seed(&mut self.world.inventory, self.world.agent_id);

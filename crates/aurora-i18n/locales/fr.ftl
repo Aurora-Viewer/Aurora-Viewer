@@ -3874,3 +3874,13 @@ ui-inventory-received-purchases = Achats reçus
 ui-inventory-no-received-purchases = Aucun achat reçu pour le moment.
 
 script-color-hint = Couleur possible : cliquer pour ouvrir le nuancier.
+script-edit-line-comment = Commenter / décommenter les lignes (Ctrl+K ou Ctrl+/)
+script-edit-block-comment = Commenter / décommenter le bloc (Ctrl+Maj+K)
+script-edit-indent = Augmenter le retrait (Tab)
+script-edit-outdent = Diminuer le retrait (Maj+Tab)
+script-selection-edit-failed = Modification impossible : script trop long ou commentaire de bloc déjà présent. Utilisez // pour des commentaires imbriqués.
+script-fold-collapse = Replier le bloc
+script-fold-expand = Déplier le bloc
+script-fold-lines = lignes
+script-fold-all = Tout replier
+script-expand-all = Tout déplier

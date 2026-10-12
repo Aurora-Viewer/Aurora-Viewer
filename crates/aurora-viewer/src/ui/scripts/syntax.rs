@@ -190,6 +190,39 @@ pub(super) fn colors(source: &str) -> Vec<ColorLiteral> {
     color_literals(source, &tokens(source))
 }
 
+pub(super) fn block_comment_at(source: &str, at: usize) -> Option<Range<usize>> {
+    tokens(source)
+        .into_iter()
+        .find(|token| {
+            token.kind == Kind::Comment
+                && token.bytes.contains(&at)
+                && source[token.bytes.clone()].starts_with("/*")
+                && source[token.bytes.clone()].ends_with("*/")
+        })
+        .map(|token| token.bytes)
+}
+
+pub(super) fn brace_pairs(source: &str) -> Vec<(usize, usize)> {
+    let mut stack = Vec::new();
+    let mut pairs = Vec::new();
+    for token in tokens(source) {
+        if token.kind != Kind::Plain {
+            continue;
+        }
+        match &source[token.bytes.clone()] {
+            "{" => stack.push(token.bytes.start),
+            "}" => {
+                if let Some(open) = stack.pop() {
+                    pairs.push((open, token.bytes.start));
+                }
+            }
+            _ => {}
+        }
+    }
+    pairs.sort_unstable();
+    pairs
+}
+
 pub(super) const COLOR_SPACE: f32 = 20.0;
 
 fn color_spacing(job: &mut LayoutJob, colors: &[ColorLiteral]) {

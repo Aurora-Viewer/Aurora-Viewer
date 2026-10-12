@@ -66,6 +66,12 @@ enum Command {
     Keyword,
     Library,
     Debug,
+    Indent,
+    Outdent,
+    LineComment,
+    BlockComment,
+    FoldAll,
+    ExpandAll,
 }
 
 fn visible_id(id: Id, processed: bool) -> Id {
@@ -90,6 +96,8 @@ fn enabled(command: Command, e: &Editor, ctx: &egui::Context, id: Id) -> bool {
         Command::Paste => editable,
         Command::Undo => editable && e.tools.can_undo,
         Command::Redo => editable && e.tools.can_redo,
+        Command::Indent | Command::Outdent | Command::LineComment | Command::BlockComment => editable,
+        Command::FoldAll | Command::ExpandAll => e.loaded,
         Command::SelectAll | Command::Deselect | Command::Find | Command::Goto | Command::Keyword => e.loaded,
         _ => true,
     }
@@ -170,6 +178,25 @@ fn run(
         }
         Command::Library => e.tools.library = true,
         Command::Debug => actions.push(Action::Debug),
+        Command::Indent | Command::Outdent | Command::LineComment | Command::BlockComment => {
+            let command = match command {
+                Command::Indent => editing::SelectionCommand::Indent,
+                Command::Outdent => editing::SelectionCommand::Outdent,
+                Command::LineComment => editing::SelectionCommand::LineComment,
+                Command::BlockComment => editing::SelectionCommand::BlockComment,
+                _ => unreachable!("selection command"),
+            };
+            if !editing::selection_command(ctx, id, &mut e.source, command) {
+                e.status = aurora_i18n::tr!("script-selection-edit-failed").into();
+            }
+        }
+        Command::FoldAll => {
+            e.folding
+                .sync(if e.tools.processed { &e.tools.processed_source } else { &e.source });
+            e.folding.collapse_all();
+            editing::select(ctx, id, 0..0, false);
+        }
+        Command::ExpandAll => e.folding.expand_all(),
     }
 }
 
@@ -366,6 +393,12 @@ fn edit_menu(ui: &mut egui::Ui, p: &Palette, e: &Editor, id: Id, chosen: &mut Op
         (Command::Deselect, "selection", aurora_i18n::tr!("script-edit-deselect")),
         (Command::Find, "magnifying-glass", aurora_i18n::tr!("script-search-title")),
         (Command::Goto, "arrow-line-down", aurora_i18n::tr!("script-goto")),
+        (Command::LineComment, "code", aurora_i18n::tr!("script-edit-line-comment")),
+        (Command::BlockComment, "code", aurora_i18n::tr!("script-edit-block-comment")),
+        (Command::Indent, "arrow-right", aurora_i18n::tr!("script-edit-indent")),
+        (Command::Outdent, "arrow-left", aurora_i18n::tr!("script-edit-outdent")),
+        (Command::FoldAll, "caret-right", aurora_i18n::tr!("script-fold-all")),
+        (Command::ExpandAll, "caret-down", aurora_i18n::tr!("script-expand-all")),
     ] {
         if menu::item_if(ui, p, icon, label, enabled(command, e, ui.ctx(), id)) {
             *chosen = Some(command);
@@ -383,6 +416,9 @@ fn source(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, settings: &Scr
     }
     let base_id = id;
     let id = visible_id(id, e.tools.processed);
+    e.folding
+        .sync(if e.tools.processed { &e.tools.processed_source } else { &e.source });
+    e.folding.reveal(editing::cursor(ui.ctx(), id).primary);
     let height = (ui.available_height() - 155.0).max(120.0);
     egui::Frame::new()
         .fill(settings.color(ColorRole::Background, p))
@@ -406,10 +442,12 @@ fn source(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, settings: &Scr
                     .min_scrolled_height(height)
                     .show_viewport(ui, |ui, viewport| {
                         ui.horizontal_top(|ui| {
-                            let (gutter, _) = ui.allocate_exact_size(Vec2::new(40.0, 1.0), egui::Sense::hover());
+                            let (gutter, _) = ui.allocate_exact_size(Vec2::new(56.0, 1.0), egui::Sense::hover());
                             let interactive = e.loaded && (e.can_read || !e.source.is_empty());
                             let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, _wrap: f32| {
-                                let job = e.highlighter.custom(text.as_str(), p, font.clone(), settings, &query, insensitive);
+                                let mut job = e.highlighter.custom(text.as_str(), p, font.clone(), settings, &query, insensitive);
+                                e.folding.sync(text.as_str());
+                                e.folding.layout(&mut job);
                                 ui.fonts_mut(|f| f.layout_job(job))
                             };
                             let mut show = |ui: &mut egui::Ui, buffer: &mut dyn egui::TextBuffer| {
@@ -440,6 +478,13 @@ fn source(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, settings: &Scr
                                 ui.ctx().data_mut(|d| d.insert_temp(Id::new((base_id, "command")), command));
                             }
                             let text = if e.tools.processed { &e.tools.processed_source } else { &e.source };
+                            if ui
+                                .ctx()
+                                .data_mut(|d| d.remove_temp::<bool>(id.with("selection_error")))
+                                .unwrap_or(false)
+                            {
+                                e.status = aurora_i18n::tr!("script-selection-edit-failed").into();
+                            }
                             e.colors.draw(ui, p, text, &output, &e.highlighter.colors, color_editable);
                             if editable
                                 && (output.response.changed()
@@ -469,7 +514,7 @@ fn source(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, settings: &Scr
                             let left = gutter.left() + viewport.min.x;
                             let clip = egui::Rect::from_min_max(
                                 egui::pos2(left, ui.clip_rect().top()),
-                                egui::pos2(left + 40.0, ui.clip_rect().bottom()),
+                                egui::pos2(left + 56.0, ui.clip_rect().bottom()),
                             );
                             let painter = ui.painter().with_clip_rect(clip);
                             painter.rect_filled(clip, 0.0, settings.color(ColorRole::Background, p));
@@ -479,9 +524,9 @@ fn source(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, settings: &Scr
                                 if y > clip.bottom() {
                                     break;
                                 }
-                                if y + row.height() >= clip.top() {
+                                if row.height() >= 1.0 && y + row.height() >= clip.top() {
                                     painter.text(
-                                        egui::pos2(left + 34.0, y),
+                                        egui::pos2(left + 50.0, y),
                                         egui::Align2::RIGHT_TOP,
                                         line.to_string(),
                                         font.clone(),
@@ -497,9 +542,13 @@ fn source(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, settings: &Scr
                                 }
                             }
                             painter.line_segment(
-                                [egui::pos2(left + 39.0, clip.top()), egui::pos2(left + 39.0, clip.bottom())],
+                                [egui::pos2(left + 55.0, clip.top()), egui::pos2(left + 55.0, clip.bottom())],
                                 egui::Stroke::new(1.0, p.muted_dim),
                             );
+                            if e.folding.reveal(output.cursor_range.unwrap_or_default().primary) {
+                                ui.ctx().request_repaint();
+                            }
+                            e.folding.draw(ui, p, id, &output, left);
                             if let Some(pos) = output.response.hover_pos() {
                                 let at = output.galley.cursor_from_pos(pos - output.galley_pos).index.0;
                                 if let Some(entry) = reference::get(editing::word(text, at)) {

@@ -109,6 +109,7 @@ impl TextBuffer for Buffer<'_> {
 }
 
 pub(super) fn edit<R>(ui: &mut egui::Ui, id: Id, source: &mut String, show: impl FnOnce(&mut egui::Ui, &mut dyn TextBuffer) -> R) -> R {
+    super::editing::keyboard(ui, id, source);
     let active = ui.memory(|m| m.has_focus(id))
         && ui.input(|i| {
             i.events.iter().any(|event| {
@@ -246,6 +247,40 @@ mod tests {
         // Let code_editor register its focus filter before sending Tab, as it
         // does on the real mouse-focus frame in the viewer.
         frame(ctx, source, vec![], 0.01);
+    }
+
+    #[test]
+    fn real_keyboard_multiline_tab_comments_and_undo_preserve_the_selection() {
+        let ctx = egui::Context::default();
+        let mut source = "éあ\n  second\nthird".to_owned();
+        setup(&ctx, &mut source, 0, 12);
+        frame(&ctx, &mut source, vec![key(Key::Tab, Modifiers::NONE)], 0.1);
+        assert_eq!(source, "    éあ\n      second\nthird");
+        frame(&ctx, &mut source, vec![key(Key::Tab, Modifiers::SHIFT)], 0.2);
+        assert_eq!(source, "éあ\n  second\nthird");
+        frame(&ctx, &mut source, vec![key(Key::K, Modifiers::COMMAND)], 0.3);
+        assert_eq!(source, "// éあ\n  // second\nthird");
+        frame(&ctx, &mut source, vec![key(Key::K, Modifiers::COMMAND)], 0.4);
+        assert_eq!(source, "éあ\n  second\nthird");
+        frame(&ctx, &mut source, vec![key(Key::K, Modifiers::COMMAND | Modifiers::SHIFT)], 0.5);
+        assert_eq!(source, "/*éあ\n  second\n*/third");
+        frame(&ctx, &mut source, vec![key(Key::Z, Modifiers::COMMAND)], 0.6);
+        assert_eq!(source, "éあ\n  second\nthird");
+    }
+
+    #[test]
+    fn commands_after_native_selection_changes_wait_for_the_actual_cursor() {
+        let ctx = egui::Context::default();
+        let mut source = "first\nsecond\n".into();
+        setup(&ctx, &mut source, 0, 0);
+        frame(
+            &ctx,
+            &mut source,
+            vec![key(Key::A, Modifiers::COMMAND), key(Key::Tab, Modifiers::NONE)],
+            0.1,
+        );
+        frame(&ctx, &mut source, vec![], 0.2);
+        assert_eq!(source, "    first\n    second\n");
     }
 
     #[test]

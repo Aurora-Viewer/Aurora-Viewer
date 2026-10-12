@@ -15,6 +15,7 @@ mod dialogs;
 mod editing;
 mod experiences;
 mod files;
+mod folding;
 mod indent;
 mod preprocessor;
 mod reference;
@@ -66,6 +67,7 @@ pub struct Editor {
     pub source: String,
     highlighter: syntax::Highlighter,
     colors: colors::State,
+    folding: folding::State,
     baseline: String,
     loaded: bool,
     loading: Option<Uuid>,
@@ -272,6 +274,39 @@ impl Editors {
         ]
     }
 
+    pub fn demo_selection(&mut self, ctx: &egui::Context, outdent: bool) {
+        if let Some(e) = self.documents.first_mut() {
+            let Some(start) = e.source.find("integer count") else { return };
+            let Some(end) = e.source.find("string greet") else { return };
+            let id = format!("script_editor_{}_{}", e.target.object, e.target.item);
+            let id = egui::Id::new((&id, "source_text"));
+            editing::select(ctx, id, e.source[..start].chars().count()..e.source[..end].chars().count(), true);
+            if outdent {
+                editing::selection_command(ctx, id, &mut e.source, editing::SelectionCommand::Indent);
+            }
+        }
+    }
+
+    pub fn demo_folding_events(&self, frame: u64) -> Vec<egui::Event> {
+        if !matches!(frame, 323 | 324) {
+            return Vec::new();
+        }
+        let Some(e) = self.documents.first() else { return Vec::new() };
+        let Some((_, rect)) = e.folding.controls.get(1) else {
+            return Vec::new();
+        };
+        let pos = rect.center();
+        vec![
+            egui::Event::PointerMoved(pos),
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: frame == 323,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ]
+    }
+
     pub fn demo_tools(&mut self, target: ScriptTarget, ctx: &egui::Context, mode: &str, settings: &mut settings::ScriptSettings) {
         let Some(e) = self.documents.iter_mut().find(|e| e.target == target) else {
             return;
@@ -356,6 +391,7 @@ impl Editors {
             source: String::new(),
             highlighter: syntax::Highlighter::default(),
             colors: colors::State::new(format!("script_color_picker_{}_{}", target.object, target.item)),
+            folding: folding::State::default(),
             baseline: String::new(),
             loaded: false,
             loading: request,

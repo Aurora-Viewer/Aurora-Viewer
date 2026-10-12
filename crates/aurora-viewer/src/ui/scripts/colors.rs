@@ -99,6 +99,9 @@ impl State {
                 .galley
                 .pos_from_cursor(CCursor::new(chars))
                 .translate(output.galley_pos.to_vec2());
+            if cursor.height() < 1.0 {
+                continue;
+            }
             let rect = Rect::from_center_size(cursor.center() - Vec2::new(COLOR_SPACE * 0.5, 0.0), Vec2::splat(14.0));
             self.swatches.push(rect);
             if !ui.clip_rect().intersects(rect) {
