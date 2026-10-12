@@ -932,22 +932,27 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
     }
 }
 
+/// Face of a toolbar button: a rounded pill, the accent while its window is
+/// open or its mode is on, a neutral one under the pointer, nothing at rest.
+/// The pills and the gap between them replace dividers.
+fn tool_fill(p: &Palette, active: bool, hovered: bool) -> Option<Color32> {
+    match (active, hovered) {
+        (true, true) => Some(p.violet.gamma_multiply(0.55)),
+        (true, false) => Some(p.violet.gamma_multiply(0.40)),
+        (false, true) => Some(p.raised),
+        (false, false) => None,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn tool_button(ui: &mut egui::Ui, p: &Palette, icons: &Icons, icon: &str, tip: &str, active: bool, width: f32, badge: bool) -> bool {
     let size = Vec2::new(width, 22.0);
     let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
     let icon_size = (width - 6.0).clamp(10.0, 16.0);
+    let radius = ui.visuals().window_corner_radius;
     let painter = ui.painter();
-    if active {
-        painter.rect_filled(rect, 1.0, p.violet.gamma_multiply(0.30));
-        painter.rect_stroke(
-            rect,
-            1.0,
-            egui::Stroke::new(1.0, p.violet.gamma_multiply(0.45)),
-            egui::StrokeKind::Inside,
-        );
-    } else if resp.hovered() {
-        painter.rect_filled(rect, 2.0, p.field);
+    if let Some(fill) = tool_fill(p, active, resp.hovered()) {
+        painter.rect_filled(rect, radius, fill);
     }
     if let Some(t) = icons.get(icon) {
         let tint = if active || resp.hovered() { p.ink } else { p.muted };
@@ -960,13 +965,11 @@ fn tool_button(ui: &mut egui::Ui, p: &Palette, icons: &Icons, icon: &str, tip: &
         );
     }
     if icon == "AO" {
-        painter.text(
-            rect.center(),
-            egui::Align2::CENTER_CENTER,
-            "AO",
-            egui::FontId::proportional(12.0),
-            if active || resp.hovered() { p.ink } else { p.muted },
-        );
+        // centered on the letters' ink like the icons beside it: the line box
+        // of a font sits lower than its capitals
+        let color = if active || resp.hovered() { p.ink } else { p.muted };
+        let galley = painter.layout_no_wrap("AO".to_owned(), egui::FontId::proportional(12.0), color);
+        super::widgets::paint_ink_centered(painter, galley, rect.center(), color);
     }
     if badge {
         painter.circle_filled(
@@ -1009,16 +1012,13 @@ fn mic_button(ui: &mut egui::Ui, p: &Palette, icons: &Icons, width: f32, mic: &m
     } else if resp.clicked() {
         mic.on = !mic.on;
     }
+    let radius = ui.visuals().window_corner_radius;
     let painter = ui.painter();
     let live = mic.talking;
+    if let Some(fill) = tool_fill(p, live, resp.hovered()) {
+        painter.rect_filled(rect, radius, fill);
+    }
     if live {
-        painter.rect_filled(rect, 1.0, p.violet.gamma_multiply(0.30));
-        painter.rect_stroke(
-            rect,
-            1.0,
-            egui::Stroke::new(1.0, p.violet.gamma_multiply(0.45)),
-            egui::StrokeKind::Inside,
-        );
         // own level, bottom of the button
         let w = (main.width() - 6.0) * mic.level.clamp(0.0, 1.0);
         if w > 0.5 {
@@ -1028,8 +1028,6 @@ fn mic_button(ui: &mut egui::Ui, p: &Palette, icons: &Icons, width: f32, mic: &m
                 p.teal,
             );
         }
-    } else if resp.hovered() {
-        painter.rect_filled(rect, 2.0, p.field);
     }
     let icon = if live || (!mic.hold && mic.on) {
         "microphone-filled"
@@ -1166,22 +1164,13 @@ pub fn bottom_bar(
                 }
 
                 // buttons stretch over the whole remaining width (hover and
-                // click area included), a thin gap between them
+                // click area included); the gap and the pill drawn under the
+                // pointer show where each one starts and ends
                 let remaining = ui.available_width();
-                let gap = 2.0;
+                let gap = 4.0;
                 let btn_w = ((remaining - gap * (n - 1.0) - 1.0) / n).floor().max(MIN_BTN);
                 ui.spacing_mut().item_spacing.x = gap;
-                for (i, b) in layout.toolbar.iter().enumerate() {
-                    // subtle divider in the gap: where each button starts and ends
-                    if i > 0 {
-                        let r = ui.max_rect();
-                        let x = ui.cursor().left() - gap * 0.5;
-                        let h = r.height() * 0.3;
-                        ui.painter().line_segment(
-                            [egui::pos2(x, r.center().y - h), egui::pos2(x, r.center().y + h)],
-                            egui::Stroke::new(1.0, p.muted_dim.gamma_multiply(0.45)),
-                        );
-                    }
+                for b in &layout.toolbar {
                     if b.command == "speak" {
                         mic_button(ui, p, icons, btn_w, mic);
                         continue;

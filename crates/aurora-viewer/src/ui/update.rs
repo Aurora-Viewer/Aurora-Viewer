@@ -8,7 +8,7 @@ use super::news::LoginInfo;
 use super::widgets::{flat_button_sized, primary_button_sized};
 use crate::settings::Settings;
 use crate::theme::Palette;
-use egui::{CornerRadius, Frame, Margin, RichText, Sense, Stroke, Vec2};
+use egui::{CornerRadius, Frame, Margin, RichText, Sense, Vec2};
 use std::time::Instant;
 
 enum Phase {
@@ -86,16 +86,8 @@ impl UpdateDemo {
         }
         let width = (ctx.content_rect().width() - 64.0).clamp(280.0, 620.0);
         aurora_render::blurred_backdrop(ctx, egui::Modal::default_area(egui::Id::new("viewer_update")).layer());
-        let response = egui::Modal::new(egui::Id::new("viewer_update"))
-            .backdrop_color(egui::Color32::TRANSPARENT)
-            .frame(
-                Frame::new()
-                    .fill(p.panel)
-                    .stroke(Stroke::new(1.0, p.raised))
-                    .corner_radius(ctx.global_style().visuals.window_corner_radius)
-                    .shadow(ctx.global_style().visuals.window_shadow)
-                    .inner_margin(Margin::same(26)),
-            )
+        let response = super::widgets::Modal::new(egui::Id::new("viewer_update"))
+            .transparent_backdrop()
             .show(ctx, |ui| {
                 ui.set_width(width);
                 ui.spacing_mut().item_spacing = Vec2::new(10.0, 9.0);
@@ -248,16 +240,8 @@ pub fn show_real(
     let width = (ctx.content_rect().width() - 64.0).clamp(280.0, 620.0);
     let required = updater.required();
     aurora_render::blurred_backdrop(ctx, egui::Modal::default_area(egui::Id::new("viewer_update")).layer());
-    let response = egui::Modal::new(egui::Id::new("viewer_update"))
-        .backdrop_color(egui::Color32::TRANSPARENT)
-        .frame(
-            Frame::new()
-                .fill(p.panel)
-                .stroke(Stroke::new(1.0, p.raised))
-                .corner_radius(ctx.global_style().visuals.window_corner_radius)
-                .shadow(ctx.global_style().visuals.window_shadow)
-                .inner_margin(Margin::same(26)),
-        )
+    let response = super::widgets::Modal::new(egui::Id::new("viewer_update"))
+        .transparent_backdrop()
         .show(ctx, |ui| {
             ui.set_width(width);
             ui.spacing_mut().item_spacing = Vec2::new(10.0, 9.0);

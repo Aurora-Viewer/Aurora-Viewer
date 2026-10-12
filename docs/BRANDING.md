@@ -46,13 +46,25 @@ Dans le code, on utilise toujours la `Palette` résolue (`p.violet`, `p.ink`…)
 
 ## Règles de design
 
-- **Verre discret.** Un flou GPU partagé apparaît seulement dans les fenêtres
-  et dialogues, sous une teinte sombre. Une ombre douce et une bordure fine
-  séparent la fenêtre du monde ; les champs restent calmes et lisibles.
-  Une skin avec `panel_alpha = 255` garde des surfaces opaques sans ce flou.
+- **Verre discret.** Un flou GPU partagé apparaît dans les fenêtres, les
+  dialogues et les panneaux posés sur le monde (notifications, volume, emoji,
+  contrôles des médias), sous une teinte sombre. Une ombre douce et une
+  bordure fine séparent la surface du monde ; les champs restent calmes et
+  lisibles. Une skin avec `panel_alpha = 255` garde des surfaces opaques sans
+  ce flou. Hors d'une fenêtre, une surface se dessine avec
+  `widgets::overlay` (ou `widgets::overlay_frame` sans monde derrière, comme
+  sur l'écran de connexion), jamais avec un fond, une bordure ou un rayon
+  écrits à la main. Les barres du haut et du bas restent pleines (`bar`).
   Les dégradés sont réservés aux éléments de marque (fond de connexion, aurores).
-- **Arrondis discrets.** Boutons : rayon 5 ; fenêtres et cartes : rayon 3,
+- **Arrondis discrets.** Design plat, angles presque carrés. Boutons :
+  rayon 5 ; fenêtres, cartes et pastilles de la barre d'outils : rayon 3,
   avec des coins proches de ceux de la construction, y compris au repli.
+  Les rayons viennent du thème, jamais d'une valeur plus grande dans le code.
+- **Boutons pleins.** Une action avec icône utilise `widgets::action_button` :
+  une face pleine sans bordure, neutre, violette pour l'action principale,
+  `danger` pour une action destructrice. La barre d'outils du bas n'a pas de
+  traits de séparation : l'espacement et la pastille du bouton survolé ou
+  actif suffisent.
 - **Hiérarchie commune.** Titre et commandes de fenêtre en haut, navigation
   stable, contenu regroupé par fonction et actions accessibles.
   L’inventaire garde une grande liste et une seule ligne de statut en bas,

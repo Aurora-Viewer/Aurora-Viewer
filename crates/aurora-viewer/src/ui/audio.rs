@@ -150,74 +150,69 @@ pub fn top_controls(
             .pivot(egui::Align2::RIGHT_TOP)
             .fixed_pos(anchor)
             .show(ui.ctx(), |ui| {
-                egui::Frame::new()
-                    .fill(p.panel)
-                    .stroke(egui::Stroke::new(1.0, p.raised))
-                    .corner_radius(egui::CornerRadius::same(3))
-                    .inner_margin(egui::Margin::symmetric(10, 8))
-                    .show(ui, |ui| {
-                        ui.spacing_mut().slider_width = 120.0;
-                        egui::Grid::new("volumes").num_columns(4).spacing([8.0, 6.0]).show(ui, |ui| {
-                            for (i, name) in audio_channels().iter().enumerate() {
-                                let label = if i == 0 {
-                                    RichText::new(*name).size(12.5).strong().color(p.ink)
-                                } else {
-                                    RichText::new(*name).size(12.0).color(p.muted)
-                                };
-                                ui.label(label);
-                                let r = ui.add_enabled(
-                                    audio.enabled[i],
-                                    egui::Slider::new(&mut audio.volume[i], 0.0..=1.0)
-                                        .custom_parser(aurora_i18n::parse_number)
-                                        .show_value(false)
-                                        .trailing_fill(true),
-                                );
-                                if r.changed() {
-                                    action = AudioAction::Changed;
-                                }
-                                let icon = speaker_icon(audio.volume[i], audio.muted[i]);
-                                let tip = if audio.muted[i] {
-                                    aurora_i18n::tr!("common-unmute")
-                                } else {
-                                    aurora_i18n::tr!("common-mute")
-                                };
-                                if icon_toggle(ui, p, icons, icon, tip, audio.muted[i], audio.enabled[i]).clicked() {
-                                    audio.muted[i] = !audio.muted[i];
-                                    action = AudioAction::Changed;
-                                }
-                                if i == 0 {
-                                    if icon_toggle(ui, p, icons, "settings-filled", aurora_i18n::tr!("common-preferences"), false, true)
-                                        .clicked()
-                                    {
-                                        action = AudioAction::OpenPreferences;
-                                    }
-                                } else if ui
-                                    .checkbox(&mut audio.enabled[i], "")
-                                    .on_hover_text(if audio.enabled[i] {
-                                        aurora_i18n::tr!("ui-audio-disable")
-                                    } else {
-                                        aurora_i18n::tr!("common-enable")
-                                    })
-                                    .changed()
-                                {
-                                    action = AudioAction::Changed;
-                                }
-                                ui.end_row();
+                super::widgets::overlay(ui, p, egui::Margin::symmetric(10, 8), |ui| {
+                    ui.spacing_mut().slider_width = 120.0;
+                    egui::Grid::new("volumes").num_columns(4).spacing([8.0, 6.0]).show(ui, |ui| {
+                        for (i, name) in audio_channels().iter().enumerate() {
+                            let label = if i == 0 {
+                                RichText::new(*name).size(12.5).strong().color(p.ink)
+                            } else {
+                                RichText::new(*name).size(12.0).color(p.muted)
+                            };
+                            ui.label(label);
+                            let r = ui.add_enabled(
+                                audio.enabled[i],
+                                egui::Slider::new(&mut audio.volume[i], 0.0..=1.0)
+                                    .custom_parser(aurora_i18n::parse_number)
+                                    .show_value(false)
+                                    .trailing_fill(true),
+                            );
+                            if r.changed() {
+                                action = AudioAction::Changed;
                             }
-                        });
-                        ui.add_space(4.0);
-                        if ui
-                            .checkbox(
-                                &mut audio.music_autoplay,
-                                RichText::new(aurora_i18n::tr!("ui-audio-auto-play-parcel-music"))
-                                    .size(11.5)
-                                    .color(p.muted),
-                            )
-                            .changed()
-                        {
-                            action = AudioAction::Changed;
+                            let icon = speaker_icon(audio.volume[i], audio.muted[i]);
+                            let tip = if audio.muted[i] {
+                                aurora_i18n::tr!("common-unmute")
+                            } else {
+                                aurora_i18n::tr!("common-mute")
+                            };
+                            if icon_toggle(ui, p, icons, icon, tip, audio.muted[i], audio.enabled[i]).clicked() {
+                                audio.muted[i] = !audio.muted[i];
+                                action = AudioAction::Changed;
+                            }
+                            if i == 0 {
+                                if icon_toggle(ui, p, icons, "settings-filled", aurora_i18n::tr!("common-preferences"), false, true)
+                                    .clicked()
+                                {
+                                    action = AudioAction::OpenPreferences;
+                                }
+                            } else if ui
+                                .checkbox(&mut audio.enabled[i], "")
+                                .on_hover_text(if audio.enabled[i] {
+                                    aurora_i18n::tr!("ui-audio-disable")
+                                } else {
+                                    aurora_i18n::tr!("common-enable")
+                                })
+                                .changed()
+                            {
+                                action = AudioAction::Changed;
+                            }
+                            ui.end_row();
                         }
                     });
+                    ui.add_space(4.0);
+                    if ui
+                        .checkbox(
+                            &mut audio.music_autoplay,
+                            RichText::new(aurora_i18n::tr!("ui-audio-auto-play-parcel-music"))
+                                .size(11.5)
+                                .color(p.muted),
+                        )
+                        .changed()
+                    {
+                        action = AudioAction::Changed;
+                    }
+                });
             });
         // click outside closes the panel
         let outside = ui.input(|i| i.pointer.any_pressed()) && !area.response.contains_pointer() && !sp.contains_pointer();

@@ -1192,18 +1192,13 @@ pub fn show(
                         .pivot(egui::Align2::RIGHT_BOTTOM)
                         .fixed_pos(anchor - egui::vec2(0.0, 4.0))
                         .show(ui.ctx(), |ui| {
-                            egui::Frame::new()
-                                .fill(p.panel)
-                                .stroke(egui::Stroke::new(1.0, p.raised))
-                                .corner_radius(egui::CornerRadius::same(3))
-                                .inner_margin(egui::Margin::same(6))
-                                .show(ui, |ui| {
-                                    ui.set_width(300.0);
-                                    if let Some(c) = emoji.picker(ui, p, icons) {
-                                        st.conv_input.push(c);
-                                        close = !ui.input(|i| i.modifiers.shift);
-                                    }
-                                });
+                            super::widgets::overlay(ui, p, egui::Margin::same(6), |ui| {
+                                ui.set_width(300.0);
+                                if let Some(c) = emoji.picker(ui, p, icons) {
+                                    st.conv_input.push(c);
+                                    close = !ui.input(|i| i.modifiers.shift);
+                                }
+                            });
                         });
                     if close {
                         st.emoji_open = false;
