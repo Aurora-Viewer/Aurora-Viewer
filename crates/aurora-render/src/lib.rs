@@ -13,6 +13,7 @@ pub mod main_thread;
 mod occlusion;
 mod packet;
 mod pick;
+pub mod present;
 pub mod probes;
 mod render_thread;
 mod renderer;
@@ -20,6 +21,7 @@ pub mod tex_anim;
 pub mod textures;
 pub mod types;
 mod ui_blur;
+mod ui_glass;
 pub mod upload;
 pub mod writes;
 
@@ -31,6 +33,7 @@ pub use renderer::{CASCADES, RenderError};
 pub use textures::{MipLevel, build_mips};
 pub use types::*;
 pub use ui_blur::blurred_backdrop;
+pub use ui_glass::glass_panel;
 pub use upload::{StagedMesh, StagedTexture, StagingPool};
 
 pub use egui;

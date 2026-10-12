@@ -12,7 +12,6 @@ use aurora_net::inventory::{
     InvItem,
     operations::{Mutation, Operation, Reply},
 };
-use glam::Vec3;
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
@@ -229,14 +228,8 @@ impl Job {
             planned.size = old.size;
         }
         let mut retired = old.clone();
-        // Preserve the old object and its contents on the same parcel side
-        // of the source, clear of both its original and replacement shapes.
-        let gap = replacement.size.length() + old.size.length() + 0.5;
-        let dx = if replacement.position.x + gap < 255.0 { gap } else { -gap };
-        retired.position = replacement.position + Vec3::X * dx;
-        if retired.position.x < 0.0 || retired.position.x >= 256.0 {
-            return Err(aurora_i18n::tr!("replace-room").into());
-        }
+        // Keep the old prim at the replacement's original world position.
+        retired.position = replacement.position;
         let now = Instant::now();
         Ok(Self {
             stage: Stage::Read,

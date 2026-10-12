@@ -4,6 +4,7 @@
 //! Message flow follows `newview/llstartup.cpp` and `llviewermessage.cpp`.
 
 mod build_cmds;
+mod inventory_moves;
 mod inventory_preview;
 mod inventory_upload;
 mod object_actions;
@@ -132,6 +133,7 @@ struct Session<'a> {
     eq_tx: mpsc::UnboundedSender<EqEvent>,
     caps_tx: mpsc::UnboundedSender<(SocketAddr, Result<HashMap<String, String>, String>)>,
     notecard_copy_tx: mpsc::UnboundedSender<(u32, Result<(), String>)>,
+    inventory_move_tx: mpsc::UnboundedSender<inventory_moves::Request>,
     notecard_copies: HashMap<u32, (Uuid, Uuid, bool)>,
     last_controls: AgentControls,
     last_agent_update: Instant,
@@ -232,6 +234,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
     let (eq_tx, mut eq_rx) = mpsc::unbounded_channel();
     let (caps_tx, mut caps_rx) = mpsc::unbounded_channel();
     let (notecard_copy_tx, mut notecard_copy_rx) = mpsc::unbounded_channel();
+    let (inventory_move_tx, mut inventory_move_rx) = mpsc::unbounded_channel();
     let mut s = Session {
         sh,
         sock: sock.clone(),
@@ -263,6 +266,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         script_transfers: Default::default(),
         inventory_callbacks: HashMap::new(),
         notecard_copy_tx,
+        inventory_move_tx,
         notecard_copies: HashMap::new(),
         inventory_merchant_pending: false,
         next_inventory_callback: 0,
@@ -295,6 +299,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
             Some(e) = eq_rx.recv() => s.on_eq_event(e),
             Some((addr, caps)) = caps_rx.recv() => s.on_caps(addr, caps),
             Some((callback, result)) = notecard_copy_rx.recv() => s.notecard_copy_http(callback, result),
+            Some(request) = inventory_move_rx.recv() => s.inventory_move(request),
         }
     }
     s.save_object_caches();
@@ -1317,8 +1322,12 @@ impl Session<'_> {
                 let http = self.sh.caps_http.clone();
                 let events = self.sh.events.clone();
                 let owner = self.agent_id();
+                let moves = self.inventory_move_tx.clone();
                 tokio::spawn(async move {
-                    let result = crate::inventory::operations::mutate(&http, &cap, &fetch_cap, owner, change).await;
+                    let result = crate::inventory::operations::mutate_with_moves(&http, &cap, &fetch_cap, owner, change, |movement| {
+                        inventory_moves::submit(moves.clone(), movement)
+                    })
+                    .await;
                     let _ = events.send(NetEvent::InventoryEdited { request, result });
                 });
             }

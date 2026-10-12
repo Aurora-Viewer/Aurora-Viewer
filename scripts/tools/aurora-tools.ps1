@@ -161,7 +161,7 @@ function Show-Main {
             @{ Key = 'p'; Label = 'Suivi des PR'; Hint = 'en direct, à garder dans un coin de l''écran' }
             @{ Key = 'g'; Label = 'Gérer les releases'; Hint = 'créer ou supprimer une version' }
             @{ Key = '8'; Label = 'Raccourcis'; Hint = 'Bureau et menu Démarrer' }
-            @{ Key = 'c'; Label = 'Permissions de Claude'; Hint = 'laisser les agents relire et fusionner leurs PR, répondre aux issues' }
+            @{ Key = 'c'; Label = 'Permissions de Claude'; Hint = 'laisser les agents suivre et fusionner leurs PR, traiter les issues' }
             @{ Key = 'v'; Label = 'Vérifier à nouveau'; Hint = 'le tableau complet de l''environnement' }
             @{ Key = 'x'; Label = 'Réinitialiser le dépôt'; Hint = 'clone neuf de GitHub, efface tout le local (inventaire d''abord)' }
             @{ Key = '0'; Label = 'Quitter'; Hint = '' }

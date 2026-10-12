@@ -16,8 +16,8 @@
 //! `mode,object:<local_id>[,part,dx,dy]` selects a demo object directly,
 //! so an animated flexible shape needs no fixed screen click coordinate.
 //!
-//! `AURORA_DEMO_BUILD_TAB` shows a tab of the floater: general | object |
-//! features | texture | contents, the texture tab with `:pbr`, `:bp` or
+//! `AURORA_DEMO_BUILD_TAB` shows a section: general | object | transform |
+//! shape | features | texture | contents, the texture tab with `:pbr`, `:bp` or
 //! `:media` (e.g. `texture:bp`), and opens `+weights`, `+grid`, `+media`
 //! (e.g. `general+weights+grid`).
 //! `AURORA_DEMO_BUILD_FOCUS=off|on` focuses the selected object before the
@@ -135,7 +135,8 @@ pub fn apply_tab(tool: &mut BuildTool) {
     let (tab, sub) = v.split_once(':').unwrap_or((v.as_str(), ""));
     tool.tab = match tab.trim() {
         "general" => 0,
-        "object" => 1,
+        "object" | "transform" => 1,
+        "shape" => 5,
         "features" => 2,
         "texture" => 3,
         "contents" => 4,
@@ -190,7 +191,7 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
     };
     if parts[0].starts_with("replace") {
         return match frame {
-            215 => vec![Step::Open(Tool::Edit, EditMode::Move, 6)],
+            215 => vec![Step::Open(Tool::Edit, EditMode::Move, 1)],
             220 => {
                 let mut steps = vec![Step::Linked(true)];
                 steps.extend(object.into_iter().map(Step::Select));

@@ -433,7 +433,7 @@ fn media_settings(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world:
     // whitelist entry dialog (floater_whitelist_entry.xml)
     if let Some(mut entry) = st.whitelist_entry.take() {
         let mut keep = true;
-        egui::Modal::new(egui::Id::new("whitelist_entry")).show(ctx, |ui| {
+        crate::ui::widgets::Modal::new(egui::Id::new("whitelist_entry")).show(ctx, |ui| {
             ui.label(
                 RichText::new(aurora_i18n::tr!("build-ui-floaters-whitelist-entry"))
                     .size(13.0)
@@ -757,7 +757,7 @@ fn confirm(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world: &mut W
         ),
     };
     let mut answer = None;
-    egui::Modal::new(egui::Id::new("build_confirm")).show(ctx, |ui| {
+    crate::ui::widgets::Modal::new(egui::Id::new("build_confirm")).show(ctx, |ui| {
         ui.set_max_width(320.0);
         ui.label(RichText::new(title).size(14.0).strong().color(p.ink));
         ui.add_space(4.0);

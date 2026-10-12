@@ -101,7 +101,7 @@ pub fn people_window(
         "people",
         aurora_i18n::tr!("common-people"),
         egui::pos2(8.0, 70.0),
-        Vec2::new(330.0, 420.0),
+        Vec2::new(410.0, 520.0),
     )
     .help(aurora_i18n::tr!("ui-people-nearby-avatars-and-friends-list"))
     .show(ctx, p, &mut open, |ui| {

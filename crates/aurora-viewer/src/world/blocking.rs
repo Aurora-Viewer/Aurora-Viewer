@@ -92,6 +92,11 @@ impl World {
                 false,
                 Uuid::nil(),
             ));
+            // a blocked resident's offer is in our inventory all the same
+            // (IOR_MUTE falls through to IOR_DECLINE: LLDiscardAgentOffer)
+            if !task && let Some((asset_type, object)) = super::notifications::offered_object(&im.binary_bucket) {
+                self.discard_offer(asset_type, object);
+            }
         }
         log::debug!("IM (dialog {}) from blocked {} dropped", im.dialog, im.from_agent_id);
         true

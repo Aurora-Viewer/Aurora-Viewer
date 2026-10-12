@@ -1,25 +1,27 @@
 //! Replacement stays inside the build floater; the world click picker
 //! retains the old selection as the locked destination.
 
-use super::common::{section, small, text};
+use super::{
+    common::{small, text},
+    compact,
+};
 use crate::build::{
     BuildSettings, BuildTool,
     replace::{Stage, object_name},
 };
 use crate::theme::Palette;
-use crate::ui::widgets::switch;
+use crate::ui::widgets::{flat_button_sized, primary_button_sized, switch};
 use crate::world::World;
-use egui::RichText;
+use egui::{RichText, Vec2};
 
 pub fn button(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &World, s: &BuildSettings) {
-    if tool.replacement_visible(world, s)
-        && ui
-            .add_sized(
-                [ui.available_width(), 24.0],
-                egui::Button::new(RichText::new(aurora_i18n::tr!("replace-button")).size(12.0).color(p.violet_light)),
-            )
-            .on_hover_text(aurora_i18n::tr!("replace-button-help"))
-            .clicked()
+    if !tool.replacement_visible(world, s) {
+        return;
+    }
+    ui.add_space(3.0);
+    if flat_button_sized(ui, p, aurora_i18n::tr!("replace-button"), Vec2::new(ui.available_width(), 24.0))
+        .on_hover_text(aurora_i18n::tr!("replace-button-help"))
+        .clicked()
     {
         tool.begin_replacement(world, s);
     }
@@ -39,11 +41,12 @@ fn toggle(ui: &mut egui::Ui, p: &Palette, value: &mut bool, label: &str, help: &
 }
 
 pub fn panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World) {
-    section(ui, p, aurora_i18n::tr!("replace-button"));
-    let height = (ui.available_height() - 30.0).max(180.0);
+    compact::heading(ui, p, "arrows-left-right", aurora_i18n::tr!("replace-button"), |_| {});
+    let height = (ui.ctx().content_rect().height() - 210.0).clamp(160.0, 380.0);
     egui::ScrollArea::vertical()
         .id_salt("replace_prim")
         .max_height(height)
+        .auto_shrink([false, true])
         .show(ui, |ui| {
             if let Some(draft) = tool.replacement.draft.as_ref() {
                 let (target, number, source, picking) = (draft.target, draft.number, draft.source, draft.picking);
@@ -63,13 +66,17 @@ pub fn panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut W
                 if let Some(source) = source {
                     text(ui, p, &aurora_i18n::tr!("replace-source", name = object_name(tool, world, source)));
                 }
-                if ui
-                    .button(if source.is_some() {
+                if flat_button_sized(
+                    ui,
+                    p,
+                    if source.is_some() {
                         aurora_i18n::tr!("replace-change-source")
                     } else {
                         aurora_i18n::tr!("replace-choose-source")
-                    })
-                    .clicked()
+                    },
+                    Vec2::new(ui.available_width(), 26.0),
+                )
+                .clicked()
                     && let Some(draft) = tool.replacement.draft.as_mut()
                 {
                     draft.picking = true;
@@ -120,21 +127,6 @@ pub fn panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut W
                 if !tool.replacement.message.is_empty() {
                     ui.label(RichText::new(&tool.replacement.message).size(11.0).color(p.warn));
                 }
-                ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    if ui.button(aurora_i18n::tr!("common-cancel")).clicked() {
-                        tool.cancel_replacement(world);
-                    }
-                    if ui
-                        .add_enabled(
-                            source.is_some() && !picking,
-                            egui::Button::new(RichText::new(aurora_i18n::tr!("replace-validate")).color(p.violet_light)),
-                        )
-                        .clicked()
-                    {
-                        tool.apply_replacement(world);
-                    }
-                });
             } else if let Some(job) = &tool.replacement.job {
                 let terminal = job.stage.terminal();
                 text(
@@ -170,9 +162,31 @@ pub fn panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut W
                 if !job.message.is_empty() {
                     ui.label(RichText::new(&job.message).size(11.0).color(p.warn));
                 }
-                if terminal && ui.button(aurora_i18n::tr!("common-close")).clicked() {
-                    tool.cancel_replacement(world);
-                }
             }
         });
+    ui.add_space(8.0);
+    ui.separator();
+    ui.add_space(3.0);
+    if let Some(draft) = &tool.replacement.draft {
+        let ready = draft.source.is_some() && !draft.picking;
+        ui.horizontal(|ui| {
+            if flat_button_sized(ui, p, aurora_i18n::tr!("common-cancel"), Vec2::new(80.0, 26.0)).clicked() {
+                tool.cancel_replacement(world);
+            }
+            let width = ui.available_width();
+            if ui
+                .add_enabled_ui(ready, |ui| {
+                    primary_button_sized(ui, p, aurora_i18n::tr!("replace-validate"), Vec2::new(width, 26.0))
+                })
+                .inner
+                .clicked()
+            {
+                tool.apply_replacement(world);
+            }
+        });
+    } else if tool.replacement.job.as_ref().is_some_and(|job| job.stage.terminal())
+        && flat_button_sized(ui, p, aurora_i18n::tr!("common-close"), Vec2::new(ui.available_width(), 26.0)).clicked()
+    {
+        tool.cancel_replacement(world);
+    }
 }

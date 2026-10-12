@@ -172,7 +172,13 @@ confirmation du parentage, Aurora conserve l'ordre envoyé dans ObjectLink,
 indépendamment de l'ordre d'arrivée des paquets. Les 256 prims sont rattachés
 par groupes confirmés, depuis la fin de la liste vers son début.
 
-Le remplacement conserve l'ancien prim à côté du remplaçant. Les objets
+Le bouton apparaît sous les informations de sélection de l'inspecteur compact.
+Le panneau reprend son cadre, ses titres et ses marges ; les actions de validation
+restent hors de la zone défilante.
+
+Le remplacement place l'ancien prim à la position initiale du remplaçant,
+en conservant sa rotation et sa taille. Avec « Copier la position » activé,
+les deux prims échangent donc leurs positions. Les objets
 doivent être posés dans le monde, modifiables, appartenir au résident, sans
 physique, caractère temporaire ni avatar assis. Maximum : 256 prims et
 1 024 éléments copiés / scripts observés. Les conflits de noms et les contenus
@@ -332,7 +338,7 @@ après le relâchement ; la caméra doit alors être arrêtée. Combiner avec
 cette variable pour vérifier le focus initial sur l’avatar. Les HUDs et le
 suivi activé conservent leur comportement.
 
-**`AURORA_DEMO_BUILD_TAB=general|object|features|texture[:pbr|bp|media]|contents`**
+**`AURORA_DEMO_BUILD_TAB=general|object|transform|shape|features|texture[:pbr|bp|media]|contents`**
 — onglet de la fenêtre de construction affiché par le script ; `+weights`,
 `+grid`, `+media` ouvrent aussi ces fenêtres.
 
@@ -434,9 +440,14 @@ grille.
   états automatiquement après le chargement, toutes les 180 images ;
   `off` commence avec l’AO désactivé. Vérifier le bouton AO en bas, les
   poses, la pause, les cycles et l’ajout / import depuis l’inventaire.
-- **`AURORA_DEMO_ANIMESH=1`** : mesh racine animé, mesh lié signalé par un
-  enfant et animesh porté, avec des squelettes propres indépendants et des
-  ombres alpha.
+- **`AURORA_DEMO_ANIMESH=1|churn`** : mesh racine animé, mesh lié signalé par
+  un enfant et animesh porté, avec des squelettes propres indépendants et des
+  ombres alpha. `churn` : l'animesh au sol (orange) change en plus d'asset de
+  mesh toutes les 240 images, comme les mesh riggés qui vont et viennent sur
+  la grille ; il doit rester entier et animé à chaque changement, les deux
+  autres aussi, et la ligne `demo animesh: skin bindings <en service> used
+  of <dans la liste>` du log (toutes les 120 images) doit cesser de croître
+  une fois les premiers mesh libérés (600 images après leur dernier usage).
 - **`AURORA_DEMO_CLOUD=1|self`** : `1` active hors ligne les nuages et les
   barres de chargement. `self` habille en plus notre avatar comme ceux qui
   restaient en nuage pendant les 60 s de la limite (issue #121) : bake de
@@ -579,6 +590,17 @@ grille.
 
 ### Détails
 
+- **Parcours de la refonte des fenêtres** : ouvrir l'inventaire et sélectionner
+  un dossier dans l'arborescence, puis un élément ; vérifier recherche, permissions,
+  menu contextuel et actions en bas. Agrandir et rétrécir la fenêtre :
+  l'arborescence reste unique et occupe toute la largeur. Dans Apparence, changer de galerie / liste
+  / portés, sélectionner une tenue et essayer Porter / Ajouter hors ligne.
+  Dans « À propos du terrain », parcourir les sections en gardant la synthèse
+  visible. Ouvrir ensuite Conversations, Personnes, Lieux, un profil,
+  Préférences et Environnement ; déplacer, redimensionner, replier et restaurer
+  les fenêtres. La construction garde sa largeur dans ses six sections, dont
+  Forme pour les paramètres avancés ; les listes longues défilent dans le corps,
+  les actions restent visibles. Les confirmations modales gardent le fond flouté.
 - **`AURORA_DEMO_WINDOWS=1|restore|drag`**, avec `AURORA_DEMO_INVENTORY=1` :
   double-clic sur le titre réel de l’inventaire aux images 660–665 ; `1`
   garde la barre repliée, `restore` la développe aux images 1000–1005,
@@ -586,6 +608,13 @@ grille.
   Capturer `620,740,900,1120` pour vérifier contenu, repli, déplacement et
   dimensions restaurées. Le bouton « − » reste utilisable ; les autres
   boutons du titre et le contenu ne déclenchent pas le double-clic du titre.
+- **`AURORA_DEMO_NOTIF=1`** : l’offre « Lanterne aurorale » est celle d’un
+  résident : l’objet est déjà dans l’inventaire (dossier Objets) à l’arrivée
+  de l’offre. « Garder », ou fermer l’offre dans la liste, l’y laisse ;
+  « Rejeter » l’envoie à la corbeille. Avec `AURORA_DEMO_INVENTORY=offer`,
+  l’inventaire s’ouvre sur l’objet reçu et l’offre reste à répondre ;
+  `offer-reject` la rejette à l’image 700, puis montre l’objet dans la
+  corbeille. Capturer après l’image 900.
 - **`AURORA_DEMO_EXIT=1|cancel|logout|quit`** : ouvre la modale à l’image 650.
   `1` la laisse interactive ; les autres modes font le choix à l’image 800.
   Capturer `740,900` pour comparer le fond flouté puis la session reprise ou
@@ -774,10 +803,22 @@ racine ouverte et libellés alignés à gauche. Créations et mutations simulée
 hors ligne ; les fichiers et photos chargés en démo restent hors ligne.
 
 - `1` : l'inventaire seul.
+- `move-menu` : menu d’un élément avec « Déplacer vers… » ; `move-item`,
+  `move-folder`, `move-multi` : fenêtre de destination pour un élément, un
+  dossier ou trois objets (dont un non copiable et un non transférable).
+  `move-filter` : filtre sur le sous-dossier ; `move-window` : même fenêtre
+  depuis un inventaire limité à un dossier. Sélectionner un dossier puis
+  Déplacer ; Annuler doit laisser la sélection à son emplacement initial.
+- `offer`, `offer-reject` : objet offert par un résident, gardé ou rejeté
+  (voir `AURORA_DEMO_NOTIF` plus haut).
 - `folder`, `object`, `animation`, `script`, `note`, `properties`, `nocopy`,
   `notransfer`, `link` : le menu de l'élément choisi, ou ses propriétés.
   `clothes`, `body`, `settings`, `uploads` sont des alias de `folder`, à
   combiner avec `AURORA_DEMO_POINTER` pour survoler les sous-menus.
+- `received`, `received-filtered`, `received-missing` : onglet Achats reçus,
+  recherche limitée à sa boîte Marketplace et état sans dossier reçu. La liste
+  et les boutons Réduire / Développer gardent la même présentation ; aucun
+  dossier personnel ne doit apparaître dans cet onglet.
 - `animation-open`, `animation-properties`, `image`, `image-photo`,
   `image-picker` : les cinq panneaux de référence.
 - `note-open`, `note-new`, `note-readonly` : éditeur d’une note existante,
@@ -847,7 +888,10 @@ Les indicateurs sont également visibles dans le contenu d'un objet :
 `AURORA_DEMO_BUILD_TAB=contents` pour l'onglet de construction. Les contenus
 de démo proposent des droits complets, sans modification ou sans copie ;
 le prochain propriétaire n'a que le transfert. Vérifier aussi le double-clic
-sur une note et la recherche « pas de copie » dans l'onglet Contenu.
+sur une note et la recherche « pas de copie » dans l'onglet Contenu. Survoler et
+sélectionner un item : même ligne, mêmes icônes et permissions après le nom que
+dans l'inventaire utilisateur ; le menu contextuel et l'ouverture des documents
+restent disponibles. Les noms longs défilent horizontalement dans la liste.
 
 Pour valider les notecards sur la grille, ouvrir une note existante puis une
 note neuve, modifier leur texte, enregistrer et fermer / rouvrir. Refaire la
@@ -927,6 +971,7 @@ Ce que l'inventaire doit montrer avec ces scénarios :
 | `AURORA_OCCLUSION=0` ou `1` | Remplace le réglage « Occlusion » (Graphismes › Qualité) |
 | `AURORA_NO_OCCLUSION=1` | Coupe l'occlusion GPU |
 | `AURORA_NOVSYNC=1` | Coupe la synchronisation verticale |
+| `AURORA_PRESENT_MODE=<mode>` | Force le mode de présentation de la swapchain |
 | `AURORA_CPU_CULL=1` | Listes de dessin construites sur le CPU |
 | `AURORA_RENDER_THREAD=0` | Images dessinées sur le thread principal |
 | `AURORA_PROFILE=1` | Profilage dans le journal (voir [Profilage](#profilage)) |
@@ -945,6 +990,19 @@ Ce que l'inventaire doit montrer avec ces scénarios :
   n'ont pas (géorgien, CJK, arabe, lettres mathématiques…) redeviennent des
   carrés. Pour comparer avec `AURORA_DEMO_GLYPHS=1` ou isoler un problème
   de police. Le journal indique `system fallback fonts: off`.
+- **`AURORA_PRESENT_MODE=immediate|mailbox|fifo|fifo-relaxed`** : remplace le
+  mode de présentation choisi d'après la synchronisation verticale
+  (`aurora-render/src/present.rs` : sans synchronisation `Mailbox`, sinon
+  `Immediate` ; avec, `FifoRelaxed`, sinon `Fifo`), si la surface le
+  propose ; une valeur inconnue est signalée dans le journal et ignorée.
+  Sert à comparer les images/s d'un écran à l'autre (écrans de fréquences
+  différentes, fréquence variable G-Sync / FreeSync) : `immediate` ne se
+  synchronise jamais sur l'écran (déchirures possibles), `fifo` s'aligne sur
+  sa fréquence. Le journal donne le mode retenu et ceux de la surface
+  (`presentation: Mailbox (vsync off, surface supports […])`), puis l'écran
+  sous la fenêtre et sa fréquence à chaque changement
+  (`screen under the window: \\.\DISPLAY2, 144 Hz`) ; `present=` et
+  `screen_hz=` figurent dans la ligne `perf settings`.
 - **`AURORA_CPU_CULL=1`** : construit toutes les listes de dessin sur le CPU
   (le repli quand le GPU n'a pas `MULTI_DRAW_INDIRECT_COUNT`) au lieu de les
   trier sur le GPU, pour comparer ; `cull=cpu|gpu` dans la ligne

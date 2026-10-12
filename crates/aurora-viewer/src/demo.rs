@@ -514,6 +514,26 @@ pub fn seed_contact_sets(world: &mut crate::world::World) {
     cs.remove_display_name(&[u(103)], is_friend);
 }
 
+/// Item of the notification center's sample inventory offer.
+pub const DEMO_OFFER: Uuid = Uuid::from_u128(0x0FFE_0000_0000_0000_0000_0000_0000_0001);
+
+/// What fetching `DEMO_OFFER` by id returns: the offered object, filed by
+/// the "server" in `parent`.
+pub fn offered_item(parent: Uuid, owner: Uuid) -> aurora_net::inventory::InvItem {
+    aurora_net::inventory::InvItem {
+        id: DEMO_OFFER,
+        parent,
+        name: aurora_i18n::tr!("demo-aurora-lantern").into(),
+        asset_type: 6,
+        inv_type: 6,
+        creator: Uuid::from_u128(2),
+        owner,
+        base_mask: 0x7fffffff,
+        owner_mask: 0x7fffffff,
+        ..Default::default()
+    }
+}
+
 pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
     if let Some(events) = hud::reply(cmd) {
         return events;
@@ -2261,7 +2281,10 @@ pub fn events() -> Vec<NetEvent> {
         })
     };
     ev.push(im(22, aurora_i18n::tr!("demo-come-see-the-lagoon-at-sunset"), Vec::new()));
-    ev.push(im(4, aurora_i18n::tr!("demo-aurora-lantern"), vec![6]));
+    // a resident's offer: asset type, then the item already in our inventory
+    let mut offer = vec![6];
+    offer.extend_from_slice(DEMO_OFFER.as_bytes());
+    ev.push(im(4, aurora_i18n::tr!("demo-aurora-lantern"), offer));
     let menu = std::env::var("AURORA_DEMO_DIALOG").unwrap_or_default();
     let (object_name, message, buttons) = if !menu.is_empty() {
         let mut buttons = [
@@ -2507,12 +2530,45 @@ pub const ANIMESH_MESH: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0000_0
 pub const ANIMESH_TEXTURE: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0000_0000_0101);
 pub const ANIMESH_ANIM: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0000_0000_0102);
 
+/// AURORA_DEMO_ANIMESH=churn: the ground animesh changes its mesh asset every
+/// `ANIMESH_CHURN_FRAMES` frames, as rigged meshes come and go on a grid.
+pub fn animesh_churn() -> bool {
+    std::env::var("AURORA_DEMO_ANIMESH").is_ok_and(|v| v == "churn")
+}
+
+pub const ANIMESH_CHURN_FRAMES: u64 = 240;
+
+/// Mesh asset of the ground animesh after its `generation`-th change.
+pub fn animesh_churn_mesh(generation: u32) -> Uuid {
+    Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0001_0000_0000 | generation as u128)
+}
+
+/// The ground animesh updated with the mesh of `generation`.
+pub fn animesh_churn_events(generation: u32) -> Vec<NetEvent> {
+    let mut objects = animesh_objects(animesh_churn_mesh(generation));
+    objects.retain(|o| o.local_id == 9200);
+    vec![NetEvent::ObjectUpdates { handle: HANDLE, objects }]
+}
+
 /// Root mesh, linked mesh driven by a child's signal, and a worn root mesh.
 pub fn animesh_events() -> Vec<NetEvent> {
-    let mesh = SculptParams {
-        texture: ANIMESH_MESH,
-        sculpt_type: LL_SCULPT_TYPE_MESH,
-    };
+    let objects = animesh_objects(ANIMESH_MESH);
+    let mut events: Vec<_> = objects
+        .iter()
+        .filter(|o| o.volume.is_mesh())
+        .map(|o| NetEvent::AvatarAnimations {
+            sources: Vec::new(),
+            avatar: o.full_id,
+            anims: vec![(ANIMESH_ANIM, 1)],
+        })
+        .collect();
+    // Signals deliberately arrive before their objects, as on a grid.
+    events.push(NetEvent::ObjectUpdates { handle: HANDLE, objects });
+    events
+}
+
+/// Objects of the animesh demo; the ground root mesh (9200) is `ground_mesh`.
+fn animesh_objects(ground_mesh: Uuid) -> Vec<ObjectUpdate> {
     let ground = floor_at(134.0, 126.0) + 0.2;
     let mut objects = Vec::new();
     for (id, pos, parent, animated, is_mesh, color) in [
@@ -2533,6 +2589,10 @@ pub fn animesh_events() -> Vec<NetEvent> {
         for f in &mut t.faces {
             f.texture = if is_mesh { ANIMESH_TEXTURE } else { BLANK_TEXTURE };
         }
+        let mesh = SculptParams {
+            texture: if id == 9200 { ground_mesh } else { ANIMESH_MESH },
+            sculpt_type: LL_SCULPT_TYPE_MESH,
+        };
         let volume = aurora_prim::VolumeParams {
             sculpt: is_mesh.then_some(mesh),
             ..Default::default()
@@ -2560,18 +2620,7 @@ pub fn animesh_events() -> Vec<NetEvent> {
         } // Right hand.
         objects.push(o);
     }
-    let mut events: Vec<_> = objects
-        .iter()
-        .filter(|o| o.volume.is_mesh())
-        .map(|o| NetEvent::AvatarAnimations {
-            sources: Vec::new(),
-            avatar: o.full_id,
-            anims: vec![(ANIMESH_ANIM, 1)],
-        })
-        .collect();
-    // Signals deliberately arrive before their objects, as on a grid.
-    events.push(NetEvent::ObjectUpdates { handle: HANDLE, objects });
-    events
+    objects
 }
 
 /// Mesh worn in AURORA_DEMO_CLOUD=self: an asset the asset server does not

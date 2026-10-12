@@ -108,8 +108,7 @@ pub(super) struct SyncCtx<'a> {
     geoms: &'a HashMap<GeomKey, GeomEntry>,
     gpu: &'a [ObjGpu],
     palette_slots: &'a HashMap<Uuid, u32>,
-    skin_bind_ranges: &'a HashMap<Uuid, u32>,
-    skin_binds: &'a [aurora_render::SkinBind],
+    skin_binds: &'a super::skin_binds::SkinBinds,
     palettes: &'a [[[f32; 4]; 4]],
     records: &'a RecordStore,
     xf: &'a XfCache,
@@ -214,12 +213,12 @@ impl SyncCtx<'_> {
         }
         if let Some((owner, _)) = skeleton_owner
             && let Some(&slot) = self.palette_slots.get(&owner)
-            && let Some(&binds) = match geom_key {
-                GeomKey::Mesh { id, .. } => self.skin_bind_ranges.get(&id),
+            && let Some(binds) = match geom_key {
+                GeomKey::Mesh { id, .. } => self.skin_binds.base_of(&id),
                 _ => None,
             }
             && let Some((c, r)) = animesh::posed_bounds(&geom.joint_bounds, |j| {
-                let b = self.skin_binds.get(binds as usize + j as usize)?;
+                let b = self.skin_binds.list().get(binds as usize + j as usize)?;
                 let p = self.palettes.get(slot as usize * anim::PALETTE_JOINTS + b.joint[0] as usize)?;
                 Some(model * Mat4::from_cols_array_2d(p) * Mat4::from_cols_array_2d(&b.inverse_bind))
             })
@@ -357,7 +356,6 @@ impl Scene {
             geoms: &self.geoms,
             gpu: &self.gpu,
             palette_slots: &self.palette_slots,
-            skin_bind_ranges: &self.skin_bind_ranges,
             skin_binds: &self.skin_binds,
             palettes: &self.palettes,
             records,

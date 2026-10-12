@@ -1,12 +1,13 @@
 //! The build floater (LLFloaterTools, floater_tools.xml, Firestorm) in the
 //! Aurora skin: the five tools and their options on top, the selection
-//! line (land impact, capacity, « Plus d'infos »), then the General,
-//! Object, Features, Texture and Contents tabs; the bottom arrow folds the
-//! tabs away (FSToolboxExpanded). Also the build keyboard shortcuts
+//! line and a compact navigation rail: Transform, Shape, Materials,
+//! Features, Rights and Contents. The footer folds the sections away
+//! (FSToolboxExpanded). Also the build keyboard shortcuts
 //! (menu_viewer.xml) and the secondary floaters (grid options, weights,
 //! media settings).
 
 mod common;
+mod compact;
 mod contents;
 mod features;
 mod floaters;
@@ -20,10 +21,10 @@ use super::{BuildSettings, BuildTool, EditMode, Tool};
 use crate::media::entry::ObjectMediaData;
 use crate::theme::Palette;
 use crate::ui::texture_picker::TexturePicker;
-use crate::ui::widgets::{Floater, tabs};
+use crate::ui::widgets::Floater;
 use crate::world::World;
 use crate::world::objects::ObjKey;
-use egui::{RichText, Vec2};
+use egui::Vec2;
 use glam::Vec3;
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
@@ -135,6 +136,7 @@ pub struct FloaterState {
     /// « À vendre » ticked / sale type / price not applied yet (Appliquer).
     pub sale_draft: Option<(bool, u8, i32)>,
     pub contents_filter: String,
+    pub contents_selected: Option<(Uuid, Uuid)>,
     /// Item being renamed in the Contents tab.
     pub rename: Option<(Uuid, String)>,
     pub open_notecard: Option<(Uuid, Uuid)>,
@@ -258,113 +260,26 @@ pub fn show(
         tool.ui.edits.clear();
         tool.ui.sale_draft = None;
         tool.ui.rename = None;
+        tool.ui.contents_selected = None;
     }
     let screen = ctx.content_rect();
     let mut open = true;
-    let height = (screen.height() - 110.0).clamp(420.0, 760.0);
-    Floater::new(
-        "build_tools",
-        aurora_i18n::tr!("common-build"),
+    let floater = Floater::new(
+        "build_tools_inspector_c3",
+        compact::selection_title(tool, world),
         egui::pos2(screen.left() + 12.0, 40.0),
-        Vec2::new(330.0, height),
+        Vec2::new(344.0, 500.0),
     )
-    .help(aurora_i18n::tr!("build-ui-mod-build-tools-ctrl-b-opens-closes-ctrl-1-to"))
-    // floater_tools is silent in Firestorm (sound_flags="0")
-    .silent()
-    .show(ctx, p, &mut open, |ui| {
-        ui.spacing_mut().item_spacing = Vec2::new(6.0, 4.0);
-        if tool.replacement.draft.is_some() || tool.replacement.job.is_some() {
-            replace::panel(ui, p, tool, world);
-            return;
-        }
-        tools::tool_row(ui, p, tool);
-        ui.label(RichText::new(tools::status_text(tool, s, mods)).size(11.5).color(p.muted));
-        ui.add_space(2.0);
-        match tool.tool {
-            Tool::Focus => tools::focus_panel(ui, p, tool, mods, env),
-            Tool::Grab => tools::grab_panel(ui, p, tool, mods),
-            Tool::Edit => tools::edit_panel(ui, p, tool, world, s, mods),
-            Tool::Create => tools::create_panel(ui, p, s),
-            Tool::Land => tools::land_panel(ui, p, tool, world, s),
-        }
-        ui.add_space(2.0);
-        if tool.tool == Tool::Land {
-            if s.expanded {
-                ui.separator();
-                tools::parcel_panel(ui, p, tool, world, s);
-            }
-        } else {
-            tools::selection_line(ui, p, tool, world);
-            if s.expanded {
-                tabs_panel(ui, p, tool, world, s, env);
-            }
-        }
-        if !tool.status.is_empty() {
-            ui.label(RichText::new(&tool.status).size(11.0).color(p.warn));
-        }
-        // FSToolboxExpanded: the arrow at the bottom folds the tabs
-        let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 12.0), egui::Sense::click());
-        ui.painter().rect_filled(rect, 2.0, if resp.hovered() { p.raised } else { p.field });
-        let icon = if s.expanded { "caret-up" } else { "caret-down" };
-        if let Some(t) = crate::ui::icons::global(icon) {
-            ui.painter().image(
-                t.id(),
-                egui::Rect::from_center_size(rect.center(), Vec2::splat(11.0)),
-                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                p.ink,
-            );
-        }
-        if resp
-            .on_hover_text(if s.expanded {
-                aurora_i18n::tr!("build-ui-mod-collapse")
-            } else {
-                aurora_i18n::tr!("build-ui-mod-expand")
-            })
-            .clicked()
-        {
-            s.expanded = !s.expanded;
-        }
-    });
+    .help(aurora_i18n::tr!("build-compact-help"))
+    .framed_header("cube")
+    .auto_height()
+    .silent();
+    floater.show(ctx, p, &mut open, |ui| compact::body(ui, p, tool, world, s, mods, env));
     floaters::secondary(ctx, p, tool, world, s, env);
     if !open {
         tool.close(world, s);
     }
     *s != before
-}
-
-/// The five tabs under the tools.
-fn tabs_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings, env: &mut Env) {
-    ui.add_space(2.0);
-    tabs(
-        ui,
-        p,
-        &mut tool.tab,
-        &[
-            (aurora_i18n::tr!("common-general"), true),
-            (aurora_i18n::tr!("common-object"), true),
-            (aurora_i18n::tr!("build-ui-mod-attributes"), true),
-            (aurora_i18n::tr!("common-texture"), true),
-            (aurora_i18n::tr!("common-contents"), true),
-        ],
-    );
-    ui.add_space(4.0);
-    egui::ScrollArea::vertical()
-        .id_salt("build_tab_scroll")
-        .auto_shrink([false, false])
-        .max_height(ui.available_height() - 18.0)
-        .show(ui, |ui| {
-            // nothing selected: empty tabs (the line above says so)
-            if tool.selection.is_empty() {
-                return;
-            }
-            match tool.tab {
-                0 => general::show(ui, p, tool, world, s),
-                1 => object::show(ui, p, tool, world, s, env),
-                2 => features::show(ui, p, tool, world, s, env),
-                3 => texture::show(ui, p, tool, world, s, env),
-                _ => contents::show(ui, p, tool, world),
-            }
-        });
 }
 
 impl BuildTool {

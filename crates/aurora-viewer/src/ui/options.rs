@@ -118,37 +118,8 @@ pub const TAB_COMMANDS: usize = 11;
 
 const LABEL_W: f32 = 180.0;
 
-fn category(ui: &mut egui::Ui, p: &Palette, icons: &Icons, label: &str, icon: &str, selected: bool) -> bool {
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 28.0), Sense::click());
-    let fill = if selected {
-        p.violet.gamma_multiply(0.28)
-    } else if resp.hovered() {
-        p.raised
-    } else {
-        Color32::TRANSPARENT
-    };
-    ui.painter().rect_filled(rect, CornerRadius::same(2), fill);
-    if selected {
-        ui.painter()
-            .rect_filled(egui::Rect::from_min_size(rect.min, Vec2::new(2.0, rect.height())), 0.0, p.violet);
-    }
-    if let Some(t) = icons.get(icon) {
-        let ir = egui::Rect::from_center_size(rect.left_center() + Vec2::new(18.0, 0.0), Vec2::splat(16.0));
-        ui.painter().image(
-            t.id(),
-            ir,
-            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-            if selected { p.ink } else { p.muted },
-        );
-    }
-    ui.painter().text(
-        rect.left_center() + Vec2::new(34.0, 0.0),
-        egui::Align2::LEFT_CENTER,
-        label,
-        egui::FontId::proportional(13.0),
-        if selected { p.ink } else { p.muted },
-    );
-    resp.clicked()
+fn category(ui: &mut egui::Ui, p: &Palette, _icons: &Icons, label: &str, icon: &str, selected: bool) -> bool {
+    super::widgets::navigation(ui, p, icon, label, selected).clicked()
 }
 
 /// A titled group of settings drawn as a flat card.
@@ -212,12 +183,13 @@ fn group(ui: &mut egui::Ui, p: &Palette, title: &str, body: impl FnOnce(&mut egu
                 p.violet_light,
             );
         }
-        ui.label(RichText::new(title.to_uppercase()).size(11.0).strong().color(p.violet_light));
+        ui.label(RichText::new(title).size(13.0).strong().color(p.ink));
     });
     ui.add_space(2.0);
     egui::Frame::new()
         .fill(p.field)
-        .corner_radius(CornerRadius::same(2))
+        .corner_radius(CornerRadius::same(3))
+        .stroke(egui::Stroke::new(1.0, p.raised))
         .inner_margin(egui::Margin::symmetric(10, 8))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -437,14 +409,14 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
         "options",
         aurora_i18n::tr!("common-preferences"),
         egui::pos2(screen.center().x - 330.0, 80.0),
-        Vec2::new(660.0, 470.0),
+        Vec2::new(780.0, 580.0),
     )
     .help(aurora_i18n::tr!("ui-options-changes-apply-immediately-and-are-saved-on-closing"))
     .show(ctx, p, open, |ui| {
         let h = (ui.available_height() - 4.0).max(200.0);
         ui.horizontal_top(|ui| {
             // ---- categories
-            ui.allocate_ui_with_layout(Vec2::new(150.0, h), egui::Layout::top_down(egui::Align::Min), |ui| {
+            ui.allocate_ui_with_layout(Vec2::new(168.0, h), egui::Layout::top_down(egui::Align::Min), |ui| {
                 ui.set_min_height(h);
                 ui.spacing_mut().item_spacing.y = 2.0;
                 for i in ORDER {
@@ -498,7 +470,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
         });
     });
     if st.confirm_reset && *open {
-        let modal = egui::Modal::new(egui::Id::new("options_reset")).show(ctx, |ui| {
+        let modal = crate::ui::widgets::Modal::new(egui::Id::new("options_reset")).show(ctx, |ui| {
             ui.set_width(340.0);
             ui.label(
                 RichText::new(aurora_i18n::tr!("ui-options-reset-everything"))

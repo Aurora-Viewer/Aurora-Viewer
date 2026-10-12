@@ -243,6 +243,8 @@ fn replaces_ninth_part_preserving_other_numbers_and_world_transforms() {
             Prim::capture(&h.tool, &h.world, idx).unwrap()
         })
         .collect();
+    let source = h.world.objects.index_of_uuid(&demo::id(demo::SOURCE)).unwrap();
+    let source_before = Prim::capture(&h.tool, &h.world, source).unwrap();
     h.tool.replacement.options.size = true;
     assert_eq!(h.run(), Stage::Done, "{:?}", h.tool.replacement.job);
     let mut expected = original;
@@ -258,6 +260,13 @@ fn replaces_ninth_part_preserving_other_numbers_and_world_transforms() {
     assert!(position.abs_diff_eq(captured[8].position, 1e-5));
     assert!(rotation.abs_diff_eq(captured[8].rotation, 1e-5));
     assert_eq!(h.world.objects.get(replacement).unwrap().scale, captured[8].size);
+    let old = h.world.objects.index_of_uuid(&demo::id(demo::TARGET)).unwrap();
+    let (position, rotation) = region_transform(&h.world, old).unwrap();
+    assert!(position.abs_diff_eq(source_before.position, 1e-5));
+    assert!(rotation.abs_diff_eq(captured[8].rotation, 1e-5));
+    let old = h.world.objects.get(old).unwrap();
+    assert_eq!(old.parent_id, 0);
+    assert_eq!(old.scale, captured[8].size);
     assert!(!h.script_changes.contains(&(demo::id(demo::ROOT + 6), true)));
 }
 
@@ -278,6 +287,8 @@ fn position_rotation_size_and_pause_options_are_independent() {
     assert!(position.abs_diff_eq(before.position, 1e-5));
     assert!(rotation.abs_diff_eq(Quat::IDENTITY, 1e-5));
     assert_eq!(h.world.objects.get(source).unwrap().scale, before.size);
+    let old = h.world.objects.index_of_uuid(&demo::id(demo::TARGET)).unwrap();
+    assert!(region_transform(&h.world, old).unwrap().0.abs_diff_eq(before.position, 1e-5));
     assert!(h.script_changes.is_empty());
 }
 

@@ -1800,7 +1800,7 @@ fn dialogs(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut Contact
         }
     };
     let mut done: Option<bool> = None;
-    let modal = egui::Modal::new(egui::Id::new("contacts_dialog")).show(ctx, |ui| {
+    let modal = crate::ui::widgets::Modal::new(egui::Id::new("contacts_dialog")).show(ctx, |ui| {
         ui.set_width(360.0);
         ui.label(RichText::new(title).size(15.0).strong().color(p.ink));
         ui.add_space(6.0);

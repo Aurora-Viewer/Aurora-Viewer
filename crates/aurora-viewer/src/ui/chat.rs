@@ -744,8 +744,8 @@ fn conversation(
 
 /// Width of the conversation list and of its entries (the vertical tabs of
 /// FSFloaterIMContainer have a fixed width too: tab_width="115").
-const LIST_W: f32 = 140.0;
-const ENTRY_W: f32 = 136.0;
+const LIST_W: f32 = 170.0;
+const ENTRY_W: f32 = 166.0;
 const UNREAD_DOT_R: f32 = 4.0;
 
 /// One entry of the conversation list: picture (or initials), name, unread
@@ -761,9 +761,9 @@ fn list_entry(
     sel: bool,
     unread: usize,
 ) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(ENTRY_W, 24.0), egui::Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(ENTRY_W, 34.0), egui::Sense::click());
     let fill = if sel {
-        p.raised
+        p.violet.gamma_multiply(0.22)
     } else if resp.hovered() {
         p.field.gamma_multiply(1.4)
     } else {
@@ -859,7 +859,7 @@ pub fn show(
         "conversations",
         title,
         egui::pos2(screen.left() + 8.0, screen.bottom() - 400.0),
-        egui::vec2(600.0, 360.0),
+        egui::vec2(700.0, 440.0),
     );
     if st.contacts {
         // the tear-off button of the multi-floater, for the Contacts tab

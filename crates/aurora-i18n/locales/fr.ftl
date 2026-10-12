@@ -1,4 +1,19 @@
 language-name = Français
+
+inventory-move-to = Déplacer vers…
+inventory-move-filter = Filtrer les dossiers par nom…
+inventory-move-selection-name = Déplacer « { $name } »
+inventory-move-selection-count = Déplacer { $count } éléments
+inventory-move-no-folders = Aucun dossier disponible pour ce filtre.
+inventory-move-folder-count = { $count ->
+    [one] { $count } dossier disponible
+   *[other] { $count } dossiers disponibles
+    }
+inventory-move-loading = Chargement des dossiers…
+inventory-move-loading-failed = Certains dossiers n’ont pas pu être chargés.
+inventory-move-confirm = Déplacer
+inventory-move-connection-unavailable = Le déplacement est impossible : la connexion à la région est indisponible.
+inventory-move-invalid-target = L’élément ou le dossier de destination est introuvable. Rechargez l’inventaire.
 ao-title = AO · Animations de l’avatar
 ao-help = Choisissez un ensemble, puis ajoutez des animations de l’inventaire à chaque état. Importez une notecard ZHAO placée dans le même dossier que ses animations. Les ensembles et options sont conservés dans #Firestorm/#AO. Un double-clic choisit une animation ; un groupe joue ses membres ensemble, une piste possède son propre cycle.
 ao-enabled = Activer l’AO
@@ -3521,6 +3536,9 @@ bug-reflections = Reflets
 bug-texture-budget = Mémoire des textures
 bug-max-avatars = Nombre maximal d’avatars
 bug-vsync = Synchronisation verticale
+bug-frame-limit = Limite d’images par seconde
+bug-present-mode = Mode de présentation
+bug-screen-rate = Fréquence de l’écran
 bug-log-redacted = [détails libres retirés]
 bug-log-additional = autre diagnostic
 bug-log-validation = erreur de validation graphique
@@ -3677,7 +3695,7 @@ replace-copy-contents = Copier le contenu
 replace-contents-help = Ajouter le contenu de l’ancien au nouveau, si les droits autorisent la copie et sans conflit de noms. Les scripts copiés démarrent dans leur état initial, sans leur mémoire d’exécution.
 replace-pause-scripts = Désactiver les scripts temporairement
 replace-scripts-help = Arrêter les scripts du linkset et du remplaçant pendant l’opération, puis restaurer leur état initial. Les scripts déjà arrêtés restent arrêtés.
-replace-old-kept = Ancien prim : délié et conservé à côté du remplaçant.
+replace-old-kept = Ancien prim : délié et placé à la position initiale du remplaçant.
 replace-number-kept = Le nouveau prim prendra le lien #{ $number }. Les autres numéros seront conservés.
 replace-validate = Valider le remplacement
 replace-waiting-server = En attente de confirmation du serveur…
@@ -3707,7 +3725,6 @@ replace-too-many = Un linkset ne peut pas dépasser 256 prims.
 replace-changed = La structure, les droits ou le placement ont changé. Recommencez le remplacement.
 replace-static = Désactivez la physique et le caractère temporaire des objets avant de les remplacer.
 replace-world-only = Le remplacement concerne les objets posés dans le monde, sans attachement ni avatar assis.
-replace-room = Il manque de la place pour conserver l’ancien prim dans cette région.
 replace-incompatible-rights = Les permissions de copie et de transfert des pièces sont incompatibles.
 replace-no-copy = Le contenu « { $name } » ne peut pas être copié. Aucun contenu sans droit de copie n’est déplacé.
 replace-name-conflict = Le nom « { $name } » existe déjà dans le remplaçant ou est présent plusieurs fois. Renommez-le avant de copier.
@@ -3720,3 +3737,102 @@ replace-timeout = Le serveur n’a pas confirmé l’étape « { $stage } » en 
 replace-restored-after-error = { $reason } La configuration initiale et l’état des scripts ont été restaurés. Les copies temporaires éventuelles sont conservées dans l’inventaire.
 replace-stopped-before-unlink = { $reason } Aucune pièce n’a été déliée. L’état initial des scripts a été restauré et les copies temporaires éventuelles sont conservées dans l’inventaire.
 replace-recovery-incomplete = Récupération incomplète : { $reason } Vérifiez les pièces dans la scène et les scripts restés arrêtés.
+
+# Compact build workspace
+build-compact-title = Construire
+build-compact-help = Ctrl+B : ouvrir / fermer ; Ctrl+1 à 5 : caméra, déplacer, modifier, créer, terrain.
+build-compact-transform = Transformer
+build-compact-shape = Forme
+build-compact-materials = Matériaux
+build-compact-features = Attributs
+build-compact-rights = Droits
+build-compact-contents = Contenu
+build-compact-multiple = Sélection multiple
+build-compact-selection = Objet sélectionné
+build-compact-select-hint = Clique sur un objet pour commencer.
+build-compact-waiting = Propriétés en cours de chargement…
+build-compact-editable = Modifiable
+build-compact-readonly = Lecture seule
+build-compact-counts = { $objects ->
+    [one] { $objects } objet
+   *[other] { $objects } objets
+    } · { $prims ->
+    [one] { $prims } prim
+   *[other] { $prims } prims
+    }
+build-compact-impact = Impact { $impact }
+build-compact-move = Bouger
+build-compact-rotate = Pivoter (Ctrl)
+build-compact-stretch = Étirer (Ctrl+Maj)
+build-compact-face = Choisir une face
+build-compact-align = Aligner (Maj : empiler)
+build-compact-world = Monde
+build-compact-local = Local
+build-compact-reference = Référence
+build-compact-grid-options = Options de la grille (Ctrl+Maj+B)
+build-compact-linked = Modifier les parties liées
+build-compact-snap = Accrocher à la grille
+build-compact-previous = Partie / face précédente (Ctrl+,)
+build-compact-next = Partie / face suivante (Ctrl+.)
+build-compact-options = Options de manipulation
+build-compact-both-sides = Étirer les deux côtés
+build-compact-stretch-textures = Étirer les textures
+build-compact-root-axis = Axe d’édition à la racine
+build-compact-highlight = Afficher le surlignage
+build-compact-probes = Sélectionner les sondes de réflexion
+build-compact-undo = Annuler (Ctrl+Z)
+build-compact-redo = Rétablir (Ctrl+Y)
+build-compact-duplicate = Dupliquer
+build-compact-link = Lier (Ctrl+L)
+build-compact-unlink = Délier (Ctrl+Maj+L)
+build-compact-collapse = Replier / déplier les rubriques
+build-compact-paste-system = Coller depuis le presse-papiers système
+build-compact-paste-vector = Coller le vecteur copié
+build-compact-copy-vector = Copier le vecteur
+build-compact-camera = Caméra
+build-compact-move-tool = Déplacer
+build-compact-edit = Modifier
+build-compact-create = Créer
+build-compact-land = Terrain
+build-compact-capacity = Capacité restante : { $remaining }. Cliquer pour voir les poids détaillés.
+build-compact-empty = Sélectionner un objet
+build-compact-selection-edit = Édition de la sélection
+build-compact-object-kind = Objet entier · { $kind }
+build-compact-prim = prim
+build-compact-mesh = mesh
+build-compact-object-count = { $count ->
+    [one] { $count } objet
+   *[other] { $count } objets
+    }
+build-compact-prim-count = { $count ->
+    [one] { $count } prim
+   *[other] { $count } prims
+    }
+build-compact-position = Position · m
+build-compact-size = Taille · m
+build-compact-rotation = Rotation · °
+build-compact-selection-snap = Sélection et accrochage
+build-compact-grid-unit = { $unit } m
+build-compact-copy-hint = Maj + glisser : copier
+build-compact-create-hint = Cliquer : créer
+build-compact-land-hint = Maintenir : peindre
+build-compact-drag-hint = Glisser dans le monde
+
+# Compact build inspector, C3
+build-c3-remaining = { $remaining } disponibles
+build-c3-emission-options = Émission et options
+build-c3-maps-tints = Cartes et teintes
+build-c3-texture-transform = Transformation des textures
+build-c3-material-assigned = Matériau PBR appliqué
+build-c3-choose = Choisir…
+
+workspace-inventory-selected = { $count } sélectionné(s)
+
+workspace-land-identity = Identité et propriété
+workspace-land-sale = Vente et informations
+workspace-land-actions = Actions sur la parcelle
+workspace-outfit-selection = Sélectionnez une tenue
+workspace-outfit-items = { $count } éléments dans cette tenue
+
+ui-inventory-received-purchases = Achats reçus
+ui-inventory-no-received-purchases = Aucun achat reçu pour le moment.

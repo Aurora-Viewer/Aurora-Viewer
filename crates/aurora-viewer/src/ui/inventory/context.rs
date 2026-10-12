@@ -60,7 +60,7 @@ pub(super) fn open(inv: &Inventory, id: Uuid, st: &mut InventoryUi, prefs: &Inve
         actions.push(InvAction::Preview(original));
     }
 }
-fn new_menu(
+pub(super) fn new_menu(
     ui: &mut egui::Ui,
     p: &Palette,
     id: Uuid,
@@ -470,6 +470,9 @@ pub(super) fn show(
             if let Some(id) = ids.first() {
                 ui.ctx().copy_text(id.to_string());
             }
+        }
+        if menu::item_if(ui, p, "folder", aurora_i18n::tr!("inventory-move-to"), ready && movable) {
+            st.begin_move_to(id);
         }
         let to = folder.map(|_| id).or_else(|| rules::parent(inv, id));
         let paste = ready

@@ -278,7 +278,7 @@ impl PlacesUi {
         }
         let screen = ctx.content_rect();
         // floater_places.xml: 333 x 588 (200 x 200 at least)
-        let size = Vec2::new(333.0, 588.0);
+        let size = Vec2::new(400.0, 588.0);
         let pos = screen.center() - size * 0.5 + Vec2::new(120.0, 0.0);
         let mut floater = Floater::new("places", aurora_i18n::tr!("common-places"), pos, size);
         floater.min_size = Vec2::new(260.0, 300.0);
@@ -322,7 +322,7 @@ impl PlacesUi {
             ),
         };
         let mut answer = None;
-        let modal = egui::Modal::new(egui::Id::new("places_confirm")).show(ctx, |ui| {
+        let modal = crate::ui::widgets::Modal::new(egui::Id::new("places_confirm")).show(ctx, |ui| {
             ui.set_width(340.0);
             ui.label(RichText::new(title).size(15.0).strong().color(p.ink));
             ui.add_space(6.0);

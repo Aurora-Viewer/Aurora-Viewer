@@ -78,7 +78,7 @@ impl TexturePicker {
         let mut chosen = None;
         let mut open = true;
         let screen = ctx.content_rect();
-        let size = Vec2::new(440.0, 420.0);
+        let size = Vec2::new(500.0, 460.0);
         Floater::new("texture_picker", self.title.clone(), screen.center() - size * 0.5, size).show(ctx, p, &mut open, |ui| {
             let filter = self.filter.trim().to_lowercase();
             let materials = self.materials;
@@ -99,16 +99,16 @@ impl TexturePicker {
             items.sort_by_key(|i| i.name.to_lowercase());
             ui.horizontal_top(|ui| {
                 ui.vertical(|ui| {
-                    ui.set_width(200.0);
+                    ui.set_width((ui.available_width() - 208.0).max(150.0));
                     let hint = if materials {
                         aurora_i18n::tr!("ui-texture-picker-filter-materials")
                     } else {
                         aurora_i18n::tr!("common-filter-textures")
                     };
-                    widgets::search_field(ui, &mut self.filter, hint, 200.0);
+                    widgets::search_field(ui, &mut self.filter, hint, ui.available_width());
                     ui.add_space(4.0);
                     egui::ScrollArea::vertical()
-                        .max_height(290.0)
+                        .max_height((ui.available_height() - 8.0).max(120.0))
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
                             if items.is_empty() {
@@ -133,7 +133,7 @@ impl TexturePicker {
                 });
                 ui.add_space(8.0);
                 ui.vertical(|ui| {
-                    let (rect, _) = ui.allocate_exact_size(Vec2::splat(180.0), egui::Sense::hover());
+                    let (rect, _) = ui.allocate_exact_size(Vec2::splat(188.0), egui::Sense::hover());
                     ui.painter().rect_filled(rect, 2.0, p.field);
                     if let Some(a) = self.selected.filter(|_| !materials) {
                         self.wanted_images.insert(a);

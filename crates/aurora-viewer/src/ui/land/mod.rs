@@ -296,7 +296,7 @@ impl LandUi {
         }
         let view = self.view(world);
         let screen = ctx.content_rect();
-        let size = Vec2::new(620.0, 560.0);
+        let size = Vec2::new(790.0, 620.0);
         let mut floater = Floater::new(
             "about_land",
             aurora_i18n::tr!("common-about-land"),
@@ -304,7 +304,7 @@ impl LandUi {
             size,
         )
         .help(aurora_i18n::tr!("ui-land-mod-information-and-settings-for-the-selected-parcel"));
-        floater.min_size = Vec2::new(580.0, 500.0);
+        floater.min_size = Vec2::new(740.0, 470.0);
         floater.show(ctx, p, open, |ui| {
             // FIRE-17280: no experiences tab where the region has none
             let has_xp = demo
@@ -326,43 +326,104 @@ impl LandUi {
             .into_iter()
             .filter(|t| *t != Tab::Experiences || has_xp)
             .collect();
-            let labels: Vec<(&str, bool)> = tabs.iter().map(|t| (t.label(), true)).collect();
-            let mut idx = tabs.iter().position(|t| *t == self.tab).unwrap_or(0);
-            widgets::tabs(ui, p, &mut idx, &labels);
-            self.tab = tabs[idx];
-            ui.add_space(8.0);
-            let body = egui::Rect::from_min_max(ui.cursor().min, ui.max_rect().max);
-            ui.allocate_rect(body, egui::Sense::hover());
-            let mut child = ui.new_child(
-                egui::UiBuilder::new()
-                    .max_rect(body)
-                    .layout(egui::Layout::top_down(egui::Align::Min)),
-            );
-            child.set_clip_rect(body.intersect(ui.clip_rect()));
-            let ui = &mut child;
-            ui.spacing_mut().item_spacing.y = 4.0;
-            // the tabs made of rows scroll when the window is small; the
-            // others size their lists to the height left
-            let scroll = |ui: &mut egui::Ui, body: &mut dyn FnMut(&mut egui::Ui)| {
-                egui::ScrollArea::vertical()
-                    .id_salt("about_land_body")
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        ui.set_width(ui.available_width() - 6.0);
-                        body(ui)
-                    });
-            };
-            match self.tab {
-                Tab::General => scroll(ui, &mut |ui| general::show(ui, p, self, &view, world)),
-                Tab::Covenant => covenant::show(ui, p, &view, world),
-                Tab::Objects => objects::show(ui, p, self, &view, world),
-                Tab::Options => scroll(ui, &mut |ui| options::show(ui, p, self, &view, world, images)),
-                Tab::Media => scroll(ui, &mut |ui| media::show(ui, p, self, &view, world, images)),
-                Tab::Sound => streams_changed = sound::show(ui, p, self, &view, world, streams),
-                Tab::Access => access::show(ui, p, self, &view, world),
-                Tab::Experiences => experiences::show(ui, p, self, &view, world),
-                Tab::Environment => environment::show(ui, p, self, &view, world),
+            if !tabs.contains(&self.tab) {
+                self.tab = Tab::General;
             }
+            let height = ui.available_height();
+            ui.horizontal_top(|ui| {
+                ui.allocate_ui_with_layout(Vec2::new(140.0, height), egui::Layout::top_down(egui::Align::Min), |ui| {
+                    ui.set_width(140.0);
+                    egui::ScrollArea::vertical().id_salt("land_navigation").show(ui, |ui| {
+                        for tab in tabs {
+                            let icon = match tab {
+                                Tab::General => "house",
+                                Tab::Covenant => "file-text",
+                                Tab::Objects => "cube",
+                                Tab::Options => "gear-six",
+                                Tab::Media => "image",
+                                Tab::Sound => "speaker-high",
+                                Tab::Access => "users-three",
+                                Tab::Experiences => "flask",
+                                Tab::Environment => "leaf",
+                            };
+                            if widgets::navigation(ui, p, icon, tab.label(), self.tab == tab).clicked() {
+                                self.tab = tab;
+                            }
+                        }
+                    });
+                });
+                ui.separator();
+                ui.vertical(|ui| {
+                    ui.set_width(ui.available_width());
+                    if let Some(parcel) = &view.parcel {
+                        widgets::surface(ui, p, |ui| {
+                            ui.set_min_width(ui.available_width());
+                            ui.add(egui::Label::new(RichText::new(&parcel.name).size(18.0).strong().color(p.ink)).truncate());
+                            if let Some(region) = &view.region {
+                                ui.label(RichText::new(&region.name).size(11.0).color(p.muted));
+                            }
+                            ui.horizontal(|ui| {
+                                widgets::stat(
+                                    ui,
+                                    p,
+                                    aurora_i18n::tr!("common-area"),
+                                    &format!("{} m²", aurora_i18n::integer(parcel.area as i64)),
+                                );
+                                ui.separator();
+                                widgets::stat(
+                                    ui,
+                                    p,
+                                    aurora_i18n::tr!("common-objects"),
+                                    &format!(
+                                        "{} / {}",
+                                        parcel.total_prims,
+                                        ((parcel.max_prims as f32 * parcel.prim_bonus).round() as i32).min(
+                                            view.region
+                                                .as_ref()
+                                                .filter(|r| r.max_tasks > 0)
+                                                .map_or(i32::MAX, |r| r.max_tasks as i32)
+                                        )
+                                    ),
+                                );
+                            });
+                        });
+                    }
+                    ui.add_space(6.0);
+                    widgets::section_header(ui, p, "sliders", self.tab.label());
+                    let body = egui::Rect::from_min_max(ui.cursor().min, ui.max_rect().max);
+                    ui.allocate_rect(body, egui::Sense::hover());
+                    let mut child = ui.new_child(
+                        egui::UiBuilder::new()
+                            .max_rect(body)
+                            .layout(egui::Layout::top_down(egui::Align::Min)),
+                    );
+                    child.set_clip_rect(body.intersect(ui.clip_rect()));
+                    let ui = &mut child;
+                    ui.spacing_mut().item_spacing.y = 4.0;
+                    // the tabs made of rows scroll when the window is small; the
+                    // others size their lists to the height left
+                    let scroll = |ui: &mut egui::Ui, body: &mut dyn FnMut(&mut egui::Ui)| {
+                        egui::ScrollArea::vertical()
+                            .id_salt("about_land_body")
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                ui.set_width(ui.available_width() - 6.0);
+                                body(ui)
+                            });
+                    };
+                    match self.tab {
+                        Tab::General => scroll(ui, &mut |ui| general::show(ui, p, self, &view, world)),
+                        Tab::Covenant => covenant::show(ui, p, &view, world),
+                        Tab::Objects => objects::show(ui, p, self, &view, world),
+                        Tab::Options => scroll(ui, &mut |ui| options::show(ui, p, self, &view, world, images)),
+                        Tab::Media => scroll(ui, &mut |ui| media::show(ui, p, self, &view, world, images)),
+                        Tab::Sound => streams_changed = sound::show(ui, p, self, &view, world, streams),
+                        Tab::Access => access::show(ui, p, self, &view, world),
+                        Tab::Experiences => experiences::show(ui, p, self, &view, world),
+                        Tab::Environment => environment::show(ui, p, self, &view, world),
+                    }
+                });
+            });
         });
         dialogs::show(ctx, p, self, &view, world);
         if let Some(ids) = self.picker.show(ctx, p, world) {
