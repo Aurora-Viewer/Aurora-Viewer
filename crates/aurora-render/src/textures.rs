@@ -17,6 +17,13 @@
 //! The image is unchanged: a layer holds the same texels and mip chain as
 //! the standalone texture did, and is sampled with the same sampler and the
 //! same implicit derivatives.
+//!
+//! Pages are created and destroyed off the frame's threads, by the page
+//! thread ([`PageWorker`]): the streamer asks before each upload whether
+//! its layer is there ([`TextureTable::prepare_page`]), and the page of a
+//! size is made ahead of the uploads queued for it. Textures created by a
+//! direct call (media, ban lines, the reserved slots) still create their
+//! page on the spot when they need one.
 
 use crate::upload::{StagedTexture, UploadQueue};
 use crate::writes::{GpuWrites, TexelDst};
@@ -66,62 +73,200 @@ const REBUILD_THROTTLE: Duration = Duration::from_millis(100);
 /// teleport, a crowd leaving) would keep their memory.
 const COMPACT_INTERVAL: Duration = Duration::from_secs(1);
 const COMPACT_MAX_BYTES: u64 = 16 << 20;
-/// Emptied pages are handed to the reaper thread one every this long (and
+/// Emptied pages are handed to the page thread one every this long (and
 /// at least one, at most [`PAGES_DESTROYED_PER_FRAME`], a frame). Once the
 /// bind group no longer holds a page, dropping it frees its video memory:
 /// ~0.4 ms each on the thread that drops it. The pages a rebuild released
 /// went together (1 to 4 ms in the frames where textures move to a finer
 /// level), and the ~300 pages of a region left by teleport made one
 /// submit of 18 to 50 ms. Paced, because the render thread meets the
-/// reaper on the device's memory allocator at each queue write.
+/// page thread on the device's memory allocator at each queue write.
 /// With the frames drawn by the render thread (render_thread.rs), the frame
 /// in flight still holds the bind group of before the rebuild in its
-/// packet: handles are reference counted, so a page handed to the reaper
+/// packet: handles are reference counted, so a page handed to the page thread
 /// meanwhile lives until that frame ends (it is then freed there, by the
 /// render thread, never under a draw that reads it).
 const PAGE_DESTROY_INTERVAL: Duration = Duration::from_millis(4);
 const PAGES_DESTROYED_PER_FRAME: usize = 8;
 
-/// Pages to hand to the reaper `since_last` after the previous ones.
+/// Pages to hand to the page thread `since_last` after the previous ones.
 fn pages_to_destroy(waiting: usize, since_last: Duration) -> usize {
     let due = (since_last.as_micros() / PAGE_DESTROY_INTERVAL.as_micros()) as usize;
     waiting.min(due.clamp(1, PAGES_DESTROYED_PER_FRAME))
 }
 
+/// A page made for the streamed uploads and not used after this long is
+/// destroyed (the textures that asked for it were freed meanwhile).
+const SPARE_TTL: Duration = Duration::from_secs(2);
+/// A page asked from the page thread and not there after this long is
+/// created by the caller instead (one takes about a millisecond).
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(1);
+
 type DeadPage = (wgpu::Texture, wgpu::TextureView);
 
-/// Destroys emptied pages on a thread of its own, a few per frame.
-struct PageReaper {
-    /// None when the thread could not start: pages are then dropped by the
-    /// caller.
-    tx: Option<std::sync::mpsc::Sender<DeadPage>>,
+/// A page created by the page thread, not in the table yet.
+struct MadePage {
+    key: PageKey,
+    layers: u32,
+    texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    /// Time its creation took on the page thread.
+    ms: f32,
 }
 
-impl PageReaper {
-    fn new() -> Self {
-        let (tx, rx) = std::sync::mpsc::channel::<DeadPage>();
+enum PageJob {
+    Make { key: PageKey, layers: u32 },
+    Destroy(DeadPage),
+}
+
+/// Creates the pages of the streamed uploads and destroys the emptied ones
+/// on a thread of its own (`aurora-pages`). Most pages are carved out of a
+/// block of video memory the device already holds (a few µs), but the one
+/// that needs a new block (128 then 256 MB each) waits for the driver to
+/// allocate it, under the lock of the device's memory allocator: 1.0 to
+/// 1.6 ms on the main thread in the streaming demo, at times 3 to 10 ms on
+/// the grid with the video memory loaded. Smaller blocks
+/// (`MemoryHints::Manual`, 64 MB) were tried and not kept: each costs less
+/// (longest page creation 1.3 → 0.55 ms alone), but they come more often,
+/// and in the viewer the render thread's `r_resources` step got longer at
+/// worst (1.3 → 4.8 ms, median of 3 passes of the streaming demo; the
+/// blocks of the staging memory of its queue writes shrink with them).
+///
+/// The render thread still meets the page thread on that lock (each of its
+/// queue writes allocates a staging buffer), for the time of the block at
+/// most; the main thread no longer does.
+struct PageWorker {
+    /// None when the thread could not start: pages are then created and
+    /// dropped by the caller.
+    tx: Option<std::sync::mpsc::Sender<PageJob>>,
+    made: std::sync::mpsc::Receiver<MadePage>,
+}
+
+impl PageWorker {
+    fn new(device: &wgpu::Device) -> Self {
+        let (tx, rx) = std::sync::mpsc::channel::<PageJob>();
+        let (made_tx, made) = std::sync::mpsc::channel::<MadePage>();
+        let device = device.clone();
         let spawned = std::thread::Builder::new().name("aurora-pages".into()).spawn(move || {
-            for page in rx {
-                drop(page);
+            for job in rx {
+                match job {
+                    PageJob::Make { key, layers } => {
+                        let t0 = Instant::now();
+                        let (texture, view) = make_page(&device, key, layers);
+                        let ms = t0.elapsed().as_secs_f32() * 1000.0;
+                        // (the table is gone: the page is dropped here)
+                        let _ = made_tx.send(MadePage {
+                            key,
+                            layers,
+                            texture,
+                            view,
+                            ms,
+                        });
+                    }
+                    PageJob::Destroy(page) => drop(page),
+                }
             }
         });
         match spawned {
-            Ok(_) => PageReaper { tx: Some(tx) },
+            Ok(_) => PageWorker { tx: Some(tx), made },
             Err(e) => {
-                log::warn!("texture pages: reaper thread not started ({e}); pages are destroyed on the render thread");
-                PageReaper { tx: None }
+                log::warn!("texture pages: page thread not started ({e}); pages are created and destroyed by the frame's threads");
+                PageWorker { tx: None, made }
             }
         }
+    }
+
+    /// Ask for a page; false when the thread is not there to make it.
+    fn make(&self, key: PageKey, layers: u32) -> bool {
+        self.tx.as_ref().is_some_and(|tx| tx.send(PageJob::Make { key, layers }).is_ok())
     }
 
     fn destroy(&self, page: DeadPage) {
         if let Some(tx) = &self.tx {
             // (a page that cannot be sent comes back in the error and is
             // dropped here)
-            let _ = tx.send(page);
+            let _ = tx.send(PageJob::Destroy(page));
         }
     }
 }
+
+/// What to do about a page the streamed uploads wait for.
+#[derive(Debug, PartialEq, Eq)]
+enum Ask {
+    /// Ask the page thread for it.
+    Send,
+    /// Already asked: wait.
+    Wait,
+    /// Asked too long ago: the caller creates it.
+    GiveUp,
+}
+
+/// Pages asked from the page thread and not received yet, one per size.
+#[derive(Default)]
+struct PageRequests {
+    asked: HashMap<PageKey, Instant>,
+}
+
+impl PageRequests {
+    fn ask(&mut self, key: PageKey, now: Instant) -> Ask {
+        match self.asked.get(&key) {
+            None => {
+                self.asked.insert(key, now);
+                Ask::Send
+            }
+            Some(&since) if now.saturating_duration_since(since) < REQUEST_TIMEOUT => Ask::Wait,
+            Some(_) => {
+                // (if it still comes, it is a spare page like another)
+                self.asked.remove(&key);
+                Ask::GiveUp
+            }
+        }
+    }
+
+    fn done(&mut self, key: PageKey) {
+        self.asked.remove(&key);
+    }
+}
+
+/// A page that took long to create (video memory under pressure?) is worth
+/// a line: a hitch when the main thread created it, and on the page thread
+/// the render thread may have waited for the allocator's lock meanwhile.
+fn log_slow_page(key: PageKey, layers: u32, ms: f32, by: &str) {
+    if ms > 4.0 {
+        log::info!(
+            "texture page {}×{} ({} layers, {} MB) created in {ms:.1} ms by the {by}",
+            key.width,
+            key.height,
+            layers,
+            (layers as u64 * key.layer_bytes()) >> 20
+        );
+    }
+}
+
+fn make_page(device: &wgpu::Device, key: PageKey, layers: u32) -> DeadPage {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("texture page"),
+        size: wgpu::Extent3d {
+            width: key.width,
+            height: key.height,
+            depth_or_array_layers: layers,
+        },
+        mip_level_count: key.mips,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        // COPY_SRC: compaction copies layers between pages
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    // explicit: the default view of a one-layer texture would be D2
+    let view = texture.create_view(&wgpu::TextureViewDescriptor {
+        dimension: Some(wgpu::TextureViewDimension::D2Array),
+        ..Default::default()
+    });
+    (texture, view)
+}
+
 const NO_SLOT: u32 = u32::MAX;
 
 /// Mip level data, tightly packed RGBA8.
@@ -141,6 +286,12 @@ struct PageKey {
 }
 
 impl PageKey {
+    /// Key of a regular chain of `levels` levels, as `chain_key` keeps it.
+    fn of_chain(width: u32, height: u32, levels: u32) -> Self {
+        let mips = levels.min(32 - width.max(height).max(1).leading_zeros());
+        PageKey { width, height, mips }
+    }
+
     /// Bytes of one layer with its mip chain.
     fn layer_bytes(&self) -> u64 {
         (0..self.mips)
@@ -192,6 +343,15 @@ fn pack(page: u32, layer: u32) -> u32 {
 #[cfg(test)]
 fn unpack(loc: u32) -> (u32, u32) {
     (loc >> LAYER_BITS, loc & ((1 << LAYER_BITS) - 1))
+}
+
+/// Whether to have the next page of a size made while an upload takes one
+/// of its `free` layers (`spare`: those of the spare page, used once the
+/// others are full): when the `queued` uploads behind it need more layers
+/// than will be left, and no spare page will be.
+fn wants_spare(free: u32, spare: u32, queued: u32) -> bool {
+    let spare_left = if free > 0 { spare } else { 0 };
+    spare_left == 0 && queued > (free + spare).saturating_sub(1)
 }
 
 /// Layers of a new page of a size whose pages already hold `allocated`
@@ -307,11 +467,28 @@ struct PageStore {
     dropped: bool,
     freed: bool,
     warned_full: bool,
-    /// CPU time spent creating pages, accumulated (AURORA_PROFILE).
-    create_ms: f32,
+    /// Pages created so far, by whom and in how long (AURORA_PROFILE).
+    made: PagesMade,
+    /// Pages the page thread made, waiting for the first texture of their
+    /// size (with when they arrived).
+    spares: Vec<(MadePage, Instant)>,
     /// Emptied pages the current bind group may still hold: taken by
     /// `TextureTable::maintain` once it is rebuilt.
     retired: Vec<DeadPage>,
+}
+
+/// Pages created since the start: by the caller (the main thread) and by
+/// the page thread, with the time they took there.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct PagesMade {
+    pub inline: u32,
+    pub inline_ms: f32,
+    pub threaded: u32,
+    pub threaded_ms: f32,
+    /// The longest one on the page thread.
+    pub threaded_max_ms: f32,
+    /// Made by the page thread and destroyed unused (`SPARE_TTL`).
+    pub unused: u32,
 }
 
 impl PageStore {
@@ -335,7 +512,8 @@ impl PageStore {
             dropped: false,
             freed: false,
             warned_full: false,
-            create_ms: 0.0,
+            made: PagesMade::default(),
+            spares: Vec::new(),
             retired: Vec::new(),
         }
     }
@@ -379,6 +557,75 @@ impl PageStore {
         self.find_layer(key, slot, None)
     }
 
+    /// Whether a page can still be added to the table.
+    fn has_page_room(&self) -> bool {
+        !self.free_pages.is_empty() || (self.pages.len() as u32) < self.page_capacity
+    }
+
+    /// Layers of the next page of a size, from what its pages already hold
+    /// (the spare one included).
+    fn next_page_layers(&self, key: PageKey) -> u32 {
+        let layers: u64 = self
+            .by_key
+            .get(&key)
+            .map_or(0, |ids| ids.iter().filter_map(|&p| self.page(p)).map(|p| p.layers.len as u64).sum());
+        let allocated = (layers + self.spare_layers(key) as u64) * key.layer_bytes();
+        page_layers(key.layer_bytes(), allocated, self.max_layers)
+    }
+
+    /// Free layers in the pages of a size.
+    fn free_layers(&self, key: PageKey) -> u32 {
+        self.by_key.get(&key).map_or(0, |ids| {
+            ids.iter()
+                .filter_map(|&p| self.page(p))
+                .map(|p| p.layers.len - p.layers.used())
+                .sum()
+        })
+    }
+
+    /// Layers of the spare pages of a size.
+    fn spare_layers(&self, key: PageKey) -> u32 {
+        self.spares.iter().filter(|(p, _)| p.key == key).map(|(p, _)| p.layers).sum()
+    }
+
+    /// Whether `slot` has a layer of that size of its own (new texels of
+    /// that size overwrite it in place).
+    fn holds(&self, slot: u32, key: PageKey) -> bool {
+        self.slots
+            .get(slot as usize)
+            .and_then(Option::as_ref)
+            .is_some_and(|s| s.key == key && !s.shared)
+    }
+
+    /// A page from the page thread: kept until a texture of its size needs
+    /// a layer (`new_page`).
+    fn add_spare(&mut self, page: MadePage) {
+        self.made.threaded += 1;
+        self.made.threaded_ms += page.ms;
+        self.made.threaded_max_ms = self.made.threaded_max_ms.max(page.ms);
+        log_slow_page(page.key, page.layers, page.ms, "page thread");
+        self.spares.push((page, Instant::now()));
+    }
+
+    /// The spare pages no texture took in `SPARE_TTL` (no bind group ever
+    /// held them: they can be destroyed at once).
+    fn expired_spares(&mut self, now: Instant) -> Vec<DeadPage> {
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i < self.spares.len() {
+            if now.saturating_duration_since(self.spares[i].1) >= SPARE_TTL {
+                let (page, _) = self.spares.swap_remove(i);
+                out.push((page.texture, page.view));
+                self.made.unused += 1;
+            } else {
+                i += 1;
+            }
+        }
+        out
+    }
+
+    /// A new page of that size in the table: the spare one the page thread
+    /// made if there is one, else created here.
     fn new_page(&mut self, device: &wgpu::Device, key: PageKey) -> Option<u32> {
         let index = match self.free_pages.pop() {
             Some(Reverse(i)) => i,
@@ -393,46 +640,22 @@ impl PageStore {
                 return None;
             }
         };
-        let allocated: u64 = self.by_key.get(&key).map_or(0, |ids| {
-            ids.iter()
-                .filter_map(|&p| self.page(p))
-                .map(|p| p.layers.len as u64 * key.layer_bytes())
-                .sum()
-        });
-        let layers = page_layers(key.layer_bytes(), allocated, self.max_layers);
-        let t0 = Instant::now();
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("texture page"),
-            size: wgpu::Extent3d {
-                width: key.width,
-                height: key.height,
-                depth_or_array_layers: layers,
-            },
-            mip_level_count: key.mips,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            // COPY_SRC: compaction copies layers between pages
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
-        });
-        // explicit: the default view of a one-layer texture would be D2
-        let view = texture.create_view(&wgpu::TextureViewDescriptor {
-            dimension: Some(wgpu::TextureViewDimension::D2Array),
-            ..Default::default()
-        });
-        let ms = t0.elapsed().as_secs_f32() * 1000.0;
-        self.create_ms += ms;
-        if ms > 4.0 {
-            // a hitch worth explaining (video memory under pressure?)
-            log::info!(
-                "texture page {}×{} ({} layers, {} MB) created in {ms:.1} ms",
-                key.width,
-                key.height,
-                layers,
-                (layers as u64 * key.layer_bytes()) >> 20
-            );
-        }
+        let (layers, texture, view) = match self.spares.iter().position(|(p, _)| p.key == key) {
+            Some(at) => {
+                let (page, _) = self.spares.swap_remove(at);
+                (page.layers, page.texture, page.view)
+            }
+            None => {
+                let layers = self.next_page_layers(key);
+                let t0 = Instant::now();
+                let (texture, view) = make_page(device, key, layers);
+                let ms = t0.elapsed().as_secs_f32() * 1000.0;
+                self.made.inline += 1;
+                self.made.inline_ms += ms;
+                log_slow_page(key, layers, ms, "main thread");
+                (layers, texture, view)
+            }
+        };
         self.page_bytes += layers as u64 * key.layer_bytes();
         self.pages[index as usize] = Some(Page {
             key,
@@ -622,22 +845,10 @@ impl PageStore {
     /// Whether new texels of this size for `slot` would need a new page
     /// (none of that size has a free layer, and the slot is not already of
     /// that size). `levels`: length of the mip chain, as uploaded.
+    #[cfg(test)]
     fn needs_page(&self, slot: u32, width: u32, height: u32, levels: u32) -> bool {
-        // the chain kept by `chain_key` for a regular chain
-        let mips = levels.min(32 - width.max(height).max(1).leading_zeros());
-        let key = PageKey { width, height, mips };
-        if self
-            .slots
-            .get(slot as usize)
-            .and_then(Option::as_ref)
-            .is_some_and(|s| s.key == key && !s.shared)
-        {
-            return false;
-        }
-        !self
-            .by_key
-            .get(&key)
-            .is_some_and(|ids| ids.iter().any(|&p| self.page(p).is_some_and(|pg| pg.layers.used() < pg.layers.len)))
+        let key = PageKey::of_chain(width, height, levels);
+        !self.holds(slot, key) && self.free_layers(key) == 0
     }
 
     fn free(&mut self, slot: u32) {
@@ -744,9 +955,11 @@ pub struct TextureTable {
     last_rebuild: Instant,
     last_compact: Instant,
     /// Emptied pages no bind group holds any more, destroyed a few per
-    /// frame by the reaper (`pages_to_destroy`).
+    /// frame by the page thread (`pages_to_destroy`).
     doomed: std::collections::VecDeque<DeadPage>,
-    reaper: PageReaper,
+    worker: PageWorker,
+    /// Pages the streamed uploads wait for.
+    requests: PageRequests,
     last_destroy: Instant,
 }
 
@@ -836,7 +1049,8 @@ impl TextureTable {
             last_rebuild: Instant::now(),
             last_compact: Instant::now(),
             doomed: Default::default(),
-            reaper: PageReaper::new(),
+            worker: PageWorker::new(device),
+            requests: PageRequests::default(),
             last_destroy: Instant::now(),
         }
     }
@@ -919,16 +1133,79 @@ impl TextureTable {
         self.store.capacity
     }
 
-    /// Whether new texels of this size for `slot` would need a new page
-    /// (none of that size has a free layer, and the slot is not already of
-    /// that size). `levels`: length of the mip chain, as uploaded.
-    pub fn needs_page(&self, slot: u32, width: u32, height: u32, levels: u32) -> bool {
-        self.store.needs_page(slot, width, height, levels)
+    /// CPU time the caller spent creating pages since the start (ms;
+    /// AURORA_PROFILE): those of the streamed uploads are made by the page
+    /// thread and cost it nothing (`prepare_page`).
+    pub fn page_create_ms(&self) -> f32 {
+        self.store.made.inline_ms
     }
 
-    /// CPU time spent creating pages since the start (ms; AURORA_PROFILE).
-    pub fn page_create_ms(&self) -> f32 {
-        self.store.create_ms
+    /// Pages created since the start, by the caller and by the page thread.
+    pub fn pages_made(&self) -> PagesMade {
+        self.store.made
+    }
+
+    /// Before a streamed upload (`replace` / `replace_staged` of a chain of
+    /// `levels` levels): true when its texels can be placed now without
+    /// creating a page. Otherwise the page is being made by the page thread
+    /// and the upload must wait for a later frame: creating it here cost
+    /// the main thread 0.4 to 1.5 ms whenever the device's allocator took a
+    /// new block of video memory, at times much more.
+    ///
+    /// `queued`: the other uploads of that size waiting behind this one.
+    /// When they outnumber the layers left, the next page is asked for at
+    /// once (one spare page per size at most), so that a size being loaded
+    /// finds its pages ready and waits only for its first one: a frame per
+    /// page would slow the uploads of the large sizes down at 60 frames a
+    /// second (a 2048² texture fills a page).
+    ///
+    /// True as well when the page thread cannot make the page (not started,
+    /// no answer in `REQUEST_TIMEOUT`, table full): the upload then creates
+    /// it or is refused, as before.
+    pub fn prepare_page(&mut self, slot: u32, width: u32, height: u32, levels: u32, queued: u32) -> bool {
+        self.receive_pages();
+        let key = PageKey::of_chain(width, height, levels);
+        if self.store.holds(slot, key) || !self.store.has_page_room() {
+            return true;
+        }
+        let (free, spare) = (self.store.free_layers(key), self.store.spare_layers(key));
+        if free + spare == 0 {
+            return !self.ask_for_page(key);
+        }
+        // this upload takes a layer (of the spare page when the others are
+        // full, which then joins the table)
+        if wants_spare(free, spare, queued) {
+            self.ask_for_page(key);
+        }
+        true
+    }
+
+    /// Have the page thread make the next page of a size, unless it is at
+    /// it already. False when it cannot: the caller creates the page.
+    fn ask_for_page(&mut self, key: PageKey) -> bool {
+        match self.requests.ask(key, Instant::now()) {
+            Ask::Send => {
+                if self.worker.make(key, self.store.next_page_layers(key)) {
+                    true
+                } else {
+                    self.requests.done(key);
+                    false
+                }
+            }
+            Ask::Wait => true,
+            Ask::GiveUp => {
+                log::warn!("texture pages: no page from the page thread in {REQUEST_TIMEOUT:?}; created by the main thread");
+                false
+            }
+        }
+    }
+
+    /// Take the pages the page thread finished.
+    fn receive_pages(&mut self) {
+        while let Ok(page) = self.worker.made.try_recv() {
+            self.requests.done(page.key);
+            self.store.add_spare(page);
+        }
     }
 
     pub fn is_full(&self) -> bool {
@@ -1027,6 +1304,10 @@ impl TextureTable {
     /// the bind group when pages changed (at once for a new page, throttled
     /// for dropped ones).
     pub fn maintain(&mut self, device: &wgpu::Device, writes: &mut GpuWrites, uploads: &mut UploadQueue, force: bool) {
+        self.receive_pages();
+        for page in self.store.expired_spares(Instant::now()) {
+            self.worker.destroy(page);
+        }
         if self.last_compact.elapsed() >= COMPACT_INTERVAL {
             self.last_compact = Instant::now();
             self.store.compact(device, uploads);
@@ -1054,7 +1335,7 @@ impl TextureTable {
             let n = pages_to_destroy(self.doomed.len(), self.last_destroy.elapsed());
             self.last_destroy = Instant::now();
             for page in self.doomed.drain(..n) {
-                self.reaper.destroy(page);
+                self.worker.destroy(page);
             }
         }
     }
@@ -1211,6 +1492,63 @@ mod tests {
                 layers
             })
             .collect()
+    }
+
+    #[test]
+    fn the_key_of_a_regular_chain_is_its_page_key() {
+        for (w, h) in [(1024u32, 1024u32), (512, 256), (384, 384), (2048, 2), (1, 1)] {
+            let full = 32 - w.max(h).leading_zeros();
+            // the whole chain, a cut one, and levels past 1×1 (ignored)
+            for levels in [full, full.min(3), full + 2] {
+                let dims = (0..levels).map(|l| (level_dim(w, l), level_dim(h, l), true));
+                assert_eq!(
+                    chain_key(dims, 16384),
+                    Some(PageKey::of_chain(w, h, levels)),
+                    "{w}×{h}, {levels} levels"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_next_page_is_asked_before_the_layers_run_out() {
+        // nothing waits behind this upload: no page ahead
+        assert!(!wants_spare(3, 0, 0));
+        // more uploads waiting than layers left once this one has its own
+        assert!(wants_spare(3, 0, 3));
+        assert!(!wants_spare(3, 0, 2));
+        // a spare page is there and stays one: never a second
+        assert!(!wants_spare(1, 6, 100));
+        // this upload starts the spare page: the next one if the queue fills it
+        assert!(wants_spare(0, 6, 6));
+        assert!(!wants_spare(0, 6, 5));
+        // a page of one layer (2048²): one ahead as long as uploads wait
+        assert!(wants_spare(0, 1, 1));
+        assert!(!wants_spare(0, 1, 0));
+    }
+
+    #[test]
+    fn a_page_is_asked_once_until_it_comes_or_is_given_up() {
+        let key = |width| PageKey {
+            width,
+            height: 64,
+            mips: 7,
+        };
+        let t0 = Instant::now();
+        let ms = Duration::from_millis;
+        let mut requests = PageRequests::default();
+        assert_eq!(requests.ask(key(64), t0), Ask::Send);
+        assert_eq!(requests.ask(key(64), t0 + ms(10)), Ask::Wait);
+        // each size has its own
+        assert_eq!(requests.ask(key(128), t0 + ms(10)), Ask::Send);
+        // received: the next page of that size is a new request
+        requests.done(key(64));
+        assert_eq!(requests.ask(key(64), t0 + ms(20)), Ask::Send);
+        // no answer: the caller creates the page, and may ask again later
+        assert_eq!(requests.ask(key(64), t0 + ms(19) + REQUEST_TIMEOUT), Ask::Wait);
+        assert_eq!(requests.ask(key(64), t0 + ms(20) + REQUEST_TIMEOUT), Ask::GiveUp);
+        assert_eq!(requests.ask(key(64), t0 + ms(21) + REQUEST_TIMEOUT), Ask::Send);
+        assert_eq!(requests.ask(key(128), t0 + ms(30)), Ask::Wait);
     }
 
     #[test]
@@ -1688,6 +2026,94 @@ mod tests {
             }
         }
         assert_eq!(store.live as usize, live.len() + RESERVED as usize);
+    }
+
+    /// The page thread on the GPU: a streamed upload waits for the first
+    /// page of its size, the next page is ready before the first is full
+    /// while uploads wait behind, and a spare page nothing took is
+    /// destroyed. `cargo test -p aurora-render page_thread -- --ignored`.
+    #[test]
+    #[ignore]
+    fn pages_come_from_the_page_thread() {
+        let instance = wgpu::Instance::default();
+        let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())) else {
+            eprintln!("no GPU adapter: skipped");
+            return;
+        };
+        let features = wgpu::Features::TEXTURE_BINDING_ARRAY
+            | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING
+            | (adapter.features() & wgpu::Features::PARTIALLY_BOUND_BINDING_ARRAY);
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            required_features: features,
+            required_limits: adapter.limits(),
+            ..Default::default()
+        }))
+        .expect("GPU device");
+        let mut writes = GpuWrites::default();
+        let mut table = TextureTable::new(&device, &mut writes, 512, 8);
+        let mut uploads = UploadQueue::new(&device, true);
+        // (the page of the reserved slots was created here)
+        let inline = table.pages_made().inline;
+        assert_eq!((table.pages(), table.pages_made().threaded), (1, 0));
+        // 64² with its mips is 21 KB: pages of 96 layers at first
+        const COUNT: u32 = 100;
+        let key = PageKey::of_chain(64, 64, 7);
+        let chain = |i: u32| -> Vec<Vec<u8>> { (0..7).map(|l| texels(i, 64, 64, l)).collect() };
+        let slots: Vec<u32> = (0..COUNT).map(|_| table.create_placeholder().expect("slot")).collect();
+        // true once the upload of `slot` can go, as the frames of the streamer ask
+        let ready = |table: &mut TextureTable, slot: u32, queued: u32| {
+            let t0 = Instant::now();
+            while !table.prepare_page(slot, 64, 64, 7, queued) {
+                assert!(t0.elapsed() < Duration::from_secs(5), "no page from the page thread");
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        };
+        // no page of that size yet: the page thread makes it, the upload waits
+        assert!(!table.prepare_page(slots[0], 64, 64, 7, COUNT - 1));
+        assert_eq!((table.pages(), table.store.free_layers(key)), (1, 0));
+        for (i, &slot) in slots.iter().enumerate() {
+            // (the second page was asked with the first upload: 99 waited
+            // behind it for the 95 layers left)
+            ready(&mut table, slot, COUNT - 1 - i as u32);
+            let levels = chain(i as u32);
+            let mips: Vec<MipLevel> = levels
+                .iter()
+                .enumerate()
+                .map(|(l, d)| MipLevel {
+                    width: level_dim(64, l as u32),
+                    height: level_dim(64, l as u32),
+                    data: d,
+                })
+                .collect();
+            assert!(table.replace(&device, &mut writes, slot, &mips));
+            // in place from now on: no layer, no page
+            assert!(table.prepare_page(slot, 64, 64, 7, 1000));
+        }
+        let made = table.pages_made();
+        assert_eq!((made.threaded, made.inline, table.pages()), (2, inline, 3));
+        assert_eq!((table.store.free_layers(key), table.store.spare_layers(key)), (2 * 96 - COUNT, 0));
+        table.maintain(&device, &mut writes, &mut uploads, false);
+        writes.replay(&mut QueueSink(&queue));
+        for (i, &slot) in slots.iter().enumerate() {
+            assert_eq!(read_back(&device, &queue, &table.store, slot), chain(i as u32), "slot {slot}");
+        }
+        // a page asked for an upload that never came: kept a while, then destroyed
+        let unused = PageKey::of_chain(32, 32, 6);
+        let extra = table.create_placeholder().expect("slot");
+        assert!(!table.prepare_page(extra, 32, 32, 6, 0));
+        let t0 = Instant::now();
+        while table.store.spare_layers(unused) == 0 {
+            assert!(t0.elapsed() < Duration::from_secs(5), "no page from the page thread");
+            std::thread::sleep(Duration::from_millis(1));
+            table.maintain(&device, &mut writes, &mut uploads, false);
+        }
+        assert_eq!((table.pages_made().threaded, table.pages()), (3, 3));
+        std::thread::sleep(SPARE_TTL);
+        table.maintain(&device, &mut writes, &mut uploads, false);
+        assert_eq!((table.store.spare_layers(unused), table.pages()), (0, 3));
+        assert_eq!(table.pages_made().unused, 1);
+        // asked again when an upload does come
+        assert!(!table.prepare_page(extra, 32, 32, 6, 0));
     }
 
     /// The whole table on the GPU as the renderer uses it: random creations,
