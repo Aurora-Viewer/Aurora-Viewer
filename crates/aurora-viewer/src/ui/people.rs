@@ -59,9 +59,8 @@ pub fn nearby(world: &World) -> Vec<(Uuid, String, Vec3, f32)> {
             out.push((*id, name, pos, pos.truncate().distance(me.truncate())));
         }
     }
-    for (_, o) in world.objects.iter() {
-        if o.is_avatar()
-            && o.full_id != world.agent_id
+    for (_, o) in world.objects.avatars() {
+        if o.full_id != world.agent_id
             && !out.iter().any(|e| e.0 == o.full_id)
             && let Some(off) = world.region_offset(o.key.region)
         {

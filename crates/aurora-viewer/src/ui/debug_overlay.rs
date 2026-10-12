@@ -245,10 +245,7 @@ pub fn draw(ctx: &egui::Context, world: &World, scene: &Scene, proj: &Projector,
             }
         }
         let pelvis = world.avatar_lib.pelvis;
-        for (idx, o) in world.objects.iter() {
-            if !o.is_avatar() {
-                continue;
-            }
+        for (idx, o) in world.objects.avatars() {
             let Some(poses) = world.avatar_poses.get(&o.full_id) else {
                 continue;
             };
