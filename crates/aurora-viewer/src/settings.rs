@@ -614,7 +614,23 @@ fn for_mode(dir: PathBuf) -> PathBuf {
     }
 }
 
+/// Unit tests never read or write the user's folders: theirs are in the
+/// build folder of the worktree.
+fn unit_test_root() -> Option<PathBuf> {
+    #[cfg(test)]
+    {
+        Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/unit-test-user-data"))
+    }
+    #[cfg(not(test))]
+    {
+        None
+    }
+}
+
 pub fn config_dir() -> PathBuf {
+    if let Some(root) = unit_test_root() {
+        return root.join("config");
+    }
     if let Some(test) = aurora_updater::test_environment() {
         return test.root.join("profile");
     }
@@ -639,6 +655,9 @@ pub fn accounts_dir() -> PathBuf {
 }
 
 pub fn cache_dir() -> PathBuf {
+    if let Some(root) = unit_test_root() {
+        return root.join("cache");
+    }
     if let Some(test) = aurora_updater::test_environment() {
         return test.root.join("cache");
     }

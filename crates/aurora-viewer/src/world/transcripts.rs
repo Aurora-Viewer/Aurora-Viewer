@@ -507,6 +507,13 @@ mod tests {
         w.poll_transcripts();
     }
 
+    /// The end of a test: its folder goes once the writer has nothing left
+    /// to write in it (a line still on its way made the removal fail).
+    fn clean(w: &World, root: &std::path::Path) {
+        assert!(w.chat_log.flush(WAIT));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     fn file_texts(w: &World, stem: &str) -> Vec<(String, String)> {
         let path = w.chat_log.file_of(stem).unwrap();
         chat_log::store::read_tail(&path)
@@ -547,7 +554,7 @@ mod tests {
         assert!(s.lines.iter().take(2).all(|l| l.source.is_nil()));
         assert_eq!(s.unread, 1);
         assert_eq!(file_texts(&w, "Jane Doe").len(), 3);
-        std::fs::remove_dir_all(&root).unwrap();
+        clean(&w, &root);
     }
 
     #[test]
@@ -568,7 +575,7 @@ mod tests {
         settle(&mut w);
         let shown: Vec<&str> = w.social.ims[0].lines.iter().map(|l| l.text.as_str()).collect();
         assert_eq!(shown, ["again"]);
-        std::fs::remove_dir_all(&root).unwrap();
+        clean(&w, &root);
     }
 
     #[test]
@@ -596,7 +603,7 @@ mod tests {
                 ("Jane Doe".to_owned(), "shouts: HELLO".to_owned())
             ]
         );
-        std::fs::remove_dir_all(&root).unwrap();
+        clean(&w, &root);
     }
 
     #[test]
@@ -634,7 +641,7 @@ mod tests {
         assert_eq!(shown, ["for alice only", "back"]);
         let nearby: Vec<&str> = w.chat.iter().filter(|l| l.origin == Origin::Log).map(|l| l.text.as_str()).collect();
         assert_eq!(nearby, ["alice's nearby line"]);
-        std::fs::remove_dir_all(&root).unwrap();
+        clean(&w, &root);
     }
 
     #[test]
@@ -693,7 +700,7 @@ mod tests {
         // opened by us: the server's lines are now in the file too
         assert!(w.chat_log.flush(WAIT));
         assert_eq!(file_texts(&w, &stem).len(), 4);
-        std::fs::remove_dir_all(&root).unwrap();
+        clean(&w, &root);
     }
 
     #[test]
@@ -719,7 +726,7 @@ mod tests {
         // a message that is not from storage has no such prefix
         w.on_im(im(jane, "Jane Doe", "hello"));
         assert_eq!(w.social.ims[0].lines[1].text, "hello");
-        std::fs::remove_dir_all(&root).unwrap();
+        clean(&w, &root);
     }
 
     #[test]
@@ -768,7 +775,7 @@ mod tests {
                 .iter()
                 .any(|c| matches!(c, NetCommand::RequestOfflineMessagesLegacy))
         );
-        std::fs::remove_dir_all(&root).unwrap();
+        clean(&w, &root);
     }
 
     #[test]
@@ -800,7 +807,7 @@ mod tests {
         // a resident never talked to has none
         w.social.names.insert(Uuid::from_u128(3), "Bob Roe".into());
         assert_eq!(w.transcript_of(Some(Uuid::from_u128(3))).1, None);
-        std::fs::remove_dir_all(&root).unwrap();
+        clean(&w, &root);
     }
 
     #[test]
@@ -819,7 +826,7 @@ mod tests {
         assert_eq!(file_texts(&w, "jane").len(), 1);
         // read after the line was written? no: the history was asked first
         assert!(w.social.ims[0].lines.iter().all(|l| l.origin == Origin::Live));
-        std::fs::remove_dir_all(&root).unwrap();
+        clean(&w, &root);
     }
 
     #[test]
@@ -835,6 +842,6 @@ mod tests {
         let s = &w.social.ims[0];
         assert_eq!(s.lines.len(), MAX_CHAT);
         assert_eq!(s.lines[0].text, "line 50");
-        std::fs::remove_dir_all(&root).unwrap();
+        clean(&w, &root);
     }
 }
