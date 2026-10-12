@@ -136,7 +136,8 @@ pub struct Settings {
     pub window_width: u32,
     pub window_height: u32,
     /// Last window position (outer, physical pixels) and maximized state
-    /// (Firestorm WindowX / WindowY / WindowMaximized).
+    /// (Firestorm WindowX / WindowY / WindowMaximized). A first launch opens
+    /// maximized (`window_starts_maximized`).
     pub window_x: Option<i32>,
     pub window_y: Option<i32>,
     pub window_maximized: bool,
@@ -619,6 +620,25 @@ pub fn cache_dir() -> PathBuf {
     )
 }
 
+/// What a settings file says of the viewer window: (its maximized state,
+/// whether it gives a size).
+fn saved_window_state(file: &serde_json::Value) -> (Option<bool>, bool) {
+    let maximized = file.get("window_maximized").and_then(serde_json::Value::as_bool);
+    let size = file.get("window_width").is_some() || file.get("window_height").is_some();
+    (maximized, size)
+}
+
+/// Whether the viewer window opens maximized. The state saved at the last
+/// exit when there is one: the user who restored the window keeps its size,
+/// the one who left it maximized finds it maximized. Without it: maximized
+/// on a first launch (no settings file, or one that says nothing of the
+/// window), but not when the file gives a size and no state, a size chosen
+/// by a script or a test. Never when the size is forced for the run
+/// (`forced`: a capture, which needs its exact window).
+pub(crate) fn window_starts_maximized(saved_maximized: Option<bool>, saved_size: bool, forced: bool) -> bool {
+    !forced && saved_maximized.unwrap_or(!saved_size)
+}
+
 impl Settings {
     /// Rendering exception of an avatar: 0 none, 1 never render fully,
     /// 2 always render fully.
@@ -647,10 +667,13 @@ impl Settings {
     }
 
     pub fn load() -> Settings {
-        let s = std::fs::read(Self::path())
+        // what the file says of the window: nothing on a first launch
+        let mut saved_window = (None, false);
+        let mut s = std::fs::read(Self::path())
             .ok()
             .and_then(|b| {
                 let value: serde_json::Value = serde_json::from_slice(&b).ok()?;
+                saved_window = saved_window_state(&value);
                 // Select before serde fills missing fields: default auto-replies
                 // must use the saved locale too, without replacing custom text.
                 aurora_i18n::select(
@@ -660,6 +683,8 @@ impl Settings {
                 serde_json::from_value::<Settings>(value).ok()
             })
             .unwrap_or_default();
+        let forced = std::env::var_os("AURORA_CAPTURE").is_some();
+        s.window_maximized = window_starts_maximized(saved_window.0, saved_window.1, forced);
         s.sanitized()
     }
 
@@ -1088,6 +1113,44 @@ mod tests {
             let loaded: Settings = serde_json::from_value(json).expect("settings with a stale key");
             assert_eq!(loaded.sanitized().keybinds.get(Action::HudDrag), slots);
         }
+    }
+
+    /// A first launch opens the viewer window maximized; afterwards the
+    /// window is what the user left.
+    #[test]
+    fn the_first_launch_window_is_maximized() {
+        let state = |json: &str| {
+            let file: serde_json::Value = serde_json::from_str(json).expect("synthetic settings");
+            let (maximized, size) = saved_window_state(&file);
+            (
+                window_starts_maximized(maximized, size, false),
+                window_starts_maximized(maximized, size, true),
+            )
+        };
+        // no settings file (nothing read), a blank one, one without a word of the window
+        assert!(window_starts_maximized(None, false, false));
+        assert_eq!(state("{}"), (true, false));
+        assert_eq!(state(r#"{"language":"fr","show_chat":true}"#), (true, false));
+        // the state saved at exit
+        assert_eq!(
+            state(r#"{"window_width":1600,"window_height":900,"window_maximized":false}"#),
+            (false, false)
+        );
+        assert_eq!(
+            state(r#"{"window_width":1600,"window_height":900,"window_maximized":true}"#),
+            (true, false)
+        );
+        // a size alone: forced by a script or a test
+        assert_eq!(state(r#"{"window_width":1280,"window_height":720}"#), (false, false));
+        // what a session writes always says both: a restored window stays restored
+        let mut left = Settings::default();
+        assert!(!left.window_maximized, "the default is the saved state of a restored window");
+        left.window_width = 1280;
+        let json = serde_json::to_string(&left).expect("serialize synthetic settings");
+        assert_eq!(state(&json), (false, false));
+        left.window_maximized = true;
+        let json = serde_json::to_string(&left).expect("serialize synthetic settings");
+        assert_eq!(state(&json), (true, false));
     }
 
     #[test]
