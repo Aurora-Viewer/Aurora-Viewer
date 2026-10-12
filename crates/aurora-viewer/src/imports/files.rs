@@ -9,7 +9,7 @@ use aurora_assets::{
 use sha2::{Digest, Sha256};
 use std::{fs::File, io::Read, path::Path};
 
-fn read(path: &Path) -> Result<Vec<u8>, AssetError> {
+pub(super) fn read(path: &Path) -> Result<Vec<u8>, AssetError> {
     let file = File::open(path).map_err(|_| AssetError::invalid("file cannot be opened"))?;
     let mut bytes = Vec::new();
     file.take(256 * 1024 * 1024 + 1)
@@ -97,6 +97,7 @@ pub(super) fn local_image(pixels: DecodedImage, name: String) -> LocalImage {
     let mut id = [0u8; 16];
     id.copy_from_slice(&digest[..16]);
     LocalImage {
+        path: None,
         key: Uuid::from_bytes(id),
         empty_alpha: import_texture::empty_alpha(&pixels),
         pixels: Arc::new(pixels),
@@ -104,7 +105,7 @@ pub(super) fn local_image(pixels: DecodedImage, name: String) -> LocalImage {
         name,
     }
 }
-fn mesh_scene(
+pub(super) fn mesh_scene(
     path: &Path,
     data: &[u8],
     assume_meters: bool,
@@ -315,6 +316,7 @@ pub(super) fn load(
                                     let mut id = [0u8; 16];
                                     id.copy_from_slice(&digest[..16]);
                                     let image = LocalImage {
+                                        path: None,
                                         key: Uuid::from_bytes(id),
                                         empty_alpha: import_texture::empty_alpha(&pixels),
                                         name: format!("{}_{}", path.file_stem().unwrap_or_default().to_string_lossy(), index + 1),
@@ -427,6 +429,7 @@ pub(super) fn load(
 pub(super) fn localize(entries: &mut [Entry], prefs: &Preferences) {
     for entry in entries {
         entry.local = true;
+        entry.local_assume_meters = prefs.local_assume_meters;
         if let Some(Source::Mesh(draft)) = &entry.source {
             entry.local_live = prefs.local_mesh_auto_reload;
             let mut paths = mesh_dependencies(&entry.path, &draft.scene);
@@ -504,7 +507,11 @@ impl Imports {
             {
                 let result = read(&path)
                     .and_then(|data| import_texture::decode_map(&data))
-                    .map(|pixels| local_image(pixels, path.file_stem().unwrap_or_default().to_string_lossy().into_owned()))
+                    .map(|pixels| {
+                        let mut image = local_image(pixels, path.file_stem().unwrap_or_default().to_string_lossy().into_owned());
+                        image.path = Some(path);
+                        image
+                    })
                     .map_err(|e| e.to_string());
                 let _ = tx.send(Worker::Map(id, generation, slot, result));
                 wake.request_repaint();
@@ -553,6 +560,7 @@ impl Imports {
         entry.reloading = true;
         entry.status = Status::Preparing;
         let path = entry.path.clone();
+        let remembered = entry.local.then(|| persistence::Asset::capture(entry));
         let options = entry.options;
         let sound_limit = self.sound_limit;
         let prefs = self.load_preferences.clone();
@@ -570,6 +578,11 @@ impl Imports {
         let tx = self.tx.clone();
         let wake = ctx.clone();
         jobs.execute(move || {
+            if let Some(remembered) = remembered {
+                let _ = tx.send(Worker::Reloaded(id, remembered.restore(&prefs).map(|entry| vec![entry])));
+                wake.request_repaint();
+                return;
+            }
             let _ = tx.send(Worker::Reloaded(
                 id,
                 load(&path, choice, options, sound_limit, &prefs, local)

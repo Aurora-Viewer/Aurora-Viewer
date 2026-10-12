@@ -9,6 +9,7 @@ pub mod files;
 pub mod local;
 pub mod maps;
 pub mod mesh;
+pub mod persistence;
 pub mod preview;
 #[cfg(test)]
 mod tests;
@@ -157,6 +158,7 @@ impl Preferences {
 
 #[derive(Clone)]
 pub struct LocalImage {
+    pub path: Option<PathBuf>,
     pub key: Uuid,
     pub name: String,
     pub pixels: Arc<DecodedImage>,
@@ -290,6 +292,9 @@ pub struct Entry {
     pub material_index: usize,
     pub empty_alpha: bool,
     pub local_live: bool,
+    pub local_assume_meters: bool,
+    pub local_restore_active: bool,
+    pub local_saved: Option<persistence::Asset>,
     pub status: Status,
 }
 #[derive(Clone)]
@@ -348,6 +353,9 @@ impl Entry {
             watch: None,
             material_index: 0,
             local_live: true,
+            local_assume_meters: false,
+            local_restore_active: false,
+            local_saved: None,
             status,
         }
     }
@@ -433,6 +441,7 @@ pub struct Imports {
     pub local_appearance_targets: HashMap<(Uuid, Option<u8>), crate::world::objects::LocalAppearance>,
     pub retired_local_slots: Vec<(Uuid, u32)>,
     pub local_rez: Option<local::Rez>,
+    pub persistence: persistence::State,
 }
 impl Default for Imports {
     fn default() -> Self {
@@ -474,6 +483,7 @@ impl Default for Imports {
             local_appearance_targets: HashMap::new(),
             retired_local_slots: Vec::new(),
             local_rez: None,
+            persistence: Default::default(),
         }
     }
 }
@@ -744,8 +754,13 @@ impl Imports {
                     if let Some(entry) = self.entries.iter_mut().find(|e| e.id == id) {
                         entry.reloading = false;
                         match result {
-                            Ok(mut loaded) if entry.material_index < loaded.len() => {
-                                let mut updated = loaded.remove(entry.material_index);
+                            Ok(mut loaded) if entry.material_index < loaded.len() || (loaded.len() == 1 && loaded[0].id == id) => {
+                                let index = if loaded.len() == 1 && loaded[0].id == id {
+                                    0
+                                } else {
+                                    entry.material_index
+                                };
+                                let mut updated = loaded.remove(index);
                                 if let Some(Source::Mesh(draft)) = &mut entry.source {
                                     draft.invalidate_quote();
                                     self.discarded_quotes.append(&mut draft.discarded_quotes);
@@ -854,6 +869,13 @@ impl Imports {
                     {
                         match result {
                             Ok(image) => {
+                                if entry.local
+                                    && let Some(path) = &image.path
+                                {
+                                    let mut paths = entry.watch.take().map_or_else(Vec::new, |watch| watch.paths);
+                                    paths.push(path.clone());
+                                    entry.watch = Some(local::Watch::new(paths));
+                                }
                                 images[slot] = Some(image);
                                 maps::set(value, slot, None);
                                 entry.preview_generation += 1;

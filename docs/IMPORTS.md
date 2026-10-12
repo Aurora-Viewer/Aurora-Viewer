@@ -202,6 +202,18 @@ Sources : `llfloatermodelpreview.cpp`, `llmodelpreview.cpp`,
   publication GPU passe explicitement par la boucle de rendu, y compris lorsque
   l’interface ne détient pas le contexte graphique. Les slots retirés sont
   libérés par cette même boucle.
+- La bibliothèque locale reste enregistrée entre les lancements dans
+  `local_previews.json`, au sein du profil privé du viewer. Elle conserve les
+  références aux sources, leurs identifiants, les réglages de texture/PBR/LOD,
+  les cartes personnalisées, la surveillance et la caméra d’aperçu ; aucun
+  pixel ni mesh source n’est recopié. Les applications aux objets sont
+  séparées par compte et grille et se rétablissent lorsque les objets arrivent.
+  Un fichier absent reste dans la liste avec une erreur et garde ses réglages.
+  « Enlever » supprime sa référence et ses applications enregistrées, sans
+  effacer le fichier source. Les changements sont regroupés sur un writer
+  dédié, remplacent atomiquement le fichier et sont vidés à la déconnexion
+  ou fermeture normale. Une bibliothèque illisible est préservée.
+  Cette persistance est une amélioration Aurora demandée par l’utilisateur.
 - Mesh local : choix du modèle, unités en mètres optionnelles, dimensions
   importées, application/retrait de la sélection et prim support ; surveillance
   désactivée par défaut, période de 3 s réglable dès 0,1 s comme Firestorm.
@@ -239,7 +251,7 @@ des accusés après annulation. Prix, permissions, inventaire créé et rendu de
 assets importés doivent encore être vérifiés par l’humain sur grille.
 Aucun import réel n’a été validé sur une grille.
 
-Vérifications locales : `check.ps1` vert, 1 220 tests réussis, 17 ignorés,
+Vérifications locales : `check.ps1` vert, 1 495 tests réussis, 17 ignorés,
 Clippy sans avertissement. Profilage de la scène démo : moyenne CPU de
 l’interface sur les trois dernières périodes, 0,37 ms sans la fenêtre puis
 0,57 ms avec l’aperçu PBR (0,51 ms animation, 0,51 ms mesh local). Les
@@ -265,6 +277,14 @@ Un autre lot de 79 animations natives a été validé : octets originaux
 conservés et poses calculées sans valeur non finie. Les comptes agrégés
 restent distincts de `check.ps1` ; les fichiers personnels et leur inventaire
 ne sont pas incorporés aux fixtures du dépôt ni aux traces publiées.
+
+La branche a été synchronisée avec les 26 PR fusionnées depuis la PR 154,
+jusqu’à la PR 181 incluse. Les imports conservent le sélecteur d’inventaire
+hiérarchique, la sélection des faces invisibles, les nouvelles ancres GPU et
+l’évaluation temporelle de leurs aperçus d’animation. Les tests de persistance
+vérifient redémarrage, réglages des trois types, cartes personnalisées,
+isolation des applications, source absente/retrouvée, suppression explicite
+et sauvegarde corrompue conservée.
 
 ### Essais humains
 

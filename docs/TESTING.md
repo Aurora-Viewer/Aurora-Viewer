@@ -985,6 +985,14 @@ grille.
   ou détection du prim support. Ils nécessitent `AURORA_DEMO_ACTIONS=1`.
   Les traces vérifient aussi que les données serveur n’ont reçu aucun UUID local.
   `local` charge ensemble texture, matériau et mesh par le même filtre.
+  `AURORA_DEMO_IMPORT_REGISTRY=<fichier de test>` active la persistance des
+  scénarios d’import vers ce fichier isolé. Lancer d’abord `local-texture-applied`,
+  `local-material-applied` ou `local-mesh-applied`, puis `local-restored` dans
+  un nouveau processus avec le même fichier et `AURORA_DEMO_ACTIONS=1`.
+  Le second lancement ne crée aucun nouvel asset : seuls la bibliothèque et
+  les liens enregistrés doivent restaurer l’application GPU. Sans cette
+  variable, les scénarios synthétiques ne remplissent pas la bibliothèque
+  persistante du profil de démo. Les sources synthétiques restent dans `.scratch`.
   `animation-own` place l’aperçu à 0,75 s, en pause, également sur l’avatar
   de démo. Le curseur et la pose doivent rester fixes jusqu’à Reprendre.
   `AURORA_DEMO_IMPORT_FILE` remplace les fixtures par un fichier existant,

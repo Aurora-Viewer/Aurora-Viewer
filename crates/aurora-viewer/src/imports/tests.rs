@@ -253,6 +253,7 @@ fn image(w: u32, h: u32) -> Arc<DecodedImage> {
 fn shared_material_maps_are_charged_once_with_equivalent_effective_encoding() {
     let pixels = image(4, 4);
     let map = LocalImage {
+        path: None,
         key: Uuid::new_v4(),
         name: "Shared".into(),
         pixels,

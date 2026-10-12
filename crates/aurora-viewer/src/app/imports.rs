@@ -15,6 +15,24 @@ impl App {
             self.imports.demo_started = true;
             crate::imports::demo::start(&mut self.imports, &self.scene.jobs, ctx);
         }
+        if !self.imports.persistence.started() {
+            let persistence_path = if self.demo && !self.imports.demo_mode.is_empty() {
+                std::env::var_os("AURORA_DEMO_IMPORT_REGISTRY").map(std::path::PathBuf::from)
+            } else {
+                Some(crate::imports::Imports::registry_path())
+            };
+            if let Some(path) = persistence_path {
+                self.imports.start_local_registry(
+                    path,
+                    crate::imports::persistence::profile(self.world.agent_id, &self.settings.login_uri()),
+                    &self.scene.jobs,
+                    ctx,
+                );
+            } else {
+                self.imports.persistence.disable();
+            }
+        }
+        self.imports.poll_local_registry();
         self.imports.sound_limit = if self.settings.grid == crate::settings::GridChoice::Custom {
             60
         } else {
@@ -58,12 +76,9 @@ impl App {
                 },
             );
         }
-        if self.imports.install_local_meshes(&mut self.scene.meshes, &self.scene.jobs) {
-            self.apply_local_mesh_targets();
-        }
         let local_demo = self.demo
             && self.imports.demo_mode.starts_with("local-")
-            && ["-applied", "-removed", "-rez"]
+            && ["-applied", "-removed", "-rez", "-restored"]
                 .iter()
                 .any(|suffix| self.imports.demo_mode.ends_with(suffix));
         if local_demo && self.imports.demo_mode.ends_with("-removed") && self.frame_count == 400 {
@@ -73,6 +88,7 @@ impl App {
         }
         self.poll_local_rez(ctx);
         if local_demo
+            && self.imports.demo_mode != "local-restored"
             && !self.imports.demo_local_applied
             && let Some(id) = self.imports.active
             && let Some(index) = self.world.objects.index_of_uuid(&crate::demo::action_id(970))
@@ -480,9 +496,10 @@ impl App {
             .entries
             .iter()
             .filter(|e| {
-                e.local_published
+                (e.local_published || e.local_restore_active)
+                    && e.source.is_some()
                     && !e.local_pending
-                    && e.local_generation != e.preview_generation
+                    && (!e.local_published || e.local_generation != e.preview_generation)
                     && e.local_failed_generation != Some(e.preview_generation)
             })
             .map(|e| e.id)
@@ -495,6 +512,7 @@ impl App {
                 self.ui_images.insert(entry.id, image.clone());
             }
         }
+        self.imports.save_local_registry(false);
     }
 
     fn update_import_avatar_preview(&mut self) {
@@ -648,14 +666,13 @@ impl App {
             self.scene.textures.unregister_local(&asset);
             renderer.free_texture(slot);
         }
-        if self.imports.install_local_meshes(&mut self.scene.meshes, &self.scene.jobs) {
-            self.apply_local_mesh_targets();
-        }
+        self.imports.install_local_meshes(&mut self.scene.meshes, &self.scene.jobs);
         if self.imports.local_uploads.is_empty() {
+            self.apply_local_mesh_targets();
+            self.imports.apply_appearance_targets(&mut self.world.objects);
             return;
         }
         let mut pending = Vec::new();
-        let mut mesh_changed = false;
         let previous_slots: std::collections::HashMap<_, _> = self
             .imports
             .entries
@@ -717,7 +734,6 @@ impl App {
                         entry.local_mesh_ids.push(mesh.id);
                         self.scene.meshes.insert_local(mesh.id, mesh.data, mesh.header, mesh.skin);
                     }
-                    mesh_changed = true;
                 }
                 entry.local_published = true;
                 entry.local_generation = prepared.generation;
@@ -735,9 +751,7 @@ impl App {
                 renderer.free_texture(slot);
             }
         }
-        if mesh_changed {
-            self.apply_local_mesh_targets();
-        }
+        self.apply_local_mesh_targets();
         self.imports.apply_appearance_targets(&mut self.world.objects);
     }
 

@@ -76,6 +76,9 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
         _ => Choice::Bulk,
     };
     let choice = imports.choice;
+    if mode == "local-restored" {
+        return;
+    }
     if mode == "mesh-error" {
         imports.message = ui::error(Error::Refused(aurora_net::inventory::upload::Rejection {
             status: Some(400),

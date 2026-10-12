@@ -1100,6 +1100,7 @@ impl App {
     }
 
     fn back_to_login(&mut self, error: Option<String>) {
+        self.imports.flush_local_registry();
         for entry in &self.imports.entries {
             if let Some(crate::imports::Source::Mesh(draft)) = &entry.source {
                 draft.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -2488,6 +2489,7 @@ impl App {
 
     /// Log out, save the window, layout, inventory cache and settings, exit.
     fn shutdown(&mut self, event_loop: &ActiveEventLoop) {
+        self.imports.flush_local_registry();
         self.record_inventory_logout();
         self.drop_clicks();
         if self.hud_drag.is_some() {

@@ -68,6 +68,7 @@ impl Imports {
                 first[y * stride..(y + 1) * stride].swap_with_slice(&mut last[..stride]);
             }
             let image = LocalImage {
+                path: None,
                 empty_alpha: false,
                 key: asset,
                 name: asset.to_string(),

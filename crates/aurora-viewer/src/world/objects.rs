@@ -16,7 +16,7 @@ pub struct ObjKey {
 }
 
 /// Client-only appearance; never included in simulator texture/material edits.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum LocalAppearance {
     Texture(Uuid),
     Material(Uuid),

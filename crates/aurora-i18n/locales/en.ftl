@@ -4179,3 +4179,6 @@ script-fold-expand = Expand block
 script-fold-lines = lines
 script-fold-all = Collapse all
 script-expand-all = Expand all
+import-local-file-missing = File not found. Its preview is still saved; restore the file at its location or remove this preview.
+import-local-save-failed = Local previews could not be saved. Changes have not been stored yet.
+import-local-library-unavailable = The local preview library could not be restored. Its original saved file is preserved.

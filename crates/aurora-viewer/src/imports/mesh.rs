@@ -10,7 +10,7 @@ use aurora_llsd::{Llsd, llsd_map};
 use rayon::prelude::*;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LodSource {
     File,
     Auto,
@@ -28,7 +28,8 @@ pub struct Lod {
     pub error: f32,
     pub error_mode: bool,
 }
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Options {
     pub scale: f32,
     pub textures: bool,

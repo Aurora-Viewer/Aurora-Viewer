@@ -25,6 +25,7 @@ pub struct Mesh {
     pub header: aurora_assets::MeshHeader,
     pub skin: Option<Arc<aurora_assets::SkinInfo>>,
 }
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Target {
     pub entry: Uuid,
     pub model: usize,
