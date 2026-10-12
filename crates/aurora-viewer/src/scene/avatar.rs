@@ -46,6 +46,9 @@ pub struct AttachPoint {
     /// point follows when the avatar is animated.
     pub skel_position: Vec3,
     pub joint: Option<usize>,
+    /// Anchor of the wearer's palette holding the posed point (anchors.rs);
+    /// None for a HUD point, or past the anchors a palette has.
+    pub anchor: Option<u8>,
 }
 
 /// One base mesh part with its geometry in avatar-local space.
@@ -64,6 +67,9 @@ pub struct AvatarLibrary {
     pub rig: std::sync::Arc<super::anim::Rig>,
     pub pelvis: Vec3,
     pub attach_points: HashMap<u8, AttachPoint>,
+    /// Attachment point of each anchor of a palette, from anchor 1 (anchor
+    /// 0 is the wearer's root).
+    pub anchor_points: Vec<u8>,
     pub attach_names: HashMap<u8, String>,
     /// Visual parameters (avatar shape) of avatar_lad.xml.
     pub shape_params: super::shape::ShapeParams,
@@ -213,6 +219,7 @@ impl AvatarLibrary {
                                     hud,
                                     skel_position: jp + pos,
                                     joint: None,
+                                    anchor: None,
                                 },
                             );
                         }
@@ -230,6 +237,15 @@ impl AvatarLibrary {
         for (id, name) in &joint_names {
             if let Some(ap) = attach_points.get_mut(id) {
                 ap.joint = rig.names.get(name).copied();
+            }
+        }
+        // one anchor per body point, in id order, after the root's
+        let mut anchor_points: Vec<u8> = attach_points.iter().filter(|(_, ap)| !ap.hud).map(|(id, _)| *id).collect();
+        anchor_points.sort_unstable();
+        anchor_points.truncate(super::anim::ANCHORS - 1);
+        for (i, id) in anchor_points.iter().enumerate() {
+            if let Some(ap) = attach_points.get_mut(id) {
+                ap.anchor = Some(i as u8 + 1);
             }
         }
         let mut parts = Vec::new();
@@ -282,6 +298,7 @@ impl AvatarLibrary {
             rig,
             pelvis,
             attach_points,
+            anchor_points,
             attach_names,
             shape_params,
             parts,

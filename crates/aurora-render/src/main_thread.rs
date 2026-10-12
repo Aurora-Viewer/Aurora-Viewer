@@ -87,6 +87,7 @@ fn scene_gpu(
         face_count: records.faces.len(),
         objects: cull.objects.buffer().clone(),
         object_count: cull.objects.len(),
+        joint_boxes: cull.boxes.buffer().clone(),
         record_slots: records.slot_count(),
         textures: textures.bind_group.clone(),
         vertices: geometry.vertex_buffer.clone(),
@@ -452,6 +453,22 @@ impl Renderer {
         }
     }
 
+    /// Upload one range of the palette matrices (the anchors of the objects
+    /// an avatar wears, when its joints were not posed again). Everything
+    /// when the buffer must grow.
+    pub fn set_palette_range(&mut self, mats: &[[[f32; 4]; 4]], range: std::ops::Range<usize>) {
+        if (mats.len() * 64) as u64 > self.palette_buffer.size() {
+            self.set_palettes(mats);
+            return;
+        }
+        let (a, b) = (range.start.min(mats.len()), range.end.min(mats.len()));
+        if a < b {
+            self.writes
+                .write_buffer(&self.palette_buffer, (a * 64) as u64, bytemuck::cast_slice(&mats[a..b]));
+            self.palettes_uploaded += ((b - a) * 64) as u64;
+        }
+    }
+
     pub fn size(&self) -> (u32, u32) {
         self.size
     }
@@ -620,6 +637,7 @@ impl Renderer {
         // ---- the scene's mirrors join the journal of this frame
         self.records.flush(&self.device, &mut self.writes);
         self.cull.objects.flush(&self.device, &mut self.writes);
+        self.cull.boxes.flush(&self.device, &mut self.writes);
         self.textures.maintain(&self.device, &mut self.writes, &mut self.uploads, false);
         let uploads = self.uploads.take_frame();
         let mut stats = RenderStats {

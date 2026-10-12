@@ -29,25 +29,46 @@ fn skin_matrix(rec: DrawRecord, j: vec4<u32>, w: vec4<f32>) -> mat4x4<f32> {
     return m * (1.0 / ws);
 }
 
-fn skinned_model(rec: DrawRecord, in: VsIn) -> mat4x4<f32> {
-    if ((rec.flags.x & FLAG_SKINNED) != 0u) {
-        return rec.model * skin_matrix(rec, in.joints, in.weights);
-    }
-    return rec.model;
+// `m` with its translation counted from `eye`.
+fn from_eye(m: mat4x4<f32>, eye: vec3<f32>) -> mat4x4<f32> {
+    var r = m;
+    r[3] = vec4<f32>(r[3].xyz - eye, r[3].w);
+    return r;
 }
 
-// The same, placed relative to the frame's eye: the eye is taken away from
-// the model's translation first, so the skinning, the vertex and the view
-// work on distances from the camera. In region coordinates, single precision
-// is too coarse high above the ground (0.24 mm steps above 2048 m: up to a
-// pixel on close objects, different whenever the view changes).
-fn eye_model(rec: DrawRecord, in: VsIn) -> mat4x4<f32> {
-    var m = rec.model;
-    m[3] = vec4<f32>(m[3].xyz - frame.eye.xyz, m[3].w);
+// Matrix of a vertex, placed relative to `eye`. What an avatar wears
+// follows it without its records being written again: the scene keeps,
+// beside each joint palette, the matrix that places the skeleton and the
+// posed attachment points (rigid world matrices). A rigged mesh reads the
+// first, a worn prim holds its placement relative to its point. The eye is
+// taken away from the translation of the matrix that holds the place in
+// the world (the record's, or its anchor's) before anything is multiplied.
+fn placed_model(rec: DrawRecord, in: VsIn, eye: vec3<f32>) -> mat4x4<f32> {
     if ((rec.flags.x & FLAG_SKINNED) != 0u) {
-        return m * skin_matrix(rec, in.joints, in.weights);
+        let skin = skin_matrix(rec, in.joints, in.weights);
+        if ((rec.flags.x & FLAG_ANCHORED) != 0u) {
+            return from_eye(palettes[rec.flags.y + SKELETON_ANCHOR], eye) * skin;
+        }
+        return from_eye(rec.model, eye) * skin;
     }
-    return m;
+    if ((rec.flags.x & FLAG_ANCHORED) != 0u) {
+        return from_eye(palettes[rec.flags.y], eye) * rec.model;
+    }
+    return from_eye(rec.model, eye);
+}
+
+// World matrix of a vertex.
+fn skinned_model(rec: DrawRecord, in: VsIn) -> mat4x4<f32> {
+    return placed_model(rec, in, vec3<f32>(0.0));
+}
+
+// The same, placed relative to the frame's eye, so the skinning, the vertex
+// and the view work on distances from the camera. In region coordinates,
+// single precision is too coarse high above the ground (0.24 mm steps above
+// 2048 m: up to a pixel on close objects, different whenever the view
+// changes).
+fn eye_model(rec: DrawRecord, in: VsIn) -> mat4x4<f32> {
+    return placed_model(rec, in, frame.eye.xyz);
 }
 
 struct VsOut {

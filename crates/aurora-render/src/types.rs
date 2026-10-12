@@ -74,7 +74,18 @@ pub mod flags {
     pub const TEX_ANIM: u32 = 1024;
     /// glTF doubleSided: HUD fragments keep back faces only when requested.
     pub const DOUBLE_SIDED: u32 = 2048;
+    /// Placed by the GPU. Not skinned: `model` is relative to the anchor
+    /// matrix `palettes[flags[1]]` (the posed attachment point of the
+    /// wearer), composed by the vertex shaders. Skinned: the skeleton is
+    /// placed by its own anchor, `palettes[flags[1] + SKELETON_ANCHOR]`,
+    /// and `model` (the identity) is not read.
+    pub const ANCHORED: u32 = 4096;
 }
+
+/// Layout of a skeleton's palette in the palettes buffer: its joints, then
+/// its anchors. The first anchor places the skeleton itself (skeleton space
+/// to world); the scene gives the others to the attachment points.
+pub const SKELETON_ANCHOR: u32 = 160;
 
 /// Per-face GPU record (must match `DrawRecord` in common.wgsl).
 #[repr(C)]
@@ -144,6 +155,40 @@ impl DrawRecord {
             (zoom.clamp(0.1, 8.0) * 4096.0).round() as u32
         };
         self.flags[0] = (self.flags[0] & 0xffff) | (packed << 16);
+    }
+
+    /// Index of the anchor matrix that places the record (flag `ANCHORED`):
+    /// the one its model is relative to, or its skeleton's when skinned.
+    pub fn anchor(&self) -> Option<u32> {
+        if self.flags[0] & flags::ANCHORED == 0 {
+            return None;
+        }
+        Some(if self.flags[0] & flags::SKINNED != 0 {
+            self.flags[1] + SKELETON_ANCHOR
+        } else {
+            self.flags[1]
+        })
+    }
+
+    /// Place the record from anchor matrix `anchor`, or in the world. A
+    /// skinned record keeps its palette in `flags[1]`: its anchor is that
+    /// palette's own (`SKELETON_ANCHOR`), whatever is asked.
+    pub fn set_anchor(&mut self, anchor: Option<u32>) {
+        let skinned = self.flags[0] & flags::SKINNED != 0;
+        match anchor {
+            Some(a) => {
+                self.flags[0] |= flags::ANCHORED;
+                if !skinned {
+                    self.flags[1] = a;
+                }
+            }
+            None => {
+                self.flags[0] &= !flags::ANCHORED;
+                if !skinned {
+                    self.flags[1] = 0;
+                }
+            }
+        }
     }
 }
 
@@ -938,6 +983,34 @@ mod tests {
                 "anim_xf"
             ]
         );
+    }
+
+    #[test]
+    fn anchored_flag_matches_wgsl_and_spares_skinned_records() {
+        let wgsl = include_str!("shaders/common.wgsl");
+        assert!(wgsl.contains(&format!("const FLAG_ANCHORED: u32 = {}u;", flags::ANCHORED)));
+        assert!(wgsl.contains(&format!("const FLAG_SKINNED: u32 = {}u;", flags::SKINNED)));
+        let mut record = DrawRecord::default();
+        assert_eq!(record.anchor(), None);
+        record.set_anchor(Some(371));
+        assert_eq!(record.anchor(), Some(371));
+        record.set_hud_zoom(2.0);
+        assert_eq!(record.anchor(), Some(371));
+        record.set_anchor(None);
+        assert_eq!((record.anchor(), record.flags[1]), (None, 0));
+        // a skinned record keeps its palette base: its anchor is its
+        // skeleton's
+        assert!(wgsl.contains(&format!("const SKELETON_ANCHOR: u32 = {SKELETON_ANCHOR}u;")));
+        let mut skinned = DrawRecord {
+            flags: [flags::SKINNED, 208, 7, 0],
+            ..Default::default()
+        };
+        assert_eq!(skinned.anchor(), None);
+        skinned.set_anchor(Some(208 + SKELETON_ANCHOR));
+        assert_eq!(skinned.flags, [flags::SKINNED | flags::ANCHORED, 208, 7, 0]);
+        assert_eq!(skinned.anchor(), Some(208 + SKELETON_ANCHOR));
+        skinned.set_anchor(None);
+        assert_eq!(skinned.flags, [flags::SKINNED, 208, 7, 0]);
     }
 
     #[test]
