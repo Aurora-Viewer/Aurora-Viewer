@@ -126,7 +126,9 @@ impl Default for SearchUi {
             events_day: 0,
             focus: true,
             was_open: false,
-            web: WebView::default(),
+            // the search page is loaded with the session: nothing of it
+            // stays in the shared browser cache
+            web: WebView::private(crate::settings::cache_dir().join(crate::media::private_profile::ROOT)),
             web_edit: None,
             web_home: String::new(),
             wanted_pics: HashSet::new(),

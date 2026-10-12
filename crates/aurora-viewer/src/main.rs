@@ -79,7 +79,17 @@ fn run_viewer() -> anyhow::Result<()> {
 
     let event_loop = winit::event_loop::EventLoop::new()?;
     event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
+    // private browser profiles a crash left behind (search web tab)
+    let private_profiles = settings::cache_dir().join(media::private_profile::ROOT);
+    let _ = std::thread::Builder::new()
+        .name("aurora-web-profile".into())
+        .spawn(move || media::private_profile::sweep(&private_profiles));
     let mut app = app::App::new()?;
-    event_loop.run_app(&mut app)?;
+    let result = event_loop.run_app(&mut app);
+    // the browsers stop with the app; their private profiles are removed
+    // while the plugins let go of their files
+    drop(app);
+    media::private_profile::finish(std::time::Duration::from_secs(8));
+    result?;
     Ok(())
 }

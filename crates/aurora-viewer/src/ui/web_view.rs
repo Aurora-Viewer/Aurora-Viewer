@@ -3,15 +3,25 @@
 //! clicked) keyboard sent to the page. Used by the "Flux" tab of the
 //! profiles (LLPanelProfileWeb) and by the web tab of the search window
 //! (FSPanelSearchWeb), which also follows the page's address and goes back
-//! and forward in its history.
+//! and forward in its history. The search tab's browser is a private one
+//! (`WebView::private`): its cache, history and log go to a profile of its
+//! own that is deleted with the browser (`media/private_profile.rs`).
 
+use crate::media::private_profile::PrivateProfile;
 use aurora_media::{BrowserSettings, Cookie, MediaEvent, MediaPlugin, Modifiers, MouseEvent, PluginPaths};
 use egui::{Color32, Vec2};
+use std::path::PathBuf;
 use std::time::Instant;
 
 #[derive(Default)]
 pub struct WebView {
+    // dropped first: the browser stops before its profile is removed
     plugin: Option<MediaPlugin>,
+    /// Where this browser's private profiles are made; None for a browser
+    /// on the shared cache.
+    private_root: Option<PathBuf>,
+    /// The profile of the running private browser.
+    profile: Option<PrivateProfile>,
     texture: Option<egui::TextureHandle>,
     /// Page to show (loaded once the plugin runs).
     url: String,
@@ -33,6 +43,15 @@ pub struct WebView {
 }
 
 impl WebView {
+    /// A browser that leaves nothing behind: each time it starts it gets a
+    /// new profile under `root`, deleted when it stops.
+    pub fn private(root: PathBuf) -> WebView {
+        WebView {
+            private_root: Some(root),
+            ..Default::default()
+        }
+    }
+
     pub fn navigate(&mut self, url: &str) {
         if self.url != url {
             self.url = url.to_owned();
@@ -43,6 +62,8 @@ impl WebView {
     /// Stop the browser (window closed).
     pub fn close(&mut self) {
         self.plugin = None;
+        // after the browser: the profile is removed once it lets go
+        self.profile = None;
         self.texture = None;
         self.focused = false;
     }
@@ -97,8 +118,32 @@ impl WebView {
         let px = ((size.x * ppp).round().max(16.0) as i32, (size.y * ppp).round().max(16.0) as i32);
         ui.painter().rect_filled(rect, 0.0, pal.field);
         if self.plugin.is_none() && self.failed.is_none() && !self.url.is_empty() {
-            match paths {
-                Some(paths) => match MediaPlugin::launch(paths, "media_plugin_cef", px.0, px.1, browser, "") {
+            // a private browser never falls back on the shared cache
+            let private = match &self.private_root {
+                Some(root) => match PrivateProfile::create(root) {
+                    Ok(profile) => {
+                        let settings = profile.settings(browser);
+                        self.profile = Some(profile);
+                        Ok(Some(settings))
+                    }
+                    Err(e) => Err(e),
+                },
+                None => Ok(None),
+            };
+            let launched = match (&private, paths) {
+                (Err(e), _) => Some(Err(std::io::Error::new(e.kind(), e.to_string()))),
+                (Ok(settings), Some(paths)) => Some(MediaPlugin::launch(
+                    paths,
+                    "media_plugin_cef",
+                    px.0,
+                    px.1,
+                    settings.as_ref().unwrap_or(browser),
+                    "",
+                )),
+                (Ok(_), None) => None,
+            };
+            match launched {
+                Some(launched) => match launched {
                     Ok(mut p) => {
                         // LLViewerMedia::getOpenIDCookie before the first page
                         if let Some(c) = cookie {
@@ -114,6 +159,10 @@ impl WebView {
                     }
                 },
                 None => self.failed = Some(aurora_i18n::tr!("extra-browser-unavailable-slplugin-cef-plugins").into()),
+            }
+            // no browser, no profile to keep
+            if self.plugin.is_none() {
+                self.profile = None;
             }
         }
         let Some(p) = self.plugin.as_mut() else {
@@ -171,6 +220,7 @@ impl WebView {
         }
         if self.failed.is_some() {
             self.plugin = None;
+            self.profile = None;
             return resp;
         }
         // pixels: whole page when it changed (small windows)
