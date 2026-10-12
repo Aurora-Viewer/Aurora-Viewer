@@ -113,6 +113,27 @@ fn status(entry: &Entry) -> String {
     }
 }
 
+fn file_status(ui: &mut egui::Ui, p: &Palette, entry: &Entry) {
+    let response = ui
+        .allocate_ui_with_layout(
+            Vec2::new(18.0, 26.0),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| match &entry.status {
+                Status::Ready => {}
+                Status::Preparing | Status::Uploading => {
+                    ui.add(egui::Spinner::new().size(16.0));
+                }
+                Status::Done(_) => widgets::glyph(ui, "check", p.success, 16.0),
+                Status::Cancelled => widgets::glyph(ui, "x", p.muted, 16.0),
+                Status::Error(_) => widgets::glyph(ui, "warning", p.danger, 16.0),
+            },
+        )
+        .response;
+    if !matches!(entry.status, Status::Ready) {
+        response.on_hover_text(status(entry));
+    }
+}
+
 pub fn show(
     ctx: &egui::Context,
     p: &Palette,
@@ -264,27 +285,24 @@ pub fn show(
                     .show(ui, |ui| {
                         for entry in imports.entries.iter_mut().filter(|e| imports.choice.accepts(e)) {
                             ui.horizontal(|ui| {
-                                ui.add_enabled(
-                                    !busy && matches!(entry.status, Status::Ready | Status::Error(_)),
-                                    egui::Checkbox::without_text(&mut entry.selected),
-                                );
+                                ui.add_enabled_ui(!busy && matches!(entry.status, Status::Ready | Status::Error(_)), |ui| {
+                                    checkbox(ui, p, &mut entry.selected, "");
+                                });
+                                let name_width = (ui.available_width() - 18.0 - ui.spacing().item_spacing.x).max(40.0);
                                 if ui
-                                    .add(egui::Button::selectable(imports.active == Some(entry.id), &entry.name).truncate())
+                                    .add_sized(
+                                        Vec2::new(name_width, 26.0),
+                                        egui::Button::selectable(imports.active == Some(entry.id), "")
+                                            .left_text(&entry.name)
+                                            .truncate(),
+                                    )
                                     .on_hover_text(entry.path.to_string_lossy())
                                     .clicked()
                                 {
                                     imports.active = Some(entry.id);
                                 }
+                                file_status(ui, p, entry);
                             });
-                            let color = if matches!(entry.status, Status::Error(_)) {
-                                p.danger
-                            } else if matches!(entry.status, Status::Done(_)) {
-                                p.success
-                            } else {
-                                p.muted
-                            };
-                            ui.label(RichText::new(status(entry)).small().color(color));
-                            ui.add_space(6.0);
                         }
                     });
             });
@@ -382,12 +400,14 @@ pub fn show(
                                                     bits = sound.source_bits
                                                 ));
                                                 ui.label(RichText::new(aurora_i18n::tr!("import-sound-conversion")).color(p.muted));
-                                                if flat_button(ui, p, aurora_i18n::tr!("common-play")).clicked() {
-                                                    actions.push(Action::Play(entry.id, true));
-                                                }
-                                                if flat_button(ui, p, aurora_i18n::tr!("common-stop")).clicked() {
-                                                    actions.push(Action::Play(entry.id, false));
-                                                }
+                                                ui.horizontal(|ui| {
+                                                    if flat_button(ui, p, aurora_i18n::tr!("common-play")).clicked() {
+                                                        actions.push(Action::Play(entry.id, true));
+                                                    }
+                                                    if flat_button(ui, p, aurora_i18n::tr!("common-stop")).clicked() {
+                                                        actions.push(Action::Play(entry.id, false));
+                                                    }
+                                                });
                                             }
                                             Source::Animation { animation, bvh, .. } => {
                                                 let old_base = entry.player.base;

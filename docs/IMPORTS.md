@@ -19,6 +19,8 @@ Référence consultée : Firestorm `d942e1118d01c3383ef7d6b64f248af77452b0dc`
   Le sélecteur de destination propose un filtre par nom, sans modifier le
   dossier sélectionné pendant la saisie. Les destinations respectent les
   protections de l’inventaire ; leur liste est mise en cache et virtualisée.
+- Liste compacte : une ligne par fichier, sans mention « Prêt » ; progression,
+  succès, annulation et erreur indiqués par une icône avec infobulle.
 - Permissions des chargements : prochain propriétaire (modifier, copier,
   transférer), groupe et tout le monde ; ne pas accorder des droits que le
   serveur n’a pas confirmés.
@@ -59,6 +61,7 @@ Sources : `llfloaterimagepreview.cpp`, `floater_image_preview.xml`,
 - WAV : restrictions PCM, canaux, fréquence, profondeur et durée ; conversion
   vers le son Vorbis de Second Life, avec les paramètres Firestorm.
 - Nom/description, tarif et destination ; aperçu sonore local.
+  Les commandes Jouer et Arrêter sont placées côte à côte.
 
 Sources : `llfloaternamedesc.cpp`, `llaudio/llvorbisencode.cpp`,
 `floater_sound_preview.xml`.
