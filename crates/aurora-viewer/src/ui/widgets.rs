@@ -663,9 +663,24 @@ pub enum ActionKind {
 /// face without a border, like the login button (the human's choice). A zero
 /// width in `size` fits the content.
 pub fn action_button(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, kind: ActionKind, size: Vec2) -> egui::Response {
+    action_button_if(ui, p, icon, label, kind, size, true)
+}
+
+/// `action_button` greyed out when `enabled` is false. It stays in the
+/// parent's layout: the child UI of `add_enabled_ui` would wrap on its own in
+/// a wrapping row.
+pub fn action_button_if(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icon: &str,
+    label: &str,
+    kind: ActionKind,
+    size: Vec2,
+    enabled: bool,
+) -> egui::Response {
     const ICON: f32 = 15.0;
     const GAP: f32 = 7.0;
-    let enabled = ui.is_enabled();
+    let enabled = enabled && ui.is_enabled();
     let font = egui::FontId::proportional(12.5);
     let width = |ui: &egui::Ui| ui.painter().layout_no_wrap(label.to_owned(), font.clone(), Color32::WHITE).size().x;
     let lead = if icon.is_empty() { 0.0 } else { ICON + GAP };

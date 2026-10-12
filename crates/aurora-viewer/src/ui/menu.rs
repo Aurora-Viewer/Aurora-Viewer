@@ -121,6 +121,23 @@ pub fn context_menu(resp: &egui::Response, p: &Palette, body: impl FnOnce(&mut U
         .is_some()
 }
 
+/// Menu opened by a click on the widget `resp` (a "more actions" button, a
+/// status light), with the rows and the frame of the right-click menus at
+/// every level. `close` is egui's rule for the clicks inside it: a stock
+/// `menu_button` closes on any of them, `CloseOnClickOutside` leaves the menu
+/// open until an entry closes it. Returns whether the menu is open.
+pub fn dropdown(resp: &egui::Response, p: &Palette, close: PopupCloseBehavior, body: impl FnOnce(&mut Ui)) -> bool {
+    use egui::containers::menu::MenuConfig;
+    // the tag hands the same style and rule to the sub-menus
+    let config = MenuConfig::new().close_behavior(close).style(style(p));
+    Popup::menu(resp)
+        .close_behavior(close)
+        .style(style(p))
+        .info(egui::UiStackInfo::new(egui::UiKind::Menu).with_tag_value(MenuConfig::MENU_CONFIG_TAG, config))
+        .show(body)
+        .is_some()
+}
+
 /// Menu opened at a screen position, not attached to a widget (the world
 /// right click). `open` is cleared when it closes. Returns the hovered row
 /// (top level only) for the slice sounds.
