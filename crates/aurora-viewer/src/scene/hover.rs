@@ -960,6 +960,7 @@ mod tests {
 
     fn face() -> crate::scene::FaceDraw {
         crate::scene::FaceDraw {
+            outline: None,
             te_index: 0,
             record: 0,
             cmd: aurora_render::DrawCmd {

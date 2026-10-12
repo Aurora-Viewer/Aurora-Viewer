@@ -228,11 +228,18 @@ préférences d’avertissement persistantes (objet ordinaire ou contenant des s
 
 La sélection de faces garde un masque d’indices TextureEntry par prim dans
 `scene/mod.rs`. Les listes de dessin monde et HUD portent une passe de surlignage
-en damier, colorée par la palette, sans modifier les matériaux. Chaque dessin
+avec de petits repères espacés, colorés par la palette, sans modifier les matériaux. Chaque dessin
 conserve son véritable indice de face, même quand des faces transparentes sont
 omises. Sélectionner une face opaque ne reconstruit pas ses enregistrements ;
 une face totalement transparente sélectionnée reçoit temporairement un
 enregistrement destiné au seul surlignage.
+
+`scene/face_edges.rs` prépare les contours des faces sur le worker de géométrie :
+triangles internes et coutures UV exclus, poids de skinning conservés lors du
+soudage des positions. Les indices de lignes suivent les triangles dans leur
+allocation, sans copie supplémentaire des sommets. Une passe monde / HUD les
+pose sur le GPU avec le même shader que la surface. Les primitives flexibles
+conservent leurs indices et ne recalculent pas les contours à chaque image.
 
 Le sélecteur `ui/inventory/move_to.rs` propose les destinations de
 « Déplacer vers… » pour la sélection d’origine, avec filtre par nom et

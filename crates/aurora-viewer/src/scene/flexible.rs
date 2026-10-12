@@ -92,7 +92,7 @@ impl Scene {
             // from the exact rendered mesh on the same thread.
             let outline = self.selection_silhouettes.contains(&idx).then(|| silhouette::from_mesh(&mesh));
             let (faces, min, max) = jobs::volume_to_faces(&mesh);
-            let prepared = jobs::PreparedGeom::new(faces, min, max, true, None);
+            let prepared = jobs::PreparedGeom::new_vertices(faces, min, max);
             Some((idx, key, prepared, outline, pos, rot, scale))
         });
         for (idx, key, prepared, outline, pos, rot, scale) in updates {

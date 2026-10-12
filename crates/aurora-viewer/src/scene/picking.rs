@@ -833,6 +833,7 @@ pub(super) mod tests {
                 refs: 2,
                 zero_since: 0,
                 state: GeomState::Ready(Arc::new(GpuGeom {
+                    outlines: Vec::new(),
                     faces: vec![Some(aurora_render::MeshAlloc {
                         vertex_offset: 0,
                         vertex_count: 4,
@@ -851,6 +852,7 @@ pub(super) mod tests {
             },
         );
         let face = FaceDraw {
+            outline: None,
             te_index: 0,
             record: 0,
             cmd: DrawCmd {
@@ -1315,6 +1317,7 @@ pub(super) mod tests {
                 refs: 1,
                 zero_since: 0,
                 state: GeomState::Ready(Arc::new(GpuGeom {
+                    outlines: Vec::new(),
                     faces: vec![None],
                     min: -Vec3::splat(0.5),
                     max: Vec3::splat(0.5),
@@ -1367,6 +1370,7 @@ pub(super) mod tests {
                     refs: 1,
                     zero_since: 0,
                     state: GeomState::Ready(Arc::new(GpuGeom {
+                        outlines: Vec::new(),
                         faces: vec![None],
                         min: Vec3::new(2.0, -0.5, -0.5),
                         max: Vec3::new(2.0, 0.5, 0.5),

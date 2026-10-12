@@ -294,6 +294,8 @@ pub struct DrawLists {
     /// Selected texture faces (LLPipeline::renderSelectedFaces).
     pub select_faces: Vec<DrawCmd>,
     pub hud_select_faces: Vec<DrawCmd>,
+    pub select_edges: Vec<DrawCmd>,
+    pub hud_select_edges: Vec<DrawCmd>,
     /// Impostor pictures to take this frame (at most `IMPOSTOR_CAPTURES`).
     pub impostor_captures: Vec<ImpostorCapture>,
     /// Impostor cards to draw.
@@ -371,6 +373,8 @@ impl DrawLists {
         self.select_child.clone_from(&src.select_child);
         self.select_faces.clone_from(&src.select_faces);
         self.hud_select_faces.clone_from(&src.hud_select_faces);
+        self.select_edges.clone_from(&src.select_edges);
+        self.hud_select_edges.clone_from(&src.hud_select_edges);
         self.impostor_captures.clone_from(&src.impostor_captures);
         self.impostor_sprites.clone_from(&src.impostor_sprites);
         self.gpu = src.gpu;
@@ -401,6 +405,8 @@ impl DrawLists {
         self.select_child.clear();
         self.select_faces.clear();
         self.hud_select_faces.clear();
+        self.select_edges.clear();
+        self.hud_select_edges.clear();
         self.impostor_captures.clear();
         self.impostor_sprites.clear();
         self.gpu = None;
@@ -983,6 +989,8 @@ mod tests {
         scene.select_root.push(cmd(5));
         scene.select_faces.push(cmd(6));
         scene.hud_select_faces.push(cmd(22));
+        scene.select_edges.push(cmd(23));
+        scene.hud_select_edges.push(cmd(24));
         scene.particles.push(ParticleInstance::default());
         scene.impostor_sprites.push(ImpostorSprite {
             center: [1.0, 2.0, 3.0],
@@ -1024,6 +1032,8 @@ mod tests {
         assert_eq!((packet.terrain.len(), packet.glow.len(), packet.select_root.len()), (1, 1, 1));
         assert_eq!(packet.select_faces[0].record, 6);
         assert_eq!(packet.hud_select_faces[0].record, 22);
+        assert_eq!(packet.select_edges[0].record, 23);
+        assert_eq!(packet.hud_select_edges[0].record, 24);
         assert_eq!((packet.particles.len(), packet.impostor_sprites.len()), (1, 1));
         assert_eq!(packet.impostor_captures[0].blend[0].record, 12);
         assert_eq!(packet.gpu.map(|g| g.draw_distance), Some(128.0));
@@ -1038,6 +1048,8 @@ mod tests {
         assert!(scene.hud_opaque.is_empty());
         assert!(scene.select_faces.is_empty());
         assert!(scene.hud_select_faces.is_empty());
+        assert!(scene.select_edges.is_empty());
+        assert!(scene.hud_select_edges.is_empty());
         assert!(packet.hud_view.is_some());
         assert_eq!(packet.hud_opaque[0].record, 20);
         assert!(packet.gpu.is_some());

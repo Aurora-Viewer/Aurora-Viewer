@@ -8,6 +8,8 @@ pub mod avatar;
 pub mod banlines;
 pub mod complexity;
 pub mod drawn;
+
+mod face_edges;
 mod flexible;
 pub mod hover;
 pub mod hud;
@@ -67,6 +69,8 @@ pub enum GeomKey {
 
 pub struct GpuGeom {
     pub faces: Vec<Option<MeshAlloc>>,
+    /// Boundary indices follow the face's triangles in the same allocation.
+    pub outlines: Vec<std::ops::Range<u32>>,
     pub min: Vec3,
     pub max: Vec3,
     pub joint_bounds: Vec<animesh::JointBounds>,
@@ -168,6 +172,7 @@ impl Pass {
 /// Cached per-face draw info.
 #[derive(Debug, Clone, Copy)]
 pub struct FaceDraw {
+    pub outline: Option<DrawCmd>,
     /// Texture-entry index; omitted transparent geometry leaves holes.
     pub te_index: u8,
     pub record: u32,
@@ -1082,6 +1087,7 @@ impl Scene {
             .collect();
         let g = Arc::new(GpuGeom {
             faces: gfaces,
+            outlines: geom.outlines,
             min: geom.min,
             max: geom.max,
             joint_bounds: geom.joint_bounds,
@@ -2597,11 +2603,19 @@ impl Scene {
             rec.set_hud_zoom(hud_zoom);
             rec.set_anchor(anchor.map(|a| a.matrix));
             let record = renderer.records.alloc(rec);
+            let edges = geom.outlines.get(fi).cloned().unwrap_or(alloc.index_count..alloc.index_count);
             g.faces.push(FaceDraw {
+                outline: (!edges.is_empty()).then_some(DrawCmd {
+                    index_count: edges.end - edges.start,
+                    first_index: alloc.index_offset + edges.start,
+                    base_vertex: alloc.vertex_offset as i32,
+                    record,
+                    bounds: [0.0; 4],
+                }),
                 te_index: fi as u8,
                 record,
                 cmd: DrawCmd {
-                    index_count: alloc.index_count,
+                    index_count: edges.start,
                     first_index: alloc.index_offset,
                     base_vertex: alloc.vertex_offset as i32,
                     record,
@@ -2755,6 +2769,7 @@ impl Scene {
                 rec.set_anchor(anchor);
                 let record = renderer.records.alloc(rec);
                 g.faces.push(FaceDraw {
+                    outline: None,
                     te_index: 0,
                     record,
                     cmd: DrawCmd {
@@ -3090,6 +3105,7 @@ impl Scene {
             select_root: Vec<DrawCmd>,
             select_child: Vec<DrawCmd>,
             select_faces: Vec<DrawCmd>,
+            select_edges: Vec<DrawCmd>,
             debug_blue: Vec<DrawCmd>,
             casters: Vec<ShadowCaster>,
             refl: Vec<ShadowCaster>,
@@ -3110,6 +3126,7 @@ impl Scene {
             select_root: Vec::new(),
             select_child: Vec::new(),
             select_faces: Vec::new(),
+            select_edges: Vec::new(),
             debug_blue: Vec::new(),
             casters: Vec::new(),
             refl: Vec::new(),
@@ -3213,6 +3230,9 @@ impl Scene {
                         .is_some_and(|mask| mask & 1u32.checked_shl(f.te_index.into()).unwrap_or(0) != 0)
                     {
                         l.select_faces.push(cmd);
+                        if let Some(edge) = f.outline {
+                            l.select_edges.push(edge.with_bounds(sc, sr));
+                        }
                     }
                 }
                 if pass == Pass::Hidden {
@@ -3277,6 +3297,7 @@ impl Scene {
             a.select_root.append(&mut b.select_root);
             a.select_child.append(&mut b.select_child);
             a.select_faces.append(&mut b.select_faces);
+            a.select_edges.append(&mut b.select_edges);
             a.casters.append(&mut b.casters);
             a.refl.append(&mut b.refl);
             a.probe.append(&mut b.probe);
@@ -3300,6 +3321,7 @@ impl Scene {
         self.lists.probe = result.probe;
         self.lists.glow = result.glow;
         self.lists.select_faces = result.select_faces;
+        self.lists.select_edges = result.select_edges;
         self.lists.glow_alpha = result.glow_alpha;
         for (slot, cmd, blend) in result.impostor {
             if let Some(c) = plan.captures.get_mut(slot) {
@@ -4521,6 +4543,7 @@ mod tests {
 
     fn test_face(p: Pass, glow: bool) -> FaceDraw {
         FaceDraw {
+            outline: None,
             te_index: 0,
             record: 0,
             cmd: DrawCmd {

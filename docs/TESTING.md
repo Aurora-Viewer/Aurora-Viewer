@@ -342,13 +342,24 @@ une sur A2 à 665, une sur B à 685, puis retire les deux premières faces
 ajoutées à 705 et 725. Un clic simple sélectionne seulement le dessus de B à 745.
 Maj retire cette dernière face à 765 : la sélection et le surlignage disparaissent,
 et « Choisir une face » reste accessible pour quitter ce mode.
-Capturer juste après ces étapes : le damier violet couvre les seules faces
-sélectionnées, sans contour de l’objet entier ; les autres faces gardent leur
-rendu. `faces-invisible` reprend ces gestes sur des prims entièrement transparents :
-seules les faces sélectionnées deviennent visibles par leur surlignage.
+Capturer juste après ces étapes : un contour violet et quelques petits repères
+identifient les seules faces sélectionnées, en laissant textures et couleurs
+lisibles. Les diagonales de triangles et coutures UV sont exclues du contour.
+`faces-invisible` reprend ces gestes sur des prims entièrement transparents :
+seules les faces sélectionnées deviennent visibles par leur marquage.
 `faces-ready` s’arrête avant les clics pour le test humain. Maj + clic ajoute
 ou retire une face, y compris sur un autre objet ; retirer la dernière face
 d’un prim le désélectionne. Sans Maj, la sélection précédente est remplacée.
+
+`faces-close,object:99620` cadre le cube de près puis sélectionne une face :
+la surface conserve sa couleur ; seuls ses bords et quelques petites croix
+espacées signalent la sélection. Capture à 660 pour vérifier sa lisibilité.
+
+`faces-picker,object:99620` sélectionne une face à 625 et ouvre son sélecteur
+de textures à 635, avec un nom très long dans la liste. Capturer à 660 puis 960 :
+la fenêtre garde sa largeur de 500 points, sans croissance autonome. Les noms
+sont tronqués et leur infobulle affiche le texte entier ; le redimensionnement
+manuel et les boutons Défaut / Vierge / Transparent restent disponibles.
 
 `AURORA_DEMO_FLEXIBLE` remplace les objets de la place par six prims avec
 quatre niveaux de souplesse, profils carrés / circulaires, creux, torsion et

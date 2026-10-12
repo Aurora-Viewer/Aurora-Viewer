@@ -79,7 +79,9 @@ impl TexturePicker {
         let mut open = true;
         let screen = ctx.content_rect();
         let size = Vec2::new(500.0, 460.0);
-        Floater::new("texture_picker", self.title.clone(), screen.center() - size * 0.5, size).show(ctx, p, &mut open, |ui| {
+        let mut floater = Floater::new("texture_picker", self.title.clone(), screen.center() - size * 0.5, size);
+        floater.min_size = Vec2::new(440.0, 330.0);
+        floater.show(ctx, p, &mut open, |ui| {
             let filter = self.filter.trim().to_lowercase();
             let materials = self.materials;
             let mut items: Vec<_> = world
@@ -97,9 +99,12 @@ impl TexturePicker {
                 .filter(|i| filter.is_empty() || i.name.to_lowercase().contains(&filter))
                 .collect();
             items.sort_by_key(|i| i.name.to_lowercase());
-            ui.horizontal_top(|ui| {
-                ui.vertical(|ui| {
-                    ui.set_width((ui.available_width() - 208.0).max(150.0));
+            // Both columns receive a bounded share of the existing width.
+            // Feeding a child's required width back into the next frame's
+            // available width made this floater grow continuously.
+            ui.columns(2, |columns| {
+                {
+                    let ui = &mut columns[0];
                     let hint = if materials {
                         aurora_i18n::tr!("ui-texture-picker-filter-materials")
                     } else {
@@ -117,11 +122,17 @@ impl TexturePicker {
                                 } else {
                                     aurora_i18n::tr!("ui-texture-picker-no-textures-in-the-loaded-inventory")
                                 };
-                                ui.label(RichText::new(t).size(11.5).color(p.muted));
+                                ui.add(egui::Label::new(RichText::new(t).size(11.5).color(p.muted)).wrap());
                             }
                             for i in items.iter().take(2000) {
                                 let sel = self.selected == Some(i.asset_id);
-                                let r = ui.selectable_label(sel, RichText::new(&i.name).size(12.0));
+                                let r = ui
+                                    .add_sized(
+                                        [ui.available_width(), 22.0],
+                                        egui::Button::selectable(sel, RichText::new(&i.name).size(12.0))
+                                            .wrap_mode(egui::TextWrapMode::Truncate),
+                                    )
+                                    .on_hover_text(&i.name);
                                 if r.clicked() {
                                     self.selected = Some(i.asset_id);
                                 }
@@ -130,9 +141,9 @@ impl TexturePicker {
                                 }
                             }
                         });
-                });
-                ui.add_space(8.0);
-                ui.vertical(|ui| {
+                }
+                {
+                    let ui = &mut columns[1];
                     let (rect, _) = ui.allocate_exact_size(Vec2::splat(188.0), egui::Sense::hover());
                     ui.painter().rect_filled(rect, 2.0, p.field);
                     if let Some(a) = self.selected.filter(|_| !materials) {
@@ -201,12 +212,70 @@ impl TexturePicker {
                             self.open = false;
                         }
                     });
-                });
+                }
             });
         });
         if !open || chosen.is_some() {
             self.open = false;
         }
         chosen
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn picker_width_stays_bounded_with_long_names_empty_inventory_and_material_controls() {
+        let p = crate::theme::Theme::default().palette();
+        for mode in 0..3 {
+            let ctx = egui::Context::default();
+            let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+            let asset = Uuid::from_u128(1);
+            if mode != 0 {
+                world.inventory.items.insert(
+                    asset,
+                    aurora_net::inventory::InvItem {
+                        id: asset,
+                        asset_id: asset,
+                        inv_type: if mode == 2 { INV_MATERIAL } else { INV_TEXTURE },
+                        name: "A very long texture name with many details ".repeat(30),
+                        ..Default::default()
+                    },
+                );
+            }
+            let mut picker = TexturePicker::default();
+            if mode == 2 {
+                picker.open_materials("Material", asset);
+            } else {
+                picker.open_with_defaults("Texture", asset, Some(asset), true);
+            }
+            let mut initial = None;
+            for frame in 0..180 {
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1200.0, 800.0))),
+                        time: Some(frame as f64 / 60.0),
+                        ..Default::default()
+                    },
+                    |_| {
+                        picker.show(&ctx, &p, &world, &HashMap::new());
+                    },
+                );
+                output.textures_delta.clear();
+                let rect = ctx.memory(|m| m.area_rect(egui::Id::new("texture_picker"))).unwrap();
+                assert!(rect.width() < 550.0, "mode {mode}, frame {frame}: {rect:?}");
+                if frame == 20 {
+                    initial = Some(rect);
+                }
+                if frame > 20 {
+                    assert!(
+                        (rect.width() - initial.unwrap().width()).abs() < 0.5,
+                        "mode {mode}, frame {frame}: {rect:?}"
+                    );
+                }
+            }
+        }
     }
 }

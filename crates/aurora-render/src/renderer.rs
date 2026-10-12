@@ -239,6 +239,7 @@ impl Smaa {
             depth_bias: Default::default(),
             constants: &[],
             polygon_line: false,
+            line_list: false,
         };
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("smaa"),
@@ -461,6 +462,7 @@ impl Glow {
             depth_bias: Default::default(),
             constants: &[],
             polygon_line: false,
+            line_list: false,
         };
         let post_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("glow extract"),
@@ -669,6 +671,8 @@ struct Pipelines {
     select_child_wire: Option<wgpu::RenderPipeline>,
     select_faces: wgpu::RenderPipeline,
     hud_select_faces: wgpu::RenderPipeline,
+    select_edges: wgpu::RenderPipeline,
+    hud_select_edges: wgpu::RenderPipeline,
     ssr: Option<wgpu::RenderPipeline>,
     pre_opaque: wgpu::RenderPipeline,
     pre_opaque_2s: wgpu::RenderPipeline,
@@ -1308,6 +1312,8 @@ struct PipeDesc<'a> {
     constants: &'a [(&'a str, f64)],
     /// Draw triangle edges only (POLYGON_MODE_LINE).
     polygon_line: bool,
+    /// Indexed material-face boundaries, sharing the mesh vertex buffers.
+    line_list: bool,
 }
 
 /// Draws of `list` whose bounding sphere touches the view of `view_proj`
@@ -1369,7 +1375,11 @@ fn make_pipeline(device: &wgpu::Device, module: &wgpu::ShaderModule, layout: &wg
             },
         },
         primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleList,
+            topology: if d.line_list {
+                wgpu::PrimitiveTopology::LineList
+            } else {
+                wgpu::PrimitiveTopology::TriangleList
+            },
             strip_index_format: None,
             front_face: wgpu::FrontFace::Ccw,
             cull_mode: d.cull,
@@ -1686,6 +1696,7 @@ impl Impostors {
             depth_bias: Default::default(),
             constants: &[],
             polygon_line: false,
+            line_list: false,
         };
         // pictures: alpha 1 where the avatar covers the tile
         let capture_opaque = make_pipeline(
@@ -1758,6 +1769,7 @@ struct Ranges {
     select_root: (u64, u32),
     select_child: (u64, u32),
     select_faces: (u64, u32),
+    select_edges: (u64, u32),
     refl_water: (u64, u32),
     refl_mirror: (u64, u32),
     refl_terrain_water: (u64, u32),
@@ -2304,6 +2316,7 @@ impl Backend {
             depth_bias: Default::default(),
             constants: &[],
             polygon_line: false,
+            line_list: false,
         };
         let g = |fs: &'static str, fs_g: &'static str| if ssr { fs_g } else { fs };
         let pipe = |d: PipeDesc| make_pipeline(device, &module, &scene_layout, d);
@@ -2516,8 +2529,8 @@ impl Backend {
                 true,
             )
         });
-        // Same selected-face geometry as Firestorm's renderSelectedFaces,
-        // with a procedural pattern instead of a fetched selection texture.
+        // Material editing leaves the surface visible: sparse marks and its
+        // boundary, instead of Firestorm's selection texture covering it.
         let select_faces = pipe(PipeDesc {
             cull: None,
             blend: Some(alpha_blend),
@@ -2530,6 +2543,22 @@ impl Backend {
             write_mask: wgpu::ColorWrites::COLOR,
             fs: Some("fs_hud_select_face"),
             ..hud_desc("HUD selected faces", Some(alpha_blend), false)
+        });
+        let select_edges = pipe(PipeDesc {
+            line_list: true,
+            cull: None,
+            blend: Some(alpha_blend),
+            depth_write: false,
+            write_mask: wgpu::ColorWrites::COLOR,
+            ..base("selected face borders", "vs_select_edge", "fs_select_edge")
+        });
+        let hud_select_edges = pipe(PipeDesc {
+            line_list: true,
+            depth_write: false,
+            write_mask: wgpu::ColorWrites::COLOR,
+            vs: "vs_select_edge",
+            fs: Some("fs_hud_select_edge"),
+            ..hud_desc("HUD selected face borders", Some(alpha_blend), false)
         });
         let ssr_pipe = ssr.then(|| {
             let src = format!("{}\n{}", include_str!("shaders/common.wgsl"), include_str!("shaders/ssr.wgsl"));
@@ -2638,6 +2667,7 @@ impl Backend {
             },
             constants: &[],
             polygon_line: false,
+            line_list: false,
         };
         let shadow = make_pipeline(device, &module, &shadow_pl, shadow_desc("shadow", Some("fs_shadow")));
         // opaque casters: `fs_shadow` discards nothing of them, so the same
@@ -2675,6 +2705,7 @@ impl Backend {
                 depth_bias: Default::default(),
                 constants: &[],
                 polygon_line: false,
+                line_list: false,
             },
         );
         Pipelines {
@@ -2700,6 +2731,8 @@ impl Backend {
             select_child_wire,
             select_faces,
             hud_select_faces,
+            select_edges,
+            hud_select_edges,
             ssr: ssr_pipe,
             pre_opaque,
             pre_opaque_2s,
@@ -2758,6 +2791,7 @@ impl Backend {
                     depth_bias: Default::default(),
                     constants: &[],
                     polygon_line: false,
+                    line_list: false,
                 },
             )
         };
@@ -3249,6 +3283,7 @@ impl Backend {
                 depth_bias: Default::default(),
                 constants: &[],
                 polygon_line: false,
+                line_list: false,
             },
         );
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -4055,11 +4090,13 @@ impl Backend {
         let hud_opaque_range = push(cpu, &lists.hud_opaque);
         let hud_blend_range = push(cpu, &lists.hud_blend);
         let hud_select_faces_range = push(cpu, &lists.hud_select_faces);
+        let hud_select_edges_range = push(cpu, &lists.hud_select_edges);
         rg.debug_red = push(cpu, &lists.debug_red);
         rg.debug_blue = push(cpu, &lists.debug_blue);
         rg.select_root = push(cpu, &lists.select_root);
         rg.select_child = push(cpu, &lists.select_child);
         rg.select_faces = push(cpu, &lists.select_faces);
+        rg.select_edges = push(cpu, &lists.select_edges);
         let imp_ranges: Vec<((u64, u32), (u64, u32))> = imp_caps.iter().map(|c| (push(cpu, &c.opaque), push(cpu, &c.blend))).collect();
         // reflection passes: each culled to its own frustum
         if capture.is_some() {
@@ -4833,6 +4870,7 @@ impl Backend {
                 draw(&mut pass, wire, rg.select_root);
             }
             draw(&mut pass, &self.pipelines.select_faces, rg.select_faces);
+            draw(&mut pass, &self.pipelines.select_edges, rg.select_edges);
             if let (true, Some(wire)) = (f.wireframe, &self.pipelines.debug_wire) {
                 for r in [rg.terrain, rg.opaque, rg.opaque_2s, rg.mask, rg.mask_2s, rg.blend] {
                     draw(&mut pass, wire, r);
@@ -5050,6 +5088,7 @@ impl Backend {
             draw(&mut pass, &self.pipelines.hud_opaque, hud_opaque_range);
             draw(&mut pass, &self.pipelines.hud_blend, hud_blend_range);
             draw(&mut pass, &self.pipelines.hud_select_faces, hud_select_faces_range);
+            draw(&mut pass, &self.pipelines.hud_select_edges, hud_select_edges_range);
         }
         if let (Some(t), Some(slot)) = (&self.timer, timer_slot) {
             encoder.resolve_query_set(&t.query_set, 0..GPU_TIMESTAMPS, &t.resolve, 0);

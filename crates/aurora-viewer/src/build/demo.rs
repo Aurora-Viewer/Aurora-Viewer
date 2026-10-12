@@ -9,6 +9,8 @@
 //!   to linked editing and click the requested part (ready stops before switching).
 //!   faces | faces-invisible | faces-ready: plain / Shift face clicks on
 //!   three prims of two objects (ready stops before the face clicks).
+//!   faces-picker: select one face and keep its texture picker open.
+//!   faces-close: close view of one selected face for material readability.
 //!   create-delete | create-ready: create and select a basic prim, then
 //!   delete it (ready leaves the new prim for the human).
 //!   contents-copy | contents-move | contents-move-plain | contents-ready:
@@ -43,6 +45,8 @@ pub enum Step {
     Open(Tool, EditMode, u8),
     Select(usize),
     Face(usize, u8, bool),
+    TexturePicker,
+    CloseView,
     CreateAt(Vec3),
     Delete,
     Contents,
@@ -254,8 +258,12 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
             215 => vec![Step::Open(Tool::Edit, EditMode::Face, 6), Step::Linked(false)],
             220 => object.into_iter().map(Step::Select).collect(),
             227 => vec![Step::Focus(false)],
+            235 if matches!(parts[0], "faces-close" | "faces-picker") => vec![Step::CloseView],
             _ if parts[0] == "faces-ready" => Vec::new(),
             240 => pick(99620, u8::MAX, false),
+            250 if parts[0] == "faces-picker" => vec![Step::TexturePicker],
+            _ if parts[0] == "faces-close" => Vec::new(),
+            _ if parts[0] == "faces-picker" => Vec::new(),
             260 => pick(99620, 0, true),
             280 => pick(99621, u8::MAX, true),
             300 => pick(99622, u8::MAX, true),

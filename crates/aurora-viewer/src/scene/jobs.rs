@@ -48,6 +48,7 @@ pub enum FaceUpload {
 /// of its skinned vertices per joint, and its vertex data staged for the
 /// GPU when the renderer's staging memory has room.
 pub struct PreparedGeom {
+    pub outlines: Vec<std::ops::Range<u32>>,
     pub faces: Vec<Option<FaceUpload>>,
     pub min: Vec3,
     pub max: Vec3,
@@ -59,6 +60,15 @@ impl PreparedGeom {
     /// `pick`: keep a copy of the triangles for ray picking (not for the
     /// avatar's own body parts).
     pub fn new(faces: Vec<FaceData>, min: Vec3, max: Vec3, pick: bool, pool: Option<&StagingPool>) -> Self {
+        Self::prepare(faces, min, max, pick, pool, pick)
+    }
+
+    /// Flexible paths retain their topology and update vertices only.
+    pub fn new_vertices(faces: Vec<FaceData>, min: Vec3, max: Vec3) -> Self {
+        Self::prepare(faces, min, max, true, None, false)
+    }
+
+    fn prepare(mut faces: Vec<FaceData>, min: Vec3, max: Vec3, pick: bool, pool: Option<&StagingPool>, edges: bool) -> Self {
         let pick_faces = if pick {
             faces
                 .iter()
@@ -94,6 +104,17 @@ impl PreparedGeom {
             .into_iter()
             .map(|(joint, (min, max))| JointBounds { joint, min, max })
             .collect();
+        let outlines = faces
+            .iter_mut()
+            .map(|face| {
+                let Some(face) = face else { return 0..0 };
+                let start = face.indices.len() as u32;
+                if edges {
+                    face.indices.extend(super::face_edges::boundary(face));
+                }
+                start..face.indices.len() as u32
+            })
+            .collect();
         let faces = faces
             .into_iter()
             .map(|f| {
@@ -107,6 +128,7 @@ impl PreparedGeom {
             })
             .collect();
         PreparedGeom {
+            outlines,
             faces,
             min,
             max,

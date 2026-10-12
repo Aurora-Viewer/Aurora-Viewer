@@ -5134,6 +5134,29 @@ impl App {
                         self.panels.inventory = true;
                         self.inventory_ui.expand_all = Some(true);
                     }
+                    crate::build::demo::Step::TexturePicker => {
+                        let current = self
+                            .build
+                            .sel_te(&self.world)
+                            .first()
+                            .and_then(|&(idx, face)| self.world.objects.get(idx)?.te.as_ref().map(|te| te.face(face as usize).texture))
+                            .unwrap_or_default();
+                        self.build.ui.picker.open_with_defaults(
+                            aurora_i18n::tr!("build-ui-texture-choose-texture"),
+                            current,
+                            Some(aurora_prim::te::DEFAULT_TEXTURE),
+                            false,
+                        );
+                        self.build.ui.pick_target = Some(crate::build::ui::PickTarget::Diffuse);
+                        self.world.inventory.add_items(vec![aurora_net::inventory::InvItem {
+                            id: uuid::Uuid::from_u128(99871),
+                            parent: self.world.inventory.root,
+                            asset_id: aurora_prim::te::BLANK_TEXTURE,
+                            inv_type: 0,
+                            name: aurora_i18n::tr!("build-demo-sim-light-wood").repeat(20),
+                            ..Default::default()
+                        }]);
+                    }
                     crate::build::demo::Step::TakeTask(copy) => {
                         if let Some(idx) = self.build.contents_target(&self.world)
                             && let Some(o) = self.world.objects.get(idx)
@@ -5188,6 +5211,19 @@ impl App {
                             let ray = (self.camera.position, (point - self.camera.position).normalize_or_zero());
                             self.camera
                                 .alt_focus(point, Some(object), ray, &mut self.world.agent, &self.settings.camera);
+                        }
+                    }
+                    crate::build::demo::Step::CloseView => {
+                        if let Some(idx) = self.build.sel_prims(&self.world).first().copied()
+                            && let Some((point, _, _)) = crate::scene::Scene::object_transform(&self.world, idx, Instant::now(), 0)
+                        {
+                            self.camera.set_view(
+                                point + Vec3::new(-4.0, -6.0, 3.0),
+                                point,
+                                &mut self.world.agent,
+                                &self.settings.camera,
+                            );
+                            self.panels.inventory = false;
                         }
                     }
                     crate::build::demo::Step::Linked(on) => {
