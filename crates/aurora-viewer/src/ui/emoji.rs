@@ -7,27 +7,35 @@ use crate::theme::Palette;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-/// Picker tabs: (label, Phosphor icon, Unicode group).
+/// Picker tabs: (label, Tabler icon, Unicode group).
 fn categories() -> &'static Vec<(&'static str, &'static str, emojis::Group)> {
     static TABLE: aurora_i18n::Localized<Vec<(&'static str, &'static str, emojis::Group)>> = aurora_i18n::Localized::new();
     TABLE.get(|| {
         vec![
-            (aurora_i18n::tr!("ui-emoji-smileys"), "smiley", emojis::Group::SmileysAndEmotion),
-            (aurora_i18n::tr!("common-people"), "hand-waving", emojis::Group::PeopleAndBody),
+            (
+                aurora_i18n::tr!("ui-emoji-smileys"),
+                "mood-smile-filled",
+                emojis::Group::SmileysAndEmotion,
+            ),
+            (aurora_i18n::tr!("common-people"), "user-filled", emojis::Group::PeopleAndBody),
             (
                 aurora_i18n::tr!("ui-emoji-animals-and-nature"),
-                "drop",
+                "paw-filled",
                 emojis::Group::AnimalsAndNature,
             ),
-            (aurora_i18n::tr!("ui-emoji-food"), "gift", emojis::Group::FoodAndDrink),
-            (aurora_i18n::tr!("ui-emoji-travel"), "airplane-tilt", emojis::Group::TravelAndPlaces),
+            (aurora_i18n::tr!("ui-emoji-food"), "apple-filled", emojis::Group::FoodAndDrink),
+            (
+                aurora_i18n::tr!("ui-emoji-travel"),
+                "plane-tilt-filled",
+                emojis::Group::TravelAndPlaces,
+            ),
             (
                 aurora_i18n::tr!("ui-emoji-activities"),
-                "person-simple-run",
+                "ball-bowling-filled",
                 emojis::Group::Activities,
             ),
-            (aurora_i18n::tr!("common-objects"), "cube", emojis::Group::Objects),
-            (aurora_i18n::tr!("ui-emoji-symbols"), "star", emojis::Group::Symbols),
+            (aurora_i18n::tr!("common-objects"), "bulb-filled", emojis::Group::Objects),
+            (aurora_i18n::tr!("ui-emoji-symbols"), "star-filled", emojis::Group::Symbols),
         ]
     })
 }

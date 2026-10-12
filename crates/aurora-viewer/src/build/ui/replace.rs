@@ -41,7 +41,7 @@ fn toggle(ui: &mut egui::Ui, p: &Palette, value: &mut bool, label: &str, help: &
 }
 
 pub fn panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World) {
-    compact::heading(ui, p, "arrows-left-right", aurora_i18n::tr!("replace-button"), |_| {});
+    compact::heading(ui, p, "replace-filled", aurora_i18n::tr!("replace-button"), |_| {});
     let height = (ui.ctx().content_rect().height() - 210.0).clamp(160.0, 380.0);
     egui::ScrollArea::vertical()
         .id_salt("replace_prim")

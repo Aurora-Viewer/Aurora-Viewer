@@ -150,7 +150,7 @@ impl EnvironmentUi {
                     if widgets::icon_button(
                         ui,
                         p,
-                        "arrow-counter-clockwise",
+                        "restore",
                         aurora_i18n::tr!("ui-environment-return-to-shared-environment"),
                         true,
                     ) {
@@ -261,10 +261,10 @@ impl EnvironmentUi {
                     }
                 }
             });
-        if widgets::icon_button(ui, p, "caret-left", aurora_i18n::tr!("common-previous"), !list.is_empty()) {
+        if widgets::icon_button(ui, p, "caret-left-filled", aurora_i18n::tr!("common-previous"), !list.is_empty()) {
             picked = env_select::step(list, env_select::shown_index(list, shown), false);
         }
-        if widgets::icon_button(ui, p, "caret-right", aurora_i18n::tr!("common-next"), !list.is_empty()) {
+        if widgets::icon_button(ui, p, "caret-right-filled", aurora_i18n::tr!("common-next"), !list.is_empty()) {
             picked = env_select::step(list, env_select::shown_index(list, shown), true);
         }
         picked.map(|id| EnvAction::Pick(kind, id))

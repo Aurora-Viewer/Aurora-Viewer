@@ -124,7 +124,7 @@ pub fn region_name_pos(sim_name: &str, pos: glam::Vec3, global: DVec3) -> String
 }
 
 /// FIRE-2717 "information_text" of the place profile ("[AREA] m² | 🚶
-/// [TRAFFIC]", the walker drawn as a Phosphor icon): the area part and the
+/// [TRAFFIC]", the walker drawn as a Tabler icon): the area part and the
 /// traffic, `(S32)dwell`.
 pub fn information(area: i32, dwell: f32) -> (String, String) {
     (format!("{area} m² |"), format!("{}", dwell as i32))
@@ -229,17 +229,17 @@ pub fn teleport_action(place: &Place, world: &World) -> Option<PlaceAction> {
 /// STORM-411), menu_landmark.xml for a landmark.
 pub fn overflow_menu(ui: &mut egui::Ui, p: &Palette, world: &World, place: &Place) {
     let slurl = slurl_of(place, world);
-    if super::menu::item_if(ui, p, "link", aurora_i18n::tr!("common-copy-slurl"), slurl.is_some())
+    if super::menu::item_if(ui, p, "link-filled", aurora_i18n::tr!("common-copy-slurl"), slurl.is_some())
         && let Some(s) = slurl
     {
         ui.ctx().copy_text(s);
     }
     if matches!(place.source, Source::Landmark { .. }) {
-        super::menu::todo(ui, p, "trash", aurora_i18n::tr!("common-delete"));
-        super::menu::todo(ui, p, "star", aurora_i18n::tr!("common-create-favorite"));
-        super::menu::todo(ui, p, "push-pin", aurora_i18n::tr!("ui-place-details-add-to-favorites-bar"));
+        super::menu::todo(ui, p, "trash-filled", aurora_i18n::tr!("common-delete"));
+        super::menu::todo(ui, p, "star-filled", aurora_i18n::tr!("common-create-favorite"));
+        super::menu::todo(ui, p, "pin-filled", aurora_i18n::tr!("ui-place-details-add-to-favorites-bar"));
     } else {
-        super::menu::todo(ui, p, "star", aurora_i18n::tr!("common-create-favorite"));
+        super::menu::todo(ui, p, "star-filled", aurora_i18n::tr!("common-create-favorite"));
     }
 }
 
@@ -333,9 +333,13 @@ fn window_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, place: &Place, 
             .response
             .on_disabled_hover_text(super::menu::not_yet());
         }
-        widgets::icon_menu(ui, p, "list", aurora_i18n::tr!("ui-place-details-show-more-options"), |ui| {
-            overflow_menu(ui, p, world, place)
-        });
+        widgets::icon_menu(
+            ui,
+            p,
+            "menu-2-filled",
+            aurora_i18n::tr!("ui-place-details-show-more-options"),
+            |ui| overflow_menu(ui, p, world, place),
+        );
     });
 }
 
@@ -381,7 +385,7 @@ fn snapshot(ui: &mut egui::Ui, c: &mut Ctx, data: &Shown) {
                 .rect_stroke(rect, 2.0, egui::Stroke::new(1.0, p.raised), egui::StrokeKind::Inside);
         }
         None => {
-            widgets::picture(ui, p, None, size, "mountains", "");
+            widgets::picture(ui, p, None, size, "mountain-filled", "");
         }
     }
     ui.add_space(2.0);
@@ -434,8 +438,8 @@ fn titles(data: &Shown, place: &Place) -> (String, Option<String>) {
 fn maturity_row(ui: &mut egui::Ui, p: &Palette, data: &Shown) {
     let (icon, text, known): (Option<&str>, &str, bool) = match data {
         Shown::Parcel(d) => (None, maturity(d.flags), true),
-        Shown::Loading => (Some("question"), loading(), false),
-        Shown::Failed(_) => (Some("question"), NOT_AVAILABLE, false),
+        Shown::Loading => (Some("help-circle-filled"), loading(), false),
+        Shown::Failed(_) => (Some("help-circle-filled"), NOT_AVAILABLE, false),
     };
     let rtl = ui.layout().prefer_right_to_left();
     let draw_icon = |ui: &mut egui::Ui| match icon {
@@ -507,7 +511,7 @@ fn place_profile(ui: &mut egui::Ui, c: &mut Ctx, place: &Place, data: &Shown) {
             Shown::Parcel(d) => {
                 let (area, traffic) = information(d.actual_area, d.dwell);
                 ui.label(small(&traffic));
-                small_icon(ui, "person-simple-walk", 12.0, p.muted);
+                small_icon(ui, "walk", 12.0, p.muted);
                 ui.label(small(&area));
             }
             Shown::Loading => {

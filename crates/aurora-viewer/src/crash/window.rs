@@ -1,4 +1,4 @@
-//! Recovery UI uses the viewer's theme, fonts, Phosphor icons and Fluent
+//! Recovery UI uses the viewer's theme, fonts, Tabler icons and Fluent
 //! catalogues, but runs in a separate process with a CPU-only painter.
 
 use crate::ui::{fonts, icons::Icons, widgets};
@@ -93,7 +93,7 @@ impl Recovery {
                     return;
                 }
                 ui.horizontal(|ui| {
-                    if let Some(icon) = self.icons.get("warning") {
+                    if let Some(icon) = self.icons.get("alert-triangle-filled") {
                         ui.add(egui::Image::new(icon).fit_to_exact_size(Vec2::splat(58.0)).tint(p.amber));
                     }
                     ui.add_space(14.0);

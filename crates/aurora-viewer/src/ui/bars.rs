@@ -566,7 +566,7 @@ fn nav_arrow(ui: &mut egui::Ui, p: &Palette, icons: &Icons, left: bool, dest: Op
 fn info_button(ui: &mut egui::Ui, p: &Palette, icons: &Icons) -> bool {
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(16.0, 16.0), egui::Sense::click());
     let col = if resp.hovered() { p.ink } else { p.muted };
-    paint_icon(ui, icons, "info", rect, 16.0, col);
+    paint_icon(ui, icons, "info-circle-filled", rect, 16.0, col);
     resp.on_hover_text(aurora_i18n::tr!("common-about-land")).clicked()
 }
 
@@ -600,7 +600,7 @@ fn voice_light(ui: &mut egui::Ui, p: &Palette, icons: &Icons, light: crate::voic
     paint_icon(
         ui,
         icons,
-        "microphone",
+        "microphone-filled",
         icon_rect,
         12.0,
         if resp.hovered() { p.ink } else { p.muted },
@@ -747,7 +747,7 @@ pub fn top_bars(
                     notif.open = !notif.open;
                 }
                 // online status (away, do not disturb, automatic responses)
-                if st.show_bug_report && icon_button(ui, p, icons, "bug", aurora_i18n::tr!("bug-title"), 17.0) {
+                if st.show_bug_report && icon_button(ui, p, icons, "bug-filled", aurora_i18n::tr!("bug-title"), 17.0) {
                     action = BarAction::ReportBug;
                 }
                 status_dot(ui, p, st.status, &mut action);
@@ -1032,9 +1032,9 @@ fn mic_button(ui: &mut egui::Ui, p: &Palette, icons: &Icons, width: f32, mic: &m
         painter.rect_filled(rect, 2.0, p.field);
     }
     let icon = if live || (!mic.hold && mic.on) {
-        "microphone"
+        "microphone-filled"
     } else {
-        "microphone-slash"
+        "microphone-off"
     };
     if let Some(t) = icons.get(icon) {
         let size = (main.width() - 6.0).clamp(10.0, 16.0);
@@ -1066,7 +1066,7 @@ fn mic_button(ui: &mut egui::Ui, p: &Palette, icons: &Icons, width: f32, mic: &m
         let caret = egui::Rect::from_min_max(egui::pos2(main.right(), rect.top()), rect.max);
         let cresp = ui.interact(caret, ui.id().with("mic_caret"), egui::Sense::click());
         let col = if cresp.hovered() { p.ink } else { p.muted_dim };
-        paint_icon(ui, icons, "caret-down", caret, 8.0, col);
+        paint_icon(ui, icons, "caret-down-filled", caret, 8.0, col);
         egui::Popup::menu(&cresp).align(egui::RectAlign::TOP_END).show(|ui| {
             ui.set_min_width(210.0);
             ui.horizontal(|ui| {

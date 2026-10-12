@@ -302,7 +302,7 @@ pub fn show(
         Vec2::new(344.0, 500.0),
     )
     .help(aurora_i18n::tr!("build-compact-help"))
-    .framed_header("cube")
+    .framed_header("box")
     .auto_height()
     .silent();
     floater.show(ctx, p, &mut open, |ui| compact::body(ui, p, tool, world, s, mods, env));

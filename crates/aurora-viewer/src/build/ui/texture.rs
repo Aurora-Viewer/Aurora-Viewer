@@ -260,11 +260,11 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         small(ui, p, aurora_i18n::tr!("build-ui-texture-no-editable-face-selected"));
         return;
     }
-    super::compact::heading(ui, p, "paint-brush", aurora_i18n::tr!("build-compact-materials"), |ui| {
+    super::compact::heading(ui, p, "paint-filled", aurora_i18n::tr!("build-compact-materials"), |ui| {
         if super::common::icon_button(
             ui,
             p,
-            "clipboard-text",
+            "clipboard-text-filled",
             aurora_i18n::tr!("build-ui-texture-paste-texture-settings-from-the-clipboard"),
             tool.ui.face_clipboard.is_some(),
         ) {
@@ -274,7 +274,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         if super::common::icon_button(
             ui,
             p,
-            "copy",
+            "copy-filled",
             aurora_i18n::tr!("build-ui-texture-copy-texture-settings-to-clipboard"),
             one_object,
         ) {
@@ -539,7 +539,7 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
                 for k in 0..2 {
                     row(ui, p, ["U", "V"][k], 20.0, |ui| {
                         e = e.or(spin(ui, &mut nt.scale[k], 0.1, -10000.0..=10000.0, 5, W, mixed));
-                        if super::common::icon_button(ui, p, "arrows-left-right", aurora_i18n::tr!("common-rotate"), true) {
+                        if super::common::icon_button(ui, p, "arrows-exchange", aurora_i18n::tr!("common-rotate"), true) {
                             flip[k] = true;
                         }
                     });
@@ -853,7 +853,7 @@ fn blinn_phong(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut
                 for i in 0..2 {
                     row(ui, p, ["H", "V"][i], 20.0, |ui| {
                         e = e.or(spin(ui, &mut v[i], 0.1, -10000.0..=10000.0, decimals, W, mixed(i)));
-                        if super::common::icon_button(ui, p, "arrows-left-right", aurora_i18n::tr!("common-rotate"), true) {
+                        if super::common::icon_button(ui, p, "arrows-exchange", aurora_i18n::tr!("common-rotate"), true) {
                             flip[i] = true;
                         }
                     });

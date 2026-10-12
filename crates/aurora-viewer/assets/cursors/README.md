@@ -1,7 +1,7 @@
 # Curseurs Firestorm
 
 Les dessins d'origine sont repris à la demande de l'utilisateur (exception
-aux icônes Phosphor de l'interface). Sources officielles Firestorm, commit
+aux icônes Tabler de l'interface). Sources officielles Firestorm, commit
 `a9151948839c4468c8137b547bac07f216855059` :
 
 - `sit.png` : `indra/newview/res/toolsit.cur`.
@@ -20,8 +20,8 @@ points actifs d'origine conservés dans `src/cursors.rs`. Aucun de ces dessins
 ne contient de pixel monochrome demandant l'inversion du fond.
 
 Touch utilise la main native du système, comme Firestorm sous Windows.
-Le déplacement des HUDs avec ALT utilise l’icône Phosphor regular
-`hand-grabbing.svg`, rastérisée en curseur de 32 × 32 avec un contour contrasté
+Le déplacement des HUDs avec ALT utilise l’icône Tabler au trait
+`hand-grab.svg`, rastérisée en curseur de 32 × 32 avec un contour contrasté
 et un point actif central. Windows remplace la main « Grabbing » native par
 des flèches : ce curseur personnalisé conserve la main demandée.
 NONE / TOUCH sur un objet non interactif, DISABLED sur un objet non physique et les actions indisponibles

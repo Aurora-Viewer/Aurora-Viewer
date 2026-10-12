@@ -2,7 +2,7 @@
 //! Firestorm's LLContextMenu / LLMenuItemGL (indra/llui/llmenugl.cpp,
 //! originally LGPL 2.1): flat rows, label on the left, a ▸ for sub-menus,
 //! thin separators, unavailable entries greyed out rather than hidden.
-//! Aurora adds a Phosphor icon at the start of every row, and draws check
+//! Aurora adds a Tabler icon at the start of every row, and draws check
 //! marks at the right end (the left column holds the icon).
 //!
 //! Menus are egui popups (`Popup` / `SubMenu`): a menu closes when an
@@ -151,7 +151,7 @@ fn row(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enabled: bool, end: En
     let end_rect = egui::Rect::from_center_size(rect.right_center() - Vec2::new(PAD + 6.0, 0.0), Vec2::splat(12.0));
     match end {
         End::None | End::Check(false) => {}
-        End::Caret => paint_icon(painter, "caret-right", end_rect, if enabled { p.muted } else { p.muted_dim }),
+        End::Caret => paint_icon(painter, "caret-right-filled", end_rect, if enabled { p.muted } else { p.muted_dim }),
         End::Check(true) => paint_icon(painter, "check", end_rect, if enabled { p.violet_light } else { p.muted_dim }),
     }
     resp

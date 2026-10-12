@@ -95,14 +95,14 @@ fn pieces(text: &str, mut name_of: impl FnMut(uuid::Uuid) -> String) -> Vec<(Str
 fn link_badge_look(p: &Palette, url: &str) -> (&'static str, Color32, String) {
     use crate::link_trust::Trust;
     match crate::link_trust::classify(url) {
-        Trust::Trusted => ("check-circle-fill", p.success, aurora_i18n::tr!("ui-chat-trusted-site").into()),
+        Trust::Trusted => ("circle-check-filled", p.success, aurora_i18n::tr!("ui-chat-trusted-site").into()),
         Trust::Unknown => (
-            "warning-fill",
+            "alert-triangle-filled",
             p.amber,
             aurora_i18n::tr!("ui-chat-external-link-check-the-address-before-opening-it").into(),
         ),
         Trust::Dangerous(why) => (
-            "x-circle-fill",
+            "circle-x-filled",
             p.danger,
             aurora_i18n::tr!("ui-chat-dangerous-link", why = why.to_string()),
         ),
@@ -316,7 +316,7 @@ fn avatar_pic(ui: &mut egui::Ui, p: &Palette, pic: Option<&egui::TextureHandle>,
     }
 }
 
-/// Phosphor icon button of the conversation toolbar.
+/// Tabler icon button of the conversation toolbar.
 fn tool(ui: &mut egui::Ui, p: &Palette, icons: &super::icons::Icons, icon: &str, tip: &str, enabled: bool, active: bool) -> bool {
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(26.0, 22.0), egui::Sense::click());
     if active {
@@ -411,7 +411,7 @@ fn place_menu(r: &egui::Response, p: &Palette, url: &str, place: &crate::slurl::
     super::menu::context_menu(r, p, |ui| {
         let l = &place.location;
         let teleport = |ui: &mut egui::Ui| {
-            if super::menu::item(ui, p, "navigation-arrow", aurora_i18n::tr!("ui-chat-teleport-to-this-location")) {
+            if super::menu::item(ui, p, "location-filled", aurora_i18n::tr!("ui-chat-teleport-to-this-location")) {
                 super::context::request(ui.ctx(), CtxAction::TeleportToPlace(l.region.clone(), l.pos));
             }
         };
@@ -421,7 +421,7 @@ fn place_menu(r: &egui::Response, p: &Palette, url: &str, place: &crate::slurl::
             aurora_i18n::tr!("common-show-on-map-2")
         };
         let map = |ui: &mut egui::Ui| {
-            if super::menu::item(ui, p, "map-trifold", map_label) {
+            if super::menu::item(ui, p, "map", map_label) {
                 super::context::request(ui.ctx(), CtxAction::ShowPlace(l.region.clone(), l.pos));
             }
         };
@@ -430,7 +430,12 @@ fn place_menu(r: &egui::Response, p: &Palette, url: &str, place: &crate::slurl::
             super::menu::separator(ui, p);
             map(ui);
         } else {
-            if super::menu::item(ui, p, "info", aurora_i18n::tr!("ui-chat-show-information-about-this-place")) {
+            if super::menu::item(
+                ui,
+                p,
+                "info-circle-filled",
+                aurora_i18n::tr!("ui-chat-show-information-about-this-place"),
+            ) {
                 super::context::request(ui.ctx(), CtxAction::ShowPlaceInfo(l.region.clone(), l.pos));
             }
             super::menu::separator(ui, p);
@@ -438,7 +443,7 @@ fn place_menu(r: &egui::Response, p: &Palette, url: &str, place: &crate::slurl::
             teleport(ui);
         }
         super::menu::separator(ui, p);
-        if super::menu::item(ui, p, "link", aurora_i18n::tr!("common-copy-slurl")) {
+        if super::menu::item(ui, p, "link-filled", aurora_i18n::tr!("common-copy-slurl")) {
             ui.ctx().copy_text(url.to_owned());
         }
     });
@@ -669,7 +674,7 @@ fn conversation(
                     ui.horizontal(|ui| {
                         if object {
                             let (rect, _) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::hover());
-                            if let Some(t) = icons.get("cube") {
+                            if let Some(t) = icons.get("box") {
                                 ui.painter().image(
                                     t.id(),
                                     rect.shrink(2.0),
@@ -863,7 +868,7 @@ pub fn show(
     );
     if st.contacts {
         // the tear-off button of the multi-floater, for the Contacts tab
-        floater = floater.action("arrow-square-out", aurora_i18n::tr!("common-detach"), &mut tear_off);
+        floater = floater.action("external-link", aurora_i18n::tr!("common-detach"), &mut tear_off);
     }
     floater.show(ctx, p, open, |ui| {
         let h = (ui.available_height() - 6.0).max(140.0);
@@ -942,7 +947,7 @@ pub fn show(
                                 ui,
                                 p,
                                 icons,
-                                "users-three",
+                                "users-group",
                                 &aurora_i18n::tr!("ui-chat-participants", n = format!("{}", n)),
                                 true,
                                 st.show_profile,
@@ -954,7 +959,7 @@ pub fn show(
                                     ui,
                                     p,
                                     icons,
-                                    "chat-teardrop-slash",
+                                    "message-off",
                                     aurora_i18n::tr!("common-stop-receiving-this-group-s-chat"),
                                     true,
                                     false,
@@ -962,12 +967,12 @@ pub fn show(
                             {
                                 actions.push(ConvAction::BlockGroupChat(other));
                             }
-                            if tool(ui, p, icons, "sign-out", aurora_i18n::tr!("ui-chat-leave-session"), true, false) {
+                            if tool(ui, p, icons, "logout", aurora_i18n::tr!("ui-chat-leave-session"), true, false) {
                                 actions.push(ConvAction::LeaveSession(other));
                             }
                         }
                         Some(other) => {
-                            if tool(ui, p, icons, "user-circle", aurora_i18n::tr!("common-profile"), true, false) {
+                            if tool(ui, p, icons, "user-filled", aurora_i18n::tr!("common-profile"), true, false) {
                                 actions.push(ConvAction::Profile(other));
                             }
                             tool(
@@ -979,22 +984,14 @@ pub fn show(
                                 false,
                                 false,
                             );
-                            if tool(
-                                ui,
-                                p,
-                                icons,
-                                "airplane-takeoff",
-                                aurora_i18n::tr!("common-offer-teleport"),
-                                true,
-                                false,
-                            ) {
+                            if tool(ui, p, icons, "send-filled", aurora_i18n::tr!("common-offer-teleport"), true, false) {
                                 actions.push(ConvAction::OfferTeleport(other));
                             }
                             tool(
                                 ui,
                                 p,
                                 icons,
-                                "gift",
+                                "gift-filled",
                                 aurora_i18n::tr!("ui-chat-give-object-coming-soon"),
                                 false,
                                 false,
@@ -1003,7 +1000,7 @@ pub fn show(
                                 ui,
                                 p,
                                 icons,
-                                "currency-circle-dollar",
+                                "coin-filled",
                                 aurora_i18n::tr!("ui-chat-pay-coming-soon"),
                                 false,
                                 false,
@@ -1012,7 +1009,7 @@ pub fn show(
                                 ui,
                                 p,
                                 icons,
-                                "phone",
+                                "phone-filled",
                                 aurora_i18n::tr!("ui-chat-voice-call-coming-soon"),
                                 false,
                                 false,
@@ -1023,7 +1020,7 @@ pub fn show(
                             } else {
                                 aurora_i18n::tr!("common-block")
                             };
-                            if tool(ui, p, icons, "prohibit", tip, true, blocked) {
+                            if tool(ui, p, icons, "forbid-filled", tip, true, blocked) {
                                 actions.push(ConvAction::ToggleBlock(other));
                             }
                         }
@@ -1038,7 +1035,7 @@ pub fn show(
                         ui,
                         p,
                         icons,
-                        "magnifying-glass",
+                        "search-filled",
                         aurora_i18n::tr!("ui-chat-search-conversation"),
                         true,
                         searching,
@@ -1178,7 +1175,7 @@ pub fn show(
                                 .hint_text(hint)
                                 .desired_width(field_w),
                         );
-                        let b = tool_resp(ui, p, icons, "smiley", st.emoji_open);
+                        let b = tool_resp(ui, p, icons, "mood-smile-filled", st.emoji_open);
                         emoji_btn = Some(b.rect);
                         if b.on_hover_text(aurora_i18n::tr!("ui-chat-emoji")).clicked() {
                             st.emoji_open = !st.emoji_open;
@@ -1277,7 +1274,7 @@ fn bubble_sender(
     let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
     match who {
         Sender::Object => {
-            if let Some(t) = super::icons::global("cube") {
+            if let Some(t) = super::icons::global("box") {
                 painter.image(t.id(), r.shrink(1.0), uv, super::colors::sender_color(line).gamma_multiply(alpha));
             }
         }

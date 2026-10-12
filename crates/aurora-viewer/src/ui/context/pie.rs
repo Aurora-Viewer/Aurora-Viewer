@@ -45,7 +45,7 @@ fn paginate(entries: Vec<Entry>) -> Vec<Entry> {
     }
     if entries.len() > SLICES {
         let rest = entries.split_off(SLICES - 1);
-        entries.push(submenu("dots-three", aurora_i18n::tr!("ui-pie-more"), rest));
+        entries.push(submenu("dots-filled", aurora_i18n::tr!("ui-pie-more"), rest));
     }
     entries
 }
@@ -86,7 +86,7 @@ fn layout(target: &Target, entries: &[Entry]) -> Vec<Entry> {
                 buy
             } else {
                 rest.push(buy);
-                submenu("hand-grabbing", aurora_i18n::tr!("ui-context-take"), vec![take, copy])
+                submenu("hand-grab", aurora_i18n::tr!("ui-context-take"), vec![take, copy])
             };
             let pay = take_action(&mut rest, |a| matches!(a, CtxAction::Pay(_)));
             let edit = take_action(&mut rest, |a| matches!(a, CtxAction::Edit(_)));
@@ -100,10 +100,10 @@ fn layout(target: &Target, entries: &[Entry]) -> Vec<Entry> {
             let zoom = take_action(&mut rest, |a| matches!(a, CtxAction::Zoom(_)));
             let stand = take_action(&mut rest, |a| matches!(a, CtxAction::StandUp));
             let sit = take_icon(&mut rest, "armchair");
-            let particles = take_icon(&mut rest, "sparkle");
-            let pass = take_icon(&mut rest, "ticket");
+            let particles = take_icon(&mut rest, "sparkles-filled");
+            let pass = take_icon(&mut rest, "ticket-filled");
             let edit = take_action(&mut rest, |a| matches!(a, CtxAction::EditTerrain));
-            let buy = take_icon(&mut rest, "shopping-cart");
+            let buy = take_icon(&mut rest, "shopping-cart-filled");
             return vec![
                 about,
                 build,
@@ -116,7 +116,7 @@ fn layout(target: &Target, entries: &[Entry]) -> Vec<Entry> {
             ];
         }
         Target::Avatar { own: true, .. } => {
-            let community = take_icon(&mut rest, "users-three");
+            let community = take_icon(&mut rest, "users-group");
             let mut community = match community.kind {
                 Kind::Submenu(e) => e,
                 _ => Vec::new(),
@@ -124,36 +124,36 @@ fn layout(target: &Target, entries: &[Entry]) -> Vec<Entry> {
             let profile = take_action(&mut community, |a| matches!(a, CtxAction::Profile(_)));
             let groups = take_action(&mut community, |a| matches!(a, CtxAction::OpenPeople(2)));
             rest.extend(community);
-            let remove = take_icon(&mut rest, "t-shirt");
+            let remove = take_icon(&mut rest, "shirt-filled");
             let sit = seated(&mut rest);
             let scripts = take_icon(&mut rest, "code");
-            let appearance = take_icon(&mut rest, "person");
-            let textures = take_icon(&mut rest, "image");
+            let appearance = take_icon(&mut rest, "man-filled");
+            let textures = take_icon(&mut rest, "photo-filled");
             vec![profile, groups, remove, sit, scripts, blank(), appearance, textures]
         }
         Target::Attachment { .. } => {
-            let profile = take_icon(&mut rest, "info");
-            let drop = take_icon(&mut rest, "trash");
+            let profile = take_icon(&mut rest, "info-circle-filled");
+            let drop = take_icon(&mut rest, "trash-filled");
             let sit = seated(&mut rest);
             let detach = take_action(&mut rest, |a| matches!(a, CtxAction::Detach(_)));
             let inventory = take_action(&mut rest, |a| matches!(a, CtxAction::AttachmentInventory(_)));
-            let appearance = take_icon(&mut rest, "person");
+            let appearance = take_icon(&mut rest, "man-filled");
             let edit = take_action(&mut rest, |a| matches!(a, CtxAction::EditAttachment(_)));
             vec![profile, drop, blank(), sit, detach, inventory, appearance, edit]
         }
         Target::Avatar { .. } => {
             let profile = take_action(&mut rest, |a| matches!(a, CtxAction::Profile(_)));
-            let mut mute = take_icon(&mut rest, "warning");
+            let mut mute = take_icon(&mut rest, "alert-triangle-filled");
             let report = match &mut mute.kind {
-                Kind::Submenu(e) => take_icon(e, "flag"),
+                Kind::Submenu(e) => take_icon(e, "flag-filled"),
                 _ => blank(),
             };
             let zoom = take_action(&mut rest, |a| matches!(a, CtxAction::Zoom(_)));
             let friend = take_action(&mut rest, |a| matches!(a, CtxAction::AddFriend(_)));
-            let invite = take_icon(&mut rest, "user-circle-plus");
-            let contacts = take_icon(&mut rest, "users-three");
+            let invite = take_icon(&mut rest, "users-plus");
+            let contacts = take_icon(&mut rest, "users-group");
             let add = submenu("user-plus", aurora_i18n::tr!("common-add"), vec![friend, contacts, invite]);
-            let pay = take_icon(&mut rest, "currency-circle-dollar");
+            let pay = take_icon(&mut rest, "coin-filled");
             let im = take_action(&mut rest, |a| matches!(a, CtxAction::Im(_)));
             vec![profile, mute, zoom, report, add, pay, blank(), im]
         }
@@ -163,7 +163,7 @@ fn layout(target: &Target, entries: &[Entry]) -> Vec<Entry> {
         Target::Avatar { own: true, .. } => 5,
         _ => 6,
     };
-    root[more_index] = submenu("dots-three", aurora_i18n::tr!("ui-pie-more"), rest);
+    root[more_index] = submenu("dots-filled", aurora_i18n::tr!("ui-pie-more"), rest);
     paginate(root)
 }
 

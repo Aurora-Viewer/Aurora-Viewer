@@ -116,7 +116,7 @@ fn field(
                 if let Some(show) = password {
                     let (r, eye) = ui.allocate_exact_size(Vec2::splat(18.0), if remembered { Sense::hover() } else { Sense::click() });
                     let col = if !remembered && eye.hovered() { p.ink } else { p.muted };
-                    img(ui, icons, if *show && !remembered { "eye-slash" } else { "eye" }, r, col);
+                    img(ui, icons, if *show && !remembered { "eye-off" } else { "eye-filled" }, r, col);
                     let tip = if remembered {
                         aurora_i18n::tr!("ui-login-password-remembered-enter-a-new-one-to-replace-it")
                     } else if *show {
@@ -212,7 +212,7 @@ fn version_panel(ui: &mut egui::Ui, p: &Palette, icons: &Icons, info: &LoginInfo
     let mut check_updates = false;
     glass(p, 10, 16).show(ui, |ui| {
         ui.set_width(ui.available_width());
-        panel_title(ui, p, icons, "tag", aurora_i18n::tr!("ui-login-version"));
+        panel_title(ui, p, icons, "tag-filled", aurora_i18n::tr!("ui-login-version"));
         let current = aurora_version::version();
         ui.horizontal(|ui| {
             ui.label(RichText::new(aurora_i18n::tr!("ui-login-installed")).size(12.5).color(p.muted));
@@ -222,15 +222,19 @@ fn version_panel(ui: &mut egui::Ui, p: &Palette, icons: &Icons, info: &LoginInfo
         });
         ui.add_space(2.0);
         let (icon, text, col) = match &info.version {
-            VersionState::UpToDate => ("check-circle", aurora_i18n::tr!("ui-login-up-to-date").to_owned(), p.success),
+            VersionState::UpToDate => ("circle-check-filled", aurora_i18n::tr!("ui-login-up-to-date").to_owned(), p.success),
             VersionState::Available { version, .. } => (
-                "sparkle",
+                "sparkles-filled",
                 aurora_i18n::tr!("status-v-version-available", version = version.to_string()),
                 p.amber,
             ),
-            VersionState::Checking => ("arrows-clockwise", aurora_i18n::tr!("ui-login-checking").to_owned(), p.muted),
-            VersionState::Failed => ("arrows-clockwise", aurora_i18n::tr!("ui-login-unable-to-check").to_owned(), p.muted),
-            VersionState::NotConfigured => ("check-circle", aurora_i18n::tr!("ui-login-development-version").to_owned(), p.muted),
+            VersionState::Checking => ("refresh", aurora_i18n::tr!("ui-login-checking").to_owned(), p.muted),
+            VersionState::Failed => ("refresh", aurora_i18n::tr!("ui-login-unable-to-check").to_owned(), p.muted),
+            VersionState::NotConfigured => (
+                "circle-check-filled",
+                aurora_i18n::tr!("ui-login-development-version").to_owned(),
+                p.muted,
+            ),
         };
         ui.horizontal(|ui| {
             ui.label(RichText::new(aurora_i18n::tr!("ui-login-latest")).size(12.5).color(p.muted));
@@ -270,7 +274,7 @@ fn version_panel(ui: &mut egui::Ui, p: &Palette, icons: &Icons, info: &LoginInfo
 fn news_panel(ui: &mut egui::Ui, p: &Palette, icons: &Icons, info: &LoginInfo, max_h: f32) {
     glass(p, 10, 16).show(ui, |ui| {
         ui.set_width(ui.available_width());
-        panel_title(ui, p, icons, "newspaper", aurora_i18n::tr!("ui-login-news"));
+        panel_title(ui, p, icons, "article-filled", aurora_i18n::tr!("ui-login-news"));
         egui::ScrollArea::vertical()
             .max_height(max_h)
             .min_scrolled_height(max_h)
@@ -295,7 +299,7 @@ fn news_panel(ui: &mut egui::Ui, p: &Palette, icons: &Icons, info: &LoginInfo, m
                                 ui.add(egui::Label::new(RichText::new(&n.title).size(14.0).strong().color(p.ink)).wrap());
                                 if has_url {
                                     let (r, _) = ui.allocate_exact_size(Vec2::splat(13.0), Sense::hover());
-                                    img(ui, icons, "arrow-square-out", r, p.muted);
+                                    img(ui, icons, "external-link-filled", r, p.muted);
                                 }
                             });
                             if !n.summary.is_empty() {
@@ -369,7 +373,7 @@ pub fn show(
                         p,
                         icons,
                         "login_user",
-                        "user",
+                        "user-filled",
                         aurora_i18n::tr!("extra-first-last-or-username"),
                         &mut settings.username,
                         None,
@@ -386,7 +390,7 @@ pub fn show(
                         p,
                         icons,
                         "login_pass",
-                        "lock-key",
+                        "lock-filled",
                         hint,
                         &mut form.password,
                         Some(&mut form.show_password),
@@ -399,7 +403,16 @@ pub fn show(
                                 .size(11.5)
                                 .color(p.amber),
                         );
-                        mfa = Some(field(ui, p, icons, "login_mfa", "lock-key", "000000", &mut form.mfa_token, None));
+                        mfa = Some(field(
+                            ui,
+                            p,
+                            icons,
+                            "login_mfa",
+                            "shield-lock-filled",
+                            "000000",
+                            &mut form.mfa_token,
+                            None,
+                        ));
                     }
 
                     ui.add_space(6.0);
@@ -446,7 +459,7 @@ pub fn show(
                             p,
                             icons,
                             "login_grid",
-                            "globe-simple",
+                            "world-filled",
                             "http://grille.exemple:8002/",
                             &mut settings.custom_login_uri,
                             None,
@@ -458,7 +471,7 @@ pub fn show(
                             p,
                             icons,
                             "login_region",
-                            "map-pin",
+                            "map-pin-filled",
                             aurora_i18n::tr!("ui-login-region-name"),
                             &mut settings.start_region,
                             None,
@@ -526,7 +539,7 @@ pub fn show(
                     img(
                         ui,
                         icons,
-                        if form.block_reason.is_some() { "lock-simple" } else { "sign-in" },
+                        if form.block_reason.is_some() { "lock-filled" } else { "login-2" },
                         egui::Rect::from_center_size(egui::pos2(x0 + 9.0, r.center().y), Vec2::splat(18.0)),
                         txt_col,
                     );
@@ -618,8 +631,8 @@ pub fn show(
             ui.add_space(4.0);
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 10.0;
-                link_button(ui, p, icons, "github-logo", "GitHub", crate::links::GITHUB);
-                link_button(ui, p, icons, "discord-logo", "Discord", crate::links::DISCORD);
+                link_button(ui, p, icons, "brand-github-filled", "GitHub", crate::links::GITHUB);
+                link_button(ui, p, icons, "brand-discord-filled", "Discord", crate::links::DISCORD);
                 if super::widgets::flat_button(ui, p, aurora_i18n::tr!("bug-title")).clicked() {
                     action = LoginAction::ReportBug;
                 }
@@ -627,7 +640,7 @@ pub fn show(
                     ui,
                     p,
                     icons,
-                    "globe-simple",
+                    "world-filled",
                     aurora_i18n::tr!("ui-login-website"),
                     crate::links::WEBSITE,
                 );
@@ -848,7 +861,7 @@ mod tests {
                         &p,
                         &icons,
                         "test_pass",
-                        "lock-key",
+                        "lock-filled",
                         hint,
                         &mut password,
                         Some(&mut show_password),

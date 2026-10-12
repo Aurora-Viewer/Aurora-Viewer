@@ -110,30 +110,30 @@ pub fn stat(ui: &mut egui::Ui, p: &Palette, label: &str, value: &str) {
 
 pub(super) fn window_icon(id: &str) -> &'static str {
     if id.starts_with("inventory") {
-        return "folder";
+        return "folder-filled";
     }
     if id.starts_with("profile") {
-        return "user";
+        return "user-filled";
     }
     if id.contains("texture") || id.contains("thumbnail") {
-        return "image";
+        return "photo-filled";
     }
     if id.contains("script") {
         return "code";
     }
     if id.contains("place") || id.contains("land") {
-        return "map-pin";
+        return "map-pin-filled";
     }
     match id {
-        "appearance" => "t-shirt",
-        "conversations" | "contacts" => "chats-circle",
-        "people" | "avatar_picker" => "users-three",
-        "options" => "gear-six",
-        "worldmap" | "minimap" => "map-trifold",
-        "environment_selector" | "personal_lighting" => "sun",
-        "performance" => "chart-bar",
-        "ao" => "person",
-        _ => "squares-four",
+        "appearance" => "shirt-filled",
+        "conversations" | "contacts" => "messages-filled",
+        "people" | "avatar_picker" => "users-group",
+        "options" => "settings-filled",
+        "worldmap" | "minimap" => "map",
+        "environment_selector" | "personal_lighting" => "sun-filled",
+        "performance" => "gauge-filled",
+        "ao" => "man-filled",
+        _ => "layout-grid-filled",
     }
 }
 

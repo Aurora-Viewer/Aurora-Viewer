@@ -164,7 +164,7 @@ impl State {
             self.controls.push((block.open, rect));
             let collapsed = self.collapsed.contains(&block.open);
             let response = ui.interact(rect, id.with(("fold", block.open)), egui::Sense::click());
-            if let Some(icon) = crate::ui::icons::global(if collapsed { "caret-right" } else { "caret-down" }) {
+            if let Some(icon) = crate::ui::icons::global(if collapsed { "caret-right-filled" } else { "caret-down-filled" }) {
                 ui.painter().image(
                     icon.id(),
                     rect,

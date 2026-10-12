@@ -109,7 +109,11 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
             .min_scrolled_height((height - ui.spacing().scroll.allocated_width()).max(40.0))
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                let open_icon = if inv.loading && items.is_empty() { "folder" } else { "folder-open" };
+                let open_icon = if inv.loading && items.is_empty() {
+                    "folder-filled"
+                } else {
+                    "folder-open-filled"
+                };
                 ui.horizontal(|ui| {
                     if let Some(t) = crate::ui::icons::global(open_icon) {
                         ui.add(egui::Image::new(&t).fit_to_exact_size(Vec2::splat(16.0)).tint(p.violet_light));

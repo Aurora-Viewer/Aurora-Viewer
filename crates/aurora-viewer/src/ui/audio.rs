@@ -63,13 +63,13 @@ fn icon_toggle(ui: &mut egui::Ui, p: &Palette, icons: &Icons, icon: &str, tip: &
 
 fn speaker_icon(volume: f32, muted: bool) -> &'static str {
     if muted {
-        "speaker-x"
+        "volume-off"
     } else if volume <= 0.001 {
-        "speaker-none"
+        "volume-3"
     } else if volume < 0.5 {
-        "speaker-low"
+        "volume-2"
     } else {
-        "speaker-high"
+        "volume"
     }
 }
 
@@ -124,7 +124,7 @@ pub fn top_controls(
                 ui,
                 p,
                 icons,
-                "monitor-play",
+                "device-tv-filled",
                 if !media.media_available {
                     aurora_i18n::tr!("ui-audio-no-media-on-this-parcel")
                 } else if media.media_playing {
@@ -186,7 +186,8 @@ pub fn top_controls(
                                     action = AudioAction::Changed;
                                 }
                                 if i == 0 {
-                                    if icon_toggle(ui, p, icons, "gear-six", aurora_i18n::tr!("common-preferences"), false, true).clicked()
+                                    if icon_toggle(ui, p, icons, "settings-filled", aurora_i18n::tr!("common-preferences"), false, true)
+                                        .clicked()
                                     {
                                         action = AudioAction::OpenPreferences;
                                     }

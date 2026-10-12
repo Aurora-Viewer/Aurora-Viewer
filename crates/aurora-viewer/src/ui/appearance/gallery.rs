@@ -42,7 +42,7 @@ pub(super) fn context_menu(
         if menu::item_if(
             ui,
             p,
-            "t-shirt",
+            "shirt-filled",
             aurora_i18n::tr!("ui-appearance-gallery-replace-your-outfit"),
             idle && ready && nonempty && (!current || model::dirty(inv)),
         ) {
@@ -71,7 +71,7 @@ pub(super) fn context_menu(
             actions.push(Action::RemoveOutfit(id));
         }
         menu::separator(ui, p);
-        if menu::item_if(ui, p, "image", aurora_i18n::tr!("common-image-2"), idle) {
+        if menu::item_if(ui, p, "photo-filled", aurora_i18n::tr!("common-image-2"), idle) {
             st.gallery.picker.open_with_defaults(
                 aurora_i18n::tr!("ui-appearance-gallery-outfit-picture"),
                 folder.info.thumbnail,
@@ -83,7 +83,7 @@ pub(super) fn context_menu(
         if menu::item_if(
             ui,
             p,
-            "star",
+            "star-filled",
             if folder.info.favorite {
                 aurora_i18n::tr!("ui-appearance-gallery-remove-from-favorites")
             } else {
@@ -93,13 +93,21 @@ pub(super) fn context_menu(
         ) {
             actions.push(Action::Category(id, Update::Favorite(!folder.info.favorite)));
         }
-        if current && menu::item_if(ui, p, "wrench", aurora_i18n::tr!("ui-appearance-gallery-edit-your-outfit"), idle) {
+        if current
+            && menu::item_if(
+                ui,
+                p,
+                "edit-filled",
+                aurora_i18n::tr!("ui-appearance-gallery-edit-your-outfit"),
+                idle,
+            )
+        {
             st.open(0, true);
         }
         if menu::item_if(
             ui,
             p,
-            "pencil-simple",
+            "pencil-filled",
             aurora_i18n::tr!("ui-appearance-gallery-rename-your-outfit"),
             idle,
         ) {
@@ -109,7 +117,7 @@ pub(super) fn context_menu(
         if menu::item_if(
             ui,
             p,
-            "floppy-disk",
+            "device-floppy-filled",
             aurora_i18n::tr!("ui-appearance-gallery-save-to-this-outfit"),
             idle && ready,
         ) {
@@ -119,7 +127,7 @@ pub(super) fn context_menu(
         if menu::item_if(
             ui,
             p,
-            "trash",
+            "trash-filled",
             aurora_i18n::tr!("ui-appearance-gallery-delete-outfit"),
             idle && ready && !current && model::system_folder(inv, 14).is_some(),
         ) {
@@ -129,7 +137,7 @@ pub(super) fn context_menu(
         menu::submenu(
             ui,
             p,
-            "t-shirt",
+            "shirt-filled",
             aurora_i18n::tr!("ui-appearance-gallery-new-clothing"),
             true,
             |ui| {
@@ -147,14 +155,14 @@ pub(super) fn context_menu(
                     aurora_i18n::tr!("ui-appearance-gallery-new-physics"),
                     aurora_i18n::tr!("common-new-tattoo"),
                 ] {
-                    menu::todo(ui, p, "t-shirt", label);
+                    menu::todo(ui, p, "shirt-filled", label);
                 }
             },
         );
         menu::submenu(
             ui,
             p,
-            "person",
+            "man-filled",
             aurora_i18n::tr!("ui-appearance-gallery-new-body-part"),
             true,
             |ui| {
@@ -164,7 +172,7 @@ pub(super) fn context_menu(
                     aurora_i18n::tr!("common-new-hair"),
                     aurora_i18n::tr!("common-new-eyes"),
                 ] {
-                    menu::todo(ui, p, "person", label);
+                    menu::todo(ui, p, "man-filled", label);
                 }
             },
         );

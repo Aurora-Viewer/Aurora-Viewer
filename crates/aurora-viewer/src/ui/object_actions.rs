@@ -101,7 +101,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, state: &mut Interactions, world: &
                 } else {
                     permission_name(&props.name, props.next_owner_mask)
                 };
-                named_row(ui, p, "cube", &object_label);
+                named_row(ui, p, "box", &object_label);
                 ui.add_space(6.0);
                 ui.label(aurora_i18n::tr!("ui-object-actions-contents"));
                 egui::Frame::new()
@@ -141,7 +141,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, state: &mut Interactions, world: &
                     "ui-object-actions-buy-for-from",
                     value0 = money(props.sale_price).to_string()
                 ));
-                named_row(ui, p, "user", &seller);
+                named_row(ui, p, "user-filled", &seller);
                 if !affordable(props.sale_price) {
                     ui.label(RichText::new(aurora_i18n::tr!("common-insufficient-or-unknown-balance")).color(p.danger));
                 }
@@ -149,9 +149,9 @@ pub fn show(ctx: &egui::Context, p: &Palette, state: &mut Interactions, world: &
                     ui.label(RichText::new(aurora_i18n::tr!("ui-object-actions-this-object-is-no-longer-for-sale")).color(p.danger));
                 }
             } else {
-                named_row(ui, p, "user", &seller);
+                named_row(ui, p, "user-filled", &seller);
                 ui.label(RichText::new(aurora_i18n::tr!("ui-object-actions-via-object")).color(p.muted));
-                named_row(ui, p, "cube", &props.name);
+                named_row(ui, p, "box", &props.name);
                 ui.add_space(6.0);
                 if let Some((default, buttons)) = &d.prices {
                     if buttons.iter().any(|v| *v > 0) {

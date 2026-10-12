@@ -202,7 +202,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let can_set_group = root_selected && owners_identical && first.owner_id == me;
-            if super::common::icon_button(ui, p, "wrench", aurora_i18n::tr!("build-ui-general-set-group"), can_set_group) {
+            if super::common::icon_button(ui, p, "users-group", aurora_i18n::tr!("build-ui-general-set-group"), can_set_group) {
                 tool.ui.group_picker_open = true;
             }
         });

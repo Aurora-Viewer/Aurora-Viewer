@@ -750,25 +750,25 @@ impl MiniMap {
             };
             if let Some(&first) = avs.first() {
                 if avs.len() == 1 {
-                    if menu::item(ui, p, "user-circle", aurora_i18n::tr!("common-view-profile")) {
+                    if menu::item(ui, p, "user-filled", aurora_i18n::tr!("common-view-profile")) {
                         actions.push(MiniMapAction::Profile(first));
                     }
                 } else {
                     // « Voir le profil ▸ » lists the avatars under the pointer
-                    menu::submenu(ui, p, "user-circle", aurora_i18n::tr!("common-view-profile"), true, |ui| {
+                    menu::submenu(ui, p, "user-filled", aurora_i18n::tr!("common-view-profile"), true, |ui| {
                         for id in &avs {
-                            if menu::item(ui, p, "user", &avatar_name(world, id)) {
+                            if menu::item(ui, p, "user-filled", &avatar_name(world, id)) {
                                 actions.push(MiniMapAction::Profile(*id));
                             }
                         }
                     });
                 }
-                menu::todo(ui, p, "users-three", aurora_i18n::tr!("common-add-to-contact-set"));
-                if menu::item(ui, p, "magnifying-glass-plus", aurora_i18n::tr!("common-zoom-2")) {
+                menu::todo(ui, p, "users-group", aurora_i18n::tr!("common-add-to-contact-set"));
+                if menu::item(ui, p, "zoom-in-filled", aurora_i18n::tr!("common-zoom-2")) {
                     context::request(ui.ctx(), CtxAction::ZoomAvatar(first));
                 }
-                menu::todo(ui, p, "eye", aurora_i18n::tr!("common-look-toward-avatar"));
-                menu::submenu(ui, p, "tag", aurora_i18n::tr!("ui-minimap-markers"), true, |ui| {
+                menu::todo(ui, p, "eye-filled", aurora_i18n::tr!("common-look-toward-avatar"));
+                menu::submenu(ui, p, "tag-filled", aurora_i18n::tr!("ui-minimap-markers"), true, |ui| {
                     for (name, col) in [
                         (aurora_i18n::tr!("ui-minimap-red"), Color32::from_rgb(186, 0, 31)),
                         (aurora_i18n::tr!("ui-minimap-green"), Color32::from_rgb(0, 255, 0)),
@@ -783,23 +783,23 @@ impl MiniMap {
                         }
                     }
                     menu::separator(ui, p);
-                    if menu::item(ui, p, "eraser", aurora_i18n::tr!("ui-minimap-clear-marker")) {
+                    if menu::item(ui, p, "backspace-filled", aurora_i18n::tr!("ui-minimap-clear-marker")) {
                         for id in &avs {
                             self.marks.remove(id);
                         }
                     }
                     menu::separator(ui, p);
-                    if menu::item(ui, p, "eraser", aurora_i18n::tr!("ui-minimap-clear-all-markers")) {
+                    if menu::item(ui, p, "backspace-filled", aurora_i18n::tr!("ui-minimap-clear-all-markers")) {
                         self.marks.clear();
                     }
                 });
                 // « Plus… »: the radar menu of the nearest avatar
-                menu::submenu(ui, p, "list", aurora_i18n::tr!("ui-minimap-more"), true, |ui| {
+                menu::submenu(ui, p, "dots-filled", aurora_i18n::tr!("ui-minimap-more"), true, |ui| {
                     context::avatar_list_menu(ui, p, world, first, AvatarList::Nearby)
                 });
                 menu::separator(ui, p);
             }
-            if menu::item(ui, p, "target", aurora_i18n::tr!("common-follow")) {
+            if menu::item(ui, p, "current-location-filled", aurora_i18n::tr!("common-follow")) {
                 actions.push(MiniMapAction::Track {
                     x: px,
                     y: py,
@@ -809,32 +809,32 @@ impl MiniMap {
             if menu::item_if(
                 ui,
                 p,
-                "x-circle",
+                "circle-x-filled",
                 aurora_i18n::tr!("ui-minimap-stop-following"),
                 world.map.track.is_some(),
             ) {
                 actions.push(MiniMapAction::StopTracking);
             }
             menu::separator(ui, p);
-            menu::submenu(ui, p, "magnifying-glass", aurora_i18n::tr!("common-zoom"), true, |ui| {
+            menu::submenu(ui, p, "zoom-filled", aurora_i18n::tr!("common-zoom"), true, |ui| {
                 for (label, s) in [
                     (aurora_i18n::tr!("ui-minimap-very-close"), MAP_SCALE_VERY_CLOSE),
                     (aurora_i18n::tr!("ui-minimap-near"), MAP_SCALE_CLOSE),
                     (aurora_i18n::tr!("ui-minimap-medium"), MAP_SCALE_MEDIUM),
                     (aurora_i18n::tr!("ui-minimap-far"), MAP_SCALE_FAR),
                 ] {
-                    if menu::check(ui, p, "magnifying-glass", label, opts.mini_scale == s, true) {
+                    if menu::check(ui, p, "zoom-filled", label, opts.mini_scale == s, true) {
                         self.pan *= s / opts.mini_scale;
                         opts.mini_scale = s;
                     }
                 }
             });
-            menu::submenu(ui, p, "eye", aurora_i18n::tr!("common-show"), true, |ui| {
-                menu::toggle(ui, p, "cube", aurora_i18n::tr!("common-objects"), &mut opts.mini_objects);
+            menu::submenu(ui, p, "eye-filled", aurora_i18n::tr!("common-show"), true, |ui| {
+                menu::toggle(ui, p, "box", aurora_i18n::tr!("common-objects"), &mut opts.mini_objects);
                 menu::toggle(
                     ui,
                     p,
-                    "cube",
+                    "box",
                     aurora_i18n::tr!("ui-minimap-physical-objects"),
                     &mut opts.mini_physical,
                 );
@@ -848,7 +848,7 @@ impl MiniMap {
                 menu::toggle(
                     ui,
                     p,
-                    "clock-counter-clockwise",
+                    "hourglass-filled",
                     aurora_i18n::tr!("ui-minimap-temporary-objects"),
                     &mut opts.mini_temp_on_rez,
                 );
@@ -856,29 +856,49 @@ impl MiniMap {
                 menu::toggle(
                     ui,
                     p,
-                    "squares-four",
+                    "layout-grid-filled",
                     aurora_i18n::tr!("ui-minimap-land-boundaries"),
                     &mut opts.mini_property_lines,
                 );
-                menu::toggle(ui, p, "tag", aurora_i18n::tr!("common-land-for-sale"), &mut opts.mini_for_sale);
                 menu::toggle(
                     ui,
                     p,
-                    "prohibit",
+                    "tag-filled",
+                    aurora_i18n::tr!("common-land-for-sale"),
+                    &mut opts.mini_for_sale,
+                );
+                menu::toggle(
+                    ui,
+                    p,
+                    "forbid-filled",
                     aurora_i18n::tr!("ui-minimap-banned-parcels"),
                     &mut opts.mini_collision,
                 );
             });
-            if menu::check(ui, p, "compass", aurora_i18n::tr!("ui-minimap-north-up"), !opts.mini_rotate, true) {
+            if menu::check(
+                ui,
+                p,
+                "compass-filled",
+                aurora_i18n::tr!("ui-minimap-north-up"),
+                !opts.mini_rotate,
+                true,
+            ) {
                 opts.mini_rotate = false;
             }
-            if menu::check(ui, p, "camera", aurora_i18n::tr!("ui-minimap-camera-up"), opts.mini_rotate, true) {
+            if menu::check(
+                ui,
+                p,
+                "camera-filled",
+                aurora_i18n::tr!("ui-minimap-camera-up"),
+                opts.mini_rotate,
+                true,
+            ) {
                 opts.mini_rotate = true;
             }
             if menu::check(
                 ui,
                 p,
-                "crosshair-simple",
+                "focus-centered",
                 aurora_i18n::tr!("ui-minimap-auto-centering"),
                 opts.mini_auto_center,
                 true,
@@ -888,19 +908,19 @@ impl MiniMap {
             if menu::item_if(
                 ui,
                 p,
-                "arrows-in",
+                "arrows-minimize",
                 aurora_i18n::tr!("ui-minimap-center-map"),
                 !opts.mini_auto_center && self.pan != Vec2::ZERO,
             ) {
                 self.recenter = true;
             }
-            menu::submenu(ui, p, "chats-circle", aurora_i18n::tr!("ui-minimap-chat-range"), true, |ui| {
+            menu::submenu(ui, p, "messages-filled", aurora_i18n::tr!("ui-minimap-chat-range"), true, |ui| {
                 let mut k = super::colors::get();
                 let before = k;
                 menu::toggle(
                     ui,
                     p,
-                    "chats-circle",
+                    "messages-filled",
                     aurora_i18n::tr!("ui-minimap-show-chat-ranges"),
                     &mut k.map_ranges,
                 );
@@ -913,9 +933,9 @@ impl MiniMap {
                 ];
                 for (label, on) in rings {
                     if ranges {
-                        menu::toggle(ui, p, "chat-text", label, on);
+                        menu::toggle(ui, p, "message-filled", label, on);
                     } else {
-                        menu::item_if(ui, p, "chat-text", label, false);
+                        menu::item_if(ui, p, "message-filled", label, false);
                     }
                 }
                 if k != before {
@@ -924,11 +944,11 @@ impl MiniMap {
                 }
             });
             // Aurora: what a double click does
-            menu::submenu(ui, p, "mouse", aurora_i18n::tr!("ui-minimap-double-click"), true, |ui| {
+            menu::submenu(ui, p, "mouse-filled", aurora_i18n::tr!("ui-minimap-double-click"), true, |ui| {
                 for (v, icon, label) in [
-                    (0u8, "x-circle", aurora_i18n::tr!("ui-minimap-do-nothing")),
-                    (1, "map-trifold", aurora_i18n::tr!("ui-minimap-open-world-map")),
-                    (2, "navigation-arrow", aurora_i18n::tr!("common-teleport")),
+                    (0u8, "circle-x-filled", aurora_i18n::tr!("ui-minimap-do-nothing")),
+                    (1, "map", aurora_i18n::tr!("ui-minimap-open-world-map")),
+                    (2, "location-filled", aurora_i18n::tr!("common-teleport")),
                 ] {
                     if menu::check(ui, p, icon, label, opts.mini_double_click == v, true) {
                         opts.mini_double_click = v;
@@ -936,11 +956,11 @@ impl MiniMap {
                 }
             });
             menu::separator(ui, p);
-            if menu::item(ui, p, "info", aurora_i18n::tr!("common-about-land")) {
+            if menu::item(ui, p, "info-circle-filled", aurora_i18n::tr!("common-about-land")) {
                 actions.push(MiniMapAction::AboutLand(px, py));
             }
-            menu::todo(ui, p, "map-pin", aurora_i18n::tr!("common-place-profile"));
-            if menu::item(ui, p, "map-trifold", aurora_i18n::tr!("common-world-map")) {
+            menu::todo(ui, p, "map-pin-filled", aurora_i18n::tr!("common-place-profile"));
+            if menu::item(ui, p, "map", aurora_i18n::tr!("common-world-map")) {
                 actions.push(MiniMapAction::OpenWorldMap);
             }
             menu::separator(ui, p);

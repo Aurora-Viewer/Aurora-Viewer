@@ -102,7 +102,7 @@ impl UpdateDemo {
                 ui.horizontal(|ui| {
                     let (rect, _) = ui.allocate_exact_size(Vec2::splat(48.0), Sense::hover());
                     ui.painter().rect_filled(rect, 2.0, p.field);
-                    icon(ui, icons, "download-simple", rect.shrink(10.0), p.violet_light);
+                    icon(ui, icons, "download-filled", rect.shrink(10.0), p.violet_light);
                     ui.vertical(|ui| {
                         ui.label(RichText::new(aurora_i18n::tr!("update-demo-badge")).size(10.0).color(p.amber));
                         let title = match self.phase {
@@ -163,7 +163,7 @@ impl UpdateDemo {
                         ui.add_space(9.0);
                         ui.horizontal(|ui| {
                             let (rect, _) = ui.allocate_exact_size(Vec2::splat(22.0), Sense::hover());
-                            icon(ui, icons, "check-circle", rect, p.success);
+                            icon(ui, icons, "circle-check-filled", rect, p.success);
                             ui.label(RichText::new(aurora_i18n::tr!("update-ready")).size(14.0).color(p.ink));
                         });
                         ui.add(
@@ -264,7 +264,7 @@ pub fn show_real(
             ui.horizontal(|ui| {
                 let (rect, _) = ui.allocate_exact_size(Vec2::splat(48.0), Sense::hover());
                 ui.painter().rect_filled(rect, 2.0, p.field);
-                icon(ui, icons, "download-simple", rect.shrink(10.0), p.violet_light);
+                icon(ui, icons, "download-filled", rect.shrink(10.0), p.violet_light);
                 let title = match updater.state {
                     State::Checking => aurora_i18n::tr!("ui-login-checking"),
                     State::Downloading(_) | State::Handoff => aurora_i18n::tr!("update-downloading-title"),

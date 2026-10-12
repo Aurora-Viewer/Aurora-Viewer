@@ -108,7 +108,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, media: &mut MediaMa
                                 ui,
                                 p,
                                 icons,
-                                "house",
+                                "home-filled",
                                 aurora_i18n::tr!("ui-media-home-page"),
                                 has_home && can_control,
                             ) {
@@ -118,14 +118,14 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, media: &mut MediaMa
                                 if button(ui, p, icons, "x", aurora_i18n::tr!("ui-media-stop-loading"), true) {
                                     m.stop_loading();
                                 }
-                            } else if button(ui, p, icons, "arrows-clockwise", aurora_i18n::tr!("ui-media-reload"), m.is_loaded()) {
+                            } else if button(ui, p, icons, "refresh", aurora_i18n::tr!("ui-media-reload"), m.is_loaded()) {
                                 m.reload();
                             }
                         } else if m.paused {
-                            if button(ui, p, icons, "play", aurora_i18n::tr!("ui-media-playback"), true) {
+                            if button(ui, p, icons, "player-play-filled", aurora_i18n::tr!("ui-media-playback"), true) {
                                 m.play();
                             }
-                        } else if button(ui, p, icons, "pause", aurora_i18n::tr!("ui-media-pause"), true) {
+                        } else if button(ui, p, icons, "player-pause-filled", aurora_i18n::tr!("ui-media-pause"), true) {
                             m.pause();
                         }
                         // address bar
@@ -163,11 +163,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, media: &mut MediaMa
                             ui.label(RichText::new(status).size(11.5).color(p.muted));
                         }
                         // volume and mute
-                        let icon = if m.muted || m.volume <= 0.001 {
-                            "speaker-x"
-                        } else {
-                            "speaker-high"
-                        };
+                        let icon = if m.muted || m.volume <= 0.001 { "volume-off" } else { "volume" };
                         if button(
                             ui,
                             p,

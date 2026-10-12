@@ -1,7 +1,7 @@
 //! Original Firestorm Windows cursors: res/toolsit.cur and res/toolbuy.cur
 //! (LGPL 2.1), exported as RGBA PNG with their original hotspots.
 //! Firestorm's modern Pay cursor uses the same artwork as Buy.
-//! Phosphor regular HUD / pipette cursors use the skin's ink and dark outline.
+//! Tabler outline HUD / pipette cursors use the skin's ink and dark outline.
 use crate::interaction::Action;
 
 pub struct Cursors {
@@ -63,11 +63,11 @@ impl Cursors {
         self.pipette = pipette_image(palette);
     }
     /// Windows maps the system Grabbing icon to arrows, so use the existing
-    /// regular Phosphor grasping hand with a contrasting native-cursor outline.
+    /// Tabler outline grasping hand with a contrasting native-cursor outline.
     pub fn hud_drag(&self) -> Option<egui::CustomCursorImage> {
         self.hud_drag.clone()
     }
-    /// LLToolPipette uses UI_CURSOR_PIPETTE; the Phosphor tip is the hotspot.
+    /// LLToolPipette uses UI_CURSOR_PIPETTE; the tip of the Tabler pipette is the hotspot.
     pub fn pipette(&self) -> Option<egui::CustomCursorImage> {
         self.pipette.clone()
     }
@@ -87,24 +87,27 @@ impl Cursors {
 }
 
 fn hud_drag_image(palette: &crate::theme::Palette) -> Option<egui::CustomCursorImage> {
-    phosphor_image(include_bytes!("../assets/icons/phosphor/hand-grabbing.svg"), palette, [16, 16])
+    tabler_image(include_bytes!("../assets/icons/tabler/outline/hand-grab.svg"), palette, [16, 16])
 }
 
 fn pipette_image(palette: &crate::theme::Palette) -> Option<egui::CustomCursorImage> {
-    phosphor_image(include_bytes!("../assets/icons/phosphor/eyedropper.svg"), palette, [5, 27])
+    tabler_image(include_bytes!("../assets/icons/tabler/outline/color-picker.svg"), palette, [5, 27])
 }
 
-fn phosphor_image(svg: &[u8], palette: &crate::theme::Palette, hotspot: [u16; 2]) -> Option<egui::CustomCursorImage> {
+/// A Tabler outline icon (24 px grid, 2 px stroke) as a 32 px cursor: a wide
+/// dark stroke under the ink one gives the contrasting outline.
+fn tabler_image(svg: &[u8], palette: &crate::theme::Palette, hotspot: [u16; 2]) -> Option<egui::CustomCursorImage> {
     let svg = std::str::from_utf8(svg).ok()?;
     let mut pixmap = resvg::tiny_skia::Pixmap::new(32, 32)?;
     let options = resvg::usvg::Options::default();
-    for (color, width) in [(palette.bar, "32"), (palette.ink, "16")] {
+    for (color, width) in [(palette.bar, "4"), (palette.ink, "2")] {
         let color = format!("#{:02x}{:02x}{:02x}", color.r(), color.g(), color.b());
         let source = svg
             .replace("currentColor", &color)
-            .replace("stroke-width=\"16\"", &format!("stroke-width=\"{width}\""));
+            .replace("stroke-width=\"2\"", &format!("stroke-width=\"{width}\""));
         let tree = resvg::usvg::Tree::from_data(source.as_bytes(), &options).ok()?;
-        resvg::render(&tree, resvg::tiny_skia::Transform::from_scale(0.125, 0.125), &mut pixmap.as_mut());
+        let scale = 32.0 / 24.0;
+        resvg::render(&tree, resvg::tiny_skia::Transform::from_scale(scale, scale), &mut pixmap.as_mut());
     }
     // resvg pixels are premultiplied; native cursor pixels are straight RGBA.
     let rgba: Vec<u8> = pixmap

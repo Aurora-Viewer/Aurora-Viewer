@@ -32,7 +32,7 @@ pub fn bell(ui: &mut egui::Ui, p: &Palette, icons: &Icons, unread: usize, open: 
         ui.painter().rect_filled(rect, 2.0, p.raised);
     }
     let col = if unread > 0 || resp.hovered() || open { p.ink } else { p.muted };
-    let icon = if unread > 0 { "bell-ringing" } else { "bell" };
+    let icon = if unread > 0 { "bell-ringing-filled" } else { "bell-filled" };
     if let Some(t) = icons.get(icon) {
         let r = egui::Rect::from_center_size(rect.center(), Vec2::splat(15.0));
         ui.painter()
@@ -54,15 +54,15 @@ pub fn bell(ui: &mut egui::Ui, p: &Palette, icons: &Icons, unread: usize, open: 
 
 fn kind_style(p: &Palette, kind: Kind) -> (&'static str, Color32) {
     match kind {
-        Kind::Info => ("info", p.muted),
-        Kind::Alert => ("warning", p.amber),
-        Kind::Teleport => ("airplane-takeoff", p.teal),
-        Kind::Friendship => ("handshake", p.violet_light),
-        Kind::Inventory => ("gift", p.violet_light),
-        Kind::Group => ("users-three", p.indigo_light),
-        Kind::Script => ("scroll", p.teal),
-        Kind::Permissions => ("key", p.amber),
-        Kind::Url => ("globe", p.teal),
+        Kind::Info => ("info-circle-filled", p.muted),
+        Kind::Alert => ("alert-triangle-filled", p.amber),
+        Kind::Teleport => ("plane-departure-filled", p.teal),
+        Kind::Friendship => ("heart-handshake", p.violet_light),
+        Kind::Inventory => ("gift-filled", p.violet_light),
+        Kind::Group => ("users-group", p.indigo_light),
+        Kind::Script => ("code", p.teal),
+        Kind::Permissions => ("key-filled", p.amber),
+        Kind::Url => ("world-filled", p.teal),
     }
 }
 

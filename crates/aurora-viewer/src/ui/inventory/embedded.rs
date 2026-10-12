@@ -194,13 +194,13 @@ pub(super) fn editor(
                 .on_hover_cursor(egui::CursorIcon::PointingHand)
                 .on_hover_text(format!("{}\n{}", attachment.item.name, attachment.item.desc));
             super::super::menu::context_menu(&response, p, |ui| {
-                let open = ui.scope(|ui| super::super::menu::item(ui, p, "folder-open", aurora_i18n::tr!("common-open")));
+                let open = ui.scope(|ui| super::super::menu::item(ui, p, "folder-open-filled", aurora_i18n::tr!("common-open")));
                 ui.ctx()
                     .data_mut(|data| data.insert_temp(id.with(("demo_attachment_open", marker)), open.response.rect));
                 if open.inner {
                     result.open = Some(marker);
                 }
-                let copy = ui.scope(|ui| super::super::menu::item(ui, p, "copy", aurora_i18n::tr!("notecard-copy-inventory")));
+                let copy = ui.scope(|ui| super::super::menu::item(ui, p, "copy-filled", aurora_i18n::tr!("notecard-copy-inventory")));
                 ui.ctx()
                     .data_mut(|data| data.insert_temp(id.with(("demo_attachment_copy", marker)), copy.response.rect));
                 if copy.inner {

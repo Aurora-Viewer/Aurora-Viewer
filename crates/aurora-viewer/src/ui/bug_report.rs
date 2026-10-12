@@ -341,7 +341,7 @@ impl BugReportUi {
                 .show(ui, |ui| {
                     ui.add_space(6.0);
                     ui.horizontal(|ui| {
-                        if let Some(icon) = icons.get("bug") {
+                        if let Some(icon) = icons.get("bug-filled") {
                             ui.add(egui::Image::new(icon).fit_to_exact_size(Vec2::splat(28.0)).tint(p.violet_light));
                         }
                         ui.vertical(|ui| {

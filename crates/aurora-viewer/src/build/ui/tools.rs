@@ -15,11 +15,11 @@ use egui::{Color32, RichText, Vec2};
 /// The tool buttons (icon, tooltip, tool).
 fn tools() -> [(&'static str, &'static str, Tool); 5] {
     [
-        ("magnifying-glass", aurora_i18n::tr!("build-ui-tools-focus-ctrl-1"), Tool::Focus),
-        ("hand-grabbing", aurora_i18n::tr!("build-ui-tools-move-ctrl-2"), Tool::Grab),
-        ("cursor", aurora_i18n::tr!("build-ui-tools-edit-ctrl-3"), Tool::Edit),
-        ("magic-wand", aurora_i18n::tr!("build-ui-tools-create-ctrl-4"), Tool::Create),
-        ("mountains", aurora_i18n::tr!("build-ui-tools-land-ctrl-5"), Tool::Land),
+        ("zoom-filled", aurora_i18n::tr!("build-ui-tools-focus-ctrl-1"), Tool::Focus),
+        ("hand-grab", aurora_i18n::tr!("build-ui-tools-move-ctrl-2"), Tool::Grab),
+        ("pointer-filled", aurora_i18n::tr!("build-ui-tools-edit-ctrl-3"), Tool::Edit),
+        ("wand", aurora_i18n::tr!("build-ui-tools-create-ctrl-4"), Tool::Create),
+        ("mountain-filled", aurora_i18n::tr!("build-ui-tools-land-ctrl-5"), Tool::Land),
     ]
 }
 

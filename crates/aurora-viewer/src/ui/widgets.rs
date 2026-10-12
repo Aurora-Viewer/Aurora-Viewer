@@ -74,7 +74,7 @@ pub struct Floater<'a> {
     pub min_size: Vec2,
     pub resizable: bool,
     pub help: Option<&'a str>,
-    /// Extra title bar button: (Phosphor icon, tooltip, set when clicked).
+    /// Extra title bar button: (Tabler icon, tooltip, set when clicked).
     pub action: Option<(&'a str, &'a str, &'a mut bool)>,
     /// No open / close sounds (sound_flags="0", e.g. floater_tools).
     pub silent: bool,
@@ -267,7 +267,7 @@ impl<'a> Floater<'a> {
                             **clicked = true;
                         }
                         if let Some(h) = self.help {
-                            title_button(ui, p, "question").on_hover_text(h);
+                            title_button(ui, p, "question-mark").on_hover_text(h);
                         }
                         buttons_left = ui.cursor().right();
                         if truncate {
@@ -389,7 +389,7 @@ pub fn place_floater(ctx: &egui::Context, id: &str, pos: egui::Pos2, size: Vec2)
     });
 }
 
-/// Title bar button with a Phosphor icon (drawn by hand if it is missing).
+/// Title bar button with a Tabler icon (drawn by hand if it is missing).
 fn title_button(ui: &mut egui::Ui, p: &Palette, icon: &str) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(16.0, 16.0), Sense::click());
     let col = if resp.hovered() { p.ink } else { p.muted };
@@ -409,7 +409,7 @@ fn title_button(ui: &mut egui::Ui, p: &Palette, icon: &str) -> egui::Response {
         "minus" => {
             painter.line_segment([c + Vec2::new(-5.0, 1.0), c + Vec2::new(5.0, 1.0)], stroke);
         }
-        "question" => {
+        "question-mark" => {
             painter.circle_stroke(c, 6.0, Stroke::new(1.2, col));
             painter.text(c, egui::Align2::CENTER_CENTER, "?", egui::FontId::proportional(10.0), col);
         }
@@ -519,7 +519,7 @@ pub fn search_field(ui: &mut egui::Ui, text: &mut String, hint: &str, width: f32
     ui.add(egui::TextEdit::singleline(text).hint_text(hint).desired_width(width))
 }
 
-/// Small flat button with a Phosphor icon (copy / paste / flip...).
+/// Small flat button with a Tabler icon (copy / paste / flip...).
 pub fn icon_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, enabled: bool) -> bool {
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(20.0, 20.0), if enabled { Sense::click() } else { Sense::hover() });
     let fill = if resp.hovered() && enabled { p.raised } else { p.field };
@@ -683,7 +683,7 @@ pub fn paint_ink_centered(painter: &egui::Painter, galley: std::sync::Arc<egui::
 }
 
 /// A picture fitted in `size` keeping its aspect, or a placeholder (a
-/// Phosphor `icon` over a caption) while there is none.
+/// Tabler `icon` over a caption) while there is none.
 pub fn picture(
     ui: &mut egui::Ui,
     p: &Palette,
@@ -734,7 +734,7 @@ pub fn picture(
     resp
 }
 
-/// A menu opened by a Phosphor icon button (menu_button with an image).
+/// A menu opened by a Tabler icon button (menu_button with an image).
 pub fn icon_menu(ui: &mut egui::Ui, p: &Palette, name: &str, tip: &str, content: impl FnOnce(&mut egui::Ui)) {
     let Some(t) = super::icons::global(name) else {
         ui.menu_button(tip, content);
