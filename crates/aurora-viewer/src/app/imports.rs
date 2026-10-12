@@ -33,6 +33,7 @@ impl App {
             }
         }
         self.imports.poll_local_registry();
+        self.sync_local_picker_bindings();
         self.imports.sound_limit = if self.settings.grid == crate::settings::GridChoice::Custom {
             60
         } else {
@@ -662,6 +663,7 @@ impl App {
         }
     }
     pub(super) fn apply_local_imports(&mut self, renderer: &mut aurora_render::Renderer) {
+        self.sync_local_picker_bindings();
         for (asset, slot) in self.imports.retired_local_slots.drain(..) {
             self.scene.textures.unregister_local(&asset);
             renderer.free_texture(slot);
@@ -766,6 +768,17 @@ impl App {
         } else {
             self.imports
                 .publish_local(id, &self.scene.jobs, ctx, self.scene.textures.staging.clone());
+        }
+    }
+
+    pub(super) fn sync_local_picker_bindings(&mut self) {
+        for (object, face, appearance) in self.build.local_appearance_changes.drain(..) {
+            let key = (object, face);
+            if let Some(appearance) = appearance {
+                self.imports.local_appearance_targets.insert(key, appearance);
+            } else {
+                self.imports.local_appearance_targets.remove(&key);
+            }
         }
     }
 

@@ -63,6 +63,8 @@ pub struct TexturePicker {
     default: Option<Uuid>,
     allow_none: bool,
     extra_buttons: bool,
+    /// Only callers with a client-only application path expose local assets.
+    pub(crate) allow_local: bool,
     uuid_text: String,
     /// Intentional choices, separate from OK so callers can opt into preview.
     preview: Option<Uuid>,
@@ -82,6 +84,7 @@ impl TexturePicker {
         self.default = None;
         self.allow_none = false;
         self.extra_buttons = false;
+        self.allow_local = false;
         self.uuid_text.clear();
         self.footer_height = 0.0;
         self.preview = None;
@@ -203,7 +206,7 @@ impl TexturePicker {
                 .local_assets
                 .iter()
                 .filter(|(_, (name, material))| {
-                    self.extra_buttons && *material == self.materials && (filter.is_empty() || name.to_lowercase().contains(&filter))
+                    self.allow_local && *material == self.materials && (filter.is_empty() || name.to_lowercase().contains(&filter))
                 })
                 .collect();
             locals.sort_by(|a, b| a.1.0.cmp(&b.1.0));

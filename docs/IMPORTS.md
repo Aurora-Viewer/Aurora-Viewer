@@ -214,6 +214,13 @@ Sources : `llfloatermodelpreview.cpp`, `llmodelpreview.cpp`,
   dédié, remplacent atomiquement le fichier et sont vidés à la déconnexion
   ou fermeture normale. Une bibliothèque illisible est préservée.
   Cette persistance est une amélioration Aurora demandée par l’utilisateur.
+- Le sélecteur de construction expose les textures diffuses et matériaux PBR
+  locaux publiés. Choisir leur ligne applique la surcouche sans commande réseau ;
+  OK conserve le lien, Annuler restaure les apparences locales précédentes,
+  y compris sur une sélection mixte. Passer à un asset d’inventaire retire
+  la surcouche des seules faces concernées. Ces liens suivent la même persistance
+  que les commandes de la fenêtre d’import. Les sélecteurs de cartes techniques,
+  sculpt et projecteur restent réservés aux assets d’inventaire.
 - Mesh local : choix du modèle, unités en mètres optionnelles, dimensions
   importées, application/retrait de la sélection et prim support ; surveillance
   désactivée par défaut, période de 3 s réglable dès 0,1 s comme Firestorm.
@@ -252,7 +259,7 @@ pas un relevé détaillé des envois payants sur grille : prix, permissions,
 inventaire créé et rendu des assets restent dans le protocole d’essai
 ci-dessous. Aucun résultat par type n’est affirmé sans compte rendu humain.
 
-Vérifications locales : `check.ps1` vert, 1 495 tests réussis, 22 ignorés,
+Vérifications locales : `check.ps1` vert, 1 498 tests réussis  22 ignorés,
 Clippy sans avertissement. Profilage de la scène démo : moyenne CPU de
 l’interface sur les trois dernières périodes, 0,37 ms sans la fenêtre puis
 0,57 ms avec l’aperçu PBR (0,51 ms animation, 0,51 ms mesh local). Les

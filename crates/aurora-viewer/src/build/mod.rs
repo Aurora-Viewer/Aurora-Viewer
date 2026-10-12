@@ -32,7 +32,7 @@ pub mod task_inventory;
 pub mod ui;
 
 use crate::world::World;
-use crate::world::objects::ObjKey;
+use crate::world::objects::{LocalAppearance, ObjKey};
 use aurora_net::build::{BuildCmd, ObjectProps, TransformUpdate, derez};
 use aurora_net::{NetCommand, RegionHandle};
 use geom::Cam;
@@ -424,6 +424,8 @@ pub struct BuildTool {
     pub cam: Cam,
     /// Commands to send (drained by the app).
     pub out: Vec<NetCommand>,
+    /// Client-only picker bindings, drained into the local preview registry.
+    pub local_appearance_changes: Vec<(Uuid, Option<u8>, Option<LocalAppearance>)>,
     /// Latest color updates kept local until the pointer is released.
     color_preview: Vec<NetCommand>,
     pub manip: manip::Manip,
@@ -470,6 +472,7 @@ impl Default for BuildTool {
             props: HashMap::new(),
             cam: Cam::default(),
             out: Vec::new(),
+            local_appearance_changes: Vec::new(),
             color_preview: Vec::new(),
             manip: manip::Manip::default(),
             land: land::LandTool::default(),
