@@ -131,6 +131,8 @@ pub struct App {
     sync_alt: u64,
     /// AURORA_NAME_TAGS=alt: this second draws the classic tags.
     name_tags_alt_classic: bool,
+    /// AURORA_DEMO_TAGS: the set of states its residents show.
+    demo_tag_states: Option<bool>,
     /// Interface parts of the frame's profile (`u_*`).
     ui_parts: Parts,
     /// The interface's shapes leave for the render thread, which
@@ -492,6 +494,7 @@ impl App {
             frame_profile: FrameProfile::default(),
             sync_alt: 0,
             name_tags_alt_classic: false,
+            demo_tag_states: None,
             ui_parts: Parts::default(),
             egui_hand_over: EguiHandOver::default(),
             last_frame: Instant::now(),
@@ -4893,6 +4896,12 @@ impl App {
                 self.apply_inventory_action(action);
             }
         }
+        if self.demo {
+            let time = self.egui_ctx.input(|i| i.time);
+            for event in crate::demo::tags::state_events(time, &mut self.demo_tag_states) {
+                self.world.apply(event);
+            }
+        }
         if self.demo && std::env::var_os("AURORA_DEMO_ANIM_LOOP").is_some() {
             for event in crate::demo::loop_animation_events(self.frame_count) {
                 self.world.apply(event);
@@ -5975,14 +5984,16 @@ impl App {
                 // overlays
                 let voice_levels = if self.demo {
                     static VOICE_MODE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
-                    crate::demo::voice_levels(
+                    let mut levels = crate::demo::voice_levels(
                         ctx.input(|i| i.time),
                         self.world.agent_id,
                         self.settings.audio.voice_enabled,
                         self.talking(),
                         self.voice.mic_level,
                         VOICE_MODE.get_or_init(|| std::env::var("AURORA_DEMO_VOICE").ok()).as_deref(),
-                    )
+                    );
+                    crate::demo::tags::voice(&mut levels, ctx.input(|i| i.time));
+                    levels
                 } else {
                     self.voice.levels(self.world.agent_id)
                 };
@@ -6017,7 +6028,7 @@ impl App {
                         plates: &mut self.plates,
                         pictures: &self.avatar_pics,
                         too_complex: &self.scene.too_complex,
-                        demo_too_complex: None,
+                        demo_too_complex: crate::demo::tags::too_complex().filter(|_| self.demo),
                     }),
                 );
                 t = self.ui_parts.lap(Part::UiTags, t);
@@ -6952,6 +6963,15 @@ impl ApplicationHandler for App {
                 if p.len() >= 2 {
                     self.camera.demo_orbit(p[0], p[1], p.get(2).copied(), &self.settings.camera);
                 }
+            }
+            // AURORA_DEMO_TAGS: residents whose name plates show every
+            // state, at the three distance levels
+            if crate::demo::tags::mode().is_some() {
+                for ev in crate::demo::tags::events() {
+                    self.world.apply(ev);
+                }
+                // (nothing over the rows of plates)
+                self.panels.people = false;
             }
             // AURORA_DEMO_RADAR=1: residents around for the radar of People
             if std::env::var_os("AURORA_DEMO_RADAR").is_some() {

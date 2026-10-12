@@ -1,0 +1,326 @@
+//! Name plates in every state and at the three distance levels
+//! (AURORA_DEMO_TAGS=voice|status|cycle, docs/TESTING.md): five residents
+//! in a row in front of the start position, two farther (compact pills) and
+//! two beyond (the name alone). A white wall stands behind the two on the
+//! left, to see the glass over a bright background too.
+//!
+//! `voice`: out of the channel, in it and silent, speaking (a friend drawn
+//! as too complex), typing, blocked. `status`: away, do not disturb, the
+//! friend out of the channel, typing while away, blocked. `cycle` goes from
+//! one to the other every six seconds.
+
+use super::{HANDLE, IDLE_ANIM, floor_at, prim, shape, te};
+use aurora_net::NetEvent;
+use aurora_prim::ExtraParams;
+use aurora_prim::params::*;
+use glam::{Quat, Vec3};
+use std::collections::HashMap;
+use uuid::Uuid;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    Voice,
+    Status,
+    Cycle,
+}
+
+/// Seconds a set of states lasts with `cycle`.
+const CYCLE: f64 = 6.0;
+
+pub fn mode() -> Option<Mode> {
+    static MODE: std::sync::OnceLock<Option<Mode>> = std::sync::OnceLock::new();
+    *MODE.get_or_init(|| match std::env::var("AURORA_DEMO_TAGS").ok()?.trim() {
+        "status" => Some(Mode::Status),
+        "cycle" => Some(Mode::Cycle),
+        _ => Some(Mode::Voice),
+    })
+}
+
+/// The states shown at `time`: false for the voice set, true for the
+/// status set.
+fn status_set(mode: Mode, time: f64) -> bool {
+    match mode {
+        Mode::Voice => false,
+        Mode::Status => true,
+        Mode::Cycle => (time / CYCLE) as u64 % 2 == 1,
+    }
+}
+
+const fn id(n: u128) -> Uuid {
+    Uuid::from_u128(0xA0E0_7A65_0000_0000_0000_0000_0000_0000 | n)
+}
+
+const NOVA: Uuid = id(1);
+const TESS: Uuid = id(2);
+/// A friend of the demo buddy list.
+const ORION: Uuid = Uuid::from_u128(0xD0D0_0000_0000_0000_0000_0000_0000_0000 | 102);
+const LUNE: Uuid = id(4);
+const BRUME: Uuid = id(5);
+const SOL: Uuid = id(6);
+const IRIS: Uuid = id(7);
+const VEGA: Uuid = id(8);
+const ATLAS: Uuid = id(9);
+
+struct Resident {
+    id: Uuid,
+    /// Meters ahead of the start position and to its left.
+    ahead: f32,
+    left: f32,
+    first: &'static str,
+    /// Chosen display name; empty for none.
+    display: &'static str,
+    title: &'static str,
+    /// Gradient of the profile picture; None for a resident without one.
+    picture: Option<u8>,
+}
+
+fn residents() -> [Resident; 9] {
+    let wolves = aurora_i18n::tr!("demo-northern-wolves");
+    let r = |id, ahead, left, first, display, title, picture| Resident {
+        id,
+        ahead,
+        left,
+        first,
+        display,
+        title,
+        picture,
+    };
+    [
+        r(NOVA, 6.5, 7.3, "Nova", "Nova ♪", wolves, Some(3)),
+        r(TESS, 6.5, 4.9, "Tess", "Tess ✨", "Aurora Builders", None),
+        r(ORION, 6.5, 2.4, "Orion", aurora_i18n::tr!("demo-orion-the-great"), wolves, Some(1)),
+        r(LUNE, 6.5, -2.3, "Lune", "", "Aurora Builders", Some(2)),
+        r(BRUME, 6.5, -4.7, "Brume", "La Brume", "", Some(0)),
+        r(SOL, 23.0, 5.0, "Sol", "Sol ♪", wolves, None),
+        r(IRIS, 23.0, -5.0, "Iris", "", "", None),
+        r(VEGA, 46.0, 4.5, "Vega", "", "", None),
+        r(ATLAS, 46.0, -4.5, "Atlas", "", "", None),
+    ]
+}
+
+/// Texture of a demo profile picture.
+const fn picture_texture(gradient: u8) -> Uuid {
+    Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0100 | gradient as u128)
+}
+
+/// Profile picture of a resident of the scenario (ours included); nil
+/// outside it and for the residents without one.
+pub fn profile_picture(agent: Uuid) -> Uuid {
+    if mode().is_none() {
+        return Uuid::nil();
+    }
+    if agent == super::DEMO_AGENT {
+        return picture_texture(0);
+    }
+    residents()
+        .iter()
+        .find(|r| r.id == agent)
+        .and_then(|r| r.picture)
+        .map_or(Uuid::nil(), picture_texture)
+}
+
+/// Pixels of a demo profile picture: a diagonal gradient with the outline
+/// of a bust, 64 x 64.
+pub fn picture_pixels(texture: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
+    const GRADIENTS: [([f32; 3], [f32; 3]); 4] = [
+        ([139.0, 92.0, 246.0], [45.0, 212.0, 191.0]),
+        ([245.0, 158.0, 11.0], [239.0, 68.0, 68.0]),
+        ([56.0, 189.0, 248.0], [99.0, 102.0, 241.0]),
+        ([244.0, 114.0, 182.0], [167.0, 139.0, 250.0]),
+    ];
+    let n = texture.as_u128() ^ picture_texture(0).as_u128();
+    let (from, to) = *GRADIENTS.get(usize::try_from(n).ok()?)?;
+    const N: u32 = 64;
+    let mut px = Vec::with_capacity((N * N * 4) as usize);
+    for y in 0..N {
+        for x in 0..N {
+            let (fx, fy) = (x as f32 / (N - 1) as f32, y as f32 / (N - 1) as f32);
+            let t = (fx + fy) * 0.5;
+            // a head over shoulders, in the dark blue of the brand
+            let head = (fx - 0.5).hypot(fy - 0.36) < 0.17;
+            let shoulders = fy > 0.62 && ((fx - 0.5) / 0.34).powi(2) + ((fy - 0.92) / 0.32).powi(2) < 1.0;
+            let shade = if head || shoulders { 0.72 } else { 0.0 };
+            let mix = |a: f32, b: f32, dark: f32| ((a + (b - a) * t) * (1.0 - shade) + dark * shade) as u8;
+            px.extend_from_slice(&[mix(from[0], to[0], 7.0), mix(from[1], to[1], 11.0), mix(from[2], to[2], 31.0), 255]);
+        }
+    }
+    Some((px, N, N))
+}
+
+/// Names of the scenario's residents: (first, last, chosen display name).
+pub fn name(agent: &Uuid) -> Option<(&'static str, &'static str, &'static str)> {
+    mode()?;
+    let r = residents().into_iter().find(|r| r.id == *agent)?;
+    Some((r.first, aurora_i18n::tr!("demo-example"), r.display))
+}
+
+/// Line of the block list for the blocked resident of the scenario.
+pub fn mute_line() -> Option<String> {
+    mode().map(|_| format!("1 {BRUME} Brume|0\n"))
+}
+
+/// The resident whose plate is shown as too complex.
+pub fn too_complex() -> Option<Uuid> {
+    mode().map(|_| ORION)
+}
+
+/// Where the scenario stands: the demo's start position (AURORA_DEMO_POS).
+fn start() -> (f32, f32) {
+    let pos: Vec<f32> = std::env::var("AURORA_DEMO_POS")
+        .ok()
+        .map(|v| v.split(',').filter_map(|s| s.trim().parse().ok()).collect())
+        .unwrap_or_default();
+    match pos[..] {
+        [x, y, ..] => (x, y),
+        _ => (132.0, 126.0),
+    }
+}
+
+/// The residents, standing in rows across the view of the start position.
+pub fn events() -> Vec<NetEvent> {
+    let (sx, sy) = start();
+    // the look direction of the demo's start (demo::events)
+    let ahead = glam::Vec2::new(0.8, 0.4).normalize();
+    let left = glam::Vec2::new(-ahead.y, ahead.x);
+    let boxp = shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE, 100, 0, 0);
+    let mut objects = Vec::new();
+    let mut events = Vec::new();
+    for (k, r) in residents().iter().enumerate() {
+        let at = glam::Vec2::new(sx, sy) + ahead * r.ahead + left * r.left;
+        let mut a = prim(
+            110_000 + k as u32,
+            Vec3::new(at.x, at.y, floor_at(at.x, at.y) + 0.84),
+            Quat::from_rotation_z(std::f32::consts::PI + 0.46),
+            Vec3::new(0.45, 0.6, 1.9),
+            boxp,
+            te([1.0; 4], 0, false, 0.0),
+            ExtraParams::default(),
+            "",
+        );
+        a.pcode = LL_PCODE_LEGACY_AVATAR;
+        a.full_id = r.id;
+        let last = aurora_i18n::tr!("demo-example");
+        a.name_values = format!("FirstName STRING RW SV {}\nLastName STRING RW SV {last}", r.first);
+        if !r.title.is_empty() {
+            a.name_values.push_str(&format!("\nTitle STRING RW SV {}", r.title));
+        }
+        objects.push(a);
+        events.push(NetEvent::AvatarAnimations {
+            avatar: r.id,
+            anims: vec![(IDLE_ANIM, 1)],
+            sources: Vec::new(),
+        });
+    }
+    // a white wall behind the two on the left: the glass over a bright
+    // background, next to the same plates over the darker scene
+    let wall = glam::Vec2::new(sx, sy) + ahead * 9.5 + left * 6.1;
+    objects.push(prim(
+        110_100,
+        Vec3::new(wall.x, wall.y, floor_at(wall.x, wall.y) + 1.9),
+        Quat::from_rotation_z(ahead.y.atan2(ahead.x)),
+        Vec3::new(0.1, 6.4, 3.8),
+        boxp,
+        te([1.0; 4], 0, true, 0.0),
+        ExtraParams::default(),
+        "",
+    ));
+    events.insert(0, NetEvent::ObjectUpdates { handle: HANDLE, objects });
+    events
+}
+
+/// The animations that carry the states (away, do not disturb, typing),
+/// sent when the set of states changes; `shown` remembers the last one.
+pub fn state_events(time: f64, shown: &mut Option<bool>) -> Vec<NetEvent> {
+    use crate::world::radar::ANIM_AGENT_TYPE;
+    use crate::world::status::{ANIM_AWAY, ANIM_DO_NOT_DISTURB};
+    let Some(mode) = mode() else { return Vec::new() };
+    let status = status_set(mode, time);
+    if *shown == Some(status) {
+        return Vec::new();
+    }
+    *shown = Some(status);
+    let states: [(Uuid, &[Uuid]); 5] = if status {
+        [
+            (NOVA, &[ANIM_AWAY]),
+            (TESS, &[ANIM_DO_NOT_DISTURB]),
+            (LUNE, &[ANIM_AWAY, ANIM_AGENT_TYPE]),
+            (IRIS, &[]),
+            (SOL, &[]),
+        ]
+    } else {
+        [
+            (NOVA, &[]),
+            (TESS, &[]),
+            (LUNE, &[ANIM_AGENT_TYPE]),
+            (IRIS, &[ANIM_AGENT_TYPE]),
+            (SOL, &[]),
+        ]
+    };
+    states
+        .into_iter()
+        .map(|(avatar, playing)| NetEvent::AvatarAnimations {
+            avatar,
+            anims: std::iter::once(IDLE_ANIM).chain(playing.iter().copied()).map(|a| (a, 1)).collect(),
+            sources: Vec::new(),
+        })
+        .collect()
+}
+
+/// Who is in the voice channel at `time`, and how loud: (raw level,
+/// speaking), as `demo::voice_levels`.
+pub fn voice(levels: &mut HashMap<Uuid, (f32, bool)>, time: f64) {
+    let Some(mode) = mode() else { return };
+    let t = time as f32;
+    // syllables and short pauses, like the mockup's level
+    let talk = |phase: f32| {
+        let syllable = (t * 2.3 + phase).sin().abs() * (0.6 + 0.4 * (t * 7.1 + phase).sin());
+        let level = 0.33 + 0.28 * syllable;
+        let on = (t * 0.45 + phase).sin() > -0.55;
+        if on { (level, true) } else { (0.0, false) }
+    };
+    levels.insert(SOL, talk(1.3));
+    levels.insert(VEGA, (0.0, false));
+    if !status_set(mode, time) {
+        levels.insert(TESS, (0.0, false));
+        levels.insert(ORION, talk(0.0));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_cycle_alternates_the_two_sets() {
+        assert!(!status_set(Mode::Cycle, 1.0));
+        assert!(status_set(Mode::Cycle, CYCLE + 1.0));
+        assert!(!status_set(Mode::Cycle, 2.0 * CYCLE + 1.0));
+        assert!(status_set(Mode::Status, 0.0) && !status_set(Mode::Voice, 100.0));
+    }
+
+    #[test]
+    fn profile_pictures_are_opaque_squares() {
+        for gradient in 0..4 {
+            let (px, w, h) = picture_pixels(&picture_texture(gradient)).expect("a picture");
+            assert_eq!(px.len(), (w * h * 4) as usize);
+            assert!(px.as_chunks::<4>().0.iter().all(|p| p[3] == 255));
+        }
+        assert!(picture_pixels(&picture_texture(4)).is_none());
+        assert!(picture_pixels(&super::super::TEX_GRADIENT).is_none());
+    }
+
+    #[test]
+    fn the_residents_stand_at_the_three_levels() {
+        use crate::ui::nameplate::{COMPACT_DISTANCE, FULL_DISTANCE, LEVEL_MARGIN};
+        // the camera is a few meters behind the start position
+        let camera = 4.0;
+        let rows: Vec<f32> = residents().iter().map(|r| r.ahead.hypot(r.left) + camera).collect();
+        assert!(rows[..5].iter().all(|d| *d < FULL_DISTANCE), "{rows:?}");
+        assert!(
+            rows[5..7]
+                .iter()
+                .all(|d| *d > FULL_DISTANCE + LEVEL_MARGIN && *d < COMPACT_DISTANCE - LEVEL_MARGIN)
+        );
+        assert!(rows[7..].iter().all(|d| *d > COMPACT_DISTANCE + LEVEL_MARGIN));
+    }
+}
