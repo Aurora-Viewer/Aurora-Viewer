@@ -16,6 +16,7 @@
 //! evicted textures) is freed by the trash thread (`Jobs::discard`).
 
 use super::jobs::{AlphaKind, JobResult, Jobs, SculptMap, Trash, classify_alpha, to_rgba};
+use super::texture_budget::{self, Pressure};
 use aurora_assets::J2kInfo;
 use aurora_net::fetch::ByteRange;
 use aurora_net::{FetchRequest, FetchResult, Fetcher};
@@ -48,9 +49,18 @@ const EVICT_LOOKS_PER_FRAME: usize = 512;
 /// Uploads set aside in a frame because their texture page is still being
 /// made, before the frame stops looking for one that can go.
 const PAGE_WAITS: usize = 16;
-/// Downloaded data is written to the disk cache, and the memory budget
-/// checked, this often.
+/// Downloaded data is written to the disk cache this often.
 const HOUSEKEEPING_EVERY: Duration = Duration::from_secs(2);
+/// The memory budget is checked this often (a query to the driver).
+const BUDGET_EVERY: Duration = Duration::from_millis(250);
+/// Textures lowered a second under memory pressure, and per frame at least
+/// and at most: GPU copies of their coarser levels, small (Firestorm scales
+/// down within its 2 to 5 ms of texture work a frame, at least five
+/// textures). By the second, not by the frame: a video memory that
+/// overflows makes slow frames, and giving it back must not slow down with
+/// them.
+const REDUCTIONS_PER_SECOND: f32 = 3000.0;
+const REDUCTIONS_PER_FRAME: std::ops::RangeInclusive<usize> = 8..=512;
 /// Firestorm asks for MAX_IMAGE_DATA_SIZE (indra/llimage/llimage.h) when it
 /// wants the whole file.
 const MAX_IMAGE_DATA_SIZE: u64 = 4096 * 4096 * 8;
@@ -149,7 +159,15 @@ struct Entry {
     info: Option<J2kInfo>,
     decoded: Option<u8>,
     want: u8,
+    /// Pixels it covers on screen (largest face in view), and those it
+    /// would cover from where the camera is, in view or not; `fixed_px`:
+    /// noted by what memory pressure never lowers (HUDs, sky, terrain).
+    /// All three decay, see `recompute_wants`.
     need_px: f32,
+    away_px: f32,
+    fixed_px: f32,
+    /// Size of its level 0 on the GPU (0 until the first upload).
+    gpu_size: (u32, u32),
     fetching: bool,
     decoding: bool,
     cache_state: u8, // 0 unchecked, 1 loading, 2 done
@@ -415,6 +433,60 @@ pub struct TextureStats {
     pub uploads_direct: u64,
     /// In use, never loaded, and the last fetch failed.
     pub failing: usize,
+    /// Memory budget (texture_budget.rs): bytes the pages may hold now, the
+    /// pressure step, and textures lowered on the GPU since the start.
+    pub target_bytes: u64,
+    pub pressure: u8,
+    pub reduced: u64,
+}
+
+/// Demo textures without a file to decode (AURORA_DEMO_STREAM under a
+/// forced memory budget): `texels` draws the mip chain of one of them
+/// (`has`) at a discard level, on the background pool, when the streamer
+/// wants it finer than it is, as a decode of downloaded data would. Without
+/// it a demo texture lowered by the memory budget could never load again.
+#[derive(Clone, Copy)]
+pub struct DemoSource {
+    pub has: fn(&Uuid) -> bool,
+    pub texels: fn(&Uuid, u8) -> Vec<(u32, u32, Vec<u8>)>,
+}
+
+/// Discard level of a texture of `full` pixels (its largest side) to cover
+/// `px` pixels on screen, among the `levels` its file holds.
+fn discard_for(full: f32, px: f32, levels: Option<u8>) -> u8 {
+    let d = (full / px.max(8.0)).log2().floor().clamp(0.0, 5.0) as u8;
+    levels.map_or(d, |l| d.min(l.min(5)))
+}
+
+/// The discard level a texture is loaded to, and the one it is lowered to
+/// under memory pressure when it holds more, the sizes on screen divided
+/// by what the pressure step takes (`texture_budget::dropped`: in view,
+/// out of view). Loading follows what is in view; lowering stops at what
+/// the texture would need from where the camera is, half a level finer, so
+/// the two never chase each other (`keep <= want`).
+fn wanted(full: f32, levels: Option<u8>, e: &Entry, (in_view, away): (f32, f32)) -> (u8, u8) {
+    let seen = e.fixed_px.max(e.need_px / in_view);
+    let near = seen.max(e.away_px / away);
+    (
+        discard_for(full, seen, levels),
+        discard_for(full, near * std::f32::consts::SQRT_2, levels),
+    )
+}
+
+/// Size of a texture at full resolution: that of its file, else from what
+/// it holds on the GPU (demo textures have no file), else unknown.
+fn full_size(e: &Entry) -> Option<(u32, u32)> {
+    match (e.info, e.decoded) {
+        (Some(i), _) => Some((i.width, i.height)),
+        (None, Some(d)) if e.gpu_size.0 > 0 => Some((e.gpu_size.0 << d, e.gpu_size.1 << d)),
+        _ => None,
+    }
+}
+
+/// Bytes of a texture's mip chain at a discard level, about (a third more
+/// than its level 0); 0 while its size is not known.
+fn bytes_at(e: &Entry, discard: u8) -> u64 {
+    full_size(e).map_or(0, |(w, h)| (w as u64 * h as u64 * 16 / 3) >> (2 * discard))
 }
 
 /// Alpha class of a bindless slot; a change bumps `generation` and is
@@ -456,7 +528,20 @@ pub struct TextureStreamer {
     alpha_changes: Vec<u32>,
     max_decodes: usize,
     decodes: usize,
-    pub discard_bias: u8,
+    /// Memory pressure step (texture_budget.rs), decided in `maintain`.
+    pressure: Pressure,
+    last_budget: Instant,
+    /// Passes of `recompute_wants` since the step last changed.
+    passes_at_step: u32,
+    /// Loaded textures to lower to a discard level, listed by the last
+    /// pass under pressure and done a few per frame, the largest (the
+    /// bytes they hold, last of the tuple) first: taken from the end.
+    reductions: Vec<(Uuid, u8, u64)>,
+    /// Bytes the textures would hold one pressure step below, from the
+    /// last pass.
+    bytes_below: u64,
+    /// Textures the demo draws itself, see [`DemoSource`].
+    pub demo_source: Option<DemoSource>,
     /// Textures also wanted as egui images (profile pictures...): small CPU copies.
     ui_wanted: std::collections::HashSet<Uuid>,
     ui_ready: HashMap<Uuid, (u32, u32, Vec<u8>)>,
@@ -507,7 +592,12 @@ impl TextureStreamer {
             generation: 0,
             max_decodes: std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).max(2),
             decodes: 0,
-            discard_bias: 0,
+            pressure: Pressure::new(Instant::now()),
+            last_budget: Instant::now(),
+            passes_at_step: 0,
+            reductions: Vec::new(),
+            bytes_below: 0,
+            demo_source: None,
             ui_wanted: Default::default(),
             ui_ready: HashMap::new(),
             stats: TextureStats::default(),
@@ -675,6 +765,9 @@ impl TextureStreamer {
                 decoded: None,
                 want: 2,
                 need_px: 0.0,
+                away_px: 0.0,
+                fixed_px: 0.0,
+                gpu_size: (0, 0),
                 fetching: false,
                 decoding: false,
                 cache_state: 0,
@@ -797,24 +890,85 @@ impl TextureStreamer {
         }
     }
 
-    /// Recompute desired discard levels from accumulated usage.
+    /// Record that a texture would cover about `px` pixels from where the
+    /// camera is, on an object out of view: not loaded for it, but under
+    /// memory pressure it is not lowered further than that (Firestorm's
+    /// pixel area does not depend on the view either: turning round does
+    /// not show blurred textures).
+    #[inline]
+    pub fn note_usage_away(&mut self, id: &Uuid, px: f32) {
+        if let Some(e) = self.entries.get_mut(id)
+            && px > e.away_px
+        {
+            e.away_px = px;
+        }
+    }
+
+    /// Like `note_usage`, for what memory pressure never lowers (as
+    /// Firestorm's boosted textures: HUDs, sky, terrain).
+    #[inline]
+    pub fn note_usage_fixed(&mut self, id: &Uuid, px: f32) {
+        if let Some(e) = self.entries.get_mut(id)
+            && px > e.fixed_px
+        {
+            e.fixed_px = px;
+        }
+    }
+
+    /// Recompute desired discard levels from accumulated usage, once every
+    /// object was seen. Under memory pressure (texture_budget.rs), also
+    /// list the loaded textures to lower, done a few per frame by
+    /// `maintain`: those clearly finer than their size on screen (half a
+    /// level of margin, so that a texture at the edge of a level is not
+    /// lowered then loaded again as the camera sways).
     pub fn recompute_wants(&mut self) {
-        for e in self.entries.values_mut() {
+        let step = self.pressure.step();
+        let dropped = texture_budget::dropped(step);
+        let below = texture_budget::dropped(step.saturating_sub(1));
+        let TextureStreamer {
+            entries,
+            reductions,
+            ui_wanted,
+            ..
+        } = self;
+        reductions.clear();
+        let mut bytes_below = 0;
+        for (id, e) in entries.iter_mut() {
             if e.keep_pixels {
                 e.want = 0;
+                bytes_below += bytes_at(e, 0);
                 continue;
             }
-            let full = e.info.map(|i| i.width.max(i.height)).unwrap_or(512) as f32;
-            let need = e.need_px.max(8.0);
-            let mut d = (full / need).log2().floor().clamp(0.0, 5.0) as u8;
-            if let Some(info) = e.info {
-                d = d.min(info.levels.min(5));
+            let full = full_size(e).map_or(512, |(w, h)| w.max(h)) as f32;
+            let levels = e.info.map(|i| i.levels);
+            let (want, keep) = wanted(full, levels, e, dropped);
+            e.want = want;
+            if step > 0 {
+                let (want_below, keep_below) = wanted(full, levels, e, below);
+                // (there it would be lowered to `keep`, or loaded up to `want`)
+                bytes_below += bytes_at(e, e.decoded.map_or(want_below, |d| d.clamp(keep_below, want_below)));
+                // (bakes and interface images are left alone, as Firestorm's
+                // boosted textures; unused ones are evicted instead)
+                if let Some(d) = e.decoded
+                    && keep > d
+                    && e.refs > 0
+                    && !e.decoding
+                    && e.source == TexSource::Asset
+                    && !ui_wanted.contains(id)
+                {
+                    reductions.push((*id, keep, bytes_at(e, d)));
+                }
             }
-            d = (d + self.discard_bias).min(5);
-            // Never drop below what is already loaded when still referenced.
-            e.want = d;
-            e.need_px *= 0.5; // decay so textures that shrank on screen can be lowered later
+            // decay so textures that shrank on screen can be lowered later
+            e.need_px *= 0.5;
+            e.away_px *= 0.5;
+            e.fixed_px *= 0.5;
         }
+        // (memory comes back soonest from the largest; the id settles ties,
+        // the table has no order of its own)
+        reductions.sort_unstable_by_key(|&(id, _, bytes)| (bytes, id));
+        self.bytes_below = bytes_below;
+        self.passes_at_step = self.passes_at_step.saturating_add(1);
     }
 
     fn bytes_needed(e: &Entry) -> usize {
@@ -850,6 +1004,7 @@ impl TextureStreamer {
             decodes,
             max_decodes,
             staging,
+            demo_source,
             ..
         } = self;
         // first disk reads of the new textures, queued in one go
@@ -886,6 +1041,25 @@ impl TextureStreamer {
                 Some(d) => e.want < d,
             };
             if !better {
+                continue;
+            }
+            if let Some(source) = demo_source.filter(|s| e.data.is_empty() && (s.has)(&id)) {
+                // (its first texels come from the scenario)
+                if e.decoded.is_some() && *decodes < *max_decodes {
+                    e.decoding = true;
+                    *decodes += 1;
+                    let (want, pool) = (e.want, staging.clone());
+                    jobs.spawn(move || {
+                        texture_result(
+                            id,
+                            want,
+                            (source.texels)(&id, want),
+                            (AlphaKind::Opaque, false),
+                            None,
+                            pool.as_deref(),
+                        )
+                    });
+                }
                 continue;
             }
             let needed = Self::bytes_needed(e);
@@ -927,7 +1101,7 @@ impl TextureStreamer {
             *next_key += 1;
             e.fetch_key = key;
             e.fetching = true;
-            let priority = e.need_px.max(1.0) + if e.decoded.is_none() { 1e5 } else { 0.0 };
+            let priority = e.need_px.max(e.fixed_px).max(1.0) + if e.decoded.is_none() { 1e5 } else { 0.0 };
             by_fetch_key.insert(key, id);
             fetcher.request(FetchRequest {
                 key,
@@ -1095,7 +1269,7 @@ impl TextureStreamer {
                         held: false,
                     },
                     e.decoded.is_none(),
-                    e.need_px,
+                    e.need_px.max(e.fixed_px),
                 );
             }
             JobResult::TextureFailed { id } => {
@@ -1237,6 +1411,7 @@ impl TextureStreamer {
                     u.mips.iter().map(|m| m.2.len() as u64).sum::<u64>()
                 }
             };
+            e.gpu_size = level0.unwrap_or_default();
             if self.ui_wanted.contains(&u.id) {
                 // largest level that fits 256 px for the UI copy (taken
                 // from the upload, which is done with it)
@@ -1283,16 +1458,26 @@ impl TextureStreamer {
         self.stats.uploads_frame = done;
     }
 
-    /// Evict unused textures and persist downloaded data. Every frame: a
-    /// few of the textures unused for `evict_after`, taken from the front
-    /// of the release queue; every two seconds: the data downloaded since,
-    /// written to the disk cache by the jobs, and the memory budget. No
+    /// Keep the memory budget, evict unused textures and persist downloaded
+    /// data. Every frame: a few of the textures to lower under memory
+    /// pressure (`reduce`), and a few of those unused for `evict_after`,
+    /// taken from the front of the release queue; a few times a second: the
+    /// budget and the pressure step (`press`); every two seconds: the data
+    /// downloaded since, written to the disk cache by the jobs. No
     /// pass over every texture (with ~9,000 of them, and a region's worth
     /// evicted at once 45 s after a teleport, that pass took 5 to 65 ms).
-    pub fn maintain(&mut self, renderer: &mut Renderer, jobs: &Jobs, budget_bytes: u64) {
+    pub fn maintain(&mut self, renderer: &mut Renderer, jobs: &Jobs, budget_bytes: u64, frame: Duration) {
         let now = Instant::now();
+        self.reduce(renderer, frame);
+        self.press(renderer, now, budget_bytes);
         let entries = &self.entries;
-        let evict = eviction_round(&mut self.unused, now, self.evict_after, |id, since| match entries.get(id) {
+        // (under memory pressure, what nothing uses goes sooner)
+        let evict_after = if self.pressure.step() > 0 {
+            self.evict_after.min(texture_budget::PRESSURE_EVICT)
+        } else {
+            self.evict_after
+        };
+        let evict = eviction_round(&mut self.unused, now, evict_after, |id, since| match entries.get(id) {
             Some(e) if e.refs == 0 && e.unused_since == Some(since) => {
                 if e.fetching || e.decoding {
                     Evictable::Busy
@@ -1362,14 +1547,83 @@ impl TextureStreamer {
             }
             JobResult::TextureCache { id, data: None, complete }
         });
-        // Memory budget: raise the global discard bias when above budget.
-        let used = renderer.textures.bytes();
-        if used > budget_bytes && self.discard_bias < 2 {
-            self.discard_bias += 1;
-            log::info!("texture memory {} MB over budget: discard bias {}", used >> 20, self.discard_bias);
-        } else if used < budget_bytes / 2 && self.discard_bias > 0 {
-            self.discard_bias -= 1;
+    }
+
+    /// Lower a few of the textures listed by the last pass under memory
+    /// pressure: the levels they keep are copied on the GPU to a smaller
+    /// layer (`TextureTable::shrink`), nothing is decoded. Each is checked
+    /// again, the list may be a few frames old.
+    fn reduce(&mut self, renderer: &mut Renderer, frame: Duration) {
+        let most =
+            ((frame.as_secs_f32() * REDUCTIONS_PER_SECOND) as usize).clamp(*REDUCTIONS_PER_FRAME.start(), *REDUCTIONS_PER_FRAME.end());
+        let mut done = 0;
+        while done < most {
+            let Some((id, keep, _)) = self.reductions.pop() else {
+                break;
+            };
+            let Some(e) = self.entries.get_mut(&id) else {
+                continue;
+            };
+            let Some(d) = e.decoded.filter(|&d| keep > d && e.refs > 0 && !e.decoding) else {
+                continue;
+            };
+            let levels = renderer.textures.shrink(e.slot, (keep - d) as u32) as u8;
+            if levels > 0 {
+                e.decoded = Some(d + levels);
+                e.gpu_size = ((e.gpu_size.0 >> levels).max(1), (e.gpu_size.1 >> levels).max(1));
+                self.stats.reduced += 1;
+                done += 1;
+            }
         }
+    }
+
+    /// Memory budget, a few times a second: what the textures may hold now
+    /// and the pressure step for what they hold (texture_budget.rs).
+    fn press(&mut self, renderer: &mut Renderer, now: Instant, setting: u64) {
+        if now.duration_since(self.last_budget) < BUDGET_EVERY {
+            return;
+        }
+        self.last_budget = now;
+        let (used, live) = (renderer.textures.page_bytes(), renderer.textures.bytes());
+        let video = renderer.video_memory.read(&renderer.device);
+        let target = texture_budget::forced_target().unwrap_or_else(|| texture_budget::texture_target(setting, used, video));
+        let before = self.pressure.step();
+        // one step below, the pages would hold the textures' bytes with
+        // the free room they have now (none taken back from step 1: only
+        // what loads from then on changes)
+        let below = if before > 1 {
+            (self.bytes_below as f64 * (used as f64 / live.max(1) as f64)) as u64
+        } else {
+            used
+        };
+        let step = self.pressure.update(
+            now,
+            texture_budget::Reading {
+                used,
+                target,
+                settled: self.passes_at_step >= 2 && self.reductions.is_empty() && !renderer.textures.settling(),
+                below,
+            },
+        );
+        if step != before {
+            self.passes_at_step = 0;
+            renderer.textures.set_eager_compaction(step > 0);
+            log::info!(
+                "texture memory: pressure {before} -> {step} ({} MB in pages for a target of {} MB, {} MB of textures{}; {} lowered so far)",
+                used >> 20,
+                target >> 20,
+                live >> 20,
+                video.map_or(String::new(), |v| format!(
+                    ", video memory: {} MB of resources, {} MB taken from the driver, budget {} MB",
+                    v.allocated >> 20,
+                    v.usage >> 20,
+                    v.budget >> 20
+                )),
+                self.stats.reduced,
+            );
+        }
+        self.stats.target_bytes = target;
+        self.stats.pressure = step;
     }
 }
 
@@ -1501,6 +1755,180 @@ mod tests {
         assert!(PickMask::from_rgba(4, 4, &rgba[..4]).is_none());
         let textures = TextureStreamer::new(PathBuf::new());
         assert!(!textures.pick_masks[&aurora_prim::te::TRANSPARENT_TEXTURE].hits(glam::Vec2::splat(0.5)));
+    }
+
+    /// A 1024 × 1024 texture in use, loaded at `decoded`, covering `need_px`
+    /// pixels in view.
+    fn entry(decoded: Option<u8>, need_px: f32) -> Entry {
+        Entry {
+            slot: 9,
+            refs: 1,
+            source: TexSource::Asset,
+            data: Arc::default(),
+            complete: false,
+            info: None,
+            decoded,
+            want: 0,
+            need_px,
+            away_px: 0.0,
+            fixed_px: 0.0,
+            gpu_size: decoded.map_or((0, 0), |d| (1024 >> d, 1024 >> d)),
+            fetching: false,
+            decoding: false,
+            cache_state: 2,
+            failures: 0,
+            retry_at: None,
+            keep_pixels: false,
+            sculpt: None,
+            alpha: AlphaKind::Opaque,
+            unused_since: None,
+            fetch_key: 0,
+            dirty_cache: false,
+            last_error: None,
+            error_logged: false,
+            gone: false,
+        }
+    }
+
+    #[test]
+    fn discard_follows_the_size_on_screen() {
+        assert_eq!(discard_for(1024.0, 1024.0, None), 0);
+        assert_eq!(discard_for(1024.0, 2000.0, None), 0);
+        assert_eq!(discard_for(1024.0, 300.0, None), 1);
+        assert_eq!(discard_for(1024.0, 256.0, None), 2);
+        // never past level 5, nor past the levels of the file
+        assert_eq!(discard_for(1024.0, 0.0, None), 5);
+        assert_eq!(discard_for(1024.0, 0.0, Some(3)), 3);
+        assert_eq!(discard_for(64.0, 8.0, Some(5)), 3);
+    }
+
+    #[test]
+    fn lowering_stops_half_a_level_above_loading() {
+        // in view at 512 px: loaded to level 1, not lowered while at 0
+        let e = entry(Some(0), 512.0);
+        assert_eq!(wanted(1024.0, None, &e, (1.0, 1.0)), (1, 0));
+        // clearly smaller on screen: lowered
+        let e = entry(Some(0), 300.0);
+        assert_eq!(wanted(1024.0, None, &e, (1.0, 1.0)), (1, 1));
+        // whatever the sizes and the levels dropped, never lowered past
+        // what would load again
+        for need in [0.0, 5.0, 40.0, 181.0, 182.0, 362.0, 363.0, 724.0, 725.0, 3000.0] {
+            for away in [0.0, 90.0, 400.0, 1500.0] {
+                for step in 0..=texture_budget::MAX_PRESSURE {
+                    let mut e = entry(Some(0), need);
+                    e.away_px = away;
+                    let (want, keep) = wanted(1024.0, Some(5), &e, texture_budget::dropped(step));
+                    assert!(keep <= want, "need {need} away {away} step {step}: keep {keep} want {want}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn out_of_view_textures_keep_what_their_distance_asks() {
+        // behind the camera, 500 px from where it is: not loaded for that
+        // (level 5 wanted), but not lowered either while memory allows
+        let mut e = entry(Some(0), 0.0);
+        e.away_px = 500.0;
+        let at = |e: &Entry, step: u8| wanted(1024.0, None, e, texture_budget::dropped(step));
+        assert_eq!(at(&e, 1), (5, 0));
+        // then half a level at a time under it, down to two levels
+        assert_eq!([2, 3, 4, 5, 6, 7].map(|s| at(&e, s).1), [1, 1, 2, 2, 2, 2]);
+        // in view: nothing until those out of view have lost a level
+        let seen = entry(Some(0), 500.0);
+        assert_eq!([1, 2, 3].map(|s| at(&seen, s)), [(1, 0); 3]);
+        assert_eq!([4, 5, 6, 7].map(|s| at(&seen, s)), [(1, 1), (2, 1), (2, 2), (3, 2)]);
+        // HUDs, sky and terrain: whatever the pressure
+        let mut fixed = entry(Some(0), 0.0);
+        fixed.fixed_px = 500.0;
+        assert_eq!(at(&fixed, texture_budget::MAX_PRESSURE), (1, 0));
+    }
+
+    #[test]
+    fn bytes_follow_the_discard_level() {
+        // a demo texture (no file): its full size from what the GPU holds
+        let e = entry(Some(2), 0.0);
+        assert_eq!(full_size(&e), Some((1024, 1024)));
+        assert_eq!(bytes_at(&e, 0), 1024 * 1024 * 16 / 3);
+        assert_eq!(bytes_at(&e, 2), (1024 * 1024 * 16 / 3) >> 4);
+        // nothing known yet
+        assert_eq!(bytes_at(&entry(None, 0.0), 0), 0);
+    }
+
+    /// The streamer under memory pressure step `step`, holding `entries`.
+    fn pressed(step: u8, entries: Vec<(u128, Entry)>) -> TextureStreamer {
+        let mut s = TextureStreamer::new(PathBuf::new());
+        let t0 = Instant::now();
+        for i in 0..step as u32 {
+            s.pressure.update(
+                t0 + Duration::from_secs(2 * i as u64),
+                texture_budget::Reading {
+                    used: 2,
+                    target: 1,
+                    settled: true,
+                    below: 2,
+                },
+            );
+        }
+        assert_eq!(s.pressure.step(), step);
+        s.entries.extend(entries.into_iter().map(|(id, e)| (Uuid::from_u128(id), e)));
+        s
+    }
+
+    #[test]
+    fn nothing_is_lowered_without_memory_pressure() {
+        let mut s = pressed(0, vec![(1, entry(Some(0), 20.0)), (2, entry(Some(0), 0.0))]);
+        s.recompute_wants();
+        assert!(s.reductions.is_empty());
+        // (loading still follows the size on screen)
+        assert_eq!(s.entries[&Uuid::from_u128(1)].want, 5);
+    }
+
+    #[test]
+    fn pressure_lists_what_is_finer_than_its_size_on_screen() {
+        let bake = Entry {
+            source: TexSource::Bake { url: String::new() },
+            ..entry(Some(0), 20.0)
+        };
+        let sculpt = Entry {
+            keep_pixels: true,
+            ..entry(Some(0), 20.0)
+        };
+        let unused = Entry {
+            refs: 0,
+            ..entry(Some(0), 20.0)
+        };
+        let decoding = Entry {
+            decoding: true,
+            ..entry(Some(0), 20.0)
+        };
+        let mut s = pressed(
+            1,
+            vec![
+                (1, entry(Some(0), 200.0)),
+                (2, entry(Some(0), 900.0)),
+                (3, entry(Some(3), 200.0)),
+                (4, entry(None, 0.0)),
+                (5, bake),
+                (6, sculpt),
+                (7, unused),
+                (8, decoding),
+                (9, entry(Some(0), 20.0)),
+                (10, entry(Some(1), 40.0)),
+            ],
+        );
+        s.ui_wanted.insert(Uuid::from_u128(9));
+        s.recompute_wants();
+        // only the textures loaded finer than their size on screen asks
+        // for: the one at 200 px to level 1 (level 2 would load it again
+        // at 256 px), the one at 40 px to level 4; the largest is last
+        // (taken first)
+        let mb = 1024 * 1024 * 16 / 3;
+        assert_eq!(s.reductions, vec![(Uuid::from_u128(10), 4, mb >> 2), (Uuid::from_u128(1), 1, mb)]);
+        // bytes one step below: the same textures at the same levels
+        assert!(s.bytes_below > 0);
+        // the sizes decay for the next pass
+        assert_eq!(s.entries[&Uuid::from_u128(1)].need_px, 100.0);
     }
 
     fn pending(id: u128, discard: u8) -> PendingUpload {

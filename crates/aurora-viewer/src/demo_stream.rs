@@ -21,7 +21,7 @@
 
 use super::{HANDLE, height, prim, shape, te};
 use crate::scene::jobs::{AlphaKind, Jobs};
-use crate::scene::textures::{TexSource, TextureStreamer, texture_result};
+use crate::scene::textures::{DemoSource, TexSource, TextureStreamer, texture_result};
 use aurora_net::NetEvent;
 use aurora_prim::ExtraParams;
 use aurora_prim::params::*;
@@ -84,8 +84,27 @@ fn data_len(i: u32) -> usize {
     (w * h / 4) as usize
 }
 
+const TEXTURE_IDS: u128 = 0xDE57_4EA0_0000_0000_0000_0000_0000_0000;
+
 pub fn texture(i: u32) -> Uuid {
-    Uuid::from_u128(0xDE57_4EA0_0000_0000_0000_0000_0000_0000 | i as u128)
+    Uuid::from_u128(TEXTURE_IDS | i as u128)
+}
+
+/// The scenario's texture number of `id`, if it is one of them.
+fn texture_index(id: &Uuid) -> Option<u32> {
+    let n = id.as_u128();
+    (n & !(u32::MAX as u128) == TEXTURE_IDS).then_some(n as u32)
+}
+
+/// The scenario's textures for the streamer, when it wants one finer than
+/// it is: only under a forced memory budget (AURORA_TEXTURE_BUDGET_MB),
+/// where they are lowered and must be able to load again. Without it the
+/// scenario alone decides what is decoded, as before.
+fn source() -> Option<DemoSource> {
+    crate::scene::texture_budget::forced_target().map(|_| DemoSource {
+        has: |id| texture_index(id).is_some(),
+        texels: |id, discard| texture_index(id).map_or(Vec::new(), |i| texture_mips(i, discard as u32)),
+    })
 }
 
 /// Mip chain of texture `i` at a discard level, down to 1×1: an 8 × 8
@@ -257,7 +276,10 @@ impl StreamDemo {
         jobs: &Jobs,
         geom_pending: usize,
     ) {
-        let armed = *self.armed.get_or_insert_with(Instant::now);
+        let armed = *self.armed.get_or_insert_with(|| {
+            textures.demo_source = source();
+            Instant::now()
+        });
         if frame < FIRST_FRAME || armed.elapsed() < FIRST_AFTER {
             return;
         }

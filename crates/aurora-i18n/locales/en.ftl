@@ -2154,6 +2154,7 @@ keybinds-previous-page = Previous page
 keybinds-next-page = Next page
 ui-web-view-web-page-unavailable = { "Web page unavailable: " }{ $e }
 ui-perf-texture-pages = Texture pages
+ui-perf-texture-budget = Texture budget
 ui-options-parcel-and-prim-web-pages-and-videos-audiostreamingmedia = Parcel and prim web pages and videos (AudioStreamingMedia)
 world-appearance-pants = Pants
 world-appearance-black-pants = Black pants
@@ -3441,6 +3442,7 @@ memory-mb-suffix = { " MB" }
 perf-frame-tooltip = { $fps } FPS · { $ms } ms
 perf-texture-memory = { $loaded } / { $total } · { $value } MB
 perf-page-memory = { $pages } · { $value } MB
+perf-texture-budget-pressure = { $value } MB · reduction { $step } / { $steps }
 
 # Independent crash recovery window
 crash-title = Aurora Viewer — Crash report

@@ -23,6 +23,7 @@ mod skin_binds;
 pub mod sounds;
 mod sync_plan;
 pub mod sync_sets;
+pub mod texture_budget;
 pub mod textures;
 pub mod water;
 
@@ -1254,7 +1255,7 @@ impl Scene {
                 self.env_tex[i] = (*id, slot);
             }
             if !id.is_nil() {
-                self.textures.note_usage(id, 2048.0);
+                self.textures.note_usage_fixed(id, 2048.0);
                 if self.textures.is_loaded(id) {
                     out[i] = self.env_tex[i].1;
                 }
@@ -2600,7 +2601,7 @@ impl Scene {
             refl: Vec<ShadowCaster>,
             probe: Vec<ShadowCaster>,
             visible: usize,
-            usage: Vec<(Uuid, f32)>,
+            usage: Vec<(Uuid, f32, bool)>,
         }
         let new_local = || Local {
             opaque: Vec::new(),
@@ -2725,14 +2726,16 @@ impl Scene {
                             }
                         }
                     }
+                    if usage {
+                        // (out of view too: what memory pressure may not
+                        // lower a texture under, see `note_usage_away`)
+                        l.usage.push((f.tex_id, px * f.repeats, in_view));
+                        for (t, r) in f.aux_tex.iter().zip(f.aux_repeats).filter(|(t, _)| !t.is_nil()) {
+                            l.usage.push((*t, px * r, in_view));
+                        }
+                    }
                     if !in_view {
                         continue;
-                    }
-                    if usage {
-                        l.usage.push((f.tex_id, px * f.repeats));
-                        for (t, r) in f.aux_tex.iter().zip(f.aux_repeats).filter(|(t, _)| !t.is_nil()) {
-                            l.usage.push((*t, px * r));
-                        }
                     }
                     match pass {
                         Pass::Blend => l.blend.push((blend_d, cmd, f.glow)),
@@ -2811,14 +2814,18 @@ impl Scene {
 
         // texture usage: a thirtieth of the objects each frame, wants
         // recomputed once all were seen
-        for (id, px) in result.usage {
-            self.textures.note_usage(&id, px);
+        for (id, px, in_view) in result.usage {
+            if in_view {
+                self.textures.note_usage(&id, px);
+            } else {
+                self.textures.note_usage_away(&id, px);
+            }
         }
         if usage_phase == 0 {
             // terrain detail textures: always wanted at decent resolution
             for r in self.regions.values() {
                 for id in &r.detail_ids {
-                    self.textures.note_usage(id, 512.0);
+                    self.textures.note_usage_fixed(id, 512.0);
                 }
             }
             self.textures.recompute_wants();
@@ -2853,7 +2860,7 @@ impl Scene {
         self.textures.upload(renderer, &self.jobs, textures::UploadBudget::for_frame(frame));
         self.parts.add(Part::Pages, renderer.textures.page_create_ms() - pages_before);
         let t = self.parts.lap(Part::Upload, t);
-        self.textures.maintain(renderer, &self.jobs, texture_budget);
+        self.textures.maintain(renderer, &self.jobs, texture_budget, frame);
         let t = self.parts.lap(Part::Maintain, t);
         if self.last_diag.elapsed() > std::time::Duration::from_secs(30) {
             self.last_diag = std::time::Instant::now();

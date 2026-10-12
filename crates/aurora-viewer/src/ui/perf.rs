@@ -943,6 +943,24 @@ fn details(ui: &mut egui::Ui, p: &Palette, v: &PerfView) {
                 value = aurora_i18n::number(v.render.texture_page_bytes as f64 / 1048576.0, 0)
             ),
         );
+        // what the pages may hold now, and the pressure step when they
+        // hold more (scene/texture_budget.rs)
+        let target = aurora_i18n::number(v.tex.target_bytes as f64 / 1048576.0, 0);
+        row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-perf-texture-budget"),
+            if v.tex.pressure > 0 {
+                aurora_i18n::tr!(
+                    "perf-texture-budget-pressure",
+                    value = target,
+                    step = v.tex.pressure.to_string(),
+                    steps = crate::scene::texture_budget::MAX_PRESSURE.to_string()
+                )
+            } else {
+                aurora_i18n::tr!("memory-mb", value = target)
+            },
+        );
         row(ui, p, aurora_i18n::tr!("ui-perf-texture-network"), format!("{}", v.tex.fetching));
         row(
             ui,
