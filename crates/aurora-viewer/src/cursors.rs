@@ -1,6 +1,7 @@
 //! Original Firestorm Windows cursors: res/toolsit.cur and res/toolbuy.cur
 //! (LGPL 2.1), exported as RGBA PNG with their original hotspots.
 //! Firestorm's modern Pay cursor uses the same artwork as Buy.
+//! Phosphor regular HUD / pipette cursors use the skin's ink and dark outline.
 use crate::interaction::Action;
 
 pub struct Cursors {
@@ -13,6 +14,7 @@ pub struct Cursors {
     zoom: Option<egui::CustomCursorImage>,
     grab: Option<egui::CustomCursorImage>,
     hud_drag: Option<egui::CustomCursorImage>,
+    pipette: Option<egui::CustomCursorImage>,
 }
 impl Default for Cursors {
     fn default() -> Self {
@@ -43,6 +45,7 @@ impl Default for Cursors {
             zoom: load(include_bytes!("../assets/cursors/zoom.png"), [7, 5]),
             grab: load(include_bytes!("../assets/cursors/grab.png"), [2, 13]),
             hud_drag: hud_drag_image(&crate::theme::Theme::default().palette()),
+            pipette: pipette_image(&crate::theme::Theme::default().palette()),
         }
     }
 }
@@ -50,17 +53,23 @@ impl Cursors {
     pub fn with_palette(palette: &crate::theme::Palette) -> Self {
         Self {
             hud_drag: hud_drag_image(palette),
+            pipette: pipette_image(palette),
             ..Self::default()
         }
     }
 
     pub fn set_palette(&mut self, palette: &crate::theme::Palette) {
         self.hud_drag = hud_drag_image(palette);
+        self.pipette = pipette_image(palette);
     }
     /// Windows maps the system Grabbing icon to arrows, so use the existing
     /// regular Phosphor grasping hand with a contrasting native-cursor outline.
     pub fn hud_drag(&self) -> Option<egui::CustomCursorImage> {
         self.hud_drag.clone()
+    }
+    /// LLToolPipette uses UI_CURSOR_PIPETTE; the Phosphor tip is the hotspot.
+    pub fn pipette(&self) -> Option<egui::CustomCursorImage> {
+        self.pipette.clone()
     }
     pub fn image(&self, action: Action, playing: bool) -> Option<egui::CustomCursorImage> {
         match action {
@@ -78,7 +87,15 @@ impl Cursors {
 }
 
 fn hud_drag_image(palette: &crate::theme::Palette) -> Option<egui::CustomCursorImage> {
-    let svg = std::str::from_utf8(include_bytes!("../assets/icons/phosphor/hand-grabbing.svg")).ok()?;
+    phosphor_image(include_bytes!("../assets/icons/phosphor/hand-grabbing.svg"), palette, [16, 16])
+}
+
+fn pipette_image(palette: &crate::theme::Palette) -> Option<egui::CustomCursorImage> {
+    phosphor_image(include_bytes!("../assets/icons/phosphor/eyedropper.svg"), palette, [5, 27])
+}
+
+fn phosphor_image(svg: &[u8], palette: &crate::theme::Palette, hotspot: [u16; 2]) -> Option<egui::CustomCursorImage> {
+    let svg = std::str::from_utf8(svg).ok()?;
     let mut pixmap = resvg::tiny_skia::Pixmap::new(32, 32)?;
     let options = resvg::usvg::Options::default();
     for (color, width) in [(palette.bar, "32"), (palette.ink, "16")] {
@@ -109,7 +126,7 @@ fn hud_drag_image(palette: &crate::theme::Palette) -> Option<egui::CustomCursorI
     Some(egui::CustomCursorImage {
         rgba: rgba.into(),
         size: [32, 32],
-        hotspot: [16, 16],
+        hotspot,
     })
 }
 
@@ -123,6 +140,11 @@ mod tests {
         assert_eq!(hand.size, [32, 32]);
         assert_eq!(hand.hotspot, [16, 16]);
         assert!(hand.rgba.as_chunks::<4>().0.iter().any(|p| p[3] > 0));
+        let pipette = c.pipette().unwrap();
+        assert_eq!(pipette.size, [32, 32]);
+        assert_eq!(pipette.hotspot, [5, 27]);
+        assert!(pipette.rgba[(27 * 32 + 5) * 4 + 3] > 0, "the hotspot must lie on the pipette tip");
+        assert!(std::sync::Arc::ptr_eq(&pipette.rgba, &c.pipette().unwrap().rgba));
         let buy = c.image(Action::Buy, false).unwrap();
         assert_eq!(buy.hotspot, [20, 15]);
         assert_eq!(buy.size, [32, 32]);

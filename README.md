@@ -320,6 +320,18 @@ cargo run -p aurora-viewer
 | `AURORA_CAPTURE=<file.png>` | Saves a capture of a frame |
 | `AURORA_PROFILE=1` | Writes one profiling line per second to the log |
 
+Les démos d'éditeur de scripts (`AURORA_DEMO_SCRIPTS`) : `close-brace` /
+`object-close-brace` vérifient le retrait des accolades fermantes ; `colors`,
+`color-picker`, `color-accept` et `color-cancel` montrent les vecteurs RVB et
+le nuancier partagé. Les scénarios complets sont dans [docs/TESTING.md](docs/TESTING.md).
+
+L'éditeur propose aussi `Ctrl+K` (ou `Ctrl+/`) pour les commentaires de lignes,
+`Ctrl+Maj+K` pour les commentaires de bloc, et Tab / Maj+Tab pour le retrait des
+lignes sélectionnées. Les flèches de la marge replient les blocs entre accolades ;
+le menu Édition propose Tout replier / Tout déplier. Les démos `comment-lines`,
+`comment-block`, `multiline-indent`, `multiline-outdent`, `folding` et
+`object-folding` permettent de vérifier ces actions hors ligne.
+
 Le menu clic droit de l’inventaire propose « Déplacer vers… » pour un dossier,
 un élément ou une sélection multiple. Saisir un nom dans le filtre de la
 fenêtre, choisir le dossier de destination puis valider avec Déplacer.

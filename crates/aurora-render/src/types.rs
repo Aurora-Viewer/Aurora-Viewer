@@ -238,6 +238,9 @@ pub struct ShadowCaster {
     pub cmd: DrawCmd,
     pub center: Vec3,
     pub radius: f32,
+    /// Shadow casters: the face is masked or blended, its shadow is alpha
+    /// tested (`fs_shadow`); the others are drawn depth only.
+    pub alpha: bool,
 }
 
 /// Visible draws for a frame, built by the world.
@@ -686,6 +689,36 @@ pub struct FrameParams {
     pub wireframe: bool,
     /// Debug: glow amount view (red = glow x10, green x2) instead of the image.
     pub debug_glow: bool,
+    /// Comparison ([`BlendDiscard::Alternate`]): this frame lights the
+    /// invisible fragments of the blended faces before dropping them.
+    pub blend_late_discard: bool,
+    /// Comparison ([`crate::light_tiles::LightCulling::Alternate`]): this
+    /// frame's fragments walk the whole light list.
+    pub all_lights: bool,
+}
+
+/// Where the blended faces drop their invisible fragments (`fs_blend` in
+/// object.wgsl; AURORA_BLEND_EARLY_DISCARD). The image is the same.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BlendDiscard {
+    /// Before the lighting (the default).
+    Early,
+    /// After it, as before (`0`).
+    Late,
+    /// Both pipelines, each frame choosing with
+    /// [`FrameParams::blend_late_discard`] (`alt`).
+    Alternate,
+}
+
+impl BlendDiscard {
+    pub fn from_env() -> BlendDiscard {
+        static MODE: std::sync::OnceLock<BlendDiscard> = std::sync::OnceLock::new();
+        *MODE.get_or_init(|| match std::env::var("AURORA_BLEND_EARLY_DISCARD").as_deref().map(str::trim) {
+            Ok("0") => BlendDiscard::Late,
+            Ok("alt") => BlendDiscard::Alternate,
+            _ => BlendDiscard::Early,
+        })
+    }
 }
 
 /// One reflection probe as the scene shaders see it (reflectionProbeF.glsl
@@ -728,6 +761,24 @@ pub struct ProbeFrame {
     pub capture: Option<ProbeCapture>,
 }
 
+/// The shadow pass of a frame, by cascade (near to far).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ShadowStats {
+    /// Casters drawn in each cascade.
+    pub draws: [u32; 3],
+    /// Of which those of the CPU lists (with the GPU lists: the terrain).
+    pub cpu_draws: [u32; 3],
+    /// With AURORA_PROFILE and the GPU lists: triangles of the GPU casters,
+    /// then the rigged ones (avatars, rigged meshes) and their triangles.
+    pub triangles: [u32; 3],
+    pub rigged_draws: [u32; 3],
+    pub rigged_triangles: [u32; 3],
+    /// What `GpuElement::ShadowsDepth` is made of (ms): the GPU culling,
+    /// the three cascades, then the depth prepass with the occlusion; None
+    /// without in-pass timestamps.
+    pub gpu_ms: Option<[f32; 5]>,
+}
+
 /// Per-frame statistics reported by the renderer.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct RenderStats {
@@ -738,6 +789,7 @@ pub struct RenderStats {
     pub present_mode: Option<wgpu::PresentMode>,
     pub draws: u32,
     pub shadow_draws: u32,
+    pub shadow: ShadowStats,
     pub triangles: u64,
     pub textures: u32,
     pub texture_bytes: u64,
@@ -765,6 +817,18 @@ pub struct RenderStats {
     /// GPU time by kind of element (ms), in [`GpuElement::ALL`] order;
     /// None without in-pass timestamps.
     pub gpu_elements: Option<[f32; GpuElement::ALL.len()]>,
+    /// Triangles of the blended faces of the scene pass.
+    pub blend_triangles: u64,
+    /// Local lights of the frame's list and its reflection probes: what a
+    /// lit fragment may have to walk.
+    pub lights: u32,
+    pub probes: u32,
+    /// The frame's fragments walked the lights of their screen tile and
+    /// depth only (light_tiles.rs).
+    pub light_tiles: bool,
+    /// The frame's blended faces dropped their invisible fragments before
+    /// the lighting ([`BlendDiscard`]).
+    pub blend_early_discard: bool,
     /// CPU time of each step of the renderer's frame (ms), in
     /// [`RENDER_PHASES`] order; "acquire" is the wait for the swapchain.
     /// Spent on the render thread when there is one (then they are those

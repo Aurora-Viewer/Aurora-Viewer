@@ -206,10 +206,11 @@ fn terrain_color(in: TerrainOut) -> vec3<f32> {
     let sh = shadow_factor(in.world_pos, n, dist);
     if (is_classic_sky() && !camera_underwater()) {
         let a = ll_atmos(in.world_pos - frame.camera_pos.xyz);
-        return ll_haze(ll_classic_diffuse(albedo, n, in.world_pos, sh, in.clip.xy, a), a);
+        let hazed = ll_haze(ll_classic_diffuse(albedo, n, in.world_pos, sh, in.clip.xy, a), a);
+        return light_tiles_checked(hazed, in.world_pos, in.clip.xy);
     }
     let col = shade_pbr(albedo, 0.0, 0.92, n, v, in.world_pos, sh, in.clip.xy);
-    return apply_fog(col, in.world_pos);
+    return light_tiles_checked(apply_fog(col, in.world_pos), in.world_pos, in.clip.xy);
 }
 
 @fragment

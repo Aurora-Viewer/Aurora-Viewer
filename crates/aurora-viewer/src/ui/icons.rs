@@ -112,6 +112,7 @@ const SVGS: &[(&str, &[u8])] = svg_list!(
     "speedometer",
     "layout",
     "palette",
+    "eyedropper",
     "text-aa",
     "text-t",
     "monitor",

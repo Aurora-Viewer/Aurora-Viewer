@@ -9,6 +9,7 @@ pub mod backdrop;
 pub mod bars;
 pub mod bug_report;
 pub mod chat;
+pub mod color_picker;
 pub mod colors;
 pub mod contacts;
 pub mod context;

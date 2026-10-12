@@ -2157,6 +2157,9 @@ pub fn events() -> Vec<NetEvent> {
     });
     ev.extend(overrides);
 
+    if std::env::var_os("AURORA_DEMO_REPLACE_PRIM").is_some() {
+        ev.extend(crate::build::replace::demo::events(HANDLE, height(135.0, 125.0)));
+    }
     // our avatar + a second one
     let mut avatars = Vec::new();
     for (k, (pos, first, last)) in [
@@ -2707,6 +2710,46 @@ fn animesh_objects(ground_mesh: Uuid) -> Vec<ObjectUpdate> {
     objects
 }
 
+/// AURORA_DEMO_CLICKS=...,rigged: the rigged demo mesh worn on the chest of
+/// the avatar `wearer` (ours), so every kind of rigged target is in the scene
+/// with AURORA_DEMO_ANIMESH: an animesh on the ground (9200, 9202), one
+/// worn by another avatar (9203), a rigged mesh worn by another avatar (the
+/// crowd's) and this one.
+pub const OWN_RIGGED: u32 = 9210;
+
+pub fn own_rigged_events(wearer: u32) -> Vec<NetEvent> {
+    let mesh = SculptParams {
+        texture: ANIMESH_MESH,
+        sculpt_type: LL_SCULPT_TYPE_MESH,
+    };
+    let mut t = (*te([0.95, 0.8, 0.3, 1.0], 0, false, 0.0)).clone();
+    for f in &mut t.faces {
+        f.texture = ANIMESH_TEXTURE;
+    }
+    let mut worn = prim(
+        OWN_RIGGED,
+        Vec3::ZERO,
+        Quat::IDENTITY,
+        Vec3::splat(0.1),
+        aurora_prim::VolumeParams {
+            sculpt: Some(mesh),
+            ..Default::default()
+        },
+        Arc::new(t),
+        ExtraParams {
+            sculpt: Some(mesh),
+            ..Default::default()
+        },
+        "",
+    );
+    worn.parent_id = wearer;
+    worn.state = 0x10; // chest
+    vec![NetEvent::ObjectUpdates {
+        handle: HANDLE,
+        objects: vec![worn],
+    }]
+}
+
 /// Mesh worn in AURORA_DEMO_CLOUD=self: an asset the asset server does not
 /// have (`MeshStreamer::insert_demo_unavailable`).
 pub const CLOUD_MESH: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0000_0000_0110);
@@ -3046,6 +3089,15 @@ pub fn crowd_busy_events(n: u32) -> Vec<NetEvent> {
     vec![NetEvent::ObjectUpdates { handle: HANDLE, objects }]
 }
 
+/// AURORA_DEMO_ANIMESH_TRIS=<n>: triangles added to the demo's rigged mesh
+/// (0 without the variable), in opaque faces of 45 000.
+pub fn animesh_dense_triangles() -> usize {
+    std::env::var("AURORA_DEMO_ANIMESH_TRIS")
+        .ok()
+        .and_then(|v| v.trim().parse().ok())
+        .unwrap_or(0)
+}
+
 /// The crowd: avatars on a grid north-east of the start, each playing the
 /// demo idle animation and wearing eight attachment linksets (a root and six
 /// child prims) on bones all over the body, so every worn prim follows its
@@ -3119,7 +3171,10 @@ pub fn crowd_events(n: u32, rigged: bool) -> Vec<NetEvent> {
                 sculpt_type: LL_SCULPT_TYPE_MESH,
             };
             let mut t = (*te([0.85, 0.85, 0.9, 1.0], 0, false, 0.0)).clone();
-            for f in &mut t.faces {
+            // the fur on the mesh's own face; the faces of
+            // AURORA_DEMO_ANIMESH_TRIS stay opaque
+            let fur = if animesh_dense_triangles() > 0 { 1 } else { t.faces.len() };
+            for f in t.faces.iter_mut().take(fur) {
                 f.texture = ANIMESH_TEXTURE;
             }
             let mut worn = prim(
@@ -3146,6 +3201,215 @@ pub fn crowd_events(n: u32, rigged: bool) -> Vec<NetEvent> {
     let mut events = vec![NetEvent::ObjectUpdates { handle: HANDLE, objects }];
     events.extend(anims);
     events
+}
+
+/// AURORA_DEMO_LIGHTS=<n>: `n` small local lights (64 for any value that is
+/// not a number) over the crowd's place and around it, 1.6 m apart at head
+/// height, as the face lights avatars wear and the lamps of a club. The
+/// renderer takes the 64 nearest.
+pub fn lights_count() -> Option<u32> {
+    let v = std::env::var("AURORA_DEMO_LIGHTS").ok()?;
+    Some(v.trim().parse().unwrap_or(64).min(256))
+}
+
+/// The lights of [`lights_count`]: small glowing spheres, each a light of
+/// 3 m (4.5 m once extended as Firestorm's deferred lights are).
+pub fn lights_events(n: u32) -> Vec<NetEvent> {
+    let sphere = shape(LL_PCODE_PATH_CIRCLE, LL_PCODE_PROFILE_CIRCLE_HALF, 100, 0, 0);
+    let objects = (0..n)
+        .map(|k| {
+            let (x, y) = (138.8 + (k % 10) as f32 * 1.6, 132.8 + (k / 10) as f32 * 1.6);
+            let hue = k as f32 * 0.37;
+            let color = [
+                0.6 + 0.4 * hue.sin(),
+                0.6 + 0.4 * (hue + 2.1).sin(),
+                0.6 + 0.4 * (hue + 4.2).sin(),
+                1.0,
+            ];
+            prim(
+                300_000 + k,
+                Vec3::new(x, y, floor_at(x, y) + 1.9),
+                Quat::IDENTITY,
+                Vec3::splat(0.06),
+                sphere,
+                te(color, 0, true, 0.3),
+                ExtraParams {
+                    light: Some(LightParams {
+                        color: [color[0], color[1], color[2], 0.6],
+                        radius: 3.0,
+                        cutoff: 0.0,
+                        falloff: 0.75,
+                    }),
+                    ..Default::default()
+                },
+                "",
+            )
+        })
+        .collect();
+    vec![NetEvent::ObjectUpdates { handle: HANDLE, objects }]
+}
+
+/// AURORA_DEMO_HAIR=<layers>[,<segments>[,<empty %>[,<period>]]]: the load
+/// of the blended pass around avatars. Our avatar and each one of the crowd
+/// (AURORA_DEMO_CROWD) wear `layers` nested rigged shells around the head
+/// and the torso, as the stacked cards of mesh hair and layered clothes:
+/// `segments` quads along each side of a shell (its triangle count), a
+/// texture of strands `period` texels apart of which `empty` percent of the
+/// texels are fully transparent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HairDemo {
+    pub layers: u32,
+    pub segments: u32,
+    pub empty: u32,
+    pub period: u32,
+}
+
+pub fn hair_demo() -> Option<HairDemo> {
+    let v = std::env::var("AURORA_DEMO_HAIR").ok()?;
+    Some(hair_demo_from(&v))
+}
+
+fn hair_demo_from(v: &str) -> HairDemo {
+    let mut p = v.split(',').map(|s| s.trim().parse::<u32>().ok());
+    let mut next = |default: u32| p.next().flatten().unwrap_or(default);
+    HairDemo {
+        layers: next(8).clamp(1, 32),
+        // (a shell face keeps 16-bit indices: at most 181² vertices)
+        segments: next(24).clamp(4, 180),
+        // (above, the texture would count as a mask)
+        empty: next(60).min(90),
+        period: next(16).clamp(4, 256),
+    }
+}
+
+/// Strand texture of the hair demo.
+pub const TEX_HAIR: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0020);
+
+/// Mesh asset of one layer of the hair demo (a head shell and a torso shell).
+pub fn hair_mesh(layer: u32) -> Uuid {
+    Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0002_0000_0000 | layer as u128)
+}
+
+/// The shells worn by our avatar and by the `crowd` avatars of
+/// [`crowd_events`]: one rigged mesh per layer, blended (the texture's alpha).
+pub fn hair_events(demo: HairDemo, crowd: u32) -> Vec<NetEvent> {
+    let mut objects = Vec::new();
+    let avatars = std::iter::once(9000).chain((0..crowd).map(|k| 100_000 + k * 64));
+    for (k, avatar_id) in avatars.enumerate() {
+        for layer in 0..demo.layers {
+            let mesh = SculptParams {
+                texture: hair_mesh(layer),
+                sculpt_type: LL_SCULPT_TYPE_MESH,
+            };
+            let shade = 0.55 + 0.45 * (layer as f32 / demo.layers as f32);
+            let mut t = (*te([shade, 0.8 * shade, 0.6 * shade, 1.0], 0, false, 0.0)).clone();
+            for f in &mut t.faces {
+                f.texture = TEX_HAIR;
+            }
+            let mut worn = prim(
+                200_000 + k as u32 * 64 + layer,
+                Vec3::ZERO,
+                Quat::IDENTITY,
+                Vec3::splat(0.1),
+                aurora_prim::VolumeParams {
+                    sculpt: Some(mesh),
+                    ..Default::default()
+                },
+                Arc::new(t),
+                ExtraParams {
+                    sculpt: Some(mesh),
+                    ..Default::default()
+                },
+                "",
+            );
+            worn.parent_id = avatar_id;
+            worn.state = 0x10; // chest
+            objects.push(worn);
+        }
+    }
+    vec![NetEvent::ObjectUpdates { handle: HANDLE, objects }]
+}
+
+/// Pixels of [`TEX_HAIR`] (RGBA8, 256×256): strands along t, `period`
+/// texels apart, `empty` percent of each period fully transparent; the
+/// strands thin out from the roots (top) to the tips.
+fn hair_texture(empty: u32, period: u32) -> (Vec<u8>, u32, u32) {
+    const N: u32 = 256;
+    let period = period.clamp(1, N);
+    let filled = (period as f32 * (1.0 - empty.min(100) as f32 / 100.0)).round() as u32;
+    let mut px = Vec::with_capacity((N * N * 4) as usize);
+    for y in 0..N {
+        let fade = 1.0 - 0.6 * y as f32 / (N - 1) as f32;
+        for x in 0..N {
+            let (strand, at) = (x / period, x % period);
+            let alpha = if at < filled {
+                // soft on the strand's first and last texel
+                let edge = if filled > 2 && (at == 0 || at + 1 == filled) { 0.5 } else { 1.0 };
+                (230.0 * fade * edge) as u8
+            } else {
+                0
+            };
+            let tone = 0.75 + 0.25 * ((strand * 37 % 11) as f32 / 10.0);
+            px.extend_from_slice(&[(214.0 * tone) as u8, (170.0 * tone) as u8, (110.0 * tone) as u8, alpha]);
+        }
+    }
+    (px, N, N)
+}
+
+/// The procedural texture `id` takes a mip chain (the others are the
+/// 64-texel test panels, kept as they are).
+pub fn local_texture_mips(id: &Uuid) -> bool {
+    *id == TEX_HAIR
+}
+
+#[cfg(test)]
+mod hair_tests {
+    use super::*;
+    use crate::scene::jobs::{AlphaKind, classify_alpha};
+
+    #[test]
+    fn hair_demo_reads_its_parameters() {
+        let d = hair_demo_from("1");
+        assert_eq!((d.layers, d.segments, d.empty, d.period), (1, 24, 60, 16));
+        let d = hair_demo_from("on");
+        assert_eq!((d.layers, d.segments, d.empty, d.period), (8, 24, 60, 16));
+        let d = hair_demo_from("32, 96, 90, 128");
+        assert_eq!((d.layers, d.segments, d.empty, d.period), (32, 96, 90, 128));
+        // kept within what a shell face and a blended texture can be
+        let d = hair_demo_from("500,1000,100,1");
+        assert_eq!((d.layers, d.segments, d.empty, d.period), (32, 180, 90, 4));
+    }
+
+    /// Whatever the share of empty texels, the strands stay a blended
+    /// texture (never a mask, never opaque), and the share is the one asked.
+    #[test]
+    fn hair_texture_is_blended_with_the_asked_share_of_empty_texels() {
+        for (empty, period) in [(0, 16), (60, 16), (90, 16), (60, 128), (90, 256), (50, 4)] {
+            let (px, w, h) = hair_texture(empty, period);
+            assert_eq!(px.len(), (w * h * 4) as usize);
+            assert_eq!(classify_alpha(&px), AlphaKind::Blend, "{empty} % empty, period {period}");
+            let transparent = px.as_chunks::<4>().0.iter().filter(|p| p[3] == 0).count() as f32 / (w * h) as f32;
+            assert!((transparent - empty as f32 / 100.0).abs() < 0.05, "{empty} % asked, {transparent}");
+        }
+    }
+
+    #[test]
+    fn every_avatar_wears_its_layers() {
+        let demo = hair_demo_from("5");
+        let events = hair_events(demo, 3);
+        let [NetEvent::ObjectUpdates { objects, .. }] = events.as_slice() else {
+            panic!("one update of objects");
+        };
+        // our avatar and three of the crowd, each parent of its five meshes
+        assert_eq!(objects.len(), 4 * 5);
+        for parent in [9000, 100_000, 100_064, 100_128] {
+            assert_eq!(objects.iter().filter(|o| o.parent_id == parent).count(), 5);
+        }
+        assert!(objects.iter().all(|o| o.volume.is_mesh()));
+        let ids: std::collections::HashSet<u32> = objects.iter().map(|o| o.local_id).collect();
+        assert_eq!(ids.len(), objects.len());
+        assert_eq!(lights_events(70).len(), 1);
+    }
 }
 
 pub fn animesh_animation() -> aurora_assets::Animation {
@@ -3355,8 +3619,12 @@ fn alpha_panels() -> [(Uuid, Option<Uuid>, &'static str); 6] {
     ]
 }
 
-/// Pixels of a procedural demo texture (RGBA8, 64×64).
+/// Pixels of a procedural demo texture (RGBA8, 64×64; the hair demo's 256×256).
 pub fn local_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
+    if *id == TEX_HAIR {
+        let (empty, period) = hair_demo().map_or((60, 16), |h| (h.empty, h.period));
+        return Some(hair_texture(empty, period));
+    }
     const N: u32 = 64;
     let tau = std::f32::consts::TAU;
     let mut px = Vec::with_capacity((N * N * 4) as usize);

@@ -52,6 +52,47 @@ pub fn ray_box(origin: Vec3, dir: Vec3, min: Vec3, max: Vec3) -> Option<f32> {
 }
 
 impl Scene {
+    /// LLToolPipette: sample the texture entry tint of the nearest volume face,
+    /// independent of lighting, texture pixels, selection and modify rights.
+    /// Candidate bounds and rendered triangles avoid a GPU readback.
+    pub fn color_at_ray(&self, world: &World, ray: (Vec3, Vec3), hud: bool, far: f32) -> Option<(Uuid, [f32; 3])> {
+        let mut candidates = Vec::new();
+        if hud {
+            let own = world.objects.index_of_uuid(&world.agent_id);
+            candidates.extend(
+                self.gpu
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(idx, g)| (g.hud && g.owner_avatar == own).then_some(idx)),
+            );
+        } else {
+            self.pick.ray_candidates(ray, &mut candidates);
+        }
+        let now = Instant::now();
+        candidates
+            .par_iter()
+            .filter_map(|&idx| {
+                let g = self.gpu.get(idx)?;
+                let o = world.objects.get(idx)?;
+                if g.hud != hud
+                    || g.rigged
+                    || o.extra.reflection_probe.is_some()
+                    || o.pcode != aurora_prim::params::LL_PCODE_VOLUME
+                    || !ray_may_hit(g, ray)
+                {
+                    return None;
+                }
+                let hit = self.face_hit(world, idx, ray, now, false)?;
+                if !hit.t.is_finite() || !hud && hit.t > far {
+                    return None;
+                }
+                let color = o.te.as_ref()?.faces.get(hit.face)?.color;
+                Some((hit.t, idx, o.full_id, [color[0], color[1], color[2]]))
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0).then_with(|| a.1.cmp(&b.1)))
+            .map(|(_, _, id, rgb)| (id, rgb))
+    }
+
     /// Exact edit surfaces along the whole cursor ray, including hidden and
     /// occluded prims. Reuses hover's bounds index and the rendered triangles;
     /// the wheel never waits for a GPU depth readback.
@@ -704,6 +745,38 @@ mod tests {
             scene.gpu[idx].faces.push(face);
         }
         (world, scene, front, back)
+    }
+
+    #[test]
+    fn color_pipette_samples_the_nearest_face_tint_without_lighting_or_modify_rights() {
+        let (mut world, mut scene, front, back) = scene_with_two_objects();
+        let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
+        for (idx, rgb) in [(front, [0.1, 0.2, 0.3]), (back, [0.4, 0.5, 0.6])] {
+            let o = world.objects.get_mut(idx).unwrap();
+            o.update_flags = 0;
+            let te = Arc::make_mut(o.te.as_mut().unwrap());
+            te.faces[0].color = [rgb[0], rgb[1], rgb[2], 1.0];
+            scene.pick.set(idx, super::super::hover::PickEntry::of(&scene.gpu[idx]));
+        }
+        assert_eq!(
+            scene.color_at_ray(&world, ray, false, 100.0),
+            Some((world.objects.get(front).unwrap().full_id, [0.1, 0.2, 0.3]))
+        );
+        scene.gpu[front].rigged = true;
+        assert_eq!(
+            scene.color_at_ray(&world, ray, false, 100.0),
+            Some((world.objects.get(back).unwrap().full_id, [0.4, 0.5, 0.6]))
+        );
+        assert_eq!(scene.color_at_ray(&world, ray, false, 6.0), None);
+        assert_eq!(scene.color_at_ray(&world, (ray.0 + Vec3::Y * 2.0, ray.1), false, 100.0), None);
+        assert_eq!(scene.color_at_ray(&world, ray, true, 100.0), None);
+        scene.gpu[front].rigged = false;
+        scene.gpu[front].hud = true;
+        scene.gpu[front].owner_avatar = world.objects.index_of_uuid(&world.agent_id);
+        assert_eq!(
+            scene.color_at_ray(&world, ray, true, 100.0),
+            Some((world.objects.get(front).unwrap().full_id, [0.1, 0.2, 0.3]))
+        );
     }
 
     #[test]
