@@ -10,6 +10,7 @@ pub mod bc7;
 pub mod gpu_cull;
 mod helpers;
 pub mod hud;
+pub mod light_tiles;
 pub mod main_thread;
 mod occlusion;
 mod packet;

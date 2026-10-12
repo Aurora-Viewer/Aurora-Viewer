@@ -252,6 +252,92 @@ impl super::Scene {
         }
     }
 
+    /// AURORA_DEMO_HAIR: one rigged mesh per layer, a shell around the head
+    /// (bound to mHead) and one around the torso (mChest), each its own
+    /// face, slightly larger from one layer to the next.
+    pub fn install_demo_hair(&mut self, renderer: &mut aurora_render::Renderer, demo: crate::demo::HairDemo) {
+        use super::jobs::FaceGeom;
+        use aurora_render::SkinVertex;
+        let rig = self.avatar_lib.rig.clone();
+        let rest = rig.world_with(&rig.local_rot, Vec3::ZERO, &rig.local_pos, &rig.scale);
+        let mut names = vec![String::new(); rig.len()];
+        for (name, &j) in &rig.names {
+            if name.starts_with('m') {
+                names[j] = name.clone();
+            }
+        }
+        let seg = demo.segments;
+        for layer in 0..demo.layers {
+            let id = crate::demo::hair_mesh(layer);
+            self.meshes.insert_demo_skin(
+                id,
+                aurora_assets::SkinInfo {
+                    joint_names: names.clone(),
+                    inverse_bind: rest.iter().map(|m| m.inverse()).collect(),
+                    ..Default::default()
+                },
+            );
+            let grow = 0.012 * layer as f32;
+            let faces: Vec<Option<FaceGeom>> = [
+                ("mHead", Vec3::new(0.0, 0.0, 0.07), Vec3::splat(0.14)),
+                ("mChest", Vec3::new(0.0, 0.0, -0.05), Vec3::new(0.2, 0.25, 0.34)),
+            ]
+            .into_iter()
+            .filter_map(|(name, offset, radii)| {
+                let &j = rig.names.get(name)?;
+                let center = rest[j].w_axis.truncate() + offset;
+                let mut face = FaceGeom {
+                    vertices: Vec::new(),
+                    indices: Vec::new(),
+                    skin: Some(Vec::new()),
+                };
+                // a latitude / longitude sphere, the strands running down it
+                for row in 0..=seg {
+                    let lat = std::f32::consts::PI * row as f32 / seg as f32;
+                    for col in 0..=seg {
+                        let lon = std::f32::consts::TAU * col as f32 / seg as f32;
+                        let n = Vec3::new(lat.sin() * lon.cos(), lat.sin() * lon.sin(), lat.cos());
+                        let p = center + n * (radii + grow);
+                        let uv = [4.0 * col as f32 / seg as f32, row as f32 / seg as f32];
+                        face.vertices.push(aurora_render::Vertex::new(p.to_array(), n.to_array(), uv));
+                        if let Some(s) = &mut face.skin {
+                            s.push(SkinVertex {
+                                joints: [j as u8, 0, 0, 0],
+                                weights: [255, 0, 0, 0],
+                            });
+                        }
+                    }
+                }
+                let at = |row: u32, col: u32| (row * (seg + 1) + col) as u16;
+                for row in 0..seg {
+                    for col in 0..seg {
+                        let (a, b, c, d) = (at(row, col), at(row + 1, col), at(row + 1, col + 1), at(row, col + 1));
+                        face.indices.extend([a, b, c, a, c, d]);
+                    }
+                }
+                Some(Some(face))
+            })
+            .collect();
+            for lod in 0..4 {
+                let faces = faces
+                    .iter()
+                    .map(|f| {
+                        f.as_ref().map(|f| FaceGeom {
+                            vertices: f.vertices.clone(),
+                            indices: f.indices.clone(),
+                            skin: f.skin.clone(),
+                        })
+                    })
+                    .collect();
+                self.upload_geom(
+                    renderer,
+                    super::GeomKey::Mesh { id, lod },
+                    super::jobs::PreparedGeom::new(faces, Vec3::splat(-2.0), Vec3::splat(2.0), true, None),
+                );
+            }
+        }
+    }
+
     /// Synthetic quadruped with a custom rest skeleton and smooth alpha fur.
     pub fn install_demo_animesh(&mut self, renderer: &mut aurora_render::Renderer) {
         use super::jobs::JobResult;

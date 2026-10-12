@@ -686,6 +686,36 @@ pub struct FrameParams {
     pub wireframe: bool,
     /// Debug: glow amount view (red = glow x10, green x2) instead of the image.
     pub debug_glow: bool,
+    /// Comparison ([`BlendDiscard::Alternate`]): this frame lights the
+    /// invisible fragments of the blended faces before dropping them.
+    pub blend_late_discard: bool,
+    /// Comparison ([`crate::light_tiles::LightCulling::Alternate`]): this
+    /// frame's fragments walk the whole light list.
+    pub all_lights: bool,
+}
+
+/// Where the blended faces drop their invisible fragments (`fs_blend` in
+/// object.wgsl; AURORA_BLEND_EARLY_DISCARD). The image is the same.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BlendDiscard {
+    /// Before the lighting (the default).
+    Early,
+    /// After it, as before (`0`).
+    Late,
+    /// Both pipelines, each frame choosing with
+    /// [`FrameParams::blend_late_discard`] (`alt`).
+    Alternate,
+}
+
+impl BlendDiscard {
+    pub fn from_env() -> BlendDiscard {
+        static MODE: std::sync::OnceLock<BlendDiscard> = std::sync::OnceLock::new();
+        *MODE.get_or_init(|| match std::env::var("AURORA_BLEND_EARLY_DISCARD").as_deref().map(str::trim) {
+            Ok("0") => BlendDiscard::Late,
+            Ok("alt") => BlendDiscard::Alternate,
+            _ => BlendDiscard::Early,
+        })
+    }
 }
 
 /// One reflection probe as the scene shaders see it (reflectionProbeF.glsl
@@ -765,6 +795,18 @@ pub struct RenderStats {
     /// GPU time by kind of element (ms), in [`GpuElement::ALL`] order;
     /// None without in-pass timestamps.
     pub gpu_elements: Option<[f32; GpuElement::ALL.len()]>,
+    /// Triangles of the blended faces of the scene pass.
+    pub blend_triangles: u64,
+    /// Local lights of the frame's list and its reflection probes: what a
+    /// lit fragment may have to walk.
+    pub lights: u32,
+    pub probes: u32,
+    /// The frame's fragments walked the lights of their screen tile and
+    /// depth only (light_tiles.rs).
+    pub light_tiles: bool,
+    /// The frame's blended faces dropped their invisible fragments before
+    /// the lighting ([`BlendDiscard`]).
+    pub blend_early_discard: bool,
     /// CPU time of each step of the renderer's frame (ms), in
     /// [`RENDER_PHASES`] order; "acquire" is the wait for the swapchain.
     /// Spent on the render thread when there is one (then they are those

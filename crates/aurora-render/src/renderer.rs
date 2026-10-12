@@ -22,6 +22,7 @@ use crate::gpu_cull::{
     REGION_PRE2, frame_flags,
 };
 use crate::helpers::Helpers;
+use crate::light_tiles::{self, LightCulling, LightSets};
 use crate::packet::{Capture, FramePacket, FrameResult, SceneGpu, Spent, SurfaceState};
 use crate::types::*;
 use crate::ui_frame::EguiFrame;
@@ -94,6 +95,8 @@ struct FrameU {
     anim_clock: [u32; 4],
     cascade_vp: [[[f32; 4]; 4]; CASCADES],
     lights: [LightU; MAX_LIGHTS],
+    /// Which of `lights` a fragment walks (light_tiles.rs).
+    light_sets: LightSets,
 }
 
 /// Must match `ShadowParams` in object.wgsl.
@@ -647,6 +650,9 @@ struct Pipelines {
     mask_2s: wgpu::RenderPipeline,
     water: wgpu::RenderPipeline,
     blend: wgpu::RenderPipeline,
+    /// Blended faces lit before their invisible fragments are dropped, for
+    /// frames that ask for it ([`BlendDiscard::Alternate`] only).
+    blend_late: Option<wgpu::RenderPipeline>,
     particles: wgpu::RenderPipeline,
     glow: wgpu::RenderPipeline,
     glow_max: wgpu::RenderPipeline,
@@ -698,6 +704,9 @@ const GPU_MARKS: u32 = 15;
 /// Mark indices, in frame order. Those inside the scene passes split them
 /// by draw group; a timestamp there waits for the draws before it, so the
 /// split is close but not exact (the GPU overlaps neighbouring draws).
+/// Measured on the blended faces: when they are heavy, part of their shading
+/// is still running at the marks that follow them and is counted there (the
+/// particles, then the post element); transparent + post is what stays put.
 const MARK_SHADOWS_END: u32 = 2;
 /// Depth prepass, occlusion culling, second prepass.
 const MARK_DEPTH_END: u32 = 3;
@@ -2217,13 +2226,23 @@ impl Backend {
                 operation: wgpu::BlendOperation::Add,
             },
         };
-        let blend = pipe(PipeDesc {
-            blend: Some(suppress),
-            write_mask: wgpu::ColorWrites::ALL,
-            depth_write: false,
-            depth_compare: wgpu::CompareFunction::Greater,
-            ..base("blend", "vs_main", "fs_blend")
-        });
+        let blend_discard = BlendDiscard::from_env();
+        let blend_pipe = |label: &'static str, early: bool| {
+            pipe(PipeDesc {
+                blend: Some(suppress),
+                write_mask: wgpu::ColorWrites::ALL,
+                depth_write: false,
+                depth_compare: wgpu::CompareFunction::Greater,
+                constants: if early {
+                    &[("BLEND_EARLY_DISCARD", 1.0)]
+                } else {
+                    &[("BLEND_EARLY_DISCARD", 0.0)]
+                },
+                ..base(label, "vs_main", "fs_blend")
+            })
+        };
+        let blend = blend_pipe("blend", blend_discard != BlendDiscard::Late);
+        let blend_late = (blend_discard == BlendDiscard::Alternate).then(|| blend_pipe("blend late discard", false));
         let particles = pipe(PipeDesc {
             vb: Vb::Particle,
             cull: None,
@@ -2484,6 +2503,7 @@ impl Backend {
             mask_2s,
             water,
             blend,
+            blend_late,
             particles,
             glow,
             glow_max,
@@ -3219,6 +3239,8 @@ impl Backend {
         u.fog = f.fog_color.extend(f.fog_density).to_array();
         let n_lights = f.lights.len().min(MAX_LIGHTS);
         u.params = [f.exposure, f.water_height, if f.shadows { 1.0 } else { 0.0 }, n_lights as f32];
+        // the whole list for every fragment; the main view narrows it (render)
+        u.light_sets = LightSets::whole();
         u.cascade_splits = [splits[0], splits[1], splits[2], 0.0];
         u.screen = [
             self.config.width as f32,
@@ -3476,6 +3498,22 @@ impl Backend {
             main.mirror_plane = n.extend(-n.dot(m.point)).to_array();
             main.mirror_box = m.world_to_box.to_cols_array_2d();
         }
+        // local lights by screen tile and depth, for the main view (light_tiles.rs)
+        let light_culling = LightCulling::from_env();
+        let light_tiles_on = match light_culling {
+            LightCulling::Tiles | LightCulling::Check => true,
+            LightCulling::All => false,
+            LightCulling::Alternate => !f.all_lights,
+        };
+        if light_tiles_on {
+            let size = [self.config.width, self.config.height];
+            let lights = &f.lights[..f.lights.len().min(MAX_LIGHTS)];
+            // (the eye the shaders measure depths from: the uniform's camera)
+            let eye = Vec3::from_slice(&main.camera_pos[..3]);
+            main.light_sets = light_tiles::bin(fu.view, fu.proj, eye, size, lights);
+            main.light_sets.mode[1] = u32::from(light_culling == LightCulling::Check);
+        }
+        stats.light_tiles = light_tiles_on;
         self.queue.write_buffer(&self.frame_buffer, 0, bytemuck::bytes_of(&main));
         if let Some(view) = lists.hud_view {
             let mut hud = main;
@@ -3802,6 +3840,14 @@ impl Backend {
             stats.triangles += d.index_count as u64 / 3;
         }
         stats.draws = lists.total() as u32;
+        stats.blend_triangles = lists.blend.iter().map(|c| c.index_count as u64 / 3).sum();
+        stats.lights = f.lights.len().min(MAX_LIGHTS) as u32;
+        stats.probes = if f.probes.enabled { f.probes.probes.len() as u32 } else { 0 };
+        stats.blend_early_discard = match BlendDiscard::from_env() {
+            BlendDiscard::Early => true,
+            BlendDiscard::Late => false,
+            BlendDiscard::Alternate => !f.blend_late_discard,
+        };
         stats.shadow_draws = shadow_lists.iter().map(|l| l.len() as u32).sum();
         stats.particles = n_particles;
         stats.occluded = occl.then_some(self.occlusion.last_hidden);
@@ -4418,16 +4464,22 @@ impl Backend {
             // after itself, so later layers in front dim it (LLDrawPoolAlpha)
             let stride = std::mem::size_of::<DrawIndexedIndirect>() as u64;
             let (b0, bn) = rg.blend;
+            let blend_pipe = self
+                .pipelines
+                .blend_late
+                .as_ref()
+                .filter(|_| f.blend_late_discard)
+                .unwrap_or(&self.pipelines.blend);
             let mut start = 0u32;
             for i in 0..bn {
                 if !(glow_on && glow_skip & 8 == 0 && lists.blend_glow.get(i as usize).copied().unwrap_or(false)) {
                     continue;
                 }
-                draw(&mut pass, &self.pipelines.blend, (b0 + start as u64 * stride, i + 1 - start));
+                draw(&mut pass, blend_pipe, (b0 + start as u64 * stride, i + 1 - start));
                 draw(&mut pass, &self.pipelines.glow, (b0 + i as u64 * stride, 1));
                 start = i + 1;
             }
-            draw(&mut pass, &self.pipelines.blend, (b0 + start as u64 * stride, bn - start));
+            draw(&mut pass, blend_pipe, (b0 + start as u64 * stride, bn - start));
             // debug overlays (before the particles, which rebind vertex buffer 0)
             draw(&mut pass, &self.pipelines.debug_red, rg.debug_red);
             draw(&mut pass, &self.pipelines.debug_blue, rg.debug_blue);
