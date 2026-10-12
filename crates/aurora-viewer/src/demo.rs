@@ -15,6 +15,8 @@ use uuid::Uuid;
 const HANDLE: u64 = (256000u64 << 32) | 256000;
 
 /// EEP environment answers (AURORA_DEMO_EEP_PARCEL).
+#[path = "demo_chatlog.rs"]
+pub mod chatlog;
 #[path = "demo_eep.rs"]
 pub mod eep;
 /// Environment selector library and script (AURORA_DEMO_ENV_SELECT).
@@ -477,6 +479,7 @@ fn long_name_events(agent: Uuid) -> Vec<NetEvent> {
             offline: false,
             from_group: false,
             binary_bucket: Vec::new(),
+            timestamp: 0,
         })
     };
     vec![
@@ -907,6 +910,7 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                         offline: false,
                         from_group: false,
                         binary_bucket: b"Aurora Builders\0".to_vec(),
+                        timestamp: 0,
                     }));
                     ev.push(NetEvent::InstantMessage(aurora_net::InstantMessage {
                         from_agent_id: DEMO_TESS,
@@ -918,6 +922,7 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                         offline: false,
                         from_group: false,
                         binary_bucket: b"Aurora Builders\0".to_vec(),
+                        timestamp: 0,
                     }));
                     ev
                 }
@@ -959,6 +964,12 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 aurora_net::SessionMethod::DeclineInvitation => Vec::new(),
             }
         }
+        // the request made once after login: what the grid kept while we
+        // were away (AURORA_DEMO_CHATLOG=offline), else nothing
+        aurora_net::NetCommand::RequestOfflineMessages => match chatlog::mode() {
+            Some(chatlog::Mode::Offline) => chatlog::offline_messages(DEMO_AGENT),
+            _ => Vec::new(),
+        },
         // opening a group chat ourselves
         aurora_net::NetCommand::SendImDialog { dialog: 15, id, .. } => vec![NetEvent::SessionStarted {
             temp_session: *id,
@@ -2506,6 +2517,7 @@ pub fn events() -> Vec<NetEvent> {
             offline: false,
             from_group: false,
             binary_bucket: bucket,
+            timestamp: 0,
         })
     };
     ev.push(im(22, aurora_i18n::tr!("demo-come-see-the-lagoon-at-sunset"), Vec::new()));

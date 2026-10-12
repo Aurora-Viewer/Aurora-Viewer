@@ -319,6 +319,7 @@ habituels. Développement et démo ne vérifient pas les releases. Voir
 | Dossiers de travail des agents | `work\`, dans le dossier du projet |
 | Sources Firestorm (référence) | `phoenix-firestorm\`, dans le dossier du projet |
 | Réglages, skins, disposition | `%APPDATA%\Aurora\AuroraViewer\config\` |
+| Historique des conversations (fichiers texte, par compte et par grille ; Préférences › Chat pour l'ouvrir, le désactiver ou l'effacer) | `%APPDATA%\Aurora\AuroraViewer\config\accounts\<uuid du compte>\chat_logs\<grille>\` |
 | Cache (textures, mesh…) — peut être supprimé sans risque | `%LOCALAPPDATA%\Aurora\AuroraViewer\cache\` |
 | Logs (à envoyer à un agent après un test) | `%LOCALAPPDATA%\Aurora\AuroraViewer\data\logs\` |
 | Viewer `--release` du dernier `main` | `RELEASE\Aurora-Viewer\aurora-viewer.exe`, dans le dossier du projet |

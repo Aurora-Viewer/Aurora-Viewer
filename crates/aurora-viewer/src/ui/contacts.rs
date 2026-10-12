@@ -836,7 +836,15 @@ fn friend_menu(
     if menu::item(ui, p, "message-filled", aurora_i18n::tr!("ui-contacts-send-im")) {
         actions.push(ContactsAction::Im(id));
     }
-    menu::todo(ui, p, "history", aurora_i18n::tr!("common-view-conversation-history"));
+    if menu::item_if(
+        ui,
+        p,
+        "history",
+        aurora_i18n::tr!("common-view-conversation-history"),
+        world.chat_log.dir().is_some(),
+    ) {
+        context::request(ui.ctx(), CtxAction::ShowHistory(Some(id)));
+    }
     let sets = world.contact_sets.set_names();
     menu::submenu(ui, p, "users-group", aurora_i18n::tr!("common-add-to-contact-set"), true, |ui| {
         if sets.is_empty() {

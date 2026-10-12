@@ -4266,3 +4266,55 @@ ui-options-name-tag-style-help = Plate: a rounded glass plate above each avatar,
 ui-options-name-tags-plate = Plate
 ui-options-name-tags-classic = Classic
 ui-options-tag-colors-classic-only = Used by the classic name tags.
+ui-chat-day = { $month } { $day }, { $year }
+ui-options-chat-logs = Conversation history
+ui-options-chat-logs-im = Save IMs and group chats
+ui-options-chat-logs-im-help = Writes every instant message, group chat and conference to a text file in this account's folder, to find it again the next time the conversation opens.
+ui-options-chat-logs-nearby = Save nearby chat
+ui-options-chat-logs-nearby-help = Also writes the nearby chat to this account's “chat” file. Off by default: the nearby chat holds what everyone around you says.
+ui-options-chat-logs-show = Show history on opening
+ui-options-chat-logs-show-help = When a conversation opens, the end of its file is shown greyed above the new messages.
+ui-options-chat-logs-dated = Dated files
+ui-options-chat-logs-dated-help = One file per month for each conversation (name-2026-10) and one per day for the nearby chat (chat-2026-10-12), instead of a single growing file.
+ui-options-chat-logs-note = These files are plain text, readable by anyone who can use this computer. They stay on this machine, apart for each account and each grid, and are never attached to a bug report.
+ui-options-chat-logs-open = Open folder
+ui-options-chat-logs-erase = Erase this account's history…
+ui-options-chat-logs-erase-title = Erase this account's history?
+ui-options-chat-logs-erase-text = Every conversation file of this account on this grid is removed from the disk: instant messages, groups, conferences and nearby chat. This cannot be undone. Other accounts are not touched.
+ui-options-chat-logs-erase-confirm = Erase
+ui-options-chat-logs-no-account = Log in to see this account's folder.
+ui-options-chat-logs-erased = { $count ->
+    [one] { $count } file erased.
+   *[other] { $count } files erased.
+    }
+ui-options-chat-logs-erase-failed = Some files could not be erased.
+ui-chat-filter-conversation = Filter the conversation (Ctrl+F: find)
+ui-chat-filter = Filter…
+ui-chat-find-previous = Previous match (Enter)
+ui-chat-find-next = Next match (Shift+Enter)
+ui-chat-find-none = No match
+ui-chat-find-count = { $current } / { $total }
+ui-chat-find-close = Close the search (Esc)
+ui-history-title = History: { $name }
+ui-history-reading = Reading the file…
+ui-history-none = No history saved for this conversation.
+ui-history-older = Previous page (older)
+ui-history-newer = Next page (newer)
+ui-history-page = Page { $page } / { $pages }
+ui-history-messages = { $count ->
+    [one] { $count } message
+   *[other] { $count } messages
+    }
+ui-history-find-end = end of the history
+demo-chatlog-line-1 = Hi! Have you seen the new Aurora release?
+demo-chatlog-line-2 = Not yet, I'm logging in tonight.
+demo-chatlog-line-3 = The notes are here: https://example.invalid/notes
+demo-chatlog-line-4 = Shall we talk about it tomorrow?
+demo-chatlog-line-5 = Aurora plaza looks great at night.
+demo-chatlog-line-6 = Yes! Going back as soon as I can 🌌
+demo-chatlog-system = Your contact is online.
+demo-chatlog-new = I'm back! Meet you at Aurora plaza?
+demo-chatlog-offline-1 = Are you there?
+demo-chatlog-offline-2 = Leaving you a message for later.
+demo-chatlog-offline-3 = Ping me when you log in 🙂
+world-im-saved = (Saved { $month } { $day }, { $year }, { $time })

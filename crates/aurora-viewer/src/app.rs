@@ -125,6 +125,8 @@ pub struct App {
     login_progress: Option<(String, f32)>,
     panels: Panels,
     chat_ui: ChatUi,
+    /// The History window (a conversation's whole transcript).
+    history_ui: ui::chat::history::HistoryUi,
     perf: PerfData,
     /// AURORA_PROFILE: frame laps and the summary line in the log.
     frame_profile: FrameProfile,
@@ -495,6 +497,7 @@ impl App {
             login_progress: None,
             panels,
             chat_ui: ChatUi::default(),
+            history_ui: Default::default(),
             perf: PerfData::default(),
             frame_profile: FrameProfile::default(),
             sync_alt: 0,
@@ -1071,6 +1074,27 @@ impl App {
         }
     }
 
+    /// The conversation transcripts follow the preferences, and know before
+    /// the login which grid it is made on (the demo is a grid of its own).
+    fn sync_chat_log(&mut self) {
+        let s = &self.settings;
+        let log = &mut self.world.chat_log;
+        log.cfg = crate::world::chat_log::Config {
+            log_im: s.log_im,
+            log_nearby: s.log_nearby,
+            show_history: s.log_show_history,
+            dated_names: s.log_dated_names,
+        };
+        // the demo keeps no transcripts unless its scenario asks for them:
+        // a run must not change what the next one shows
+        let off = self.demo && !matches!(crate::demo::chatlog::mode(), Some(m) if !matches!(m, crate::demo::chatlog::Mode::Long { .. }));
+        log.set_grid(if off {
+            String::new()
+        } else {
+            crate::world::chat_log::grid_name(&s.grid, &s.custom_login_uri, self.demo)
+        });
+    }
+
     // ------------------------------------------------------------------ login
 
     fn start_login(&mut self) {
@@ -1163,6 +1187,9 @@ impl App {
             self.scene.clear(&mut g.renderer);
         }
         self.world.reset();
+        // the transcripts shown belong to the account that leaves
+        self.history_ui = Default::default();
+        self.chat_ui = ChatUi::default();
         self.ao_agent = uuid::Uuid::nil();
         self.appearance_ui = Default::default();
         self.interactions = Default::default();
@@ -2575,6 +2602,8 @@ impl App {
             self.world.social.avatar_names.save(&path);
         }
         self.settings.save();
+        // the last lines of the conversations reach their files
+        self.world.chat_log.flush(Duration::from_secs(2));
         event_loop.exit();
     }
 
@@ -3756,6 +3785,7 @@ impl App {
         let t_ev = Instant::now();
         self.world.events_this_frame = 0;
         self.world.script_debug.owner_say = self.settings.script_editor.owner_say_debug;
+        self.sync_chat_log();
         while let Ok(ev) = self.net.events.try_recv() {
             if let Some(app_ev) = self.world.apply(ev) {
                 self.on_app_event(app_ev);
@@ -3765,6 +3795,7 @@ impl App {
             }
         }
         self.world.poll_inventory_cache();
+        self.world.poll_transcripts();
         self.perf.events_ms = t_ev.elapsed().as_secs_f32() * 1000.0;
         for anim in std::mem::take(&mut self.world.animation_stops) {
             self.send(NetCommand::AgentAnimation { anim, start: false });
@@ -4632,6 +4663,7 @@ impl App {
         let ctx = self.egui_ctx.clone();
         if self.demo {
             raw.events.extend(ui::widgets::demo::events(&ctx, self.frame_count));
+            raw.events.extend(crate::demo::chatlog::input_events(self.frame_count));
             raw.events.extend(ui::widgets::demo::snap_events(&ctx, self.frame_count));
             raw.events.extend(ui::color_picker::demo::events(
                 &self.egui_ctx,
@@ -6220,6 +6252,7 @@ impl App {
                         ui::chat::ConvAction::ToggleBlock(id) => a.ctx_action = Some(ui::context::CtxAction::ToggleBlock(id)),
                         ui::chat::ConvAction::Close(id) => {
                             self.world.leave_session(id);
+                            self.chat_ui.forget(id);
                             // closed from the list, another conversation may be shown
                             if self.chat_ui.selected == Some(id) {
                                 self.chat_ui.selected = None;
@@ -6228,6 +6261,7 @@ impl App {
                         }
                         ui::chat::ConvAction::BlockGroupChat(id) => {
                             self.world.set_group_chat_blocked(id, true);
+                            self.chat_ui.forget(id);
                             self.chat_ui.selected = None;
                         }
                         ui::chat::ConvAction::OpenPeople(tab) => {
@@ -6240,6 +6274,18 @@ impl App {
                     }
                 }
                 self.panels.chat = open;
+                if let Some(ui::chat::history::HistoryAction::OpenFolder(dir)) = self.history_ui.show(
+                    &ctx,
+                    &p,
+                    icons,
+                    &mut self.emoji,
+                    &self.avatar_pics,
+                    &self.world,
+                    &mut self.chat_ui.wanted_names,
+                ) && let Err(e) = crate::bug_report::files::open_directory(&dir)
+                {
+                    log::warn!("cannot open the transcripts folder: {e}");
+                }
                 if self.settings.contacts.torn_off {
                     let mut open = self.panels.contacts;
                     let pics = ui::contacts::Pics {
@@ -6728,6 +6774,16 @@ impl App {
                 let mut open = self.panels.settings;
                 self.options_ui.cache_usage = self.disk_cache.usage();
                 self.options_ui.cache_clearing = self.disk_cache.is_clearing();
+                self.options_ui.chat_log_dir = self.world.chat_log.dir().map(std::path::Path::to_path_buf);
+                if let Some(done) = self.world.chat_log.take_erased() {
+                    self.options_ui.chat_log_status = match done {
+                        Ok(count) => aurora_i18n::tr!("ui-options-chat-logs-erased", count = count),
+                        Err(e) => {
+                            log::warn!("conversation transcripts: erasing failed ({e})");
+                            aurora_i18n::tr!("ui-options-chat-logs-erase-failed").to_owned()
+                        }
+                    };
+                }
                 let res = ui::options::show(&ctx, &p, &self.skin.icons, &mut self.settings, &mut self.options_ui, &mut open);
                 if !open {
                     self.options_ui.capture = None;
@@ -6735,6 +6791,19 @@ impl App {
                 if res.clear_cache {
                     self.disk_cache.clear();
                     self.net.send(NetCommand::ClearObjectCache);
+                }
+                if res.open_chat_logs
+                    && let Some(dir) = self.world.chat_log.dir()
+                {
+                    // the folder may not exist before the first line
+                    let _ = std::fs::create_dir_all(dir);
+                    if let Err(e) = crate::bug_report::files::open_directory(dir) {
+                        log::warn!("cannot open the transcripts folder: {e}");
+                    }
+                }
+                if res.erase_chat_logs {
+                    self.options_ui.chat_log_status.clear();
+                    self.world.chat_log.erase();
                 }
                 a.settings_changed = res.changed;
                 a.font_changed = res.font_changed;
@@ -7194,6 +7263,7 @@ impl ApplicationHandler for App {
             for (id, m) in crate::demo::pbr_materials() {
                 self.scene.materials.insert(id, m);
             }
+            self.sync_chat_log();
             for ev in crate::demo::events() {
                 if let Some(e) = self.world.apply(ev) {
                     self.on_app_event(e);
@@ -7213,6 +7283,49 @@ impl ApplicationHandler for App {
                 for event in events {
                     self.world.apply(event);
                 }
+            }
+            // AURORA_DEMO_CHATLOG: the conversation transcripts, written in
+            // the demo account's own folder (demo_chatlog.rs)
+            if let Some(mode) = crate::demo::chatlog::mode() {
+                use crate::demo::chatlog::{self, Mode};
+                self.panels.chat = true;
+                self.panels.perf = false;
+                self.panels.people = false;
+                self.panels.minimap = false;
+                // windows of a known size
+                ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(8.0, 44.0), egui::vec2(660.0, 560.0));
+                ui::widgets::place_floater(&self.egui_ctx, "chat_history", egui::pos2(8.0, 44.0), egui::vec2(620.0, 600.0));
+                let me = self.world.agent_id;
+                if !matches!(mode, Mode::Long { .. })
+                    && let Some(dir) = self.world.chat_log.dir().map(std::path::Path::to_path_buf)
+                    && let Err(e) = chatlog::seed(&dir, mode, &self.world.own_name())
+                {
+                    log::warn!("demo transcripts not written: {e}");
+                }
+                match mode {
+                    Mode::Long { lines, .. } => {
+                        for i in 0..lines {
+                            let (own, text) = chatlog::long_line(i);
+                            if own {
+                                self.world.own_im(chatlog::PEER, &text);
+                            } else {
+                                self.world.apply(chatlog::message(me, &text));
+                            }
+                        }
+                        // not two thousand notification sounds
+                        self.world.im_messages.clear();
+                    }
+                    Mode::Offline => {}
+                    Mode::Im | Mode::Find | Mode::History { .. } => {
+                        self.world.apply(chatlog::new_message(me));
+                    }
+                }
+                if let Mode::History { .. } = mode {
+                    self.panels.chat = false;
+                    let (title, file) = self.world.transcript_of(Some(chatlog::PEER));
+                    self.history_ui.show_file(title, file);
+                }
+                self.chat_ui.selected = Some(chatlog::PEER);
             }
             if std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("cycle,") || v.starts_with("cycle-linked,")) {
                 for ev in crate::demo::selection_cycle_events() {

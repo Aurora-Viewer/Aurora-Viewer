@@ -131,7 +131,10 @@ The texture memory budget is set automatically from the detected VRAM.
 - **World** — prims, sculpts, mesh with LOD, terrain, EEP environment,
   world sounds, parcel music, media on prims.
 - **Social** — local chat, IMs and groups, people list, blocking,
-  notifications, voice (WebRTC).
+  notifications, voice (WebRTC); conversation history kept on disk per
+  account and grid in Firestorm's text format, shown greyed when a
+  conversation opens, with search and a History window; instant messages
+  received while offline.
 - **Interface** — flat Aurora theme, Tabler icons, mini-map and world map,
   inventory, preferences, debug overlays.
 - **Windows updates** — release checks, cancellable verified downloads,
@@ -341,6 +344,11 @@ diagnostics) and how to read the profiling output are in
 [docs/TESTING.md](docs/TESTING.md) (in French).
 
 Logs are in `%LOCALAPPDATA%\Aurora\AuroraViewer\data\logs\`.
+
+Conversation history (plain text, one file per conversation) is in
+`%APPDATA%\Aurora\AuroraViewer\config\accounts\<account id>\chat_logs\<grid>\`;
+Preferences › Chat shows the folder, turns logging off and erases it. These
+files never leave the machine and are never attached to a bug report.
 
 ## Contributing
 

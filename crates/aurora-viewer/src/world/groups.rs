@@ -14,7 +14,7 @@
 //! id); this module keeps what is specific to multi-agent sessions.
 
 use super::social::ImSession;
-use super::{ChatKind, ChatLine, MAX_CHAT, World};
+use super::{ChatKind, ChatLine, Origin, World};
 use aurora_net::{GroupMembership, NetCommand, NetEvent, SessionAgent, SessionMethod};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
@@ -51,6 +51,8 @@ pub struct SessionInfo {
     /// The server closed it (ForceCloseChatterBoxSession).
     pub closed: bool,
     history_fetched: bool,
+    /// We opened it ourselves (IM_SESSION_GROUP_START), no message did.
+    pub(super) started_by_us: bool,
 }
 
 #[derive(Default)]
@@ -144,6 +146,7 @@ fn line(from: String, text: String, kind: ChatKind, source: Uuid, time: SystemTi
         text,
         kind,
         source,
+        origin: Origin::Live,
     }
 }
 
@@ -186,17 +189,15 @@ impl World {
 
     /// The conversation lines of a session (created when missing, without a
     /// name lookup since its id is not an avatar).
-    fn session_lines(&mut self, session: Uuid) -> &mut ImSession {
-        if let Some(i) = self.social.ims.iter().position(|s| s.other == session) {
-            return &mut self.social.ims[i];
-        }
-        self.social.ims.push(ImSession {
-            other: session,
-            lines: Vec::new(),
-            unread: 0,
-            input: String::new(),
-        });
-        self.social.ims.last_mut().unwrap()
+    pub(super) fn session_lines(&mut self, session: Uuid) -> &mut ImSession {
+        let i = match self.social.ims.iter().position(|s| s.other == session) {
+            Some(i) => i,
+            None => {
+                self.social.ims.push(ImSession::new(session));
+                self.social.ims.len() - 1
+            }
+        };
+        &mut self.social.ims[i]
     }
 
     /// A message in a group chat or conference: its sound follows the
@@ -215,14 +216,7 @@ impl World {
     }
 
     fn session_push(&mut self, session: Uuid, l: ChatLine, unread: bool) {
-        let s = self.session_lines(session);
-        s.lines.push(l);
-        if unread {
-            s.unread += 1;
-        }
-        if s.lines.len() > MAX_CHAT {
-            s.lines.remove(0);
-        }
+        self.conversation_push(session, l, unread);
     }
 
     fn session_system(&mut self, session: Uuid, text: impl Into<String>) {
@@ -262,6 +256,9 @@ impl World {
         if !known {
             // LLIMModel::sendStartSession(IM_SESSION_GROUP_START)
             self.groups.im(group, dialog::SESSION_GROUP_START, group, String::new());
+            if let Some(s) = self.groups.sessions.get_mut(&group) {
+                s.started_by_us = true;
+            }
         }
     }
 
@@ -490,7 +487,7 @@ impl World {
                 },
                 SessionMethod::FetchHistory => {
                     if let Some(r) = result {
-                        self.add_history(session, aurora_net::social::parse_history(&r));
+                        self.add_server_history(session, aurora_net::social::parse_history(&r));
                     }
                 }
                 SessionMethod::DeclineInvitation => {}
@@ -604,44 +601,6 @@ impl World {
         self.session_sound(session, false);
         self.session_push(session, l, true);
         true
-    }
-
-    /// Recent messages from the chat server, before what we already have
-    /// (LLIMSession::addMessagesFromServerHistory).
-    fn add_history(&mut self, session: Uuid, history: Vec<aurora_net::HistoryLine>) {
-        if history.is_empty() {
-            return;
-        }
-        let me = self.agent_id;
-        let own = self.own_name();
-        let known: HashSet<(Uuid, String)> = self
-            .social
-            .ims
-            .iter()
-            .find(|s| s.other == session)
-            .map(|s| s.lines.iter().map(|l| (l.source, l.text.clone())).collect())
-            .unwrap_or_default();
-        let mut older: Vec<ChatLine> = history
-            .into_iter()
-            .filter(|h| !self.mutes.text_muted(&h.from_id, &h.from))
-            .filter(|h| !known.contains(&(if h.from_id == me { Uuid::nil() } else { h.from_id }, h.message.clone())))
-            .map(|h| {
-                let time = SystemTime::UNIX_EPOCH + Duration::from_secs(h.time as u64);
-                if h.from_id == me {
-                    line(own.clone(), h.message, ChatKind::Own, Uuid::nil(), time)
-                } else {
-                    line(h.from, h.message, ChatKind::Im, h.from_id, time)
-                }
-            })
-            .collect();
-        if older.is_empty() {
-            return;
-        }
-        let s = self.session_lines(session);
-        older.append(&mut s.lines);
-        s.lines = older;
-        let excess = s.lines.len().saturating_sub(MAX_CHAT);
-        s.lines.drain(..excess);
     }
 }
 

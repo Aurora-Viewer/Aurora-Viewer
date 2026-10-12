@@ -34,6 +34,7 @@ impl Messages {
             text: message.message.clone(),
             kind: super::ChatKind::Object(message.chat_type),
             source: message.source_id,
+            origin: super::Origin::Live,
         });
         self.revision = self.revision.wrapping_add(1);
         true

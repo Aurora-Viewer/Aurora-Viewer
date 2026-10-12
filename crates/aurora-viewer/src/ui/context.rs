@@ -164,6 +164,9 @@ pub enum CtxAction {
     ToggleFly,
     ResetCamera,
     Im(Uuid),
+    /// The History window on the transcript of the nearby chat (None), of
+    /// a conversation, a resident or a group.
+    ShowHistory(Option<Uuid>),
     OfferTeleport(Uuid),
     Profile(Uuid),
     /// Rendering exception of an avatar (LLRenderMuteList).
@@ -389,6 +392,19 @@ pub fn avatar_list_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid,
             act(CtxAction::RequestTeleport(id));
         }
     };
+    // the transcript of the conversation with this resident (enabled while
+    // the account keeps transcripts; the window says when there is none)
+    let history = |ui: &mut egui::Ui| {
+        if menu::item_if(
+            ui,
+            p,
+            "history",
+            aurora_i18n::tr!("common-view-conversation-history"),
+            world.chat_log.dir().is_some(),
+        ) {
+            act(CtxAction::ShowHistory(Some(id)));
+        }
+    };
     match kind {
         AvatarList::Nearby => {
             profile(ui);
@@ -398,7 +414,7 @@ pub fn avatar_list_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid,
             tp_to(ui);
             menu::todo(ui, p, "phone-filled", aurora_i18n::tr!("common-voice-call"));
             menu::separator(ui, p);
-            menu::todo(ui, p, "history", aurora_i18n::tr!("common-view-conversation-history"));
+            history(ui);
             menu::separator(ui, p);
             add_friend(ui);
             remove_friend(ui);
@@ -416,7 +432,7 @@ pub fn avatar_list_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid,
         AvatarList::Friend => {
             profile(ui);
             im(ui);
-            menu::todo(ui, p, "history", aurora_i18n::tr!("common-view-conversation-history"));
+            history(ui);
             menu::todo(ui, p, "users-group", aurora_i18n::tr!("common-add-to-contact-set"));
             zoom(ui);
             tp_to(ui);
@@ -449,7 +465,7 @@ pub fn avatar_list_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid,
         AvatarList::Name => {
             profile(ui);
             im(ui);
-            menu::todo(ui, p, "history", aurora_i18n::tr!("common-view-conversation-history"));
+            history(ui);
             add_friend(ui);
             menu::todo(ui, p, "users-group", aurora_i18n::tr!("ui-context-add-to-contact-set"));
             zoom(ui);

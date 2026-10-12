@@ -43,6 +43,13 @@ pub struct OptionsUi {
     confirm_reset: bool,
     /// Sound assets being typed (Firestorm name -> text).
     ui_sound_text: std::collections::HashMap<&'static str, String>,
+    /// Folder of the conversation transcripts of the account logged in
+    /// (set by the app; none on the login screen).
+    pub chat_log_dir: Option<std::path::PathBuf>,
+    /// What the last erasing of the transcripts did (set by the app).
+    pub chat_log_status: String,
+    /// "Effacer les historiques" confirmation open.
+    confirm_erase_logs: bool,
 }
 
 impl OptionsUi {
@@ -90,6 +97,10 @@ pub struct OptionsResult {
     pub reset: bool,
     /// The camera settings went back to their defaults: the view follows.
     pub reset_camera: bool,
+    /// Show the folder of the conversation transcripts.
+    pub open_chat_logs: bool,
+    /// Erase the conversation transcripts of the account (confirmed).
+    pub erase_chat_logs: bool,
 }
 
 /// Category tabs (index = `OptionsUi::tab`).
@@ -140,6 +151,7 @@ fn group_icon(title: &str) -> Option<&'static str> {
         value if value == aurora_i18n::text("ui-options-system-fonts") => "device-desktop-filled",
         value if value == aurora_i18n::text("common-nearby-chat") => "message-circle-filled",
         value if value == aurora_i18n::text("ui-options-messages") => "message-filled",
+        value if value == aurora_i18n::text("ui-options-chat-logs") => "history",
         value if value == aurora_i18n::text("ui-options-emitter") => "user-filled",
         value if value == aurora_i18n::text("ui-options-chat-mentions") => "at",
         value if value == aurora_i18n::text("ui-options-mouse") => "mouse-filled",
@@ -493,7 +505,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
                             9 => debug_page(ui, p, s),
                             TAB_CAMERA => camera::page(ui, p, s, &mut r.reset_camera),
                             TAB_COMMANDS => commands::page(ui, p, &mut s.chat_commands),
-                            _ => content(ui, p, s, st, &mut r.font_changed, &mut r.clear_cache),
+                            _ => content(ui, p, s, st, &mut r),
                         };
                     });
             });
@@ -539,11 +551,181 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
             st.confirm_reset = false;
         }
     }
+    if st.confirm_erase_logs && *open {
+        let modal = crate::ui::widgets::Modal::new(egui::Id::new("options_erase_chat_logs")).show(ctx, |ui| {
+            ui.set_width(360.0);
+            ui.label(
+                RichText::new(aurora_i18n::tr!("ui-options-chat-logs-erase-title"))
+                    .size(15.0)
+                    .strong()
+                    .color(p.ink),
+            );
+            ui.add_space(6.0);
+            ui.label(
+                RichText::new(aurora_i18n::tr!("ui-options-chat-logs-erase-text"))
+                    .size(12.5)
+                    .color(p.muted),
+            );
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                use super::widgets::{ActionKind, action_button};
+                let size = Vec2::new(0.0, 26.0);
+                if action_button(
+                    ui,
+                    p,
+                    "trash-filled",
+                    aurora_i18n::tr!("ui-options-chat-logs-erase-confirm"),
+                    ActionKind::Danger,
+                    size,
+                )
+                .clicked()
+                {
+                    r.erase_chat_logs = true;
+                    st.confirm_erase_logs = false;
+                }
+                if action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {
+                    st.confirm_erase_logs = false;
+                }
+            });
+        });
+        if modal.should_close() {
+            st.confirm_erase_logs = false;
+        }
+    }
     r
 }
 
-fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi, font_changed: &mut bool, clear_cache: &mut bool) -> bool {
+/// Préférences › Chat › Historique des conversations: what is written to
+/// the account's transcripts and where they are (Firestorm: Préférences ›
+/// Confidentialité, « Journaux et transcriptions »).
+fn chat_logs_group(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi, r: &mut OptionsResult) -> bool {
     let mut c = false;
+    group(ui, p, aurora_i18n::tr!("ui-options-chat-logs"), |ui| {
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-chat-logs-im"),
+            aurora_i18n::tr!("ui-options-chat-logs-im-help"),
+            |ui| toggle(ui, p, &mut s.log_im),
+        );
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-chat-logs-nearby"),
+            aurora_i18n::tr!("ui-options-chat-logs-nearby-help"),
+            |ui| toggle(ui, p, &mut s.log_nearby),
+        );
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-chat-logs-show"),
+            aurora_i18n::tr!("ui-options-chat-logs-show-help"),
+            |ui| toggle(ui, p, &mut s.log_show_history),
+        );
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-chat-logs-dated"),
+            aurora_i18n::tr!("ui-options-chat-logs-dated-help"),
+            |ui| toggle(ui, p, &mut s.log_dated_names),
+        );
+        ui.label(
+            RichText::new(aurora_i18n::tr!("ui-options-chat-logs-note"))
+                .size(11.5)
+                .color(p.muted),
+        );
+        match &st.chat_log_dir {
+            Some(dir) => {
+                // without the verbatim prefix Windows gives a canonical path
+                let path = dir.display().to_string();
+                let path = path.strip_prefix(r"\\?\").unwrap_or(&path).to_owned();
+                ui.add(super::widgets::elided_label(
+                    ui,
+                    RichText::new(&path).size(11.5).color(p.muted_dim),
+                    ui.available_width(),
+                ))
+                .on_hover_text(&path);
+                ui.horizontal(|ui| {
+                    use super::widgets::{ActionKind, action_button};
+                    let size = Vec2::new(0.0, 24.0);
+                    if action_button(
+                        ui,
+                        p,
+                        "folder-open-filled",
+                        aurora_i18n::tr!("ui-options-chat-logs-open"),
+                        ActionKind::Flat,
+                        size,
+                    )
+                    .clicked()
+                    {
+                        r.open_chat_logs = true;
+                    }
+                    if action_button(
+                        ui,
+                        p,
+                        "trash-filled",
+                        aurora_i18n::tr!("ui-options-chat-logs-erase"),
+                        ActionKind::FlatDanger,
+                        size,
+                    )
+                    .clicked()
+                    {
+                        st.confirm_erase_logs = true;
+                    }
+                });
+                if !st.chat_log_status.is_empty() {
+                    ui.label(RichText::new(&st.chat_log_status).size(11.5).color(p.muted));
+                }
+            }
+            None => {
+                ui.label(
+                    RichText::new(aurora_i18n::tr!("ui-options-chat-logs-no-account"))
+                        .size(11.5)
+                        .color(p.muted_dim),
+                );
+            }
+        }
+    });
+    c
+}
+
+/// First group of the Chat page.
+fn chat_page_head(ui: &mut egui::Ui, p: &Palette, s: &mut Settings) -> bool {
+    let mut c = false;
+    group(ui, p, aurora_i18n::tr!("common-nearby-chat"), |ui| {
+        c |= row(ui, p, aurora_i18n::tr!("ui-options-show-time"), "", |ui| {
+            toggle(ui, p, &mut s.chat_timestamps)
+        });
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-chat-bubble-duration"),
+            aurora_i18n::tr!("ui-options-0-no-chat-bubbles-above-the-chat-bar"),
+            |ui| slider(ui, &mut s.chat_toast_seconds, 0.0..=60.0, " s"),
+        );
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-warn-before-external-links"),
+            aurora_i18n::tr!("ui-options-warn-before-opening-a-link-to-a-site-that"),
+            |ui| toggle(ui, p, &mut s.warn_external_links),
+        );
+        c |= row(ui, p, aurora_i18n::tr!("ui-options-conversations-at-startup"), "", |ui| {
+            toggle(ui, p, &mut s.show_chat)
+        });
+    });
+    c
+}
+
+fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi, r: &mut OptionsResult) -> bool {
+    let mut c = false;
+    let (mut font, mut cache) = (false, false);
+    let (font_changed, clear_cache) = (&mut font, &mut cache);
+    if st.tab == TAB_CHAT {
+        // drawn after the first group of the page, below
+        c |= chat_page_head(ui, p, s);
+        c |= chat_logs_group(ui, p, s, st, r);
+    }
     match st.tab {
         0 => {
             group(ui, p, aurora_i18n::tr!("ui-options-quality"), |ui| {
@@ -1323,28 +1505,6 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
             });
         }
         3 => {
-            group(ui, p, aurora_i18n::tr!("common-nearby-chat"), |ui| {
-                c |= row(ui, p, aurora_i18n::tr!("ui-options-show-time"), "", |ui| {
-                    toggle(ui, p, &mut s.chat_timestamps)
-                });
-                c |= row(
-                    ui,
-                    p,
-                    aurora_i18n::tr!("ui-options-chat-bubble-duration"),
-                    aurora_i18n::tr!("ui-options-0-no-chat-bubbles-above-the-chat-bar"),
-                    |ui| slider(ui, &mut s.chat_toast_seconds, 0.0..=60.0, " s"),
-                );
-                c |= row(
-                    ui,
-                    p,
-                    aurora_i18n::tr!("ui-options-warn-before-external-links"),
-                    aurora_i18n::tr!("ui-options-warn-before-opening-a-link-to-a-site-that"),
-                    |ui| toggle(ui, p, &mut s.warn_external_links),
-                );
-                c |= row(ui, p, aurora_i18n::tr!("ui-options-conversations-at-startup"), "", |ui| {
-                    toggle(ui, p, &mut s.show_chat)
-                });
-            });
             group(ui, p, aurora_i18n::tr!("ui-options-groups-and-blocking"), |ui| {
                 c |= row(
                     ui,
@@ -1681,6 +1841,8 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
             });
         }
     }
+    r.font_changed |= font;
+    r.clear_cache |= cache;
     c
 }
 

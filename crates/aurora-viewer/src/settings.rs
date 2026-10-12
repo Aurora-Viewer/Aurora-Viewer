@@ -149,6 +149,15 @@ pub struct Settings {
     pub font_scale: f32,
     pub chat_timestamps: bool,
     pub chat_toast_seconds: f32,
+    /// Write instant messages, group chats and conferences to text files in
+    /// the account's folder (Firestorm KeepConversationLogTranscripts = 2).
+    pub log_im: bool,
+    /// Write the nearby chat too (Firestorm LogNearbyChat, off).
+    pub log_nearby: bool,
+    /// Show the end of a conversation's file when it opens (LogShowHistory).
+    pub log_show_history: bool,
+    /// Date in the names of these files (LogFileNamewithDate, off).
+    pub log_dated_names: bool,
     /// Ask before opening a web link outside the trusted domains (the box
     /// « Ne plus me prévenir » of the warning turns it off).
     pub warn_external_links: bool,
@@ -516,6 +525,10 @@ impl Default for Settings {
             font_scale: 1.0,
             chat_timestamps: true,
             chat_toast_seconds: 20.0,
+            log_im: true,
+            log_nearby: false,
+            log_show_history: true,
+            log_dated_names: false,
             warn_external_links: true,
             mute_all_groups: false,
             mute_groups_without_notices: false,
@@ -612,7 +625,14 @@ pub fn config_dir() -> PathBuf {
 /// Files of one account (LL_PATH_PER_SL_ACCOUNT): contact sets, pinned
 /// groups.
 pub fn account_dir(agent: &uuid::Uuid) -> PathBuf {
-    config_dir().join("accounts").join(agent.to_string())
+    accounts_dir().join(agent.to_string())
+}
+
+/// The folder that holds one folder per account id. An account id says
+/// nothing of the grid: what must not cross from one grid to another (the
+/// conversation transcripts) adds the grid under it.
+pub fn accounts_dir() -> PathBuf {
+    config_dir().join("accounts")
 }
 
 pub fn cache_dir() -> PathBuf {

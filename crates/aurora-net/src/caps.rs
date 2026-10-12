@@ -6,12 +6,18 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 
 pub const REQUESTED_CAPS: &[&str] = &[
+    // offline friendship offers and group invitations are answered through
+    // these (session_offline.rs)
+    "AcceptFriendship",
+    "AcceptGroupInvite",
     "AgentPreferences",
     "AgentProfile",
     "AvatarPickerSearch",
     "AvatarRenderInfo",
     "ChatSessionRequest",
     "CopyInventoryFromNotecard",
+    "DeclineFriendship",
+    "DeclineGroupInvite",
     "EnvironmentSettings",
     "EventQueueGet",
     "ExtEnvironment",
@@ -43,6 +49,8 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "ObjectMediaNavigate",
     "ParcelVoiceInfoRequest",
     "ProvisionVoiceAccountRequest",
+    // instant messages kept while offline (LLIMProcessing::requestOfflineMessages)
+    "ReadOfflineMsgs",
     "RenderMaterials",
     "RequestTaskInventory",
     "ResourceCostSelected",

@@ -1,8 +1,13 @@
 //! Local chat window (nearby chat + instant messages).
 
+mod find;
+pub mod history;
+mod view;
+
 use super::context::CtxAction;
 use crate::theme::Palette;
-use crate::world::{ChatKind, World};
+use crate::world::chat_log::format::Slt;
+use crate::world::{ChatKind, Origin, World};
 use aurora_net::ChatType;
 use egui::{Color32, RichText};
 use std::collections::{HashMap, HashSet};
@@ -24,9 +29,19 @@ pub struct ChatUi {
     pub wanted_names: HashSet<uuid::Uuid>,
     /// Participants of the group / conference session shown.
     pub show_profile: bool,
-    /// Search filter (None = closed).
-    pub search: Option<String>,
+    /// Filter and find bar of each conversation (None = nearby chat).
+    searches: HashMap<Option<uuid::Uuid>, find::Search>,
+    /// Laid-out rows of each conversation.
+    views: HashMap<Option<uuid::Uuid>, view::View>,
     pub emoji_open: bool,
+}
+
+impl ChatUi {
+    /// A conversation closed: its filter, find bar and rows go with it.
+    pub fn forget(&mut self, conversation: uuid::Uuid) {
+        self.searches.remove(&Some(conversation));
+        self.views.remove(&Some(conversation));
+    }
 }
 
 pub struct OutgoingChat {
@@ -59,10 +74,42 @@ fn color_for(kind: ChatKind, p: &Palette) -> Color32 {
     }
 }
 
+/// Time of a chat line, in Second Life time as Firestorm shows it and as
+/// the transcripts have it ("hour,datetime,slt"). Empty for a line whose
+/// time is unknown (history without a timestamp).
 pub(crate) fn hhmm(t: std::time::SystemTime) -> String {
-    let secs = t.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-    // Local time is not available without a tz database; show UTC.
-    format!("{:02}:{:02}", (secs / 3600) % 24, (secs / 60) % 60)
+    if t == std::time::UNIX_EPOCH {
+        return String::new();
+    }
+    let t = Slt::of(t);
+    format!("{:02}:{:02}", t.hour, t.minute)
+}
+
+/// Color of the name and text of a history line: Firestorm greys what comes
+/// from the transcript (ChatHistoryMessageFromLog) and gives the chat
+/// server's replay its own tone (ChatHistoryMessageFromServerLog).
+pub(crate) fn history_tone(p: &Palette, origin: Origin) -> Option<Color32> {
+    match origin {
+        Origin::Live => None,
+        Origin::Log => Some(p.muted_dim),
+        Origin::ServerLog => Some(p.muted_dim.lerp_to_gamma(p.success, 0.3)),
+    }
+}
+
+/// The day a group of lines was said, between two lines of different days
+/// (a history spans days; the times stay HH:MM).
+fn date_marker(ui: &mut egui::Ui, p: &Palette, year: i64, month: i64, day: i64) {
+    let month = super::land::months()[(month.clamp(1, 12) - 1) as usize];
+    let text = aurora_i18n::tr!(
+        "ui-chat-day",
+        day = day.to_string(),
+        month = month.to_string(),
+        year = year.to_string()
+    );
+    ui.add_space(4.0);
+    ui.vertical_centered(|ui| {
+        ui.label(RichText::new(text).size(11.0).color(p.muted_dim));
+    });
 }
 
 /// A link of a chat bubble, clickable like in the conversation window.
@@ -281,9 +328,6 @@ pub enum ConvAction {
     Profile(uuid::Uuid),
 }
 
-/// Messages from the same sender within this many seconds share one header.
-const GROUP_SECONDS: u64 = 300;
-
 fn initials(name: &str) -> String {
     name.split_whitespace()
         .filter_map(|w| w.chars().next())
@@ -464,8 +508,58 @@ pub(crate) fn chat_text(
     color: Color32,
     italics: bool,
 ) {
+    chat_text_marked(ui, p, emoji, world, want_names, text, size, color, italics, None);
+}
+
+/// A text searched for in the lines, and the wash its matches are drawn on.
+#[derive(Clone, Copy)]
+pub(crate) struct Mark<'a> {
+    /// Lowercase.
+    pub needle: &'a str,
+    pub wash: Color32,
+}
+
+/// A run of plain text, the matches of the searched text on their wash.
+fn marked_run(
+    ui: &mut egui::Ui,
+    emoji: &mut super::emoji::Emoji,
+    text: &str,
+    size: f32,
+    color: Color32,
+    italics: bool,
+    mark: Option<Mark>,
+) {
+    let Some(mark) = mark else {
+        emoji.inline(ui, text, size, color, italics);
+        return;
+    };
+    let mut at = 0;
+    for m in view::find_ci(text, mark.needle) {
+        emoji.inline(ui, &text[at..m.start], size, color, italics);
+        emoji.inline_marked(ui, &text[m.clone()], size, color, italics, Some(mark.wash));
+        at = m.end;
+    }
+    emoji.inline(ui, &text[at..], size, color, italics);
+}
+
+/// `chat_text` with the matches of a searched text highlighted.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn chat_text_marked(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    emoji: &mut super::emoji::Emoji,
+    world: &World,
+    want_names: &mut HashSet<uuid::Uuid>,
+    text: &str,
+    size: f32,
+    color: Color32,
+    italics: bool,
+    mark: Option<Mark>,
+) {
     let segs = segments(text);
-    if segs.iter().all(|s| matches!(s, Seg::Text(_))) {
+    // only a text that has a match is cut into runs
+    let mark = mark.filter(|m| !view::find_ci(text, m.needle).is_empty());
+    if mark.is_none() && segs.iter().all(|s| matches!(s, Seg::Text(_))) {
         emoji.rich_text(ui, text, size, color, italics);
         return;
     }
@@ -474,7 +568,7 @@ pub(crate) fn chat_text(
         ui.spacing_mut().item_spacing = egui::vec2(0.0, 1.0);
         for s in segs {
             match s {
-                Seg::Text(t) => emoji.inline(ui, t, size, color, italics),
+                Seg::Text(t) => marked_run(ui, emoji, t, size, color, italics, mark),
                 Seg::Url(u) => {
                     link_badge(ui, p, u, size);
                     let r = ui.add(egui::Link::new(RichText::new(u).size(size).color(super::colors::c(k.chat_urls))));
@@ -610,142 +704,152 @@ fn header_names(ui: &mut egui::Ui, p: &Palette, name: &str, username: Option<&st
     r
 }
 
-/// Messages grouped by sender: header strip (picture, name, time) then lines.
-#[allow(clippy::too_many_arguments)]
-fn conversation(
-    ui: &mut egui::Ui,
-    p: &Palette,
-    icons: &super::icons::Icons,
-    emoji: &mut super::emoji::Emoji,
-    pics: &HashMap<uuid::Uuid, egui::TextureHandle>,
-    world: &World,
-    want_names: &mut HashSet<uuid::Uuid>,
-    lines: &[&crate::world::ChatLine],
-    wanted: &mut HashSet<uuid::Uuid>,
-    own_name: &str,
-) {
+/// What drawing a line of a conversation needs.
+pub(crate) struct LineEnv<'a> {
+    pub p: &'a Palette,
+    pub icons: &'a super::icons::Icons,
+    pub emoji: &'a mut super::emoji::Emoji,
+    pub pics: &'a HashMap<uuid::Uuid, egui::TextureHandle>,
+    pub world: &'a World,
+    /// Names to resolve (mentions, agent links).
+    pub want_names: &'a mut HashSet<uuid::Uuid>,
+    /// Profile pictures to load.
+    pub wanted: &'a mut HashSet<uuid::Uuid>,
+    pub own_name: &'a str,
+    /// History lines in the colors of new ones (the History window, where
+    /// every line is history; Firestorm's is_conversation_log).
+    pub plain_history: bool,
+}
+
+/// One line of a conversation: the day when it changes, the sender's header
+/// strip (picture, name, time) when `look` asks for it, then the text.
+pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::ChatLine, look: view::Look, mark: Option<Mark>) {
+    let (p, world) = (env.p, env.world);
     ui.spacing_mut().item_spacing.y = 2.0;
     let w = ui.available_width();
-    let mut prev: Option<(uuid::Uuid, std::time::SystemTime, bool)> = None;
-    for line in lines {
-        if line.kind == ChatKind::System {
-            chat_text(
-                ui,
-                p,
-                emoji,
-                world,
-                want_names,
-                &line.text,
-                12.5,
-                super::colors::chat_color(line, world),
-                true,
-            );
-            prev = None;
-            continue;
-        }
-        let own = line.kind == ChatKind::Own;
-        let object = matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm);
-        let new_group = match prev {
-            Some((src, t, o)) => {
-                src != line.source || o != own || line.time.duration_since(t).map(|d| d.as_secs() > GROUP_SECONDS).unwrap_or(true)
-            }
-            None => true,
-        };
-        // FSChatHistoryHeader: the display name, then " - username" in small
-        let names = &world.social.avatar_names;
-        let cached = if object {
-            None
-        } else {
-            names.get(if own { &world.agent_id } else { &line.source })
-        };
-        let name = match cached {
-            Some(n) => n.display(&names.options),
-            None if own => own_name.to_owned(),
-            None => line.from.clone(),
-        };
-        if new_group {
-            ui.add_space(6.0);
-            let username = cached.and_then(|n| n.chat_username(&names.options));
-            egui::Frame::new()
-                .fill(p.raised.gamma_multiply(0.55))
-                .corner_radius(ui.visuals().window_corner_radius)
-                .inner_margin(egui::Margin::symmetric(4, 3))
-                .show(ui, |ui| {
-                    ui.set_width(w - 8.0);
-                    ui.horizontal(|ui| {
-                        if object {
-                            let (rect, _) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::hover());
-                            if let Some(t) = icons.get("box") {
-                                ui.painter().image(
-                                    t.id(),
-                                    rect.shrink(2.0),
-                                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                                    super::colors::sender_color(line),
-                                );
-                            }
-                        } else {
-                            if !line.source.is_nil() {
-                                wanted.insert(line.source);
-                            }
-                            avatar_pic(ui, p, pics.get(&line.source), &name, 20.0);
+    // history lines: greyed, and nothing is looked up for them (no name, no
+    // picture, no profile), like Firestorm's message_from_log
+    let logged = line.origin != Origin::Live;
+    let tone = if env.plain_history { None } else { history_tone(p, line.origin) };
+    if let Some((year, month, day)) = look.marker {
+        date_marker(ui, p, year, month, day);
+    }
+    if line.kind == ChatKind::System {
+        chat_text_marked(
+            ui,
+            p,
+            env.emoji,
+            world,
+            env.want_names,
+            &line.text,
+            12.5,
+            tone.unwrap_or_else(|| super::colors::chat_color(line, world)),
+            true,
+            mark,
+        );
+        return;
+    }
+    let own = line.kind == ChatKind::Own;
+    let object = matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm);
+    // FSChatHistoryHeader: the display name, then " - username" in small
+    let names = &world.social.avatar_names;
+    let cached = if object || logged {
+        None
+    } else {
+        names.get(if own { &world.agent_id } else { &line.source })
+    };
+    let name = match cached {
+        Some(n) => n.display(&names.options),
+        None if own && !logged => env.own_name.to_owned(),
+        None => line.from.clone(),
+    };
+    if look.header {
+        ui.add_space(6.0);
+        let username = cached.and_then(|n| n.chat_username(&names.options));
+        egui::Frame::new()
+            .fill(p.raised.gamma_multiply(0.55))
+            .corner_radius(ui.visuals().window_corner_radius)
+            .inner_margin(egui::Margin::symmetric(4, 3))
+            .show(ui, |ui| {
+                ui.set_width(w - 8.0);
+                ui.horizontal(|ui| {
+                    if object {
+                        let (rect, _) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::hover());
+                        if let Some(t) = env.icons.get("box") {
+                            ui.painter().image(
+                                t.id(),
+                                rect.shrink(2.0),
+                                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                                super::colors::sender_color(line),
+                            );
                         }
-                        let col = super::colors::sender_color(line);
-                        let time = header_time(ui, p, hhmm(line.time));
-                        let reserve = time.size().x + ui.spacing().item_spacing.x;
-                        let r = header_names(ui, p, &name, username.as_deref(), col, reserve);
-                        // the inspector in Firestorm; Aurora opens the profile
-                        let avatar = if own { world.agent_id } else { line.source };
-                        if !object && !avatar.is_nil() {
-                            name_menu(&r, p, world, avatar);
+                    } else {
+                        if !line.source.is_nil() && !logged {
+                            env.wanted.insert(line.source);
                         }
-                        if !object
-                            && !avatar.is_nil()
-                            && r.on_hover_cursor(egui::CursorIcon::PointingHand)
-                                .on_hover_text(aurora_i18n::tr!("common-view-profile"))
-                                .clicked()
-                        {
-                            super::profile::request_open(ui.ctx(), avatar);
-                        }
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(time);
-                        });
+                        avatar_pic(ui, p, env.pics.get(&line.source), &name, 20.0);
+                    }
+                    let col = tone.unwrap_or_else(|| super::colors::sender_color(line));
+                    let time = header_time(ui, p, hhmm(line.time));
+                    let reserve = time.size().x + ui.spacing().item_spacing.x;
+                    let r = header_names(ui, p, &name, username.as_deref(), col, reserve);
+                    // the inspector in Firestorm; Aurora opens the profile
+                    // (history lines name no avatar)
+                    let avatar = match (logged, own) {
+                        (true, _) => uuid::Uuid::nil(),
+                        (false, true) => world.agent_id,
+                        (false, false) => line.source,
+                    };
+                    if !object && !avatar.is_nil() {
+                        name_menu(&r, p, world, avatar);
+                    }
+                    if !object
+                        && !avatar.is_nil()
+                        && r.on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .on_hover_text(aurora_i18n::tr!("common-view-profile"))
+                            .clicked()
+                    {
+                        super::profile::request_open(ui.ctx(), avatar);
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(time);
                     });
                 });
-            ui.add_space(2.0);
-        }
-        prev = Some((line.source, line.time, own));
-        let emote = line.text.starts_with("/me ") || line.text.starts_with("/me'");
-        let (text, italics) = if emote {
-            (format!("{}{}", name, &line.text[3..]), true)
-        } else {
-            let prefix = match line.kind {
-                ChatKind::Local(ChatType::Shout) => aurora_i18n::tr!("status-shouts-2"),
-                ChatKind::Local(ChatType::Whisper) => aurora_i18n::tr!("status-whispers-2"),
-                _ => "",
-            };
-            (format!("{prefix}{}", line.text), false)
-        };
-        egui::Frame::new()
-            .inner_margin(egui::Margin {
-                left: 6,
-                right: 2,
-                top: 0,
-                bottom: 0,
-            })
-            .show(ui, |ui| {
-                chat_text(
-                    ui,
-                    p,
-                    emoji,
-                    world,
-                    want_names,
-                    &text,
-                    13.5,
-                    super::colors::chat_color(line, world),
-                    italics,
-                );
             });
+        ui.add_space(2.0);
     }
+    let emote = line.text.starts_with("/me ") || line.text.starts_with("/me'");
+    let (text, italics) = if emote {
+        (format!("{}{}", name, &line.text[3..]), true)
+    } else {
+        let prefix = match line.kind {
+            ChatKind::Local(ChatType::Shout) => aurora_i18n::tr!("status-shouts-2"),
+            ChatKind::Local(ChatType::Whisper) => aurora_i18n::tr!("status-whispers-2"),
+            _ => "",
+        };
+        (format!("{prefix}{}", line.text), false)
+    };
+    egui::Frame::new()
+        .inner_margin(egui::Margin {
+            left: 6,
+            right: 2,
+            top: 0,
+            bottom: 0,
+        })
+        .show(ui, |ui| {
+            chat_text_marked(
+                ui,
+                p,
+                env.emoji,
+                world,
+                env.want_names,
+                &text,
+                13.5,
+                tone.unwrap_or_else(|| super::colors::chat_color(line, world)),
+                italics,
+                mark,
+            );
+        });
 }
 
 /// Width of the conversation list and of its entries (the vertical tabs of
@@ -1118,24 +1222,40 @@ pub fn show(
                             }
                         }
                     }
-                    let searching = st.search.is_some();
+                    let search = st.searches.entry(st.selected).or_default();
+                    let filtering = search.filter.is_some();
                     if tool(
                         ui,
                         p,
                         icons,
                         "search-filled",
-                        aurora_i18n::tr!("ui-chat-search-conversation"),
+                        aurora_i18n::tr!("ui-chat-filter-conversation"),
                         true,
-                        searching,
+                        filtering,
                     ) {
-                        st.search = if searching { None } else { Some(String::new()) };
+                        search.filter = if filtering { None } else { Some(String::new()) };
                     }
-                    if let Some(q) = st.search.as_mut() {
+                    if let Some(q) = search.filter.as_mut() {
                         ui.add(
                             egui::TextEdit::singleline(q)
-                                .hint_text(aurora_i18n::tr!("ui-chat-search"))
-                                .desired_width(160.0),
+                                .id(find::filter_id())
+                                .hint_text(aurora_i18n::tr!("ui-chat-filter"))
+                                .desired_width(140.0),
                         );
+                    }
+                    // the whole transcript, when this account keeps them
+                    if world.chat_log.dir().is_some()
+                        && tool(
+                            ui,
+                            p,
+                            icons,
+                            "history",
+                            aurora_i18n::tr!("common-view-conversation-history"),
+                            true,
+                            false,
+                        )
+                    {
+                        super::context::request(ui.ctx(), CtxAction::ShowHistory(st.selected));
                     }
                     // the conversation's own close button, at the end of its
                     // toolbar like the X of a title bar (the nearby chat
@@ -1196,65 +1316,107 @@ pub fn show(
                     ui.add_space(4.0);
                 }
                 let input_h = 30.0;
-                let lines_h = (ui.available_height() - input_h - 8.0).clamp(60.0, h);
-                let query = st.search.as_ref().map(|q| q.to_lowercase()).filter(|q| !q.is_empty());
-                let keep = |l: &&crate::world::ChatLine| {
-                    query
-                        .as_ref()
-                        .is_none_or(|q| l.text.to_lowercase().contains(q) || l.from.to_lowercase().contains(q))
+                // Ctrl+F opens the find bar of the conversation shown, when
+                // the keyboard is in this window, or nowhere with the
+                // pointer over it
+                let conv_input = egui::Id::new("conv_input");
+                let search = st.searches.entry(st.selected).or_default();
+                if find::wants_shortcut(ui, &[conv_input, find::field_id(), find::filter_id()]) {
+                    search.open_find();
+                }
+                // exactly what the find bar takes under the lines (a row
+                // that overflows makes the resizable window grow every frame)
+                let find_h = if search.find.is_some() {
+                    find::BAR_H + 4.0 + ui.spacing().item_spacing.y
+                } else {
+                    0.0
                 };
+                let lines_h = (ui.available_height() - input_h - find_h - 8.0).clamp(60.0, h);
+                let filter = search.filter.as_deref().unwrap_or("").to_lowercase();
+                let needle = search.find.as_ref().map(|f| f.text.to_lowercase()).unwrap_or_default();
+                let view = st.views.entry(st.selected).or_default();
                 egui::Frame::new()
                     .fill(p.field)
                     .corner_radius(ui.visuals().window_corner_radius)
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
-                        egui::ScrollArea::vertical()
+                        match st.selected {
+                            None => world.chat_unread = 0,
+                            Some(id) => {
+                                if let Some(s) = world.social.ims.iter_mut().find(|s| s.other == id) {
+                                    s.unread = 0;
+                                }
+                            }
+                        }
+                        let w: &World = world;
+                        let (lines, clock) = match st.selected {
+                            None => (Some(&w.chat), w.chat_clock),
+                            Some(id) => match w.social.ims.iter().find(|s| s.other == id) {
+                                Some(s) => (Some(&s.lines), s.clock),
+                                None => (None, w.chat_clock),
+                            },
+                        };
+                        let mut env = LineEnv {
+                            p,
+                            icons,
+                            emoji,
+                            pics,
+                            world: w,
+                            want_names: &mut st.wanted_names,
+                            wanted: &mut st.wanted_pics,
+                            own_name: &own_name,
+                            plain_history: false,
+                        };
+                        let wash = find::wash(p);
+                        let current = search.find.as_ref().and_then(|f| f.current_line(view));
+                        let out = egui::ScrollArea::vertical()
                             .id_salt(("conv", st.selected))
                             .stick_to_bottom(true)
                             .auto_shrink([false, false])
                             .max_height(lines_h)
                             .min_scrolled_height(lines_h)
-                            .show(ui, |ui| match st.selected {
-                                None => {
-                                    world.chat_unread = 0;
-                                    let w: &World = world;
-                                    let lines: Vec<&crate::world::ChatLine> = w.chat.iter().filter(keep).collect();
-                                    conversation(
-                                        ui,
-                                        p,
-                                        icons,
-                                        emoji,
-                                        pics,
-                                        w,
-                                        &mut st.wanted_names,
-                                        &lines,
-                                        &mut st.wanted_pics,
-                                        &own_name,
-                                    );
+                            .show_viewport(ui, |ui, viewport| {
+                                let Some(lines) = lines else {
+                                    return 0.0;
+                                };
+                                let width = (ui.available_width() * 2.0).round() / 2.0;
+                                let changed = view.sync(
+                                    &view::Source {
+                                        lines,
+                                        clock,
+                                        filter: &filter,
+                                        find: &needle,
+                                    },
+                                    width,
+                                );
+                                if changed && let Some(f) = search.find.as_mut() {
+                                    f.hits_changed(view);
                                 }
-                                Some(id) => {
-                                    if let Some(s) = world.social.ims.iter_mut().find(|s| s.other == id) {
-                                        s.unread = 0;
+                                let mark = (!needle.is_empty()).then_some(Mark { needle: &needle, wash });
+                                view.show(ui, viewport, clock.first, &mut |ui, row, painted| {
+                                    let Some(line) = lines.get(row.line) else {
+                                        return;
+                                    };
+                                    draw_line(ui, &mut env, line, row.look, mark.filter(|_| row.hit));
+                                    if painted && current == Some(row.line) {
+                                        find::current_marker(ui, p);
                                     }
-                                    let w: &World = world;
-                                    if let Some(s) = w.social.ims.iter().find(|s| s.other == id) {
-                                        let lines: Vec<&crate::world::ChatLine> = s.lines.iter().filter(keep).collect();
-                                        conversation(
-                                            ui,
-                                            p,
-                                            icons,
-                                            emoji,
-                                            pics,
-                                            w,
-                                            &mut st.wanted_names,
-                                            &lines,
-                                            &mut st.wanted_pics,
-                                            &own_name,
-                                        );
-                                    }
-                                }
+                                })
                             });
+                        if out.inner != 0.0 {
+                            // rows above changed height: what is in sight stays
+                            let mut state = out.state;
+                            state.offset.y += out.inner;
+                            state.store(ui.ctx(), out.id);
+                        }
                     });
+                if let Some(f) = search.find.as_mut() {
+                    ui.add_space(4.0);
+                    if find::bar(ui, p, f, view) {
+                        search.find = None;
+                        ui.ctx().memory_mut(|m| m.request_focus(conv_input));
+                    }
+                }
                 ui.add_space(4.0);
                 // input + emoji
                 let hint = match st.selected {
@@ -1269,7 +1431,7 @@ pub fn show(
                         let field_w = (ui.available_width() - EMOJI_BTN_W - ui.spacing().item_spacing.x - 2.0).max(40.0);
                         let r = ui.add(
                             egui::TextEdit::singleline(&mut st.conv_input)
-                                .id(egui::Id::new("conv_input"))
+                                .id(conv_input)
                                 .hint_text(hint)
                                 .desired_width(field_w),
                         );

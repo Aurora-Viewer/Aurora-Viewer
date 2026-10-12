@@ -4269,3 +4269,55 @@ ui-options-name-tag-style-help = Plaque : une plaque arrondie en verre au-dessus
 ui-options-name-tags-plate = Plaque
 ui-options-name-tags-classic = Classique
 ui-options-tag-colors-classic-only = Utilisées par les étiquettes classiques.
+ui-chat-day = { $day } { $month } { $year }
+ui-options-chat-logs = Historique des conversations
+ui-options-chat-logs-im = Enregistrer IM et groupes
+ui-options-chat-logs-im-help = Écrit chaque message privé, chat de groupe et conférence dans un fichier texte du dossier de ce compte, pour le retrouver à la prochaine ouverture de la conversation.
+ui-options-chat-logs-nearby = Enregistrer le chat local
+ui-options-chat-logs-nearby-help = Écrit aussi le chat local dans le fichier « chat » de ce compte. Désactivé par défaut : le chat local contient ce que disent toutes les personnes autour de vous.
+ui-options-chat-logs-show = Historique à l'ouverture
+ui-options-chat-logs-show-help = Quand une conversation s'ouvre, la fin de son fichier est affichée en gris au-dessus des nouveaux messages.
+ui-options-chat-logs-dated = Fichiers datés
+ui-options-chat-logs-dated-help = Un fichier par mois pour chaque conversation (nom-2026-10) et un par jour pour le chat local (chat-2026-10-12), au lieu d'un seul fichier qui grandit.
+ui-options-chat-logs-note = Ces fichiers sont du texte lisible par toute personne qui a accès à cet ordinateur. Ils restent sur cette machine, séparés pour chaque compte et chaque grille, et ne sont jamais joints à un rapport de bug.
+ui-options-chat-logs-open = Ouvrir le dossier
+ui-options-chat-logs-erase = Effacer les historiques de ce compte…
+ui-options-chat-logs-erase-title = Effacer les historiques de ce compte ?
+ui-options-chat-logs-erase-text = Tous les fichiers de conversations de ce compte sur cette grille sont supprimés du disque : messages privés, groupes, conférences et chat local. Cette action est définitive. Les autres comptes ne sont pas touchés.
+ui-options-chat-logs-erase-confirm = Effacer
+ui-options-chat-logs-no-account = Connectez-vous pour voir le dossier de ce compte.
+ui-options-chat-logs-erased = { $count ->
+    [one] { $count } fichier effacé.
+   *[other] { $count } fichiers effacés.
+    }
+ui-options-chat-logs-erase-failed = Certains fichiers n'ont pas pu être effacés.
+ui-chat-filter-conversation = Filtrer la conversation (Ctrl+F : rechercher)
+ui-chat-filter = Filtrer…
+ui-chat-find-previous = Résultat précédent (Entrée)
+ui-chat-find-next = Résultat suivant (Maj+Entrée)
+ui-chat-find-none = Aucun résultat
+ui-chat-find-count = { $current } / { $total }
+ui-chat-find-close = Fermer la recherche (Échap)
+ui-history-title = Historique : { $name }
+ui-history-reading = Lecture du fichier…
+ui-history-none = Aucun historique enregistré pour cette conversation.
+ui-history-older = Page précédente (plus ancienne)
+ui-history-newer = Page suivante (plus récente)
+ui-history-page = Page { $page } / { $pages }
+ui-history-messages = { $count ->
+    [one] { $count } message
+   *[other] { $count } messages
+    }
+ui-history-find-end = fin de l'historique
+demo-chatlog-line-1 = Coucou ! Tu as vu la nouvelle version d'Aurora ?
+demo-chatlog-line-2 = Pas encore, je me connecte ce soir.
+demo-chatlog-line-3 = Les notes sont ici : https://example.invalid/notes
+demo-chatlog-line-4 = On en reparle demain ?
+demo-chatlog-line-5 = La place Aurora est superbe la nuit.
+demo-chatlog-line-6 = Oui ! J'y retourne dès que possible 🌌
+demo-chatlog-system = Votre correspondant est en ligne.
+demo-chatlog-new = Me revoilà ! On se retrouve sur la place Aurora ?
+demo-chatlog-offline-1 = Tu es là ?
+demo-chatlog-offline-2 = Je te laisse un message pour plus tard.
+demo-chatlog-offline-3 = Rappelle-moi quand tu te connectes 🙂
+world-im-saved = (Enregistré le { $day } { $month } { $year } à { $time })

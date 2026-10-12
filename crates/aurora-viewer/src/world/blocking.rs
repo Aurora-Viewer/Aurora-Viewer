@@ -26,6 +26,26 @@ impl World {
         if self.mutes.check_timeout(self.cache_dir.as_deref()) {
             self.restore_deferred_group_chats();
         }
+        self.request_offline_messages_once();
+    }
+
+    /// LLIMProcessing::requestOfflineMessages, polled every frame: once our
+    /// avatar is there, the region's capabilities came and the block list
+    /// is loaded (or its request timed out), since offers from blocked
+    /// residents are among what comes back.
+    fn request_offline_messages_once(&mut self) {
+        if self.offline_im_requested || !self.mutes.is_loaded() {
+            return;
+        }
+        let caps = self
+            .main_region
+            .and_then(|h| self.regions.get(&h))
+            .is_some_and(|r| !r.caps.is_empty());
+        if !caps || self.objects.index_of_uuid(&self.agent_id).is_none() {
+            return;
+        }
+        self.offline_im_requested = true;
+        self.groups.out.push(NetCommand::RequestOfflineMessages);
     }
 
     /// MuteListUpdate / UseCachedMuteList answered.
