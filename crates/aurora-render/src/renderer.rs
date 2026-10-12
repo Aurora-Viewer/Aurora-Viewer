@@ -1183,47 +1183,6 @@ fn cull_cmds_to_view(view_proj: Mat4, list: &[DrawCmd]) -> Vec<DrawCmd> {
         .collect()
 }
 
-/// Fullscreen-triangle pipeline with one bind group (filters, blits).
-pub(crate) fn make_pipeline_simple(
-    device: &wgpu::Device,
-    module: &wgpu::ShaderModule,
-    layout: &wgpu::BindGroupLayout,
-    label: &'static str,
-    vs: &'static str,
-    fs: &'static str,
-    format: wgpu::TextureFormat,
-) -> wgpu::RenderPipeline {
-    let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some(label),
-        bind_group_layouts: &[Some(layout)],
-        immediate_size: 0,
-    });
-    make_pipeline(
-        device,
-        module,
-        &pl,
-        PipeDesc {
-            label,
-            vs,
-            fs: Some(fs),
-            vb: Vb::None,
-            cull: None,
-            blend: None,
-            write_mask: wgpu::ColorWrites::ALL,
-            depth_write: false,
-            depth_compare: wgpu::CompareFunction::Always,
-            a2c: false,
-            samples: 1,
-            format: Some(format),
-            gbuf: false,
-            depth_format: None,
-            depth_bias: Default::default(),
-            constants: &[],
-            polygon_line: false,
-        },
-    )
-}
-
 fn make_pipeline(device: &wgpu::Device, module: &wgpu::ShaderModule, layout: &wgpu::PipelineLayout, d: PipeDesc) -> wgpu::RenderPipeline {
     let mesh_bufs = [Some(vertex_layout()), Some(skin_layout())];
     let part_bufs = [Some(particle_layout())];
@@ -4211,7 +4170,7 @@ impl Backend {
                 }
             }
             if c.finish {
-                self.probes.filter(&self.device, &mut encoder, c.slot);
+                self.probes.filter(&mut encoder, c.slot);
             }
         }
 
