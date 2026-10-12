@@ -145,6 +145,17 @@ fn caption(ui: &mut egui::Ui, p: &Palette, text: &str) {
 
 /// Height of the buttons along the bottom of the screen.
 const BAR_BUTTON: f32 = 30.0;
+/// From the bottom of the screen to these buttons.
+const BAR_MARGIN: f32 = 28.0;
+/// Kept free between the cards and the line of these buttons, and between
+/// the brand and the top of the window.
+const BAR_GAP: f32 = 10.0;
+/// The brand and the login card stand a little above the middle.
+const CENTER_OFFSET: f32 = -10.0;
+/// Side of the logo over the login card, and what is left of it in a window
+/// too low for the whole block.
+const LOGO: f32 = 150.0;
+const LOGO_MIN: f32 = 64.0;
 
 /// Community link with its icon and name; `url` empty = not configured.
 fn link_button(ui: &mut egui::Ui, p: &Palette, icon: &str, name: &str, url: &str) {
@@ -298,6 +309,9 @@ fn version_panel(ui: &mut egui::Ui, p: &Palette, icons: &Icons, info: &LoginInfo
     check_updates
 }
 
+/// Side of the mark after the title of a news that opens a link.
+const LINK_MARK: f32 = 13.0;
+
 /// News card, `height` tall whatever the number of news (the list scrolls).
 fn news_panel(ui: &mut egui::Ui, p: &Palette, icons: &Icons, info: &LoginInfo, height: f32) {
     const MARGIN: i8 = 16;
@@ -328,10 +342,17 @@ fn news_panel(ui: &mut egui::Ui, p: &Palette, icons: &Icons, info: &LoginInfo, h
                             if !n.date.is_empty() {
                                 ui.label(RichText::new(&n.date).size(11.0).color(p.muted_dim));
                             }
+                            // a title of several lines leaves the link mark its
+                            // place: it stood beyond the card, which grew wider
+                            let mark = if has_url { LINK_MARK + ui.spacing().item_spacing.x } else { 0.0 };
+                            let room = ui.available_width() - mark;
                             ui.horizontal(|ui| {
-                                ui.add(egui::Label::new(RichText::new(&n.title).size(14.0).strong().color(p.ink)).wrap());
+                                ui.scope(|ui| {
+                                    ui.set_max_width(room);
+                                    ui.add(egui::Label::new(RichText::new(&n.title).size(14.0).strong().color(p.ink)).wrap());
+                                });
                                 if has_url {
-                                    let (r, _) = ui.allocate_exact_size(Vec2::splat(13.0), Sense::hover());
+                                    let (r, _) = ui.allocate_exact_size(Vec2::splat(LINK_MARK), Sense::hover());
                                     img(ui, icons, "external-link-filled", r, p.muted);
                                 }
                             });
@@ -374,13 +395,35 @@ pub fn show(
 
     // ---- brand + login card (center)
     let mut login_card = egui::Rect::NOTHING;
-    egui::Area::new(egui::Id::new("login_area"))
-        .anchor(egui::Align2::CENTER_CENTER, Vec2::new(0.0, -10.0))
+    let area = egui::Id::new("login_area");
+    // In a low window (1280 × 720) the centred block would reach the line of
+    // buttons along the bottom: the news, as tall as the card, then stood
+    // over the version and Quit. The block moves up by what it needs, and
+    // the logo gives up the height still missing (the height of the block
+    // is the one of the frame before).
+    let buttons_top = screen.bottom() - BAR_MARGIN - BAR_BUTTON;
+    let lowest = buttons_top - BAR_GAP;
+    let logo_drawn = area.with("logo");
+    let last = ctx
+        .memory(|m| m.area_rect(area))
+        .map(|rect| (rect.height(), ctx.data(|d| d.get_temp::<f32>(logo_drawn)).unwrap_or(0.0)));
+    let logo_size = last.map_or(LOGO, |(height, before)| {
+        (lowest - BAR_GAP - (height - before)).clamp(LOGO_MIN, LOGO).round()
+    });
+    let drawn = if logo.is_some() { logo_size } else { 0.0 };
+    let lift = last.map_or(0.0, |(height, before)| {
+        let height = height - before + drawn;
+        let top = screen.center().y + CENTER_OFFSET - height / 2.0;
+        (top + height - lowest).min(top - BAR_GAP).max(0.0)
+    });
+    ctx.data_mut(|d| d.insert_temp(logo_drawn, drawn));
+    egui::Area::new(area)
+        .anchor(egui::Align2::CENTER_CENTER, Vec2::new(0.0, CENTER_OFFSET - lift))
         .show(&ctx, |ui| {
             ui.set_width(card_w);
             ui.vertical_centered(|ui| {
                 if let Some(l) = logo {
-                    let r = ui.add(egui::Image::new(l).fit_to_exact_size(Vec2::splat(150.0))).rect;
+                    let r = ui.add(egui::Image::new(l).fit_to_exact_size(Vec2::splat(logo_size))).rect;
                     // soft light behind the logo (additive)
                     let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("halo")));
                     super::aurora_bg::radial_glow(&painter, r.center(), 150.0, p.violet, 0.42);
@@ -631,7 +674,9 @@ pub fn show(
             .fixed_pos(egui::pos2(left, login_card.top()))
             .show(&ctx, |ui| {
                 ui.set_width(col_w);
-                news_panel(ui, p, icons, info, login_card.height());
+                // (a card too tall to be moved up enough: the news stop
+                // above the line of buttons)
+                news_panel(ui, p, icons, info, login_card.height().min(lowest - login_card.top()));
             });
         egui::Area::new(egui::Id::new("login_version"))
             .pivot(egui::Align2::LEFT_BOTTOM)
@@ -657,7 +702,7 @@ pub fn show(
 
     // ---- community links (bottom left)
     egui::Area::new(egui::Id::new("login_links"))
-        .anchor(egui::Align2::LEFT_BOTTOM, Vec2::new(32.0, -28.0))
+        .anchor(egui::Align2::LEFT_BOTTOM, Vec2::new(32.0, -BAR_MARGIN))
         .show(&ctx, |ui| {
             ui.label(
                 RichText::new(aurora_i18n::tr!("ui-login-join-the-community"))
@@ -679,7 +724,7 @@ pub fn show(
 
     // ---- version + quit (bottom right)
     egui::Area::new(egui::Id::new("login_quit"))
-        .anchor(egui::Align2::RIGHT_BOTTOM, Vec2::new(-32.0, -28.0))
+        .anchor(egui::Align2::RIGHT_BOTTOM, Vec2::new(-32.0, -BAR_MARGIN))
         .show(&ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 14.0;
@@ -840,6 +885,102 @@ mod tests {
             &mut settings,
         );
         assert!(matches!(action, LoginAction::Login));
+    }
+
+    /// At 1280 × 720 the news, as tall as the login card, stood over the
+    /// version and the Quit button of the line along the bottom.
+    #[test]
+    fn the_cards_stay_above_the_line_of_buttons_in_a_low_window() {
+        let ctx = egui::Context::default();
+        let p = crate::theme::Theme::default().palette();
+        let icons = Icons::default();
+        let info = LoginInfo::preview_release("0.3.0");
+        let logo = ctx.load_texture("logo", egui::ColorImage::filled([4, 4], Color32::WHITE), Default::default());
+        let rect = |name: &str| {
+            ctx.memory(|m| m.area_rect(egui::Id::new(name)))
+                .expect("an area of the login screen")
+        };
+        // (the fonts of a test make the block some 60 px lower than in the
+        // viewer: 680 here is what 740 is there, the block only moves up; at
+        // 640 the logo shrinks too)
+        for (size, room) in [
+            (Vec2::new(1280.0, 680.0), false),
+            (Vec2::new(1280.0, 640.0), false),
+            (Vec2::new(1600.0, 900.0), true),
+            (Vec2::new(1920.0, 1080.0), true),
+        ] {
+            let mut settings = Settings::default();
+            let mut form = LoginForm::default();
+            for _ in 0..3 {
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        show(ui, &p, &icons, Some(&logo), &mut settings, &mut form, &info, None);
+                    },
+                );
+                output.textures_delta.clear();
+            }
+            let (block, news, quit) = (rect("login_area"), rect("login_news"), rect("login_quit"));
+            assert!(block.top() >= BAR_GAP - 0.5, "{size:?}: the brand stays in the window ({block:?})");
+            assert!(
+                block.bottom() <= quit.top(),
+                "{size:?}: login card {block:?} over the buttons {quit:?}"
+            );
+            assert!(news.bottom() <= quit.top(), "{size:?}: news {news:?} over the buttons {quit:?}");
+            // the news keep the height of the login card, on its line (their
+            // frame is drawn around the same height: two pixels more)
+            assert!((news.bottom() - block.bottom()).abs() <= 2.5, "{size:?}: {news:?} / {block:?}");
+            if room {
+                let middle = size.y / 2.0 + CENTER_OFFSET;
+                assert!(
+                    (block.center().y - middle).abs() < 1.0,
+                    "{size:?}: the block is centred ({block:?})"
+                );
+            } else {
+                assert!(
+                    block.center().y < size.y / 2.0 + CENTER_OFFSET - 1.0,
+                    "{size:?}: the block moved up"
+                );
+            }
+        }
+    }
+
+    /// A news with a link and a title of several lines made its card wider
+    /// than the version card above it: the link mark stood after a title
+    /// that already took the whole width.
+    #[test]
+    fn a_long_news_title_with_a_link_keeps_the_card_width() {
+        let ctx = egui::Context::default();
+        let p = crate::theme::Theme::default().palette();
+        let icons = Icons::default();
+        let mut info = LoginInfo::preview_release("0.3.0");
+        let plain = info.news.clone();
+        info.news.insert(
+            0,
+            super::super::news::NewsItem {
+                date: "2026-10-13".into(),
+                title: "A title long enough to run over several lines of the news card of the login screen".into(),
+                summary: "Text.".into(),
+                url: "https://example.org/news".into(),
+            },
+        );
+        let width = |info: &LoginInfo| {
+            let mut used = 0.0;
+            for _ in 0..2 {
+                let mut output = ctx.run_ui(Default::default(), |ui| {
+                    ui.set_width(330.0);
+                    used = ui.scope(|ui| news_panel(ui, &p, &icons, info, 400.0)).response.rect.width();
+                });
+                output.textures_delta.clear();
+            }
+            used
+        };
+        let with_link = width(&info);
+        info.news = plain;
+        assert_eq!(with_link, width(&info), "the card is as wide with the link as without");
     }
 
     #[test]
