@@ -669,6 +669,10 @@ struct Pipelines {
     refl_obj: wgpu::RenderPipeline,
     shadow: wgpu::RenderPipeline,
     post: wgpu::RenderPipeline,
+    /// Faces drawn under a pixel (drawn_pick.rs): culled like the scene's
+    /// one-sided and two-sided faces.
+    pick: wgpu::RenderPipeline,
+    pick_2s: wgpu::RenderPipeline,
 }
 
 struct Ssao {
@@ -910,7 +914,7 @@ struct FrameGroups {
     /// Water and mirror reflection passes (own uniform buffers).
     /// Water reflection, mirror and reflection probe capture passes.
     /// [3], [4]: impostor pictures.
-    refl: [wgpu::BindGroup; 6],
+    refl: [wgpu::BindGroup; 7],
 }
 
 /// The passes of a frame and all they own. Lives on the render thread, or
@@ -934,7 +938,7 @@ pub(crate) struct Backend {
     pipelines: Pipelines,
     ssao: Ssao,
     frame_buffer: wgpu::Buffer,
-    refl_buffers: [wgpu::Buffer; 6],
+    refl_buffers: [wgpu::Buffer; 7],
     hud_depth: Option<(u32, u32, wgpu::TextureView)>,
     probes: crate::probes::Probes,
     groups: FrameGroups,
@@ -968,6 +972,8 @@ pub(crate) struct Backend {
     gpu_cull: bool,
     /// Depth under the cursor (hover without waiting, clicks).
     depth_pick: crate::pick::DepthPick,
+    /// Faces drawn under a clicked pixel (drawn_pick.rs).
+    drawn_pick: crate::drawn_pick::DrawnPick,
     impostors: Impostors,
     cull_cpu: Vec<crate::occlusion::CullDraw>,
     particle_buffer: wgpu::Buffer,
@@ -1815,6 +1821,7 @@ impl Backend {
             mk_frame_buffer("impostor uniforms 0"),
             mk_frame_buffer("impostor uniforms 1"),
             mk_frame_buffer("HUD uniforms"),
+            mk_frame_buffer("drawn pick uniforms"),
         ];
         let probes = crate::probes::Probes::new(&device, RenderSettings::default().probe_slots);
 
@@ -1972,6 +1979,7 @@ impl Backend {
             mapped_at_creation: false,
         });
         let depth_pick = crate::pick::DepthPick::new(&device);
+        let drawn_pick = crate::drawn_pick::DrawnPick::new(&device, DEPTH_FORMAT);
         let occlusion = crate::occlusion::Occlusion::new(&device);
         let cull = GpuCull::new(&device);
         let impostors = Impostors::new(&device, &frame_layout, &records_layout, &tex_layout, msaa_samples, settings.ssr);
@@ -2029,6 +2037,7 @@ impl Backend {
             cull,
             gpu_cull,
             depth_pick,
+            drawn_pick,
             impostors,
             cull_cpu: Vec::new(),
             particle_buffer,
@@ -2411,6 +2420,17 @@ impl Backend {
             ..base("reflection sky", "vs_sky", "fs_sky")
         });
         let refl_terrain = refl("reflection terrain", "vs_terrain", "fs_terrain", Vb::Mesh);
+        // faces drawn under a pixel: record, depth and surface coordinates
+        let pick_desc = |label: &'static str, cull: Option<wgpu::Face>| PipeDesc {
+            cull,
+            samples: 1,
+            format: Some(crate::drawn_pick::FORMAT),
+            write_mask: wgpu::ColorWrites::ALL,
+            depth_compare: wgpu::CompareFunction::Greater,
+            ..base(label, "vs_pick", "fs_pick")
+        };
+        let pick = pipe(pick_desc("drawn pick", Some(wgpu::Face::Back)));
+        let pick_2s = pipe(pick_desc("drawn pick 2s", None));
         let refl_obj = refl("reflection objects", "vs_main", "fs_reflect", Vb::Mesh);
         let shadow = make_pipeline(
             device,
@@ -2503,6 +2523,8 @@ impl Backend {
             refl_obj,
             shadow,
             post,
+            pick,
+            pick_2s,
         }
     }
 
@@ -2668,7 +2690,7 @@ impl Backend {
         device: &wgpu::Device,
         layout: &wgpu::BindGroupLayout,
         frame_buffer: &wgpu::Buffer,
-        refl_buffers: &[wgpu::Buffer; 6],
+        refl_buffers: &[wgpu::Buffer; 7],
         shadow_view: &wgpu::TextureView,
         shadow_sampler: &wgpu::Sampler,
         lin_clamp: &wgpu::Sampler,
@@ -2797,6 +2819,15 @@ impl Backend {
                 mk(
                     "frame HUD",
                     &refl_buffers[5],
+                    &dummies.white,
+                    &dummies.black,
+                    &dummies.black,
+                    &dummies.black,
+                    &dummies.depth,
+                ),
+                mk(
+                    "frame drawn pick",
+                    &refl_buffers[6],
                     &dummies.white,
                     &dummies.black,
                     &dummies.black,
@@ -3295,11 +3326,13 @@ impl Backend {
 
     /// What a frame gives back: its statistics, the readbacks that have
     /// arrived, the packet's buffers.
-    fn result(&self, index: u64, stats: RenderStats, captured: Option<(u32, u32, Vec<u8>)>, spent: Spent) -> FrameResult {
+    fn result(&mut self, index: u64, stats: RenderStats, captured: Option<(u32, u32, Vec<u8>)>, spent: Spent) -> FrameResult {
         FrameResult {
             index,
             stats,
             hover: self.depth_pick.latest(),
+            picks: self.depth_pick.take_click_answers(),
+            drawn: self.drawn_pick.take_answers(),
             cull: self.cull.last,
             captured,
             spent,
@@ -3321,6 +3354,8 @@ impl Backend {
             self.queue.submit(upload_cmds);
         }
         uploads.after_submit();
+        // (nothing was drawn for the pixel this frame began to answer)
+        self.drawn_pick.abandon();
         self.result(index, stats, None, spent)
     }
 
@@ -3337,6 +3372,8 @@ impl Backend {
             surface,
             settings,
             hover,
+            picks,
+            drawn,
             capture: wanted,
         } = packet;
         let mut stats = RenderStats::default();
@@ -3346,6 +3383,19 @@ impl Backend {
         self.occlusion.harvest();
         self.cull.harvest();
         self.depth_pick.harvest();
+        self.depth_pick.harvest_clicks();
+        self.drawn_pick.harvest();
+        self.drawn_pick.ask(drawn);
+        // the depth under the clicks made on the last frame drawn, before
+        // anything of this frame replaces it (targets, depth, camera)
+        self.depth_pick.submit_clicks(
+            &self.device,
+            &self.queue,
+            &self.targets.depth_ss,
+            (self.config.width, self.config.height),
+            self.last_inv_vp,
+            picks,
+        );
         // the window and the settings as the main thread had them for this frame
         self.apply_surface(surface);
         stats.present_mode = Some(self.config.present_mode);
@@ -3477,6 +3527,16 @@ impl Backend {
             main.mirror_box = m.world_to_box.to_cols_array_2d();
         }
         self.queue.write_buffer(&self.frame_buffer, 0, bytemuck::bytes_of(&main));
+        // a pixel whose drawn faces are asked: the same camera, narrowed to it
+        let main_vp = Mat4::from_cols_array_2d(&main.view_proj);
+        let drawn_px = self.drawn_pick.begin((self.config.width, self.config.height), main_vp.inverse());
+        if let Some((x, y)) = drawn_px {
+            let narrow = crate::drawn_pick::narrow(x, y, self.config.width, self.config.height);
+            let mut u = main;
+            u.view_proj = (narrow * main_vp).to_cols_array_2d();
+            u.eye_view_proj = (narrow * Mat4::from_cols_array_2d(&main.eye_view_proj)).to_cols_array_2d();
+            self.queue.write_buffer(&self.refl_buffers[6], 0, bytemuck::bytes_of(&u));
+        }
         if let Some(view) = lists.hud_view {
             let mut hud = main;
             hud.view_proj = view.matrix().to_cols_array_2d();
@@ -4456,6 +4516,54 @@ impl Backend {
 
         prof.mark("scene_b");
         mark(&mut encoder, MARK_SCENE_END);
+        // ---- faces drawn under a clicked pixel: opaque and masked, then
+        // blended ones in front of them (only in the frame of a click)
+        if drawn_px.is_some() {
+            let layers: [&[(&wgpu::RenderPipeline, (u64, u32), Option<usize>)]; 2] = [
+                &[
+                    (&self.pipelines.pick, rg.terrain, None),
+                    (&self.pipelines.pick, rg.opaque, Some(0)),
+                    (&self.pipelines.pick_2s, rg.opaque_2s, Some(1)),
+                    (&self.pipelines.pick, rg.mask, Some(2)),
+                    (&self.pipelines.pick_2s, rg.mask_2s, Some(3)),
+                ],
+                &[(&self.pipelines.pick, rg.blend, None)],
+            ];
+            for (k, draws) in layers.iter().enumerate() {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("drawn pick"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &self.drawn_pick.views[k],
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &self.drawn_pick.depth,
+                        depth_ops: Some(wgpu::Operations {
+                            // the blended faces behind the opaque ones stay hidden
+                            load: if k == 0 { wgpu::LoadOp::Clear(0.0) } else { wgpu::LoadOp::Load },
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                bind_mesh(&mut pass, &self.groups.refl[6]);
+                for (pipe, range, bin) in draws.iter() {
+                    draw(&mut pass, pipe, *range);
+                    if let Some(b) = bin {
+                        draw_bin(&mut pass, Some(pipe), *b, *b);
+                    }
+                }
+            }
+            self.drawn_pick.encode_copy(&mut encoder);
+        }
         // depth under the cursor, read back in a later frame
         self.depth_pick.encode_hover(
             &self.device,
@@ -4742,11 +4850,15 @@ impl Backend {
         self.occlusion.after_submit();
         self.cull.after_submit();
         self.depth_pick.after_submit();
+        self.drawn_pick.after_submit();
         prof.mark("submit");
         let encode_ms = t0.elapsed().as_secs_f32() * 1000.0;
         self.queue.present(surface_tex);
         stats.presented = true;
         let _ = self.device.poll(wgpu::PollType::Poll);
+        // a click answered by now goes back with this frame's result
+        self.depth_pick.harvest_clicks();
+        self.drawn_pick.harvest();
         prof.mark("present");
         let phase = |step: &str| RENDER_PHASES.iter().position(|p| *p == step);
         stats.cpu_phases[0] = (t0 - t_acquire).as_secs_f32() * 1000.0;

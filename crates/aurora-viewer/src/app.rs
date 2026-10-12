@@ -27,6 +27,7 @@ use winit::window::{CursorGrabMode, Window, WindowId};
 mod ao;
 mod bug_report;
 mod chat_commands;
+mod click_pick;
 mod color_picker;
 mod context_menu;
 mod hud_drag;
@@ -139,6 +140,8 @@ pub struct App {
     cursor_grabbed: bool,
     alt: bool,
     left_down: bool,
+    /// Clicks that wait for the depth under them, and what follows them.
+    clicks: click_pick::ClickWait,
     /// Mouse travel while the right button is held (click vs orbit drag).
     right_moved: f32,
     /// Open right-click menu.
@@ -501,6 +504,7 @@ impl App {
             cursor_grabbed: false,
             alt: false,
             left_down: false,
+            clicks: Default::default(),
             right_moved: 0.0,
             context_menu: None,
             mouse_mode: MouseMode::None,
@@ -1497,6 +1501,11 @@ impl App {
         if on == self.cursor_grabbed {
             return;
         }
+        if on && self.clicks.scripted() {
+            // AURORA_DEMO_CLICKS: several camera drags a second must not
+            // take the real cursor of someone using the PC
+            return;
+        }
         if on {
             let ok = g
                 .window
@@ -1520,6 +1529,11 @@ impl App {
 
     /// Mouse motion: mouselook, camera drags (steering, Alt), right drag orbit.
     fn camera_mouse_delta(&mut self, dx: f32, dy: f32) {
+        if self.clicks.waiting() {
+            // behind the click that will say what this motion drags
+            self.clicks.hold(click_pick::Held::Motion(dx, dy));
+            return;
+        }
         if self.hud_drag.is_some() {
             return;
         }
@@ -1594,13 +1608,7 @@ impl App {
                         }
                     }
                 }
-                Step::Log => log::info!(
-                    "demo camera f{}: {} (mouse {:?}, agent yaw {:.2})",
-                    self.frame_count,
-                    self.camera.describe(),
-                    self.mouse_mode,
-                    self.world.agent.yaw
-                ),
+                Step::Log => self.demo_note(click_pick::DemoNote::Camera(self.frame_count)),
             }
         }
     }
@@ -1853,7 +1861,14 @@ impl App {
         })
     }
 
+    /// Left press on the world, past the build tools (LLToolPie).
     fn on_left_press(&mut self) {
+        self.click(click_pick::Click::World);
+    }
+
+    /// What `on_left_press` does, run by `click`: again from the start when
+    /// the depth under the cursor has come back (app/click_pick.rs).
+    fn world_press(&mut self) {
         self.left_down = true;
         if self.hud_drag_requested()
             && self.settings.show_huds
@@ -1869,9 +1884,9 @@ impl App {
                 .and_then(|view| crate::build::hud_drag::HudDrag::start(&self.world, idx, view, self.cursor_pos));
             return;
         }
-        let Some(g) = self.gfx.as_mut() else {
+        if self.gfx.is_none() {
             return;
-        };
+        }
         let (x, y) = self.cursor_pos;
         if let Some((idx, point, hud_ray)) = self.scene.hud_pick(&self.world, (x, y), true) {
             self.media.build_mode = self.build.open;
@@ -1894,14 +1909,15 @@ impl App {
             }
             return;
         }
-        let ray = g.renderer.cursor_ray(x, y);
-        let hit = self.scene.action_point(
-            &self.world,
-            ray,
-            g.renderer.pick_world(x, y),
-            self.build.open,
-            self.settings.draw_distance,
-        );
+        let Some(picked) = self.click_pick() else {
+            return;
+        };
+        let (ray, depth) = (picked.ray, picked.depth);
+        let hit = self
+            .scene
+            .action_point(&self.world, ray, depth, self.build.open, self.settings.draw_distance);
+        // a rigged mesh or a worn mesh shown there: the GPU alone poses it
+        let shown = self.designate(crate::scene::drawn::Gesture::Touch, &picked, hit);
         // on our avatar: a surface inside its box under the cursor (nothing
         // in front of it); or, when the ray goes through the box without
         // touching anything (body not drawn yet), close to the body's axis
@@ -1949,6 +1965,21 @@ impl App {
                     .and_then(|i| self.world.objects.get(i))
                     .map(|o| (o.key.local_id, o.click_action))
             );
+        }
+        // the click acts on the rigged mesh it lands on, as on any object:
+        // also one we wear, like the scripted attachments Firestorm lets
+        // us touch (its rigged ones are out of the left click's reach)
+        if !self.alt
+            && !self.ctrl
+            && !self.shift
+            && !self.build.open
+            && !self.camera.mouselook()
+            && let Some(d) = shown
+            && let Some(target) = crate::interaction::target(&self.world, d.idx, &self.interactions.props)
+        {
+            let surface = self.scene.drawn_surface(&self.world, &d);
+            self.activate_object_action_at(target, d.idx, d.hit.point, ray, surface);
+            return;
         }
         if !on_avatar
             && !self.alt
@@ -2352,6 +2383,7 @@ impl App {
         self.down.clear();
         self.right_drag = false;
         self.mic_button_held = false;
+        self.drop_clicks();
         self.on_left_release();
         self.release_object_hold();
         if self.temp_run.take().is_some() && !self.always_run {
@@ -2381,6 +2413,7 @@ impl App {
     /// Log out, save the window, layout, inventory cache and settings, exit.
     fn shutdown(&mut self, event_loop: &ActiveEventLoop) {
         self.record_inventory_logout();
+        self.drop_clicks();
         if self.hud_drag.is_some() {
             self.on_left_release();
         }
@@ -2647,29 +2680,14 @@ impl App {
         if id != 0 && self.frame_count == click_frame {
             if mode.ends_with("-build") {
                 self.build.open_build(crate::build::Tool::Edit);
-                self.build_mouse_down();
+                self.click(click_pick::Click::Build);
             } else {
                 self.on_left_press();
             }
             if id != 975 && id != 982 {
                 self.on_left_release();
             }
-            log::info!(
-                "demo action click: {mode}; dialog={}, seated={}, contents={}, parcel_playing={}, parcel_paused={}, selected={:?}, focus={:?}, media_url={}",
-                self.interactions.dialog.is_some(),
-                self.world.agent.is_sitting(),
-                self.interactions
-                    .contents
-                    .as_ref()
-                    .and_then(|c| c.result.as_ref())
-                    .and_then(|r| r.as_ref().ok())
-                    .map_or(0, Vec::len),
-                self.media.parcel_playing(),
-                self.media.find(&crate::media::MediaKey::Parcel).is_some_and(|m| m.paused),
-                self.build.selection,
-                self.camera.focus_point(),
-                self.interactions.media_url.is_some(),
-            );
+            self.demo_note(click_pick::DemoNote::Action(mode.clone()));
         }
         if (id == 975 || id == 982) && self.frame_count == 300 {
             self.cursor_pos.0 += 30.0;
@@ -2730,6 +2748,8 @@ impl App {
     }
 
     /// Left press while building: handles, selection, create, terraform.
+    /// Run by `click`; false also when it stopped to ask for the depth under
+    /// the cursor (`ClickWait::waiting`), to run again when it has come.
     fn build_mouse_down(&mut self) -> bool {
         if self.color_pipette() {
             self.left_down = true;
@@ -2745,9 +2765,9 @@ impl App {
         if self.build.tool == crate::build::Tool::Focus {
             return self.focus_tool_down();
         }
-        let Some(g) = self.gfx.as_mut() else {
+        if self.gfx.is_none() {
             return false;
-        };
+        }
         let (x, y) = self.cursor_pos;
         let hud = (self.build.tool == crate::build::Tool::Edit)
             .then(|| self.scene.hud_edit_pick(&self.world, (x, y)))
@@ -2755,8 +2775,16 @@ impl App {
         let (hit, target) = if let Some((idx, point, _)) = hud {
             (Some(point), Some(idx))
         } else {
-            let hit = g.renderer.pick_world(x, y);
-            (hit, hit.and_then(|p| self.scene.pick_at(&self.world, p, Instant::now())))
+            let Some(picked) = self.click_pick() else {
+                return false;
+            };
+            let hit = picked.depth;
+            // a rigged mesh is selected where it is shown (Firestorm: with
+            // the move tool only, LLToolCompTranslate)
+            match self.designate(crate::scene::drawn::Gesture::Build, &picked, hit) {
+                Some(d) => (Some(d.hit.point), Some(d.idx)),
+                None => (hit, hit.and_then(|p| self.scene.pick_at(&self.world, p, Instant::now()))),
+            }
         };
         let mods = crate::build::Mods {
             shift: self.shift,
@@ -2789,11 +2817,11 @@ impl App {
     /// Focus tool press (LLToolCamera): focus on the clicked point, then
     /// the drag zooms, orbits or pans as the tool's radio or Ctrl / Shift say.
     fn focus_tool_down(&mut self) -> bool {
-        let Some(g) = self.gfx.as_mut() else {
+        let Some(picked) = self.click_pick() else {
             return false;
         };
         let (x, y) = self.cursor_pos;
-        let hit = g.renderer.pick_world(x, y);
+        let hit = picked.depth;
         let ray = self.build.cam.ray(x, y);
         let now = Instant::now();
         if let Some(p) = hit {
@@ -2830,6 +2858,11 @@ impl App {
     }
 
     fn on_left_release(&mut self) {
+        if self.clicks.waiting() {
+            // after the press it ends, which still waits for its depth
+            self.clicks.hold(click_pick::Held::LeftRelease);
+            return;
+        }
         if self.left_down && self.color_pipette() {
             if !self.egui_ctx.is_pointer_over_egui() {
                 self.sample_build_color();
@@ -2870,6 +2903,7 @@ impl App {
     /// server's destination before showing a screen for an unknown destination,
     /// so even these local teleports remain direct.
     fn begin_teleport(&mut self, dest: String, show_progress: bool) {
+        self.drop_clicks();
         if self.hud_drag.is_some() {
             self.on_left_release();
         }
@@ -3461,6 +3495,9 @@ impl App {
             return;
         }
         self.poll_inventory_images();
+        // a click whose depth is back already (the render thread finished
+        // the last frame while this thread waited for its next one)
+        self.resolve_clicks();
         self.frame_profile.lap(Lap::Between);
         let now = Instant::now();
         if let Some(action) = self.exit_prompt.finish(!self.in_world() || self.demo, now) {
@@ -3833,6 +3870,11 @@ impl App {
             self.build
                 .update(&mut self.world, &self.settings.build, self.cursor_pos, over_ui, mods);
             self.scene.selection_wire = self.build.wire_selection(&self.world, &self.settings.build);
+            // the attachment the open menu is about, outlined like a child
+            // prim of a selection (worn objects are not selected in Aurora)
+            for idx in self.menu_outline() {
+                self.scene.selection_wire.entry(idx).or_insert(false);
+            }
             self.scene.selection_silhouettes = self.build.silhouette_selection(&self.world, &self.settings.build);
             self.flush_build();
             let camera_changed = edit_camera_frame.is_some() || panned;
@@ -4757,7 +4799,10 @@ impl App {
         self.frame_profile.lap(Lap::Tail);
         self.end_profile_frame(w, h);
         self.gfx = Some(gfx);
+        // the clicks whose depth came back with this frame's hand-over
+        self.resolve_clicks();
         self.demo_action_steps();
+        self.demo_click_steps();
         self.demo_hud_drag_steps();
         // AURORA_DEMO_INVENTORY=offer|offer-reject: the sample offer's item
         // shown in the folder it reaches; the second rejects it at frame 700
@@ -4826,7 +4871,7 @@ impl App {
                     let handle = b.center + Vec3::Y * self.build.cam.meters_for_pixels(b.center, 45.0);
                     if let Some(cursor) = self.build.cam.project_px(handle) {
                         self.cursor_pos = cursor;
-                        self.build_mouse_down();
+                        self.click(click_pick::Click::Build);
                     }
                 } else if (801..=840).contains(&self.frame_count) {
                     self.cursor_pos.0 += 2.0;
@@ -5058,13 +5103,8 @@ impl App {
                         self.build.click_select(&mut self.world, &self.settings.build, Some(idx), false);
                         self.flush_build();
                     }
-                    crate::build::demo::Step::Press => {
-                        self.build_mouse_down();
-                    }
-                    crate::build::demo::Step::Release => {
-                        self.build.mouse_up(&mut self.world, &self.settings.build);
-                        self.flush_build();
-                    }
+                    crate::build::demo::Step::Press => self.click(click_pick::Click::Build),
+                    crate::build::demo::Step::Release => self.build_release(),
                     crate::build::demo::Step::Focus(follow) => {
                         self.settings.build.follow_edit_object = follow;
                         if let Some(idx) = self.build.sel_prims(&self.world).first().copied()
@@ -5129,11 +5169,7 @@ impl App {
                 self.cursor_pos = pos;
                 self.on_left_press();
                 self.on_left_release();
-                log::info!(
-                    "demo media click at {pos:?} (frame {}): focus {:?}",
-                    self.frame_count,
-                    self.media.focus
-                );
+                self.demo_note(click_pick::DemoNote::Media(pos, self.frame_count));
             }
             if (850..862).contains(&f) {
                 let k = (f - 850) as usize;
@@ -5172,7 +5208,7 @@ impl App {
                 (0, n) if n >= 2 => {
                     self.cursor_pos = (c[0], c[1]);
                     self.on_left_press();
-                    log::info!("demo mmo: mode {:?}, pos {:?}", self.mouse_mode, self.world.agent.position);
+                    self.demo_note(click_pick::DemoNote::Mmo);
                 }
                 // third value 1: hold the right arrow instead of the right button
                 (10, _) if c.get(2) == Some(&1.0) => {
@@ -7164,6 +7200,7 @@ impl ApplicationHandler for App {
                 self.shift = false;
                 self.right_drag = false;
                 self.mic_button_held = false;
+                self.drop_clicks();
                 self.on_left_release();
                 if self.temp_run.take().is_some() && !self.always_run {
                     self.send(NetCommand::SetAlwaysRun(false));
@@ -7269,23 +7306,8 @@ impl ApplicationHandler for App {
                     }
                     return;
                 }
-                match button {
-                    MouseButton::Right => self.on_right_button(pressed, over_ui),
-                    MouseButton::Left if pressed => {
-                        if !over_ui && self.in_world() && !self.camera.mouselook() && !self.build_mouse_down() {
-                            self.on_left_press();
-                        }
-                    }
-                    MouseButton::Left => self.on_left_release(),
-                    other => {
-                        if let Some(input) = Input::mouse(*other) {
-                            // bindable buttons (push-to-talk on the wheel click...)
-                            if !pressed || !over_ui {
-                                self.on_input(input, pressed);
-                            }
-                        }
-                    }
-                }
+                // (in its turn behind a click that waits for its depth)
+                self.mouse_input(*button, pressed, over_ui);
             }
             WindowEvent::MouseWheel { delta, .. } if !self.exit_prompt.open && !self.egui_ctx.is_pointer_over_egui() && self.in_world() => {
                 let steps = match delta {

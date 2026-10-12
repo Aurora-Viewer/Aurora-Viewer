@@ -214,6 +214,10 @@ pub struct Held {
     pub offset: glam::Vec3,
     pub position: glam::Vec3,
     pub surface: aurora_net::TouchSurface,
+    /// The surface was read from the faces the GPU drew (a rigged mesh,
+    /// scene/drawn.rs): the CPU cannot follow the cursor on it, the
+    /// touch keeps the surface of its press.
+    pub shown: bool,
     pub cursor: (f32, f32),
     pub last: Instant,
     pub physical: bool,
