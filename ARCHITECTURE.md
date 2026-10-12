@@ -138,6 +138,7 @@ Les scripts utilisent un éditeur commun (`ui/scripts.rs`, actions dans `app/scr
 
 | Dossier / fichier | Contenu |
 |---|---|
+| `build/replace.rs`, `build/replace/`, `build/ui/replace.rs` | Remplacement guidé d'une partie liée : cible verrouillée, sélection du remplaçant, options et avancement ; étapes confirmées par le serveur, copie du contenu via l'inventaire du résident, conservation des états des scripts, récupération de la configuration initiale et simulateur hors ligne |
 | `ui/inventory/document.rs`, `aurora-net/src/inventory/notecard.rs` | Cycle d’édition des documents : brouillon et sauvegarde corrélés à la fenêtre, fermeture après confirmation, refus conservant le texte ; import des notecards v1 / v2, export v2 avec longueur UTF-8 bornée et conservation des permissions des pièces jointes encore référencées |
 | `ui/inventory/embedded.rs` | Éléments intégrés aux notes : icône et nom dans le texte, aperçu / ouverture et copie dans l’inventaire, dépôt à la position du pointeur ; un caractère par élément pour conserver la sélection, la suppression et l’annulation |
 | `aurora-net/src/session/inventory_preview.rs` | Lecture des notes et scripts protégés par transfert d’inventaire du simulateur (identifiants de l’agent, de session, du propriétaire, de l’objet, de l’élément et de l’asset) ; réassemblage borné des paquets désordonnés, corrélation au simulateur et expiration |
@@ -151,7 +152,7 @@ Les scripts utilisent un éditeur commun (`ui/scripts.rs`, actions dans `app/scr
 | `world/` | État du monde reçu du réseau : objets, régions, terrain, environnement (EEP : cycles et assets de réglages dans `eep.rs`, choix local > parcelle > région > jour par défaut, environnement local et fondus dans `eep_env.rs`, listes du sélecteur d'environnement et chargement des dossiers dans `env_select.rs`), parcelle sélectionnée d'« À propos du terrain » et ses droits (`land.rs`), social, profils des avatars, inventaire, groupes (actif, épinglés), cercles de contacts et surnoms (`contact_sets.rs`), blocages, messages du bridge LSL de Firestorm (cachés), orientation des corps, regard (LookAt), carte, profils de lieux de « Lieux » et des fenêtres séparées (`place_details.rs` : région par son nom, repère, RemoteParcelRequest, ParcelInfoRequest), assets des repères et handles de leurs régions (`landmarks.rs`), historique de téléportation daté et enregistré (`tphistory.rs`)… |
 | `scene/` | Ce qu'on envoie au GPU : géométrie et LOD, textures (streaming), avatars (squelette, animations, silhouette), particules, eau, sondes de reflets, sons du monde, imposteurs, assets de réglages d'environnement (`settings.rs` : ciel, eau, cycle du jour) |
 | `ui/` | Interface egui : barres, fenêtres, options, chat, contacts (amis, groupes, cercles : `contacts.rs`), profils des avatars, « Lieux » (`places.rs` : favoris, repères, historique de téléportation) et profils de lieux (`place_details.rs`, aussi en fenêtres séparées), « À propos du terrain » (`land/`, un fichier par onglet, dialogues), choix d'un résident (`avatar_picker.rs`), page web dans une fenêtre (`web_view.rs`), choix d'une texture, inventaire, sélecteur d'environnement et « Éclairage personnel » (`environment.rs`), cartes, overlays de débogage ; sons causés par les widgets (`sound_cues.rs` : clics, touches refusées, fenêtres) ; menus clic droit : apparence commune (`menu.rs` : icône Phosphor, sous-menus, cases cochées) et entrées comme Firestorm (`context.rs` : monde, noms d'avatars, groupes) |
-| `build/` | Outils de construction comme LLFloaterTools : sélection et manipulateurs (`manip.rs`), parcours de la sélection sous le pointeur avec CTRL + molette (`cycle.rs` : unités par linkset ou prims d’un même objet, molette de haute précision), déplacement direct des HUDs (`hud_drag.rs` : racine du linkset, conversion écran / point d’attachement, écho local et MultipleObjectUpdate de position au relâchement), outils Déplacer (`grab.rs`) et Aligner (`align.rs`), terrain (`land.rs`), modifications de la sélection (`edits.rs`), matériaux et médias (`materials.rs`), contenu des objets (`contents.rs`), impact et poids (`costs.rs`), simulateur de démo (`demo_sim.rs`) ; la fenêtre et ses onglets dans `build/ui/` |
+| `build/` | Outils de construction comme LLFloaterTools : sélection et manipulateurs (`manip.rs`), régressions de sélection des parties liées et des objets entiers (`selection_tests.rs`), parcours de la sélection sous le pointeur avec CTRL + molette (`cycle.rs` : unités par linkset ou prims d’un même objet, molette de haute précision), déplacement direct des HUDs (`hud_drag.rs` : racine du linkset, conversion écran / point d’attachement, écho local et MultipleObjectUpdate de position au relâchement), outils Déplacer (`grab.rs`) et Aligner (`align.rs`), terrain (`land.rs`), modifications de la sélection (`edits.rs`), matériaux et médias (`materials.rs`), contenu des objets (`contents.rs`), impact et poids (`costs.rs`), simulateur de démo (`demo_sim.rs`) ; la fenêtre et ses onglets dans `build/ui/` |
 | `interaction.rs`, `cursors.rs`, `ui/object_actions.rs` | Règles des actions de clic 0–9, héritage, permissions, curseurs natifs Firestorm, fenêtres d'achat / paiement et liste du contenu ; transaction après confirmation |
 | `app/object_actions.rs` | Déclenchement des actions, toucher maintenu, déplacement physique, lecture de parcelle, ouverture de média et cadrage de caméra |
 | `scene/picking.rs` | Rayons contre les triangles partagés avec la géométrie affichée (prims, sculpts, meshes) ; prim réellement visée au survol et au clic gauche malgré des boîtes recouvrantes, IGNORE traverse la géométrie hors construction, informations de surface pour les scripts de toucher ; les mêmes tests sur les seuls candidats de l'index de survol |
@@ -168,7 +169,7 @@ Les scripts utilisent un éditeur commun (`ui/scripts.rs`, actions dans `app/scr
 | `ui/fonts.rs`, `ui/fonts/fallback.rs` | Polices de l'interface : police principale embarquée ou choisie, celles d'egui, puis les polices de repli du système pour les caractères que les autres n'ont pas (noms d'affichage, titres, chat : géorgien, CJK, arabe, lettres mathématiques…). `fallback.rs` : liste par écriture, première police installée qui dessine le caractère témoin, fichiers mappés en mémoire et vérifiés sur le thread `aurora-fonts`, alignement de leur ligne de base sur la police principale ; installées à l'image suivante si la recherche n'était pas finie. `AURORA_FONT_FALLBACK=0` les retire |
 | `ui/exit.rs` | Modale de fermeture traduite : quitter, déconnecter vers le login, annuler ; fond flouté sur le GPU et interactions bloquées ; attente non bloquante de la fin de session, avec le délai de secours de six secondes de Firestorm |
 | `updater.rs`, `ui/update.rs` | Contrôleur asynchrone et fenêtre de mise à jour : notes, progression, relance et erreurs ; recherche manuelle dans Aide / connexion, tag ignoré et choix Demander / Automatique / Obligatoires uniquement. Démo synthétique isolée via `AURORA_DEMO_UPDATE`. |
-| `ui/inventory.rs`, `ui/inventory/view.rs`, `ui/inventory/controls.rs`, `ui/inventory/context.rs`, `ui/inventory/dialogs.rs`, `ui/inventory/properties.rs`, `ui/inventory/thumbnail.rs`, `app/inventory.rs`, `app/inventory_thumbnail.rs` | Inventaire : tri / filtres purs et cache de vues par génération dans `view.rs` (index, tri et filtrage parallèles avec rayon), commandes et préférences persistantes dans `controls.rs`, arborescence filtrée incluant les dossiers parents, états de dépliage par onglet, résultats dessinés selon la zone visible sans limite de 500 et zone de statut de hauteur fixe ; défilement sur les deux axes, largeur des noms mesurée dans la zone visible puis conservée pour les résultats virtuels, commandes adaptées aux petites largeurs ; menus par type, sélection multiple avec ajout / détachement groupés, renommage dans la ligne après création ou sur demande, fenêtres de dossiers limitées à leurs descendants avec un filtre propre, presse-papiers partagé entre fenêtres, propriétés et confirmations, aperçus / édition des notes et scripts, lecture des statistiques d’animation ; éditeur d’image à six actions, choix en arbre et capture de la scène sans interface ; décodage / redimensionnement / encodage hors du thread de rendu et exécution des actions après dessin de l’interface |
+| `ui/inventory.rs`, `ui/inventory/view.rs`, `ui/inventory/controls.rs`, `ui/inventory/context.rs`, `ui/inventory/clipboard.rs`, `ui/inventory/delete.rs`, `ui/inventory/dialogs.rs`, `ui/inventory/properties.rs`, `ui/inventory/thumbnail.rs`, `app/inventory.rs`, `app/inventory_thumbnail.rs` | Inventaire : tri / filtres purs et cache de vues par génération dans `view.rs` (index, tri et filtrage parallèles avec rayon), commandes et préférences persistantes dans `controls.rs`, arborescence filtrée incluant les dossiers parents, états de dépliage par onglet, résultats dessinés selon la zone visible sans limite de 500 et zone de statut de hauteur fixe ; défilement sur les deux axes, largeur des noms mesurée dans la zone visible puis conservée pour les résultats virtuels, commandes adaptées aux petites largeurs ; menus par type, sélection multiple avec ajout / détachement groupés, renommage dans la ligne après création ou sur demande, fenêtres de dossiers limitées à leurs descendants avec un filtre propre, presse-papiers partagé entre fenêtres et raccourcis natifs Ctrl+C / Ctrl+X / Ctrl+V selon le focus de la liste dans `clipboard.rs`, Suppr et corbeille de bas de fenêtre via la suppression partagée dans `delete.rs`, propriétés et confirmations, aperçus / édition des notes et scripts, lecture des statistiques d’animation ; éditeur d’image à six actions, choix en arbre et capture de la scène sans interface ; décodage / redimensionnement / encodage hors du thread de rendu et exécution des actions après dessin de l’interface |
 | `world/inventory/actions.rs`, `world/inventory/wearable.rs`, `world/inventory/demo.rs`, `world/inventory/preview.rs`, `world/inventory/tests.rs` | Règles de permissions, déplacements / copies / liens et offres, préparation des annonces Place du marché, assets de vêtements par défaut et scénario synthétique ; cache d’inventaire v2 avec permissions complètes |
 | `aurora-net/src/inventory/operations.rs`, `aurora-net/src/inventory/thumbnail.rs`, `aurora-net/src/session/inventory_upload.rs` | Mutations AIS avec relecture, remappage des UUID attribués par le serveur, créations / copies UDP et accusés avec expiration, sauvegarde des documents par capabilities ; chargement AssetUpload / Xfer des vêtements avant création de l’élément ; vignettes gratuites par InventoryThumbnailUpload, POST JPEG2000 puis AIS et relecture |
 | `aurora-assets/src/j2k/encode.rs` | Encodeur OpenJPEG borné en mémoire, vignettes RGB / RGBA carrées de 64 à 256 pixels et conservation de l’alpha |
@@ -203,9 +204,36 @@ d’inventaire existantes, avec vérification des droits à la validation.
 
 Les changements de parent passent par `aurora-net/src/session/inventory_moves.rs`
 (MoveInventoryItem / MoveInventoryFolder UDP fiables, comme Firestorm).
-`inventory/operations.rs` conserve l’ordre avec les créations AIS et confirme
-le déplacement par relecture des dossiers, avec attente bornée si le stockage
-renvoie encore l’ancien parent. Les autres champs restent modifiés par AIS.
+Les déplacements seuls publient `InventoryMoved` dès l'envoi : l'arborescence
+change immédiatement, sans attendre une relecture HTTP. Le statut indique
+« Déplacement demandé » ; les mises à jour serveur réconcilient le modèle.
+Les mutations mêlant déplacements et métadonnées gardent leur vérification AIS.
+
+`inventory/operations.rs` remappe les UUID des dossiers confirmés par AIS et
+retourne leurs métadonnées, sans relire des dossiers encore vides. Le modèle
+peut ainsi recevoir leurs items immédiatement. `session/inventory_copies.rs`
+envoie les copies fiables et suit leurs confirmations ; le nom vide est encodé
+avec une longueur nulle, comme `LLTemplateMessageBuilder::addString(std::string)`.
+La réception des items complète la copie, sans imposer un second snapshot HTTP.
+Les créations sans copie des appelants de `mutate` / `mutate_with_moves`,
+notamment le remplacement de prims, gardent leur confirmation par relecture
+avant de poursuivre leur travail.
+Les dossiers publiés directement dans l'inventaire utilisent le nom normalisé
+envoyé au serveur, avec les mêmes règles de caractères et de longueur.
+
+`session/inventory_updates.rs` reçoit `UpdateCreateInventoryItem` et
+`BulkUpdateInventory` directement par HTTP, comme `LLEventPollImpl` de Firestorm,
+et les variantes LLSD de `LargeGenericMessage` / `GenericMessage`, en plus du
+transport UDP. `InventoryUpdated` applique items et dossiers dès leur arrivée.
+`world/inventory.rs` avance les versions des parents chargés, ignore les
+réponses plus anciennes et évite de recompter les enregistrements répétés.
+
+`ui/inventory/progress.rs` distingue la soumission d'une mutation du suivi des
+copies en arrière-plan : plusieurs copies peuvent être suivies sans désactiver
+les autres commandes. `InventoryProgress` transmet étapes et compteurs ; la
+ligne de statut, partagée entre fenêtres, indique l'activité et le temps écoulé,
+puis la confirmation de fin. Les erreurs gardent la possibilité de recharger
+les dossiers concernés, sans rejouer les copies ni les déplacements.
 
 ### Surfaces des fenêtres
 
@@ -213,6 +241,30 @@ renvoie encore l’ancien parent. Les autres champs restent modifiés par AIS.
 dialogues et les lignes de l'inventaire utilisateur et des contenus d'objets
 (densité, survol, sélection et style du nom). `build/ui/compact.rs` agence la
 construction en six sections dans un inspecteur étroit.
+`ui/color_picker.rs` compose le sélecteur commun (RVB / LSL / Hexa, TSL,
+aperçus, palette de 32 cases et pipette) ; `ui/color_picker/model.rs` garde
+les conversions et préférences sérialisées, `demo.rs` les gestes hors ligne.
+`build/ui/color.rs` capture les couleurs par objet et face, applique les
+aperçus et restaure seulement le RGB à l'annulation. Les envois intermédiaires
+sont regroupés dans `build/edits.rs` jusqu'au relâchement. `app/color_picker.rs`
+route la pipette vers `Scene::color_at_ray` : candidats de l'index spatial,
+triangles réels en parallèle et teinte de la face, sans lecture GPU ni effet
+de l'éclairage. Elle ne change pas la sélection.
+Le sélecteur conserve l'identité de sa fenêtre appelante : placement contre son
+bord droit, aligné en haut, ou à gauche si l'espace manque, recalculé à chaque
+déplacement de la fenêtre ou changement de taille de l'écran. Sa taille mesurée
+garde les commandes visibles et le déplacement conserve son état réduit.
+Déplacer la palette la détache ; au relâchement, une proximité de 10 points
+avec une position accolée à gauche ou à droite rétablit le suivi. Le côté
+choisi reste stable tant qu'il tient à l'écran. Le lien vers la couleur d'origine
+reste présent quand les fenêtres sont indépendantes. « Appliquer » est coché
+par défaut, puis le dernier choix est sérialisé avec la palette enregistrée.
+Les pastilles transmettent leur rectangle visible à chaque passage : un cône
+dégradé les relie à la palette pendant qu'elle est déplacée séparément, sans
+surface interactive supplémentaire. Un second clic sur la même pastille ferme
+la transaction ; une autre pastille restaure la précédente avant de s'ouvrir.
+`cursors.rs` garde le curseur pipette Phosphor en mémoire, avec la pointe comme
+point de prélèvement et le contour contrasté de la skin, comme le curseur HUD.
 `aurora-render/src/ui_glass.rs` produit un fond dépoli partagé
 par les fenêtres visibles : copie et deux passes de flou sur le GPU, puis
 échantillonnage dans leurs seuls rectangles arrondis. Les ressources sont

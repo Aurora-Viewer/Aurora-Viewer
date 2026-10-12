@@ -1,7 +1,7 @@
 //! Compact Aurora build workspace. The six sections reorganize the
 //! LLFloaterTools / LLPanelObject controls without changing their commands.
 
-use super::{Env, common, contents, features, general, object, texture, tools};
+use super::{Env, common, contents, features, general, object, replace, texture, tools};
 use crate::build::{BuildSettings, BuildTool, EditMode, Mods, Tool};
 use crate::theme::Palette;
 use crate::ui::icons;
@@ -166,10 +166,11 @@ fn selection(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &World
         if let Some(info) = tool.part_info(world, s) {
             common::small(ui, p, &info);
         }
+        replace::button(ui, p, tool, world, s);
     });
 }
 
-fn manipulation(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings, mods: Mods) {
+pub(super) fn manipulation(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings, mods: Mods) {
     ui.scope(|ui| {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
@@ -336,8 +337,6 @@ fn sections_panel(
                             4 => contents::show(ui, p, tool, world),
                             5 => object::show_shape(ui, p, tool, world, env),
                             _ => {
-                                manipulation(ui, p, tool, world, s, mods);
-                                ui.add_space(4.0);
                                 object::show_transform(ui, p, tool, world, s, mods);
                                 transform_options(ui, p, tool, world, s);
                             }
@@ -458,6 +457,14 @@ fn footer(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Worl
 
 pub fn body(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings, mods: Mods, env: &mut Env) {
     ui.spacing_mut().item_spacing = Vec2::ZERO;
+    if tool.replacement.draft.is_some() || tool.replacement.job.is_some() {
+        band(ui, egui::Color32::TRANSPARENT, 12, 12, |ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(6.0, 5.0);
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+            replace::panel(ui, p, tool, world);
+        });
+        return;
+    }
     selection(ui, p, tool, world, s);
     divider(ui, p);
     band(ui, egui::Color32::TRANSPARENT, 10, 7, |ui| tools::tool_row(ui, p, tool));

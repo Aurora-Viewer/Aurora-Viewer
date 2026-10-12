@@ -28,6 +28,7 @@ mod ao;
 mod bug_report;
 mod chat_commands;
 mod click_pick;
+mod color_picker;
 mod context_menu;
 mod hud_drag;
 mod inventory;
@@ -658,6 +659,11 @@ impl App {
     fn send(&mut self, cmd: NetCommand) {
         if self.demo {
             match &cmd {
+                NetCommand::Build(aurora_net::build::BuildCmd::SetTextures { local_id, .. })
+                    if ui::color_picker::demo::mode().is_some() =>
+                {
+                    log::info!("demo color ObjectImage: prim={local_id}");
+                }
                 NetCommand::TeleportTo { handle, position, look_at } => {
                     if Some(*handle) == self.world.main_region {
                         self.world.apply(NetEvent::TeleportLocal {
@@ -710,6 +716,23 @@ impl App {
                     handle: self.world.main_region.unwrap_or_default(),
                     objects: vec![crate::demo::action_avatar(false)],
                 });
+            }
+            if let NetCommand::RequestObjects { handle, local_ids } = &cmd {
+                let objects = local_ids
+                    .iter()
+                    .filter_map(|local_id| {
+                        self.world
+                            .objects
+                            .index_of(&crate::world::objects::ObjKey {
+                                region: *handle,
+                                local_id: *local_id,
+                            })
+                            .and_then(|i| self.world.objects.get(i))
+                            .map(crate::build::replace::demo_update)
+                    })
+                    .collect();
+                self.world.apply(NetEvent::ObjectUpdates { handle: *handle, objects });
+                return;
             }
             if let NetCommand::Build(b) = &cmd {
                 for ev in self.build_demo.reply(&self.world, b) {
@@ -765,6 +788,32 @@ impl App {
                     })
                     .collect();
                 self.world.inventory.add_items(items);
+                return;
+            }
+            if let NetCommand::FinishInventoryCopies { request, reply } = &cmd {
+                let items = reply
+                    .copies
+                    .iter()
+                    .filter_map(|c| {
+                        self.world.inventory.items.get(&c.item).cloned().map(|mut it| {
+                            it.id = uuid::Uuid::new_v4();
+                            it.parent = c.parent;
+                            it
+                        })
+                    })
+                    .collect();
+                self.world.inventory.add_items(items);
+                let change = aurora_net::inventory::operations::Mutation {
+                    refresh: reply.refresh.clone(),
+                    ..Default::default()
+                };
+                let result = crate::world::inventory::actions::demo_mutate(&mut self.world.inventory, self.world.agent_id, change).map(
+                    |mut completed| {
+                        completed.created.clone_from(&reply.created);
+                        completed
+                    },
+                );
+                self.on_app_event(NetEvent::InventoryEdited { request: *request, result });
                 return;
             }
             if let NetCommand::CreateInventoryWearable { parent, kind, name, .. } = &cmd {
@@ -1091,7 +1140,14 @@ impl App {
             self.inventory_ui.message = reason;
             return;
         }
+        if let NetEvent::InventoryProgress { request, progress } = ev {
+            self.inventory_ui.update_mutation_progress(request, progress);
+            return;
+        }
         if let NetEvent::InventoryEdited { request, result } = ev {
+            if self.build.replacement_inventory_result(request, &result) {
+                return;
+            }
             if self.world_edits.remove(&request) {
                 match result {
                     Ok(reply) => {
@@ -1223,6 +1279,8 @@ impl App {
                 if let Ok(items) = result {
                     self.build.on_task_inventory(&self.world, object, serial, items);
                     self.flush_build();
+                } else if let Err(reason) = result {
+                    self.build.replacement_task_inventory_error(object, reason);
                 }
             }
             NetEvent::CapReply { tag, result } => self.build.on_cap_reply(&mut self.world, tag, result),
@@ -1245,6 +1303,7 @@ impl App {
             NetEvent::PhysicsProperties(list) => {
                 for (local_id, params) in list {
                     self.build.physics.insert(local_id, params);
+                    self.build.physics_materials_known.insert(local_id);
                 }
             }
             NetEvent::SelectedParcel { handle, sequence, parcel } => self.build.on_selected_parcel(handle, sequence, parcel),
@@ -2646,6 +2705,9 @@ impl App {
 
     /// CTRL + wheel cycles the edit selection before HUD, media or camera zoom.
     fn on_build_scroll(&mut self, delta: f32) -> bool {
+        if self.build.replacement_active() {
+            return true;
+        }
         if !self.ctrl || self.alt || !self.build.open || self.build.tool != crate::build::Tool::Edit || self.camera.mouselook() {
             self.build.reset_selection_wheel();
             return false;
@@ -2689,6 +2751,11 @@ impl App {
     /// Run by `click`; false also when it stopped to ask for the depth under
     /// the cursor (`ClickWait::waiting`), to run again when it has come.
     fn build_mouse_down(&mut self) -> bool {
+        if self.build.ui.color_picker.pipette {
+            self.left_down = true;
+            self.sample_build_color();
+            return true;
+        }
         if !self.build.open
             || self.alt
             || (self.hud_drag_requested() && self.settings.show_huds && self.scene.hud_move_pick(&self.world, self.cursor_pos).is_some())
@@ -2795,6 +2862,13 @@ impl App {
             // after the press it ends, which still waits for its depth
             self.clicks.hold(click_pick::Held::LeftRelease);
             return;
+        }
+        if self.left_down && self.build.ui.color_picker.pipette {
+            if !self.egui_ctx.is_pointer_over_egui() {
+                self.sample_build_color();
+            }
+            self.build.ui.color_picker.pipette = false;
+            self.build.ui.color_picker.sampled = None;
         }
         self.update_hud_drag(self.scene.lists.hud_view);
         if let Some(cmd) = self.hud_drag.take().and_then(|drag| drag.release(&self.world)) {
@@ -3564,6 +3638,10 @@ impl App {
         }
 
         self.frame_profile.lap(Lap::Social);
+        // Coalesce OS pointer moves before taking the renderer for this frame.
+        if self.left_down && self.build.ui.color_picker.pipette && !self.egui_ctx.is_pointer_over_egui() {
+            self.sample_build_color();
+        }
         let Some(mut gfx) = self.gfx.take() else {
             return;
         };
@@ -4245,12 +4323,14 @@ impl App {
         // native window or taking the user's keyboard (with_active(false)).
         if self.demo
             && self.capture.is_some()
-            && std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|v| {
-                matches!(
-                    v.as_str(),
-                    "rename" | "new-script" | "new-note" | "new-folder" | "resize-left" | "resize-right"
-                ) || v.starts_with("note-")
-            })
+            && (ui::color_picker::demo::mode().is_some()
+                || std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|v| {
+                    matches!(
+                        v.as_str(),
+                        "rename" | "new-script" | "new-note" | "new-folder" | "resize-left" | "resize-right"
+                    ) || v.starts_with("note-")
+                        || v.starts_with("clipboard-")
+                }))
         {
             raw.focused = true;
             raw.events.retain(|e| !matches!(e, egui::Event::WindowFocused(false)));
@@ -4329,12 +4409,21 @@ impl App {
         let ctx = self.egui_ctx.clone();
         if self.demo {
             raw.events.extend(ui::widgets::demo::events(&ctx, self.frame_count));
+            raw.events.extend(ui::color_picker::demo::events(
+                &self.egui_ctx,
+                &self.build.ui.color_picker,
+                self.frame_count,
+            ));
             for d in self.task_notecards.values_mut() {
                 raw.events
                     .extend(ui::inventory::document_demo_events(&ctx, self.frame_count, &mut d.state));
             }
             raw.events
                 .extend(ui::inventory::document_demo_events(&ctx, self.frame_count, &mut self.inventory_ui));
+            raw.events
+                .extend(ui::inventory::clipboard_demo_events(&ctx, self.frame_count, &mut self.inventory_ui));
+            raw.events
+                .extend(ui::inventory::delete_demo_events(&ctx, self.frame_count, &self.inventory_ui));
         }
         let projector = ui::hud::Projector {
             view_proj: vp,
@@ -4514,6 +4603,10 @@ impl App {
         if let Some(cursor) = self.inventory_drag.cursor {
             full.platform_output.cursor_icon = cursor;
             full.platform_output.cursor_image = None;
+        }
+        if self.build.ui.color_picker.pipette && !ctx.is_pointer_over_egui() {
+            full.platform_output.cursor_icon = egui::CursorIcon::Crosshair;
+            full.platform_output.cursor_image = self.cursors.pipette();
         }
         gfx.egui_state
             .handle_platform_output_with_event_loop(&gfx.window, event_loop, full.platform_output);
@@ -5024,6 +5117,19 @@ impl App {
                     }
                     crate::build::demo::Step::Linked(on) => {
                         self.build.set_edit_linked(&mut self.world, &mut self.settings.build, on);
+                        self.flush_build();
+                    }
+                    crate::build::demo::Step::ReplaceBegin(contents) => {
+                        self.build.begin_replacement(&self.world, &self.settings.build);
+                        self.build.replacement.options.contents = contents;
+                        self.build.replacement.options.size = contents;
+                    }
+                    crate::build::demo::Step::ReplacePick(idx) => {
+                        self.build.pick_replacement(&self.world, Some(idx));
+                        self.flush_build();
+                    }
+                    crate::build::demo::Step::ReplaceApply => {
+                        self.build.apply_replacement(&self.world);
                         self.flush_build();
                     }
                     crate::build::demo::Step::Wheel(delta) => {
@@ -6595,6 +6701,15 @@ impl ApplicationHandler for App {
                     self.world.apply(ev);
                 }
             }
+            if std::env::var_os("AURORA_DEMO_REPLACE_PRIM").is_some() && std::env::var_os("AURORA_DEMO_CAM").is_none() {
+                let focus = Vec3::new(135.5, 125.0, crate::demo::floor_at(135.0, 125.0) + 1.3);
+                self.camera.set_view(
+                    focus + Vec3::new(0.0, -6.0, 4.0),
+                    focus,
+                    &mut self.world.agent,
+                    &self.settings.camera,
+                );
+            }
             if std::env::var_os("AURORA_DEMO_FLEXIBLE").is_some() && std::env::var_os("AURORA_DEMO_CAM").is_none() {
                 let edit_focus = std::env::var("AURORA_DEMO_BUILD")
                     .ok()
@@ -6751,7 +6866,23 @@ impl ApplicationHandler for App {
                 }
                 if let Some(id) = crate::world::inventory::demo::target(&view) {
                     self.inventory_ui.show_original(&self.world.inventory, id);
-                    if view == "new-folder" {
+                    if view.starts_with("clipboard") {
+                        if view == "clipboard-window" {
+                            self.inventory_ui.open_folder_window(uuid::Uuid::from_u128(8000));
+                            self.inventory_ui.open_folder_window(uuid::Uuid::from_u128(8001));
+                        } else {
+                            crate::world::inventory::demo::seed_clipboard_tree(&mut self.world.inventory);
+                            if view == "clipboard-cut-folder"
+                                && let Some(item) = self.world.inventory.items.get_mut(&uuid::Uuid::from_u128(8223))
+                            {
+                                item.owner_mask &= !crate::world::inventory::actions::COPY;
+                            }
+                        }
+                    } else if view.starts_with("delete-") {
+                        crate::world::inventory::demo::seed_clipboard_tree(&mut self.world.inventory);
+                        self.inventory_ui.expand_all = Some(true);
+                        self.inventory_ui.show_original(&self.world.inventory, uuid::Uuid::from_u128(8001));
+                    } else if view == "new-folder" {
                         if let Ok(change) = crate::world::inventory::actions::create_folder(id, aurora_i18n::tr!("common-new-folder")) {
                             self.apply_inventory_action(ui::inventory::InvAction::Edit(change));
                         }
@@ -7078,6 +7209,11 @@ impl ApplicationHandler for App {
                 }
                 if let PhysicalKey::Code(code) = ke.physical_key {
                     let pressed = ke.state == ElementState::Pressed;
+                    // The color dialog owns Escape before camera shortcuts.
+                    // egui already received the event above.
+                    if pressed && code == KeyCode::Escape && self.build.ui.color_picker.is_open() {
+                        return;
+                    }
                     // learn the keyboard layout for the shortcut labels
                     if pressed
                         && !self.shift

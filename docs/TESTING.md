@@ -242,15 +242,50 @@ capture.
 | `AURORA_DEMO_ACTIONS=<mode>` | Curseurs, clics d'objet, achat et paiement |
 | `AURORA_DEMO_DIALOG=<mode>` | Menu llDialog |
 | `AURORA_DEMO_BUILD="<script>"` | Script des outils de construction |
+| `AURORA_DEMO_REPLACE_PRIM=1\|script` | Plateau de remplacement, cas du script seul |
 | `AURORA_DEMO_BUILD_FRAME=<n>` | Image de départ du script de construction |
 | `AURORA_DEMO_BUILD_FOCUS=off\|on` | Focus et suivi caméra pendant l’édition |
 | `AURORA_DEMO_BUILD_EDGE=<bord>` | Déplacement jusqu’au bord, maintien puis relâchement |
 | `AURORA_DEMO_BUILD_TAB=<onglet>` | Onglet de la fenêtre de construction |
+| `AURORA_DEMO_COLOR_PICKER=<mode>` | Sélecteur de couleur et gestes hors ligne |
 | `AURORA_DEMO_SCRIPTS=<mode>` | Édition et enregistrement de scripts hors ligne |
 | `AURORA_DEMO_LSL_BRIDGE=1` | Messages du bridge LSL de Firestorm (cachés) |
 | `AURORA_DEMO_FLEXIBLE=1` | Prims flexibles : gravité, tension, vent, force et parent mobile |
 
 ### Détails
+
+`AURORA_DEMO_COLOR_PICKER=1|left|follow|link|toggle|dock|lsl|hex|invalid|drag|cancel|no-apply|palette|pipette`
+ouvre le nuancier de la sélection, avec `AURORA_DEMO_BUILD=move,object:118`
+et `AURORA_DEMO_BUILD_TAB=texture:bp`.
+
+La palette s'ouvre contre le bord droit de la construction, au même niveau en
+haut. `left` place la construction près du bord droit de l'écran : la palette
+s'ouvre alors contre son bord gauche. Capturer vers l'image 660. Déplacer la
+construction avec la palette ouverte : celle-ci suit, bascule de côté si la
+place manque et reste visible. Le mode `follow` effectue ce glissement vers la
+droite puis revient à gauche : captures 800 et 920, sans réouverture du nuancier.
+Le mode `link` déplace séparément la palette : capture 800 pour le cône vers la
+pastille d'origine et son contour violet, 880 pour son extinction au relâchement.
+Le mode `toggle` clique trois fois sur la pastille : palette fermée à 710,
+rouverte à 750 puis fermée à 790. La fermeture reprend les règles d'Annuler.
+Le mode `dock` détache la palette (760), déplace la construction seule (840),
+réaccroche à droite (920), vérifie le suivi et le basculement (1000), détache à
+nouveau (1080), réaccroche à gauche (1160) et vérifie le suivi de ce côté (1240).
+Le rapprochement doit être à 10 points du bord et du haut ; l'accrochage se
+fait au relâchement. « Appliquer » est coché sans choix antérieur ; le décocher,
+fermer puis rouvrir la palette conserve ce choix, y compris au redémarrage.
+
+Les modes LSL / Hexa changent le format
+par ses vrais boutons ; Hexa saisit `33AA66`, invalid saisit `GG0000` (OK
+désactivé). Capturer vers l'image 740. Les modes drag / cancel / no-apply
+glissent sur 100 images : capturer à 780 pendant le geste, 830 au relâchement,
+900 après OK / Annuler. L'aperçu suit immédiatement, le serveur reçoit la
+couleur finale au relâchement ; no-apply attend OK. Palette glisse l'aperçu
+actuel dans la case 32 : capture 880 et réouverture pour vérifier sa sauvegarde.
+Pipette arme l'outil ; cliquer une face visible pour prendre sa teinte (aucun
+changement de sélection), relâcher pour quitter l'outil. Échap quitte d'abord
+la pipette, puis annule le nuancier. Les gestes sont en coordonnées des contrôles
+réels, sans dépendance à la position enregistrée de la fenêtre.
 
 En mode Modifier, maintenir CTRL et tourner la molette parcourt les objets
 réellement sous le pointeur : défilement vers le bas pour aller plus loin,
@@ -394,6 +429,70 @@ suivi activé conservent leur comportement.
 
 **`AURORA_DEMO_LSL_BRIDGE=1`** — messages du bridge LSL de Firestorm
 (cachés) entre deux lignes « owner say ».
+
+#### Remplacer un prim
+
+Pour contrôler le passage à « Modifier les parties liées », combiner
+`AURORA_DEMO_REPLACE_PRIM=1` et
+`AURORA_DEMO_BUILD=linked-click,object:99688` : objet entier sélectionné,
+activation de la modification liée à l'image 625, puis clic sur la partie #9
+à l'image 635 (départ 600 par défaut). Capturer à 630 puis à 650 : 15 parties
+sélectionnées deviennent une seule, avec « Numéro de lien : 9 » et le bouton
+de remplacement. `linked-click-ready,object:99688` s'arrête sur l'objet entier
+pour que l'humain puisse cocher l'option puis cliquer lui-même sur la partie.
+
+`AURORA_DEMO_REPLACE_PRIM=1` ajoute un jeu de 15 prims (racine `99680`,
+pile de cartes au lien 9 : `99688`) et un remplaçant indépendant (`99700`).
+Le remplaçant a une rotation et des dimensions différentes ; son contenu est
+vide. Un script du plateau démarre arrêté pour vérifier qu'il reste arrêté.
+Les mises à jour des prims ne renseignent pas `OwnerID`, comme pour un prim
+sans son ni particules sur la grille : les indicateurs de permission et les
+réponses `ObjectProperties` confirment qu'ils appartiennent au résident.
+Le choix du remplaçant et l'opération doivent fonctionner dans ce cas.
+
+`AURORA_DEMO_REPLACE_PRIM=script` garde un seul script dans la pile de cartes,
+avec les autres contenus vides. Le moteur simulé confirme les changements
+d'état des scripts seulement après une première réponse portant l'ancien état.
+Avec `AURORA_DEMO_BUILD=replace-copy,object:99688`, vérifier la copie du script,
+la conservation de l'original et le retour à leur état actif, sans blocage.
+Capturer le résultat à l'image 900 pour laisser les confirmations arriver.
+L'avancement distingue la lecture des états, la copie vers l'inventaire et
+l'insertion dans le remplaçant ; les erreurs de lecture du contenu remontent
+directement, avec l'étape concernée.
+
+À combiner avec `AURORA_DEMO_BUILD` :
+
+- `replace-button,object:99688` : une partie liée sélectionnée, bouton dans la fenêtre de construction ;
+- `replace-edit,object:99688` : remplaçant choisi, cinq options indépendantes, sans mutation ;
+- `replace-run,object:99688` : remplacement avec les valeurs par défaut ;
+- `replace-copy,object:99688` : copie du contenu et de la taille, puis remplacement ;
+- `replace-run,object:99680` : remplacement de la racine et contrôle des positions des enfants.
+
+Les scripts de construction commencent à l'image `AURORA_DEMO_BUILD_FRAME`
+(600 par défaut). Le choix du remplaçant se fait à +35 images, la validation
+à +55 pour les scénarios qui exécutent l'opération. Le simulateur renvoie les
+changements de parentage, le contenu et les états des scripts par les mêmes
+événements que le réseau. Sur la grille, contrôler aussi les numéros avec
+LSL, les droits de copie et les confirmations lors d'une connexion lente.
+Le protocole renvoie le parent des prims, sans numéro de lien : après
+confirmation du parentage, Aurora conserve l'ordre envoyé dans ObjectLink,
+indépendamment de l'ordre d'arrivée des paquets. Les 256 prims sont rattachés
+par groupes confirmés, depuis la fin de la liste vers son début.
+
+Le bouton apparaît sous les informations de sélection de l'inspecteur compact.
+Le panneau reprend son cadre, ses titres et ses marges ; les actions de validation
+restent hors de la zone défilante.
+
+Le remplacement place l'ancien prim à la position initiale du remplaçant,
+en conservant sa rotation et sa taille. Avec « Copier la position » activé,
+les deux prims échangent donc leurs positions. Les objets
+doivent être posés dans le monde, modifiables, appartenir au résident, sans
+physique, caractère temporaire ni avatar assis. Maximum : 256 prims et
+1 024 éléments copiés / scripts observés. Les conflits de noms et les contenus
+non copiables arrêtent l'opération avant toute déliaison. Copier un script
+ne conserve pas sa mémoire d'exécution ; remplacer la racine ne copie pas
+automatiquement les données Linkset Data.
+
 
 ## HUDs
 
@@ -878,6 +977,46 @@ racine ouverte et libellés alignés à gauche. Créations et mutations simulée
 hors ligne ; les fichiers et photos chargés en démo restent hors ligne.
 
 - `1` : l'inventaire seul.
+- `delete-key`, `delete-button` : sélectionnent un dossier contenant trois
+  niveaux et leurs items, puis ouvrent la confirmation par Suppr ou le bouton
+  de corbeille du pied de fenêtre. Capturer 660 (sélection et corbeille à droite
+  du compteur), puis 720 (confirmation identique au menu contextuel). Supprimer
+  déplace le dossier complet dans la corbeille ; Annuler le garde à sa place.
+  Vérifier aussi une sélection multiple, un objet porté / protégé (commande
+  indisponible), un champ de texte (Suppr édite le texte) et une fenêtre de
+  dossier. Une sélection entièrement dans la corbeille demande confirmation
+  avant suppression définitive.
+- `clipboard` : inventaire déplié pour tester Ctrl+C / Ctrl+X / Ctrl+V sur
+  les éléments, les dossiers et les sélections multiples. Choisir le dossier
+  de destination (ou un de ses éléments) avant de coller. Les champs de
+  recherche et de renommage gardent leurs raccourcis de texte.
+  `clipboard-copy` sélectionne deux éléments, copie puis colle deux fois dans
+  le sous-dossier ; `clipboard-cut` déplace deux objets, dont un non copiable
+  et un non transférable ; `clipboard-folder` copie le sous-dossier, ses deux
+  niveaux imbriqués et leurs trois items dans « Destination de test ».
+  `clipboard-cut-folder` déplace la même arborescence, avec un objet non copiable
+  dans un sous-dossier : tous les éléments doivent rester présents avec les
+  mêmes identifiants. `clipboard-window` copie depuis une fenêtre de
+  dossier puis colle dans une autre, vide. Gestes aux images 650–781, puis
+  ouverture du dossier de destination ; capture après 800. Aucune activation
+  de la fenêtre native ni lecture du presse-papiers du système pendant ces
+  scénarios automatiques.
+  `clipboard-progress` illustre les états possibles de la ligne de statut :
+  modification aux images 650–749, copie avec compteur 2/3 aux images
+  800–849, vérification aux images 850–919, puis confirmation de fin dès 920.
+  Capturer 700,820,890,940 ; l’animation, le compteur et le temps écoulé doivent
+  rester visibles dans la ligne de statut, sans agrandir la fenêtre.
+  La vérification concerne les mutations de métadonnées ; une copie réelle
+  est terminée par la réception de ses items, sans relecture finale du dossier.
+  En ligne, le statut doit montrer les étapes, le compteur d’items confirmés et
+  le temps écoulé, puis « Modification terminée ». Les items apparaissent dès leur
+  arrivée ; il doit être possible de lancer une autre copie ou de déplacer un
+  autre item pendant une copie en cours. Un couper/coller change l'arborescence
+  dès l'envoi fiable et affiche « Déplacement demandé » sans attendre de relecture
+  HTTP. Tester deux copies successives, des dossiers avec plusieurs niveaux,
+  puis recharger et vérifier les originaux, les copies et les déplacements.
+  Une copie non confirmée demande de recharger la destination ; des références
+  incomplètes demandent de recharger la source au lieu d'attendre une expiration.
 - `move-menu` : menu d’un élément avec « Déplacer vers… » ; `move-item`,
   `move-folder`, `move-multi` : fenêtre de destination pour un élément, un
   dossier ou trois objets (dont un non copiable et un non transférable).

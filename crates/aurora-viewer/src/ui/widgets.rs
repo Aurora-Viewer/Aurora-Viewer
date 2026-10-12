@@ -371,6 +371,11 @@ impl<'a> Floater<'a> {
 
 const PLACE_POS: &str = "place_pos";
 
+/// Move a dependent floater without changing its size or minimized state.
+pub fn move_floater(ctx: &egui::Context, id: &str, pos: egui::Pos2) {
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new(id).with(PLACE_POS), pos));
+}
+
 /// Give the floater `id` this position and size on its next frame, expanded,
 /// as if the user had moved and resized it: a demo scenario then shows the
 /// same thing whatever layout the previous run left in ui_layout.ron.

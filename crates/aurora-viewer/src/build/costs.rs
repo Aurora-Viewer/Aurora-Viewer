@@ -12,7 +12,7 @@ use super::BuildTool;
 use super::edits::CapPurpose;
 use crate::world::World;
 use aurora_llsd::{Llsd, llsd_map};
-use aurora_net::build::{BUILD_PARCEL_SEQ, BuildCmd, PhysicsParams};
+use aurora_net::build::{BUILD_PARCEL_SEQ, BuildCmd};
 use aurora_net::{ParcelInfo, RegionHandle};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -193,23 +193,33 @@ impl BuildTool {
             }
             CapPurpose::PhysicsData(ids) => {
                 let Ok(v) = result else { return };
-                for id in ids {
+                let mut received = 0;
+                for id in &ids {
                     let d = &v[id.to_string().as_str()];
-                    if d.is_undef() {
+                    if !d.has("PhysicsShapeType") || !(0..=2).contains(&d["PhysicsShapeType"].as_i32()) {
                         continue;
                     }
-                    if let Some(o) = world.objects.index_of_uuid(&id).and_then(|i| world.objects.get(i)) {
-                        self.physics.insert(
-                            o.key.local_id,
-                            PhysicsParams {
-                                shape_type: d["PhysicsShapeType"].as_i32() as u8,
-                                density: d["Density"].as_f32(),
-                                friction: d["Friction"].as_f32(),
-                                restitution: d["Restitution"].as_f32(),
-                                gravity_multiplier: d["GravityMultiplier"].as_f32(),
-                            },
-                        );
+                    if let Some(o) = world.objects.index_of_uuid(id).and_then(|i| world.objects.get(i)) {
+                        // LLViewerObjectList::fetchPhisicsFlagsCoro: material
+                        // values are optional. A shape-only reply must retain
+                        // the existing material, not turn missing fields into zero.
+                        let params = self.physics.entry(o.key.local_id).or_default();
+                        params.shape_type = d["PhysicsShapeType"].as_i32() as u8;
+                        if d.has("Density") {
+                            params.density = d["Density"].as_f32();
+                            params.friction = d["Friction"].as_f32();
+                            params.restitution = d["Restitution"].as_f32();
+                            params.gravity_multiplier = d["GravityMultiplier"].as_f32();
+                            self.physics_materials_known.insert(o.key.local_id);
+                        }
+                        received += 1;
                     }
+                }
+                if received == ids.len()
+                    && let Some(job) = self.replacement.job.as_mut()
+                    && job.physics_request == Some(tag)
+                {
+                    job.physics_request = None;
                 }
             }
             other => self.on_media_reply(world, other, result),

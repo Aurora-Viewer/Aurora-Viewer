@@ -191,7 +191,21 @@ pub fn target(view: &str) -> Option<Uuid> {
         | "move-folder"
         | "folder-window-search" => 8000,
         "move-item" | "move-multi" | "move-filter" | "move-window" | "move-menu" => 8100,
-        "object" | "properties" | "rename" | "multi-add" | "multi-detach" | "delete" => 8100,
+        "object"
+        | "properties"
+        | "rename"
+        | "multi-add"
+        | "multi-detach"
+        | "delete"
+        | "delete-key"
+        | "delete-button"
+        | "clipboard"
+        | "clipboard-copy"
+        | "clipboard-cut"
+        | "clipboard-folder"
+        | "clipboard-cut-folder"
+        | "clipboard-progress"
+        | "clipboard-window" => 8100,
         "animation" | "animation-open" | "animation-properties" | "image" | "image-photo" | "image-picker" | "image-photo-save" => 8101,
         "script" => 8102,
         "note" | "note-open" | "note-edit" | "note-save" | "note-close" | "note-error" | "note-readonly" | "note-embedded" | "note-new"
@@ -202,6 +216,54 @@ pub fn target(view: &str) -> Option<Uuid> {
         "link" => 8113,
         _ => return None,
     }))
+}
+
+pub fn seed_clipboard_tree(inv: &mut Inventory) {
+    for (number, parent, name) in [
+        (
+            8221,
+            Uuid::from_u128(8001),
+            aurora_i18n::tr!("inventory-demo-nested-folder", level = 2),
+        ),
+        (
+            8222,
+            Uuid::from_u128(8221),
+            aurora_i18n::tr!("inventory-demo-nested-folder", level = 3),
+        ),
+        (8300, inv.root, aurora_i18n::tr!("inventory-demo-destination").into()),
+    ] {
+        let id = Uuid::from_u128(number);
+        inv.folders.insert(
+            id,
+            Folder {
+                info: InvFolder {
+                    id,
+                    parent,
+                    name,
+                    type_default: -1,
+                    version: 1,
+                    ..Default::default()
+                },
+                children: Vec::new(),
+                items: Vec::new(),
+                state: FetchState::Fetched,
+                library: false,
+            },
+        );
+        if let Some(folder) = inv.folders.get_mut(&parent) {
+            folder.children.push(id);
+        }
+    }
+    let items = [(8220, 8001, 8104), (8223, 8221, 8100), (8224, 8222, 8102)]
+        .into_iter()
+        .filter_map(|(number, parent, original)| {
+            let mut item = inv.items.get(&Uuid::from_u128(original))?.clone();
+            item.id = Uuid::from_u128(number);
+            item.parent = Uuid::from_u128(parent);
+            Some(item)
+        })
+        .collect();
+    inv.add_items(items);
 }
 
 pub fn note_asset(embedded: bool) -> Vec<u8> {
