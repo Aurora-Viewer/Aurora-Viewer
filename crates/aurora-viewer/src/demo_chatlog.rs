@@ -5,9 +5,11 @@
 //!
 //! - `im`: a conversation with history from two earlier days, greyed, then
 //!   a new message;
-//! - `find`: the same with the find bar open on a word;
+//! - `find`: the same, then Ctrl+F and a word typed at frame 300: the find
+//!   bar and its matches;
 //! - `history`: the History window on a transcript of 20 000 messages
-//!   (`history:find`: with a search going through the whole file);
+//!   (`history:find`: Ctrl+F and a word typed at frame 300, searched in the
+//!   whole file);
 //! - `offline`: the instant messages kept while we were away, as the
 //!   request made at login returns them;
 //! - `long:<n>`: a conversation of `n` lines, nothing written (to measure
@@ -164,14 +166,25 @@ pub fn offline_messages(agent: Uuid) -> Vec<NetEvent> {
     ]
 }
 
-/// Wheel events of `long:<n>:scroll`, over the lines of the conversation
-/// window as the scenario places it.
-pub fn scroll_events(frame: u64) -> Vec<egui::Event> {
-    if !matches!(mode(), Some(Mode::Long { scroll: true, .. })) {
-        return Vec::new();
-    }
+/// What the scenario types and scrolls: Ctrl+F then the searched word for
+/// `find` and `history:find` (the shortcut goes to the window in front), the
+/// wheel over the lines of the conversation window for `long:<n>:scroll`.
+pub fn input_events(frame: u64) -> Vec<egui::Event> {
+    let (find, scroll) = match mode() {
+        Some(Mode::Find | Mode::History { find: true }) => (true, false),
+        Some(Mode::Long { scroll: true, .. }) => (false, true),
+        _ => return Vec::new(),
+    };
     match frame {
-        320..=380 => vec![
+        300 if find => vec![egui::Event::Key {
+            key: egui::Key::F,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::COMMAND,
+        }],
+        306 if find => vec![egui::Event::Text(needle().to_owned())],
+        320..=380 if scroll => vec![
             egui::Event::PointerMoved(egui::pos2(420.0, 320.0)),
             egui::Event::MouseWheel {
                 unit: egui::MouseWheelUnit::Point,

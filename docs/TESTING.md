@@ -781,6 +781,7 @@ grille.
 | `AURORA_DEMO_COLORPICK=1` | Ouvre le sélecteur de couleur compact de la première pastille affichée |
 | `AURORA_DEMO_CONV=1`, `AURORA_DEMO_TALK=1` | Conversation de groupe, micro ouvert |
 | `AURORA_DEMO_CONTACTS=<onglet>` | Onglet Contacts de Conversations |
+| `AURORA_DEMO_CHATLOG=<mode>` | Historique des conversations : fichiers, recherche, fenêtre Historique, IM hors ligne |
 | `AURORA_DEMO_GLYPHS=1` | Noms, titres et chat en caractères étendus (polices du système) |
 | `AURORA_DEMO_PROFILE=<avatar>[:onglet]` | Fenêtre de profil d'un avatar |
 | `AURORA_DEMO_FEED=<url>` | Onglet « Flux » du profil sur cette page |
@@ -965,6 +966,37 @@ grille.
   Contacts de Conversations sur Amis, Groupes ou Cercles de contacts (cercles
   et surnoms de démo), la fenêtre Contacts détachée, ou le sélecteur de
   résident de « Ajouter... ».
+- **`AURORA_DEMO_CHATLOG=im|find|history[:find]|offline|long:<n>[:scroll]`** :
+  l'historique des conversations sans grille. La démo est sa propre
+  « grille » : ses fichiers sont dans
+  `config\demo\accounts\<uuid du compte de démo>\chat_logs\demo\`, jamais dans
+  le dossier d'un vrai compte, et le scénario les réécrit à chaque lancement
+  (sans cette variable, la démo n'écrit et ne relit aucun historique). Les
+  fenêtres sont placées à une taille connue.
+  - `im` : une conversation avec Nova dont le fichier contient deux journées
+    passées. À voir : ces lignes en gris, sans photo de profil, avec un repère
+    de date à chaque changement de jour, puis le nouveau message dans ses
+    couleurs normales ; le fichier `Nova Exemple.txt` reçoit ce message.
+  - `find` : la même, puis Ctrl+F et un mot tapés à l'image 300. À voir : la
+    barre de recherche sous les lignes, « 5 / 5 », les occurrences sur fond
+    ambre et un trait ambre devant la ligne du résultat courant.
+  - `history` : la fenêtre Historique sur un fichier de 19 950 messages
+    (page 200 / 200, la plus récente) ; `history:find` y tape Ctrl+F et un
+    mot : compteur « 9976 / 9976 » une fois tout le fichier parcouru, dernier
+    résultat en vue.
+  - `offline` : les trois messages gardés par la « grille » pendant
+    l'absence, rendus par la demande faite après la connexion, chacun
+    précédé de « (Enregistré le … à …) », après l'historique en gris.
+  - `long:<n>` : une conversation de `n` lignes (2 000 au plus, la limite),
+    sans rien écrire, pour mesurer la vue des conversations avec
+    `AURORA_PROFILE=1` (étape `u_chat`) ; `long:<n>:scroll` y fait défiler la
+    molette vers le haut des images 320 à 380, à travers des lignes jamais
+    mises en page.
+
+  Pour ces essais, qui écrivent des fichiers, préférer un profil isolé
+  (« Installation réelle isolée » ci-dessus : exe copié dans
+  `<racine>\install`, `AURORA_UPDATE_TEST_ROOT=<racine>`) : les historiques
+  sont alors sous `<racine>\profile\accounts\`.
 - **`AURORA_DEMO_PROFILE=loup|nova|friend|self[:onglet]`** : une fenêtre de
   profil (onglet 0 Vie SL, 1 Flux, 2 Favoris, 3 Annonces, 4 Vie RL, 5 Notes).
 - **`AURORA_DEMO_FEED=<url>`** : le nom d'utilisateur et `/?feed_only=true`

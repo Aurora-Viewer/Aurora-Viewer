@@ -772,6 +772,38 @@ mod tests {
     }
 
     #[test]
+    fn a_conversation_we_open_shows_its_history_before_any_line() {
+        let root = temp();
+        let jane = Uuid::from_u128(2);
+        let mut w = world(&root, Uuid::from_u128(1));
+        w.social.names.insert(jane, "Jane Doe".into());
+        w.chat_log.append(
+            "Jane Doe",
+            format::parse_stamp("2026/10/11 09:30").unwrap(),
+            "Jane Doe",
+            "yesterday",
+        );
+        assert!(w.chat_log.flush(WAIT));
+        // opened from the contacts: no line yet
+        w.social.session_mut(jane);
+        settle(&mut w);
+        settle(&mut w);
+        let shown: Vec<(&str, Origin)> = w.social.ims[0].lines.iter().map(|l| (l.text.as_str(), l.origin)).collect();
+        assert_eq!(shown, [("yesterday", Origin::Log)]);
+        assert_eq!(w.social.ims[0].unread, 0);
+        // the transcript the History window opens for it, and for the
+        // nearby chat (none was written)
+        let (title, file) = w.transcript_of(Some(jane));
+        assert_eq!(title, "Jane Doe");
+        assert_eq!(file, w.chat_log.file_of("Jane Doe"));
+        assert_eq!(w.transcript_of(None).1, None);
+        // a resident never talked to has none
+        w.social.names.insert(Uuid::from_u128(3), "Bob Roe".into());
+        assert_eq!(w.transcript_of(Some(Uuid::from_u128(3))).1, None);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
     fn lines_wait_for_the_name_of_their_file() {
         let root = temp();
         let jane = Uuid::from_u128(2);

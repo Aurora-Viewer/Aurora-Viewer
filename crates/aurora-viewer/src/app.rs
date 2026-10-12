@@ -4533,7 +4533,7 @@ impl App {
         let ctx = self.egui_ctx.clone();
         if self.demo {
             raw.events.extend(ui::widgets::demo::events(&ctx, self.frame_count));
-            raw.events.extend(crate::demo::chatlog::scroll_events(self.frame_count));
+            raw.events.extend(crate::demo::chatlog::input_events(self.frame_count));
             raw.events.extend(ui::widgets::demo::snap_events(&ctx, self.frame_count));
             raw.events.extend(ui::color_picker::demo::events(
                 &self.egui_ctx,
@@ -5986,6 +5986,7 @@ impl App {
                         ui::chat::ConvAction::ToggleBlock(id) => a.ctx_action = Some(ui::context::CtxAction::ToggleBlock(id)),
                         ui::chat::ConvAction::Close(id) => {
                             self.world.leave_session(id);
+                            self.chat_ui.forget(id);
                             // closed from the list, another conversation may be shown
                             if self.chat_ui.selected == Some(id) {
                                 self.chat_ui.selected = None;
@@ -5994,6 +5995,7 @@ impl App {
                         }
                         ui::chat::ConvAction::BlockGroupChat(id) => {
                             self.world.set_group_chat_blocked(id, true);
+                            self.chat_ui.forget(id);
                             self.chat_ui.selected = None;
                         }
                         ui::chat::ConvAction::OpenPeople(tab) => {
@@ -6982,17 +6984,10 @@ impl ApplicationHandler for App {
                         self.world.apply(chatlog::new_message(me));
                     }
                 }
-                match mode {
-                    Mode::Find => self.chat_ui.find_in(Some(chatlog::PEER), chatlog::needle()),
-                    Mode::History { find } => {
-                        self.panels.chat = false;
-                        let (title, file) = self.world.transcript_of(Some(chatlog::PEER));
-                        self.history_ui.show_file(title, file);
-                        if find {
-                            self.history_ui.find(chatlog::needle());
-                        }
-                    }
-                    _ => {}
+                if let Mode::History { .. } = mode {
+                    self.panels.chat = false;
+                    let (title, file) = self.world.transcript_of(Some(chatlog::PEER));
+                    self.history_ui.show_file(title, file);
                 }
                 self.chat_ui.selected = Some(chatlog::PEER);
             }

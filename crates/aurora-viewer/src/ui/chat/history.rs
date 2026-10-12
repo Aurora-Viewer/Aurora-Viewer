@@ -77,16 +77,6 @@ impl HistoryUi {
         }
     }
 
-    /// Open the search with a text (demo scenario).
-    pub fn find(&mut self, text: &str) {
-        self.search = Some(Search {
-            text: text.to_owned(),
-            focus: true,
-            ..Default::default()
-        });
-        self.start_search();
-    }
-
     fn go_to(&mut self, page: usize) {
         self.page = page;
         if self.loaded != Some(page)

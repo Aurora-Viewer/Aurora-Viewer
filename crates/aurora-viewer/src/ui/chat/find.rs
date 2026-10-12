@@ -21,13 +21,8 @@ pub struct Search {
 impl Search {
     /// Open the find bar (keeping its text when it is already open) and put
     /// the keyboard in it.
-    pub fn open_find(&mut self, text: &str) {
-        let f = self.find.get_or_insert_with(Find::default);
-        if !text.is_empty() {
-            text.clone_into(&mut f.text);
-            f.restart = true;
-        }
-        f.focus = true;
+    pub fn open_find(&mut self) {
+        self.find.get_or_insert_with(Find::default).focus = true;
     }
 }
 

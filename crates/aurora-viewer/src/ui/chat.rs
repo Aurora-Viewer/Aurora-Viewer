@@ -37,9 +37,10 @@ pub struct ChatUi {
 }
 
 impl ChatUi {
-    /// Open the find bar of a conversation with a text (demo scenario).
-    pub fn find_in(&mut self, conversation: Option<uuid::Uuid>, text: &str) {
-        self.searches.entry(conversation).or_default().open_find(text);
+    /// A conversation closed: its filter, find bar and rows go with it.
+    pub fn forget(&mut self, conversation: uuid::Uuid) {
+        self.searches.remove(&Some(conversation));
+        self.views.remove(&Some(conversation));
     }
 }
 
@@ -1321,7 +1322,7 @@ pub fn show(
                 let conv_input = egui::Id::new("conv_input");
                 let search = st.searches.entry(st.selected).or_default();
                 if find::wants_shortcut(ui, &[conv_input, find::field_id(), find::filter_id()]) {
-                    search.open_find("");
+                    search.open_find();
                 }
                 // exactly what the find bar takes under the lines (a row
                 // that overflows makes the resizable window grow every frame)
