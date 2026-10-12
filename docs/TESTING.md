@@ -279,7 +279,7 @@ Pour vérifier l'édition, ajouter `AURORA_DEMO_BUILD=move,object:90000` ou
 translucide et poignées de taille. `stretch,object:90000,fz,100,0` tire la face
 opposée à la base ; le flexible garde sa courbure pendant le changement de taille.
 
-**`AURORA_DEMO_SCRIPTS=inventory|object|both|save|object-save|error|readonly|syntax|object-syntax|syntax-readonly|indent|object-indent|tabstops|object-tabstops|experience|experience-save|workbench|object-workbench|search|preferences|help|preprocessor|object-preprocessor|processed|preprocessor-error`** :
+**`AURORA_DEMO_SCRIPTS=inventory|object|both|save|object-save|error|readonly|syntax|object-syntax|syntax-readonly|indent|object-indent|tabstops|object-tabstops|close-brace|object-close-brace|colors|color-picker|color-accept|color-cancel|experience|experience-save|workbench|object-workbench|search|preferences|help|preprocessor|object-preprocessor|processed|preprocessor-error`** :
 ouvre un éditeur de script depuis l'inventaire, le contenu d'un objet ou
 les deux à l'image 280. `save` et `object-save` enregistrent une source
 modifiée puis ferment et rouvrent l'éditeur à l'image 360 avec un UUID
@@ -303,6 +303,15 @@ et Entrée. Le commentaire et l'instruction doivent être alignés sur huit
 espaces. Tab ajoute des espaces jusqu'au prochain multiple de quatre ;
 Retour arrière revient au palier précédent quand les espaces le permettent,
 sans supprimer un caractère du code pour rejoindre ce palier.
+`close-brace` et `object-close-brace` ferment deux blocs imbriqués par saisie
+de `}`, avec espaces ou tabulations importées : les fermetures doivent être
+alignées sur leurs ouvertures. Le collage conserve exactement ses retraits.
+`colors` montre cinq pastilles près des vecteurs numériques entre 0 et 1
+inclus ; position hors plage, rotation, chaîne et commentaire n'en ont pas.
+`color-picker` ouvre la première pastille et choisit le vert ; `color-accept`
+valide et `color-cancel` restaure exactement les valeurs d'origine. Le texte
+reste sélectionnable pendant l'aperçu ; OK rend l'édition et l'enregistrement
+disponibles et produit une seule action Annuler / Rétablir.
 `experience` choisit et enregistre l'expérience simulée d'un script d'objet ;
 `experience-save` ferme ensuite l'éditeur et le rouvre avec cette association.
 Les autres démos d'objet commencent avec « Aucune ». Le sélecteur permet

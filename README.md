@@ -316,9 +316,15 @@ cargo run -p aurora-viewer
 |---|---|
 | `AURORA_DEMO=1` | Offline demo mode |
 | `AURORA_DEMO_<NAME>=…` | A demo scenario: a window, a stress scene, a camera script… |
+
 | `AURORA_DEMO_PIE=1` / `0` | Force le menu circulaire / en liste dans la démo, sans modifier la préférence ; à combiner avec `AURORA_DEMO_RCLICK` |
 | `AURORA_CAPTURE=<file.png>` | Saves a capture of a frame |
 | `AURORA_PROFILE=1` | Writes one profiling line per second to the log |
+
+Les démos d'éditeur de scripts (`AURORA_DEMO_SCRIPTS`) : `close-brace` /
+`object-close-brace` vérifient le retrait des accolades fermantes ; `colors`,
+`color-picker`, `color-accept` et `color-cancel` montrent les vecteurs RVB et
+le nuancier partagé. Les scénarios complets sont dans [docs/TESTING.md](docs/TESTING.md).
 
 Le menu clic droit de l’inventaire propose « Déplacer vers… » pour un dossier,
 un élément ou une sélection multiple. Saisir un nom dans le filtre de la

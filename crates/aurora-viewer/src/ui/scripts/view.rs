@@ -77,7 +77,7 @@ fn text(e: &Editor) -> &str {
 }
 
 fn enabled(command: Command, e: &Editor, ctx: &egui::Context, id: Id) -> bool {
-    let editable = e.can_edit && e.loaded && e.saving.is_none() && e.loading.is_none() && !e.tools.processed;
+    let editable = e.can_edit && e.loaded && e.saving.is_none() && e.loading.is_none() && !e.tools.processed && !e.colors.active();
     let selection = !editing::cursor(ctx, visible_id(id, e.tools.processed)).is_empty();
     match command {
         Command::Save => e.can_save(),
@@ -398,7 +398,8 @@ fn source(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, settings: &Scr
                     String::new()
                 };
                 let insensitive = e.tools.search.insensitive;
-                let editable = e.loaded && e.can_edit && e.saving.is_none() && e.loading.is_none() && !e.tools.processed;
+                let color_editable = e.loaded && e.can_edit && e.saving.is_none() && e.loading.is_none() && !e.tools.processed;
+                let editable = color_editable && !e.colors.active();
                 egui::ScrollArea::both()
                     .id_salt((id, "source"))
                     .max_height(height)
@@ -439,6 +440,7 @@ fn source(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, settings: &Scr
                                 ui.ctx().data_mut(|d| d.insert_temp(Id::new((base_id, "command")), command));
                             }
                             let text = if e.tools.processed { &e.tools.processed_source } else { &e.source };
+                            e.colors.draw(ui, p, text, &output, &e.highlighter.colors, color_editable);
                             if editable
                                 && (output.response.changed()
                                     || e.tools.history_cursor != output.cursor_range
@@ -514,24 +516,27 @@ fn source(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, settings: &Scr
 
 fn insertion(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id) {
     let mut chosen = None;
-    ui.add_enabled_ui(e.loaded && e.can_edit && e.saving.is_none() && !e.tools.processed, |ui| {
-        egui::ComboBox::from_id_salt((id, "insert"))
-            .selected_text(aurora_i18n::tr!("script-insert"))
-            .width(155.0)
-            .height(220.0)
-            .show_ui(ui, |ui| {
-                ui.add(egui::TextEdit::singleline(&mut e.tools.insert_filter).hint_text(aurora_i18n::tr!("script-insert-filter")));
-                let filter = e.tools.insert_filter.to_lowercase();
-                for entry in reference::all()
-                    .iter()
-                    .filter(|e| e.group == "functions" && e.name.to_lowercase().contains(&filter))
-                {
-                    if ui.selectable_label(false, &entry.name).on_hover_text(&entry.signature).clicked() {
-                        chosen = Some(entry.name.clone());
+    ui.add_enabled_ui(
+        e.loaded && e.can_edit && e.saving.is_none() && !e.tools.processed && !e.colors.active(),
+        |ui| {
+            egui::ComboBox::from_id_salt((id, "insert"))
+                .selected_text(aurora_i18n::tr!("script-insert"))
+                .width(155.0)
+                .height(220.0)
+                .show_ui(ui, |ui| {
+                    ui.add(egui::TextEdit::singleline(&mut e.tools.insert_filter).hint_text(aurora_i18n::tr!("script-insert-filter")));
+                    let filter = e.tools.insert_filter.to_lowercase();
+                    for entry in reference::all()
+                        .iter()
+                        .filter(|e| e.group == "functions" && e.name.to_lowercase().contains(&filter))
+                    {
+                        if ui.selectable_label(false, &entry.name).on_hover_text(&entry.signature).clicked() {
+                            chosen = Some(entry.name.clone());
+                        }
                     }
-                }
-            });
-    });
+                });
+        },
+    );
     if let Some(name) = chosen {
         let [a, b] = editing::cursor(ui.ctx(), id).sorted_cursors();
         if editing::replace(ui.ctx(), id, &mut e.source, a.index.0..b.index.0, &name) {

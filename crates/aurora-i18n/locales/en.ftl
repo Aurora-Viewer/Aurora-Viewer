@@ -3872,3 +3872,5 @@ workspace-outfit-items = { $count } items in this outfit
 
 ui-inventory-received-purchases = Received purchases
 ui-inventory-no-received-purchases = No received purchases yet.
+
+script-color-hint = Possible color: click to open the color picker.

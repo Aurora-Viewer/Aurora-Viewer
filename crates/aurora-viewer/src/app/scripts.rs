@@ -25,6 +25,22 @@ default {
 }
 "#;
 
+const COLORS_DEMO_SOURCE: &str = r#"vector red = <1.0, 0.0, 0.0>;
+vector blue = <0, .25, 1>;
+list colors = [<.8, .2, .6>, <0, 1, .5>];
+vector position = <128, 64, 20>;
+rotation orientation = <0, 0, 0, 1>;
+string example = "<1, 0, 0>";
+// <0, 1, 0> is a comment
+default
+{
+    state_entry()
+    {
+        llSetColor(<0.2, 0.8, 1.0>, ALL_SIDES);
+    }
+}
+"#;
+
 struct ScriptInfo {
     name: String,
     handle: u64,
@@ -46,6 +62,23 @@ impl App {
             return;
         }
         let Ok(mode) = std::env::var("AURORA_DEMO_SCRIPTS") else { return };
+        if matches!(mode.as_str(), "color-picker" | "color-accept" | "color-cancel") {
+            raw.events.extend(self.script_editors.demo_color_events(self.frame_count, &mode));
+        }
+        if matches!(mode.as_str(), "close-brace" | "object-close-brace") {
+            if matches!(self.frame_count, 321 | 323) {
+                raw.events.push(egui::Event::Text("}".into()));
+            }
+            if self.frame_count == 322 {
+                raw.events.push(egui::Event::Key {
+                    key: egui::Key::Enter,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                });
+            }
+        }
         if self.frame_count == 323 && matches!(mode.as_str(), "tabstops" | "object-tabstops") {
             for key in [egui::Key::Backspace, egui::Key::Tab] {
                 raw.events.push(egui::Event::Key {
@@ -81,10 +114,24 @@ impl App {
         let Ok(mode) = std::env::var("AURORA_DEMO_SCRIPTS") else { return };
         let syntax_demo = matches!(
             mode.as_str(),
-            "syntax" | "object-syntax" | "syntax-readonly" | "workbench" | "object-workbench" | "search" | "preferences" | "help"
+            "syntax"
+                | "object-syntax"
+                | "syntax-readonly"
+                | "workbench"
+                | "object-workbench"
+                | "search"
+                | "preferences"
+                | "help"
+                | "colors"
+                | "color-picker"
+                | "color-accept"
+                | "color-cancel"
         );
         if self.frame_count == 280 {
             self.panels.perf = false;
+            if matches!(mode.as_str(), "colors" | "color-picker" | "color-accept" | "color-cancel") {
+                self.world.notifications.list.clear();
+            }
             if !matches!(
                 mode.as_str(),
                 "object"
@@ -92,6 +139,7 @@ impl App {
                     | "object-syntax"
                     | "object-indent"
                     | "object-tabstops"
+                    | "object-close-brace"
                     | "experience"
                     | "experience-save"
                     | "object-workbench"
@@ -117,7 +165,15 @@ impl App {
                 self.inventory_ui.show_original(&self.world.inventory, item);
                 let target = ScriptTarget { object: Uuid::nil(), item };
                 if syntax_demo {
-                    self.demo_script_sources.insert(target, SYNTAX_DEMO_SOURCE.into());
+                    self.demo_script_sources.insert(
+                        target,
+                        if matches!(mode.as_str(), "colors" | "color-picker" | "color-accept" | "color-cancel") {
+                            COLORS_DEMO_SOURCE
+                        } else {
+                            SYNTAX_DEMO_SOURCE
+                        }
+                        .into(),
+                    );
                 }
                 self.open_script(target);
             }
@@ -128,6 +184,7 @@ impl App {
                     | "object-syntax"
                     | "object-indent"
                     | "object-tabstops"
+                    | "object-close-brace"
                     | "experience"
                     | "experience-save"
                     | "both"
@@ -197,11 +254,21 @@ impl App {
         if self.frame_count == 320
             && matches!(
                 mode.as_str(),
-                "indent" | "object-indent" | "tabstops" | "object-tabstops" | "experience" | "experience-save"
+                "indent"
+                    | "object-indent"
+                    | "tabstops"
+                    | "object-tabstops"
+                    | "experience"
+                    | "experience-save"
+                    | "close-brace"
+                    | "object-close-brace"
             )
             && let Some(target) = self.script_editors.documents.first().map(|e| e.target)
         {
-            if matches!(mode.as_str(), "tabstops" | "object-tabstops") {
+            if matches!(mode.as_str(), "close-brace" | "object-close-brace") {
+                self.script_editors
+                    .demo_close_brace(target, &self.egui_ctx, mode == "object-close-brace");
+            } else if matches!(mode.as_str(), "tabstops" | "object-tabstops") {
                 self.script_editors.demo_tabstops(target, &self.egui_ctx);
             } else if matches!(mode.as_str(), "indent" | "object-indent") {
                 self.script_editors.demo_indent(target, &self.egui_ctx, mode == "object-indent");
@@ -347,7 +414,10 @@ impl App {
                 }
             }
         }
-        for action in self.script_editors.show(ctx, p, &mut self.settings.script_editor) {
+        for action in self
+            .script_editors
+            .show(ctx, p, &mut self.settings.script_editor, &mut self.settings.build.color_picker)
+        {
             self.apply_script_action(action);
         }
         self.script_editors.show_debug(ctx, p, &mut self.world.script_debug);

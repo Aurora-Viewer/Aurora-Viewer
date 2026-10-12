@@ -3872,3 +3872,5 @@ workspace-outfit-items = { $count } éléments dans cette tenue
 
 ui-inventory-received-purchases = Achats reçus
 ui-inventory-no-received-purchases = Aucun achat reçu pour le moment.
+
+script-color-hint = Couleur possible : cliquer pour ouvrir le nuancier.

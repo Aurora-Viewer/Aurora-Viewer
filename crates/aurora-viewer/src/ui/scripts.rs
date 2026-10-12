@@ -9,6 +9,7 @@ use aurora_net::scripts::{MAX_SOURCE, ScriptOptions, ScriptSaved, ScriptTarget};
 use egui::Vec2;
 use uuid::Uuid;
 
+mod colors;
 mod debug;
 mod dialogs;
 mod editing;
@@ -64,6 +65,7 @@ pub struct Editor {
     pub name: String,
     pub source: String,
     highlighter: syntax::Highlighter,
+    colors: colors::State,
     baseline: String,
     loaded: bool,
     loading: Option<Uuid>,
@@ -96,6 +98,7 @@ impl Editor {
     fn can_save(&self) -> bool {
         self.loaded
             && self.can_edit
+            && !self.colors.active()
             && self.saving.is_none()
             && self.loading.is_none()
             && (self.target.object.is_nil()
@@ -170,6 +173,7 @@ impl Editors {
         self.includes.clear();
         self.documents.retain(|e| e.dirty() || e.saving.is_some());
         for e in &mut self.documents {
+            e.colors.cancel(&mut e.source);
             e.loading = None;
             e.experience.loading = None;
             e.saving = None;
@@ -187,6 +191,7 @@ impl Editors {
     pub fn prepare_exit(&mut self) -> bool {
         let mut ready = true;
         for e in &mut self.documents {
+            e.colors.cancel(&mut e.source);
             if e.dirty() || e.saving.is_some() {
                 e.close_prompt = true;
                 ready = false;
@@ -232,6 +237,39 @@ impl Editors {
         if let Some(position) = e.source.find("llSay(") {
             Self::focus_source(e, ctx, position);
         }
+    }
+
+    pub fn demo_close_brace(&mut self, target: ScriptTarget, ctx: &egui::Context, tabs: bool) {
+        if let Some(e) = self.documents.iter_mut().find(|e| e.target == target) {
+            e.source = "default\n{\n    state_entry()\n    {\n        llSetColor(<0.2, 0.8, 1.0>, ALL_SIDES);\n        ".into();
+            if tabs {
+                e.source = e.source.replace("    ", "\t");
+            }
+            Self::focus_source(e, ctx, e.source.len());
+        }
+    }
+
+    pub fn demo_color_events(&self, frame: u64, mode: &str) -> Vec<egui::Event> {
+        use super::color_picker::Control;
+        let Some(e) = self.documents.first() else { return Vec::new() };
+        let rect = match frame {
+            323 | 324 => e.colors.swatches.first().copied(),
+            343 | 344 => e.colors.picker.controls.get(&Control::Slot(20)).copied(),
+            363 | 364 if mode == "color-cancel" => e.colors.picker.controls.get(&Control::Cancel).copied(),
+            363 | 364 if mode == "color-accept" => e.colors.picker.controls.get(&Control::Accept).copied(),
+            _ => None,
+        };
+        let Some(rect) = rect else { return Vec::new() };
+        let pos = rect.center();
+        vec![
+            egui::Event::PointerMoved(pos),
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: frame % 2 == 1,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ]
     }
 
     pub fn demo_tools(&mut self, target: ScriptTarget, ctx: &egui::Context, mode: &str, settings: &mut settings::ScriptSettings) {
@@ -317,6 +355,7 @@ impl Editors {
             name,
             source: String::new(),
             highlighter: syntax::Highlighter::default(),
+            colors: colors::State::new(format!("script_color_picker_{}_{}", target.object, target.item)),
             baseline: String::new(),
             loaded: false,
             loading: request,
@@ -458,7 +497,31 @@ impl Editors {
         }
     }
 
-    pub fn show(&mut self, ctx: &egui::Context, p: &Palette, settings: &mut settings::ScriptSettings) -> Vec<Action> {
+    pub fn color_picker(&mut self) -> Option<&mut super::color_picker::ColorPicker> {
+        let index = self
+            .documents
+            .iter()
+            .position(|e| e.colors.picker.pipette)
+            .or_else(|| self.documents.iter().position(|e| e.colors.picker.is_open()))?;
+        Some(&mut self.documents[index].colors.picker)
+    }
+
+    pub fn color_pipette(&self) -> bool {
+        self.documents.iter().any(|e| e.colors.picker.pipette)
+    }
+
+    pub fn color_open(&self) -> bool {
+        self.documents.iter().any(|e| e.colors.picker.is_open())
+    }
+
+    pub fn show(
+        &mut self,
+        ctx: &egui::Context,
+        p: &Palette,
+        settings: &mut settings::ScriptSettings,
+        color_prefs: &mut super::color_picker::Preferences,
+    ) -> Vec<Action> {
+        let colors_before = color_prefs.clone();
         let mut actions = Vec::new();
         if self.preferences.show(ctx, p, settings) {
             actions.push(Action::SettingsChanged);
@@ -561,7 +624,19 @@ impl Editors {
                 &mut self.preferences,
                 &mut actions,
             );
+            let source_id = egui::Id::new((&id, "source_text"));
+            if let Some(literal) = e.colors.clicked.take() {
+                e.colors.open(&mut e.source, ctx, source_id, egui::Id::new(&id), literal);
+            }
+            e.colors.show(
+                ctx,
+                p,
+                color_prefs,
+                &mut e.source,
+                e.can_edit && e.loaded && e.saving.is_none() && e.loading.is_none() && !e.tools.processed,
+            );
             if !open {
+                e.colors.cancel(&mut e.source);
                 if e.dirty() || e.saving.is_some() {
                     e.close_prompt = true;
                 } else {
@@ -612,6 +687,9 @@ impl Editors {
             }
         }
         self.documents.retain(|e| !e.closed);
+        if *color_prefs != colors_before {
+            actions.push(Action::SettingsChanged);
+        }
         actions
     }
 }
@@ -651,7 +729,9 @@ mod tests {
         let mut uploaded = None;
         while std::time::Instant::now() < until && uploaded.is_none() {
             let mut actions = Vec::new();
-            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| actions = editors.show(ui.ctx(), &p, &mut settings));
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                actions = editors.show(ui.ctx(), &p, &mut settings, &mut crate::ui::color_picker::Preferences::default())
+            });
             // No renderer consumes texture updates in this headless test.
             output.textures_delta.clear();
             for action in actions {
@@ -708,7 +788,7 @@ mod tests {
             let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
                 assert!(
                     !editors
-                        .show(ui.ctx(), &p, &mut settings)
+                        .show(ui.ctx(), &p, &mut settings, &mut crate::ui::color_picker::Preferences::default())
                         .iter()
                         .any(|a| matches!(a, Action::Save { .. }))
                 )
