@@ -291,6 +291,9 @@ pub struct DrawLists {
     /// in yellow, other prims of the linkset in blue.
     pub select_root: Vec<DrawCmd>,
     pub select_child: Vec<DrawCmd>,
+    /// Selected texture faces (LLPipeline::renderSelectedFaces).
+    pub select_faces: Vec<DrawCmd>,
+    pub hud_select_faces: Vec<DrawCmd>,
     /// Impostor pictures to take this frame (at most `IMPOSTOR_CAPTURES`).
     pub impostor_captures: Vec<ImpostorCapture>,
     /// Impostor cards to draw.
@@ -366,6 +369,8 @@ impl DrawLists {
         self.debug_blue.clone_from(&src.debug_blue);
         self.select_root.clone_from(&src.select_root);
         self.select_child.clone_from(&src.select_child);
+        self.select_faces.clone_from(&src.select_faces);
+        self.hud_select_faces.clone_from(&src.hud_select_faces);
         self.impostor_captures.clone_from(&src.impostor_captures);
         self.impostor_sprites.clone_from(&src.impostor_sprites);
         self.gpu = src.gpu;
@@ -394,6 +399,8 @@ impl DrawLists {
         self.debug_blue.clear();
         self.select_root.clear();
         self.select_child.clear();
+        self.select_faces.clear();
+        self.hud_select_faces.clear();
         self.impostor_captures.clear();
         self.impostor_sprites.clear();
         self.gpu = None;
@@ -655,6 +662,12 @@ pub struct MirrorParams {
 /// Camera and environment for one frame.
 #[derive(Debug, Clone)]
 pub struct FrameParams {
+    /// Linear RGBA from the UI palette for selected-face overlays.
+    pub selection_color: [f32; 4],
+    /// Brief coverage highlight, zero once the material can be read unaltered.
+    pub selection_pulse: f32,
+    /// Logical halo width scaled to display pixels.
+    pub selection_scale: f32,
     pub view: Mat4,
     pub proj: Mat4,
     pub camera_pos: Vec3,
@@ -972,6 +985,8 @@ mod tests {
         scene.blend_glow.extend([false, true, false]);
         scene.glow.push(cmd(4));
         scene.select_root.push(cmd(5));
+        scene.select_faces.push(cmd(6));
+        scene.hud_select_faces.push(cmd(22));
         scene.particles.push(ParticleInstance::default());
         scene.impostor_sprites.push(ImpostorSprite {
             center: [1.0, 2.0, 3.0],
@@ -1011,6 +1026,8 @@ mod tests {
         assert_eq!(packet.blend.iter().map(|c| c.record).collect::<Vec<_>>(), [7, 8, 9]);
         assert_eq!(packet.blend_glow, [false, true, false]);
         assert_eq!((packet.terrain.len(), packet.glow.len(), packet.select_root.len()), (1, 1, 1));
+        assert_eq!(packet.select_faces[0].record, 6);
+        assert_eq!(packet.hud_select_faces[0].record, 22);
         assert_eq!((packet.particles.len(), packet.impostor_sprites.len()), (1, 1));
         assert_eq!(packet.impostor_captures[0].blend[0].record, 12);
         assert_eq!(packet.gpu.map(|g| g.draw_distance), Some(128.0));
@@ -1023,6 +1040,8 @@ mod tests {
         assert_eq!(packet.blend.len(), 3);
         assert!(scene.hud_view.is_none());
         assert!(scene.hud_opaque.is_empty());
+        assert!(scene.select_faces.is_empty());
+        assert!(scene.hud_select_faces.is_empty());
         assert!(packet.hud_view.is_some());
         assert_eq!(packet.hud_opaque[0].record, 20);
         assert!(packet.gpu.is_some());

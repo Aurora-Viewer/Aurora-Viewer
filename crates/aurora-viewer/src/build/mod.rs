@@ -28,6 +28,7 @@ pub mod replace;
 mod selection_tests;
 pub mod shapes;
 pub mod silhouette;
+pub mod task_inventory;
 pub mod ui;
 
 use crate::world::World;
@@ -228,6 +229,31 @@ mod hud_tests {
         tool.click_select(&mut world, &BuildSettings::default(), Some(root), false);
         tool.click_select(&mut world, &BuildSettings::default(), Some(ground), true);
         assert_eq!(tool.selection, vec![world.objects.get(ground).unwrap().key]);
+    }
+
+    #[test]
+    fn shift_face_selection_does_not_mix_hud_and_world_coordinates() {
+        let mut world = world();
+        let hud = world.objects.index_of_uuid(&crate::demo::hud::object(31, false).full_id).unwrap();
+        let ground = world
+            .objects
+            .iter()
+            .find(|(idx, _)| {
+                selectable(&world, *idx)
+                    && crate::scene::Scene::object_transform(&world, *idx, Instant::now(), 0).is_some_and(|(_, _, hud)| !hud)
+            })
+            .unwrap()
+            .0;
+        let mut tool = BuildTool::default();
+        tool.open_build(Tool::Edit);
+        tool.edit_mode = EditMode::Face;
+        tool.face_click(&mut world, Some(hud), Some(0), false);
+        tool.face_click(&mut world, Some(ground), Some(0), true);
+        assert_eq!(tool.selection, vec![world.objects.get(ground).unwrap().key]);
+        assert_eq!(tool.sel_te(&world), [(ground, 0)]);
+        tool.face_click(&mut world, Some(hud), Some(0), true);
+        assert_eq!(tool.selection, vec![world.objects.get(hud).unwrap().key]);
+        assert_eq!(tool.sel_te(&world), [(hud, 0)]);
     }
 }
 
@@ -905,7 +931,12 @@ impl BuildTool {
         let own = world.agent_id;
         let not_owned = roots
             .iter()
-            .filter(|&&i| world.objects.get(i).is_some_and(|o| o.owner_id != own))
+            .filter(|&&i| {
+                world.objects.get(i).is_some_and(|o| {
+                    let owner = self.props.get(&o.full_id).map_or(o.owner_id, |p| p.owner_id);
+                    o.update_flags & crate::ui::context::flags::OBJECT_YOU_OWNER == 0 && !owner.is_nil() && owner != own
+                })
+            })
             .count();
         for (handle, ids) in self.group_by_region(world, &roots) {
             self.send(BuildCmd::DeRez {
@@ -1063,11 +1094,10 @@ impl BuildTool {
     /// Remember the objects already flagged "create selected" so that only
     /// new ones get selected when they arrive.
     pub fn expect_created(&mut self, world: &World) {
-        let own = world.agent_id;
         let flagged = world
             .objects
             .iter()
-            .filter(|(_, o)| o.owner_id == own && o.update_flags & FLAGS_CREATE_SELECTED != 0)
+            .filter(|(_, o)| o.update_flags & FLAGS_CREATE_SELECTED != 0)
             .map(|(_, o)| o.full_id)
             .collect();
         self.pending_create = Some((Instant::now(), flagged));
@@ -1081,13 +1111,13 @@ impl BuildTool {
             self.pending_create = None;
             return;
         }
-        let own = world.agent_id;
+        // FLAGS_CREATE_SELECTED is addressed to the creating client, as in
+        // LLViewerObjectList::processObjectUpdate. OwnerID is absent from
+        // ordinary updates until sound / particles or ObjectProperties arrive.
         let new: Vec<usize> = world
             .objects
             .iter()
-            .filter(|(_, o)| {
-                o.owner_id == own && o.parent_id == 0 && o.update_flags & FLAGS_CREATE_SELECTED != 0 && !known.contains(&o.full_id)
-            })
+            .filter(|(_, o)| o.parent_id == 0 && o.update_flags & FLAGS_CREATE_SELECTED != 0 && !known.contains(&o.full_id))
             .map(|(i, _)| i)
             .collect();
         if new.is_empty() {
@@ -1339,6 +1369,16 @@ impl BuildTool {
             }
             return;
         };
+        let Some(idx) = world.objects.index_of(&unit) else { return };
+        if face as usize >= self.num_faces(world, idx) {
+            return;
+        }
+        // LLSelectMgr keeps HUD and world selections in separate spaces.
+        let hud = world.hud_root(idx).is_some();
+        if shift && !self.selection.is_empty() && self.hud_selected(world) != hud {
+            self.deselect_all(world);
+            self.faces.clear();
+        }
         if !shift {
             if !self.selection_linked || self.selection != vec![unit] {
                 self.deselect_all(world);
@@ -1349,9 +1389,19 @@ impl BuildTool {
             self.faces.insert(unit, vec![face]);
         } else {
             if !self.selection_linked {
+                // Entering face selection from a whole linkset keeps all its
+                // selected prims and faces (LLToolFace::pickCallback).
+                let prims: Vec<_> = self
+                    .sel_prims(world)
+                    .into_iter()
+                    .filter_map(|i| Self::unit_of(world, i, true))
+                    .collect();
                 self.deselect_all(world);
                 self.faces.clear();
                 self.selection_linked = true;
+                for prim in prims {
+                    self.add(world, prim);
+                }
             }
             if !self.is_selected(&unit) {
                 self.add(world, unit);
@@ -1526,7 +1576,7 @@ impl BuildTool {
     /// Selected mesh / sculpted prims the renderer outlines as wireframes
     /// (object index -> root color); the others get their edges drawn here.
     pub fn wire_selection(&self, world: &World, s: &BuildSettings) -> HashMap<usize, bool> {
-        if !(self.open || self.menu_selection) || !s.show_highlight || self.manip.dragging() {
+        if self.face_mode() || !(self.open || self.menu_selection) || !s.show_highlight || self.manip.dragging() {
             return HashMap::new();
         }
         self.color_highlighted(world)
@@ -1536,12 +1586,33 @@ impl BuildTool {
     }
 
     pub fn silhouette_selection(&self, world: &World, s: &BuildSettings) -> HashSet<usize> {
-        if !(self.open || self.menu_selection) || !s.show_highlight || self.manip.dragging() {
+        if self.face_mode() || !(self.open || self.menu_selection) || !s.show_highlight || self.manip.dragging() {
             return HashSet::new();
         }
         self.color_highlighted(world)
             .into_iter()
             .filter_map(|(i, _)| world.objects.get(i).is_some_and(|o| o.is_flexible()).then_some(i))
+            .collect()
+    }
+
+    fn face_mode(&self) -> bool {
+        self.open && self.tool == Tool::Edit && self.edit_mode == EditMode::Face
+    }
+
+    /// LLSelectMgr's TE mode: the selected surfaces, not whole-object outlines.
+    pub fn face_selection(&self, world: &World, s: &BuildSettings) -> HashMap<usize, u64> {
+        if !self.face_mode() || !s.show_highlight {
+            return HashMap::new();
+        }
+        self.sel_prims(world)
+            .into_iter()
+            .map(|idx| {
+                let mask = self
+                    .sel_faces(world, idx)
+                    .into_iter()
+                    .fold(0, |mask, face| mask | 1u64.checked_shl(face.into()).unwrap_or(0));
+                (idx, mask)
+            })
             .collect()
     }
 
@@ -1555,7 +1626,7 @@ impl BuildTool {
         let cam = self.cam;
         let mut p = draw::Painter3d::new(painter, &cam);
         let now = Instant::now();
-        if s.show_highlight && !self.manip.dragging() {
+        if s.show_highlight && !self.face_mode() && !self.manip.dragging() {
             let prims = self.color_highlighted(world);
             self.silhouettes.draw(&p, world, scene, &prims);
         }
@@ -1567,7 +1638,7 @@ impl BuildTool {
                 let mode = self.effective_mode(mods);
                 if mode == EditMode::Align {
                     self.align_draw(&mut p, world);
-                } else {
+                } else if mode != EditMode::Face {
                     self.manip.draw(&mut p, world, s, &self.selection, self.selection_linked, mode, now);
                 }
             }

@@ -119,7 +119,7 @@ impl Permissions {
     pub fn row(self, ui: &mut egui::Ui, p: &Palette, name: &str, selected: bool) -> egui::Response {
         let mut label = super::super::widgets::name_with_suffix(name, "", FontId::proportional(13.0), p.ink);
         self.append_suffix(&mut label, p);
-        super::super::widgets::inventory_item_label(ui, label, selected, egui::Sense::click(), None)
+        super::super::widgets::inventory_item_label(ui, label, selected, egui::Sense::click_and_drag(), None)
     }
 }
 

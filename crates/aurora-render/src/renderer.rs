@@ -94,6 +94,7 @@ struct FrameU {
     sky_ll: [f32; 4],
     sky_obj_light: [f32; 4],
     anim_clock: [u32; 4],
+    selection_color: [f32; 4],
     cascade_vp: [[[f32; 4]; 4]; CASCADES],
     lights: [LightU; MAX_LIGHTS],
     /// Which of `lights` a fragment walks (light_tiles.rs).
@@ -666,6 +667,7 @@ struct Pipelines {
     /// Selection wireframes (SilhouetteParentColor / SilhouetteChildColor).
     select_root_wire: Option<wgpu::RenderPipeline>,
     select_child_wire: Option<wgpu::RenderPipeline>,
+    selection_mask: wgpu::RenderPipeline,
     ssr: Option<wgpu::RenderPipeline>,
     pre_opaque: wgpu::RenderPipeline,
     pre_opaque_2s: wgpu::RenderPipeline,
@@ -1065,6 +1067,7 @@ pub(crate) struct Backend {
     egui: egui_wgpu::Renderer,
     ui_blur: Option<crate::ui_blur::Blur>,
     ui_glass: Option<crate::ui_glass::Glass>,
+    selection: Option<crate::selection::Overlay>,
     frame_layout: wgpu::BindGroupLayout,
     records_layout: wgpu::BindGroupLayout,
     /// Layout of the scene's texture pages (textures.rs), for the pipelines.
@@ -1754,6 +1757,7 @@ struct Ranges {
     debug_blue: (u64, u32),
     select_root: (u64, u32),
     select_child: (u64, u32),
+    select_faces: (u64, u32),
     refl_water: (u64, u32),
     refl_mirror: (u64, u32),
     refl_terrain_water: (u64, u32),
@@ -2143,6 +2147,7 @@ impl Backend {
             egui,
             ui_blur: None,
             ui_glass: None,
+            selection: None,
             frame_layout,
             records_layout,
             tex_layout,
@@ -2512,6 +2517,21 @@ impl Backend {
                 true,
             )
         });
+        // Coverage of the selected material faces, including closed and
+        // disconnected surfaces, drawn with the same posed vertices as depth.
+        let selection_mask = pipe(PipeDesc {
+            cull: None,
+            samples: 1,
+            format: Some(wgpu::TextureFormat::R8Unorm),
+            depth_write: false,
+            write_mask: wgpu::ColorWrites::RED,
+            depth_bias: wgpu::DepthBiasState {
+                constant: 1,
+                slope_scale: 0.0,
+                clamp: 0.0,
+            },
+            ..base("selected face coverage", "vs_main", "fs_selection_mask")
+        });
         let ssr_pipe = ssr.then(|| {
             let src = format!("{}\n{}", include_str!("shaders/common.wgsl"), include_str!("shaders/ssr.wgsl"));
             let m = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -2679,6 +2699,7 @@ impl Backend {
             debug_wire,
             select_root_wire,
             select_child_wire,
+            selection_mask,
             ssr: ssr_pipe,
             pre_opaque,
             pre_opaque_2s,
@@ -3399,6 +3420,7 @@ impl Backend {
         let inv_view = view.inverse();
         let camera_pos = inv_view.transform_point3(Vec3::ZERO);
         let mut u = FrameU::zeroed();
+        u.selection_color = f.selection_color;
         u.view_proj = vp.to_cols_array_2d();
         u.inv_view_proj = vp.inverse().to_cols_array_2d();
         if eye_relative_enabled() {
@@ -3654,6 +3676,16 @@ impl Backend {
         // Offscreen only while a modal is visible. This works even when the
         // swapchain cannot be sampled or copied, and preserves scene captures.
         let surface_view = self.ui_blur.as_ref().map_or_else(|| present_view.clone(), |blur| blur.view.clone());
+
+        if !lists.select_faces.is_empty() || !lists.hud_select_faces.is_empty() {
+            let size = [self.config.width, self.config.height];
+            if self.selection.as_ref().is_none_or(|selection| selection.size != size) {
+                self.selection = Some(crate::selection::Overlay::new(&self.device, self.config.format, size));
+            }
+            if let Some(selection) = &self.selection {
+                selection.update(&self.queue, f.selection_color, f.selection_pulse, f.selection_scale);
+            }
+        }
 
         // ---- resources: the scene's buffers as they are for this frame
         if scene.records_key != self.records_key {
@@ -4032,10 +4064,12 @@ impl Backend {
         let cpu = &mut self.indirect_cpu;
         let hud_opaque_range = push(cpu, &lists.hud_opaque);
         let hud_blend_range = push(cpu, &lists.hud_blend);
+        let hud_select_faces_range = push(cpu, &lists.hud_select_faces);
         rg.debug_red = push(cpu, &lists.debug_red);
         rg.debug_blue = push(cpu, &lists.debug_blue);
         rg.select_root = push(cpu, &lists.select_root);
         rg.select_child = push(cpu, &lists.select_child);
+        rg.select_faces = push(cpu, &lists.select_faces);
         let imp_ranges: Vec<((u64, u32), (u64, u32))> = imp_caps.iter().map(|c| (push(cpu, &c.opaque), push(cpu, &c.blend))).collect();
         // reflection passes: each culled to its own frustum
         if capture.is_some() {
@@ -4942,7 +4976,7 @@ impl Backend {
         // ---- post (tonemap) to the swapchain
         {
             let ts = match (&self.timer, timer_slot) {
-                (Some(t), Some(_)) if !draw_huds => Some(wgpu::RenderPassTimestampWrites {
+                (Some(t), Some(_)) if !draw_huds && rg.select_faces.1 == 0 => Some(wgpu::RenderPassTimestampWrites {
                     query_set: &t.query_set,
                     beginning_of_pass_write_index: None,
                     end_of_pass_write_index: Some(1),
@@ -4980,6 +5014,25 @@ impl Backend {
             }
         }
 
+        if rg.select_faces.1 > 0
+            && let Some(selection) = &self.selection
+        {
+            let mut pass = selection.begin_mask(&mut encoder, &self.targets.depth_ss);
+            bind_mesh(&mut pass, &self.groups.b);
+            draw(&mut pass, &self.pipelines.selection_mask, rg.select_faces);
+            drop(pass);
+            let timestamps = match (&self.timer, timer_slot) {
+                (Some(t), Some(_)) if !draw_huds => Some(wgpu::RenderPassTimestampWrites {
+                    query_set: &t.query_set,
+                    beginning_of_pass_write_index: None,
+                    end_of_pass_write_index: Some(1),
+                }),
+                _ => None,
+            };
+            selection.encode(&mut encoder, &surface_view, timestamps);
+            calls.set(calls.get() + 2);
+        }
+
         // scene only (no interface): copied before egui draws on top
         let mut capture = None;
         if wanted == Some(Capture::Scene) {
@@ -5011,7 +5064,7 @@ impl Backend {
                     stencil_ops: None,
                 }),
                 timestamp_writes: match (&self.timer, timer_slot) {
-                    (Some(t), Some(_)) => Some(wgpu::RenderPassTimestampWrites {
+                    (Some(t), Some(_)) if hud_select_faces_range.1 == 0 => Some(wgpu::RenderPassTimestampWrites {
                         query_set: &t.query_set,
                         beginning_of_pass_write_index: None,
                         end_of_pass_write_index: Some(1),
@@ -5024,6 +5077,24 @@ impl Backend {
             bind_mesh(&mut pass, &self.groups.refl[5]);
             draw(&mut pass, &self.pipelines.hud_opaque, hud_opaque_range);
             draw(&mut pass, &self.pipelines.hud_blend, hud_blend_range);
+        }
+        if hud_select_faces_range.1 > 0
+            && let (Some(selection), Some((_, _, depth))) = (&self.selection, &self.hud_depth)
+        {
+            let mut pass = selection.begin_mask(&mut encoder, depth);
+            bind_mesh(&mut pass, &self.groups.refl[5]);
+            draw(&mut pass, &self.pipelines.selection_mask, hud_select_faces_range);
+            drop(pass);
+            let timestamps = match (&self.timer, timer_slot) {
+                (Some(t), Some(_)) => Some(wgpu::RenderPassTimestampWrites {
+                    query_set: &t.query_set,
+                    beginning_of_pass_write_index: None,
+                    end_of_pass_write_index: Some(1),
+                }),
+                _ => None,
+            };
+            selection.encode(&mut encoder, &surface_view, timestamps);
+            calls.set(calls.get() + 2);
         }
         if let (Some(t), Some(slot)) = (&self.timer, timer_slot) {
             encoder.resolve_query_set(&t.query_set, 0..GPU_TIMESTAMPS, &t.resolve, 0);

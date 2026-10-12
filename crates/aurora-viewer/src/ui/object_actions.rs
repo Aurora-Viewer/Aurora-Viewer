@@ -347,6 +347,18 @@ pub fn show_contents(
                                             if response.clicked() || response.secondary_clicked() {
                                                 selected = Some(item.id);
                                             }
+                                            super::inventory::task_drop::source(
+                                                ui,
+                                                &response,
+                                                world,
+                                                c.target.object,
+                                                &crate::build::task_inventory::from_inventory(c.target.object, item),
+                                                crate::build::task_inventory::owned(
+                                                    world,
+                                                    c.target.object,
+                                                    state.props.get(&c.target.root),
+                                                ),
+                                            );
                                             if matches!(item.asset_type, 7 | 10) {
                                                 let document = || {
                                                     if item.asset_type == 10 {

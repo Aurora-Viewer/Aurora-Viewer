@@ -750,6 +750,18 @@ fn fs_debug_flat(in: VsOut) -> @location(0) vec4<f32> {
     return vec4<f32>(debug_r, debug_g, debug_b, debug_a);
 }
 
+// Selection is a separate coverage mask, never an interior grid. Keep
+// masked texture holes but retain invisible faces for editing their TE.
+@fragment
+fn fs_selection_mask(in: VsOut) -> @location(0) vec4<f32> {
+    let rec = records[in.record];
+    if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u) {
+        let alpha = sample_tex(rec.tex.x, in.uv).a * rec.base_color.a;
+        if (rec.base_color.a >= 0.004 && alpha < rec.params.w) { discard; }
+    }
+    return vec4<f32>(1.0, 0.0, 0.0, 1.0);
+}
+
 // Glow suppression of a face LL draws in its alpha pool: the glow under it
 // is scaled by (1 - its alpha) before it adds its own (fs_glow).
 @fragment

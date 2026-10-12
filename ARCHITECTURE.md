@@ -219,6 +219,43 @@ micro local, même sans écho de sa présence par le serveur vocal.
 
 ## Déroulement d'une image
 
+`build/task_inventory.rs` centralise les permissions et les destinations du
+transfert du contenu d’un objet vers l’inventaire personnel ;
+`ui/inventory/task_drop.rs` fournit la source commune aux deux fenêtres de
+contenu, les cibles de dépôt et la confirmation des retraits. `app/inventory.rs`
+revérifie les permissions avant le message `MoveTaskInventory`, avec deux
+préférences d’avertissement persistantes (objet ordinaire ou contenant des scripts).
+
+La sélection de faces garde un masque d’indices TextureEntry par prim dans
+`scene/mod.rs`. Les listes de dessin monde et HUD portent une passe de surlignage
+des faces visibles, colorées par la palette, sans modifier les matériaux. Chaque dessin
+conserve son véritable indice de face, même quand des faces transparentes sont
+omises. Sélectionner une face opaque ne reconstruit pas ses enregistrements ;
+une face totalement transparente sélectionnée reçoit temporairement un
+enregistrement destiné au seul surlignage.
+
+`aurora-render/src/selection.rs` et `shaders/selection.wgsl` calculent un halo
+extérieur à partir de la couverture des triangles sélectionnés, avec la profondeur
+du monde ou du HUD et la géométrie posée habituelle. Deux passes séparables sur
+le GPU suivent les silhouettes, les trous et les morceaux discontinus, y compris
+une face fermée sans arête de bord. Le halo est composé après le post-traitement,
+sans toucher à l’intérieur des faces ; une brève teinte au clic s’efface en 0,7 s.
+« Revoir la sélection » relance cette teinte sans modifier les objets.
+`scene/selection_demo.rs` fournit le mesh hors ligne à îlots courbes séparés
+du scénario `faces-complex`, à côté d’une primitive torique fermée.
+
+`ui/texture_picker/tree.rs` partage le cache de recherche et l’arborescence virtuelle
+de `ui/inventory/view.rs`. Les dossiers se chargent par lots bornés ; les états
+dépliés de recherche et de navigation restent séparés. `ui/texture_picker.rs`
+présente les lignes visibles, les noms longs tronqués avec infobulle, un aperçu
+borné, une séparation ajustable et les commandes en bas de la fenêtre.
+Ses choix intentionnels sont distincts de la confirmation :
+`build/ui/texture_preview.rs` applique l’aperçu immédiat à la sélection capturée,
+conserve les textures et matériaux d’origine de chaque face, confirme sans
+renvoi avec « OK » ou restaure avec « Annuler ». Les autres utilisateurs du
+sélecteur gardent leur confirmation habituelle ; les textures d’inventaire
+non copiables ne produisent pas d’aperçu, comme dans Firestorm.
+
 Le sélecteur `ui/inventory/move_to.rs` propose les destinations de
 « Déplacer vers… » pour la sélection d’origine, avec filtre par nom et
 chemins. La liste est calculée en parallèle, gardée par génération et dessinée

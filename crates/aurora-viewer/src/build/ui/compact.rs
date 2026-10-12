@@ -104,18 +104,6 @@ pub fn selection_title(tool: &BuildTool, world: &World) -> String {
 fn selection(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &World, s: &BuildSettings) {
     let roots = tool.roots(world);
     let prims = tool.sel_prims(world);
-    let known = prims
-        .first()
-        .and_then(|&i| world.objects.get(i))
-        .is_some_and(|o| tool.props.contains_key(&o.full_id));
-    let editable = prims.iter().all(|&idx| tool.can_modify(world, idx));
-    let status = if !known {
-        aurora_i18n::tr!("build-compact-waiting")
-    } else if editable {
-        aurora_i18n::tr!("build-compact-editable")
-    } else {
-        aurora_i18n::tr!("build-compact-readonly")
-    };
     band(ui, p.bar.gamma_multiply(0.82), 12, 5, |ui| {
         ui.spacing_mut().item_spacing = Vec2::new(5.0, 4.0);
         ui.spacing_mut().interact_size.y = 14.0;
@@ -123,20 +111,6 @@ fn selection(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &World
             common::small(ui, p, aurora_i18n::tr!("build-compact-select-hint"));
             return;
         }
-        ui.horizontal(|ui| {
-            let (dot, _) = ui.allocate_exact_size(Vec2::splat(5.0), egui::Sense::hover());
-            ui.painter()
-                .circle_filled(dot.center(), 2.5, if editable && known { p.teal } else { p.muted });
-            ui.add(egui::Label::new(RichText::new(status).size(10.0).color(p.muted)).truncate())
-                .on_hover_text(status);
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(
-                    RichText::new(aurora_i18n::tr!("build-compact-counts", objects = roots.len(), prims = prims.len()))
-                        .size(10.0)
-                        .color(p.muted),
-                );
-            });
-        });
         ui.horizontal(|ui| {
             let impact = tool
                 .land_impact(world)
@@ -155,14 +129,17 @@ fn selection(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &World
             {
                 tool.ui.weights_open = !tool.ui.weights_open;
             }
-            if let Some((_, remaining)) = tool.costs.capacity(world) {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(
-                    RichText::new(aurora_i18n::tr!("build-c3-remaining", remaining = remaining))
+                    RichText::new(aurora_i18n::tr!("build-compact-counts", objects = roots.len(), prims = prims.len()))
                         .size(10.0)
                         .color(p.muted),
                 );
-            }
+            });
         });
+        if let Some((_, remaining)) = tool.costs.capacity(world) {
+            common::small(ui, p, &aurora_i18n::tr!("build-c3-remaining", remaining = remaining));
+        }
         if let Some(info) = tool.part_info(world, s) {
             common::small(ui, p, &info);
         }
@@ -178,7 +155,6 @@ pub(super) fn manipulation(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool,
                 (EditMode::Move, "arrows-out-cardinal", aurora_i18n::tr!("build-compact-move")),
                 (EditMode::Rotate, "arrows-clockwise", aurora_i18n::tr!("build-compact-rotate")),
                 (EditMode::Stretch, "arrows-out", aurora_i18n::tr!("build-compact-stretch")),
-                (EditMode::Face, "selection", aurora_i18n::tr!("build-compact-face")),
                 (
                     EditMode::Align,
                     "align-center-horizontal-simple",
@@ -201,9 +177,6 @@ pub(super) fn manipulation(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool,
                 );
                 if response.on_hover_text(title).clicked() {
                     tool.set_edit_mode(world, s, mode);
-                    if mode == EditMode::Face {
-                        tool.tab = 3;
-                    }
                 }
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -226,14 +199,11 @@ pub(super) fn manipulation(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool,
     });
 }
 
-fn transform_options(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings) {
+fn transform_options(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, s: &mut BuildSettings) {
     ui.add_space(4.0);
     divider(ui, p);
     ui.add_space(4.0);
     ui.spacing_mut().interact_size.y = 20.0;
-    if let Some(v) = common::check(ui, s.edit_linked, false, aurora_i18n::tr!("build-compact-linked"), true) {
-        tool.set_edit_linked(world, s, v);
-    }
     ui.horizontal(|ui| {
         if let Some(v) = common::check(ui, s.snap, false, aurora_i18n::tr!("build-compact-snap"), true) {
             s.snap = v;
@@ -278,7 +248,7 @@ fn sections_panel(
     env: &mut Env,
     height: f32,
 ) {
-    let response = ui.horizontal_top(|ui| {
+    ui.horizontal_top(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
         let rail = ui.allocate_ui_with_layout(Vec2::new(44.0, height), egui::Layout::top_down(egui::Align::Min), |ui| {
             band(ui, p.bar.gamma_multiply(0.82), 5, 8, |ui| {
@@ -315,9 +285,9 @@ fn sections_panel(
                 egui::ScrollArea::vertical()
                     .id_salt(("c3_section", tool.tab))
                     .max_height((height - 24.0).max(1.0))
-                    .auto_shrink([false, true])
+                    .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        if tool.selection.is_empty() {
+                        if tool.selection.is_empty() && tool.tab != 3 {
                             common::label(ui, p, aurora_i18n::tr!("build-compact-select-hint"));
                             return;
                         }
@@ -338,7 +308,7 @@ fn sections_panel(
                             5 => object::show_shape(ui, p, tool, world, env),
                             _ => {
                                 object::show_transform(ui, p, tool, world, s, mods);
-                                transform_options(ui, p, tool, world, s);
+                                transform_options(ui, p, tool, s);
                             }
                         }
                     });
@@ -348,9 +318,6 @@ fn sections_panel(
         ui.painter()
             .vline(rail_edge, rail.response.rect.top()..=bottom, Stroke::new(1.0, p.raised));
     });
-    // The rail has a stable minimum; longer property groups scroll within the
-    // available screen while short categories let the inspector shrink.
-    let _ = response;
 }
 
 fn footer(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings, mods: Mods) {
@@ -467,9 +434,18 @@ pub fn body(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
     }
     selection(ui, p, tool, world, s);
     divider(ui, p);
-    band(ui, egui::Color32::TRANSPARENT, 10, 7, |ui| tools::tool_row(ui, p, tool));
+    band(ui, egui::Color32::TRANSPARENT, 10, 7, |ui| {
+        tools::tool_row(ui, p, tool);
+        // Firestorm's floater_tools.xml exposes linked editing above its tabs.
+        if tool.tool == Tool::Edit {
+            ui.add_space(6.0);
+            if let Some(v) = common::check(ui, s.edit_linked, false, aurora_i18n::tr!("build-compact-linked"), true) {
+                tool.set_edit_linked(world, s, v);
+            }
+        }
+    });
     divider(ui, p);
-    let height = (ui.ctx().content_rect().height() - 250.0).clamp(190.0, 354.0);
+    let height = (ui.ctx().content_rect().height() - 270.0).clamp(190.0, 420.0);
     if s.expanded || tool.tool != Tool::Edit {
         if tool.tool == Tool::Edit {
             sections_panel(ui, p, tool, world, s, mods, env, height);

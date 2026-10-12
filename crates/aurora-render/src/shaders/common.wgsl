@@ -58,6 +58,7 @@ struct Frame {
     sky_ll: vec4<f32>,          // x classic sky (1 = no reflection probe ambiance), y distance multiplier
     sky_obj_light: vec4<f32>,   // rgb sun / moon color lighting objects (mSunDiffuse, max component <= 1)
     anim_clock: vec4<u32>,      // texture animation clock: x ms (wrapping), y sub-ms fraction (f32 bits)
+    selection_color: vec4<f32>, // selected-face overlay, from the UI palette
     cascade_vp: array<mat4x4<f32>, 3>,
     lights: array<Light, 64>,
     // which of `lights` a fragment walks (light_tiles.rs, LightSets)

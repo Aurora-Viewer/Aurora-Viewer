@@ -231,7 +231,7 @@ impl ProfileUi {
         emoji: &mut super::emoji::Emoji,
         pics: &HashMap<Uuid, egui::TextureHandle>,
         images: &HashMap<Uuid, egui::TextureHandle>,
-        world: &World,
+        world: &mut World,
         want_names: &mut HashSet<Uuid>,
         web: &WebContext,
     ) -> Vec<ProfileAction> {
