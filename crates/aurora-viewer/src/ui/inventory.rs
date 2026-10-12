@@ -522,7 +522,7 @@ fn item_row(
                 ui.label(&it.desc);
             }
             if let Some(permissions) = permissions {
-                ui.separator();
+                crate::ui::widgets::divider(ui, p);
                 ui.label(permissions.tooltip());
             }
         });

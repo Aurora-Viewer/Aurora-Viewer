@@ -225,7 +225,7 @@ pub(super) fn show(
         ));
         now.group_scripts = on;
     });
-    ui.separator();
+    crate::ui::widgets::divider(ui, p);
     // refreshSearch: small parcels stay out of search unless already listed
     let can_search = v.can(powers::LAND_FIND_PLACES) && !v.region_flag(rf::BLOCK_PARCEL_SEARCH);
     let large = parcel.area >= MIN_PARCEL_AREA;
@@ -367,7 +367,7 @@ pub(super) fn show(
                             t.id(),
                             rect,
                             egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                            egui::Color32::WHITE,
+                            super::super::widgets::PICTURE_TINT,
                         );
                     }
                     None => {

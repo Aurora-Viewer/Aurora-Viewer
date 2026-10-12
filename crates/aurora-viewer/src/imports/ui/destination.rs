@@ -80,7 +80,7 @@ impl Picker {
                         search.request_focus();
                     }
                 });
-                ui.separator();
+                widgets::divider(ui, p);
                 self.filter();
                 egui::ScrollArea::vertical()
                     .id_salt("import_folder_results")

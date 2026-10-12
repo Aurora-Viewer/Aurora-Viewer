@@ -137,7 +137,7 @@ impl EnvironmentUi {
                 });
             }
             ui.add_space(6.0);
-            ui.separator();
+            widgets::divider(ui, p);
             ui.horizontal(|ui| {
                 ui.add_space(LABEL_W + 4.0);
                 if widgets::flat_button(ui, p, aurora_i18n::tr!("common-personal-lighting"))
@@ -158,7 +158,7 @@ impl EnvironmentUi {
                     }
                 });
             });
-            ui.separator();
+            widgets::divider(ui, p);
             ui.horizontal(|ui| {
                 let (rect, _) = ui.allocate_exact_size(Vec2::new(LABEL_W, 20.0), egui::Sense::hover());
                 ui.painter().text(
@@ -179,7 +179,7 @@ impl EnvironmentUi {
                 {
                     let preset = i as u8 + 1;
                     let on = time_of_day == preset;
-                    let text = RichText::new(*name).size(12.0).color(if on { p.ink } else { p.muted });
+                    let text = RichText::new(*name).size(12.0).color(if on { p.on_accent } else { p.muted });
                     let b = egui::Button::new(text)
                         .fill(if on { p.violet } else { p.raised })
                         .corner_radius(ui.visuals().window_corner_radius)
@@ -253,7 +253,7 @@ impl EnvironmentUi {
                     let on = env_select::shown_index(list, shown) == i && !matches!(shown, Shown::Preset(_) | Shown::Personal);
                     ui.add_enabled(false, egui::Button::selectable(on, RichText::new(label).size(12.0)));
                 }
-                ui.separator();
+                widgets::divider(ui, p);
                 for c in list {
                     let on = shown == Shown::Item(c.asset);
                     if ui.selectable_label(on, RichText::new(&c.name).size(12.0)).clicked() && !on {

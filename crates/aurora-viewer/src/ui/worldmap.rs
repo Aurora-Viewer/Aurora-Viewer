@@ -526,7 +526,7 @@ impl WorldMapUi {
         let heading = |ui: &mut egui::Ui, t: &str| {
             ui.add_space(4.0);
             ui.label(RichText::new(t).size(12.0).strong().color(p.violet_light));
-            ui.separator();
+            widgets::divider(ui, p);
         };
         let level = scale_to_level(256.0 * self.zoom.exp2());
         heading(ui, aurora_i18n::tr!("ui-worldmap-legend"));

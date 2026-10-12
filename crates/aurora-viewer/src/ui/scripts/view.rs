@@ -607,7 +607,7 @@ fn insertion(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id) {
                     if !e.tools.insertion_open {
                         field.request_focus();
                     }
-                    ui.separator();
+                    crate::ui::widgets::divider(ui, p);
                     // Only the results scroll, keeping the search field visible.
                     let mut results = egui::ScrollArea::vertical().id_salt((id, "insert_results")).max_height(220.0);
                     if field.changed() {

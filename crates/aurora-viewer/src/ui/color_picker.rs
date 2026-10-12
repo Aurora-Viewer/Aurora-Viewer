@@ -253,7 +253,7 @@ impl ColorPicker {
                     [ui.available_width(), 16.0],
                     egui::Label::new(RichText::new(status).size(11.0).color(p.muted)),
                 );
-                ui.separator();
+                widgets::divider(ui, p);
                 ui.horizontal(|ui| {
                     let apply = widgets::checkbox(ui, p, &mut prefs.apply, aurora_i18n::tr!("color-picker-apply"));
                     self.record(Control::Apply, apply.rect);
@@ -437,7 +437,7 @@ impl ColorPicker {
             }
         }
         ui.add_space(3.0);
-        ui.separator();
+        widgets::divider(ui, p);
         let mut hsl = [draft.hsl[0] * 360.0, draft.hsl[1] * 100.0, draft.hsl[2] * 100.0];
         let mut changed = false;
         for (i, label) in [

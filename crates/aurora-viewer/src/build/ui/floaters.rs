@@ -429,7 +429,7 @@ fn media_settings(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world:
                 });
             }
         }
-        ui.separator();
+        crate::ui::widgets::divider(ui, p);
         ui.horizontal(|ui| {
             if flat_button(ui, p, aurora_i18n::tr!("common-ok")).clicked() {
                 apply = true;

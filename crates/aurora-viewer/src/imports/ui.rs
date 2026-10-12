@@ -306,7 +306,7 @@ pub fn show(
         if widgets::tabs(ui, p, &mut selected, &labels) {
             imports.open(choices[selected]);
         }
-        ui.separator();
+        widgets::divider(ui, p);
         if imports.choice == Choice::Local {
             fold(ui, p, aurora_i18n::tr!("import-local-settings"), false, |ui| {
                 ui.horizontal_wrapped(|ui| {
@@ -397,7 +397,7 @@ pub fn show(
             });
             let (separator, _) = ui.allocate_exact_size(Vec2::new(1.0, height), egui::Sense::hover());
             ui.painter()
-                .vline(separator.center().x, separator.y_range(), egui::Stroke::new(1.0, p.raised));
+                .vline(separator.center().x, separator.y_range(), widgets::divider_stroke(p));
             ui.allocate_ui_with_layout(
                 Vec2::new((ui.available_width()).max(260.0), height),
                 egui::Layout::top_down(egui::Align::Min),
@@ -627,7 +627,7 @@ pub fn show(
             );
         });
         let footer_start = ui.cursor().top();
-        ui.separator();
+        widgets::divider(ui, p);
         if imports.choice != Choice::Local {
             ui.add_enabled_ui(!busy, |ui| {
                 fold(ui, p, aurora_i18n::tr!("import-permissions"), false, |ui| {
@@ -974,7 +974,7 @@ fn texture(
             texture.id(),
             image_rect,
             egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-            egui::Color32::WHITE,
+            widgets::PICTURE_TINT,
         );
     } else {
         ui.spinner();

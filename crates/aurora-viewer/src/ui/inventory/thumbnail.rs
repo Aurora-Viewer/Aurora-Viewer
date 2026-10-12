@@ -341,7 +341,7 @@ fn paint_image(ui: &egui::Ui, rect: egui::Rect, texture: &egui::TextureHandle) {
         texture.id(),
         rect,
         egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
-        egui::Color32::WHITE,
+        crate::ui::widgets::PICTURE_TINT,
     );
 }
 pub(super) fn picture(

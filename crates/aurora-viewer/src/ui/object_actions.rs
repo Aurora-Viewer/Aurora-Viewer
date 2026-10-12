@@ -341,7 +341,7 @@ pub fn show_contents(
                                                     if !item.desc.is_empty() {
                                                         ui.label(&item.desc);
                                                     }
-                                                    ui.separator();
+                                                    crate::ui::widgets::divider(ui, p);
                                                     ui.label(permissions.tooltip());
                                                 });
                                             if response.clicked() || response.secondary_clicked() {

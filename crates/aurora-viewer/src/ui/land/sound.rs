@@ -65,7 +65,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
                 if ui.button(parcel.music_url.as_str()).clicked() {
                     ui.close();
                 }
-                ui.separator();
+                super::super::menu::separator(ui, p);
                 for url in streams.iter() {
                     if ui.button(url.as_str()).clicked() {
                         commit = Some(url.clone());

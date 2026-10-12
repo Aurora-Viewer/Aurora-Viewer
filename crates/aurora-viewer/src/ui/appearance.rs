@@ -233,7 +233,7 @@ fn gallery(
                             t.id(),
                             egui::Rect::from_center_size(rect.center(), size * scale),
                             egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
-                            egui::Color32::WHITE,
+                            widgets::PICTURE_TINT,
                         );
                     } else if let Some(t) = icons::global("hanger-2-filled") {
                         ui.painter().image(
@@ -886,7 +886,7 @@ pub fn show(
         if !st.message.is_empty() {
             ui.add(egui::Label::new(RichText::new(&st.message).size(11.0).color(p.warn)).wrap());
         }
-        ui.separator();
+        widgets::divider(ui, p);
         ui.horizontal_wrapped(|ui| {
             let available = st.pending.is_none() && model::cof(&world.inventory).is_some_and(|id| model::complete(&world.inventory, id));
             use widgets::{ActionKind, action_button, action_button_if};

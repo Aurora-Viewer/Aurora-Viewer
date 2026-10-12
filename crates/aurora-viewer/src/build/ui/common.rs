@@ -3,7 +3,7 @@
 //! state check boxes, combo boxes, texture and color swatches.
 
 use crate::theme::Palette;
-use egui::{Color32, RichText, Vec2};
+use egui::{RichText, Vec2};
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -197,7 +197,11 @@ pub fn swatch(
                             t.id(),
                             rect.shrink(1.0),
                             egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                            if enabled { Color32::WHITE } else { Color32::from_gray(120) },
+                            if enabled {
+                                crate::ui::widgets::PICTURE_TINT
+                            } else {
+                                crate::ui::widgets::PICTURE_TINT_DISABLED
+                            },
                         );
                     }
                     None => {

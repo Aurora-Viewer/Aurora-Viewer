@@ -193,6 +193,7 @@ fn progress_light(painter: &egui::Painter, p: &Palette, fill: Rect, k: f32, t: f
     let width = (120.0 * k).min(fill.width());
     let travel = fill.width() + width;
     let center = fill.left() - width / 2.0 + travel * (t * 0.32).fract();
+    // theme-guard: brand — the light of the sheen, whatever the skin
     let sheen = Color32::WHITE.gamma_multiply(0.6 * a);
     let lit = painter.with_clip_rect(fill.intersect(painter.clip_rect()));
     let left = Rect::from_min_max(Pos2::new(center - width / 2.0, fill.top()), Pos2::new(center, fill.bottom()));
@@ -296,7 +297,7 @@ fn banner(
             l.id(),
             rect,
             Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
-            Color32::WHITE.gamma_multiply(a),
+            super::widgets::PICTURE_TINT.gamma_multiply(a),
         );
         brand_text = rect.right() + 12.0 * k;
     }
@@ -327,7 +328,7 @@ fn banner(
         shadow.color = shadow.color.gamma_multiply(a);
         painter.add(shadow.as_shape(rect, radius));
         painter.add(
-            egui::epaint::RectShape::filled(rect, radius, Color32::WHITE.gamma_multiply(a))
+            egui::epaint::RectShape::filled(rect, radius, super::widgets::PICTURE_TINT.gamma_multiply(a))
                 .with_texture(tile.id(), Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0))),
         );
         painter.rect_stroke(

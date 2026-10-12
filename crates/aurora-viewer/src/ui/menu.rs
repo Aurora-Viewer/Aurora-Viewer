@@ -384,7 +384,7 @@ pub fn separator(ui: &mut Ui, p: &Palette) {
     let w = if ui.is_sizing_pass() { MIN_W } else { ui.available_width() };
     let (rect, _) = ui.allocate_exact_size(Vec2::new(w, 7.0), Sense::hover());
     ui.painter()
-        .hline(rect.x_range().shrink(4.0), rect.center().y, Stroke::new(1.0, p.raised));
+        .hline(rect.x_range().shrink(4.0), rect.center().y, super::widgets::divider_stroke(p));
 }
 
 /// Muted line that is not an action (an avatar's complexity…).

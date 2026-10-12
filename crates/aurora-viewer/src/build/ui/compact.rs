@@ -33,7 +33,8 @@ fn glyph(ui: &egui::Ui, rect: egui::Rect, name: &str, color: egui::Color32) {
 
 fn divider(ui: &mut egui::Ui, p: &Palette) {
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 1.0), egui::Sense::hover());
-    ui.painter().hline(rect.x_range(), rect.center().y, Stroke::new(1.0, p.raised));
+    ui.painter()
+        .hline(rect.x_range(), rect.center().y, crate::ui::widgets::divider_stroke(p));
 }
 
 fn band<R>(ui: &mut egui::Ui, fill: egui::Color32, x: i8, y: i8, body: impl FnOnce(&mut egui::Ui) -> R) -> R {
@@ -309,7 +310,7 @@ fn sections_panel(
                             0 => general::show(ui, p, tool, world, s),
                             2 => {
                                 object::show_flags(ui, p, tool, world);
-                                ui.separator();
+                                crate::ui::widgets::divider(ui, p);
                                 features::show(ui, p, tool, world, s, env);
                             }
                             3 => texture::show(ui, p, tool, world, s, env),
@@ -325,7 +326,7 @@ fn sections_panel(
         });
         let bottom = rail.response.rect.bottom().max(properties.response.rect.bottom());
         ui.painter()
-            .vline(rail_edge, rail.response.rect.top()..=bottom, Stroke::new(1.0, p.raised));
+            .vline(rail_edge, rail.response.rect.top()..=bottom, crate::ui::widgets::divider_stroke(p));
     });
 }
 
@@ -377,10 +378,8 @@ fn footer(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Worl
             {
                 tool.undo(world, true);
             }
-            ui.add_space(3.0);
-            let (line, _) = ui.allocate_exact_size(Vec2::new(1.0, 16.0), egui::Sense::hover());
-            ui.painter().vline(line.center().x, line.y_range(), Stroke::new(1.0, p.raised));
-            ui.add_space(3.0);
+            // no line between toolbar items: the gap it had tells the groups apart
+            ui.add_space(7.0 + ui.spacing().item_spacing.x);
             let label = RichText::new(aurora_i18n::tr!("build-compact-duplicate")).size(10.0);
             let button = if let Some(icon) = icons::global("copy-filled") {
                 egui::Button::image_and_text(egui::Image::new((icon.id(), Vec2::splat(12.0))).tint(p.ink), label)
@@ -472,7 +471,7 @@ pub fn body(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                         Tool::Land => {
                             tools::land_panel(ui, p, tool, world, s);
                             if s.expanded {
-                                ui.separator();
+                                crate::ui::widgets::divider(ui, p);
                                 tools::parcel_panel(ui, p, tool, world, s);
                             }
                         }

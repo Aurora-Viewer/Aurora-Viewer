@@ -352,7 +352,7 @@ impl LandUi {
                         }
                     });
                 });
-                ui.separator();
+                widgets::divider(ui, p);
                 ui.vertical(|ui| {
                     ui.set_width(ui.available_width());
                     if let Some(parcel) = &view.parcel {
@@ -369,7 +369,7 @@ impl LandUi {
                                     aurora_i18n::tr!("common-area"),
                                     &format!("{} m²", aurora_i18n::integer(parcel.area as i64)),
                                 );
-                                ui.separator();
+                                widgets::divider(ui, p);
                                 widgets::stat(
                                     ui,
                                     p,

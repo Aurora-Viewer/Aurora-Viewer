@@ -84,7 +84,7 @@ pub fn panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut W
                 if picking {
                     ui.label(RichText::new(aurora_i18n::tr!("replace-picking")).size(12.0).color(p.violet_light));
                 }
-                ui.separator();
+                crate::ui::widgets::divider(ui, p);
                 let o = &mut tool.replacement.options;
                 toggle(
                     ui,
@@ -166,7 +166,7 @@ pub fn panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut W
             }
         });
     ui.add_space(8.0);
-    ui.separator();
+    crate::ui::widgets::divider(ui, p);
     ui.add_space(3.0);
     if let Some(draft) = &tool.replacement.draft {
         let ready = draft.source.is_some() && !draft.picking;

@@ -90,7 +90,7 @@ impl Backdrop {
             Rect::from_min_max(Pos2::new(0.0, 0.5 - k * 0.5), Pos2::new(1.0, 0.5 + k * 0.5))
         };
         let a = alpha.clamp(0.0, 1.0);
-        painter.image(t.id(), rect, uv, Color32::WHITE.gamma_multiply(a));
+        painter.image(t.id(), rect, uv, super::widgets::PICTURE_TINT.gamma_multiply(a));
         // darken a little so the loading text stays readable
         let n = p.navy;
         painter.rect_filled(rect, 0.0, Color32::from_rgba_unmultiplied(n.r(), n.g(), n.b(), (110.0 * a) as u8));

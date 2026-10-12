@@ -316,8 +316,10 @@ fn news_panel(ui: &mut egui::Ui, p: &Palette, icons: &Icons, info: &LoginInfo, h
                     if i > 0 {
                         ui.add_space(4.0);
                         let r = ui.available_rect_before_wrap();
-                        ui.painter()
-                            .hline(r.x_range(), r.top(), Stroke::new(1.0, p.raised.gamma_multiply(0.7)));
+                        // lighter than in a window: the card is glass over the sky
+                        let mut line = widgets::divider_stroke(p);
+                        line.color = line.color.gamma_multiply(0.7);
+                        ui.painter().hline(r.x_range(), r.top(), line);
                         ui.add_space(6.0);
                     }
                     let has_url = !n.url.is_empty();
@@ -552,7 +554,7 @@ pub fn show(
                         p.violet
                     };
                     ui.painter().rect_filled(r, ui.visuals().widgets.inactive.corner_radius, fill);
-                    let txt_col = if can { Color32::WHITE } else { Color32::WHITE.gamma_multiply(0.5) };
+                    let txt_col = if can { p.on_accent } else { p.on_accent.gamma_multiply(0.5) };
                     let galley = ui.painter().layout_no_wrap(
                         aurora_i18n::tr!("ui-login-log-in").to_owned(),
                         egui::FontId::proportional(15.0),
@@ -588,7 +590,7 @@ pub fn show(
                 }
                 if let Some(msg) = form.tos_message.clone() {
                     ui.add_space(8.0);
-                    ui.separator();
+                    widgets::divider(ui, p);
                     ui.label(RichText::new(aurora_i18n::tr!("ui-login-terms-of-service")).strong().color(p.amber));
                     egui::ScrollArea::vertical().max_height(120.0).show(ui, |ui| {
                         ui.label(RichText::new(msg).size(12.0).color(p.muted));

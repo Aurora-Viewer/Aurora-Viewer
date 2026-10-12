@@ -395,7 +395,7 @@ pub(super) fn show(
 
 fn confirmation_buttons(ui: &mut egui::Ui, p: &Palette, enabled: bool, label: &str, done: &mut bool) -> bool {
     ui.add_space(16.0);
-    ui.separator();
+    crate::ui::widgets::divider(ui, p);
     ui.add_space(6.0);
     let mut confirm = false;
     ui.horizontal(|ui| {

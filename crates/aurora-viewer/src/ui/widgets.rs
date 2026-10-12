@@ -321,8 +321,7 @@ impl<'a> Floater<'a> {
             };
             let mut title_rect = header.rect;
             if framed_header.is_some() {
-                ui.painter()
-                    .hline(header.rect.x_range(), header.rect.bottom(), Stroke::new(1.0, p.raised));
+                ui.painter().hline(header.rect.x_range(), header.rect.bottom(), divider_stroke(p));
             }
             title_rect.max.x = buttons_left;
             // Keep the title buttons outside the double-click target; Window
@@ -337,9 +336,9 @@ impl<'a> Floater<'a> {
                 if framed_header.is_none() {
                     if self.compact_header {
                         ui.painter()
-                            .hline(header.rect.x_range(), header.rect.bottom() + 2.0, Stroke::new(1.0, p.raised));
+                            .hline(header.rect.x_range(), header.rect.bottom() + 2.0, divider_stroke(p));
                     } else {
-                        ui.separator();
+                        divider(ui, p);
                         ui.add_space(5.0);
                     }
                 }
@@ -493,6 +492,49 @@ fn title_button(ui: &mut egui::Ui, p: &Palette, icon: &str) -> egui::Response {
     resp
 }
 
+/// Stroke of every divider of the interface: a thin line of a neutral
+/// hardly lighter than the panels.
+pub fn divider_stroke(p: &Palette) -> Stroke {
+    Stroke::new(1.0, p.raised)
+}
+
+/// Thin line between two zones of a window, across the layout (horizontal in
+/// a column, vertical in a row), in the room of egui's separator: a window
+/// keeps its layout. Not for buttons or toolbar items: their spacing and the
+/// pill of the hovered one tell them apart. A menu uses `menu::separator`.
+pub fn divider(ui: &mut egui::Ui, p: &Palette) -> egui::Response {
+    const ROOM: f32 = 6.0;
+    let across = !ui.layout().main_dir().is_horizontal();
+    let available = if ui.is_sizing_pass() {
+        Vec2::ZERO
+    } else {
+        ui.available_size_before_wrap()
+    };
+    let size = if across {
+        Vec2::new(available.x, ROOM)
+    } else {
+        Vec2::new(ROOM, available.y)
+    };
+    let (rect, resp) = ui.allocate_at_least(size, Sense::hover());
+    if ui.is_rect_visible(rect) {
+        if across {
+            ui.painter().hline(rect.x_range(), rect.center().y, divider_stroke(p));
+        } else {
+            ui.painter().vline(rect.center().x, rect.y_range(), divider_stroke(p));
+        }
+    }
+    resp
+}
+
+// theme-guard: content — a picture keeps its own colors
+/// Tint of a picture drawn with its own colors (texture, snapshot, emoji,
+/// web page): none.
+pub const PICTURE_TINT: Color32 = Color32::WHITE;
+
+// theme-guard: content — the same picture, darkened
+/// Tint of a picture whose control is disabled.
+pub const PICTURE_TINT_DISABLED: Color32 = Color32::from_gray(120);
+
 /// Corners of a small mark inside a control or a line (the knob of a switch,
 /// a key cap, a status square, a letter badge): one pixel tighter than the
 /// windows', so that a mark of a few pixels stays a square.
@@ -523,7 +565,7 @@ pub fn switch(ui: &mut egui::Ui, p: &Palette, on: &mut bool) -> egui::Response {
     let half = rect.height() / 2.0;
     let x = egui::lerp(rect.left() + half..=rect.right() - half, t);
     let knob = egui::Rect::from_center_size(egui::pos2(x, rect.center().y), Vec2::splat(KNOB));
-    painter.rect_filled(knob, inner_radius(ui.visuals()), if *on { p.ink } else { p.muted });
+    painter.rect_filled(knob, inner_radius(ui.visuals()), if *on { p.on_accent } else { p.muted });
     resp
 }
 
@@ -606,14 +648,14 @@ fn check_row(ui: &mut egui::Ui, p: &Palette, on: &mut bool, label: egui::WidgetT
                 egui::StrokeKind::Inside,
             );
         }
-        let mark = Stroke::new(1.6, p.ink);
+        let mark = Stroke::new(1.6, p.on_accent);
         if mixed {
             painter.hline(square.shrink(3.5).x_range(), square.center().y, mark);
         } else if checked {
             match super::icons::global("check") {
                 Some(icon) => {
                     let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
-                    painter.image(icon.id(), square.shrink(1.0), uv, p.ink);
+                    painter.image(icon.id(), square.shrink(1.0), uv, p.on_accent);
                 }
                 // no icon theme: the tick is drawn
                 None => {
@@ -648,7 +690,7 @@ pub fn radio(ui: &mut egui::Ui, p: &Palette, selected: bool, label: impl Into<eg
         let painter = ui.painter();
         painter.circle_filled(center, radius, mark_fill(p, selected, hot));
         if selected {
-            painter.circle_filled(center, radius * RADIO_DOT, p.ink);
+            painter.circle_filled(center, radius * RADIO_DOT, p.on_accent);
         } else {
             // as the empty check box: visible on a panel of nearly its color
             painter.circle_stroke(center, radius - 0.5, Stroke::new(1.0, p.muted_dim));
@@ -703,7 +745,7 @@ pub fn tabs(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&st
         let font = egui::FontId::proportional(12.0);
         let text_w: Vec<f32> = labels
             .iter()
-            .map(|(l, _)| ui.fonts_mut(|f| f.layout_no_wrap((*l).to_owned(), font.clone(), Color32::WHITE).size().x) + 18.0)
+            .map(|(l, _)| ui.fonts_mut(|f| f.layout_no_wrap((*l).to_owned(), font.clone(), Color32::PLACEHOLDER).size().x) + 18.0)
             .collect();
         let gaps = (n - 1.0) * ui.spacing().item_spacing.x;
         let total: f32 = text_w.iter().sum::<f32>() + gaps;
@@ -793,7 +835,11 @@ fn small_icon_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, enab
         p.field
     };
     ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, fill);
-    let col = if enabled { p.ink } else { p.muted_dim };
+    let col = match (enabled, on) {
+        (false, _) => p.muted_dim,
+        (true, true) => p.on_accent,
+        (true, false) => p.ink,
+    };
     match super::icons::global(icon) {
         Some(t) => {
             ui.painter().image(
@@ -950,14 +996,19 @@ pub fn action_button_if(
     const GAP: f32 = 7.0;
     let enabled = enabled && ui.is_enabled();
     let font = egui::FontId::proportional(12.5);
-    let width = |ui: &egui::Ui| ui.painter().layout_no_wrap(label.to_owned(), font.clone(), Color32::WHITE).size().x;
+    let width = |ui: &egui::Ui| {
+        ui.painter()
+            .layout_no_wrap(label.to_owned(), font.clone(), Color32::PLACEHOLDER)
+            .size()
+            .x
+    };
     let lead = if icon.is_empty() { 0.0 } else { ICON + GAP };
     let content = lead + width(ui);
     let desired = Vec2::new(if size.x > 0.0 { size.x } else { content + 24.0 }, size.y);
     let (rect, resp) = ui.allocate_exact_size(desired, if enabled { Sense::click() } else { Sense::hover() });
     let hot = enabled && (resp.hovered() || resp.has_focus());
     let (fill, ink) = match kind {
-        ActionKind::Primary => (if hot { p.violet_light } else { p.violet }, p.ink),
+        ActionKind::Primary => (if hot { p.violet_light } else { p.violet }, p.on_accent),
         ActionKind::Danger => (if hot { p.danger } else { p.danger.gamma_multiply(0.88) }, p.navy),
         ActionKind::Caution => (if hot { p.amber } else { p.amber.gamma_multiply(0.88) }, p.navy),
         ActionKind::FlatDanger if hot => (p.danger.gamma_multiply(0.88), p.navy),
@@ -991,7 +1042,7 @@ pub fn action_button_if(
 pub fn primary_button_sized(ui: &mut egui::Ui, p: &Palette, label: &str, size: Vec2) -> egui::Response {
     ui.add_sized(
         size,
-        egui::Button::new(RichText::new(label).size(12.0).strong().color(p.ink))
+        egui::Button::new(RichText::new(label).size(12.0).strong().color(p.on_accent))
             .fill(p.violet)
             .stroke(Stroke::new(1.0, p.violet))
             .corner_radius(ui.visuals().widgets.inactive.corner_radius)
@@ -1010,11 +1061,14 @@ pub fn online_color(p: &Palette, online: bool) -> Color32 {
 /// Fixed-meaning colors (kept from the official viewer): G violet, M white,
 /// A red.
 pub fn maturity_style(p: &Palette, maturity: &str) -> Option<(&'static str, Color32, Color32)> {
+    // theme-guard: content — the white and the red of the official maturity badges
+    const WHITE: Color32 = Color32::WHITE;
+    const ADULT: Color32 = Color32::from_rgb(0xD9, 0x2D, 0x2D);
     match maturity {
         "" => None,
-        value if value == aurora_i18n::text("common-general") => Some(("G", p.violet, Color32::WHITE)),
-        value if value == aurora_i18n::text("common-moderate") => Some(("M", Color32::WHITE, p.navy)),
-        value if value == aurora_i18n::text("common-adult") => Some(("A", Color32::from_rgb(0xD9, 0x2D, 0x2D), Color32::WHITE)),
+        value if value == aurora_i18n::text("common-general") => Some(("G", p.violet, WHITE)),
+        value if value == aurora_i18n::text("common-moderate") => Some(("M", WHITE, p.navy)),
+        value if value == aurora_i18n::text("common-adult") => Some(("A", ADULT, WHITE)),
         _ => None,
     }
 }
@@ -1081,7 +1135,7 @@ pub fn picture(
                 t.id(),
                 egui::Rect::from_center_size(rect.center(), fit),
                 egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                Color32::WHITE,
+                PICTURE_TINT,
             );
         }
         None => {

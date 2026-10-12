@@ -217,7 +217,7 @@ fn item_row(
                 if !item.description.is_empty() {
                     ui.label(&item.description);
                 }
-                ui.separator();
+                widgets::divider(ui, p);
                 ui.label(permissions.tooltip());
             });
         if r.clicked() || r.secondary_clicked() {

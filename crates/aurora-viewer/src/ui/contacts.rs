@@ -349,7 +349,7 @@ fn right_cell(ui: &egui::Ui, p: &Palette, rect: egui::Rect, on: bool, editable: 
                 t.id(),
                 b.shrink(1.0),
                 egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                Color32::WHITE,
+                p.on_accent,
             );
         }
     } else {
@@ -407,7 +407,7 @@ fn row_icon(ui: &egui::Ui, p: &Palette, rect: egui::Rect, tex: Option<&egui::Tex
                 t.id(),
                 rect,
                 egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                Color32::WHITE,
+                widgets::PICTURE_TINT,
             );
         }
         None => {
@@ -1142,7 +1142,7 @@ fn group_list(
                             // LLGroupListSeparator after the pinned groups
                             let (r, _) = ui.allocate_exact_size(Vec2::new(list_w, 7.0), Sense::hover());
                             ui.painter()
-                                .hline(r.x_range().shrink(6.0), r.center().y, Stroke::new(1.0, p.raised));
+                                .hline(r.x_range().shrink(6.0), r.center().y, widgets::divider_stroke(p));
                         }
                         group_row(ui, p, world, st, pics, Some(g), list_w, actions);
                     }
@@ -1369,7 +1369,7 @@ fn sets_tab(
                             }
                         }
                         if !set_names.is_empty() {
-                            ui.separator();
+                            widgets::divider(ui, p);
                         }
                         for s in [
                             contact_sets::ALL_SETS,
@@ -1671,7 +1671,7 @@ fn set_config_window(ctx: &egui::Context, p: &Palette, world: &mut World, st: &m
         if widgets::switch_labeled(ui, p, &mut sort, aurora_i18n::tr!("ui-contacts-sort-by-online-status")).changed() {
             world.contact_sets.set_sort_by_online(&set, sort);
         }
-        ui.separator();
+        widgets::divider(ui, p);
         ui.label(
             RichText::new(aurora_i18n::tr!("ui-contacts-all-contact-sets"))
                 .size(12.5)

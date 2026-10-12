@@ -185,7 +185,7 @@ pub fn show(
                 ui.label(aurora_i18n::tr!("ao-empty"));
                 return;
             };
-            ui.separator();
+            widgets::divider(ui, p);
             ui.add_enabled_ui(!state.busy(), |ui| {
                 ui.horizontal(|ui| {
                     let mut edit = set.clone();
@@ -222,7 +222,7 @@ pub fn show(
                     }
                 });
             });
-            ui.separator();
+            widgets::divider(ui, p);
             ui.horizontal(|ui| {
                 egui::ComboBox::from_id_salt("ao_state")
                     .selected_text(state.state.label())
@@ -591,7 +591,7 @@ fn dialogs(ctx: &egui::Context, p: &Palette, inv: &mut Inventory, catalog: &inve
                     }
                 }
             });
-            ui.separator();
+            widgets::divider(ui, p);
             ui.label(aurora_i18n::tr!("ao-browse"));
             if state.folder.is_nil() {
                 state.folder = inv.root;

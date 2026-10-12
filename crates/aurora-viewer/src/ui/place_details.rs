@@ -380,7 +380,7 @@ fn snapshot(ui: &mut egui::Ui, c: &mut Ctx, data: &Shown) {
         Some(t) => {
             let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
             let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
-            ui.painter().image(t.id(), rect, uv, egui::Color32::WHITE);
+            ui.painter().image(t.id(), rect, uv, widgets::PICTURE_TINT);
             ui.painter().rect_stroke(
                 rect,
                 ui.visuals().window_corner_radius,

@@ -290,7 +290,7 @@ impl Emoji {
                 .hint_text(aurora_i18n::tr!("ui-emoji-search-emoji-name-or-code"))
                 .desired_width(f32::INFINITY),
         );
-        ui.separator();
+        crate::ui::widgets::divider(ui, p);
         let q = self.query.trim().trim_matches(':').to_lowercase();
         let list: Vec<char> = if q.is_empty() {
             self.lists.get(self.tab).cloned().unwrap_or_default()
@@ -326,7 +326,7 @@ impl Emoji {
                                     t.id(),
                                     ir,
                                     egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                                    egui::Color32::WHITE,
+                                    crate::ui::widgets::PICTURE_TINT,
                                 );
                             }
                             // tooltip: shortcode to type it in chat

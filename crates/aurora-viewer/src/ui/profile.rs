@@ -1495,7 +1495,7 @@ fn pick_detail(
     });
     let mut created = None;
     if own && let Some((e, base)) = w.pick_edit.as_mut() {
-        ui.separator();
+        widgets::divider(ui, p);
         ui.horizontal(|ui| {
             if e.id.is_nil() {
                 if ui.button(aurora_i18n::tr!("ui-profile-create-place")).clicked() {

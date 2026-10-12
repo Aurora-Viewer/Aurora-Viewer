@@ -28,6 +28,7 @@ pub struct Theme {
     pub warn: String,
     pub danger_dim: String,
     pub indigo_light: String,
+    pub on_accent: String,
     pub panel_alpha: u8,
     pub button_radius: u8,
     pub window_radius: u8,
@@ -59,6 +60,7 @@ impl Default for Theme {
             warn: "#FB923C".into(),
             danger_dim: "#A85252".into(),
             indigo_light: "#818CF8".into(),
+            on_accent: "#FFFFFF".into(),
             panel_alpha: 230,
             button_radius: 5,
             window_radius: 3,
@@ -101,6 +103,10 @@ pub struct Palette {
     #[allow(dead_code)] // part of the skin palette, not used by a widget yet
     pub danger_dim: Color32,
     pub indigo_light: Color32,
+    /// Text and icons on a face filled with the accent (primary button,
+    /// selected tool, checked box): `ink` belongs to the panels, and a skin
+    /// may give them a dark one.
+    pub on_accent: Color32,
     pub panel_alpha: u8,
 }
 
@@ -127,6 +133,7 @@ impl Theme {
             warn: hex(&self.warn),
             danger_dim: hex(&self.danger_dim),
             indigo_light: hex(&self.indigo_light),
+            on_accent: hex(&self.on_accent),
             panel_alpha: self.panel_alpha,
         }
     }

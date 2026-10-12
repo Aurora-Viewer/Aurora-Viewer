@@ -9,7 +9,7 @@ use super::icons::Icons;
 use super::widgets::{Floater, keycap};
 use crate::settings::Settings;
 use crate::theme::Palette;
-use egui::{Color32, RichText, Sense, Vec2};
+use egui::{RichText, Sense, Vec2};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Capture {
@@ -1958,7 +1958,7 @@ fn binding_cell(
         _ => Vec::new(),
     };
     let (text, col) = if capturing {
-        (aurora_i18n::tr!("common-press-a-key"), Color32::WHITE)
+        (aurora_i18n::tr!("common-press-a-key"), p.on_accent)
     } else if b.is_some() {
         ("", p.ink)
     } else {

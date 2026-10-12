@@ -34,7 +34,7 @@ fn tool_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, width: f32
         p.field
     };
     ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, fill);
-    let tint = if on { p.ink } else { p.muted };
+    let tint = if on { p.on_accent } else { p.muted };
     if let Some(t) = crate::ui::icons::global(icon) {
         ui.painter().image(
             t.id(),
@@ -161,7 +161,7 @@ pub fn create_panel(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings) {
                         p.field
                     };
                     ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, fill);
-                    let col = if sel { Color32::WHITE } else { p.ink };
+                    let col = if sel { p.on_accent } else { p.ink };
                     let name = match i {
                         i if i < shapes().len() => {
                             let sh = &shapes()[i];
@@ -412,6 +412,7 @@ pub fn parcel_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world:
     if s.show_parcel_owners {
         ui.horizontal_wrapped(|ui| {
             for (c, t) in [
+                // theme-guard: content — the colors of the parcel owner overlay
                 (Color32::from_rgb(0, 200, 0), aurora_i18n::tr!("build-ui-tools-yours")),
                 (Color32::from_rgb(0, 200, 200), "groupe"),
                 (Color32::from_rgb(220, 0, 0), "autres"),

@@ -40,13 +40,13 @@ pub fn bell(ui: &mut egui::Ui, p: &Palette, icons: &Icons, unread: usize, open: 
     }
     if unread > 0 {
         let text = if unread > 99 { "99+".to_owned() } else { unread.to_string() };
-        let galley = ui.painter().layout_no_wrap(text, egui::FontId::proportional(9.0), Color32::WHITE);
+        let galley = ui.painter().layout_no_wrap(text, egui::FontId::proportional(9.0), p.on_accent);
         // round for one digit, a pill beyond
         const H: f32 = 12.0;
         let w = (galley.size().x + 6.0).max(H);
         let badge = egui::Rect::from_min_size(egui::pos2(rect.right() - w + 3.0, rect.top()), Vec2::new(w, H));
         ui.painter().rect_filled(badge, H / 2.0, p.rose);
-        super::widgets::paint_ink_centered(ui.painter(), galley, badge.center(), Color32::WHITE);
+        super::widgets::paint_ink_centered(ui.painter(), galley, badge.center(), p.on_accent);
     }
     let tip = aurora_i18n::tr!("notifications-unread-count", count = unread);
     (resp.on_hover_text(tip).clicked(), rect)
@@ -254,7 +254,7 @@ fn button(ui: &mut egui::Ui, p: &Palette, label: &str, primary: bool) -> egui::R
 /// accent for the expected answer. A sized button cuts a long script label
 /// and shows it whole when hovered.
 fn button_sized(ui: &mut egui::Ui, p: &Palette, label: &str, primary: bool, size: Option<Vec2>) -> egui::Response {
-    let button = egui::Button::new(RichText::new(label).size(12.0).color(p.ink))
+    let button = egui::Button::new(RichText::new(label).size(12.0).color(if primary { p.on_accent } else { p.ink }))
         .fill(if primary { p.violet } else { p.raised })
         .corner_radius(ui.visuals().widgets.inactive.corner_radius);
     match size {

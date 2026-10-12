@@ -239,7 +239,7 @@ impl TexturePicker {
                                     rect.left_center() + egui::vec2(8.0, 0.0),
                                     rect.width() - 16.0,
                                     egui::FontId::proportional(12.0),
-                                    p.ink,
+                                    if selected { p.on_accent } else { p.ink },
                                 );
                                 if response.clicked() {
                                     self.selected = Some(*id);
@@ -294,7 +294,7 @@ impl TexturePicker {
                                 icon.id(),
                                 egui::Rect::from_center_size(egui::pos2(x + 7.0, rect.center().y), Vec2::splat(14.0)),
                                 egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
-                                if selected { p.ink } else { p.violet_light },
+                                if selected { p.on_accent } else { p.violet_light },
                             );
                         }
                         x += 20.0;
@@ -304,7 +304,11 @@ impl TexturePicker {
                             egui::pos2(x, rect.center().y),
                             rect.right() - x - 4.0,
                             egui::FontId::proportional(12.0),
-                            if enabled { p.ink } else { p.muted_dim },
+                            match (selected, enabled) {
+                                (true, _) => p.on_accent,
+                                (false, true) => p.ink,
+                                (false, false) => p.muted_dim,
+                            },
                         );
                         let response = if cut { response.on_hover_text(&name) } else { response };
                         if response.clicked() {
@@ -350,12 +354,13 @@ impl TexturePicker {
                             t.id(),
                             rect,
                             egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
-                            egui::Color32::WHITE,
+                            widgets::PICTURE_TINT,
                         );
                         let size = t.size();
                         ui.label(RichText::new(format!("{} × {}", size[0], size[1])).size(11.0).color(p.muted));
                     } else if a == BLANK_TEXTURE {
                         // IMG_WHITE has known content while its metadata streams.
+                        // theme-guard: content — the blank texture is white
                         ui.painter().rect_filled(rect, radius, egui::Color32::WHITE);
                     } else if a == TRANSPARENT_TEXTURE {
                         let cell = 12.0;
@@ -439,7 +444,7 @@ impl TexturePicker {
                 p.muted,
             );
             if self.extra_buttons {
-                ui.separator();
+                widgets::divider(ui, p);
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(aurora_i18n::tr!("ui-texture-picker-uuid")).size(12.0).color(p.muted));
                     let width = (ui.available_width() - 104.0).max(120.0);
@@ -454,7 +459,7 @@ impl TexturePicker {
                     }
                 });
             }
-            ui.separator();
+            widgets::divider(ui, p);
             ui.allocate_ui_with_layout(
                 Vec2::new(ui.available_width(), 26.0),
                 egui::Layout::right_to_left(egui::Align::Center),

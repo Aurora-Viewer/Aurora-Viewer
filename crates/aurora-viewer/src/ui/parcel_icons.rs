@@ -190,7 +190,7 @@ fn label_font() -> egui::FontId {
 
 fn item_width(ui: &egui::Ui, it: &ParcelIcon) -> f32 {
     16.0 + it.label.as_ref().map_or(0.0, |t| {
-        ui.painter().layout_no_wrap(t.clone(), label_font(), Color32::WHITE).size().x + 2.0
+        ui.painter().layout_no_wrap(t.clone(), label_font(), Color32::PLACEHOLDER).size().x + 2.0
     })
 }
 
