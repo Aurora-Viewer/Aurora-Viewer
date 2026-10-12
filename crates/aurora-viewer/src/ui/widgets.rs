@@ -426,8 +426,11 @@ fn title_button(ui: &mut egui::Ui, p: &Palette, icon: &str) -> egui::Response {
     resp
 }
 
-/// Flat on/off switch.
+/// Flat on/off switch: a track with the corners of the theme, and a square
+/// knob that slides in it.
 pub fn switch(ui: &mut egui::Ui, p: &Palette, on: &mut bool) -> egui::Response {
+    // a whole number of pixels around the knob keeps its edges crisp
+    const KNOB: f32 = 14.0;
     let (rect, mut resp) = ui.allocate_exact_size(Vec2::new(34.0, 18.0), Sense::click());
     if resp.clicked() {
         *on = !*on;
@@ -435,10 +438,14 @@ pub fn switch(ui: &mut egui::Ui, p: &Palette, on: &mut bool) -> egui::Response {
     }
     let t = ui.ctx().animate_bool_responsive(resp.id, *on);
     let track = if *on { p.violet } else { p.raised };
+    let radius = ui.visuals().window_corner_radius;
     let painter = ui.painter();
-    painter.rect_filled(rect, CornerRadius::same(9), track);
-    let x = egui::lerp(rect.left() + 9.0..=rect.right() - 9.0, t);
-    painter.circle_filled(egui::pos2(x, rect.center().y), 6.5, if *on { Color32::WHITE } else { p.muted });
+    painter.rect_filled(rect, radius, track);
+    let half = rect.height() / 2.0;
+    let x = egui::lerp(rect.left() + half..=rect.right() - half, t);
+    let knob = egui::Rect::from_center_size(egui::pos2(x, rect.center().y), Vec2::splat(KNOB));
+    let knob_radius = CornerRadius::same(radius.nw.saturating_sub(1).max(1));
+    painter.rect_filled(knob, knob_radius, if *on { p.ink } else { p.muted });
     resp
 }
 
