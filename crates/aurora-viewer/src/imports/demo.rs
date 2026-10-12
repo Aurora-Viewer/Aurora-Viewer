@@ -67,7 +67,7 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
     imports.open = true;
     imports.demo_mode = mode.clone();
     imports.choice = match mode.as_str() {
-        "texture" => Choice::Texture,
+        "texture" | "destination" => Choice::Texture,
         "material" => Choice::Material,
         "mesh" | "mesh-physics" | "mesh-degenerate" | "mesh-options" => Choice::Mesh,
         "animation" | "animation-own" => Choice::Animation,

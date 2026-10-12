@@ -583,12 +583,15 @@ grille.
 
 ### Détails
 
-- **`AURORA_DEMO_IMPORTS=texture|material|mesh|mesh-physics|mesh-degenerate|mesh-options|animation|animation-own|sound|bulk|bulk-upload|local|local-mesh|local-mesh-applied`** :
+- **`AURORA_DEMO_IMPORTS=texture|destination|material|mesh|mesh-physics|mesh-degenerate|mesh-options|animation|animation-own|sound|bulk|bulk-upload|local|local-mesh|local-mesh-applied`** :
   écrit des fichiers propres à ce lancement dans `.scratch/import-demo/<uuid>/`
   puis ouvre le parcours choisi : image RGBA, matériau PBR, cube Collada,
   animations BVH / `.anim` et son WAV synthétique. Vérifier les paramètres, les
   aperçus, la caméra, les permissions, la sélection et la confirmation.
   Le devis et les envois restent entièrement dans le serveur de démo.
+  `destination` ouvre le choix de dossier avec le filtre « Textures » ;
+  saisir un autre nom doit filtrer sans changer la destination ni fermer
+  la liste. Choisir un résultat ferme la liste et applique ce dossier.
   Pour le mesh, l’aperçu reste à gauche des sections LOD, Collisions et
   Import. `mesh-options` ouvre la troisième section (taille, textures,
   squelette, association des fichiers) ; les contrôles défilent indépendamment.

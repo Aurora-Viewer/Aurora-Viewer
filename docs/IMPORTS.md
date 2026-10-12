@@ -16,6 +16,9 @@ Référence consultée : Firestorm `d942e1118d01c3383ef7d6b64f248af77452b0dc`
 
 - Choisir un ou plusieurs fichiers ; nom et description ; dossier de
   destination par type, y compris les cinq dossiers personnalisés existants.
+  Le sélecteur de destination propose un filtre par nom, sans modifier le
+  dossier sélectionné pendant la saisie. Les destinations respectent les
+  protections de l’inventaire ; leur liste est mise en cache et virtualisée.
 - Permissions des chargements : prochain propriétaire (modifier, copier,
   transférer), groupe et tout le monde ; ne pas accorder des droits que le
   serveur n’a pas confirmés.
@@ -96,6 +99,9 @@ Sources : `llfloaterbvhpreview.cpp`,
 - Matériau sans frais propres ; création et sauvegarde comme un asset
   `material`, enveloppe LLSD version 1.1 / `GLTF 2.0`.
 - Aperçu local et sauvegarde du matériau importé avec les permissions.
+  Les propriétés sont placées à côté de l’aperçu ; les quatre cartes
+  utilisent des colonnes alignées dans une fenêtre adaptée au contenu ;
+  les noms longs sont tronqués avec leur texte complet au survol.
 
 Sources : `llmaterialeditor.cpp`, `panel_gltf_material.xml`,
 `llprimitive/llgltfmaterial.cpp`, `lllocalgltfmaterials.cpp`.
@@ -107,10 +113,12 @@ Sources : `llmaterialeditor.cpp`, `panel_gltf_material.xml`,
 - Quatre LOD : fichier, génération, réutilisation ; compteurs et validation
   des faces/instances, suffixes et recherche des fichiers associés.
   La fenêtre présente l’aperçu à côté de trois sections : LOD, Collisions
-  et Import. Chaque LOD expose sa source, son fichier et son nombre de
+  et Import. Chaque LOD possède un bloc encadré avec titre, source, fichier et nombre de
   triangles ; cliquer son niveau l’affiche dans l’aperçu. Les outils de
   visualisation et les réglages avancés restent accessibles sans masquer
   le modèle. Le calcul des frais se trouve dans le pied de fenêtre.
+  Les cases sont carrées et contrastées ; les lignes des menus conservent
+  leur taille au survol et lors d’un changement de sélection.
 - Génération de LOD : méthodes, triangles, erreur et normales lissées ;
   valeurs et presets de la fenêtre de référence.
 - Palettes glTF : articulations reconnues, joints pondérés prioritaires puis
@@ -164,7 +172,8 @@ grille. Aucune connexion ni opération réelle sur grille par l’agent.
 essais humains. Les codecs,
 les parcours réseau HTTP/UDP, les brouillons et les aperçus GPU sont présents.
 Les captures texture, son, animation, matériau, mesh et application locale ont
-été examinées : aperçu au-dessus des paramètres, actions et coût accessibles
+été examinées : aperçu à côté des paramètres pour le mesh et le matériau,
+au-dessus pour les autres types ; actions et coût accessibles
 dans le pied de fenêtre. Les tests couvrent notamment
 la préparation ORM, les trois modes V-HACD, les poids de LOD, les palettes glTF,
 les limites d’échelle, le rechargement des dépendances et la conservation
@@ -172,7 +181,7 @@ des accusés après annulation. Prix, permissions, inventaire créé et rendu de
 assets importés doivent encore être vérifiés par l’humain sur grille.
 Aucun import réel n’a été validé sur une grille.
 
-Vérifications locales : `check.ps1` vert, 1 193 tests réussis, 17 ignorés,
+Vérifications locales : `check.ps1` vert, 1 196 tests réussis, 17 ignorés,
 Clippy sans avertissement. Profilage de la scène démo : moyenne CPU de
 l’interface sur les trois dernières périodes, 0,37 ms sans la fenêtre puis
 0,57 ms avec l’aperçu PBR (0,51 ms animation, 0,51 ms mesh local). Les
