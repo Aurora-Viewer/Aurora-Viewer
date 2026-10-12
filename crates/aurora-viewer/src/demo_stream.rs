@@ -366,12 +366,19 @@ impl StreamDemo {
             if full == self.n as usize && geom_pending == 0 {
                 self.loaded_logged = true;
                 self.loaded_at = Some(now);
+                let pages = renderer.textures.pages_made();
                 log::info!(
-                    "demo stream: fully loaded in {:.2} s ({} textures at full resolution, geometry built; uploads {} staged / {} direct)",
+                    "demo stream: fully loaded in {:.2} s ({} textures at full resolution, geometry built; uploads {} staged / {} direct; texture pages {} by the page thread in {:.1} ms (longest {:.2}, {} unused) / {} by the main thread in {:.1} ms)",
                     now.duration_since(started).as_secs_f32(),
                     self.n,
                     textures.stats.uploads_staged,
                     textures.stats.uploads_direct,
+                    pages.threaded,
+                    pages.threaded_ms,
+                    pages.threaded_max_ms,
+                    pages.unused,
+                    pages.inline,
+                    pages.inline_ms,
                 );
             }
         }

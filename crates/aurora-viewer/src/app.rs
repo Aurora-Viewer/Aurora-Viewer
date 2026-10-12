@@ -3829,6 +3829,20 @@ impl App {
             if self.demo && std::env::var_os("AURORA_DEMO_ANIMESH").is_some() && self.frame_count.is_multiple_of(120) {
                 self.scene.log_demo_animesh(&self.world);
             }
+            // AURORA_DEMO_ANIMESH=churn: the ground animesh takes a new mesh
+            // asset; the one it leaves is freed with its skin bindings
+            if self.demo
+                && self.frame_count > 0
+                && self.frame_count.is_multiple_of(crate::demo::ANIMESH_CHURN_FRAMES)
+                && crate::demo::animesh_churn()
+            {
+                let generation = (self.frame_count / crate::demo::ANIMESH_CHURN_FRAMES) as u32;
+                self.scene
+                    .install_demo_animesh_mesh(&mut gfx.renderer, crate::demo::animesh_churn_mesh(generation));
+                for ev in crate::demo::animesh_churn_events(generation) {
+                    self.world.apply(ev);
+                }
+            }
             self.options_ui.vram = (gfx.renderer.info.vram_mb, gfx.renderer.info.integrated);
             // diagnostic: our attachments 40 s and 120 s after arrival
             let since_arrival = self.move_complete_at.map(|t| t.elapsed().as_secs()).unwrap_or(0);

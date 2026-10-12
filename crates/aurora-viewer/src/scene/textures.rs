@@ -46,6 +46,9 @@ const UNUSED_EVICT: Duration = Duration::from_secs(45);
 /// left by teleport go in about a second instead of in one frame.
 const EVICT_PER_FRAME: usize = 64;
 const EVICT_LOOKS_PER_FRAME: usize = 512;
+/// Uploads set aside in a frame because their texture page is still being
+/// made, before the frame stops looking for one that can go.
+const PAGE_WAITS: usize = 16;
 /// Downloaded data is written to the disk cache, and the memory budget
 /// checked, this often.
 const HOUSEKEEPING_EVERY: Duration = Duration::from_secs(2);
@@ -167,6 +170,10 @@ struct Entry {
     gone: bool,
 }
 
+/// What decides the texture page of an upload: texel format, level-0
+/// size and number of levels.
+type ChainSize = (TexelFormat, u32, u32, u32);
+
 struct PendingUpload {
     id: Uuid,
     discard: u8,
@@ -277,6 +284,18 @@ impl PendingUpload {
         self.staged.as_ref().is_none_or(|s| s.data.ready())
     }
 
+    /// Texel format, level-0 size and number of levels of the chain to
+    /// upload (what decides its texture page).
+    fn chain(&self) -> Option<ChainSize> {
+        match &self.staged {
+            Some(staged) => staged
+                .levels
+                .first()
+                .map(|l| (staged.format, l.width, l.height, staged.levels.len() as u32)),
+            None => self.mips.first().map(|m| (TexelFormat::Rgba8, m.0, m.1, self.mips.len() as u32)),
+        }
+    }
+
     /// Done with this upload. Its staging region is released here (the
     /// chunk is recycled once its last region is gone, which must not wait
     /// for another thread); its levels in memory are left to the trash
@@ -305,6 +324,9 @@ struct PendingUploads {
     /// Finest discard level waiting, per texture: a coarser one still in
     /// the queue is dropped when its turn comes (the finer one replaces it).
     finest: HashMap<Uuid, u8>,
+    /// Uploads waiting, per chain size: tells the renderer when to prepare
+    /// the next texture page of a size (`TextureTable::prepare_page`).
+    chains: HashMap<ChainSize, u32>,
     seq: u64,
 }
 
@@ -334,6 +356,9 @@ impl PendingUploads {
     fn requeue(&mut self, u: PendingUpload) {
         let finest = self.finest.entry(u.id).or_insert(u.discard);
         *finest = (*finest).min(u.discard);
+        if let Some(chain) = u.chain() {
+            *self.chains.entry(chain).or_default() += 1;
+        }
         if u.ready() {
             self.heap.push(u);
         } else {
@@ -355,10 +380,23 @@ impl PendingUploads {
         }
     }
 
+    /// Uploads of that chain size waiting (copyable or not).
+    fn queued(&self, chain: ChainSize) -> u32 {
+        self.chains.get(&chain).copied().unwrap_or(0)
+    }
+
     /// The most urgent copyable upload that is still the finest of its
     /// texture; the coarser ones met on the way are retired.
     fn pop(&mut self, trash: &mut Trash<Vec<u8>>) -> Option<PendingUpload> {
         while let Some(u) = self.heap.pop() {
+            if let Some(chain) = u.chain()
+                && let std::collections::hash_map::Entry::Occupied(mut n) = self.chains.entry(chain)
+            {
+                *n.get_mut() -= 1;
+                if *n.get() == 0 {
+                    n.remove();
+                }
+            }
             match self.finest.get(&u.id) {
                 Some(&f) if f < u.discard => {
                     u.retire(trash);
@@ -1200,6 +1238,8 @@ impl TextureStreamer {
         let t0 = Instant::now();
         let mut spent = 0u64;
         let mut done = 0usize;
+        // uploads whose texture page is not there yet, put back at the end
+        let mut waiting: Vec<PendingUpload> = Vec::new();
         self.uploads.promote_ready();
         while budget.allows(done, spent, t0.elapsed()) {
             let Some(mut u) = self.uploads.pop(&mut self.trash) else {
@@ -1218,23 +1258,20 @@ impl TextureStreamer {
                 self.uploads.requeue(u);
                 continue;
             }
-            // a new texture page (up to ~1 ms to create) only while most of
-            // the frame's budget is left: next frame, it goes first
-            let size = match &u.staged {
-                Some(staged) => staged
-                    .levels
-                    .first()
-                    .map(|l| (staged.format, l.width, l.height, staged.levels.len())),
-                None => u.mips.first().map(|m| (TexelFormat::Rgba8, m.0, m.1, u.mips.len())),
-            };
-            if done > 0
-                && t0.elapsed() > budget.time / 4
-                && size.is_some_and(|(format, w, h, levels)| renderer.textures.needs_page(e.slot, format, w, h, levels as u32))
+            // a new texture page is made by the renderer's page thread
+            // (0.4 to 1.5 ms here when the device took a new block of video
+            // memory), ahead of the uploads queued for it: only the first
+            // of a size waits a frame or two, and the others go meanwhile
+            let queued = &self.uploads;
+            if u.chain()
+                .is_some_and(|chain| !renderer.textures.prepare_page(e.slot, chain, queued.queued(chain)))
             {
-                // (the uploads behind it wait too: thousands may need
-                // that same page)
-                self.uploads.requeue(u);
-                break;
+                waiting.push(u);
+                if waiting.len() >= PAGE_WAITS {
+                    // (thousands may wait for that same page)
+                    break;
+                }
+                continue;
             }
             let (accepted, level0, levels) = match &u.staged {
                 Some(staged) => (
@@ -1320,6 +1357,9 @@ impl TextureStreamer {
                 self.alpha_changes.push(e.slot);
             }
             u.retire(&mut self.trash);
+        }
+        for u in waiting {
+            self.uploads.requeue(u);
         }
         self.trash.empty(jobs);
         self.stats.uploaded_bytes_frame = spent;
@@ -1586,6 +1626,10 @@ mod tests {
         assert!(!textures.pick_masks[&aurora_prim::te::TRANSPARENT_TEXTURE].hits(glam::Vec2::splat(0.5)));
     }
 
+    fn rgba(width: u32, height: u32, levels: u32) -> ChainSize {
+        (TexelFormat::Rgba8, width, height, levels)
+    }
+
     fn pending(id: u128, discard: u8) -> PendingUpload {
         PendingUpload {
             id: Uuid::from_u128(id),
@@ -1634,6 +1678,41 @@ mod tests {
         let got: Vec<u8> = std::iter::from_fn(|| q.pop(&mut trash)).map(|u| u.discard).collect();
         assert_eq!(got, [0]);
         assert!(q.finest.is_empty() && q.len() == 0);
+    }
+
+    #[test]
+    fn waiting_uploads_are_counted_per_chain_size() {
+        let mut q = PendingUploads::default();
+        let mut trash = Trash::default();
+        let sized = |id, discard, mips: &[(u32, u32)]| {
+            let mut u = pending(id, discard);
+            u.mips = mips.iter().map(|&(w, h)| (w, h, vec![0; (w * h * 4) as usize])).collect();
+            u
+        };
+        let (big, small) = ([(4, 4), (2, 2), (1, 1)], [(2, 2), (1, 1)]);
+        // copyable or not, both wait for a layer of their size
+        let mut held = sized(1, 0, &big);
+        held.held = true;
+        q.push(held, true, 10.0);
+        q.push(sized(2, 0, &big), true, 20.0);
+        q.push(sized(3, 0, &small), true, 30.0);
+        assert_eq!(
+            (q.queued(rgba(4, 4, 3)), q.queued(rgba(2, 2, 2)), q.queued(rgba(8, 8, 4))),
+            (2, 1, 0)
+        );
+        // the one popped no longer counts; put back, it does again
+        let u = q.pop(&mut trash).expect("upload");
+        assert_eq!((u.id.as_u128(), q.queued(rgba(2, 2, 2))), (3, 0));
+        q.requeue(u);
+        assert_eq!(q.queued(rgba(2, 2, 2)), 1);
+        // a coarser level retired on the way is forgotten too
+        q.push(sized(4, 2, &small), true, 90.0);
+        q.push(sized(4, 0, &big), true, 90.0);
+        assert_eq!((q.queued(rgba(4, 4, 3)), q.queued(rgba(2, 2, 2))), (3, 2));
+        q.unready[0].held = false;
+        q.promote_ready();
+        while q.pop(&mut trash).is_some() {}
+        assert!(q.chains.is_empty());
     }
 
     #[test]

@@ -29,7 +29,8 @@ s'il faut plus d'une phrase, ou s'il y a plusieurs modes, un paragraphe
 fichier les lignes de tableau qui commencent par `AURORA_DEMO_<NOM>=1` et
 affiche leur seconde colonne : elle doit rester courte.
 
-Sommaire : [Général](#général) · [Captures](#captures) ·
+Sommaire : [Fenêtres automatisées](#fenêtres-de-test-automatisé-sous-windows) ·
+[Général](#général) · [Captures](#captures) ·
 [Caméra, déplacements et pointeur](#caméra-déplacements-et-pointeur) ·
 [Objets et construction](#objets-et-construction) · [HUDs](#huds) ·
 [Avatars et animations](#avatars-et-animations) ·
@@ -38,6 +39,35 @@ Sommaire : [Général](#général) · [Captures](#captures) ·
 [Médias et son](#médias-et-son) ·
 [Réglages forcés et diagnostics](#réglages-forcés-et-diagnostics) ·
 [Profilage](#profilage)
+
+## Fenêtres de test automatisé sous Windows
+
+Lors d'un test sans intervention humaine, ajouter
+`[AUTOMATISATION - NE PAS TOUCHER]` au titre et lancer le contour jaune en
+pointillés. Depuis le worktree de la tâche, après compilation :
+
+```powershell
+$env:AURORA_DEMO = '1'
+$viewer = Start-Process -FilePath '.\target\debug\aurora-viewer.exe' -PassThru `
+  -ArgumentList '--title "Test ma-tâche [AUTOMATISATION - NE PAS TOUCHER]"'
+$borderScript = (Resolve-Path '.\scripts\automation-window-border.ps1').Path
+$borderArgs = @(
+  '-NoProfile', '-NonInteractive', '-STA', '-ExecutionPolicy', 'Bypass',
+  '-File', ('"{0}"' -f $borderScript),
+  '-ViewerProcessId', $viewer.Id
+)
+Start-Process -FilePath 'powershell.exe' -WindowStyle Hidden -ArgumentList $borderArgs
+```
+
+Utiliser le PID de l'exécutable du viewer, jamais celui de `cargo`. Le viewer
+et le script doivent tourner dans la même session Windows, sur le bureau
+interactif. Le script utilise Windows PowerShell 5.1 en mode STA.
+
+Le contour suit la position et la taille des fenêtres portant le tag, sans
+prendre le focus ni intercepter les clics. Il disparaît lorsque la fenêtre
+est réduite, cachée ou perd son tag, et le script s'arrête à la fermeture du
+processus du viewer. Pour un test avec intervention humaine, garder le titre
+`Test <tâche>` sans le tag.
 
 ## Général
 
@@ -399,9 +429,14 @@ grille.
   états automatiquement après le chargement, toutes les 180 images ;
   `off` commence avec l’AO désactivé. Vérifier le bouton AO en bas, les
   poses, la pause, les cycles et l’ajout / import depuis l’inventaire.
-- **`AURORA_DEMO_ANIMESH=1`** : mesh racine animé, mesh lié signalé par un
-  enfant et animesh porté, avec des squelettes propres indépendants et des
-  ombres alpha.
+- **`AURORA_DEMO_ANIMESH=1|churn`** : mesh racine animé, mesh lié signalé par
+  un enfant et animesh porté, avec des squelettes propres indépendants et des
+  ombres alpha. `churn` : l'animesh au sol (orange) change en plus d'asset de
+  mesh toutes les 240 images, comme les mesh riggés qui vont et viennent sur
+  la grille ; il doit rester entier et animé à chaque changement, les deux
+  autres aussi, et la ligne `demo animesh: skin bindings <en service> used
+  of <dans la liste>` du log (toutes les 120 images) doit cesser de croître
+  une fois les premiers mesh libérés (600 images après leur dernier usage).
 - **`AURORA_DEMO_CLOUD=1|self`** : `1` active hors ligne les nuages et les
   barres de chargement. `self` habille en plus notre avatar comme ceux qui
   restaient en nuage pendant les 60 s de la limite (issue #121) : bake de
@@ -497,8 +532,10 @@ grille.
   complète 1,5 s plus tard.
   - Le journal donne la fin du chargement (`demo stream: fully loaded in
     … s`, avec les envois préparés par les tâches / écrits par le thread
-    principal) ; avec `AURORA_PROFILE=1`, lire `stream`, `results` et les
-    parties `s_*` dans `max:`.
+    principal, et les pages de textures créées par le thread des pages /
+    par le thread principal, avec leur durée) ; avec `AURORA_PROFILE=1`,
+    lire `stream`, `results` et les parties `s_*` dans `max:` (`s_pages` :
+    les pages créées par le thread principal).
   - Avec `,leave`, la région est quittée une seconde après le chargement,
     comme par une téléportation : tous les objets sont retirés d'un coup et
     leur texture, qui contient alors les données téléchargées de la taille
