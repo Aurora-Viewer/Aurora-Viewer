@@ -5,29 +5,17 @@
 // parts (c) 2018 Sascha Willems, MIT licence).
 //
 // Faces follow the Vulkan cube map convention (+X, -X, +Y, -Y, +Z, -Z, texel
-// row 0 at the top), the world being z-up. The draw's instance index carries
-// the face (and the mip level for the radiance pass): instance = mip * 6 + face.
+// row 0 at the top), the world being z-up.
+//
+// Compute: one dispatch writes the six faces of one mip (layer = face), a
+// texel per invocation, sampled at its center. The whole filtering of a probe
+// is 15 dispatches of one pass (it was 90 render passes, one per face and
+// mip, each paid for in wgpu's CommandEncoder::finish).
 
 @group(0) @binding(0) var src_faces: texture_2d_array<f32>;
 @group(0) @binding(1) var src_cube: texture_cube<f32>;
 @group(0) @binding(2) var lin: sampler;
-
-struct Out {
-    @builtin(position) clip: vec4<f32>,
-    @location(0) uv: vec2<f32>,
-    @location(1) @interpolate(flat) inst: u32,
-};
-
-@vertex
-fn vs_filter(@builtin(vertex_index) vi: u32, @builtin(instance_index) inst: u32) -> Out {
-    let x = f32((vi << 1u) & 2u);
-    let y = f32(vi & 2u);
-    var o: Out;
-    o.clip = vec4<f32>(x * 2.0 - 1.0, y * 2.0 - 1.0, 0.0, 1.0);
-    o.uv = vec2<f32>(x, 1.0 - y);
-    o.inst = inst;
-    return o;
-}
+@group(0) @binding(3) var dst: texture_storage_2d_array<rgba16float, write>;
 
 /// World direction of a texel of cube face `face` (Vulkan face selection).
 fn face_dir(face: u32, uv: vec2<f32>) -> vec3<f32> {
@@ -45,16 +33,16 @@ fn face_dir(face: u32, uv: vec2<f32>) -> vec3<f32> {
 
 // reflectionmipF.glsl: each mip is the bilinear downsample of the previous
 // one (the source view holds that single mip, all six faces).
-@fragment
-fn fs_mip(in: Out) -> @location(0) vec4<f32> {
-    let face = i32(in.inst % 6u);
-    let c = textureSampleLevel(src_faces, lin, in.uv, face, 0.0).rgb;
+fn mip_texel(face: u32, uv: vec2<f32>) -> vec4<f32> {
+    let c = textureSampleLevel(src_faces, lin, uv, i32(face), 0.0).rgb;
     return vec4<f32>(c, 1.0);
 }
 
 const PI: f32 = 3.1415926536;
 // RenderReflectionProbeResolution 128: mips 128 .. 2, max_probe_lod = log2(128) - 1
 const MAX_PROBE_LOD: f32 = 6.0;
+// PROBE_RES of probes.rs (the radiance mip being written is known by its size)
+const PROBE_RES: u32 = 128u;
 // The capture is twice the probe resolution: its mip 1 matches probe mip 0.
 const CAPTURE_LOD_OFFSET: f32 = 1.0;
 // gRadianceGenProgram PROBE_FILTER_SAMPLES
@@ -95,11 +83,8 @@ fn d_ggx(nh: f32, roughness: f32) -> f32 {
 }
 
 // radianceGenF.glsl prefilterEnvMap
-@fragment
-fn fs_radiance(in: Out) -> @location(0) vec4<f32> {
-    let face = in.inst % 6u;
-    let mip = f32(in.inst / 6u);
-    let n = face_dir(face, in.uv);
+fn radiance_texel(face: u32, mip: f32, uv: vec2<f32>) -> vec4<f32> {
+    let n = face_dir(face, uv);
     let v = n;
     let env_dim = f32(textureDimensions(src_cube).x) * 0.5;
     let roughness = mip / MAX_PROBE_LOD;
@@ -130,15 +115,14 @@ fn fs_radiance(in: Out) -> @location(0) vec4<f32> {
 
 // irradianceGenF.glsl (from the Khronos glTF Sample Viewer ibl_filtering):
 // cosine weighted hemisphere, mip chosen from the sample's solid angle,
-// written into the 16x16 irradiance cube of the slot. instance = face.
+// written into the 16x16 irradiance cube of the slot.
 const IRR_SAMPLES: u32 = 32u;
 // u_width / u_lodBias of irradianceGenF
 const IRR_WIDTH: f32 = 64.0;
 const IRR_LOD_BIAS: f32 = 2.0;
 
-@fragment
-fn fs_irradiance(in: Out) -> @location(0) vec4<f32> {
-    let n = face_dir(in.inst % 6u, in.uv);
+fn irradiance_texel(face: u32, uv: vec2<f32>) -> vec4<f32> {
+    let n = face_dir(face, uv);
     // generateTBN (with the robust bitangent near +-Y LL leaves commented out)
     let up = select(vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(0.0, 0.0, 1.0), abs(n.y) > 0.999);
     let t = normalize(cross(up, n));
@@ -156,4 +140,37 @@ fn fs_irradiance(in: Out) -> @location(0) vec4<f32> {
         color += textureSampleLevel(src_cube, lin, dir, lod + CAPTURE_LOD_OFFSET).rgb;
     }
     return vec4<f32>(max(color / f32(IRR_SAMPLES), vec3<f32>(0.0)), 1.0);
+}
+
+fn texel_uv(id: vec3<u32>, dims: vec2<u32>) -> vec2<f32> {
+    return (vec2<f32>(id.xy) + 0.5) / vec2<f32>(dims);
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn cs_mip(@builtin(global_invocation_id) id: vec3<u32>) {
+    let dims = textureDimensions(dst);
+    if (id.x >= dims.x || id.y >= dims.y) {
+        return;
+    }
+    textureStore(dst, vec2<i32>(id.xy), i32(id.z), mip_texel(id.z, texel_uv(id, dims)));
+}
+
+// The mip being written gives the roughness: its size against PROBE_RES.
+@compute @workgroup_size(8, 8, 1)
+fn cs_radiance(@builtin(global_invocation_id) id: vec3<u32>) {
+    let dims = textureDimensions(dst);
+    if (id.x >= dims.x || id.y >= dims.y) {
+        return;
+    }
+    let mip = f32(firstTrailingBit(PROBE_RES / dims.x));
+    textureStore(dst, vec2<i32>(id.xy), i32(id.z), radiance_texel(id.z, mip, texel_uv(id, dims)));
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn cs_irradiance(@builtin(global_invocation_id) id: vec3<u32>) {
+    let dims = textureDimensions(dst);
+    if (id.x >= dims.x || id.y >= dims.y) {
+        return;
+    }
+    textureStore(dst, vec2<i32>(id.xy), i32(id.z), irradiance_texel(id.z, texel_uv(id, dims)));
 }
