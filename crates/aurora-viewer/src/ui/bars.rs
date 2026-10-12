@@ -1277,7 +1277,7 @@ mod import_menu_tests {
             let mut frame = |events| {
                 time += 0.2;
                 let mut action = BarAction::None;
-                let output = ctx.run_ui(
+                let mut output = ctx.run_ui(
                     egui::RawInput {
                         screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(800.0, 600.0))),
                         time: Some(time),
@@ -1290,6 +1290,7 @@ mod import_menu_tests {
                         });
                     },
                 );
+                output.textures_delta.clear();
                 (output, action)
             };
             let click_events = |pos, pressed| {
