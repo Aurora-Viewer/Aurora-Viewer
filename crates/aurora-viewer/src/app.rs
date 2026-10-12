@@ -419,8 +419,10 @@ impl App {
         if settings.loading_backdrop && std::env::var_os("AURORA_CAPTURE").is_none() {
             backdrop.load_saved();
         }
-        // floater positions / sizes from the last session (not for captures)
-        if std::env::var_os("AURORA_CAPTURE").is_none() {
+        // floater positions / sizes from the last session (not for
+        // captures, unless AURORA_CAPTURE_LAYOUT asks for it: a capture of
+        // what a saved layout gives in this window; it is never written)
+        if std::env::var_os("AURORA_CAPTURE").is_none() || std::env::var_os("AURORA_CAPTURE_LAYOUT").is_some() {
             ui::layout::load(&egui_ctx);
         }
         // after the layout: restoring it drops the fonts installed before

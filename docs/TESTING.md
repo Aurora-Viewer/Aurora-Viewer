@@ -110,6 +110,14 @@ ignorée). Le plafond inférieur en arrière-plan reste applicable hors captures
 | `AURORA_CAPTURE=<fichier.png>` | Enregistre une capture de l'image |
 | `AURORA_CAPTURE_FRAMES=<n>` | Image capturée (240 par défaut) |
 | `AURORA_CAPTURE_EXIT=1` | Quitte après la capture |
+| `AURORA_CAPTURE_LAYOUT=1` | La capture relit la disposition enregistrée (`ui_layout.ron`) |
+
+`AURORA_CAPTURE_LAYOUT` : une capture part sinon de la disposition par
+défaut, pour être reproductible. Avec cette variable elle relit celle de la
+session précédente (sans jamais l'écrire) : c'est ce qu'il faut pour voir ce
+que donne une disposition enregistrée dans une fenêtre d'une autre taille
+(les fenêtres gardent leur bord). Une disposition n'est écrite que par une
+sortie normale, par exemple `AURORA_DEMO_EXIT=quit` sans `AURORA_CAPTURE`.
 
 `AURORA_CAPTURE_FRAMES` : compter environ 620 pour passer le fondu de
 chargement. Plusieurs images séparées par des virgules (`2500,2600`)

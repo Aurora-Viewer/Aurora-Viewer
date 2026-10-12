@@ -175,6 +175,11 @@ struct Live {
     /// Positions the gestures give this frame: the windows glued to the one
     /// dragged, a snap applied.
     places: BTreeMap<u64, Pos2>,
+    /// Windows egui measures this frame, and where each belongs: egui keeps
+    /// a window it has no size for inside the screen as if it had its
+    /// default size, which pushes away from the bottom and right edges one
+    /// that was left smaller. The next frame puts it back.
+    settle: BTreeMap<u64, Pos2>,
     /// Where the dragged window of a group can go (`snap::block_limits`).
     limits: Option<(u64, Rect)>,
     /// The setting (`Settings::snap_windows`), as of this frame.
@@ -254,7 +259,16 @@ pub(crate) fn slot(ctx: &egui::Context, id: Id) -> Slot {
     let (pos, limits) = windows(ctx, |w| {
         let followed = usable(screen).then(|| w.follow(key, screen)).flatten();
         let limits = w.live.limits.filter(|(window, _)| *window == key).map(|(_, limits)| limits);
-        (w.live.places.remove(&key).or(followed), limits)
+        let mut pos = w.live.places.remove(&key).or(followed);
+        if sized {
+            // measured last frame: back where it belongs, unless it is
+            // given another place now
+            let settled = w.live.settle.remove(&key);
+            pos = pos.or(settled);
+        } else if let Some(target) = pos.or_else(|| w.placed.get(&key).map(|placed| placed.rect.min)) {
+            w.live.settle.insert(key, target);
+        }
+        (pos, limits)
     });
     Slot { id, sized, pos, limits }
 }
@@ -267,8 +281,12 @@ impl Slot {
             let key = self.id.value();
             let recorded = w.placed.get(&key).copied();
             let rect = match (self.sized, recorded) {
-                // measured this frame: it keeps the size it was recorded with
-                (false, Some(old)) => Rect::from_min_size(rect.min, old.rect.size()),
+                // measured this frame: it keeps the size it was recorded
+                // with, where it belongs (`Live::settle`)
+                (false, Some(old)) => {
+                    let min = w.live.settle.get(&key).copied().unwrap_or(rect.min);
+                    Rect::from_min_size(min, old.rect.size())
+                }
                 _ => rect,
             };
             let new = Placed { rect, screen };
@@ -568,6 +586,53 @@ mod tests {
                 sizes,
                 "{first_frame:?}"
             );
+        }
+    }
+
+    /// A window left smaller than its default size, in the bottom right
+    /// corner: the next session, in a larger viewer window where its default
+    /// size is larger still (Conversations), it is back in its corner with
+    /// its size. egui alone measures it on its first frame and keeps it
+    /// inside the screen as if it had its default size, away from the corner.
+    #[test]
+    fn a_window_smaller_than_its_default_size_keeps_its_corner() {
+        let palette = crate::theme::Theme::default().palette();
+        let run = |ctx: &egui::Context, frame: usize, width: f32, height: f32, default_height: f32| {
+            let input = egui::RawInput {
+                screen_rect: Some(screen(width, height)),
+                time: Some(frame as f64 / 60.0),
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(input, |ui| {
+                let size = Vec2::new(300.0, default_height);
+                let pos = Pos2::new(width - 8.0, height - 38.0) - size;
+                crate::ui::widgets::Floater::new(CORNER, "Window", pos, size)
+                    .silent()
+                    .show(ui.ctx(), &palette, &mut true, |ui| {
+                        ui.label("content");
+                    });
+            });
+            output.textures_delta.clear();
+            ctx.memory(|m| m.area_rect(Id::new(CORNER))).expect("shown")
+        };
+        let first = egui::Context::default();
+        let mut rect = Rect::NOTHING;
+        for frame in 0..3 {
+            rect = run(&first, frame, 1280.0, 720.0, 252.0);
+        }
+        assert_eq!(rect, Rect::from_min_max(Pos2::new(972.0, 430.0), Pos2::new(1272.0, 682.0)));
+        let saved = ron::to_string(&first.memory(|m| m.clone())).expect("serialize");
+        // the same viewer window, then a larger one
+        for (width, height) in [(1280.0, 720.0), (1600.0, 900.0)] {
+            let next = egui::Context::default();
+            restore(&next, &saved).expect("restore");
+            for frame in 0..4 {
+                rect = run(&next, frame, width, height, 432.0);
+            }
+            assert_eq!(rect.size(), Vec2::new(300.0, 252.0), "{width} x {height}");
+            assert_eq!(rect.right_bottom(), Pos2::new(width - 8.0, height - 38.0), "{width} x {height}");
+            let recorded = windows(&next, |w| w.placed[&Id::new(CORNER).value()]);
+            assert_eq!((recorded.rect, recorded.screen), (rect, screen(width, height)));
         }
     }
 
