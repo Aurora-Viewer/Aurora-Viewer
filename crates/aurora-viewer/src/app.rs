@@ -5247,7 +5247,11 @@ impl App {
         match a.bar {
             BarAction::CheckUpdates => self.updater.check(self.net.runtime(), true),
             BarAction::ReportBug => self.bug_report.requested = true,
-            BarAction::Import(choice) => self.imports.open(choice),
+            BarAction::Import { choice, pick_files } => {
+                self.imports.open(choice);
+                self.imports.choose_files_on_open = pick_files;
+                self.egui_ctx.request_repaint();
+            }
             BarAction::ShowHuds(visible) => {
                 if self.hud_drag.is_some() {
                     self.on_left_release();

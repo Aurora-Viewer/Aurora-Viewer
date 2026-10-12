@@ -1,6 +1,46 @@
 use super::*;
 
 #[test]
+fn menu_file_request_is_emitted_once_and_tab_changes_do_not_reopen_the_picker() {
+    let ctx = egui::Context::default();
+    let theme = crate::theme::Theme::default();
+    theme.apply(&ctx, 1.0);
+    let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    let mut prefs = Preferences::default();
+    let mut imports = Imports {
+        open: true,
+        choice: Choice::Mesh,
+        choose_files_on_open: true,
+        ..Default::default()
+    };
+    let mut frame = |imports: &mut Imports| {
+        let mut actions = Vec::new();
+        let output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1280.0, 900.0))),
+                ..Default::default()
+            },
+            |ui| {
+                actions = show(
+                    ui.ctx(),
+                    &theme.palette(),
+                    imports,
+                    &mut prefs,
+                    &world,
+                    &crate::ui::inventory::InventoryPreferences::default(),
+                );
+            },
+        );
+        drop(output);
+        actions
+    };
+    assert!(matches!(frame(&mut imports).as_slice(), [Action::Files]));
+    assert!(frame(&mut imports).is_empty());
+    imports.open(Choice::Animation);
+    assert!(frame(&mut imports).is_empty());
+}
+
+#[test]
 fn mesh_error_details_are_explained_and_uncertain_transfers_keep_the_inventory_warning() {
     let rejection = aurora_net::inventory::upload::Rejection {
         status: Some(400),

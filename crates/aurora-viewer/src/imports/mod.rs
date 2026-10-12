@@ -406,6 +406,8 @@ pub struct Imports {
     pub confirm: bool,
     pub scale_bulk_1k: bool,
     pub pending_files: Option<Uuid>,
+    /// One-shot menu intent, consumed after drawing the import window.
+    pub choose_files_on_open: bool,
     pub(super) tx: Sender<Worker>,
     rx: Receiver<Worker>,
     queue: VecDeque<Step>,
@@ -444,6 +446,7 @@ impl Default for Imports {
             confirm: false,
             scale_bulk_1k: false,
             pending_files: None,
+            choose_files_on_open: false,
             tx,
             rx,
             queue: VecDeque::new(),

@@ -242,7 +242,12 @@ ne sont pas incorporés aux fixtures du dépôt ni aux traces publiées.
 
 ### Essais humains
 
-Ouvrir **Contenu → Importer…**, puis parcourir les onglets :
+Cliquer sur **Contenu → Importer…** ouvre la fenêtre sur **Texture**. Survoler
+**Importer…** affiche les types d’assets : cliquer sur un type ouvre son
+onglet et propose immédiatement de choisir les fichiers. Les onglets de la
+fenêtre permettent ensuite de changer de type sans ouvrir le sélecteur.
+
+Parcourir les onglets :
 
 - **Textures / matériaux** : choisir un fichier, vérifier dimensions et
   alpha, modifier les cartes et facteurs PBR, faire pivoter et zoomer

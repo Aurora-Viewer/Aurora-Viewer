@@ -218,6 +218,9 @@ pub fn show(
     inventory_prefs: &crate::ui::inventory::InventoryPreferences,
 ) -> Vec<Action> {
     let mut actions = Vec::new();
+    if imports.open && std::mem::take(&mut imports.choose_files_on_open) {
+        actions.push(Action::Files);
+    }
     let mut open = imports.open;
     let mut close_requested = false;
     let prices = if imports.demo_started {
