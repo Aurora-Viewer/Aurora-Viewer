@@ -246,25 +246,21 @@ fn stepped(ui: &mut egui::Ui, p: &Palette, v: &mut u8, labels: &[&str]) -> bool 
     r.changed()
 }
 
-/// Color swatch with a picker popup (opaque).
-fn swatch(ui: &mut egui::Ui, v: &mut crate::settings::Rgba) -> bool {
-    let mut col = Color32::from_rgba_unmultiplied(v[0], v[1], v[2], v[3]);
+/// Color swatch opening the compact picker (opaque); `id` tells the
+/// swatches of a page apart.
+fn swatch(ui: &mut egui::Ui, p: &Palette, id: impl egui::AsIdSalt, v: &mut crate::settings::Rgba) -> bool {
     ui.spacing_mut().interact_size = Vec2::new(38.0, 18.0);
-    let changed = egui::widgets::color_picker::color_edit_button_srgba(ui, &mut col, egui::widgets::color_picker::Alpha::Opaque).changed();
-    if changed {
-        *v = col.to_array();
-    }
-    changed
+    super::widgets::color_button(ui, p, id, v, false).changed()
 }
 
 /// Grid of labelled swatches, three per row (Firestorm color preferences).
-fn swatches(ui: &mut egui::Ui, id: &str, items: &mut [(&str, &mut crate::settings::Rgba)]) -> bool {
+fn swatches(ui: &mut egui::Ui, p: &Palette, id: &str, items: &mut [(&str, &mut crate::settings::Rgba)]) -> bool {
     let mut changed = false;
     egui::Grid::new(id).num_columns(3).spacing([24.0, 8.0]).show(ui, |ui| {
         for (i, (label, v)) in items.iter_mut().enumerate() {
             ui.horizontal(|ui| {
                 ui.set_min_width(150.0);
-                changed |= swatch(ui, v);
+                changed |= swatch(ui, p, (id, i), v);
                 ui.label(RichText::new(*label).size(12.5));
             });
             if i % 3 == 2 {
@@ -1443,6 +1439,7 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
             group(ui, p, aurora_i18n::tr!("ui-options-name-tag-color"), |ui| {
                 c |= swatches(
                     ui,
+                    p,
                     "tags",
                     &mut [
                         (aurora_i18n::tr!("ui-options-my-name"), &mut k.tag_me),
@@ -1457,6 +1454,7 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
             group(ui, p, aurora_i18n::tr!("ui-options-mini-map-markers"), |ui| {
                 c |= swatches(
                     ui,
+                    p,
                     "map",
                     &mut [
                         (aurora_i18n::tr!("common-me"), &mut k.map_me),
@@ -1484,7 +1482,7 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                         ] {
                             ui.horizontal(|ui| {
                                 c |= ui.checkbox(on, "").changed();
-                                c |= swatch(ui, col);
+                                c |= swatch(ui, p, ("map_range", label), col);
                                 ui.label(RichText::new(label).size(12.5).color(p.ink));
                             });
                         }
@@ -1495,6 +1493,7 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
             group(ui, p, aurora_i18n::tr!("ui-options-messages"), |ui| {
                 c |= swatches(
                     ui,
+                    p,
                     "msgs",
                     &mut [
                         (aurora_i18n::tr!("ui-options-my-messages"), &mut k.chat_mine),
@@ -1516,6 +1515,7 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
             group(ui, p, aurora_i18n::tr!("ui-options-emitter"), |ui| {
                 c |= swatches(
                     ui,
+                    p,
                     "sender",
                     &mut [
                         (aurora_i18n::tr!("ui-options-avatars"), &mut k.sender_avatar),
@@ -1526,6 +1526,7 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
             group(ui, p, aurora_i18n::tr!("ui-options-chat-mentions"), |ui| {
                 c |= swatches(
                     ui,
+                    p,
                     "mentions",
                     &mut [
                         (aurora_i18n::tr!("ui-options-font"), &mut k.mention_text),

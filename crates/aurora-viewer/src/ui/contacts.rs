@@ -1662,8 +1662,7 @@ fn set_config_window(ctx: &egui::Context, p: &Palette, world: &mut World, st: &m
         });
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            let mut c = cfg.color;
-            if ui.color_edit_button_rgba_unmultiplied(&mut c).changed() {
+            if let Some(c) = set_color_button(ui, p, "set_color", cfg.color) {
                 world.contact_sets.set_color(&set, c);
             }
             ui.label(RichText::new(aurora_i18n::tr!("common-color")).size(12.5).color(p.ink));
@@ -1683,8 +1682,7 @@ fn set_config_window(ctx: &egui::Context, p: &Palette, world: &mut World, st: &m
                 .color(p.ink),
         );
         ui.horizontal(|ui| {
-            let mut c = world.contact_sets.default_color;
-            if ui.color_edit_button_rgba_unmultiplied(&mut c).changed() {
+            if let Some(c) = set_color_button(ui, p, "default_color", world.contact_sets.default_color) {
                 world.contact_sets.set_default_color(c);
             }
             ui.label(RichText::new(aurora_i18n::tr!("ui-contacts-default-color")).size(12.5).color(p.ink));
@@ -1704,6 +1702,16 @@ fn set_config_window(ctx: &egui::Context, p: &Palette, world: &mut World, st: &m
 }
 
 // ------------------------------------------------------------------ dialogs
+
+/// Swatch of a contact set's color (linear, straight alpha, as egui's
+/// color button edited it): the new color when it changed.
+fn set_color_button(ui: &mut egui::Ui, p: &Palette, id: &str, color: [f32; 4]) -> Option<[f32; 4]> {
+    let [r, g, b, a] = color;
+    let mut srgba = Color32::from(egui::Rgba::from_rgba_unmultiplied(r, g, b, a)).to_srgba_unmultiplied();
+    let changed = widgets::color_button(ui, p, id, &mut srgba, true).changed();
+    let [r, g, b, a] = srgba;
+    changed.then(|| egui::Rgba::from(Color32::from_rgba_unmultiplied(r, g, b, a)).to_rgba_unmultiplied())
+}
 
 /// The pending confirmation or prompt, as a modal window.
 fn dialogs(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut ContactsUi, actions: &mut Vec<ContactsAction>) {

@@ -157,8 +157,8 @@ impl Preferences {
                     ui.label(aurora_i18n::tr!("script-preferences-colors"));
                     egui::Grid::new("script_colors").num_columns(4).show(ui, |ui| {
                         for (i, role) in ColorRole::ALL.into_iter().enumerate() {
-                            let mut color = settings.color(role, p);
-                            if ui.color_edit_button_srgba(&mut color).changed() { settings.colors.insert(role, color.to_srgba_unmultiplied()); }
+                            let mut color = settings.color(role, p).to_srgba_unmultiplied();
+                            if crate::ui::widgets::color_button(ui, p, ("script_color", i), &mut color, true).changed() { settings.colors.insert(role, color); }
                             ui.label(role.label());
                             if i % 2 == 1 { ui.end_row(); }
                         }

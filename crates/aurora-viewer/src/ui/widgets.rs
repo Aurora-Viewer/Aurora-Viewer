@@ -6,12 +6,14 @@ use egui::{Color32, CornerRadius, RichText, Sense, Stroke, Vec2};
 
 #[cfg(test)]
 mod collapse_tests;
+pub mod color;
 pub mod demo;
 #[cfg(test)]
 pub(crate) mod elide_tests;
 pub(crate) mod keycap;
 mod resize;
 mod workspace;
+pub use color::color_button;
 pub use workspace::{Modal, collapsing, collapsing_forced, glyph, navigation, section_header, stat, surface};
 pub(crate) use workspace::{finish_bar_glass, inventory_item_label, inventory_spacing, overlay, overlay_frame};
 
@@ -529,8 +531,24 @@ pub fn search_field(ui: &mut egui::Ui, text: &mut String, hint: &str, width: f32
 
 /// Small flat button with a Tabler icon (copy / paste / flip...).
 pub fn icon_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, enabled: bool) -> bool {
+    small_icon_button(ui, p, icon, tip, enabled, false)
+}
+
+/// `icon_button` that stays lit while `on` (a mode that is armed); true
+/// when clicked.
+pub fn icon_toggle(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, on: bool) -> bool {
+    small_icon_button(ui, p, icon, tip, true, on)
+}
+
+fn small_icon_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, enabled: bool, on: bool) -> bool {
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(20.0, 20.0), if enabled { Sense::click() } else { Sense::hover() });
-    let fill = if resp.hovered() && enabled { p.raised } else { p.field };
+    let fill = if on {
+        p.violet
+    } else if resp.hovered() && enabled {
+        p.raised
+    } else {
+        p.field
+    };
     ui.painter().rect_filled(rect, 2.0, fill);
     let col = if enabled { p.ink } else { p.muted_dim };
     match super::icons::global(icon) {
