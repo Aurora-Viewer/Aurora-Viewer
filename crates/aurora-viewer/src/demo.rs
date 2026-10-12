@@ -2292,6 +2292,19 @@ pub fn events() -> Vec<NetEvent> {
         Some((values.next()??, values.next().flatten()))
     });
     if let Some((gamma, haze_distance)) = sky {
+        // an EEP region: without the ExtEnvironment capability its day is
+        // not shown (the simulator sun is)
+        ev.push(NetEvent::Capabilities {
+            handle: HANDLE,
+            caps: Arc::new(
+                [
+                    ("GetDisplayNames".to_owned(), "demo://names".to_owned()),
+                    ("ExtEnvironment".to_owned(), "demo://environment".to_owned()),
+                ]
+                .into_iter()
+                .collect(),
+            ),
+        });
         ev.push(NetEvent::Environment {
             handle: HANDLE,
             parcel_id: -1,
