@@ -21,6 +21,8 @@ pub(super) struct Tools {
     pub search: Search,
     pub help: Help,
     pub insert_filter: String,
+    pub insert_button: Option<egui::Rect>,
+    insertion_open: bool,
     pub library: bool,
     pub goto: bool,
     pub goto_line: usize,
@@ -38,6 +40,7 @@ pub(super) struct Tools {
     incoming_external: bool,
     pub diagnostics_processed: bool,
     pub reset_history: bool,
+    footer_height: f32,
     can_undo: bool,
     can_redo: bool,
     history_cursor: Option<egui::text::CCursorRange>,
@@ -66,6 +69,12 @@ enum Command {
     Keyword,
     Library,
     Debug,
+    Indent,
+    Outdent,
+    LineComment,
+    BlockComment,
+    FoldAll,
+    ExpandAll,
 }
 
 fn visible_id(id: Id, processed: bool) -> Id {
@@ -77,7 +86,7 @@ fn text(e: &Editor) -> &str {
 }
 
 fn enabled(command: Command, e: &Editor, ctx: &egui::Context, id: Id) -> bool {
-    let editable = e.can_edit && e.loaded && e.saving.is_none() && e.loading.is_none() && !e.tools.processed;
+    let editable = e.can_edit && e.loaded && e.saving.is_none() && e.loading.is_none() && !e.tools.processed && !e.colors.active();
     let selection = !editing::cursor(ctx, visible_id(id, e.tools.processed)).is_empty();
     match command {
         Command::Save => e.can_save(),
@@ -90,6 +99,8 @@ fn enabled(command: Command, e: &Editor, ctx: &egui::Context, id: Id) -> bool {
         Command::Paste => editable,
         Command::Undo => editable && e.tools.can_undo,
         Command::Redo => editable && e.tools.can_redo,
+        Command::Indent | Command::Outdent | Command::LineComment | Command::BlockComment => editable,
+        Command::FoldAll | Command::ExpandAll => e.loaded,
         Command::SelectAll | Command::Deselect | Command::Find | Command::Goto | Command::Keyword => e.loaded,
         _ => true,
     }
@@ -170,6 +181,25 @@ fn run(
         }
         Command::Library => e.tools.library = true,
         Command::Debug => actions.push(Action::Debug),
+        Command::Indent | Command::Outdent | Command::LineComment | Command::BlockComment => {
+            let command = match command {
+                Command::Indent => editing::SelectionCommand::Indent,
+                Command::Outdent => editing::SelectionCommand::Outdent,
+                Command::LineComment => editing::SelectionCommand::LineComment,
+                Command::BlockComment => editing::SelectionCommand::BlockComment,
+                _ => unreachable!("selection command"),
+            };
+            if !editing::selection_command(ctx, id, &mut e.source, command) {
+                e.status = aurora_i18n::tr!("script-selection-edit-failed").into();
+            }
+        }
+        Command::FoldAll => {
+            e.folding
+                .sync(if e.tools.processed { &e.tools.processed_source } else { &e.source });
+            e.folding.collapse_all();
+            editing::select(ctx, id, 0..0, false);
+        }
+        Command::ExpandAll => e.folding.expand_all(),
     }
 }
 
@@ -275,7 +305,24 @@ pub(super) fn body(
     } else {
         e.tools.processed = false;
     }
-    source(ui, p, e, id, settings);
+    // Measure the actual controls, including object-only rows and diagnostics.
+    // Repaint after a width/status change, without replaying asynchronous actions.
+    let footer_height = if e.tools.footer_height > 0.0 {
+        e.tools.footer_height
+    } else {
+        155.0
+    };
+    let height = (ui.available_height() - footer_height - ui.spacing().item_spacing.y - 8.0).max(120.0);
+    source(ui, p, e, id, settings, height);
+    let footer = ui.scope(|ui| footer(ui, p, e, id, actions));
+    if (e.tools.footer_height - footer.response.rect.height()).abs() > 0.5 {
+        e.tools.footer_height = footer.response.rect.height();
+        ctx.request_repaint();
+    }
+}
+
+fn footer(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, actions: &mut Vec<Action>) {
+    let ctx = ui.ctx().clone();
     ui.horizontal(|ui| {
         insertion(ui, p, e, id);
         ui.label(
@@ -366,6 +413,12 @@ fn edit_menu(ui: &mut egui::Ui, p: &Palette, e: &Editor, id: Id, chosen: &mut Op
         (Command::Deselect, "selection", aurora_i18n::tr!("script-edit-deselect")),
         (Command::Find, "magnifying-glass", aurora_i18n::tr!("script-search-title")),
         (Command::Goto, "arrow-line-down", aurora_i18n::tr!("script-goto")),
+        (Command::LineComment, "code", aurora_i18n::tr!("script-edit-line-comment")),
+        (Command::BlockComment, "code", aurora_i18n::tr!("script-edit-block-comment")),
+        (Command::Indent, "arrow-right", aurora_i18n::tr!("script-edit-indent")),
+        (Command::Outdent, "arrow-left", aurora_i18n::tr!("script-edit-outdent")),
+        (Command::FoldAll, "caret-right", aurora_i18n::tr!("script-fold-all")),
+        (Command::ExpandAll, "caret-down", aurora_i18n::tr!("script-expand-all")),
     ] {
         if menu::item_if(ui, p, icon, label, enabled(command, e, ui.ctx(), id)) {
             *chosen = Some(command);
@@ -373,7 +426,7 @@ fn edit_menu(ui: &mut egui::Ui, p: &Palette, e: &Editor, id: Id, chosen: &mut Op
     }
 }
 
-fn source(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, settings: &ScriptSettings) {
+fn source(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, settings: &ScriptSettings, height: f32) {
     if std::mem::take(&mut e.tools.reset_history) {
         egui::text_edit::TextEditState::default().store(ui.ctx(), id);
         egui::text_edit::TextEditState::default().store(ui.ctx(), visible_id(id, true));
@@ -383,7 +436,9 @@ fn source(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, settings: &Scr
     }
     let base_id = id;
     let id = visible_id(id, e.tools.processed);
-    let height = (ui.available_height() - 155.0).max(120.0);
+    e.folding
+        .sync(if e.tools.processed { &e.tools.processed_source } else { &e.source });
+    e.folding.reveal(editing::cursor(ui.ctx(), id).primary);
     egui::Frame::new()
         .fill(settings.color(ColorRole::Background, p))
         .inner_margin(4.0)
@@ -398,17 +453,20 @@ fn source(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, settings: &Scr
                     String::new()
                 };
                 let insensitive = e.tools.search.insensitive;
-                let editable = e.loaded && e.can_edit && e.saving.is_none() && e.loading.is_none() && !e.tools.processed;
+                let color_editable = e.loaded && e.can_edit && e.saving.is_none() && e.loading.is_none() && !e.tools.processed;
+                let editable = color_editable && !e.colors.active();
                 egui::ScrollArea::both()
                     .id_salt((id, "source"))
+                    .auto_shrink([false, false])
                     .max_height(height)
-                    .min_scrolled_height(height)
                     .show_viewport(ui, |ui, viewport| {
                         ui.horizontal_top(|ui| {
-                            let (gutter, _) = ui.allocate_exact_size(Vec2::new(40.0, 1.0), egui::Sense::hover());
+                            let (gutter, _) = ui.allocate_exact_size(Vec2::new(56.0, 1.0), egui::Sense::hover());
                             let interactive = e.loaded && (e.can_read || !e.source.is_empty());
                             let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, _wrap: f32| {
-                                let job = e.highlighter.custom(text.as_str(), p, font.clone(), settings, &query, insensitive);
+                                let mut job = e.highlighter.custom(text.as_str(), p, font.clone(), settings, &query, insensitive);
+                                e.folding.sync(text.as_str());
+                                e.folding.layout(&mut job);
                                 ui.fonts_mut(|f| f.layout_job(job))
                             };
                             let mut show = |ui: &mut egui::Ui, buffer: &mut dyn egui::TextBuffer| {
@@ -417,7 +475,8 @@ fn source(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, settings: &Scr
                                     .code_editor()
                                     .layouter(&mut layouter)
                                     .desired_width(f32::INFINITY)
-                                    .desired_rows(18)
+                                    .desired_rows(1)
+                                    .min_size(Vec2::new(0.0, viewport.height()))
                                     .frame(egui::Frame::NONE)
                                     .interactive(interactive)
                                     .show(ui)
@@ -439,6 +498,14 @@ fn source(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, settings: &Scr
                                 ui.ctx().data_mut(|d| d.insert_temp(Id::new((base_id, "command")), command));
                             }
                             let text = if e.tools.processed { &e.tools.processed_source } else { &e.source };
+                            if ui
+                                .ctx()
+                                .data_mut(|d| d.remove_temp::<bool>(id.with("selection_error")))
+                                .unwrap_or(false)
+                            {
+                                e.status = aurora_i18n::tr!("script-selection-edit-failed").into();
+                            }
+                            e.colors.draw(ui, p, text, &output, &e.highlighter.colors, color_editable);
                             if editable
                                 && (output.response.changed()
                                     || e.tools.history_cursor != output.cursor_range
@@ -467,7 +534,7 @@ fn source(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, settings: &Scr
                             let left = gutter.left() + viewport.min.x;
                             let clip = egui::Rect::from_min_max(
                                 egui::pos2(left, ui.clip_rect().top()),
-                                egui::pos2(left + 40.0, ui.clip_rect().bottom()),
+                                egui::pos2(left + 56.0, ui.clip_rect().bottom()),
                             );
                             let painter = ui.painter().with_clip_rect(clip);
                             painter.rect_filled(clip, 0.0, settings.color(ColorRole::Background, p));
@@ -477,9 +544,9 @@ fn source(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, settings: &Scr
                                 if y > clip.bottom() {
                                     break;
                                 }
-                                if y + row.height() >= clip.top() {
+                                if row.height() >= 1.0 && y + row.height() >= clip.top() {
                                     painter.text(
-                                        egui::pos2(left + 34.0, y),
+                                        egui::pos2(left + 50.0, y),
                                         egui::Align2::RIGHT_TOP,
                                         line.to_string(),
                                         font.clone(),
@@ -495,9 +562,13 @@ fn source(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, settings: &Scr
                                 }
                             }
                             painter.line_segment(
-                                [egui::pos2(left + 39.0, clip.top()), egui::pos2(left + 39.0, clip.bottom())],
+                                [egui::pos2(left + 55.0, clip.top()), egui::pos2(left + 55.0, clip.bottom())],
                                 egui::Stroke::new(1.0, p.muted_dim),
                             );
+                            if e.folding.reveal(output.cursor_range.unwrap_or_default().primary) {
+                                ui.ctx().request_repaint();
+                            }
+                            e.folding.draw(ui, p, id, &output, left);
                             if let Some(pos) = output.response.hover_pos() {
                                 let at = output.galley.cursor_from_pos(pos - output.galley_pos).index.0;
                                 if let Some(entry) = reference::get(editing::word(text, at)) {
@@ -514,24 +585,52 @@ fn source(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, settings: &Scr
 
 fn insertion(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id) {
     let mut chosen = None;
-    ui.add_enabled_ui(e.loaded && e.can_edit && e.saving.is_none() && !e.tools.processed, |ui| {
-        egui::ComboBox::from_id_salt((id, "insert"))
-            .selected_text(aurora_i18n::tr!("script-insert"))
-            .width(155.0)
-            .height(220.0)
-            .show_ui(ui, |ui| {
-                ui.add(egui::TextEdit::singleline(&mut e.tools.insert_filter).hint_text(aurora_i18n::tr!("script-insert-filter")));
-                let filter = e.tools.insert_filter.to_lowercase();
-                for entry in reference::all()
-                    .iter()
-                    .filter(|e| e.group == "functions" && e.name.to_lowercase().contains(&filter))
-                {
-                    if ui.selectable_label(false, &entry.name).on_hover_text(&entry.signature).clicked() {
-                        chosen = Some(entry.name.clone());
+    ui.add_enabled_ui(
+        e.loaded && e.can_edit && e.saving.is_none() && !e.tools.processed && !e.colors.active(),
+        |ui| {
+            let popup = egui::ComboBox::from_id_salt((id, "insert"))
+                .selected_text(aurora_i18n::tr!("script-insert"))
+                .width(155.0)
+                .height(280.0)
+                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                .show_ui(ui, |ui| {
+                    let field = ui.add(
+                        egui::TextEdit::singleline(&mut e.tools.insert_filter)
+                            .id(id.with("insert_filter"))
+                            .desired_width(260.0)
+                            .hint_text(aurora_i18n::tr!("script-insert-filter")),
+                    );
+                    if !e.tools.insertion_open {
+                        field.request_focus();
                     }
-                }
-            });
-    });
+                    ui.separator();
+                    // Only the results scroll, keeping the search field visible.
+                    let mut results = egui::ScrollArea::vertical().id_salt((id, "insert_results")).max_height(220.0);
+                    if field.changed() {
+                        results = results.vertical_scroll_offset(0.0);
+                    }
+                    let filter = e.tools.insert_filter.trim().to_lowercase();
+                    results.show(ui, |ui| {
+                        let mut found = false;
+                        for entry in reference::all()
+                            .iter()
+                            .filter(|e| e.group == "functions" && e.name.to_lowercase().contains(&filter))
+                        {
+                            found = true;
+                            if ui.selectable_label(false, &entry.name).on_hover_text(&entry.signature).clicked() {
+                                chosen = Some(entry.name.clone());
+                                ui.close();
+                            }
+                        }
+                        if !found {
+                            ui.label(RichText::new(aurora_i18n::tr!("script-insert-empty")).color(p.muted));
+                        }
+                    });
+                });
+            e.tools.insert_button = Some(popup.response.rect);
+            e.tools.insertion_open = popup.inner.is_some();
+        },
+    );
     if let Some(name) = chosen {
         let [a, b] = editing::cursor(ui.ctx(), id).sorted_cursors();
         if editing::replace(ui.ctx(), id, &mut e.source, a.index.0..b.index.0, &name) {
@@ -542,7 +641,6 @@ fn insertion(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id) {
             e.status = aurora_i18n::tr!("script-source-too-large").into();
         }
     }
-    let _ = p;
 }
 
 pub(super) fn dialogs(
@@ -753,6 +851,92 @@ fn poll_files(ctx: &egui::Context, e: &mut Editor, id: Id, settings: &ScriptSett
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn resizing_fills_the_editor_without_painting_the_gutter_over_the_footer() {
+        use crate::theme::Theme;
+        for object in [false, true] {
+            let ctx = egui::Context::default();
+            let theme = Theme::default();
+            theme.apply(&ctx, 1.0);
+            ctx.global_style_mut(|style| style.spacing.scroll = egui::style::ScrollStyle::solid());
+            let p = theme.palette();
+            let target = aurora_net::scripts::ScriptTarget {
+                object: if object { uuid::Uuid::from_u128(9) } else { uuid::Uuid::nil() },
+                item: uuid::Uuid::from_u128(10),
+            };
+            let mut editors = super::super::Editors::default();
+            let request = editors.open(target, "Resize".into(), true, true).unwrap();
+            editors.loaded(request, target, Ok("default {\n    event() {\n        code;\n    }\n}".into()));
+            let e = &mut editors.documents[0];
+            let settings = ScriptSettings::default();
+            let mut prefs = Preferences::default();
+            let short_source = "default {\n    event() {\n        code;\n    }\n}";
+            let long_source = format!("// {}\n{short_source}", "long line ".repeat(100));
+            for size in [Vec2::new(660.0, 440.0), Vec2::new(1100.0, 880.0), Vec2::new(520.0, 380.0)] {
+                for (source, folded) in [(short_source, false), (short_source, true), (long_source.as_str(), false)] {
+                    e.source = source.into();
+                    e.folding.sync(&e.source);
+                    if folded {
+                        e.folding.collapse_all();
+                    } else {
+                        e.folding.expand_all();
+                    }
+                    let mut bounds = egui::Rect::NOTHING;
+                    let mut bottom = 0.0;
+                    let mut frame = || {
+                        ctx.run_ui(
+                            egui::RawInput {
+                                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+                                ..Default::default()
+                            },
+                            |ui| {
+                                bounds = ui.available_rect_before_wrap();
+                                body(ui, &p, e, Id::new("resize_source"), &settings, &mut prefs, &mut vec![]);
+                                bottom = ui.min_rect().bottom();
+                            },
+                        )
+                    };
+                    // read_response exposes the previous frame's widget geometry.
+                    for _ in 0..2 {
+                        let mut warmup = frame();
+                        warmup.textures_delta.clear();
+                    }
+                    let mut output = frame();
+                    let background = settings.color(ColorRole::Background, &p);
+                    let rectangles: Vec<_> = output
+                        .shapes
+                        .iter()
+                        .filter_map(|shape| match &shape.shape {
+                            egui::epaint::Shape::Rect(rect) if rect.fill == background => Some(rect.rect),
+                            _ => None,
+                        })
+                        .collect();
+                    let editor = rectangles
+                        .iter()
+                        .max_by(|a, b| a.area().total_cmp(&b.area()))
+                        .expect("editor background");
+                    let gutter = rectangles.iter().find(|rect| (rect.width() - 56.0).abs() < 0.5).expect("gutter");
+                    let input = ctx.read_response(Id::new("resize_source")).expect("source input");
+                    assert!(
+                        input.rect.height() >= gutter.height() - 0.5,
+                        "clickable editor: {:?} / {editor:?}",
+                        input.rect
+                    );
+                    assert!(editor.height() > if size.y > 800.0 { 600.0 } else { 120.0 }, "{editor:?}");
+                    assert!(
+                        (4.0..25.0).contains(&(editor.bottom() - gutter.bottom())),
+                        "{editor:?} / {gutter:?}"
+                    );
+                    assert!(
+                        (bounds.bottom() - bottom).abs() < 1.0,
+                        "unused/overflowing space: {bounds:?} / {bottom}"
+                    );
+                    output.textures_delta.clear();
+                }
+            }
+        }
+    }
+
     #[test]
     fn commands_enforce_permissions_and_processed_selection_does_not_replace_the_source_cursor() {
         let target = aurora_net::scripts::ScriptTarget {

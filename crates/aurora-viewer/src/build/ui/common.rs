@@ -238,24 +238,30 @@ pub fn swatch(
     .inner
 }
 
-/// A color swatch (LLColorSwatchCtrl) with egui's color picker; returns
-/// the new color (sRGB 0..1) when changed, and whether the picker closed.
-pub fn color_swatch(ui: &mut egui::Ui, p: &Palette, rgb: [f32; 3], caption: &str, size: f32, enabled: bool) -> Option<[f32; 3]> {
-    let mut out = None;
+/// LLColorSwatchCtrl: clicking opens the shared color dialog. The stored
+/// value is sRGB, not egui's linear-RGB color button input.
+pub fn color_swatch(ui: &mut egui::Ui, p: &Palette, rgb: [f32; 3], caption: &str, size: f32, enabled: bool) -> egui::Response {
     ui.vertical(|ui| {
-        let mut c = rgb;
-        ui.add_enabled_ui(enabled, |ui| {
-            ui.spacing_mut().interact_size = Vec2::new(size, size);
-            if egui::color_picker::color_edit_button_rgb(ui, &mut c).changed() {
-                out = Some(c);
-            }
-        });
+        let response = ui
+            .add_enabled_ui(enabled, |ui| {
+                let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), egui::Sense::click());
+                ui.painter().rect_filled(rect, 3.0, crate::ui::color_picker::color(rgb));
+                ui.painter().rect_stroke(
+                    rect,
+                    3.0,
+                    egui::Stroke::new(1.0, if response.hovered() { p.violet } else { p.raised }),
+                    egui::StrokeKind::Inside,
+                );
+                response.on_hover_text(aurora_i18n::tr!("color-picker-open"))
+            })
+            .inner;
         ui.add_sized(
             [size, 14.0],
             egui::Label::new(RichText::new(caption).size(11.0).color(if enabled { p.muted } else { p.muted_dim })),
         );
-    });
-    out
+        response
+    })
+    .inner
 }
 
 pub use crate::ui::widgets::icon_button;

@@ -18,6 +18,8 @@ pub struct DemoSim {
     props: HashMap<Uuid, ObjectProps>,
     contents: HashMap<Uuid, (i16, Vec<TaskItem>)>,
     running: HashMap<(Uuid, Uuid), (bool, bool)>,
+    pending_running: HashMap<(Uuid, Uuid), bool>,
+    physics: HashMap<Uuid, PhysicsParams>,
 }
 
 fn demo_item(object: Uuid, n: u128, name: &str, asset_type: i8, inv_type: i8) -> TaskItem {
@@ -26,12 +28,17 @@ fn demo_item(object: Uuid, n: u128, name: &str, asset_type: i8, inv_type: i8) ->
         parent_id: object,
         creator_id: DEMO_CREATOR,
         owner_id: crate::demo::DEMO_AGENT,
+        last_owner_id: DEMO_CREATOR,
         base_mask: PERM_ALL,
         owner_mask: PERM_ALL
-            & match n {
-                2 => !perm::MODIFY,
-                3 => !perm::COPY,
-                _ => u32::MAX,
+            & if object == super::replace::demo::id(super::replace::demo::TARGET) {
+                u32::MAX
+            } else {
+                match n {
+                    2 => !perm::MODIFY,
+                    3 => !perm::COPY,
+                    _ => u32::MAX,
+                }
             },
         next_owner_mask: perm::MOVE | perm::TRANSFER,
         asset_id: Uuid::from_u128(n),
@@ -43,6 +50,10 @@ fn demo_item(object: Uuid, n: u128, name: &str, asset_type: i8, inv_type: i8) ->
         creation_date: 1_700_000_000,
         ..Default::default()
     }
+}
+
+fn script_copy_demo() -> bool {
+    std::env::var("AURORA_DEMO_REPLACE_PRIM").is_ok_and(|mode| mode == "script")
 }
 
 impl DemoSim {
@@ -95,7 +106,23 @@ impl DemoSim {
     }
 
     fn contents_of(&mut self, id: Uuid) -> &mut (i16, Vec<TaskItem>) {
+        if id == super::replace::demo::id(super::replace::demo::SOURCE) {
+            return self.contents.entry(id).or_insert((1, Vec::new()));
+        }
         self.contents.entry(id).or_insert_with(|| {
+            if script_copy_demo()
+                && (super::replace::demo::id(super::replace::demo::ROOT)..=super::replace::demo::id(super::replace::demo::ROOT + 14))
+                    .contains(&id)
+            {
+                return (
+                    1,
+                    if id == super::replace::demo::id(super::replace::demo::TARGET) {
+                        vec![demo_item(id, 1, aurora_i18n::tr!("build-demo-sim-door-script"), 10, 10)]
+                    } else {
+                        Vec::new()
+                    },
+                );
+            }
             (
                 1,
                 vec![
@@ -134,6 +161,127 @@ impl DemoSim {
     /// Events a simulator would send back for a build command.
     pub fn reply(&mut self, world: &World, c: &BuildCmd) -> Vec<NetEvent> {
         match c {
+            BuildCmd::SetPhysicsParams {
+                handle, local_id, params, ..
+            } => {
+                if let Some(id) = Self::uuids(world, *handle, &[*local_id]).first() {
+                    self.physics.insert(*id, *params);
+                }
+                Vec::new()
+            }
+            BuildCmd::Transform { handle, updates } => {
+                let mut objects = Vec::new();
+                for update in updates {
+                    let Some(id) = Self::uuids(world, *handle, &[update.local_id]).first().copied() else {
+                        continue;
+                    };
+                    let Some(o) = world.objects.index_of_uuid(&id).and_then(|i| world.objects.get(i)) else {
+                        continue;
+                    };
+                    let mut o = super::replace::demo_update(o);
+                    if let Some(p) = update.position {
+                        o.position = p;
+                    }
+                    if let Some(r) = update.rotation {
+                        o.rotation = r;
+                    }
+                    if let Some(s) = update.scale {
+                        o.scale = s;
+                    }
+                    objects.push(o);
+                }
+                vec![NetEvent::ObjectUpdates { handle: *handle, objects }]
+            }
+            BuildCmd::Delink { handle, local_ids } => {
+                let mut objects = Vec::new();
+                for id in Self::uuids(world, *handle, local_ids) {
+                    let Some(idx) = world.objects.index_of_uuid(&id) else { continue };
+                    let Some(o) = world.objects.get(idx) else { continue };
+                    let Some((p, r)) = super::replace::region_transform(world, idx) else {
+                        continue;
+                    };
+                    let mut o = super::replace::demo_update(o);
+                    o.parent_id = 0;
+                    o.position = p;
+                    o.rotation = r;
+                    objects.push(o);
+                }
+                vec![NetEvent::ObjectUpdates { handle: *handle, objects }]
+            }
+            BuildCmd::Link { handle, local_ids } => {
+                let ids = Self::uuids(world, *handle, local_ids);
+                let Some(root) = ids.first().and_then(|id| world.objects.index_of_uuid(id)) else {
+                    return Vec::new();
+                };
+                let Some(ro) = world.objects.get(root) else { return Vec::new() };
+                let Some((p, r)) = super::replace::region_transform(world, root) else {
+                    return Vec::new();
+                };
+                let mut objects = Vec::new();
+                for id in &ids {
+                    let Some(idx) = world.objects.index_of_uuid(id) else { continue };
+                    let Some(o) = world.objects.get(idx) else { continue };
+                    let Some((op, or)) = super::replace::region_transform(world, idx) else {
+                        continue;
+                    };
+                    let mut o = super::replace::demo_update(o);
+                    o.parent_id = if idx == root { 0 } else { ro.key.local_id };
+                    o.position = if idx == root { op } else { r.inverse() * (op - p) };
+                    o.rotation = if idx == root { or } else { r.inverse() * or };
+                    objects.push(o);
+                }
+                vec![NetEvent::ObjectUpdates { handle: *handle, objects }]
+            }
+            BuildCmd::MoveTaskInventory {
+                handle,
+                local_id,
+                item_id,
+                folder_id,
+            } => {
+                let Some(id) = Self::uuids(world, *handle, &[*local_id]).first().copied() else {
+                    return Vec::new();
+                };
+                let Some(task) = self.contents_of(id).1.iter().find(|i| i.item_id == *item_id).cloned() else {
+                    return Vec::new();
+                };
+                if task.owner_mask & perm::COPY == 0 {
+                    return Vec::new();
+                }
+                let mut items: Vec<_> = world.inventory.items.values().filter(|i| i.parent == *folder_id).cloned().collect();
+                items.push(aurora_net::inventory::InvItem {
+                    id: Uuid::new_v4(),
+                    parent: *folder_id,
+                    name: task.name,
+                    desc: task.description,
+                    asset_type: task.asset_type as i32,
+                    inv_type: task.inv_type as i32,
+                    asset_id: task.asset_id,
+                    creator: task.creator_id,
+                    owner: task.owner_id,
+                    last_owner: task.last_owner_id,
+                    group_id: task.group_id,
+                    group_owned: task.group_owned,
+                    base_mask: task.base_mask,
+                    owner_mask: task.owner_mask,
+                    group_mask: task.group_mask,
+                    everyone_mask: task.everyone_mask,
+                    next_owner_mask: task.next_owner_mask,
+                    created_at: task.creation_date as i64,
+                    ..Default::default()
+                });
+                vec![NetEvent::InventoryContents(vec![aurora_net::inventory::FolderContents {
+                    folder_id: *folder_id,
+                    owner_id: world.agent_id,
+                    // A new item advances storage's snapshot version too.
+                    version: world
+                        .inventory
+                        .folders
+                        .get(folder_id)
+                        .map_or(1, |f| f.info.version.max(0).saturating_add(1)),
+                    folders: Vec::new(),
+                    items,
+                }])]
+            }
             BuildCmd::RezInventory(rez) => vec![NetEvent::ObjectUpdates {
                 handle: rez.handle,
                 objects: vec![crate::demo::inventory_rez(rez)],
@@ -250,15 +398,19 @@ impl DemoSim {
                 let Some(id) = ids.first().copied() else { return Vec::new() };
                 let entry = self.contents_of(id);
                 let mut it = (**item).clone();
-                if it.item_id.is_nil() {
+                if it.item_id.is_nil() || world.inventory.items.contains_key(&it.item_id) {
                     it.item_id = Uuid::new_v4();
                 }
+                let script_id = it.item_id;
                 match entry.1.iter_mut().find(|i| i.item_id == it.item_id) {
                     Some(old) => *old = it,
                     None => entry.1.push(it),
                 }
                 entry.0 = entry.0.wrapping_add(1);
                 let serial = entry.0;
+                if let BuildCmd::RezScript { enabled, .. } = c {
+                    self.running.insert((id, script_id), (*enabled, true));
+                }
                 self.props_of(world, id).inventory_serial = serial;
                 self.reply_props(world, &ids)
             }
@@ -278,11 +430,21 @@ impl DemoSim {
                 running,
                 ..
             } => {
-                self.running.entry((*object_id, *item_id)).or_insert((true, true)).0 = *running;
+                if script_copy_demo() {
+                    self.pending_running.insert((*object_id, *item_id), *running);
+                } else {
+                    self.running.entry((*object_id, *item_id)).or_insert((true, true)).0 = *running;
+                }
                 Vec::new()
             }
             BuildCmd::GetScriptRunning { object_id, item_id, .. } => {
-                let (running, mono) = self.running.get(&(*object_id, *item_id)).copied().unwrap_or((true, true));
+                let initial = *object_id != super::replace::demo::id(super::replace::demo::ROOT + 6);
+                let (running, mono) = self.running.get(&(*object_id, *item_id)).copied().unwrap_or((initial, true));
+                // First reply observes the previous state; the next query
+                // confirms the asynchronous script-engine operation.
+                if let Some(next) = self.pending_running.remove(&(*object_id, *item_id)) {
+                    self.running.insert((*object_id, *item_id), (next, mono));
+                }
                 vec![NetEvent::ScriptRunning {
                     object_id: *object_id,
                     item_id: *item_id,
@@ -338,9 +500,9 @@ impl DemoSim {
                 llsd_map! { "selected" => llsd_map! { "streaming" => 0.1 * n, "physics" => 0.1 * n, "simulation" => 0.5 * n } }
             }
             "GetObjectPhysicsData" => {
-                let d = PhysicsParams::default();
                 let mut m = Llsd::new_map();
                 for v in body["object_ids"].as_array() {
+                    let d = self.physics.get(&v.as_uuid()).copied().unwrap_or_default();
                     m.insert(
                         v.as_uuid().to_string(),
                         llsd_map! {

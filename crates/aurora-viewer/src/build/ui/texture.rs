@@ -118,7 +118,7 @@ impl BuildTool {
     /// Blinn-Phong material of a face as the panel sees it: the one just
     /// sent (until the simulator's new material id arrives), else the
     /// region's, else none.
-    fn face_legacy(&self, env: &Env, world: &World, idx: usize, face: u8, te: &TextureFace) -> Option<LegacyMaterial> {
+    pub(super) fn face_legacy(&self, env: &Env, world: &World, idx: usize, face: u8, te: &TextureFace) -> Option<LegacyMaterial> {
         let id = world.objects.get(idx)?.full_id;
         if let Some((old, m)) = self.ui.legacy_pending.get(&(id, face))
             && *old == te.material_id
@@ -260,55 +260,45 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         small(ui, p, aurora_i18n::tr!("build-ui-texture-no-editable-face-selected"));
         return;
     }
-    ui.horizontal(|ui| {
-        ui.label(
-            RichText::new(aurora_i18n::tr!("build-compact-materials"))
-                .size(13.0)
-                .strong()
-                .color(p.ink),
-        );
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let items = [
-                ("PBR", 0usize),
-                (aurora_i18n::tr!("build-ui-texture-blinn-phong"), 1),
-                (aurora_i18n::tr!("extra-media"), 2),
-            ];
-            if let Some(tab) = combo(ui, "material_type", Some(tool.ui.tex_tab), &items, 115.0, true) {
-                tool.ui.tex_tab = tab;
-            }
-        });
+    super::compact::heading(ui, p, "paint-brush", aurora_i18n::tr!("build-compact-materials"), |ui| {
+        if super::common::icon_button(
+            ui,
+            p,
+            "clipboard-text",
+            aurora_i18n::tr!("build-ui-texture-paste-texture-settings-from-the-clipboard"),
+            tool.ui.face_clipboard.is_some(),
+        ) {
+            paste_faces(tool, world, &sel);
+        }
+        let one_object = sel.iter().all(|x| x.idx == sel[0].idx);
+        if super::common::icon_button(
+            ui,
+            p,
+            "copy",
+            aurora_i18n::tr!("build-ui-texture-copy-texture-settings-to-clipboard"),
+            one_object,
+        ) {
+            let clip = sel
+                .iter()
+                .map(|x| FaceClip {
+                    face: x.te,
+                    legacy: tool.face_legacy(env, world, x.idx, x.face, &x.te),
+                    gltf: BuildTool::gltf_asset(world, x.idx, x.face).map(|a| (a, BuildTool::gltf_override(world, x.idx, x.face))),
+                })
+                .collect();
+            tool.ui.face_clipboard = Some(clip);
+        }
     });
-    ui.horizontal(|ui| {
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if super::common::icon_button(
-                ui,
-                p,
-                "clipboard-text",
-                aurora_i18n::tr!("build-ui-texture-paste-texture-settings-from-the-clipboard"),
-                tool.ui.face_clipboard.is_some(),
-            ) {
-                paste_faces(tool, world, &sel);
-            }
-            let one_object = sel.iter().all(|x| x.idx == sel[0].idx);
-            if super::common::icon_button(
-                ui,
-                p,
-                "copy",
-                aurora_i18n::tr!("build-ui-texture-copy-texture-settings-to-clipboard"),
-                one_object,
-            ) {
-                let clip = sel
-                    .iter()
-                    .map(|x| FaceClip {
-                        face: x.te,
-                        legacy: tool.face_legacy(env, world, x.idx, x.face, &x.te),
-                        gltf: BuildTool::gltf_asset(world, x.idx, x.face).map(|a| (a, BuildTool::gltf_override(world, x.idx, x.face))),
-                    })
-                    .collect();
-                tool.ui.face_clipboard = Some(clip);
-            }
-        });
-    });
+    tabs(
+        ui,
+        p,
+        &mut tool.ui.tex_tab,
+        &[
+            ("PBR", true),
+            (aurora_i18n::tr!("build-ui-texture-classic"), true),
+            (aurora_i18n::tr!("extra-media"), true),
+        ],
+    );
     ui.add_space(4.0);
     match tool.ui.tex_tab {
         0 => pbr(ui, p, tool, world, env, &sel),
@@ -481,14 +471,8 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
                     super::common::linear_to_srgb(bc[1]),
                     super::common::linear_to_srgb(bc[2]),
                 ];
-                if let Some(c) = color_swatch(ui, p, srgb, aurora_i18n::tr!("build-ui-texture-tint"), 40.0, editable) {
-                    let lin = [
-                        super::common::srgb_to_linear(c[0]),
-                        super::common::srgb_to_linear(c[1]),
-                        super::common::srgb_to_linear(c[2]),
-                    ];
-                    tool.edit_gltf(world, sel, |o| o.base_color_factor = Some([lin[0], lin[1], lin[2], bc[3]]));
-                }
+                let swatch = color_swatch(ui, p, srgb, aurora_i18n::tr!("build-ui-texture-tint"), 40.0, editable);
+                tool.color_swatch_response(world, env, super::ColorTarget::PbrBase, srgb, swatch);
             });
             ui.horizontal(|ui| {
                 let maps: [(Option<Uuid>, &str, usize); 2] = [
@@ -518,14 +502,8 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
                     super::common::linear_to_srgb(e[1]),
                     super::common::linear_to_srgb(e[2]),
                 ];
-                if let Some(c) = color_swatch(ui, p, srgb, aurora_i18n::tr!("build-ui-texture-tint"), 40.0, editable) {
-                    let lin = [
-                        super::common::srgb_to_linear(c[0]),
-                        super::common::srgb_to_linear(c[1]),
-                        super::common::srgb_to_linear(c[2]),
-                    ];
-                    tool.edit_gltf(world, sel, |o| o.emissive_factor = Some(lin));
-                }
+                let swatch = color_swatch(ui, p, srgb, aurora_i18n::tr!("build-ui-texture-tint"), 40.0, editable);
+                tool.color_swatch_response(world, env, super::ColorTarget::PbrEmissive, srgb, swatch);
             });
         });
     egui::CollapsingHeader::new(aurora_i18n::tr!("build-c3-texture-transform"))
@@ -631,14 +609,8 @@ fn blinn_phong(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut
         }
         let (col, _) = same(sel.iter().map(|x| [x.te.color[0], x.te.color[1], x.te.color[2]]));
         let col = col.unwrap_or([1.0; 3]);
-        if let Some(c) = color_swatch(ui, p, col, aurora_i18n::tr!("build-ui-texture-tint"), 40.0, editable) {
-            // selectionSetColorOnly: the alpha stays
-            tool.edit_faces(world, |f, _, _| {
-                f.color[0] = c[0];
-                f.color[1] = c[1];
-                f.color[2] = c[2];
-            });
-        }
+        let swatch = color_swatch(ui, p, col, aurora_i18n::tr!("build-ui-texture-tint"), 40.0, editable);
+        tool.color_swatch_response(world, env, super::ColorTarget::Diffuse, col, swatch);
         ui.vertical(|ui| {
             let (fb, fb_mixed) = same(sel.iter().map(|x| x.te.bump_shiny_fullbright & TEM_FULLBRIGHT != 0));
             if let Some(v) = check(
@@ -799,17 +771,15 @@ fn blinn_phong(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut
                 }
                 let sc = legacy[0].as_ref().map(|m| m.specular_color).unwrap_or([255; 4]);
                 let rgb = [sc[0] as f32 / 255.0, sc[1] as f32 / 255.0, sc[2] as f32 / 255.0];
-                if let Some(c) = color_swatch(
+                let swatch = color_swatch(
                     ui,
                     p,
                     rgb,
                     aurora_i18n::tr!("build-ui-texture-tint"),
                     40.0,
                     editable && spec.is_some(),
-                ) {
-                    let b = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
-                    tool.edit_legacy(env, world, sel, |m| m.specular_color = [b(c[0]), b(c[1]), b(c[2]), sc[3]]);
-                }
+                );
+                tool.color_swatch_response(world, env, super::ColorTarget::Specular, rgb, swatch);
                 ui.vertical(|ui| {
                     let (gl, gl_mixed) = same(legacy.iter().map(|m| m.as_ref().map(|m| m.specular_exp).unwrap_or(51)));
                     let (env_i, env_mixed) = same(legacy.iter().map(|m| m.as_ref().map(|m| m.env_intensity).unwrap_or(0)));
