@@ -240,7 +240,9 @@ chaque modification de l'interface :
   bouton avec icône utilise `widgets::action_button`.
 - **Rayons** : ceux du thème (`ui.visuals().window_corner_radius` pour les
   cartes et pastilles, `ui.visuals().widgets.inactive.corner_radius` pour les
-  boutons), jamais un nombre dans le code, jamais plus arrondi.
+  boutons), jamais un nombre dans le code, jamais plus arrondi. La plaque de
+  nom des avatars (`ui/nameplate.rs`), aux extrémités rondes, est une
+  exception voulue, pas un précédent.
 - **Icônes** : uniquement des icônes Tabler, choisies dans
   `assets/tabler-icons/`. La version pleine (`nom-filled`) d'abord ; au trait
   seulement pour un glyphe linéaire, une icône barrée ou une fonction sans

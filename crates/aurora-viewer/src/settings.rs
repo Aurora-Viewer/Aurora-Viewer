@@ -165,6 +165,9 @@ pub struct Settings {
     /// Commandes).
     pub chat_commands: crate::cmdline::ChatCommandSettings,
     pub name_tag_distance: f32,
+    /// Avatar name tags drawn as before the name plates (`ui::nameplate`):
+    /// lines of text on a flat tag, in the tag colors of the preferences.
+    pub classic_name_tags: bool,
     pub invert_mouse: bool,
     pub arrows_strafe: bool,
     /// Our avatar's head and eyes follow the cursor and what we point at,
@@ -520,6 +523,7 @@ impl Default for Settings {
             autoresponse: Default::default(),
             chat_commands: Default::default(),
             name_tag_distance: 64.0,
+            classic_name_tags: false,
             invert_mouse: false,
             arrows_strafe: false,
             look_at: false,

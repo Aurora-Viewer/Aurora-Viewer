@@ -1432,6 +1432,7 @@ Ce que l'inventaire doit montrer avec ces scénarios :
 | `AURORA_DEMO_MUSIC=<url>` ou `1` | Musique de la parcelle de démo |
 | `AURORA_DEMO_SOUND=1` | Sons du monde et de l'interface audibles |
 | `AURORA_DEMO_VOICE` | États vocaux et couleurs des deux étiquettes d'avatars |
+| `AURORA_DEMO_TAGS=voice`, `status` ou `cycle` | Plaques de nom dans tous leurs états, aux trois distances |
 
 ### Détails
 
@@ -1442,7 +1443,34 @@ Ce que l'inventaire doit montrer avec ces scénarios :
   `listening` garde les deux étiquettes neutres, `off` montre le micro barré rouge. `cycle`
   enchaîne 4 s de parole, 3 s d'écoute, 2 s hors vocal. Sans cette variable,
   notre contour suit le vrai micro quand son bouton / push-to-talk est actif
-  et la voix activée. Aucun réglage enregistré n'est changé.
+  et la voix activée. Aucun réglage enregistré n'est changé. Avec les
+  plaques de nom (style par défaut), le contour est vert dans le canal vocal
+  et un halo vert serré suit le niveau ; hors vocal, la plaque n'a ni contour
+  coloré ni badge.
+- **`AURORA_DEMO_TAGS`** : neuf résidents devant la position de départ
+  (`demo_tags.rs`), pour voir les plaques de nom sans grille. Cinq sont à
+  moins de 15 m de la caméra (plaque complète), deux vers 27 m (pastille
+  compacte), deux vers 50 m (nom seul). Un mur blanc se dresse derrière
+  les deux de gauche, pour juger le verre sur un fond clair à côté des
+  mêmes plaques sur la scène sombre. La fenêtre Personnes est fermée.
+  - `voice` : Nova hors du canal vocal ; Tess dans le canal, silencieuse
+    (contour vert, badge micro) et sans photo de profil (l'icône reste) ;
+    Orion, un ami, parle (halo qui suit le niveau, nom violet clair, badges
+    micro, cœur et triangle : il est montré comme trop complexe) ; Lune
+    écrit (trois points animés) et n'a pas de nom d'affichage (deux lignes) ;
+    La Brume est bloquée (plaque atténuée, nom en italique, badge interdit,
+    pas de pastille de statut). Plus loin, Sol parle et Iris écrit ; au-delà,
+    Vega est dans le canal (contour vert) et Atlas non.
+  - `status` : Nova absente (pastille ambre), Tess ne pas déranger (pastille
+    rouge), Orion hors du canal (cœur et triangle seuls), Lune écrit en
+    étant absente.
+  - `cycle` : passe de l'un à l'autre toutes les six secondes.
+  - Les photos sont des dégradés générés (`demo_tags::picture_pixels`),
+    demandées comme sur la grille : profil, puis texture, au plus quatre par
+    seconde, la plus proche d'abord ; notre avatar et La Brume ont la même.
+  - À combiner avec `AURORA_DEMO_VOICE` pour notre propre plaque et celle de
+    Loup Violet (bloqué dans la démo), et avec `AURORA_NAME_TAGS=classic`
+    pour comparer avec les étiquettes classiques.
 - **`AURORA_DEMO_MEDIA_CLICK`** : clic de focus à l'image 700 par défaut,
   deuxième clic 60 images après, clic facultatif sur le champ 120 images
   après, puis saisie « aurora ». `AURORA_DEMO_MEDIA_CLICK_FRAME` change
@@ -1467,6 +1495,7 @@ Ce que l'inventaire doit montrer avec ces scénarios :
 | `AURORA_CPU_ATTACH=1` | Objets portés et mesh riggés placés par la synchro, sans les ancres du GPU |
 | `AURORA_SYNC_SLICE=1` ou `alt` | Synchro de la scène par tranche de tous les objets, comme avant |
 | `AURORA_SYNC_CHECK=1` | Ce que la synchro de la scène visite à chaque image |
+| `AURORA_NAME_TAGS=classic`, `plate` ou `alt` | Style des étiquettes d'avatars de ce lancement |
 | `AURORA_TEXTURE_BC7=0` | Textures jamais compressées en BC7 |
 | `AURORA_TEXTURE_BC7_CACHE=0` | BC7 sans son cache disque |
 | `AURORA_RENDER_THREAD=0` | Images dessinées sur le thread principal |
@@ -1489,6 +1518,19 @@ Ce que l'inventaire doit montrer avec ces scénarios :
 
 ### Détails
 
+- **`AURORA_NAME_TAGS`** : `classic` ou `plate` impose le style des
+  étiquettes d'avatars (classiques ou plaques de nom) sans toucher au
+  réglage « Style des étiquettes ». `alt` alterne dans la même session, à
+  chaque ligne `perf summary` : une seconde avec les étiquettes classiques
+  (`xmode=old`), deux avec les plaques (`xmode=new`). C'est la mesure à faire
+  sur une machine partagée : mêmes avatars, même caméra, même charge
+  extérieure des deux côtés. À lire : `u_tags` (thread principal),
+  `r_tessellate`, `r_egui`, `ui_meshes` et `ui_vertices`. Scène de mesure :
+  `AURORA_DEMO_CROWD=40` avec `AURORA_DEMO_POS="135,134"` (dans la foule :
+  les huit plaques complètes, le reste en pastilles compactes) ou
+  `"129,134"` (devant la foule), `AURORA_FPS_LIMIT=120`. Caméra immobile, une plaque qui n'a
+  pas bougé est redessinée sans copie : le coût en mouvement se voit en
+  tournant la caméra pendant le relevé.
 - **`AURORA_TEXTURE_BUDGET_MB=<n>`** : les pages de textures ne doivent pas
   dépasser n Mo, quels que soient le réglage « Mémoire textures » et la
   mémoire vidéo que le pilote annonce (`scene/texture_budget.rs`). Sert à

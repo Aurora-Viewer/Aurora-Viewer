@@ -273,6 +273,40 @@ fn swatches(ui: &mut egui::Ui, p: &Palette, id: &str, items: &mut [(&str, &mut c
     changed
 }
 
+/// The name tag colors are those of the classic tags: the name plates take
+/// theirs from the theme (the human's choice; Firestorm's are configurable).
+fn tag_colors_used(s: &Settings) -> bool {
+    s.classic_name_tags
+}
+
+/// The name tag colors of the Colors page. Greyed rather than hidden while
+/// the name plates are the style, so that the page keeps its shape.
+fn tag_colors(ui: &mut egui::Ui, p: &Palette, k: &mut crate::settings::ColorSettings, used: bool) -> bool {
+    let mut changed = false;
+    group(ui, p, aurora_i18n::tr!("ui-options-name-tag-color"), |ui| {
+        if !used {
+            let note = aurora_i18n::tr!("ui-options-tag-colors-classic-only");
+            ui.label(RichText::new(note).size(11.5).color(p.muted));
+        }
+        ui.add_enabled_ui(used, |ui| {
+            changed |= swatches(
+                ui,
+                p,
+                "tags",
+                &mut [
+                    (aurora_i18n::tr!("ui-options-my-name"), &mut k.tag_me),
+                    (aurora_i18n::tr!("common-friends"), &mut k.tag_friend),
+                    (aurora_i18n::tr!("ui-options-ignored"), &mut k.tag_muted),
+                    ("Linden Lab", &mut k.tag_linden),
+                    (aurora_i18n::tr!("ui-options-matches"), &mut k.tag_match),
+                    (aurora_i18n::tr!("ui-options-non-matches"), &mut k.tag_mismatch),
+                ],
+            );
+        });
+    });
+    changed
+}
+
 fn format_bytes(b: u64) -> String {
     let mb = b as f64 / (1024.0 * 1024.0);
     if mb >= 1024.0 {
@@ -1124,6 +1158,26 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                 c |= row(
                     ui,
                     p,
+                    aurora_i18n::tr!("ui-options-name-tag-style"),
+                    aurora_i18n::tr!("ui-options-name-tag-style-help"),
+                    |ui| {
+                        let mut changed = false;
+                        let (plate, classic) = (
+                            aurora_i18n::tr!("ui-options-name-tags-plate"),
+                            aurora_i18n::tr!("ui-options-name-tags-classic"),
+                        );
+                        egui::ComboBox::from_id_salt("name-tag-style")
+                            .selected_text(if s.classic_name_tags { classic } else { plate })
+                            .show_ui(ui, |ui| {
+                                changed |= ui.selectable_value(&mut s.classic_name_tags, false, plate).changed();
+                                changed |= ui.selectable_value(&mut s.classic_name_tags, true, classic).changed();
+                            });
+                        changed
+                    },
+                );
+                c |= row(
+                    ui,
+                    p,
                     aurora_i18n::tr!("ui-options-complexity-in-name-tags"),
                     aurora_i18n::tr!("ui-options-below-the-name-from-green-to-red-based-on"),
                     |ui| toggle(ui, p, &mut s.tag_complexity),
@@ -1444,22 +1498,9 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
             });
         }
         5 => {
+            let classic_tags = tag_colors_used(s);
             let k = &mut s.colors;
-            group(ui, p, aurora_i18n::tr!("ui-options-name-tag-color"), |ui| {
-                c |= swatches(
-                    ui,
-                    p,
-                    "tags",
-                    &mut [
-                        (aurora_i18n::tr!("ui-options-my-name"), &mut k.tag_me),
-                        (aurora_i18n::tr!("common-friends"), &mut k.tag_friend),
-                        (aurora_i18n::tr!("ui-options-ignored"), &mut k.tag_muted),
-                        ("Linden Lab", &mut k.tag_linden),
-                        (aurora_i18n::tr!("ui-options-matches"), &mut k.tag_match),
-                        (aurora_i18n::tr!("ui-options-non-matches"), &mut k.tag_mismatch),
-                    ],
-                );
-            });
+            c |= tag_colors(ui, p, k, classic_tags);
             group(ui, p, aurora_i18n::tr!("ui-options-mini-map-markers"), |ui| {
                 c |= swatches(
                     ui,
@@ -2208,6 +2249,76 @@ mod tests {
         assert_eq!(ui.capture_key(KeyCode::KeyB, true, false), Some(Some(Input::key(KeyCode::KeyB))));
         ui.take_capture();
         assert_eq!(ui.capture_key(KeyCode::ControlLeft, false, false), None);
+    }
+
+    /// Draw the tag colors of the Colors page, then click along the column
+    /// of the first swatches; whether a color picker opened, and whether the
+    /// line about the classic tags is written.
+    fn tag_colors_frame(settings: &mut Settings) -> (bool, bool) {
+        let ctx = egui::Context::default();
+        let p = crate::theme::Theme::default().palette();
+        let note = aurora_i18n::tr!("ui-options-tag-colors-classic-only");
+        let picker = aurora_i18n::tr!("color-picker-title");
+        let (mut opened, mut noted) = (false, false);
+        let frame = |events: Vec<egui::Event>, settings: &mut Settings| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(700.0, 500.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    let used = tag_colors_used(settings);
+                    tag_colors(ui, &p, &mut settings.colors, used);
+                },
+            );
+            output.textures_delta.clear();
+            fn has(shape: &egui::Shape, text: &str) -> bool {
+                match shape {
+                    egui::Shape::Text(t) => t.galley.text() == text,
+                    egui::Shape::Vec(shapes) => shapes.iter().any(|s| has(s, text)),
+                    _ => false,
+                }
+            }
+            (
+                output.shapes.iter().any(|s| has(&s.shape, picker)),
+                output.shapes.iter().any(|s| has(&s.shape, note)),
+            )
+        };
+        noted |= frame(vec![], settings).1;
+        // the first swatch of each row is near the left edge of the group
+        for y in (20..120).step_by(4) {
+            let pos = egui::pos2(30.0, y as f32);
+            for pressed in [true, false] {
+                let click = egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: Default::default(),
+                };
+                frame(vec![egui::Event::PointerMoved(pos), click], settings);
+            }
+            opened |= frame(vec![], settings).0;
+            if opened {
+                break;
+            }
+        }
+        (opened, noted)
+    }
+
+    #[test]
+    fn the_tag_colors_are_greyed_exactly_while_the_name_plates_are_the_style() {
+        let mut settings = Settings::default();
+        assert!(!settings.classic_name_tags, "the name plates are the default style");
+        let colors = settings.colors;
+        let (opened, noted) = tag_colors_frame(&mut settings);
+        assert!(!opened, "a greyed swatch does not open its picker");
+        assert!(noted, "the page says the colors belong to the classic tags");
+        assert_eq!(settings.colors, colors);
+        // the classic style: the same rows, live at once
+        settings.classic_name_tags = true;
+        let (opened, noted) = tag_colors_frame(&mut settings);
+        assert!(opened && !noted);
     }
 
     #[test]

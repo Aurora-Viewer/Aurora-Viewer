@@ -35,6 +35,9 @@ pub mod place;
 /// (AURORA_DEMO_STREAM).
 #[path = "demo_stream.rs"]
 pub mod stream;
+/// Name plates in every state and at each distance (AURORA_DEMO_TAGS).
+#[path = "demo_tags.rs"]
+pub mod tags;
 
 /// Walkable floor of the demo (plaza top, else the terrain), for the
 /// offline movement stand-in.
@@ -550,6 +553,7 @@ fn demo_profile(id: Uuid) -> aurora_net::AvatarProfile {
         online: Some(true),
         flags: flags::IDENTIFIED,
         notes: Some(String::new()),
+        sl_image: tags::profile_picture(id),
         ..Default::default()
     };
     if id == DEMO_AGENT {
@@ -679,6 +683,8 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                             ("Aurora", "Demo", "")
                         } else if let Some(long) = long_name(id) {
                             long
+                        } else if let Some(resident) = tags::name(id) {
+                            resident
                         } else if let Some((first, sample)) = &glyphs {
                             (first.as_str(), "Resident", sample.display_name)
                         } else {
@@ -821,6 +827,7 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
             } else {
                 text
             };
+            let text = text + &tags::mute_line().unwrap_or_default();
             vec![NetEvent::MuteList(aurora_net::MuteListSource::File(text))]
         }
         // two groups, and someone starts a chat in the first one
@@ -3870,6 +3877,9 @@ pub fn local_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
     if *id == TEX_HAIR {
         let (empty, period) = hair_demo().map_or((60, 16), |h| (h.empty, h.period));
         return Some(hair_texture(empty, period));
+    }
+    if let Some(picture) = tags::picture_pixels(id) {
+        return Some(picture);
     }
     const N: u32 = 64;
     let tau = std::f32::consts::TAU;

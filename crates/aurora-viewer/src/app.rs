@@ -130,6 +130,10 @@ pub struct App {
     frame_profile: FrameProfile,
     /// `AURORA_SYNC_SLICE=alt`: seconds of the frame profile so far.
     sync_alt: u64,
+    /// AURORA_NAME_TAGS=alt: this second draws the classic tags.
+    name_tags_alt_classic: bool,
+    /// AURORA_DEMO_TAGS: the set of states its residents show.
+    demo_tag_states: Option<bool>,
     /// Interface parts of the frame's profile (`u_*`).
     ui_parts: Parts,
     /// The interface's shapes leave for the render thread, which
@@ -294,6 +298,8 @@ pub struct App {
     update_acknowledged: bool,
     /// Smoothed speaking outlines of the avatar name tags.
     voice_tags: ui::voice_tag::VoiceTags,
+    /// Name plates of the avatars (the default style of the name tags).
+    plates: ui::nameplate::Plates,
     /// Avatar name tags on screen last frame, far first: a click on one
     /// counts as one on its avatar.
     name_tags: Vec<ui::hud::NameTag>,
@@ -311,6 +317,8 @@ pub struct App {
     system_fonts_pending: bool,
     /// Profile pictures by avatar id (egui textures).
     avatar_pics: std::collections::HashMap<uuid::Uuid, egui::TextureHandle>,
+    /// The same textures by picture, for the residents who share one.
+    avatar_pic_images: std::collections::HashMap<uuid::Uuid, egui::TextureHandle>,
     /// Other interface images by asset id (profiles: 1st life picture,
     /// group insignias).
     ui_images: std::collections::HashMap<uuid::Uuid, egui::TextureHandle>,
@@ -490,6 +498,8 @@ impl App {
             perf: PerfData::default(),
             frame_profile: FrameProfile::default(),
             sync_alt: 0,
+            name_tags_alt_classic: false,
+            demo_tag_states: None,
             ui_parts: Parts::default(),
             egui_hand_over: EguiHandOver::default(),
             last_frame: Instant::now(),
@@ -604,6 +614,7 @@ impl App {
             update_acknowledged: false,
             login_info,
             voice_tags: Default::default(),
+            plates: Default::default(),
             name_tags: Vec::new(),
             sound_blocks: Default::default(),
             sound_changes: Vec::new(),
@@ -611,6 +622,7 @@ impl App {
             emoji: ui::emoji::Emoji::load(),
             system_fonts_pending,
             avatar_pics: Default::default(),
+            avatar_pic_images: Default::default(),
             ui_images: Default::default(),
             profile_ui: Default::default(),
             place_ui: Default::default(),
@@ -1046,6 +1058,17 @@ impl App {
 
     fn in_world(&self) -> bool {
         matches!(self.screen, Screen::World | Screen::Loading { .. })
+    }
+
+    /// The avatar name tags are the classic ones, not the name plates: the
+    /// setting, unless AURORA_NAME_TAGS forces a style.
+    fn classic_name_tags(&self) -> bool {
+        match name_tags_env() {
+            Some(NameTagsEnv::Classic) => true,
+            Some(NameTagsEnv::Plate) => false,
+            Some(NameTagsEnv::Alternate) => self.name_tags_alt_classic,
+            None => self.settings.classic_name_tags,
+        }
     }
 
     // ------------------------------------------------------------------ login
@@ -3474,6 +3497,7 @@ impl App {
         let mut wanted: Vec<uuid::Uuid> = self.chat_ui.wanted_pics.drain().collect();
         wanted.extend(self.profile_ui.wanted_pics.drain());
         wanted.extend(self.contacts_ui.wanted_pics.drain());
+        wanted.extend(self.plates.wanted_pics.drain());
         for agent in wanted {
             if self.avatar_pics.contains_key(&agent) {
                 continue;
@@ -3482,12 +3506,19 @@ impl App {
             let Some(image) = self.world.profiles.get(&agent).map(|p| p.sl_image).filter(|i| !i.is_nil()) else {
                 continue;
             };
+            // two residents with the same picture share its texture (its
+            // pixels are delivered once)
+            if let Some(t) = self.avatar_pic_images.get(&image) {
+                self.avatar_pics.insert(agent, t.clone());
+                continue;
+            }
             self.scene.textures.want_ui_image(renderer, image);
             if let Some((w, h, rgba)) = self.scene.textures.take_ui_image(&image)
                 && rgba.len() == (w * h * 4) as usize
             {
                 let ci = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba);
                 let t = self.egui_ctx.load_texture(format!("pic-{agent}"), ci, egui::TextureOptions::LINEAR);
+                self.avatar_pic_images.insert(image, t.clone());
                 self.avatar_pics.insert(agent, t);
             }
         }
@@ -4959,6 +4990,12 @@ impl App {
                 self.apply_inventory_action(action);
             }
         }
+        if self.demo {
+            let time = self.egui_ctx.input(|i| i.time);
+            for event in crate::demo::tags::state_events(time, &mut self.demo_tag_states) {
+                self.world.apply(event);
+            }
+        }
         if self.demo && std::env::var_os("AURORA_DEMO_ANIM_LOOP").is_some() {
             for event in crate::demo::loop_animation_events(self.frame_count) {
                 self.world.apply(event);
@@ -5599,6 +5636,12 @@ impl App {
             if let Some(old) = crate::scene::sync_sets::alternate_slice(self.sync_alt) {
                 self.frame_profile.set_mark(if old { " | xmode=old" } else { " | xmode=new" });
             }
+            // AURORA_NAME_TAGS=alt: the classic tags one second in three
+            if name_tags_env() == Some(NameTagsEnv::Alternate) {
+                let old = self.sync_alt.is_multiple_of(3);
+                self.name_tags_alt_classic = old;
+                self.frame_profile.set_mark(if old { " | xmode=old" } else { " | xmode=new" });
+            }
         }
     }
 
@@ -6044,17 +6087,20 @@ impl App {
                 // overlays
                 let voice_levels = if self.demo {
                     static VOICE_MODE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
-                    crate::demo::voice_levels(
+                    let mut levels = crate::demo::voice_levels(
                         ctx.input(|i| i.time),
                         self.world.agent_id,
                         self.settings.audio.voice_enabled,
                         self.talking(),
                         self.voice.mic_level,
                         VOICE_MODE.get_or_init(|| std::env::var("AURORA_DEMO_VOICE").ok()).as_deref(),
-                    )
+                    );
+                    crate::demo::tags::voice(&mut levels, ctx.input(|i| i.time));
+                    levels
                 } else {
                     self.voice.levels(self.world.agent_id)
                 };
+                let classic_tags = self.classic_name_tags();
                 self.name_tags = ui::hud::draw(
                     &ctx,
                     &p,
@@ -6081,6 +6127,12 @@ impl App {
                         })
                     },
                     self.scene.loading_bars.then(|| self.scene.loading_avatars()),
+                    (!classic_tags).then_some(ui::hud::PlateFrame {
+                        plates: &mut self.plates,
+                        pictures: &self.avatar_pics,
+                        too_complex: &self.scene.too_complex,
+                        demo_too_complex: crate::demo::tags::too_complex().filter(|_| self.demo),
+                    }),
                 );
                 t = self.ui_parts.lap(Part::UiTags, t);
                 if !self.camera.mouselook() {
@@ -6791,6 +6843,29 @@ fn forced_window_size() -> Option<(u32, u32)> {
     })
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NameTagsEnv {
+    Classic,
+    Plate,
+    Alternate,
+}
+
+/// AURORA_NAME_TAGS=classic|plate|alt: the style of the avatar name tags of
+/// this run, whatever the setting (which is left alone). `alt` switches
+/// with each `perf summary` line, to measure both styles in one run.
+fn name_tags_env() -> Option<NameTagsEnv> {
+    static STYLE: std::sync::OnceLock<Option<NameTagsEnv>> = std::sync::OnceLock::new();
+    *STYLE.get_or_init(|| match std::env::var("AURORA_NAME_TAGS").ok()?.trim() {
+        "classic" => Some(NameTagsEnv::Classic),
+        "plate" => Some(NameTagsEnv::Plate),
+        "alt" => Some(NameTagsEnv::Alternate),
+        other => {
+            log::warn!("AURORA_NAME_TAGS: unknown style {other:?} (classic, plate or alt)");
+            None
+        }
+    })
+}
+
 #[derive(Default)]
 struct UiActions {
     exit: Option<ui::exit::Action>,
@@ -6992,6 +7067,15 @@ impl ApplicationHandler for App {
                 if p.len() >= 2 {
                     self.camera.demo_orbit(p[0], p[1], p.get(2).copied(), &self.settings.camera);
                 }
+            }
+            // AURORA_DEMO_TAGS: residents whose name plates show every
+            // state, at the three distance levels
+            if crate::demo::tags::mode().is_some() {
+                for ev in crate::demo::tags::events() {
+                    self.world.apply(ev);
+                }
+                // (nothing over the rows of plates)
+                self.panels.people = false;
             }
             // AURORA_DEMO_RADAR=1: residents around for the radar of People
             if std::env::var_os("AURORA_DEMO_RADAR").is_some() {
