@@ -69,7 +69,7 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
     imports.choice = match mode.as_str() {
         "texture" => Choice::Texture,
         "material" => Choice::Material,
-        "mesh" | "mesh-physics" | "mesh-degenerate" => Choice::Mesh,
+        "mesh" | "mesh-physics" | "mesh-degenerate" | "mesh-options" => Choice::Mesh,
         "animation" | "animation-own" => Choice::Animation,
         "sound" => Choice::Sound,
         "local" | "local-mesh" | "local-mesh-applied" => Choice::Local,
@@ -128,6 +128,11 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
                                             face.vertices[1].position = face.vertices[2].position;
                                         }
                                     }
+                                }
+                            }
+                            if mode == "mesh-options" {
+                                for entry in &loaded {
+                                    wake.data_mut(|d| d.insert_temp(egui::Id::new(("mesh_section", entry.id)), 2usize));
                                 }
                             }
                             entries.append(&mut loaded);

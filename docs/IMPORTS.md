@@ -106,6 +106,11 @@ Sources : `llmaterialeditor.cpp`, `panel_gltf_material.xml`,
   matériaux, coordonnées, unités, transformations et rigging.
 - Quatre LOD : fichier, génération, réutilisation ; compteurs et validation
   des faces/instances, suffixes et recherche des fichiers associés.
+  La fenêtre présente l’aperçu à côté de trois sections : LOD, Collisions
+  et Import. Chaque LOD expose sa source, son fichier et son nombre de
+  triangles ; cliquer son niveau l’affiche dans l’aperçu. Les outils de
+  visualisation et les réglages avancés restent accessibles sans masquer
+  le modèle. Le calcul des frais se trouve dans le pied de fenêtre.
 - Génération de LOD : méthodes, triangles, erreur et normales lissées ;
   valeurs et presets de la fenêtre de référence.
 - Palettes glTF : articulations reconnues, joints pondérés prioritaires puis
@@ -172,6 +177,11 @@ Clippy sans avertissement. Profilage de la scène démo : moyenne CPU de
 l’interface sur les trois dernières périodes, 0,37 ms sans la fenêtre puis
 0,57 ms avec l’aperçu PBR (0,51 ms animation, 0,51 ms mesh local). Les
 traitements des fichiers et de la physique restent sur les workers.
+Après clarification de la fenêtre mesh : captures LOD / collisions /
+options d’import, application locale et libellé d’animation examinés ;
+moyenne CPU de l’interface de 0,57 ms sur les trois dernières périodes
+du scénario mesh. Les réglages réseau et la préparation des assets restent
+identiques.
 
 Les fixtures humaines ont aussi été lues et préparées hors ligne : neuf
 meshes avec leurs quatre LOD et leur physique, 58 textures, une image

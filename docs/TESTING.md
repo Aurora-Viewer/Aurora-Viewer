@@ -583,12 +583,15 @@ grille.
 
 ### Détails
 
-- **`AURORA_DEMO_IMPORTS=texture|material|mesh|mesh-physics|mesh-degenerate|animation|animation-own|sound|bulk|bulk-upload|local|local-mesh|local-mesh-applied`** :
+- **`AURORA_DEMO_IMPORTS=texture|material|mesh|mesh-physics|mesh-degenerate|mesh-options|animation|animation-own|sound|bulk|bulk-upload|local|local-mesh|local-mesh-applied`** :
   écrit des fichiers propres à ce lancement dans `.scratch/import-demo/<uuid>/`
   puis ouvre le parcours choisi : image RGBA, matériau PBR, cube Collada,
   animations BVH / `.anim` et son WAV synthétique. Vérifier les paramètres, les
   aperçus, la caméra, les permissions, la sélection et la confirmation.
   Le devis et les envois restent entièrement dans le serveur de démo.
+  Pour le mesh, l’aperçu reste à gauche des sections LOD, Collisions et
+  Import. `mesh-options` ouvre la troisième section (taille, textures,
+  squelette, association des fichiers) ; les contrôles défilent indépendamment.
   `bulk-upload` exécute automatiquement le lot sur ce serveur hors ligne :
   quatre lignes réussies, création des dépendances du matériau et reçu total
   de 40 L$ fictifs attendus ; aucun transfert ni paiement réel.
