@@ -221,8 +221,8 @@ la grille, 🔧 en cours, ⬜ à faire.
 
 ## 7. Interface et branding
 
-Interface plate, propre et moderne, palette Aurora, icônes Phosphor
-« regular » uniquement : voir [docs/BRANDING.md](docs/BRANDING.md). Jamais de
+Interface plate, propre et moderne, palette Aurora, icônes Tabler (version
+pleine d'abord, au trait sinon) : voir [docs/BRANDING.md](docs/BRANDING.md). Jamais de
 couleur en dur : utilise la `Palette`. Réutilise les widgets de
 `ui/widgets.rs`.
 

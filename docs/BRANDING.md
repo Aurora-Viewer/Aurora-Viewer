@@ -2,7 +2,7 @@
 
 L'interface d'Aurora est **propre, moderne et légèrement vitrée** : surfaces sombres et
 calmes, une seule couleur d'accent forte (le violet), du texte lisible, des
-icônes fines et cohérentes. Chaque écran doit avoir l'air soigné et fini.
+icônes nettes et cohérentes. Chaque écran doit avoir l'air soigné et fini.
 
 ## Palette
 
@@ -98,33 +98,55 @@ Le logo est une tête de loup de profil, tournée vers la droite, en 4 couleurs 
 violet `#8B5CF6`, indigo `#4F46E5`, turquoise `#5EEAD4` et bleu nuit `#070B1F`.
 Ne pas le déformer, le recolorer ni lui ajouter d'effet.
 
-## Icônes : Phosphor
+## Icônes : Tabler
 
-Toutes les icônes de l'interface sont des [Phosphor Icons](https://phosphoricons.com)
-(MIT), **graisse « regular »**, dessinées en blanc puis teintées avec la palette.
+Toutes les icônes de l'interface sont des [Tabler Icons](https://tabler.io/icons)
+(MIT), dessinées en blanc puis teintées avec la palette.
 Ne pas mélanger avec un autre jeu d'icônes.
 
-- La bibliothèque complète est dans
-  [`assets/phosphor-icons/SVGs/`](../assets/phosphor-icons/SVGs/) (6 graisses,
-  plus de 1 500 icônes) : c'est là qu'on choisit une icône.
+- La bibliothèque complète (version 3.49.0) est dans
+  [`assets/tabler-icons/`](../assets/tabler-icons/) : `outline/` (5 184 icônes
+  au trait) et `filled/` (1 054 icônes pleines). C'est là qu'on choisit une
+  icône ; le site de Tabler permet de chercher par mot-clé.
 - Seules les icônes utilisées sont embarquées dans le viewer :
-  `crates/aurora-viewer/assets/icons/phosphor/<nom>.svg`.
+  `crates/aurora-viewer/assets/icons/tabler/outline/<nom>.svg` et
+  `…/tabler/filled/<nom>.svg`.
+- Dans le code, une icône porte son nom Tabler : `eye-off` pour la version au
+  trait, `eye-filled` pour la version pleine.
+
+**La version pleine d'abord.** Tabler ne propose une version pleine que pour
+une icône sur cinq : on la prend chaque fois qu'elle existe et qu'elle dit
+bien la fonction. La version au trait sert dans trois cas :
+
+- **glyphes linéaires**, qui n'ont pas de surface à remplir : croix, plus,
+  moins, coche, flèches, annuler / rétablir, actualiser, pivoter, `</>` ;
+- **icônes barrées** (`eye-off`, `microphone-off`, `volume-off`,
+  `message-off`) : Tabler ne les dessine qu'au trait ;
+- **fonctions sans icône pleine qui convienne** : objet (`box`), personnes au
+  pluriel (`users`, `users-group`, `user-plus`), haut-parleur (`volume`), carte
+  (`map`), mains (`hand-grab`, `hand-stop`), s'asseoir (`armchair`), marcher /
+  courir (`walk`, `run`)…
+
+Ne pas forcer une icône pleine qui ne dit pas la fonction. Deux icônes qui
+vont par paire (lier / délier, plus / moins) restent dans le même style.
+Une même fonction garde la même icône partout (script = `code`, objet = `box`,
+tenue = `hanger-2-filled`, profil = `user-filled`…) : chercher l'icône déjà
+utilisée avant d'en ajouter une.
 
 **Ajouter une icône :**
 
-1. Choisir le nom dans `assets/phosphor-icons/SVGs/regular/` (ex.
-   `microphone.svg`).
-2. La copier dans `crates/aurora-viewer/assets/icons/phosphor/`.
-3. Ajouter son nom dans la liste `svg_list!` de
+1. Choisir le nom dans `assets/tabler-icons/filled/`, sinon dans
+   `assets/tabler-icons/outline/` (ex. `microphone.svg`).
+2. La copier dans `crates/aurora-viewer/assets/icons/tabler/filled/` (ou
+   `outline/`).
+3. Ajouter son nom dans la liste `FILLED` (ou `OUTLINE`) de
    `crates/aurora-viewer/src/ui/icons.rs`.
-4. L'utiliser avec `icons.get("microphone")`, teintée par la palette.
+4. L'utiliser avec `icons.get("microphone-filled")` (ou `icons.get("volume")`
+   pour une icône au trait), teintée par la palette.
 
-Les graisses « fill » ou « bold » ne servent qu'à un état précis (élément
-sélectionné, alerte) et uniquement si c'est cohérent avec le reste de l'écran.
-Exception : le micro barré des étiquettes d'avatars hors vocal est en « fill »
-et en `danger`, pour garder ce statut lisible à petite taille.
-Les icônes des autorisations de la parcelle (bout droit du champ de
-lieu) sont en « fill », car ces petites formes colorées en vert / rouge s'y
-lisent mieux qu'au trait. De même pour l'icône devant les liens web du chat et
-des profils : `check-circle-fill` en `success` (site de confiance) et
-`warning-fill` en `amber` (lien externe) et `x-circle-fill` en `danger` (lien dangereux), aussi dans leurs avertissements.
+Les icônes des autorisations de la parcelle (bout droit du champ de lieu) sont
+colorées en vert / rouge ; une barre dessinée par le code raye celles qui sont
+interdites. L'icône devant les liens web du chat et des profils est
+`circle-check-filled` en `success` (site de confiance), `alert-triangle-filled`
+en `amber` (lien externe) ou `circle-x-filled` en `danger` (lien dangereux),
+aussi dans leurs avertissements.

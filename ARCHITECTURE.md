@@ -41,7 +41,7 @@ aurora-viewer/                  dépôt git (GitHub : Aurora-Viewer/Aurora-Viewe
 ├─ aurora-tools.cmd             outils de développement (double-clic) : scripts/tools
 ├─ assets/
 │  ├─ branding/                 logos (couleur, silhouette), SVG + PNG 4096, aurora.ico
-│  ├─ phosphor-icons/           bibliothèque Phosphor complète (SVG, 6 graisses)
+│  ├─ tabler-icons/             bibliothèque Tabler complète (SVG : outline, filled)
 │  └─ emoji/                    police emoji (téléchargée, hors git)
 ├─ crates/                      le code (voir ci-dessous)
 ├─ docs/                        BRANDING.md, TESTING.md (options de test `AURORA_*`, profilage), captures du README
@@ -171,7 +171,7 @@ Les scripts utilisent un éditeur commun (`ui/scripts.rs`, actions dans `app/scr
 | `camera/` | La caméra comme LLAgentCamera : vue derrière l'avatar, caméra Alt sur un point ou un objet (`focus.rs`), caméra de siège, vue subjective, transitions, lissage, recul en vol, collision envoyée par le simulateur ; réglages Firestorm (`settings.rs`), scénarios de démo (`demo.rs`) |
 | `world/` | État du monde reçu du réseau : objets, régions, terrain, environnement (EEP : cycles et assets de réglages dans `eep.rs`, choix local > parcelle > région > jour par défaut, environnement local et fondus dans `eep_env.rs`, listes du sélecteur d'environnement et chargement des dossiers dans `env_select.rs`), parcelle sélectionnée d'« À propos du terrain » et ses droits (`land.rs`), social, profils des avatars, inventaire, groupes (actif, épinglés), cercles de contacts et surnoms (`contact_sets.rs`), blocages, messages du bridge LSL de Firestorm (cachés), orientation des corps, regard (LookAt), carte, profils de lieux de « Lieux » et des fenêtres séparées (`place_details.rs` : région par son nom, repère, RemoteParcelRequest, ParcelInfoRequest), assets des repères et handles de leurs régions (`landmarks.rs`), historique de téléportation daté et enregistré (`tphistory.rs`)… |
 | `scene/` | Ce qu'on envoie au GPU : géométrie et LOD, textures (streaming), avatars (squelette, animations, silhouette), particules, eau, sondes de reflets, sons du monde, imposteurs, assets de réglages d'environnement (`settings.rs` : ciel, eau, cycle du jour) |
-| `ui/` | Interface egui : barres, fenêtres, options, chat, contacts (amis, groupes, cercles : `contacts.rs`), profils des avatars, « Lieux » (`places.rs` : favoris, repères, historique de téléportation) et profils de lieux (`place_details.rs`, aussi en fenêtres séparées), « À propos du terrain » (`land/`, un fichier par onglet, dialogues), choix d'un résident (`avatar_picker.rs`), page web dans une fenêtre (`web_view.rs`), choix d'une texture, inventaire, sélecteur d'environnement et « Éclairage personnel » (`environment.rs`), cartes, overlays de débogage ; sons causés par les widgets (`sound_cues.rs` : clics, touches refusées, fenêtres) ; menus clic droit : apparence commune (`menu.rs` : icône Phosphor, sous-menus, cases cochées) et entrées comme Firestorm (`context.rs` : monde, noms d'avatars, groupes) |
+| `ui/` | Interface egui : barres, fenêtres, options, chat, contacts (amis, groupes, cercles : `contacts.rs`), profils des avatars, « Lieux » (`places.rs` : favoris, repères, historique de téléportation) et profils de lieux (`place_details.rs`, aussi en fenêtres séparées), « À propos du terrain » (`land/`, un fichier par onglet, dialogues), choix d'un résident (`avatar_picker.rs`), page web dans une fenêtre (`web_view.rs`), choix d'une texture, inventaire, sélecteur d'environnement et « Éclairage personnel » (`environment.rs`), cartes, overlays de débogage ; sons causés par les widgets (`sound_cues.rs` : clics, touches refusées, fenêtres) ; menus clic droit : apparence commune (`menu.rs` : icône Tabler, sous-menus, cases cochées) et entrées comme Firestorm (`context.rs` : monde, noms d'avatars, groupes) |
 | `build/` | Outils de construction comme LLFloaterTools : sélection et manipulateurs (`manip.rs`), régressions de sélection des parties liées et des objets entiers (`selection_tests.rs`), parcours de la sélection sous le pointeur avec CTRL + molette (`cycle.rs` : unités par linkset ou prims d’un même objet, molette de haute précision), déplacement direct des HUDs (`hud_drag.rs` : racine du linkset, conversion écran / point d’attachement, écho local et MultipleObjectUpdate de position au relâchement), outils Déplacer (`grab.rs`) et Aligner (`align.rs`), terrain (`land.rs`), modifications de la sélection (`edits.rs`), matériaux et médias (`materials.rs`), contenu des objets (`contents.rs`), impact et poids (`costs.rs`), simulateur de démo (`demo_sim.rs`) ; la fenêtre et ses onglets dans `build/ui/` |
 | `interaction.rs`, `cursors.rs`, `ui/object_actions.rs` | Règles des actions de clic 0–9, héritage, permissions, curseurs natifs Firestorm, fenêtres d'achat / paiement et liste du contenu ; transaction après confirmation |
 | `app/object_actions.rs` | Déclenchement des actions, toucher maintenu, déplacement physique, lecture de parcelle, ouverture de média et cadrage de caméra |
@@ -211,7 +211,7 @@ Les scripts utilisent un éditeur commun (`ui/scripts.rs`, actions dans `app/scr
 Les indicateurs vocaux des étiquettes sont dessinés par `ui/voice_tag.rs` :
 contour lissé selon le niveau de parole, couleurs calibrées sur l'échelle
 WebRTC (rouge dès 0,58, le micro local plafonnant vers 0,63), micro barré
-Phosphor fill pour les avatars hors vocal. `voice.rs` garantit l'entrée de notre avatar à partir du
+Tabler (`microphone-off`) pour les avatars hors vocal. `voice.rs` garantit l'entrée de notre avatar à partir du
 micro local, même sans écho de sa présence par le serveur vocal.
 
 ## Déroulement d'une image
@@ -283,7 +283,7 @@ Les pastilles transmettent leur rectangle visible à chaque passage : un cône
 dégradé les relie à la palette pendant qu'elle est déplacée séparément, sans
 surface interactive supplémentaire. Un second clic sur la même pastille ferme
 la transaction ; une autre pastille restaure la précédente avant de s'ouvrir.
-`cursors.rs` garde le curseur pipette Phosphor en mémoire, avec la pointe comme
+`cursors.rs` garde le curseur pipette Tabler en mémoire, avec la pointe comme
 point de prélèvement et le contour contrasté de la skin, comme le curseur HUD.
 `aurora-render/src/ui_glass.rs` produit un fond dépoli partagé
 par les fenêtres visibles : copie et deux passes de flou sur le GPU, puis
@@ -505,7 +505,7 @@ Son dossier de travail est celui des rapports, pour laisser l'updater
 remplacer le dossier d'installation après l'arrêt du viewer. Il ne relance
 jamais le viewer.
 
-`window.rs` réutilise Fluent, la Palette, les polices, les icônes Phosphor
+`window.rs` réutilise Fluent, la Palette, les polices, les icônes Tabler
 et les boutons du viewer. `software.rs` dessine ses maillages egui sur le
 CPU et `softbuffer` présente les pixels, sans initialiser Vulkan ni aucun
 adaptateur graphique. La boucle attend les événements entre les images.
