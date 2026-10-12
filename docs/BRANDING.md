@@ -66,7 +66,9 @@ Dans le code, on utilise toujours la `Palette` résolue (`p.violet`, `p.ink`…)
   point (`aurora_bg::frosted` : sans étoiles, rayons des aurores fondus,
   crêtes adoucies), avec deux lueurs de l'aurore (violet, turquoise) qui
   débordent autour d'elle. Son bord supérieur accroche la lumière ; la carte
-  de connexion porte le filet au dégradé de la marque. Les boutons du bas
+  de connexion porte le filet au dégradé de la marque. Les actualités se
+  tiennent à côté de la carte de connexion, sur sa ligne et à sa hauteur
+  (la liste défile), la version au-dessus d'elles. Les boutons du bas
   et le numéro de version partagent la même ligne.
 - **Barres de progression.** `widgets::progress` : une piste plate (celle
   des curseurs) remplie au dégradé de la marque, qui glisse vers sa valeur

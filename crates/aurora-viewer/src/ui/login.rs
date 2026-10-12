@@ -298,14 +298,18 @@ fn version_panel(ui: &mut egui::Ui, p: &Palette, icons: &Icons, info: &LoginInfo
     check_updates
 }
 
-fn news_panel(ui: &mut egui::Ui, p: &Palette, icons: &Icons, info: &LoginInfo, max_h: f32) {
-    card(ui, p, 16, false, |ui| {
+/// News card, `height` tall whatever the number of news (the list scrolls).
+fn news_panel(ui: &mut egui::Ui, p: &Palette, icons: &Icons, info: &LoginInfo, height: f32) {
+    const MARGIN: i8 = 16;
+    card(ui, p, MARGIN, false, |ui| {
         ui.set_width(ui.available_width());
+        ui.set_height(height - 2.0 * f32::from(MARGIN));
         widgets::section_header(ui, p, "article-filled", aurora_i18n::tr!("ui-login-news"));
+        let rest = ui.available_height();
         egui::ScrollArea::vertical()
-            .max_height(max_h)
-            .min_scrolled_height(max_h)
-            .auto_shrink([false, true])
+            .max_height(rest)
+            .min_scrolled_height(rest)
+            .auto_shrink([false, false])
             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 4.0;
                 for (i, n) in info.news.iter().enumerate() {
@@ -367,6 +371,7 @@ pub fn show(
     let card_w = 380.0f32.min(screen.width() - 32.0);
 
     // ---- brand + login card (center)
+    let mut login_card = egui::Rect::NOTHING;
     egui::Area::new(egui::Id::new("login_area"))
         .anchor(egui::Align2::CENTER_CENTER, Vec2::new(0.0, -10.0))
         .show(&ctx, |ui| {
@@ -387,7 +392,7 @@ pub fn show(
                 );
                 ui.add_space(18.0);
             });
-            card(ui, p, 24, true, |ui| {
+            login_card = card(ui, p, 24, true, |ui| {
                 ui.set_width(card_w - 48.0);
                 ui.spacing_mut().item_spacing.y = 6.0;
                 let enabled = !form.busy;
@@ -609,21 +614,31 @@ pub fn show(
                     ui.add_space(8.0);
                     ui.label(RichText::new(err).size(12.5).color(p.danger));
                 }
-            });
+            })
+            .response
+            .rect;
         });
 
     // ---- version + news (right)
     if wide {
+        // the news stand beside the login card, on its line and of its
+        // height; the version sits on top of them
         let col_w = 330.0;
-        egui::Area::new(egui::Id::new("login_side"))
-            .anchor(egui::Align2::RIGHT_CENTER, Vec2::new(-48.0, -10.0))
+        let left = screen.right() - 48.0 - col_w;
+        egui::Area::new(egui::Id::new("login_news"))
+            .fixed_pos(egui::pos2(left, login_card.top()))
+            .show(&ctx, |ui| {
+                ui.set_width(col_w);
+                news_panel(ui, p, icons, info, login_card.height());
+            });
+        egui::Area::new(egui::Id::new("login_version"))
+            .pivot(egui::Align2::LEFT_BOTTOM)
+            .fixed_pos(egui::pos2(left, login_card.top() - 14.0))
             .show(&ctx, |ui| {
                 ui.set_width(col_w);
                 if version_panel(ui, p, icons, info) {
                     action = LoginAction::CheckUpdates;
                 }
-                ui.add_space(14.0);
-                news_panel(ui, p, icons, info, (screen.height() * 0.42).clamp(160.0, 420.0));
             });
     } else if info.can_check_updates {
         egui::Area::new(egui::Id::new("login_check_updates"))
