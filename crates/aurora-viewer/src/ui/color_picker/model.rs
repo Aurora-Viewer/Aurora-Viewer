@@ -8,7 +8,7 @@ pub type Rgb = [f32; 3];
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Preferences {
-    /// ApplyColorImmediately: preview changes while choosing a color.
+    /// ApplyColorImmediately: on until chosen otherwise, then persisted.
     pub apply: bool,
     /// ColorPaletteEntry01..32, in sRGB, shared by the construction swatches.
     pub palette: [Rgb; 32],

@@ -226,6 +226,11 @@ Le sélecteur conserve l'identité de sa fenêtre appelante : placement contre s
 bord droit, aligné en haut, ou à gauche si l'espace manque, recalculé à chaque
 déplacement de la fenêtre ou changement de taille de l'écran. Sa taille mesurée
 garde les commandes visibles et le déplacement conserve son état réduit.
+Déplacer la palette la détache ; au relâchement, une proximité de 10 points
+avec une position accolée à gauche ou à droite rétablit le suivi. Le côté
+choisi reste stable tant qu'il tient à l'écran. Le lien vers la couleur d'origine
+reste présent quand les fenêtres sont indépendantes. « Appliquer » est coché
+par défaut, puis le dernier choix est sérialisé avec la palette enregistrée.
 Les pastilles transmettent leur rectangle visible à chaque passage : un cône
 dégradé les relie à la palette pendant qu'elle est déplacée séparément, sans
 surface interactive supplémentaire. Un second clic sur la même pastille ferme

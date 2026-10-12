@@ -32,6 +32,48 @@ pub fn events(ctx: &egui::Context, picker: &ColorPicker, frame: u64) -> Vec<Even
             })
             .unwrap_or_default()
     };
+    if mode == "dock" {
+        for (stage, begin) in [700_u64, 780, 860, 940, 1020, 1100, 1180].into_iter().enumerate() {
+            if !(begin..=begin + 41).contains(&frame) {
+                continue;
+            }
+            let control = if matches!(stage, 1 | 3 | 6) {
+                Control::ParentTitle
+            } else {
+                Control::Title
+            };
+            let drag_id = egui::Id::new(("demo_color_picker_dock", stage));
+            if frame == begin
+                && let (Some(title), Some(parent), Some(window)) = (
+                    picker.controls.get(&control),
+                    picker.parent_rect,
+                    ctx.memory(|m| m.area_rect(egui::Id::new(super::WINDOW_ID))),
+                )
+            {
+                let start = title.min + egui::vec2(70.0, 20.0);
+                let target = match stage {
+                    0 => window.min + egui::vec2(240.0, 100.0),
+                    1 => parent.min + egui::vec2(300.0, 0.0),
+                    2 => Pos2::new(parent.right() + 7.0, parent.top() + 5.0),
+                    3 => parent.min + egui::vec2(600.0, 40.0),
+                    4 => window.min + egui::vec2(120.0, 160.0),
+                    5 => Pos2::new(parent.left() - window.width() + 7.0, parent.top() + 5.0),
+                    _ => parent.min + egui::vec2(-100.0, 0.0),
+                };
+                let end = start + (target - title.min);
+                ctx.data_mut(|d| d.insert_temp(drag_id, (start, end)));
+                return vec![Event::PointerMoved(start), button(start, true)];
+            }
+            if let Some((start, end)) = ctx.data(|d| d.get_temp::<(Pos2, Pos2)>(drag_id)) {
+                if frame == begin + 41 {
+                    return vec![button(end, false)];
+                }
+                let fraction = frame.saturating_sub(begin) as f32 / 40.0;
+                return vec![Event::PointerMoved(start.lerp(end, fraction))];
+            }
+        }
+        return Vec::new();
+    }
     if mode == "toggle" {
         return match frame {
             700 | 701 => click(Control::Origin, 700),

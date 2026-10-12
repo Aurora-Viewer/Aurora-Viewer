@@ -15,6 +15,14 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 const WINDOW_ID: &str = "build_color_picker";
+// LLDragHandle::sSnapMargin / SnapMargin (Firestorm settings.xml).
+const SNAP_MARGIN: f32 = 10.0;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DockSide {
+    Left,
+    Right,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Event {
@@ -58,6 +66,8 @@ pub struct ColorPicker {
     screen_rect: Option<Rect>,
     opening: bool,
     origin: Option<Rect>,
+    dock: Option<DockSide>,
+    dragging: bool,
     pub(crate) controls: HashMap<Control, Rect>,
 }
 
@@ -75,6 +85,8 @@ impl ColorPicker {
         self.screen_rect = None;
         self.opening = true;
         self.origin = None;
+        self.dock = None;
+        self.dragging = false;
         self.track_controls = cfg!(test) || demo::mode().is_some();
     }
 
@@ -82,6 +94,7 @@ impl ColorPicker {
     pub fn open_from(&mut self, rgb: Rgb, mixed: bool, parent: egui::Id) {
         self.open(rgb, mixed);
         self.parent = Some(parent);
+        self.dock = Some(DockSide::Right);
     }
 
     /// The invoking swatch supplies its visible rectangle on every layout pass.
@@ -102,6 +115,8 @@ impl ColorPicker {
         self.parent_rect = None;
         self.screen_rect = None;
         self.origin = None;
+        self.dock = None;
+        self.dragging = false;
     }
 
     pub fn needs_sample(&mut self, cursor: (f32, f32)) -> bool {
@@ -143,13 +158,20 @@ impl ColorPicker {
         let screen = ctx.content_rect();
         let size = Vec2::new((screen.width() - 32.0).clamp(360.0, 460.0), 420.0);
         let parent = self.parent.and_then(|id| ctx.memory(|m| m.area_rect(id)));
-        let following = self.opening || parent != self.parent_rect || self.screen_rect != Some(screen);
+        let moving = ctx.is_being_dragged(egui::Id::new(WINDOW_ID).with("move"));
+        if moving {
+            // LLFloater::translate only moves dependents still snapped to it.
+            // Keep the color owner for the context cone, even while detached.
+            self.dock = None;
+        }
+        let following = self.dock.is_some() && (self.opening || parent != self.parent_rect || self.screen_rect != Some(screen));
         if let Some(parent) = parent.filter(|_| following) {
             let height = ctx
                 .memory(|m| m.area_rect(egui::Id::new(WINDOW_ID)))
                 .map_or(size.y, |rect| rect.height());
             let measured = Vec2::new(size.x, height);
-            let pos = adjacent_position(screen, parent, measured);
+            let (pos, side) = adjacent_position(screen, parent, measured, self.dock.unwrap_or(DockSide::Right));
+            self.dock = Some(side);
             if self.opening {
                 widgets::place_floater(ctx, WINDOW_ID, pos, size);
             } else {
@@ -237,12 +259,25 @@ impl ColorPicker {
         {
             // Auto-height is known after the first layout. Correct the screen
             // constraint in another pass so opening near the bottom stays visible.
-            let pos = adjacent_position(screen, parent, rect.size());
+            let (pos, side) = adjacent_position(screen, parent, rect.size(), self.dock.unwrap_or(DockSide::Right));
+            self.dock = Some(side);
             if rect.min.distance(pos) > 0.5 {
                 widgets::move_floater(ctx, WINDOW_ID, pos);
                 ctx.request_discard("position color picker beside its parent");
             }
         }
+        if self.dragging
+            && !moving
+            && let Some(parent) = parent
+            && let Some(rect) = ctx.memory(|m| m.area_rect(egui::Id::new(WINDOW_ID)))
+            && let Some(side) = nearby_snap(screen, parent, rect)
+        {
+            self.dock = Some(side);
+            let (pos, _) = adjacent_position(screen, parent, rect.size(), side);
+            widgets::move_floater(ctx, WINDOW_ID, pos);
+            ctx.request_discard("snap color picker to its parent");
+        }
+        self.dragging = moving;
         self.opening = false;
         self.parent_rect = parent;
         self.screen_rect = Some(screen);
@@ -597,18 +632,44 @@ fn owner_link(origin: Rect, window: Rect, shade: Color32) -> egui::Mesh {
     mesh
 }
 
-/// Prefer the right edge, then the left; keep the whole dialog on screen
-/// when neither side or the parent's top can accommodate its measured size.
-fn adjacent_position(screen: Rect, parent: Rect, size: Vec2) -> Pos2 {
-    let x = if parent.right() + size.x <= screen.right() {
-        parent.right()
-    } else {
-        parent.left() - size.x
+/// Keep the chosen edge while it fits; otherwise switch sides and clamp to
+/// the screen when neither edge or the parent's top can fit the whole dialog.
+fn adjacent_position(screen: Rect, parent: Rect, size: Vec2, preferred: DockSide) -> (Pos2, DockSide) {
+    let left = parent.left() - size.x;
+    let right = parent.right();
+    let fits = |x: f32| x >= screen.left() && x + size.x <= screen.right();
+    let side = match preferred {
+        DockSide::Right if !fits(right) => DockSide::Left,
+        DockSide::Left if !fits(left) && fits(right) => DockSide::Right,
+        _ => preferred,
     };
-    Pos2::new(
-        x.clamp(screen.left(), (screen.right() - size.x).max(screen.left())),
-        parent.top().clamp(screen.top(), (screen.bottom() - size.y).max(screen.top())),
+    let x = if side == DockSide::Right { right } else { left };
+    (
+        Pos2::new(
+            x.clamp(screen.left(), (screen.right() - size.x).max(screen.left())),
+            parent.top().clamp(screen.top(), (screen.bottom() - size.y).max(screen.top())),
+        ),
+        side,
     )
+}
+
+/// Only a released dialog near a real adjacent position becomes dependent
+/// again; screen clamping alone must not create an overlapping snap target.
+fn nearby_snap(screen: Rect, parent: Rect, window: Rect) -> Option<DockSide> {
+    [DockSide::Right, DockSide::Left].into_iter().find(|&side| {
+        let x = if side == DockSide::Right {
+            parent.right()
+        } else {
+            parent.left() - window.width()
+        };
+        let y = parent
+            .top()
+            .clamp(screen.top(), (screen.bottom() - window.height()).max(screen.top()));
+        x >= screen.left()
+            && x + window.width() <= screen.right()
+            && (window.left() - x).abs() <= SNAP_MARGIN
+            && (window.top() - y).abs() <= SNAP_MARGIN
+    })
 }
 
 fn number(ui: &mut egui::Ui, value: &mut f32, max: f32, speed: f32, decimals: usize) -> egui::Response {

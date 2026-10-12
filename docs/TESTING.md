@@ -219,7 +219,7 @@ capture.
 
 ### Détails
 
-`AURORA_DEMO_COLOR_PICKER=1|left|follow|link|toggle|lsl|hex|invalid|drag|cancel|no-apply|palette|pipette`
+`AURORA_DEMO_COLOR_PICKER=1|left|follow|link|toggle|dock|lsl|hex|invalid|drag|cancel|no-apply|palette|pipette`
 ouvre le nuancier de la sélection, avec `AURORA_DEMO_BUILD=move,object:118`
 et `AURORA_DEMO_BUILD_TAB=texture:bp`.
 
@@ -233,6 +233,12 @@ Le mode `link` déplace séparément la palette : capture 800 pour le cône vers
 pastille d'origine et son contour violet, 880 pour son extinction au relâchement.
 Le mode `toggle` clique trois fois sur la pastille : palette fermée à 710,
 rouverte à 750 puis fermée à 790. La fermeture reprend les règles d'Annuler.
+Le mode `dock` détache la palette (760), déplace la construction seule (840),
+réaccroche à droite (920), vérifie le suivi et le basculement (1000), détache à
+nouveau (1080), réaccroche à gauche (1160) et vérifie le suivi de ce côté (1240).
+Le rapprochement doit être à 10 points du bord et du haut ; l'accrochage se
+fait au relâchement. « Appliquer » est coché sans choix antérieur ; le décocher,
+fermer puis rouvrir la palette conserve ce choix, y compris au redémarrage.
 
 Les modes LSL / Hexa changent le format
 par ses vrais boutons ; Hexa saisit `33AA66`, invalid saisit `GG0000` (OK

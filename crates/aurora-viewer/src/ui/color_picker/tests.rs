@@ -8,6 +8,7 @@ struct UiTest {
     time: f64,
     owner: Option<Pos2>,
     owner_visible: bool,
+    screen_size: Vec2,
 }
 
 impl UiTest {
@@ -19,6 +20,7 @@ impl UiTest {
             time: 0.0,
             owner: None,
             owner_visible: false,
+            screen_size: Vec2::new(1000.0, 760.0),
         };
         crate::theme::Theme::default().apply(&test.ctx, 1.0);
         test.picker.open([0.5, 0.25, 1.0], false);
@@ -32,7 +34,7 @@ impl UiTest {
         let mut result = None;
         let output = self.ctx.run_ui(
             egui::RawInput {
-                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1000.0, 760.0))),
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, self.screen_size)),
                 time: Some(self.time),
                 focused: true,
                 events,
@@ -98,6 +100,16 @@ impl UiTest {
         ])
         .0
     }
+
+    fn drag_to(&mut self, id: egui::Id, pos: Pos2) {
+        let rect = self.ctx.memory(|m| m.area_rect(id)).unwrap();
+        let start = rect.min + egui::vec2(70.0, 20.0);
+        let end = start + (pos - rect.min);
+        self.frame(vec![Input::PointerMoved(start), Self::button(start, true)]);
+        self.frame(vec![Input::PointerMoved(end)]);
+        self.frame(vec![Self::button(end, false)]);
+        self.frame(Vec::new());
+    }
 }
 
 #[test]
@@ -105,10 +117,22 @@ fn adjacent_position_prefers_right_then_left_and_keeps_dialog_on_screen() {
     let screen = Rect::from_min_size(Pos2::new(20.0, 30.0), Vec2::new(1000.0, 760.0));
     let size = Vec2::new(460.0, 525.0);
     let parent = |x, y| Rect::from_min_size(Pos2::new(x, y), Vec2::new(344.0, 550.0));
-    assert_eq!(adjacent_position(screen, parent(32.0, 40.0), size), Pos2::new(376.0, 40.0));
-    assert_eq!(adjacent_position(screen, parent(664.0, 40.0), size), Pos2::new(204.0, 40.0));
-    assert_eq!(adjacent_position(screen, parent(300.0, 500.0), size), Pos2::new(20.0, 265.0));
-    assert_eq!(adjacent_position(screen, parent(32.0, -10.0), size), Pos2::new(376.0, 30.0));
+    assert_eq!(
+        adjacent_position(screen, parent(32.0, 40.0), size, DockSide::Right).0,
+        Pos2::new(376.0, 40.0)
+    );
+    assert_eq!(
+        adjacent_position(screen, parent(664.0, 40.0), size, DockSide::Right).0,
+        Pos2::new(204.0, 40.0)
+    );
+    assert_eq!(
+        adjacent_position(screen, parent(300.0, 500.0), size, DockSide::Right).0,
+        Pos2::new(20.0, 265.0)
+    );
+    assert_eq!(
+        adjacent_position(screen, parent(32.0, -10.0), size, DockSide::Right).0,
+        Pos2::new(376.0, 30.0)
+    );
 }
 
 #[test]
@@ -154,13 +178,102 @@ fn dragging_the_parent_follows_every_frame_and_switches_back_to_either_side() {
         t.frame(vec![Input::PointerMoved(start + egui::vec2(dx, 24.0))]);
         let parent = t.ctx.memory(|m| m.area_rect(owner)).unwrap();
         let picker = t.ctx.memory(|m| m.area_rect(egui::Id::new(WINDOW_ID))).unwrap();
-        let expected = adjacent_position(t.ctx.content_rect(), parent, picker.size());
+        let expected = adjacent_position(t.ctx.content_rect(), parent, picker.size(), t.picker.dock.unwrap()).0;
         assert!(picker.min.distance(expected) < 0.5, "{parent:?} -> {picker:?}, wanted {expected:?}");
     }
     let parent = t.ctx.memory(|m| m.area_rect(owner)).unwrap();
     assert!((parent.top() - 64.0).abs() < 0.5, "the parent must really move: {parent:?}");
     t.frame(vec![UiTest::button(start + egui::vec2(0.0, 24.0), false)]);
     assert!(t.picker.is_open());
+}
+
+#[test]
+fn detached_dialog_moves_independently_and_snapping_to_either_side_restores_following() {
+    let mut t = UiTest::new();
+    t.screen_size.x = 1600.0;
+    let owner = egui::Id::new("color_picker_owner_fixture");
+    let picker = egui::Id::new(WINDOW_ID);
+    t.owner = Some(Pos2::new(12.0, 40.0));
+    t.picker.open_from([0.5, 0.25, 1.0], false, owner);
+    for _ in 0..4 {
+        t.frame(Vec::new());
+    }
+    assert_eq!(t.picker.dock, Some(DockSide::Right));
+    t.drag_to(picker, Pos2::new(450.0, 180.0));
+    assert_eq!(t.picker.dock, None);
+    let detached = t.ctx.memory(|m| m.area_rect(picker)).unwrap();
+    t.drag_to(owner, Pos2::new(40.0, 80.0));
+    assert_eq!(t.ctx.memory(|m| m.area_rect(picker)).unwrap(), detached);
+
+    let parent = t.ctx.memory(|m| m.area_rect(owner)).unwrap();
+    t.drag_to(picker, Pos2::new(parent.right() + 7.0, parent.top() + 6.0));
+    assert_eq!(t.picker.dock, Some(DockSide::Right));
+    let snapped = t.ctx.memory(|m| m.area_rect(picker)).unwrap();
+    assert!(snapped.min.distance(Pos2::new(parent.right(), parent.top())) < 0.5);
+    t.drag_to(owner, Pos2::new(100.0, 100.0));
+    let followed = t.ctx.memory(|m| m.area_rect(picker)).unwrap();
+    assert!(followed.min.distance(Pos2::new(400.0, 100.0)) < 0.5);
+
+    t.drag_to(picker, Pos2::new(800.0, 260.0));
+    assert_eq!(t.picker.dock, None);
+    let detached = t.ctx.memory(|m| m.area_rect(picker)).unwrap();
+    t.drag_to(owner, Pos2::new(600.0, 80.0));
+    assert_eq!(t.ctx.memory(|m| m.area_rect(picker)).unwrap(), detached);
+    t.drag_to(picker, Pos2::new(600.0 - detached.width() - 6.0, 85.0));
+    assert_eq!(t.picker.dock, Some(DockSide::Left));
+    t.drag_to(owner, Pos2::new(620.0, 100.0));
+    let followed = t.ctx.memory(|m| m.area_rect(picker)).unwrap();
+    assert!(followed.min.distance(Pos2::new(620.0 - followed.width(), 100.0)) < 0.5);
+    assert_eq!(t.picker.dock, Some(DockSide::Left), "keep the chosen side even when both sides fit");
+    t.drag_to(owner, Pos2::new(200.0, 80.0));
+    let followed = t.ctx.memory(|m| m.area_rect(picker)).unwrap();
+    assert!(followed.min.distance(Pos2::new(500.0, 80.0)) < 0.5);
+    assert_eq!(t.picker.dock, Some(DockSide::Right));
+}
+
+#[test]
+fn snapping_requires_both_top_and_edge_proximity_and_a_side_that_fits_on_screen() {
+    let screen = Rect::from_min_size(Pos2::new(20.0, 30.0), Vec2::new(1600.0, 900.0));
+    let parent = Rect::from_min_size(Pos2::new(600.0, 80.0), Vec2::new(344.0, 550.0));
+    let size = Vec2::new(460.0, 525.0);
+    for (side, x) in [(DockSide::Right, parent.right()), (DockSide::Left, parent.left() - size.x)] {
+        for offset in [Vec2::ZERO, egui::vec2(-9.0, 9.0), egui::vec2(9.0, -9.0)] {
+            let window = Rect::from_min_size(Pos2::new(x, parent.top()) + offset, size);
+            assert_eq!(nearby_snap(screen, parent, window), Some(side));
+        }
+        for offset in [egui::vec2(11.0, 0.0), egui::vec2(0.0, 11.0)] {
+            let window = Rect::from_min_size(Pos2::new(x, parent.top()) + offset, size);
+            assert_eq!(nearby_snap(screen, parent, window), None);
+        }
+    }
+    let narrow = Rect::from_min_size(Pos2::new(20.0, 30.0), Vec2::new(700.0, 900.0));
+    let middle = Rect::from_min_size(Pos2::new(300.0, 80.0), parent.size());
+    let clamped = Rect::from_min_size(Pos2::new(20.0, 80.0), size);
+    assert_eq!(nearby_snap(narrow, middle, clamped), None);
+}
+
+#[test]
+fn apply_is_checked_without_a_saved_choice_and_retains_the_users_choice_on_reopening() {
+    let mut t = UiTest::new();
+    let old: Preferences = serde_json::from_str("{}").unwrap();
+    assert!(old.apply);
+    assert!(t.prefs.apply);
+    t.click(Control::Apply);
+    assert!(!t.prefs.apply);
+    let persisted = serde_json::to_string(&t.prefs).unwrap();
+    t.picker.close();
+    t.prefs = serde_json::from_str(&persisted).unwrap();
+    t.picker.open([0.5, 0.25, 1.0], false);
+    for _ in 0..4 {
+        t.frame(Vec::new());
+    }
+    assert!(!t.prefs.apply);
+    assert_eq!(t.click(Control::Slot(18)).0, None);
+    assert_eq!(t.click(Control::Apply).0, Some(Event::Preview([1.0, 0.0, 0.0])));
+    t.picker.close();
+    t.picker.open([0.5, 0.25, 1.0], false);
+    t.frame(Vec::new());
+    assert!(t.prefs.apply);
 }
 
 #[test]

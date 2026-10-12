@@ -277,7 +277,7 @@ pub fn show(
     let demo_picker = egui::Id::new("demo_color_picker_opened");
     let picker_mode = crate::ui::color_picker::demo::mode();
     if env.demo
-        && matches!(picker_mode, Some("left" | "follow" | "link" | "toggle"))
+        && matches!(picker_mode, Some("left" | "follow" | "link" | "toggle" | "dock"))
         && !ctx.data(|d| d.get_temp::<bool>(demo_picker).unwrap_or(false))
     {
         crate::ui::widgets::place_floater(
