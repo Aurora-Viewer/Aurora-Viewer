@@ -829,6 +829,11 @@ pub struct RenderStats {
     /// The frame's blended faces dropped their invisible fragments before
     /// the lighting ([`BlendDiscard`]).
     pub blend_early_discard: bool,
+    /// GPU time of the depth prepasses alone (ms), both part of
+    /// [`GpuElement::ShadowsDepth`]: the single-sample prepass with the
+    /// occlusion culling, and with MSAA the prepass of the multisampled
+    /// depth the scene pass starts from (0 otherwise).
+    pub gpu_depth: Option<[f32; 2]>,
     /// CPU time of each step of the renderer's frame (ms), in
     /// [`RENDER_PHASES`] order; "acquire" is the wait for the swapchain.
     /// Spent on the render thread when there is one (then they are those

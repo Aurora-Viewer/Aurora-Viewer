@@ -4,7 +4,8 @@
 //! 2. single-sample depth prepass (shared by SSAO, water, SSR, particles, TAA)
 //! 3. SSAO at half resolution (optional)
 //! 4. planar reflections: water and the nearest mirror (optional, reduced resolution)
-//! 5. scene pass A: sky, terrain, opaque and masked geometry (MSAA, HDR)
+//! 5. scene pass A: sky, terrain, opaque and masked geometry (MSAA, HDR);
+//!    with MSAA, first a depth prepass of its multisampled depth
 //! 6. copy of the resolved scene (refraction / SSR source)
 //! 7. scene pass B: SSR, water, alpha-blended faces, particles
 //! 8. TAA (optional), tonemapping, egui overlay
@@ -670,6 +671,9 @@ struct Pipelines {
     pre_opaque_2s: wgpu::RenderPipeline,
     pre_mask: wgpu::RenderPipeline,
     pre_mask_2s: wgpu::RenderPipeline,
+    /// Depth prepass into the scene pass's own multisampled depth (MSAA
+    /// only): one-sided and two-sided opaque faces.
+    pre_msaa: Option<[wgpu::RenderPipeline; 2]>,
     refl_sky: wgpu::RenderPipeline,
     refl_terrain: wgpu::RenderPipeline,
     refl_obj: wgpu::RenderPipeline,
@@ -706,11 +710,71 @@ struct GpuTimer {
     /// Last breakdown of `GpuElement::ShadowsDepth` (ms), in
     /// [`GPU_SHADOW_PARTS`] order.
     last_shadow_parts: Option<[f32; 5]>,
+    /// Last times of the depth prepasses (ms), in [`GPU_DEPTH`] order.
+    last_depth: Option<[f32; 2]>,
+    /// AURORA_MSAA_PREPASS=alt: the variant each readback slot's frame was
+    /// drawn with, and the frames measured since the variant last changed.
+    slot_prepass: [std::cell::Cell<bool>; 3],
+    compare: PrepassCompare,
+}
+
+/// AURORA_MSAA_PREPASS=alt: GPU times of the frames drawn with one variant,
+/// from one switch to the next.
+#[derive(Default)]
+struct PrepassCompare {
+    prepass: bool,
+    /// Frames still to leave out after a switch.
+    skip: u32,
+    /// Per frame: the whole frame, each [`GpuElement`], each [`GPU_DEPTH`].
+    frames: Vec<[f32; COMPARE_KEYS.len()]>,
+}
+
+const COMPARE_KEYS: [&str; 3 + GpuElement::ALL.len()] = [
+    "gpu",
+    "shadows_depth",
+    "effects",
+    "terrain_sky",
+    "objects",
+    "water",
+    "transparent",
+    "post",
+    "depth",
+    "depth_msaa",
+];
+
+impl PrepassCompare {
+    /// A measured frame drawn with (or without) the prepass. Logs the
+    /// median of each time over the frames of a variant when it ends:
+    /// another process's turn on the GPU lands in one step of one frame,
+    /// which a median leaves out and a mean does not.
+    fn add(&mut self, prepass: bool, times: [f32; COMPARE_KEYS.len()]) {
+        if prepass != self.prepass {
+            let n = self.frames.len();
+            if n >= 20 {
+                let mut line = format!("prepass={} frames={n}", if self.prepass { "on" } else { "off" });
+                for (k, key) in COMPARE_KEYS.iter().enumerate() {
+                    let mut v: Vec<f32> = self.frames.iter().map(|f| f[k]).collect();
+                    v.sort_by(f32::total_cmp);
+                    line.push_str(&format!(" {key}={:.3}", v[n / 2]));
+                }
+                log::info!("msaa prepass alt: {line}");
+            }
+            self.frames.clear();
+            self.prepass = prepass;
+            // the first frames after a switch are not at their steady cost
+            self.skip = 8;
+        }
+        if self.skip > 0 {
+            self.skip -= 1;
+        } else {
+            self.frames.push(times);
+        }
+    }
 }
 
 /// Timestamps of a frame: 0 first pass, 1 end of post / HUDs, then the marks.
 const GPU_TIMESTAMPS: u32 = 2 + GPU_MARKS;
-const GPU_MARKS: u32 = 18;
+const GPU_MARKS: u32 = 19;
 /// Mark indices, in frame order. Those inside the scene passes split them
 /// by draw group; a timestamp there waits for the draws before it, so the
 /// split is close but not exact (the GPU overlaps neighbouring draws).
@@ -756,11 +820,17 @@ const GPU_SHADOW_PARTS: [(u32, u32); 5] = [
     (MARK_SHADOW_C1_END, MARK_SHADOWS_END),
     (MARK_SHADOWS_END, MARK_DEPTH_END),
 ];
+/// After the prepass of the multisampled depth, which opens the scene
+/// encoder (written right after `MARK_SCENE_BEGIN` without MSAA).
+const MARK_DEPTH_MSAA_END: u32 = 20;
+/// The depth prepasses on their own, both counted in the first element:
+/// single-sample prepass with the occlusion culling, multisampled prepass.
+const GPU_DEPTH: [(u32, u32); 2] = [(MARK_SHADOWS_END, MARK_DEPTH_END), (MARK_SCENE_BEGIN, MARK_DEPTH_MSAA_END)];
 /// GPU time ranges `(from, to)` of each kind of element, in
 /// [`GpuElement::ALL`] order; together they cover the whole frame.
 const GPU_ELEMENTS: [&[(u32, u32)]; GpuElement::ALL.len()] = [
     // shadows and depth
-    &[(0, MARK_SHADOWS_END), (MARK_SHADOWS_END, MARK_DEPTH_END)],
+    &[(0, MARK_SHADOWS_END), GPU_DEPTH[0], GPU_DEPTH[1]],
     // effects: SSAO, planar reflections, probes, scene copy, SSR
     &[
         (MARK_DEPTH_END, MARK_SSAO_END),
@@ -769,7 +839,7 @@ const GPU_ELEMENTS: [&[(u32, u32)]; GpuElement::ALL.len()] = [
         (MARK_COPY_END, MARK_SSR_END),
     ],
     // terrain and sky
-    &[(MARK_SCENE_BEGIN, MARK_SKY_END), (MARK_SKY_END, MARK_TERRAIN_END)],
+    &[(MARK_DEPTH_MSAA_END, MARK_SKY_END), (MARK_SKY_END, MARK_TERRAIN_END)],
     // objects and avatars (opaque, masked), impostor pictures and cards
     &[
         (MARK_TERRAIN_END, MARK_OBJECTS_END),
@@ -823,12 +893,15 @@ impl GpuTimer {
                 .contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS | wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES),
             last_elements: None,
             last_shadow_parts: None,
+            last_depth: None,
+            slot_prepass: Default::default(),
+            compare: PrepassCompare::default(),
         }
     }
 
     /// Collect finished readbacks.
     fn harvest(&mut self) {
-        for (buf, ready, pending) in self.readback.iter_mut() {
+        for (slot, (buf, ready, pending)) in self.readback.iter_mut().enumerate() {
             if *pending && ready.load(Ordering::Acquire) {
                 if let Ok(view) = buf.get_mapped_range(..) {
                     let ts: &[u64] = bytemuck::cast_slice(&view[..GPU_TIMESTAMPS as usize * 8]);
@@ -845,6 +918,15 @@ impl GpuTimer {
                             }
                             self.last_elements = Some(e);
                             self.last_shadow_parts = Some(GPU_SHADOW_PARTS.map(|(a, b)| ms(a, b)));
+                            let d = GPU_DEPTH.map(|(a, b)| ms(a, b));
+                            self.last_depth = Some(d);
+                            if msaa_prepass() == MsaaPrepass::Alternate {
+                                let mut times = [0.0; COMPARE_KEYS.len()];
+                                times[0] = ms(0, 1);
+                                times[1..1 + e.len()].copy_from_slice(&e);
+                                times[1 + e.len()..].copy_from_slice(&d);
+                                self.compare.add(self.slot_prepass[slot].get(), times);
+                            }
                         }
                     }
                 }
@@ -875,6 +957,29 @@ impl GpuTimer {
 fn profile_frames() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("AURORA_PROFILE_FRAMES").is_some())
+}
+
+/// AURORA_MSAA_PREPASS: what the scene pass starts from with MSAA.
+#[derive(Clone, Copy, PartialEq)]
+enum MsaaPrepass {
+    /// The prepass of the multisampled depth (default).
+    On,
+    /// `0`: an empty depth, as before that prepass.
+    Off,
+    /// `alt`: one second without, two with, and the GPU times of each
+    /// variant in the log (`msaa prepass alt`), to compare the two on a
+    /// GPU other processes use too. Three seconds, so that work done
+    /// every other second does not always fall on the same variant.
+    Alternate,
+}
+
+fn msaa_prepass() -> MsaaPrepass {
+    static MODE: std::sync::OnceLock<MsaaPrepass> = std::sync::OnceLock::new();
+    *MODE.get_or_init(|| match std::env::var("AURORA_MSAA_PREPASS").as_deref().map(str::trim) {
+        Ok("0") => MsaaPrepass::Off,
+        Ok("alt") => MsaaPrepass::Alternate,
+        _ => MsaaPrepass::On,
+    })
 }
 
 /// AURORA_PROFILE: the summary also wants the time each step waited.
@@ -2449,6 +2554,18 @@ impl Backend {
         let pre_opaque_2s = pre("prepass 2s", "vs_depth", None, None);
         let pre_mask = pre("prepass mask", "vs_main", Some("fs_depth_mask"), Some(wgpu::Face::Back));
         let pre_mask_2s = pre("prepass mask 2s", "vs_main", Some("fs_depth_mask"), None);
+        let pre_msaa = (samples > 1).then(|| {
+            let msaa = |label: &'static str, cull: Option<wgpu::Face>| {
+                pipe(PipeDesc {
+                    fs: None,
+                    cull,
+                    format: None,
+                    depth_compare: wgpu::CompareFunction::Greater,
+                    ..base(label, "vs_depth", "fs_opaque")
+                })
+            };
+            [msaa("prepass msaa", Some(wgpu::Face::Back)), msaa("prepass msaa 2s", None)]
+        });
         // planar reflections (single sample, mirrored winding -> no culling)
         let refl = |label: &'static str, vs: &'static str, fs: &'static str, vb: Vb| {
             pipe(PipeDesc {
@@ -2567,6 +2684,7 @@ impl Backend {
             pre_opaque_2s,
             pre_mask,
             pre_mask_2s,
+            pre_msaa,
             refl_sky,
             refl_terrain,
             refl_obj,
@@ -4441,6 +4559,57 @@ impl Backend {
             }),
         );
         mark(&mut encoder, MARK_SCENE_BEGIN);
+        let prepass_wanted = match msaa_prepass() {
+            MsaaPrepass::On => true,
+            MsaaPrepass::Off => false,
+            MsaaPrepass::Alternate => {
+                static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+                !START.get_or_init(Instant::now).elapsed().as_secs().is_multiple_of(3)
+            }
+        };
+        // ---- MSAA: depth prepass of the scene pass's own depth. The scene
+        // pass cannot test against the single-sample prepass, and without
+        // this one it shades every opaque fragment that reaches it, hidden
+        // or not. Terrain and opaque faces only, exactly the draws of the
+        // scene pass (same lists, so the depth of each sample is the one
+        // the scene pass would have ended with and the image is the same).
+        // Alpha-masked faces stay out: their coverage comes from
+        // alpha-to-coverage in the scene pass, which a depth-only pass
+        // cannot reproduce sample for sample; they are drawn after the
+        // opaque faces and were already tested against them.
+        let msaa_pre = match (&self.pipelines.pre_msaa, &self.targets.depth_msaa) {
+            (Some(pipes), Some(depth)) if prepass_wanted => {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("depth prepass msaa"),
+                    color_attachments: &[],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: depth,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(0.0),
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                bind_mesh(&mut pass, &self.groups.a);
+                draw(&mut pass, &pipes[0], rg.terrain);
+                for (b, (pipe, r)) in [(&pipes[0], rg.opaque), (&pipes[1], rg.opaque_2s)].into_iter().enumerate() {
+                    draw(&mut pass, pipe, r);
+                    draw_bin(&mut pass, Some(pipe), b, b);
+                }
+                true
+            }
+            _ => false,
+        };
+        mark(&mut encoder, MARK_DEPTH_MSAA_END);
+        // (the variant asked for: without MSAA the two are the same frame,
+        // and their times tell how far apart two equal measures fall)
+        if let (Some(t), Some(slot)) = (&self.timer, timer_slot) {
+            t.slot_prepass[slot].set(prepass_wanted);
+        }
         // ---- scene pass A: sky, terrain, opaque, masked
         let single = self.targets.color_msaa.is_none();
         {
@@ -4488,8 +4657,10 @@ impl Backend {
                     },
                 }));
             }
-            // single sample: reuse the prepass depth (early-z, no overdraw)
+            // start from a prepass depth (early-z, no overdraw): the
+            // single-sample one, or with MSAA the multisampled one above
             let (depth, load) = match &self.targets.depth_msaa {
+                Some(d) if msaa_pre => (d, wgpu::LoadOp::Load),
                 Some(d) => (d, wgpu::LoadOp::Clear(0.0)),
                 None => (&self.targets.depth_ss, wgpu::LoadOp::Load),
             };
@@ -5025,6 +5196,7 @@ impl Backend {
         stats.gpu_ms = self.timer.as_ref().and_then(|t| t.last_ms);
         stats.gpu_elements = self.timer.as_ref().and_then(|t| t.last_elements);
         stats.shadow.gpu_ms = self.timer.as_ref().and_then(|t| t.last_shadow_parts);
+        stats.gpu_depth = self.timer.as_ref().and_then(|t| t.last_depth);
         if profile_frames && let Some(e) = stats.gpu_elements {
             let mut out = String::new();
             for (el, ms) in GpuElement::ALL.iter().zip(e) {
@@ -5196,5 +5368,370 @@ mod tests {
     #[test]
     fn frame_uniform_layout_is_16_byte_aligned() {
         assert_eq!(std::mem::size_of::<FrameU>() % 16, 0);
+    }
+
+    /// The scene pass tests its vertices against the depth the prepasses
+    /// wrote (`GreaterEqual`): a fragment whose depth is one step under
+    /// the prepass's is rejected and shows what is behind (the sky seen
+    /// through the ground). Draws a plain face, a rigged one placed by its
+    /// record, a rigged one placed by its skeleton's anchor, a worn prim
+    /// placed by its attachment point's anchor and a terrain patch, 3 000 m
+    /// up, through the prepass's vertex shader and through the scene
+    /// pass's (`vs_main`, `vs_terrain`) with 4 samples, and compares the
+    /// two depths sample for sample. Needs a GPU:
+    /// `cargo test -p aurora-render prepass_depth -- --ignored`.
+    #[test]
+    #[ignore]
+    fn gpu_prepass_depth_is_the_scene_depth() {
+        use glam::Quat;
+        use wgpu::util::DeviceExt;
+        const SIZE: u32 = 256;
+        const SAMPLES: u32 = 4;
+        let instance = wgpu::Instance::default();
+        let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())) else {
+            eprintln!("no GPU adapter: skipped");
+            return;
+        };
+        // (the scene shader declares the texture pages as a binding array)
+        let bindless =
+            wgpu::Features::TEXTURE_BINDING_ARRAY | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING;
+        if !adapter.features().contains(bindless) {
+            eprintln!("no texture binding arrays: skipped");
+            return;
+        }
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            required_features: bindless,
+            required_limits: adapter.limits(),
+            ..Default::default()
+        }))
+        .expect("GPU device");
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("scene"),
+            source: wgpu::ShaderSource::Wgsl(
+                format!(
+                    "{}\n{}\n{}",
+                    include_str!("shaders/common.wgsl"),
+                    include_str!("shaders/object.wgsl"),
+                    include_str!("shaders/env.wgsl")
+                )
+                .into(),
+            ),
+        });
+        // depth only, like the prepass of the multisampled depth
+        let pipeline = |vs: &str| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(vs),
+                layout: None,
+                vertex: wgpu::VertexState {
+                    module: &module,
+                    entry_point: Some(vs),
+                    compilation_options: Default::default(),
+                    buffers: &[Some(vertex_layout()), Some(skin_layout())],
+                },
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: DEPTH_FORMAT,
+                    depth_write_enabled: Some(true),
+                    depth_compare: Some(wgpu::CompareFunction::Greater),
+                    stencil: wgpu::StencilState::default(),
+                    bias: Default::default(),
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: SAMPLES,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                fragment: None,
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+
+        // a bumpy grid, every vertex weighted on four joints
+        const N: u32 = 24;
+        let mut vertices = Vec::new();
+        let mut skin = Vec::new();
+        for j in 0..=N {
+            for i in 0..=N {
+                let (u, v) = (i as f32 / N as f32, j as f32 / N as f32);
+                let bump = 0.07 * ((u * 9.0).sin() + (v * 7.0).cos());
+                vertices.push(Vertex::new([u - 0.5, v - 0.5, bump], [0.0, 0.0, 1.0], [u, v]));
+                let a = (u * 255.0) as u8;
+                let b = ((1.0 - u) * v * 255.0) as u8;
+                let rest = 255 - a - b;
+                skin.push(SkinVertex {
+                    joints: [0, 1, 2, 3],
+                    weights: [a, b, rest / 2, rest - rest / 2],
+                });
+            }
+        }
+        let mut indices: Vec<u16> = Vec::new();
+        for j in 0..N {
+            for i in 0..N {
+                let k = (j * (N + 1) + i) as u16;
+                let below = k + N as u16 + 1;
+                indices.extend([k, k + 1, below, k + 1, below + 1, below]);
+            }
+        }
+        let buffer = |label: &str, contents: &[u8], usage: wgpu::BufferUsages| {
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(label),
+                contents,
+                usage,
+            })
+        };
+        let vertex_buf = buffer("vertices", bytemuck::cast_slice(&vertices), wgpu::BufferUsages::VERTEX);
+        let skin_buf = buffer("skin", bytemuck::cast_slice(&skin), wgpu::BufferUsages::VERTEX);
+        let index_buf = buffer("indices", bytemuck::cast_slice(&indices), wgpu::BufferUsages::INDEX);
+
+        // high above the ground, where region coordinates only hold 0.24 mm
+        let center = Vec3::new(131.37, 97.81, 3000.43);
+        let eye = center + Vec3::new(-2.3, -3.1, 1.2);
+        let proj = glam::camera::rh::proj::directx::perspective_infinite_reverse(60f32.to_radians(), 1.0, 0.1);
+        let view = glam::camera::rh::view::look_at_mat4(eye, center, Vec3::Z);
+        let mut frame = FrameU::zeroed();
+        frame.view_proj = (proj * view).to_cols_array_2d();
+        frame.eye_view_proj = eye_view_proj(proj, view, eye, true).to_cols_array_2d();
+        frame.eye = eye.extend(0.0).to_array();
+        frame.camera_pos = eye.extend(0.0).to_array();
+        let frame_buf = buffer("frame", bytemuck::bytes_of(&frame), wgpu::BufferUsages::UNIFORM);
+
+        // one skeleton at palette 208: four posed joints, its anchor, and
+        // the anchor of an attachment point after it
+        const SKELETON: u32 = 208;
+        let place = |offset: Vec3, turn: f32| {
+            Mat4::from_scale_rotation_translation(
+                Vec3::new(1.9, 2.3, 1.4),
+                Quat::from_euler(glam::EulerRot::ZXY, turn, 0.4 * turn, -0.7),
+                center + offset,
+            )
+        };
+        let mut palettes = vec![Mat4::IDENTITY.to_cols_array_2d(); (SKELETON + SKELETON_ANCHOR + 2) as usize];
+        for j in 0..4 {
+            let m = Mat4::from_rotation_translation(
+                Quat::from_rotation_x(0.21 * j as f32 - 0.3),
+                Vec3::new(0.013 * j as f32, -0.02, 0.031 * j as f32),
+            );
+            palettes[(SKELETON + j) as usize] = m.to_cols_array_2d();
+        }
+        let rigid = |offset: Vec3, turn: f32| Mat4::from_rotation_translation(Quat::from_rotation_z(turn), center + offset);
+        palettes[(SKELETON + SKELETON_ANCHOR) as usize] = rigid(Vec3::new(0.9, 0.3, -0.2), 0.8).to_cols_array_2d();
+        palettes[(SKELETON + SKELETON_ANCHOR + 1) as usize] = rigid(Vec3::new(-0.8, 0.7, 0.4), -1.1).to_cols_array_2d();
+        let binds: Vec<SkinBind> = (0..4)
+            .map(|j| SkinBind {
+                inverse_bind: Mat4::from_translation(Vec3::new(0.004 * j as f32, 0.0, -0.002)).to_cols_array_2d(),
+                joint: [j, 0, 0, 0],
+            })
+            .collect();
+        let record = |model: Mat4, flags: [u32; 4]| DrawRecord {
+            model: model.to_cols_array_2d(),
+            flags,
+            ..Default::default()
+        };
+        let local = Mat4::from_scale_rotation_translation(Vec3::splat(1.6), Quat::from_rotation_y(0.5), Vec3::new(0.1, 0.2, 0.05));
+        let records = [
+            // plain face
+            record(place(Vec3::new(-0.6, -0.5, 0.0), 0.3), [0; 4]),
+            // rigged mesh placed by its record
+            record(place(Vec3::new(0.7, -0.6, 0.3), -0.9), [flags::SKINNED, SKELETON, 0, 0]),
+            // rigged mesh placed by its skeleton's anchor
+            record(Mat4::IDENTITY, [flags::SKINNED | flags::ANCHORED, SKELETON, 0, 0]),
+            // worn prim placed by its attachment point's anchor
+            record(local, [flags::ANCHORED, SKELETON + SKELETON_ANCHOR + 1, 0, 0]),
+            // terrain patch (drawn with vs_terrain by the scene pass)
+            record(place(Vec3::new(0.1, 0.4, -0.9), 0.1) * Mat4::from_scale(Vec3::splat(3.0)), [0; 4]),
+        ];
+        const TERRAIN: u32 = 4;
+        let storage = wgpu::BufferUsages::STORAGE;
+        let records_buf = buffer("records", bytemuck::cast_slice(&records), storage);
+        let palettes_buf = buffer("palettes", bytemuck::cast_slice(&palettes), storage);
+        let binds_buf = buffer("skin binds", bytemuck::cast_slice(&binds), storage);
+
+        let depth = |label: &str| {
+            make_view(
+                &device,
+                label,
+                SIZE,
+                SIZE,
+                DEPTH_FORMAT,
+                SAMPLES,
+                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            )
+            .1
+        };
+        let (prepass_depth, scene_depth) = (depth("prepass"), depth("scene"));
+        let (pre, main, terrain) = (pipeline("vs_depth"), pipeline("vs_main"), pipeline("vs_terrain"));
+        let groups = |p: &wgpu::RenderPipeline| {
+            fn entry(binding: u32, b: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
+                wgpu::BindGroupEntry {
+                    binding,
+                    resource: b.as_entire_binding(),
+                }
+            }
+            [
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: None,
+                    layout: &p.get_bind_group_layout(0),
+                    entries: &[entry(0, &frame_buf)],
+                }),
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: None,
+                    layout: &p.get_bind_group_layout(1),
+                    entries: &[entry(0, &records_buf), entry(1, &palettes_buf), entry(2, &binds_buf)],
+                }),
+            ]
+        };
+        let mut encoder = device.create_command_encoder(&Default::default());
+        let draws: [(&wgpu::TextureView, [&wgpu::RenderPipeline; 2]); 2] =
+            [(&prepass_depth, [&pre, &pre]), (&scene_depth, [&main, &terrain])];
+        for (target, [objects, ground]) in draws {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: None,
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: target,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(0.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_vertex_buffer(0, vertex_buf.slice(..));
+            pass.set_vertex_buffer(1, skin_buf.slice(..));
+            pass.set_index_buffer(index_buf.slice(..), wgpu::IndexFormat::Uint16);
+            for r in 0..records.len() as u32 {
+                let p = if r == TERRAIN { ground } else { objects };
+                let [g0, g1] = groups(p);
+                pass.set_pipeline(p);
+                pass.set_bind_group(0, &g0, &[]);
+                pass.set_bind_group(1, &g1, &[]);
+                pass.draw_indexed(0..indices.len() as u32, 0, r..r + 1);
+            }
+        }
+
+        // per pixel: samples whose two depths differ, samples drawn
+        let compare = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("compare"),
+            source: wgpu::ShaderSource::Wgsl(
+                "@group(0) @binding(0) var a: texture_depth_multisampled_2d;
+                 @group(0) @binding(1) var b: texture_depth_multisampled_2d;
+                 @vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
+                     return vec4<f32>(f32((i << 1u) & 2u) * 2.0 - 1.0, f32(i & 2u) * 2.0 - 1.0, 0.0, 1.0);
+                 }
+                 @fragment fn fs(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
+                     let c = vec2<i32>(p.xy);
+                     var differ = 0.0;
+                     var drawn = 0.0;
+                     for (var s = 0; s < 4; s++) {
+                         let da = textureLoad(a, c, s);
+                         let db = textureLoad(b, c, s);
+                         if (da != db) { differ += 1.0; }
+                         if (da > 0.0) { drawn += 1.0; }
+                     }
+                     return vec4<f32>(differ / 255.0, drawn / 255.0, 0.0, 1.0);
+                 }"
+                .into(),
+            ),
+        });
+        let compare_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("compare"),
+            layout: None,
+            vertex: wgpu::VertexState {
+                module: &compare,
+                entry_point: Some("vs"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &compare,
+                entry_point: Some("fs"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::TextureFormat::Rgba8Unorm.into())],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
+        let result = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("result"),
+            size: wgpu::Extent3d {
+                width: SIZE,
+                height: SIZE,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let compare_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &compare_pipeline.get_bind_group_layout(0),
+            entries: &[tex(0, &prepass_depth), tex(1, &scene_depth)],
+        });
+        {
+            let view = result.create_view(&Default::default());
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: None,
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&compare_pipeline);
+            pass.set_bind_group(0, &compare_group, &[]);
+            pass.draw(0..3, 0..1);
+        }
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("readback"),
+            size: (SIZE * SIZE * 4) as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        encoder.copy_texture_to_buffer(
+            result.as_image_copy(),
+            wgpu::TexelCopyBufferInfo {
+                buffer: &readback,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(SIZE * 4),
+                    rows_per_image: None,
+                },
+            },
+            wgpu::Extent3d {
+                width: SIZE,
+                height: SIZE,
+                depth_or_array_layers: 1,
+            },
+        );
+        queue.submit([encoder.finish()]);
+        readback.map_async(wgpu::MapMode::Read, .., |_| {});
+        device.poll(wgpu::PollType::wait_indefinitely()).expect("poll");
+        let view = readback.get_mapped_range(..).expect("mapped");
+        let (mut differ, mut drawn) = (0u32, 0u32);
+        for px in view.as_chunks::<4>().0 {
+            differ += px[0] as u32;
+            drawn += px[1] as u32;
+        }
+        // (every kind of face is on screen: well over a tenth of the samples)
+        assert!(drawn > SIZE * SIZE * SAMPLES / 10, "{drawn} samples drawn");
+        assert_eq!(differ, 0, "samples whose scene depth is not the prepass depth, of {drawn} drawn");
     }
 }

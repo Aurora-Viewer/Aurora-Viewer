@@ -94,10 +94,12 @@ hauteur : entre 2 048 et 4 096 m, une position ne varie que par pas de
 
 `AURORA_AA` : 0 aucun, 1 FXAA, 2 à 4 MSAA 2x / 4x / 8x, 5 TAA, 6 SMAA. La
 démo garde le réglage par défaut (3, MSAA 4x), qui a sa propre profondeur
-multi-échantillonnée ; les autres modes réutilisent la profondeur de la
-prépasse dans la passe de scène. Un changement des vertex shaders ou des
-passes se vérifie donc aussi avec `AURORA_AA=6` : c'est avec lui que le
-terrain laissait voir le ciel par taches (`AURORA_DEMO_POS="60,128"`,
+multi-échantillonnée, remplie par sa propre prépasse (terrain et faces
+opaques, voir `AURORA_MSAA_PREPASS`) ; les autres modes réutilisent la
+profondeur de la prépasse à un échantillon dans la passe de scène, faces
+masquées comprises. Un changement des vertex shaders ou des passes se
+vérifie donc aussi avec `AURORA_AA=6` : c'est avec lui que le terrain
+laissait voir le ciel par taches (`AURORA_DEMO_POS="60,128"`,
 `AURORA_DEMO_ALTITUDE=86`).
 
 `AURORA_WINDOW_SIZE` : largeur et hauteur de la zone de rendu, en pixels
@@ -722,6 +724,7 @@ grille.
 | `AURORA_DEMO_TEXTURES=<n>` | Test de charge des textures : n cubes |
 | `AURORA_DEMO_TEXTURES_CHURN=1` | Avec `AURORA_DEMO_TEXTURES` : textures renouvelées |
 | `AURORA_DEMO_CROWD=<n>[,busy]` ou `<n>,<portés>[,<triangles>]` | Test de charge de la synchro : n avatars ; avec `busy` ce que la synchro place encore elle-même, avec `<portés>` des avatars habillés de mesh riggés |
+| `AURORA_DEMO_OVERDRAW=<n>` | Test de recouvrement : n rangées de murs opaques |
 | `AURORA_DEMO_STREAM=<n>[,<vague>][,leave][,j2k=<dossier>]` | Test des à-coups du streaming |
 | `AURORA_DEMO_HAIR=<couches>[,<segments>[,<vide>[,<période>]]]` | Charge des faces transparentes : coques superposées sur les avatars |
 | `AURORA_DEMO_LIGHTS=<n>` | Charge des lumières locales : n petites lumières dans la foule |
@@ -785,6 +788,15 @@ grille.
   `AURORA_DEMO_POS="129,134"` elles sont devant la caméra, à 9 m et plus ;
   avec `"140,134"`, la caméra est au milieu d'elles. Sert à mesurer
   `AURORA_LIGHT_TILES`.
+- **`AURORA_DEMO_OVERDRAW=<n>`** : n rangées de murs opaques (12 si la
+  valeur n'est pas un nombre, 40 au plus) à l'est de la place, l'une
+  derrière l'autre et chacune plus haute que celle de devant, envoyées de la
+  plus lointaine à la plus proche. Chaque mur dépasse du suivant : l'occlusion
+  les garde tous, et une passe de scène qui repart d'une profondeur vide
+  calcule la couleur de chacun en entier avant que les plus proches le
+  recouvrent. C'est le cas le plus défavorable du recouvrement, pour mesurer
+  ce qu'une prépasse épargne (`AURORA_MSAA_PREPASS`) ; une région réelle en
+  a moins.
 - **`AURORA_DEMO_STREAM=<n>[,<vague>][,leave][,j2k=<dossier>]`** : n objets texturés (2000
   si la valeur n'est pas un nombre) qui arrivent par vagues après le fondu de
   chargement, `vague` objets toutes les 250 ms (100 par défaut, soit ~400 par
@@ -1278,6 +1290,7 @@ Ce que l'inventaire doit montrer avec ces scénarios :
 |---|---|
 | `AURORA_OCCLUSION=0` ou `1` | Remplace le réglage « Occlusion » (Graphismes › Qualité) |
 | `AURORA_NO_OCCLUSION=1` | Coupe l'occlusion GPU |
+| `AURORA_MSAA_PREPASS=0` ou `alt` | MSAA sans la prépasse de sa profondeur, ou les deux en alternance |
 | `AURORA_NOVSYNC=1` | Coupe la synchronisation verticale |
 | `AURORA_PRESENT_MODE=<mode>` | Force le mode de présentation de la swapchain |
 | `AURORA_CPU_CULL=1` | Listes de dessin construites sur le CPU |
@@ -1455,6 +1468,32 @@ Ce que l'inventaire doit montrer avec ces scénarios :
   paquet autonome et passe à l'image suivante ; avec `0`, le même paquet est
   exécuté sur place. `thread=on|off` dans la ligne `perf summary`, et une
   ligne de journal au démarrage (`renderer: frames drawn by…`).
+- **`AURORA_MSAA_PREPASS=0|alt`** : avec le MSAA, la passe de scène a sa
+  propre profondeur multi-échantillonnée et ne peut pas reprendre celle de
+  la prépasse à un échantillon. Par défaut, une seconde prépasse remplit
+  cette profondeur juste avant (terrain et faces opaques, les dessins mêmes
+  de la passe de scène), et la passe de scène ne calcule plus la couleur des
+  fragments cachés. Les faces masquées par alpha n'y sont pas : avec le
+  MSAA leur bord vient de l'`alpha to coverage` de la passe de scène, qu'une
+  passe de profondeur ne peut pas reproduire échantillon par échantillon.
+  - `0` : la passe de scène repart d'une profondeur vide, comme avant, pour
+    comparer l'image et les temps (`g_objects`, `g_terrain_sky`,
+    `g_depth_msaa` de `perf summary`).
+  - `alt` : une seconde sans la prépasse, deux secondes avec, tout au long
+    de la session ; à chaque bascule le journal donne la médiane des temps
+    GPU des images de la variante qui se termine
+    (`msaa prepass alt: prepass=on|off frames=… gpu=… shadows_depth=… …
+    objects=… depth=… depth_msaa=…`, en ms). C'est la mesure à utiliser sur
+    une carte partagée ou sur la grille : les deux variantes voient la même
+    scène et la même charge, et la médiane écarte le tour d'un autre
+    processus sur la carte. Comparer les médianes des lignes `on` et `off`,
+    de préférence avec `AURORA_FPS_LIMIT=120`.
+  - Sans effet hors MSAA (`AURORA_AA` 0, 1, 5, 6) : avec `alt`, les lignes
+    `on` et `off` mesurent alors deux fois le même chemin, ce qui donne
+    l'écart entre deux mesures égales.
+  - À voir avec `AURORA_DEMO_OVERDRAW=12` (gain net) et avec la démo
+    seule (peu de recouvrement : la prépasse coûte à peu près ce qu'elle
+    épargne).
 - **`AURORA_EYE_RELATIVE=0`** : calcule les sommets des objets et du terrain en coordonnées
   de région, comme avant, pour comparer. Par défaut, le vertex shader retire
   la position de la caméra de la translation du modèle avant tout autre
@@ -1681,6 +1720,9 @@ thread principal est déjà sur l'image suivante. Avec
     avatars et des mesh riggés (les triangles ne comptent que les draws des
     listes du GPU). `shadow_path` : le chemin des ombres de la seconde
     (`AURORA_SHADOW_LEGACY`) ;
+  - `g_depth_msaa` : avec le MSAA, la prépasse de la profondeur
+    multi-échantillonnée dont part la passe de scène (0 hors MSAA),
+    comptée elle aussi dans `g_shadows_depth` ;
   - les draws et commandes de dessin, les
     objets synchronisés / reconstruits (`synced`, `rebuilt` : des moyennes
     **par image** ; `rebuilt=0.2` à 175 images/s, ce sont 35 reconstructions

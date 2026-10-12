@@ -361,10 +361,17 @@ Le rez depuis l’inventaire passe par `ui/inventory.rs` (charge utile et relâc
    encode les passes (ombres, prépasse, scène, eau, reflets,
    post-traitement) avec des draws indirects dont le nombre est écrit par le
    GPU. Sans `MULTI_DRAW_INDIRECT_COUNT` (ou avec `AURORA_CPU_CULL=1`),
-   `build_lists` prépare toutes les listes sur le CPU comme avant. Les
+   `build_lists` prépare toutes les listes sur le CPU comme avant. La passe
+   de scène part toujours d'une profondeur déjà écrite, pour ne calculer la
+   couleur que de ce qui se voit : celle de la prépasse à un échantillon
+   sans MSAA ; avec le MSAA, celle d'une seconde prépasse dans sa propre
+   profondeur multi-échantillonnée (terrain et faces opaques, les dessins
+   mêmes de la passe de scène ; les faces masquées par alpha, dont le bord
+   vient alors de l'`alpha to coverage`, n'y sont pas). Les
    sommets des objets et du terrain sont calculés relativement à la caméra
-   (le terrain comme la prépasse de profondeur, opération pour opération :
-   sans MSAA, la passe de scène le teste contre cette profondeur) : le vertex
+   (les objets et le terrain comme les prépasses de profondeur, opération
+   pour opération : la passe de scène les teste contre cette profondeur, et
+   un écart d'un arrondi montrerait le ciel à travers le sol) : le vertex
    shader retire sa position de la translation du modèle (les
    enregistrements restent en coordonnées de région), et la matrice de vue
    de la caméra principale se réduit à sa rotation (`eye_view_proj` dans

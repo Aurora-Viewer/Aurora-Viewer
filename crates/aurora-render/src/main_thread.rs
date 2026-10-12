@@ -786,6 +786,7 @@ impl Renderer {
                     gpu_ms: self.last_stats.shadow.gpu_ms,
                     ..Default::default()
                 },
+                gpu_depth: self.last_stats.gpu_depth,
                 occluded: self.last_stats.occluded,
                 visible_objects: self.last_stats.visible_objects,
                 gpu_cull: self.last_stats.gpu_cull,

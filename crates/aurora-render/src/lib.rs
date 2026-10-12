@@ -99,6 +99,35 @@ mod shader_tests {
         assert_eq!(prepass, scene);
     }
 
+    /// The same for the objects: the depth prepasses draw the opaque faces
+    /// with `vs_depth` (the single-sample one, and with MSAA the one of
+    /// the scene pass's own depth) and the scene pass tests `vs_main`
+    /// against that depth. Plain, worn, rigged and anchored faces all go
+    /// through `eye_model` in both.
+    #[test]
+    fn object_position_is_the_depth_prepass_position() {
+        let src = include_str!("shaders/object.wgsl");
+        let prepass = position_steps(src, "vs_depth");
+        let scene = position_steps(src, "vs_main");
+        assert_eq!(prepass.len(), 3, "{prepass:?}");
+        assert_eq!(prepass, scene);
+    }
+
+    /// Equal operations give equal depths only if the compiler may not
+    /// rearrange them differently in each shader: the three positions are
+    /// declared invariant.
+    #[test]
+    fn prepass_and_scene_positions_are_invariant() {
+        let object = include_str!("shaders/object.wgsl");
+        let env = include_str!("shaders/env.wgsl");
+        for (src, name) in [(object, "DepthOut"), (object, "VsOut"), (env, "TerrainOut")] {
+            let start = src.find(&format!("struct {name} {{")).unwrap_or_else(|| panic!("{name} not found"));
+            let body = &src[start..];
+            let body = &body[..body.find('}').unwrap_or(body.len())];
+            assert!(body.contains("@invariant @builtin(position) clip: vec4<f32>"), "{name}: {body}");
+        }
+    }
+
     #[test]
     fn ssao_shader_is_valid() {
         validate(include_str!("shaders/ssao.wgsl"));
