@@ -1250,6 +1250,7 @@ impl App {
             NetEvent::PhysicsProperties(list) => {
                 for (local_id, params) in list {
                     self.build.physics.insert(local_id, params);
+                    self.build.physics_materials_known.insert(local_id);
                 }
             }
             NetEvent::SelectedParcel { handle, sequence, parcel } => self.build.on_selected_parcel(handle, sequence, parcel),

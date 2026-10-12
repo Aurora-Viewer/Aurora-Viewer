@@ -368,6 +368,9 @@ pub struct BuildTool {
     /// Physics shape and material values of selected prims
     /// (ObjectPhysicsProperties / GetObjectPhysicsData).
     pub physics: HashMap<u32, aurora_net::build::PhysicsParams>,
+    /// Materials actually received from the server, rather than defaults
+    /// accompanying a GetObjectPhysicsData reply containing only shape type.
+    pub physics_materials_known: HashSet<u32>,
     /// Land impact, weights and parcel capacity.
     pub costs: costs::Costs,
     /// Object inventories (Contents tab).
@@ -422,6 +425,7 @@ impl Default for BuildTool {
             face_counts: HashMap::new(),
             grid_objects: Vec::new(),
             physics: HashMap::new(),
+            physics_materials_known: HashSet::new(),
             costs: costs::Costs::default(),
             contents: contents::Contents::default(),
             replacement: replace::Replacement::default(),

@@ -126,6 +126,7 @@ pub struct Job {
     pub inventory_request: Option<Uuid>,
     pub inventory_result: Option<Result<Reply, String>>,
     pub inventory_error: Option<(Uuid, String)>,
+    pub physics_request: Option<u64>,
     members: Vec<Prim>,
     replacement: Prim,
     planned: Prim,
@@ -244,6 +245,7 @@ impl Job {
             inventory_request: None,
             inventory_result: None,
             inventory_error: None,
+            physics_request: None,
             members,
             replacement,
             planned,
@@ -395,7 +397,7 @@ impl Job {
         tool.out.push(NetCommand::EditInventory { request, change });
     }
 
-    fn physics(&self, tool: &mut BuildTool, standalone: bool, recovery: bool) {
+    fn physics(&self, tool: &mut BuildTool, world: &World, standalone: bool, recovery: bool) {
         for p in self.all() {
             let Some(mut params) = p.physics else { continue };
             if standalone && params.shape_type == 1 {
@@ -404,14 +406,42 @@ impl Job {
             if !standalone && !recovery && p.id == self.target && params.shape_type == 1 {
                 params.shape_type = 2;
             }
+            let phantom = p.flags & crate::build::edits::FLAGS_PHANTOM != 0;
+            if tool
+                .physics
+                .get(&p.key.local_id)
+                .is_some_and(|actual| actual.shape_type == params.shape_type)
+            {
+                let flags = crate::build::edits::FLAGS_USE_PHYSICS
+                    | crate::build::edits::FLAGS_TEMPORARY_ON_REZ
+                    | crate::build::edits::FLAGS_PHANTOM;
+                if world
+                    .objects
+                    .index_of_uuid(&p.id)
+                    .and_then(|i| world.objects.get(i))
+                    .is_some_and(|o| o.update_flags & flags != p.flags & crate::build::edits::FLAGS_PHANTOM)
+                {
+                    tool.send(BuildCmd::SetFlags {
+                        handle: p.key.region,
+                        local_id: p.key.local_id,
+                        physics: false,
+                        temporary: false,
+                        phantom,
+                    });
+                }
+                continue;
+            }
             tool.send(BuildCmd::SetPhysicsParams {
                 handle: p.key.region,
                 local_id: p.key.local_id,
                 physics: false,
                 temporary: false,
-                phantom: p.flags & crate::build::edits::FLAGS_PHANTOM != 0,
+                phantom,
                 params,
             });
+            // Track the requested shape for restoring it after relinking.
+            // The final fresh capability reply still confirms server state.
+            tool.physics.insert(p.key.local_id, params);
         }
     }
 
@@ -477,28 +507,37 @@ impl Job {
                 if first {
                     for p in self.all() {
                         tool.props.remove(&p.id);
-                        tool.physics.remove(&p.key.local_id);
                     }
                     tool.send(BuildCmd::Select {
                         handle,
                         local_ids: self.all().map(|p| p.key.local_id).collect(),
                     });
                     let ids: Vec<Uuid> = self.all().map(|p| p.id).collect();
-                    tool.cap(
+                    self.physics_request = Some(tool.cap(
                         handle,
                         "GetObjectPhysicsData",
                         false,
                         llsd_map! { "object_ids" => Llsd::Array(ids.iter().map(|id| Llsd::from(*id)).collect()) },
                         crate::build::edits::CapPurpose::PhysicsData(ids),
-                    );
+                    ));
                     for id in self.list_objects() {
                         Self::request_list(tool, world, id);
                     }
                 }
-                if self
-                    .all()
-                    .any(|p| tool.props.get(&p.id).is_none_or(|props| !props.full) || !tool.physics.contains_key(&p.key.local_id))
+                if self.physics_request.is_some()
+                    || self
+                        .all()
+                        .any(|p| tool.props.get(&p.id).is_none_or(|props| !props.full) || !tool.physics.contains_key(&p.key.local_id))
                 {
+                    return Ok(None);
+                }
+                // None must temporarily become Convex Hull for delinking.
+                // Its material must be known before sending ExtraPhysics:
+                // substituting defaults would change custom physical values.
+                if self.all().any(|p| {
+                    tool.physics.get(&p.key.local_id).is_some_and(|params| params.shape_type == 1)
+                        && !tool.physics_materials_known.contains(&p.key.local_id)
+                }) {
                     return Ok(None);
                 }
                 let masks = self
@@ -771,7 +810,7 @@ impl Job {
                         return Err(aurora_i18n::tr!("replace-changed").into());
                     }
                     self.mutated = true;
-                    self.physics(tool, true, self.recovering);
+                    self.physics(tool, world, true, self.recovering);
                     // Rebuild the full ordered set, keeping the root independent.
                     // This makes all child-parent changes observable, rather than
                     // assigning guessed link numbers in the local object list.
@@ -885,22 +924,22 @@ impl Job {
                 {
                     return Err(aurora_i18n::tr!("replace-transform-failed").into());
                 }
-                self.physics(tool, false, self.recovering);
+                self.physics(tool, world, false, self.recovering);
                 Ok(Some(if self.recovering { Stage::RecoverPhysics } else { Stage::Physics }))
             }
             Stage::Physics | Stage::RecoverPhysics => {
                 if first {
                     let ids: Vec<_> = self.all().map(|p| p.id).collect();
-                    for p in self.all() {
-                        tool.physics.remove(&p.key.local_id);
-                    }
-                    tool.cap(
+                    self.physics_request = Some(tool.cap(
                         handle,
                         "GetObjectPhysicsData",
                         false,
                         llsd_map! { "object_ids" => Llsd::Array(ids.iter().map(|id| Llsd::from(*id)).collect()) },
                         crate::build::edits::CapPurpose::PhysicsData(ids),
-                    );
+                    ));
+                }
+                if self.physics_request.is_some() {
+                    return Ok(None);
                 }
                 let confirmed = self.all().all(|p| {
                     let expected = p.physics.map(|v| {

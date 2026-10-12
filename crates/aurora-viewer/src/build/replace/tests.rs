@@ -23,6 +23,9 @@ struct Harness {
     script_transfers: Vec<(Uuid, TaskItem)>,
     fail_task_listing_once: bool,
     fail_folder_creation: bool,
+    shape_only_physics: bool,
+    missing_physics: bool,
+    physics_writes: Vec<(u32, aurora_net::build::PhysicsParams)>,
 }
 
 impl Harness {
@@ -72,10 +75,29 @@ impl Harness {
             script_transfers: Vec::new(),
             fail_task_listing_once: false,
             fail_folder_creation: false,
+            shape_only_physics: false,
+            missing_physics: false,
+            physics_writes: Vec::new(),
         }
     }
 
     fn deliver(&mut self, mut event: NetEvent) {
+        if let NetEvent::CapReply {
+            result: Ok(aurora_llsd::Llsd::Map(objects)),
+            ..
+        } = &mut event
+        {
+            for values in objects.values_mut() {
+                if values.has("PhysicsShapeType") {
+                    if self.shape_only_physics {
+                        *values = aurora_llsd::llsd_map! { "PhysicsShapeType" => values["PhysicsShapeType"].clone() };
+                    }
+                    if self.missing_physics {
+                        *values = aurora_llsd::Llsd::Undef;
+                    }
+                }
+            }
+        }
         if self.fail_task_listing_once
             && let NetEvent::TaskInventory { object, result, .. } = &mut event
             && *object == demo::id(demo::TARGET)
@@ -165,6 +187,9 @@ impl Harness {
             for command in commands {
                 match command {
                     NetCommand::Build(command) => {
+                        if let BuildCmd::SetPhysicsParams { local_id, params, .. } = &command {
+                            self.physics_writes.push((*local_id, *params));
+                        }
                         if let BuildCmd::SetScriptRunning { object_id, running, .. } = &command {
                             self.script_changes.push((*object_id, *running));
                             if self.delay_script_writes {
@@ -517,6 +542,96 @@ fn child_with_no_physics_shape_regains_its_shape_after_relinking() {
     );
     assert_eq!(h.run(), Stage::Done);
     assert_eq!(h.tool.physics[&local_id].shape_type, 1);
+}
+
+#[test]
+fn shape_only_physics_replies_keep_materials_and_do_not_send_unchanged_shapes() {
+    let mut h = Harness::new(demo::TARGET);
+    h.shape_only_physics = true;
+    let params = aurora_net::build::PhysicsParams {
+        density: 1200.0,
+        friction: 0.8,
+        restitution: 0.2,
+        gravity_multiplier: 0.5,
+        ..Default::default()
+    };
+    for local in (demo::ROOT..demo::ROOT + 15).chain(std::iter::once(demo::SOURCE)) {
+        h.tool.physics.insert(local, params);
+    }
+    assert_eq!(h.run(), Stage::Done);
+    assert!(h.physics_writes.is_empty());
+    assert!(h.tool.physics.values().all(|actual| *actual == params));
+}
+
+#[test]
+fn temporarily_enabled_collision_shape_preserves_custom_materials_with_shape_only_replies() {
+    let mut h = Harness::new(demo::TARGET);
+    h.shape_only_physics = true;
+    let local_id = demo::ROOT + 2;
+    let params = aurora_net::build::PhysicsParams {
+        shape_type: 1,
+        density: 1200.0,
+        friction: 0.8,
+        restitution: 0.2,
+        gravity_multiplier: 0.5,
+    };
+    h.tool.physics.insert(local_id, params);
+    h.tool.physics_materials_known.insert(local_id);
+    h.sim.reply(
+        &h.server,
+        &BuildCmd::SetPhysicsParams {
+            handle: h.server.main_region.unwrap(),
+            local_id,
+            physics: false,
+            temporary: false,
+            phantom: false,
+            params,
+        },
+    );
+    assert_eq!(h.run(), Stage::Done);
+    let mut standalone = params;
+    standalone.shape_type = 2;
+    assert_eq!(h.physics_writes, vec![(local_id, standalone), (local_id, params)]);
+    assert_eq!(h.tool.physics[&local_id], params);
+}
+
+#[test]
+fn cached_physics_does_not_confirm_a_missing_fresh_reply() {
+    let mut h = Harness::new(demo::TARGET);
+    h.missing_physics = true;
+    for local in (demo::ROOT..demo::ROOT + 15).chain(std::iter::once(demo::SOURCE)) {
+        h.tool.physics.insert(local, Default::default());
+    }
+    let original = h.ids(demo::ROOT);
+    assert_eq!(h.run(), Stage::Failed);
+    assert_eq!(h.ids(demo::ROOT), original);
+    assert!(h.physics_writes.is_empty());
+}
+
+#[test]
+fn no_collision_material_is_replaced_with_defaults_when_the_server_omits_it() {
+    let mut h = Harness::new(demo::TARGET);
+    h.shape_only_physics = true;
+    let original = h.ids(demo::ROOT);
+    h.sim.reply(
+        &h.server,
+        &BuildCmd::SetPhysicsParams {
+            handle: h.server.main_region.unwrap(),
+            local_id: demo::ROOT + 2,
+            physics: false,
+            temporary: false,
+            phantom: false,
+            params: aurora_net::build::PhysicsParams {
+                shape_type: 1,
+                density: 1200.0,
+                ..Default::default()
+            },
+        },
+    );
+    assert_eq!(h.run(), Stage::Failed);
+    assert_eq!(h.ids(demo::ROOT), original);
+    assert!(h.physics_writes.is_empty());
+    assert!(h.script_changes.is_empty());
 }
 
 #[test]
