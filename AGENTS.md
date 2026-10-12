@@ -258,7 +258,9 @@ chaque modification de l'interface :
   couleur par `widgets::color_button` : jamais `ui.checkbox`,
   `egui::CollapsingHeader` ni `color_edit_button_*`. Les menus s'écrivent
   avec les lignes de `ui/menu.rs` (`menu::item`, `check`, `toggle`,
-  `submenu`, `separator`) et reçoivent leur verre tout seuls.
+  `submenu`, `separator`) et reçoivent leur verre tout seuls. `check.ps1` le
+  vérifie : un test (`ui/theme_guard.rs`) échoue si une fenêtre utilise
+  directement l'un de ces widgets d'egui.
 - **Vérifie à l'œil** : capture l'écran modifié en démo et compare-le à une
   fenêtre voisine (mêmes fonds, mêmes boutons, mêmes rayons, icônes alignées
   avec le texte) avant de demander la validation humaine.
