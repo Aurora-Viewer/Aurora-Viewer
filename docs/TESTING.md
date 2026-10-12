@@ -1069,7 +1069,12 @@ Sans variable, le journal reçoit une ligne `texture load:` à la fin de
 chaque chargement de textures (`scene/texture_load.rs`) : du premier
 fichier lu, téléchargé ou décodé jusqu'à ce qu'il ne reste rien à lire,
 télécharger, décoder ni envoyer au GPU pendant 2 s. Les petits chargements
-(moins de 200 décodages et moins de 5 s) n'en ont pas. Elle donne :
+(moins de 200 décodages et moins de 5 s) n'en ont pas. Une région chargée
+ne s'arrête jamais tout à fait (il reste toujours quelques téléchargements
+en cours) : tant qu'un chargement dure, une ligne `texture load (running):`
+donne son avancement toutes les 10 s, et l'arrivée dans une autre région
+(connexion, téléportation) clôt celui en cours (`cut by an arrival`) pour
+que le suivant ne compte que la nouvelle région. Chaque ligne donne :
 
 - la durée du chargement, le « temps jusqu'à tout chargé » à comparer d'une
   version à l'autre et avec Firestorm au même endroit, et les textures

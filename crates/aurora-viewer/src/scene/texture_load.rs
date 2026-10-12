@@ -18,6 +18,8 @@ const IDLE_ENDS: Duration = Duration::from_secs(2);
 /// the camera turns.
 const WORTH_DECODES: u64 = 200;
 const WORTH_TIME: Duration = Duration::from_secs(5);
+/// A progress line this often while an episode runs.
+const PROGRESS_EVERY: Duration = Duration::from_secs(10);
 
 /// Totals since the start. The decode fields come from the jobs
 /// ([`DecodeMeter`]); the others are counted by the main thread.
@@ -68,15 +70,16 @@ impl LoadTotals {
         }
     }
 
-    /// The log line of an episode that took `took` and left `loaded` of
-    /// `total` textures loaded.
-    pub fn describe(&self, took: Duration, (loaded, total): (usize, usize)) -> String {
+    /// The log line of an episode (`running`: still under way) that took
+    /// `took` and left `loaded` of `total` textures loaded.
+    pub fn describe(&self, took: Duration, running: bool, (loaded, total): (usize, usize)) -> String {
         let s = |us: u64| us as f64 / 1e6;
         let cpu = self.codec_us + self.convert_us + self.rgba_us + self.mips_us + self.stage_us;
         format!(
-            "texture load: {:.1} s, {loaded}/{total} textures loaded; {} decodes ({} of a texture already shown; discard 0..5: {:?}), \
+            "texture load{}: {:.1} s, {loaded}/{total} textures loaded; {} decodes ({} of a texture already shown; discard 0..5: {:?}), \
              {:.1} Mpx; decode CPU {:.1} s (codec {:.1}, convert {:.1}, rgba {:.1}, mips {:.1}, staging {:.1}); \
              downloaded {:.1} MB in {} replies; disk cache {} hits / {} misses",
+            if running { " (running)" } else { "" },
             took.as_secs_f64(),
             self.decodes(),
             self.again,
@@ -136,36 +139,73 @@ impl DecodeMeter {
     }
 }
 
+/// What [`LoadWatch`] has to say about the episode under way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LoadReport {
+    /// From the first busy frame to the first idle one (to now while it runs).
+    pub took: Duration,
+    /// What the episode added to the totals.
+    pub added: LoadTotals,
+    /// The episode is over; else this is a progress line.
+    pub done: bool,
+}
+
 /// Follows the loading episodes, frame after frame.
 #[derive(Default)]
 pub struct LoadWatch {
     started: Option<(Instant, LoadTotals)>,
     idle_since: Option<Instant>,
+    /// Last progress line of the episode under way (its start before any).
+    reported: Option<Instant>,
 }
 
 impl LoadWatch {
     /// `busy`: something is being read, fetched, decoded or waits for the
-    /// GPU. Returns a finished episode worth a log line: its duration (up
-    /// to the last busy frame) and what it added to the totals. `totals` is
-    /// only read when an episode starts or ends.
-    pub fn step(&mut self, now: Instant, busy: bool, totals: impl FnOnce() -> LoadTotals) -> Option<(Duration, LoadTotals)> {
+    /// GPU. Returns the line to log, if any: the progress of the episode
+    /// under way every [`PROGRESS_EVERY`] (a busy region never comes to
+    /// rest: a few downloads are always in flight), or a finished episode
+    /// worth a line. `totals` is only read for those and when an episode
+    /// starts.
+    pub fn step(&mut self, now: Instant, busy: bool, totals: impl FnOnce() -> LoadTotals) -> Option<LoadReport> {
         if busy {
             self.idle_since = None;
-            if self.started.is_none() {
+            let Some((start, at_start)) = &self.started else {
                 self.started = Some((now, totals()));
+                self.reported = Some(now);
+                return None;
+            };
+            if self.reported.is_some_and(|t| now.duration_since(t) < PROGRESS_EVERY) {
+                return None;
             }
-            return None;
+            self.reported = Some(now);
+            return Some(LoadReport {
+                took: now.duration_since(*start),
+                added: totals().since(at_start),
+                done: false,
+            });
         }
         self.started.as_ref()?;
         let idle = *self.idle_since.get_or_insert(now);
         if now.duration_since(idle) < IDLE_ENDS {
             return None;
         }
+        self.end(idle, totals)
+    }
+
+    /// Ends the episode under way at `now`, if there is one: the arrival in
+    /// another region starts a new one, with its own counts.
+    pub fn cut(&mut self, now: Instant, totals: impl FnOnce() -> LoadTotals) -> Option<LoadReport> {
+        let last_busy = self.idle_since.unwrap_or(now);
+        self.end(last_busy, totals)
+    }
+
+    fn end(&mut self, last_busy: Instant, totals: impl FnOnce() -> LoadTotals) -> Option<LoadReport> {
         self.idle_since = None;
+        self.reported = None;
         let (start, at_start) = self.started.take()?;
-        let took = idle.duration_since(start);
+        let took = last_busy.duration_since(start);
         let added = totals().since(&at_start);
-        (added.decodes() >= WORTH_DECODES || took >= WORTH_TIME).then_some((took, added))
+        (added.decodes() >= WORTH_DECODES || took >= WORTH_TIME).then_some(LoadReport { took, added, done: true })
     }
 }
 
@@ -180,6 +220,14 @@ mod tests {
         }
     }
 
+    fn done(took_ms: u64, decodes: u64) -> Option<LoadReport> {
+        Some(LoadReport {
+            took: Duration::from_millis(took_ms),
+            added: totals(decodes),
+            done: true,
+        })
+    }
+
     #[test]
     fn episode_runs_from_the_first_busy_frame_to_the_last() {
         let t0 = Instant::now();
@@ -187,13 +235,11 @@ mod tests {
         let mut w = LoadWatch::default();
         assert_eq!(w.step(at(0), false, || totals(0)), None);
         assert_eq!(w.step(at(100), true, || totals(50)), None);
-        assert_eq!(w.step(at(7_000), true, || unreachable!("read at the ends only")), None);
+        assert_eq!(w.step(at(7_000), true, || unreachable!("read for a line only")), None);
         // idle, but not for long enough yet
         assert_eq!(w.step(at(7_100), false, || unreachable!()), None);
         assert_eq!(w.step(at(9_000), false, || unreachable!()), None);
-        let (took, added) = w.step(at(9_100), false, || totals(1050)).expect("episode");
-        assert_eq!(took, Duration::from_millis(7_000));
-        assert_eq!(added.decodes(), 1000);
+        assert_eq!(w.step(at(9_100), false, || totals(1050)), done(7_000, 1000));
         // over: nothing more until the next busy frame
         assert_eq!(w.step(at(20_000), false, || unreachable!()), None);
     }
@@ -207,8 +253,7 @@ mod tests {
         assert_eq!(w.step(at(1_000), false, || unreachable!()), None);
         assert_eq!(w.step(at(2_500), true, || unreachable!()), None);
         assert_eq!(w.step(at(6_000), false, || unreachable!()), None);
-        let (took, _) = w.step(at(8_000), false, || totals(10)).expect("episode");
-        assert_eq!(took, Duration::from_millis(6_000));
+        assert_eq!(w.step(at(8_000), false, || totals(10)), done(6_000, 10));
     }
 
     #[test]
@@ -222,7 +267,47 @@ mod tests {
         // many decodes in a short time are
         w.step(at(3_000), true, || totals(12));
         w.step(at(3_400), false, || unreachable!());
-        assert!(w.step(at(5_400), false, || totals(12 + WORTH_DECODES)).is_some());
+        assert_eq!(w.step(at(5_400), false, || totals(12 + WORTH_DECODES)), done(400, WORTH_DECODES));
+    }
+
+    #[test]
+    fn a_region_that_never_rests_gets_progress_lines() {
+        let t0 = Instant::now();
+        let at = |ms: u64| t0 + Duration::from_millis(ms);
+        let running = |took_ms: u64, decodes: u64| {
+            Some(LoadReport {
+                took: Duration::from_millis(took_ms),
+                added: totals(decodes),
+                done: false,
+            })
+        };
+        let mut w = LoadWatch::default();
+        w.step(at(0), true, || totals(100));
+        assert_eq!(w.step(at(9_900), true, || unreachable!()), None);
+        assert_eq!(w.step(at(10_000), true, || totals(600)), running(10_000, 500));
+        assert_eq!(w.step(at(19_000), true, || unreachable!()), None);
+        assert_eq!(w.step(at(20_500), true, || totals(900)), running(20_500, 800));
+        // the next episode counts its own ten seconds
+        assert_eq!(w.step(at(23_000), false, || totals(900)), None);
+        assert_eq!(w.step(at(25_000), false, || totals(900)), done(23_000, 800));
+        w.step(at(26_000), true, || totals(900));
+        assert_eq!(w.step(at(31_000), true, || unreachable!()), None);
+    }
+
+    #[test]
+    fn an_arrival_ends_the_episode_under_way() {
+        let t0 = Instant::now();
+        let at = |ms: u64| t0 + Duration::from_millis(ms);
+        let mut w = LoadWatch::default();
+        assert_eq!(w.cut(at(0), || unreachable!()), None);
+        w.step(at(0), true, || totals(0));
+        w.step(at(4_000), true, || unreachable!());
+        assert_eq!(w.cut(at(6_000), || totals(700)), done(6_000, 700));
+        // idle when the cut comes: up to the first idle frame
+        w.step(at(7_000), true, || totals(700));
+        w.step(at(13_000), false, || unreachable!());
+        assert_eq!(w.cut(at(14_000), || totals(705)), done(6_000, 5));
+        assert_eq!(w.cut(at(15_000), || unreachable!()), None);
     }
 
     #[test]
@@ -247,10 +332,15 @@ mod tests {
         assert_eq!(totals.by_discard, [1, 0, 0, 0, 0, 1]);
         assert_eq!(totals.codec_us, 80_000);
         assert_eq!(
-            totals.describe(Duration::from_millis(12_340), (2, 3)),
+            totals.describe(Duration::from_millis(12_340), false, (2, 3)),
             "texture load: 12.3 s, 2/3 textures loaded; 2 decodes (1 of a texture already shown; discard 0..5: [1, 0, 0, 0, 0, 1]), \
              1.0 Mpx; decode CPU 0.1 s (codec 0.1, convert 0.0, rgba 0.0, mips 0.0, staging 0.0); \
              downloaded 2.5 MB in 3 replies; disk cache 1 hits / 1 misses"
+        );
+        assert!(
+            totals
+                .describe(Duration::ZERO, true, (0, 0))
+                .starts_with("texture load (running): 0.0 s, ")
         );
     }
 }

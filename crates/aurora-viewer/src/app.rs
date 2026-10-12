@@ -1326,6 +1326,7 @@ impl App {
                 self.move_complete_at = Some(Instant::now());
                 self.tp_checks = vec![10.0, 3.0];
                 self.camera.on_teleport_arrival(&self.settings.camera);
+                self.scene.textures.mark_arrival();
                 self.loading_stage = aurora_i18n::tr!("app-loading-scene").into();
             }
             NetEvent::SitResponse {

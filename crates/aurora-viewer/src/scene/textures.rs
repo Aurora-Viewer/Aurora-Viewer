@@ -969,8 +969,26 @@ impl TextureStreamer {
             meter.read_into(&mut totals);
             totals
         };
-        if let Some((took, added)) = self.watch.step(now, busy, totals) {
-            log::info!("{}", added.describe(took, (loaded, self.entries.len())));
+        if let Some(r) = self.watch.step(now, busy, totals) {
+            log::info!("{}", r.added.describe(r.took, !r.done, (loaded, self.entries.len())));
+        }
+    }
+
+    /// Arrival in a region (login, teleport, crossing by teleport): the
+    /// loading episode under way ends there, so the next `texture load:`
+    /// line counts the new region alone.
+    pub fn mark_arrival(&mut self) {
+        let (counted, meter) = (self.load, &self.meter);
+        let totals = || {
+            let mut totals = counted;
+            meter.read_into(&mut totals);
+            totals
+        };
+        if let Some(r) = self.watch.cut(Instant::now(), totals) {
+            log::info!(
+                "{} (cut by an arrival)",
+                r.added.describe(r.took, false, (self.stats.loaded, self.stats.total))
+            );
         }
     }
 
