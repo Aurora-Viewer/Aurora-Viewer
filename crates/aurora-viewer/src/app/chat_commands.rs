@@ -239,7 +239,7 @@ impl App {
                 )),
             },
             Command::ClearChat => {
-                self.world.chat.clear();
+                self.world.clear_nearby_chat();
                 self.world.chat_unread = 0;
             }
             Command::CopyCamera => {

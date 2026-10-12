@@ -78,6 +78,8 @@ pub enum Data {
     Friend {
         from: Uuid,
         tx: Uuid,
+        /// Offered while we were offline: answered by capability.
+        offline: bool,
     },
     Inventory {
         from: Uuid,
@@ -91,6 +93,9 @@ pub enum Data {
     Group {
         group: Uuid,
         tx: Uuid,
+        /// Received while we were offline (answered by capability when it
+        /// came without a session id).
+        offline: bool,
     },
     Dialog {
         object: Uuid,
@@ -159,6 +164,8 @@ pub enum Response {
 pub struct Notifications {
     pub list: Vec<Notification>,
     next: u64,
+    /// Our legacy full name ("First Last"), for the answers that carry it.
+    pub own_name: String,
 }
 
 const MAX: usize = 100;
@@ -224,7 +231,7 @@ impl Notifications {
                 // closing an offer declines it, like Firestorm's toasts
                 match &n.data {
                     Data::Lure { from, lure } => out.push(decline_lure(*from, *lure)),
-                    Data::Friend { tx, .. } => out.push(NetCommand::DeclineFriendship { transaction: *tx }),
+                    Data::Friend { from, tx, offline } => out.push(self.friend_answer(*from, *tx, *offline, false, calling_cards)),
                     // Closing a resident's offer refuses nothing: what it
                     // delivered stays (inventory_offer_callback, "close
                     // button probably"), and the giver reads "accepted" as
@@ -241,7 +248,7 @@ impl Notifications {
                         let folder = if keep { folder_for(*asset_type) } else { Uuid::nil() };
                         out.push(inventory_answer(*from, *tx, *task, keep, folder));
                     }
-                    Data::Group { group, tx } => out.push(group_answer(*group, *tx, false)),
+                    Data::Group { group, tx, offline } => out.push(group_answer(*group, *tx, *offline, false)),
                     Data::Dialog { .. } | Data::TextBox { .. } => {} // ignore = no reply
                     _ => {}
                 }
@@ -253,16 +260,7 @@ impl Notifications {
                     out.push(decline_lure(*from, *lure));
                 }
             }
-            (Data::Friend { tx, .. }, _) => {
-                out.push(if accept {
-                    NetCommand::AcceptFriendship {
-                        transaction: *tx,
-                        folder: calling_cards,
-                    }
-                } else {
-                    NetCommand::DeclineFriendship { transaction: *tx }
-                });
-            }
+            (Data::Friend { from, tx, offline }, _) => out.push(self.friend_answer(*from, *tx, *offline, accept, calling_cards)),
             (
                 Data::Inventory {
                     from,
@@ -276,7 +274,7 @@ impl Notifications {
                 let folder = if accept { folder_for(*asset_type) } else { Uuid::nil() };
                 out.push(inventory_answer(*from, *tx, *task, accept, folder));
             }
-            (Data::Group { group, tx }, _) => out.push(group_answer(*group, *tx, accept)),
+            (Data::Group { group, tx, offline }, _) => out.push(group_answer(*group, *tx, *offline, accept)),
             (
                 Data::Dialog {
                     object, channel, buttons, ..
@@ -312,6 +310,28 @@ impl Notifications {
             _ => {}
         }
         (out, url)
+    }
+
+    /// Answer to a friendship offer (friendship_offer_callback): one made
+    /// while we were offline goes through the region's capability, which
+    /// needs who offered and our name instead of a transaction id.
+    fn friend_answer(&self, from: Uuid, tx: Uuid, offline: bool, accept: bool, calling_cards: Uuid) -> NetCommand {
+        if offline {
+            NetCommand::AnswerOfflineFriendship {
+                from,
+                transaction: tx,
+                folder: calling_cards,
+                accept,
+                agent_name: self.own_name.clone(),
+            }
+        } else if accept {
+            NetCommand::AcceptFriendship {
+                transaction: tx,
+                folder: calling_cards,
+            }
+        } else {
+            NetCommand::DeclineFriendship { transaction: tx }
+        }
     }
 }
 
@@ -356,7 +376,13 @@ pub(crate) fn inventory_answer(from: Uuid, tx: Uuid, task: bool, accept: bool, f
     }
 }
 
-fn group_answer(group: Uuid, tx: Uuid, accept: bool) -> NetCommand {
+/// send_join_group_response: an invitation received while offline without
+/// a session id (the offline messages capability gives none) is answered by
+/// capability, the others by instant message.
+fn group_answer(group: Uuid, tx: Uuid, offline: bool, accept: bool) -> NetCommand {
+    if offline && tx.is_nil() {
+        return NetCommand::AnswerOfflineGroupInvite { group, accept };
+    }
     NetCommand::SendImDialog {
         to: group,
         dialog: if accept {
@@ -418,6 +444,50 @@ mod tests {
         assert!(
             matches!(&cmds[..], [NetCommand::SendImDialog { dialog: im::INVENTORY_ACCEPTED, bucket, .. }] if bucket[..] == folder.as_bytes()[..])
         );
+    }
+
+    #[test]
+    fn offline_offers_are_answered_by_capability() {
+        let mut n = Notifications {
+            own_name: "Aurora Demo".into(),
+            ..Default::default()
+        };
+        let (from, cards) = (Uuid::from_u128(7), Uuid::from_u128(8));
+        // a friendship offer made while we were away has no transaction id
+        let offer = |n: &mut Notifications, tx: Uuid, offline: bool| n.push(Kind::Friendship, "", "", Data::Friend { from, tx, offline });
+        let id = offer(&mut n, Uuid::nil(), true);
+        let (cmds, _) = n.respond(id, Response::Accept, |_| Uuid::nil(), cards);
+        assert!(matches!(
+            &cmds[..],
+            [NetCommand::AnswerOfflineFriendship { from: f, transaction, folder, accept: true, agent_name }]
+                if *f == from && transaction.is_nil() && *folder == cards && agent_name == "Aurora Demo"
+        ));
+        // closing it declines it, the same way
+        let id = offer(&mut n, Uuid::nil(), true);
+        let (cmds, _) = n.respond(id, Response::Dismiss, |_| Uuid::nil(), cards);
+        assert!(matches!(&cmds[..], [NetCommand::AnswerOfflineFriendship { accept: false, .. }]));
+        // an offer received while online keeps the message
+        let tx = Uuid::from_u128(9);
+        let id = offer(&mut n, tx, false);
+        let (cmds, _) = n.respond(id, Response::Accept, |_| Uuid::nil(), cards);
+        assert!(matches!(&cmds[..], [NetCommand::AcceptFriendship { transaction, folder }] if *transaction == tx && *folder == cards));
+
+        // group invitations: by capability only when offline and without a
+        // session id (what the offline messages capability gives)
+        let group = Uuid::from_u128(0x6200);
+        let invite = |n: &mut Notifications, tx: Uuid, offline: bool| n.push(Kind::Group, "", "", Data::Group { group, tx, offline });
+        let id = invite(&mut n, Uuid::nil(), true);
+        let (cmds, _) = n.respond(id, Response::Accept, |_| Uuid::nil(), cards);
+        assert!(matches!(&cmds[..], [NetCommand::AnswerOfflineGroupInvite { group: g, accept: true }] if *g == group));
+        let id = invite(&mut n, Uuid::nil(), true);
+        let (cmds, _) = n.respond(id, Response::Decline, |_| Uuid::nil(), cards);
+        assert!(matches!(&cmds[..], [NetCommand::AnswerOfflineGroupInvite { accept: false, .. }]));
+        // offline but with a session id (the legacy request): by message
+        for (tx, offline) in [(tx, true), (tx, false)] {
+            let id = invite(&mut n, tx, offline);
+            let (cmds, _) = n.respond(id, Response::Accept, |_| Uuid::nil(), cards);
+            assert!(matches!(&cmds[..], [NetCommand::SendImDialog { dialog: im::GROUP_INVITATION_ACCEPT, id, .. }] if *id == tx));
+        }
     }
 
     #[test]

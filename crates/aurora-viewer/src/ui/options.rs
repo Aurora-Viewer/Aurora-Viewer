@@ -602,7 +602,9 @@ fn chat_logs_group(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut Op
         );
         match &st.chat_log_dir {
             Some(dir) => {
+                // without the verbatim prefix Windows gives a canonical path
                 let path = dir.display().to_string();
+                let path = path.strip_prefix(r"\\?\").unwrap_or(&path).to_owned();
                 ui.add(super::widgets::elided_label(
                     ui,
                     RichText::new(&path).size(11.5).color(p.muted_dim),

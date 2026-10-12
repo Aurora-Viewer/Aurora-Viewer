@@ -12,11 +12,13 @@
 //!
 //! - `format`: the text of a line and its reading back;
 //! - `names`: the file of each conversation;
-//! - `store`: the folder, the thread that writes and reads.
+//! - `store`: the folder, the thread that writes and reads;
+//! - `transcript`: a whole file for the History window, by pages.
 
 pub mod format;
 pub mod names;
 pub mod store;
+pub mod transcript;
 
 pub use format::Entry;
 pub use store::{Identity, Loaded};
@@ -155,6 +157,13 @@ impl ChatLog {
     /// File a conversation is written to now.
     pub fn file_of(&self, stem: &str) -> Option<PathBuf> {
         names::file_path(self.dir()?, stem, self.today())
+    }
+
+    /// File a conversation's history is read from: the one written now, or
+    /// with dated names the latest that exists. Looks at the disk: not for
+    /// every frame.
+    pub fn history_file_of(&self, stem: &str) -> Option<PathBuf> {
+        names::existing_file(self.dir()?, stem, self.today())
     }
 
     fn worker(&mut self) -> Option<&store::Worker> {

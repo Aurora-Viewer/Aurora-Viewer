@@ -136,6 +136,8 @@ pub struct World {
     /// before its object, and the scene merges them when it builds the faces.
     pub gltf_overrides: HashMap<ObjKey, Arc<[(u8, aurora_assets::material::PbrOverride)]>>,
     pub chat: VecDeque<ChatLine>,
+    /// Follows `chat` for the view.
+    pub chat_clock: transcripts::LineClock,
     pub chat_unread: usize,
     /// Conversation transcripts of the account logged in.
     pub chat_log: chat_log::ChatLog,
@@ -246,11 +248,34 @@ pub struct World {
     /// Place details windows of place links (their parcel requests).
     pub place_details: place_details::PlaceDetails,
     arrived_once: bool,
+    /// The instant messages kept while offline were asked for (once per
+    /// login).
+    offline_im_requested: bool,
     /// Disk cache root (inventory cache).
     pub cache_dir: Option<std::path::PathBuf>,
 }
 
-const MAX_CHAT: usize = 500;
+/// Lines kept in memory for one conversation (the nearby chat is one). The
+/// view only lays out the lines in sight, so the bound is about memory;
+/// older lines are in the conversation's transcript.
+const MAX_CHAT: usize = 2000;
+
+/// "(Saved <date>) " before a message kept while we were offline, with the
+/// moment it was sent (Second Life time, like the times of the chat).
+fn saved_prefix(timestamp: u32) -> String {
+    if timestamp == 0 {
+        return String::new();
+    }
+    let t = chat_log::format::Slt::from_unix(i64::from(timestamp));
+    let month = crate::ui::land::months()[(t.month.clamp(1, 12) - 1) as usize];
+    aurora_i18n::tr!(
+        "world-im-saved",
+        day = t.day.to_string(),
+        month = month.to_string(),
+        year = t.year.to_string(),
+        time = format!("{:02}:{:02}", t.hour, t.minute)
+    ) + " "
+}
 
 impl World {
     pub fn new(avatar_lib: Arc<AvatarLibrary>) -> World {
@@ -269,6 +294,7 @@ impl World {
             objects: ObjectStore::default(),
             gltf_overrides: HashMap::new(),
             chat: VecDeque::new(),
+            chat_clock: Default::default(),
             chat_unread: 0,
             chat_log: Default::default(),
             nearby_history: Default::default(),
@@ -327,6 +353,7 @@ impl World {
             notifications: notifications::Notifications::default(),
             profiles: profiles::Profiles::default(),
             arrived_once: false,
+            offline_im_requested: false,
             cache_dir: None,
         }
     }
@@ -557,12 +584,8 @@ impl World {
     }
 
     fn push_chat(&mut self, line: ChatLine) {
-        self.log_nearby(&line);
-        self.chat.push_back(line);
+        self.nearby_push(line);
         self.chat_unread += 1;
-        while self.chat.len() > MAX_CHAT {
-            self.chat.pop_front();
-        }
     }
 
     /// Ask for an avatar's profile (once).
@@ -750,6 +773,9 @@ impl World {
                 self.agent_id = l.agent_id;
                 // the account is known: its transcripts open
                 self.chat_log.login(l.agent_id);
+                // LLVOAvatar::getFullname, sent when an offline friendship
+                // offer is accepted
+                self.notifications.own_name = format!("{} {}", l.first_name, l.last_name);
                 self.agent.position = Vec3::new(128.0, 128.0, 30.0);
                 self.agent.set_look_at(l.look_at);
                 self.social = social::Social::from_login(&l.raw);
@@ -973,6 +999,16 @@ impl World {
             | NetEvent::ChatSessionReply { .. }) => self.on_group_event(ev),
             NetEvent::InstantMessage(im) => {
                 self.on_im(im);
+                None
+            }
+            NetEvent::OfflineMessagesFailed => {
+                // requestOfflineMessagesCoro: "Falling back to legacy method."
+                self.groups.out.push(aurora_net::NetCommand::RequestOfflineMessagesLegacy);
+                None
+            }
+            NetEvent::OfflineGroupInviteAccepted(_) => {
+                // response_group_invitation_coro: sendAgentDataUpdateRequest
+                self.groups.out.push(aurora_net::NetCommand::RequestGroups);
                 None
             }
             NetEvent::Appearance(a) => {
@@ -1600,10 +1636,17 @@ impl World {
                 .complete(&im.from_agent_id)
                 .unwrap_or_else(|| im.from_name.clone());
             self.social.session_mut(im.from_agent_id);
+            // a message kept while we were offline says when it was sent
+            // ("(Saved <date>)" before the text, llimprocessing.cpp)
+            let text = if im.offline {
+                saved_prefix(im.timestamp) + &im.message
+            } else {
+                im.message.clone()
+            };
             let line = ChatLine {
                 time: SystemTime::now(),
                 from,
-                text: im.message.clone(),
+                text,
                 kind: ChatKind::Im,
                 source: im.from_agent_id,
                 origin: Origin::Live,
@@ -1619,10 +1662,16 @@ impl World {
         } else {
             im.from_name
         };
+        // an object's message kept while we were offline (IM_FROM_TASK)
+        let text = if im.offline && im.dialog == 19 {
+            saved_prefix(im.timestamp) + &im.message
+        } else {
+            im.message
+        };
         self.push_chat(ChatLine {
             time: SystemTime::now(),
             from,
-            text: im.message,
+            text,
             kind,
             source: im.from_agent_id,
             origin: Origin::Live,
@@ -1661,6 +1710,7 @@ impl World {
                     Data::Friend {
                         from: im.from_agent_id,
                         tx: im.session_id,
+                        offline: im.offline,
                     },
                 );
             }
@@ -1717,6 +1767,7 @@ impl World {
                     Data::Group {
                         group: im.from_agent_id,
                         tx: im.session_id,
+                        offline: im.offline,
                     },
                 );
             }

@@ -47,9 +47,68 @@ pub struct SessionLog {
 }
 
 impl SessionLog {
-    #[cfg(test)]
     pub fn stem(&self) -> Option<&str> {
         self.stem.as_deref()
+    }
+}
+
+/// What a view needs to follow a list of lines without reading them all
+/// every frame: when it changed, and a number for each line that stays the
+/// same while lines are added at either end or dropped from the front.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LineClock {
+    /// Number of the first line; line `i` has number `first + i`.
+    pub first: u64,
+    /// Changes whenever the lines do (unique in the whole run).
+    pub revision: u64,
+    /// Changes when the numbers no longer name the same lines (a new list,
+    /// lines inserted in the middle).
+    pub token: u64,
+}
+
+fn tick() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
+impl Default for LineClock {
+    fn default() -> Self {
+        LineClock {
+            // room below for the history put before the first line
+            first: 1 << 40,
+            revision: tick(),
+            token: tick(),
+        }
+    }
+}
+
+impl LineClock {
+    pub fn pushed_back(&mut self) {
+        self.revision = tick();
+    }
+
+    pub fn popped_front(&mut self) {
+        self.first += 1;
+        self.revision = tick();
+    }
+
+    pub fn pushed_front(&mut self, count: usize) {
+        self.first -= count as u64;
+        self.revision = tick();
+    }
+
+    /// The lines were replaced or shuffled.
+    pub fn renumbered(&mut self) {
+        self.revision = tick();
+        self.token = tick();
+    }
+}
+
+/// Drop the oldest lines over the bound.
+fn trim(lines: &mut std::collections::VecDeque<ChatLine>, clock: &mut LineClock) {
+    while lines.len() > MAX_CHAT {
+        lines.pop_front();
+        clock.popped_front();
     }
 }
 
@@ -61,12 +120,13 @@ fn minute(t: SystemTime) -> u64 {
 impl World {
     /// The transcript file of a conversation, from what is known now.
     fn transcript_stem(&self, session: &Uuid) -> Option<String> {
-        if let Some(info) = self.groups.sessions.get(session) {
-            let group = self.groups.group(session);
-            if info.group || group.is_some() {
-                let name = group.map(|g| g.name.as_str()).unwrap_or(&info.name);
-                return (!name.is_empty()).then(|| names::group(name));
-            }
+        let group = self.groups.group(session);
+        let info = self.groups.sessions.get(session);
+        if group.is_some() || info.is_some_and(|i| i.group) {
+            let name = group.map(|g| g.name.as_str()).or(info.map(|i| i.name.as_str())).unwrap_or("");
+            return (!name.is_empty()).then(|| names::group(name));
+        }
+        if info.is_some() {
             // a conference someone invited us to: dated when it started
             let name = self.session_title(session);
             return Some(names::conference_invited(&name, SystemTime::now(), session));
@@ -84,6 +144,37 @@ impl World {
             _ => names::resident(self.social.names.get(session)?),
         };
         (!legacy.trim().is_empty()).then_some(legacy)
+    }
+
+    /// Title and transcript file of a conversation, for the History window:
+    /// the nearby chat (None), an open conversation, or a resident or one
+    /// of our groups without one. The file is the one its history is read
+    /// from; None when the account keeps no transcripts or the name the
+    /// file is made of is unknown.
+    pub fn transcript_of(&self, conversation: Option<Uuid>) -> (String, Option<std::path::PathBuf>) {
+        let Some(id) = conversation else {
+            return (
+                aurora_i18n::tr!("common-nearby-chat").to_owned(),
+                self.chat_log.history_file_of(names::NEARBY),
+            );
+        };
+        let title = match self.groups.group(&id) {
+            Some(g) => g.name.clone(),
+            None => self.session_title(&id),
+        };
+        let open = self
+            .social
+            .ims
+            .iter()
+            .find(|s| s.other == id)
+            .and_then(|s| s.log.stem().map(str::to_owned));
+        let stem = open.or_else(|| {
+            // a conference has no file before it starts
+            (!self.groups.sessions.contains_key(&id) || self.groups.group(&id).is_some())
+                .then(|| self.transcript_stem(&id))
+                .flatten()
+        });
+        (title, stem.and_then(|s| self.chat_log.history_file_of(&s)))
     }
 
     /// Name the conversation's file if it can be, ask for its history
@@ -147,12 +238,25 @@ impl World {
         }
         let s = self.session_lines(session);
         s.lines.push_back(line);
+        s.clock.pushed_back();
         if unread {
             s.unread += 1;
         }
-        while s.lines.len() > MAX_CHAT {
-            s.lines.pop_front();
-        }
+        trim(&mut s.lines, &mut s.clock);
+    }
+
+    /// A line enters the nearby chat (same bound).
+    pub(super) fn nearby_push(&mut self, line: ChatLine) {
+        self.log_nearby(&line);
+        self.chat.push_back(line);
+        self.chat_clock.pushed_back();
+        trim(&mut self.chat, &mut self.chat_clock);
+    }
+
+    /// Empty the nearby chat (the "clear" command of the chat bar).
+    pub fn clear_nearby_chat(&mut self) {
+        self.chat.clear();
+        self.chat_clock.renumbered();
     }
 
     /// A line of the nearby chat, written when the nearby chat is logged
@@ -209,13 +313,14 @@ impl World {
 
     /// The lines of a transcript's end as conversation lines
     /// (addMessagesFromHistoryCache). A line without a date takes the time
-    /// of the one before.
-    fn history_lines(&self, entries: Vec<Entry>, nearby: bool) -> Vec<ChatLine> {
+    /// of the one before. `keep_all`: one line per entry, the empty ones
+    /// too (the History window counts them).
+    pub fn history_lines(&self, entries: Vec<Entry>, nearby: bool, keep_all: bool) -> Vec<ChatLine> {
         let own = self.own_log_names();
         let mut last = UNIX_EPOCH;
         entries
             .into_iter()
-            .filter(|e| !e.text.is_empty())
+            .filter(|e| keep_all || !e.text.is_empty())
             .map(|e| {
                 last = e.time.unwrap_or(last);
                 let kind = if e.is_system() || e.from.is_empty() {
@@ -241,15 +346,14 @@ impl World {
 
     fn apply_history(&mut self, loaded: Loaded) {
         let nearby = loaded.conversation.is_nil();
-        let lines = self.history_lines(loaded.entries, nearby);
+        let lines = self.history_lines(loaded.entries, nearby, false);
         if nearby {
             self.nearby_history = HistoryState::Done;
+            self.chat_clock.pushed_front(lines.len());
             for l in lines.into_iter().rev() {
                 self.chat.push_front(l);
             }
-            while self.chat.len() > MAX_CHAT {
-                self.chat.pop_front();
-            }
+            trim(&mut self.chat, &mut self.chat_clock);
             return;
         }
         let Some(s) = self.social.ims.iter_mut().find(|s| s.other == loaded.conversation) else {
@@ -259,12 +363,11 @@ impl World {
             return;
         }
         s.log.history = HistoryState::Done;
+        s.clock.pushed_front(lines.len());
         for l in lines.into_iter().rev() {
             s.lines.push_front(l);
         }
-        while s.lines.len() > MAX_CHAT {
-            s.lines.pop_front();
-        }
+        trim(&mut s.lines, &mut s.clock);
         if let Some(history) = s.log.server_history.take() {
             self.merge_server_history(loaded.conversation, history);
         }
@@ -353,9 +456,8 @@ impl World {
         for (i, l) in older.into_iter().enumerate() {
             s.lines.insert(at + i, l);
         }
-        while s.lines.len() > MAX_CHAT {
-            s.lines.pop_front();
-        }
+        s.clock.renumbered();
+        trim(&mut s.lines, &mut s.clock);
     }
 }
 
@@ -591,6 +693,81 @@ mod tests {
         // opened by us: the server's lines are now in the file too
         assert!(w.chat_log.flush(WAIT));
         assert_eq!(file_texts(&w, &stem).len(), 4);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_message_kept_while_offline_says_when_it_was_sent() {
+        let root = temp();
+        let jane = Uuid::from_u128(2);
+        let mut w = world(&root, Uuid::from_u128(1));
+        let sent = format::parse_stamp("2026/10/11 09:30").unwrap();
+        let mut m = im(jane, "Jane Doe", "see you tomorrow");
+        m.offline = true;
+        m.timestamp = sent.duration_since(UNIX_EPOCH).unwrap().as_secs() as u32;
+        w.on_im(m);
+        settle(&mut w);
+        let line = &w.social.ims[0].lines[0];
+        // "(Saved <date>) " then the text; shown and written as received now
+        assert!(line.text.ends_with(") see you tomorrow"), "{}", line.text);
+        assert!(line.text.starts_with('(') && line.text.contains("09:30") && line.text.contains("2026"));
+        assert!(line.time > sent + Duration::from_secs(3600));
+        assert_eq!(line.origin, Origin::Live);
+        assert_eq!(w.social.ims[0].unread, 1);
+        let written = file_texts(&w, "Jane Doe");
+        assert_eq!(written, [("Jane Doe".to_owned(), line.text.clone())]);
+        // a message that is not from storage has no such prefix
+        w.on_im(im(jane, "Jane Doe", "hello"));
+        assert_eq!(w.social.ims[0].lines[1].text, "hello");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn offline_messages_are_asked_for_once_when_the_session_is_ready() {
+        use aurora_net::NetCommand;
+        let root = temp();
+        // the demo's avatar object is the agent's
+        let me = crate::demo::DEMO_AGENT;
+        let mut w = world(&root, me);
+        let asked = |w: &mut World| {
+            w.tick_social();
+            w.groups
+                .take_commands()
+                .iter()
+                .filter(|c| matches!(c, NetCommand::RequestOfflineMessages))
+                .count()
+        };
+        // not before the arrival, the capabilities, the block list and our
+        // avatar
+        assert_eq!(asked(&mut w), 0);
+        w.movement_complete = true;
+        assert_eq!(asked(&mut w), 0);
+        let handle = 0x0003_E800_0003_E800;
+        w.main_region = Some(handle);
+        w.apply(aurora_net::NetEvent::Capabilities {
+            handle,
+            caps: Arc::new([("ReadOfflineMsgs".to_owned(), "x".to_owned())].into_iter().collect()),
+        });
+        assert_eq!(asked(&mut w), 0);
+        w.on_mute_list(aurora_net::MuteListSource::UseCache);
+        assert!(w.mutes.is_loaded());
+        assert_eq!(asked(&mut w), 0);
+        w.apply(aurora_net::NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![crate::demo::action_avatar(false)],
+        });
+        assert!(w.objects.index_of_uuid(&me).is_some());
+        // once, and never again in this session
+        assert_eq!(asked(&mut w), 1);
+        assert_eq!(asked(&mut w), 0);
+        // the capability failed: the legacy message is asked for
+        w.apply(aurora_net::NetEvent::OfflineMessagesFailed);
+        assert!(
+            w.groups
+                .take_commands()
+                .iter()
+                .any(|c| matches!(c, NetCommand::RequestOfflineMessagesLegacy))
+        );
         std::fs::remove_dir_all(&root).unwrap();
     }
 

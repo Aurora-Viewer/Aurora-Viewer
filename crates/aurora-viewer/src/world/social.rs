@@ -2,7 +2,7 @@
 
 use super::ChatLine;
 use super::names::AvatarNames;
-use super::transcripts::SessionLog;
+use super::transcripts::{LineClock, SessionLog};
 use aurora_llsd::Llsd;
 use std::collections::{HashMap, VecDeque};
 use uuid::Uuid;
@@ -29,6 +29,8 @@ pub struct ImSession {
     /// The lines, oldest first, within `MAX_CHAT`: history read from the
     /// transcript, then the chat server's, then this session's.
     pub lines: VecDeque<ChatLine>,
+    /// Follows `lines` for the view.
+    pub clock: LineClock,
     pub unread: usize,
     #[allow(dead_code)] // draft of an IM session, not kept by the UI yet
     pub input: String,
@@ -41,6 +43,7 @@ impl ImSession {
         ImSession {
             other,
             lines: VecDeque::new(),
+            clock: LineClock::default(),
             unread: 0,
             input: String::new(),
             log: SessionLog::default(),

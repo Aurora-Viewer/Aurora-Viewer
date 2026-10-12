@@ -222,12 +222,28 @@ impl Emoji {
 
     /// Text with color emoji added to the current (wrapping) layout.
     pub fn inline(&mut self, ui: &mut egui::Ui, text: &str, size: f32, color: egui::Color32, italics: bool) {
+        self.inline_marked(ui, text, size, color, italics, None);
+    }
+
+    /// `inline`, on a background when one is given (a search match).
+    pub fn inline_marked(
+        &mut self,
+        ui: &mut egui::Ui,
+        text: &str,
+        size: f32,
+        color: egui::Color32,
+        italics: bool,
+        background: Option<egui::Color32>,
+    ) {
         let mut run = String::new();
         let flush = |ui: &mut egui::Ui, run: &mut String| {
             if !run.is_empty() {
                 let mut rt = egui::RichText::new(std::mem::take(run)).size(size).color(color);
                 if italics {
                     rt = rt.italics();
+                }
+                if let Some(bg) = background {
+                    rt = rt.background_color(bg);
                 }
                 ui.add(egui::Label::new(rt).wrap().selectable(true));
             }
