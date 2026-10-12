@@ -30,6 +30,7 @@ mod texture_load;
 pub mod textures;
 pub mod water;
 
+use crate::frame_par::{self, Grain};
 use crate::world::World;
 use crate::world::objects::{Object, ObjectStore};
 use crate::world::terrain::{self, CHUNK_CELLS, Composition};
@@ -85,6 +86,29 @@ struct GeomEntry {
 const GEOM_KEEP_FRAMES: u32 = 600;
 /// Unused geometries looked at per frame once their time has come.
 const GEOM_FREED_PER_FRAME: usize = 256;
+
+/// How the frame's loops over objects are shared between the main thread
+/// and the pool's workers (frame_par.rs); the costs are those of the dev
+/// profile. Placing an object in the sync's planning: 0.3 µs.
+const PLAN_GRAIN: Grain = Grain { chunk: 32, per_helper: 8 };
+/// An object's faces sorted into the draw lists: about as much. With the
+/// lists culled on the GPU a frame visits a few hundred objects, on the
+/// calling thread alone.
+const LISTS_GRAIN: Grain = Grain { chunk: 128, per_helper: 4 };
+/// The pose of an avatar: 8 µs.
+const POSES_GRAIN: Grain = Grain { chunk: 1, per_helper: 8 };
+/// A flexible prim simulated and meshed again: 50 µs or more.
+const FLEXIBLE_GRAIN: Grain = Grain { chunk: 1, per_helper: 2 };
+
+/// Seconds a cached rest skeleton is used before it is rebuilt anyway (the
+/// net under the events that rebuild it): 2 to 3 s, by owner. With the same
+/// 2 s for all, the avatars of a crowd that arrived together were rebuilt in
+/// the same frame from then on (40 avatars: one frame in two seconds 1.5 ms
+/// longer).
+fn skeleton_max_age(owner: &Uuid) -> f32 {
+    // (the id's low bits spread over 0..1, also for ids that follow each other)
+    2.0 + ((owner.as_u128() as u32).wrapping_mul(0x9E37_79B9) >> 22) as f32 / 1024.0
+}
 
 /// Pass a face is drawn in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -437,7 +461,7 @@ pub struct Scene {
     /// Build tools: selected mesh / sculpted objects drawn as wireframes
     /// (object index -> root color).
     pub selection_wire: HashMap<usize, bool>,
-    /// Selected prims whose deformed silhouette is prepared by rayon.
+    /// Selected prims whose deformed silhouette is prepared with their mesh.
     pub selection_silhouettes: HashSet<usize>,
     /// Far avatars drawn as pictures (RenderAvatarMaxNonImpostors).
     impostors: impostors::Impostors,
@@ -1538,21 +1562,27 @@ impl Scene {
         self.xf_cache.next_frame(n);
         let mut plans: Vec<(usize, Plan)> = Vec::with_capacity(list.items.len());
         for level in list.levels() {
-            let planned: Vec<(usize, Plan)> = {
+            // (a few objects, as the avatars' level: this thread alone)
+            let planned: Vec<Vec<(usize, Plan)>> = {
                 let ctx = self.sync_ctx(world, &renderer.records, view.eye, now);
-                // a few objects (the avatars' level): not worth waking the pool
-                if level.len() < 64 {
-                    level.iter().map(|&idx| (idx, ctx.plan(idx))).collect()
-                } else {
-                    level.par_iter().with_min_len(32).map(|&idx| (idx, ctx.plan(idx))).collect()
-                }
+                frame_par::fold(
+                    &level,
+                    PLAN_GRAIN,
+                    || Vec::with_capacity(PLAN_GRAIN.chunk),
+                    |mut part, &idx| {
+                        part.push((idx, ctx.plan(idx)));
+                        part
+                    },
+                )
             };
-            for (idx, plan) in &planned {
-                if let Some(xf) = plan.xf() {
-                    self.xf_cache.set(*idx, xf);
+            for part in planned {
+                for (idx, plan) in &part {
+                    if let Some(xf) = plan.xf() {
+                        self.xf_cache.set(*idx, xf);
+                    }
                 }
+                plans.extend(part);
             }
-            plans.extend(planned);
         }
         let t_part = self.parts.lap(Part::SyncPlan, t_part);
         let mut synced: Vec<usize> = plans.iter().map(|(idx, _)| *idx).collect();
@@ -2662,153 +2692,153 @@ impl Scene {
             visible: 0,
             usage: Vec::new(),
         };
-        let result = visit
-            .par_iter()
-            .fold(new_local, |mut l, &(idx, usage)| {
-                let Some(g) = self.gpu.get(idx) else {
-                    return l;
-                };
-                if g.faces.is_empty() || g.hud {
-                    return l;
+        let result = frame_par::fold(&visit, LISTS_GRAIN, new_local, |mut l: Local, &(idx, usage)| {
+            let Some(g) = self.gpu.get(idx) else {
+                return l;
+            };
+            if g.faces.is_empty() || g.hud {
+                return l;
+            }
+            // avatar limit: far avatars and everything they wear are drawn
+            // as impostors; pictured ones give their draws to the picture
+            let avatar = g.avatar(idx);
+            if let Some(a) = avatar.filter(|a| !avatar_ok.get(*a).copied().unwrap_or(true)) {
+                if let Some(&slot) = plan.capture.get(&a) {
+                    for f in &g.faces {
+                        match f.pass {
+                            Pass::Hidden => {}
+                            Pass::Blend => l.impostor.push((slot, f.cmd, true)),
+                            _ => l.impostor.push((slot, f.cmd, false)),
+                        }
+                    }
                 }
-                // avatar limit: far avatars and everything they wear are drawn
-                // as impostors; pictured ones give their draws to the picture
-                let avatar = g.avatar(idx);
-                if let Some(a) = avatar.filter(|a| !avatar_ok.get(*a).copied().unwrap_or(true)) {
-                    if let Some(&slot) = plan.capture.get(&a) {
-                        for f in &g.faces {
-                            match f.pass {
-                                Pass::Hidden => {}
-                                Pass::Blend => l.impostor.push((slot, f.cmd, true)),
-                                _ => l.impostor.push((slot, f.cmd, false)),
-                            }
-                        }
+                return l;
+            }
+            let Some(ObjVis {
+                sphere: (sc, sr),
+                in_view,
+                casts,
+                reflects,
+            }) = object_visibility(
+                g,
+                idx,
+                &ctx,
+                |a| avatar_ok.get(a).copied().unwrap_or(true),
+                |a| self.too_complex.contains(&a),
+                |a| hidden_loading.is_some_and(|h| h.contains(&a)),
+            )
+            else {
+                return l;
+            };
+            if in_view {
+                l.visible += 1;
+            }
+            // texture usage and blend order on the object's own bounds
+            let px = view.pixel_size(g.center, g.radius);
+            let blend_d = (g.center - view.eye).length();
+            for f in &g.faces {
+                // object sphere for the GPU occlusion test
+                let cmd = f.cmd.with_bounds(sc, sr);
+                let pass = f.pass;
+                // blended faces glow in their sorted place; hidden faces do not glow
+                if f.glow && in_view && pass != Pass::Blend && pass != Pass::Hidden {
+                    if f.glow_pool {
+                        l.glow_alpha.push(cmd);
+                    } else {
+                        l.glow.push(cmd);
                     }
-                    return l;
                 }
-                let Some(ObjVis {
-                    sphere: (sc, sr),
-                    in_view,
-                    casts,
-                    reflects,
-                }) = object_visibility(
-                    g,
-                    idx,
-                    &ctx,
-                    |a| avatar_ok.get(a).copied().unwrap_or(true),
-                    |a| self.too_complex.contains(&a),
-                    |a| hidden_loading.is_some_and(|h| h.contains(&a)),
-                )
-                else {
-                    return l;
-                };
-                if in_view {
-                    l.visible += 1;
-                }
-                // texture usage and blend order on the object's own bounds
-                let px = view.pixel_size(g.center, g.radius);
-                let blend_d = (g.center - view.eye).length();
-                for f in &g.faces {
-                    // object sphere for the GPU occlusion test
-                    let cmd = f.cmd.with_bounds(sc, sr);
-                    let pass = f.pass;
-                    // blended faces glow in their sorted place; hidden faces do not glow
-                    if f.glow && in_view && pass != Pass::Blend && pass != Pass::Hidden {
-                        if f.glow_pool {
-                            l.glow_alpha.push(cmd);
-                        } else {
-                            l.glow.push(cmd);
-                        }
-                    }
-                    // debug « Afficher la transparence » (renderDebugAlpha): blended,
-                    // masked and invisible faces in red, material masks in blue;
-                    // rigged faces only when asked (Firestorm sShowDebugAlphaRigged)
-                    if let Some(rigged_too) = debug_alpha.filter(|_| in_view)
-                        && (rigged_too || !(g.rigged || g.is_avatar))
-                    {
-                        let material = f.pbr_alpha.is_some() || f.legacy_alpha.is_some();
-                        match pass {
-                            Pass::Blend | Pass::Hidden => l.debug_red.push(cmd),
-                            Pass::Mask | Pass::MaskTwoSided if material => l.debug_blue.push(cmd),
-                            Pass::Mask | Pass::MaskTwoSided => l.debug_red.push(cmd),
-                            _ => {}
-                        }
-                    }
-                    if in_view {
-                        match selection_wire.get(&idx) {
-                            Some(true) => l.select_root.push(cmd),
-                            Some(false) => l.select_child.push(cmd),
-                            None => {}
-                        }
-                    }
-                    if pass == Pass::Hidden {
-                        continue;
-                    }
-                    if full {
-                        // LLDrawPoolAvatar::renderShadow includes alpha-blended
-                        // rigged faces (fur, hair, etc.) with an alpha-tested shadow.
-                        if casts && (pass != Pass::Blend || g.rigged || g.is_avatar) {
-                            l.casters.push(ShadowCaster {
-                                cmd,
-                                center: sc,
-                                radius: sr,
-                            });
-                        }
-                        if reflects && matches!(pass, Pass::Opaque | Pass::OpaqueTwoSided | Pass::Mask | Pass::MaskTwoSided) {
-                            let c = ShadowCaster {
-                                cmd,
-                                center: sc,
-                                radius: sr,
-                            };
-                            l.refl.push(c);
-                            if avatar.is_none() && g.skeleton_owner.is_none() {
-                                l.probe.push(c);
-                            }
-                        }
-                    }
-                    if usage {
-                        // (out of view too: what memory pressure may not
-                        // lower a texture under, see `note_usage_away`)
-                        l.usage.push((f.tex_id, px * f.repeats, in_view));
-                        for (t, r) in f.aux_tex.iter().zip(f.aux_repeats).filter(|(t, _)| !t.is_nil()) {
-                            l.usage.push((*t, px * r, in_view));
-                        }
-                    }
-                    if !in_view {
-                        continue;
-                    }
+                // debug « Afficher la transparence » (renderDebugAlpha): blended,
+                // masked and invisible faces in red, material masks in blue;
+                // rigged faces only when asked (Firestorm sShowDebugAlphaRigged)
+                if let Some(rigged_too) = debug_alpha.filter(|_| in_view)
+                    && (rigged_too || !(g.rigged || g.is_avatar))
+                {
+                    let material = f.pbr_alpha.is_some() || f.legacy_alpha.is_some();
                     match pass {
-                        Pass::Blend => l.blend.push((blend_d, cmd, f.glow)),
-                        _ if !full => {}
-                        Pass::Opaque => l.opaque.push(cmd),
-                        Pass::OpaqueTwoSided => l.opaque2.push(cmd),
-                        Pass::Mask => l.mask.push(cmd),
-                        Pass::MaskTwoSided => l.mask2.push(cmd),
-                        Pass::Hidden => {}
+                        Pass::Blend | Pass::Hidden => l.debug_red.push(cmd),
+                        Pass::Mask | Pass::MaskTwoSided if material => l.debug_blue.push(cmd),
+                        Pass::Mask | Pass::MaskTwoSided => l.debug_red.push(cmd),
+                        _ => {}
                     }
                 }
-                l
-            })
-            .reduce(new_local, |mut a, mut b| {
-                a.opaque.append(&mut b.opaque);
-                a.opaque2.append(&mut b.opaque2);
-                a.mask.append(&mut b.mask);
-                a.mask2.append(&mut b.mask2);
-                a.blend.append(&mut b.blend);
-                a.glow.append(&mut b.glow);
-                a.glow_alpha.append(&mut b.glow_alpha);
-                a.impostor.append(&mut b.impostor);
-                a.debug_red.append(&mut b.debug_red);
-                a.debug_blue.append(&mut b.debug_blue);
-                a.select_root.append(&mut b.select_root);
-                a.select_child.append(&mut b.select_child);
-                a.casters.append(&mut b.casters);
-                a.refl.append(&mut b.refl);
-                a.probe.append(&mut b.probe);
-                a.visible += b.visible;
-                a.usage.append(&mut b.usage);
-                a
-            });
+                if in_view {
+                    match selection_wire.get(&idx) {
+                        Some(true) => l.select_root.push(cmd),
+                        Some(false) => l.select_child.push(cmd),
+                        None => {}
+                    }
+                }
+                if pass == Pass::Hidden {
+                    continue;
+                }
+                if full {
+                    // LLDrawPoolAvatar::renderShadow includes alpha-blended
+                    // rigged faces (fur, hair, etc.) with an alpha-tested shadow.
+                    if casts && (pass != Pass::Blend || g.rigged || g.is_avatar) {
+                        l.casters.push(ShadowCaster {
+                            cmd,
+                            center: sc,
+                            radius: sr,
+                        });
+                    }
+                    if reflects && matches!(pass, Pass::Opaque | Pass::OpaqueTwoSided | Pass::Mask | Pass::MaskTwoSided) {
+                        let c = ShadowCaster {
+                            cmd,
+                            center: sc,
+                            radius: sr,
+                        };
+                        l.refl.push(c);
+                        if avatar.is_none() && g.skeleton_owner.is_none() {
+                            l.probe.push(c);
+                        }
+                    }
+                }
+                if usage {
+                    // (out of view too: what memory pressure may not
+                    // lower a texture under, see `note_usage_away`)
+                    l.usage.push((f.tex_id, px * f.repeats, in_view));
+                    for (t, r) in f.aux_tex.iter().zip(f.aux_repeats).filter(|(t, _)| !t.is_nil()) {
+                        l.usage.push((*t, px * r, in_view));
+                    }
+                }
+                if !in_view {
+                    continue;
+                }
+                match pass {
+                    Pass::Blend => l.blend.push((blend_d, cmd, f.glow)),
+                    _ if !full => {}
+                    Pass::Opaque => l.opaque.push(cmd),
+                    Pass::OpaqueTwoSided => l.opaque2.push(cmd),
+                    Pass::Mask => l.mask.push(cmd),
+                    Pass::MaskTwoSided => l.mask2.push(cmd),
+                    Pass::Hidden => {}
+                }
+            }
+            l
+        })
+        .into_iter()
+        .reduce(|mut a, mut b| {
+            a.opaque.append(&mut b.opaque);
+            a.opaque2.append(&mut b.opaque2);
+            a.mask.append(&mut b.mask);
+            a.mask2.append(&mut b.mask2);
+            a.blend.append(&mut b.blend);
+            a.glow.append(&mut b.glow);
+            a.glow_alpha.append(&mut b.glow_alpha);
+            a.impostor.append(&mut b.impostor);
+            a.debug_red.append(&mut b.debug_red);
+            a.debug_blue.append(&mut b.debug_blue);
+            a.select_root.append(&mut b.select_root);
+            a.select_child.append(&mut b.select_child);
+            a.casters.append(&mut b.casters);
+            a.refl.append(&mut b.refl);
+            a.probe.append(&mut b.probe);
+            a.visible += b.visible;
+            a.usage.append(&mut b.usage);
+            a
+        })
+        .unwrap_or_else(new_local);
         self.visit_tmp = visit;
         self.lists.opaque = result.opaque;
         self.lists.opaque_two_sided = result.opaque2;
@@ -3076,7 +3106,8 @@ impl Scene {
             }
             let cached = changed.as_ref().is_some_and(|c| !c.contains(&owner))
                 && self.skeletons.get(&owner).is_some_and(|s| {
-                    s.appearance_gen == world.appearance_generation(&owner) && now.duration_since(s.at).as_secs_f32() < 2.0
+                    s.appearance_gen == world.appearance_generation(&owner)
+                        && now.duration_since(s.at).as_secs_f32() < skeleton_max_age(&owner)
                 });
             let (base, dz) = match self.skeletons.get(&owner).filter(|_| cached) {
                 Some(s) => (s.base.clone(), s.root_dz),
@@ -3089,11 +3120,11 @@ impl Scene {
         self.stats.posed = work.len();
         let pal = &mut self.palettes;
         let mut chunks: Vec<Option<&mut [[[f32; 4]; 4]]>> = pal.chunks_mut(anim::PALETTE_JOINTS).map(Some).collect();
-        let jobs: Vec<(&mut [[[f32; 4]; 4]], &mut (usize, anim::Controller, Arc<anim::SkeletonBase>, Uuid))> = work
+        let mut jobs: Vec<(&mut [[[f32; 4]; 4]], &mut (usize, anim::Controller, Arc<anim::SkeletonBase>, Uuid))> = work
             .iter_mut()
             .filter_map(|w| chunks.get_mut(w.0).and_then(|c| c.take()).map(|c| (c, w)))
             .collect();
-        jobs.into_par_iter().for_each(|(chunk, (_, motions, base, _))| {
+        frame_par::for_each_mut(&mut jobs, POSES_GRAIN, |(chunk, (_, motions, base, _))| {
             for m in chunk.iter_mut().skip(rig.len()) {
                 *m = Mat4::IDENTITY.to_cols_array_2d();
             }
@@ -3219,7 +3250,7 @@ impl Scene {
         if let Some(s) = self.skeletons.get_mut(&owner)
             && s.appearance_gen == generation
             && s.signature == signature
-            && now.duration_since(s.at).as_secs_f32() < 2.0
+            && now.duration_since(s.at).as_secs_f32() < skeleton_max_age(&owner)
         {
             if s.members != members {
                 s.members = members;

@@ -15,6 +15,7 @@ mod crash;
 mod credentials;
 mod cursors;
 mod demo;
+mod frame_par;
 mod frame_profile;
 mod interaction;
 mod keybinds;
@@ -66,7 +67,10 @@ fn run_viewer() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // Leave a core for the render thread; rayon handles decoding/meshing.
+    // The global pool: the workers that help the main thread in the frame's
+    // parallel loops (frame_par.rs), and the UI's parallel searches. Leave a
+    // core for the render thread; decoding and meshing have their own pool
+    // (scene/jobs.rs).
     let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
     let _ = rayon::ThreadPoolBuilder::new()
         .num_threads(threads.saturating_sub(1).max(2))

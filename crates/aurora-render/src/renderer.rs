@@ -4718,11 +4718,15 @@ impl Backend {
         }
         // finish() validates, tracks and encodes every command of its
         // encoder: the three run at once (wgpu-core only takes a shared
-        // lock there), two on the helper threads and the last one here,
-        // then are submitted in frame order
-        let (pre, scene, post) = self.finishers.pair(enc_pre, enc_scene, move || encoder.finish());
-        match (pre, scene) {
-            (Some(pre), Some(scene)) => extra_cmds.extend([pre, scene, post]),
+        // lock there), two on the helper threads and one here, then are
+        // submitted in frame order. The scene's encoder, the longest, is
+        // the one finished here: handed to a helper, the frame also waited
+        // for that helper to wake up, for the few commands of the last
+        // encoder (finish 0.56 -> 0.51 ms, 1.9 -> 1.6 ms in the longest
+        // frame of a second)
+        let (pre, post, scene) = self.finishers.pair(enc_pre, encoder, move || enc_scene.finish());
+        match (pre, post) {
+            (Some(pre), Some(post)) => extra_cmds.extend([pre, scene, post]),
             _ => {
                 log::error!("render: a command encoder thread panicked");
                 let spent = Spent { writes, lists: draw_lists };

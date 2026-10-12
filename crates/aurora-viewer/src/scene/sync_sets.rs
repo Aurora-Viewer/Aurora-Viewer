@@ -13,6 +13,7 @@
 //!   its whole subtree along (its children are placed relative to it).
 //! - **Pending**: objects whose wanted geometry is not bound yet; visited
 //!   when that geometry can make progress (ready, or to be requested again).
+//!   Beyond [`PENDING_PER_FRAME`] of them, a frame only looks at a part.
 //! - **LOD slice**: each object is visited every [`LOD_PERIOD`] frames
 //!   (detail level, and a safety net for state changed behind the store's
 //!   back). Only that frame's slice of the slab is walked.
@@ -25,6 +26,20 @@ use uuid::Uuid;
 
 /// Frames between two detail-level checks of an object.
 pub const LOD_PERIOD: u32 = 24;
+
+/// Objects waiting for their geometry that a frame asks about at most,
+/// unless that would take more than [`PENDING_ROUND`] frames to see them
+/// all: after a teleport, 12 000 objects waiting cost the frame list over
+/// 1 ms in every frame until their geometry was there.
+pub const PENDING_PER_FRAME: usize = 2048;
+/// Frames in which every object waiting for its geometry is asked about,
+/// however many there are.
+pub const PENDING_ROUND: usize = 4;
+
+/// How many of `waiting` objects a frame asks about.
+fn pending_checks(waiting: usize) -> usize {
+    waiting.min(waiting.div_ceil(PENDING_ROUND).max(PENDING_PER_FRAME))
+}
 
 /// Parent chains longer than this are cut (as `Scene::object_transform`).
 pub const MAX_DEPTH: u8 = 16;
@@ -318,8 +333,12 @@ pub struct SyncSets {
     pub seen_mat_gen: u64,
     /// Objects whose full sync waits for a frame with time left.
     pub backlog: Backlog,
+    /// Where the next frame goes on in `pending`.
+    pending_next: usize,
     listed: FrameMarks,
     expanded: FrameMarks,
+    /// Stack of `push_tree`, kept for its room.
+    tree_stack: Vec<(usize, u8)>,
 }
 
 impl SyncSets {
@@ -389,15 +408,23 @@ impl SyncSets {
                 self.push_one(objects, idx, &mut list);
             }
         }
-        let mut i = 0;
-        while i < self.pending.len() {
-            let idx = self.pending.items[i];
+        // (all of them while they are few; else a part, the next frame
+        // going on where this one stops)
+        let mut i = self.pending_next;
+        for _ in 0..pending_checks(self.pending.len()) {
+            if i >= self.pending.len() {
+                i = 0;
+            }
+            let Some(&idx) = self.pending.items.get(i) else {
+                break;
+            };
             // already waiting for its full sync: not planned again each frame
             if self.backlog.contains(idx) {
                 i += 1;
                 continue;
             }
             match state.pending_due(idx) {
+                // (swap-removed: the last one takes its place)
                 None => {
                     self.pending.remove(idx);
                     continue;
@@ -407,6 +434,7 @@ impl SyncSets {
             }
             i += 1;
         }
+        self.pending_next = i;
         // LOD slice: (frame + idx) is a multiple of LOD_PERIOD
         let start = ((LOD_PERIOD - frame % LOD_PERIOD) % LOD_PERIOD) as usize;
         for idx in (start..n).step_by(LOD_PERIOD as usize) {
@@ -432,7 +460,10 @@ impl SyncSets {
         if !self.expanded.mark(root) {
             return;
         }
-        let mut stack = vec![(root, depth(objects, root))];
+        // (one allocation per call showed when thousands of objects arrive
+        // in the same frame)
+        let mut stack = std::mem::take(&mut self.tree_stack);
+        stack.push((root, depth(objects, root)));
         while let Some((idx, d)) = stack.pop() {
             if self.listed.mark(idx) {
                 list.items.push((idx, d));
@@ -450,6 +481,7 @@ impl SyncSets {
                 }
             }
         }
+        self.tree_stack = stack;
     }
 }
 
@@ -470,6 +502,10 @@ mod tests {
         rigged: HashSet<usize>,
         extra: HashSet<usize>,
         pending: Vec<(usize, bool)>,
+        /// Answer for the objects that are not in `pending`.
+        pending_else: Option<bool>,
+        /// Calls of `pending_due`.
+        asked: std::cell::Cell<usize>,
     }
 
     impl SyncState for State {
@@ -480,7 +516,8 @@ mod tests {
             o.render.needs_records || o.shape_dirty || o.material_dirty || self.extra.contains(&idx)
         }
         fn pending_due(&self, idx: usize) -> Option<bool> {
-            self.pending.iter().find(|p| p.0 == idx).map(|p| p.1)
+            self.asked.set(self.asked.get() + 1);
+            self.pending.iter().find(|p| p.0 == idx).map(|p| p.1).or(self.pending_else)
         }
     }
 
@@ -768,6 +805,43 @@ mod tests {
         state.pending = vec![(b, false)];
         assert_eq!(f.quiet_frame(&[a, b], &state), Vec::<usize>::new());
         assert!(!f.sets.pending.contains(a) && f.sets.pending.contains(b));
+    }
+
+    #[test]
+    fn many_pending_objects_are_asked_about_over_a_few_frames() {
+        assert_eq!(pending_checks(0), 0);
+        assert_eq!(pending_checks(100), 100);
+        assert_eq!(pending_checks(PENDING_PER_FRAME), PENDING_PER_FRAME);
+        assert_eq!(pending_checks(PENDING_PER_FRAME + 500), PENDING_PER_FRAME);
+        assert_eq!(pending_checks(12_000), 3000);
+
+        let mut f = Fixture::new();
+        let n = PENDING_PER_FRAME * 2 + 500;
+        let objs: Vec<usize> = (0..n).map(|i| f.add(10_000 + i as u32, 0, false)).collect();
+        let mut state = State {
+            pending_else: Some(false),
+            ..State::default()
+        };
+        f.frame(&state);
+        for &i in &objs {
+            f.sets.pending.insert(i);
+        }
+        // nothing can progress: a part of them is asked about each frame
+        state.asked.set(0);
+        f.frame(&state);
+        assert_eq!(state.asked.get(), PENDING_PER_FRAME);
+        // one becomes ready, wherever the round is: listed within the round
+        let ready = objs[n - 7];
+        state.pending = vec![(ready, true)];
+        let listed = (0..n.div_ceil(PENDING_PER_FRAME)).any(|_| f.quiet_frame(&[ready], &state).contains(&ready));
+        assert!(listed);
+        // resolved ones leave the set as the round meets them
+        state.pending.clear();
+        state.pending_else = None;
+        for _ in 0..n.div_ceil(PENDING_PER_FRAME) {
+            f.frame(&state);
+        }
+        assert_eq!(f.sets.pending.len(), 0);
     }
 
     #[test]

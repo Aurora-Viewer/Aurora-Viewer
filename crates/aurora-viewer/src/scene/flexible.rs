@@ -1,4 +1,4 @@
-//! Per-object flexies: world-space physics and swept geometry on rayon;
+//! Per-object flexies: world-space physics and swept geometry in parallel;
 //! vertex allocations and face records stay in place between frames.
 //! Source: LLVolumeImplFlexible (indra/newview/llflexibleobject.cpp, LGPL 2.1).
 
@@ -50,53 +50,51 @@ impl Scene {
                 outline: None,
             });
         }
-        let updates: Vec<_> = self
-            .flexibles
-            .par_iter_mut()
-            .filter_map(|(&idx, state)| {
-                let o = world.objects.get(idx)?;
-                let p = o.extra.flexible?;
-                let g = self.gpu.get(idx)?;
-                let key = g.geom.filter(|k| matches!(k, GeomKey::Flexible { .. }))?;
-                let Some(GeomState::Ready(_)) = self.geoms.get(&key).map(|e| &e.state) else {
-                    return None;
-                };
-                if g.owner_avatar.is_some_and(|a| self.too_complex.contains(&a)) {
-                    return None;
+        let mut states: Vec<(usize, &mut State)> = self.flexibles.iter_mut().map(|(&idx, state)| (idx, state)).collect();
+        let updates = frame_par::filter_map_mut(&mut states, FLEXIBLE_GRAIN, |(idx, state)| {
+            let idx = *idx;
+            let o = world.objects.get(idx)?;
+            let p = o.extra.flexible?;
+            let g = self.gpu.get(idx)?;
+            let key = g.geom.filter(|k| matches!(k, GeomKey::Flexible { .. }))?;
+            let Some(GeomState::Ready(_)) = self.geoms.get(&key).map(|e| &e.state) else {
+                return None;
+            };
+            if g.owner_avatar.is_some_and(|a| self.too_complex.contains(&a)) {
+                return None;
+            }
+            let (pos, rot, hud) = self.xf_cache.get(idx).or_else(|| Self::object_transform(world, idx, now, 0))?;
+            let scale = world.visual_scale(idx).max(Vec3::splat(0.001));
+            if !hud && pos.distance(view.eye) > self.draw_distance + scale.length() {
+                return None;
+            }
+            if !state.sim.matches(p.softness, scale.z) {
+                state.sim.reconfigure(p.softness, scale.z, pos, rot);
+            }
+            let dt = now.saturating_duration_since(state.last).as_secs_f32();
+            state.last = now;
+            let region = world.regions.get(&o.key.region);
+            let offset = world.region_offset(o.key.region).unwrap_or(Vec3::ZERO);
+            state.sim.update(p, pos, rot, dt, |sample| {
+                if hud {
+                    Vec3::ZERO
+                } else {
+                    region.map_or(Vec3::ZERO, |r| r.wind.velocity(sample - offset, r.heightmap.size_x as f32))
                 }
-                let (pos, rot, hud) = self.xf_cache.get(idx).or_else(|| Self::object_transform(world, idx, now, 0))?;
-                let scale = world.visual_scale(idx).max(Vec3::splat(0.001));
-                if !hud && pos.distance(view.eye) > self.draw_distance + scale.length() {
-                    return None;
-                }
-                if !state.sim.matches(p.softness, scale.z) {
-                    state.sim.reconfigure(p.softness, scale.z, pos, rot);
-                }
-                let dt = now.saturating_duration_since(state.last).as_secs_f32();
-                state.last = now;
-                let region = world.regions.get(&o.key.region);
-                let offset = world.region_offset(o.key.region).unwrap_or(Vec3::ZERO);
-                state.sim.update(p, pos, rot, dt, |sample| {
-                    if hud {
-                        Vec3::ZERO
-                    } else {
-                        region.map_or(Vec3::ZERO, |r| r.wind.velocity(sample - offset, r.heightmap.size_x as f32))
-                    }
-                });
-                let mesh = aurora_prim::volume::generate_flexible_volume(
-                    &o.volume,
-                    aurora_prim::volume::DETAIL_SCALES[g.lod as usize % 4],
-                    &state.sim.path(pos, rot),
-                    scale,
-                );
-                // Only selected flexies need silhouette topology. Build it
-                // from the exact rendered mesh on the same rayon worker.
-                let outline = self.selection_silhouettes.contains(&idx).then(|| silhouette::from_mesh(&mesh));
-                let (faces, min, max) = jobs::volume_to_faces(&mesh);
-                let prepared = jobs::PreparedGeom::new(faces, min, max, true, None);
-                Some((idx, key, prepared, outline, pos, rot, scale))
-            })
-            .collect();
+            });
+            let mesh = aurora_prim::volume::generate_flexible_volume(
+                &o.volume,
+                aurora_prim::volume::DETAIL_SCALES[g.lod as usize % 4],
+                &state.sim.path(pos, rot),
+                scale,
+            );
+            // Only selected flexies need silhouette topology. Build it
+            // from the exact rendered mesh on the same thread.
+            let outline = self.selection_silhouettes.contains(&idx).then(|| silhouette::from_mesh(&mesh));
+            let (faces, min, max) = jobs::volume_to_faces(&mesh);
+            let prepared = jobs::PreparedGeom::new(faces, min, max, true, None);
+            Some((idx, key, prepared, outline, pos, rot, scale))
+        });
         for (idx, key, prepared, outline, pos, rot, scale) in updates {
             let Some(GeomEntry {
                 state: GeomState::Ready(geom),
