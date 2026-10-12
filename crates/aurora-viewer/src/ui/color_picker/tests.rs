@@ -32,7 +32,7 @@ impl UiTest {
     fn frame(&mut self, events: Vec<Input>) -> (Option<Event>, egui::FullOutput) {
         self.time += 1.0 / 60.0;
         let mut result = None;
-        let output = self.ctx.run_ui(
+        let mut output = self.ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(Rect::from_min_size(Pos2::ZERO, self.screen_size)),
                 time: Some(self.time),
@@ -67,6 +67,9 @@ impl UiTest {
                     .show(ui.ctx(), &crate::theme::Theme::default().palette(), &mut self.prefs));
             },
         );
+        // Headless frames inspect shapes and commands without uploading fonts
+        // to a renderer. egui requires acknowledging these unused deltas.
+        output.textures_delta.clear();
         (result, output)
     }
     fn button(pos: Pos2, pressed: bool) -> Input {
