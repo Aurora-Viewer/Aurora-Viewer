@@ -2844,6 +2844,7 @@ impl Session<'_> {
                         offline: b.offline != 0,
                         from_group: b.from_group,
                         binary_bucket: b.binary_bucket.clone(),
+                        timestamp: b.timestamp,
                     }),
                 );
             }

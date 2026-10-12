@@ -3,6 +3,7 @@
 pub mod appearance;
 pub mod blocking;
 pub mod body;
+pub mod chat_log;
 pub mod contact_sets;
 pub mod eep;
 pub mod eep_env;
@@ -28,6 +29,7 @@ pub mod social;
 pub mod status;
 pub mod terrain;
 pub mod tphistory;
+pub mod transcripts;
 pub mod worldmap;
 
 use crate::agent::AgentState;
@@ -74,6 +76,19 @@ pub enum ChatKind {
     Own,
 }
 
+/// Where a line comes from: said during this session, or read back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Origin {
+    #[default]
+    Live,
+    /// The end of the conversation's transcript on disk, shown when it
+    /// opens (Firestorm's CHAT_STYLE_HISTORY).
+    Log,
+    /// The chat server's recent messages of a group
+    /// (CHAT_STYLE_SERVER_HISTORY).
+    ServerLog,
+}
+
 #[derive(Debug, Clone)]
 pub struct ChatLine {
     pub time: SystemTime,
@@ -81,6 +96,7 @@ pub struct ChatLine {
     pub text: String,
     pub kind: ChatKind,
     pub source: Uuid,
+    pub origin: Origin,
 }
 
 /// One simulator signal, with independent sequence and continuous clocks.
@@ -121,6 +137,10 @@ pub struct World {
     pub gltf_overrides: HashMap<ObjKey, Arc<[(u8, aurora_assets::material::PbrOverride)]>>,
     pub chat: VecDeque<ChatLine>,
     pub chat_unread: usize,
+    /// Conversation transcripts of the account logged in.
+    pub chat_log: chat_log::ChatLog,
+    /// History of the nearby chat (asked once per login).
+    nearby_history: transcripts::HistoryState,
     pub script_debug: script_debug::Messages,
     pub sun: Option<(SunInfo, Instant)>,
     pub agent: AgentState,
@@ -250,6 +270,8 @@ impl World {
             gltf_overrides: HashMap::new(),
             chat: VecDeque::new(),
             chat_unread: 0,
+            chat_log: Default::default(),
+            nearby_history: Default::default(),
             script_debug: script_debug::Messages::default(),
             sun: None,
             agent: AgentState::default(),
@@ -309,12 +331,16 @@ impl World {
         }
     }
 
+    /// Back to the login screen. Nothing said to the account that leaves
+    /// stays for the next one: the conversations and the nearby chat go, and
+    /// the transcripts close (only their writer and settings are kept).
     pub fn reset(&mut self) {
         let lib = self.avatar_lib.clone();
-        let chat = std::mem::take(&mut self.chat);
         let cache_dir = self.cache_dir.take();
+        let mut chat_log = std::mem::take(&mut self.chat_log);
+        chat_log.logout();
         *self = World::new(lib);
-        self.chat = chat;
+        self.chat_log = chat_log;
         self.cache_dir = cache_dir;
     }
 
@@ -531,6 +557,7 @@ impl World {
     }
 
     fn push_chat(&mut self, line: ChatLine) {
+        self.log_nearby(&line);
         self.chat.push_back(line);
         self.chat_unread += 1;
         while self.chat.len() > MAX_CHAT {
@@ -590,6 +617,7 @@ impl World {
             text: text.into(),
             kind: ChatKind::System,
             source: Uuid::nil(),
+            origin: Origin::Live,
         });
     }
 
@@ -720,6 +748,8 @@ impl World {
         match ev {
             NetEvent::LoggedIn(l) => {
                 self.agent_id = l.agent_id;
+                // the account is known: its transcripts open
+                self.chat_log.login(l.agent_id);
                 self.agent.position = Vec3::new(128.0, 128.0, 30.0);
                 self.agent.set_look_at(l.look_at);
                 self.social = social::Social::from_login(&l.raw);
@@ -1540,6 +1570,7 @@ impl World {
             text: c.message,
             kind,
             source: c.source_id,
+            origin: Origin::Live,
         });
     }
 
@@ -1568,18 +1599,16 @@ impl World {
                 .avatar_names
                 .complete(&im.from_agent_id)
                 .unwrap_or_else(|| im.from_name.clone());
-            let s = self.social.session_mut(im.from_agent_id);
-            s.lines.push(ChatLine {
+            self.social.session_mut(im.from_agent_id);
+            let line = ChatLine {
                 time: SystemTime::now(),
                 from,
                 text: im.message.clone(),
                 kind: ChatKind::Im,
                 source: im.from_agent_id,
-            });
-            s.unread += 1;
-            if s.lines.len() > MAX_CHAT {
-                s.lines.remove(0);
-            }
+                origin: Origin::Live,
+            };
+            self.conversation_push(im.from_agent_id, line, true);
             self.send_autoresponse(&im, autoresponse);
             return;
         }
@@ -1596,6 +1625,7 @@ impl World {
             text: im.message,
             kind,
             source: im.from_agent_id,
+            origin: Origin::Live,
         });
     }
 
@@ -1912,14 +1942,16 @@ impl World {
             .as_ref()
             .map(|l| social::format_name(&l.first_name, &l.last_name))
             .unwrap_or_default();
-        let s = self.social.session_mut(to);
-        s.lines.push(ChatLine {
+        self.social.session_mut(to);
+        let line = ChatLine {
             time: SystemTime::now(),
             from: me,
             text: text.to_owned(),
             kind: ChatKind::Own,
             source: Uuid::nil(),
-        });
+            origin: Origin::Live,
+        };
+        self.conversation_push(to, line, false);
     }
 
     /// Turn the drawn bodies of the standing avatars toward where they face
@@ -2564,6 +2596,7 @@ mod motion_tests {
             offline: false,
             from_group: false,
             binary_bucket: bucket,
+            timestamp: 0,
         })
     }
 

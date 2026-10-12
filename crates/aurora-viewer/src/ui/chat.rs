@@ -2,7 +2,8 @@
 
 use super::context::CtxAction;
 use crate::theme::Palette;
-use crate::world::{ChatKind, World};
+use crate::world::chat_log::format::Slt;
+use crate::world::{ChatKind, Origin, World};
 use aurora_net::ChatType;
 use egui::{Color32, RichText};
 use std::collections::{HashMap, HashSet};
@@ -59,10 +60,42 @@ fn color_for(kind: ChatKind, p: &Palette) -> Color32 {
     }
 }
 
+/// Time of a chat line, in Second Life time as Firestorm shows it and as
+/// the transcripts have it ("hour,datetime,slt"). Empty for a line whose
+/// time is unknown (history without a timestamp).
 pub(crate) fn hhmm(t: std::time::SystemTime) -> String {
-    let secs = t.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-    // Local time is not available without a tz database; show UTC.
-    format!("{:02}:{:02}", (secs / 3600) % 24, (secs / 60) % 60)
+    if t == std::time::UNIX_EPOCH {
+        return String::new();
+    }
+    let t = Slt::of(t);
+    format!("{:02}:{:02}", t.hour, t.minute)
+}
+
+/// Color of the name and text of a history line: Firestorm greys what comes
+/// from the transcript (ChatHistoryMessageFromLog) and gives the chat
+/// server's replay its own tone (ChatHistoryMessageFromServerLog).
+pub(crate) fn history_tone(p: &Palette, origin: Origin) -> Option<Color32> {
+    match origin {
+        Origin::Live => None,
+        Origin::Log => Some(p.muted_dim),
+        Origin::ServerLog => Some(p.muted_dim.lerp_to_gamma(p.success, 0.3)),
+    }
+}
+
+/// The day a group of lines was said, between two lines of different days
+/// (a history spans days; the times stay HH:MM).
+fn date_marker(ui: &mut egui::Ui, p: &Palette, day: &Slt) {
+    let month = super::land::months()[(day.month.clamp(1, 12) - 1) as usize];
+    let text = aurora_i18n::tr!(
+        "ui-chat-day",
+        day = day.day.to_string(),
+        month = month.to_string(),
+        year = day.year.to_string()
+    );
+    ui.add_space(4.0);
+    ui.vertical_centered(|ui| {
+        ui.label(RichText::new(text).size(11.0).color(p.muted_dim));
+    });
 }
 
 /// A link of a chat bubble, clickable like in the conversation window.
@@ -626,8 +659,21 @@ fn conversation(
 ) {
     ui.spacing_mut().item_spacing.y = 2.0;
     let w = ui.available_width();
-    let mut prev: Option<(uuid::Uuid, std::time::SystemTime, bool)> = None;
+    let mut prev: Option<(uuid::Uuid, std::time::SystemTime, bool, &str)> = None;
+    let today = Slt::of(std::time::SystemTime::now());
+    let mut prev_day: Option<Slt> = None;
     for line in lines {
+        // history lines: greyed, and nothing is looked up for them (no
+        // name, no picture, no profile), like Firestorm's message_from_log
+        let tone = history_tone(p, line.origin);
+        if line.time != std::time::UNIX_EPOCH {
+            let day = Slt::of(line.time);
+            if !day.same_day(prev_day.as_ref().unwrap_or(&today)) {
+                date_marker(ui, p, &day);
+                prev = None;
+            }
+            prev_day = Some(day);
+        }
         if line.kind == ChatKind::System {
             chat_text(
                 ui,
@@ -637,7 +683,7 @@ fn conversation(
                 want_names,
                 &line.text,
                 12.5,
-                super::colors::chat_color(line, world),
+                tone.unwrap_or_else(|| super::colors::chat_color(line, world)),
                 true,
             );
             prev = None;
@@ -646,21 +692,24 @@ fn conversation(
         let own = line.kind == ChatKind::Own;
         let object = matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm);
         let new_group = match prev {
-            Some((src, t, o)) => {
-                src != line.source || o != own || line.time.duration_since(t).map(|d| d.as_secs() > GROUP_SECONDS).unwrap_or(true)
+            Some((src, t, o, from)) => {
+                src != line.source
+                    || o != own
+                    || from != line.from
+                    || line.time.duration_since(t).map(|d| d.as_secs() > GROUP_SECONDS).unwrap_or(true)
             }
             None => true,
         };
         // FSChatHistoryHeader: the display name, then " - username" in small
         let names = &world.social.avatar_names;
-        let cached = if object {
+        let cached = if object || tone.is_some() {
             None
         } else {
             names.get(if own { &world.agent_id } else { &line.source })
         };
         let name = match cached {
             Some(n) => n.display(&names.options),
-            None if own => own_name.to_owned(),
+            None if own && tone.is_none() => own_name.to_owned(),
             None => line.from.clone(),
         };
         if new_group {
@@ -684,17 +733,22 @@ fn conversation(
                                 );
                             }
                         } else {
-                            if !line.source.is_nil() {
+                            if !line.source.is_nil() && tone.is_none() {
                                 wanted.insert(line.source);
                             }
                             avatar_pic(ui, p, pics.get(&line.source), &name, 20.0);
                         }
-                        let col = super::colors::sender_color(line);
+                        let col = tone.unwrap_or_else(|| super::colors::sender_color(line));
                         let time = header_time(ui, p, hhmm(line.time));
                         let reserve = time.size().x + ui.spacing().item_spacing.x;
                         let r = header_names(ui, p, &name, username.as_deref(), col, reserve);
-                        // the inspector in Firestorm; Aurora opens the profile
-                        let avatar = if own { world.agent_id } else { line.source };
+                        // the inspector in Firestorm; Aurora opens the
+                        // profile (history lines name no avatar)
+                        let avatar = match (tone, own) {
+                            (Some(_), _) => uuid::Uuid::nil(),
+                            (None, true) => world.agent_id,
+                            (None, false) => line.source,
+                        };
                         if !object && !avatar.is_nil() {
                             name_menu(&r, p, world, avatar);
                         }
@@ -713,7 +767,7 @@ fn conversation(
                 });
             ui.add_space(2.0);
         }
-        prev = Some((line.source, line.time, own));
+        prev = Some((line.source, line.time, own, &line.from));
         let emote = line.text.starts_with("/me ") || line.text.starts_with("/me'");
         let (text, italics) = if emote {
             (format!("{}{}", name, &line.text[3..]), true)
@@ -741,7 +795,7 @@ fn conversation(
                     want_names,
                     &text,
                     13.5,
-                    super::colors::chat_color(line, world),
+                    tone.unwrap_or_else(|| super::colors::chat_color(line, world)),
                     italics,
                 );
             });

@@ -1013,6 +1013,27 @@ impl App {
         matches!(self.screen, Screen::World | Screen::Loading { .. })
     }
 
+    /// The conversation transcripts follow the preferences, and know before
+    /// the login which grid it is made on (the demo is a grid of its own).
+    fn sync_chat_log(&mut self) {
+        let s = &self.settings;
+        let log = &mut self.world.chat_log;
+        log.cfg = crate::world::chat_log::Config {
+            log_im: s.log_im,
+            log_nearby: s.log_nearby,
+            show_history: s.log_show_history,
+            dated_names: s.log_dated_names,
+        };
+        // the demo keeps no transcripts unless its scenario asks for them:
+        // a run must not change what the next one shows
+        let off = self.demo && std::env::var_os("AURORA_DEMO_CHATLOG").is_none();
+        log.set_grid(if off {
+            String::new()
+        } else {
+            crate::world::chat_log::grid_name(&s.grid, &s.custom_login_uri, self.demo)
+        });
+    }
+
     // ------------------------------------------------------------------ login
 
     fn start_login(&mut self) {
@@ -2470,6 +2491,8 @@ impl App {
             self.world.social.avatar_names.save(&path);
         }
         self.settings.save();
+        // the last lines of the conversations reach their files
+        self.world.chat_log.flush(Duration::from_secs(2));
         event_loop.exit();
     }
 
@@ -3637,6 +3660,7 @@ impl App {
         let t_ev = Instant::now();
         self.world.events_this_frame = 0;
         self.world.script_debug.owner_say = self.settings.script_editor.owner_say_debug;
+        self.sync_chat_log();
         while let Ok(ev) = self.net.events.try_recv() {
             if let Some(app_ev) = self.world.apply(ev) {
                 self.on_app_event(app_ev);
@@ -3646,6 +3670,7 @@ impl App {
             }
         }
         self.world.poll_inventory_cache();
+        self.world.poll_transcripts();
         self.perf.events_ms = t_ev.elapsed().as_secs_f32() * 1000.0;
         for anim in std::mem::take(&mut self.world.animation_stops) {
             self.send(NetCommand::AgentAnimation { anim, start: false });
@@ -6458,6 +6483,16 @@ impl App {
                 let mut open = self.panels.settings;
                 self.options_ui.cache_usage = self.disk_cache.usage();
                 self.options_ui.cache_clearing = self.disk_cache.is_clearing();
+                self.options_ui.chat_log_dir = self.world.chat_log.dir().map(std::path::Path::to_path_buf);
+                if let Some(done) = self.world.chat_log.take_erased() {
+                    self.options_ui.chat_log_status = match done {
+                        Ok(count) => aurora_i18n::tr!("ui-options-chat-logs-erased", count = count),
+                        Err(e) => {
+                            log::warn!("conversation transcripts: erasing failed ({e})");
+                            aurora_i18n::tr!("ui-options-chat-logs-erase-failed").to_owned()
+                        }
+                    };
+                }
                 let res = ui::options::show(&ctx, &p, &self.skin.icons, &mut self.settings, &mut self.options_ui, &mut open);
                 if !open {
                     self.options_ui.capture = None;
@@ -6465,6 +6500,19 @@ impl App {
                 if res.clear_cache {
                     self.disk_cache.clear();
                     self.net.send(NetCommand::ClearObjectCache);
+                }
+                if res.open_chat_logs
+                    && let Some(dir) = self.world.chat_log.dir()
+                {
+                    // the folder may not exist before the first line
+                    let _ = std::fs::create_dir_all(dir);
+                    if let Err(e) = crate::bug_report::files::open_directory(dir) {
+                        log::warn!("cannot open the transcripts folder: {e}");
+                    }
+                }
+                if res.erase_chat_logs {
+                    self.options_ui.chat_log_status.clear();
+                    self.world.chat_log.erase();
                 }
                 a.settings_changed = res.changed;
                 a.font_changed = res.font_changed;
@@ -6873,6 +6921,7 @@ impl ApplicationHandler for App {
             for (id, m) in crate::demo::pbr_materials() {
                 self.scene.materials.insert(id, m);
             }
+            self.sync_chat_log();
             for ev in crate::demo::events() {
                 if let Some(e) = self.world.apply(ev) {
                     self.on_app_event(e);

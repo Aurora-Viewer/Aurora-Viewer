@@ -447,6 +447,7 @@ fn long_name_events(agent: Uuid) -> Vec<NetEvent> {
             offline: false,
             from_group: false,
             binary_bucket: Vec::new(),
+            timestamp: 0,
         })
     };
     vec![
@@ -873,6 +874,7 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                         offline: false,
                         from_group: false,
                         binary_bucket: b"Aurora Builders\0".to_vec(),
+                        timestamp: 0,
                     }));
                     ev.push(NetEvent::InstantMessage(aurora_net::InstantMessage {
                         from_agent_id: DEMO_TESS,
@@ -884,6 +886,7 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                         offline: false,
                         from_group: false,
                         binary_bucket: b"Aurora Builders\0".to_vec(),
+                        timestamp: 0,
                     }));
                     ev
                 }
@@ -2390,6 +2393,7 @@ pub fn events() -> Vec<NetEvent> {
             offline: false,
             from_group: false,
             binary_bucket: bucket,
+            timestamp: 0,
         })
     };
     ev.push(im(22, aurora_i18n::tr!("demo-come-see-the-lagoon-at-sunset"), Vec::new()));

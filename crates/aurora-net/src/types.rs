@@ -284,6 +284,8 @@ pub struct InstantMessage {
     pub from_group: bool,
     /// Extra data (inventory offers: asset type + item id; group invites: fee...).
     pub binary_bucket: Vec<u8>,
+    /// When it was sent (Unix time); 0 when the simulator gave none.
+    pub timestamp: u32,
 }
 
 #[derive(Debug, Clone)]

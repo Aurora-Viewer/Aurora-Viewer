@@ -3979,3 +3979,25 @@ ui-options-snap-windows = Snap windows
 ui-options-snap-windows-help = A window moved or resized near another one, a bar or an edge of the screen snaps to it; two windows snapped side by side then move together. Hold Alt during the gesture to move the window alone, without snapping.
 ui-snap-alt-no-snap = do not snap
 ui-snap-alt-detach = detach this window
+ui-chat-day = { $month } { $day }, { $year }
+ui-options-chat-logs = Conversation history
+ui-options-chat-logs-im = Save IMs and group chats
+ui-options-chat-logs-im-help = Writes every instant message, group chat and conference to a text file in this account's folder, to find it again the next time the conversation opens.
+ui-options-chat-logs-nearby = Save nearby chat
+ui-options-chat-logs-nearby-help = Also writes the nearby chat to this account's “chat” file. Off by default: the nearby chat holds what everyone around you says.
+ui-options-chat-logs-show = Show history on opening
+ui-options-chat-logs-show-help = When a conversation opens, the end of its file is shown greyed above the new messages.
+ui-options-chat-logs-dated = Date in file names
+ui-options-chat-logs-dated-help = One file per month for each conversation (name-2026-10) and one per day for the nearby chat (chat-2026-10-12), instead of a single growing file.
+ui-options-chat-logs-note = These files are plain text, readable by anyone who can use this computer. They stay on this machine, apart for each account and each grid, and are never attached to a bug report.
+ui-options-chat-logs-open = Open folder
+ui-options-chat-logs-erase = Erase this account's history…
+ui-options-chat-logs-erase-title = Erase this account's history?
+ui-options-chat-logs-erase-text = Every conversation file of this account on this grid is removed from the disk: instant messages, groups, conferences and nearby chat. This cannot be undone. Other accounts are not touched.
+ui-options-chat-logs-erase-confirm = Erase
+ui-options-chat-logs-no-account = Log in to see this account's folder.
+ui-options-chat-logs-erased = { $count ->
+    [one] { $count } file erased.
+   *[other] { $count } files erased.
+    }
+ui-options-chat-logs-erase-failed = Some files could not be erased.
