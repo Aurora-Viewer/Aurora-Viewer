@@ -20,6 +20,9 @@
 //!   back). Only that frame's slice of the slab is walked.
 //! - **Backlog**: objects whose full sync did not fit the frame's time
 //!   budget; the sync takes them back, nearest first ([`Backlog`]).
+//! - **Arrivals**: new objects, which wait for their first sync without
+//!   being listed; the sync takes them in arrival order, within the same
+//!   budget ([`Arrivals`]).
 
 use crate::world::objects::{Object, ObjectStore};
 use glam::{Quat, Vec3};
@@ -305,6 +308,78 @@ impl Backlog {
     }
 }
 
+/// New objects waiting for their first sync, in arrival order.
+///
+/// An object that was never synced has nothing on screen to keep in place:
+/// its first sync can wait a few frames. Listed like a changed object, it
+/// went through the frame list and the parallel placement only for the
+/// sync to find that out, and thousands arriving together (the region's
+/// object cache answering, a region coming into view) made that frame
+/// several milliseconds long whatever the budget of the full syncs. Here
+/// an arrival costs a push; the frame list leaves these objects alone, and
+/// the sync takes them within its time budget, as it does the [`Backlog`].
+#[derive(Default)]
+pub struct Arrivals {
+    /// An entry whose object is no longer queued (removed) is skipped when
+    /// it comes up.
+    queue: std::collections::VecDeque<u32>,
+    queued: Vec<bool>,
+    len: usize,
+}
+
+impl Arrivals {
+    /// Queue an object. False when it was already waiting (it keeps its
+    /// place).
+    pub fn push(&mut self, idx: usize) -> bool {
+        if self.queued.len() <= idx {
+            self.queued.resize(idx + 1, false);
+        }
+        if std::mem::replace(&mut self.queued[idx], true) {
+            return false;
+        }
+        self.len += 1;
+        self.queue.push_back(idx as u32);
+        true
+    }
+
+    pub fn contains(&self, idx: usize) -> bool {
+        self.queued.get(idx).copied().unwrap_or(false)
+    }
+
+    /// The object was removed.
+    pub fn remove(&mut self, idx: usize) {
+        if let Some(q) = self.queued.get_mut(idx)
+            && std::mem::replace(q, false)
+        {
+            self.len -= 1;
+            if self.len == 0 {
+                // nothing but skipped entries left
+                self.queue.clear();
+            }
+        }
+    }
+
+    /// The object that has waited longest.
+    pub fn pop(&mut self) -> Option<usize> {
+        while let Some(idx) = self.queue.pop_front() {
+            let idx = idx as usize;
+            if self.contains(idx) {
+                self.remove(idx);
+                return Some(idx);
+            }
+        }
+        None
+    }
+
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+}
+
 /// Main-thread time a frame still has for the full syncs that can wait.
 /// Only their own time counts: what the frame must do anyway (moves,
 /// avatars) does not eat it.
@@ -322,7 +397,17 @@ impl FullSyncBudget {
     /// always the first of the frame (the backlog advances whatever the
     /// budget).
     pub fn allows(&self) -> bool {
-        !self.left.is_zero() || self.done == 0
+        self.allows_beyond(std::time::Duration::ZERO)
+    }
+
+    /// The same, for work that must leave `reserve` of the budget to what
+    /// comes after it.
+    pub fn allows_beyond(&self, reserve: std::time::Duration) -> bool {
+        self.left > reserve || self.done == 0
+    }
+
+    pub fn left(&self) -> std::time::Duration {
+        self.left
     }
 
     /// A full sync took `spent`.
@@ -345,6 +430,8 @@ pub struct SyncSets {
     pub seen_mat_gen: u64,
     /// Objects whose full sync waits for a frame with time left.
     pub backlog: Backlog,
+    /// New objects waiting for their first sync.
+    pub arrivals: Arrivals,
     /// Where the next frame goes on in `pending`.
     pending_next: usize,
     listed: FrameMarks,
@@ -367,6 +454,7 @@ impl SyncSets {
         self.pending.remove(idx);
         self.material_users.remove(idx);
         self.backlog.remove(idx);
+        self.arrivals.remove(idx);
     }
 
     /// An object changed through the store: synced this frame, and moving
@@ -458,6 +546,10 @@ impl SyncSets {
         // LOD slice: (frame + idx) is a multiple of LOD_PERIOD
         let start = ((LOD_PERIOD - frame % LOD_PERIOD) % LOD_PERIOD) as usize;
         for idx in (start..n).step_by(LOD_PERIOD as usize) {
+            // (its first sync chooses its detail level)
+            if self.arrivals.contains(idx) {
+                continue;
+            }
             let Some(o) = objects.get(idx) else {
                 continue;
             };
@@ -1077,6 +1169,86 @@ mod tests {
         b.push(8, 1.0);
         b.remove(8);
         assert!(b.heap.is_empty() && b.pop().is_none());
+    }
+
+    #[test]
+    fn arrivals_are_served_in_arrival_order() {
+        let mut a = Arrivals::default();
+        assert!(a.pop().is_none() && a.is_empty());
+        assert!(a.push(12));
+        assert!(a.push(3));
+        assert!(a.push(40));
+        // already waiting: it keeps its place
+        assert!(!a.push(3));
+        assert_eq!(a.len(), 3);
+        assert!(a.contains(40) && !a.contains(4) && !a.contains(999));
+        // removed while it waits, twice, and one that never waited
+        a.remove(3);
+        a.remove(3);
+        a.remove(999);
+        assert_eq!(a.len(), 2);
+        // its slot taken again by a new object: served once, at the place
+        // of the first entry met
+        a.push(3);
+        let order: Vec<usize> = std::iter::from_fn(|| a.pop()).collect();
+        assert_eq!(order, [12, 3, 40]);
+        assert!(a.is_empty() && !a.contains(12));
+        // emptied by removals alone: nothing left to skip
+        a.push(8);
+        a.remove(8);
+        assert!(a.queue.is_empty() && a.pop().is_none());
+    }
+
+    #[test]
+    fn arrivals_wait_out_of_the_frame_list() {
+        let mut f = Fixture::new();
+        let state = State::default();
+        let objs: Vec<usize> = (0..50).map(|i| f.add(9000 + i, 0, false)).collect();
+        f.frame(&state);
+        // a new object waiting for its first sync: the LOD slice passes it
+        let waiting = objs[7];
+        f.sets.arrivals.push(waiting);
+        let mut seen = vec![0u32; objs.len()];
+        for _ in 0..LOD_PERIOD {
+            for idx in f.frame(&state) {
+                seen[idx] += 1;
+            }
+        }
+        assert_eq!(seen[waiting], 0);
+        assert!(objs.iter().all(|&i| i == waiting || seen[i] == 1), "{seen:?}");
+        // served: visited like the others from then on
+        assert_eq!(f.sets.arrivals.pop(), Some(waiting));
+        let visits: usize = (0..LOD_PERIOD)
+            .map(|_| f.frame(&state).iter().filter(|&&i| i == waiting).count())
+            .sum();
+        assert_eq!(visits, 1);
+        // a removed object leaves the arrivals with the other sets
+        f.sets.arrivals.push(waiting);
+        f.sets.forget(waiting);
+        assert!(f.sets.arrivals.is_empty() && f.sets.arrivals.pop().is_none());
+    }
+
+    #[test]
+    fn full_sync_budget_keeps_a_reserve() {
+        let us = std::time::Duration::from_micros;
+        // the first half of the budget, then what is left of it
+        let mut b = FullSyncBudget::new(us(1000));
+        let reserve = b.left() / 2;
+        let mut first = 0;
+        while b.allows_beyond(reserve) {
+            b.spend(us(100));
+            first += 1;
+        }
+        assert_eq!((first, b.left()), (5, us(500)));
+        let mut rest = 0;
+        while b.allows() {
+            b.spend(us(100));
+            rest += 1;
+        }
+        assert_eq!(rest, 5);
+        // no time at all: the first of the frame is still done
+        let b = FullSyncBudget::new(us(0));
+        assert!(b.allows_beyond(us(0)) && b.allows_beyond(us(400)));
     }
 
     #[test]

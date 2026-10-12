@@ -92,6 +92,20 @@ const GEOM_FREED_PER_FRAME: usize = 256;
 /// and the pool's workers (frame_par.rs); the costs are those of the dev
 /// profile. Placing an object in the sync's planning: 0.3 µs.
 const PLAN_GRAIN: Grain = Grain { chunk: 32, per_helper: 8 };
+
+/// The per-object table with room for `n` objects, its memory already
+/// written once: the pages of a fresh allocation are only given by the
+/// system when first written, which the frame filling the table for a
+/// region's objects paid for (0.4 ms for 12 000 objects).
+fn prefaulted_table(n: usize) -> Vec<ObjGpu> {
+    let mut gpu = Vec::new();
+    gpu.resize_with(n, ObjGpu::default);
+    gpu.clear();
+    gpu
+}
+
+/// First syncs of new objects between two readings of the clock.
+const ARRIVALS_PER_CLOCK: usize = 8;
 /// An object's faces sorted into the draw lists: about as much. With the
 /// lists culled on the GPU a frame visits a few hundred objects, on the
 /// calling thread alone.
@@ -771,7 +785,7 @@ impl Scene {
             avatar_lib,
             // (room for a busy region: the first doublings of a growing
             // `Vec` would copy megabytes in the middle of an arrival)
-            gpu: Vec::with_capacity(32_768),
+            gpu: prefaulted_table(32_768),
             regions: HashMap::new(),
             water: water::WaterGpu::default(),
             banlines: banlines::BanLines::default(),
@@ -1574,6 +1588,12 @@ impl Scene {
         for &idx in &touched {
             // a new object in the slot of a removed one not released yet
             self.release_slot(renderer, idx);
+            // a new object: its first sync waits its turn, without a
+            // place in this frame's list
+            if world.objects.is_arrival(idx) {
+                self.sets.arrivals.push(idx);
+                continue;
+            }
             let rigged = self.gpu.get(idx).is_some_and(|g| g.moves_with_skeleton());
             self.sets.touched(&world.objects, agent, idx, rigged);
             // (its click action or flags may have changed)
@@ -1645,6 +1665,11 @@ impl Scene {
                     // (without a transform the sync only notes that the
                     // object still waits for its parent)
                     let now_or_never = avatar || xf.is_none();
+                    if !now_or_never && self.sets.arrivals.contains(idx) {
+                        // listed with its parent: its turn comes with the
+                        // other new objects
+                        continue;
+                    }
                     if now_or_never || (self.sets.backlog.is_empty() && budget.allows()) {
                         let started = Instant::now();
                         self.sets.backlog.remove(idx);
@@ -1663,6 +1688,12 @@ impl Scene {
                 }
             }
         }
+        // New objects first, for half of the time left at most: what they
+        // ask for (a geometry to build, a mesh to download) takes the
+        // longest to come, and the objects already waiting for their faces
+        // keep the other half.
+        let reserve = budget.left() / 2;
+        self.sync_arrivals(renderer, world, now, view, mat_gen, &mut budget, reserve, &mut synced);
         while budget.allows() {
             let Some(idx) = self.sets.backlog.pop() else {
                 break;
@@ -1673,7 +1704,17 @@ impl Scene {
             synced.push(idx);
             budget.spend(started.elapsed());
         }
-        self.stats.sync_backlog = self.sets.backlog.len();
+        self.sync_arrivals(
+            renderer,
+            world,
+            now,
+            view,
+            mat_gen,
+            &mut budget,
+            std::time::Duration::ZERO,
+            &mut synced,
+        );
+        self.stats.sync_backlog = self.sets.backlog.len() + self.sets.arrivals.len();
         let t_part = self.parts.lap(Part::SyncApply, t_part);
         self.update_anchors(renderer, world, now);
         let t_part = self.parts.lap(Part::SyncAnchors, t_part);
@@ -1847,10 +1888,41 @@ impl Scene {
         }
     }
 
+    /// First sync of the new objects, in arrival order, while `budget`
+    /// allows it beyond `reserve`.
+    #[allow(clippy::too_many_arguments)]
+    fn sync_arrivals(
+        &mut self,
+        renderer: &mut Renderer,
+        world: &mut World,
+        now: Instant,
+        view: &CullView,
+        mat_gen: u64,
+        budget: &mut FullSyncBudget,
+        reserve: std::time::Duration,
+        synced: &mut Vec<usize>,
+    ) {
+        while !self.sets.arrivals.is_empty() && budget.allows_beyond(reserve) {
+            // (the clock is read once for a few objects: a first sync that
+            // only asks for a geometry takes a fraction of a microsecond)
+            let started = Instant::now();
+            for _ in 0..ARRIVALS_PER_CLOCK {
+                let Some(idx) = self.sets.arrivals.pop() else {
+                    break;
+                };
+                self.sync_object(renderer, world, idx, now, view, None);
+                self.after_full_sync(world, idx, mat_gen);
+                synced.push(idx);
+            }
+            budget.spend(started.elapsed());
+        }
+    }
+
     /// Bookkeeping after a full sync: what could not finish is retried next
     /// frame, geometry still pending is watched, material users noted, and
-    /// a mesh found rigged starts moving.
-    fn after_full_sync(&mut self, world: &World, idx: usize, mat_gen: u64) {
+    /// a mesh found rigged starts moving. A new object is no longer one.
+    fn after_full_sync(&mut self, world: &mut World, idx: usize, mat_gen: u64) {
+        world.objects.settle(idx);
         let Some(g) = self.gpu.get(idx) else {
             return;
         };
