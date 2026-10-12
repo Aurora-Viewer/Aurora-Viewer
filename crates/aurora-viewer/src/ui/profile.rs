@@ -934,7 +934,7 @@ fn own_bottom(ui: &mut egui::Ui, p: &Palette, w: &mut Window, profile: Option<&A
         ui.spacing_mut().item_spacing.x = 12.0;
         if let Some(pr) = profile {
             let mut publish = pr.allow_publish();
-            if ui.checkbox(&mut publish, aurora_i18n::tr!("common-show-in-search")).changed() {
+            if widgets::checkbox(ui, p, &mut publish, aurora_i18n::tr!("common-show-in-search")).changed() {
                 actions.push(ProfileAction::Save {
                     target: w.id,
                     data: llsd_map! { "allow_publish" => publish },
@@ -945,10 +945,7 @@ fn own_bottom(ui: &mut egui::Ui, p: &Palette, w: &mut Window, profile: Option<&A
                 && now - born > 365.0 * 86_400.0
             {
                 let mut full = !hide;
-                if ui
-                    .checkbox(&mut full, aurora_i18n::tr!("ui-profile-show-full-birth-date"))
-                    .changed()
-                {
+                if widgets::checkbox(ui, p, &mut full, aurora_i18n::tr!("ui-profile-show-full-birth-date")).changed() {
                     actions.push(ProfileAction::Save {
                         target: w.id,
                         data: llsd_map! { "hide_age" => !full },
@@ -1112,7 +1109,7 @@ fn rights_dialog(ctx: &egui::Context, p: &Palette, w: &mut Window, name: &str, r
             (4, aurora_i18n::tr!("ui-profile-modify-delete-or-take-my-objects")),
         ] {
             let mut on = r & bit != 0;
-            if ui.checkbox(&mut on, label).changed() {
+            if widgets::checkbox(ui, p, &mut on, label).changed() {
                 r = if on { r | bit } else { r & !bit };
             }
         }

@@ -153,6 +153,7 @@ pub(super) fn show(
         ui.add_space(super::KEY_W);
         let (r, on) = check(
             ui,
+            p,
             can,
             parcel.media.auto_scale,
             aurora_i18n::tr!("ui-land-media-automatic-scaling"),
@@ -201,6 +202,7 @@ pub(super) fn show(
         // DEV-10042: no looping for static types
         let (r, on) = check(
             ui,
+            p,
             can && allow_loop,
             allow_loop && parcel.media.looping,
             aurora_i18n::tr!("ui-land-media-looping"),

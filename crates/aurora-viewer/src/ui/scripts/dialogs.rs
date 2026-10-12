@@ -62,8 +62,8 @@ impl Search {
                 ui.add_enabled(editable, egui::TextEdit::singleline(&mut self.replacement).desired_width(280.0));
             });
             ui.horizontal(|ui| {
-                ui.checkbox(&mut self.insensitive, aurora_i18n::tr!("script-search-insensitive"));
-                ui.checkbox(&mut self.up, aurora_i18n::tr!("script-search-up"));
+                crate::ui::widgets::checkbox(ui, p, &mut self.insensitive, aurora_i18n::tr!("script-search-insensitive"));
+                crate::ui::widgets::checkbox(ui, p, &mut self.up, aurora_i18n::tr!("script-search-up"));
             });
             ui.horizontal(|ui| {
                 if flat_button(ui, p, aurora_i18n::tr!("script-search-find")).clicked() {
@@ -173,13 +173,13 @@ impl Preferences {
                         ui.add(egui::Label::new(self.preview.custom(preview, p, egui::FontId::monospace(settings.font_size.clamp(8.0,32.0)), settings, "", false)));
                     });
                     ui.separator();
-                    ui.checkbox(&mut settings.convert_tabs, aurora_i18n::tr!("script-preferences-convert-tabs"));
-                    ui.checkbox(&mut settings.preprocessor, aurora_i18n::tr!("script-preferences-preprocessor"));
+                    crate::ui::widgets::switch_labeled(ui, p, &mut settings.convert_tabs, aurora_i18n::tr!("script-preferences-convert-tabs"));
+                    crate::ui::widgets::switch_labeled(ui, p, &mut settings.preprocessor, aurora_i18n::tr!("script-preferences-preprocessor"));
                     ui.add_enabled_ui(settings.preprocessor, |ui| {
-                        ui.checkbox(&mut settings.optimize, aurora_i18n::tr!("script-preferences-optimize"));
-                        ui.checkbox(&mut settings.switches, aurora_i18n::tr!("script-preferences-switches"));
-                        ui.checkbox(&mut settings.lazy_lists, aurora_i18n::tr!("script-preferences-lazy-lists"));
-                        ui.checkbox(&mut settings.disk_includes, aurora_i18n::tr!("script-preferences-disk-includes"));
+                        crate::ui::widgets::switch_labeled(ui, p, &mut settings.optimize, aurora_i18n::tr!("script-preferences-optimize"));
+                        crate::ui::widgets::switch_labeled(ui, p, &mut settings.switches, aurora_i18n::tr!("script-preferences-switches"));
+                        crate::ui::widgets::switch_labeled(ui, p, &mut settings.lazy_lists, aurora_i18n::tr!("script-preferences-lazy-lists"));
+                        crate::ui::widgets::switch_labeled(ui, p, &mut settings.disk_includes, aurora_i18n::tr!("script-preferences-disk-includes"));
                         ui.label(aurora_i18n::tr!("script-preferences-include-path"));
                         ui.add_enabled_ui(settings.disk_includes, |ui| {
                             ui.horizontal(|ui| {
@@ -197,8 +197,8 @@ impl Preferences {
                         });
                     });
                     ui.separator();
-                    ui.checkbox(&mut settings.owner_say_debug, aurora_i18n::tr!("script-preferences-owner-say"));
-                    ui.checkbox(&mut settings.recompile, aurora_i18n::tr!("script-preferences-recompile"));
+                    crate::ui::widgets::switch_labeled(ui, p, &mut settings.owner_say_debug, aurora_i18n::tr!("script-preferences-owner-say"));
+                    crate::ui::widgets::switch_labeled(ui, p, &mut settings.recompile, aurora_i18n::tr!("script-preferences-recompile"));
                     ui.label(aurora_i18n::tr!("script-preferences-external"));
                     ui.text_edit_singleline(&mut settings.external_editor);
                     ui.label(RichText::new(aurora_i18n::tr!("script-preferences-external-hint")).small().color(p.muted));
@@ -257,7 +257,7 @@ impl Help {
                     self.at += 1;
                     self.keyword.clone_from(&self.history[self.at]);
                 }
-                ui.checkbox(&mut settings.help_follows_cursor, aurora_i18n::tr!("script-help-follow"));
+                crate::ui::widgets::checkbox(ui, p, &mut settings.help_follows_cursor, aurora_i18n::tr!("script-help-follow"));
             });
             ui.text_edit_singleline(&mut self.filter);
             let mut selected = None;

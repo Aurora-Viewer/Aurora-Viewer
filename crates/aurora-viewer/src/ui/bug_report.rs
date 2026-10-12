@@ -548,13 +548,13 @@ impl BugReportUi {
             }
             2 => {
                 ui.add_enabled_ui(self.delivery == Delivery::Direct, |ui| {
-                    ui.checkbox(&mut self.include_logs, aurora_i18n::tr!("bug-private-logs"));
+                    super::widgets::checkbox(ui, p, &mut self.include_logs, aurora_i18n::tr!("bug-private-logs"));
                 });
                 ui.label(RichText::new(aurora_i18n::tr!("bug-private-logs-help")).size(12.0).color(p.amber));
                 ui.add_space(10.0);
                 ui.label(RichText::new(aurora_i18n::tr!("bug-fields-help")).size(12.0).color(p.muted));
                 for field in &mut self.report.fields {
-                    ui.checkbox(&mut field.included, aurora_i18n::text(field.label));
+                    super::widgets::checkbox(ui, p, &mut field.included, aurora_i18n::text(field.label));
                     ui.indent(field.heading, |ui| {
                         ui.add(egui::Label::new(RichText::new(field.display_value()).color(p.muted)).wrap());
                     });
@@ -562,7 +562,7 @@ impl BugReportUi {
                 }
                 ui.add_space(8.0);
                 ui.add_enabled_ui(!self.report.excerpt.is_empty(), |ui| {
-                    ui.checkbox(&mut self.report.include_excerpt, aurora_i18n::tr!("bug-log"));
+                    super::widgets::checkbox(ui, p, &mut self.report.include_excerpt, aurora_i18n::tr!("bug-log"));
                 });
                 ui.label(RichText::new(aurora_i18n::tr!("bug-log-help")).size(12.0).color(p.muted));
                 if !self.report.excerpt.is_empty() {
@@ -601,7 +601,7 @@ impl BugReportUi {
                                     });
                                 }
                             });
-                            if ui.checkbox(&mut self.include_ui, aurora_i18n::tr!("bug-with-ui")).changed() {
+                            if super::widgets::checkbox(ui, p, &mut self.include_ui, aurora_i18n::tr!("bug-with-ui")).changed() {
                                 self.capture_option_changed(in_world);
                             }
                         });
@@ -611,7 +611,7 @@ impl BugReportUi {
                         if self.image.is_some() {
                             ui.add_enabled_ui(!busy, |ui| {
                                 ui.horizontal_wrapped(|ui| {
-                                    ui.checkbox(&mut self.include_image, aurora_i18n::tr!("bug-include-image"));
+                                    super::widgets::checkbox(ui, p, &mut self.include_image, aurora_i18n::tr!("bug-include-image"));
                                     let remove = aurora_i18n::tr!("bug-remove-image");
                                     if action_button(ui, p, "trash-filled", remove, ActionKind::Flat, BUTTON).clicked() {
                                         self.image = None;

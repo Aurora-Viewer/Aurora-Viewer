@@ -255,7 +255,7 @@ impl ColorPicker {
                 );
                 ui.separator();
                 ui.horizontal(|ui| {
-                    let apply = ui.checkbox(&mut prefs.apply, aurora_i18n::tr!("color-picker-apply"));
+                    let apply = widgets::checkbox(ui, p, &mut prefs.apply, aurora_i18n::tr!("color-picker-apply"));
                     self.record(Control::Apply, apply.rect);
                     apply.on_hover_text(aurora_i18n::tr!("color-picker-apply-hint"));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

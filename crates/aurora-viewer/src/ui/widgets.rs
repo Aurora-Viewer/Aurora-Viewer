@@ -5,6 +5,8 @@ use crate::theme::Palette;
 use egui::{Color32, CornerRadius, RichText, Sense, Stroke, Vec2};
 
 #[cfg(test)]
+mod check_tests;
+#[cfg(test)]
 mod collapse_tests;
 pub mod color;
 pub mod demo;
@@ -449,6 +451,92 @@ pub fn switch(ui: &mut egui::Ui, p: &Palette, on: &mut bool) -> egui::Response {
     let knob_radius = CornerRadius::same(radius.nw.saturating_sub(1).max(1));
     painter.rect_filled(knob, knob_radius, if *on { p.ink } else { p.muted });
     resp
+}
+
+/// Check box of the interface, with the contract of `ui.checkbox`: the
+/// response is `changed()` when a click flipped `on`. A flat square with the
+/// corners of the theme, violet and ticked when on; the square and its label
+/// are one clickable row.
+pub fn checkbox(ui: &mut egui::Ui, p: &Palette, on: &mut bool, label: impl Into<egui::WidgetText>) -> egui::Response {
+    check_row(ui, p, on, label.into(), false)
+}
+
+/// `checkbox` showing a dash instead of its tick while `mixed`: the objects
+/// of a selection do not agree.
+pub fn checkbox_mixed(ui: &mut egui::Ui, p: &Palette, on: &mut bool, label: impl Into<egui::WidgetText>, mixed: bool) -> egui::Response {
+    check_row(ui, p, on, label.into(), mixed)
+}
+
+fn check_row(ui: &mut egui::Ui, p: &Palette, on: &mut bool, label: egui::WidgetText, mixed: bool) -> egui::Response {
+    // the geometry of the stock check box: a window keeps its layout
+    let (side, gap) = (ui.spacing().icon_width, ui.spacing().icon_spacing);
+    let galley =
+        (!label.is_empty()).then(|| label.into_galley(ui, None, (ui.available_width() - side - gap).max(0.0), egui::TextStyle::Button));
+    let mut size = Vec2::new(side, 0.0);
+    if let Some(galley) = &galley {
+        size += Vec2::new(gap, 0.0) + galley.size();
+    }
+    let size = size.max(Vec2::splat(ui.spacing().interact_size.y));
+    let (rect, mut resp) = ui.allocate_exact_size(size, Sense::click());
+    if resp.clicked() {
+        *on = !*on;
+        resp.mark_changed();
+    }
+    let checked = *on;
+    resp.widget_info(|| {
+        let text = galley.as_ref().map_or("", |galley| galley.text());
+        egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), checked, text)
+    });
+    if ui.is_rect_visible(rect) {
+        let hot = resp.hovered() || resp.has_focus();
+        let square = egui::Rect::from_center_size(egui::pos2(rect.left() + side / 2.0, rect.center().y), Vec2::splat(side));
+        let fill = match (checked || mixed, hot) {
+            (true, false) => p.violet,
+            (true, true) => p.violet_light,
+            (false, false) => p.raised,
+            (false, true) => p.raised.lerp_to_gamma(p.ink, 0.16),
+        };
+        let painter = ui.painter();
+        painter.rect_filled(square, ui.visuals().window_corner_radius, fill);
+        let mark = Stroke::new(1.6, p.ink);
+        if mixed {
+            painter.hline(square.shrink(3.5).x_range(), square.center().y, mark);
+        } else if checked {
+            match super::icons::global("check") {
+                Some(icon) => {
+                    let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+                    painter.image(icon.id(), square.shrink(1.0), uv, p.ink);
+                }
+                // no icon theme: the tick is drawn
+                None => {
+                    let c = square.center();
+                    let tick = [c + Vec2::new(-3.5, 0.0), c + Vec2::new(-1.0, 2.5), c + Vec2::new(3.5, -2.5)];
+                    painter.line_segment([tick[0], tick[1]], mark);
+                    painter.line_segment([tick[1], tick[2]], mark);
+                }
+            }
+        }
+        if let Some(galley) = galley {
+            let text = egui::pos2(square.right() + gap, rect.center().y - galley.size().y / 2.0);
+            painter.galley(text, galley, p.ink);
+        }
+    }
+    resp
+}
+
+/// A switch followed by its label, both clickable: a lone on / off setting
+/// of a window. The response is `changed()` when either flipped `on`.
+pub fn switch_labeled(ui: &mut egui::Ui, p: &Palette, on: &mut bool, label: impl Into<egui::WidgetText>) -> egui::Response {
+    ui.horizontal(|ui| {
+        let mut resp = switch(ui, p, on);
+        let text = ui.add(egui::Label::new(label).sense(Sense::click()));
+        if text.clicked() {
+            *on = !*on;
+            resp.mark_changed();
+        }
+        resp.union(text)
+    })
+    .inner
 }
 
 /// Flat tab strip. Returns true when the selection changed.

@@ -132,12 +132,12 @@ pub fn spin_i(ui: &mut egui::Ui, v: &mut i32, range: std::ops::RangeInclusive<i3
 }
 
 /// Check box that can show a mixed state; returns the new value when clicked.
-pub fn check(ui: &mut egui::Ui, value: bool, tentative: bool, label: &str, enabled: bool) -> Option<bool> {
+pub fn check(ui: &mut egui::Ui, p: &Palette, value: bool, tentative: bool, label: &str, enabled: bool) -> Option<bool> {
     let mut v = value && !tentative;
-    let r = ui.add_enabled(
-        enabled,
-        egui::Checkbox::new(&mut v, RichText::new(label).size(12.0)).indeterminate(tentative),
-    );
+    let label = RichText::new(label).size(12.0);
+    let r = ui
+        .add_enabled_ui(enabled, |ui| crate::ui::widgets::checkbox_mixed(ui, p, &mut v, label, tentative))
+        .inner;
     r.clicked().then_some(v)
 }
 

@@ -92,6 +92,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
     let animated = extra.extended_mesh_flags.unwrap_or(0) & EXTENDED_MESH_ANIMATED != 0;
     if let Some(v) = check(
         ui,
+        p,
         animated,
         false,
         aurora_i18n::tr!("build-ui-features-animated-mesh"),
@@ -110,6 +111,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         let can_flex = matches!(volume.path.curve_type, LL_PCODE_PATH_LINE | LL_PCODE_PATH_FLEXIBLE) && !mesh;
         if let Some(v) = check(
             ui,
+            p,
             extra.flexible.is_some(),
             false,
             aurora_i18n::tr!("build-ui-features-flexibility"),
@@ -264,7 +266,7 @@ fn light_section(
     let l = extra.light.unwrap_or(LIGHT_DEFAULT);
     let img = extra.light_image;
     ui.horizontal(|ui| {
-        if let Some(v) = check(ui, extra.light.is_some(), false, aurora_i18n::tr!("common-light"), enabled) {
+        if let Some(v) = check(ui, p, extra.light.is_some(), false, aurora_i18n::tr!("common-light"), enabled) {
             tool.set_extra(world, idx, Extra::Light(v.then_some(LIGHT_DEFAULT)));
         }
         ui.add_space(12.0);
@@ -351,7 +353,7 @@ fn probe_section(
         (aurora_i18n::tr!("common-box"), PROBE_BOX),
     ];
     ui.horizontal(|ui| {
-        if let Some(v) = check(ui, probe.is_some(), false, aurora_i18n::tr!("common-reflection-probe"), enabled) {
+        if let Some(v) = check(ui, p, probe.is_some(), false, aurora_i18n::tr!("common-reflection-probe"), enabled) {
             if v {
                 // ReflectionProbeApplied: confirmed first
                 tool.ui.confirm = Some(Confirm::Probe);
@@ -367,6 +369,7 @@ fn probe_section(
     ui.add_enabled_ui(on, |ui| {
         if let Some(d) = check(
             ui,
+            p,
             pr.flags & PROBE_DYNAMIC != 0,
             false,
             aurora_i18n::tr!("build-ui-features-dynamic"),

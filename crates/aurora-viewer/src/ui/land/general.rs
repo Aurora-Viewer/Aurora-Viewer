@@ -108,6 +108,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
         ui.add_space(super::KEY_W);
         let (r, on) = check(
             ui,
+            p,
             enable_deed,
             allow_deed,
             aurora_i18n::tr!("ui-land-general-allow-deeding-to-group"),
@@ -136,6 +137,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
         ui.add_space(super::KEY_W);
         let (r, on) = check(
             ui,
+            p,
             enable_deed && allow_deed,
             parcel.flags & pf::CONTRIBUTE_WITH_DEED != 0,
             aurora_i18n::tr!("ui-land-general-owner-contributes-when-deeding-land"),

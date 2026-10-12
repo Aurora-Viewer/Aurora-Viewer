@@ -1668,10 +1668,7 @@ fn set_config_window(ctx: &egui::Context, p: &Palette, world: &mut World, st: &m
             ui.label(RichText::new(aurora_i18n::tr!("common-color")).size(12.5).color(p.ink));
         });
         let mut sort = cfg.sort_by_online;
-        if ui
-            .checkbox(&mut sort, aurora_i18n::tr!("ui-contacts-sort-by-online-status"))
-            .changed()
-        {
+        if widgets::switch_labeled(ui, p, &mut sort, aurora_i18n::tr!("ui-contacts-sort-by-online-status")).changed() {
             world.contact_sets.set_sort_by_online(&set, sort);
         }
         ui.separator();
@@ -1687,11 +1684,15 @@ fn set_config_window(ctx: &egui::Context, p: &Palette, world: &mut World, st: &m
             }
             ui.label(RichText::new(aurora_i18n::tr!("ui-contacts-default-color")).size(12.5).color(p.ink));
         });
-        ui.checkbox(
+        widgets::switch_labeled(
+            ui,
+            p,
             &mut settings.set_list_icons,
             aurora_i18n::tr!("ui-contacts-show-profile-pictures-in-contact-set-lists"),
         );
-        ui.checkbox(
+        widgets::switch_labeled(
+            ui,
+            p,
             &mut settings.colorize_friends,
             aurora_i18n::tr!("ui-contacts-friend-list-color-based-on-contact-set"),
         );

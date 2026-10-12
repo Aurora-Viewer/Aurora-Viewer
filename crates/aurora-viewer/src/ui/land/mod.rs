@@ -577,8 +577,11 @@ fn icon_button(ui: &mut egui::Ui, p: &Palette, icon: &str, enabled: bool) -> egu
 }
 
 /// A checkbox that reports a click (the value is the parcel's, not kept).
-fn check(ui: &mut egui::Ui, enabled: bool, mut value: bool, label: &str) -> (egui::Response, bool) {
-    let r = ui.add_enabled(enabled, egui::Checkbox::new(&mut value, RichText::new(label).size(12.0)));
+fn check(ui: &mut egui::Ui, p: &Palette, enabled: bool, mut value: bool, label: &str) -> (egui::Response, bool) {
+    let label = RichText::new(label).size(12.0);
+    let r = ui
+        .add_enabled_ui(enabled, |ui| super::widgets::checkbox(ui, p, &mut value, label))
+        .inner;
     (r, value)
 }
 

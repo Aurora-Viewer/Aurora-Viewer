@@ -542,7 +542,7 @@ pub fn show_transform(
     }
 }
 
-pub fn show_flags(ui: &mut egui::Ui, _p: &Palette, tool: &mut BuildTool, world: &mut World) {
+pub fn show_flags(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World) {
     let Some(key) = tool.selection.first().copied() else { return };
     let Some(idx) = world.objects.index_of(&key) else { return };
     let Some(o) = world.objects.get(idx) else { return };
@@ -561,6 +561,7 @@ pub fn show_flags(ui: &mut egui::Ui, _p: &Palette, tool: &mut BuildTool, world: 
     }));
     if let Some(v) = check(
         ui,
+        p,
         locked.unwrap_or(false),
         locked_mixed,
         aurora_i18n::tr!("build-ui-object-locked"),
@@ -571,6 +572,7 @@ pub fn show_flags(ui: &mut egui::Ui, _p: &Palette, tool: &mut BuildTool, world: 
     let root_ok = editable && is_root;
     if let Some(v) = check(
         ui,
+        p,
         flags & FLAGS_USE_PHYSICS != 0,
         false,
         aurora_i18n::tr!("build-ui-object-physics"),
@@ -580,6 +582,7 @@ pub fn show_flags(ui: &mut egui::Ui, _p: &Palette, tool: &mut BuildTool, world: 
     }
     if let Some(v) = check(
         ui,
+        p,
         flags & FLAGS_TEMPORARY_ON_REZ != 0,
         false,
         aurora_i18n::tr!("common-temporary"),
@@ -589,6 +592,7 @@ pub fn show_flags(ui: &mut egui::Ui, _p: &Palette, tool: &mut BuildTool, world: 
     }
     if let Some(v) = check(
         ui,
+        p,
         flags & FLAGS_PHANTOM != 0,
         false,
         aurora_i18n::tr!("build-ui-object-phantom"),
@@ -893,6 +897,7 @@ fn sculpt_section(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &
     }
     if let Some(v) = check(
         ui,
+        p,
         sc.sculpt_type & LL_SCULPT_FLAG_MIRROR != 0,
         false,
         aurora_i18n::tr!("build-ui-object-mirror"),
@@ -906,6 +911,7 @@ fn sculpt_section(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &
     }
     if let Some(v) = check(
         ui,
+        p,
         sc.sculpt_type & LL_SCULPT_FLAG_INVERT != 0,
         false,
         aurora_i18n::tr!("status-inside-out"),

@@ -231,11 +231,11 @@ fn transform_options(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world
     divider(ui, p);
     ui.add_space(4.0);
     ui.spacing_mut().interact_size.y = 20.0;
-    if let Some(v) = common::check(ui, s.edit_linked, false, aurora_i18n::tr!("build-compact-linked"), true) {
+    if let Some(v) = common::check(ui, p, s.edit_linked, false, aurora_i18n::tr!("build-compact-linked"), true) {
         tool.set_edit_linked(world, s, v);
     }
     ui.horizontal(|ui| {
-        if let Some(v) = common::check(ui, s.snap, false, aurora_i18n::tr!("build-compact-snap"), true) {
+        if let Some(v) = common::check(ui, p, s.snap, false, aurora_i18n::tr!("build-compact-snap"), true) {
             s.snap = v;
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -259,7 +259,7 @@ fn transform_options(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world
             (&mut s.select_probes, aurora_i18n::tr!("build-compact-probes")),
             (&mut s.follow_edit_object, aurora_i18n::tr!("build-ui-tools-follow-edit-object")),
         ] {
-            if let Some(v) = common::check(ui, *value, false, title, true) {
+            if let Some(v) = common::check(ui, p, *value, false, title, true) {
                 *value = v;
             }
         }

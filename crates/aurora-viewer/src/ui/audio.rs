@@ -186,8 +186,7 @@ pub fn top_controls(
                                 {
                                     action = AudioAction::OpenPreferences;
                                 }
-                            } else if ui
-                                .checkbox(&mut audio.enabled[i], "")
+                            } else if super::widgets::checkbox(ui, p, &mut audio.enabled[i], "")
                                 .on_hover_text(if audio.enabled[i] {
                                     aurora_i18n::tr!("ui-audio-disable")
                                 } else {
@@ -201,14 +200,15 @@ pub fn top_controls(
                         }
                     });
                     ui.add_space(4.0);
-                    if ui
-                        .checkbox(
-                            &mut audio.music_autoplay,
-                            RichText::new(aurora_i18n::tr!("ui-audio-auto-play-parcel-music"))
-                                .size(11.5)
-                                .color(p.muted),
-                        )
-                        .changed()
+                    if super::widgets::checkbox(
+                        ui,
+                        p,
+                        &mut audio.music_autoplay,
+                        RichText::new(aurora_i18n::tr!("ui-audio-auto-play-parcel-music"))
+                            .size(11.5)
+                            .color(p.muted),
+                    )
+                    .changed()
                     {
                         action = AudioAction::Changed;
                     }

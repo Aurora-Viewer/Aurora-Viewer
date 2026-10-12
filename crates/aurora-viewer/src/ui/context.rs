@@ -672,7 +672,9 @@ pub fn external_link_confirm(ctx: &egui::Context, p: &Palette, url: &str, dont_w
         );
         ui.add_space(8.0);
         if danger.is_none() {
-            ui.checkbox(
+            super::widgets::checkbox(
+                ui,
+                p,
                 dont_warn,
                 RichText::new(aurora_i18n::tr!("ui-context-do-not-warn-me-again"))
                     .size(12.5)

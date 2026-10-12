@@ -429,7 +429,7 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
     });
     collapsing(ui, p, "pbr_maps", aurora_i18n::tr!("build-c3-maps-tints"), false, |ui| {
         ui.add_enabled_ui(editable, |ui| {
-            if let Some(v) = check(ui, mat.double_sided, false, aurora_i18n::tr!("common-double-sided"), editable) {
+            if let Some(v) = check(ui, p, mat.double_sided, false, aurora_i18n::tr!("common-double-sided"), editable) {
                 tool.edit_gltf(world, sel, |o| o.double_sided = Some(v));
             }
             let mut alpha = mat.base_color_factor[3];
@@ -617,6 +617,7 @@ fn blinn_phong(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut
             let (fb, fb_mixed) = same(sel.iter().map(|x| x.te.bump_shiny_fullbright & TEM_FULLBRIGHT != 0));
             if let Some(v) = check(
                 ui,
+                p,
                 fb.unwrap_or(false),
                 fb_mixed,
                 aurora_i18n::tr!("build-ui-texture-fullbright"),
@@ -960,7 +961,7 @@ fn face_options(
         });
         let legacy0 = tool.face_legacy(env, world, sel[0].idx, sel[0].face, &sel[0].te);
         let water = sel.iter().all(|x| is_hide_water(&x.te, legacy0.as_ref()));
-        if let Some(v) = check(ui, water, false, aurora_i18n::tr!("build-ui-texture-occlude-water"), true) {
+        if let Some(v) = check(ui, p, water, false, aurora_i18n::tr!("build-ui-texture-occlude-water"), true) {
             if v {
                 tool.ui.confirm = Some(Confirm::HideWater);
             } else {
@@ -971,6 +972,7 @@ fn face_options(
     ui.vertical(|ui| {
         if let Some(v) = check(
             ui,
+            p,
             s.sync_materials,
             false,
             aurora_i18n::tr!("build-ui-texture-synchronize-materials"),
@@ -992,13 +994,11 @@ fn face_options(
     ui.horizontal(|ui| {
         let mut align = tool.ui.planar_align;
         if ui
-            .add_enabled(
-                planar,
-                egui::Checkbox::new(
-                    &mut align,
-                    RichText::new(aurora_i18n::tr!("build-ui-texture-align-planar-faces")).size(12.0),
-                ),
-            )
+            .add_enabled_ui(planar, |ui| {
+                let label = RichText::new(aurora_i18n::tr!("build-ui-texture-align-planar-faces")).size(12.0);
+                crate::ui::widgets::checkbox(ui, p, &mut align, label)
+            })
+            .inner
             .changed()
         {
             tool.ui.planar_align = align;

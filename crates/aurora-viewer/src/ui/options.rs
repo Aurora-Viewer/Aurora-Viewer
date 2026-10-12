@@ -1465,14 +1465,15 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     ],
                 );
                 ui.add_space(4.0);
-                c |= ui
-                    .checkbox(
-                        &mut k.map_ranges,
-                        RichText::new(aurora_i18n::tr!("ui-options-show-whisper-normal-chat-and-shout-ranges-on-the"))
-                            .size(12.5)
-                            .color(p.ink),
-                    )
-                    .changed();
+                c |= super::widgets::switch_labeled(
+                    ui,
+                    p,
+                    &mut k.map_ranges,
+                    RichText::new(aurora_i18n::tr!("ui-options-show-whisper-normal-chat-and-shout-ranges-on-the"))
+                        .size(12.5)
+                        .color(p.ink),
+                )
+                .changed();
                 ui.add_enabled_ui(k.map_ranges, |ui| {
                     egui::Grid::new("ranges").num_columns(3).spacing([24.0, 6.0]).show(ui, |ui| {
                         for (label, on, col) in [
@@ -1481,7 +1482,7 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                             (aurora_i18n::tr!("ui-options-shout"), &mut k.map_shout_on, &mut k.map_shout),
                         ] {
                             ui.horizontal(|ui| {
-                                c |= ui.checkbox(on, "").changed();
+                                c |= super::widgets::checkbox(ui, p, on, "").changed();
                                 c |= swatch(ui, p, ("map_range", label), col);
                                 ui.label(RichText::new(label).size(12.5).color(p.ink));
                             });
@@ -1721,8 +1722,7 @@ fn audio_page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut Options
                     ch = true;
                 }
                 if i > 0 {
-                    ch |= ui
-                        .checkbox(&mut a.enabled[i], "")
+                    ch |= super::widgets::checkbox(ui, p, &mut a.enabled[i], "")
                         .on_hover_text(aurora_i18n::tr!("ui-options-enable-this-channel"))
                         .changed();
                 }

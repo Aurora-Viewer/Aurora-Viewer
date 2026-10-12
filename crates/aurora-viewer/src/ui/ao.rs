@@ -426,8 +426,8 @@ pub fn show(
                     let edit = &mut state.cycle_edit.as_mut().expect("cycle editor initialized").1;
                     let apply = ui
                         .horizontal(|ui| {
-                            ui.checkbox(&mut edit.cycle, aurora_i18n::tr!("ao-cycle"));
-                            ui.checkbox(&mut edit.random, aurora_i18n::tr!("ao-random"));
+                            toggle(ui, p, "ao-cycle", &mut edit.cycle);
+                            toggle(ui, p, "ao-random", &mut edit.random);
                             ui.add(egui::DragValue::new(&mut edit.seconds).range(0.0..=86400.0).suffix(" s").speed(1.0));
                             widgets::flat_button(ui, p, aurora_i18n::tr!("common-apply")).clicked()
                         })

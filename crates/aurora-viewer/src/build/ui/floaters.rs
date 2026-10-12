@@ -103,6 +103,7 @@ fn grid_options(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, s: &mut 
         });
         if let Some(v) = check(
             ui,
+            p,
             s.grid_sub_unit,
             false,
             aurora_i18n::tr!("build-ui-floaters-show-intermediate-tick-marks"),
@@ -262,11 +263,12 @@ fn media_settings(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world:
                 {
                     tool.media_home(world, env, &e.home_url);
                 }
-                if let Some(v) = check(ui, e.auto_loop, false, aurora_i18n::tr!("build-ui-floaters-loop-playback"), true) {
+                if let Some(v) = check(ui, p, e.auto_loop, false, aurora_i18n::tr!("build-ui-floaters-loop-playback"), true) {
                     e.auto_loop = v;
                 }
                 if let Some(v) = check(
                     ui,
+                    p,
                     e.first_click_interact,
                     false,
                     aurora_i18n::tr!("build-ui-floaters-interact-on-first-click"),
@@ -274,10 +276,24 @@ fn media_settings(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world:
                 ) {
                     e.first_click_interact = v;
                 }
-                if let Some(v) = check(ui, e.auto_zoom, false, aurora_i18n::tr!("build-ui-floaters-automatic-zoom"), true) {
+                if let Some(v) = check(
+                    ui,
+                    p,
+                    e.auto_zoom,
+                    false,
+                    aurora_i18n::tr!("build-ui-floaters-automatic-zoom"),
+                    true,
+                ) {
                     e.auto_zoom = v;
                 }
-                if let Some(v) = check(ui, e.auto_play, false, aurora_i18n::tr!("build-ui-floaters-auto-play-media"), true) {
+                if let Some(v) = check(
+                    ui,
+                    p,
+                    e.auto_play,
+                    false,
+                    aurora_i18n::tr!("build-ui-floaters-auto-play-media"),
+                    true,
+                ) {
                     e.auto_play = v;
                 }
                 small(
@@ -287,6 +303,7 @@ fn media_settings(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world:
                 );
                 if let Some(v) = check(
                     ui,
+                    p,
                     e.auto_scale,
                     false,
                     aurora_i18n::tr!("build-ui-floaters-automatically-resize-media-to-the-object-face"),
@@ -339,6 +356,7 @@ fn media_settings(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world:
                     section(ui, p, &title);
                     if let Some(v) = check(
                         ui,
+                        p,
                         e.perms_interact & bit != 0,
                         false,
                         aurora_i18n::tr!("build-ui-floaters-allow-navigation-interaction"),
@@ -348,6 +366,7 @@ fn media_settings(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world:
                     }
                     if let Some(v) = check(
                         ui,
+                        p,
                         e.perms_control & bit != 0,
                         false,
                         aurora_i18n::tr!("build-ui-floaters-show-control-bar"),
@@ -360,6 +379,7 @@ fn media_settings(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world:
             _ => {
                 if let Some(v) = check(
                     ui,
+                    p,
                     e.whitelist_enable,
                     false,
                     aurora_i18n::tr!("build-ui-floaters-allow-access-only-to-specified-urls"),
@@ -540,17 +560,18 @@ fn bulk_perms(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world: &mu
             .iter()
             .enumerate()
             {
-                if let Some(v) = check(ui, b.types[i], false, n, true) {
+                if let Some(v) = check(ui, p, b.types[i], false, n, true) {
                     b.types[i] = v;
                 }
             }
         });
         section(ui, p, aurora_i18n::tr!("common-rights"));
-        if let Some(v) = check(ui, b.share, false, aurora_i18n::tr!("build-ui-floaters-share-with-group"), true) {
+        if let Some(v) = check(ui, p, b.share, false, aurora_i18n::tr!("build-ui-floaters-share-with-group"), true) {
             b.share = v;
         }
         if let Some(v) = check(
             ui,
+            p,
             b.everyone_copy,
             false,
             aurora_i18n::tr!("build-ui-floaters-anyone-can-copy"),
@@ -560,13 +581,13 @@ fn bulk_perms(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world: &mu
         }
         label(ui, p, aurora_i18n::tr!("build-ui-floaters-next-owner-can"));
         ui.horizontal(|ui| {
-            if let Some(v) = check(ui, b.next_modify, false, aurora_i18n::tr!("common-edit"), true) {
+            if let Some(v) = check(ui, p, b.next_modify, false, aurora_i18n::tr!("common-edit"), true) {
                 b.next_modify = v;
             }
-            if let Some(v) = check(ui, b.next_copy, false, aurora_i18n::tr!("common-copy-2"), true) {
+            if let Some(v) = check(ui, p, b.next_copy, false, aurora_i18n::tr!("common-copy-2"), true) {
                 b.next_copy = v;
             }
-            if let Some(v) = check(ui, b.next_transfer, false, aurora_i18n::tr!("common-transfer"), true) {
+            if let Some(v) = check(ui, p, b.next_transfer, false, aurora_i18n::tr!("common-transfer"), true) {
                 b.next_transfer = v;
             }
         });
