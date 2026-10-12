@@ -96,16 +96,12 @@ pub fn filter_id() -> egui::Id {
 /// Ctrl+F was pressed for the window this `ui` is in: the keyboard is in
 /// one of `own` fields, or it is nowhere while the pointer is over this
 /// window. Another window with the keyboard (the script editor, a search
-/// field) keeps its shortcut, and so does whatever Ctrl+F does when the
-/// pointer is over the world or another window. The key is consumed when
-/// taken.
+/// field) keeps its shortcut, and the viewer's own (« Rechercher ») runs
+/// when the pointer is over the world or another window. The key is
+/// consumed when taken. The rule itself, shared with the app, is
+/// `find_shortcut::owner`.
 pub fn wants_shortcut(ui: &egui::Ui, own: &[egui::Id]) -> bool {
-    let ctx = ui.ctx();
-    let ours = match ctx.memory(|m| m.focused()) {
-        Some(id) => own.contains(&id),
-        None => ctx.pointer_latest_pos().and_then(|pos| ctx.layer_id_at(pos)) == Some(ui.layer_id()),
-    };
-    ours && ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::F))
+    super::super::find_shortcut::take(ui, own)
 }
 
 /// The find bar: field, previous / next, "3 / 17", close. Enter goes to the

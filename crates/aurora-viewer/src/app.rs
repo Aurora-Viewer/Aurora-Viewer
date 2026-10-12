@@ -8093,17 +8093,20 @@ impl ApplicationHandler for App {
                     // accelerators go before the focused field
                     // (LLViewerWindow::handleKey); the field keeps its own
                     // editing shortcuts (copy, paste, undo, words...)
-                    // (the script editor keeps Ctrl+F for its own search)
                     let shortcut = pressed
                         && typing
                         && (self.ctrl || self.alt)
                         && !crate::keybinds::is_text_edit_key(code)
-                        && self
-                            .settings
-                            .keybinds
-                            .triggered(&Input::key(code), self.mods())
-                            .is_some_and(|a| a != Action::Search || !ui::scripts::editor_focused(&self.egui_ctx));
-                    if (!pressed || (!resp.consumed && !typing) || shortcut) && !(pressed && ke.repeat) {
+                        && self.settings.keybinds.triggered(&Input::key(code), self.mods()).is_some();
+                    // Ctrl+F belongs to the window with its own find when the
+                    // keyboard is in it (script editor, conversation), or the
+                    // pointer over a conversation with the keyboard nowhere:
+                    // the viewer's shortcut on these keys (« Rechercher »)
+                    // only runs otherwise. The rule: ui::find_shortcut::owner.
+                    // The key is the one egui reads, which the window takes.
+                    let find_key = matches!(&ke.logical_key, winit::keyboard::Key::Character(c) if c.eq_ignore_ascii_case("f"));
+                    let find_taken = pressed && self.ctrl && find_key && ui::find_shortcut::window_takes_it(&self.egui_ctx);
+                    if (!pressed || (!resp.consumed && !typing) || shortcut) && !(pressed && ke.repeat) && !find_taken {
                         self.on_input(Input::key(code), pressed);
                     }
                 }

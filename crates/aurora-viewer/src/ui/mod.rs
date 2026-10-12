@@ -18,6 +18,7 @@ pub mod display_name;
 pub mod emoji;
 pub mod environment;
 pub mod exit;
+pub mod find_shortcut;
 pub mod fonts;
 pub mod hud;
 pub mod icons;
