@@ -29,6 +29,22 @@ use uuid::Uuid;
 /// Id of the window (layout, raise, demo placement).
 pub const WINDOW: &str = "search";
 
+/// The size the window opens with: room for the list beside the details
+/// (floater_fs_search.xml opens at 780 x 590, with a smaller font).
+const DEFAULT_SIZE: Vec2 = Vec2::new(900.0, 600.0);
+const MIN_SIZE: Vec2 = Vec2::new(720.0, 440.0);
+
+/// The window before the user moves or resizes it: in the middle of the
+/// work area (`layout::work_area`; floater_fs_search.xml is "centered"),
+/// with the gap of the first launch windows to the bars in a low viewer
+/// window. It stands over the middle of the screen, which those windows
+/// leave free: each of them stays visible beside it, down to 1280 x 720.
+pub(crate) fn default_rect(work: Rect) -> Rect {
+    let room = work.size() - Vec2::splat(2.0 * super::layout::GAP);
+    let size = DEFAULT_SIZE.min(room).max(MIN_SIZE);
+    Rect::from_min_size((work.center() - size * 0.5).round(), size)
+}
+
 /// What the window asks the app to do.
 pub enum SearchAction {
     /// onBtnFind of a tab.
@@ -475,10 +491,9 @@ impl SearchUi {
             self.tab = (settings.last_tab as usize).min(Tab::ALL.len() - 1);
         }
         let p = c.p;
-        let screen = ctx.content_rect();
-        let size = Vec2::new(900.0, 600.0).min(screen.size() - Vec2::splat(40.0));
-        let mut floater = Floater::new(WINDOW, aurora_i18n::tr!("search-title"), screen.center() - size * 0.5, size);
-        floater.min_size = Vec2::new(720.0, 440.0);
+        let default = default_rect(super::layout::work_area(ctx));
+        let mut floater = Floater::new(WINDOW, aurora_i18n::tr!("search-title"), default.min, default.size());
+        floater.min_size = MIN_SIZE;
         floater.show(ctx, p, open, |ui| {
             // "ls_tabs" of floater_fs_search.xml, in its order (Tab::ALL)
             let labels = [

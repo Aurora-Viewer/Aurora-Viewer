@@ -205,6 +205,33 @@ mod tests {
             assert_eq!(perf.right(), map.right());
             assert_eq!(chat.right(), map.right());
         }
+        // « Rechercher », closed at first: opened, it stands in the middle,
+        // inside the work area, and hides none of these windows entirely
+        for (width, height) in [(1280.0, 720.0), (1600.0, 900.0), (1920.0, 1017.0)] {
+            let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, height));
+            let work = super::layout::default_work_area(screen);
+            let search = super::search::default_rect(work);
+            assert_eq!(search.size(), egui::vec2(900.0, 600.0), "{width} x {height}");
+            assert!(work.shrink(GAP - 0.01).contains_rect(search), "{width} x {height}: {search:?}");
+            assert!((search.center() - work.center()).length() <= 1.0, "{width} x {height}: {search:?}");
+            let perf_pos = super::perf::default_pos(work, super::perf::COMPACT_W);
+            let perf = egui::Rect::from_min_size(
+                perf_pos,
+                egui::vec2(super::perf::COMPACT_W + super::perf::SIDES, super::perf::COMPACT_H),
+            );
+            let radar = egui::Rect::from_min_size(super::people::default_pos(work), super::people::DEFAULT_SIZE);
+            for (name, rect) in [
+                ("radar", radar),
+                ("map", super::minimap::default_rect(work)),
+                ("perf", perf),
+                ("chat", super::chat::default_rect(work)),
+            ] {
+                // a strip wide enough to read and to click stays beside it
+                let left = (search.left() - rect.left()).max(0.0);
+                let right = (rect.right() - search.right()).max(0.0);
+                assert!(left.max(right) >= 160.0, "{name} at {width} x {height}: {rect:?} under {search:?}");
+            }
+        }
         // Conversations has its whole height where there is room for it
         let large = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1920.0, 1017.0));
         assert_eq!(
