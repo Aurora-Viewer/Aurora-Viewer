@@ -319,9 +319,11 @@ pub fn draw(
                     let ratio_color = |v: f32, m: f32| {
                         let green = 1.0 - ((v - m) / m).clamp(0.0, 1.0);
                         let red = (v / m).min(1.0);
+                        // theme-guard: content — Firestorm's complexity ramp (complexity_color: red and green levels)
                         Color32::from_rgb((red * 255.0) as u8, (green * 255.0) as u8, 0)
                     };
                     let col = if tc.max == 0 || own {
+                        // theme-guard: content — Firestorm's complexity without a limit (LLColor4::grey1)
                         Color32::from_gray(190)
                     } else {
                         ratio_color(c as f32, tc.max as f32)
@@ -385,6 +387,8 @@ pub fn draw(
         }
     }
     let now_s = ctx.input(|i| i.time);
+    // the classic tag is a small card of the theme
+    let tag_radius = ctx.global_style().visuals.window_corner_radius;
     // far first so near tags draw on top
     tags.sort_by(|a, b| b.0.total_cmp(&a.0));
     for (d, sp, lines, in_voice, progress, avatar) in tags {
@@ -414,7 +418,7 @@ pub fn draw(
             }
             painter.rect_filled(
                 r,
-                3.0,
+                tag_radius,
                 Color32::from_rgba_unmultiplied(p.bar.r(), p.bar.g(), p.bar.b(), (190.0 * fade) as u8),
             );
             // still loading: thin progress bar along the bottom of the tag
@@ -424,7 +428,7 @@ pub fn draw(
                     Pos2::new(r.left() + 4.0, r.bottom() - 3.0),
                     Pos2::new(r.right() - 4.0, r.bottom() - 1.0),
                 );
-                painter.rect_filled(track, 1.0, p.field.gamma_multiply(fade));
+                painter.rect_filled(track, super::widgets::TRACK_RADIUS, p.field.gamma_multiply(fade));
                 let fill = egui::Rect::from_min_max(
                     track.min,
                     Pos2::new(track.left() + track.width() * f.clamp(0.02, 1.0), track.bottom()),
@@ -465,9 +469,10 @@ pub fn draw(
                     g.job.sections.first().map(|s| s.format.font_id.clone()).unwrap_or_default(),
                     Color32::from_black_alpha((a as f32 * 0.7) as u8),
                 );
-                painter.galley(rect.min + egui::vec2(1.0, 1.0), shadow, Color32::BLACK);
+                painter.galley(rect.min + egui::vec2(1.0, 1.0), shadow, Color32::PLACEHOLDER);
             }
-            painter.galley(rect.min, g, Color32::WHITE);
+            // every line was laid out with its own color: nothing to fall back on
+            painter.galley(rect.min, g, Color32::PLACEHOLDER);
             y += h;
         }
     }

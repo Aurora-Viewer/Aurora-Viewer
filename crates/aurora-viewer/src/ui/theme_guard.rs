@@ -167,16 +167,6 @@ const ALLOWED: &[(&str, &str, &str)] = &[
         COLOR,
         "left as it is while the conversation view is rewritten on its own branch: convert there",
     ),
-    (
-        "ui/hud.rs",
-        RADIUS,
-        "left as it is while the name tags are rewritten on their own branch: convert there",
-    ),
-    (
-        "ui/hud.rs",
-        COLOR,
-        "left as it is while the name tags are rewritten on their own branch: convert there",
-    ),
 ];
 
 /// The comment that allows one line of content, followed by its reason.
