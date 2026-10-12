@@ -73,10 +73,17 @@ pub(super) fn shortcuts(
     actions: &mut Vec<InvAction>,
 ) {
     if !ui.is_enabled()
+        || st.dialog.is_some()
         || !ui.memory(|m| m.has_focus(focus_id(st)) && m.allows_interaction(ui.layer_id()))
         || ui.ctx().text_edit_focused()
         || egui::Popup::is_any_open(ui.ctx())
     {
+        return;
+    }
+    if !actions.iter().any(|action| matches!(action, InvAction::Edit(_))) {
+        super::delete::shortcut(ui, inv, st, prefs, facts);
+    }
+    if st.dialog.is_some() {
         return;
     }
     // egui-winit consumes the physical C/X/V presses and emits these native
@@ -143,7 +150,7 @@ fn demo_mode() -> Option<&'static str> {
 }
 
 pub(super) fn demo_row(response: &egui::Response, st: &InventoryUi, item: Uuid) {
-    if demo_mode().is_some() {
+    if demo_mode().is_some() || super::delete::demo_enabled() {
         response
             .ctx
             .data_mut(|data| data.insert_temp(egui::Id::new(("clipboard_demo_row", st.ui_id, item)), response.rect.center()));
@@ -370,7 +377,11 @@ mod tests {
                     _ => None,
                 }
             }
-            let label = rules::name(&self.world.inventory, item);
+            let label = if self.world.inventory.folders.contains_key(&item) {
+                folder_name(&self.world.inventory, item)
+            } else {
+                rules::name(&self.world.inventory, item)
+            };
             let rect = self.ctx.memory(|m| m.area_rect(egui::Id::new(window))).expect("inventory window");
             self.output
                 .shapes
@@ -380,9 +391,10 @@ mod tests {
                 .unwrap_or_else(|| panic!("missing visible row: {label}"))
         }
 
-        fn click(&mut self, pos: Pos2, modifiers: egui::Modifiers) {
+        fn click(&mut self, pos: Pos2, modifiers: egui::Modifiers) -> Vec<InvAction> {
+            let mut actions = Vec::new();
             for pressed in [true, false] {
-                self.frame(vec![
+                actions.extend(self.frame(vec![
                     Event::ModifiersChanged(modifiers),
                     Event::PointerMoved(pos),
                     Event::PointerButton {
@@ -391,8 +403,9 @@ mod tests {
                         pressed,
                         modifiers,
                     },
-                ]);
+                ]));
             }
+            actions
         }
 
         fn select(&mut self, item: Uuid, ctrl: bool) {
@@ -409,6 +422,178 @@ mod tests {
         fn paste(&mut self) -> Vec<InvAction> {
             self.frame(vec![Event::Paste(self.st.clipboard[0].to_string())])
         }
+
+        fn text(&self, label: &str) -> egui::Rect {
+            fn rect(shape: &Shape, label: &str) -> Option<egui::Rect> {
+                match shape {
+                    Shape::Text(t) if t.galley.text() == label => Some(t.galley.rect.translate(t.pos.to_vec2())),
+                    Shape::Vec(shapes) => shapes.iter().find_map(|shape| rect(shape, label)),
+                    _ => None,
+                }
+            }
+            self.output
+                .shapes
+                .iter()
+                .rev()
+                .find_map(|shape| rect(&shape.shape, label))
+                .expect("visible label")
+        }
+
+        fn trash_button(&self, ui_id: Uuid) -> egui::Rect {
+            self.ctx
+                .data(|data| data.get_temp::<egui::Rect>(egui::Id::new(("inventory_delete_button", ui_id))))
+                .expect("trash button")
+        }
+
+        fn add_trash(&mut self) -> Uuid {
+            let trash = id(8020);
+            let mut folder = self.world.inventory.folders[&id(8001)].clone();
+            folder.info.id = trash;
+            folder.info.parent = id(1);
+            folder.info.name = "Trash".into();
+            folder.info.type_default = 14;
+            folder.children.clear();
+            folder.items.clear();
+            self.world.inventory.folders.insert(trash, folder);
+            self.world.inventory.folders.get_mut(&id(1)).expect("root").children.push(trash);
+            self.world.inventory.generation += 1;
+            trash
+        }
+    }
+
+    fn delete_key(modifiers: egui::Modifiers) -> Event {
+        Event::Key {
+            key: egui::Key::Delete,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        }
+    }
+
+    #[test]
+    fn delete_key_confirms_and_moves_selected_folder_with_its_contents_and_no_copy_item() {
+        let mut h = Harness::new();
+        let trash = h.add_trash();
+        let mut child = h.world.inventory.items[&id(8104)].clone();
+        child.parent = id(8001);
+        h.world.inventory.server_updated(Vec::new(), vec![child]);
+        h.st.expand_all = Some(true);
+        h.frame(Vec::new());
+        h.select(id(8001), false);
+        h.select(id(8104), true);
+        h.select(id(8109), true);
+        assert!(h.frame(vec![delete_key(Default::default())]).is_empty());
+        assert!(matches!(&h.st.dialog, Some(EditDialog::Delete(ids, false)) if ids.len() == 3));
+        h.frame(Vec::new());
+        let actions = h.click(h.text(aurora_i18n::tr!("common-delete")).center(), Default::default());
+        let [InvAction::Edit(change)] = &actions[..] else {
+            panic!("confirmed deletion must submit one mutation")
+        };
+        assert!(change.move_only());
+        assert_eq!(change.operations.len(), 2, "a selected descendant moves with its folder once");
+        rules::demo_mutate(&mut h.world.inventory, h.world.agent_id, change.clone()).expect("delete");
+        assert_eq!(h.world.inventory.folders[&id(8001)].info.parent, trash);
+        assert_eq!(h.world.inventory.items[&id(8104)].parent, id(8001));
+        assert_eq!(h.world.inventory.items[&id(8109)].parent, trash);
+        assert_eq!(h.world.inventory.items[&id(8100)].parent, id(8000));
+    }
+
+    #[test]
+    fn trash_button_is_right_of_loaded_count_and_opens_same_confirmation() {
+        let mut h = Harness::new();
+        h.select(id(8100), false);
+        let button = h.trash_button(h.st.ui_id);
+        let count = h.text(&aurora_i18n::tr!(
+            "ui-inventory-objects-loaded",
+            value0 = format!("{}", h.world.inventory.item_count())
+        ));
+        assert!(button.left() > count.right());
+        assert!(button.left() - count.right() < 18.0, "the count sits beside the trash button");
+        assert!((button.center().y - count.center().y).abs() < 3.0);
+        assert!(h.click(button.center(), Default::default()).is_empty());
+        assert!(matches!(&h.st.dialog, Some(EditDialog::Delete(ids, false)) if *ids == vec![id(8100)]));
+        h.frame(Vec::new());
+        assert!(
+            h.click(h.text(aurora_i18n::tr!("common-cancel")).center(), Default::default())
+                .is_empty()
+        );
+        assert!(h.st.dialog.is_none());
+        assert_eq!(h.world.inventory.items[&id(8100)].parent, id(8000));
+    }
+
+    #[test]
+    fn delete_keeps_text_input_priority_and_blocks_modified_keys_pending_and_protected_selection() {
+        let mut h = Harness::new();
+        h.select(id(8100), false);
+        h.frame(vec![delete_key(egui::Modifiers::CTRL)]);
+        assert!(h.st.dialog.is_none());
+        for item in [id(1), id(8003)] {
+            h.select(item, false);
+            h.frame(vec![delete_key(Default::default())]);
+            h.click(h.trash_button(h.st.ui_id).center(), Default::default());
+            assert!(h.st.dialog.is_none(), "system and library folders are protected");
+        }
+        h.st.selection.clear();
+        h.frame(Vec::new());
+        h.click(h.trash_button(h.st.ui_id).center(), Default::default());
+        assert!(h.st.dialog.is_none());
+        h.select(id(8100), false);
+        h.st.pending = Some(Uuid::new_v4());
+        h.frame(vec![delete_key(Default::default())]);
+        h.click(h.trash_button(h.st.ui_id).center(), Default::default());
+        assert!(h.st.dialog.is_none());
+        h.st.pending = None;
+        h.prefs.protected.insert(id(8000));
+        h.select(id(8100), false);
+        h.frame(vec![delete_key(Default::default())]);
+        h.click(h.trash_button(h.st.ui_id).center(), Default::default());
+        assert!(h.st.dialog.is_none());
+        h.prefs.protected.clear();
+        let mut worn = Facts::from_world(&h.world, false);
+        worn.worn.insert(id(8100));
+        assert!(!super::super::delete::allowed(&h.world.inventory, &[id(8100)], &h.prefs, &worn));
+        assert!(!super::super::delete::allowed(&h.world.inventory, &[id(8000)], &h.prefs, &worn));
+        h.select(id(8100), false);
+        h.st.begin_rename(&h.world.inventory, id(8100));
+        h.frame(Vec::new());
+        assert!(h.ctx.text_edit_focused());
+        h.frame(vec![delete_key(Default::default())]);
+        assert!(h.st.dialog.is_none());
+        assert_eq!(
+            h.st.rename.as_ref().expect("rename").name,
+            "",
+            "Delete edits the selected name text"
+        );
+    }
+
+    #[test]
+    fn folder_window_delete_uses_its_own_selection_and_trash_items_request_purge() {
+        let mut h = Harness::new();
+        let trash = h.add_trash();
+        let mut item = h.world.inventory.items[&id(8100)].clone();
+        item.parent = trash;
+        h.world.inventory.server_updated(Vec::new(), vec![item]);
+        h.st.open_folder_window(trash);
+        let window = h.st.windows[0].id;
+        super::super::super::widgets::place_floater(
+            &h.ctx,
+            &format!("inventory_{window}"),
+            egui::pos2(30.0, 50.0),
+            egui::vec2(420.0, 440.0),
+        );
+        for _ in 0..4 {
+            h.frame(Vec::new());
+        }
+        h.click(h.row_in(id(8100), &format!("inventory_{window}")), Default::default());
+        h.frame(vec![delete_key(Default::default())]);
+        assert!(h.st.dialog.is_none());
+        assert!(matches!(&h.st.windows[0].state.dialog, Some(EditDialog::Delete(ids, true)) if *ids == vec![id(8100)]));
+        h.frame(Vec::new());
+        let actions = h.click(h.text(aurora_i18n::tr!("ui-inventory-dialogs-purge")).center(), Default::default());
+        assert!(
+            matches!(&actions[..], [InvAction::Edit(change)] if change.removed == vec![id(8100)] && matches!(&change.operations[..], [aurora_net::inventory::operations::Operation::Delete { id: item, folder: false }] if *item == id(8100)))
+        );
     }
 
     #[test]

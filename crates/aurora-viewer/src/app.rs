@@ -4380,6 +4380,8 @@ impl App {
                 .extend(ui::inventory::document_demo_events(&ctx, self.frame_count, &mut self.inventory_ui));
             raw.events
                 .extend(ui::inventory::clipboard_demo_events(&ctx, self.frame_count, &mut self.inventory_ui));
+            raw.events
+                .extend(ui::inventory::delete_demo_events(&ctx, self.frame_count, &self.inventory_ui));
         }
         let projector = ui::hud::Projector {
             view_proj: vp,
@@ -6840,6 +6842,10 @@ impl ApplicationHandler for App {
                                 item.owner_mask &= !crate::world::inventory::actions::COPY;
                             }
                         }
+                    } else if view.starts_with("delete-") {
+                        crate::world::inventory::demo::seed_clipboard_tree(&mut self.world.inventory);
+                        self.inventory_ui.expand_all = Some(true);
+                        self.inventory_ui.show_original(&self.world.inventory, uuid::Uuid::from_u128(8001));
                     } else if view == "new-folder" {
                         if let Ok(change) = crate::world::inventory::actions::create_folder(id, aurora_i18n::tr!("common-new-folder")) {
                             self.apply_inventory_action(ui::inventory::InvAction::Edit(change));

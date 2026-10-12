@@ -265,7 +265,7 @@ pub(super) fn show(
                     p,
                     "trash",
                     aurora_i18n::tr!("ui-inventory-context-purge-object"),
-                    ready && movable && !worn,
+                    ready && super::delete::allowed(inv, &ids, prefs, facts),
                 ) {
                     st.dialog = Some(EditDialog::Delete(ids.clone(), true));
                 }
@@ -515,8 +515,7 @@ pub(super) fn show(
         }
         if !trash {
             menu::separator(ui, p);
-            let removable =
-                movable && ids.iter().all(|id| !facts.worn.iter().any(|w| rules::under(inv, *w, *id))) && !rules::in_type(inv, id, 46);
+            let removable = super::delete::allowed(inv, &ids, prefs, facts);
             if menu::item_if(ui, p, "trash", aurora_i18n::tr!("common-delete"), ready && removable) {
                 st.dialog = Some(EditDialog::Delete(ids.clone(), false));
             }

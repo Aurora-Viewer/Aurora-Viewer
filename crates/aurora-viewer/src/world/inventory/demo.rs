@@ -197,6 +197,8 @@ pub fn target(view: &str) -> Option<Uuid> {
         | "multi-add"
         | "multi-detach"
         | "delete"
+        | "delete-key"
+        | "delete-button"
         | "clipboard"
         | "clipboard-copy"
         | "clipboard-cut"

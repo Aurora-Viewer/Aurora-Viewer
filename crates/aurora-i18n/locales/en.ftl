@@ -3227,6 +3227,7 @@ ui-environment-skies-waters-day-cycles = { $value0 }{ " skies · " }{ $value1 }{
 ui-land-access-entries-imported = { $value0 }{ " entries imported." }
 build-mod-object-s-sent-to-trash = { $value0 }{ " object(s) sent to Trash" }
 ui-inventory-objects-loaded = { $value0 }{ " objects loaded" }
+inventory-delete-shortcut = Delete selection (Delete)
 build-mod-objects-linked = { $value0 }{ " objects linked" }
 ui-perf-per-frame = { $value0 }{ " per frame" }
 ui-perf-ready = { $value0 }{ " ready / " }{ $value1 }

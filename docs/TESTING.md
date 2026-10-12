@@ -942,6 +942,15 @@ racine ouverte et libellés alignés à gauche. Créations et mutations simulée
 hors ligne ; les fichiers et photos chargés en démo restent hors ligne.
 
 - `1` : l'inventaire seul.
+- `delete-key`, `delete-button` : sélectionnent un dossier contenant trois
+  niveaux et leurs items, puis ouvrent la confirmation par Suppr ou le bouton
+  de corbeille du pied de fenêtre. Capturer 660 (sélection et corbeille à droite
+  du compteur), puis 720 (confirmation identique au menu contextuel). Supprimer
+  déplace le dossier complet dans la corbeille ; Annuler le garde à sa place.
+  Vérifier aussi une sélection multiple, un objet porté / protégé (commande
+  indisponible), un champ de texte (Suppr édite le texte) et une fenêtre de
+  dossier. Une sélection entièrement dans la corbeille demande confirmation
+  avant suppression définitive.
 - `clipboard` : inventaire déplié pour tester Ctrl+C / Ctrl+X / Ctrl+V sur
   les éléments, les dossiers et les sélections multiples. Choisir le dossier
   de destination (ou un de ses éléments) avant de coller. Les champs de

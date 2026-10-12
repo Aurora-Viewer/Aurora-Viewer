@@ -12,6 +12,8 @@ mod clipboard;
 pub use clipboard::demo_events as clipboard_demo_events;
 mod context;
 mod controls;
+mod delete;
+pub use delete::demo_events as delete_demo_events;
 mod dialogs;
 mod document;
 mod embedded;
@@ -751,7 +753,7 @@ fn folder_window_contents(
             folder_contents(ui, p, icons, inv, root, 1, expand, st, prefs, facts, actions);
         });
     });
-    status(ui, p, inv, st, prefs, actions, filtered);
+    status(ui, p, inv, st, prefs, facts, actions, filtered);
     clipboard::shortcuts(ui, inv, root, st, prefs, facts, actions);
 }
 
@@ -808,6 +810,7 @@ fn status(
     inv: &Inventory,
     st: &mut InventoryUi,
     prefs: &mut InventoryPreferences,
+    facts: &Facts,
     actions: &mut Vec<InvAction>,
     filtered: bool,
 ) {
@@ -859,15 +862,13 @@ fn status(
                 .color(p.muted),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            delete::button(ui, p, inv, st, prefs, facts);
             if st.busy() {
                 ui.add(egui::Spinner::new().size(14.0).color(p.violet));
             }
             let label = if message.is_empty() { &count } else { &message };
-            ui.add_sized(
-                [ui.available_width(), 20.0],
-                egui::Label::new(RichText::new(label).size(11.0).color(color)).truncate(),
-            )
-            .on_hover_text(if message.is_empty() { count } else { format!("{message}\n{count}") });
+            ui.add(egui::Label::new(RichText::new(label).size(11.0).color(color)).truncate())
+                .on_hover_text(if message.is_empty() { count } else { format!("{message}\n{count}") });
         });
     });
 }
@@ -1198,7 +1199,7 @@ fn inventory_contents(
                 }
             });
         });
-    status(ui, p, inv, st, prefs, actions, filtered);
+    status(ui, p, inv, st, prefs, facts, actions, filtered);
     clipboard::shortcuts(ui, inv, root, st, prefs, facts, actions);
 }
 
