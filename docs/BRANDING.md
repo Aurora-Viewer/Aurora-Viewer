@@ -106,6 +106,20 @@ Dans le code, on utilise toujours la `Palette` résolue (`p.violet`, `p.ink`…)
   icône utilise `widgets::action_button`. La barre d'outils du bas n'a pas de
   traits de séparation : l'espacement et la pastille du bouton survolé ou
   actif suffisent.
+- **Interrupteurs et cases.** L'interrupteur (`widgets::switch`) est presque
+  carré : piste au rayon du thème, curseur carré qui glisse. Il sert à un
+  réglage isolé (seul avec son libellé : `widgets::switch_labeled`) ; les
+  listes de drapeaux (droits, données d'un rapport, cellules d'un tableau)
+  gardent des cases, dessinées par `widgets::checkbox` (carré plat, violet et
+  coché quand il est actif), jamais par `ui.checkbox`.
+- **Sections repliables.** `widgets::collapsing` : une ligne pleine largeur
+  avec un chevron Tabler et le titre de la section, allumée en pastille au
+  survol, sans trait ; jamais `egui::CollapsingHeader`.
+- **Couleurs.** Une couleur se choisit avec `widgets::color_button` : la
+  pastille ouvre un petit panneau vitré (champ saturation / valeur, barre de
+  teinte, nouvelle couleur au-dessus de l'ancienne, champs R V B et
+  hexadécimal, pipette), jamais les `color_edit_button_*` d'egui. La palette
+  de couleur des outils de construction reste une fenêtre à part.
 - **Hiérarchie commune.** Titre et commandes de fenêtre en haut, navigation
   stable, contenu regroupé par fonction et actions accessibles.
   L’inventaire garde une grande liste et une seule ligne de statut en bas,
