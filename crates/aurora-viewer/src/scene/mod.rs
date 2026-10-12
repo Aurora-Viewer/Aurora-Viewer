@@ -22,6 +22,7 @@ pub mod shape;
 pub mod sounds;
 mod sync_plan;
 pub mod sync_sets;
+mod texture_load;
 pub mod textures;
 pub mod water;
 

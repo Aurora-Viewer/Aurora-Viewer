@@ -16,6 +16,7 @@
 //! evicted textures) is freed by the trash thread (`Jobs::discard`).
 
 use super::jobs::{AlphaKind, JobResult, Jobs, SculptMap, Trash, classify_alpha, to_rgba};
+use super::texture_load::{DecodeMeter, LoadTotals, LoadWatch};
 use aurora_assets::J2kInfo;
 use aurora_net::fetch::ByteRange;
 use aurora_net::{FetchRequest, FetchResult, Fetcher};
@@ -312,6 +313,11 @@ impl PendingUploads {
         self.heap.len() + self.unready.len()
     }
 
+    /// An upload of `id` at `discard` or finer is waiting.
+    fn covers(&self, id: &Uuid, discard: u8) -> bool {
+        self.finest.get(id).is_some_and(|&f| f <= discard)
+    }
+
     /// Queue an upload; `first`: the texture still shows its placeholder,
     /// `pixels`: its size on screen.
     fn push(&mut self, mut u: PendingUpload, first: bool, pixels: f32) {
@@ -443,6 +449,12 @@ pub struct TextureStreamer {
     /// Decoded levels the uploads are done with and download bodies once
     /// merged, freed off this thread.
     trash: Trash<Vec<u8>>,
+    /// Measure of the loading episodes (`texture load:` in the log): what
+    /// the decode jobs spent, what the main thread counts, and the episode
+    /// under way.
+    meter: Arc<DecodeMeter>,
+    load: LoadTotals,
+    watch: LoadWatch,
 }
 
 impl TextureStreamer {
@@ -486,6 +498,9 @@ impl TextureStreamer {
             dirty: Vec::new(),
             trash: Trash::default(),
             alpha_changes: Vec::new(),
+            meter: Arc::default(),
+            load: LoadTotals::default(),
+            watch: LoadWatch::default(),
         }
     }
 
@@ -819,10 +834,14 @@ impl TextureStreamer {
             decodes,
             max_decodes,
             staging,
+            meter,
+            load,
+            uploads,
             ..
         } = self;
         // first disk reads of the new textures, queued in one go
         let mut cache_reads = Vec::new();
+        let mut reading = 0;
         for (&id, e) in entries.iter_mut() {
             if e.decoded.is_some() {
                 loaded += 1;
@@ -846,6 +865,7 @@ impl TextureStreamer {
                 continue;
             }
             if e.cache_state == 1 || e.decoding || e.fetching {
+                reading += usize::from(e.cache_state == 1);
                 continue;
             }
             // (before looking at the data, which is behind a pointer: most
@@ -876,12 +896,22 @@ impl TextureStreamer {
                 if e.decoded.is_some_and(|d| discard >= d) {
                     continue;
                 }
+                // That level, or a finer one, is already decoded and waits
+                // for its turn to the GPU (`decoded` only follows once it is
+                // sent): decoding it again each time a decode slot frees up
+                // was half of the decodes of an arrival (AURORA_DEMO_STREAM
+                // with j2k=, 9000 textures: 9126 of 18129).
+                if uploads.covers(&id, discard) {
+                    continue;
+                }
                 e.decoding = true;
                 *decodes += 1;
+                load.again += u64::from(e.decoded.is_some());
                 let data = e.data.clone();
                 let keep = e.keep_pixels;
                 let pool = staging.clone();
-                jobs.spawn(move || decode_job(id, &data, discard, keep, pool.as_deref()));
+                let meter = meter.clone();
+                jobs.spawn(move || decode_job(id, &data, discard, keep, pool.as_deref(), &meter));
                 continue;
             }
             // 2. fetch more
@@ -906,6 +936,7 @@ impl TextureStreamer {
                 accept: "image/x-j2c",
             });
         }
+        reading += cache_reads.len();
         let dir = cache_dir.clone();
         jobs.spawn_many(cache_reads, move |id| {
             for complete in [true, false] {
@@ -930,6 +961,17 @@ impl TextureStreamer {
         self.stats.decoding = self.decodes;
         self.stats.pending_upload = self.uploads.len();
         let _ = Self::url_for;
+        let busy = reading > 0 || fetching > 0 || self.decodes > 0 || self.uploads.len() > 0;
+        // (totals: the main thread's counters and what the jobs have spent so far)
+        let (counted, meter) = (self.load, &self.meter);
+        let totals = || {
+            let mut totals = counted;
+            meter.read_into(&mut totals);
+            totals
+        };
+        if let Some((took, added)) = self.watch.step(now, busy, totals) {
+            log::info!("{}", added.describe(took, (loaded, self.entries.len())));
+        }
     }
 
     pub fn on_fetch(&mut self, r: FetchResult) {
@@ -940,6 +982,10 @@ impl TextureStreamer {
             return;
         };
         e.fetching = false;
+        if let Ok(bytes) = &r.data {
+            self.load.fetched_bytes += bytes.len() as u64;
+            self.load.replies += 1;
+        }
         // LLTextureFetchWorker::callbackHttpGet / WAIT_HTTP_REQ: a 200 is the
         // whole asset, a 206 continues our data, a 416 completes it.
         let outcome = match r.data {
@@ -1020,6 +1066,11 @@ impl TextureStreamer {
     pub fn on_job(&mut self, r: JobResult) {
         match r {
             JobResult::TextureCache { id, data, complete } => {
+                if data.is_some() {
+                    self.load.cache_hits += 1;
+                } else {
+                    self.load.cache_misses += 1;
+                }
                 if let Some(e) = self.entries.get_mut(&id) {
                     e.cache_state = 2;
                     if let Some(d) = data
@@ -1415,9 +1466,10 @@ pub fn texture_result(
     }
 }
 
-fn decode_job(id: Uuid, data: &[u8], discard: u8, keep_pixels: bool, pool: Option<&StagingPool>) -> JobResult {
-    match aurora_assets::decode_j2k(data, discard) {
-        Ok(img) => {
+fn decode_job(id: Uuid, data: &[u8], discard: u8, keep_pixels: bool, pool: Option<&StagingPool>, meter: &DecodeMeter) -> JobResult {
+    match aurora_assets::decode_j2k_timed(data, discard) {
+        Ok((img, decode)) => {
+            let start = Instant::now();
             let pixels = (img.width * img.height) as usize;
             let rgba = if img.components == 4 {
                 img.data.clone()
@@ -1426,6 +1478,7 @@ fn decode_job(id: Uuid, data: &[u8], discard: u8, keep_pixels: bool, pool: Optio
             };
             let alpha_channel = img.components == 4 || img.components == 2;
             let alpha = if alpha_channel { classify_alpha(&rgba) } else { AlphaKind::Opaque };
+            let rgba_done = start.elapsed();
             let sculpt = keep_pixels.then(|| {
                 Arc::new(SculptMap {
                     width: img.width,
@@ -1434,8 +1487,13 @@ fn decode_job(id: Uuid, data: &[u8], discard: u8, keep_pixels: bool, pool: Optio
                     pixels: img.data,
                 })
             });
+            let before_mips = start.elapsed();
             let mips = build_mips(img.width, img.height, rgba, 16);
-            texture_result(id, img.discard, mips, (alpha, alpha_channel), sculpt, pool)
+            let mips_done = start.elapsed();
+            let result = texture_result(id, img.discard, mips, (alpha, alpha_channel), sculpt, pool);
+            let stages = [rgba_done, mips_done - before_mips, start.elapsed() - mips_done];
+            meter.add(img.discard, pixels as u64, decode, stages);
+            result
         }
         Err(e) => {
             log::debug!("texture {id} decode failed at discard {discard}: {e}");
@@ -1638,6 +1696,20 @@ mod tests {
         assert_eq!(q.pop(&mut trash).map(|u| u.discard), Some(0));
         assert_eq!(q.pop(&mut trash).map(|u| u.discard), Some(2));
         assert!(q.pop(&mut trash).is_none() && q.finest.is_empty());
+    }
+
+    #[test]
+    fn waiting_upload_covers_its_level_and_the_coarser_ones() {
+        let mut q = PendingUploads::default();
+        let mut trash = Trash::default();
+        assert!(!q.covers(&id(1), 5));
+        q.push(pending(1, 2), true, 100.0);
+        // no decode again at 2 or coarser while it waits; a finer one may go
+        assert!(q.covers(&id(1), 2) && q.covers(&id(1), 5));
+        assert!(!q.covers(&id(1), 1) && !q.covers(&id(2), 5));
+        // once it left for the GPU, the texture's `decoded` level takes over
+        assert!(q.pop(&mut trash).is_some());
+        assert!(!q.covers(&id(1), 5));
     }
 
     #[test]

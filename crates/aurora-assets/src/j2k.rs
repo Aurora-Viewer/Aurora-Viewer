@@ -18,6 +18,7 @@
 
 use std::ffi::{CStr, c_char, c_void};
 use std::ptr;
+use std::time::{Duration, Instant};
 
 use openjpeg_sys as opj;
 
@@ -357,6 +358,22 @@ impl Drop for ImageGuard {
 /// are decoded as far as possible (non-strict mode). Each call uses its own
 /// codec instance, so this is safe to call concurrently.
 pub fn decode_j2k(data: &[u8], discard: u8) -> Result<DecodedImage, AssetError> {
+    decode_j2k_timed(data, discard).map(|(img, _)| img)
+}
+
+/// Where the time of one decode went ([`decode_j2k_timed`]).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DecodeTimings {
+    /// OpenJPEG: header, entropy decoding, inverse wavelet and colour transforms.
+    pub codec: Duration,
+    /// Planar 32-bit samples to interleaved 8-bit pixels.
+    pub convert: Duration,
+}
+
+/// [`decode_j2k`], with the time spent in each of its two stages
+/// (measurements: `examples/j2k_bench.rs`).
+pub fn decode_j2k_timed(data: &[u8], discard: u8) -> Result<(DecodedImage, DecodeTimings), AssetError> {
+    let start = Instant::now();
     let cs = locate_codestream(data).ok_or(AssetError::J2k("not a JPEG2000 codestream"))?;
     let info = parse_main_header(cs).ok_or(AssetError::Truncated("JPEG2000 main header"))?;
     if info.width > MAX_DIMENSION || info.height > MAX_DIMENSION || info.width as u64 * info.height as u64 > MAX_PIXELS {
@@ -433,7 +450,10 @@ pub fn decode_j2k(data: &[u8], discard: u8) -> Result<DecodedImage, AssetError> 
     // SAFETY: `image.0` is non-null and points to an image fully initialised by
     // `opj_read_header`/`opj_decode`; it is not mutated while borrowed.
     let img = unsafe { &*image.0 };
-    convert_image(img)
+    let codec = start.elapsed();
+    let out = convert_image(img)?;
+    let convert = start.elapsed().saturating_sub(codec);
+    Ok((out, DecodeTimings { codec, convert }))
 }
 
 /// Convert OpenJPEG component planes to interleaved 8-bit pixels.

@@ -470,7 +470,7 @@ grille.
 | `AURORA_DEMO_TEXTURES=<n>` | Test de charge des textures : n cubes |
 | `AURORA_DEMO_TEXTURES_CHURN=1` | Avec `AURORA_DEMO_TEXTURES` : textures renouvelées |
 | `AURORA_DEMO_CROWD=<n>` | Test de charge de la synchro : n avatars |
-| `AURORA_DEMO_STREAM=<n>[,<vague>][,leave]` | Test des à-coups du streaming |
+| `AURORA_DEMO_STREAM=<n>[,<vague>][,leave][,j2k=<dossier>]` | Test des à-coups du streaming |
 
 ### Détails
 
@@ -487,7 +487,7 @@ grille.
   un nombre) qui jouent l'animation d'attente, chacun portant huit linksets
   de sept prims sur des os de tout le corps (avec `AURORA_DEMO_ANIMESH`,
   aussi le mesh riggé de la démo), comme dans une boutique fréquentée.
-- **`AURORA_DEMO_STREAM=<n>[,<vague>][,leave]`** : n objets texturés (2000
+- **`AURORA_DEMO_STREAM=<n>[,<vague>][,leave][,j2k=<dossier>]`** : n objets texturés (2000
   si la valeur n'est pas un nombre) qui arrivent par vagues après le fondu de
   chargement, `vague` objets toutes les 250 ms (100 par défaut, soit ~400 par
   seconde comme sur la grille ; `vague` = n envoie tout d'un coup, comme une
@@ -505,6 +505,15 @@ grille.
     de son fichier J2C, est inutilisée et à évincer 2 s plus tard (`demo
     stream: region left`, puis `demo stream: textures evicted`) ; lire
     `s_maintain`, `sync`, `s_sync_list` et `r_submit` dans `max:`.
+  - Avec `,j2k=<dossier>` après les nombres, les textures sont les fichiers
+    `.j2c` de ce dossier (le `cache\tex` d'un viewer, repris en boucle
+    s'il y en a moins que d'objets) au lieu de damiers dessinés : chaque
+    fichier est remis au streaming comme une lecture réussie du cache
+    disque et suit le vrai chemin à partir du décodage JPEG2000, au
+    niveau que demande sa taille à l'écran. C'est le retour dans une
+    région déjà en cache, sans la grille : lire `demo stream: loaded in
+    … s` puis la ligne `texture load:` (voir [Profilage](#profilage)).
+    Le dossier n'est que lu.
 
 ## Interface
 
@@ -1053,3 +1062,35 @@ thread principal est déjà sur l'image suivante. Avec
     (textures vivantes, pages de textures et leur mémoire allouée), la
     mémoire de la géométrie, et les objets dont la synchro complète attend
     une image qui a du temps (`sync_backlog`).
+
+### Chargement des textures
+
+Sans variable, le journal reçoit une ligne `texture load:` à la fin de
+chaque chargement de textures (`scene/texture_load.rs`) : du premier
+fichier lu, téléchargé ou décodé jusqu'à ce qu'il ne reste rien à lire,
+télécharger, décoder ni envoyer au GPU pendant 2 s. Les petits chargements
+(moins de 200 décodages et moins de 5 s) n'en ont pas. Elle donne :
+
+- la durée du chargement, le « temps jusqu'à tout chargé » à comparer d'une
+  version à l'autre et avec Firestorm au même endroit, et les textures
+  chargées sur celles connues ;
+- les décodages JPEG2000, dont ceux d'une texture déjà affichée à un
+  niveau plus grossier, et leur nombre par niveau de réduction (`discard
+  0..5`, 0 = pleine résolution) ; les mégapixels décodés ;
+- le temps processeur des tâches de décodage, tous threads additionnés,
+  et sa répartition : `codec` (OpenJPEG), `convert` (plans 32 bits vers
+  pixels 8 bits), `rgba` (passage en RGBA et classe alpha), `mips`,
+  `staging` (masque de picking et copie en mémoire de transit) ;
+- les octets téléchargés et le nombre de réponses, les lectures du cache
+  disque réussies et manquées.
+
+Le coût du décodage seul se mesure hors du viewer sur un dossier de
+textures en cache (lecture seule), par classe de taille, sur un thread
+puis sur autant de threads que les tâches de fond :
+
+```powershell
+cargo run --release -p aurora-assets --example j2k_bench -- "$env:LOCALAPPDATA\Aurora\AuroraViewer\cache\tex"
+```
+
+Options : `--sample <n>` (2000 textures par défaut), `--threads <n>`,
+`--levels 0,1,2,3`.
