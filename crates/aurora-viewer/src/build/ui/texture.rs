@@ -260,59 +260,45 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         small(ui, p, aurora_i18n::tr!("build-ui-texture-no-editable-face-selected"));
         return;
     }
-    ui.horizontal(|ui| {
-        ui.label(
-            RichText::new(aurora_i18n::tr!("build-compact-materials"))
-                .size(13.0)
-                .strong()
-                .color(p.ink),
-        );
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.allocate_ui_with_layout(egui::vec2(195.0, 30.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                tabs(
-                    ui,
-                    p,
-                    &mut tool.ui.tex_tab,
-                    &[
-                        ("PBR", true),
-                        (aurora_i18n::tr!("build-ui-texture-classic"), true),
-                        (aurora_i18n::tr!("extra-media"), true),
-                    ],
-                );
-            });
-        });
+    super::compact::heading(ui, p, "paint-brush", aurora_i18n::tr!("build-compact-materials"), |ui| {
+        if super::common::icon_button(
+            ui,
+            p,
+            "clipboard-text",
+            aurora_i18n::tr!("build-ui-texture-paste-texture-settings-from-the-clipboard"),
+            tool.ui.face_clipboard.is_some(),
+        ) {
+            paste_faces(tool, world, &sel);
+        }
+        let one_object = sel.iter().all(|x| x.idx == sel[0].idx);
+        if super::common::icon_button(
+            ui,
+            p,
+            "copy",
+            aurora_i18n::tr!("build-ui-texture-copy-texture-settings-to-clipboard"),
+            one_object,
+        ) {
+            let clip = sel
+                .iter()
+                .map(|x| FaceClip {
+                    face: x.te,
+                    legacy: tool.face_legacy(env, world, x.idx, x.face, &x.te),
+                    gltf: BuildTool::gltf_asset(world, x.idx, x.face).map(|a| (a, BuildTool::gltf_override(world, x.idx, x.face))),
+                })
+                .collect();
+            tool.ui.face_clipboard = Some(clip);
+        }
     });
-    ui.horizontal(|ui| {
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if super::common::icon_button(
-                ui,
-                p,
-                "clipboard-text",
-                aurora_i18n::tr!("build-ui-texture-paste-texture-settings-from-the-clipboard"),
-                tool.ui.face_clipboard.is_some(),
-            ) {
-                paste_faces(tool, world, &sel);
-            }
-            let one_object = sel.iter().all(|x| x.idx == sel[0].idx);
-            if super::common::icon_button(
-                ui,
-                p,
-                "copy",
-                aurora_i18n::tr!("build-ui-texture-copy-texture-settings-to-clipboard"),
-                one_object,
-            ) {
-                let clip = sel
-                    .iter()
-                    .map(|x| FaceClip {
-                        face: x.te,
-                        legacy: tool.face_legacy(env, world, x.idx, x.face, &x.te),
-                        gltf: BuildTool::gltf_asset(world, x.idx, x.face).map(|a| (a, BuildTool::gltf_override(world, x.idx, x.face))),
-                    })
-                    .collect();
-                tool.ui.face_clipboard = Some(clip);
-            }
-        });
-    });
+    tabs(
+        ui,
+        p,
+        &mut tool.ui.tex_tab,
+        &[
+            ("PBR", true),
+            (aurora_i18n::tr!("build-ui-texture-classic"), true),
+            (aurora_i18n::tr!("extra-media"), true),
+        ],
+    );
     ui.add_space(4.0);
     match tool.ui.tex_tab {
         0 => pbr(ui, p, tool, world, env, &sel),

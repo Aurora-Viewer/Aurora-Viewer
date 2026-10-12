@@ -170,7 +170,7 @@ fn selection(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &World
     });
 }
 
-fn manipulation(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings, mods: Mods) {
+pub(super) fn manipulation(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings, mods: Mods) {
     ui.scope(|ui| {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
@@ -337,8 +337,6 @@ fn sections_panel(
                             4 => contents::show(ui, p, tool, world),
                             5 => object::show_shape(ui, p, tool, world, env),
                             _ => {
-                                manipulation(ui, p, tool, world, s, mods);
-                                ui.add_space(4.0);
                                 object::show_transform(ui, p, tool, world, s, mods);
                                 transform_options(ui, p, tool, world, s);
                             }
