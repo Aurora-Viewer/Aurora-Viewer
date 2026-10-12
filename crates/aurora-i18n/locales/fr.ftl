@@ -2154,6 +2154,7 @@ keybinds-previous-page = Page préc.
 keybinds-next-page = Page suiv.
 ui-web-view-web-page-unavailable = { "Page web indisponible : " }{ $e }
 ui-perf-texture-pages = Pages de textures
+ui-perf-texture-budget = Budget des textures
 ui-options-parcel-and-prim-web-pages-and-videos-audiostreamingmedia = Pages web et vidéos de la parcelle et des prims (AudioStreamingMedia)
 world-appearance-pants = Pantalon
 world-appearance-black-pants = Pantalon noir
@@ -3441,6 +3442,7 @@ memory-mb-suffix = { " Mo" }
 perf-frame-tooltip = { $fps } i/s · { $ms } ms
 perf-texture-memory = { $loaded } / { $total } · { $value } Mo
 perf-page-memory = { $pages } · { $value } Mo
+perf-texture-budget-pressure = { $value } Mo · réduction { $step } / { $steps }
 
 # Fenêtre indépendante de récupération après plantage
 crash-title = Aurora Viewer — Rapport de plantage

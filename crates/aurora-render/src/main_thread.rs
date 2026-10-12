@@ -107,6 +107,9 @@ pub struct Renderer {
     pub uploads: UploadQueue,
     pub records: RecordStore,
     pub textures: TextureTable,
+    /// Video memory budget and use of the moment, as the driver reports
+    /// them (vram.rs).
+    pub video_memory: crate::vram::VideoMemoryProbe,
     /// The scene's tables of the GPU-driven draw lists (gpu_cull.rs).
     pub cull: CullTables,
     /// Queue writes of the frame being built (writes.rs).
@@ -280,6 +283,7 @@ impl Renderer {
             }
         );
         let anim_clock = crate::tex_anim::AnimClock::new(Instant::now());
+        let video_memory = crate::vram::VideoMemoryProbe::new(adapter.clone());
         let backend = Backend::new(BackendInit {
             device: device.clone(),
             queue,
@@ -314,6 +318,7 @@ impl Renderer {
             uploads,
             records,
             textures,
+            video_memory,
             cull,
             writes,
             palette_buffer,

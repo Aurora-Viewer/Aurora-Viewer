@@ -73,6 +73,11 @@ const REBUILD_THROTTLE: Duration = Duration::from_millis(100);
 /// teleport, a crowd leaving) would keep their memory.
 const COMPACT_INTERVAL: Duration = Duration::from_secs(1);
 const COMPACT_MAX_BYTES: u64 = 16 << 20;
+/// Under memory pressure (`TextureTable::set_eager_compaction`) a page is
+/// emptied this often, whatever its fill: at most 32 MB of GPU copies each
+/// time, 640 MB a second, so the pages the lowered textures left are given
+/// back within seconds without the copies weighing on the frames.
+const COMPACT_EAGER_INTERVAL: Duration = Duration::from_millis(50);
 /// Emptied pages are handed to the page thread one every this long (and
 /// at least one, at most [`PAGES_DESTROYED_PER_FRAME`], a frame). Once the
 /// bind group no longer holds a page, dropping it frees its video memory:
@@ -343,6 +348,21 @@ fn chain_key(format: TexelFormat, mut levels: impl Iterator<Item = (u32, u32, bo
     })
 }
 
+/// Page key of a texture once its `levels` finest levels are dropped: level
+/// `levels` becomes level 0 and the rest of the chain follows. None when
+/// nothing would be dropped or nothing would be left, or when the level
+/// that would come first is not made of whole blocks (a BC7 page cannot
+/// start there: the texture keeps its size).
+fn shrunk_key(key: PageKey, levels: u32) -> Option<PageKey> {
+    let (width, height) = (level_dim(key.width, levels), level_dim(key.height, levels));
+    (levels > 0 && levels < key.mips && key.format.fits(width, height)).then_some(PageKey {
+        width,
+        height,
+        mips: key.mips - levels,
+        format: key.format,
+    })
+}
+
 fn pack(page: u32, layer: u32) -> u32 {
     debug_assert!(page < MAX_PAGES && layer < 1 << LAYER_BITS);
     (page << LAYER_BITS) | layer
@@ -382,12 +402,18 @@ fn pick_page(pages: impl Iterator<Item = (u32, u32, u32)>) -> Option<u32> {
 /// layers): sparse (at most a quarter used), small enough to copy, and
 /// fitting in the free layers of the others. Page 0 holds the reserved slots
 /// and never moves.
-fn compaction_pick(pages: &[(u32, u32, u32)], layer_bytes: u64) -> Option<(u32, u32)> {
+///
+/// `eager` (memory pressure): any page that fits in the others, up to a
+/// whole page to copy. Textures lowered to give memory back leave their
+/// layers one here, one there: without it the pages they were in would stay
+/// allocated, half empty, while smaller ones are created.
+fn compaction_pick(pages: &[(u32, u32, u32)], layer_bytes: u64, eager: bool) -> Option<(u32, u32)> {
     let free: u32 = pages.iter().map(|&(_, used, len)| len - used).sum();
+    let max_bytes = if eager { PAGE_MAX_BYTES } else { COMPACT_MAX_BYTES };
     pages
         .iter()
         .filter(|&&(page, used, len)| {
-            page != 0 && used * 4 <= len && used as u64 * layer_bytes <= COMPACT_MAX_BYTES && used <= free - (len - used)
+            page != 0 && (eager || used * 4 <= len) && used as u64 * layer_bytes <= max_bytes && used <= free - (len - used)
         })
         .min_by_key(|&&(page, used, _)| (used, page))
         .map(|&(page, used, _)| (page, used))
@@ -476,6 +502,9 @@ struct PageStore {
     created: bool,
     dropped: bool,
     freed: bool,
+    /// Memory pressure: compaction takes any page that fits in the others
+    /// (`compaction_pick`).
+    eager: bool,
     warned_full: bool,
     /// Pages created so far, by whom and in how long (AURORA_PROFILE).
     made: PagesMade,
@@ -522,6 +551,7 @@ impl PageStore {
             created: false,
             dropped: false,
             freed: false,
+            eager: false,
             warned_full: false,
             made: PagesMade::default(),
             spares: Vec::new(),
@@ -881,21 +911,89 @@ impl PageStore {
         self.set_loc(slot, WHITE_LOC);
     }
 
+    /// Drop the `levels` finest levels of `slot` to give memory back: the
+    /// levels it keeps are copied on the GPU to a layer of the smaller size
+    /// (nothing is decoded again, the texels already there are the ones a
+    /// lower resolution shows), then the old layer is freed. As for
+    /// compaction, the copies go to the upload encoder, submitted before
+    /// the frame that sees the new location. False when the slot has no
+    /// layer of its own, too few levels, or no page could be had.
+    fn shrink(&mut self, device: &wgpu::Device, uploads: &mut UploadQueue, slot: u32, levels: u32) -> bool {
+        if slot < RESERVED {
+            return false;
+        }
+        let Some((key, page, layer)) = self
+            .slots
+            .get(slot as usize)
+            .and_then(Option::as_ref)
+            .filter(|s| !s.shared)
+            .map(|s| (s.key, s.page, s.layer))
+        else {
+            return false;
+        };
+        let Some(small) = shrunk_key(key, levels) else {
+            return false;
+        };
+        let Some((dst, dst_layer)) = self.place(device, small, slot) else {
+            return false;
+        };
+        let encoder = uploads.encoder(device);
+        if let (Some(s), Some(d)) = (self.page(page), self.page(dst)) {
+            for level in 0..small.mips {
+                let (width, height) = small
+                    .format
+                    .copy_extent(level_dim(small.width, level), level_dim(small.height, level));
+                encoder.copy_texture_to_texture(
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &s.texture,
+                        mip_level: level + levels,
+                        origin: wgpu::Origin3d { x: 0, y: 0, z: layer },
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &d.texture,
+                        mip_level: level,
+                        origin: wgpu::Origin3d { x: 0, y: 0, z: dst_layer },
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    wgpu::Extent3d {
+                        width,
+                        height,
+                        depth_or_array_layers: 1,
+                    },
+                );
+            }
+        }
+        self.slots[slot as usize] = Some(Slot {
+            key: small,
+            page: dst,
+            layer: dst_layer,
+            shared: false,
+        });
+        self.bytes = self.bytes.saturating_sub(key.layer_bytes()) + small.layer_bytes();
+        self.set_loc(slot, pack(dst, dst_layer));
+        // (the last layer of a page drops it; the encoder keeps it alive)
+        self.release(page, layer);
+        true
+    }
+
     /// Empty one sparse page into the other pages of its size (GPU copies of
     /// every level, submitted before the frame that sees the new locations).
-    fn compact(&mut self, device: &wgpu::Device, uploads: &mut UploadQueue) {
+    /// Whether a page was emptied.
+    fn compact(&mut self, device: &wgpu::Device, uploads: &mut UploadQueue) -> bool {
         if !std::mem::take(&mut self.freed) {
-            return;
+            return false;
         }
+        let eager = self.eager;
         let candidate = self.by_key.iter().filter(|(_, ids)| ids.len() > 1).find_map(|(key, ids)| {
             let pages: Vec<(u32, u32, u32)> = ids
                 .iter()
                 .filter_map(|&p| self.page(p).map(|pg| (p, pg.layers.used(), pg.layers.len)))
                 .collect();
-            compaction_pick(&pages, key.layer_bytes()).map(|(page, _)| (page, *key))
+            compaction_pick(&pages, key.layer_bytes(), eager).map(|(page, _)| (page, *key))
         });
         let Some((src, key)) = candidate else {
-            return;
+            return false;
         };
         let Some(moves) = self.page(src).map(|p| {
             p.owners
@@ -905,7 +1003,7 @@ impl PageStore {
                 .map(|(l, &s)| (l as u32, s))
                 .collect::<Vec<_>>()
         }) else {
-            return;
+            return false;
         };
         // in the upload encoder: after the copies of this frame's uploads
         // (a moved layer may just have been written), before the passes
@@ -948,6 +1046,7 @@ impl PageStore {
         }
         // other pages may qualify: look again at the next interval
         self.freed = true;
+        true
     }
 }
 
@@ -976,6 +1075,11 @@ pub struct TextureTable {
     /// Pages the streamed uploads wait for.
     requests: PageRequests,
     last_destroy: Instant,
+    /// Reductions asked this frame (slot, levels to drop, its size when
+    /// asked), done in `maintain`.
+    shrinks: Vec<(u32, u32, PageKey)>,
+    /// The last eager compaction emptied a page: more may follow.
+    compacting: bool,
 }
 
 impl TextureTable {
@@ -1068,6 +1172,8 @@ impl TextureTable {
             worker: PageWorker::new(device),
             requests: PageRequests::default(),
             last_destroy: Instant::now(),
+            shrinks: Vec::new(),
+            compacting: false,
         }
     }
 
@@ -1323,18 +1429,82 @@ impl TextureTable {
         self.store.free(slot);
     }
 
-    /// Once a frame, when it is handed to the render thread: compact
-    /// (throttled), record the upload of the changed locations, and rebuild
-    /// the bind group when pages changed (at once for a new page, throttled
-    /// for dropped ones).
+    /// Ask for the `levels` finest levels of a slot to be dropped (memory
+    /// budget): what it keeps is copied on the GPU to a smaller layer, see
+    /// `PageStore::shrink`. Done when the frame is handed to the render
+    /// thread, not here: the layer it leaves is free for others from then
+    /// on, and a texture written to it through the journal later in this
+    /// frame would land before the copy reads it. Returns the levels that
+    /// will be dropped: down to its last level at most, none for a slot
+    /// without texels of its own or already asked this frame.
+    pub fn shrink(&mut self, slot: u32, levels: u32) -> u32 {
+        let Some(key) = self
+            .store
+            .slots
+            .get(slot as usize)
+            .and_then(Option::as_ref)
+            .filter(|s| slot >= RESERVED && !s.shared)
+            .map(|s| s.key)
+        else {
+            return 0;
+        };
+        let levels = levels.min(key.mips - 1);
+        if shrunk_key(key, levels).is_none() || self.shrinks.iter().any(|s| s.0 == slot) {
+            return 0;
+        }
+        self.shrinks.push((slot, levels, key));
+        levels
+    }
+
+    /// Memory pressure on or off: under pressure the pages are compacted
+    /// often and whatever their fill, see [`COMPACT_EAGER_INTERVAL`].
+    pub fn set_eager_compaction(&mut self, eager: bool) {
+        if eager && !self.store.eager {
+            // (pages the usual rule left alone may qualify now)
+            self.store.freed = true;
+        }
+        self.store.eager = eager;
+        self.compacting &= eager;
+    }
+
+    /// Memory is still being given back: reductions asked and not done
+    /// yet, or pages being emptied under pressure.
+    pub fn settling(&self) -> bool {
+        !self.shrinks.is_empty() || self.compacting
+    }
+
+    /// Once a frame, when it is handed to the render thread: reduce the
+    /// textures asked to, compact (throttled), record the upload of the
+    /// changed locations, and rebuild the bind group when pages changed (at
+    /// once for a new page, throttled for dropped ones).
     pub fn maintain(&mut self, device: &wgpu::Device, writes: &mut GpuWrites, uploads: &mut UploadQueue, force: bool) {
         self.receive_pages();
         for page in self.store.expired_spares(Instant::now()) {
             self.worker.destroy(page);
         }
-        if self.last_compact.elapsed() >= COMPACT_INTERVAL {
+        // reductions: those that find a layer in a page of their new size
+        // are only copies; when none has room the page comes from the page
+        // thread, as for the streamed uploads (`prepare_page`), and the
+        // reduction waits for it (on the grid, thousands of textures
+        // lowered at once, their pages created here, made frames of 10 to
+        // 14 ms instead of 6)
+        for (slot, levels, key) in std::mem::take(&mut self.shrinks) {
+            // (a slot freed or given texels of another size since is left
+            // as it is)
+            let Some(small) = shrunk_key(key, levels).filter(|_| self.store.holds(slot, key)) else {
+                continue;
+            };
+            let room = self.store.free_layers(small) + self.store.spare_layers(small) > 0;
+            if !room && self.store.has_page_room() && self.ask_for_page(small) {
+                self.shrinks.push((slot, levels, key));
+                continue;
+            }
+            self.store.shrink(device, uploads, slot, levels);
+        }
+        let eager = self.store.eager;
+        if self.last_compact.elapsed() >= if eager { COMPACT_EAGER_INTERVAL } else { COMPACT_INTERVAL } {
             self.last_compact = Instant::now();
-            self.store.compact(device, uploads);
+            self.compacting = self.store.compact(device, uploads) && eager;
         }
         if let Some((lo, hi)) = self.store.loc_dirty.take() {
             writes.write_buffer(&self.loc_buffer, lo as u64 * 4, bytemuck::cast_slice(&self.store.loc[lo..hi]));
@@ -1665,18 +1835,37 @@ mod tests {
     fn compaction_empties_a_sparse_page_that_fits_elsewhere() {
         let kb = 1024;
         // a quarter used, fits in the free layers of page 1
-        assert_eq!(compaction_pick(&[(1, 10, 16), (2, 4, 16)], kb), Some((2, 4)));
+        assert_eq!(compaction_pick(&[(1, 10, 16), (2, 4, 16)], kb, false), Some((2, 4)));
         // the emptiest candidate first
-        assert_eq!(compaction_pick(&[(1, 2, 16), (2, 3, 16), (3, 10, 64)], kb), Some((1, 2)));
+        assert_eq!(compaction_pick(&[(1, 2, 16), (2, 3, 16), (3, 10, 64)], kb, false), Some((1, 2)));
         // more than a quarter used
-        assert_eq!(compaction_pick(&[(1, 10, 16), (2, 5, 16)], kb), None);
+        assert_eq!(compaction_pick(&[(1, 10, 16), (2, 5, 16)], kb, false), None);
         // no room in the other pages
-        assert_eq!(compaction_pick(&[(1, 15, 16), (2, 2, 16)], kb), None);
+        assert_eq!(compaction_pick(&[(1, 15, 16), (2, 2, 16)], kb, false), None);
         // page 0 (reserved slots) never moves
-        assert_eq!(compaction_pick(&[(0, 1, 2048), (1, 10, 16)], kb), None);
+        assert_eq!(compaction_pick(&[(0, 1, 2048), (1, 10, 16)], kb, false), None);
         // too much to copy at once (4 × 8 MB)
-        assert_eq!(compaction_pick(&[(1, 40, 64), (2, 4, 16)], 8 << 20), None);
-        assert_eq!(compaction_pick(&[(1, 1, 64), (2, 4, 16)], 8 << 20), Some((1, 1)));
+        assert_eq!(compaction_pick(&[(1, 40, 64), (2, 4, 16)], 8 << 20, false), None);
+        assert_eq!(compaction_pick(&[(1, 1, 64), (2, 4, 16)], 8 << 20, false), Some((1, 1)));
+    }
+
+    #[test]
+    fn eager_compaction_takes_any_page_that_fits_elsewhere() {
+        let kb = 1024;
+        // more than a quarter used: left alone as a rule, emptied under
+        // memory pressure
+        assert_eq!(compaction_pick(&[(1, 10, 16), (2, 5, 16)], kb, true), Some((2, 5)));
+        // half-empty pages left by lowered textures: one goes into the other
+        assert_eq!(compaction_pick(&[(1, 3, 5), (2, 2, 5)], 5 << 20, true), Some((2, 2)));
+        // still only when the others have the room
+        assert_eq!(compaction_pick(&[(1, 15, 16), (2, 2, 16)], kb, true), None);
+        assert_eq!(compaction_pick(&[(1, 4, 5), (2, 4, 5)], 5 << 20, true), None);
+        // page 0 never moves (the others may move into it), and never more
+        // than a whole page to copy (5 × 8 MB)
+        assert_eq!(compaction_pick(&[(0, 9, 16), (1, 10, 16)], kb, true), None);
+        assert_eq!(compaction_pick(&[(0, 1, 2048), (1, 10, 16)], kb, true), Some((1, 10)));
+        assert_eq!(compaction_pick(&[(1, 5, 64), (2, 60, 64)], 8 << 20, true), None);
+        assert_eq!(compaction_pick(&[(1, 4, 64), (2, 60, 64)], 8 << 20, true), Some((1, 4)));
     }
 
     #[test]
@@ -1710,6 +1899,56 @@ mod tests {
         assert_eq!(dims, vec![(8, 4), (4, 2), (2, 1), (1, 1)]);
         assert!(m.iter().all(|(w, h, d)| d.len() == (w * h * 4) as usize));
         assert_eq!(m[3].2, vec![255, 255, 255, 255]);
+    }
+
+    #[test]
+    fn shrunk_key_drops_the_finest_levels() {
+        let key = PageKey {
+            width: 1024,
+            height: 512,
+            mips: 11,
+            format: TexelFormat::Rgba8,
+        };
+        assert_eq!(
+            shrunk_key(key, 2),
+            Some(PageKey {
+                width: 256,
+                height: 128,
+                mips: 9,
+                format: TexelFormat::Rgba8,
+            })
+        );
+        // down to the last level, never past it
+        assert_eq!(
+            shrunk_key(key, 10),
+            Some(PageKey {
+                width: 1,
+                height: 1,
+                mips: 1,
+                format: TexelFormat::Rgba8,
+            })
+        );
+        assert_eq!(shrunk_key(key, 11), None);
+        assert_eq!(shrunk_key(key, 0), None);
+        // sizes that are not powers of two halve as their mip chain does
+        let odd = PageKey {
+            width: 48,
+            height: 6,
+            mips: 6,
+            format: TexelFormat::Rgba8,
+        };
+        assert_eq!(
+            shrunk_key(odd, 3),
+            Some(PageKey {
+                width: 6,
+                height: 1,
+                mips: 3,
+                format: TexelFormat::Rgba8,
+            })
+        );
+        // the memory of a layer falls by about four per level dropped
+        let small = shrunk_key(key, 1).expect("one level dropped");
+        assert!(small.layer_bytes() * 4 >= key.layer_bytes() && small.layer_bytes() * 3 < key.layer_bytes());
     }
 
     /// Texels of test texture `i` at a level: a value proper to the texture,
@@ -1876,6 +2115,139 @@ mod tests {
         assert_eq!(store.live as usize, live.len() + RESERVED as usize);
     }
 
+    /// GPU check of the reductions: textures lose their finest levels on the
+    /// GPU and must read back, in their smaller layer, the texels their
+    /// coarser levels held; the layers they leave are reused by new textures
+    /// in the same frame without spoiling the copies, their memory is given
+    /// back, and what cannot be reduced is refused.
+    /// `cargo test -p aurora-render shrink -- --ignored`.
+    #[test]
+    #[ignore]
+    fn textures_shrink_on_the_gpu() {
+        let instance = wgpu::Instance::default();
+        let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())) else {
+            eprintln!("no GPU adapter: skipped");
+            return;
+        };
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).expect("GPU device");
+        let max_layers = device.limits().max_texture_array_layers.min(MAX_LAYERS);
+        let mut store = PageStore::new(4096, 64, max_layers, 4096);
+        let writes = RefCell::new(GpuWrites::default());
+        for _ in 0..RESERVED {
+            store.create(
+                &device,
+                &mut writes.borrow_mut(),
+                &[MipLevel {
+                    width: 1,
+                    height: 1,
+                    data: &[255; 4],
+                }],
+            );
+        }
+        // 64×32 textures with their whole chain (7 levels)
+        let create = |store: &mut PageStore, i: u32| {
+            let levels: Vec<Vec<u8>> = (0..7).map(|l| texels(i, 64, 32, l)).collect();
+            let mips: Vec<MipLevel> = levels
+                .iter()
+                .enumerate()
+                .map(|(l, d)| MipLevel {
+                    width: level_dim(64, l as u32),
+                    height: level_dim(32, l as u32),
+                    data: d,
+                })
+                .collect();
+            store.create(&device, &mut writes.borrow_mut(), &mips).expect("slot")
+        };
+        // (the reserved slots count here; the table leaves them out)
+        let reserved = store.bytes;
+        let slots: Vec<u32> = (0..40).map(|i| create(&mut store, i)).collect();
+        let mut uploads = UploadQueue::new(&device, true);
+        run_frame(&queue, &writes, &mut uploads);
+        let full = store.bytes - reserved;
+        let layer = PageKey {
+            width: 64,
+            height: 32,
+            mips: 7,
+            format: TexelFormat::Rgba8,
+        }
+        .layer_bytes();
+        assert_eq!(full, 40 * layer);
+        // every other texture loses 1 to 3 levels
+        let dropped = |i: u32| if i.is_multiple_of(2) { 1 + i / 2 % 3 } else { 0 };
+        for (i, &slot) in slots.iter().enumerate() {
+            let k = dropped(i as u32);
+            assert_eq!(store.shrink(&device, &mut uploads, slot, k), k > 0, "texture {i}");
+        }
+        // what cannot be reduced: the whole chain, a reserved slot, a
+        // placeholder, a free slot
+        assert!(!store.shrink(&device, &mut uploads, slots[1], 7));
+        assert!(!store.shrink(&device, &mut uploads, WHITE, 1));
+        let waiting = store.create_placeholder().expect("placeholder slot");
+        assert!(!store.shrink(&device, &mut uploads, waiting, 1));
+        store.free(waiting);
+        assert!(!store.shrink(&device, &mut uploads, waiting, 1));
+        // new textures take the layers just left (staged uploads are copies
+        // recorded after the reductions, in the same encoder)
+        let chains: Vec<(u32, StagedTexture)> = (100..110)
+            .map(|i| {
+                let levels: Vec<Vec<u8>> = (0..7).map(|l| texels(i, 64, 32, l)).collect();
+                let chain: Vec<(u32, u32, &[u8])> = levels
+                    .iter()
+                    .enumerate()
+                    .map(|(l, d)| (level_dim(64, l as u32), level_dim(32, l as u32), d.as_slice()))
+                    .collect();
+                (i, StagedTexture::new(uploads.pool(), &chain).expect("staging room"))
+            })
+            .collect();
+        uploads.prepare();
+        let staged: Vec<(u32, u32)> = chains
+            .iter()
+            .map(|(i, texture)| {
+                assert!(texture.data.ready());
+                let slot = store.create_placeholder().expect("slot");
+                assert!(store.replace_staged(&device, &mut uploads, slot, texture));
+                (slot, *i)
+            })
+            .collect();
+        drop(chains);
+        run_frame(&queue, &writes, &mut uploads);
+        for (i, &slot) in slots.iter().enumerate() {
+            let k = dropped(i as u32);
+            let got = read_back(&device, &queue, &store, slot);
+            assert_eq!(got.len() as u32, 7 - k, "texture {i}");
+            for (l, level) in got.iter().enumerate() {
+                assert_eq!(
+                    level,
+                    &texels(i as u32, 64, 32, l as u32 + k),
+                    "texture {i} level {l} after dropping {k}"
+                );
+            }
+        }
+        for &(slot, i) in &staged {
+            let got = read_back(&device, &queue, &store, slot);
+            for (l, level) in got.iter().enumerate() {
+                assert_eq!(level, &texels(i, 64, 32, l as u32), "new texture {i} level {l}");
+            }
+        }
+        let small: u64 = (0..40u32)
+            .map(|i| {
+                shrunk_key(
+                    PageKey {
+                        width: 64,
+                        height: 32,
+                        mips: 7,
+                        format: TexelFormat::Rgba8,
+                    },
+                    dropped(i),
+                )
+                .map_or(layer, |k| k.layer_bytes())
+            })
+            .sum();
+        assert_eq!(store.bytes - reserved, small + 10 * layer);
+        assert!(small < full * 3 / 4, "{small} of {full}");
+        assert_eq!(store.live as usize, 50 + RESERVED as usize);
+    }
+
     /// GPU check of the shared placeholder: slots of textures still loading
     /// show the one grey layer without owning it; their first texels (even
     /// 1×1 ones, the placeholder's own size) go to a layer of their own and
@@ -1980,6 +2352,19 @@ mod tests {
         assert_eq!(read_back(&device, &queue, &store, slot), rgba);
         assert_eq!(key(&store, slot).map(|k| k.1), Some(TexelFormat::Rgba8));
         assert_eq!(read_back(&device, &queue, &store, slots[1].0), slots[1].1);
+        // memory to give back: the finest level dropped on the GPU, the
+        // others block for block in a BC7 page of the smaller size
+        assert!(store.shrink(&device, &mut uploads, slots[1].0, 1));
+        run_frame(&queue, &writes, &mut uploads);
+        device.poll(wgpu::PollType::wait_indefinitely()).expect("poll");
+        assert_eq!(read_back(&device, &queue, &store, slots[1].0), slots[1].1[1..]);
+        assert_eq!(
+            store.slots[slots[1].0 as usize].as_ref().map(|s| (s.key.width, s.key.format)),
+            Some((32, TexelFormat::Bc7))
+        );
+        // 40 × 12 would start at 20 × 6, which is not whole blocks: kept
+        assert!(!store.shrink(&device, &mut uploads, slots[3].0, 1));
+        assert_eq!(read_back(&device, &queue, &store, slots[3].0), slots[3].1);
     }
 
     /// leave it untouched, and freeing them does not release it.

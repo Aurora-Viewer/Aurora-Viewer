@@ -24,6 +24,7 @@ pub mod types;
 mod ui_blur;
 mod ui_glass;
 pub mod upload;
+pub mod vram;
 pub mod writes;
 
 pub use arena::MeshAlloc;

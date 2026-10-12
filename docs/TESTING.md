@@ -989,8 +989,30 @@ Ce que l'inventaire doit montrer avec ces scénarios :
 | `AURORA_GLOW_SKIP=<masque>` | Retire une famille de faces du glow |
 | `AURORA_MEDIA_DEBUG=1` | Diagnostic des médias |
 | `AURORA_FONT_FALLBACK=0` | Sans les polices de repli du système |
+| `AURORA_TEXTURE_BUDGET_MB=<n>` | Force le budget mémoire des textures |
 
 ### Détails
+
+- **`AURORA_TEXTURE_BUDGET_MB=<n>`** : les pages de textures ne doivent pas
+  dépasser n Mo, quels que soient le réglage « Mémoire textures » et la
+  mémoire vidéo que le pilote annonce (`scene/texture_budget.rs`). Sert à
+  mettre le viewer sous pression mémoire sur n'importe quelle machine, en
+  démo comme sur la grille.
+  - Au-dessus de la cible, le journal annonce chaque changement de palier
+    (`texture memory: pressure 0 -> 1 (… MB in pages for a target of … MB, …
+    lowered so far)`) : 1 ramène les textures à leur taille à l'écran, 2 à 7
+    retirent ensuite un demi-niveau à la fois, jusqu'à deux niveaux, hors
+    champ d'abord. La même ligne donne la mémoire vidéo du viewer : ses
+    ressources, ce que le pilote lui compte et le budget accordé. La fenêtre
+    Performances complète affiche la cible et le palier (« Budget des
+    textures », dans Mémoire et flux).
+  - En démo, avec `AURORA_DEMO_STREAM=3000` (4,7 Go de textures) :
+    `AURORA_DEMO_POS="168,126"` place l'avatar au milieu des objets ;
+    512 reste au palier 1, 96 monte jusqu'au palier 4 ou 5 selon l'essai.
+    Les textures de ce
+    scénario se rechargent alors à la demande, comme celles de la grille
+    (caméra rapprochée après une réduction). Une valeur énorme (1000000)
+    retire toute pression, pour comparer.
 
 - **`AURORA_FONT_FALLBACK=0`** : n'utilise que les polices embarquées, comme
   avant l'ajout des polices de repli du système : les caractères qu'elles
