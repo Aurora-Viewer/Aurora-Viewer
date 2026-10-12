@@ -138,12 +138,12 @@ mod tests {
     }
 
     #[test]
-    fn first_launch_opens_the_radar_and_the_mini_map_only() {
+    fn first_launch_opens_the_radar_the_mini_map_and_performance() {
         let missing_file = Settings::default();
         let empty_file: Settings = serde_json::from_str("{}").expect("blank settings");
         for blank in [missing_file, empty_file] {
             let panels = Panels::from_settings(&blank);
-            assert_eq!(open(&panels), ["people", "minimap"]);
+            assert_eq!(open(&panels), ["perf", "people", "minimap"]);
             assert_eq!(panels.people_tab, 0, "the radar is the first tab of People");
             assert!(
                 !blank.radar.show_minimap,
@@ -164,6 +164,11 @@ mod tests {
             assert!(!radar.intersects(map), "{width} x {height}");
             assert_eq!(radar.top(), map.top());
             assert!(radar.left() < 20.0 && screen.right() - map.right() < 20.0);
+            // Performance stands under the mini-map, on its right edge
+            let perf = super::perf::default_pos(screen, super::perf::COMPACT_W);
+            assert!(perf.y > map.bottom() && perf.y - map.bottom() < 20.0);
+            assert_eq!(perf.x + super::perf::COMPACT_W + super::perf::SIDES, map.right());
+            assert!(perf.x > radar.right(), "{width} x {height}");
         }
     }
 
