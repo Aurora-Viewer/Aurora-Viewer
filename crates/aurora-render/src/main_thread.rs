@@ -226,6 +226,11 @@ impl Renderer {
         if afeat.contains(wgpu::Features::PARTIALLY_BOUND_BINDING_ARRAY) {
             features |= wgpu::Features::PARTIALLY_BOUND_BINDING_ARRAY;
         }
+        // BC7 texture pages (textures.rs): a quarter of the video memory of
+        // RGBA8 for the streamed textures; without it they stay RGBA8
+        if afeat.contains(wgpu::Features::TEXTURE_COMPRESSION_BC) {
+            features |= wgpu::Features::TEXTURE_COMPRESSION_BC;
+        }
         // GPU draw lists (gpu_cull.rs): draw counts written by the GPU
         if afeat.contains(wgpu::Features::MULTI_DRAW_INDIRECT_COUNT) {
             features |= wgpu::Features::MULTI_DRAW_INDIRECT_COUNT;

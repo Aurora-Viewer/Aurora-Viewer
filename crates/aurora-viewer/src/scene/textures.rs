@@ -20,7 +20,7 @@ use super::texture_load::{DecodeMeter, LoadTotals, LoadWatch};
 use aurora_assets::J2kInfo;
 use aurora_net::fetch::ByteRange;
 use aurora_net::{FetchRequest, FetchResult, Fetcher};
-use aurora_render::{MipLevel, Renderer, StagedTexture, StagingPool, build_mips};
+use aurora_render::{MipLevel, Renderer, StagedTexture, StagingPool, TexelFormat, build_mips};
 use std::collections::{BinaryHeap, HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -1214,12 +1214,15 @@ impl TextureStreamer {
             // a new texture page (up to ~1 ms to create) only while most of
             // the frame's budget is left: next frame, it goes first
             let size = match &u.staged {
-                Some(staged) => staged.levels.first().map(|l| (l.width, l.height, staged.levels.len())),
-                None => u.mips.first().map(|m| (m.0, m.1, u.mips.len())),
+                Some(staged) => staged
+                    .levels
+                    .first()
+                    .map(|l| (staged.format, l.width, l.height, staged.levels.len())),
+                None => u.mips.first().map(|m| (TexelFormat::Rgba8, m.0, m.1, u.mips.len())),
             };
             if done > 0
                 && t0.elapsed() > budget.time / 4
-                && size.is_some_and(|(w, h, levels)| renderer.textures.needs_page(e.slot, w, h, levels as u32))
+                && size.is_some_and(|(format, w, h, levels)| renderer.textures.needs_page(e.slot, format, w, h, levels as u32))
             {
                 // (the uploads behind it wait too: thousands may need
                 // that same page)
