@@ -32,7 +32,7 @@ the Second Life viewer sources (originally LGPL 2.1).
 
 | Asset | Location | License |
 |---|---|---|
-| Phosphor Icons — Copyright © 2020-2024 Phosphor Icons | `assets/phosphor-icons/`, `crates/aurora-viewer/assets/icons/phosphor/` | MIT ([LICENSE](assets/phosphor-icons/LICENSE)) |
+| Tabler Icons — Copyright © 2020-2026 Paweł Kuna | `assets/tabler-icons/`, `crates/aurora-viewer/assets/icons/tabler/` | MIT ([LICENSE](assets/tabler-icons/LICENSE)) |
 | Inter typeface | `crates/aurora-viewer/assets/fonts/` | SIL Open Font License 1.1 |
 | Noto Sans | `crates/aurora-viewer/assets/fonts/` | SIL Open Font License 1.1 |
 | Roboto | `crates/aurora-viewer/assets/fonts/` | Apache License 2.0 |
