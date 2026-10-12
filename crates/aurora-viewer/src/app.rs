@@ -786,6 +786,32 @@ impl App {
                 self.world.inventory.add_items(items);
                 return;
             }
+            if let NetCommand::FinishInventoryCopies { request, reply } = &cmd {
+                let items = reply
+                    .copies
+                    .iter()
+                    .filter_map(|c| {
+                        self.world.inventory.items.get(&c.item).cloned().map(|mut it| {
+                            it.id = uuid::Uuid::new_v4();
+                            it.parent = c.parent;
+                            it
+                        })
+                    })
+                    .collect();
+                self.world.inventory.add_items(items);
+                let change = aurora_net::inventory::operations::Mutation {
+                    refresh: reply.contents.iter().map(|c| c.folder_id).collect(),
+                    ..Default::default()
+                };
+                let result = crate::world::inventory::actions::demo_mutate(&mut self.world.inventory, self.world.agent_id, change).map(
+                    |mut completed| {
+                        completed.created.clone_from(&reply.created);
+                        completed
+                    },
+                );
+                self.on_app_event(NetEvent::InventoryEdited { request: *request, result });
+                return;
+            }
             if let NetCommand::CreateInventoryWearable { parent, kind, name, .. } = &cmd {
                 self.send(NetCommand::CreateInventoryItem {
                     parent: *parent,
@@ -4349,7 +4375,7 @@ impl App {
             raw.events
                 .extend(ui::inventory::document_demo_events(&ctx, self.frame_count, &mut self.inventory_ui));
             raw.events
-                .extend(ui::inventory::clipboard_demo_events(&ctx, self.frame_count, &self.inventory_ui));
+                .extend(ui::inventory::clipboard_demo_events(&ctx, self.frame_count, &mut self.inventory_ui));
         }
         let projector = ui::hud::Projector {
             view_proj: vp,
@@ -6803,10 +6829,12 @@ impl ApplicationHandler for App {
                             self.inventory_ui.open_folder_window(uuid::Uuid::from_u128(8000));
                             self.inventory_ui.open_folder_window(uuid::Uuid::from_u128(8001));
                         } else {
-                            let mut item = self.world.inventory.items[&uuid::Uuid::from_u128(8104)].clone();
-                            item.id = uuid::Uuid::from_u128(8220);
-                            item.parent = uuid::Uuid::from_u128(8001);
-                            self.world.inventory.add_items(vec![item]);
+                            crate::world::inventory::demo::seed_clipboard_tree(&mut self.world.inventory);
+                            if view == "clipboard-cut-folder"
+                                && let Some(item) = self.world.inventory.items.get_mut(&uuid::Uuid::from_u128(8223))
+                            {
+                                item.owner_mask &= !crate::world::inventory::actions::COPY;
+                            }
                         }
                     } else if view == "new-folder" {
                         if let Ok(change) = crate::world::inventory::actions::create_folder(id, aurora_i18n::tr!("common-new-folder")) {

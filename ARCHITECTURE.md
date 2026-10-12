@@ -207,6 +207,17 @@ Les changements de parent passent par `aurora-net/src/session/inventory_moves.rs
 le déplacement par relecture des dossiers, avec attente bornée si le stockage
 renvoie encore l’ancien parent. Les autres champs restent modifiés par AIS.
 
+Les copies du contenu d’un dossier sont terminées par
+`aurora-net/src/session/inventory_copies.rs` : messages fiables
+`CopyInventoryItem`, suivi de tous les accusés, puis relecture bornée des
+dossiers jusqu’à présence de chaque item copié. `app/inventory.rs` conserve
+la mutation en cours pendant cette étape ; une création de dossier vide
+ne vaut pas confirmation de copie. Les snapshots sont ordonnés par ascendance
+avant leur application, y compris si les réponses HTTP arrivent dans l’ordre
+inverse ou sur plusieurs lots. Les anciennes réponses d’inventaire et
+les métadonnées de versions inférieures n’écrasent pas les contenus confirmés
+dans `world/inventory.rs`.
+
 ### Surfaces des fenêtres
 
 `ui/widgets/workspace.rs` partage la navigation, les panneaux de détails, les

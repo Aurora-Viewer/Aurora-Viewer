@@ -107,7 +107,13 @@ impl Inventory {
 
     fn upsert_folder(&mut self, f: InvFolder, library: bool) {
         match self.folders.get_mut(&f.id) {
-            Some(existing) => existing.info = f,
+            Some(existing) => {
+                // A parent listing can carry older/unknown child versions.
+                // Keep the version of the contents already confirmed locally.
+                let version = existing.info.version;
+                existing.info = f;
+                existing.info.version = existing.info.version.max(version);
+            }
             None => {
                 self.folders.insert(
                     f.id,
@@ -175,6 +181,16 @@ impl Inventory {
     pub fn apply(&mut self, contents: Vec<FolderContents>) {
         self.generation += 1;
         for c in contents {
+            // Inventory versions advance as copies arrive (Firestorm's
+            // LLInventoryModel::accountForUpdate). A delayed pre-copy HTTP
+            // snapshot must not replace the newer, populated folder.
+            if self
+                .folders
+                .get(&c.folder_id)
+                .is_some_and(|f| f.state == FetchState::Fetched && c.version < f.info.version)
+            {
+                continue;
+            }
             let library = self.folders.get(&c.folder_id).map(|f| f.library).unwrap_or(false);
             let child_ids: Vec<Uuid> = c.folders.iter().map(|f| f.id).collect();
             for f in c.folders {
@@ -519,6 +535,40 @@ mod tests {
         inv.add_items(vec![item.clone(), item.clone()]);
         assert!(!inv.folders[&old].items.contains(&item.id));
         assert_eq!(inv.folders[&item.parent].items, vec![item.id]);
+    }
+
+    #[test]
+    fn stale_folder_snapshots_do_not_erase_confirmed_copy_contents() {
+        let mut inv = fixture();
+        let folder = Uuid::from_u128(704);
+        let mut copied = inv.items[&Uuid::from_u128(723)].clone();
+        copied.id = Uuid::from_u128(9999);
+        copied.parent = folder;
+        inv.apply(vec![FolderContents {
+            folder_id: folder,
+            owner_id: Uuid::from_u128(1),
+            version: 5,
+            folders: Vec::new(),
+            items: vec![copied.clone()],
+        }]);
+        let mut metadata = inv.folders[&folder].info.clone();
+        metadata.version = 1;
+        inv.apply(vec![FolderContents {
+            folder_id: metadata.parent,
+            owner_id: Uuid::from_u128(1),
+            version: 6,
+            folders: vec![metadata],
+            items: Vec::new(),
+        }]);
+        inv.apply(vec![FolderContents {
+            folder_id: folder,
+            owner_id: Uuid::from_u128(1),
+            version: 4,
+            folders: Vec::new(),
+            items: Vec::new(),
+        }]);
+        assert_eq!(inv.folders[&folder].info.version, 5);
+        assert_eq!(inv.folders[&folder].items, vec![copied.id]);
     }
 
     #[test]

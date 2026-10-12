@@ -208,7 +208,7 @@ where
         tokio::time::sleep(std::time::Duration::from_millis(200 << attempt.min(3))).await;
     }
     // Parent metadata must precede its descendants (including new folders).
-    contents.sort_by_key(|c| created.values().any(|id| *id == c.folder_id));
+    sort_contents_parent_first(&mut contents);
     let copies = change
         .copies
         .into_iter()
@@ -223,6 +223,78 @@ where
         removed: change.removed,
         created,
     })
+}
+
+/// A stale HTTP snapshot can still be empty just after UDP copy acknowledgements.
+/// Re-read every affected folder until all copied UUIDs are present; never resend
+/// CopyInventoryItem, which would create duplicates after a delayed confirmation.
+pub(crate) async fn complete_copies(
+    http: &reqwest::Client,
+    fetch: &str,
+    owner: Uuid,
+    mut reply: Reply,
+    items: &[InvItem],
+) -> Result<Reply, String> {
+    let mut folders: Vec<_> = reply
+        .contents
+        .iter()
+        .map(|c| c.folder_id)
+        .chain(items.iter().map(|it| it.parent))
+        .collect();
+    folders.sort();
+    folders.dedup();
+    for attempt in 0..=5 {
+        let mut contents = Vec::new();
+        for chunk in folders.chunks(16) {
+            let doc = crate::caps::post_llsd(http, fetch, &super::fetch_request_body(chunk, owner))
+                .await
+                .map_err(|_| aurora_i18n::tr!("inventory-copy-unconfirmed").to_owned())?;
+            contents.extend(super::parse_fetch_response(&doc));
+        }
+        let complete = folders
+            .iter()
+            .all(|id| contents.iter().any(|c| c.folder_id == *id && c.version >= 0))
+            && items.iter().all(|item| {
+                contents
+                    .iter()
+                    .any(|c| c.folder_id == item.parent && c.items.iter().any(|it| it.id == item.id && it.parent == item.parent))
+            });
+        if complete {
+            sort_contents_parent_first(&mut contents);
+            reply.contents = contents;
+            reply.copies.clear();
+            log::info!(
+                "inventory copy: confirmed {} copied items in {} folders",
+                items.len(),
+                folders.len()
+            );
+            return Ok(reply);
+        }
+        if attempt < 5 {
+            tokio::time::sleep(std::time::Duration::from_millis(250 << attempt)).await;
+        }
+    }
+    Err(aurora_i18n::tr!("inventory-copy-unconfirmed").into())
+}
+
+fn sort_contents_parent_first(contents: &mut [FolderContents]) {
+    // HTTP responses (including separate chunks) can list a deep descendant
+    // before the snapshot that introduces its folder to the inventory model.
+    let parents: HashMap<_, _> = contents
+        .iter()
+        .flat_map(|c| c.folders.iter().map(move |f| (f.id, c.folder_id)))
+        .collect();
+    contents.sort_by_cached_key(|c| {
+        let mut id = c.folder_id;
+        let mut depth = 0;
+        // Bound traversal so malformed network parent cycles cannot hang it.
+        for _ in 0..=parents.len() {
+            let Some(parent) = parents.get(&id) else { break };
+            depth += 1;
+            id = *parent;
+        }
+        depth
+    });
 }
 
 fn confirmed(operations: &[Operation], created: &HashMap<Uuid, Uuid>, contents: &[FolderContents]) -> bool {
@@ -1142,6 +1214,113 @@ mod tests {
         let requests = task.await.expect("requests");
         assert!(requests[1].0.contains(&format!("/category/{}?", id(200))));
         assert_eq!(requests[1].1["categories"].at(0)["parent_id"].as_uuid(), id(200));
+    }
+
+    #[tokio::test]
+    async fn folder_copy_waits_for_all_nested_contents_after_a_stale_empty_snapshot() {
+        let empty = llsd_map! { "folders" => Llsd::Array(vec![
+            llsd_map! { "folder_id" => id(200), "version" => 1 },
+            llsd_map! { "folder_id" => id(201), "version" => 1 }
+        ]) };
+        let filled = llsd_map! { "folders" => Llsd::Array(vec![
+            llsd_map! { "folder_id" => id(200), "version" => 2, "items" => Llsd::Array(vec![llsd_map! { "item_id" => id(300), "parent_id" => id(200), "type" => 6 }]) },
+            llsd_map! { "folder_id" => id(201), "version" => 2, "items" => Llsd::Array(vec![llsd_map! { "item_id" => id(301), "parent_id" => id(201), "type" => 7 }]) }
+        ]) };
+        let (url, task) = server(vec![(200, empty), (200, filled)]).await;
+        let items = vec![
+            InvItem {
+                id: id(300),
+                parent: id(200),
+                ..Default::default()
+            },
+            InvItem {
+                id: id(301),
+                parent: id(201),
+                ..Default::default()
+            },
+        ];
+        let reply = complete_copies(
+            &reqwest::Client::new(),
+            &url,
+            id(2),
+            Reply {
+                contents: Vec::new(),
+                copies: Vec::new(),
+                removed: Vec::new(),
+                created: HashMap::from([(id(100), id(200)), (id(101), id(201))]),
+            },
+            &items,
+        )
+        .await
+        .expect("all nested contents confirmed");
+        assert!(reply.copies.is_empty());
+        assert_eq!(reply.created[&id(101)], id(201));
+        assert!(items.iter().all(|item| {
+            reply
+                .contents
+                .iter()
+                .any(|c| c.folder_id == item.parent && c.items.iter().any(|it| it.id == item.id))
+        }));
+        let requests = task.await.expect("requests");
+        assert_eq!(requests.len(), 2);
+        assert!(requests.iter().all(|(header, _)| header.starts_with("POST / ")));
+    }
+
+    #[test]
+    fn copied_folder_snapshots_introduce_parents_before_every_nested_content() {
+        let snapshot = |folder_id, child: Option<u128>| FolderContents {
+            folder_id: id(folder_id),
+            owner_id: id(2),
+            version: 1,
+            folders: child
+                .map(|child| super::super::InvFolder {
+                    id: id(child),
+                    parent: id(folder_id),
+                    ..Default::default()
+                })
+                .into_iter()
+                .collect(),
+            items: Vec::new(),
+        };
+        // UUID ordering is intentionally opposite to ancestry, as on a server.
+        let mut contents = vec![
+            snapshot(100, None),
+            snapshot(200, Some(100)),
+            snapshot(300, Some(200)),
+            snapshot(900, Some(300)),
+        ];
+        sort_contents_parent_first(&mut contents);
+        assert_eq!(
+            contents.iter().map(|c| c.folder_id).collect::<Vec<_>>(),
+            vec![id(900), id(300), id(200), id(100)]
+        );
+    }
+
+    #[tokio::test]
+    async fn incomplete_folder_copies_are_reported_instead_of_publishing_empty_folders() {
+        for status in [200, 403] {
+            let empty = llsd_map! { "folders" => Llsd::Array(vec![llsd_map! { "folder_id" => id(200), "version" => 1 }]) };
+            let (url, task) = server(vec![(status, empty); if status == 200 { 6 } else { 1 }]).await;
+            let result = complete_copies(
+                &reqwest::Client::new(),
+                &url,
+                id(2),
+                Reply {
+                    contents: Vec::new(),
+                    copies: Vec::new(),
+                    removed: Vec::new(),
+                    created: HashMap::new(),
+                },
+                &[InvItem {
+                    id: id(300),
+                    parent: id(200),
+                    ..Default::default()
+                }],
+            )
+            .await;
+            assert!(result.is_err());
+            task.await.expect("requests");
+        }
     }
     #[tokio::test]
     async fn a_successful_patch_with_stale_readback_is_not_reported_as_success() {

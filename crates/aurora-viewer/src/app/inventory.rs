@@ -129,6 +129,11 @@ impl App {
                     return;
                 }
                 let request = Uuid::new_v4();
+                log::info!(
+                    "inventory mutation: {} operations, {} item copies",
+                    change.operations.len(),
+                    change.copies.len()
+                );
                 self.inventory_ui.pending = Some(request);
                 self.inventory_ui.pending_refresh.clone_from(&change.refresh);
                 self.inventory_ui.created_selection = change.operations.iter().find_map(|op| {
@@ -337,6 +342,16 @@ impl App {
         if self.inventory_ui.pending != Some(request) {
             return;
         }
+        let result = match result {
+            Ok(reply) if !reply.copies.is_empty() => {
+                // AIS confirms the folders before CopyInventoryItem fills them.
+                // Keep the operation pending until the copies are acknowledged
+                // and the complete contents have been read back.
+                self.send(NetCommand::FinishInventoryCopies { request, reply });
+                return;
+            }
+            result => result,
+        };
         self.inventory_ui.pending = None;
         self.finish_inventory_image(request, result.as_ref().err().cloned());
         match result {
@@ -355,9 +370,6 @@ impl App {
                 if let Some(id) = self.inventory_ui.created_selection.and_then(|id| reply.created.get(&id)) {
                     self.inventory_ui.show_original(&self.world.inventory, *id);
                     self.inventory_ui.begin_rename(&self.world.inventory, *id);
-                }
-                if !reply.copies.is_empty() {
-                    self.send(NetCommand::CopyInventoryItems(reply.copies));
                 }
                 if self.inventory_ui.consume_clipboard {
                     self.inventory_ui.clipboard.clear();

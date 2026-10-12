@@ -160,7 +160,7 @@ pub(super) fn demo_caret(response: &egui::Response, st: &InventoryUi, folder: Uu
 
 /// Exercise actual rows with the same native events egui-winit emits for
 /// Ctrl+C/X/V, without activating the OS window or reading OS clipboard text.
-pub fn demo_events(ctx: &egui::Context, frame: u64, st: &InventoryUi) -> Vec<egui::Event> {
+pub fn demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryUi) -> Vec<egui::Event> {
     let Some(mode) = demo_mode().filter(|mode| *mode != "clipboard") else {
         return Vec::new();
     };
@@ -181,8 +181,12 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, st: &InventoryUi) -> Vec<egu
     } else {
         st.ui_id
     };
-    let cut = mode == "clipboard-cut";
-    let folder = mode == "clipboard-folder";
+    let cut = matches!(mode, "clipboard-cut" | "clipboard-cut-folder");
+    let folder = matches!(mode, "clipboard-folder" | "clipboard-cut-folder");
+    if folder && frame == 785 {
+        st.expand_all = Some(true);
+        st.reveal = st.selected;
+    }
     if folder && matches!(frame, 750 | 751) {
         return vec![egui::Event::Key {
             key: egui::Key::Enter,
@@ -232,7 +236,7 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, st: &InventoryUi) -> Vec<egu
                 .map(|r| r.rect.center()),
             false,
         ),
-        700 | 701 => (row(st.ui_id, if folder { 8000 } else { 8001 }), false),
+        700 | 701 => (row(st.ui_id, if folder { 8300 } else { 8001 }), false),
         _ => (None, false),
     };
     if let Some(pos) = pos {

@@ -948,12 +948,19 @@ hors ligne ; les fichiers et photos chargés en démo restent hors ligne.
   recherche et de renommage gardent leurs raccourcis de texte.
   `clipboard-copy` sélectionne deux éléments, copie puis colle deux fois dans
   le sous-dossier ; `clipboard-cut` déplace deux objets, dont un non copiable
-  et un non transférable ; `clipboard-folder` copie le sous-dossier et son
-  contenu dans le dossier parent. `clipboard-window` copie depuis une fenêtre de
+  et un non transférable ; `clipboard-folder` copie le sous-dossier, ses deux
+  niveaux imbriqués et leurs trois items dans « Destination de test ».
+  `clipboard-cut-folder` déplace la même arborescence, avec un objet non copiable
+  dans un sous-dossier : tous les éléments doivent rester présents avec les
+  mêmes identifiants. `clipboard-window` copie depuis une fenêtre de
   dossier puis colle dans une autre, vide. Gestes aux images 650–781, puis
   ouverture du dossier de destination ; capture après 800. Aucune activation
   de la fenêtre native ni lecture du presse-papiers du système pendant ces
   scénarios automatiques.
+  En ligne, la copie doit rester « Modification en cours » jusqu’à confirmation
+  de tous les items ; une copie non confirmée affiche une erreur demandant de
+  recharger la destination. Tester des dossiers avec plusieurs niveaux, attendre
+  la fin puis recharger les dossiers et vérifier les originaux et les copies.
 - `move-menu` : menu d’un élément avec « Déplacer vers… » ; `move-item`,
   `move-folder`, `move-multi` : fenêtre de destination pour un élément, un
   dossier ou trois objets (dont un non copiable et un non transférable).

@@ -4,6 +4,7 @@
 //! Message flow follows `newview/llstartup.cpp` and `llviewermessage.cpp`.
 
 mod build_cmds;
+mod inventory_copies;
 mod inventory_moves;
 mod inventory_preview;
 mod inventory_upload;
@@ -163,6 +164,7 @@ struct Session<'a> {
     inventory_previews: inventory_preview::Previews,
     script_transfers: scripts::ScriptTransfers,
     inventory_callbacks: HashMap<u32, (Instant, bool)>,
+    inventory_copies: inventory_copies::Pending,
     inventory_merchant_pending: bool,
     next_inventory_callback: u32,
 }
@@ -265,6 +267,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         inventory_previews: Default::default(),
         script_transfers: Default::default(),
         inventory_callbacks: HashMap::new(),
+        inventory_copies: inventory_copies::Pending::default(),
         notecard_copy_tx,
         inventory_move_tx,
         notecard_copies: HashMap::new(),
@@ -680,6 +683,9 @@ impl Session<'_> {
         self.expire_script_transfers();
         self.expire_inventory_uploads();
         self.expire_inventory_previews();
+        for completion in self.inventory_copies.expire(Instant::now()) {
+            self.finish_inventory_copies(completion);
+        }
         let before = self.inventory_callbacks.len();
         self.inventory_callbacks
             .retain(|_, (sent, _)| sent.elapsed() < Duration::from_secs(60));
@@ -1524,19 +1530,12 @@ impl Session<'_> {
             }
             NetCommand::CopyInventoryItems(items) => {
                 for it in items {
-                    let mut m = CopyInventoryItem::default();
-                    m.agent_data.agent_id = self.agent_id();
-                    m.agent_data.session_id = self.session_id();
-                    m.inventory_data = vec![copy_inventory_item::InventoryData {
-                        callback_id: self.inventory_callback(false),
-                        old_agent_id: it.owner,
-                        old_item_id: it.item,
-                        new_folder_id: it.parent,
-                        new_name: str_field(&it.name),
-                    }];
+                    let callback = self.inventory_callback(false);
+                    let m = inventory_copies::message(self.agent_id(), self.session_id(), callback, &it);
                     self.send_main(&m, true);
                 }
             }
+            NetCommand::FinishInventoryCopies { request, reply } => self.start_inventory_copies(request, reply),
             NetCommand::CopyNotecardInventory {
                 editor,
                 open,
@@ -2990,6 +2989,9 @@ impl Session<'_> {
                     .iter()
                     .map(|it| {
                         let item = crate::inventory::operations::item_from_udp(it);
+                        if let Some(completion) = self.inventory_copies.accept(it.callback_id, &item) {
+                            self.finish_inventory_copies(completion);
+                        }
                         if let Some((editor, notecard, open)) = self.notecard_copies.remove(&it.callback_id) {
                             emit(
                                 self.sh,
@@ -3046,6 +3048,9 @@ impl Session<'_> {
                             created_at: i64::from(it.creation_date),
                             ..Default::default()
                         };
+                        if let Some(completion) = self.inventory_copies.accept(it.callback_id, &item) {
+                            self.finish_inventory_copies(completion);
+                        }
                         if new {
                             created.push(item.clone());
                         }

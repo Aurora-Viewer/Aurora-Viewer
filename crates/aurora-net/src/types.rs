@@ -1137,6 +1137,11 @@ pub enum NetCommand {
         change: crate::inventory::operations::Mutation,
     },
     CopyInventoryItems(Vec<crate::inventory::operations::CopyItem>),
+    /// Complete a mutation's deferred item copies before publishing its folders.
+    FinishInventoryCopies {
+        request: Uuid,
+        reply: crate::inventory::operations::Reply,
+    },
     CreateInventoryItem {
         parent: Uuid,
         kind: crate::inventory::operations::NewItem,
