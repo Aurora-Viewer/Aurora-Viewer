@@ -61,8 +61,9 @@ pub fn target(
         egui::CursorIcon::NotAllowed
     });
     if allowed {
+        let radius = ui.visuals().window_corner_radius;
         ui.painter()
-            .rect_stroke(r.rect, 2.0, egui::Stroke::new(1.0, p.violet_light), egui::StrokeKind::Inside);
+            .rect_stroke(r.rect, radius, egui::Stroke::new(1.0, p.violet_light), egui::StrokeKind::Inside);
         if let Some(cargo) = r.dnd_release_payload::<TaskDrag>() {
             let mut request = cargo.request.clone();
             request.folder = folder;
@@ -92,18 +93,16 @@ pub fn confirm(ctx: &egui::Context, p: &Palette, pending: &mut Option<PendingTra
             ui.label(RichText::new(aurora_i18n::tr!("task-transfer-scripted-warning")).color(p.warn));
         }
         ui.add_space(8.0);
+        let ignore = aurora_i18n::tr!("task-transfer-ignore");
+        super::super::widgets::switch_labeled(ui, p, &mut transfer.request.ignore_warning, ignore);
+        ui.add_space(4.0);
         ui.horizontal(|ui| {
-            super::super::widgets::switch(ui, p, &mut transfer.request.ignore_warning);
-            ui.label(aurora_i18n::tr!("task-transfer-ignore"));
-        });
-        ui.horizontal(|ui| {
-            if ui
-                .add(egui::Button::new(aurora_i18n::tr!("task-transfer-confirm")).fill(p.violet))
-                .clicked()
-            {
+            use super::super::widgets::{ActionKind, action_button};
+            let size = Vec2::new(0.0, 26.0);
+            if action_button(ui, p, "check", aurora_i18n::tr!("task-transfer-confirm"), ActionKind::Primary, size).clicked() {
                 answer = Some(true);
             }
-            if ui.button(aurora_i18n::tr!("common-cancel")).clicked() {
+            if action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {
                 answer = Some(false);
             }
         });
