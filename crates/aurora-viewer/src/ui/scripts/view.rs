@@ -38,6 +38,7 @@ pub(super) struct Tools {
     incoming_external: bool,
     pub diagnostics_processed: bool,
     pub reset_history: bool,
+    footer_height: f32,
     can_undo: bool,
     can_redo: bool,
     history_cursor: Option<egui::text::CCursorRange>,
@@ -302,7 +303,24 @@ pub(super) fn body(
     } else {
         e.tools.processed = false;
     }
-    source(ui, p, e, id, settings);
+    // Measure the actual controls, including object-only rows and diagnostics.
+    // Repaint after a width/status change, without replaying asynchronous actions.
+    let footer_height = if e.tools.footer_height > 0.0 {
+        e.tools.footer_height
+    } else {
+        155.0
+    };
+    let height = (ui.available_height() - footer_height - ui.spacing().item_spacing.y - 8.0).max(120.0);
+    source(ui, p, e, id, settings, height);
+    let footer = ui.scope(|ui| footer(ui, p, e, id, actions));
+    if (e.tools.footer_height - footer.response.rect.height()).abs() > 0.5 {
+        e.tools.footer_height = footer.response.rect.height();
+        ctx.request_repaint();
+    }
+}
+
+fn footer(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, actions: &mut Vec<Action>) {
+    let ctx = ui.ctx().clone();
     ui.horizontal(|ui| {
         insertion(ui, p, e, id);
         ui.label(
@@ -406,7 +424,7 @@ fn edit_menu(ui: &mut egui::Ui, p: &Palette, e: &Editor, id: Id, chosen: &mut Op
     }
 }
 
-fn source(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, settings: &ScriptSettings) {
+fn source(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, settings: &ScriptSettings, height: f32) {
     if std::mem::take(&mut e.tools.reset_history) {
         egui::text_edit::TextEditState::default().store(ui.ctx(), id);
         egui::text_edit::TextEditState::default().store(ui.ctx(), visible_id(id, true));
@@ -419,7 +437,6 @@ fn source(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, settings: &Scr
     e.folding
         .sync(if e.tools.processed { &e.tools.processed_source } else { &e.source });
     e.folding.reveal(editing::cursor(ui.ctx(), id).primary);
-    let height = (ui.available_height() - 155.0).max(120.0);
     egui::Frame::new()
         .fill(settings.color(ColorRole::Background, p))
         .inner_margin(4.0)
@@ -438,8 +455,8 @@ fn source(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, settings: &Scr
                 let editable = color_editable && !e.colors.active();
                 egui::ScrollArea::both()
                     .id_salt((id, "source"))
+                    .auto_shrink([false, false])
                     .max_height(height)
-                    .min_scrolled_height(height)
                     .show_viewport(ui, |ui, viewport| {
                         ui.horizontal_top(|ui| {
                             let (gutter, _) = ui.allocate_exact_size(Vec2::new(56.0, 1.0), egui::Sense::hover());
@@ -456,7 +473,8 @@ fn source(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, settings: &Scr
                                     .code_editor()
                                     .layouter(&mut layouter)
                                     .desired_width(f32::INFINITY)
-                                    .desired_rows(18)
+                                    .desired_rows(1)
+                                    .min_size(Vec2::new(0.0, viewport.height()))
                                     .frame(egui::Frame::NONE)
                                     .interactive(interactive)
                                     .show(ui)
@@ -807,6 +825,92 @@ fn poll_files(ctx: &egui::Context, e: &mut Editor, id: Id, settings: &ScriptSett
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn resizing_fills_the_editor_without_painting_the_gutter_over_the_footer() {
+        use crate::theme::Theme;
+        for object in [false, true] {
+            let ctx = egui::Context::default();
+            let theme = Theme::default();
+            theme.apply(&ctx, 1.0);
+            ctx.global_style_mut(|style| style.spacing.scroll = egui::style::ScrollStyle::solid());
+            let p = theme.palette();
+            let target = aurora_net::scripts::ScriptTarget {
+                object: if object { uuid::Uuid::from_u128(9) } else { uuid::Uuid::nil() },
+                item: uuid::Uuid::from_u128(10),
+            };
+            let mut editors = super::super::Editors::default();
+            let request = editors.open(target, "Resize".into(), true, true).unwrap();
+            editors.loaded(request, target, Ok("default {\n    event() {\n        code;\n    }\n}".into()));
+            let e = &mut editors.documents[0];
+            let settings = ScriptSettings::default();
+            let mut prefs = Preferences::default();
+            let short_source = "default {\n    event() {\n        code;\n    }\n}";
+            let long_source = format!("// {}\n{short_source}", "long line ".repeat(100));
+            for size in [Vec2::new(660.0, 440.0), Vec2::new(1100.0, 880.0), Vec2::new(520.0, 380.0)] {
+                for (source, folded) in [(short_source, false), (short_source, true), (long_source.as_str(), false)] {
+                    e.source = source.into();
+                    e.folding.sync(&e.source);
+                    if folded {
+                        e.folding.collapse_all();
+                    } else {
+                        e.folding.expand_all();
+                    }
+                    let mut bounds = egui::Rect::NOTHING;
+                    let mut bottom = 0.0;
+                    let mut frame = || {
+                        ctx.run_ui(
+                            egui::RawInput {
+                                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+                                ..Default::default()
+                            },
+                            |ui| {
+                                bounds = ui.available_rect_before_wrap();
+                                body(ui, &p, e, Id::new("resize_source"), &settings, &mut prefs, &mut vec![]);
+                                bottom = ui.min_rect().bottom();
+                            },
+                        )
+                    };
+                    // read_response exposes the previous frame's widget geometry.
+                    for _ in 0..2 {
+                        let mut warmup = frame();
+                        warmup.textures_delta.clear();
+                    }
+                    let mut output = frame();
+                    let background = settings.color(ColorRole::Background, &p);
+                    let rectangles: Vec<_> = output
+                        .shapes
+                        .iter()
+                        .filter_map(|shape| match &shape.shape {
+                            egui::epaint::Shape::Rect(rect) if rect.fill == background => Some(rect.rect),
+                            _ => None,
+                        })
+                        .collect();
+                    let editor = rectangles
+                        .iter()
+                        .max_by(|a, b| a.area().total_cmp(&b.area()))
+                        .expect("editor background");
+                    let gutter = rectangles.iter().find(|rect| (rect.width() - 56.0).abs() < 0.5).expect("gutter");
+                    let input = ctx.read_response(Id::new("resize_source")).expect("source input");
+                    assert!(
+                        input.rect.height() >= gutter.height() - 0.5,
+                        "clickable editor: {:?} / {editor:?}",
+                        input.rect
+                    );
+                    assert!(editor.height() > if size.y > 800.0 { 600.0 } else { 120.0 }, "{editor:?}");
+                    assert!(
+                        (4.0..25.0).contains(&(editor.bottom() - gutter.bottom())),
+                        "{editor:?} / {gutter:?}"
+                    );
+                    assert!(
+                        (bounds.bottom() - bottom).abs() < 1.0,
+                        "unused/overflowing space: {bounds:?} / {bottom}"
+                    );
+                    output.textures_delta.clear();
+                }
+            }
+        }
+    }
+
     #[test]
     fn commands_enforce_permissions_and_processed_selection_does_not_replace_the_source_cursor() {
         let target = aurora_net::scripts::ScriptTarget {
