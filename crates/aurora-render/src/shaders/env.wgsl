@@ -122,10 +122,17 @@ struct TerrainOut {
 @vertex
 fn vs_terrain(in: VsIn) -> TerrainOut {
     let rec = records[in.instance];
-    let wp = rec.model * vec4<f32>(in.pos, 1.0);
+    // The position of vs_depth, operation for operation: the depth prepass
+    // draws the terrain with it, and without multisampling the scene pass
+    // tests the terrain against that very depth. Computed in region
+    // coordinates here, the depth differed by a rounding and patches of
+    // terrain were rejected, showing the sky.
+    let model = eye_model(rec, in);
+    let ep = model * vec4<f32>(in.pos, 1.0);
     var out: TerrainOut;
-    out.clip = frame.view_proj * wp;
-    out.world_pos = wp.xyz;
+    out.clip = frame.eye_view_proj * ep;
+    // (lighting, shadows and fog keep region coordinates)
+    out.world_pos = ep.xyz + frame.eye.xyz;
     out.normal = in.normal.xyz;
     out.uv = in.uv;
     // composition 0..3 packed in normal.w (-1..1)

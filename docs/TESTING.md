@@ -91,6 +91,14 @@ préférences déjà enregistrées sont conservées.
 hauteur : entre 2 048 et 4 096 m, une position ne varie que par pas de
 0,24 mm, soit environ un pixel en gros plan.
 
+`AURORA_AA` : 0 aucun, 1 FXAA, 2 à 4 MSAA 2x / 4x / 8x, 5 TAA, 6 SMAA. La
+démo garde le réglage par défaut (3, MSAA 4x), qui a sa propre profondeur
+multi-échantillonnée ; les autres modes réutilisent la profondeur de la
+prépasse dans la passe de scène. Un changement des vertex shaders ou des
+passes se vérifie donc aussi avec `AURORA_AA=6` : c'est avec lui que le
+terrain laissait voir le ciel par taches (`AURORA_DEMO_POS="60,128"`,
+`AURORA_DEMO_ALTITUDE=86`).
+
 `AURORA_FPS_LIMIT` : plafond utilisateur pour les essais (10–500 images/s ;
 les valeurs positives sont ramenées à cette plage, une valeur invalide est
 ignorée). Le plafond inférieur en arrière-plan reste applicable hors captures.
@@ -1004,7 +1012,7 @@ Ce que l'inventaire doit montrer avec ces scénarios :
 | `AURORA_TEXTURE_BC7=0` | Textures jamais compressées en BC7 |
 | `AURORA_TEXTURE_BC7_CACHE=0` | BC7 sans son cache disque |
 | `AURORA_RENDER_THREAD=0` | Images dessinées sur le thread principal |
-| `AURORA_EYE_RELATIVE=0` | Sommets des objets calculés en coordonnées de région |
+| `AURORA_EYE_RELATIVE=0` | Sommets des objets et du terrain calculés en coordonnées de région |
 | `AURORA_PROFILE=1` | Profilage dans le journal (voir [Profilage](#profilage)) |
 | `AURORA_PROFILE_FRAMES=1` | Profil détaillé de chaque image |
 | `AURORA_GPU_VALIDATION=1` | Couches de validation de wgpu |
@@ -1095,7 +1103,7 @@ Ce que l'inventaire doit montrer avec ces scénarios :
   paquet autonome et passe à l'image suivante ; avec `0`, le même paquet est
   exécuté sur place. `thread=on|off` dans la ligne `perf summary`, et une
   ligne de journal au démarrage (`renderer: frames drawn by…`).
-- **`AURORA_EYE_RELATIVE=0`** : calcule les sommets des objets en coordonnées
+- **`AURORA_EYE_RELATIVE=0`** : calcule les sommets des objets et du terrain en coordonnées
   de région, comme avant, pour comparer. Par défaut, le vertex shader retire
   la position de la caméra de la translation du modèle avant tout autre
   calcul (`eye_model` dans `object.wgsl`, matrice `eye_view_proj`) : en
