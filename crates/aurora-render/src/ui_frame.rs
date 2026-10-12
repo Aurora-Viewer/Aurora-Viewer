@@ -112,14 +112,15 @@ mod tests {
     /// A pass with what the interface draws: text, rounded and stroked
     /// rectangles, circles small enough for the atlas discs and larger
     /// ones, lines, a clipped area; from 12 rows on, a title whose glyphs
-    /// do not fit in the rows of a new atlas.
+    /// do not fit in the rows of a new atlas. No renderer applies the
+    /// texture changes here: they are dropped on purpose.
     fn pass(ctx: &egui::Context, rows: usize, max_texture_side: usize) -> egui::FullOutput {
         let input = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 700.0))),
             max_texture_side: Some(max_texture_side),
             ..Default::default()
         };
-        ctx.run_ui(input, |ui| {
+        let mut out = ctx.run_ui(input, |ui| {
             let painter = ui.painter().clone();
             for i in 0..24 {
                 let c = egui::pos2(20.0 + 30.0 * i as f32, 600.0);
@@ -148,7 +149,9 @@ mod tests {
                     }
                 });
             });
-        })
+        });
+        out.textures_delta.clear();
+        out
     }
 
     fn assert_same(ours: &[ClippedPrimitive], egui: &[ClippedPrimitive]) {
@@ -188,9 +191,10 @@ mod tests {
     #[test]
     fn small_circles_use_the_discs_of_the_atlas() {
         let ctx = egui::Context::default();
-        let out = ctx.run_ui(egui::RawInput::default(), |ui| {
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
             ui.painter().circle_filled(egui::pos2(50.0, 50.0), 3.0, egui::Color32::WHITE);
         });
+        out.textures_delta.clear();
         let circle: Vec<ClippedShape> = out
             .shapes
             .iter()

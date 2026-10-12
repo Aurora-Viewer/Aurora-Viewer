@@ -3323,7 +3323,7 @@ impl Backend {
             scene,
             params,
             lists: draw_lists,
-            ui: egui_frame,
+            ui: mut egui_frame,
             surface,
             settings,
             hover,
@@ -3347,7 +3347,7 @@ impl Backend {
         }
 
         // egui textures first, so they are never lost on a skipped frame
-        if let Some(ui) = &egui_frame {
+        if let Some(ui) = &mut egui_frame {
             for (id, deltas) in &ui.textures_delta.set {
                 for delta in deltas.iter() {
                     self.egui.update_texture(&self.device, &self.queue, *id, delta);
@@ -3356,6 +3356,8 @@ impl Backend {
             for id in &ui.textures_delta.free {
                 self.egui.free_texture(id);
             }
+            // applied: egui's debug builds refuse to drop a delta that is not
+            ui.textures_delta.clear();
         }
         // what the scene wrote for this frame, in the order it was recorded,
         // before the frame's own uniforms; then its streamed copies, first
