@@ -376,6 +376,10 @@ impl ChangeFeed {
 /// The interface labels few of the objects (name tags of the avatars, hover
 /// text of the prims, dots of the maps): `avatars` and `texted` list them,
 /// kept from a third feed, so that no window walks every object each frame.
+///
+/// A full update may carry a particle system or an attached sound for their
+/// managers (`particle_update`, `sound_update`): two more feeds list those
+/// objects (`take_particle_changes`, `take_sound_changes`).
 #[derive(Default)]
 pub struct ObjectStore {
     pub slots: Vec<Option<Object>>,
@@ -396,6 +400,10 @@ pub struct ObjectStore {
     media_changes: ChangeFeed,
     /// The same, since `refresh_labelled`.
     label_changes: ChangeFeed,
+    /// Objects whose `particle_update` / `sound_update` waits for its
+    /// manager (a slot may hold another object since, or none).
+    particle_changes: ChangeFeed,
+    sound_changes: ChangeFeed,
     /// Slots of the avatars, and of the other objects with a hover text
     /// (llSetText), as of the last `refresh_labelled`.
     avatar_slots: BTreeSet<usize>,
@@ -431,6 +439,7 @@ impl ObjectStore {
         self.touched.note(idx);
         self.media_changes.note(idx);
         self.label_changes.note(idx);
+        self.note_carried(idx);
     }
 
     /// The objects changed since the scene sync last took them.
@@ -447,6 +456,32 @@ impl ObjectStore {
     /// `out`), for the media manager.
     pub fn take_media_changes(&mut self, out: &mut Vec<usize>) {
         self.media_changes.take(out);
+    }
+
+    /// The slots whose object got a particle system change since the last
+    /// call (appended to `out`): the only ones with a `particle_update`.
+    pub fn take_particle_changes(&mut self, out: &mut Vec<usize>) {
+        self.particle_changes.take(out);
+    }
+
+    /// The slots whose object got a full update since the last call
+    /// (appended to `out`): the only ones with `sound_update` set.
+    pub fn take_sound_changes(&mut self, out: &mut Vec<usize>) {
+        self.sound_changes.take(out);
+    }
+
+    /// Note what a full update left on an object for the particle and
+    /// sound managers.
+    fn note_carried(&mut self, idx: usize) {
+        let Some(o) = self.slots.get(idx).and_then(|o| o.as_ref()) else {
+            return;
+        };
+        if o.particle_update.is_some() {
+            self.particle_changes.note(idx);
+        }
+        if o.sound_update {
+            self.sound_changes.note(idx);
+        }
     }
 
     /// Bring the lists behind [`Self::avatars`] and [`Self::texted`] up to

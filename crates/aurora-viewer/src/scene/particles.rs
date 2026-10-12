@@ -3,6 +3,7 @@
 
 use super::Scene;
 use super::textures::{TexSource, TextureStreamer};
+use crate::frame_profile::{Part, Parts};
 use crate::world::World;
 use aurora_net::objects::ParticleUpdate;
 use aurora_prim::particles::{self as ps, ParticleSource, SourceContext};
@@ -50,6 +51,8 @@ pub struct ParticleManager {
     sources: HashMap<Uuid, Source>,
     seed: u64,
     sort_tmp: Vec<(f32, ParticleInstance)>,
+    /// Objects whose update carried a particle system change (reused).
+    changed_tmp: Vec<usize>,
     pub live: usize,
 }
 
@@ -107,10 +110,20 @@ impl ParticleManager {
         max_particles: usize,
         draw_distance: f32,
         out: &mut Vec<ParticleInstance>,
+        parts: &mut Parts,
     ) {
+        let t = Instant::now();
         out.clear();
-        // ---- particle system changes carried by object updates
-        for o in world.objects.slots.iter_mut().flatten() {
+        // ---- particle system changes carried by object updates: the store
+        // lists those objects (no walk over every object each frame), taken
+        // in slot order so that the sources keep the seeds a walk gave them
+        let mut changed = std::mem::take(&mut self.changed_tmp);
+        world.objects.take_particle_changes(&mut changed);
+        changed.sort_unstable();
+        for &idx in &changed {
+            let Some(o) = world.objects.get_mut_untracked(idx) else {
+                continue;
+            };
             let Some(update) = o.particle_update.take() else {
                 continue;
             };
@@ -138,6 +151,9 @@ impl ParticleManager {
                 (None, None) => {}
             }
         }
+        changed.clear();
+        self.changed_tmp = changed;
+        let t = parts.lap(Part::ParamsPartSources, t);
         if max_particles == 0 {
             self.clear(textures);
             return;
@@ -211,6 +227,7 @@ impl ParticleManager {
                 textures.release(&s.texture);
             }
         }
+        let t = parts.lap(Part::ParamsPartSim, t);
 
         // ---- instances, back to front
         self.sort_tmp.clear();
@@ -263,5 +280,6 @@ impl ParticleManager {
         self.live = self.sort_tmp.len();
         self.sort_tmp.sort_unstable_by(|a, b| b.0.total_cmp(&a.0));
         out.extend(self.sort_tmp.iter().map(|(_, i)| *i));
+        parts.lap(Part::ParamsPartList, t);
     }
 }

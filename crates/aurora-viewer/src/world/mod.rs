@@ -1877,8 +1877,8 @@ impl World {
     pub fn update_bodies(&mut self, now: Instant, dt: f32, cam_at: Vec3, mouselook: bool) -> i8 {
         let mut own_turn = 0;
         let mut seen = std::collections::HashSet::new();
-        for (_, o) in self.objects.iter() {
-            if !o.is_avatar() || o.parent_id != 0 {
+        for (_, o) in self.objects.avatars() {
+            if o.parent_id != 0 {
                 continue;
             }
             let id = o.full_id;

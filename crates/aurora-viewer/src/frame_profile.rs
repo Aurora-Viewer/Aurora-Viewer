@@ -122,7 +122,8 @@ impl Lap {
 
 /// Sub-steps of the main thread's laps. Streaming (`s_*` in the summary):
 /// what `Results`, `Stream` and `Sync` spend their time on, so that a slow
-/// frame while content loads names its cause. Interface (`u_*`): what the
+/// frame while content loads names its cause. Frame parameters (`p_*`):
+/// what the `Params` lap spends its time on. Interface (`u_*`): what the
 /// `Ui` lap spends its time on, by group of windows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Part {
@@ -158,6 +159,23 @@ pub enum Part {
     /// `Scene::sync`: faces classified again after a texture changed alpha
     /// class.
     SyncAlpha,
+    /// Loading to world transition, teleport screen, arrival diagnostics.
+    ParamsScreen,
+    /// Sky and water of the frame, their textures.
+    ParamsEnv,
+    /// `Scene::find_mirror`: the nearest visible mirror.
+    ParamsMirror,
+    /// Particles: systems set or stopped by object updates.
+    ParamsPartSources,
+    /// Particles: simulation of every source.
+    ParamsPartSim,
+    /// Particles: the frame's instances, sorted back to front.
+    ParamsPartList,
+    /// Local lights nearest to the camera.
+    ParamsLights,
+    /// Reflection probes (candidate scan, slots, face to capture), then
+    /// the frame parameters put together.
+    ParamsProbes,
     /// Top and bottom bars.
     UiBars,
     /// Avatar name tags and hover text of the prims.
@@ -191,7 +209,7 @@ pub enum Part {
 }
 
 impl Part {
-    pub const ALL: [Part; 28] = [
+    pub const ALL: [Part; 36] = [
         Part::Fetched,
         Part::Geometry,
         Part::Decoded,
@@ -207,6 +225,14 @@ impl Part {
         Part::SyncApply,
         Part::SyncAnchors,
         Part::SyncAlpha,
+        Part::ParamsScreen,
+        Part::ParamsEnv,
+        Part::ParamsMirror,
+        Part::ParamsPartSources,
+        Part::ParamsPartSim,
+        Part::ParamsPartList,
+        Part::ParamsLights,
+        Part::ParamsProbes,
         Part::UiBars,
         Part::UiTags,
         Part::UiOverlays,
@@ -224,7 +250,11 @@ impl Part {
 
     /// Prefix of the part's key in the summary: its segment.
     fn prefix(self) -> &'static str {
-        if (self as usize) < Part::UiBars as usize { "s_" } else { "u_" }
+        match self as usize {
+            i if i < Part::ParamsScreen as usize => "s_",
+            i if i < Part::UiBars as usize => "p_",
+            _ => "u_",
+        }
     }
 
     fn key(self) -> &'static str {
@@ -244,6 +274,14 @@ impl Part {
             Part::SyncApply => "sync_apply",
             Part::SyncAnchors => "sync_anchors",
             Part::SyncAlpha => "sync_alpha",
+            Part::ParamsScreen => "screen",
+            Part::ParamsEnv => "env",
+            Part::ParamsMirror => "mirror",
+            Part::ParamsPartSources => "part_sources",
+            Part::ParamsPartSim => "part_sim",
+            Part::ParamsPartList => "part_list",
+            Part::ParamsLights => "lights",
+            Part::ParamsProbes => "probes",
             Part::UiBars => "bars",
             Part::UiTags => "tags",
             Part::UiOverlays => "overlays",
@@ -265,8 +303,15 @@ const PARTS: usize = Part::ALL.len();
 
 /// Time of each [`Part`] in the current frame (ms), filled by the scene and
 /// by the interface and taken by [`FrameProfile::end_frame`].
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Parts([f32; PARTS]);
+
+// by hand: the standard library stops at arrays of 32
+impl Default for Parts {
+    fn default() -> Self {
+        Parts([0.0; PARTS])
+    }
+}
 
 impl Parts {
     pub fn add(&mut self, part: Part, ms: f32) {
@@ -344,8 +389,8 @@ struct Period {
     laps_off_max: [f32; LAPS],
     phases_off_max: [f32; PHASES],
     phases_max: [f32; PHASES],
-    parts: [f32; PARTS],
-    parts_max: [f32; PARTS],
+    parts: Parts,
+    parts_max: Parts,
     gpu: [f32; GPU],
     gpu_frames: u32,
     draws: u64,
@@ -470,8 +515,8 @@ impl FrameProfile {
         );
         keep_max(&mut p.phases_off_max, &render.cpu_waits);
         keep_max(&mut p.phases_max, &render.cpu_phases);
-        add(&mut p.parts, &parts.0);
-        keep_max(&mut p.parts_max, &parts.0);
+        add(&mut p.parts.0, &parts.0);
+        keep_max(&mut p.parts_max.0, &parts.0);
         let thread = [render.packet_ms, render.wait_render_ms, render.thread_ms, render.thread_idle_ms];
         add(&mut p.thread, &thread);
         keep_max(&mut p.thread_max, &thread);
@@ -564,9 +609,10 @@ fn slow_frames(frames: &[f32]) -> usize {
 }
 
 /// One line: averages per frame over the period (times in ms); renderer
-/// steps prefixed with `r_`, streaming parts with `s_`, interface parts
-/// with `u_` (followed by the interface's counts), GPU elements with `g_`.
-/// The `max:` segment lists the steps (`r_*`, `s_*`, `u_*` and the
+/// steps prefixed with `r_`, streaming parts with `s_`, the parts of the
+/// frame parameters with `p_`, interface parts with `u_` (followed by the
+/// interface's counts), GPU elements with `g_`. The `max:` segment lists
+/// the steps (`r_*`, `s_*`, `p_*`, `u_*` and the
 /// `thread` segment's included) whose longest single-frame time reached
 /// [`MAX_SHOWN_MS`], longest first (`-` when none did); `off_cpu:` does
 /// the same for the time the steps of the two threads spent off the
@@ -594,7 +640,7 @@ fn summary(p: &Period, elapsed: Duration) -> String {
         .zip(p.laps_max)
         .map(|(lap, ms)| ("", lap.key(), ms))
         .chain(RENDER_PHASES.iter().zip(p.phases_max).map(|(key, ms)| ("r_", *key, ms)))
-        .chain(Part::ALL.iter().zip(p.parts_max).map(|(part, ms)| (part.prefix(), part.key(), ms)))
+        .chain(Part::ALL.iter().zip(p.parts_max.0).map(|(part, ms)| (part.prefix(), part.key(), ms)))
         .chain(THREAD_KEYS.iter().zip(p.thread_max).map(|(key, ms)| ("", *key, ms)))
         .filter(|(_, _, ms)| *ms >= MAX_SHOWN_MS)
         .collect();
@@ -636,7 +682,7 @@ fn summary(p: &Period, elapsed: Duration) -> String {
         let _ = write!(out, " r_{key}={:.2}", avg(ms));
     }
     let mut segment = "";
-    for (part, ms) in Part::ALL.iter().zip(p.parts) {
+    for (part, ms) in Part::ALL.iter().zip(p.parts.0) {
         if part.prefix() != segment {
             segment = part.prefix();
             out.push_str(" |");
@@ -880,6 +926,7 @@ mod tests {
             p.lap_cpu_at(Lap::Limiter, at, cycles);
             let mut parts = Parts::default();
             parts.add(Part::UiTags, 0.25);
+            parts.add(Part::ParamsPartSim, if i == 5 { 1.5 } else { 0.5 });
             parts.add(Part::UiPass, if i == 7 { 5.75 } else { 0.75 });
             // render thread: one `finish` waited 2.5 ms; the swapchain wait
             // of `acquire` is by design too
@@ -898,13 +945,19 @@ mod tests {
         assert_eq!(lines.len(), 1, "{lines:?}");
         let l = &lines[0];
         // the parts of the interface have their own segment, with its counts
-        assert!(l.contains(" s_sync_alpha=0.00 | u_bars=0.00 u_tags=0.25 "), "{l}");
+        // so have the parts of the frame parameters, before it
+        assert!(
+            l.contains(" s_sync_alpha=0.00 | p_screen=0.00 p_env=0.00 p_mirror=0.00 p_part_sources=0.00 p_part_sim=0.52 "),
+            "{l}"
+        );
+        assert!(l.contains(" p_lights=0.00 p_probes=0.00 | u_bars=0.00 u_tags=0.25 "), "{l}");
         assert!(
             l.contains(" u_pass=0.85 ui_shapes=600 ui_meshes=40 ui_vertices=21373 ui_vertices_max=90000 | gpu="),
             "{l}"
         );
         let segment = |name: &str| l.split(name).nth(1).and_then(|s| s.split(" |").next()).unwrap_or_default();
         assert!(segment(" | max: ").contains(" u_pass=5.75"), "{l}");
+        assert!(segment(" | max: ").contains(" p_part_sim=1.50"), "{l}");
         // where the thread's CPU time is unknown, only the render thread's
         // waits (given here) are listed
         let waited = if rate > 0.0 { "ui=5.00 r_finish=2.50" } else { "r_finish=2.50" };

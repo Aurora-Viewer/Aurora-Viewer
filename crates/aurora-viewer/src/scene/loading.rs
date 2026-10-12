@@ -290,10 +290,7 @@ impl Scene {
         loading.indices.clear();
         let mut seen = Vec::new();
         let mut hurry = Vec::new();
-        for (idx, o) in world.objects.iter() {
-            if !o.is_avatar() {
-                continue;
-            }
+        for (idx, o) in world.objects.avatars() {
             // silhouettes are not clouded (LL: no cloud for too complex avatars)
             if self.too_complex.contains(&idx) {
                 seen.push(o.full_id);
