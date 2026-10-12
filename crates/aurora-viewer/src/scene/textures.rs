@@ -413,6 +413,10 @@ pub struct TextureStreamer {
     uploads: PendingUploads,
     /// Staging memory of the renderer, given to the decode jobs.
     pub staging: Option<Arc<StagingPool>>,
+    /// The decode jobs compress to BC7 the textures that come out of it
+    /// unharmed (`aurora_render::bc7`): the GPU has BC compression and
+    /// AURORA_TEXTURE_BC7 does not turn it off.
+    pub bc7: bool,
     /// Alpha class by bindless slot (fast lookup during list building).
     pub alpha_by_slot: Vec<AlphaKind>,
     pub(super) pick_masks: HashMap<Uuid, PickMask>,
@@ -468,6 +472,7 @@ impl TextureStreamer {
             next_key: 1,
             uploads: PendingUploads::default(),
             staging: None,
+            bc7: false,
             pick_masks: HashMap::from([(
                 aurora_prim::te::TRANSPARENT_TEXTURE,
                 PickMask {
@@ -837,8 +842,10 @@ impl TextureStreamer {
             meter,
             load,
             uploads,
+            bc7,
             ..
         } = self;
+        let bc7 = *bc7;
         // first disk reads of the new textures, queued in one go
         let mut cache_reads = Vec::new();
         let mut reading = 0;
@@ -911,7 +918,7 @@ impl TextureStreamer {
                 let keep = e.keep_pixels;
                 let pool = staging.clone();
                 let meter = meter.clone();
-                jobs.spawn(move || decode_job(id, &data, discard, keep, pool.as_deref(), &meter));
+                jobs.spawn(move || decode_job(id, &data, discard, keep, pool.as_deref(), bc7, &meter));
                 continue;
             }
             // 2. fetch more
@@ -1459,7 +1466,23 @@ fn eviction_round(
 pub fn texture_result(
     id: Uuid,
     discard: u8,
+    mips: Vec<(u32, u32, Vec<u8>)>,
+    alpha: (AlphaKind, bool),
+    sculpt: Option<Arc<SculptMap>>,
+    pool: Option<&StagingPool>,
+) -> JobResult {
+    texture_result_from(id, discard, mips, None, alpha, sculpt, pool)
+}
+
+/// [`texture_result`], staging the BC7 blocks of the chain (`compressed`)
+/// instead of its RGBA8 levels when the job has them. Without room in the
+/// staging memory, the RGBA8 chain stays for the main-thread write, as an
+/// uncompressed texture.
+fn texture_result_from(
+    id: Uuid,
+    discard: u8,
     mut mips: Vec<(u32, u32, Vec<u8>)>,
+    compressed: Option<aurora_render::bc7::Chain>,
     (alpha, alpha_channel): (AlphaKind, bool),
     sculpt: Option<Arc<SculptMap>>,
     pool: Option<&StagingPool>,
@@ -1469,8 +1492,12 @@ pub fn texture_result(
         .then(|| mips.first().and_then(|(w, h, rgba)| PickMask::from_rgba(*w, *h, rgba)))
         .flatten();
     let staged = pool.and_then(|pool| {
-        let levels: Vec<(u32, u32, &[u8])> = mips.iter().map(|(w, h, d)| (*w, *h, d.as_slice())).collect();
-        StagedTexture::new(pool, &levels)
+        let (format, chain) = match &compressed {
+            Some(blocks) => (TexelFormat::Bc7, blocks),
+            None => (TexelFormat::Rgba8, &mips),
+        };
+        let levels: Vec<(u32, u32, &[u8])> = chain.iter().map(|(w, h, d)| (*w, *h, d.as_slice())).collect();
+        StagedTexture::with_format(pool, format, &levels)
     });
     if staged.is_some() {
         mips.retain(|m| m.0.max(m.1) <= 256);
@@ -1487,7 +1514,15 @@ pub fn texture_result(
     }
 }
 
-fn decode_job(id: Uuid, data: &[u8], discard: u8, keep_pixels: bool, pool: Option<&StagingPool>, meter: &DecodeMeter) -> JobResult {
+fn decode_job(
+    id: Uuid,
+    data: &[u8],
+    discard: u8,
+    keep_pixels: bool,
+    pool: Option<&StagingPool>,
+    bc7: bool,
+    meter: &DecodeMeter,
+) -> JobResult {
     match aurora_assets::decode_j2k_timed(data, discard) {
         Ok((img, decode)) => {
             let start = Instant::now();
@@ -1511,9 +1546,14 @@ fn decode_job(id: Uuid, data: &[u8], discard: u8, keep_pixels: bool, pool: Optio
             let before_mips = start.elapsed();
             let mips = build_mips(img.width, img.height, rgba, 16);
             let mips_done = start.elapsed();
-            let result = texture_result(id, img.discard, mips, (alpha, alpha_channel), sculpt, pool);
-            let stages = [rgba_done, mips_done - before_mips, start.elapsed() - mips_done];
-            meter.add(img.discard, pixels as u64, decode, stages);
+            let compressed = (bc7 && pool.is_some())
+                .then(|| aurora_render::bc7::encode_chain(&mips, alpha != AlphaKind::Opaque))
+                .flatten();
+            let bc7_done = start.elapsed();
+            let result = texture_result_from(id, img.discard, mips, compressed, (alpha, alpha_channel), sculpt, pool);
+            let as_blocks = matches!(&result, JobResult::Texture { staged: Some(s), .. } if s.format == TexelFormat::Bc7);
+            let stages = [rgba_done, mips_done - before_mips, bc7_done - mips_done, start.elapsed() - bc7_done];
+            meter.add(img.discard, pixels as u64, decode, stages, as_blocks);
             result
         }
         Err(e) => {

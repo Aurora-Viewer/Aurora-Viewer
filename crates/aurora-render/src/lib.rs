@@ -6,6 +6,7 @@
 //! of `render_thread`); see main_thread.rs for who owns what.
 
 pub mod arena;
+pub mod bc7;
 pub mod gpu_cull;
 mod helpers;
 pub mod hud;

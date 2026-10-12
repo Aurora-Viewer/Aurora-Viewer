@@ -36,6 +36,10 @@ pub struct LoadTotals {
     /// Expansion to RGBA and alpha classification.
     pub rgba_us: u64,
     pub mips_us: u64,
+    /// BC7 encoding and its quality check.
+    pub bc7_us: u64,
+    /// Decodes whose texture went to the GPU as BC7 blocks.
+    pub compressed: u64,
     /// Pick mask and copy into the renderer's staging memory.
     pub stage_us: u64,
     pub fetched_bytes: u64,
@@ -62,6 +66,8 @@ impl LoadTotals {
             convert_us: self.convert_us - start.convert_us,
             rgba_us: self.rgba_us - start.rgba_us,
             mips_us: self.mips_us - start.mips_us,
+            bc7_us: self.bc7_us - start.bc7_us,
+            compressed: self.compressed - start.compressed,
             stage_us: self.stage_us - start.stage_us,
             fetched_bytes: self.fetched_bytes - start.fetched_bytes,
             replies: self.replies - start.replies,
@@ -74,15 +80,16 @@ impl LoadTotals {
     /// `took` and left `loaded` of `total` textures loaded.
     pub fn describe(&self, took: Duration, running: bool, (loaded, total): (usize, usize)) -> String {
         let s = |us: u64| us as f64 / 1e6;
-        let cpu = self.codec_us + self.convert_us + self.rgba_us + self.mips_us + self.stage_us;
+        let cpu = self.codec_us + self.convert_us + self.rgba_us + self.mips_us + self.bc7_us + self.stage_us;
         format!(
-            "texture load{}: {:.1} s, {loaded}/{total} textures loaded; {} decodes ({} of a texture already shown; discard 0..5: {:?}), \
-             {:.1} Mpx; decode CPU {:.1} s (codec {:.1}, convert {:.1}, rgba {:.1}, mips {:.1}, staging {:.1}); \
+            "texture load{}: {:.1} s, {loaded}/{total} textures loaded; {} decodes ({} of a texture already shown, {} compressed to BC7; discard 0..5: {:?}), \
+             {:.1} Mpx; decode CPU {:.1} s (codec {:.1}, convert {:.1}, rgba {:.1}, mips {:.1}, bc7 {:.1}, staging {:.1}); \
              downloaded {:.1} MB in {} replies; disk cache {} hits / {} misses",
             if running { " (running)" } else { "" },
             took.as_secs_f64(),
             self.decodes(),
             self.again,
+            self.compressed,
             self.by_discard,
             self.pixels as f64 / 1e6,
             s(cpu),
@@ -90,6 +97,7 @@ impl LoadTotals {
             s(self.convert_us),
             s(self.rgba_us),
             s(self.mips_us),
+            s(self.bc7_us),
             s(self.stage_us),
             self.fetched_bytes as f64 / 1e6,
             self.replies,
@@ -108,13 +116,16 @@ pub struct DecodeMeter {
     convert_us: AtomicU64,
     rgba_us: AtomicU64,
     mips_us: AtomicU64,
+    bc7_us: AtomicU64,
+    compressed: AtomicU64,
     stage_us: AtomicU64,
 }
 
 impl DecodeMeter {
-    /// One finished decode job: the level it decoded and the time of each
-    /// stage (`rgba`, `mips`, `stage` follow the two stages of the decoder).
-    pub fn add(&self, discard: u8, pixels: u64, decode: DecodeTimings, [rgba, mips, stage]: [Duration; 3]) {
+    /// One finished decode job: the level it decoded, the time of each
+    /// stage (`rgba`, `mips`, `bc7`, `stage` follow the two stages of the
+    /// decoder) and whether the texture leaves as BC7 blocks.
+    pub fn add(&self, discard: u8, pixels: u64, decode: DecodeTimings, [rgba, mips, bc7, stage]: [Duration; 4], compressed: bool) {
         let us = |d: Duration| d.as_micros() as u64;
         self.by_discard[usize::from(discard.min(5))].fetch_add(1, Ordering::Relaxed);
         self.pixels.fetch_add(pixels, Ordering::Relaxed);
@@ -122,6 +133,8 @@ impl DecodeMeter {
         self.convert_us.fetch_add(us(decode.convert), Ordering::Relaxed);
         self.rgba_us.fetch_add(us(rgba), Ordering::Relaxed);
         self.mips_us.fetch_add(us(mips), Ordering::Relaxed);
+        self.bc7_us.fetch_add(us(bc7), Ordering::Relaxed);
+        self.compressed.fetch_add(u64::from(compressed), Ordering::Relaxed);
         self.stage_us.fetch_add(us(stage), Ordering::Relaxed);
     }
 
@@ -135,6 +148,8 @@ impl DecodeMeter {
         totals.convert_us = self.convert_us.load(Ordering::Relaxed);
         totals.rgba_us = self.rgba_us.load(Ordering::Relaxed);
         totals.mips_us = self.mips_us.load(Ordering::Relaxed);
+        totals.bc7_us = self.bc7_us.load(Ordering::Relaxed);
+        totals.compressed = self.compressed.load(Ordering::Relaxed);
         totals.stage_us = self.stage_us.load(Ordering::Relaxed);
     }
 }
@@ -318,8 +333,8 @@ mod tests {
             convert: Duration::from_millis(3),
         };
         let ms = Duration::from_millis;
-        m.add(0, 1 << 20, t, [ms(2), ms(4), ms(1)]);
-        m.add(9, 1 << 10, t, [ms(2), ms(4), ms(1)]);
+        m.add(0, 1 << 20, t, [ms(2), ms(4), ms(30), ms(1)], true);
+        m.add(9, 1 << 10, t, [ms(2), ms(4), ms(0), ms(1)], false);
         let mut totals = LoadTotals {
             again: 1,
             fetched_bytes: 2_500_000,
@@ -333,8 +348,8 @@ mod tests {
         assert_eq!(totals.codec_us, 80_000);
         assert_eq!(
             totals.describe(Duration::from_millis(12_340), false, (2, 3)),
-            "texture load: 12.3 s, 2/3 textures loaded; 2 decodes (1 of a texture already shown; discard 0..5: [1, 0, 0, 0, 0, 1]), \
-             1.0 Mpx; decode CPU 0.1 s (codec 0.1, convert 0.0, rgba 0.0, mips 0.0, staging 0.0); \
+            "texture load: 12.3 s, 2/3 textures loaded; 2 decodes (1 of a texture already shown, 1 compressed to BC7; discard 0..5: [1, 0, 0, 0, 0, 1]), \
+             1.0 Mpx; decode CPU 0.1 s (codec 0.1, convert 0.0, rgba 0.0, mips 0.0, bc7 0.0, staging 0.0); \
              downloaded 2.5 MB in 3 replies; disk cache 1 hits / 1 misses"
         );
         assert!(

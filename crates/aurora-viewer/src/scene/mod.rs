@@ -981,6 +981,14 @@ impl Scene {
         if self.staging.is_none() {
             let pool = renderer.staging_pool();
             self.textures.staging = Some(pool.clone());
+            // (AURORA_TEXTURE_BC7=0: every texture stays RGBA8, to compare)
+            let wanted = std::env::var("AURORA_TEXTURE_BC7").map_or(true, |v| v != "0");
+            self.textures.bc7 = wanted && renderer.textures.bc7();
+            log::info!(
+                "textures: BC7 compression {} (GPU support: {})",
+                if self.textures.bc7 { "on" } else { "off" },
+                renderer.textures.bc7()
+            );
             self.meshes.staging = Some(pool.clone());
             self.staging = Some(pool);
         }
