@@ -60,7 +60,7 @@ impl Scene {
             // away; their interest is screen area, never world distance.
             let px = (g.radius * 2.0 * size[1] as f32 * world.hud_zoom).max(32.0);
             for id in &g.tex_ids {
-                self.textures.note_usage(id, px);
+                self.textures.note_usage_fixed(id, px);
             }
             for face in &g.faces {
                 match face.pass {
