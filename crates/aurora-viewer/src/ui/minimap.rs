@@ -398,8 +398,12 @@ impl MiniMap {
         let frame = super::widgets::overlay_frame(ctx, p)
             .fill(Color32::from_rgba_unmultiplied(p.panel.r(), p.panel.g(), p.panel.b(), 168))
             .inner_margin(egui::Margin::same(2));
-        egui::Window::new(aurora_i18n::tr!("common-mini-map"))
-            .id(egui::Id::new("minimap"))
+        let id = egui::Id::new("minimap");
+        // like the floaters, it keeps its corner when the viewer window
+        // changes size
+        let slot = super::layout::slot(ctx, id);
+        let mut window = egui::Window::new(aurora_i18n::tr!("common-mini-map"))
+            .id(id)
             .title_bar(false)
             .frame(frame)
             .fade_in(false)
@@ -408,11 +412,17 @@ impl MiniMap {
             .default_size(default_rect(screen).size())
             .min_size(vec2(64.0, 64.0))
             .resizable(true)
-            .constrain(true)
-            .show(ctx, |ui| {
-                let size = ui.available_size().max(vec2(60.0, 60.0));
-                actions = self.draw(ui, p, world, tiles, cam, opts, size, true);
-            });
+            .constrain(true);
+        if let Some(pos) = slot.pos {
+            window = window.current_pos(pos);
+        }
+        let shown = window.show(ctx, |ui| {
+            let size = ui.available_size().max(vec2(60.0, 60.0));
+            actions = self.draw(ui, p, world, tiles, cam, opts, size, true);
+        });
+        if let Some(shown) = shown {
+            slot.shown(ctx, shown.response.rect);
+        }
         if actions.iter().any(|a| matches!(a, MiniMapAction::Close)) {
             *open = false;
         }

@@ -213,6 +213,12 @@ impl<'a> Floater<'a> {
         } else if restore && !self.auto_height {
             w = w.fixed_size(expanded);
         }
+        // the viewer window changed size: the floater follows its edges;
+        // a placement asked this frame and a resize in progress come after
+        let slot = super::layout::slot(ctx, window_id);
+        if let Some(pos) = slot.pos {
+            w = w.current_pos(pos);
+        }
         if let Some(pos) = ctx.data_mut(|d| d.remove_temp::<egui::Pos2>(window_id.with(PLACE_POS))) {
             w = w.current_pos(pos);
         }
@@ -337,6 +343,7 @@ impl<'a> Floater<'a> {
             }
         });
         if let Some(response) = response {
+            slot.shown(ctx, response.response.rect);
             if let Some((painter, slot)) = glass_slot {
                 let radius = f32::from(ctx.global_style().visuals.window_corner_radius.nw);
                 workspace::finish_glass(
