@@ -131,6 +131,7 @@ pub(super) fn window_icon(id: &str) -> &'static str {
         "appearance" => "shirt-filled",
         "conversations" | "contacts" => "messages-filled",
         "people" | "avatar_picker" => "users-group",
+        "search" => "search-filled",
         "options" => "settings-filled",
         "worldmap" | "minimap" => "map",
         "environment_selector" | "personal_lighting" => "sun-filled",

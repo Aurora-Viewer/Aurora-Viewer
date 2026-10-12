@@ -41,6 +41,7 @@ pub mod place_details;
 pub mod places;
 pub mod profile;
 pub mod scripts;
+pub mod search;
 pub mod skin;
 pub mod sound_cues;
 pub mod texture_picker;
@@ -76,6 +77,8 @@ pub struct Panels {
     pub about_land: bool,
     /// « Lieux » (favorites, landmarks, teleport history, place profiles).
     pub places: bool,
+    /// « Rechercher » (Firestorm's legacy search floater, Ctrl+F).
+    pub search: bool,
     /// Navigation bar location being edited (text) and "just opened" (select all).
     pub nav_edit: Option<String>,
     pub nav_edit_new: bool,

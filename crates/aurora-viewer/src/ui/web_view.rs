@@ -1,7 +1,9 @@
 //! A web page inside a window, like LLMediaCtrl: a CEF plugin of its own
 //! (`aurora-media`), its pixels in an egui texture, mouse, wheel and (once
 //! clicked) keyboard sent to the page. Used by the "Flux" tab of the
-//! profiles (LLPanelProfileWeb).
+//! profiles (LLPanelProfileWeb) and by the web tab of the search window
+//! (FSPanelSearchWeb), which also follows the page's address and goes back
+//! and forward in its history.
 
 use aurora_media::{BrowserSettings, Cookie, MediaEvent, MediaPlugin, Modifiers, MouseEvent, PluginPaths};
 use egui::{Color32, Vec2};
@@ -23,6 +25,11 @@ pub struct WebView {
     pub load_secs: Option<f32>,
     cursor: String,
     scratch: Vec<Color32>,
+    /// Address of the page shown, as the browser reports it (it follows the
+    /// links clicked in the page).
+    pub location: String,
+    /// A page is loading (between NavigateBegin and NavigateComplete).
+    pub loading: bool,
 }
 
 impl WebView {
@@ -42,6 +49,37 @@ impl WebView {
 
     pub fn plugin_mut(&mut self) -> Option<&mut MediaPlugin> {
         self.plugin.as_mut()
+    }
+
+    /// The browser runs (a page was asked and the plugin started).
+    pub fn running(&self) -> bool {
+        self.plugin.is_some()
+    }
+
+    /// LLMediaCtrl::navigateBack / navigateForward / reload.
+    pub fn back(&mut self) {
+        if let Some(p) = self.plugin.as_mut() {
+            p.browse_back();
+        }
+    }
+
+    pub fn forward(&mut self) {
+        if let Some(p) = self.plugin.as_mut() {
+            p.browse_forward();
+        }
+    }
+
+    pub fn reload(&mut self) {
+        if let Some(p) = self.plugin.as_mut() {
+            p.browse_reload(false);
+        }
+    }
+
+    /// Load `url` even when it is the page asked last ("home" after links
+    /// were followed inside the page).
+    pub fn navigate_again(&mut self, url: &str) {
+        self.url = url.to_owned();
+        self.nav_pending = true;
     }
 
     /// Draw the page in `size` points (starting the browser if needed).
@@ -100,16 +138,29 @@ impl WebView {
             p.load_uri(&self.url);
             self.nav_started = Some(Instant::now());
             self.load_secs = None;
+            self.location = self.url.clone();
+            self.loading = true;
         }
         p.idle();
         for ev in p.take_events() {
             match ev {
-                MediaEvent::NavigateComplete { .. } => {
+                MediaEvent::NavigateComplete { uri, .. } => {
                     // the first page of a new browser may complete twice
                     if let Some(t) = self.nav_started.take() {
                         self.load_secs = Some(t.elapsed().as_secs_f32());
                     }
+                    if !uri.is_empty() {
+                        self.location = uri;
+                    }
+                    self.loading = false;
                 }
+                MediaEvent::NavigateBegin(uri) => {
+                    if !uri.is_empty() {
+                        self.location = uri;
+                    }
+                    self.loading = true;
+                }
+                MediaEvent::LocationChanged(uri) if !uri.is_empty() => self.location = uri,
                 MediaEvent::CursorChanged(c) => self.cursor = c,
                 MediaEvent::PluginFailed(e) => {
                     log::warn!("web view: browser stopped: {e}");
