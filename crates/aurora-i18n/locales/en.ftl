@@ -25,6 +25,7 @@ import-mesh-info = { $models } { $models ->
 import-lods = Levels of detail (LOD)
 import-browse = Browse…
 import-error-threshold = Error threshold
+import-lod-result-help = This LOD retains { $remaining } % of the original model’s { $original } triangles.
 import-error-threshold-help = Limits geometric deviation as a percentage of the model size. Lower values retain more detail; higher values allow more simplification. Seams and face boundaries can prevent further reduction.
 import-triangles = Triangles:
 import-generate-normals = Generate normals

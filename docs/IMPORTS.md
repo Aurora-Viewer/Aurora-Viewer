@@ -129,8 +129,12 @@ Sources : `llmaterialeditor.cpp`, `panel_gltf_material.xml`,
   adaptée à la largeur disponible. Le préréglage physique reste sur une
   ligne complète. Les commandes de caméra sont indiquées au survol du modèle.
   Chaque LOD possède un bloc encadré avec titre, source, fichier et nombre de
-  triangles ; cliquer son niveau l’affiche dans l’aperçu. Les outils de
-  visualisation et les réglages avancés restent accessibles sans masquer
+  triangles ; cliquer son niveau l’affiche dans l’aperçu. Modifier une source,
+  un mode, un seuil ou un budget affiche aussi le LOD concerné. Le survol
+  du compteur indique sa proportion de triangles par rapport à l’original.
+  Le glissement des champs numériques reste continu au bord de l’écran,
+  avec le curseur maintenu près du champ ; le clic permet toujours la saisie.
+  Les outils de visualisation et les réglages avancés restent accessibles sans masquer
   le modèle. Le calcul des frais se trouve dans le pied de fenêtre.
   Les cases sont carrées et contrastées ; les lignes des menus conservent
   leur taille au survol et lors d’un changement de sélection.
@@ -142,7 +146,11 @@ Sources : `llmaterialeditor.cpp`, `panel_gltf_material.xml`,
   puis retire les copies inutilisées avant simplification pour éviter
   qu’elles ne soient encore traitées comme des raccords bloqués.
   Le seuil est affiché en pourcentage de la taille du modèle ; son aide
-  explique le compromis entre fidélité et simplification. AUTO réduit aussi
+  explique le compromis entre fidélité et simplification. Il limite la
+  déformation, sans imposer un nombre de triangles ; préserver les coutures
+  de normales et d’UV peut laisser presque tous les triangles, même avec un
+  seuil élevé. La méthode rapide accepte davantage de simplification aux
+  coutures. AUTO réduit aussi
   progressivement les raccords de normales et d’UV, puis utilise la méthode
   rapide si nécessaire, comme Firestorm lorsque le budget est dépassé de
   plus de 80 %. Les faces gardent leur emplacement de matériau.

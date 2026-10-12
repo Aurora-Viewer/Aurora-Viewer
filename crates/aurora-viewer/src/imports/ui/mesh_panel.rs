@@ -232,6 +232,7 @@ fn mesh_controls(
                             ui.set_min_width(ui.available_width());
                             ui.spacing_mut().item_spacing.y = 3.0;
                             let lod = &mut draft.lods[level];
+                            let mut lod_changed = false;
                             let actual = draft
                                 .prepared
                                 .as_ref()
@@ -284,7 +285,7 @@ fn mesh_controls(
                                         actions.push(Action::MeshFile(id, level));
                                     } else {
                                         lod.source = source;
-                                        changed = true;
+                                        lod_changed = true;
                                     }
                                 }
                                 if lod.source == mesh::LodSource::File {
@@ -297,13 +298,13 @@ fn mesh_controls(
                                         |ui| source_path(ui, p, lod.path.as_deref()),
                                     );
                                 } else if lod.source != mesh::LodSource::Above {
-                                    changed |= checkbox(ui, p, &mut lod.error_mode, aurora_i18n::tr!("import-error-threshold"))
+                                    lod_changed |= checkbox(ui, p, &mut lod.error_mode, aurora_i18n::tr!("import-error-threshold"))
                                         .on_hover_text(aurora_i18n::tr!("import-error-threshold-help"))
                                         .changed();
                                     if !lod.error_mode {
                                         ui.label(aurora_i18n::tr!("import-triangle-target"));
                                     }
-                                    changed |= if lod.error_mode {
+                                    lod_changed |= if lod.error_mode {
                                         let mut percent = lod.error * 100.0;
                                         let response = ui
                                             .add(egui::DragValue::new(&mut percent).range(0.0..=100.0).speed(0.01).suffix(" %"))
@@ -317,9 +318,19 @@ fn mesh_controls(
                                     };
                                 }
                                 if let Some(count) = actual {
-                                    ui.label(RichText::new(aurora_i18n::tr!("import-lod-count", count = count)).color(p.muted));
+                                    ui.label(RichText::new(aurora_i18n::tr!("import-lod-count", count = count)).color(p.muted))
+                                        .on_hover_text(aurora_i18n::tr!(
+                                            "import-lod-result-help",
+                                            original = triangles,
+                                            remaining = aurora_i18n::number(count as f64 * 100.0 / triangles.max(1) as f64, 1)
+                                        ));
                                 }
                             });
+                            if lod_changed {
+                                // Show the level being edited, so a threshold change is visible immediately.
+                                draft.preview_lod = level;
+                                changed = true;
+                            }
                         });
                 });
             }
@@ -584,6 +595,117 @@ fn load_settings(ui: &mut egui::Ui, p: &Palette, prefs: &mut Preferences) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn editing_the_error_threshold_selects_the_lod_and_rebuilds_its_geometry() {
+        let ctx = egui::Context::default();
+        let theme = crate::theme::Theme::default();
+        theme.apply(&ctx, 1.0);
+        let mut draft = crate::imports::tests::mesh_fixture();
+        // A closed surface can reduce as the error rises; an isolated quad cannot.
+        let model = &mut Arc::make_mut(&mut draft.scene).models[0];
+        model.center = glam::Vec3::ZERO;
+        model.size = glam::Vec3::ONE;
+        model.faces.truncate(1);
+        let face = &mut model.faces[0];
+        let prototype = face.vertices[0].clone();
+        face.vertices = [-0.5, 0.5]
+            .into_iter()
+            .flat_map(|x| {
+                let prototype = prototype.clone();
+                [-0.5, 0.5].into_iter().flat_map(move |y| {
+                    let prototype = prototype.clone();
+                    [-0.5, 0.5].into_iter().map(move |z| aurora_assets::import_mesh::Vertex {
+                        position: [x, y, z],
+                        normal: [0.0, 0.0, 1.0],
+                        uv: [0.0; 2],
+                        ..prototype.clone()
+                    })
+                })
+            })
+            .collect();
+        face.indices = vec![
+            0, 2, 3, 0, 3, 1, 4, 5, 7, 4, 7, 6, 0, 1, 5, 0, 5, 4, 2, 6, 7, 2, 7, 3, 0, 4, 6, 0, 6, 2, 1, 3, 7, 1, 7, 5,
+        ];
+        draft.lods[2].error_mode = true;
+        draft.lods[2].error = 0.0;
+        let prepared = Arc::new(mesh::prepare(&draft).expect("strict threshold"));
+        let original = prepared.lods[0][2].as_ref().expect("medium LOD").triangles();
+        draft.prepared = Some(prepared);
+        let mut entry = Entry::new("mesh.dae".into(), Ok(Source::Mesh(Box::new(draft))), Default::default());
+        let mut prefs = Preferences::default();
+        let mut frame = |events, entry: &mut Entry| {
+            ctx.run_ui(
+                egui::RawInput {
+                    events,
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1280.0, 900.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    ui.set_width(1000.0);
+                    show(ui, &theme.palette(), entry, &mut prefs, &mut Vec::new(), |_, _| {});
+                },
+            )
+        };
+        let mut output = frame(Vec::new(), &mut entry);
+        for _ in 0..3 {
+            output = frame(Vec::new(), &mut entry);
+        }
+        let pos = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) if text.galley.text().ends_with(" %") => Some(text.pos + text.galley.size() * 0.5),
+                _ => None,
+            })
+            .expect("error threshold field visible");
+        for pressed in [true, false] {
+            frame(
+                vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+                &mut entry,
+            );
+        }
+        frame(
+            vec![
+                egui::Event::Text("100".into()),
+                egui::Event::Key {
+                    key: egui::Key::Enter,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+            &mut entry,
+        );
+        let Some(Source::Mesh(draft)) = &entry.source else {
+            panic!("mesh draft")
+        };
+        assert_eq!(
+            draft.lods[2].error, 1.0,
+            "the UI percent reaches the simplifier as a relative error"
+        );
+        assert_eq!(
+            draft.preview_lod, 2,
+            "editing Medium must display Medium rather than the unchanged High level"
+        );
+        assert!(draft.prepared.is_none(), "the cached geometry must be invalidated");
+        assert!(entry.preview_generation > 0);
+        let reduced = mesh::prepare(draft).expect("relaxed threshold");
+        let count = reduced.lods[0][2].as_ref().expect("medium LOD").triangles();
+        assert!(
+            count < original,
+            "relaxed threshold: {count} triangles, strict threshold: {original}"
+        );
+    }
 
     #[test]
     fn mesh_controls_stay_in_place_with_a_model_during_a_recalculation_and_without_a_model() {

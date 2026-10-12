@@ -130,6 +130,7 @@ pub struct App {
     start: Instant,
     right_drag: bool,
     cursor_grabbed: bool,
+    numeric_drag: ui::numeric_drag::NumericDrag,
     alt: bool,
     left_down: bool,
     /// Mouse travel while the right button is held (click vs orbit drag).
@@ -488,6 +489,7 @@ impl App {
             start: Instant::now(),
             right_drag: false,
             cursor_grabbed: false,
+            numeric_drag: Default::default(),
             alt: false,
             left_down: false,
             right_moved: 0.0,
@@ -4374,6 +4376,7 @@ impl App {
             }
         }
         self.sound_cues.before(&ctx, &raw);
+        self.numeric_drag.before(&mut raw, ctx.pixels_per_point());
         let mut inventory_drop = None;
         let mut full = ctx.run_ui(raw, |ui| {
             self.sound_cues.pass_start(ui.ctx());
@@ -4386,6 +4389,20 @@ impl App {
         // once logged in
         let in_world_view = matches!(self.screen, Screen::World);
         let cues = self.sound_cues.after(&ctx, &full.platform_output.events, in_world_view);
+        if let Some(anchor) = self.numeric_drag.after(
+            &ctx,
+            &full.platform_output.events,
+            self.focused && !self.cursor_grabbed && !self.exit_prompt.open,
+        ) {
+            let position = winit::dpi::PhysicalPosition::new(anchor.x * ctx.pixels_per_point(), anchor.y * ctx.pixels_per_point());
+            if (self.cursor_pos.0 - position.x).abs() > 0.5 || (self.cursor_pos.1 - position.y).abs() > 0.5 {
+                if gfx.window.set_cursor_position(position).is_ok() {
+                    self.cursor_pos = (position.x, position.y);
+                } else {
+                    self.numeric_drag.cancel();
+                }
+            }
+        }
         let previews = ui::sound_cues::take_previews(&ctx);
         if self.in_world() {
             self.world.ui_sounds.extend(cues);
@@ -7022,6 +7039,7 @@ impl ApplicationHandler for App {
             }
             WindowEvent::Focused(true) => self.focused = true,
             WindowEvent::Focused(false) => {
+                self.numeric_drag.cancel();
                 self.build.reset_selection_wheel();
                 self.focused = false;
                 self.down.clear();
@@ -7194,6 +7212,12 @@ impl ApplicationHandler for App {
 
     fn device_event(&mut self, _el: &ActiveEventLoop, _id: winit::event::DeviceId, event: DeviceEvent) {
         if let DeviceEvent::MouseMotion { delta } = event {
+            if self.numeric_drag.active() {
+                if let Some(g) = &mut self.gfx {
+                    g.egui_state.on_mouse_motion(delta);
+                }
+                return;
+            }
             if !self.in_world() || self.exit_prompt.open {
                 return;
             }
