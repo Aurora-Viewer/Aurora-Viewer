@@ -174,6 +174,56 @@ pub fn progress_bar(ui: &mut egui::Ui, p: &Palette, width: f32, fraction: Option
     ui.ctx().request_repaint();
 }
 
+/// The lit part of the banner's progress line: the brand gradient, a small
+/// aurora rising from it (waving, taller toward the head), a sheen that
+/// travels along it and a bright core at its head.
+fn progress_light(painter: &egui::Painter, p: &Palette, fill: Rect, k: f32, t: f32, alpha: f32) {
+    let a = alpha.clamp(0.0, 1.0);
+    gradient_rect(painter, fill, p.violet.gamma_multiply(a), p.teal.gamma_multiply(a), true);
+
+    // aurora curtain: a strip of quads above the line, opaque-ish at its
+    // foot and transparent at its waving top
+    const SEGMENTS: usize = 64;
+    let mut curtain = Mesh::default();
+    for i in 0..=SEGMENTS {
+        let u = i as f32 / SEGMENTS as f32;
+        let x = fill.left() + fill.width() * u;
+        // two waves of different lengths drifting against each other
+        let wave = 0.62 + 0.38 * (x * 0.021 / k + t * 1.25).sin() * (x * 0.0083 / k - t * 0.7).cos();
+        // rises toward the head, then falls into its halo instead of ending on an edge
+        let toward_head = u.powf(1.6) * (1.0 - ((u - 0.9) / 0.1).clamp(0.0, 1.0).powi(2));
+        let height = k * (8.0 + 44.0 * toward_head) * wave;
+        let color = p.violet.lerp_to_gamma(p.teal, u);
+        let foot = color.gamma_multiply(a * (0.10 + 0.34 * toward_head));
+        let v = |pos: Pos2, color: Color32| Vertex { pos, uv: WHITE_UV, color };
+        curtain.vertices.push(v(Pos2::new(x, fill.top()), foot));
+        curtain.vertices.push(v(Pos2::new(x, fill.top() - height), Color32::TRANSPARENT));
+        if i > 0 {
+            let n = (i * 2) as u32;
+            curtain.add_triangle(n - 2, n - 1, n);
+            curtain.add_triangle(n - 1, n + 1, n);
+        }
+    }
+    painter.add(Shape::mesh(curtain));
+
+    // sheen: a highlight crossing the lit part every few seconds
+    let width = (120.0 * k).min(fill.width());
+    let travel = fill.width() + width;
+    let center = fill.left() - width / 2.0 + travel * (t * 0.32).fract();
+    let sheen = Color32::WHITE.gamma_multiply(0.6 * a);
+    let lit = painter.with_clip_rect(fill.intersect(painter.clip_rect()));
+    let left = Rect::from_min_max(Pos2::new(center - width / 2.0, fill.top()), Pos2::new(center, fill.bottom()));
+    let right = Rect::from_min_max(Pos2::new(center, fill.top()), Pos2::new(center + width / 2.0, fill.bottom()));
+    gradient_rect(&lit, left, Color32::TRANSPARENT, sheen, true);
+    gradient_rect(&lit, right, sheen, Color32::TRANSPARENT, true);
+
+    // head: a soft halo breathing around a bright core
+    let head = Pos2::new(fill.right(), fill.center().y);
+    let breathe = 0.8 + 0.2 * (t * 3.1).sin();
+    super::aurora_bg::radial_glow(painter, head, 30.0 * k, p.teal, 0.5 * breathe * a);
+    super::aurora_bg::radial_glow(painter, head, 9.0 * k, p.ink, 0.95 * a);
+}
+
 /// What starts a fact about the place: an icon or a colored letter.
 enum Lead<'a> {
     Icon(&'a str),
@@ -277,9 +327,7 @@ fn banner(
     painter.rect_filled(track, 0.0, navy(0.55));
     let fill = progress_fill(track, fraction, t);
     if fill.width() >= 1.0 {
-        gradient_rect(painter, fill, p.violet.gamma_multiply(a), p.teal.gamma_multiply(a), true);
-        let head = Pos2::new(fill.right(), track.center().y);
-        super::aurora_bg::radial_glow(&painter.with_clip_rect(screen), head, 34.0 * k, p.teal, 0.55 * a);
+        progress_light(&painter.with_clip_rect(screen), p, fill, k, t, a);
     }
 
     // bottom right: the region on the world map, and the progress in figures
