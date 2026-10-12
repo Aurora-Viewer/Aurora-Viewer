@@ -12,7 +12,7 @@ pub(crate) mod elide_tests;
 pub(crate) mod keycap;
 mod resize;
 mod workspace;
-pub use workspace::{Modal, glyph, navigation, section_header, stat, surface};
+pub use workspace::{Modal, collapsing, collapsing_forced, glyph, navigation, section_header, stat, surface};
 pub(crate) use workspace::{finish_bar_glass, inventory_item_label, inventory_spacing, overlay, overlay_frame};
 
 /// Keep status suffixes at normal weight and slightly darker than the name.

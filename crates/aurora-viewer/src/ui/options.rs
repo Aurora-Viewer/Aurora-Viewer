@@ -2107,13 +2107,8 @@ fn ui_sounds_group(ui: &mut egui::Ui, p: &Palette, a: &mut crate::settings::Audi
                 .changed()
             },
         );
-        egui::CollapsingHeader::new(
-            RichText::new(aurora_i18n::tr!("ui-options-per-sound-choices"))
-                .size(13.0)
-                .color(p.ink),
-        )
-        .id_salt("ui_sounds_each")
-        .show(ui, |ui| {
+        let each = aurora_i18n::tr!("ui-options-per-sound-choices");
+        super::widgets::collapsing(ui, p, "ui_sounds_each", each, false, |ui| {
             for e in CATALOG
                 .iter()
                 .filter(|e| !e.sound.caller_gated() || e.sound == UiSound::TrackerBeacon)

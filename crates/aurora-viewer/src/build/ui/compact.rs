@@ -249,22 +249,21 @@ fn transform_options(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world
             }
         });
     });
-    egui::CollapsingHeader::new(RichText::new(aurora_i18n::tr!("build-compact-options")).size(11.0).color(p.muted))
-        .id_salt("compact_manipulation")
-        .show(ui, |ui| {
-            for (value, title) in [
-                (&mut s.scale_uniform, aurora_i18n::tr!("build-compact-both-sides")),
-                (&mut s.scale_stretch_textures, aurora_i18n::tr!("build-compact-stretch-textures")),
-                (&mut s.actual_root, aurora_i18n::tr!("build-compact-root-axis")),
-                (&mut s.show_highlight, aurora_i18n::tr!("build-compact-highlight")),
-                (&mut s.select_probes, aurora_i18n::tr!("build-compact-probes")),
-                (&mut s.follow_edit_object, aurora_i18n::tr!("build-ui-tools-follow-edit-object")),
-            ] {
-                if let Some(v) = common::check(ui, *value, false, title, true) {
-                    *value = v;
-                }
+    let options = aurora_i18n::tr!("build-compact-options");
+    crate::ui::widgets::collapsing(ui, p, "compact_manipulation", options, false, |ui| {
+        for (value, title) in [
+            (&mut s.scale_uniform, aurora_i18n::tr!("build-compact-both-sides")),
+            (&mut s.scale_stretch_textures, aurora_i18n::tr!("build-compact-stretch-textures")),
+            (&mut s.actual_root, aurora_i18n::tr!("build-compact-root-axis")),
+            (&mut s.show_highlight, aurora_i18n::tr!("build-compact-highlight")),
+            (&mut s.select_probes, aurora_i18n::tr!("build-compact-probes")),
+            (&mut s.follow_edit_object, aurora_i18n::tr!("build-ui-tools-follow-edit-object")),
+        ] {
+            if let Some(v) = common::check(ui, *value, false, title, true) {
+                *value = v;
             }
-        });
+        }
+    });
 }
 
 #[allow(clippy::too_many_arguments)]

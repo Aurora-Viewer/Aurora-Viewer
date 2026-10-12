@@ -171,7 +171,9 @@ pub fn show(
                 ui.label(RichText::new(&state.message).color(p.warn));
             }
             if !state.warnings.is_empty() {
-                egui::CollapsingHeader::new(aurora_i18n::tr!("ao-import-warnings")).show(ui, |ui| {
+                // the title is also the id, as it was for the stock header
+                let warnings = aurora_i18n::tr!("ao-import-warnings");
+                widgets::collapsing(ui, p, warnings, warnings, false, |ui| {
                     egui::ScrollArea::vertical().max_height(85.0).show(ui, |ui| {
                         for warning in &state.warnings {
                             ui.label(warning);

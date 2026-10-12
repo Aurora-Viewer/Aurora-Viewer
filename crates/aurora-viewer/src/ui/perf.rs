@@ -770,13 +770,10 @@ fn row(ui: &mut egui::Ui, p: &Palette, k: &str, v: String) {
 }
 
 fn group(ui: &mut egui::Ui, p: &Palette, title: &str, open: bool, body: impl FnOnce(&mut egui::Ui)) {
-    egui::CollapsingHeader::new(RichText::new(title).size(12.0).strong().color(p.violet_light))
-        .id_salt(("perf", title))
-        .default_open(open)
-        .show(ui, |ui| {
-            ui.spacing_mut().item_spacing.y = 0.0;
-            body(ui);
-        });
+    super::widgets::collapsing(ui, p, ("perf", title), title, open, |ui| {
+        ui.spacing_mut().item_spacing.y = 0.0;
+        body(ui);
+    });
 }
 
 fn details(ui: &mut egui::Ui, p: &Palette, v: &PerfView) {
