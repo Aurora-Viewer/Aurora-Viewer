@@ -191,7 +191,7 @@ capture.
   (recherche de l'objet sous le curseur et réponses gardées d'une image à
   l'autre, `scene/hover.rs`). Lire `hover` dans le profil ; à combiner avec
   `AURORA_HOVER_CHECK=1`, `AURORA_DEMO_ACTIONS=1` ou une scène de charge.
-- **`AURORA_DEMO_CLICKS="<ms>[,x,y|sweep][,left|alt|menu|build|focus]"`** :
+- **`AURORA_DEMO_CLICKS="<ms>[,x,y|sweep|rigged][,left|alt|menu|build|focus]"`** :
   un clic sur le monde toutes les `ms` millisecondes (250 si la valeur n'est
   pas un nombre) une fois le monde affiché, bouton tenu 60 ms, par le même
   chemin qu'un bouton de la souris (`app/click_pick.rs`), sans jamais
@@ -199,7 +199,9 @@ capture.
   `demo clicks: the click before is not over` signale un clic dont le
   relâchement n'a pas été traité avant le suivant. Au pixel (x, y) de la
   fenêtre (un quart de la largeur, près du bas, par défaut : le sol), ou
-  avec `sweep` à un nouvel endroit de la fenêtre à chaque clic. `left` (par
+  avec `sweep` à un nouvel endroit de la fenêtre à chaque clic, ou avec
+  `rigged` sur les mesh riggés à l'écran, tour à tour (au milieu de leurs
+  limites posées). `left` (par
   défaut) : clic gauche ; `alt` : Alt + clic (caméra) ; `menu` : clic droit ;
   `build` et `focus` : clic avec l'outil Modifier ou l'outil Focus de la
   construction. Sert à mesurer ce qu'un clic coûte à l'image dans une scène
@@ -208,6 +210,21 @@ capture.
   `AURORA_PROFILE=1`, lire `between` dans `max:` et `off_cpu:`, et les
   lignes `click pick:` (une par clic : images et millisecondes avant la
   réponse). À combiner avec `AURORA_CLICK_PICK=wait` ou `check`.
+  - Clics sur ce qui est riggé : `AURORA_DEMO_ANIMESH=1`,
+    `AURORA_DEMO_CROWD=4`, `AURORA_DEMO_POS="131,126.6"` et
+    `AURORA_DEMO_CLICKS=150,rigged,menu` (ou `left`, `build`) mettent à
+    l'écran un animesh posé (objets 9200 et 9202), un animesh porté par un
+    autre avatar (9203), le mesh riggé de la foule et un mesh riggé porté
+    par notre avatar (9210, ajouté par ce mode), tous rendus sensibles au
+    toucher. Chaque clic écrit une ligne `demo drawn pick` : l'objet visé
+    (`aimed at … : OK` ou `MISSED`, ce dernier quand autre chose le cache),
+    l'objet désigné, sa face, et `inside its posed bounds` (`OUTSIDE`
+    serait un défaut : le point lu sur le GPU n'est pas dans les limites
+    que le CPU connaît de l'objet). Suivent `demo menu: …` (menu ouvert)
+    ou `demo click action: Touch, object=…`. Avec `3000,rigged,menu` et
+    `AURORA_CAPTURE_FRAMES=1100,1460`, les captures montrent le menu d'un
+    objet porté par un autre avatar puis celui d'un objet porté par nous,
+    l'objet entouré de son contour.
 - **`AURORA_DEMO_LOOKAT=1`** : suivi du regard activé (en mémoire seulement)
   et regard d'un avatar distant.
 - **`AURORA_DEMO_KEYBOARD=system|wasd|zqsd|fallback`** : valeurs par défaut
@@ -1160,7 +1177,8 @@ Ce que l'inventaire doit montrer avec ces scénarios :
   suit (relâchement, autres boutons, mouvement de la souris qui déplace la
   caméra) attend derrière lui, dans l'ordre (`app/click_pick.rs`).
   - `wait` : la profondeur est lue tout de suite en attendant le GPU, comme
-    avant, pour comparer : dans une scène où le GPU est la limite, le
+    avant, pour comparer (sans la lecture des faces dessinées : un mesh
+    riggé n'est alors pas désigné, comme avant aussi) : dans une scène où le GPU est la limite, le
     thread principal attend alors 16 à 30 ms à chaque clic (`between` dans
     `max:` et `off_cpu:` de `perf summary`).
   - `check` : les deux lectures sont faites et comparées, une ligne `click

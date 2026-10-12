@@ -1850,12 +1850,15 @@ impl App {
             }
             return;
         }
-        let Some(click_pick::Picked { ray, depth }) = self.click_pick() else {
+        let Some(picked) = self.click_pick() else {
             return;
         };
+        let (ray, depth) = (picked.ray, picked.depth);
         let hit = self
             .scene
             .action_point(&self.world, ray, depth, self.build.open, self.settings.draw_distance);
+        // a rigged mesh or a worn mesh shown there: the GPU alone poses it
+        let shown = self.designate(crate::scene::drawn::Gesture::Touch, &picked, hit);
         // on our avatar: a surface inside its box under the cursor (nothing
         // in front of it); or, when the ray goes through the box without
         // touching anything (body not drawn yet), close to the body's axis
@@ -1903,6 +1906,21 @@ impl App {
                     .and_then(|i| self.world.objects.get(i))
                     .map(|o| (o.key.local_id, o.click_action))
             );
+        }
+        // the click acts on the rigged mesh it lands on, as on any object:
+        // also one we wear, like the scripted attachments Firestorm lets
+        // us touch (its rigged ones are out of the left click's reach)
+        if !self.alt
+            && !self.ctrl
+            && !self.shift
+            && !self.build.open
+            && !self.camera.mouselook()
+            && let Some(d) = shown
+            && let Some(target) = crate::interaction::target(&self.world, d.idx, &self.interactions.props)
+        {
+            let surface = self.scene.drawn_surface(&self.world, &d);
+            self.activate_object_action_at(target, d.idx, d.hit.point, ray, surface);
+            return;
         }
         if !on_avatar
             && !self.alt
@@ -2694,7 +2712,12 @@ impl App {
                 return false;
             };
             let hit = picked.depth;
-            (hit, hit.and_then(|p| self.scene.pick_at(&self.world, p, Instant::now())))
+            // a rigged mesh is selected where it is shown (Firestorm: with
+            // the move tool only, LLToolCompTranslate)
+            match self.designate(crate::scene::drawn::Gesture::Build, &picked, hit) {
+                Some(d) => (Some(d.hit.point), Some(d.idx)),
+                None => (hit, hit.and_then(|p| self.scene.pick_at(&self.world, p, Instant::now()))),
+            }
         };
         let mods = crate::build::Mods {
             shift: self.shift,
@@ -3768,6 +3791,11 @@ impl App {
             self.build
                 .update(&mut self.world, &self.settings.build, self.cursor_pos, over_ui, mods);
             self.scene.selection_wire = self.build.wire_selection(&self.world, &self.settings.build);
+            // the attachment the open menu is about, outlined like a child
+            // prim of a selection (worn objects are not selected in Aurora)
+            for idx in self.menu_outline() {
+                self.scene.selection_wire.entry(idx).or_insert(false);
+            }
             self.scene.selection_silhouettes = self.build.silhouette_selection(&self.world, &self.settings.build);
             self.flush_build();
             let camera_changed = edit_camera_frame.is_some() || panned;

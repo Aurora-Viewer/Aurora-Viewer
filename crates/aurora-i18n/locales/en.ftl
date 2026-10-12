@@ -3774,3 +3774,8 @@ workspace-outfit-items = { $count } items in this outfit
 
 ui-inventory-received-purchases = Received purchases
 ui-inventory-no-received-purchases = No received purchases yet.
+ui-context-sit-stand = Sit / stand
+ui-context-save-backup = Backup
+ui-context-save-collada = Collada
+ui-context-remove-from-display-exceptions = Remove from display exceptions
+ui-context-script-info = Script info

@@ -27,6 +27,11 @@
 //! camera. Nothing is lost or reordered; the cursor position itself is
 //! never held.
 //!
+//! With the depth, a click that is not a camera gesture asks what the next
+//! frame draws under its pixel (`Renderer::request_drawn`): the object of a
+//! rigged mesh, which only the GPU poses, is designated from that answer
+//! (scene/drawn.rs). It comes a frame after the depth.
+//!
 //! `AURORA_CLICK_PICK=wait` reads the depth as before, waiting;
 //! `AURORA_CLICK_PICK=check` does both and logs every click (`click
 //! check`): whether the two depths are the same, and whether the click
@@ -89,11 +94,20 @@ pub(super) enum DemoNote {
 pub(super) struct Picked {
     pub ray: Option<(Vec3, Vec3)>,
     pub depth: Option<Vec3>,
+    /// The faces drawn under the pixel, in the frame after the click:
+    /// whose surface it is when the GPU alone poses it (scene/drawn.rs).
+    /// Nothing for the camera clicks, which only aim at the surface.
+    pub drawn: aurora_render::Drawn,
 }
 
 /// A click whose depth is asked.
 struct Pending {
     ticket: u64,
+    /// The request for the drawn faces, when the click asks it, and the
+    /// two answers as they come.
+    drawn: Option<u64>,
+    depth_answer: Option<Option<Vec3>>,
+    drawn_answer: Option<aurora_render::Drawn>,
     click: Click,
     cursor: (f32, f32),
     /// Alt, Ctrl, Shift.
@@ -256,7 +270,13 @@ impl App {
             let t = Instant::now();
             let depth = g.renderer.pick_world(x, y);
             self.note_pick(format_args!("the read waited {:.2} ms", t.elapsed().as_secs_f32() * 1000.0));
-            return Some(Picked { ray, depth });
+            // (the read that waits knows nothing of the faces drawn: a
+            // rigged mesh is not designated, as before)
+            return Some(Picked {
+                ray,
+                depth,
+                drawn: Default::default(),
+            });
         };
         let check = (mode == PickMode::Check).then(|| {
             let t = Instant::now();
@@ -264,6 +284,9 @@ impl App {
             (depth, t.elapsed())
         });
         let ticket = g.renderer.request_pick(x, y);
+        // camera clicks aim at the surface: they need not know whose it is
+        let camera = self.alt || (self.build.open && self.build.tool == crate::build::Tool::Focus);
+        let drawn = (!camera).then(|| g.renderer.request_drawn(x, y));
         let check = check.map(|(depth, waited)| Check {
             depth,
             target: self.click_target(click, ray, depth),
@@ -271,6 +294,9 @@ impl App {
         });
         self.clicks.pending = Some(Pending {
             ticket,
+            drawn,
+            depth_answer: None,
+            drawn_answer: None,
             click,
             cursor: (x, y),
             mods: [self.alt, self.ctrl, self.shift],
@@ -286,26 +312,38 @@ impl App {
     /// then what was held behind it, until one of those waits in turn.
     /// Once a frame, with the renderer in `self.gfx`.
     pub(super) fn resolve_clicks(&mut self) {
-        while let Some(p) = &self.clicks.pending {
+        while let Some(p) = self.clicks.pending.as_mut() {
             let Some(g) = self.gfx.as_mut() else {
                 return;
             };
-            let depth = match g.renderer.take_pick(p.ticket) {
-                Some(depth) => Some(depth),
-                None if p.asked.elapsed() < GIVE_UP => return,
-                None => {
+            if p.depth_answer.is_none() {
+                p.depth_answer = g.renderer.take_pick(p.ticket);
+            }
+            if let Some(ticket) = p.drawn
+                && p.drawn_answer.is_none()
+            {
+                p.drawn_answer = g.renderer.take_drawn(ticket);
+            }
+            let answer = match (p.depth_answer, p.drawn, p.drawn_answer) {
+                (Some(depth), None, _) => Some((depth, Default::default())),
+                (Some(depth), Some(_), Some(drawn)) => Some((depth, drawn)),
+                _ if p.asked.elapsed() < GIVE_UP => return,
+                _ => {
                     log::warn!(
                         "click pick: no answer after {:.1} s, click dropped",
                         p.asked.elapsed().as_secs_f32()
                     );
                     g.renderer.forget_pick(p.ticket);
+                    if let Some(ticket) = p.drawn {
+                        g.renderer.forget_drawn(ticket);
+                    }
                     None
                 }
             };
             let Some(p) = self.clicks.pending.take() else {
                 return;
             };
-            if let Some(depth) = depth
+            if let Some((depth, drawn)) = answer
                 && self.in_world()
             {
                 let frames = self.frame_count - p.frame;
@@ -318,7 +356,7 @@ impl App {
                     Some(c) => self.log_click_check(&p, c, depth, frames, ms),
                     None => self.note_pick(format_args!("answered after {frames} frames, {ms:.2} ms")),
                 }
-                self.clicks.in_hand = Some(Picked { ray: p.ray, depth });
+                self.clicks.in_hand = Some(Picked { ray: p.ray, depth, drawn });
                 if p.click != Click::Press || !self.camera.mouselook() {
                     self.run_click(p.click);
                 }
@@ -345,6 +383,52 @@ impl App {
         }
     }
 
+    /// The object a click designates from the faces drawn under its pixel
+    /// (scene/drawn.rs); None when the search on the CPU speaks for it.
+    /// `found`: the point that search settled on.
+    pub(super) fn designate(
+        &mut self,
+        gesture: crate::scene::drawn::Gesture,
+        picked: &Picked,
+        found: Option<Vec3>,
+    ) -> Option<crate::scene::drawn::DrawnObject> {
+        let shown = self
+            .scene
+            .designated(&self.world, gesture, &picked.drawn, picked.ray, found, self.build.open);
+        if self.clicks.scripted() {
+            // AURORA_DEMO_CLICKS: what the click designates, against two
+            // things the CPU knows by itself: the object the click was
+            // aimed at (`rigged`), and the posed bounds of the object
+            // designated, which must hold the point read from the GPU
+            let local = |idx: usize| self.world.objects.get(idx).map(|o| o.key.local_id);
+            let got = shown.and_then(|d| local(d.idx));
+            let raw = |f: Option<aurora_render::DrawnFace>| f.and_then(|f| self.scene.record_object(f.record)).and_then(|(i, _)| local(i));
+            let aimed = match self.clicks.demo.expected.take() {
+                Some(expected) if got == Some(expected) => format!("aimed at {expected}: OK"),
+                Some(expected) => format!("aimed at {expected}: MISSED"),
+                None => "not aimed".to_string(),
+            };
+            let bounds = shown.and_then(|d| {
+                let g = self.scene.gpu.get(d.idx)?;
+                let off = d.hit.point.distance(g.center);
+                Some(format!(
+                    "{} its posed bounds ({off:.2} m from the centre, radius {:.2})",
+                    if off <= g.radius * 1.05 + 0.05 { "inside" } else { "OUTSIDE" },
+                    g.radius
+                ))
+            });
+            log::info!(
+                "demo drawn pick: {gesture:?} {aimed}; designated {got:?}, face {:?}, blended {:?}, {}; drawn: opaque {:?}, blend {:?}",
+                shown.and_then(|d| d.face),
+                shown.map(|d| d.blend),
+                bounds.unwrap_or_else(|| "nothing to bound".into()),
+                raw(picked.drawn.opaque),
+                raw(picked.drawn.blend),
+            );
+        }
+        shown
+    }
+
     /// The clicks that wait and what is held behind them are given up: the
     /// window lost the focus, the viewer leaves, a teleport starts.
     pub(super) fn drop_clicks(&mut self) {
@@ -352,6 +436,9 @@ impl App {
             && let Some(g) = self.gfx.as_mut()
         {
             g.renderer.forget_pick(p.ticket);
+            if let Some(ticket) = p.drawn {
+                g.renderer.forget_drawn(ticket);
+            }
         }
         self.clicks.held.clear();
     }
@@ -511,6 +598,14 @@ impl App {
                 let (u, v) = sweep_point(self.clicks.demo.count);
                 ((w * (0.04 + 0.92 * u)).floor(), (h * (0.1 + 0.85 * v)).floor())
             }
+            DemoAt::Rigged => {
+                self.clicks.demo.count += 1;
+                let Some((local, at)) = self.demo_rigged_target(self.clicks.demo.count, (w, h)) else {
+                    return;
+                };
+                self.clicks.demo.expected = Some(local);
+                at
+            }
         };
         match spec.kind {
             DemoKind::Left => {}
@@ -534,11 +629,51 @@ impl App {
     }
 }
 
-/// AURORA_DEMO_CLICKS="<ms>[,x,y|sweep][,left|alt|menu|build|focus]": a
+impl App {
+    /// AURORA_DEMO_CLICKS=...,rigged: the `n`th click aims at a rigged mesh
+    /// on screen, in turn: its local id and the pixel of the middle of its
+    /// posed bounds. The first call completes the fixture: a rigged mesh on
+    /// our own avatar, and every rigged mesh scripted for touch, so a left
+    /// click shows what it reaches.
+    fn demo_rigged_target(&mut self, n: u32, (w, h): (f32, f32)) -> Option<(u32, (f32, f32))> {
+        if !std::mem::replace(&mut self.clicks.demo.fixture, true) {
+            let me = self.world.objects.index_of_uuid(&self.world.agent_id);
+            if let Some(wearer) = me.and_then(|i| self.world.objects.get(i)).map(|o| o.key.local_id) {
+                for ev in crate::demo::own_rigged_events(wearer) {
+                    self.world.apply(ev);
+                }
+            }
+            return None;
+        }
+        let mut targets: Vec<(u32, usize, (f32, f32))> = self
+            .scene
+            .gpu
+            .iter()
+            .enumerate()
+            .filter(|(_, g)| g.rigged && !g.is_avatar && !g.hud && !g.faces.is_empty() && g.radius > 0.0)
+            .filter_map(|(idx, g)| {
+                let at = self.build.cam.project_px(g.center)?;
+                let inside = at.0 > w * 0.03 && at.0 < w * 0.97 && at.1 > h * 0.08 && at.1 < h * 0.95;
+                inside.then_some((self.world.objects.get(idx)?.key.local_id, idx, at))
+            })
+            .collect();
+        targets.sort_unstable_by_key(|t| t.0);
+        let (local, idx, at) = *targets.get(n as usize % targets.len().max(1))?;
+        // (HANDLE_TOUCH: the simulator sets it on a scripted object)
+        if let Some(o) = self.world.objects.get_mut(idx) {
+            o.update_flags |= ui::context::flags::HANDLE_TOUCH;
+        }
+        Some((local, (at.0.floor(), at.1.floor())))
+    }
+}
+
+/// AURORA_DEMO_CLICKS="<ms>[,x,y|sweep|rigged][,left|alt|menu|build|focus]": a
 /// click on the world every `ms` milliseconds (250 if it is not a number)
 /// once the world shows, held 60 ms: at pixel (x, y) of the window (a
 /// quarter of the width, near the bottom, by default), or with `sweep` at a
-/// new place of the window each time.
+/// new place of the window each time, or with `rigged` at the rigged meshes
+/// on screen in turn (`demo drawn pick` in the log says what each click
+/// designated).
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct DemoSpec {
     period: Duration,
@@ -551,6 +686,7 @@ enum DemoAt {
     Default,
     Pixel(f32, f32),
     Sweep,
+    Rigged,
 }
 
 /// Place of the `n`th click of a sweep, in [0, 1)²: a low-discrepancy
@@ -581,6 +717,7 @@ fn demo_spec(var: &str) -> DemoSpec {
     };
     let at = match numbers[..] {
         _ if parts.contains(&"sweep") => DemoAt::Sweep,
+        _ if parts.contains(&"rigged") => DemoAt::Rigged,
         [x, y, ..] => DemoAt::Pixel(x, y),
         _ => DemoAt::Default,
     };
@@ -599,6 +736,10 @@ struct DemoClicks {
     up: Option<Instant>,
     /// Clicks of a sweep so far.
     count: u32,
+    /// `rigged`: the fixture is complete, and the object the click in
+    /// flight was aimed at (local id).
+    fixture: bool,
+    expected: Option<u32>,
 }
 
 impl DemoClicks {
@@ -675,6 +816,8 @@ mod tests {
             (Duration::from_millis(100), DemoAt::Sweep, DemoKind::Build)
         );
         assert_eq!(demo_spec("250,focus").kind, DemoKind::Focus);
+        let d = demo_spec("300,rigged,menu");
+        assert_eq!((d.at, d.kind), (DemoAt::Rigged, DemoKind::Menu));
         // a sweep stays in the window and does not repeat itself soon
         let places: Vec<(f32, f32)> = (1..200).map(sweep_point).collect();
         assert!(places.iter().all(|(u, v)| (0.0..1.0).contains(u) && (0.0..1.0).contains(v)));

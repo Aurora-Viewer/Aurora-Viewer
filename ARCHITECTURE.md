@@ -155,6 +155,7 @@ Les scripts utilisent un éditeur commun (`ui/scripts.rs`, actions dans `app/scr
 | `interaction.rs`, `cursors.rs`, `ui/object_actions.rs` | Règles des actions de clic 0–9, héritage, permissions, curseurs natifs Firestorm, fenêtres d'achat / paiement et liste du contenu ; transaction après confirmation |
 | `app/object_actions.rs` | Déclenchement des actions, toucher maintenu, déplacement physique, lecture de parcelle, ouverture de média et cadrage de caméra |
 | `scene/picking.rs` | Rayons contre les triangles partagés avec la géométrie affichée (prims, sculpts, meshes) ; prim réellement visée au survol et au clic gauche malgré des boîtes recouvrantes, IGNORE traverse la géométrie hors construction, informations de surface pour les scripts de toucher ; les mêmes tests sur les seuls candidats de l'index de survol |
+| `scene/drawn.rs` | Ce qu'un clic désigne d'après les faces que le GPU a dessinées sous son pixel (`aurora-render/src/drawn_pick.rs`) : les objets que le CPU ne sait pas trouver là où ils sont affichés — animesh, mesh riggés portés, mesh portés — sont désignés tels que le GPU les pose, pour le clic gauche, le clic droit et la construction. Règle isolée et testée (`reaches` : geste × statut de l'objet), informations de surface d'un toucher (face, position, ST / UV, normale et binormale de la surface posée). Écart voulu avec Firestorm, qui n'atteint un mesh riggé qu'au clic droit et avec l'outil Déplacer |
 | `scene/hover.rs` | Objet sous le curseur sans recherche à chaque image : index compact des sphères englobantes tenu par la synchro (candidats proches du rayon du curseur ou du point de profondeur), réponse gardée tant que le rayon, la profondeur lue sur le GPU et les objets alentour ne changent pas, refaite au moins toutes les 100 ms ; jamais pour les clics. Contrôle : `AURORA_HOVER_CHECK` |
 | `media/` | Médias des prims et des parcelles (objets à médias tenus à jour par le flux de changements de l'`ObjectStore`, sans passe sur tous les objets), cookie OpenID des pages web de la grille (`openid.rs`) |
 | `demo.rs`, `demo_land.rs`, `demo_place.rs`, `demo_eep.rs`, `demo_env.rs`, `demo_stream.rs`, `demo_glyphs.rs` | Le mode démo : une scène locale qui simule un serveur (et ses réponses à « À propos du terrain », aux profils de lieux, repères et historique de « Lieux » et à ExtEnvironment, une bibliothèque d'environnements pour le sélecteur) ; `demo_stream.rs` : objets et textures qui arrivent par vagues (test des à-coups du streaming, AURORA_DEMO_STREAM) ; `demo_glyphs.rs` : résidents dont le titre, le nom et le message utilisent les caractères étendus des noms d'affichage (AURORA_DEMO_GLYPHS) |
@@ -384,6 +385,13 @@ réponse revient avec un résultat d'image, une à trois images plus tard (le
 résultat d'une image que le thread de rendu a déjà finie est pris sans
 attendre la remise suivante)
 (`aurora-render/src/pick.rs`, `aurora-viewer/src/app/click_pick.rs`).
+Le même clic demande aussi ce qui est dessiné sous son pixel
+(`Renderer::request_drawn`, `aurora-render/src/drawn_pick.rs`) : l'image
+qui porte la demande redessine les faces de la vue par une caméra resserrée
+sur ce pixel et ses voisins, avec le vertex shader de la scène, dans une
+cible de 2 × 2 texels (enregistrement de dessin, profondeur, coordonnées de
+surface) : faces opaques et masquées, puis faces transparentes devant
+elles. Rien n'est dessiné ni alloué par image hors d'un clic.
 L'ancienne lecture, qui attendait l'image en cours puis tout ce que le GPU
 avait en file (`Renderer::pick_world`), ne sert plus qu'à la comparaison
 (`AURORA_CLICK_PICK=wait` ou `check`). Si le thread de rendu disparaît
