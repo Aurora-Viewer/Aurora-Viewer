@@ -19,6 +19,7 @@ pub mod picking;
 pub mod probes;
 pub mod settings;
 pub mod shape;
+mod skin_binds;
 pub mod sounds;
 mod sync_plan;
 pub mod sync_sets;
@@ -509,9 +510,7 @@ pub struct Scene {
     motions: HashMap<Uuid, anim::Controller>,
     /// Skin bindings uploaded to the GPU: the default skeleton first (system
     /// avatar), then each rigged mesh (by asset id).
-    skin_binds: Vec<aurora_render::SkinBind>,
-    skin_bind_ranges: HashMap<Uuid, u32>,
-    skin_binds_dirty: bool,
+    skin_binds: skin_binds::SkinBinds,
 }
 
 /// Camera data used for culling and LOD.
@@ -765,9 +764,7 @@ impl Scene {
             skeleton_member_of: HashMap::new(),
             skeleton_meta_gen: 0,
             motions: HashMap::new(),
-            skin_binds: Vec::new(),
-            skin_bind_ranges: HashMap::new(),
-            skin_binds_dirty: false,
+            skin_binds: Default::default(),
         }
     }
 
@@ -846,6 +843,13 @@ impl Scene {
                 }
                 Some(GeomState::Pending) => self.geom_pending = self.geom_pending.saturating_sub(1),
                 _ => {}
+            }
+            // the skin bindings go with the last detail level of the mesh:
+            // an object drawn with them holds one of its geometries
+            if let GeomKey::Mesh { id, .. } = key
+                && !(0..4).any(|lod| self.geoms.contains_key(&GeomKey::Mesh { id, lod }))
+            {
+                self.skin_binds.release(&id);
             }
         }
         self.geom_trash.empty(&self.jobs);
@@ -1937,7 +1941,9 @@ impl Scene {
         let wearer = Self::wearer_avatar(world, idx);
         let rigged_owner = match g.geom {
             Some(GeomKey::Mesh { id, .. }) => match self.meshes.meta(&id).and_then(|m| m.skin).filter(|s| !s.joint_names.is_empty()) {
-                Some(skin) => Self::skeleton_owner(world, idx).map(|(owner, i)| (owner, i, self.mesh_binds(id, &skin))),
+                Some(skin) => {
+                    Self::skeleton_owner(world, idx).map(|(owner, i)| (owner, i, self.skin_binds.mesh(id, &skin, &self.avatar_lib.rig)))
+                }
                 None => None,
             },
             _ => None,
@@ -2206,7 +2212,7 @@ impl Scene {
         // parts are in skeleton space: put the pelvis at the avatar position
         let avatar_model = Mat4::from_rotation_translation(rot, pos) * Mat4::from_translation(-lib.pelvis);
         let palette = self.palette_base(o.full_id);
-        let system_binds = self.system_binds();
+        let system_binds = self.skin_binds.system(&self.avatar_lib.rig);
         let appearance_gen = world.appearance_generation(&o.full_id);
         // bakes used by attachments (checked every 30 frames)
         let bom_mask = if !self.gpu[idx].is_avatar || (self.frame as usize + idx).is_multiple_of(30) {
@@ -2334,7 +2340,7 @@ impl Scene {
                 .collect();
         }
         let (c, r) = animesh::posed_bounds(&self.system_bounds, |j| {
-            let b = self.skin_binds.get(binds as usize + j as usize)?;
+            let b = self.skin_binds.list().get(binds as usize + j as usize)?;
             let p = self.palettes.get(palette_base as usize + b.joint[0] as usize)?;
             Some(model * Mat4::from_cols_array_2d(p) * Mat4::from_cols_array_2d(&b.inverse_bind))
         })?;
@@ -2839,9 +2845,8 @@ impl Scene {
             self.materials.generation += 1;
         }
         let t = self.parts.lap(Part::Assets, t);
-        if self.skin_binds_dirty {
-            self.skin_binds_dirty = false;
-            renderer.set_skin_binds(&self.skin_binds);
+        for dirty in self.skin_binds.take_dirty() {
+            renderer.set_skin_binds(self.skin_binds.list(), dirty);
         }
         let t = self.parts.lap(Part::Skin, t);
         let pages_before = renderer.textures.page_create_ms();
@@ -2856,8 +2861,9 @@ impl Scene {
             let t = &self.textures.stats;
             let (lm_ready, lm_wait, lm_unknown) = self.legacy_mats.counts();
             let (gm_ready, gm_wait, gm_missing) = self.materials.counts();
+            let (binds_used, binds_len) = self.skin_binds.counts();
             log::info!(
-                "streaming: {} objects, meshes {ready} ready / {fetching} downloading / {failed} failed, textures {}/{} ({} downloading, {} failing, uploads {} staged / {} direct), legacy materials {lm_ready} ready / {lm_wait} pending / {lm_unknown} unknown, glTF materials {gm_ready} ready / {gm_wait} pending / {gm_missing} missing, viewer asset cap {}",
+                "streaming: {} objects, meshes {ready} ready / {fetching} downloading / {failed} failed, skin bindings {binds_used} used of {binds_len}, textures {}/{} ({} downloading, {} failing, uploads {} staged / {} direct), legacy materials {lm_ready} ready / {lm_wait} pending / {lm_unknown} unknown, glTF materials {gm_ready} ready / {gm_wait} pending / {gm_missing} missing, viewer asset cap {}",
                 world.objects.len(),
                 t.loaded,
                 t.total,
@@ -3127,49 +3133,6 @@ impl Scene {
                 ))
             }
         }
-    }
-
-    /// Skin bindings of the system avatar mesh: index = rig joint (plus the
-    /// identity slot), inverse bind = inverse default joint matrix.
-    fn system_binds(&mut self) -> u32 {
-        if self.skin_binds.is_empty() {
-            let rig = &self.avatar_lib.rig;
-            let n = rig.len();
-            for j in 0..n {
-                self.skin_binds.push(aurora_render::SkinBind {
-                    inverse_bind: rig.default_world_inv[j].to_cols_array_2d(),
-                    joint: [j as u32, 0, 0, 0],
-                });
-            }
-            self.skin_binds.push(aurora_render::SkinBind {
-                inverse_bind: Mat4::IDENTITY.to_cols_array_2d(),
-                joint: [n as u32, 0, 0, 0],
-            });
-            self.skin_binds_dirty = true;
-        }
-        0
-    }
-
-    /// Skin bindings of a rigged mesh: its inverse bind matrices and the rig
-    /// joints its joint names refer to. Unknown joints keep the inverse bind
-    /// alone (identity joint), as LLSkinningUtil does.
-    fn mesh_binds(&mut self, mesh: Uuid, skin: &aurora_assets::SkinInfo) -> u32 {
-        self.system_binds();
-        if let Some(b) = self.skin_bind_ranges.get(&mesh) {
-            return *b;
-        }
-        let base = self.skin_binds.len() as u32;
-        let rig = &self.avatar_lib.rig;
-        let identity = rig.len() as u32;
-        for (name, ib) in skin.joint_names.iter().zip(&skin.inverse_bind) {
-            self.skin_binds.push(aurora_render::SkinBind {
-                inverse_bind: ib.to_cols_array_2d(),
-                joint: [rig.names.get(name).map(|&j| j as u32).unwrap_or(identity), 0, 0, 0],
-            });
-        }
-        self.skin_bind_ranges.insert(mesh, base);
-        self.skin_binds_dirty = true;
-        base
     }
 
     /// Rest skeleton of an avatar (or animesh) and the vertical offset of

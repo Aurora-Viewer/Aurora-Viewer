@@ -60,10 +60,9 @@ pub struct GpuInfo {
     pub integrated: bool,
 }
 
-/// First skin binding to send when `sent` of `len` are already on the GPU:
-/// the new tail, or everything if the list was started over.
-fn skin_binds_tail(sent: usize, len: usize) -> usize {
-    if sent <= len { sent } else { 0 }
+/// The part of a range of skin bindings to send that is in a list of `len`.
+fn skin_binds_range(dirty: std::ops::Range<usize>, len: usize) -> std::ops::Range<usize> {
+    dirty.start.min(len)..dirty.end.min(len)
 }
 
 /// Packet buffers kept for the next frames (one in flight, one being built).
@@ -116,8 +115,6 @@ pub struct Renderer {
     /// Palette bytes written since the last frame (AURORA_PROFILE).
     palettes_uploaded: u64,
     skin_bind_buffer: wgpu::Buffer,
-    /// Skin bindings already in `skin_bind_buffer` (see `set_skin_binds`).
-    skin_binds_sent: usize,
     /// Bumped when the palette or skin binding buffer is reallocated (the
     /// render thread rebuilds the records bind group).
     bind_generation: u64,
@@ -317,7 +314,6 @@ impl Renderer {
             palette_buffer,
             palettes_uploaded: 0,
             skin_bind_buffer,
-            skin_binds_sent: 0,
             bind_generation: 0,
             gpu_cull,
             size: (width.max(1), height.max(1)),
@@ -364,16 +360,13 @@ impl Renderer {
 
     /// Upload the skin bindings (inverse bind matrix + palette joint per
     /// mesh joint) referenced by `DrawRecord::flags[2]` of skinned records.
-    /// The list only grows (a rigged mesh appends its joints): only the
-    /// entries not sent yet are written, unless the buffer had to grow. The
-    /// whole list sent again for every new rigged mesh was megabytes a frame
-    /// while a crowd loads.
-    pub fn set_skin_binds(&mut self, binds: &[SkinBind]) {
-        if binds.is_empty() {
-            return;
-        }
+    /// Only the `dirty` entries of the list are written (a rigged mesh sets
+    /// the range of its joints, at the end or in the place of a mesh gone),
+    /// unless the buffer had to grow. The whole list sent again for every
+    /// new rigged mesh was megabytes a frame while a crowd loads.
+    pub fn set_skin_binds(&mut self, binds: &[SkinBind], dirty: std::ops::Range<usize>) {
         let size = std::mem::size_of::<SkinBind>();
-        let mut from = skin_binds_tail(self.skin_binds_sent, binds.len());
+        let mut dirty = skin_binds_range(dirty, binds.len());
         if std::mem::size_of_val(binds) as u64 > self.skin_bind_buffer.size() {
             let mut n = (self.skin_bind_buffer.size() as usize / size).max(1);
             while n < binds.len() {
@@ -381,13 +374,15 @@ impl Renderer {
             }
             self.skin_bind_buffer = Self::make_skin_bind_buffer(&self.device, n);
             self.bind_generation += 1;
-            from = 0;
+            dirty = 0..binds.len();
         }
-        if from < binds.len() {
-            self.writes
-                .write_buffer(&self.skin_bind_buffer, (from * size) as u64, bytemuck::cast_slice(&binds[from..]));
+        if !dirty.is_empty() {
+            self.writes.write_buffer(
+                &self.skin_bind_buffer,
+                (dirty.start * size) as u64,
+                bytemuck::cast_slice(&binds[dirty]),
+            );
         }
-        self.skin_binds_sent = binds.len();
     }
 
     fn make_palette_buffer(device: &wgpu::Device, matrices: usize) -> wgpu::Buffer {
@@ -858,12 +853,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn skin_binds_send_only_the_new_tail() {
-        assert_eq!(skin_binds_tail(0, 134), 0);
-        assert_eq!(skin_binds_tail(134, 244), 134);
-        // nothing new: an empty tail
-        assert_eq!(skin_binds_tail(244, 244), 244);
-        // a shorter list is a new one
-        assert_eq!(skin_binds_tail(244, 134), 0);
+    fn skin_binds_send_only_the_range_asked_for() {
+        // a new mesh at the end of the list, or in the place of one gone
+        assert_eq!(skin_binds_range(134..244, 244), 134..244);
+        assert_eq!(skin_binds_range(20..54, 244), 20..54);
+        // never past the list
+        assert_eq!(skin_binds_range(200..300, 244), 200..244);
+        assert!(skin_binds_range(300..320, 244).is_empty());
     }
 }
