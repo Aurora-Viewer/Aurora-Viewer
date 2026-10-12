@@ -4336,8 +4336,11 @@ impl App {
         let ctx = self.egui_ctx.clone();
         if self.demo {
             raw.events.extend(ui::widgets::demo::events(&ctx, self.frame_count));
-            raw.events
-                .extend(ui::color_picker::demo::events(&self.build.ui.color_picker, self.frame_count));
+            raw.events.extend(ui::color_picker::demo::events(
+                &self.egui_ctx,
+                &self.build.ui.color_picker,
+                self.frame_count,
+            ));
             for d in self.task_notecards.values_mut() {
                 raw.events
                     .extend(ui::inventory::document_demo_events(&ctx, self.frame_count, &mut d.state));

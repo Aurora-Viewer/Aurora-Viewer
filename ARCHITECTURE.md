@@ -222,6 +222,14 @@ sont regroupés dans `build/edits.rs` jusqu'au relâchement. `app/color_picker.r
 route la pipette vers `Scene::color_at_ray` : candidats de l'index spatial,
 triangles réels en parallèle et teinte de la face, sans lecture GPU ni effet
 de l'éclairage. Elle ne change pas la sélection.
+Le sélecteur conserve l'identité de sa fenêtre appelante : placement contre son
+bord droit, aligné en haut, ou à gauche si l'espace manque, recalculé à chaque
+déplacement de la fenêtre ou changement de taille de l'écran. Sa taille mesurée
+garde les commandes visibles et le déplacement conserve son état réduit.
+Les pastilles transmettent leur rectangle visible à chaque passage : un cône
+dégradé les relie à la palette pendant qu'elle est déplacée séparément, sans
+surface interactive supplémentaire. Un second clic sur la même pastille ferme
+la transaction ; une autre pastille restaure la précédente avant de s'ouvrir.
 `cursors.rs` garde le curseur pipette Phosphor en mémoire, avec la pointe comme
 point de prélèvement et le contour contrasté de la skin, comme le curseur HUD.
 `aurora-render/src/ui_glass.rs` produit un fond dépoli partagé

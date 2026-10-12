@@ -471,9 +471,8 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
                     super::common::linear_to_srgb(bc[1]),
                     super::common::linear_to_srgb(bc[2]),
                 ];
-                if color_swatch(ui, p, srgb, aurora_i18n::tr!("build-ui-texture-tint"), 40.0, editable) {
-                    tool.open_color_picker(world, env, super::ColorTarget::PbrBase, srgb);
-                }
+                let swatch = color_swatch(ui, p, srgb, aurora_i18n::tr!("build-ui-texture-tint"), 40.0, editable);
+                tool.color_swatch_response(world, env, super::ColorTarget::PbrBase, srgb, swatch);
             });
             ui.horizontal(|ui| {
                 let maps: [(Option<Uuid>, &str, usize); 2] = [
@@ -503,9 +502,8 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
                     super::common::linear_to_srgb(e[1]),
                     super::common::linear_to_srgb(e[2]),
                 ];
-                if color_swatch(ui, p, srgb, aurora_i18n::tr!("build-ui-texture-tint"), 40.0, editable) {
-                    tool.open_color_picker(world, env, super::ColorTarget::PbrEmissive, srgb);
-                }
+                let swatch = color_swatch(ui, p, srgb, aurora_i18n::tr!("build-ui-texture-tint"), 40.0, editable);
+                tool.color_swatch_response(world, env, super::ColorTarget::PbrEmissive, srgb, swatch);
             });
         });
     egui::CollapsingHeader::new(aurora_i18n::tr!("build-c3-texture-transform"))
@@ -611,9 +609,8 @@ fn blinn_phong(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut
         }
         let (col, _) = same(sel.iter().map(|x| [x.te.color[0], x.te.color[1], x.te.color[2]]));
         let col = col.unwrap_or([1.0; 3]);
-        if color_swatch(ui, p, col, aurora_i18n::tr!("build-ui-texture-tint"), 40.0, editable) {
-            tool.open_color_picker(world, env, super::ColorTarget::Diffuse, col);
-        }
+        let swatch = color_swatch(ui, p, col, aurora_i18n::tr!("build-ui-texture-tint"), 40.0, editable);
+        tool.color_swatch_response(world, env, super::ColorTarget::Diffuse, col, swatch);
         ui.vertical(|ui| {
             let (fb, fb_mixed) = same(sel.iter().map(|x| x.te.bump_shiny_fullbright & TEM_FULLBRIGHT != 0));
             if let Some(v) = check(
@@ -774,16 +771,15 @@ fn blinn_phong(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut
                 }
                 let sc = legacy[0].as_ref().map(|m| m.specular_color).unwrap_or([255; 4]);
                 let rgb = [sc[0] as f32 / 255.0, sc[1] as f32 / 255.0, sc[2] as f32 / 255.0];
-                if color_swatch(
+                let swatch = color_swatch(
                     ui,
                     p,
                     rgb,
                     aurora_i18n::tr!("build-ui-texture-tint"),
                     40.0,
                     editable && spec.is_some(),
-                ) {
-                    tool.open_color_picker(world, env, super::ColorTarget::Specular, rgb);
-                }
+                );
+                tool.color_swatch_response(world, env, super::ColorTarget::Specular, rgb, swatch);
                 ui.vertical(|ui| {
                     let (gl, gl_mixed) = same(legacy.iter().map(|m| m.as_ref().map(|m| m.specular_exp).unwrap_or(51)));
                     let (env_i, env_mixed) = same(legacy.iter().map(|m| m.as_ref().map(|m| m.env_intensity).unwrap_or(0)));

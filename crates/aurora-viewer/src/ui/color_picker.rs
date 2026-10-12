@@ -14,6 +14,8 @@ pub use model::{Preferences, Rgb};
 use std::collections::HashMap;
 use uuid::Uuid;
 
+const WINDOW_ID: &str = "build_color_picker";
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Event {
     Preview(Rgb),
@@ -23,6 +25,9 @@ pub enum Event {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum Control {
+    Origin,
+    Title,
+    ParentTitle,
     Grid,
     Lightness,
     Current,
@@ -48,6 +53,11 @@ pub struct ColorPicker {
     pending_preview: bool,
     notice: String,
     track_controls: bool,
+    parent: Option<egui::Id>,
+    parent_rect: Option<Rect>,
+    screen_rect: Option<Rect>,
+    opening: bool,
+    origin: Option<Rect>,
     pub(crate) controls: HashMap<Control, Rect>,
 }
 
@@ -60,7 +70,23 @@ impl ColorPicker {
         self.sample_cursor = None;
         self.pending_preview = false;
         self.notice.clear();
+        self.parent = None;
+        self.parent_rect = None;
+        self.screen_rect = None;
+        self.opening = true;
+        self.origin = None;
         self.track_controls = cfg!(test) || demo::mode().is_some();
+    }
+
+    /// Open beside the invoking floater and follow its subsequent movements.
+    pub fn open_from(&mut self, rgb: Rgb, mixed: bool, parent: egui::Id) {
+        self.open(rgb, mixed);
+        self.parent = Some(parent);
+    }
+
+    /// The invoking swatch supplies its visible rectangle on every layout pass.
+    pub fn set_origin(&mut self, rect: Rect) {
+        self.origin = Some(rect);
     }
 
     pub fn is_open(&self) -> bool {
@@ -72,6 +98,10 @@ impl ColorPicker {
         self.pipette = false;
         self.sampled = None;
         self.pending_preview = false;
+        self.parent = None;
+        self.parent_rect = None;
+        self.screen_rect = None;
+        self.origin = None;
     }
 
     pub fn needs_sample(&mut self, cursor: (f32, f32)) -> bool {
@@ -112,8 +142,22 @@ impl ColorPicker {
         let mut open = true;
         let screen = ctx.content_rect();
         let size = Vec2::new((screen.width() - 32.0).clamp(360.0, 460.0), 420.0);
+        let parent = self.parent.and_then(|id| ctx.memory(|m| m.area_rect(id)));
+        let following = self.opening || parent != self.parent_rect || self.screen_rect != Some(screen);
+        if let Some(parent) = parent.filter(|_| following) {
+            let height = ctx
+                .memory(|m| m.area_rect(egui::Id::new(WINDOW_ID)))
+                .map_or(size.y, |rect| rect.height());
+            let measured = Vec2::new(size.x, height);
+            let pos = adjacent_position(screen, parent, measured);
+            if self.opening {
+                widgets::place_floater(ctx, WINDOW_ID, pos, size);
+            } else {
+                widgets::move_floater(ctx, WINDOW_ID, pos);
+            }
+        }
         Floater::new(
-            "build_color_picker",
+            WINDOW_ID,
             aurora_i18n::tr!("color-picker-title"),
             screen.center() - size * 0.5,
             size,
@@ -188,6 +232,21 @@ impl ColorPicker {
                 });
             });
         });
+        if let Some(parent) = parent.filter(|_| following)
+            && let Some(rect) = ctx.memory(|m| m.area_rect(egui::Id::new(WINDOW_ID)))
+        {
+            // Auto-height is known after the first layout. Correct the screen
+            // constraint in another pass so opening near the bottom stays visible.
+            let pos = adjacent_position(screen, parent, rect.size());
+            if rect.min.distance(pos) > 0.5 {
+                widgets::move_floater(ctx, WINDOW_ID, pos);
+                ctx.request_discard("position color picker beside its parent");
+            }
+        }
+        self.opening = false;
+        self.parent_rect = parent;
+        self.screen_rect = Some(screen);
+        self.draw_owner_link(ctx, p);
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
             if self.pipette {
                 self.pipette = false;
@@ -207,6 +266,42 @@ impl ColorPicker {
             let modified = rgb != draft.original;
             self.draft = Some(draft);
             (prefs.apply && (edited || !apply_before && modified)).then_some(Event::Preview(rgb))
+        }
+    }
+
+    /// LLFloater::drawConeToOwner / LLFloaterColorPicker::draw (Firestorm,
+    /// originally LGPL 2.1): fade a context cone while moving the dialog.
+    fn draw_owner_link(&mut self, ctx: &egui::Context, p: &Palette) {
+        let id = egui::Id::new(WINDOW_ID);
+        if let Some(rect) = ctx.memory(|m| m.area_rect(id)) {
+            self.record(Control::Title, Rect::from_min_size(rect.min, Vec2::new(rect.width() - 100.0, 40.0)));
+        }
+        if let Some(rect) = self.parent_rect {
+            self.record(
+                Control::ParentTitle,
+                Rect::from_min_size(rect.min, Vec2::new(rect.width() - 100.0, 40.0)),
+            );
+        }
+        let moving = ctx.is_being_dragged(id.with("move"));
+        let opacity = ctx.animate_bool_with_time(id.with("owner_link"), moving, 0.08);
+        if let Some(origin) = self.origin.take() {
+            self.record(Control::Origin, origin);
+            if opacity <= 0.001 {
+                return;
+            }
+            let Some(window) = ctx.memory(|m| m.area_rect(id)) else {
+                return;
+            };
+            let mesh = owner_link(origin, window, p.bar.gamma_multiply(0.4 * opacity));
+            ctx.layer_painter(egui::LayerId::background()).add(egui::Shape::mesh(mesh));
+            if let Some(parent) = self.parent {
+                ctx.layer_painter(egui::LayerId::new(egui::Order::Middle, parent)).rect_stroke(
+                    origin.expand(2.0),
+                    3.0,
+                    Stroke::new(1.5, p.violet.gamma_multiply(opacity)),
+                    egui::StrokeKind::Outside,
+                );
+            }
         }
     }
 
@@ -462,6 +557,58 @@ impl ColorPicker {
         }
         edited
     }
+}
+
+/// A context cone shades the gap between the visible swatch and dialog edges.
+fn owner_link(origin: Rect, window: Rect, shade: Color32) -> egui::Mesh {
+    let mut mesh = egui::Mesh::default();
+    if origin.intersects(window) {
+        return mesh;
+    }
+    let (from, to) = if window.left() >= origin.right() {
+        (
+            [origin.right_top(), origin.right_bottom()],
+            [window.left_top(), window.left_bottom()],
+        )
+    } else if window.right() <= origin.left() {
+        (
+            [origin.left_top(), origin.left_bottom()],
+            [window.right_top(), window.right_bottom()],
+        )
+    } else if window.top() >= origin.bottom() {
+        (
+            [origin.left_bottom(), origin.right_bottom()],
+            [window.left_top(), window.right_top()],
+        )
+    } else {
+        (
+            [origin.left_top(), origin.right_top()],
+            [window.left_bottom(), window.right_bottom()],
+        )
+    };
+    for pos in from {
+        mesh.colored_vertex(pos, Color32::TRANSPARENT);
+    }
+    for pos in to {
+        mesh.colored_vertex(pos, shade);
+    }
+    mesh.add_triangle(0, 2, 1);
+    mesh.add_triangle(1, 2, 3);
+    mesh
+}
+
+/// Prefer the right edge, then the left; keep the whole dialog on screen
+/// when neither side or the parent's top can accommodate its measured size.
+fn adjacent_position(screen: Rect, parent: Rect, size: Vec2) -> Pos2 {
+    let x = if parent.right() + size.x <= screen.right() {
+        parent.right()
+    } else {
+        parent.left() - size.x
+    };
+    Pos2::new(
+        x.clamp(screen.left(), (screen.right() - size.x).max(screen.left())),
+        parent.top().clamp(screen.top(), (screen.bottom() - size.y).max(screen.top())),
+    )
 }
 
 fn number(ui: &mut egui::Ui, value: &mut f32, max: f32, speed: f32, decimals: usize) -> egui::Response {

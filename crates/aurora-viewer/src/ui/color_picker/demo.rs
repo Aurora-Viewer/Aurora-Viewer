@@ -7,8 +7,8 @@ pub fn mode() -> Option<&'static str> {
     MODE.get_or_init(|| std::env::var("AURORA_DEMO_COLOR_PICKER").ok()).as_deref()
 }
 
-pub fn events(picker: &ColorPicker, frame: u64) -> Vec<Event> {
-    let Some(mode) = mode().filter(|_| picker.is_open()) else {
+pub fn events(ctx: &egui::Context, picker: &ColorPicker, frame: u64) -> Vec<Event> {
+    let Some(mode) = mode().filter(|mode| picker.is_open() || *mode == "toggle") else {
         return Vec::new();
     };
     let button = |pos, pressed| Event::PointerButton {
@@ -32,6 +32,47 @@ pub fn events(picker: &ColorPicker, frame: u64) -> Vec<Event> {
             })
             .unwrap_or_default()
     };
+    if mode == "toggle" {
+        return match frame {
+            700 | 701 => click(Control::Origin, 700),
+            740 | 741 => click(Control::Origin, 740),
+            780 | 781 => click(Control::Origin, 780),
+            _ => Vec::new(),
+        };
+    }
+    if matches!(mode, "follow" | "link") {
+        let start_id = egui::Id::new(("demo_color_picker_drag_start", mode));
+        if frame == 700 {
+            let control = if mode == "follow" { Control::ParentTitle } else { Control::Title };
+            if let Some(rect) = picker.controls.get(&control) {
+                let start = rect.min + egui::vec2(70.0, 20.0);
+                ctx.data_mut(|d| d.insert_temp(start_id, start));
+                return vec![Event::PointerMoved(start), button(start, true)];
+            }
+        }
+        if let Some(start) = ctx.data(|d| d.get_temp::<Pos2>(start_id)) {
+            let offset = if mode == "follow" {
+                let fraction = if frame <= 800 {
+                    frame.saturating_sub(700) as f32 / 100.0
+                } else {
+                    1.0 - frame.saturating_sub(820) as f32 / 100.0
+                }
+                .clamp(0.0, 1.0);
+                egui::vec2(fraction * 800.0, fraction * 40.0)
+            } else {
+                let fraction = (frame.saturating_sub(700) as f32 / 80.0).clamp(0.0, 1.0);
+                egui::vec2(fraction * 240.0, fraction * 80.0)
+            };
+            let end = if mode == "follow" { 921 } else { 851 };
+            if (701..end).contains(&frame) {
+                return vec![Event::PointerMoved(start + offset)];
+            }
+            if frame == end {
+                return vec![button(start + offset, false)];
+            }
+        }
+        return Vec::new();
+    }
     if frame == 680 || frame == 681 {
         return match mode {
             "lsl" => click(Control::Mode(1), 680),

@@ -6,6 +6,8 @@ struct UiTest {
     picker: ColorPicker,
     prefs: Preferences,
     time: f64,
+    owner: Option<Pos2>,
+    owner_visible: bool,
 }
 
 impl UiTest {
@@ -15,7 +17,10 @@ impl UiTest {
             picker: ColorPicker::default(),
             prefs: Preferences::default(),
             time: 0.0,
+            owner: None,
+            owner_visible: false,
         };
+        crate::theme::Theme::default().apply(&test.ctx, 1.0);
         test.picker.open([0.5, 0.25, 1.0], false);
         for _ in 0..4 {
             test.frame(Vec::new());
@@ -34,6 +39,27 @@ impl UiTest {
                 ..Default::default()
             },
             |ui| {
+                if let Some(pos) = self.owner {
+                    widgets::place_floater(ui.ctx(), "color_picker_owner_fixture", pos, Vec2::new(300.0, 120.0));
+                    self.owner_visible = true;
+                    self.owner = None;
+                }
+                if self.owner_visible {
+                    let mut open = true;
+                    Floater::new(
+                        "color_picker_owner_fixture",
+                        "owner",
+                        Pos2::new(12.0, 40.0),
+                        Vec2::new(300.0, 120.0),
+                    )
+                    .auto_height()
+                    .framed_header("cube")
+                    .show(ui.ctx(), &crate::theme::Theme::default().palette(), &mut open, |ui| {
+                        ui.label("owner");
+                        let (rect, _) = ui.allocate_exact_size(Vec2::splat(40.0), Sense::click());
+                        self.picker.set_origin(rect);
+                    });
+                }
                 result = result.or(self
                     .picker
                     .show(ui.ctx(), &crate::theme::Theme::default().palette(), &mut self.prefs));
@@ -72,6 +98,128 @@ impl UiTest {
         ])
         .0
     }
+}
+
+#[test]
+fn adjacent_position_prefers_right_then_left_and_keeps_dialog_on_screen() {
+    let screen = Rect::from_min_size(Pos2::new(20.0, 30.0), Vec2::new(1000.0, 760.0));
+    let size = Vec2::new(460.0, 525.0);
+    let parent = |x, y| Rect::from_min_size(Pos2::new(x, y), Vec2::new(344.0, 550.0));
+    assert_eq!(adjacent_position(screen, parent(32.0, 40.0), size), Pos2::new(376.0, 40.0));
+    assert_eq!(adjacent_position(screen, parent(664.0, 40.0), size), Pos2::new(204.0, 40.0));
+    assert_eq!(adjacent_position(screen, parent(300.0, 500.0), size), Pos2::new(20.0, 265.0));
+    assert_eq!(adjacent_position(screen, parent(32.0, -10.0), size), Pos2::new(376.0, 30.0));
+}
+
+#[test]
+fn opening_from_a_moved_parent_overrides_saved_position_and_aligns_both_sides() {
+    let mut t = UiTest::new();
+    let owner = egui::Id::new("color_picker_owner_fixture");
+    for pos in [Pos2::new(12.0, 40.0), Pos2::new(680.0, 40.0), Pos2::new(680.0, 540.0)] {
+        t.owner = Some(pos);
+        t.picker.open_from([0.5, 0.25, 1.0], false, owner);
+        for _ in 0..4 {
+            t.frame(Vec::new());
+        }
+        let parent = t.ctx.memory(|m| m.area_rect(owner)).unwrap();
+        let picker = t.ctx.memory(|m| m.area_rect(egui::Id::new(WINDOW_ID))).unwrap();
+        if pos.x < 500.0 {
+            assert!((picker.left() - parent.right()).abs() < 0.5, "{parent:?} -> {picker:?}");
+        } else {
+            assert!((picker.right() - parent.left()).abs() < 0.5, "{parent:?} -> {picker:?}");
+        }
+        if pos.y < 500.0 {
+            assert!((picker.top() - parent.top()).abs() < 0.5);
+        } else {
+            assert!(picker.bottom() <= 760.5, "{picker:?}");
+        }
+        assert_eq!(t.picker.parent, Some(owner));
+        t.picker.close();
+    }
+}
+
+#[test]
+fn dragging_the_parent_follows_every_frame_and_switches_back_to_either_side() {
+    let mut t = UiTest::new();
+    let owner = egui::Id::new("color_picker_owner_fixture");
+    t.owner = Some(Pos2::new(12.0, 40.0));
+    t.picker.open_from([0.5, 0.25, 1.0], false, owner);
+    for _ in 0..4 {
+        t.frame(Vec::new());
+    }
+    let parent = t.ctx.memory(|m| m.area_rect(owner)).unwrap();
+    let start = parent.min + egui::vec2(70.0, 20.0);
+    t.frame(vec![Input::PointerMoved(start), UiTest::button(start, true)]);
+    for dx in [100.0, 220.0, 420.0, 560.0, 220.0, 0.0] {
+        t.frame(vec![Input::PointerMoved(start + egui::vec2(dx, 24.0))]);
+        let parent = t.ctx.memory(|m| m.area_rect(owner)).unwrap();
+        let picker = t.ctx.memory(|m| m.area_rect(egui::Id::new(WINDOW_ID))).unwrap();
+        let expected = adjacent_position(t.ctx.content_rect(), parent, picker.size());
+        assert!(picker.min.distance(expected) < 0.5, "{parent:?} -> {picker:?}, wanted {expected:?}");
+    }
+    let parent = t.ctx.memory(|m| m.area_rect(owner)).unwrap();
+    assert!((parent.top() - 64.0).abs() < 0.5, "the parent must really move: {parent:?}");
+    t.frame(vec![UiTest::button(start + egui::vec2(0.0, 24.0), false)]);
+    assert!(t.picker.is_open());
+}
+
+#[test]
+fn moving_the_dialog_shows_a_fading_cone_to_the_current_swatch_without_changing_color() {
+    let mut t = UiTest::new();
+    t.owner = Some(Pos2::new(12.0, 40.0));
+    t.picker
+        .open_from([0.5, 0.25, 1.0], false, egui::Id::new("color_picker_owner_fixture"));
+    for _ in 0..4 {
+        t.frame(Vec::new());
+    }
+    let window = t.ctx.memory(|m| m.area_rect(egui::Id::new(WINDOW_ID))).unwrap();
+    let start = window.min + egui::vec2(80.0, 20.0);
+    let end = start + egui::vec2(100.0, 80.0);
+    t.frame(vec![Input::PointerMoved(start), UiTest::button(start, true)]);
+    t.frame(vec![Input::PointerMoved(end)]);
+    for _ in 0..8 {
+        let (event, output) = t.frame(Vec::new());
+        assert_eq!(event, None);
+        assert!(
+            output.shapes.iter().any(|shape| matches!(
+            &shape.shape, egui::Shape::Mesh(mesh) if mesh.vertices.len() == 4
+                && mesh.vertices[..2].iter().all(|v| v.color.a() == 0) && mesh.vertices[2].color.a() > 0
+            )),
+            "the context cone must appear during the window drag"
+        );
+    }
+    let moved = t.ctx.memory(|m| m.area_rect(egui::Id::new(WINDOW_ID))).unwrap();
+    assert!(moved.min.distance(window.min + egui::vec2(100.0, 80.0)) < 0.5);
+    t.frame(vec![UiTest::button(end, false)]);
+    for _ in 0..12 {
+        t.frame(Vec::new());
+    }
+    let (_, output) = t.frame(Vec::new());
+    assert!(!output.shapes.iter().any(|shape| matches!(
+        &shape.shape, egui::Shape::Mesh(mesh) if mesh.vertices.len() == 4
+            && mesh.vertices[..2].iter().all(|v| v.color.a() == 0) && mesh.vertices[2].color.a() > 0
+    )));
+    assert_eq!(t.picker.draft.as_ref().unwrap().rgb, [0.5, 0.25, 1.0]);
+}
+
+#[test]
+fn owner_link_points_to_the_swatch_on_all_sides_and_avoids_overlapping_windows() {
+    let origin = Rect::from_min_size(Pos2::new(400.0, 300.0), Vec2::splat(40.0));
+    let shade = Color32::from_gray(32).gamma_multiply(0.4);
+    for pos in [
+        Pos2::new(500.0, 200.0),
+        Pos2::new(0.0, 200.0),
+        Pos2::new(350.0, 500.0),
+        Pos2::new(350.0, 0.0),
+    ] {
+        let window = Rect::from_min_size(pos, Vec2::new(200.0, 200.0));
+        let mesh = owner_link(origin, window, shade);
+        assert_eq!(mesh.indices.len(), 6);
+        assert_eq!(mesh.vertices.len(), 4);
+        assert!(mesh.vertices[..2].iter().all(|v| origin.contains(v.pos) && v.color.a() == 0));
+        assert!(mesh.vertices[2..].iter().all(|v| window.contains(v.pos) && v.color == shade));
+    }
+    assert!(owner_link(origin, origin.expand(20.0), shade).vertices.is_empty());
 }
 
 #[test]

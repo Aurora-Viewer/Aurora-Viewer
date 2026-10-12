@@ -175,6 +175,7 @@ pub struct FloaterState {
 
 /// Width of the label column of the tabs.
 const LABEL_W: f32 = 112.0;
+const INSPECTOR_ID: &str = "build_tools_inspector_c3";
 
 /// Build shortcuts (menu_viewer.xml): Ctrl+B, Ctrl+1..5, delete, duplicate,
 /// link, edit linked parts, grid, undo...
@@ -273,9 +274,29 @@ pub fn show(
         tool.ui.contents_selected = None;
     }
     let screen = ctx.content_rect();
+    let demo_picker = egui::Id::new("demo_color_picker_opened");
+    let picker_mode = crate::ui::color_picker::demo::mode();
+    if env.demo
+        && matches!(picker_mode, Some("left" | "follow" | "link" | "toggle"))
+        && !ctx.data(|d| d.get_temp::<bool>(demo_picker).unwrap_or(false))
+    {
+        crate::ui::widgets::place_floater(
+            ctx,
+            INSPECTOR_ID,
+            egui::pos2(
+                if picker_mode == Some("left") {
+                    screen.right() - 344.0 - 12.0
+                } else {
+                    screen.left() + 12.0
+                },
+                40.0,
+            ),
+            Vec2::new(344.0, 500.0),
+        );
+    }
     let mut open = true;
     let floater = Floater::new(
-        "build_tools_inspector_c3",
+        INSPECTOR_ID,
         compact::selection_title(tool, world),
         egui::pos2(screen.left() + 12.0, 40.0),
         Vec2::new(344.0, 500.0),
@@ -286,7 +307,6 @@ pub fn show(
     .silent();
     floater.show(ctx, p, &mut open, |ui| compact::body(ui, p, tool, world, s, mods, env));
     floaters::secondary(ctx, p, tool, world, s, env);
-    let demo_picker = egui::Id::new("demo_color_picker_opened");
     if env.demo
         && crate::ui::color_picker::demo::mode().is_some()
         && !ctx.data(|d| d.get_temp::<bool>(demo_picker).unwrap_or(false))
@@ -297,7 +317,7 @@ pub fn show(
             .and_then(|o| o.te.as_ref())
             .map(|te| te.face(face as usize).color)
     {
-        tool.open_color_picker(world, env, ColorTarget::Diffuse, [rgb[0], rgb[1], rgb[2]]);
+        tool.toggle_color_picker(world, env, ColorTarget::Diffuse, [rgb[0], rgb[1], rgb[2]]);
         ctx.data_mut(|d| d.insert_temp(demo_picker, true));
     }
     color::show(ctx, p, tool, world, s);

@@ -219,9 +219,22 @@ capture.
 
 ### Détails
 
-`AURORA_DEMO_COLOR_PICKER=1|lsl|hex|invalid|drag|cancel|no-apply|palette|pipette`
+`AURORA_DEMO_COLOR_PICKER=1|left|follow|link|toggle|lsl|hex|invalid|drag|cancel|no-apply|palette|pipette`
 ouvre le nuancier de la sélection, avec `AURORA_DEMO_BUILD=move,object:118`
-et `AURORA_DEMO_BUILD_TAB=texture:bp`. Les modes LSL / Hexa changent le format
+et `AURORA_DEMO_BUILD_TAB=texture:bp`.
+
+La palette s'ouvre contre le bord droit de la construction, au même niveau en
+haut. `left` place la construction près du bord droit de l'écran : la palette
+s'ouvre alors contre son bord gauche. Capturer vers l'image 660. Déplacer la
+construction avec la palette ouverte : celle-ci suit, bascule de côté si la
+place manque et reste visible. Le mode `follow` effectue ce glissement vers la
+droite puis revient à gauche : captures 800 et 920, sans réouverture du nuancier.
+Le mode `link` déplace séparément la palette : capture 800 pour le cône vers la
+pastille d'origine et son contour violet, 880 pour son extinction au relâchement.
+Le mode `toggle` clique trois fois sur la pastille : palette fermée à 710,
+rouverte à 750 puis fermée à 790. La fermeture reprend les règles d'Annuler.
+
+Les modes LSL / Hexa changent le format
 par ses vrais boutons ; Hexa saisit `33AA66`, invalid saisit `GG0000` (OK
 désactivé). Capturer vers l'image 740. Les modes drag / cancel / no-apply
 glissent sur 100 images : capturer à 780 pendant le geste, 830 au relâchement,

@@ -240,7 +240,7 @@ pub fn swatch(
 
 /// LLColorSwatchCtrl: clicking opens the shared color dialog. The stored
 /// value is sRGB, not egui's linear-RGB color button input.
-pub fn color_swatch(ui: &mut egui::Ui, p: &Palette, rgb: [f32; 3], caption: &str, size: f32, enabled: bool) -> bool {
+pub fn color_swatch(ui: &mut egui::Ui, p: &Palette, rgb: [f32; 3], caption: &str, size: f32, enabled: bool) -> egui::Response {
     ui.vertical(|ui| {
         let response = ui
             .add_enabled_ui(enabled, |ui| {
@@ -259,7 +259,7 @@ pub fn color_swatch(ui: &mut egui::Ui, p: &Palette, rgb: [f32; 3], caption: &str
             [size, 14.0],
             egui::Label::new(RichText::new(caption).size(11.0).color(if enabled { p.muted } else { p.muted_dim })),
         );
-        response.clicked()
+        response
     })
     .inner
 }

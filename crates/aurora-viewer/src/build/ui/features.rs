@@ -277,10 +277,9 @@ fn light_section(
         ui.add_space(12.0);
         // the swatch shows sRGB; the wire carries linear (setLightSRGBColor)
         let srgb = [linear_to_srgb(l.color[0]), linear_to_srgb(l.color[1]), linear_to_srgb(l.color[2])];
-        if color_swatch(ui, p, srgb, aurora_i18n::tr!("common-color"), 40.0, on)
-            && let Some(object) = world.objects.get(idx)
-        {
-            tool.open_color_picker(world, env, super::ColorTarget::Light(object.full_id), srgb);
+        let swatch = color_swatch(ui, p, srgb, aurora_i18n::tr!("common-color"), 40.0, on);
+        if let Some(object) = world.objects.get(idx) {
+            tool.color_swatch_response(world, env, super::ColorTarget::Light(object.full_id), srgb, swatch);
         }
         let r = super::common::swatch(
             ui,

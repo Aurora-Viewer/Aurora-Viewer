@@ -77,8 +77,35 @@ impl BuildTool {
         prims
     }
 
-    pub(super) fn open_color_picker(&mut self, world: &mut World, env: &mut Env, target: ColorTarget, rgb: Rgb) {
+    pub(super) fn color_swatch_response(
+        &mut self,
+        world: &mut World,
+        env: &mut Env,
+        target: ColorTarget,
+        rgb: Rgb,
+        swatch: egui::Response,
+    ) {
+        if swatch.clicked() {
+            self.toggle_color_picker(world, env, target, rgb);
+        }
+        if self.ui.color_picker.is_open() && self.ui.color_edit.as_ref().is_some_and(|session| session.target == target) {
+            self.ui.color_picker.set_origin(swatch.rect);
+        }
+    }
+
+    pub(super) fn toggle_color_picker(&mut self, world: &mut World, env: &mut Env, target: ColorTarget, rgb: Rgb) {
+        // Unlike LLColorSwatchCtrl::showPicker, a repeated click closes the
+        // same transaction instead of resetting the original color snapshot.
+        let same = self.ui.color_picker.is_open()
+            && self
+                .ui
+                .color_edit
+                .as_ref()
+                .is_some_and(|session| session.target == target && session.selection == self.selection && session.faces == self.faces);
         self.cancel_color_picker(world);
+        if same {
+            return;
+        }
         let mut saved = Vec::new();
         if let ColorTarget::Light(id) = target {
             if let Some(idx) = world.objects.index_of_uuid(&id)
@@ -140,7 +167,7 @@ impl BuildTool {
             return;
         }
         let mixed = saved.iter().any(|s| s.original.rgb() != saved[0].original.rgb());
-        self.ui.color_picker.open(rgb, mixed);
+        self.ui.color_picker.open_from(rgb, mixed, egui::Id::new(super::INSPECTOR_ID));
         self.ui.color_edit = Some(Session {
             target,
             saved,
@@ -398,6 +425,50 @@ mod tests {
         });
         tool.ui.color_picker.open([1.0; 3], true);
         (world, tool, prims)
+    }
+
+    #[test]
+    fn clicking_the_same_swatch_closes_and_restores_but_another_target_opens_its_own_draft() {
+        let (mut world, mut tool, prims) = fixture(ColorTarget::Diffuse);
+        let originals: Vec<_> = prims
+            .iter()
+            .map(|&i| world.objects.get(i).unwrap().te.as_ref().unwrap().clone())
+            .collect();
+        let images = HashMap::new();
+        let mut media = crate::media::MediaManager::default();
+        let mut scene = crate::scene::Scene::new(std::env::temp_dir(), Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let mut env = Env {
+            images: &images,
+            media: &mut media,
+            scene: &mut scene,
+            zoom_fraction: 0.0,
+            demo: true,
+        };
+        tool.color_event(&mut world, Event::Preview([1.0, 0.0, 0.0]));
+        tool.toggle_color_picker(&mut world, &mut env, ColorTarget::Diffuse, [1.0, 0.0, 0.0]);
+        assert!(!tool.ui.color_picker.is_open());
+        assert!(tool.ui.color_edit.is_none());
+        assert!(tool.color_preview.is_empty());
+        for (&idx, original) in prims.iter().zip(&originals) {
+            assert_eq!(
+                world.objects.get(idx).unwrap().te.as_ref().unwrap().faces[0].color,
+                original.faces[0].color
+            );
+        }
+        tool.toggle_color_picker(&mut world, &mut env, ColorTarget::Diffuse, [0.1, 0.4, 0.7]);
+        assert!(tool.ui.color_picker.is_open());
+        tool.color_event(&mut world, Event::Preview([0.0, 1.0, 0.0]));
+        tool.toggle_color_picker(&mut world, &mut env, ColorTarget::Specular, [1.0; 3]);
+        assert!(tool.ui.color_picker.is_open());
+        assert_eq!(tool.ui.color_edit.as_ref().unwrap().target, ColorTarget::Specular);
+        for (&idx, original) in prims.iter().zip(&originals) {
+            assert_eq!(
+                world.objects.get(idx).unwrap().te.as_ref().unwrap().faces[0].color,
+                original.faces[0].color
+            );
+        }
+        tool.toggle_color_picker(&mut world, &mut env, ColorTarget::Specular, [1.0; 3]);
+        assert!(!tool.ui.color_picker.is_open());
     }
 
     #[test]
