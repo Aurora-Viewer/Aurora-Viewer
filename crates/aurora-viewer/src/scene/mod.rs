@@ -7,6 +7,7 @@ pub mod animesh;
 pub mod avatar;
 pub mod banlines;
 pub mod complexity;
+pub mod drawn;
 mod flexible;
 pub mod hover;
 pub mod hud;
@@ -2762,6 +2763,7 @@ impl Scene {
                         cmd,
                         center: c.center,
                         radius: c.radius,
+                        alpha: false,
                     });
                 }
                 if self.reflections {
@@ -3019,6 +3021,7 @@ impl Scene {
                             cmd,
                             center: sc,
                             radius: sr,
+                            alpha: pass.record_flags() != 0,
                         });
                     }
                     if reflects && matches!(pass, Pass::Opaque | Pass::OpaqueTwoSided | Pass::Mask | Pass::MaskTwoSided) {
@@ -3026,6 +3029,7 @@ impl Scene {
                             cmd,
                             center: sc,
                             radius: sr,
+                            alpha: false,
                         };
                         l.refl.push(c);
                         if avatar.is_none() && g.skeleton_owner.is_none() {
@@ -4231,7 +4235,7 @@ mod tests {
     /// and visible objects.
     #[test]
     fn gpu_culling_matches_the_cpu_lists() {
-        use aurora_render::gpu_cull::{BIN_PROBE, BIN_REFL_WATER, BIN_SHADOW, CullFrame, face_bins, frame_flags};
+        use aurora_render::gpu_cull::{BIN_PROBE, BIN_REFL_WATER, BIN_SHADOW, BIN_SHADOW_ALPHA, CullFrame, face_bins, frame_flags};
         let mut seed = 0x853c_49e6_748f_ea9bu64;
         let mut rand = move |n: u32| {
             seed ^= seed << 13;
@@ -4323,7 +4327,13 @@ mod tests {
         // show the CPU's casts / reflects decisions
         let all = Mat4::from_scale(Vec3::splat(1e-5));
         let flags = frame_flags::SHADOWS | frame_flags::REFLECTIONS | frame_flags::WATER | frame_flags::PROBE;
-        let mut frame = CullFrame::new(&gview, &[all; 3], [Mat4::IDENTITY; 3], flags);
+        let mut frame = CullFrame::new(
+            &gview,
+            &[all; 3],
+            &[aurora_render::shadow_cull::CASTER_PLANES_ALL; 3],
+            [Mat4::IDENTITY; 3],
+            flags,
+        );
         frame.water = [[0.0, 0.0, 0.0, 1.0]; 6];
         frame.probe = frame.water;
         frame.sizes[1] = n as u32;
@@ -4358,7 +4368,14 @@ mod tests {
             if main {
                 assert_eq!(m & 0xf, 1 << (f.pass.gpu_code() - 1), "pass bin, object {i}");
             }
-            assert_eq!(m >> BIN_SHADOW & 7 == 7, casts, "shadows, object {i}");
+            // depth only unless the face's shadow is alpha tested
+            let (bin, other) = if f.pass.record_flags() == 0 {
+                (BIN_SHADOW, BIN_SHADOW_ALPHA)
+            } else {
+                (BIN_SHADOW_ALPHA, BIN_SHADOW)
+            };
+            assert_eq!(m >> bin & 7 == 7, casts, "shadows, object {i}");
+            assert_eq!(m >> other & 7, 0, "shadows of the other kind, object {i}");
             assert_eq!(m >> BIN_REFL_WATER & 1 == 1, refl, "reflection, object {i}");
             assert_eq!(m >> BIN_PROBE & 1 == 1, probe, "probe, object {i}");
             assert_eq!(visible, in_view && fi == 0, "visible object {i}");

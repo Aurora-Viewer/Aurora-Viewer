@@ -661,11 +661,23 @@ fn cascade_shadow(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32) -> f32 {
     return sum / 16.0;
 }
 
-fn shadow_factor(world_pos: vec3<f32>, n: vec3<f32>, view_depth: f32) -> f32 {
+fn shadow_factor(world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: f32) -> f32 {
     if (frame.params.z < 0.5) {
         return 1.0;
     }
     let splits = frame.cascade_splits;
+    // The cascade comes from the pixel's own distance to the camera, as for
+    // the terrain and the water (and as Firestorm, which reads each pixel's
+    // position: sampleDirectionalShadow, deferred/shadowUtil.glsl). The
+    // distance interpolated from the vertices is longer inside a triangle
+    // that spans a range of distances: on a large floor, the pixels near
+    // the camera read a far cascade, and no caster could be left out of a
+    // far cascade for being near (shadow_cull.rs). splits.w == 0 keeps that
+    // distance, to compare (AURORA_SHADOW_LEGACY).
+    var view_depth = vertex_depth;
+    if (splits.w > 0.5) {
+        view_depth = distance(world_pos, frame.camera_pos.xyz);
+    }
     var cascade = 0u;
     if (view_depth > splits.x) { cascade = 1u; }
     if (view_depth > splits.y) { cascade = 2u; }

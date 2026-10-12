@@ -762,6 +762,51 @@ fn fs_glow_suppress(in: VsOut) -> @location(0) vec4<f32> {
     return vec4<f32>(0.0, 0.0, 0.0, a);
 }
 
+// ---------------------------------------------- what is drawn under a pixel
+
+// The faces of the view drawn once more through a camera narrowed to a
+// clicked pixel (drawn_pick.rs): placed and posed by the same code as the
+// scene, so a rigged mesh is found where it is shown.
+struct PickOut {
+    @invariant @builtin(position) clip: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+    // surface coordinates before the texture transform (a touch's ST)
+    @location(1) st: vec2<f32>,
+    @location(2) @interpolate(flat) record: u32,
+};
+
+@vertex
+fn vs_pick(in: VsIn) -> PickOut {
+    let rec = records[in.instance];
+    let model = eye_model(rec, in);
+    let ep = model * vec4<f32>(in.pos, 1.0);
+    var out: PickOut;
+    out.clip = frame.eye_view_proj * ep;
+    let st = face_st(in, rec);
+    out.st = st;
+    out.uv = diffuse_uv(st, rec, frame.anim_clock.xy);
+    out.record = in.instance;
+    return out;
+}
+
+// Record + 1, depth and surface coordinates of the face shown: a masked
+// face where it passes its alpha test (fs_depth_mask), a blended one where
+// it draws anything (fs_blend).
+@fragment
+fn fs_pick(in: PickOut) -> @location(0) vec4<u32> {
+    let rec = records[in.record];
+    if ((rec.flags.x & (FLAG_ALPHA_MASK | FLAG_ALPHA_BLEND)) != 0u) {
+        // (the level the scene samples: each texel of the target is a
+        // pixel of the screen)
+        let a = sample_tex(rec.tex.x, in.uv).a * rec.base_color.a;
+        let masked = (rec.flags.x & FLAG_ALPHA_MASK) != 0u;
+        if (a < select(0.004, max(rec.params.w, 0.01), masked)) {
+            discard;
+        }
+    }
+    return vec4<u32>(in.record + 1u, bitcast<u32>(in.clip.z), bitcast<u32>(in.st.x), bitcast<u32>(in.st.y));
+}
+
 // ------------------------------------------------------------- shadow pass
 
 struct ShadowOut {

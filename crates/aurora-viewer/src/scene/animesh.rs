@@ -238,12 +238,58 @@ impl super::Scene {
                 face.indices.extend(f.indices.iter().map(|i| base + *i));
             }
         }
+        // AURORA_DEMO_ANIMESH_TRIS=<n>: about n more triangles, as faces of
+        // their own (a fine tube around the chest each), so that what wears
+        // the mesh weighs what an avatar of the grid does
+        let mut dense = Vec::new();
+        if let Some(&j) = rig.names.get("mChest") {
+            const SIDE: usize = 150;
+            let center = rest[j].w_axis.truncate();
+            for k in 0..crate::demo::animesh_dense_triangles().div_ceil(2 * SIDE * SIDE).min(7) {
+                let mut tube = FaceGeom {
+                    vertices: Vec::with_capacity((SIDE + 1) * (SIDE + 1)),
+                    indices: Vec::with_capacity(6 * SIDE * SIDE),
+                    skin: Some(vec![
+                        SkinVertex {
+                            joints: [j as u8, 0, 0, 0],
+                            weights: [255, 0, 0, 0],
+                        };
+                        (SIDE + 1) * (SIDE + 1)
+                    ]),
+                };
+                let radius = 0.2 + 0.015 * k as f32;
+                for ring in 0..=SIDE {
+                    for seg in 0..=SIDE {
+                        let (u, v) = (seg as f32 / SIDE as f32, ring as f32 / SIDE as f32);
+                        let (sin, cos) = (u * std::f32::consts::TAU).sin_cos();
+                        let p = center + Vec3::new(cos * radius, sin * radius, (v - 0.5) * 0.5);
+                        tube.vertices
+                            .push(aurora_render::Vertex::new(p.to_array(), [cos, sin, 0.0], [u, v]));
+                    }
+                }
+                for ring in 0..SIDE {
+                    for seg in 0..SIDE {
+                        let a = (ring * (SIDE + 1) + seg) as u16;
+                        let b = a + SIDE as u16 + 1;
+                        tube.indices.extend([a, a + 1, b, a + 1, b + 1, b]);
+                    }
+                }
+                dense.push(tube);
+            }
+        }
         for lod in 0..4 {
-            let faces = vec![Some(FaceGeom {
+            let mut faces = vec![Some(FaceGeom {
                 vertices: face.vertices.clone(),
                 indices: face.indices.clone(),
                 skin: face.skin.clone(),
             })];
+            faces.extend(dense.iter().map(|t| {
+                Some(FaceGeom {
+                    vertices: t.vertices.clone(),
+                    indices: t.indices.clone(),
+                    skin: t.skin.clone(),
+                })
+            }));
             self.upload_geom(
                 renderer,
                 super::GeomKey::Mesh { id, lod },

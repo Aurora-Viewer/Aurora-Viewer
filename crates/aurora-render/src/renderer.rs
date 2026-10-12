@@ -18,8 +18,8 @@
 //! and it alone uses the queue.
 
 use crate::gpu_cull::{
-    BIN_PROBE, BIN_REFL_MIRROR, BIN_REFL_WATER, BIN_SHADOW, COUNT_PRE1, COUNT_PRE2, CullFrame, GpuCull, MAIN_BINS, REGION_PRE1,
-    REGION_PRE2, frame_flags,
+    BIN_PROBE, BIN_REFL_MIRROR, BIN_REFL_WATER, BIN_SHADOW, BIN_SHADOW_ALPHA, COUNT_PRE1, COUNT_PRE2, CullFrame, GpuCull, MAIN_BINS,
+    REGION_PRE1, REGION_PRE2, frame_flags,
 };
 use crate::helpers::Helpers;
 use crate::light_tiles::{self, LightCulling, LightSets};
@@ -673,8 +673,15 @@ struct Pipelines {
     refl_sky: wgpu::RenderPipeline,
     refl_terrain: wgpu::RenderPipeline,
     refl_obj: wgpu::RenderPipeline,
+    /// Shadow casters with the alpha test of `fs_shadow`.
     shadow: wgpu::RenderPipeline,
+    /// Opaque shadow casters: the same vertices, no fragment shader.
+    shadow_depth: wgpu::RenderPipeline,
     post: wgpu::RenderPipeline,
+    /// Faces drawn under a pixel (drawn_pick.rs): culled like the scene's
+    /// one-sided and two-sided faces.
+    pick: wgpu::RenderPipeline,
+    pick_2s: wgpu::RenderPipeline,
 }
 
 struct Ssao {
@@ -696,11 +703,14 @@ struct GpuTimer {
     marks: bool,
     /// Last breakdown by kind of element (ms), in [`GpuElement::ALL`] order.
     last_elements: Option<[f32; GpuElement::ALL.len()]>,
+    /// Last breakdown of `GpuElement::ShadowsDepth` (ms), in
+    /// [`GPU_SHADOW_PARTS`] order.
+    last_shadow_parts: Option<[f32; 5]>,
 }
 
 /// Timestamps of a frame: 0 first pass, 1 end of post / HUDs, then the marks.
 const GPU_TIMESTAMPS: u32 = 2 + GPU_MARKS;
-const GPU_MARKS: u32 = 15;
+const GPU_MARKS: u32 = 18;
 /// Mark indices, in frame order. Those inside the scene passes split them
 /// by draw group; a timestamp there waits for the draws before it, so the
 /// split is close but not exact (the GPU overlaps neighbouring draws).
@@ -731,6 +741,21 @@ const MARK_GLOW_END: u32 = 14;
 const MARK_BLEND_END: u32 = 15;
 /// After scene pass B (particles).
 const MARK_SCENE_END: u32 = 16;
+/// Before the shadow pass (after the culling), then inside it after the
+/// first and the second cascade.
+const MARK_SHADOW_BEGIN: u32 = 17;
+const MARK_SHADOW_C0_END: u32 = 18;
+const MARK_SHADOW_C1_END: u32 = 19;
+/// What `GpuElement::ShadowsDepth` is made of (`ShadowStats::gpu_ms`): the
+/// GPU culling, the three cascades, then the depth prepass with the
+/// occlusion.
+const GPU_SHADOW_PARTS: [(u32, u32); 5] = [
+    (0, MARK_SHADOW_BEGIN),
+    (MARK_SHADOW_BEGIN, MARK_SHADOW_C0_END),
+    (MARK_SHADOW_C0_END, MARK_SHADOW_C1_END),
+    (MARK_SHADOW_C1_END, MARK_SHADOWS_END),
+    (MARK_SHADOWS_END, MARK_DEPTH_END),
+];
 /// GPU time ranges `(from, to)` of each kind of element, in
 /// [`GpuElement::ALL`] order; together they cover the whole frame.
 const GPU_ELEMENTS: [&[(u32, u32)]; GpuElement::ALL.len()] = [
@@ -797,6 +822,7 @@ impl GpuTimer {
                 .features()
                 .contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS | wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES),
             last_elements: None,
+            last_shadow_parts: None,
         }
     }
 
@@ -818,6 +844,7 @@ impl GpuTimer {
                                 *t = ranges.iter().map(|&(a, b)| ms(a, b)).sum();
                             }
                             self.last_elements = Some(e);
+                            self.last_shadow_parts = Some(GPU_SHADOW_PARTS.map(|(a, b)| ms(a, b)));
                         }
                     }
                 }
@@ -919,7 +946,7 @@ struct FrameGroups {
     /// Water and mirror reflection passes (own uniform buffers).
     /// Water reflection, mirror and reflection probe capture passes.
     /// [3], [4]: impostor pictures.
-    refl: [wgpu::BindGroup; 6],
+    refl: [wgpu::BindGroup; 7],
 }
 
 /// The passes of a frame and all they own. Lives on the render thread, or
@@ -943,7 +970,7 @@ pub(crate) struct Backend {
     pipelines: Pipelines,
     ssao: Ssao,
     frame_buffer: wgpu::Buffer,
-    refl_buffers: [wgpu::Buffer; 6],
+    refl_buffers: [wgpu::Buffer; 7],
     hud_depth: Option<(u32, u32, wgpu::TextureView)>,
     probes: crate::probes::Probes,
     groups: FrameGroups,
@@ -977,6 +1004,8 @@ pub(crate) struct Backend {
     gpu_cull: bool,
     /// Depth under the cursor (hover without waiting, clicks).
     depth_pick: crate::pick::DepthPick,
+    /// Faces drawn under a clicked pixel (drawn_pick.rs).
+    drawn_pick: crate::drawn_pick::DrawnPick,
     impostors: Impostors,
     cull_cpu: Vec<crate::occlusion::CullDraw>,
     particle_buffer: wgpu::Buffer,
@@ -994,6 +1023,8 @@ pub(crate) struct Backend {
     /// Texture animation clock (tex_anim.rs) and its value for this frame.
     anim_clock: crate::tex_anim::AnimClock,
     anim_now: [u32; 2],
+    /// `shadow_cull::path` bits of the frame being drawn.
+    shadow_path: u32,
     /// Inverse view-projection of the last rendered frame (picking).
     last_inv_vp: Mat4,
     msaa_supported: Vec<u32>,
@@ -1624,7 +1655,10 @@ struct Ranges {
     refl_terrain_mirror: (u64, u32),
     refl_terrain_probe: (u64, u32),
     probe: (u64, u32),
+    /// CPU casters of each cascade drawn depth only, then those drawn with
+    /// the alpha test.
     shadow: [(u64, u32); CASCADES],
+    shadow_alpha: [(u64, u32); CASCADES],
 }
 
 impl Backend {
@@ -1824,6 +1858,7 @@ impl Backend {
             mk_frame_buffer("impostor uniforms 0"),
             mk_frame_buffer("impostor uniforms 1"),
             mk_frame_buffer("HUD uniforms"),
+            mk_frame_buffer("drawn pick uniforms"),
         ];
         let probes = crate::probes::Probes::new(&device, RenderSettings::default().probe_slots);
 
@@ -1981,6 +2016,7 @@ impl Backend {
             mapped_at_creation: false,
         });
         let depth_pick = crate::pick::DepthPick::new(&device);
+        let drawn_pick = crate::drawn_pick::DrawnPick::new(&device, DEPTH_FORMAT);
         let occlusion = crate::occlusion::Occlusion::new(&device);
         let cull = GpuCull::new(&device);
         let impostors = Impostors::new(&device, &frame_layout, &records_layout, &tex_layout, msaa_samples, settings.ssr);
@@ -2038,6 +2074,7 @@ impl Backend {
             cull,
             gpu_cull,
             depth_pick,
+            drawn_pick,
             impostors,
             cull_cpu: Vec::new(),
             particle_buffer,
@@ -2052,6 +2089,7 @@ impl Backend {
             frame_index: 0,
             anim_clock,
             anim_now: [0, 0],
+            shadow_path: crate::shadow_cull::path::NEW,
             last_inv_vp: Mat4::IDENTITY,
             msaa_supported,
         };
@@ -2430,35 +2468,46 @@ impl Backend {
             ..base("reflection sky", "vs_sky", "fs_sky")
         });
         let refl_terrain = refl("reflection terrain", "vs_terrain", "fs_terrain", Vb::Mesh);
+        // faces drawn under a pixel: record, depth and surface coordinates
+        let pick_desc = |label: &'static str, cull: Option<wgpu::Face>| PipeDesc {
+            cull,
+            samples: 1,
+            format: Some(crate::drawn_pick::FORMAT),
+            write_mask: wgpu::ColorWrites::ALL,
+            depth_compare: wgpu::CompareFunction::Greater,
+            ..base(label, "vs_pick", "fs_pick")
+        };
+        let pick = pipe(pick_desc("drawn pick", Some(wgpu::Face::Back)));
+        let pick_2s = pipe(pick_desc("drawn pick 2s", None));
         let refl_obj = refl("reflection objects", "vs_main", "fs_reflect", Vb::Mesh);
-        let shadow = make_pipeline(
-            device,
-            &module,
-            &shadow_pl,
-            PipeDesc {
-                label: "shadow",
-                vs: "vs_shadow",
-                fs: Some("fs_shadow"),
-                vb: Vb::Mesh,
-                cull: None,
-                blend: None,
-                write_mask: wgpu::ColorWrites::ALL,
-                depth_write: true,
-                depth_compare: wgpu::CompareFunction::LessEqual,
-                a2c: false,
-                samples: 1,
-                format: None,
-                gbuf: false,
-                depth_format: Some(SHADOW_FORMAT),
-                depth_bias: wgpu::DepthBiasState {
-                    constant: 2,
-                    slope_scale: 2.0,
-                    clamp: 0.0,
-                },
-                constants: &[],
-                polygon_line: false,
+        let shadow_desc = |label, fs| PipeDesc {
+            label,
+            vs: "vs_shadow",
+            fs,
+            vb: Vb::Mesh,
+            cull: None,
+            blend: None,
+            write_mask: wgpu::ColorWrites::ALL,
+            depth_write: true,
+            depth_compare: wgpu::CompareFunction::LessEqual,
+            a2c: false,
+            samples: 1,
+            format: None,
+            gbuf: false,
+            depth_format: Some(SHADOW_FORMAT),
+            depth_bias: wgpu::DepthBiasState {
+                constant: 2,
+                slope_scale: 2.0,
+                clamp: 0.0,
             },
-        );
+            constants: &[],
+            polygon_line: false,
+        };
+        let shadow = make_pipeline(device, &module, &shadow_pl, shadow_desc("shadow", Some("fs_shadow")));
+        // opaque casters: `fs_shadow` discards nothing of them, so the same
+        // vertex shader alone writes the same depth, without a texture read
+        // per fragment
+        let shadow_depth = make_pipeline(device, &module, &shadow_pl, shadow_desc("shadow depth", None));
         let post_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("post"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/post.wgsl").into()),
@@ -2522,7 +2571,10 @@ impl Backend {
             refl_terrain,
             refl_obj,
             shadow,
+            shadow_depth,
             post,
+            pick,
+            pick_2s,
         }
     }
 
@@ -2688,7 +2740,7 @@ impl Backend {
         device: &wgpu::Device,
         layout: &wgpu::BindGroupLayout,
         frame_buffer: &wgpu::Buffer,
-        refl_buffers: &[wgpu::Buffer; 6],
+        refl_buffers: &[wgpu::Buffer; 7],
         shadow_view: &wgpu::TextureView,
         shadow_sampler: &wgpu::Sampler,
         lin_clamp: &wgpu::Sampler,
@@ -2817,6 +2869,15 @@ impl Backend {
                 mk(
                     "frame HUD",
                     &refl_buffers[5],
+                    &dummies.white,
+                    &dummies.black,
+                    &dummies.black,
+                    &dummies.black,
+                    &dummies.depth,
+                ),
+                mk(
+                    "frame drawn pick",
+                    &refl_buffers[6],
                     &dummies.white,
                     &dummies.black,
                     &dummies.black,
@@ -3239,9 +3300,10 @@ impl Backend {
         u.fog = f.fog_color.extend(f.fog_density).to_array();
         let n_lights = f.lights.len().min(MAX_LIGHTS);
         u.params = [f.exposure, f.water_height, if f.shadows { 1.0 } else { 0.0 }, n_lights as f32];
+        let pixel_splits = self.shadow_path & crate::shadow_cull::path::PIXEL_SPLITS != 0;
         // the whole list for every fragment; the main view narrows it (render)
         u.light_sets = LightSets::whole();
-        u.cascade_splits = [splits[0], splits[1], splits[2], 0.0];
+        u.cascade_splits = [splits[0], splits[1], splits[2], if pixel_splits { 1.0 } else { 0.0 }];
         u.screen = [
             self.config.width as f32,
             self.config.height as f32,
@@ -3317,11 +3379,13 @@ impl Backend {
 
     /// What a frame gives back: its statistics, the readbacks that have
     /// arrived, the packet's buffers.
-    fn result(&self, index: u64, stats: RenderStats, captured: Option<(u32, u32, Vec<u8>)>, spent: Spent) -> FrameResult {
+    fn result(&mut self, index: u64, stats: RenderStats, captured: Option<(u32, u32, Vec<u8>)>, spent: Spent) -> FrameResult {
         FrameResult {
             index,
             stats,
             hover: self.depth_pick.latest(),
+            picks: self.depth_pick.take_click_answers(),
+            drawn: self.drawn_pick.take_answers(),
             cull: self.cull.last,
             captured,
             spent,
@@ -3343,6 +3407,8 @@ impl Backend {
             self.queue.submit(upload_cmds);
         }
         uploads.after_submit();
+        // (nothing was drawn for the pixel this frame began to answer)
+        self.drawn_pick.abandon();
         self.result(index, stats, None, spent)
     }
 
@@ -3359,6 +3425,8 @@ impl Backend {
             surface,
             settings,
             hover,
+            picks,
+            drawn,
             capture: wanted,
         } = packet;
         let mut stats = RenderStats::default();
@@ -3368,6 +3436,19 @@ impl Backend {
         self.occlusion.harvest();
         self.cull.harvest();
         self.depth_pick.harvest();
+        self.depth_pick.harvest_clicks();
+        self.drawn_pick.harvest();
+        self.drawn_pick.ask(drawn);
+        // the depth under the clicks made on the last frame drawn, before
+        // anything of this frame replaces it (targets, depth, camera)
+        self.depth_pick.submit_clicks(
+            &self.device,
+            &self.queue,
+            &self.targets.depth_ss,
+            (self.config.width, self.config.height),
+            self.last_inv_vp,
+            picks,
+        );
         // the window and the settings as the main thread had them for this frame
         self.apply_surface(surface);
         stats.present_mode = Some(self.config.present_mode);
@@ -3465,6 +3546,7 @@ impl Backend {
 
         // one texture animation time for every pass of the frame
         self.anim_now = self.anim_clock.now(Instant::now());
+        self.shadow_path = crate::shadow_cull::current_path();
         let (cascades, splits) = self.cascade_matrices(f);
         let unjittered_vp = f.proj * f.view;
         let jittered;
@@ -3515,6 +3597,16 @@ impl Backend {
         }
         stats.light_tiles = light_tiles_on;
         self.queue.write_buffer(&self.frame_buffer, 0, bytemuck::bytes_of(&main));
+        // a pixel whose drawn faces are asked: the same camera, narrowed to it
+        let main_vp = Mat4::from_cols_array_2d(&main.view_proj);
+        let drawn_px = self.drawn_pick.begin((self.config.width, self.config.height), main_vp.inverse());
+        if let Some((x, y)) = drawn_px {
+            let narrow = crate::drawn_pick::narrow(x, y, self.config.width, self.config.height);
+            let mut u = main;
+            u.view_proj = (narrow * main_vp).to_cols_array_2d();
+            u.eye_view_proj = (narrow * Mat4::from_cols_array_2d(&main.eye_view_proj)).to_cols_array_2d();
+            self.queue.write_buffer(&self.refl_buffers[6], 0, bytemuck::bytes_of(&u));
+        }
         if let Some(view) = lists.hud_view {
             let mut hud = main;
             hud.view_proj = view.matrix().to_cols_array_2d();
@@ -3689,18 +3781,46 @@ impl Backend {
                 .write_buffer(&self.particle_buffer, 0, bytemuck::cast_slice(&lists.particles));
         }
 
-        // ---- shadow caster culling per cascade
+        // ---- shadow caster culling per cascade (CPU lists: the terrain,
+        // and every caster without the GPU lists). Each cascade keeps the
+        // casters that can shadow what the view samples in it
+        // (shadow_cull.rs); opaque ones are drawn depth only.
+        let shadow_path = self.shadow_path;
+        let caster_planes = if f.shadows && shadow_path & crate::shadow_cull::path::TIGHT != 0 {
+            let (near, far) = crate::shadow_cull::cascade_reach(splits, shadow_path & crate::shadow_cull::path::PIXEL_SPLITS != 0);
+            crate::shadow_cull::cascade_caster_planes(
+                &crate::shadow_cull::ReceiverView {
+                    inv_view: f.view.inverse(),
+                    tan_x: 1.0 / f.proj.x_axis.x.abs().max(1e-6),
+                    tan_y: 1.0 / f.proj.y_axis.y.abs().max(1e-6),
+                    near: f.near,
+                },
+                -f.sun_dir.normalize_or(Vec3::Z),
+                near,
+                far,
+                // (orthographic: the first row of a cascade's matrix is the
+                // light's right axis over its half extent)
+                cascades.map(|m| 2.0 / (m.row(0).truncate().length().max(1e-6) * self.shadow_size as f32)),
+            )
+        } else {
+            [crate::shadow_cull::CASTER_PLANES_ALL; CASCADES]
+        };
+        let shadow_depth_only = shadow_path & crate::shadow_cull::path::DEPTH_ONLY != 0;
         let mut shadow_lists: [Vec<DrawCmd>; CASCADES] = Default::default();
+        let mut shadow_alpha_lists: [Vec<DrawCmd>; CASCADES] = Default::default();
         if f.shadows {
             for (ci, m) in cascades.iter().enumerate() {
                 for c in &lists.shadow_casters {
-                    let p = *m * c.center.extend(1.0);
-                    // ortho: w == 1, radius in clip units ~ r / half-extent
-                    let r = c.radius * m.x_axis.truncate().length();
-                    if p.x + r < -1.0 || p.x - r > 1.0 || p.y + r < -1.0 || p.y - r > 1.0 || p.z - r > 1.0 {
+                    if !crate::gpu_cull::in_cascade(m, c.center, c.radius)
+                        || !crate::shadow_cull::casts_into(&caster_planes[ci], c.center, c.radius)
+                    {
                         continue;
                     }
-                    shadow_lists[ci].push(c.cmd);
+                    if c.alpha || !shadow_depth_only {
+                        shadow_alpha_lists[ci].push(c.cmd);
+                    } else {
+                        shadow_lists[ci].push(c.cmd);
+                    }
                 }
             }
         }
@@ -3780,12 +3900,14 @@ impl Backend {
                 (mirror.is_some(), frame_flags::MIRROR),
                 (probe.is_some(), frame_flags::PROBE),
                 (occl, frame_flags::OCCLUSION),
+                (profile(), frame_flags::SHADOW_STATS),
+                (!shadow_depth_only, frame_flags::SHADOW_ALPHA_ALL),
             ] {
                 if on {
                     flags |= bit;
                 }
             }
-            let frame = CullFrame::new(g, &cascades, [water_vp, mirror_vp, probe_vp], flags);
+            let frame = CullFrame::new(g, &cascades, &caster_planes, [water_vp, mirror_vp, probe_vp], flags);
             self.cull
                 .prepare(&self.device, &self.queue, scene.face_count, scene.object_count, frame);
         }
@@ -3817,8 +3939,9 @@ impl Backend {
         if mirror.is_some() {
             rg.refl_terrain_mirror = push(cpu, &cull_cmds_to_view(mirror_vp, &lists.reflection_terrain));
         }
-        for (i, sl) in shadow_lists.iter().enumerate() {
-            rg.shadow[i] = push(cpu, sl);
+        for i in 0..CASCADES {
+            rg.shadow[i] = push(cpu, &shadow_lists[i]);
+            rg.shadow_alpha[i] = push(cpu, &shadow_alpha_lists[i]);
         }
         let needed = (self.indirect_cpu.len() * std::mem::size_of::<DrawIndexedIndirect>()) as u64;
         if needed > self.indirect.size() {
@@ -3840,6 +3963,10 @@ impl Backend {
             stats.triangles += d.index_count as u64 / 3;
         }
         stats.draws = lists.total() as u32;
+        let cpu_casters: [u32; CASCADES] = std::array::from_fn(|i| (shadow_lists[i].len() + shadow_alpha_lists[i].len()) as u32);
+        stats.shadow_draws = cpu_casters.iter().sum();
+        stats.shadow.draws = cpu_casters;
+        stats.shadow.cpu_draws = cpu_casters;
         stats.blend_triangles = lists.blend.iter().map(|c| c.index_count as u64 / 3).sum();
         stats.lights = f.lights.len().min(MAX_LIGHTS) as u32;
         stats.probes = if f.probes.enabled { f.probes.probes.len() as u32 } else { 0 };
@@ -3848,7 +3975,6 @@ impl Backend {
             BlendDiscard::Late => false,
             BlendDiscard::Alternate => !f.blend_late_discard,
         };
-        stats.shadow_draws = shadow_lists.iter().map(|l| l.len() as u32).sum();
         stats.particles = n_particles;
         stats.occluded = occl.then_some(self.occlusion.last_hidden);
         if gpu.is_some() {
@@ -3856,6 +3982,12 @@ impl Backend {
             let c = self.cull.last;
             stats.draws += c.main_draws();
             stats.shadow_draws += c.shadow_draws();
+            for k in 0..CASCADES {
+                stats.shadow.draws[k] += c.cascade_draws(k);
+            }
+            stats.shadow.triangles = c.shadow_triangles;
+            stats.shadow.rigged_draws = c.shadow_rigged;
+            stats.shadow.rigged_triangles = c.shadow_rigged_triangles;
             stats.triangles += c.triangles as u64;
             stats.occluded = occl.then_some(self.occlusion.last_hidden + c.hidden);
             stats.visible_objects = Some(c.visible_objects);
@@ -3961,6 +4093,11 @@ impl Backend {
             }
         };
         // ---- shadows
+        mark(&mut encoder, MARK_SHADOW_BEGIN);
+        if !f.shadows {
+            mark(&mut encoder, MARK_SHADOW_C0_END);
+            mark(&mut encoder, MARK_SHADOW_C1_END);
+        }
         if f.shadows {
             // one pass for all cascades, each in its atlas tile
             let ts = if take_first() { ts_begin(&self.timer) } else { None };
@@ -3979,8 +4116,7 @@ impl Backend {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            if gpu_on || rg.shadow.iter().any(|r| r.1 > 0) {
-                pass.set_pipeline(&self.pipelines.shadow);
+            if gpu_on || rg.shadow.iter().chain(&rg.shadow_alpha).any(|r| r.1 > 0) {
                 pass.set_bind_group(1, &self.records_bind_group, &[]);
                 pass.set_bind_group(2, &scene.textures, &[]);
                 pass.set_vertex_buffer(0, scene.vertices.slice(..));
@@ -3989,19 +4125,31 @@ impl Backend {
             }
             let size = self.shadow_size;
             for ci in 0..CASCADES {
-                let (off, count) = rg.shadow[ci];
-                if count == 0 && !gpu_on {
-                    continue;
-                }
                 let (x, y) = ((ci as u32 % 2) * size, (ci as u32 / 2) * size);
                 pass.set_viewport(x as f32, y as f32, size as f32, size as f32, 0.0, 1.0);
                 pass.set_scissor_rect(x, y, size, size);
                 pass.set_bind_group(3, &self.shadow_bind_groups[ci], &[]);
-                if count > 0 {
-                    pass.multi_draw_indexed_indirect(&self.indirect, off, count);
-                    calls.set(calls.get() + 1);
+                // depth only, then alpha tested: the depth kept is the
+                // nearest whatever the order
+                for (pipe, (off, count), bin) in [
+                    (&self.pipelines.shadow_depth, rg.shadow[ci], BIN_SHADOW + ci),
+                    (&self.pipelines.shadow, rg.shadow_alpha[ci], BIN_SHADOW_ALPHA + ci),
+                ] {
+                    if count == 0 && !gpu_on {
+                        continue;
+                    }
+                    pass.set_pipeline(pipe);
+                    if count > 0 {
+                        pass.multi_draw_indexed_indirect(&self.indirect, off, count);
+                        calls.set(calls.get() + 1);
+                    }
+                    draw_bin(&mut pass, None, bin, bin);
                 }
-                draw_bin(&mut pass, None, BIN_SHADOW + ci, BIN_SHADOW + ci);
+                match ci {
+                    0 => pass_mark(&mut pass, MARK_SHADOW_C0_END),
+                    1 => pass_mark(&mut pass, MARK_SHADOW_C1_END),
+                    _ => {}
+                }
             }
         }
 
@@ -4508,6 +4656,54 @@ impl Backend {
 
         prof.mark("scene_b");
         mark(&mut encoder, MARK_SCENE_END);
+        // ---- faces drawn under a clicked pixel: opaque and masked, then
+        // blended ones in front of them (only in the frame of a click)
+        if drawn_px.is_some() {
+            let layers: [&[(&wgpu::RenderPipeline, (u64, u32), Option<usize>)]; 2] = [
+                &[
+                    (&self.pipelines.pick, rg.terrain, None),
+                    (&self.pipelines.pick, rg.opaque, Some(0)),
+                    (&self.pipelines.pick_2s, rg.opaque_2s, Some(1)),
+                    (&self.pipelines.pick, rg.mask, Some(2)),
+                    (&self.pipelines.pick_2s, rg.mask_2s, Some(3)),
+                ],
+                &[(&self.pipelines.pick, rg.blend, None)],
+            ];
+            for (k, draws) in layers.iter().enumerate() {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("drawn pick"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &self.drawn_pick.views[k],
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &self.drawn_pick.depth,
+                        depth_ops: Some(wgpu::Operations {
+                            // the blended faces behind the opaque ones stay hidden
+                            load: if k == 0 { wgpu::LoadOp::Clear(0.0) } else { wgpu::LoadOp::Load },
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                bind_mesh(&mut pass, &self.groups.refl[6]);
+                for (pipe, range, bin) in draws.iter() {
+                    draw(&mut pass, pipe, *range);
+                    if let Some(b) = bin {
+                        draw_bin(&mut pass, Some(pipe), *b, *b);
+                    }
+                }
+            }
+            self.drawn_pick.encode_copy(&mut encoder);
+        }
         // depth under the cursor, read back in a later frame
         self.depth_pick.encode_hover(
             &self.device,
@@ -4794,11 +4990,15 @@ impl Backend {
         self.occlusion.after_submit();
         self.cull.after_submit();
         self.depth_pick.after_submit();
+        self.drawn_pick.after_submit();
         prof.mark("submit");
         let encode_ms = t0.elapsed().as_secs_f32() * 1000.0;
         self.queue.present(surface_tex);
         stats.presented = true;
         let _ = self.device.poll(wgpu::PollType::Poll);
+        // a click answered by now goes back with this frame's result
+        self.depth_pick.harvest_clicks();
+        self.drawn_pick.harvest();
         prof.mark("present");
         let phase = |step: &str| RENDER_PHASES.iter().position(|p| *p == step);
         stats.cpu_phases[0] = (t0 - t_acquire).as_secs_f32() * 1000.0;
@@ -4824,6 +5024,7 @@ impl Backend {
 
         stats.gpu_ms = self.timer.as_ref().and_then(|t| t.last_ms);
         stats.gpu_elements = self.timer.as_ref().and_then(|t| t.last_elements);
+        stats.shadow.gpu_ms = self.timer.as_ref().and_then(|t| t.last_shadow_parts);
         if profile_frames && let Some(e) = stats.gpu_elements {
             let mut out = String::new();
             for (el, ms) in GpuElement::ALL.iter().zip(e) {

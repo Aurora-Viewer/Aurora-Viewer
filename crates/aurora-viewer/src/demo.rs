@@ -2157,6 +2157,9 @@ pub fn events() -> Vec<NetEvent> {
     });
     ev.extend(overrides);
 
+    if std::env::var_os("AURORA_DEMO_REPLACE_PRIM").is_some() {
+        ev.extend(crate::build::replace::demo::events(HANDLE, height(135.0, 125.0)));
+    }
     // our avatar + a second one
     let mut avatars = Vec::new();
     for (k, (pos, first, last)) in [
@@ -2707,6 +2710,46 @@ fn animesh_objects(ground_mesh: Uuid) -> Vec<ObjectUpdate> {
     objects
 }
 
+/// AURORA_DEMO_CLICKS=...,rigged: the rigged demo mesh worn on the chest of
+/// the avatar `wearer` (ours), so every kind of rigged target is in the scene
+/// with AURORA_DEMO_ANIMESH: an animesh on the ground (9200, 9202), one
+/// worn by another avatar (9203), a rigged mesh worn by another avatar (the
+/// crowd's) and this one.
+pub const OWN_RIGGED: u32 = 9210;
+
+pub fn own_rigged_events(wearer: u32) -> Vec<NetEvent> {
+    let mesh = SculptParams {
+        texture: ANIMESH_MESH,
+        sculpt_type: LL_SCULPT_TYPE_MESH,
+    };
+    let mut t = (*te([0.95, 0.8, 0.3, 1.0], 0, false, 0.0)).clone();
+    for f in &mut t.faces {
+        f.texture = ANIMESH_TEXTURE;
+    }
+    let mut worn = prim(
+        OWN_RIGGED,
+        Vec3::ZERO,
+        Quat::IDENTITY,
+        Vec3::splat(0.1),
+        aurora_prim::VolumeParams {
+            sculpt: Some(mesh),
+            ..Default::default()
+        },
+        Arc::new(t),
+        ExtraParams {
+            sculpt: Some(mesh),
+            ..Default::default()
+        },
+        "",
+    );
+    worn.parent_id = wearer;
+    worn.state = 0x10; // chest
+    vec![NetEvent::ObjectUpdates {
+        handle: HANDLE,
+        objects: vec![worn],
+    }]
+}
+
 /// Mesh worn in AURORA_DEMO_CLOUD=self: an asset the asset server does not
 /// have (`MeshStreamer::insert_demo_unavailable`).
 pub const CLOUD_MESH: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0000_0000_0110);
@@ -2909,6 +2952,15 @@ pub fn crowd_count() -> Option<u32> {
     Some(v.trim().parse().unwrap_or(40).min(400))
 }
 
+/// AURORA_DEMO_ANIMESH_TRIS=<n>: triangles added to the demo's rigged mesh
+/// (0 without the variable), in opaque faces of 45 000.
+pub fn animesh_dense_triangles() -> usize {
+    std::env::var("AURORA_DEMO_ANIMESH_TRIS")
+        .ok()
+        .and_then(|v| v.trim().parse().ok())
+        .unwrap_or(0)
+}
+
 /// The crowd: avatars on a grid north-east of the start, each playing the
 /// demo idle animation and wearing eight attachment linksets (a root and six
 /// child prims) on bones all over the body, so every worn prim follows its
@@ -2982,7 +3034,10 @@ pub fn crowd_events(n: u32, rigged: bool) -> Vec<NetEvent> {
                 sculpt_type: LL_SCULPT_TYPE_MESH,
             };
             let mut t = (*te([0.85, 0.85, 0.9, 1.0], 0, false, 0.0)).clone();
-            for f in &mut t.faces {
+            // the fur on the mesh's own face; the faces of
+            // AURORA_DEMO_ANIMESH_TRIS stay opaque
+            let fur = if animesh_dense_triangles() > 0 { 1 } else { t.faces.len() };
+            for f in t.faces.iter_mut().take(fur) {
                 f.texture = ANIMESH_TEXTURE;
             }
             let mut worn = prim(

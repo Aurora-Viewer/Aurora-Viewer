@@ -238,6 +238,9 @@ pub struct ShadowCaster {
     pub cmd: DrawCmd,
     pub center: Vec3,
     pub radius: f32,
+    /// Shadow casters: the face is masked or blended, its shadow is alpha
+    /// tested (`fs_shadow`); the others are drawn depth only.
+    pub alpha: bool,
 }
 
 /// Visible draws for a frame, built by the world.
@@ -758,6 +761,24 @@ pub struct ProbeFrame {
     pub capture: Option<ProbeCapture>,
 }
 
+/// The shadow pass of a frame, by cascade (near to far).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ShadowStats {
+    /// Casters drawn in each cascade.
+    pub draws: [u32; 3],
+    /// Of which those of the CPU lists (with the GPU lists: the terrain).
+    pub cpu_draws: [u32; 3],
+    /// With AURORA_PROFILE and the GPU lists: triangles of the GPU casters,
+    /// then the rigged ones (avatars, rigged meshes) and their triangles.
+    pub triangles: [u32; 3],
+    pub rigged_draws: [u32; 3],
+    pub rigged_triangles: [u32; 3],
+    /// What `GpuElement::ShadowsDepth` is made of (ms): the GPU culling,
+    /// the three cascades, then the depth prepass with the occlusion; None
+    /// without in-pass timestamps.
+    pub gpu_ms: Option<[f32; 5]>,
+}
+
 /// Per-frame statistics reported by the renderer.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct RenderStats {
@@ -768,6 +789,7 @@ pub struct RenderStats {
     pub present_mode: Option<wgpu::PresentMode>,
     pub draws: u32,
     pub shadow_draws: u32,
+    pub shadow: ShadowStats,
     pub triangles: u64,
     pub textures: u32,
     pub texture_bytes: u64,

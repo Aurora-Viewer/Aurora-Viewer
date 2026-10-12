@@ -5,6 +5,8 @@
 //!   land | select
 //!   cycle | cycle-linked: nested objects, three CTRL + wheel notches
 //!   (deeper, deeper, nearer), centered on `object:99610`.
+//!   linked-click | linked-click-ready: select a whole object, then switch
+//!   to linked editing and click the requested part (ready stops before switching).
 //! - x, y: click (physical pixels) at frame 220: selects the object there,
 //!   creates a prim, or presses the land brush (held until the capture)
 //! - part: handle grabbed at frame 250 (move: x y z xy yz xz; rotate: rx ry
@@ -40,6 +42,9 @@ pub enum Step {
     Focus(bool),
     Linked(bool),
     Wheel(f32),
+    ReplaceBegin(bool),
+    ReplacePick(usize),
+    ReplaceApply,
 }
 
 fn part_of(s: &str) -> Option<Part> {
@@ -186,6 +191,35 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
     let Some(frame) = (frame + 215).checked_sub(base) else {
         return Vec::new();
     };
+    if matches!(parts[0], "linked-click" | "linked-click-ready") {
+        return match frame {
+            215 => vec![Step::Open(Tool::Edit, EditMode::Move, 1), Step::Linked(false)],
+            220 => object.into_iter().map(Step::Select).collect(),
+            227 => vec![Step::Focus(false)],
+            240 if parts[0] == "linked-click" => vec![Step::Linked(true)],
+            250 if parts[0] == "linked-click" => object.into_iter().map(Step::Select).collect(),
+            _ => Vec::new(),
+        };
+    }
+    if parts[0].starts_with("replace") {
+        return match frame {
+            215 => vec![Step::Open(Tool::Edit, EditMode::Move, 1)],
+            220 => {
+                let mut steps = vec![Step::Linked(true)];
+                steps.extend(object.into_iter().map(Step::Select));
+                steps
+            }
+            227 => vec![Step::Focus(false)],
+            230 if parts[0] != "replace-button" => vec![Step::ReplaceBegin(parts[0] == "replace-copy")],
+            250 if parts[0] != "replace-button" => world
+                .objects
+                .index_of_uuid(&super::replace::demo::id(super::replace::demo::SOURCE))
+                .map(|i| vec![Step::ReplacePick(i)])
+                .unwrap_or_default(),
+            270 if matches!(parts[0], "replace-run" | "replace-copy") => vec![Step::ReplaceApply],
+            _ => Vec::new(),
+        };
+    }
     let (dx, dy) = (num(h + 1).unwrap_or(120.0), num(h + 2).unwrap_or(0.0));
     let edge = (t == Tool::Edit && m == EditMode::Move)
         .then(|| std::env::var("AURORA_DEMO_BUILD_EDGE").ok())

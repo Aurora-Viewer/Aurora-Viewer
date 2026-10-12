@@ -265,7 +265,7 @@ pub(super) fn show(
                     p,
                     "trash",
                     aurora_i18n::tr!("ui-inventory-context-purge-object"),
-                    ready && movable && !worn,
+                    ready && super::delete::allowed(inv, &ids, prefs, facts),
                 ) {
                     st.dialog = Some(EditDialog::Delete(ids.clone(), true));
                 }
@@ -450,26 +450,12 @@ pub(super) fn show(
             }
         }
         menu::separator(ui, p);
-        let copyable = ids.iter().all(|id| {
-            inv.folders.contains_key(id)
-                || inv
-                    .items
-                    .get(id)
-                    .is_some_and(|it| it.owner_mask & rules::COPY != 0 || !matches!(it.asset_type, 2 | 49))
-        });
+        let copyable = clipboard::copy_allowed(inv, &ids);
         if menu::item_if(ui, p, "copy", aurora_i18n::tr!("common-copy-2"), ready && copyable) {
-            st.clipboard = ids.clone();
-            st.cut = false;
-            if let Some(id) = ids.first() {
-                ui.ctx().copy_text(id.to_string());
-            }
+            clipboard::store(ui.ctx(), st, ids.clone(), false);
         }
         if menu::item_if(ui, p, "arrow-u-up-left", aurora_i18n::tr!("common-cut"), ready && movable) {
-            st.clipboard = ids.clone();
-            st.cut = true;
-            if let Some(id) = ids.first() {
-                ui.ctx().copy_text(id.to_string());
-            }
+            clipboard::store(ui.ctx(), st, ids.clone(), true);
         }
         if menu::item_if(ui, p, "folder", aurora_i18n::tr!("inventory-move-to"), ready && movable) {
             st.begin_move_to(id);
@@ -485,21 +471,12 @@ pub(super) fn show(
         if menu::item_if(ui, p, "clipboard-text", aurora_i18n::tr!("common-paste"), paste)
             && let Some(to) = to
         {
-            st.consume_clipboard = st.cut;
-            submit(
-                st,
-                actions,
-                rules::paste(inv, &st.clipboard, to, st.cut, false, &prefs.protected, &facts.worn),
-            );
+            clipboard::paste(inv, to, false, st, prefs, facts, actions);
         }
         if menu::item_if(ui, p, "link", aurora_i18n::tr!("ui-inventory-context-paste-as-link"), paste_links)
             && let Some(to) = to
         {
-            submit(
-                st,
-                actions,
-                rules::paste(inv, &st.clipboard, to, false, true, &prefs.protected, &facts.worn),
-            );
+            clipboard::paste(inv, to, true, st, prefs, facts, actions);
         }
         if linked {
             if menu::item_if(
@@ -538,8 +515,7 @@ pub(super) fn show(
         }
         if !trash {
             menu::separator(ui, p);
-            let removable =
-                movable && ids.iter().all(|id| !facts.worn.iter().any(|w| rules::under(inv, *w, *id))) && !rules::in_type(inv, id, 46);
+            let removable = super::delete::allowed(inv, &ids, prefs, facts);
             if menu::item_if(ui, p, "trash", aurora_i18n::tr!("common-delete"), ready && removable) {
                 st.dialog = Some(EditDialog::Delete(ids.clone(), false));
             }

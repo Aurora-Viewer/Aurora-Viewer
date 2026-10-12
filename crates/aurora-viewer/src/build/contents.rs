@@ -99,6 +99,12 @@ impl BuildTool {
         }
         inv.items = items;
         inv.loading = false;
+        // A newer successful listing supersedes an earlier request error.
+        if let Some(job) = self.replacement.job.as_mut()
+            && job.inventory_error.as_ref().is_some_and(|(id, _)| *id == object_id)
+        {
+            job.inventory_error = None;
+        }
         if std::mem::take(&mut inv.reset_pending)
             && let Some(idx) = world.objects.index_of_uuid(&object_id)
         {
@@ -127,6 +133,10 @@ impl BuildTool {
                 .iter()
                 .filter_map(|k| world.objects.index_of(k).and_then(|i| world.objects.get(i)).map(|o| o.full_id))
                 .collect();
+            let mut keep = keep;
+            if let Some(job) = self.replacement.job.as_ref().filter(|job| !job.stage.terminal()) {
+                keep.extend(job.inventory_ids());
+            }
             self.contents.objects.retain(|k, _| keep.contains(k));
         }
     }

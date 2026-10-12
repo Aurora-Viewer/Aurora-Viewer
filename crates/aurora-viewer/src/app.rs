@@ -27,6 +27,8 @@ use winit::window::{CursorGrabMode, Window, WindowId};
 mod ao;
 mod bug_report;
 mod chat_commands;
+mod click_pick;
+mod color_picker;
 mod context_menu;
 mod hud_drag;
 mod inventory;
@@ -138,6 +140,8 @@ pub struct App {
     cursor_grabbed: bool,
     alt: bool,
     left_down: bool,
+    /// Clicks that wait for the depth under them, and what follows them.
+    clicks: click_pick::ClickWait,
     /// Mouse travel while the right button is held (click vs orbit drag).
     right_moved: f32,
     /// Open right-click menu.
@@ -500,6 +504,7 @@ impl App {
             cursor_grabbed: false,
             alt: false,
             left_down: false,
+            clicks: Default::default(),
             right_moved: 0.0,
             context_menu: None,
             mouse_mode: MouseMode::None,
@@ -654,6 +659,11 @@ impl App {
     fn send(&mut self, cmd: NetCommand) {
         if self.demo {
             match &cmd {
+                NetCommand::Build(aurora_net::build::BuildCmd::SetTextures { local_id, .. })
+                    if ui::color_picker::demo::mode().is_some() =>
+                {
+                    log::info!("demo color ObjectImage: prim={local_id}");
+                }
                 NetCommand::TeleportTo { handle, position, look_at } => {
                     if Some(*handle) == self.world.main_region {
                         self.world.apply(NetEvent::TeleportLocal {
@@ -706,6 +716,23 @@ impl App {
                     handle: self.world.main_region.unwrap_or_default(),
                     objects: vec![crate::demo::action_avatar(false)],
                 });
+            }
+            if let NetCommand::RequestObjects { handle, local_ids } = &cmd {
+                let objects = local_ids
+                    .iter()
+                    .filter_map(|local_id| {
+                        self.world
+                            .objects
+                            .index_of(&crate::world::objects::ObjKey {
+                                region: *handle,
+                                local_id: *local_id,
+                            })
+                            .and_then(|i| self.world.objects.get(i))
+                            .map(crate::build::replace::demo_update)
+                    })
+                    .collect();
+                self.world.apply(NetEvent::ObjectUpdates { handle: *handle, objects });
+                return;
             }
             if let NetCommand::Build(b) = &cmd {
                 for ev in self.build_demo.reply(&self.world, b) {
@@ -761,6 +788,32 @@ impl App {
                     })
                     .collect();
                 self.world.inventory.add_items(items);
+                return;
+            }
+            if let NetCommand::FinishInventoryCopies { request, reply } = &cmd {
+                let items = reply
+                    .copies
+                    .iter()
+                    .filter_map(|c| {
+                        self.world.inventory.items.get(&c.item).cloned().map(|mut it| {
+                            it.id = uuid::Uuid::new_v4();
+                            it.parent = c.parent;
+                            it
+                        })
+                    })
+                    .collect();
+                self.world.inventory.add_items(items);
+                let change = aurora_net::inventory::operations::Mutation {
+                    refresh: reply.refresh.clone(),
+                    ..Default::default()
+                };
+                let result = crate::world::inventory::actions::demo_mutate(&mut self.world.inventory, self.world.agent_id, change).map(
+                    |mut completed| {
+                        completed.created.clone_from(&reply.created);
+                        completed
+                    },
+                );
+                self.on_app_event(NetEvent::InventoryEdited { request: *request, result });
                 return;
             }
             if let NetCommand::CreateInventoryWearable { parent, kind, name, .. } = &cmd {
@@ -1087,7 +1140,14 @@ impl App {
             self.inventory_ui.message = reason;
             return;
         }
+        if let NetEvent::InventoryProgress { request, progress } = ev {
+            self.inventory_ui.update_mutation_progress(request, progress);
+            return;
+        }
         if let NetEvent::InventoryEdited { request, result } = ev {
+            if self.build.replacement_inventory_result(request, &result) {
+                return;
+            }
             if self.world_edits.remove(&request) {
                 match result {
                     Ok(reply) => {
@@ -1219,6 +1279,8 @@ impl App {
                 if let Ok(items) = result {
                     self.build.on_task_inventory(&self.world, object, serial, items);
                     self.flush_build();
+                } else if let Err(reason) = result {
+                    self.build.replacement_task_inventory_error(object, reason);
                 }
             }
             NetEvent::CapReply { tag, result } => self.build.on_cap_reply(&mut self.world, tag, result),
@@ -1241,6 +1303,7 @@ impl App {
             NetEvent::PhysicsProperties(list) => {
                 for (local_id, params) in list {
                     self.build.physics.insert(local_id, params);
+                    self.build.physics_materials_known.insert(local_id);
                 }
             }
             NetEvent::SelectedParcel { handle, sequence, parcel } => self.build.on_selected_parcel(handle, sequence, parcel),
@@ -1438,6 +1501,11 @@ impl App {
         if on == self.cursor_grabbed {
             return;
         }
+        if on && self.clicks.scripted() {
+            // AURORA_DEMO_CLICKS: several camera drags a second must not
+            // take the real cursor of someone using the PC
+            return;
+        }
         if on {
             let ok = g
                 .window
@@ -1461,6 +1529,11 @@ impl App {
 
     /// Mouse motion: mouselook, camera drags (steering, Alt), right drag orbit.
     fn camera_mouse_delta(&mut self, dx: f32, dy: f32) {
+        if self.clicks.waiting() {
+            // behind the click that will say what this motion drags
+            self.clicks.hold(click_pick::Held::Motion(dx, dy));
+            return;
+        }
         if self.hud_drag.is_some() {
             return;
         }
@@ -1535,13 +1608,7 @@ impl App {
                         }
                     }
                 }
-                Step::Log => log::info!(
-                    "demo camera f{}: {} (mouse {:?}, agent yaw {:.2})",
-                    self.frame_count,
-                    self.camera.describe(),
-                    self.mouse_mode,
-                    self.world.agent.yaw
-                ),
+                Step::Log => self.demo_note(click_pick::DemoNote::Camera(self.frame_count)),
             }
         }
     }
@@ -1794,7 +1861,14 @@ impl App {
         })
     }
 
+    /// Left press on the world, past the build tools (LLToolPie).
     fn on_left_press(&mut self) {
+        self.click(click_pick::Click::World);
+    }
+
+    /// What `on_left_press` does, run by `click`: again from the start when
+    /// the depth under the cursor has come back (app/click_pick.rs).
+    fn world_press(&mut self) {
         self.left_down = true;
         if self.hud_drag_requested()
             && self.settings.show_huds
@@ -1810,9 +1884,9 @@ impl App {
                 .and_then(|view| crate::build::hud_drag::HudDrag::start(&self.world, idx, view, self.cursor_pos));
             return;
         }
-        let Some(g) = self.gfx.as_mut() else {
+        if self.gfx.is_none() {
             return;
-        };
+        }
         let (x, y) = self.cursor_pos;
         if let Some((idx, point, hud_ray)) = self.scene.hud_pick(&self.world, (x, y), true) {
             self.media.build_mode = self.build.open;
@@ -1835,14 +1909,15 @@ impl App {
             }
             return;
         }
-        let ray = g.renderer.cursor_ray(x, y);
-        let hit = self.scene.action_point(
-            &self.world,
-            ray,
-            g.renderer.pick_world(x, y),
-            self.build.open,
-            self.settings.draw_distance,
-        );
+        let Some(picked) = self.click_pick() else {
+            return;
+        };
+        let (ray, depth) = (picked.ray, picked.depth);
+        let hit = self
+            .scene
+            .action_point(&self.world, ray, depth, self.build.open, self.settings.draw_distance);
+        // a rigged mesh or a worn mesh shown there: the GPU alone poses it
+        let shown = self.designate(crate::scene::drawn::Gesture::Touch, &picked, hit);
         // on our avatar: a surface inside its box under the cursor (nothing
         // in front of it); or, when the ray goes through the box without
         // touching anything (body not drawn yet), close to the body's axis
@@ -1890,6 +1965,21 @@ impl App {
                     .and_then(|i| self.world.objects.get(i))
                     .map(|o| (o.key.local_id, o.click_action))
             );
+        }
+        // the click acts on the rigged mesh it lands on, as on any object:
+        // also one we wear, like the scripted attachments Firestorm lets
+        // us touch (its rigged ones are out of the left click's reach)
+        if !self.alt
+            && !self.ctrl
+            && !self.shift
+            && !self.build.open
+            && !self.camera.mouselook()
+            && let Some(d) = shown
+            && let Some(target) = crate::interaction::target(&self.world, d.idx, &self.interactions.props)
+        {
+            let surface = self.scene.drawn_surface(&self.world, &d);
+            self.activate_object_action_at(target, d.idx, d.hit.point, ray, surface);
+            return;
         }
         if !on_avatar
             && !self.alt
@@ -2293,6 +2383,7 @@ impl App {
         self.down.clear();
         self.right_drag = false;
         self.mic_button_held = false;
+        self.drop_clicks();
         self.on_left_release();
         self.release_object_hold();
         if self.temp_run.take().is_some() && !self.always_run {
@@ -2322,6 +2413,7 @@ impl App {
     /// Log out, save the window, layout, inventory cache and settings, exit.
     fn shutdown(&mut self, event_loop: &ActiveEventLoop) {
         self.record_inventory_logout();
+        self.drop_clicks();
         if self.hud_drag.is_some() {
             self.on_left_release();
         }
@@ -2588,29 +2680,14 @@ impl App {
         if id != 0 && self.frame_count == click_frame {
             if mode.ends_with("-build") {
                 self.build.open_build(crate::build::Tool::Edit);
-                self.build_mouse_down();
+                self.click(click_pick::Click::Build);
             } else {
                 self.on_left_press();
             }
             if id != 975 && id != 982 {
                 self.on_left_release();
             }
-            log::info!(
-                "demo action click: {mode}; dialog={}, seated={}, contents={}, parcel_playing={}, parcel_paused={}, selected={:?}, focus={:?}, media_url={}",
-                self.interactions.dialog.is_some(),
-                self.world.agent.is_sitting(),
-                self.interactions
-                    .contents
-                    .as_ref()
-                    .and_then(|c| c.result.as_ref())
-                    .and_then(|r| r.as_ref().ok())
-                    .map_or(0, Vec::len),
-                self.media.parcel_playing(),
-                self.media.find(&crate::media::MediaKey::Parcel).is_some_and(|m| m.paused),
-                self.build.selection,
-                self.camera.focus_point(),
-                self.interactions.media_url.is_some(),
-            );
+            self.demo_note(click_pick::DemoNote::Action(mode.clone()));
         }
         if (id == 975 || id == 982) && self.frame_count == 300 {
             self.cursor_pos.0 += 30.0;
@@ -2628,6 +2705,9 @@ impl App {
 
     /// CTRL + wheel cycles the edit selection before HUD, media or camera zoom.
     fn on_build_scroll(&mut self, delta: f32) -> bool {
+        if self.build.replacement_active() {
+            return true;
+        }
         if !self.ctrl || self.alt || !self.build.open || self.build.tool != crate::build::Tool::Edit || self.camera.mouselook() {
             self.build.reset_selection_wheel();
             return false;
@@ -2668,7 +2748,14 @@ impl App {
     }
 
     /// Left press while building: handles, selection, create, terraform.
+    /// Run by `click`; false also when it stopped to ask for the depth under
+    /// the cursor (`ClickWait::waiting`), to run again when it has come.
     fn build_mouse_down(&mut self) -> bool {
+        if self.color_pipette() {
+            self.left_down = true;
+            self.sample_build_color();
+            return true;
+        }
         if !self.build.open
             || self.alt
             || (self.hud_drag_requested() && self.settings.show_huds && self.scene.hud_move_pick(&self.world, self.cursor_pos).is_some())
@@ -2678,9 +2765,9 @@ impl App {
         if self.build.tool == crate::build::Tool::Focus {
             return self.focus_tool_down();
         }
-        let Some(g) = self.gfx.as_mut() else {
+        if self.gfx.is_none() {
             return false;
-        };
+        }
         let (x, y) = self.cursor_pos;
         let hud = (self.build.tool == crate::build::Tool::Edit)
             .then(|| self.scene.hud_edit_pick(&self.world, (x, y)))
@@ -2688,8 +2775,16 @@ impl App {
         let (hit, target) = if let Some((idx, point, _)) = hud {
             (Some(point), Some(idx))
         } else {
-            let hit = g.renderer.pick_world(x, y);
-            (hit, hit.and_then(|p| self.scene.pick_at(&self.world, p, Instant::now())))
+            let Some(picked) = self.click_pick() else {
+                return false;
+            };
+            let hit = picked.depth;
+            // a rigged mesh is selected where it is shown (Firestorm: with
+            // the move tool only, LLToolCompTranslate)
+            match self.designate(crate::scene::drawn::Gesture::Build, &picked, hit) {
+                Some(d) => (Some(d.hit.point), Some(d.idx)),
+                None => (hit, hit.and_then(|p| self.scene.pick_at(&self.world, p, Instant::now()))),
+            }
         };
         let mods = crate::build::Mods {
             shift: self.shift,
@@ -2722,11 +2817,11 @@ impl App {
     /// Focus tool press (LLToolCamera): focus on the clicked point, then
     /// the drag zooms, orbits or pans as the tool's radio or Ctrl / Shift say.
     fn focus_tool_down(&mut self) -> bool {
-        let Some(g) = self.gfx.as_mut() else {
+        let Some(picked) = self.click_pick() else {
             return false;
         };
         let (x, y) = self.cursor_pos;
-        let hit = g.renderer.pick_world(x, y);
+        let hit = picked.depth;
         let ray = self.build.cam.ray(x, y);
         let now = Instant::now();
         if let Some(p) = hit {
@@ -2763,6 +2858,19 @@ impl App {
     }
 
     fn on_left_release(&mut self) {
+        if self.clicks.waiting() {
+            // after the press it ends, which still waits for its depth
+            self.clicks.hold(click_pick::Held::LeftRelease);
+            return;
+        }
+        if self.left_down && self.color_pipette() {
+            if !self.egui_ctx.is_pointer_over_egui() {
+                self.sample_build_color();
+            }
+            let picker = self.active_color_picker();
+            picker.pipette = false;
+            picker.sampled = None;
+        }
         self.update_hud_drag(self.scene.lists.hud_view);
         if let Some(cmd) = self.hud_drag.take().and_then(|drag| drag.release(&self.world)) {
             if self.demo {
@@ -2795,6 +2903,7 @@ impl App {
     /// server's destination before showing a screen for an unknown destination,
     /// so even these local teleports remain direct.
     fn begin_teleport(&mut self, dest: String, show_progress: bool) {
+        self.drop_clicks();
         if self.hud_drag.is_some() {
             self.on_left_release();
         }
@@ -3386,6 +3495,9 @@ impl App {
             return;
         }
         self.poll_inventory_images();
+        // a click whose depth is back already (the render thread finished
+        // the last frame while this thread waited for its next one)
+        self.resolve_clicks();
         self.frame_profile.lap(Lap::Between);
         let now = Instant::now();
         if let Some(action) = self.exit_prompt.finish(!self.in_world() || self.demo, now) {
@@ -3527,6 +3639,10 @@ impl App {
         }
 
         self.frame_profile.lap(Lap::Social);
+        // Coalesce OS pointer moves before taking the renderer for this frame.
+        if self.left_down && self.color_pipette() && !self.egui_ctx.is_pointer_over_egui() {
+            self.sample_build_color();
+        }
         let Some(mut gfx) = self.gfx.take() else {
             return;
         };
@@ -3754,6 +3870,11 @@ impl App {
             self.build
                 .update(&mut self.world, &self.settings.build, self.cursor_pos, over_ui, mods);
             self.scene.selection_wire = self.build.wire_selection(&self.world, &self.settings.build);
+            // the attachment the open menu is about, outlined like a child
+            // prim of a selection (worn objects are not selected in Aurora)
+            for idx in self.menu_outline() {
+                self.scene.selection_wire.entry(idx).or_insert(false);
+            }
             self.scene.selection_silhouettes = self.build.silhouette_selection(&self.world, &self.settings.build);
             self.flush_build();
             let camera_changed = edit_camera_frame.is_some() || panned;
@@ -4205,12 +4326,14 @@ impl App {
         // native window or taking the user's keyboard (with_active(false)).
         if self.demo
             && self.capture.is_some()
-            && std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|v| {
-                matches!(
-                    v.as_str(),
-                    "rename" | "new-script" | "new-note" | "new-folder" | "resize-left" | "resize-right"
-                ) || v.starts_with("note-")
-            })
+            && (ui::color_picker::demo::mode().is_some()
+                || std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|v| {
+                    matches!(
+                        v.as_str(),
+                        "rename" | "new-script" | "new-note" | "new-folder" | "resize-left" | "resize-right"
+                    ) || v.starts_with("note-")
+                        || v.starts_with("clipboard-")
+                }))
         {
             raw.focused = true;
             raw.events.retain(|e| !matches!(e, egui::Event::WindowFocused(false)));
@@ -4289,12 +4412,21 @@ impl App {
         let ctx = self.egui_ctx.clone();
         if self.demo {
             raw.events.extend(ui::widgets::demo::events(&ctx, self.frame_count));
+            raw.events.extend(ui::color_picker::demo::events(
+                &self.egui_ctx,
+                &self.build.ui.color_picker,
+                self.frame_count,
+            ));
             for d in self.task_notecards.values_mut() {
                 raw.events
                     .extend(ui::inventory::document_demo_events(&ctx, self.frame_count, &mut d.state));
             }
             raw.events
                 .extend(ui::inventory::document_demo_events(&ctx, self.frame_count, &mut self.inventory_ui));
+            raw.events
+                .extend(ui::inventory::clipboard_demo_events(&ctx, self.frame_count, &mut self.inventory_ui));
+            raw.events
+                .extend(ui::inventory::delete_demo_events(&ctx, self.frame_count, &self.inventory_ui));
         }
         let projector = ui::hud::Projector {
             view_proj: vp,
@@ -4474,6 +4606,10 @@ impl App {
         if let Some(cursor) = self.inventory_drag.cursor {
             full.platform_output.cursor_icon = cursor;
             full.platform_output.cursor_image = None;
+        }
+        if self.color_pipette() && !ctx.is_pointer_over_egui() {
+            full.platform_output.cursor_icon = egui::CursorIcon::Crosshair;
+            full.platform_output.cursor_image = self.cursors.pipette();
         }
         gfx.egui_state
             .handle_platform_output_with_event_loop(&gfx.window, event_loop, full.platform_output);
@@ -4665,7 +4801,10 @@ impl App {
         self.frame_profile.lap(Lap::Tail);
         self.end_profile_frame(w, h);
         self.gfx = Some(gfx);
+        // the clicks whose depth came back with this frame's hand-over
+        self.resolve_clicks();
         self.demo_action_steps();
+        self.demo_click_steps();
         self.demo_hud_drag_steps();
         // AURORA_DEMO_INVENTORY=offer|offer-reject: the sample offer's item
         // shown in the folder it reaches; the second rejects it at frame 700
@@ -4734,7 +4873,7 @@ impl App {
                     let handle = b.center + Vec3::Y * self.build.cam.meters_for_pixels(b.center, 45.0);
                     if let Some(cursor) = self.build.cam.project_px(handle) {
                         self.cursor_pos = cursor;
-                        self.build_mouse_down();
+                        self.click(click_pick::Click::Build);
                     }
                 } else if (801..=840).contains(&self.frame_count) {
                     self.cursor_pos.0 += 2.0;
@@ -4966,13 +5105,8 @@ impl App {
                         self.build.click_select(&mut self.world, &self.settings.build, Some(idx), false);
                         self.flush_build();
                     }
-                    crate::build::demo::Step::Press => {
-                        self.build_mouse_down();
-                    }
-                    crate::build::demo::Step::Release => {
-                        self.build.mouse_up(&mut self.world, &self.settings.build);
-                        self.flush_build();
-                    }
+                    crate::build::demo::Step::Press => self.click(click_pick::Click::Build),
+                    crate::build::demo::Step::Release => self.build_release(),
                     crate::build::demo::Step::Focus(follow) => {
                         self.settings.build.follow_edit_object = follow;
                         if let Some(idx) = self.build.sel_prims(&self.world).first().copied()
@@ -4986,6 +5120,19 @@ impl App {
                     }
                     crate::build::demo::Step::Linked(on) => {
                         self.build.set_edit_linked(&mut self.world, &mut self.settings.build, on);
+                        self.flush_build();
+                    }
+                    crate::build::demo::Step::ReplaceBegin(contents) => {
+                        self.build.begin_replacement(&self.world, &self.settings.build);
+                        self.build.replacement.options.contents = contents;
+                        self.build.replacement.options.size = contents;
+                    }
+                    crate::build::demo::Step::ReplacePick(idx) => {
+                        self.build.pick_replacement(&self.world, Some(idx));
+                        self.flush_build();
+                    }
+                    crate::build::demo::Step::ReplaceApply => {
+                        self.build.apply_replacement(&self.world);
                         self.flush_build();
                     }
                     crate::build::demo::Step::Wheel(delta) => {
@@ -5024,11 +5171,7 @@ impl App {
                 self.cursor_pos = pos;
                 self.on_left_press();
                 self.on_left_release();
-                log::info!(
-                    "demo media click at {pos:?} (frame {}): focus {:?}",
-                    self.frame_count,
-                    self.media.focus
-                );
+                self.demo_note(click_pick::DemoNote::Media(pos, self.frame_count));
             }
             if (850..862).contains(&f) {
                 let k = (f - 850) as usize;
@@ -5067,7 +5210,7 @@ impl App {
                 (0, n) if n >= 2 => {
                     self.cursor_pos = (c[0], c[1]);
                     self.on_left_press();
-                    log::info!("demo mmo: mode {:?}, pos {:?}", self.mouse_mode, self.world.agent.position);
+                    self.demo_note(click_pick::DemoNote::Mmo);
                 }
                 // third value 1: hold the right arrow instead of the right button
                 (10, _) if c.get(2) == Some(&1.0) => {
@@ -5403,7 +5546,10 @@ impl App {
                 );
                 self.sync_remembered_password();
                 // Keep disconnected script drafts accessible for copying.
-                for action in self.script_editors.show(&ctx, &p, &mut self.settings.script_editor) {
+                for action in self
+                    .script_editors
+                    .show(&ctx, &p, &mut self.settings.script_editor, &mut self.settings.build.color_picker)
+                {
                     self.apply_script_action(action);
                 }
             }
@@ -6580,6 +6726,15 @@ impl ApplicationHandler for App {
                     self.world.apply(ev);
                 }
             }
+            if std::env::var_os("AURORA_DEMO_REPLACE_PRIM").is_some() && std::env::var_os("AURORA_DEMO_CAM").is_none() {
+                let focus = Vec3::new(135.5, 125.0, crate::demo::floor_at(135.0, 125.0) + 1.3);
+                self.camera.set_view(
+                    focus + Vec3::new(0.0, -6.0, 4.0),
+                    focus,
+                    &mut self.world.agent,
+                    &self.settings.camera,
+                );
+            }
             if std::env::var_os("AURORA_DEMO_FLEXIBLE").is_some() && std::env::var_os("AURORA_DEMO_CAM").is_none() {
                 let edit_focus = std::env::var("AURORA_DEMO_BUILD")
                     .ok()
@@ -6736,7 +6891,23 @@ impl ApplicationHandler for App {
                 }
                 if let Some(id) = crate::world::inventory::demo::target(&view) {
                     self.inventory_ui.show_original(&self.world.inventory, id);
-                    if view == "new-folder" {
+                    if view.starts_with("clipboard") {
+                        if view == "clipboard-window" {
+                            self.inventory_ui.open_folder_window(uuid::Uuid::from_u128(8000));
+                            self.inventory_ui.open_folder_window(uuid::Uuid::from_u128(8001));
+                        } else {
+                            crate::world::inventory::demo::seed_clipboard_tree(&mut self.world.inventory);
+                            if view == "clipboard-cut-folder"
+                                && let Some(item) = self.world.inventory.items.get_mut(&uuid::Uuid::from_u128(8223))
+                            {
+                                item.owner_mask &= !crate::world::inventory::actions::COPY;
+                            }
+                        }
+                    } else if view.starts_with("delete-") {
+                        crate::world::inventory::demo::seed_clipboard_tree(&mut self.world.inventory);
+                        self.inventory_ui.expand_all = Some(true);
+                        self.inventory_ui.show_original(&self.world.inventory, uuid::Uuid::from_u128(8001));
+                    } else if view == "new-folder" {
                         if let Ok(change) = crate::world::inventory::actions::create_folder(id, aurora_i18n::tr!("common-new-folder")) {
                             self.apply_inventory_action(ui::inventory::InvAction::Edit(change));
                         }
@@ -7066,6 +7237,7 @@ impl ApplicationHandler for App {
                 self.shift = false;
                 self.right_drag = false;
                 self.mic_button_held = false;
+                self.drop_clicks();
                 self.on_left_release();
                 if self.temp_run.take().is_some() && !self.always_run {
                     self.send(NetCommand::SetAlwaysRun(false));
@@ -7078,6 +7250,11 @@ impl ApplicationHandler for App {
                 }
                 if let PhysicalKey::Code(code) = ke.physical_key {
                     let pressed = ke.state == ElementState::Pressed;
+                    // The color dialog owns Escape before camera shortcuts.
+                    // egui already received the event above.
+                    if pressed && code == KeyCode::Escape && (self.build.ui.color_picker.is_open() || self.script_editors.color_open()) {
+                        return;
+                    }
                     // learn the keyboard layout for the shortcut labels
                     if pressed
                         && !self.shift
@@ -7166,23 +7343,8 @@ impl ApplicationHandler for App {
                     }
                     return;
                 }
-                match button {
-                    MouseButton::Right => self.on_right_button(pressed, over_ui),
-                    MouseButton::Left if pressed => {
-                        if !over_ui && self.in_world() && !self.camera.mouselook() && !self.build_mouse_down() {
-                            self.on_left_press();
-                        }
-                    }
-                    MouseButton::Left => self.on_left_release(),
-                    other => {
-                        if let Some(input) = Input::mouse(*other) {
-                            // bindable buttons (push-to-talk on the wheel click...)
-                            if !pressed || !over_ui {
-                                self.on_input(input, pressed);
-                            }
-                        }
-                    }
-                }
+                // (in its turn behind a click that waits for its depth)
+                self.mouse_input(*button, pressed, over_ui);
             }
             WindowEvent::MouseWheel { delta, .. } if !self.exit_prompt.open && !self.egui_ctx.is_pointer_over_egui() && self.in_world() => {
                 let steps = match delta {

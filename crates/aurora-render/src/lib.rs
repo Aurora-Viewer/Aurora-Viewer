@@ -7,6 +7,7 @@
 
 pub mod arena;
 pub mod bc7;
+mod drawn_pick;
 pub mod gpu_cull;
 mod helpers;
 pub mod hud;
@@ -19,6 +20,7 @@ pub mod present;
 pub mod probes;
 mod render_thread;
 mod renderer;
+pub mod shadow_cull;
 pub mod tex_anim;
 pub mod textures;
 pub mod thread_cpu;
@@ -31,6 +33,7 @@ pub mod vram;
 pub mod writes;
 
 pub use arena::MeshAlloc;
+pub use drawn_pick::{Drawn, DrawnFace};
 pub use hud::HudView;
 pub use main_thread::{GpuInfo, Renderer};
 pub use renderer::{CASCADES, RenderError};

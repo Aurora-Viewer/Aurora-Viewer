@@ -394,6 +394,14 @@ struct Period {
     parts_max: Parts,
     gpu: [f32; GPU],
     gpu_frames: u32,
+    /// Parts of the shadows and depth GPU time (`ShadowStats::gpu_ms`).
+    gpu_shadow: [f32; 5],
+    gpu_shadow_frames: u32,
+    /// Shadow casters by cascade: draws, those of the CPU lists, triangles
+    /// of the GPU casters, rigged casters and their triangles.
+    shadow: [[u64; 3]; 5],
+    /// Shadow path of the period's frames (`shadow_cull::path`).
+    shadow_path: u32,
     draws: u64,
     blend_triangles: u64,
     /// Frames whose blended faces dropped their invisible fragments before
@@ -564,6 +572,20 @@ impl FrameProfile {
         p.calls += render.draw_calls as u64;
         p.triangles += render.triangles;
         p.shadow_draws += render.shadow_draws as u64;
+        let sh = &render.shadow;
+        if let Some(g) = sh.gpu_ms {
+            add(&mut p.gpu_shadow, &g);
+            p.gpu_shadow_frames += 1;
+        }
+        for (sum, v) in p
+            .shadow
+            .iter_mut()
+            .zip([sh.draws, sh.cpu_draws, sh.triangles, sh.rigged_draws, sh.rigged_triangles])
+        {
+            for k in 0..3 {
+                sum[k] += v[k] as u64;
+            }
+        }
         p.particles += render.particles as u64;
         p.occluded += render.occluded.unwrap_or(0) as u64;
         p.records_bytes += render.records_uploaded;
@@ -601,7 +623,9 @@ impl FrameProfile {
         }
         self.started = Some(now);
         self.periods += 1;
-        let p = std::mem::take(&mut self.period);
+        let mut p = std::mem::take(&mut self.period);
+        // (with AURORA_SHADOW_LEGACY=ab, the next period compares the other path)
+        p.shadow_path = aurora_render::shadow_cull::next_path();
         Some(summary(&p, elapsed))
     }
 }
@@ -741,6 +765,24 @@ fn summary(p: &Period, elapsed: Duration) -> String {
     let _ = write!(out, " | gpu={:.2}", p.gpu.iter().sum::<f32>() / gpu_n);
     for (el, ms) in GpuElement::ALL.iter().zip(p.gpu) {
         let _ = write!(out, " g_{}={:.3}", el.key(), ms / gpu_n);
+    }
+    // shadows and depth in detail: culling, cascades, prepass; then the
+    // casters of each cascade
+    let shadow_n = p.gpu_shadow_frames.max(1) as f32;
+    for (key, ms) in ["cull", "shadow0", "shadow1", "shadow2", "depth"].iter().zip(p.gpu_shadow) {
+        let _ = write!(out, " g_{key}={:.3}", ms / shadow_n);
+    }
+    let _ = write!(out, " | shadow_path={}", aurora_render::shadow_cull::path_name(p.shadow_path));
+    for (key, by_cascade, unit) in [
+        ("sd", p.shadow[0], 1.0),
+        ("sd_cpu", p.shadow[1], 1.0),
+        ("st_k", p.shadow[2], 1000.0),
+        ("sd_rig", p.shadow[3], 1.0),
+        ("st_rig_k", p.shadow[4], 1000.0),
+    ] {
+        for (k, v) in by_cascade.iter().enumerate() {
+            let _ = write!(out, " {key}{k}={:.0}", count(*v) / unit);
+        }
     }
     let s = &p.scene;
     let _ = write!(

@@ -95,6 +95,161 @@ struct Token {
     kind: Kind,
 }
 
+pub(super) fn matching_open_brace(source: &str, close: usize) -> Option<usize> {
+    let mut stack = Vec::new();
+    for token in tokens(source) {
+        if token.bytes.start > close {
+            break;
+        }
+        if token.kind != Kind::Plain {
+            continue;
+        }
+        match &source[token.bytes.clone()] {
+            "{" => stack.push(token.bytes.start),
+            "}" if token.bytes.start == close => return stack.pop(),
+            "}" => {
+                stack.pop();
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct ColorLiteral {
+    pub bytes: Range<usize>,
+    pub components: [Range<usize>; 3],
+    pub rgb: crate::ui::color_picker::Rgb,
+}
+
+fn color_literals(source: &str, tokens: &[Token]) -> Vec<ColorLiteral> {
+    let code: Vec<_> = tokens
+        .iter()
+        .filter(|t| t.kind != Kind::Comment && !source[t.bytes.clone()].trim().is_empty())
+        .collect();
+    let mut colors = Vec::new();
+    for (i, token) in code.iter().enumerate() {
+        if token.kind != Kind::Plain || &source[token.bytes.clone()] != "<" {
+            continue;
+        }
+        let mut at = i + 1;
+        let mut rgb = [0.0; 3];
+        let mut components = [0..0, 0..0, 0..0];
+        let valid = (0..3).all(|n| {
+            let Some(first) = code.get(at) else { return false };
+            let start = first.bytes.start;
+            let sign = match &source[first.bytes.clone()] {
+                "-" => {
+                    at += 1;
+                    -1.0
+                }
+                "+" => {
+                    at += 1;
+                    1.0
+                }
+                _ => 1.0,
+            };
+            let Some(number) = code.get(at).filter(|t| matches!(t.kind, Kind::Number | Kind::Float)) else {
+                return false;
+            };
+            let text = &source[number.bytes.clone()];
+            let value = if let Some(hex) = text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")) {
+                u32::from_str_radix(hex, 16).ok().map(f64::from)
+            } else {
+                text.parse::<f64>().ok()
+            };
+            let Some(value) = value.map(|v| v * sign).filter(|v| (0.0..=1.0).contains(v)) else {
+                return false;
+            };
+            rgb[n] = value as f32;
+            components[n] = start..number.bytes.end;
+            at += 1;
+            let separator = if n == 2 { ">" } else { "," };
+            if !code
+                .get(at)
+                .is_some_and(|t| t.kind == Kind::Plain && &source[t.bytes.clone()] == separator)
+            {
+                return false;
+            }
+            at += 1;
+            true
+        });
+        if valid {
+            colors.push(ColorLiteral {
+                bytes: token.bytes.start..code[at - 1].bytes.end,
+                components,
+                rgb,
+            });
+        }
+    }
+    colors
+}
+
+pub(super) fn colors(source: &str) -> Vec<ColorLiteral> {
+    color_literals(source, &tokens(source))
+}
+
+pub(super) fn block_comment_at(source: &str, at: usize) -> Option<Range<usize>> {
+    tokens(source)
+        .into_iter()
+        .find(|token| {
+            token.kind == Kind::Comment
+                && token.bytes.contains(&at)
+                && source[token.bytes.clone()].starts_with("/*")
+                && source[token.bytes.clone()].ends_with("*/")
+        })
+        .map(|token| token.bytes)
+}
+
+pub(super) fn brace_pairs(source: &str) -> Vec<(usize, usize)> {
+    let mut stack = Vec::new();
+    let mut pairs = Vec::new();
+    for token in tokens(source) {
+        if token.kind != Kind::Plain {
+            continue;
+        }
+        match &source[token.bytes.clone()] {
+            "{" => stack.push(token.bytes.start),
+            "}" => {
+                if let Some(open) = stack.pop() {
+                    pairs.push((open, token.bytes.start));
+                }
+            }
+            _ => {}
+        }
+    }
+    pairs.sort_unstable();
+    pairs
+}
+
+pub(super) const COLOR_SPACE: f32 = 20.0;
+
+fn color_spacing(job: &mut LayoutJob, colors: &[ColorLiteral]) {
+    let mut starts = colors.iter().map(|c| c.bytes.start).peekable();
+    let mut sections = Vec::new();
+    for section in job.sections.drain(..) {
+        let mut start = section.byte_range.start.0;
+        let end = section.byte_range.end.0;
+        let mut spacing = 0.0;
+        while start < end {
+            if starts.peek() == Some(&start) {
+                spacing = COLOR_SPACE;
+                starts.next();
+            }
+            let limit = starts.peek().copied().unwrap_or(end).min(end);
+            sections.push(LayoutSection {
+                leading_space: spacing,
+                byte_range: start.into()..limit.into(),
+                format: section.format.clone(),
+            });
+            start = limit;
+            spacing = 0.0;
+        }
+    }
+    job.sections = sections;
+}
+
 fn identifier_start(c: char) -> bool {
     c == '_' || c.is_alphabetic()
 }
@@ -286,6 +441,7 @@ impl Style {
 pub(super) struct Highlighter {
     style: Option<Style>,
     job: LayoutJob,
+    pub colors: Vec<ColorLiteral>,
 }
 
 impl Highlighter {
@@ -309,7 +465,9 @@ impl Highlighter {
                 text: source.into(),
                 ..Default::default()
             };
-            for token in tokens(source) {
+            let tokens = tokens(source);
+            self.colors = color_literals(source, &tokens);
+            for token in tokens {
                 let format = TextFormat {
                     font_id: style.font.clone(),
                     color: style.colors[token.kind as usize],
@@ -360,6 +518,7 @@ impl Highlighter {
                 }
                 job.sections = sections;
             }
+            color_spacing(&mut job, &self.colors);
             self.job = job;
             self.style = Some(style);
         }
@@ -371,6 +530,55 @@ impl Highlighter {
 mod tests {
     use super::*;
     use crate::theme::Theme;
+
+    #[test]
+    fn detects_only_literal_rgb_vectors_including_endpoints_and_numeric_notation() {
+        let source = "// éあ <0,1,0>\nstring s = \"<1,0,0>\"; /* <0,0,1> */\nvector a = <0, 1, .5>; vector b = <+0.1, 1e-1, -0.0>; vector c = <0x0, 0X1, 1.>;\nvector d = <0.25, /*green*/ .75,\n 1>;";
+        let colors = color_literals(source, &tokens(source));
+        assert_eq!(
+            colors.iter().map(|c| c.rgb).collect::<Vec<_>>(),
+            [[0.0, 1.0, 0.5], [0.1, 0.1, -0.0], [0.0, 1.0, 1.0], [0.25, 0.75, 1.0]]
+        );
+        for color in colors {
+            assert!(source[color.bytes].starts_with('<'));
+        }
+        for literal in [
+            "<-0.1,0,0>",
+            "<1.000000001,0,0>",
+            "<2,0,0>",
+            "<1e999,0,0>",
+            "<a,0,0>",
+            "<0+1,0,0>",
+            "<0,0,0,1>",
+            "<0,0>",
+            "<0,0,>",
+            "<0,0,0.5foo>",
+            "#define COLOR <0,1,0>",
+        ] {
+            assert!(color_literals(literal, &tokens(literal)).is_empty(), "{literal}");
+        }
+    }
+
+    #[test]
+    fn swatch_spacing_keeps_source_and_character_ranges_with_search_highlights() {
+        let source = "vector c = <0,1,0>; vector d = <1,0,0>;";
+        let mut highlighter = Highlighter::default();
+        let job = highlighter.custom(
+            source,
+            &Theme::default().palette(),
+            FontId::monospace(14.0),
+            &ScriptSettings::default(),
+            "0",
+            false,
+        );
+        assert_eq!(job.text, source);
+        assert_eq!(highlighter.colors.len(), 2);
+        let spaces: Vec<_> = job.sections.iter().filter(|s| s.leading_space != 0.0).collect();
+        assert_eq!(spaces.len(), 2);
+        for section in spaces {
+            assert_eq!(&source[section.byte_range.start.0..section.byte_range.start.0 + 1], "<");
+        }
+    }
 
     fn lex(source: &str) -> Vec<(&str, Kind)> {
         let tokens = tokens(source);
