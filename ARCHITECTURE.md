@@ -46,6 +46,7 @@ aurora-viewer/                  dépôt git (GitHub : Aurora-Viewer/Aurora-Viewe
 ├─ crates/                      le code (voir ci-dessous)
 ├─ docs/                        BRANDING.md, TESTING.md (options de test `AURORA_*`, profilage), captures du README
 ├─ scripts/                     outils des agents et des humains (PowerShell)
+│  ├─ automation-window-border.ps1 contour jaune en pointillés des fenêtres de test automatisé (Windows)
 │  └─ tools/                    aurora-tools : menu, interface (ui), vérifications et réparation (checks), actions, PR en direct (prs), releases, réinitialisation (reset), permissions de Claude Code (claude)
 └─ .github/                     CI (workflows/, actions/), release, modèle de PR, Dependabot
 ```

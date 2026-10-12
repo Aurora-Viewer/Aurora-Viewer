@@ -29,7 +29,8 @@ s'il faut plus d'une phrase, ou s'il y a plusieurs modes, un paragraphe
 fichier les lignes de tableau qui commencent par `AURORA_DEMO_<NOM>=1` et
 affiche leur seconde colonne : elle doit rester courte.
 
-Sommaire : [Général](#général) · [Captures](#captures) ·
+Sommaire : [Fenêtres automatisées](#fenêtres-de-test-automatisé-sous-windows) ·
+[Général](#général) · [Captures](#captures) ·
 [Caméra, déplacements et pointeur](#caméra-déplacements-et-pointeur) ·
 [Objets et construction](#objets-et-construction) · [HUDs](#huds) ·
 [Avatars et animations](#avatars-et-animations) ·
@@ -38,6 +39,35 @@ Sommaire : [Général](#général) · [Captures](#captures) ·
 [Médias et son](#médias-et-son) ·
 [Réglages forcés et diagnostics](#réglages-forcés-et-diagnostics) ·
 [Profilage](#profilage)
+
+## Fenêtres de test automatisé sous Windows
+
+Lors d'un test sans intervention humaine, ajouter
+`[AUTOMATISATION - NE PAS TOUCHER]` au titre et lancer le contour jaune en
+pointillés. Depuis le worktree de la tâche, après compilation :
+
+```powershell
+$env:AURORA_DEMO = '1'
+$viewer = Start-Process -FilePath '.\target\debug\aurora-viewer.exe' -PassThru `
+  -ArgumentList '--title "Test ma-tâche [AUTOMATISATION - NE PAS TOUCHER]"'
+$borderScript = (Resolve-Path '.\scripts\automation-window-border.ps1').Path
+$borderArgs = @(
+  '-NoProfile', '-NonInteractive', '-STA', '-ExecutionPolicy', 'Bypass',
+  '-File', ('"{0}"' -f $borderScript),
+  '-ViewerProcessId', $viewer.Id
+)
+Start-Process -FilePath 'powershell.exe' -WindowStyle Hidden -ArgumentList $borderArgs
+```
+
+Utiliser le PID de l'exécutable du viewer, jamais celui de `cargo`. Le viewer
+et le script doivent tourner dans la même session Windows, sur le bureau
+interactif. Le script utilise Windows PowerShell 5.1 en mode STA.
+
+Le contour suit la position et la taille des fenêtres portant le tag, sans
+prendre le focus ni intercepter les clics. Il disparaît lorsque la fenêtre
+est réduite, cachée ou perd son tag, et le script s'arrête à la fermeture du
+processus du viewer. Pour un test avec intervention humaine, garder le titre
+`Test <tâche>` sans le tag.
 
 ## Général
 
