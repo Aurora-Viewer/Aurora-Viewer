@@ -31,6 +31,7 @@ mod click_pick;
 mod color_picker;
 mod context_menu;
 mod hud_drag;
+mod imports;
 mod inventory;
 mod inventory_drag;
 mod inventory_thumbnail;
@@ -140,6 +141,7 @@ pub struct App {
     start: Instant,
     right_drag: bool,
     cursor_grabbed: bool,
+    numeric_drag: ui::numeric_drag::NumericDrag,
     alt: bool,
     left_down: bool,
     /// Clicks that wait for the depth under them, and what follows them.
@@ -330,6 +332,7 @@ pub struct App {
     lighting_was_open: bool,
     demo: bool,
     inventory_ui: ui::inventory::InventoryUi,
+    imports: crate::imports::Imports,
     task_transfer: Option<ui::inventory::task_drop::PendingTransfer>,
     /// Inventory edits asked by the world (`World::take_inventory_edits`),
     /// awaiting their reply.
@@ -506,6 +509,7 @@ impl App {
             start: Instant::now(),
             right_drag: false,
             cursor_grabbed: false,
+            numeric_drag: Default::default(),
             alt: false,
             left_down: false,
             clicks: Default::default(),
@@ -630,6 +634,7 @@ impl App {
             lighting_was_open: false,
             demo: false,
             inventory_ui: Default::default(),
+            imports: Default::default(),
             task_transfer: None,
             world_edits: Default::default(),
             demo_offer_shown: None,
@@ -662,7 +667,30 @@ impl App {
     }
 
     fn send(&mut self, cmd: NetCommand) {
+        if self.demo
+            && let NetCommand::UploadAsset { request, upload } = cmd
+        {
+            self.demo_asset_upload(request, upload);
+            return;
+        }
         if self.demo {
+            if let NetCommand::QuoteMesh { request, .. } = &cmd {
+                self.on_app_event(NetEvent::MeshQuoted {
+                    request: *request,
+                    result: Ok(aurora_net::inventory::mesh_upload::Quote {
+                        token: uuid::Uuid::new_v4(),
+                        cost: 11,
+                        data: aurora_llsd::Llsd::new_map(),
+                    }),
+                });
+                return;
+            }
+            if let NetCommand::UploadMesh { request, .. } = &cmd {
+                if let Some(upload) = self.imports.demo_mesh_request() {
+                    self.demo_asset_upload(*request, upload);
+                }
+                return;
+            }
             match &cmd {
                 NetCommand::Build(aurora_net::build::BuildCmd::SetTextures { local_id, .. })
                     if ui::color_picker::demo::mode().is_some() =>
@@ -1072,6 +1100,32 @@ impl App {
     }
 
     fn back_to_login(&mut self, error: Option<String>) {
+        self.sync_local_picker_bindings();
+        self.imports.flush_local_registry();
+        for entry in &self.imports.entries {
+            if let Some(crate::imports::Source::Mesh(draft)) = &entry.source {
+                draft.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+        let imports = std::mem::take(&mut self.imports);
+        if let Some(gfx) = &mut self.gfx {
+            let mut slots = HashSet::new();
+            for entry in &imports.entries {
+                for asset in &entry.local_mesh_ids {
+                    self.scene.meshes.remove_local(asset);
+                }
+                if entry.local_published {
+                    self.scene.materials.remove_local(&entry.id);
+                }
+                for (asset, slot) in &entry.local_slots {
+                    self.scene.textures.unregister_local(asset);
+                    if slots.insert(*slot) {
+                        gfx.renderer.free_texture(*slot);
+                    }
+                }
+            }
+        }
+        self.scene.jobs.discard(imports);
         self.record_inventory_logout();
         self.inventory_ui = Default::default();
         self.task_notecards.clear();
@@ -1109,6 +1163,25 @@ impl App {
     }
 
     fn on_app_event(&mut self, ev: NetEvent) {
+        if let NetEvent::UploadCost(cost) = ev {
+            self.world.upload_cost = Some(cost);
+            return;
+        }
+        if let NetEvent::MeshQuoted { request, result } = ev {
+            self.imports.mesh_quoted(request, result);
+            return;
+        }
+        if let NetEvent::AssetUploaded { request, result } = ev {
+            if !self.demo {
+                self.send(NetCommand::RequestBalance);
+            }
+            if let Some(item) = self.imports.uploaded(request, result) {
+                let id = item.id;
+                self.world.inventory.add_items(vec![item]);
+                self.inventory_ui.show_original(&self.world.inventory, id);
+            }
+            return;
+        }
         if let NetEvent::InventoryCreated(item) = ev {
             let id = item.id;
             self.world.inventory.add_items(vec![item]);
@@ -2417,6 +2490,8 @@ impl App {
 
     /// Log out, save the window, layout, inventory cache and settings, exit.
     fn shutdown(&mut self, event_loop: &ActiveEventLoop) {
+        self.sync_local_picker_bindings();
+        self.imports.flush_local_registry();
         self.record_inventory_logout();
         self.drop_clicks();
         if self.hud_drag.is_some() {
@@ -3657,6 +3732,7 @@ impl App {
         let Some(mut gfx) = self.gfx.take() else {
             return;
         };
+        self.apply_local_imports(&mut gfx.renderer);
         let t_up = Instant::now();
         let (w, h) = gfx.renderer.size();
         let aspect = w as f32 / h.max(1) as f32;
@@ -4516,6 +4592,7 @@ impl App {
             }
         }
         self.sound_cues.before(&ctx, &raw);
+        self.numeric_drag.before(&mut raw, ctx.pixels_per_point());
         let mut inventory_drop = None;
         let t_pass = Instant::now();
         let mut windows_ms = 0.0;
@@ -4532,6 +4609,20 @@ impl App {
         // once logged in
         let in_world_view = matches!(self.screen, Screen::World);
         let cues = self.sound_cues.after(&ctx, &full.platform_output.events, in_world_view);
+        if let Some(anchor) = self.numeric_drag.after(
+            &ctx,
+            &full.platform_output.events,
+            self.focused && !self.cursor_grabbed && !self.exit_prompt.open,
+        ) {
+            let position = winit::dpi::PhysicalPosition::new(anchor.x * ctx.pixels_per_point(), anchor.y * ctx.pixels_per_point());
+            if (self.cursor_pos.0 - position.x).abs() > 0.5 || (self.cursor_pos.1 - position.y).abs() > 0.5 {
+                if gfx.window.set_cursor_position(position).is_ok() {
+                    self.cursor_pos = (position.x, position.y);
+                } else {
+                    self.numeric_drag.cancel();
+                }
+            }
+        }
         let previews = ui::sound_cues::take_previews(&ctx);
         if self.in_world() {
             self.world.ui_sounds.extend(cues);
@@ -5498,6 +5589,11 @@ impl App {
         match a.bar {
             BarAction::CheckUpdates => self.updater.check(self.net.runtime(), true),
             BarAction::ReportBug => self.bug_report.requested = true,
+            BarAction::Import { choice, pick_files } => {
+                self.imports.open(choice);
+                self.imports.choose_files_on_open = pick_files;
+                self.egui_ctx.request_repaint();
+            }
             BarAction::ShowHuds(visible) => {
                 if self.hud_drag.is_some() {
                     self.on_left_release();
@@ -6022,6 +6118,7 @@ impl App {
                 }
                 t = self.ui_parts.lap(Part::UiPeople, t);
                 self.poll_inventory_animation_stats();
+                self.show_imports(&ctx, &p);
                 let inventory_preferences = self.settings.inventory.clone();
                 let mut open = self.panels.inventory;
                 if !self.inventory_ui.merchant_requested {
@@ -7380,6 +7477,7 @@ impl ApplicationHandler for App {
             }
             WindowEvent::Focused(true) => self.focused = true,
             WindowEvent::Focused(false) => {
+                self.numeric_drag.cancel();
                 self.build.reset_selection_wheel();
                 self.focused = false;
                 self.down.clear();
@@ -7543,6 +7641,12 @@ impl ApplicationHandler for App {
 
     fn device_event(&mut self, _el: &ActiveEventLoop, _id: winit::event::DeviceId, event: DeviceEvent) {
         if let DeviceEvent::MouseMotion { delta } = event {
+            if self.numeric_drag.active() {
+                if let Some(g) = &mut self.gfx {
+                    g.egui_state.on_mouse_motion(delta);
+                }
+                return;
+            }
             if !self.in_world() || self.exit_prompt.open {
                 return;
             }

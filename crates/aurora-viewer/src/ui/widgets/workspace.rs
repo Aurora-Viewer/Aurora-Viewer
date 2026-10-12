@@ -133,6 +133,7 @@ pub(super) fn window_icon(id: &str) -> &'static str {
         "environment_selector" | "personal_lighting" => "sun",
         "performance" => "chart-bar",
         "ao" => "person",
+        "asset_imports_v3" => "upload-simple",
         _ => "squares-four",
     }
 }

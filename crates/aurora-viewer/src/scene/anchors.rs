@@ -90,7 +90,11 @@ pub fn skeleton_model(world: &World, meshes: &MeshStreamer, owner_idx: usize, po
     if let Some(root) = world.objects.get(owner_idx)
         && !root.is_avatar()
         && Scene::wearer_avatar(world, owner_idx).is_none()
-        && let Some(skin) = root.volume.sculpt.and_then(|s| meshes.meta(&s.texture)).and_then(|m| m.skin)
+        && let Some(skin) = root
+            .visual_volume()
+            .sculpt
+            .and_then(|s| meshes.meta(&s.texture))
+            .and_then(|m| m.skin)
     {
         let (_, bind_rot, _) = skin.bind_shape.to_scale_rotation_translation();
         if bind_rot.is_finite() {
@@ -112,7 +116,7 @@ pub fn skeleton_extent(owner: &Object) -> f32 {
     if owner.is_avatar() {
         2.5
     } else {
-        (owner.scale.length() * 0.75).max(1.0)
+        (owner.visual_scale().length() * 0.75).max(1.0)
     }
 }
 

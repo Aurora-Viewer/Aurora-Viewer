@@ -287,6 +287,14 @@ impl ShapeParams {
     /// The avatar's skeleton for these AvatarAppearance values.
     pub fn shape(&self, values: &[u8], rig: &Rig) -> Shape {
         let weights = self.weights(values);
+        self.shape_weights(weights, rig)
+    }
+    pub fn preview_shape(&self, male: bool, rig: &Rig) -> Shape {
+        let mut weights = self.weights(&[]);
+        self.set_weight(&mut weights, PARAM_MALE, f32::from(male), 0);
+        self.shape_weights(weights, rig)
+    }
+    fn shape_weights(&self, weights: HashMap<i32, f32>, rig: &Rig) -> Shape {
         let male = weights.get(&PARAM_MALE).copied().unwrap_or(0.0) > 0.5;
         let sex = if male { SEX_MALE } else { SEX_FEMALE };
         let mut local_pos = rig.local_pos.clone();

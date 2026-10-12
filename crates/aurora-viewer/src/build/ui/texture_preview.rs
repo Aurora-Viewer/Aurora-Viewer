@@ -6,7 +6,10 @@ use super::{Env, PickTarget, texture::Sel};
 use crate::build::{BuildTool, edits::Extra, materials::GltfUpdate};
 use crate::scene::legacy_mat::LegacyMaterial;
 use crate::theme::Palette;
-use crate::world::{World, objects::ObjKey};
+use crate::world::{
+    World,
+    objects::{LocalAppearance, ObjKey},
+};
 use aurora_assets::material::PbrOverride;
 use aurora_prim::te::TextureFace;
 use std::collections::{HashMap, HashSet};
@@ -26,6 +29,7 @@ struct Saved {
     object: Uuid,
     face: u8,
     original: Original,
+    local: Option<LocalAppearance>,
 }
 
 pub(super) struct Session {
@@ -36,6 +40,7 @@ pub(super) struct Session {
     linked: bool,
     saved: Vec<Saved>,
     last_preview: Option<Uuid>,
+    remote_changed: bool,
 }
 
 impl Session {
@@ -66,6 +71,7 @@ impl Session {
                 object: object.full_id,
                 face: s.face,
                 original,
+                local: object.local_appearance(s.face as usize),
             });
             // Object parameters, unlike texture entries, affect one prim.
             if matches!(target, PickTarget::Sculpt | PickTarget::LightTexture) {
@@ -80,6 +86,7 @@ impl Session {
             linked: tool.selection_linked,
             saved,
             last_preview: None,
+            remote_changed: false,
         }
     }
 
@@ -99,6 +106,35 @@ impl Session {
 }
 
 impl BuildTool {
+    fn set_local_picker_appearance(&mut self, world: &mut World, sel: &[Sel], appearance: Option<LocalAppearance>) {
+        for s in sel {
+            let Some(object) = world.objects.get_mut(s.idx) else { continue };
+            if object.local_appearance(s.face as usize) == appearance {
+                continue;
+            }
+            // Split a whole-object binding before editing one face, keeping
+            // every other face unchanged and recording the equivalent links.
+            if let Some(all) = object.render.local_appearance.remove(&None) {
+                self.local_appearance_changes.push((object.full_id, None, None));
+                for face in 0..object.te.as_ref().map_or(0, |te| te.faces.len()).min(256) {
+                    let value = *object.render.local_appearance.entry(Some(face as u8)).or_insert(all);
+                    self.local_appearance_changes.push((object.full_id, Some(face as u8), Some(value)));
+                }
+            }
+            match appearance {
+                Some(value) => {
+                    object.render.local_appearance.insert(Some(s.face), value);
+                }
+                None => {
+                    object.render.local_appearance.remove(&Some(s.face));
+                }
+            }
+            object.material_dirty = true;
+            object.render.needs_records = true;
+            self.local_appearance_changes.push((object.full_id, Some(s.face), appearance));
+        }
+    }
+
     pub(super) fn set_diffuse(&mut self, world: &mut World, sel: &[Sel], mut edit: impl FnMut(&Sel, &mut TextureFace)) {
         let mut changed = HashSet::new();
         for s in sel {
@@ -127,8 +163,24 @@ impl BuildTool {
         // OK after a preview confirms it without sending it a second time.
         if session.last_preview != Some(id) {
             let sel = session.resolve(self, world);
-            self.apply_texture(world, env, session.target, id, &sel);
-            session.last_preview = Some(id);
+            if let Some((_, material)) = world.local_assets.get(&id) {
+                let appearance = match (session.target, *material) {
+                    (PickTarget::Diffuse, false) => Some(LocalAppearance::Texture(id)),
+                    (PickTarget::PbrMaterial, true) => Some(LocalAppearance::Material(id)),
+                    _ => None,
+                };
+                if let Some(appearance) = appearance {
+                    self.set_local_picker_appearance(world, &sel, Some(appearance));
+                    session.last_preview = Some(id);
+                }
+            } else {
+                if matches!(session.target, PickTarget::Diffuse | PickTarget::PbrMaterial) {
+                    self.set_local_picker_appearance(world, &sel, None);
+                }
+                self.apply_texture(world, env, session.target, id, &sel);
+                session.last_preview = Some(id);
+                session.remote_changed = true;
+            }
         }
         self.ui.texture_edit = Some(session);
     }
@@ -142,6 +194,21 @@ impl BuildTool {
     fn restore_texture_preview(&mut self, world: &mut World, env: &mut Env) {
         let Some(session) = self.ui.texture_edit.take() else { return };
         if session.last_preview.is_none() {
+            return;
+        }
+        if matches!(session.target, PickTarget::Diffuse | PickTarget::PbrMaterial) {
+            for s in session.resolve(self, world) {
+                let object = world.objects.get(s.idx).map(|object| object.full_id);
+                if let Some(saved) = session
+                    .saved
+                    .iter()
+                    .find(|saved| Some(saved.object) == object && saved.face == s.face)
+                {
+                    self.set_local_picker_appearance(world, std::slice::from_ref(&s), saved.local);
+                }
+            }
+        }
+        if !session.remote_changed {
             return;
         }
         if session.target == PickTarget::Diffuse {
@@ -285,6 +352,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world
     {
         tool.ui.texture_edit = Some(Session::capture(tool, world, env, target));
     }
+    tool.ui.picker.allow_local = matches!(tool.ui.pick_target, Some(PickTarget::Diffuse | PickTarget::PbrMaterial));
     let accepted = tool.ui.picker.show(ctx, p, world, env.images);
     if let Some(id) = accepted {
         tool.preview_texture(world, env, id);
@@ -353,6 +421,109 @@ mod tests {
 
     fn texture(world: &World, idx: usize, face: usize) -> Uuid {
         world.objects.get(idx).unwrap().te.as_ref().unwrap().faces[face].texture
+    }
+
+    #[test]
+    fn local_picker_choices_and_cancel_never_send_local_ids_to_the_simulator() {
+        use crate::world::objects::LocalAppearance;
+        fixture(|world, tool, env, prims| {
+            let id = Uuid::from_u128(901);
+            let original: Vec<_> = prims.iter().map(|idx| texture(world, *idx, 0)).collect();
+            for (material, target, appearance) in [
+                (false, PickTarget::Diffuse, LocalAppearance::Texture(id)),
+                (true, PickTarget::PbrMaterial, LocalAppearance::Material(id)),
+            ] {
+                world.local_assets.insert(id, ("Local fixture".into(), material));
+                open(tool, world, env, target);
+                tool.out.clear();
+                tool.preview_texture(world, env, id);
+                assert!(tool.out.is_empty(), "a local preview must not enqueue network edits");
+                for (&idx, &texture) in prims.iter().zip(&original) {
+                    let object = world.objects.get(idx).unwrap();
+                    assert_eq!(object.local_appearance(0), Some(appearance));
+                    assert_eq!(object.te.as_ref().unwrap().faces[0].texture, texture);
+                    assert!(object.extra.render_materials.is_empty());
+                    assert_eq!(object.local_appearance(1), None);
+                }
+                tool.cancel_texture_picker(world, env);
+                assert!(tool.out.is_empty(), "cancelling a local choice must stay local");
+                for &idx in prims {
+                    assert_eq!(world.objects.get(idx).unwrap().local_appearance(0), None);
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn local_face_choices_keep_other_faces_and_cancel_restores_existing_local_bindings() {
+        fixture(|world, tool, env, prims| {
+            let old = LocalAppearance::Texture(Uuid::from_u128(902));
+            let id = Uuid::from_u128(903);
+            world.local_assets.insert(id, ("Local fixture".into(), false));
+            for &idx in prims {
+                world.objects.get_mut(idx).unwrap().render.local_appearance.insert(None, old);
+            }
+            open(tool, world, env, PickTarget::Diffuse);
+            tool.out.clear();
+            tool.preview_texture(world, env, id);
+            for &idx in prims {
+                let object = world.objects.get(idx).unwrap();
+                assert_eq!(object.local_appearance(0), Some(LocalAppearance::Texture(id)));
+                assert_eq!(object.local_appearance(1), Some(old));
+            }
+            tool.preview_texture(world, env, aurora_prim::te::BLANK_TEXTURE);
+            for &idx in prims {
+                let object = world.objects.get(idx).unwrap();
+                assert_eq!(object.local_appearance(0), None);
+                assert_eq!(object.local_appearance(1), Some(old));
+                assert_eq!(texture(world, idx, 0), aurora_prim::te::BLANK_TEXTURE);
+            }
+            tool.cancel_texture_picker(world, env);
+            let mut links = HashMap::new();
+            for (object, face, appearance) in tool.local_appearance_changes.drain(..) {
+                if let Some(appearance) = appearance {
+                    links.insert((object, face), appearance);
+                } else {
+                    links.remove(&(object, face));
+                }
+            }
+            for &idx in prims {
+                let object = world.objects.get(idx).unwrap();
+                assert_eq!(object.local_appearance(0), Some(old));
+                assert_eq!(object.local_appearance(1), Some(old));
+                assert_eq!(links[&(object.full_id, Some(0))], old);
+                assert_eq!(links[&(object.full_id, Some(1))], old);
+            }
+        });
+    }
+
+    #[test]
+    fn clicking_a_local_picker_row_previews_and_ok_keeps_its_client_only_binding() {
+        fixture(|world, tool, env, prims| {
+            let id = Uuid::from_u128(904);
+            world.local_assets.insert(id, ("Local fixture".into(), false));
+            open(tool, world, env, PickTarget::Diffuse);
+            let ctx = egui::Context::default();
+            let mut positions = HashMap::new();
+            for i in 0..10 {
+                positions = frame(&ctx, tool, world, env, i as f64 / 60.0, vec![]);
+            }
+            tool.out.clear();
+            click(&ctx, tool, world, env, 1.0, positions["Local fixture"]);
+            assert!(tool.ui.picker.open);
+            for &idx in prims {
+                assert_eq!(
+                    world.objects.get(idx).unwrap().local_appearance(0),
+                    Some(LocalAppearance::Texture(id))
+                );
+            }
+            let changes = tool.local_appearance_changes.len();
+            let positions = frame(&ctx, tool, world, env, 2.0, vec![]);
+            click(&ctx, tool, world, env, 3.0, positions["OK"]);
+            assert!(!tool.ui.picker.open);
+            assert!(tool.out.is_empty());
+            assert_eq!(tool.local_appearance_changes.len(), changes);
+        });
     }
 
     #[test]

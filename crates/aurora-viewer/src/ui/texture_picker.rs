@@ -3,7 +3,7 @@
 //! profiles (PICK_TEXTURE, inventory filter IT_TEXTURE | IT_SNAPSHOT) and
 //! by the build floater, which adds the « Défaut », « Vierge »,
 //! « Transparent » and « Aucune » buttons, the UUID field, and lists
-//! materials for a PBR material (PICK_MATERIAL). No local textures nor bakes.
+//! materials for a PBR material (PICK_MATERIAL), plus published local previews.
 
 use super::widgets::{self, Floater};
 use crate::theme::Palette;
@@ -63,6 +63,8 @@ pub struct TexturePicker {
     default: Option<Uuid>,
     allow_none: bool,
     extra_buttons: bool,
+    /// Only callers with a client-only application path expose local assets.
+    pub(crate) allow_local: bool,
     uuid_text: String,
     /// Intentional choices, separate from OK so callers can opt into preview.
     preview: Option<Uuid>,
@@ -82,6 +84,7 @@ impl TexturePicker {
         self.default = None;
         self.allow_none = false;
         self.extra_buttons = false;
+        self.allow_local = false;
         self.uuid_text.clear();
         self.footer_height = 0.0;
         self.preview = None;
@@ -198,14 +201,57 @@ impl TexturePicker {
             );
             list.spacing_mut().item_spacing.y = 0.0;
             let rows = &self.tree.state.rows;
+            let filter = self.filter.trim().to_lowercase();
+            let mut locals: Vec<_> = world
+                .local_assets
+                .iter()
+                .filter(|(_, (name, material))| {
+                    self.allow_local && *material == self.materials && (filter.is_empty() || name.to_lowercase().contains(&filter))
+                })
+                .collect();
+            locals.sort_by(|a, b| a.1.0.cmp(&b.1.0));
+            let row_count = rows.len() + if locals.is_empty() { 0 } else { locals.len() + 1 };
             let tab = usize::from(!self.filter.trim().is_empty());
             let mut toggle = None;
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .max_height(body.height())
-                .show_rows(&mut list, 22.0, rows.len(), |ui, range| {
+                .show_rows(&mut list, 22.0, row_count, |ui, range| {
                     ui.spacing_mut().item_spacing.y = 0.0;
-                    for row in &rows[range] {
+                    for index in range {
+                        if index >= rows.len() {
+                            if index == rows.len() {
+                                ui.add_sized(
+                                    Vec2::new(ui.available_width(), 22.0),
+                                    egui::Label::new(RichText::new(aurora_i18n::tr!("import-local")).color(p.muted)),
+                                );
+                            } else {
+                                let (id, (name, _)) = locals[index - rows.len() - 1];
+                                let selected = self.selected == Some(*id);
+                                let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 22.0), egui::Sense::click());
+                                if selected || response.hovered() {
+                                    ui.painter().rect_filled(rect, 2.0, if selected { p.violet } else { p.raised });
+                                }
+                                widgets::paint_elided(
+                                    ui,
+                                    name,
+                                    rect.left_center() + egui::vec2(8.0, 0.0),
+                                    rect.width() - 16.0,
+                                    egui::FontId::proportional(12.0),
+                                    p.ink,
+                                );
+                                if response.clicked() {
+                                    self.selected = Some(*id);
+                                    self.selected_item = None;
+                                    self.preview = Some(*id);
+                                }
+                                if response.double_clicked() {
+                                    chosen = Some(*id);
+                                }
+                            }
+                            continue;
+                        }
+                        let row = &rows[index];
                         let inv = &world.inventory;
                         let name = if row.id == inv.root {
                             aurora_i18n::tr!("common-my-inventory").to_owned()

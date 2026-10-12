@@ -17,6 +17,7 @@ mod occlusion;
 mod packet;
 mod pick;
 pub mod present;
+pub mod preview;
 pub mod probes;
 mod render_thread;
 mod renderer;
@@ -61,6 +62,11 @@ mod shader_tests {
         if let Err(e) = v.validate(&module) {
             panic!("{}", e.emit_to_string(src));
         }
+    }
+
+    #[test]
+    fn asset_preview_shader_is_valid() {
+        validate(include_str!("shaders/preview.wgsl"));
     }
 
     #[test]

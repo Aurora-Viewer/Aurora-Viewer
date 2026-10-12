@@ -277,6 +277,12 @@ impl Jobs {
         });
     }
 
+    /// UI file imports share the low-priority worker pool without feeding
+    /// their results into the scene's geometry/texture result channel.
+    pub fn execute(&self, work: impl FnOnce() + Send + 'static) {
+        self.pool.spawn(work);
+    }
+
     /// A job that reports by itself (it fills something it shares with the
     /// scene): nothing comes back through the results.
     pub fn run(&self, f: impl FnOnce() + Send + 'static) {

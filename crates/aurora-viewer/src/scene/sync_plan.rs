@@ -163,9 +163,9 @@ impl SyncCtx<'_> {
     pub(super) fn lod_metrics(&self, idx: usize, o: &Object, pos: Vec3) -> (f32, f32) {
         let world = self.world;
         let eye = self.eye;
-        if o.volume.is_mesh() {
+        if o.visual_volume().is_mesh() {
             let rigged = o
-                .volume
+                .visual_volume()
                 .sculpt
                 .is_some_and(|s| self.meshes.meta(&s.texture).is_some_and(|m| m.skin.is_some()));
             if rigged
@@ -174,14 +174,18 @@ impl SyncCtx<'_> {
             {
                 // avatars: diagonal of the animated extents (~2.2 m);
                 // animesh: half of it (LL uses the dynamic box)
-                let radius = if ow.is_avatar() { 2.2 } else { (ow.scale.length() * 0.5).max(0.5) };
+                let radius = if ow.is_avatar() {
+                    2.2
+                } else {
+                    (ow.visual_scale().length() * 0.5).max(0.5)
+                };
                 return (radius, op.distance(eye));
             }
-            return ((o.scale * 0.5).length(), pos.distance(eye));
+            return ((o.visual_scale() * 0.5).length(), pos.distance(eye));
         }
-        let path = o.volume.path.curve_type & 0xF0;
-        let profile = o.volume.profile.curve_type & 0x0F;
-        let bias = if o.volume.is_sculpt() {
+        let path = o.visual_volume().path.curve_type & 0xF0;
+        let profile = o.visual_volume().profile.curve_type & 0x0F;
+        let bias = if o.visual_volume().is_sculpt() {
             Vec3::splat(0.5)
         } else if path == aurora_prim::params::LL_PCODE_PATH_LINE && profile == aurora_prim::params::LL_PCODE_PROFILE_CIRCLE {
             // cylinders don't care about the Z axis
@@ -191,14 +195,14 @@ impl SyncCtx<'_> {
         } else {
             Vec3::splat(0.5)
         };
-        ((bias * o.scale).length(), pos.distance(eye))
+        ((bias * o.visual_scale()).length(), pos.distance(eye))
     }
 
     /// Model matrix and bounds of an object drawn with `geom`.
     pub(super) fn placement(&self, idx: usize, o: &Object, xf: Xf, geom_key: GeomKey, geom: &GpuGeom) -> Placement {
         let world = self.world;
         let (pos, rot, _) = xf;
-        let scale = (o.scale * if xf.2 { world.hud_scale(idx) } else { 1.0 }).max(Vec3::splat(0.001));
+        let scale = (o.visual_scale() * if xf.2 { world.hud_scale(idx) } else { 1.0 }).max(Vec3::splat(0.001));
         let rigged = matches!(geom_key, GeomKey::Mesh { id, .. } if self.meshes.meta(&id).is_some_and(|m| m.skin.is_some()));
         let skeleton_owner = rigged.then(|| Scene::skeleton_owner(world, idx)).flatten();
         let owner_xf = skeleton_owner.and_then(|(_, owner_idx)| self.transform(owner_idx));
@@ -364,7 +368,7 @@ impl SyncCtx<'_> {
         }
         // a sculpt keeps its texture held (the full sync acquires it again
         // after its faces were rebuilt)
-        if matches!(key, GeomKey::Sculpt { .. }) && o.volume.sculpt.is_some_and(|s| !g.tex_ids.contains(&s.texture)) {
+        if matches!(key, GeomKey::Sculpt { .. }) && o.visual_volume().sculpt.is_some_and(|s| !g.tex_ids.contains(&s.texture)) {
             return full();
         }
         let Some(GeomState::Ready(geom)) = self.geoms.get(&key).map(|e| &e.state) else {

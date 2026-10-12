@@ -18,6 +18,14 @@ struct Upload {
     data: Vec<u8>,
     started: Instant,
     transfer: Option<Transfer>,
+    import: Option<(Uuid, crate::inventory::upload::Request)>,
+}
+impl Upload {
+    fn asset_type(&self) -> i8 {
+        self.import
+            .as_ref()
+            .map_or(if self.kind < 4 { 13 } else { 5 }, |(_, request)| request.kind.asset_type() as i8)
+    }
 }
 
 struct Transfer {
@@ -43,6 +51,45 @@ fn packet(data: &[u8], chunk: usize, index: u32) -> Option<(u32, Vec<u8>)> {
 }
 
 impl Session<'_> {
+    pub(super) fn legacy_import(&mut self, request: Uuid, mut upload: crate::inventory::upload::Request) {
+        use crate::inventory::upload::{Error, Kind};
+        if !matches!(upload.kind, Kind::Texture | Kind::Sound | Kind::Animation) || self.inventory_uploads.assets.len() >= 8 {
+            emit(
+                self.sh,
+                NetEvent::AssetUploaded {
+                    request,
+                    result: Err(Error::Invalid),
+                },
+            );
+            return;
+        }
+        let transaction = Uuid::new_v4();
+        let mut key = [0u8; 32];
+        key[..16].copy_from_slice(transaction.as_bytes());
+        key[16..].copy_from_slice(self.login.secure_session_id.as_bytes());
+        let asset = Uuid::from_bytes(md5::compute(key).0);
+        let mut message = AssetUploadRequest::default();
+        message.asset_block.transaction_id = transaction;
+        message.asset_block.type_ = upload.kind.asset_type() as i8;
+        let data = std::mem::take(&mut upload.data);
+        if data.len() + 100 < 1200 {
+            message.asset_block.asset_data.clone_from(&data);
+        }
+        self.inventory_uploads.assets.insert(
+            asset,
+            Upload {
+                transaction,
+                parent: upload.folder,
+                kind: 255,
+                name: upload.name.clone(),
+                data,
+                started: Instant::now(),
+                transfer: None,
+                import: Some((request, upload)),
+            },
+        );
+        self.send_main(&message, true);
+    }
     pub(super) fn create_wearable(&mut self, parent: Uuid, kind: u8, name: String, data: Vec<u8>) {
         if kind >= 17 || data.is_empty() || data.len() > 64 * 1024 || self.inventory_uploads.assets.len() >= 8 {
             emit(
@@ -75,6 +122,7 @@ impl Session<'_> {
                 data,
                 started: Instant::now(),
                 transfer: None,
+                import: None,
             },
         );
         self.send_main(&m, true);
@@ -106,8 +154,8 @@ impl Session<'_> {
             let Some(upload) = self.inventory_uploads.assets.get_mut(&m.xfer_id.v_file_id) else {
                 return Ok(false);
             };
-            let asset_type = if upload.kind < 4 { 13 } else { 5 };
-            if m.xfer_id.v_file_type != asset_type || !field_str(&m.xfer_id.filename).is_empty() {
+            let asset_type = upload.asset_type();
+            if m.xfer_id.v_file_type != i16::from(asset_type) || !field_str(&m.xfer_id.filename).is_empty() {
                 return Ok(false);
             }
             upload.transfer = Some(Transfer {
@@ -148,6 +196,20 @@ impl Session<'_> {
             let Some(upload) = self.inventory_uploads.assets.remove(&m.asset_block.uuid) else {
                 return Ok(false);
             };
+            if let Some((request, metadata)) = upload.import {
+                if m.asset_block.success && m.asset_block.type_ == metadata.kind.asset_type() as i8 {
+                    self.legacy_asset_ready(request, metadata, upload.transaction, m.asset_block.uuid);
+                } else {
+                    emit(
+                        self.sh,
+                        NetEvent::AssetUploaded {
+                            request,
+                            result: Err(crate::inventory::upload::Error::Rejected),
+                        },
+                    );
+                }
+                return Ok(true);
+            }
             if !m.asset_block.success {
                 emit(
                     self.sh,
@@ -179,7 +241,17 @@ impl Session<'_> {
                 .iter()
                 .find_map(|(id, u)| u.transfer.as_ref().filter(|t| t.id == m.xfer_id.id).map(|_| *id));
             if let Some(asset) = asset {
-                self.inventory_uploads.assets.remove(&asset);
+                let removed = self.inventory_uploads.assets.remove(&asset);
+                if let Some((request, _)) = removed.and_then(|u| u.import) {
+                    emit(
+                        self.sh,
+                        NetEvent::AssetUploaded {
+                            request,
+                            result: Err(crate::inventory::upload::Error::Unknown),
+                        },
+                    );
+                    return Ok(true);
+                }
                 emit(
                     self.sh,
                     NetEvent::InventoryOperationFailed(
@@ -195,9 +267,14 @@ impl Session<'_> {
     pub(super) fn expire_inventory_uploads(&mut self) {
         let mut retry = Vec::new();
         let mut failed = false;
+        let mut imports = Vec::new();
         self.inventory_uploads.assets.retain(|id, u| {
             if u.started.elapsed() > Duration::from_secs(60) {
-                failed = true;
+                if let Some((request, _)) = &u.import {
+                    imports.push(*request);
+                } else {
+                    failed = true;
+                }
                 return false;
             }
             if let Some(t) = &mut u.transfer
@@ -205,7 +282,11 @@ impl Session<'_> {
                 && (t.packet as usize) * t.chunk < u.data.len()
             {
                 if t.retries >= 3 {
-                    failed = true;
+                    if let Some((request, _)) = &u.import {
+                        imports.push(*request);
+                    } else {
+                        failed = true;
+                    }
                     return false;
                 }
                 t.retries += 1;
@@ -216,6 +297,15 @@ impl Session<'_> {
         });
         for asset in retry {
             self.send_inventory_packet(asset);
+        }
+        for request in imports {
+            emit(
+                self.sh,
+                NetEvent::AssetUploaded {
+                    request,
+                    result: Err(crate::inventory::upload::Error::Unknown),
+                },
+            );
         }
         if failed {
             emit(

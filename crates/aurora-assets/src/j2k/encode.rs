@@ -2,10 +2,10 @@
 //! OpenJPEG instances and output buffers belong to one encoding thread.
 
 use super::*;
-const MAX_OUTPUT: usize = 2 * 1024 * 1024;
 struct Writer {
     data: Vec<u8>,
     position: usize,
+    maximum: usize,
 }
 
 unsafe extern "C" fn write(buffer: *mut c_void, size: usize, user: *mut c_void) -> usize {
@@ -14,7 +14,7 @@ unsafe extern "C" fn write(buffer: *mut c_void, size: usize, user: *mut c_void) 
     }
     // SAFETY: OpenJPEG calls synchronously with our live Writer and readable buffer.
     let writer = unsafe { &mut *user.cast::<Writer>() };
-    let Some(end) = writer.position.checked_add(size).filter(|end| *end <= MAX_OUTPUT) else {
+    let Some(end) = writer.position.checked_add(size).filter(|end| *end <= writer.maximum) else {
         return usize::MAX;
     };
     if end > writer.data.len() {
@@ -33,11 +33,11 @@ unsafe extern "C" fn seek(offset: i64, user: *mut c_void) -> opj::OPJ_BOOL {
     let Ok(position) = usize::try_from(offset) else {
         return 0;
     };
-    if position > MAX_OUTPUT {
-        return 0;
-    }
     // SAFETY: the stream holds the Writer alive until compression ends.
     let writer = unsafe { &mut *user.cast::<Writer>() };
+    if position > writer.maximum {
+        return 0;
+    }
     writer.position = position;
     if position > writer.data.len() {
         writer.data.resize(position, 0);
@@ -67,17 +67,54 @@ pub fn encode_thumbnail_j2k(width: u32, height: u32, components: u8, data: &[u8]
     {
         return Err(AssetError::invalid("invalid thumbnail dimensions or pixels"));
     }
+    encode(width, height, components, data, true, 2 * 1024 * 1024)
+}
+
+/// LLImageJ2COJ::encodeImpl: reversible for small uploads, otherwise
+/// progressive quality layers with an 8:1 final compression ratio.
+/// Pixels are top-to-bottom, like the decoder; the upload caller flips rows
+/// to Second Life's bottom-to-top convention before encoding.
+pub fn encode_texture_j2k(width: u32, height: u32, components: u8, data: &[u8], lossless: bool) -> Result<Vec<u8>, AssetError> {
+    encode(width, height, components, data, lossless, 32 * 1024 * 1024)
+}
+fn encode(width: u32, height: u32, components: u8, data: &[u8], lossless: bool, maximum: usize) -> Result<Vec<u8>, AssetError> {
+    if !(4..=2048).contains(&width)
+        || !(4..=2048).contains(&height)
+        || !width.is_power_of_two()
+        || !height.is_power_of_two()
+        || !matches!(components, 3 | 4)
+        || data.len() != width as usize * height as usize * components as usize
+    {
+        return Err(AssetError::invalid("invalid texture dimensions or pixels"));
+    }
     // SAFETY: sizes are bounded above, every allocation is checked, guards
     // release each native object once, callbacks borrow the live local Writer.
     unsafe {
         let mut params: opj::opj_cparameters_t = std::mem::zeroed();
         opj::opj_set_default_encoder_parameters(&mut params);
-        params.tcp_numlayers = 1;
-        params.tcp_rates[0] = 0.0;
+        let layers = if lossless {
+            1
+        } else {
+            match width * height {
+                0..=1024 => 2,
+                1025..=16384 => 3,
+                16385..=262144 => 4,
+                262145..=1048576 => 5,
+                _ => 6,
+            }
+        };
+        params.tcp_numlayers = layers;
+        for i in 0..layers {
+            params.tcp_rates[i as usize] = if lossless {
+                0.0
+            } else {
+                8.0 * (1u32 << ((layers - i - 1) * 2)) as f32
+            };
+        }
         params.cp_disto_alloc = 1;
-        params.irreversible = 0;
+        params.irreversible = i32::from(!lossless);
         params.tcp_mct = 1;
-        params.numresolution = params.numresolution.min(1 + width.ilog2() as i32);
+        params.numresolution = params.numresolution.min(1 + width.min(height).ilog2() as i32);
         let mut planes: Vec<opj::opj_image_cmptparm_t> = (0..components)
             .map(|_| {
                 let mut p: opj::opj_image_cmptparm_t = std::mem::zeroed();
@@ -119,6 +156,7 @@ pub fn encode_thumbnail_j2k(width: u32, height: u32, components: u8, data: &[u8]
         let mut writer = Writer {
             data: Vec::new(),
             position: 0,
+            maximum,
         };
         // Destroy the stream before its borrowed writer goes out of scope.
         let stream = StreamGuard(opj::opj_stream_create(1 << 16, 0));
@@ -133,7 +171,7 @@ pub fn encode_thumbnail_j2k(width: u32, height: u32, components: u8, data: &[u8]
             || opj::opj_encode(codec.0, stream.0) == 0
             || opj::opj_end_compress(codec.0, stream.0) == 0
         {
-            return Err(AssetError::J2k("thumbnail encoding failed"));
+            return Err(AssetError::J2k("image encoding failed"));
         }
         drop(stream);
         Ok(writer.data)

@@ -89,7 +89,26 @@ impl MeshStreamer {
         })
     }
 
-    /// In-memory mesh metadata for offline geometry fixtures; no asset fetch.
+    /// In-memory meshes for local previews and offline fixtures; no asset fetch.
+    pub fn insert_local(&mut self, id: Uuid, data: Arc<Vec<u8>>, header: MeshHeader, skin: Option<Arc<SkinInfo>>) {
+        self.entries.insert(
+            id,
+            MeshEntry {
+                data: Some(data),
+                header: Some(header),
+                skin,
+                state: 3,
+                ..Default::default()
+            },
+        );
+        self.meta_generation += 1;
+    }
+    pub fn remove_local(&mut self, id: &Uuid) {
+        if self.entries.remove(id).is_some() {
+            self.meta_generation += 1;
+        }
+    }
+
     pub fn insert_demo_skin(&mut self, id: Uuid, skin: SkinInfo) {
         self.meta_generation += 1;
         self.entries.insert(
@@ -504,6 +523,12 @@ impl MaterialStreamer {
     }
 
     /// The material if it is loaded, without requesting it (diagnostics).
+    pub fn remove_local(&mut self, id: &Uuid) {
+        if self.entries.remove(id).is_some() {
+            self.generation += 1;
+        }
+    }
+
     pub fn peek(&self, id: &Uuid) -> Option<Arc<PbrMaterial>> {
         self.entries.get(id).and_then(|e| e.material.clone())
     }
