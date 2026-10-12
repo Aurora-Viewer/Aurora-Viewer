@@ -79,6 +79,8 @@ Sources : `llfloaternamedesc.cpp`, `llaudio/llvorbisencode.cpp`,
   caméra, rechargement du fichier, statistiques et erreurs de parsing.
   Cliquer une animation dans la liste relance sa lecture depuis le début,
   y compris si elle avait déjà été jouée ou arrêtée.
+  « Jouer aussi sur mon avatar » est commun à toutes les animations et
+  mémorisé dans les réglages du viewer, activé ou désactivé.
   La pause et le curseur pilotent également l’aperçu sur notre avatar ;
   les fins de ces mouvements locaux ne produisent aucun arrêt réseau.
 - Imports par lot : `.anim` acceptés, BVH exclus comme Firestorm.
@@ -128,6 +130,15 @@ Sources : `llmaterialeditor.cpp`, `panel_gltf_material.xml`,
   leur taille au survol et lors d’un changement de sélection.
 - Génération de LOD : méthodes, triangles, erreur et normales lissées ;
   valeurs et presets de la fenêtre de référence.
+  Le mode triangles utilise un seuil interne de 100 % comme Firestorm ;
+  le seuil d’erreur enregistré ne s’applique qu’au mode erreur. AUTO réduit
+  progressivement les raccords de normales et d’UV, puis utilise la méthode
+  rapide si nécessaire, comme Firestorm lorsque le budget est dépassé de
+  plus de 80 %. Les faces gardent leur emplacement de matériau.
+  Le choix
+  « Fichier » ouvre le sélecteur avant de modifier une source sans fichier ;
+  annuler conserve l’ancien LOD. Charger un fichier valide ou changer
+  de niveau débloque un aperçu ayant échoué, sans accepter de résultat ancien.
 - Palettes glTF : articulations reconnues, joints pondérés prioritaires puis
   joints inutilisés des groupes actifs, limite de 110 comme la référence.
 - Physique : fichier/LOD/préréglage, analyse convexe, simplification,
@@ -188,7 +199,7 @@ des accusés après annulation. Prix, permissions, inventaire créé et rendu de
 assets importés doivent encore être vérifiés par l’humain sur grille.
 Aucun import réel n’a été validé sur une grille.
 
-Vérifications locales : `check.ps1` vert, 1 197 tests réussis, 17 ignorés,
+Vérifications locales : `check.ps1` vert, 1 203 tests réussis, 17 ignorés,
 Clippy sans avertissement. Profilage de la scène démo : moyenne CPU de
 l’interface sur les trois dernières périodes, 0,37 ms sans la fenêtre puis
 0,57 ms avec l’aperçu PBR (0,51 ms animation, 0,51 ms mesh local). Les

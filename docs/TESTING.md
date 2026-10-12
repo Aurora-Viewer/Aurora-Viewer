@@ -583,7 +583,7 @@ grille.
 
 ### Détails
 
-- **`AURORA_DEMO_IMPORTS=texture|destination|material|mesh|mesh-physics|mesh-degenerate|mesh-options|animation|animation-own|sound|bulk|bulk-upload|local|local-mesh|local-mesh-applied`** :
+- **`AURORA_DEMO_IMPORTS=texture|destination|material|mesh|mesh-low|mesh-physics|mesh-degenerate|mesh-options|animation|animation-own|sound|bulk|bulk-upload|local|local-mesh|local-mesh-applied`** :
   écrit des fichiers propres à ce lancement dans `.scratch/import-demo/<uuid>/`
   puis ouvre le parcours choisi : image RGBA, matériau PBR, cube Collada,
   animations BVH / `.anim` et son WAV synthétique. Vérifier les paramètres, les
@@ -595,6 +595,11 @@ grille.
   Pour le mesh, l’aperçu se trouve à droite du nom, de la description et de
   la destination ; les sections LOD, Collisions et Import se trouvent dessous.
   Le niveau Haut est affiché par défaut ; cliquer un nom de LOD change l’aperçu.
+  `mesh-low` affiche Très bas pour comparer réellement les géométries et
+  leurs compteurs. Choisir « Fichier » pour un LOD généré doit ouvrir le
+  sélecteur ; annuler conserve le LOD, choisir un fichier valide relance
+  l’aperçu même après une erreur précédente. L’option d’aperçu sur notre
+  avatar reste identique en changeant d’animation et après redémarrage.
   `mesh-options` ouvre la troisième section (taille, textures, squelette,
   association des fichiers). Dans la liste des animations, cliquer un fichier
   lance sa lecture, même si on avait déjà joué cette animation.

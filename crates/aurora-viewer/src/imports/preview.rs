@@ -591,3 +591,28 @@ impl Imports {
         });
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preview_uses_the_selected_prepared_lod_geometry() {
+        let mut draft = crate::imports::tests::mesh_fixture();
+        draft.prepared = Some(Arc::new(super::super::mesh::prepare(&draft).expect("LODs")));
+        let avatars = crate::scene::avatar::AvatarLibrary::load();
+        let mut counts = Vec::new();
+        for level in (0..4).rev() {
+            draft.preview_lod = level;
+            let expected = draft.prepared.as_ref().expect("prepared").lods[0][level]
+                .as_ref()
+                .expect("LOD")
+                .triangles();
+            let model = build(&Source::Mesh(Box::new(draft.clone())), 0, Default::default(), &avatars).expect("preview");
+            let count = model.parts.iter().map(|part| part.indices.len() / 3).sum::<usize>();
+            assert_eq!(count, expected);
+            counts.push(count);
+        }
+        assert!(counts[1..].iter().all(|count| *count < counts[0]));
+    }
+}

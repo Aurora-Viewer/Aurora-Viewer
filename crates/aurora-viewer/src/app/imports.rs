@@ -92,6 +92,10 @@ impl App {
                 engine.play_world(SOUND_PREVIEW, aurora_audio::Channel::Ui, &clip, false, (1.0, 1.0));
             }
         }
+        // Seed the scripted preview before tracking user preference changes.
+        if self.demo && self.imports.demo_mode == "animation-own" && !self.imports.demo_animation_positioned {
+            self.settings.imports.preview_on_avatar = true;
+        }
         let before = self.settings.imports.clone();
         if self.imports.open {
             if let Some(id) = self.imports.active.filter(|id| {
@@ -111,7 +115,6 @@ impl App {
                     {
                         entry.player.seek(0.75);
                         entry.player.playing = false;
-                        entry.preview_on_avatar = true;
                         self.imports.demo_animation_positioned = true;
                     }
                     entry.player.tick(entry.id, &self.scene.avatar_lib.rig, &mut self.scene.anims);
@@ -447,7 +450,7 @@ impl App {
             .find(|e| {
                 self.imports.open
                     && self.imports.active == Some(e.id)
-                    && e.preview_on_avatar
+                    && self.settings.imports.preview_on_avatar
                     && e.player.request.is_some()
                     && e.player.request == self.imports.play_request
             })

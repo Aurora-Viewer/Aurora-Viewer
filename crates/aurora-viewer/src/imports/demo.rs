@@ -5,7 +5,7 @@ use super::*;
 use std::path::Path;
 
 const BVH: &[u8] = b"HIERARCHY ROOT hip { OFFSET 0 0 0 CHANNELS 6 Xposition Yposition Zposition Zrotation Xrotation Yrotation End Site { OFFSET 0 1 0 } } MOTION Frames: 6 Frame Time: 0.5 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 15 0 0 0 0 0 -15 0 0 0 0 0 15 0 0 0 0 0 0 0 0";
-const DAE: &str = r##"<COLLADA><asset><unit meter="1"/><up_axis>Z_UP</up_axis></asset>
+pub(super) const DAE: &str = r##"<COLLADA><asset><unit meter="1"/><up_axis>Z_UP</up_axis></asset>
 <library_geometries><geometry id="cube" name="Cube"><mesh>
 <source id="positions"><float_array count="24">-0.5 -0.5 -0.5 0.5 -0.5 -0.5 0.5 0.5 -0.5 -0.5 0.5 -0.5 -0.5 -0.5 0.5 0.5 -0.5 0.5 0.5 0.5 0.5 -0.5 0.5 0.5</float_array><technique_common><accessor count="8" stride="3"/></technique_common></source>
 <vertices id="vertices"><input semantic="POSITION" source="#positions"/></vertices>
@@ -69,7 +69,7 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
     imports.choice = match mode.as_str() {
         "texture" | "destination" => Choice::Texture,
         "material" => Choice::Material,
-        "mesh" | "mesh-physics" | "mesh-degenerate" | "mesh-options" => Choice::Mesh,
+        "mesh" | "mesh-low" | "mesh-physics" | "mesh-degenerate" | "mesh-options" => Choice::Mesh,
         "animation" | "animation-own" => Choice::Animation,
         "sound" => Choice::Sound,
         "local" | "local-mesh" | "local-mesh-applied" => Choice::Local,
@@ -116,6 +116,13 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
                 for (path, loader) in paths {
                     match files::load(&path, loader, prefs.texture(), 30, &prefs, choice == Choice::Local) {
                         Ok(mut loaded) => {
+                            if mode == "mesh-low" {
+                                for entry in &mut loaded {
+                                    if let Some(Source::Mesh(draft)) = &mut entry.source {
+                                        draft.preview_lod = 0;
+                                    }
+                                }
+                            }
                             if matches!(mode.as_str(), "mesh-physics" | "mesh-degenerate") {
                                 for entry in &mut loaded {
                                     if let Some(Source::Mesh(draft)) = &mut entry.source {

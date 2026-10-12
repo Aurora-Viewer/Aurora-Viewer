@@ -40,10 +40,7 @@ pub(super) fn show(
     });
     ui.add_space(8.0);
     let Some(Source::Mesh(draft)) = &mut entry.source else { return };
-    if mesh_controls(ui, p, entry.id, draft, actions) {
-        entry.preview_generation += 1;
-        entry.model = None;
-    }
+    let changed = mesh_controls(ui, p, entry.id, draft, actions);
     let section = ui
         .ctx()
         .data_mut(|data| data.get_temp::<usize>(egui::Id::new(("mesh_section", entry.id))))
@@ -51,19 +48,19 @@ pub(super) fn show(
     if section == 2 {
         load_settings(ui, p, prefs);
     }
-    if old_preview
-        != (
-            draft.preview_lod,
-            draft.preview_physics,
-            draft.show_textures,
-            draft.preview_weights,
-            draft.show_joints,
-            draft.show_overrides,
-            draft.explode,
-        )
+    if changed
+        || old_preview
+            != (
+                draft.preview_lod,
+                draft.preview_physics,
+                draft.show_textures,
+                draft.preview_weights,
+                draft.show_joints,
+                draft.show_overrides,
+                draft.explode,
+            )
     {
-        entry.preview_generation += 1;
-        entry.model = None;
+        entry.invalidate_preview();
     }
 }
 
@@ -254,12 +251,12 @@ fn mesh_controls(ui: &mut egui::Ui, p: &Palette, id: Uuid, draft: &mut mesh::Dra
                                 {
                                     draft.preview_lod = level;
                                 }
-                                let before = lod.source;
+                                let mut source = lod.source;
                                 egui::ComboBox::from_id_salt("source")
                                     .width(180.0)
                                     .selected_text(lod_source(lod.source))
                                     .show_ui(ui, |ui| {
-                                        for source in [
+                                        for choice in [
                                             mesh::LodSource::File,
                                             mesh::LodSource::Auto,
                                             mesh::LodSource::Combine,
@@ -267,14 +264,22 @@ fn mesh_controls(ui: &mut egui::Ui, p: &Palette, id: Uuid, draft: &mut mesh::Dra
                                             mesh::LodSource::Reliable,
                                             mesh::LodSource::Above,
                                         ] {
-                                            if level < 3 || source != mesh::LodSource::Above {
-                                                selection(ui, &mut lod.source, source, lod_source(source));
+                                            if level < 3 || choice != mesh::LodSource::Above {
+                                                selection(ui, &mut source, choice, lod_source(choice));
                                             }
                                         }
                                     })
                                     .response
                                     .on_hover_text(aurora_i18n::tr!("import-source"));
-                                changed |= before != lod.source;
+                                if source != lod.source {
+                                    if source == mesh::LodSource::File && level < 3 && lod.file.is_none() {
+                                        // Commit file mode only after the picker returns a decoded model.
+                                        actions.push(Action::MeshFile(id, level));
+                                    } else {
+                                        lod.source = source;
+                                        changed = true;
+                                    }
+                                }
                                 if lod.source == mesh::LodSource::File {
                                     if flat_button(ui, p, aurora_i18n::tr!("import-browse")).clicked() {
                                         actions.push(Action::MeshFile(id, level));
@@ -507,4 +512,113 @@ fn load_settings(ui: &mut egui::Ui, p: &Palette, prefs: &mut Preferences) {
         ui.label(aurora_i18n::tr!("import-user-physics"));
         ui.add(egui::TextEdit::singleline(&mut prefs.mesh_physics_preset).desired_width(ui.available_width()));
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn text_position(output: &egui::FullOutput, label: &str, last: bool) -> egui::Pos2 {
+        let positions: Vec<_> = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) if text.galley.text() == label => Some(text.pos + text.galley.size() * 0.5),
+                _ => None,
+            })
+            .collect();
+        if last {
+            *positions.last().expect("text visible")
+        } else {
+            positions[0]
+        }
+    }
+
+    #[test]
+    fn picking_file_mode_waits_for_a_file_and_lod_clicks_clear_a_failed_preview() {
+        let ctx = egui::Context::default();
+        let theme = crate::theme::Theme::default();
+        theme.apply(&ctx, 1.0);
+        let mut entry = Entry::new(
+            "mesh.dae".into(),
+            Ok(Source::Mesh(Box::new(crate::imports::tests::mesh_fixture()))),
+            Default::default(),
+        );
+        let mut prefs = Preferences::default();
+        let mut frame = |events, entry: &mut Entry| {
+            let mut actions = Vec::new();
+            let output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1280.0, 900.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    ui.set_width(1000.0);
+                    show(ui, &theme.palette(), entry, &mut prefs, &mut actions, |_, _| {});
+                },
+            );
+            (output, actions)
+        };
+        let events = |pos, pressed| {
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]
+        };
+        let mut output = None;
+        for _ in 0..3 {
+            output = Some(frame(Vec::new(), &mut entry).0);
+        }
+        let source = text_position(output.as_ref().expect("frame"), aurora_i18n::tr!("import-lod-auto"), false);
+        for pressed in [true, false] {
+            output = Some(frame(events(source, pressed), &mut entry).0);
+        }
+        for _ in 0..3 {
+            output = Some(frame(Vec::new(), &mut entry).0);
+        }
+        let file = text_position(output.as_ref().expect("popup"), aurora_i18n::tr!("import-source-file"), true);
+        let mut actions = Vec::new();
+        for pressed in [true, false] {
+            actions.extend(frame(events(file, pressed), &mut entry).1);
+        }
+        assert!(
+            matches!(actions.as_slice(), [Action::MeshFile(id, 2)] if *id == entry.id),
+            "file actions: {:?}",
+            actions
+                .iter()
+                .map(|action| match action {
+                    Action::MeshFile(_, level) => *level as i32,
+                    _ => -1,
+                })
+                .collect::<Vec<_>>()
+        );
+        let Some(Source::Mesh(draft)) = &entry.source else { panic!("mesh") };
+        assert!(
+            draft.lods[2].source == mesh::LodSource::Auto,
+            "cancelled file picker keeps the working source"
+        );
+        assert_eq!(entry.preview_generation, 0);
+        assert!(entry.preview_error.is_none());
+
+        output = Some(frame(Vec::new(), &mut entry).0);
+        let low = text_position(
+            output.as_ref().expect("frame"),
+            &aurora_i18n::tr!("import-lod-level", level = lod_label(1)),
+            false,
+        );
+        entry.preview_error = Some("previous preparation failure".into());
+        for pressed in [true, false] {
+            assert!(frame(events(low, pressed), &mut entry).1.is_empty());
+        }
+        let Some(Source::Mesh(draft)) = &entry.source else { panic!("mesh") };
+        assert_eq!(draft.preview_lod, 1);
+        assert_eq!(entry.preview_generation, 1);
+        assert!(entry.preview_error.is_none(), "new preview selection can retry after an error");
+    }
 }

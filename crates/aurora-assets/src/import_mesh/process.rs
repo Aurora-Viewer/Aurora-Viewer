@@ -1,6 +1,6 @@
 //! Worker-side LOD reduction, normal generation and convex physics.
 //! meshoptimizer replaces the legacy GLOD machinery; the visible choices
-//! still control target triangles/error and preserve UV/face boundaries.
+//! still control target triangles/error and preserve material slots.
 
 use super::*;
 use parry3d::{math::Vector, transformation::try_convex_hull};
@@ -86,11 +86,71 @@ pub fn lod(model: &Model, options: LodOptions, cancel: &AtomicBool) -> Result<Mo
             return Err(AssetError::invalid("cancelled"));
         }
         let target = options.triangles.saturating_mul(3).min(indices.len());
-        let output = if target == 0 && !options.error_only {
+        let mut output = if target == 0 && !options.error_only {
             Vec::new()
         } else {
             meshopt::simplify_decoder(&indices, &vertices, target, options.error, meshopt::SimplifyOptions::None, None)
         };
+        // Port of LLModelPreview::genMeshOptimizerLODs (llmodelpreview.cpp,
+        // LGPL 2.1): AUTO progressively welds normal/UV seams
+        // when precise simplification misses the triangle budget by > 1.8x.
+        // Keep each material's vertex range separate so no face changes slots.
+        if !options.error_only && target > 0 {
+            for attributes in [2, 1, 0] {
+                if output.len() as f64 <= target as f64 * 1.8 {
+                    break;
+                }
+                if cancel.load(Ordering::Relaxed) {
+                    return Err(AssetError::invalid("cancelled"));
+                }
+                let mut shadow = Vec::with_capacity(indices.len());
+                for (face, (start, _)) in model.faces.iter().zip(&ranges) {
+                    let mut welded = std::collections::HashMap::new();
+                    for index in &face.indices {
+                        let vertex = &face.vertices[*index as usize];
+                        let bits = |value: f32| if value == 0.0 { 0 } else { value.to_bits() };
+                        let mut key = [0; 8];
+                        key[..3].copy_from_slice(&vertex.position.map(bits));
+                        if attributes == 2 {
+                            key[3..6].copy_from_slice(&vertex.normal.map(bits));
+                        }
+                        if attributes > 0 {
+                            key[6..].copy_from_slice(&vertex.uv.map(bits));
+                        }
+                        let key = (key, vertex.joints, vertex.weights.map(bits));
+                        let representative = *welded.entry(key).or_insert(*start + *index);
+                        shadow.push(representative);
+                    }
+                }
+                let candidate = meshopt::simplify_decoder(&shadow, &vertices, target, options.error, meshopt::SimplifyOptions::None, None);
+                if !candidate.is_empty() && candidate.len() < output.len() {
+                    output = candidate;
+                }
+            }
+            if output.len() as f64 > target as f64 * 1.8 {
+                let mut candidate = Vec::new();
+                for (face, (start, _)) in model.faces.iter().zip(&ranges) {
+                    if cancel.load(Ordering::Relaxed) {
+                        return Err(AssetError::invalid("cancelled"));
+                    }
+                    if face.indices.is_empty() {
+                        continue;
+                    }
+                    let budget = (face.indices.len() / 3 * options.triangles / source_triangles).max(1) * 3;
+                    let reduced = meshopt::simplify_sloppy_decoder(
+                        &face.indices,
+                        &face.vertices,
+                        budget.min(face.indices.len()),
+                        options.error,
+                        None,
+                    );
+                    candidate.extend(reduced.iter().map(|index| *start + *index));
+                }
+                if !candidate.is_empty() && candidate.len() < output.len() {
+                    output = candidate;
+                }
+            }
+        }
         for face in &mut reduced.faces {
             face.indices.clear();
         }

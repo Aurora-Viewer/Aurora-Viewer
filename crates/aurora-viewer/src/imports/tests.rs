@@ -1,5 +1,87 @@
 use super::*;
 
+pub(super) fn mesh_fixture() -> mesh::Draft {
+    let skeleton = aurora_assets::Skeleton::parse(include_bytes!("../../assets/character/avatar_skeleton.xml")).expect("skeleton");
+    let scene = aurora_assets::import_mesh::collada::parse(demo::DAE.as_bytes(), &skeleton).expect("synthetic mesh");
+    mesh::Draft::new(scene, HashMap::new())
+}
+
+#[test]
+fn avatar_preview_preference_round_trips_on_and_off_and_defaults_off() {
+    assert!(!serde_json::from_str::<Preferences>("{}").expect("old settings").preview_on_avatar);
+    for enabled in [true, false] {
+        let prefs = Preferences {
+            preview_on_avatar: enabled,
+            ..Default::default()
+        };
+        let stored = serde_json::to_vec(&prefs).expect("save");
+        assert_eq!(
+            serde_json::from_slice::<Preferences>(&stored).expect("reload").preview_on_avatar,
+            enabled
+        );
+    }
+}
+
+#[test]
+fn triangle_budget_ignores_the_inactive_error_threshold_and_reduces_lods() {
+    let mut draft = mesh_fixture();
+    for lod in &mut draft.lods[..3] {
+        lod.error = 0.0;
+    }
+    let prepared = mesh::prepare(&draft).expect("prepare");
+    let high = prepared.lods[0][3].as_ref().expect("high").triangles();
+    assert_eq!(high, 12);
+    for lod in &prepared.lods[0][..3] {
+        assert!(
+            lod.as_ref().expect("generated LOD").triangles() < high,
+            "triangle mode must reduce this closed model even with a saved zero error threshold"
+        );
+    }
+    draft.lods[2].error_mode = true;
+    let by_error = mesh::prepare(&draft).expect("error mode");
+    assert_eq!(by_error.lods[0][2].as_ref().expect("medium").triangles(), high);
+}
+
+#[test]
+fn loading_a_valid_lod_recovers_from_a_previous_preview_failure_and_ignores_stale_errors() {
+    let mut draft = mesh_fixture();
+    draft.lods[2].source = mesh::LodSource::File;
+    let replacement = draft.scene.clone();
+    let mut entry = Entry::new("base.dae".into(), Ok(Source::Mesh(Box::new(draft))), Default::default());
+    let error = "invalid asset data: LOD file missing".to_owned();
+    entry.preview_error = Some(error.clone());
+    let id = entry.id;
+    let mut imports = Imports {
+        entries: vec![entry],
+        message: error.clone(),
+        ..Default::default()
+    };
+    imports
+        .tx
+        .send(Worker::MeshFile(id, 2, Ok((replacement, HashMap::new(), "replacement.dae".into()))))
+        .expect("file result");
+    imports.tx.send(Worker::PreviewFailed(id, 0, error)).expect("stale result");
+    let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    let (jobs, _results) = crate::scene::jobs::Jobs::new();
+    assert!(
+        imports
+            .poll(
+                &egui::Context::default(),
+                &jobs,
+                &world,
+                &crate::ui::inventory::InventoryPreferences::default()
+            )
+            .is_empty()
+    );
+    let entry = &imports.entries[0];
+    assert!(entry.preview_error.is_none());
+    assert!(imports.message.is_empty());
+    assert_eq!(entry.preview_generation, 1);
+    let Some(Source::Mesh(draft)) = &entry.source else { panic!("mesh") };
+    assert!(draft.lods[2].file.is_some());
+    assert!(mesh::prepare(draft).is_ok());
+}
+
 fn prices() -> Prices {
     Prices {
         texture: Some(10),

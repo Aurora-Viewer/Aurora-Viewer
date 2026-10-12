@@ -105,6 +105,99 @@ fn cube() -> Model {
 }
 
 #[test]
+fn automatic_lods_reduce_disconnected_seams_without_mixing_materials_or_mutating_the_source() {
+    let mut source = cube();
+    let face = &mut source.faces[0];
+    let prototype = face.vertices[0].clone();
+    face.vertices = (0..=10)
+        .flat_map(|y| {
+            let prototype = prototype.clone();
+            (0..=10).map(move |x| Vertex {
+                position: [x as f32 / 10.0, y as f32 / 10.0, 0.0],
+                ..prototype.clone()
+            })
+        })
+        .collect();
+    face.indices = (0..10)
+        .flat_map(|y| {
+            (0..10).flat_map(move |x| {
+                let i = y * 11 + x;
+                [i, i + 1, i + 11, i + 1, i + 12, i + 11]
+            })
+        })
+        .collect();
+    let mut second = source.faces[0].clone();
+    second.material = 1;
+    for vertex in &mut second.vertices {
+        vertex.position[0] += 2.0;
+    }
+    source.faces.push(second);
+    for face in &mut source.faces {
+        face.vertices = face
+            .indices
+            .iter()
+            .enumerate()
+            .map(|(corner, index)| {
+                let mut vertex = face.vertices[*index as usize].clone();
+                vertex.uv = [corner as f32 / 600.0, face.material as f32];
+                vertex
+            })
+            .collect();
+        face.indices = (0..face.vertices.len() as u32).collect();
+    }
+    let options = process::LodOptions {
+        triangles: 100,
+        error: 1.0,
+        method: process::Method::Auto,
+        crease_angle: None,
+        error_only: false,
+    };
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    let precise = process::lod(
+        &source,
+        process::LodOptions {
+            method: process::Method::Precise,
+            ..options
+        },
+        &cancel,
+    )
+    .expect("precise LOD");
+    assert!(
+        precise.triangles() > 180,
+        "fragmented seams prevent precise reduction from reaching the budget"
+    );
+    let lod = process::lod(&source, options, &cancel).expect("automatic LOD");
+    assert!(
+        lod.triangles() > 0 && lod.triangles() <= 180,
+        "AUTO should reach the reference's 1.8x budget tolerance: {} triangles",
+        lod.triangles()
+    );
+    for (face, original) in lod.faces.iter().zip(&source.faces) {
+        face.validate().expect("valid reduced face");
+        assert_eq!(face.material, original.material);
+        for vertex in &face.vertices {
+            assert!(original.vertices.iter().any(|v| v.position == vertex.position && v.uv == vertex.uv));
+        }
+    }
+    assert_eq!(source.triangles(), 400);
+    assert!(source.faces.iter().all(|face| face.vertices.len() == 600));
+    let error_lod = process::lod(
+        &source,
+        process::LodOptions {
+            error_only: true,
+            error: 0.0,
+            ..options
+        },
+        &cancel,
+    )
+    .expect("zero error LOD");
+    assert!(
+        error_lod.triangles() > 180,
+        "error mode must retain the explicit threshold without welding away seams"
+    );
+}
+
+#[test]
 fn convex_physics_is_bounded_and_cancelled_processing_preserves_the_source() {
     let source = cube();
     let hull = process::base_hull(&source).expect("hull");

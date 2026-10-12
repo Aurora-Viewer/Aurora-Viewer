@@ -346,7 +346,9 @@ pub fn prepare(draft: &Draft) -> Result<Prepared, AssetError> {
                             } else {
                                 high.triangles() * spec.triangles / total
                             },
-                            error: spec.error,
+                            // Firestorm uses 100% error in triangle-budget mode;
+                            // the saved error threshold applies only to error mode.
+                            error: if spec.error_mode { spec.error } else { 1.0 },
                             method: match method {
                                 LodSource::Auto => process::Method::Auto,
                                 LodSource::Reliable => process::Method::Reliable,

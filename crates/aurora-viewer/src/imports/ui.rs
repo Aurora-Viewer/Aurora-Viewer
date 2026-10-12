@@ -243,6 +243,14 @@ pub fn show(
             }
         });
         ui.separator();
+        if imports.choice == Choice::Animation
+            || imports
+                .active
+                .and_then(|id| imports.entries.iter().find(|entry| entry.id == id))
+                .is_some_and(|entry| matches!(entry.source, Some(Source::Animation { .. })))
+        {
+            checkbox(ui, p, &mut prefs.preview_on_avatar, aurora_i18n::tr!("import-preview-own-avatar"));
+        }
         if imports.choice == Choice::Local {
             ui.horizontal_wrapped(|ui| {
                 checkbox(ui, p, &mut prefs.local_meshes, aurora_i18n::tr!("import-local-mesh-files"));
@@ -363,6 +371,8 @@ pub fn show(
                                     prefs.preview_degenerate_edges.unwrap_or_else(|| palette_color(p.warn)),
                                 ];
                                 let metadata = (entry.name.clone(), entry.description.clone(), entry.folder);
+                                let preview_generation = entry.preview_generation;
+                                let preview_error = entry.preview_error.clone();
                                 if entry.local {
                                     checkbox(ui, p, &mut entry.local_live, aurora_i18n::tr!("import-local-live"));
                                 }
@@ -440,12 +450,6 @@ pub fn show(
                                             }
                                             Source::Animation { animation, bvh, .. } => {
                                                 let old_base = entry.player.base;
-                                                checkbox(
-                                                    ui,
-                                                    p,
-                                                    &mut entry.preview_on_avatar,
-                                                    aurora_i18n::tr!("import-preview-own-avatar"),
-                                                );
                                                 let bases = [
                                                     aurora_i18n::tr!("import-base-standing"),
                                                     aurora_i18n::tr!("import-base-walking"),
@@ -552,6 +556,13 @@ pub fn show(
                                         draft.invalidate_quote();
                                     }
                                     entry.preview_generation += 1;
+                                }
+                                if entry.preview_generation != preview_generation
+                                    && let Some(error) = preview_error
+                                    && imports.message == error
+                                    && entry.preview_error.is_none()
+                                {
+                                    imports.message.clear();
                                 }
                                 if !matches!(entry.source, Some(Source::Sound(_) | Source::Mesh(_))) {
                                     preview_colors(ui, p, prefs);

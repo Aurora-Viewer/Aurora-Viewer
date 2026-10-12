@@ -83,6 +83,7 @@ pub struct Preferences {
     pub share_group: bool,
     pub everyone_copy: bool,
     pub show_payment: bool,
+    pub preview_on_avatar: bool,
     pub mesh_auto_weights: bool,
     pub mesh_auto_preview_weights: bool,
     pub mesh_reliable_default: bool,
@@ -111,6 +112,7 @@ impl Default for Preferences {
             share_group: false,
             everyone_copy: false,
             show_payment: true,
+            preview_on_avatar: false,
             mesh_auto_weights: true,
             mesh_auto_preview_weights: true,
             mesh_reliable_default: false,
@@ -275,7 +277,6 @@ pub struct Entry {
     pub view: aurora_render::preview::View,
     pub texture_target: usize,
     pub player: animation::Player,
-    pub preview_on_avatar: bool,
     pub local: bool,
     pub local_pending: bool,
     pub local_published: bool,
@@ -301,6 +302,12 @@ pub enum Status {
     Cancelled,
 }
 impl Entry {
+    pub fn invalidate_preview(&mut self) -> Option<String> {
+        self.preview_generation += 1;
+        self.model = None;
+        self.preview_error.take()
+    }
+
     pub fn new(path: PathBuf, source: Result<Source, String>, options: import_texture::Options) -> Self {
         let (source, status) = match source {
             Ok(source) => (Some(source), Status::Ready),
@@ -326,7 +333,6 @@ impl Entry {
             view: Default::default(),
             texture_target: 0,
             player: Default::default(),
-            preview_on_avatar: false,
             local: false,
             local_pending: false,
             local_published: false,
@@ -895,8 +901,11 @@ impl Imports {
                                     draft.physics_path = Some(path);
                                     draft.options.physics_source = if level == 8 { 8 } else { 5 };
                                 }
-                                entry.preview_generation += 1;
-                                entry.model = None;
+                                if let Some(error) = entry.invalidate_preview()
+                                    && self.message == error
+                                {
+                                    self.message.clear();
+                                }
                                 if entry.local {
                                     let live = entry.local_live;
                                     files::localize(std::slice::from_mut(entry), &self.load_preferences);

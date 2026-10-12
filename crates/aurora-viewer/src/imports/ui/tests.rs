@@ -6,7 +6,10 @@ fn clicking_an_animation_selects_and_restarts_its_preview() {
     let theme = crate::theme::Theme::default();
     theme.apply(&ctx, 1.0);
     let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
-    let mut prefs = Preferences::default();
+    let mut prefs = Preferences {
+        preview_on_avatar: true,
+        ..Default::default()
+    };
     let mut imports = Imports {
         open: true,
         choice: Choice::Animation,
@@ -97,6 +100,8 @@ fn clicking_an_animation_selects_and_restarts_its_preview() {
         assert_eq!(imports.active, Some(target));
         assert!(matches!(actions.as_slice(), [Action::Play(id, true)] if *id == target));
     }
+    drop(frame);
+    assert!(prefs.preview_on_avatar, "selecting another animation keeps the common preference");
 }
 
 #[test]
