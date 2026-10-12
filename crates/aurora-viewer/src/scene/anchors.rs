@@ -157,7 +157,7 @@ pub fn anchor_slot(lib: &AvatarLibrary, point: u8) -> Option<u8> {
     }
 }
 
-/// AURORA_CPU_ATTACH=1: worn objects are placed by the sync, as before.
+/// AURORA_CPU_ATTACH=1: the sync places everything, as before the anchors.
 pub fn enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("AURORA_CPU_ATTACH").is_none_or(|v| v == "0"))
@@ -209,7 +209,8 @@ pub fn anchored(world: &World, o: &Object, matrix_of: impl Fn(&Object, u8) -> Op
     None
 }
 
-/// A wearer with anchored objects.
+/// The owner of a palette (a wearer, the root of an animated object) with
+/// anchors in use.
 struct Wearer {
     id: Uuid,
     /// Anchors in use (bit per slot): written at each frame.
