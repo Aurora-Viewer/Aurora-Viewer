@@ -138,6 +138,8 @@ pub struct App {
     start: Instant,
     right_drag: bool,
     cursor_grabbed: bool,
+    /// Where the cursor was when the camera took it (physical pixels).
+    grab_origin: Option<(f32, f32)>,
     alt: bool,
     left_down: bool,
     /// Clicks that wait for the depth under them, and what follows them.
@@ -502,6 +504,7 @@ impl App {
             start: Instant::now(),
             right_drag: false,
             cursor_grabbed: false,
+            grab_origin: None,
             alt: false,
             left_down: false,
             clicks: Default::default(),
@@ -1502,14 +1505,12 @@ impl App {
         use crate::camera::ToolMode;
         let focus_tool = self.build.open && self.build.tool == crate::build::Tool::Focus;
         let alt_gr = self.down.contains(&Input::key(KeyCode::AltRight)) && !self.down.contains(&Input::key(KeyCode::AltLeft));
-        let dragging = self.mouse_mode == MouseMode::FocusOrbit;
-        if !dragging
-            && (!matches!(self.screen, Screen::World)
-                || self.mouse_mode != MouseMode::None
-                || self.camera.mouselook()
-                || !(focus_tool || (self.alt && !alt_gr))
-                || ctx.is_pointer_over_egui()
-                || ctx.egui_wants_pointer_input())
+        if !matches!(self.screen, Screen::World)
+            || self.mouse_mode != MouseMode::None
+            || self.camera.mouselook()
+            || !(focus_tool || (self.alt && !alt_gr))
+            || ctx.is_pointer_over_egui()
+            || ctx.egui_wants_pointer_input()
         {
             return None;
         }
@@ -1544,8 +1545,18 @@ impl App {
                 .is_ok();
             g.window.set_cursor_visible(false);
             self.cursor_grabbed = ok;
+            self.grab_origin = ok.then_some(self.cursor_pos);
         } else {
             let _ = g.window.set_cursor_grab(CursorGrabMode::None);
+            // LLToolCamera::handleMouseUp (lltoolfocus.cpp) puts the cursor
+            // back where the drag started: a confined cursor moved while
+            // hidden.
+            if let Some((x, y)) = self.grab_origin.take() {
+                let _ = g
+                    .window
+                    .set_cursor_position(winit::dpi::PhysicalPosition::new(f64::from(x), f64::from(y)));
+                self.cursor_pos = (x, y);
+            }
             g.window.set_cursor_visible(true);
             self.cursor_grabbed = false;
         }
@@ -4646,6 +4657,12 @@ impl App {
         if self.color_pipette() && !ctx.is_pointer_over_egui() {
             full.platform_output.cursor_icon = egui::CursorIcon::Crosshair;
             full.platform_output.cursor_image = self.cursors.pipette();
+        }
+        if self.cursor_grabbed {
+            // the camera holds the hidden cursor: a cursor change from egui
+            // would show it again in the middle of the drag
+            full.platform_output.cursor_icon = egui::CursorIcon::None;
+            full.platform_output.cursor_image = None;
         }
         gfx.egui_state
             .handle_platform_output_with_event_loop(&gfx.window, event_loop, full.platform_output);
