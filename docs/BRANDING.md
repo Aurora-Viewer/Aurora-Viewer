@@ -169,3 +169,14 @@ Firestorm, seuls les dessins changent :
 | Pipette du nuancier | `color-picker`, la pointe est le point prélevé |
 
 Avec la flèche + pastille, la pointe de la flèche est le point cliqué.
+
+## Touches des raccourcis
+
+Dans Préférences › Raccourcis, chaque touche d'un raccourci est une capsule
+claire sur le bouton sombre, sans « + » entre elles. Les lettres, les
+chiffres, F1 à F9 et les flèches utilisent les icônes de touche de Tabler
+(`square-letter-w-filled`, `square-number-1-filled`, `square-f5-filled`,
+`square-arrow-up-filled`). Les autres touches (Ctrl, Alt, Maj, Échap, F10 à
+F12, pavé numérique, lettres accentuées…) sont une capsule de la même forme
+autour de leur nom ; un bouton de souris y ajoute l'icône `mouse-filled`
+avant son nom, Tabler n'ayant pas d'icône par bouton.
