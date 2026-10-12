@@ -382,6 +382,15 @@ fn object_visibility(
     })
 }
 
+/// Texture usage of a face whose object covers `px` pixels: its base
+/// texture and those of its material (id, pixels, in view).
+fn note_face_usage(usage: &mut Vec<(Uuid, f32, bool)>, f: &FaceDraw, px: f32, in_view: bool) {
+    usage.push((f.tex_id, px * f.repeats, in_view));
+    for (t, r) in f.aux_tex.iter().zip(f.aux_repeats).filter(|(t, _)| !t.is_nil()) {
+        usage.push((*t, px * r, in_view));
+    }
+}
+
 /// GPU face table entry of a face of object `idx`.
 fn cull_face(f: &FaceDraw, idx: usize, first: bool) -> CullFace {
     CullFace {
@@ -2718,14 +2727,27 @@ impl Scene {
         for (_, i) in avatars.iter().take(self.max_avatars.max(1)) {
             avatar_ok[*i] = true;
         }
-        let imp_avatars: Vec<(usize, Vec3, f32, bool)> = avatars
+        // (as when drawn in full, one still loading is a cloud until it is
+        // complete, and one over the complexity limit is its silhouette)
+        let imp_avatars: Vec<impostors::Far> = avatars
             .iter()
             .skip(self.max_avatars.max(1))
             .filter_map(|&(d, i)| {
                 let g = self.gpu.get(i)?;
-                (d < dd && !g.faces.is_empty()).then(|| (i, g.center, d, view.sphere_visible(g.center, 1.6)))
+                let loading = self.hide_loading && self.loading.indices.contains(&i);
+                (d < dd && !g.faces.is_empty() && !loading).then(|| impostors::Far {
+                    idx: i,
+                    center: g.center,
+                    distance: d,
+                    in_view: view.sphere_visible(g.center, 1.6),
+                    silhouette: self.too_complex.contains(&i),
+                })
             })
             .collect();
+        let mut avatar_far = vec![false; self.gpu.len()];
+        for a in &imp_avatars {
+            avatar_far[a.idx] = true;
+        }
         let mut plan = self.impostors.plan(&imp_avatars, view.eye, Instant::now());
         self.stats.avatars_hidden = imp_avatars.len();
         // avatar states of the GPU object table (few avatars: every frame)
@@ -2833,6 +2855,10 @@ impl Scene {
             // as impostors; pictured ones give their draws to the picture
             let avatar = g.avatar(idx);
             if let Some(a) = avatar.filter(|a| !avatar_ok.get(*a).copied().unwrap_or(true)) {
+                // (too complex: its silhouette alone, without what it wears)
+                if !avatar_far.get(a).copied().unwrap_or(false) || g.owner_avatar.is_some_and(|a| self.too_complex.contains(&a)) {
+                    return l;
+                }
                 if let Some(&slot) = plan.capture.get(&a) {
                     for f in &g.faces {
                         match f.pass {
@@ -2840,6 +2866,17 @@ impl Scene {
                             Pass::Blend => l.impostor.push((slot, f.cmd, true)),
                             _ => l.impostor.push((slot, f.cmd, false)),
                         }
+                    }
+                }
+                if usage {
+                    // its textures as fine as the picture shows them: without
+                    // a size they stay at their coarsest level, and an avatar
+                    // that was never among the nearest is a blur of colors
+                    let (sc, sr) = g.sphere();
+                    let in_view = view.sphere_visible(sc, sr);
+                    let px = view.pixel_size(g.center, g.radius).min(impostors::picture_pixels(g.radius));
+                    for f in g.faces.iter().filter(|f| f.pass != Pass::Hidden) {
+                        note_face_usage(&mut l.usage, f, px, in_view);
                     }
                 }
                 return l;
@@ -2927,10 +2964,7 @@ impl Scene {
                 if usage {
                     // (out of view too: what memory pressure may not
                     // lower a texture under, see `note_usage_away`)
-                    l.usage.push((f.tex_id, px * f.repeats, in_view));
-                    for (t, r) in f.aux_tex.iter().zip(f.aux_repeats).filter(|(t, _)| !t.is_nil()) {
-                        l.usage.push((*t, px * r, in_view));
-                    }
+                    note_face_usage(&mut l.usage, f, px, in_view);
                 }
                 if !in_view {
                     continue;

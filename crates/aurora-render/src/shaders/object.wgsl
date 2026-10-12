@@ -920,11 +920,16 @@ struct SpriteIn {
     @builtin(vertex_index) vid: u32,
 };
 
+// High bit of a card's tile: its picture is all fullbright (the silhouette
+// of an avatar over the complexity limit).
+const IMPOSTOR_FULLBRIGHT: u32 = 0x80000000u;
+
 struct SpriteOut {
     @builtin(position) clip: vec4<f32>,
     @location(0) uv: vec2<f32>,
     @location(1) world_pos: vec3<f32>,
     @location(2) normal: vec3<f32>,
+    @location(3) @interpolate(flat) fullbright: u32,
 };
 
 @vertex
@@ -936,12 +941,14 @@ fn vs_impostor(in: SpriteIn) -> SpriteOut {
     let c = corners[in.vid % 6u];
     let p = in.center + in.right * c.x + in.up * c.y;
     let per = u32(impostor_tiles_per_row);
-    let origin = vec2<f32>(f32(in.tile % per), f32(in.tile / per));
+    let tile = in.tile & ~IMPOSTOR_FULLBRIGHT;
+    let origin = vec2<f32>(f32(tile % per), f32(tile / per));
     var out: SpriteOut;
     out.clip = frame.view_proj * vec4<f32>(p, 1.0);
     out.uv = (origin + vec2<f32>(c.x * 0.5 + 0.5, 0.5 - c.y * 0.5)) / impostor_tiles_per_row;
     out.world_pos = p;
     out.normal = normalize(cross(in.right, in.up));
+    out.fullbright = in.tile & IMPOSTOR_FULLBRIGHT;
     return out;
 }
 
@@ -950,8 +957,19 @@ fn impostor_color(in: SpriteOut) -> vec4<f32> {
     if (t.a < 0.5) {
         discard;
     }
-    // the picture was taken lit and unfogged: fog it at its real distance
-    return vec4<f32>(apply_fog(t.rgb / max(t.a, 1e-3), in.world_pos), 1.0);
+    // the picture was taken lit, without haze or fog: the card takes those
+    // of its real distance, as `shade` gives them to the avatar drawn in
+    // full (the haze of a classic sky, which a fullbright face does not
+    // take; the fog of the others)
+    var col = t.rgb / max(t.a, 1e-3);
+    if (is_classic_sky() && !camera_underwater()) {
+        if (in.fullbright == 0u) {
+            col = ll_haze(col, ll_atmos(in.world_pos - frame.camera_pos.xyz));
+        }
+    } else {
+        col = apply_fog(col, in.world_pos);
+    }
+    return vec4<f32>(col, 1.0);
 }
 
 @fragment
