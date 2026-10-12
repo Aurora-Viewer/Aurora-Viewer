@@ -108,7 +108,19 @@ pub fn stat(ui: &mut egui::Ui, p: &Palette, label: &str, value: &str) {
     });
 }
 
+/// Title icon of a window, from its id: the icon its function has in the
+/// toolbar and the menus. A window opened by another one (a picker, a tool of
+/// the script editor) is named after its owner: its own function comes first.
 pub(super) fn window_icon(id: &str) -> &'static str {
+    if id.contains("avatar_picker") || id.starts_with("inventory_share") {
+        return "users-group";
+    }
+    if id.contains("color_picker") {
+        return "palette-filled";
+    }
+    if id.starts_with("notecard") {
+        return "file-text-filled";
+    }
     if id.starts_with("inventory") {
         return "folder-filled";
     }
@@ -121,21 +133,45 @@ pub(super) fn window_icon(id: &str) -> &'static str {
     if id.contains("texture") || id.contains("thumbnail") {
         return "photo-filled";
     }
-    if id.contains("script") {
+    // the tools of a script editor carry its egui id and their own suffix
+    if id.ends_with("_search") {
+        return "search-filled";
+    }
+    if id.ends_with("_help") {
+        return "help-circle-filled";
+    }
+    if id.ends_with("_library") {
+        return "library-filled";
+    }
+    if id.contains("script") || id.ends_with("_goto") || id.ends_with("_revert") || id.ends_with("_file_conflict") {
         return "code";
     }
     if id.contains("place") || id.contains("land") {
         return "map-pin-filled";
     }
+    if id.starts_with("ao") {
+        return "man-filled";
+    }
+    if id.starts_with("build_tools") {
+        return "box";
+    }
     match id {
-        "appearance" => "shirt-filled",
+        "appearance" | "appearance_item_profile" => "shirt-filled",
         "conversations" | "contacts" => "messages-filled",
-        "people" | "avatar_picker" => "users-group",
+        "people" | "group_picker" | "contact_set_config" => "users-group",
         "options" => "settings-filled",
         "worldmap" | "minimap" => "map",
         "environment_selector" | "personal_lighting" => "sun-filled",
-        "performance" => "gauge-filled",
-        "ao" => "man-filled",
+        "perf" | "performance" => "gauge-filled",
+        "display_name" => "id-filled",
+        "object_purchase" => "shopping-cart-filled",
+        "object_payment" => "coin-filled",
+        "object_contents" => "package",
+        "object_weights" => "box",
+        "build_options" => "adjustments-filled",
+        "media_settings" => "device-tv-filled",
+        "bulk_perms" => "lock-filled",
+        "task_item_props" => "file-info-filled",
         _ => "layout-grid-filled",
     }
 }
