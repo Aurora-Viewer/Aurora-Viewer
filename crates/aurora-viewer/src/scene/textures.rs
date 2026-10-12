@@ -16,6 +16,7 @@
 //! evicted textures) is freed by the trash thread (`Jobs::discard`).
 
 use super::jobs::{AlphaKind, JobResult, Jobs, SculptMap, Trash, classify_alpha, to_rgba};
+use super::texture_cache::{self, Transcoded};
 use super::texture_load::{DecodeMeter, LoadTotals, LoadWatch};
 use aurora_assets::J2kInfo;
 use aurora_net::fetch::ByteRange;
@@ -111,6 +112,17 @@ pub struct PickMask {
 }
 
 impl PickMask {
+    /// As stored in the transcoded cache: (width, height, bits).
+    fn parts(&self) -> (u32, u32, &[u8]) {
+        (self.width, self.height, &self.bits)
+    }
+
+    /// A mask read back from the transcoded cache, if its bits fit its size.
+    fn from_parts((width, height, bits): texture_cache::MaskParts) -> Option<Self> {
+        let fits = width > 0 && height > 0 && bits.len() == (width as usize * height as usize).div_ceil(8);
+        fits.then_some(Self { width, height, bits })
+    }
+
     pub fn from_rgba(width: u32, height: u32, rgba: &[u8]) -> Option<Self> {
         let pixels = (width as usize).checked_mul(height as usize)?;
         if width == 0 || height == 0 || rgba.len() != pixels.checked_mul(4)? {
@@ -153,7 +165,14 @@ struct Entry {
     need_px: f32,
     fetching: bool,
     decoding: bool,
-    cache_state: u8, // 0 unchecked, 1 loading, 2 done
+    /// 0 unchecked, 1 being read, 2 the JPEG 2000 data is read (or is not
+    /// on the disk), 3 shown from the transcoded cache, the JPEG 2000 data
+    /// left on the disk until a finer level is wanted.
+    cache_state: u8,
+    /// Finest discard level the transcoded cache holds for this texture.
+    transcoded: Option<u8>,
+    /// BC7 would harm this texture (known from the transcoded cache).
+    keep_rgba: bool,
     failures: u32,
     retry_at: Option<Instant>,
     keep_pixels: bool,
@@ -455,6 +474,9 @@ pub struct TextureStreamer {
     /// unharmed (`aurora_render::bc7`): the GPU has BC compression and
     /// AURORA_TEXTURE_BC7 does not turn it off.
     pub bc7: bool,
+    /// The BC7 chains are kept on the disk and read back instead of
+    /// decoding the JPEG 2000 data again (`texture_cache.rs`).
+    pub bc7_cache: bool,
     /// Alpha class by bindless slot (fast lookup during list building).
     pub alpha_by_slot: Vec<AlphaKind>,
     pub(super) pick_masks: HashMap<Uuid, PickMask>,
@@ -491,6 +513,9 @@ pub struct TextureStreamer {
     /// Decoded levels the uploads are done with and download bodies once
     /// merged, freed off this thread.
     trash: Trash<Vec<u8>>,
+    /// Thread that writes the transcoded cache (started with the first
+    /// file to write).
+    cache_writer: Option<texture_cache::Writer>,
     /// Measure of the loading episodes (`texture load:` in the log): what
     /// the decode jobs spent, what the main thread counts, and the episode
     /// under way.
@@ -511,6 +536,7 @@ impl TextureStreamer {
             uploads: PendingUploads::default(),
             staging: None,
             bc7: false,
+            bc7_cache: false,
             pick_masks: HashMap::from([(
                 aurora_prim::te::TRANSPARENT_TEXTURE,
                 PickMask {
@@ -540,6 +566,7 @@ impl TextureStreamer {
             unused: VecDeque::new(),
             dirty: Vec::new(),
             trash: Trash::default(),
+            cache_writer: None,
             alpha_changes: Vec::new(),
             meter: Arc::default(),
             load: LoadTotals::default(),
@@ -551,6 +578,11 @@ impl TextureStreamer {
     /// call (a slot may be listed more than once).
     pub fn take_alpha_changes(&mut self, out: &mut Vec<u32>) {
         out.append(&mut self.alpha_changes);
+    }
+
+    /// The transcoded chain of a texture (`texture_cache.rs`).
+    fn transcoded_path(cache_dir: &std::path::Path, id: &Uuid) -> PathBuf {
+        cache_dir.join("tex").join(format!("{id}.bc7"))
     }
 
     fn cache_path(cache_dir: &std::path::Path, id: &Uuid, complete: bool) -> PathBuf {
@@ -705,6 +737,8 @@ impl TextureStreamer {
                 fetching: false,
                 decoding: false,
                 cache_state: 0,
+                transcoded: None,
+                keep_rgba: false,
                 failures: 0,
                 retry_at: None,
                 keep_pixels: false,
@@ -881,9 +915,16 @@ impl TextureStreamer {
             load,
             uploads,
             bc7,
+            bc7_cache,
+            ui_wanted,
+            cache_writer,
             ..
         } = self;
-        let bc7 = *bc7;
+        if *bc7_cache && cache_writer.is_none() {
+            *cache_writer = texture_cache::Writer::start();
+            // (without its thread, the cache is only read)
+        }
+        let (bc7, bc7_cache) = (*bc7, *bc7_cache);
         // first disk reads of the new textures, queued in one go
         let mut cache_reads = Vec::new();
         let mut reading = 0;
@@ -904,9 +945,21 @@ impl TextureStreamer {
                 continue;
             }
             // 1. disk cache
+            // (a texture whose pixels are kept, or copied for the
+            // interface, needs a decode: the transcoded cache has blocks)
+            let blocks_do = bc7_cache && !e.keep_pixels && !ui_wanted.contains(&id);
             if e.cache_state == 0 {
                 e.cache_state = 1;
-                cache_reads.push(id);
+                // its size on screen is not known yet: the coarsest level of
+                // a transcoded chain shows it at once, and the level it
+                // needs is read when known (the default level would load
+                // every texture of a region at a quarter of its size)
+                let level = if e.need_px > 0.0 {
+                    e.want
+                } else {
+                    aurora_assets::j2k::MAX_DISCARD_LEVEL
+                };
+                cache_reads.push((id, level, blocks_do));
                 continue;
             }
             if e.cache_state == 1 || e.decoding || e.fetching {
@@ -920,6 +973,18 @@ impl TextureStreamer {
                 Some(d) => e.want < d,
             };
             if !better {
+                continue;
+            }
+            if e.cache_state == 3 {
+                // shown from the transcoded cache and another level is
+                // wanted: from that file again if it holds it, else the
+                // JPEG 2000 data is read at last, for a decode
+                let from_file = blocks_do && e.transcoded.is_some_and(|finest| e.want >= finest);
+                if from_file && uploads.covers(&id, e.want) {
+                    continue;
+                }
+                e.cache_state = 1;
+                cache_reads.push((id, e.want, from_file));
                 continue;
             }
             let needed = Self::bytes_needed(e);
@@ -953,10 +1018,21 @@ impl TextureStreamer {
                 *decodes += 1;
                 load.again += u64::from(e.decoded.is_some());
                 let data = e.data.clone();
-                let keep = e.keep_pixels;
+                let job = DecodeJob {
+                    id,
+                    discard,
+                    keep_pixels: e.keep_pixels,
+                    bc7: bc7 && !e.keep_rgba,
+                    // (not over a file that already holds this level)
+                    cache: e
+                        .info
+                        .filter(|_| bc7_cache && !e.keep_rgba && !e.transcoded.is_some_and(|finest| finest <= discard))
+                        .zip(cache_writer.clone())
+                        .map(|(info, writer)| (Self::transcoded_path(cache_dir, &id), info, writer)),
+                };
                 let pool = staging.clone();
                 let meter = meter.clone();
-                jobs.spawn(move || decode_job(id, &data, discard, keep, pool.as_deref(), bc7, &meter));
+                jobs.spawn(move || decode_job(job, &data, pool.as_deref(), &meter));
                 continue;
             }
             // 2. fetch more
@@ -983,21 +1059,9 @@ impl TextureStreamer {
         }
         reading += cache_reads.len();
         let dir = cache_dir.clone();
-        jobs.spawn_many(cache_reads, move |id| {
-            for complete in [true, false] {
-                if let Ok(d) = crate::cache::read_touch(Self::cache_path(&dir, &id, complete)) {
-                    return JobResult::TextureCache {
-                        id,
-                        data: Some(d),
-                        complete,
-                    };
-                }
-            }
-            JobResult::TextureCache {
-                id,
-                data: None,
-                complete: false,
-            }
+        let pool = staging.clone();
+        jobs.spawn_many(cache_reads, move |(id, want, blocks)| {
+            read_job(&dir, id, want, blocks, pool.as_deref())
         });
         self.stats.total = self.entries.len();
         self.stats.loaded = loaded;
@@ -1128,7 +1192,24 @@ impl TextureStreamer {
 
     pub fn on_job(&mut self, r: JobResult) {
         match r {
-            JobResult::TextureCache { id, data, complete } => {
+            JobResult::TextureTranscoded { id, info, finest, texture } => {
+                self.load.transcoded += 1;
+                if let Some(e) = self.entries.get_mut(&id) {
+                    e.cache_state = 3;
+                    e.transcoded = Some(finest);
+                    e.info.get_or_insert(info);
+                }
+                // (queued as the result of a decode; it took no decode slot,
+                // and the handler below gives one back)
+                self.decodes += 1;
+                self.on_job(*texture);
+            }
+            JobResult::TextureCache {
+                id,
+                data,
+                complete,
+                keep_rgba,
+            } => {
                 if data.is_some() {
                     self.load.cache_hits += 1;
                 } else {
@@ -1136,6 +1217,7 @@ impl TextureStreamer {
                 }
                 if let Some(e) = self.entries.get_mut(&id) {
                     e.cache_state = 2;
+                    e.keep_rgba |= keep_rgba;
                     if let Some(d) = data
                         && d.len() > e.data.len()
                     {
@@ -1219,6 +1301,16 @@ impl TextureStreamer {
                 ));
             }
         }
+    }
+
+    /// AURORA_DEMO_STREAM with `j2k=`: the texture is in use, the disk
+    /// cache was looked up and it has no JPEG 2000 data (nothing there, or
+    /// its transcoded chain does not hold the level wanted): on the grid, a
+    /// download would start; the scenario brings the file instead.
+    pub fn demo_needs_data(&self, id: &Uuid) -> bool {
+        self.entries
+            .get(id)
+            .is_some_and(|e| e.refs > 0 && e.cache_state == 2 && e.data.is_empty() && !e.decoding)
     }
 
     /// AURORA_DEMO_STREAM: the downloaded data a texture loaded at full
@@ -1443,7 +1535,7 @@ impl TextureStreamer {
             if complete {
                 let _ = std::fs::remove_file(Self::cache_path(&dir, &id, false));
             }
-            JobResult::TextureCache { id, data: None, complete }
+            JobResult::Done
         });
         // Memory budget: raise the global discard bias when above budget.
         let used = renderer.textures.bytes();
@@ -1511,13 +1603,26 @@ pub fn texture_result(
     sculpt: Option<Arc<SculptMap>>,
     pool: Option<&StagingPool>,
 ) -> JobResult {
-    texture_result_from(id, discard, mips, None, alpha, sculpt, pool)
+    texture_result_from(id, discard, mips, None, alpha, sculpt, pool, None)
 }
 
 /// [`texture_result`], staging the BC7 blocks of the chain (`compressed`)
 /// instead of its RGBA8 levels when the job has them. Without room in the
 /// staging memory, the RGBA8 chain stays for the main-thread write, as an
 /// uncompressed texture.
+/// A decoded level under this size says nothing of how BC7 treats the
+/// larger ones: its refusal is not written to the transcoded cache.
+const KEEP_RGBA_FROM: u32 = 128;
+
+/// Where a decode job leaves its result in the transcoded cache.
+struct CacheWrite<'a> {
+    path: &'a std::path::Path,
+    writer: &'a texture_cache::Writer,
+    info: J2kInfo,
+    /// BC7 was tried: no chain means it would harm the texture.
+    tried: bool,
+}
+
 fn texture_result_from(
     id: Uuid,
     discard: u8,
@@ -1526,11 +1631,32 @@ fn texture_result_from(
     (alpha, alpha_channel): (AlphaKind, bool),
     sculpt: Option<Arc<SculptMap>>,
     pool: Option<&StagingPool>,
+    cache: Option<CacheWrite>,
 ) -> JobResult {
     // Generated on the decode worker, before staging may release CPU levels.
     let pick_mask = (alpha != AlphaKind::Opaque)
         .then(|| mips.first().and_then(|(w, h, rgba)| PickMask::from_rgba(*w, *h, rgba)))
         .flatten();
+    if let Some(cache) = cache {
+        let meta = texture_cache::Meta {
+            info: cache.info,
+            discard,
+            alpha,
+            alpha_channel,
+        };
+        let file = match &compressed {
+            Some(chain) => texture_cache::encode(&meta, pick_mask.as_ref().map(PickMask::parts), chain),
+            // BC7 was tried and harms it: remembered, unless the level is
+            // too small to tell for the larger ones
+            None => mips
+                .first()
+                .filter(|(w, h, _)| cache.tried && TexelFormat::Bc7.fits(*w, *h) && (*w).max(*h) >= KEEP_RGBA_FROM)
+                .map(|_| texture_cache::encode_keep_rgba(&meta)),
+        };
+        if let Some(file) = file {
+            cache.writer.write(cache.path.to_path_buf(), file);
+        }
+    }
     let staged = pool.and_then(|pool| {
         let (format, chain) = match &compressed {
             Some(blocks) => (TexelFormat::Bc7, blocks),
@@ -1554,15 +1680,76 @@ fn texture_result_from(
     }
 }
 
-fn decode_job(
+/// One decode: the texture, the level, and what to do with the result.
+struct DecodeJob {
     id: Uuid,
-    data: &[u8],
     discard: u8,
     keep_pixels: bool,
-    pool: Option<&StagingPool>,
+    /// Compress to BC7 when the texture comes out of it unharmed.
     bc7: bool,
-    meter: &DecodeMeter,
-) -> JobResult {
+    /// File of the transcoded cache to write, with the header of the image
+    /// and the thread that writes it.
+    cache: Option<(PathBuf, J2kInfo, texture_cache::Writer)>,
+}
+
+/// A texture from the disk cache: its transcoded chain at `want` when
+/// `blocks` allows it and the file is there (staged, ready for the GPU),
+/// else its JPEG 2000 data.
+fn read_job(dir: &std::path::Path, id: Uuid, want: u8, blocks: bool, pool: Option<&StagingPool>) -> JobResult {
+    let mut keep_rgba = false;
+    if blocks {
+        match texture_cache::read(&TextureStreamer::transcoded_path(dir, &id), want) {
+            Some(Transcoded::Bc7(cached)) => {
+                let levels: Vec<(u32, u32, &[u8])> = cached.levels.iter().map(|(w, h, d)| (*w, *h, d.as_slice())).collect();
+                // (without room in the staging memory: decoded, as before)
+                if let Some(staged) = pool.and_then(|pool| StagedTexture::with_format(pool, TexelFormat::Bc7, &levels)) {
+                    return JobResult::TextureTranscoded {
+                        id,
+                        info: cached.info,
+                        finest: cached.finest,
+                        texture: Box::new(JobResult::Texture {
+                            id,
+                            discard: cached.discard,
+                            mips: Vec::new(),
+                            staged: Some(staged),
+                            alpha: cached.alpha,
+                            alpha_channel: cached.alpha_channel,
+                            pick_mask: cached.pick_mask.and_then(PickMask::from_parts),
+                            sculpt: None,
+                        }),
+                    };
+                }
+            }
+            Some(Transcoded::KeepRgba) => keep_rgba = true,
+            None => {}
+        }
+    }
+    for complete in [true, false] {
+        if let Ok(d) = crate::cache::read_touch(TextureStreamer::cache_path(dir, &id, complete)) {
+            return JobResult::TextureCache {
+                id,
+                data: Some(d),
+                complete,
+                keep_rgba,
+            };
+        }
+    }
+    JobResult::TextureCache {
+        id,
+        data: None,
+        complete: false,
+        keep_rgba,
+    }
+}
+
+fn decode_job(job: DecodeJob, data: &[u8], pool: Option<&StagingPool>, meter: &DecodeMeter) -> JobResult {
+    let DecodeJob {
+        id,
+        discard,
+        keep_pixels,
+        bc7,
+        cache,
+    } = job;
     match aurora_assets::decode_j2k_timed(data, discard) {
         Ok((img, decode)) => {
             let start = Instant::now();
@@ -1586,11 +1773,18 @@ fn decode_job(
             let before_mips = start.elapsed();
             let mips = build_mips(img.width, img.height, rgba, 16);
             let mips_done = start.elapsed();
-            let compressed = (bc7 && pool.is_some())
+            let tried = bc7 && pool.is_some();
+            let compressed = tried
                 .then(|| aurora_render::bc7::encode_chain(&mips, alpha != AlphaKind::Opaque))
                 .flatten();
             let bc7_done = start.elapsed();
-            let result = texture_result_from(id, img.discard, mips, compressed, (alpha, alpha_channel), sculpt, pool);
+            let cache = cache.as_ref().map(|(path, info, writer)| CacheWrite {
+                path,
+                writer,
+                info: *info,
+                tried,
+            });
+            let result = texture_result_from(id, img.discard, mips, compressed, (alpha, alpha_channel), sculpt, pool, cache);
             let as_blocks = matches!(&result, JobResult::Texture { staged: Some(s), .. } if s.format == TexelFormat::Bc7);
             let stages = [rgba_done, mips_done - before_mips, bc7_done - mips_done, start.elapsed() - bc7_done];
             meter.add(img.discard, pixels as u64, decode, stages, as_blocks);

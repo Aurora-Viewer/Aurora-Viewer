@@ -550,7 +550,12 @@ grille.
     niveau que demande sa taille à l'écran. C'est le retour dans une
     région déjà en cache, sans la grille : lire `demo stream: loaded in
     … s` puis la ligne `texture load:` (voir [Profilage](#profilage)).
-    Le dossier n'est que lu.
+    Le dossier n'est que lu. Lancé deux fois de suite, le scénario rejoue
+    aussi le retour avec le cache des textures transcodées : la seconde
+    fois, les textures compressées viennent des fichiers `.bc7` laissés
+    par la première dans le cache de la démo (`cache\demo\tex`, à
+    supprimer pour repartir d'une première visite) et leur fichier J2C
+    n'est demandé que s'il faut un niveau plus fin.
 
 ## Interface
 
@@ -974,6 +979,7 @@ Ce que l'inventaire doit montrer avec ces scénarios :
 | `AURORA_PRESENT_MODE=<mode>` | Force le mode de présentation de la swapchain |
 | `AURORA_CPU_CULL=1` | Listes de dessin construites sur le CPU |
 | `AURORA_TEXTURE_BC7=0` | Textures jamais compressées en BC7 |
+| `AURORA_TEXTURE_BC7_CACHE=0` | BC7 sans son cache disque |
 | `AURORA_RENDER_THREAD=0` | Images dessinées sur le thread principal |
 | `AURORA_PROFILE=1` | Profilage dans le journal (voir [Profilage](#profilage)) |
 | `AURORA_PROFILE_FRAMES=1` | Profil détaillé de chaque image |
@@ -1004,6 +1010,11 @@ Ce que l'inventaire doit montrer avec ces scénarios :
   sous la fenêtre et sa fréquence à chaque changement
   (`screen under the window: \\.\DISPLAY2, 144 Hz`) ; `present=` et
   `screen_hz=` figurent dans la ligne `perf settings`.
+- **`AURORA_TEXTURE_BC7_CACHE=0`** : les textures compressées en BC7 ne
+  sont ni écrites dans le cache disque (`cache\tex\<id>.bc7`) ni relues :
+  chaque texture est décodée depuis son JPEG2000 comme à une première
+  visite, pour mesurer ce que le cache épargne (`read as BC7 without a
+  decode` et le temps processeur dans la ligne `texture load:`).
 - **`AURORA_TEXTURE_BC7=0`** : toutes les textures restent en RGBA8 en
   mémoire vidéo, comme avant la compression BC7, pour comparer l'image,
   la mémoire (`texture_mb`, `pages_mb` de `perf summary`) et le temps de
@@ -1135,7 +1146,9 @@ que le suivant ne compte que la nouvelle région. Chaque ligne donne :
   `bc7` (encodage BC7 et contrôle de qualité), `staging` (masque de
   picking et copie en mémoire de transit) ;
 - les octets téléchargés et le nombre de réponses, les lectures du cache
-  disque réussies et manquées.
+  disque réussies et manquées (données JPEG2000), et les textures relues
+  du cache transcodé (`read as BC7 without a decode`) : envoyées au GPU
+  sans décodage ni encodage.
 
 Le coût du décodage seul se mesure hors du viewer sur un dossier de
 textures en cache (lecture seule), par classe de taille, sur un thread

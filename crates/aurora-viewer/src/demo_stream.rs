@@ -22,10 +22,12 @@
 //! With `,j2k=<folder>` after the counts, the textures are the `.j2c` files
 //! of that folder (a viewer's `cache/tex`, cycled if there are fewer than
 //! objects) instead of drawn checkers: each file is handed to the streamer
-//! as a disk cache hit and goes through the real path from the JPEG 2000
-//! decode on, at the level its size on screen asks for. This is the return
-//! to a region already in the cache; the streamer's `texture load:` line
-//! gives what it cost.
+//! as a disk cache hit, when it looks for the JPEG 2000 data and has
+//! none, and goes through the real path from the JPEG 2000 decode on, at
+//! the level its size on screen asks for. This is the return to a region
+//! already in the cache; the streamer's `texture load:` line gives what it
+//! cost. Run twice, the second run finds the transcoded chains the first
+//! one left in the demo's cache folder and asks for almost no file.
 
 use super::{HANDLE, height, prim, shape, te};
 use crate::scene::jobs::{AlphaKind, JobResult, Jobs};
@@ -201,11 +203,15 @@ fn spawn_decodes(jobs: &Jobs, pool: Option<Arc<StagingPool>>, textures: Vec<u32>
 /// `j2k=<folder>`: the J2C file of each texture, read on the background
 /// pool and handed over as a disk cache hit. The streamer decodes it at the
 /// level its size on screen asks for, as a texture of the grid.
+/// Asked again after this long if the data still has not come.
+const FEED_AGAIN: Duration = Duration::from_secs(2);
+
 fn spawn_cache_hits(jobs: &Jobs, files: Arc<Vec<PathBuf>>, textures: Vec<u32>) {
     jobs.spawn_many(textures, move |i| JobResult::TextureCache {
         id: texture(i),
         data: std::fs::read(&files[i as usize % files.len()]).ok(),
         complete: true,
+        keep_rgba: false,
     });
 }
 
@@ -229,6 +235,8 @@ pub struct StreamDemo {
     evicted_logged: bool,
     /// `,j2k=<folder>`: the files the textures are decoded from.
     j2k: Option<Arc<Vec<PathBuf>>>,
+    /// When each texture was last given its file.
+    fed: Vec<Option<Instant>>,
 }
 
 impl StreamDemo {
@@ -237,6 +245,7 @@ impl StreamDemo {
         let (n, wave, leave) = parse(&value);
         Some(StreamDemo {
             j2k: j2k_files(&value),
+            fed: vec![None; n as usize],
             n,
             wave,
             next: 0,
@@ -322,12 +331,10 @@ impl StreamDemo {
                 let _ = textures.acquire(renderer, texture(i), TexSource::Asset);
             }
             let arrived: Vec<u32> = (self.next..self.next + count).collect();
-            match &self.j2k {
-                Some(files) => spawn_cache_hits(jobs, files.clone(), arrived),
-                None => {
-                    self.upgrades.extend(arrived.iter().map(|&i| (now + UPGRADE_AFTER, i)));
-                    spawn_decodes(jobs, textures.staging.clone(), arrived, 2);
-                }
+            // (with `j2k=`, the files are brought below, when asked for)
+            if self.j2k.is_none() {
+                self.upgrades.extend(arrived.iter().map(|&i| (now + UPGRADE_AFTER, i)));
+                spawn_decodes(jobs, textures.staging.clone(), arrived, 2);
             }
             for ev in wave_events(self.n, self.next, count) {
                 world.apply(ev);
@@ -339,6 +346,23 @@ impl StreamDemo {
                     self.n,
                     now.duration_since(started).as_secs_f32()
                 );
+            }
+        }
+        // `j2k=`: the file of each texture whose disk cache lookup found no
+        // JPEG 2000 data, where the grid would start a download (not the
+        // textures shown from their transcoded chain)
+        if let Some(files) = &self.j2k
+            && frame.is_multiple_of(4)
+        {
+            let fed = &mut self.fed;
+            let ask: Vec<u32> = (0..self.next)
+                .filter(|&i| fed[i as usize].is_none_or(|t| now.duration_since(t) >= FEED_AGAIN) && textures.demo_needs_data(&texture(i)))
+                .collect();
+            for &i in &ask {
+                fed[i as usize] = Some(now);
+            }
+            if !ask.is_empty() {
+                spawn_cache_hits(jobs, files.clone(), ask);
             }
         }
         let mut due = Vec::new();

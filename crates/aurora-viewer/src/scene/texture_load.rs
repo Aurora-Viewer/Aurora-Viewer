@@ -46,6 +46,9 @@ pub struct LoadTotals {
     pub replies: u64,
     pub cache_hits: u64,
     pub cache_misses: u64,
+    /// Textures read back from the transcoded cache: sent to the GPU
+    /// without a decode.
+    pub transcoded: u64,
 }
 
 impl LoadTotals {
@@ -73,6 +76,7 @@ impl LoadTotals {
             replies: self.replies - start.replies,
             cache_hits: self.cache_hits - start.cache_hits,
             cache_misses: self.cache_misses - start.cache_misses,
+            transcoded: self.transcoded - start.transcoded,
         }
     }
 
@@ -84,7 +88,7 @@ impl LoadTotals {
         format!(
             "texture load{}: {:.1} s, {loaded}/{total} textures loaded; {} decodes ({} of a texture already shown, {} compressed to BC7; discard 0..5: {:?}), \
              {:.1} Mpx; decode CPU {:.1} s (codec {:.1}, convert {:.1}, rgba {:.1}, mips {:.1}, bc7 {:.1}, staging {:.1}); \
-             downloaded {:.1} MB in {} replies; disk cache {} hits / {} misses",
+             downloaded {:.1} MB in {} replies; disk cache {} hits / {} misses, {} read as BC7 without a decode",
             if running { " (running)" } else { "" },
             took.as_secs_f64(),
             self.decodes(),
@@ -103,6 +107,7 @@ impl LoadTotals {
             self.replies,
             self.cache_hits,
             self.cache_misses,
+            self.transcoded,
         )
     }
 }
@@ -341,6 +346,7 @@ mod tests {
             replies: 3,
             cache_hits: 1,
             cache_misses: 1,
+            transcoded: 7,
             ..Default::default()
         };
         m.read_into(&mut totals);
@@ -350,7 +356,7 @@ mod tests {
             totals.describe(Duration::from_millis(12_340), false, (2, 3)),
             "texture load: 12.3 s, 2/3 textures loaded; 2 decodes (1 of a texture already shown, 1 compressed to BC7; discard 0..5: [1, 0, 0, 0, 0, 1]), \
              1.0 Mpx; decode CPU 0.1 s (codec 0.1, convert 0.0, rgba 0.0, mips 0.0, bc7 0.0, staging 0.0); \
-             downloaded 2.5 MB in 3 replies; disk cache 1 hits / 1 misses"
+             downloaded 2.5 MB in 3 replies; disk cache 1 hits / 1 misses, 7 read as BC7 without a decode"
         );
         assert!(
             totals

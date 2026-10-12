@@ -23,6 +23,7 @@ mod skin_binds;
 pub mod sounds;
 mod sync_plan;
 pub mod sync_sets;
+mod texture_cache;
 mod texture_load;
 pub mod textures;
 pub mod water;
@@ -988,6 +989,10 @@ impl Scene {
             // (AURORA_TEXTURE_BC7=0: every texture stays RGBA8, to compare)
             let wanted = std::env::var("AURORA_TEXTURE_BC7").map_or(true, |v| v != "0");
             self.textures.bc7 = wanted && renderer.textures.bc7();
+            // (AURORA_TEXTURE_BC7_CACHE=0: BC7 without its disk cache, every
+            // texture decoded from its JPEG 2000 data as before)
+            let cached = std::env::var("AURORA_TEXTURE_BC7_CACHE").map_or(true, |v| v != "0");
+            self.textures.bc7_cache = self.textures.bc7 && cached;
             log::info!(
                 "textures: BC7 compression {} (GPU support: {})",
                 if self.textures.bc7 { "on" } else { "off" },
