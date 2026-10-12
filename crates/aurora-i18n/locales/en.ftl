@@ -3910,3 +3910,63 @@ loading-residents = { $count ->
     }
 ui-bars-click-to-talk = Click to turn on
 ui-bars-microphone-options = Microphone options
+radar-col-region = Same region
+radar-col-typing = Typing
+radar-col-sitting = Sitting
+radar-col-payment = Payment info
+radar-col-notes = Notes
+radar-col-age = Age
+radar-col-seen = Seen for
+radar-name-header = Name [{ $total }/{ $region }/{ $chat }]
+radar-name-header-tip = Name (avatars in total / in the region / in chat range)
+radar-voice-connected = In the voice channel
+radar-voice-speaking = Speaking
+radar-payment-none = No payment info
+radar-payment-on-file = Payment info on file
+radar-payment-used = Payment info used
+radar-age-hidden = n/a
+radar-age-days = { $days ->
+    [one] { $days } day
+   *[other] { $days } days
+    }
+radar-empty = Nobody nearby.
+radar-options = Radar options
+radar-selection-menu = Actions on the selection
+radar-add-friend = Add as friend
+radar-opt-minimap = Show the mini-map
+radar-opt-limit-range = Limit to a radius
+radar-opt-range = Radius
+radar-opt-show-muted = Show blocked residents
+radar-opt-name-format = Name format
+radar-name-display = Display name
+radar-name-user = Username
+radar-name-display-user = Display name (username)
+radar-name-user-display = Username (display name)
+radar-opt-columns = Columns
+radar-opt-color-names = Color names by distance
+radar-opt-report-to = Report to
+radar-report-chat = Nearby chat
+radar-report-toasts = Notifications
+radar-opt-draw-enter = Entering draw distance
+radar-opt-draw-leave = Leaving draw distance
+radar-opt-chat-enter = Entering chat range
+radar-opt-chat-leave = Leaving chat range
+radar-opt-region-enter = Entering the region
+radar-opt-region-leave = Leaving the region
+radar-opt-age-alert = Age alert
+radar-opt-age-days = Threshold (days)
+radar-opt-show-blocked = Show the block list
+radar-chat-enter = entered chat range ({ $distance } m).
+radar-chat-leave = left chat range.
+radar-draw-enter = entered draw distance ({ $distance } m).
+radar-draw-leave = left draw distance.
+radar-region-enter = entered the region ({ $distance } m).
+radar-region-enter-unknown = entered the region.
+radar-region-leave = left the region.
+radar-age-alert = { $days ->
+    [one] triggered the age alert. Age: { $days } day
+   *[other] triggered the age alert. Age: { $days } days
+    }
+radar-too-far-to-zoom = This avatar is too far for the camera to reach it.
+radar-col-seen-short = Seen
+radar-col-range-short = Dist.

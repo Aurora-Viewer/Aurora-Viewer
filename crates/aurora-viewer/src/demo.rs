@@ -481,6 +481,24 @@ fn long_name_events(agent: Uuid) -> Vec<NetEvent> {
     ]
 }
 
+/// AURORA_DEMO_RADAR=1: residents around us for the radar of the People
+/// window, at every kind of range (chat, shout, farther, unknown altitude).
+pub fn radar_events() -> Vec<NetEvent> {
+    vec![NetEvent::CoarseLocations {
+        handle: HANDLE,
+        positions: vec![
+            (DEMO_LOUP, Vec3::new(134.0, 132.0, 24.0)),
+            (DEMO_NOVA, Vec3::new(150.0, 140.0, 24.0)),
+            (DEMO_TESS, Vec3::new(96.0, 150.0, 28.0)),
+            (DEMO_LONG_NAME, Vec3::new(146.0, 132.0, 24.0)),
+            (DEMO_WIDE_NAME, Vec3::new(120.0, 150.0, 24.0)),
+            (u(100), Vec3::new(20.0, 240.0, 60.0)),
+            // no altitude: its range is unknown
+            (u(101), Vec3::new(200.0, 60.0, 0.0)),
+        ],
+    }]
+}
+
 /// AgentProfile reply of the demo residents (AURORA_DEMO_PROFILE).
 fn demo_profile(id: Uuid) -> aurora_net::AvatarProfile {
     use aurora_net::profile::{days_from_civil, flags};
@@ -531,6 +549,13 @@ fn demo_profile(id: Uuid) -> aurora_net::AvatarProfile {
             (Uuid::from_u128(0x91C0_0002), aurora_i18n::tr!("demo-my-workshop").into()),
         ];
         p.notes = Some(aurora_i18n::tr!("demo-met-at-the-beach-very-friendly").into());
+    } else if id == DEMO_TESS {
+        // three days old, no payment info: the radar's age alert
+        let today = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0.0, |d| d.as_secs_f64());
+        p.born = Some(today - 3.5 * 86_400.0);
+        p.flags = 0;
     } else if id == DEMO_NOVA {
         p.partner = DEMO_LOUP;
         p.hide_age = Some(true);

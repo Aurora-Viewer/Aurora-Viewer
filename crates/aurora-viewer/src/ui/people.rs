@@ -7,9 +7,12 @@ use super::widgets::{self, Floater};
 use crate::theme::Palette;
 use crate::world::World;
 use crate::world::mutes::{MuteType, flag};
-use egui::{Color32, RichText, Vec2};
+use egui::{RichText, Vec2};
 use glam::Vec3;
 use uuid::Uuid;
+
+mod radar;
+pub use radar::{RadarData, RadarSettings, age_days, radar_name};
 
 pub enum PeopleAction {
     OpenIm(Uuid),
@@ -32,6 +35,9 @@ pub enum PeopleAction {
         flag: u32,
         on: bool,
     },
+    /// Double click on an avatar of the radar that is not drawn
+    /// (ZoomToAvatarNotPossible).
+    TooFarToZoom,
 }
 
 #[derive(Default)]
@@ -40,49 +46,29 @@ pub struct PeopleUi {
     pub friends_tab: usize,
     /// Object name typed in "Bloquer par nom".
     pub block_name: String,
+    /// Avatars selected in the radar.
+    pub radar_selected: Vec<Uuid>,
 }
 
-/// Nearby avatars from coarse locations + loaded avatar objects.
+/// Nearby avatars, nearest first: the loaded ones at their exact place, the
+/// others from the coarse locations (the radar's sightings).
 pub fn nearby(world: &World) -> Vec<(Uuid, String, Vec3, f32)> {
     let me = world.agent.position;
-    let mut out: Vec<(Uuid, String, Vec3, f32)> = Vec::new();
-    for (h, list) in &world.coarse {
-        let Some(off) = world.region_offset(*h) else {
-            continue;
-        };
-        for (id, p) in list {
-            if *id == world.agent_id {
-                continue;
-            }
-            let pos = off + *p;
-            let name = world.person_name(id).unwrap_or_else(|| "…".into());
-            out.push((*id, name, pos, pos.truncate().distance(me.truncate())));
-        }
-    }
-    for (_, o) in world.objects.avatars() {
-        if o.full_id != world.agent_id
-            && !out.iter().any(|e| e.0 == o.full_id)
-            && let Some(off) = world.region_offset(o.key.region)
-        {
-            let pos = off + o.position;
-            out.push((o.full_id, world.person_name(&o.full_id).unwrap_or_default(), pos, pos.distance(me)));
-        }
-    }
+    let mut out: Vec<(Uuid, String, Vec3, f32)> = crate::world::radar::sightings(world)
+        .into_iter()
+        .map(|s| {
+            let name = world.person_name(&s.id).unwrap_or_else(|| "…".into());
+            // without an altitude, the distance on the ground
+            let distance = if s.altitude_known {
+                s.position.distance(me)
+            } else {
+                s.position.truncate().distance(me.truncate())
+            };
+            (s.id, name, s.position, distance)
+        })
+        .collect();
     out.sort_by(|a, b| a.3.total_cmp(&b.3));
     out
-}
-
-/// Width of the distance column of the nearby list.
-const DISTANCE_W: f32 = 70.0;
-
-fn distance_color(p: &Palette, d: f32) -> Color32 {
-    if d <= 20.0 {
-        p.success
-    } else if d <= 100.0 {
-        p.warn
-    } else {
-        p.muted
-    }
 }
 
 pub fn people_window(
@@ -91,6 +77,7 @@ pub fn people_window(
     world: &World,
     panels: &mut Panels,
     st: &mut PeopleUi,
+    radar: &mut RadarData,
     // the mini-map renderer (LLNetMap in the Nearby tab)
     map: &mut dyn FnMut(&mut egui::Ui, Vec2),
 ) -> Vec<PeopleAction> {
@@ -100,7 +87,7 @@ pub fn people_window(
         "people",
         aurora_i18n::tr!("common-people"),
         egui::pos2(8.0, 70.0),
-        Vec2::new(410.0, 520.0),
+        Vec2::new(470.0, 540.0),
     )
     .help(aurora_i18n::tr!("ui-people-nearby-avatars-and-friends-list"))
     .show(ctx, p, &mut open, |ui| {
@@ -119,49 +106,19 @@ pub fn people_window(
         );
         panels.people_tab = tab as u8;
         ui.add_space(4.0);
+        if panels.people_tab == 0 {
+            // the radar lays out its own filter, beside its buttons
+            let mut blocked = false;
+            radar::tab(ui, p, world, radar, st, map, &mut actions, &mut blocked);
+            if blocked {
+                panels.people_tab = 4;
+            }
+            return;
+        }
         widgets::search_field(ui, &mut st.filter, aurora_i18n::tr!("ui-people-filter"), ui.available_width());
         ui.add_space(4.0);
         let filter = st.filter.trim().to_lowercase();
-        if panels.people_tab == 0 {
-            ui.vertical_centered(|ui| map(ui, Vec2::new(ui.available_width().min(320.0), 150.0)));
-            ui.add_space(4.0);
-            let list: Vec<_> = nearby(world)
-                .into_iter()
-                .filter(|e| filter.is_empty() || e.1.to_lowercase().contains(&filter))
-                .collect();
-            let w = ui.available_width();
-            let title = aurora_i18n::tr!("ui-people-name", value0 = format!("{}", list.len()));
-            widgets::header_row(
-                ui,
-                p,
-                &[(&title, w - DISTANCE_W), (aurora_i18n::tr!("common-distance"), DISTANCE_W)],
-            );
-            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                for (id, name, _, d) in list.iter().take(200) {
-                    ui.horizontal(|ui| {
-                        ui.set_min_height(18.0);
-                        // complete names can be long: cut before the distance
-                        // column (full name on hover)
-                        let name_w = (ui.available_width() - DISTANCE_W).max(60.0);
-                        let name = RichText::new(name).size(13.0).color(p.ink);
-                        let r = ui.add(widgets::elided_label(ui, name, name_w).sense(egui::Sense::click()));
-                        // menu_people_nearby.xml
-                        menu::context_menu(&r, p, |ui| context::avatar_list_menu(ui, p, world, *id, AvatarList::Nearby));
-                        if r.double_clicked() {
-                            actions.push(PeopleAction::OpenIm(*id));
-                        }
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(aurora_i18n::number(*d as f64, 2))
-                                    .size(12.0)
-                                    .strong()
-                                    .color(distance_color(p, *d)),
-                            );
-                        });
-                    });
-                }
-            });
-        } else if panels.people_tab == 2 {
+        if panels.people_tab == 2 {
             groups_tab(ui, p, world, &filter, &mut actions);
         } else if panels.people_tab == 4 {
             blocked_tab(ui, p, world, st, &filter, &mut actions);

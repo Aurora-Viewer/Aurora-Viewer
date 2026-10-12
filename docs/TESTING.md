@@ -762,6 +762,7 @@ grille.
 | `AURORA_DEMO_WINDOWS=<mode>` | Repli, déplacement et restauration du titre de l’inventaire |
 | `AURORA_DEMO_EXIT=<mode>` | Modale de fermeture et choix hors ligne |
 | `AURORA_DEMO_UI=<onglet>` | Ouvre Personnes (onglet), l'inventaire et le chat |
+| `AURORA_DEMO_RADAR=1` | Résidents autour de soi pour le radar de Personnes (toutes les portées) |
 | `AURORA_DEMO_OPTIONS=<section>` | Ouvre les préférences sur une section |
 | `AURORA_DEMO_PERF=compact` ou `full` | Ouvre la fenêtre Performances, compacte ou complète |
 | `AURORA_DEMO_LOGIN=<mode>` | Écran de connexion hors ligne |

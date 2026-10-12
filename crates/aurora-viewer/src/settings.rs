@@ -68,6 +68,8 @@ pub struct Settings {
     pub camera: crate::camera::CameraSettings,
     /// Contacts window (Amis / Groupes / Cercles).
     pub contacts: crate::ui::contacts::ContactsSettings,
+    /// Radar of the People window.
+    pub radar: crate::ui::people::RadarSettings,
     pub inventory: crate::ui::inventory::InventoryPreferences,
     pub ao: crate::ao::Settings,
     pub script_editor: crate::ui::scripts::settings::ScriptSettings,
@@ -448,6 +450,7 @@ impl Default for Settings {
             build: Default::default(),
             camera: Default::default(),
             contacts: Default::default(),
+            radar: Default::default(),
             inventory: Default::default(),
             script_editor: Default::default(),
             username: String::new(),

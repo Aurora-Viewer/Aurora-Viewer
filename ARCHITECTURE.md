@@ -257,6 +257,8 @@ les dossiers concernés, sans rejouer les copies ni les déplacements.
 
 ### Surfaces des fenêtres
 
+`world/radar.rs` tient le radar de la fenêtre Personnes (balayage des avatars une fois par seconde, première
+apparition, franchissements signalés), `ui/people/radar.rs` son tableau, ses réglages et son menu d'options.
 `ui/widgets/keycap.rs` dessine les touches d'un raccourci (liste des
 raccourcis, panneau du micro). `ui/widgets/workspace.rs` partage la navigation, les panneaux de détails, les
 dialogues et les lignes de l'inventaire utilisateur et des contenus d'objets

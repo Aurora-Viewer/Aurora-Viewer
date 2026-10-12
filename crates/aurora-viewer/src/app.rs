@@ -249,6 +249,9 @@ pub struct App {
     geom_changed: Option<Instant>,
     frame_start: Instant,
     people_ui: ui::people::PeopleUi,
+    /// Avatars around us, swept once a second on `radar_clock`.
+    radar: crate::world::radar::Radar,
+    radar_clock: Instant,
     contacts_ui: ui::contacts::ContactsUi,
     /// Mini-map and world map state, map server tiles.
     minimap_ui: ui::minimap::MiniMap,
@@ -572,6 +575,8 @@ impl App {
             geom_changed: None,
             frame_start: Instant::now(),
             people_ui: Default::default(),
+            radar: Default::default(),
+            radar_clock: Instant::now(),
             contacts_ui: Default::default(),
             minimap_ui: Default::default(),
             display_name_ui: Default::default(),
@@ -2570,6 +2575,72 @@ impl App {
         }
     }
 
+    /// Radar of the People window: one sweep a second (also with the
+    /// window closed, for its alerts), the profiles its columns show and
+    /// the crossings it reports (FSRadar::updateRadarList, fsradar.cpp).
+    fn update_radar(&mut self) {
+        use crate::world::radar::Event;
+        let now = self.radar_clock.elapsed().as_secs_f64();
+        if !self.in_world() || !self.radar.due(now) {
+            return;
+        }
+        let seen = crate::world::radar::sightings(&self.world);
+        let mut events = self.radar.sweep(
+            seen,
+            self.world.agent.position,
+            self.world.main_region,
+            self.settings.draw_distance,
+            now,
+        );
+        let s = self.settings.radar.clone();
+        // Firestorm asks for every profile as its entry appears; here only
+        // when something reads them (a column on screen, the age alert)
+        let on_screen = self.panels.people && self.panels.people_tab == 0;
+        if s.age_alert || (on_screen && s.wants_profiles()) {
+            for id in self.radar.take_profile_wants() {
+                self.world.want_profile(id);
+            }
+        }
+        if s.age_alert {
+            let today = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0.0, |d| d.as_secs_f64());
+            let profiles = &self.world.profiles;
+            events.extend(self.radar.age_alerts(i64::from(s.age_alert_days), |id| {
+                profiles.get(id).and_then(|p| ui::people::age_days(p, today))
+            }));
+        }
+        for event in events {
+            let meters = |d: f32| aurora_i18n::number(f64::from(d), 2);
+            let (wanted, text) = match event {
+                Event::ChatEnter(_, d) => (s.chat_enter, aurora_i18n::tr!("radar-chat-enter", distance = meters(d))),
+                Event::ChatLeave(_) => (s.chat_leave, aurora_i18n::tr!("radar-chat-leave").to_owned()),
+                Event::DrawEnter(_, d) => (s.draw_enter, aurora_i18n::tr!("radar-draw-enter", distance = meters(d))),
+                Event::DrawLeave(_) => (s.draw_leave, aurora_i18n::tr!("radar-draw-leave").to_owned()),
+                Event::RegionEnter(_, Some(d)) => (s.region_enter, aurora_i18n::tr!("radar-region-enter", distance = meters(d))),
+                Event::RegionEnter(_, None) => (s.region_enter, aurora_i18n::tr!("radar-region-enter-unknown").to_owned()),
+                Event::RegionLeave(_) => (s.region_leave, aurora_i18n::tr!("radar-region-leave").to_owned()),
+                Event::AgeAlert(_, days) => (s.age_alert, aurora_i18n::tr!("radar-age-alert", days = days)),
+            };
+            if !wanted {
+                continue;
+            }
+            let id = event.avatar();
+            if s.toasts {
+                let name = ui::people::radar_name(&self.world, &id, s.name_format);
+                self.world.notifications.push(
+                    crate::world::notifications::Kind::Info,
+                    name,
+                    text,
+                    crate::world::notifications::Data::None,
+                );
+            } else {
+                // the name is a link to the resident, as in Firestorm's chat
+                self.world.system_message(format!("secondlife:///app/agent/{id}/about {text}"));
+            }
+        }
+    }
+
     /// Voice session for the current region / parcel, microphone, push-to-talk.
     fn update_voice(&mut self) {
         let tuning = self.panels.settings && self.options_ui.tab == ui::options::TAB_AUDIO;
@@ -3764,6 +3835,7 @@ impl App {
             *self.net.controls.lock() = c;
         }
         self.update_voice();
+        self.update_radar();
         let mut view = self.camera.view();
         let mut proj = self.camera.proj(aspect);
         let mut vp = proj * view;
@@ -5946,7 +6018,26 @@ impl App {
                     );
                     mini.extend(acts);
                 };
-                let people = ui::people::people_window(&ctx, &p, &self.world, &mut self.panels, &mut self.people_ui, &mut people_map);
+                let radar_before = self.settings.radar.clone();
+                let mut radar = ui::people::RadarData {
+                    radar: &self.radar,
+                    settings: &mut self.settings.radar,
+                    voice: &voice_levels,
+                    draw_distance: self.settings.draw_distance,
+                    now: self.radar_clock.elapsed().as_secs_f64(),
+                };
+                let people = ui::people::people_window(
+                    &ctx,
+                    &p,
+                    &self.world,
+                    &mut self.panels,
+                    &mut self.people_ui,
+                    &mut radar,
+                    &mut people_map,
+                );
+                if radar_before != self.settings.radar {
+                    self.settings.save();
+                }
                 for pa in people {
                     match pa {
                         ui::people::PeopleAction::OpenIm(id) => {
@@ -5957,6 +6048,9 @@ impl App {
                         }
                         ui::people::PeopleAction::OfferTeleport(id) => a.offer_tp.push(id),
                         ui::people::PeopleAction::Profile(id) => self.profile_ui.open(&mut self.world, id),
+                        ui::people::PeopleAction::TooFarToZoom => {
+                            self.world.system_message(aurora_i18n::tr!("radar-too-far-to-zoom"));
+                        }
                         ui::people::PeopleAction::GroupChat(id) => {
                             self.world.ui_sounds.push(UiSound::StartIm);
                             self.world.start_group_chat(id);
@@ -6666,6 +6760,14 @@ impl ApplicationHandler for App {
                 if p.len() >= 2 {
                     self.camera.demo_orbit(p[0], p[1], p.get(2).copied(), &self.settings.camera);
                 }
+            }
+            // AURORA_DEMO_RADAR=1: residents around for the radar of People
+            if std::env::var_os("AURORA_DEMO_RADAR").is_some() {
+                for ev in crate::demo::radar_events() {
+                    self.world.apply(ev);
+                }
+                self.panels.people = true;
+                self.panels.people_tab = 0;
             }
             if std::env::var_os("AURORA_DEMO_UI").is_some() {
                 self.panels.people = true;

@@ -3910,3 +3910,63 @@ loading-residents = { $count ->
     }
 ui-bars-click-to-talk = Clic pour activer
 ui-bars-microphone-options = Options du micro
+radar-col-region = Même région
+radar-col-typing = Écrit
+radar-col-sitting = Assis
+radar-col-payment = Infos de paiement
+radar-col-notes = Notes
+radar-col-age = Âge
+radar-col-seen = Vu depuis
+radar-name-header = Nom [{ $total }/{ $region }/{ $chat }]
+radar-name-header-tip = Nom (avatars au total / dans la région / à portée du chat)
+radar-voice-connected = Dans le canal vocal
+radar-voice-speaking = Parle
+radar-payment-none = Aucune info de paiement
+radar-payment-on-file = Infos de paiement enregistrées
+radar-payment-used = Infos de paiement utilisées
+radar-age-hidden = n.d.
+radar-age-days = { $days ->
+    [one] { $days } jour
+   *[other] { $days } jours
+    }
+radar-empty = Personne à proximité.
+radar-options = Options du radar
+radar-selection-menu = Actions sur la sélection
+radar-add-friend = Ajouter en ami
+radar-opt-minimap = Afficher la mini-carte
+radar-opt-limit-range = Limiter au rayon
+radar-opt-range = Rayon
+radar-opt-show-muted = Afficher les résidents bloqués
+radar-opt-name-format = Format des noms
+radar-name-display = Nom d'affichage
+radar-name-user = Nom d'utilisateur
+radar-name-display-user = Nom d'affichage (utilisateur)
+radar-name-user-display = Utilisateur (nom d'affichage)
+radar-opt-columns = Colonnes
+radar-opt-color-names = Couleur des noms selon la distance
+radar-opt-report-to = Signaler dans
+radar-report-chat = Chat local
+radar-report-toasts = Notifications
+radar-opt-draw-enter = Entrées dans la distance d'affichage
+radar-opt-draw-leave = Sorties de la distance d'affichage
+radar-opt-chat-enter = Entrées à portée du chat
+radar-opt-chat-leave = Sorties de la portée du chat
+radar-opt-region-enter = Entrées dans la région
+radar-opt-region-leave = Sorties de la région
+radar-opt-age-alert = Alerte d'âge
+radar-opt-age-days = Seuil (jours)
+radar-opt-show-blocked = Afficher la liste des bloqués
+radar-chat-enter = est entré(e) à portée du chat ({ $distance } m).
+radar-chat-leave = a quitté la portée du chat.
+radar-draw-enter = est entré(e) dans la distance d'affichage ({ $distance } m).
+radar-draw-leave = a quitté la distance d'affichage.
+radar-region-enter = est entré(e) dans la région ({ $distance } m).
+radar-region-enter-unknown = est entré(e) dans la région.
+radar-region-leave = a quitté la région.
+radar-age-alert = { $days ->
+    [one] a déclenché l'alerte d'âge. Âge : { $days } jour
+   *[other] a déclenché l'alerte d'âge. Âge : { $days } jours
+    }
+radar-too-far-to-zoom = Cet avatar est trop loin pour que la caméra aille jusqu'à lui.
+radar-col-seen-short = Vu
+radar-col-range-short = Dist.
