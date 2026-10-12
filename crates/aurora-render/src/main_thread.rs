@@ -118,6 +118,8 @@ pub struct Renderer {
     palette_buffer: wgpu::Buffer,
     /// Palette bytes written since the last frame (AURORA_PROFILE).
     palettes_uploaded: u64,
+    /// Bytes of vertices deformed in place this frame (profile).
+    vertices_uploaded: u64,
     skin_bind_buffer: wgpu::Buffer,
     /// Bumped when the palette or skin binding buffer is reallocated (the
     /// render thread rebuilds the records bind group).
@@ -324,6 +326,7 @@ impl Renderer {
             writes,
             palette_buffer,
             palettes_uploaded: 0,
+            vertices_uploaded: 0,
             skin_bind_buffer,
             bind_generation: 0,
             gpu_cull,
@@ -559,6 +562,7 @@ impl Renderer {
             mesh.vertex_offset as u64 * std::mem::size_of::<Vertex>() as u64,
             bytemuck::cast_slice(vertices),
         );
+        self.vertices_uploaded += std::mem::size_of_val(vertices) as u64;
         true
     }
 
@@ -643,6 +647,8 @@ impl Renderer {
         let mut stats = RenderStats {
             records_uploaded: self.records.uploaded,
             palettes_uploaded: std::mem::take(&mut self.palettes_uploaded),
+            cull_uploaded: self.records.faces.uploaded + self.cull.objects.uploaded + self.cull.boxes.uploaded,
+            vertices_uploaded: std::mem::take(&mut self.vertices_uploaded),
             journal_bytes: self.writes.bytes() as u64,
             textures: self.textures.live(),
             texture_bytes: self.textures.bytes(),
@@ -750,6 +756,8 @@ impl Renderer {
         }
         stats.records_uploaded = main.records_uploaded;
         stats.palettes_uploaded = main.palettes_uploaded;
+        stats.cull_uploaded = main.cull_uploaded;
+        stats.vertices_uploaded = main.vertices_uploaded;
         stats.journal_bytes = main.journal_bytes;
         stats.textures = main.textures;
         stats.texture_bytes = main.texture_bytes;

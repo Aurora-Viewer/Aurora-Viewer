@@ -784,6 +784,10 @@ pub struct RenderStats {
     /// Bytes of draw records and joint palettes sent to the GPU this frame.
     pub records_uploaded: u64,
     pub palettes_uploaded: u64,
+    /// Bytes of the culling tables (faces, objects, joint boxes) and of the
+    /// vertices deformed in place (flexible prims) sent this frame.
+    pub cull_uploaded: u64,
+    pub vertices_uploaded: u64,
     /// The frame was drawn by the render thread (render_thread.rs); false
     /// with AURORA_RENDER_THREAD=0.
     pub render_thread: bool,

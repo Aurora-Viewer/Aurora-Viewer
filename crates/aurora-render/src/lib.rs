@@ -30,6 +30,7 @@ pub mod vram;
 pub mod writes;
 
 pub use arena::MeshAlloc;
+pub use gpu_cull::set_whole_chunk_uploads;
 pub use hud::HudView;
 pub use main_thread::{GpuInfo, Renderer};
 pub use renderer::{CASCADES, RenderError};
