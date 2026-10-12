@@ -26,6 +26,7 @@ struct Harness {
     shape_only_physics: bool,
     missing_physics: bool,
     physics_writes: Vec<(u32, aurora_net::build::PhysicsParams)>,
+    keep_inventory_folders: bool,
 }
 
 impl Harness {
@@ -78,6 +79,7 @@ impl Harness {
             shape_only_physics: false,
             missing_physics: false,
             physics_writes: Vec::new(),
+            keep_inventory_folders: false,
         }
     }
 
@@ -147,8 +149,12 @@ impl Harness {
                     serial,
                     result: Ok(items),
                 } => {
-                    self.tool
-                        .on_task_inventory(&self.world, object, serial, items.into_iter().filter(|i| !i.is_folder).collect());
+                    self.tool.on_task_inventory(
+                        &self.world,
+                        object,
+                        serial,
+                        items.into_iter().filter(|i| self.keep_inventory_folders || !i.is_folder).collect(),
+                    );
                 }
                 NetEvent::CapReply { tag, result } => self.tool.on_cap_reply(&mut self.world, tag, result),
                 NetEvent::TaskInventory {
@@ -777,6 +783,41 @@ fn unconfirmed_copy_folder_reports_the_stage_and_restores_the_original_script() 
         h.script_changes,
         vec![(demo::id(demo::TARGET), false), (demo::id(demo::TARGET), true)]
     );
+}
+
+#[test]
+fn contents_folder_metadata_does_not_conflict_with_a_script_named_contents() {
+    let mut h = Harness::new(demo::TARGET);
+    h.only_target_script();
+    h.keep_inventory_folders = true;
+    h.tool.replacement.options.contents = true;
+    let handle = h.server.main_region.unwrap();
+    for event in h.sim.reply(
+        &h.server,
+        &BuildCmd::RequestTaskInventory {
+            handle,
+            local_id: demo::TARGET,
+            object_id: demo::id(demo::TARGET),
+        },
+    ) {
+        if let NetEvent::TaskInventory { result: Ok(items), .. } = event {
+            let mut item = items.into_iter().find(|i| !i.is_folder).unwrap();
+            item.name = "Contents".into();
+            h.sim.reply(
+                &h.server,
+                &BuildCmd::UpdateTaskInventory {
+                    handle,
+                    local_id: demo::TARGET,
+                    item: Box::new(item),
+                },
+            );
+        }
+    }
+    assert_eq!(h.run(), Stage::Done, "{:?}", h.tool.replacement.job);
+    let inventory = &h.tool.contents.objects[&demo::id(demo::SOURCE)];
+    assert!(inventory.items.iter().any(|i| i.is_folder && i.name == "Contents"));
+    assert!(inventory.items.iter().any(|i| !i.is_folder && i.name == "Contents"));
+    assert_eq!(h.script_transfers.len(), 1);
 }
 
 #[test]

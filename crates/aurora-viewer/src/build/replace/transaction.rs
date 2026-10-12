@@ -584,7 +584,7 @@ impl Job {
                         .unwrap_or_default();
                     let destination = &tool.contents.objects[&self.source].items;
                     self.destination_before = destination.iter().map(|i| i.item_id).collect();
-                    let mut names: HashSet<String> = destination.iter().map(|i| i.name.clone()).collect();
+                    let mut names: HashSet<String> = destination.iter().filter(|i| !i.is_folder).map(|i| i.name.clone()).collect();
                     for item in &self.items {
                         if item.owner_id != world.agent_id || item.owner_mask & perm::COPY == 0 {
                             return Err(aurora_i18n::tr!("replace-no-copy", name = item.name.clone()));
@@ -758,7 +758,10 @@ impl Job {
                 }
                 if let Some(inv) = tool.contents.objects.get(&self.source).filter(|i| !i.loading)
                     && let Some(item) = inv.items.iter().find(|i| {
-                        i.name == original.name && !self.destination_before.contains(&i.item_id) && !self.copied.contains(&i.item_id)
+                        i.name == original.name
+                            && i.asset_type == original.asset_type
+                            && !self.destination_before.contains(&i.item_id)
+                            && !self.copied.contains(&i.item_id)
                     })
                 {
                     self.copied.push(item.item_id);
