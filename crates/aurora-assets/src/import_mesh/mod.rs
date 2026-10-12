@@ -6,8 +6,10 @@ pub mod collada;
 pub mod encode;
 pub mod gltf;
 pub mod process;
+pub mod skin;
 #[cfg(test)]
 mod tests;
+mod vhacd;
 
 use crate::{AssetError, PbrMaterial};
 use glam::{Mat4, Vec3};
@@ -42,6 +44,8 @@ pub struct Skin {
 #[derive(Debug, Clone)]
 pub struct Model {
     pub name: String,
+    /// Extra faces of the same source geometry share a root physics shape.
+    pub submodel: u32,
     pub faces: Vec<Face>,
     pub skin: Option<Skin>,
     pub center: Vec3,
@@ -112,24 +116,18 @@ impl Face {
 }
 impl Model {
     pub fn normalize(&mut self) -> Result<(), AssetError> {
+        let (center, size) = normalization(&self.faces)?;
+        self.normalize_to(center, size)
+    }
+    pub fn normalize_to(&mut self, center: Vec3, size: Vec3) -> Result<(), AssetError> {
         if self.faces.is_empty() || self.faces.len() > 8 {
             return Err(AssetError::invalid("mesh model needs between one and eight faces"));
         }
-        let mut min = Vec3::splat(f32::MAX);
-        let mut max = Vec3::splat(f32::MIN);
         for face in &self.faces {
             face.validate()?;
-            for vertex in &face.vertices {
-                let point = Vec3::from_array(vertex.position);
-                min = min.min(point);
-                max = max.max(point);
-            }
         }
-        if !min.is_finite() || min.x == f32::MAX {
-            return Err(AssetError::invalid("empty mesh"));
-        }
-        self.center = (min + max) * 0.5;
-        self.size = (max - min).max(Vec3::splat(0.00001));
+        self.center = center;
+        self.size = size;
         if !self.center.is_finite() || !self.size.is_finite() {
             return Err(AssetError::invalid("mesh bounds overflow"));
         }
@@ -147,6 +145,24 @@ impl Model {
     pub fn triangles(&self) -> usize {
         self.faces.iter().map(|f| f.indices.len() / 3).sum()
     }
+}
+
+/// LLDAELoader normalizes the entire source before splitting extra faces.
+pub fn normalization(faces: &[Face]) -> Result<(Vec3, Vec3), AssetError> {
+    let mut min = Vec3::splat(f32::MAX);
+    let mut max = Vec3::splat(f32::MIN);
+    for face in faces {
+        face.validate()?;
+        for vertex in &face.vertices {
+            let point = Vec3::from_array(vertex.position);
+            min = min.min(point);
+            max = max.max(point);
+        }
+    }
+    if !min.is_finite() || min.x == f32::MAX {
+        return Err(AssetError::invalid("empty mesh"));
+    }
+    Ok(((min + max) * 0.5, (max - min).max(Vec3::splat(0.00001))))
 }
 
 /// Split a primitive by both the 16-bit vertex limit and the eight-face

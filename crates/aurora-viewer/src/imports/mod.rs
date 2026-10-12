@@ -10,6 +10,8 @@ pub mod local;
 pub mod maps;
 pub mod mesh;
 pub mod preview;
+#[cfg(test)]
+mod tests;
 pub mod ui;
 
 use aurora_assets::{Animation, DecodedImage, PbrMaterial, import_sound::Sound, import_texture};
@@ -85,6 +87,7 @@ pub struct Preferences {
     pub mesh_auto_preview_weights: bool,
     pub mesh_reliable_default: bool,
     pub mesh_suffixes: [String; 5],
+    pub mesh_physics_preset: String,
 }
 impl Default for Preferences {
     fn default() -> Self {
@@ -102,6 +105,7 @@ impl Default for Preferences {
             mesh_auto_preview_weights: true,
             mesh_reliable_default: false,
             mesh_suffixes: ["LOD0".into(), "LOD1".into(), "LOD2".into(), String::new(), "PHYS".into()],
+            mesh_physics_preset: String::new(),
         }
     }
 }
@@ -178,6 +182,43 @@ pub struct BvhInfo {
     pub frame_time: f32,
 }
 impl Source {
+    /// Conservative size of retained input; shared maps may be counted twice.
+    pub fn retained_bytes(&self) -> usize {
+        let model = |model: &aurora_assets::import_mesh::Model| {
+            model
+                .faces
+                .iter()
+                .map(|f| f.vertices.len() * std::mem::size_of::<aurora_assets::import_mesh::Vertex>() + f.indices.len() * 4)
+                .sum::<usize>()
+        };
+        match self {
+            Self::Texture(image) => image.data.len(),
+            Self::Sound(sound) => sound.mono.len() * 4,
+            Self::Animation { bytes, animation, .. } => {
+                bytes.len()
+                    + animation
+                        .joints
+                        .iter()
+                        .map(|j| {
+                            j.rot_keys.len() * std::mem::size_of::<aurora_assets::anim::RotKey>()
+                                + j.pos_keys.len() * std::mem::size_of::<aurora_assets::anim::PosKey>()
+                        })
+                        .sum::<usize>()
+            }
+            Self::Material { images, .. } => images.iter().flatten().map(|i| i.pixels.data.len()).sum(),
+            Self::Mesh(draft) => {
+                draft.scene.models.iter().map(model).sum::<usize>()
+                    + draft.images.values().map(|i| i.pixels.data.len()).sum::<usize>()
+                    + draft
+                        .lods
+                        .iter()
+                        .filter_map(|l| l.file.as_ref())
+                        .map(|s| s.models.iter().map(model).sum::<usize>())
+                        .sum::<usize>()
+                    + draft.physics_file.as_ref().map_or(0, |s| s.models.iter().map(model).sum::<usize>())
+            }
+        }
+    }
     pub fn kind(&self) -> Kind {
         match self {
             Self::Texture(_) => Kind::Texture,
@@ -207,6 +248,7 @@ pub struct Entry {
     pub preview: Option<egui::TextureHandle>,
     pub preview_generation: u64,
     pub preview_pending: bool,
+    pub preview_job_generation: u64,
     pub preview_error: Option<String>,
     pub model: Option<Arc<aurora_render::preview::Model>>,
     pub view: aurora_render::preview::View,
@@ -252,6 +294,7 @@ impl Entry {
             preview: None,
             preview_generation: 0,
             preview_pending: false,
+            preview_job_generation: 0,
             preview_error: None,
             model: None,
             view: Default::default(),
@@ -276,7 +319,7 @@ pub(super) enum Worker {
     Reloaded(Uuid, Result<Vec<Entry>, String>),
     Encoded(Uuid, Result<Vec<u8>, String>),
     Preview(Uuid, u64, egui::ColorImage),
-    Model(Uuid, u64, Arc<aurora_render::preview::Model>),
+    Model(Uuid, u64, Arc<aurora_render::preview::Model>, Option<Arc<mesh::Prepared>>),
     PreviewFailed(Uuid, u64, String),
     MeshPrepared(
         Uuid,
@@ -284,7 +327,11 @@ pub(super) enum Worker {
         u64,
         Result<(Arc<mesh::Prepared>, aurora_net::inventory::mesh_upload::Request), String>,
     ),
-    MeshFile(Uuid, usize, Result<(Arc<aurora_assets::import_mesh::Scene>, PathBuf), String>),
+    MeshFile(
+        Uuid,
+        usize,
+        Result<(Arc<aurora_assets::import_mesh::Scene>, HashMap<usize, LocalImage>, PathBuf), String>,
+    ),
     Local(Uuid, u64, Result<local::Prepared, String>),
     Watch(Uuid, local::Stamp),
     Map(Uuid, u64, usize, Result<LocalImage, String>),
@@ -335,6 +382,7 @@ pub struct Imports {
     pub load_preferences: Preferences,
     cost_overrides: HashMap<(Kind, bool), i32>,
     pub spent: i32,
+    pub discarded_quotes: Vec<Uuid>,
 }
 impl Default for Imports {
     fn default() -> Self {
@@ -364,6 +412,7 @@ impl Default for Imports {
             load_preferences: Default::default(),
             cost_overrides: HashMap::new(),
             spent: 0,
+            discarded_quotes: Vec::new(),
         }
     }
 }
@@ -662,10 +711,15 @@ impl Imports {
                         entry.preview = Some(ctx.load_texture(format!("import_{id}"), pixels, egui::TextureOptions::LINEAR));
                     }
                 }
-                Worker::Model(id, generation, model) => {
+                Worker::Model(id, generation, model, prepared) => {
                     if let Some(entry) = self.entries.iter_mut().find(|e| e.id == id && e.preview_generation == generation) {
                         entry.preview_pending = false;
                         entry.model = Some(model);
+                        if let Some(Source::Mesh(draft)) = &mut entry.source
+                            && draft.prepared.is_none()
+                        {
+                            draft.prepared = prepared;
+                        }
                     }
                 }
                 Worker::PreviewFailed(id, generation, error) => {
@@ -743,16 +797,32 @@ impl Imports {
                         && let Some(Source::Mesh(draft)) = &mut entry.source
                     {
                         match result {
-                            Ok((scene, path)) => {
+                            Ok((scene, images, path)) => {
                                 draft.invalidate();
-                                if level < 4 {
+                                if level == 3 {
+                                    let triangles = scene.models.iter().map(aurora_assets::import_mesh::Model::triangles).sum::<usize>();
+                                    for (i, lod) in draft.lods.iter_mut().enumerate() {
+                                        if lod.file.as_ref().is_some_and(|file| file.models.len() != scene.models.len()) {
+                                            lod.file = None;
+                                            lod.path = None;
+                                            lod.source = mesh::LodSource::Auto;
+                                        }
+                                        lod.triangles = (triangles / 4usize.pow((3 - i) as u32)).max(1);
+                                    }
+                                    draft.lods[3].file = None;
+                                    draft.lods[3].path = Some(path.clone());
+                                    draft.lods[3].source = mesh::LodSource::File;
+                                    draft.scene = scene;
+                                    draft.images = images;
+                                    entry.path = path;
+                                } else if level < 4 {
                                     draft.lods[level].file = Some(scene);
                                     draft.lods[level].path = Some(path);
                                     draft.lods[level].source = mesh::LodSource::File;
                                 } else {
                                     draft.physics_file = Some(scene);
                                     draft.physics_path = Some(path);
-                                    draft.options.physics_source = 5;
+                                    draft.options.physics_source = if level == 8 { 8 } else { 5 };
                                 }
                                 entry.preview_generation += 1;
                                 entry.model = None;
@@ -845,6 +915,7 @@ impl Imports {
         let generation = entry.preview_generation;
         let entry = self.entries.iter_mut().find(|e| e.id == id).expect("entry exists");
         entry.preview_pending = true;
+        entry.preview_job_generation = generation;
         entry.preview_error = None;
         jobs.execute(move || match import_texture::prepare(&source, options) {
             Ok(image) => {

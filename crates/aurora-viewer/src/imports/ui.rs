@@ -17,6 +17,7 @@ pub enum Action {
     Reload(Uuid),
     Quote(Uuid),
     MeshFile(Uuid, usize),
+    PhysicsPreset(Uuid, bool),
     Open(Uuid),
     Local(Uuid),
     MapFile(Uuid, usize),
@@ -285,6 +286,17 @@ pub fn show(
                                                 }
                                             }
                                             Source::Animation { animation, bvh, .. } => {
+                                                if let Some(model) = &entry.model {
+                                                    entry.view.background = palette_color(p.field);
+                                                    aurora_render::preview::paint_with_pose(
+                                                        ui,
+                                                        egui::Id::new(("animation_preview", entry.id)),
+                                                        model.clone(),
+                                                        &mut entry.view,
+                                                        Vec2::new(ui.available_width(), 180.0),
+                                                        entry.player.pose.clone(),
+                                                    );
+                                                }
                                                 let before = (
                                                     animation.base_priority,
                                                     animation.looping,
@@ -295,26 +307,29 @@ pub fn show(
                                                     animation.hand_pose,
                                                     animation.emote_name.clone(),
                                                 );
-                                                if let Some(animation) = Arc::get_mut(animation) {
-                                                    animation_controls(ui, p, animation, bvh.as_ref());
-                                                } else {
-                                                    ui.label(aurora_i18n::tr!(
-                                                        "import-animation-info",
-                                                        duration = format!("{:.3}", animation.duration),
-                                                        joints = animation.joints.len()
-                                                    ));
-                                                }
+                                                let mut header = super::animation::metadata(animation);
+                                                animation_controls(ui, p, &mut header, bvh.as_ref(), animation.joints.len());
                                                 let changed = before
                                                     != (
-                                                        animation.base_priority,
-                                                        animation.looping,
-                                                        animation.loop_in,
-                                                        animation.loop_out,
-                                                        animation.ease_in,
-                                                        animation.ease_out,
-                                                        animation.hand_pose,
-                                                        animation.emote_name.clone(),
+                                                        header.base_priority,
+                                                        header.looping,
+                                                        header.loop_in,
+                                                        header.loop_out,
+                                                        header.ease_in,
+                                                        header.ease_out,
+                                                        header.hand_pose,
+                                                        header.emote_name.clone(),
                                                     );
+                                                if changed {
+                                                    let current = Arc::make_mut(animation);
+                                                    header.joints = std::mem::take(&mut current.joints);
+                                                    if current.base_priority != header.base_priority {
+                                                        for joint in &mut header.joints {
+                                                            joint.priority = header.base_priority;
+                                                        }
+                                                    }
+                                                    *current = header;
+                                                }
                                                 if changed && entry.player.bound.is_some() {
                                                     actions.push(Action::Play(entry.id, true));
                                                 }
@@ -359,22 +374,6 @@ pub fn show(
                                                 if old_base != entry.player.base {
                                                     entry.player.seek(position);
                                                 }
-                                                if let Some(model) = &entry.model {
-                                                    entry.view.background = [
-                                                        p.field.r() as f32 / 255.0,
-                                                        p.field.g() as f32 / 255.0,
-                                                        p.field.b() as f32 / 255.0,
-                                                        1.0,
-                                                    ];
-                                                    aurora_render::preview::paint_with_pose(
-                                                        ui,
-                                                        egui::Id::new(("animation_preview", entry.id)),
-                                                        model.clone(),
-                                                        &mut entry.view,
-                                                        Vec2::new(ui.available_width(), 260.0),
-                                                        entry.player.pose.clone(),
-                                                    );
-                                                }
                                             }
                                             Source::Material { value, images } => {
                                                 if let Some(model) = &entry.model {
@@ -406,11 +405,6 @@ pub fn show(
                                                 }
                                             }
                                             Source::Mesh(draft) => {
-                                                if mesh_controls(ui, p, entry.id, draft, &mut actions) {
-                                                    draft.invalidate();
-                                                    entry.preview_generation += 1;
-                                                    entry.model = None;
-                                                }
                                                 if let Some(model) = &entry.model {
                                                     entry.view.background = [
                                                         p.field.r() as f32 / 255.0,
@@ -423,8 +417,13 @@ pub fn show(
                                                         egui::Id::new(("mesh_preview", entry.id)),
                                                         model.clone(),
                                                         &mut entry.view,
-                                                        Vec2::new(ui.available_width(), 260.0),
+                                                        Vec2::new(ui.available_width(), 220.0),
                                                     );
+                                                }
+                                                if mesh_controls(ui, p, entry.id, draft, &mut actions) {
+                                                    draft.invalidate();
+                                                    entry.preview_generation += 1;
+                                                    entry.model = None;
                                                 }
                                                 let old = (
                                                     draft.preview_lod,
@@ -478,7 +477,7 @@ pub fn show(
                                 });
                                 if metadata != (entry.name.clone(), entry.description.clone(), entry.folder) {
                                     if let Some(Source::Mesh(draft)) = &mut entry.source {
-                                        draft.invalidate();
+                                        draft.invalidate_quote();
                                     }
                                     entry.preview_generation += 1;
                                 }
@@ -511,6 +510,10 @@ pub fn show(
                                                 ui.add(egui::TextEdit::singleline(suffix).char_limit(32).desired_width(120.0));
                                             });
                                         }
+                                        ui.label(aurora_i18n::tr!("import-user-physics"));
+                                        ui.add(
+                                            egui::TextEdit::singleline(&mut prefs.mesh_physics_preset).desired_width(ui.available_width()),
+                                        );
                                     });
                                 }
                             } else {
@@ -560,7 +563,13 @@ pub fn show(
                 } else {
                     match total {
                         Some(cost) => aurora_i18n::tr!("import-total", cost = cost),
-                        None => aurora_i18n::tr!("import-price-unavailable").into(),
+                        None => {
+                            if imports.choice == Choice::Mesh {
+                                aurora_i18n::tr!("import-mesh-fee-required").into()
+                            } else {
+                                aurora_i18n::tr!("import-price-unavailable").into()
+                            }
+                        }
                     }
                 })
                 .strong(),
@@ -578,11 +587,25 @@ pub fn show(
                 {
                     actions.push(Action::Local(entry.id));
                 }
-            } else if ui
-                .add_enabled(can_upload, egui::Button::new(aurora_i18n::tr!("import-upload")))
-                .clicked()
-            {
-                imports.confirm = true;
+            } else {
+                if imports.choice == Choice::Mesh
+                    && let Some(entry) = imports.active.and_then(|id| imports.entries.iter().find(|e| e.id == id))
+                    && let Some(Source::Mesh(draft)) = &entry.source
+                    && ui
+                        .add_enabled(
+                            !busy && draft.pending.is_none(),
+                            egui::Button::new(aurora_i18n::tr!("import-calculate-fee")),
+                        )
+                        .clicked()
+                {
+                    actions.push(Action::Quote(entry.id));
+                }
+                if ui
+                    .add_enabled(can_upload, egui::Button::new(aurora_i18n::tr!("import-upload")))
+                    .clicked()
+                {
+                    imports.confirm = true;
+                }
             }
             if busy {
                 ui.spinner();
@@ -596,10 +619,10 @@ pub fn show(
         });
     });
     imports.open = open && !close_requested;
-    if *prefs != old_permissions {
+    if prefs.permissions() != old_permissions.permissions() {
         for entry in &mut imports.entries {
             if let Some(Source::Mesh(draft)) = &mut entry.source {
-                draft.invalidate();
+                draft.invalidate_quote();
                 entry.preview_generation += 1;
             }
         }
@@ -641,6 +664,15 @@ fn lod_label(level: usize) -> &'static str {
         1 => aurora_i18n::tr!("import-lod-low"),
         _ => aurora_i18n::tr!("import-lod-lowest"),
     }
+}
+
+fn palette_color(color: egui::Color32) -> [f32; 4] {
+    [
+        f32::from(color.r()) / 255.0,
+        f32::from(color.g()) / 255.0,
+        f32::from(color.b()) / 255.0,
+        1.0,
+    ]
 }
 fn lod_source(source: mesh::LodSource) -> &'static str {
     match source {
@@ -734,9 +766,12 @@ fn mesh_controls(ui: &mut egui::Ui, p: &Palette, id: Uuid, draft: &mut mesh::Dra
             lod_label(3),
             aurora_i18n::tr!("import-bounding-box"),
             aurora_i18n::tr!("import-source-file"),
+            aurora_i18n::tr!("import-physics-cube"),
+            aurora_i18n::tr!("import-physics-hex"),
+            aurora_i18n::tr!("import-user-physics"),
         ];
         egui::ComboBox::from_id_salt("physics_source")
-            .selected_text(labels[(draft.options.physics_source + 1).clamp(0, 6) as usize])
+            .selected_text(labels[(draft.options.physics_source + 1).clamp(0, 9) as usize])
             .show_ui(ui, |ui| {
                 for (i, label) in labels.into_iter().enumerate() {
                     ui.selectable_value(&mut draft.options.physics_source, i as i32 - 1, label);
@@ -745,11 +780,33 @@ fn mesh_controls(ui: &mut egui::Ui, p: &Palette, id: Uuid, draft: &mut mesh::Dra
         if draft.options.physics_source == 5 && flat_button(ui, p, aurora_i18n::tr!("import-browse")).clicked() {
             actions.push(Action::MeshFile(id, 4));
         }
+        if draft.options.physics_source == 8 && flat_button(ui, p, aurora_i18n::tr!("import-load-preset")).clicked() {
+            actions.push(Action::PhysicsPreset(id, false));
+        }
+        if let Some(path) = &draft.physics_path {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(path.file_name().unwrap_or_default().to_string_lossy());
+                if flat_button(ui, p, aurora_i18n::tr!("import-save-preset")).clicked() {
+                    actions.push(Action::PhysicsPreset(id, true));
+                }
+            });
+        }
         ui.add_enabled_ui(draft.options.physics_source >= 0, |ui| {
             ui.checkbox(&mut draft.options.decompose, aurora_i18n::tr!("import-decompose"));
             ui.add(egui::Slider::new(&mut draft.options.retain, 0.01..=1.0).text(aurora_i18n::tr!("import-retain")));
             ui.add_enabled_ui(draft.options.decompose, |ui| {
-                ui.checkbox(&mut draft.options.surface, aurora_i18n::tr!("import-fill-surface"));
+                let labels = [
+                    aurora_i18n::tr!("import-fill-flood"),
+                    aurora_i18n::tr!("import-fill-surface"),
+                    aurora_i18n::tr!("import-fill-raycast"),
+                ];
+                egui::ComboBox::from_id_salt("physics_fill")
+                    .selected_text(labels[draft.options.fill_mode.min(2) as usize])
+                    .show_ui(ui, |ui| {
+                        for (index, label) in labels.into_iter().enumerate() {
+                            ui.selectable_value(&mut draft.options.fill_mode, index as u32, label);
+                        }
+                    });
                 ui.horizontal(|ui| {
                     ui.label(aurora_i18n::tr!("import-voxel-resolution"));
                     ui.add(egui::DragValue::new(&mut draft.options.resolution).range(1000..=16000000));
@@ -806,6 +863,10 @@ fn mesh_controls(ui: &mut egui::Ui, p: &Palette, id: Uuid, draft: &mut mesh::Dra
         }
         if draft.pending.is_some() {
             ui.spinner();
+            let progress = draft.progress.load(std::sync::atomic::Ordering::Relaxed);
+            if progress > 0 {
+                ui.label(aurora_i18n::tr!("import-analysis-progress", percent = progress));
+            }
             if flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked() {
                 draft.invalidate();
             }
@@ -914,7 +975,7 @@ fn texture(
         }
     } else if let Some(texture) = preview {
         let size = texture.size_vec2();
-        let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 260.0), egui::Sense::drag());
+        let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 170.0), egui::Sense::drag());
         let painter = ui.painter().with_clip_rect(rect);
         for y in 0..(rect.height() / 16.0).ceil() as i32 {
             for x in 0..(rect.width() / 16.0).ceil() as i32 {
@@ -954,12 +1015,12 @@ fn texture(
     }
 }
 
-fn animation_controls(ui: &mut egui::Ui, p: &Palette, animation: &mut Animation, bvh: Option<&BvhInfo>) {
+fn animation_controls(ui: &mut egui::Ui, p: &Palette, animation: &mut Animation, bvh: Option<&BvhInfo>, joint_count: usize) {
     widgets::section_header(ui, p, "person-simple-run", aurora_i18n::tr!("import-animation"));
     ui.label(aurora_i18n::tr!(
         "import-animation-info",
         duration = format!("{:.3}", animation.duration),
-        joints = animation.joints.len()
+        joints = joint_count
     ));
     if let Some(bvh) = bvh {
         ui.label(aurora_i18n::tr!(
@@ -967,78 +1028,80 @@ fn animation_controls(ui: &mut egui::Ui, p: &Palette, animation: &mut Animation,
             frames = bvh.frames,
             rate = format!("{:.2}", 1.0 / bvh.frame_time)
         ));
-        ui.horizontal(|ui| {
-            ui.label(aurora_i18n::tr!("import-priority"));
-            if ui.add(egui::DragValue::new(&mut animation.base_priority).range(0..=6)).changed() {
-                for joint in &mut animation.joints {
-                    joint.priority = animation.base_priority;
-                }
-            }
-        });
-        ui.checkbox(&mut animation.looping, aurora_i18n::tr!("import-loop"));
-        let hand_labels = super::animation::hands();
-        egui::ComboBox::from_id_salt("animation_hand")
-            .selected_text(hand_labels[(animation.hand_pose as usize).min(12)])
-            .show_ui(ui, |ui| {
-                for (i, label) in hand_labels.into_iter().enumerate() {
-                    ui.selectable_value(&mut animation.hand_pose, i as u32, label);
+        ui.collapsing(aurora_i18n::tr!("import-animation-settings"), |ui| {
+            ui.horizontal(|ui| {
+                ui.label(aurora_i18n::tr!("import-priority"));
+                if ui.add(egui::DragValue::new(&mut animation.base_priority).range(0..=6)).changed() {
+                    for joint in &mut animation.joints {
+                        joint.priority = animation.base_priority;
+                    }
                 }
             });
-        let emotes = super::animation::emotes();
-        egui::ComboBox::from_id_salt("animation_emote")
-            .selected_text(
-                emotes
-                    .iter()
-                    .find(|(name, _, _)| *name == animation.emote_name)
-                    .map(|(_, _, label)| *label)
-                    .unwrap_or(aurora_i18n::tr!("import-emote-none")),
-            )
-            .show_ui(ui, |ui| {
-                for (name, _, label) in emotes {
-                    ui.selectable_value(&mut animation.emote_name, name.into(), label);
+            ui.checkbox(&mut animation.looping, aurora_i18n::tr!("import-loop"));
+            let hand_labels = super::animation::hands();
+            egui::ComboBox::from_id_salt("animation_hand")
+                .selected_text(hand_labels[(animation.hand_pose as usize).min(13)])
+                .show_ui(ui, |ui| {
+                    for (i, label) in hand_labels.into_iter().enumerate() {
+                        ui.selectable_value(&mut animation.hand_pose, i as u32, label);
+                    }
+                });
+            let emotes = super::animation::emotes();
+            egui::ComboBox::from_id_salt("animation_emote")
+                .selected_text(
+                    emotes
+                        .iter()
+                        .find(|(name, _, _)| *name == animation.emote_name)
+                        .map(|(_, _, label)| *label)
+                        .unwrap_or(aurora_i18n::tr!("import-emote-none")),
+                )
+                .show_ui(ui, |ui| {
+                    for (name, _, label) in emotes {
+                        ui.selectable_value(&mut animation.emote_name, name.into(), label);
+                    }
+                });
+            ui.add_enabled_ui(animation.looping, |ui| {
+                for (label, value) in [
+                    (aurora_i18n::tr!("import-loop-in"), &mut animation.loop_in),
+                    (aurora_i18n::tr!("import-loop-out"), &mut animation.loop_out),
+                ] {
+                    ui.horizontal(|ui| {
+                        ui.label(label);
+                        ui.add(
+                            egui::DragValue::new(value)
+                                .range(0.0..=animation.duration)
+                                .suffix(" s")
+                                .speed(bvh.frame_time),
+                        );
+                        let mut percent = if animation.duration > 0.0 {
+                            *value / animation.duration * 100.0
+                        } else {
+                            0.0
+                        };
+                        if ui.add(egui::DragValue::new(&mut percent).range(0.0..=100.0).suffix(" %")).changed() {
+                            *value = percent / 100.0 * animation.duration;
+                        }
+                        let mut frame = (*value / bvh.frame_time).round() as usize;
+                        if ui
+                            .add(egui::DragValue::new(&mut frame).range(0..=bvh.frames.saturating_sub(2)))
+                            .changed()
+                        {
+                            *value = frame as f32 * bvh.frame_time;
+                        }
+                    });
                 }
+                animation.loop_out = animation.loop_out.max(animation.loop_in);
             });
-        ui.add_enabled_ui(animation.looping, |ui| {
             for (label, value) in [
-                (aurora_i18n::tr!("import-loop-in"), &mut animation.loop_in),
-                (aurora_i18n::tr!("import-loop-out"), &mut animation.loop_out),
+                (aurora_i18n::tr!("import-ease-in"), &mut animation.ease_in),
+                (aurora_i18n::tr!("import-ease-out"), &mut animation.ease_out),
             ] {
                 ui.horizontal(|ui| {
                     ui.label(label);
-                    ui.add(
-                        egui::DragValue::new(value)
-                            .range(0.0..=animation.duration)
-                            .suffix(" s")
-                            .speed(bvh.frame_time),
-                    );
-                    let mut percent = if animation.duration > 0.0 {
-                        *value / animation.duration * 100.0
-                    } else {
-                        0.0
-                    };
-                    if ui.add(egui::DragValue::new(&mut percent).range(0.0..=100.0).suffix(" %")).changed() {
-                        *value = percent / 100.0 * animation.duration;
-                    }
-                    let mut frame = (*value / bvh.frame_time).round() as usize;
-                    if ui
-                        .add(egui::DragValue::new(&mut frame).range(0..=bvh.frames.saturating_sub(2)))
-                        .changed()
-                    {
-                        *value = frame as f32 * bvh.frame_time;
-                    }
+                    ui.add(egui::DragValue::new(value).range(0.0..=animation.duration).suffix(" s").speed(0.01));
                 });
             }
-            animation.loop_out = animation.loop_out.max(animation.loop_in);
         });
-        for (label, value) in [
-            (aurora_i18n::tr!("import-ease-in"), &mut animation.ease_in),
-            (aurora_i18n::tr!("import-ease-out"), &mut animation.ease_out),
-        ] {
-            ui.horizontal(|ui| {
-                ui.label(label);
-                ui.add(egui::DragValue::new(value).range(0.0..=animation.duration).suffix(" s").speed(0.01));
-            });
-        }
     } else {
         ui.label(RichText::new(aurora_i18n::tr!("import-anim-original")).color(p.muted));
     }

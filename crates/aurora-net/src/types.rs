@@ -1207,6 +1207,8 @@ pub enum NetCommand {
         request: Uuid,
         token: Uuid,
     },
+    /// Release a fee offer after its draft changes or is removed.
+    DiscardMeshQuote(Uuid),
     RequestBalance,
     RequestInventoryMerchant,
     CreateInventoryWearable {

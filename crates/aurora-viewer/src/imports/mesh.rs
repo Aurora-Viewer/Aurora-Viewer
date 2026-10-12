@@ -38,14 +38,14 @@ pub struct Options {
     pub pelvis: f32,
     pub normals: bool,
     pub crease: f32,
-    /// -1: convex hull only, 0..3: LOD, 4: bounding box, 5: file.
+    /// -1 hull, 0..3 LOD, 4 bounds, 5 file, 6 cube, 7 hexagon, 8 user preset.
     pub physics_source: i32,
     pub decompose: bool,
     pub resolution: u32,
     pub max_hulls: u32,
     pub max_vertices: u32,
     pub tolerance: f32,
-    pub surface: bool,
+    pub fill_mode: u32,
     pub retain: f32,
 }
 impl Default for Options {
@@ -65,7 +65,7 @@ impl Default for Options {
             max_hulls: 8,
             max_vertices: 32,
             tolerance: 1.0,
-            surface: false,
+            fill_mode: 0,
             retain: 1.0,
         }
     }
@@ -80,8 +80,11 @@ pub struct Draft {
     pub options: Options,
     pub prepared: Option<Arc<Prepared>>,
     pub quote: Option<aurora_net::inventory::mesh_upload::Quote>,
+    pub quoted_at: Option<std::time::Instant>,
+    pub discarded_quotes: Vec<Uuid>,
     pub pending: Option<(Uuid, u64)>,
     pub cancel: Arc<AtomicBool>,
+    pub progress: Arc<std::sync::atomic::AtomicU32>,
     pub preview_lod: usize,
     pub preview_physics: bool,
     pub show_textures: bool,
@@ -119,8 +122,11 @@ impl Draft {
             },
             prepared: None,
             quote: None,
+            quoted_at: None,
+            discarded_quotes: Vec::new(),
             pending: None,
             cancel: Arc::new(AtomicBool::new(false)),
+            progress: Arc::new(std::sync::atomic::AtomicU32::new(0)),
             preview_lod: 3,
             preview_physics: false,
             show_textures: true,
@@ -131,11 +137,18 @@ impl Draft {
         }
     }
     pub fn invalidate(&mut self) {
+        self.invalidate_quote();
+        self.prepared = None;
+    }
+    pub fn invalidate_quote(&mut self) {
         self.cancel.store(true, Ordering::Relaxed);
         self.cancel = Arc::new(AtomicBool::new(false));
+        self.progress = Arc::new(std::sync::atomic::AtomicU32::new(0));
         self.pending = None;
-        self.quote = None;
-        self.prepared = None;
+        if let Some(quote) = self.quote.take() {
+            self.discarded_quotes.push(quote.token);
+        }
+        self.quoted_at = None;
     }
 }
 
@@ -179,6 +192,7 @@ fn box_model(high: &Model) -> Model {
     ];
     Model {
         name: high.name.clone(),
+        submodel: high.submodel,
         skin: None,
         center: high.center,
         size: high.size,
@@ -199,6 +213,33 @@ fn box_model(high: &Model) -> Model {
             ],
         }],
     }
+}
+
+fn hex_model(high: &Model) -> Model {
+    // Firestorm fs_resources/hex_phys.dae: six sides, capped, normalized.
+    let mut model = box_model(high);
+    let face = &mut model.faces[0];
+    face.vertices = (0..12)
+        .map(|i| {
+            let angle = (i % 6) as f32 * std::f32::consts::TAU / 6.0;
+            codec::Vertex {
+                position: [angle.sin() * 0.5, angle.cos() * 0.5, if i < 6 { -0.5 } else { 0.5 }],
+                normal: [angle.sin(), angle.cos(), 0.0],
+                uv: [0.0; 2],
+                joints: [0; 4],
+                weights: [0.0; 4],
+            }
+        })
+        .collect();
+    face.indices.clear();
+    for i in 0..6 {
+        let j = (i + 1) % 6;
+        face.indices.extend_from_slice(&[i, j, i + 6, j, j + 6, i + 6]);
+    }
+    for i in 1..5 {
+        face.indices.extend_from_slice(&[0, i + 1, i, 6, i + 6, i + 7]);
+    }
+    model
 }
 
 pub fn prepare(draft: &Draft) -> Result<Prepared, AssetError> {
@@ -270,13 +311,20 @@ pub fn prepare(draft: &Draft) -> Result<Prepared, AssetError> {
                         process::normals(face, options.crease)?;
                     }
                 }
+                if options.skin && level < 3 {
+                    codec::skin::transfer_weights(&mut model, high)?;
+                }
                 lods[level] = Some(model);
+            }
+            if high.submodel > 0 {
+                return Ok((lods, None, process::Physics::default()));
             }
             let mut physics = match options.physics_source {
                 -1 => None,
                 0..=3 => lods[options.physics_source as usize].clone(),
-                4 => Some(box_model(high)),
-                5 => Some(aligned(
+                4 | 6 => Some(box_model(high)),
+                7 => Some(hex_model(high)),
+                5 | 8 => Some(aligned(
                     match_model(
                         draft
                             .physics_file
@@ -307,7 +355,7 @@ pub fn prepare(draft: &Draft) -> Result<Prepared, AssetError> {
                 )?;
             }
             let hulls = if options.decompose {
-                process::analyze(
+                process::analyze_progress(
                     physics
                         .as_ref()
                         .ok_or_else(|| AssetError::invalid("choose a physics source before analyzing"))?,
@@ -316,9 +364,10 @@ pub fn prepare(draft: &Draft) -> Result<Prepared, AssetError> {
                         max_hulls: options.max_hulls,
                         max_vertices: options.max_vertices,
                         tolerance: options.tolerance,
-                        fill_surface: options.surface,
+                        fill_mode: options.fill_mode,
                     },
                     &draft.cancel,
+                    &draft.progress,
                 )?
             } else {
                 process::Physics {
@@ -367,7 +416,7 @@ pub fn request(
                     joints: draft.options.joints,
                     lock_scale: draft.options.lock_scale,
                     pelvis_offset: draft.options.pelvis,
-                    secondary: None,
+                    secondary: (draft.scene.models[i].submodel > 0).then_some(draft.scene.models[i].submodel),
                 },
             )
             .map(Llsd::Binary)
@@ -421,7 +470,7 @@ pub fn request(
         instances.push(
             llsd_map! { "position" => floats((position * draft.options.scale).to_array()), "rotation" => floats(rotation.to_array()),
             "scale" => floats((scale * draft.options.scale).to_array()), "material" => 3,
-            "physics_shape_type" => if prepared.physics[instance.model].is_some() { 0 } else { 2 },
+            "physics_shape_type" => if model.submodel > 0 { 1 } else if prepared.physics[instance.model].is_some() { 0 } else { 2 },
             "mesh" => instance.model as i32, "mesh_name" => instance.name.as_str(), "face_list" => Llsd::Array(faces) },
         );
     }
@@ -481,7 +530,7 @@ impl Imports {
         let Some(Source::Mesh(draft)) = &mut entry.source else {
             return;
         };
-        draft.invalidate();
+        draft.invalidate_quote();
         let request_id = Uuid::new_v4();
         let generation = entry.preview_generation;
         draft.pending = Some((request_id, generation));
@@ -493,10 +542,12 @@ impl Imports {
         let wake = ctx.clone();
         let tx = self.tx.clone();
         jobs.execute(move || {
-            let result = prepare(&draft)
+            let result = draft
+                .prepared
+                .as_ref()
+                .map_or_else(|| prepare(&draft).map(Arc::new), |prepared| Ok(prepared.clone()))
                 .and_then(|prepared| {
-                    request(&draft, &prepared, folder, textures, &name, &description, rights, options)
-                        .map(|request| (Arc::new(prepared), request))
+                    request(&draft, &prepared, folder, textures, &name, &description, rights, options).map(|request| (prepared, request))
                 })
                 .map_err(|e| e.to_string());
             let _ = tx.send(Worker::MeshPrepared(id, request_id, generation, result));
@@ -512,11 +563,17 @@ impl Imports {
             {
                 draft.pending = None;
                 match result {
-                    Ok(quote) => draft.quote = Some(quote),
+                    Ok(quote) => {
+                        draft.quoted_at = Some(std::time::Instant::now());
+                        draft.quote = Some(quote);
+                    }
                     Err(error) => self.message = ui::error(error),
                 }
                 return;
             }
+        }
+        if let Ok(quote) = result {
+            self.discarded_quotes.push(quote.token);
         }
     }
 }

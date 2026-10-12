@@ -12,7 +12,16 @@ import-lod-combine = MeshOpt combiné
 import-lod-fast = MeshOpt rapide
 import-lod-reliable = Génération fiable
 import-lod-above = LOD supérieur
-import-mesh-info = { $models } modèles · { $instances } instances · { $triangles } triangles
+import-mesh-info = { $models } { $models ->
+    [one] modèle
+    *[other] modèles
+    } · { $instances } { $instances ->
+    [one] instance
+    *[other] instances
+    } · { $triangles } { $triangles ->
+    [one] triangle
+    *[other] triangles
+    }
 import-lods = Niveaux de détail (LOD)
 import-browse = Parcourir…
 import-error-threshold = Seuil d’erreur
@@ -24,6 +33,18 @@ import-bounding-box = Boîte englobante
 import-decompose = Analyser en enveloppes convexes
 import-retain = Proportion conservée
 import-fill-surface = Surface seule
+import-fill-flood = Remplissage par propagation
+import-fill-raycast = Remplissage par rayons
+import-physics-cube = Cube
+import-physics-hex = Hexagone
+import-user-physics = Préréglage physique personnel
+import-load-preset = Charger le préréglage
+import-save-preset = Enregistrer comme préréglage
+import-analysis-progress = Analyse : { $percent } %
+import-animation-settings = Réglages de l’animation
+import-batch-limit = Limite du brouillon atteinte (512 assets ou 1 Gio). Retirez des fichiers avant de poursuivre.
+import-mesh-fee-required = Calculez les frais avant l’import.
+import-hands-spread-right = Main droite ouverte
 import-voxel-resolution = Résolution en voxels
 import-max-hulls = Nombre maximal d’enveloppes
 import-hull-vertices = Sommets par enveloppe
@@ -147,9 +168,15 @@ import-max-size = Taille maximale X / Y
 import-texture-size = { $source_width } × { $source_height } → { $width } × { $height } px
 import-lossless = Compression sans perte
 import-strip-alpha = Retirer le canal alpha presque opaque
-import-sound-info = { $duration } s · { $channels } canal(aux) · { $bits } bits
+import-sound-info = { $duration } s · { $channels } { $channels ->
+    [one] canal
+    *[other] canaux
+    } · { $bits } bits
 import-sound-conversion = Envoi en Vorbis mono à 44 100 Hz.
-import-animation-info = { $duration } s · { $joints } articulations
+import-animation-info = { $duration } s · { $joints } { $joints ->
+    [one] articulation
+    *[other] articulations
+    }
 import-animation-frames = { $frames } images · { $rate } images/s
 import-priority = Priorité
 import-loop = Boucle

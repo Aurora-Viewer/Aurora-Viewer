@@ -313,15 +313,17 @@ pub fn parse(data: &[u8], skeleton: &crate::Skeleton) -> Result<Scene, AssetErro
                 let faces = split_faces;
                 let face_symbols = split_symbols;
                 let mut models = Vec::new();
+                let (center, size) = normalization(&faces)?;
                 for (index, group) in faces.chunks(8).enumerate() {
                     let mut model = Model {
                         name: geometry.attr("name").or_else(|| geometry.attr("id")).unwrap_or("Mesh").into(),
+                        submodel: index as u32,
                         faces: group.to_vec(),
                         skin: skin.as_ref().map(|s| s.0.clone()),
                         center: Vec3::ZERO,
                         size: Vec3::ONE,
                     };
-                    model.normalize()?;
+                    model.normalize_to(center, size)?;
                     let id = scene.models.len();
                     symbols.insert(id, face_symbols[index * 8..(index * 8 + group.len())].to_vec());
                     models.push(id);
@@ -640,6 +642,36 @@ fn read_skin(
         .map(|e| numbers(&e.text()))
         .transpose()?
         .unwrap_or_else(|| Mat4::IDENTITY.to_cols_array().to_vec());
+    let mut alternate_bind = Vec::with_capacity(output_names.len());
+    for (name, inverse) in output_names.iter().zip(&inverse_bind) {
+        let node = ids.values().find(|node| {
+            tag(node) == "node"
+                && [node.attr("sid"), node.attr("id"), node.attr("name")]
+                    .into_iter()
+                    .flatten()
+                    .any(|candidate| candidate == name || skeleton.find(candidate).is_some_and(|i| skeleton.joints[i].name == *name))
+        });
+        let offset = if let Some(node) = node {
+            if let Some(matrix) = child(node, "matrix") {
+                let values: [f32; 16] = numbers(&matrix.text())?
+                    .try_into()
+                    .map_err(|_| AssetError::invalid("joint matrix"))?;
+                basis.transform_vector3(Mat4::from_cols_array(&values).transpose().w_axis.truncate())
+            } else if let Some(translation) = child(node, "translate") {
+                let values: [f32; 3] = numbers(&translation.text())?
+                    .try_into()
+                    .map_err(|_| AssetError::invalid("joint translation"))?;
+                basis.transform_vector3(Vec3::from_array(values))
+            } else {
+                Vec3::ZERO
+            }
+        } else {
+            skeleton.find(name).map(|i| skeleton.joints[i].pos).unwrap_or(Vec3::ZERO)
+        };
+        let mut alternate = *inverse;
+        alternate.w_axis = offset.extend(1.0);
+        alternate_bind.push(alternate);
+    }
     let bind: [f32; 16] = bind.try_into().map_err(|_| AssetError::invalid("skin bind shape matrix"))?;
     let vertex_weights = child(skin, "vertex_weights").ok_or_else(|| AssetError::invalid("skin vertex weights"))?;
     let mut stride = 0;
@@ -717,7 +749,7 @@ fn read_skin(
     Ok((
         Skin {
             names: output_names,
-            alternate_bind: inverse_bind.clone(),
+            alternate_bind,
             inverse_bind,
             bind_shape: basis * Mat4::from_cols_array(&bind).transpose() * basis.inverse(),
             pelvis_offset: 0.0,

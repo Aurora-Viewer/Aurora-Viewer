@@ -1370,6 +1370,7 @@ impl Session<'_> {
             NetCommand::UploadAsset { request, upload } => self.import_asset(request, upload),
             NetCommand::QuoteMesh { request, upload } => self.quote_mesh(request, upload),
             NetCommand::UploadMesh { request, token } => self.upload_mesh(request, token),
+            NetCommand::DiscardMeshQuote(token) => self.discard_mesh_quote(token),
             NetCommand::RequestBalance => {
                 let mut message = MoneyBalanceRequest::default();
                 message.agent_data.agent_id = self.agent_id();
@@ -3117,6 +3118,7 @@ impl Session<'_> {
             }
         } else if id == MoneyBalanceReply::ID {
             let m: MoneyBalanceReply = pkt.decode()?;
+            self.asset_imports.balance = Some(m.money_data.money_balance);
             emit(self.sh, NetEvent::Balance(m.money_data.money_balance));
         } else if id == TeleportStart::ID {
             emit(self.sh, NetEvent::TeleportStarted);

@@ -67,7 +67,19 @@ fn decode_inner(bytes: &[u8], maps: bool) -> Result<DecodedImage, AssetError> {
         return Err(AssetError::TooLarge("texture file"));
     }
     if bytes.starts_with(&[0xff, 0x4f]) || bytes.get(4..12) == Some(b"jP  \r\n\x87\n") {
-        let image = crate::decode_j2k(bytes, 0)?;
+        let mut image = crate::decode_j2k(bytes, 0)?;
+        if maps && matches!(image.components, 1 | 2) {
+            let alpha = image.components == 2;
+            let mut data = Vec::with_capacity(image.width as usize * image.height as usize * if alpha { 4 } else { 3 });
+            for pixel in image.data.chunks_exact(image.components as usize) {
+                data.extend_from_slice(&[pixel[0]; 3]);
+                if alpha {
+                    data.push(pixel[1]);
+                }
+            }
+            image.data = data;
+            image.components = if alpha { 4 } else { 3 };
+        }
         validate(&image)?;
         return Ok(image);
     }
@@ -109,7 +121,7 @@ fn decode_inner(bytes: &[u8], maps: bool) -> Result<DecodedImage, AssetError> {
     Ok(image)
 }
 
-fn validate(image: &DecodedImage) -> Result<(), AssetError> {
+pub(crate) fn validate(image: &DecodedImage) -> Result<(), AssetError> {
     if image.width == 0 || image.height == 0 || u64::from(image.width) * u64::from(image.height) > MAX_SOURCE_PIXELS {
         return Err(AssetError::TooLarge("texture dimensions"));
     }

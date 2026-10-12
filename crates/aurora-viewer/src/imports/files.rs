@@ -270,6 +270,59 @@ fn load(
                         images[slot] = Some(image);
                     }
                 }
+                for slot in [1, 3] {
+                    if let Some(image) = &mut images[slot]
+                        && image.pixels.components == 4
+                    {
+                        *image = local_image(aurora_assets::import_material::rgb(&image.pixels)?, image.name.clone());
+                    }
+                }
+                let occlusion = if let Some(occlusion) = material.occlusion.filter(|i| Some(*i) != material.images[2]) {
+                    match doc.image(occlusion, |uri| relative(&root, uri))? {
+                        Image::Bytes(bytes) => Some(import_texture::decode_map(&bytes)?),
+                        Image::Existing(_) => {
+                            return Err(AssetError::Unsupported(
+                                "separate occlusion asset must be a local image for packing".into(),
+                            ));
+                        }
+                    }
+                } else {
+                    None
+                };
+                if let Some(packed) = aurora_assets::import_material::orm(
+                    images[2].as_ref().map(|i| i.pixels.as_ref()),
+                    occlusion.as_ref(),
+                    material.occlusion.is_some(),
+                )? {
+                    let name = images[2]
+                        .as_ref()
+                        .map(|i| i.name.clone())
+                        .unwrap_or_else(|| format!("{}_ORM", path.file_stem().unwrap_or_default().to_string_lossy()));
+                    images[2] = Some(local_image(packed, name));
+                }
+                if choice == Choice::Local {
+                    for (slot, image) in images.iter_mut().enumerate() {
+                        if let Some(image) = image {
+                            let mut hash = Sha256::new();
+                            hash.update(path.as_os_str().to_string_lossy().as_bytes());
+                            hash.update(material.images[slot].unwrap_or(usize::MAX).to_le_bytes());
+                            hash.update([if slot == 0 {
+                                0
+                            } else if slot == 2 {
+                                2
+                            } else {
+                                1
+                            }]);
+                            if slot == 2 {
+                                hash.update(material.occlusion.unwrap_or(usize::MAX).to_le_bytes());
+                            }
+                            let digest = hash.finalize();
+                            let mut id = [0u8; 16];
+                            id.copy_from_slice(&digest[..16]);
+                            image.key = Uuid::from_bytes(id);
+                        }
+                    }
+                }
                 let mut entry = Entry::new(
                     path.to_owned(),
                     Ok(Source::Material {
@@ -278,8 +331,9 @@ fn load(
                     }),
                     options,
                 );
-                entry.name = material.name;
+                entry.name = format!("{} ({})", path.file_stem().unwrap_or_default().to_string_lossy(), material.name);
                 entry.material_index = index;
+                entry.selected = choice != Choice::Material || index == 0;
                 entry.local = choice == Choice::Local;
                 if entry.local {
                     entry.watch = Some(local::Watch::new(dependencies(&doc, &root, path)));
@@ -355,11 +409,23 @@ impl Imports {
             {
                 let result = read(&path)
                     .and_then(|data| mesh_scene(&path, &data))
-                    .map(|(scene, _)| (Arc::new(scene), path))
+                    .map(|(scene, images)| (Arc::new(scene), images, path))
                     .map_err(|e| e.to_string());
                 let _ = tx.send(Worker::MeshFile(id, level, result));
                 wake.request_repaint();
             }
+        });
+    }
+    pub fn mesh_file_path(&mut self, id: Uuid, path: PathBuf, jobs: &crate::scene::jobs::Jobs, ctx: &egui::Context) {
+        let tx = self.tx.clone();
+        let wake = ctx.clone();
+        jobs.execute(move || {
+            let result = read(&path)
+                .and_then(|data| mesh_scene(&path, &data))
+                .map(|(scene, images)| (Arc::new(scene), images, path))
+                .map_err(|e| e.to_string());
+            let _ = tx.send(Worker::MeshFile(id, 8, result));
+            wake.request_repaint();
         });
     }
     pub fn reload(&mut self, id: Uuid, jobs: &crate::scene::jobs::Jobs, ctx: &egui::Context) {
@@ -400,6 +466,13 @@ impl Imports {
         let choice = self.choice;
         let sound_limit = self.sound_limit;
         let prefs = self.load_preferences.clone();
+        let mut retained = self
+            .entries
+            .iter()
+            .filter_map(|e| e.source.as_ref())
+            .map(Source::retained_bytes)
+            .sum::<usize>();
+        let existing = self.entries.len();
         let tx = self.tx.clone();
         let wake = ctx.clone();
         jobs.execute(move || {
@@ -418,9 +491,27 @@ impl Imports {
                 .pick_files()
                 .unwrap_or_default();
             let mut entries = Vec::new();
-            for path in paths.into_iter().take(256) {
+            for (index, path) in paths.into_iter().enumerate() {
+                if index >= 256 || existing + entries.len() >= 512 {
+                    entries.push(Entry::new(path, Err(aurora_i18n::tr!("import-batch-limit").into()), options));
+                    break;
+                }
                 match load(&path, choice, options, sound_limit, &prefs) {
-                    Ok(mut loaded) => entries.append(&mut loaded),
+                    Ok(mut loaded) => {
+                        let size = loaded
+                            .iter()
+                            .filter_map(|e| e.source.as_ref())
+                            .map(Source::retained_bytes)
+                            .sum::<usize>();
+                        // Preserve a failed row instead of silently truncating
+                        // the selection or allowing the draft to exhaust RAM.
+                        if retained.saturating_add(size) > 1024 * 1024 * 1024 || existing + entries.len() + loaded.len() > 512 {
+                            entries.push(Entry::new(path, Err(aurora_i18n::tr!("import-batch-limit").into()), options));
+                            break;
+                        }
+                        retained += size;
+                        entries.append(&mut loaded);
+                    }
                     Err(error) => entries.push(Entry::new(path, Err(error.to_string()), options)),
                 }
             }

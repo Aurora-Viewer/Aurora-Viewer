@@ -507,6 +507,7 @@ version = "0.1.0"
 dependencies = [
  "aurora-llsd",
  "base64 0.23.1",
+ "cc",
  "crossbeam-channel",
  "flate2",
  "glam 0.34.1",

@@ -194,6 +194,8 @@ pub fn asset(
     {
         sections.push(("skin", compressed(&skin(value, options)?)?));
     }
+    let empty = process::Physics::default();
+    let decomposition = if options.secondary.is_some() { &empty } else { decomposition };
     sections.push(("physics_convex", compressed(&convex(decomposition)?)?));
     for (index, key) in ["lowest_lod", "low_lod", "medium_lod", "high_lod"].into_iter().enumerate() {
         if let Some(model) = &lods[index] {
@@ -216,7 +218,8 @@ pub fn asset(
             sections.push((key, compressed(&lod(model, options.skin && high.skin.is_some())?)?));
         }
     }
-    if decomposition.hulls.is_empty()
+    if options.secondary.is_none()
+        && decomposition.hulls.is_empty()
         && let Some(model) = physics
     {
         sections.push(("physics_mesh", compressed(&lod(model, false)?)?));
@@ -247,6 +250,7 @@ mod tests {
     fn triangle() -> Model {
         Model {
             name: "Test".into(),
+            submodel: 0,
             faces: vec![Face {
                 material: 0,
                 indices: vec![0, 1, 2],

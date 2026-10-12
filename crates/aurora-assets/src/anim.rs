@@ -131,7 +131,7 @@ fn parse(data: &[u8], upload: bool) -> Result<Animation, AssetError> {
         return Err(AssetError::invalid("bad animation timing"));
     }
     let hand_pose = r.u32("hand_pose")?;
-    if upload && (hand_pose > 12 || loop_in < 0.0 || loop_out < loop_in || loop_out > duration || ease_in < 0.0 || ease_out < 0.0) {
+    if upload && (hand_pose > 13 || loop_in < 0.0 || loop_out < loop_in || loop_out > duration || ease_in < 0.0 || ease_out < 0.0) {
         return Err(AssetError::invalid("animation timing or hand pose"));
     }
     let num_joints = r.u32("num_joints")? as usize;

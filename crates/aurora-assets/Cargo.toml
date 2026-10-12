@@ -24,5 +24,8 @@ meshopt = "0.6.2"
 parry3d = "0.31.1"
 aurora-llsd = { path = "../aurora-llsd" }
 
+[build-dependencies]
+cc = "1.6.0"
+
 [lints]
 workspace = true

@@ -52,35 +52,41 @@ fn sphere() -> (Vec<Vertex>, Vec<u32>) {
     (vertices, indices)
 }
 fn bounds(parts: &[Part]) -> (Vec3, f32) {
+    let point = |part: &Part, vertex: &Vertex| {
+        let point = Vec3::from_array(vertex.position);
+        let mut p = Vec3::ZERO;
+        let mut sum = 0.0;
+        if let Some(skin) = &part.skin {
+            for (j, w) in vertex.joints.iter().zip(vertex.weights) {
+                if w > 0.0
+                    && let Some(m) = skin.rest.get(*j as usize)
+                {
+                    p += m.transform_point3(point) * w;
+                    sum += w;
+                }
+            }
+        }
+        if sum > 0.0001 { p / sum } else { point }
+    };
     let mut min = Vec3::splat(f32::MAX);
     let mut max = Vec3::splat(f32::MIN);
     for part in parts {
         for vertex in part.vertices.iter() {
-            let point = Vec3::from_array(vertex.position);
-            let point = if let Some(skin) = &part.skin {
-                let mut p = Vec3::ZERO;
-                let mut sum = 0.0;
-                for (j, w) in vertex.joints.iter().zip(vertex.weights) {
-                    if w > 0.0
-                        && let Some(m) = skin.rest.get(*j as usize)
-                    {
-                        p += m.transform_point3(point) * w;
-                        sum += w;
-                    }
-                }
-                if sum > 0.0001 { p / sum } else { point }
-            } else {
-                point
-            };
-            min = min.min(point);
-            max = max.max(point);
+            let p = point(part, vertex);
+            min = min.min(p);
+            max = max.max(p);
         }
     }
     let center = (min + max) * 0.5;
     if parts.is_empty() || !center.is_finite() {
         (Vec3::ZERO, 1.0)
     } else {
-        (center, ((max - min).length() * 0.5).max(0.01))
+        let radius = parts
+            .iter()
+            .flat_map(|part| part.vertices.iter().map(|v| point(part, v).distance_squared(center)))
+            .fold(0.0, f32::max)
+            .sqrt();
+        (center, radius.max(0.01))
     }
 }
 
@@ -202,10 +208,14 @@ fn build(
                             } else {
                                 transform.transform_point3(Vec3::from_array(v.position)).to_array()
                             },
-                            normal: normal_matrix
-                                .transform_vector3(Vec3::from_array(v.normal))
-                                .normalize_or_zero()
-                                .to_array(),
+                            normal: if skin.is_some() {
+                                v.normal
+                            } else {
+                                normal_matrix
+                                    .transform_vector3(Vec3::from_array(v.normal))
+                                    .normalize_or_zero()
+                                    .to_array()
+                            },
                             uv: [v.uv[0], 1.0 - v.uv[1]],
                             joints: v.joints.map(u32::from),
                             weights: if skin.is_some() { v.weights } else { [0.0; 4] },
@@ -432,7 +442,7 @@ impl Imports {
         let Some(entry) = self.entries.iter().find(|e| e.id == id) else {
             return;
         };
-        let Some(source) = entry.source.clone() else {
+        let Some(mut source) = entry.source.clone() else {
             return;
         };
         let options = self.options(entry);
@@ -440,11 +450,25 @@ impl Imports {
         let generation = entry.preview_generation;
         let tx = self.tx.clone();
         let wake = ctx.clone();
-        self.entries.iter_mut().find(|e| e.id == id).expect("entry exists").preview_pending = true;
+        let entry = self.entries.iter_mut().find(|e| e.id == id).expect("entry exists");
+        entry.preview_pending = true;
+        entry.preview_job_generation = generation;
+        entry.preview_error = None;
         jobs.execute(move || {
-            match build(&source, target, options, &avatars) {
-                Ok(model) => {
-                    let _ = tx.send(Worker::Model(id, generation, Arc::new(model)));
+            let result = (|| {
+                let prepared = if let Source::Mesh(draft) = &mut source {
+                    if draft.prepared.is_none() {
+                        draft.prepared = Some(Arc::new(super::mesh::prepare(draft)?));
+                    }
+                    draft.prepared.clone()
+                } else {
+                    None
+                };
+                build(&source, target, options, &avatars).map(|model| (model, prepared))
+            })();
+            match result {
+                Ok((model, prepared)) => {
+                    let _ = tx.send(Worker::Model(id, generation, Arc::new(model), prepared));
                 }
                 Err(error) => {
                     let _ = tx.send(Worker::PreviewFailed(id, generation, error.to_string()));

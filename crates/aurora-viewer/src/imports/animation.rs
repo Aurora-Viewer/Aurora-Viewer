@@ -84,6 +84,22 @@ impl Player {
     }
 }
 
+/// Copy editable metadata without cloning thousands of motion keys per frame.
+pub fn metadata(animation: &Animation) -> Animation {
+    Animation {
+        base_priority: animation.base_priority,
+        duration: animation.duration,
+        emote_name: animation.emote_name.clone(),
+        loop_in: animation.loop_in,
+        loop_out: animation.loop_out,
+        looping: animation.looping,
+        ease_in: animation.ease_in,
+        ease_out: animation.ease_out,
+        hand_pose: animation.hand_pose,
+        joints: Vec::new(),
+    }
+}
+
 /// LLAnimStateLibrary names used by LLKeyframeMotion::setEmote.
 pub fn emotes() -> [(&'static str, Uuid, &'static str); 20] {
     [
@@ -185,7 +201,7 @@ pub fn emotes() -> [(&'static str, Uuid, &'static str); 20] {
         ),
     ]
 }
-pub fn hands() -> [&'static str; 13] {
+pub fn hands() -> [&'static str; 14] {
     [
         aurora_i18n::tr!("import-hands-spread"),
         aurora_i18n::tr!("import-hands-relaxed"),
@@ -200,5 +216,6 @@ pub fn hands() -> [&'static str; 13] {
         aurora_i18n::tr!("import-hands-salute"),
         aurora_i18n::tr!("import-hands-typing"),
         aurora_i18n::tr!("import-hands-peace"),
+        aurora_i18n::tr!("import-hands-spread-right"),
     ]
 }

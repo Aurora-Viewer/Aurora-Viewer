@@ -284,7 +284,7 @@ pub fn parse(doc: &Document, skeleton: &crate::Skeleton) -> Result<Scene, AssetE
                 .get(mesh_index)
                 .ok_or_else(|| AssetError::invalid("mesh index"))?;
             let skin = if let Some(index) = skin_index {
-                Some(read_skin(doc, index, nodes, &globals, basis, skeleton, &mut scene.warnings)?)
+                Some(read_skin(doc, index, nodes, basis, skeleton, &mut scene.warnings)?)
             } else {
                 None
             };
@@ -395,16 +395,18 @@ pub fn parse(doc: &Document, skeleton: &crate::Skeleton) -> Result<Scene, AssetE
                 faces.extend(split);
             }
             let mut models = Vec::new();
-            for group in faces.chunks(8) {
+            let (center, size) = normalization(&faces)?;
+            for (submodel, group) in faces.chunks(8).enumerate() {
                 let name = mesh["name"].as_str().unwrap_or("Mesh").to_owned();
                 let mut model = Model {
                     name,
+                    submodel: submodel as u32,
                     faces: group.to_vec(),
                     skin: skin.clone(),
                     center: Vec3::ZERO,
                     size: Vec3::ONE,
                 };
-                model.normalize()?;
+                model.normalize_to(center, size)?;
                 models.push(scene.models.len());
                 scene.models.push(model);
             }
@@ -431,7 +433,6 @@ fn read_skin(
     doc: &Document,
     index: usize,
     nodes: &[Value],
-    globals: &[Mat4],
     basis: Mat4,
     skeleton: &crate::Skeleton,
     warnings: &mut Vec<String>,
@@ -467,8 +468,13 @@ fn read_skin(
         if !matrix.is_finite() || matrix.determinant().abs() < 0.000001 {
             return Err(AssetError::invalid("singular skin inverse bind"));
         }
-        inverse_bind.push(basis * matrix * basis.inverse());
-        alternate_bind.push((basis * globals[index] * basis.inverse()).inverse());
+        let inverse = basis * matrix * basis.inverse();
+        inverse_bind.push(inverse);
+        // Alternate binds preserve inverse rotation and carry the imported
+        // local joint offset (LLDAELoader's mAlternateBindMatrix convention).
+        let mut alternate = inverse;
+        alternate.w_axis = basis.transform_vector3(transform(node)?.w_axis.truncate()).extend(1.0);
+        alternate_bind.push(alternate);
     }
     Ok(Skin {
         names,

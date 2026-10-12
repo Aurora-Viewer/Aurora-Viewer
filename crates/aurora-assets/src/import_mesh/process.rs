@@ -3,15 +3,8 @@
 //! still control target triangles/error and preserve UV/face boundaries.
 
 use super::*;
-use parry3d::{
-    math::Vector,
-    transformation::{
-        try_convex_hull,
-        vhacd::{VHACD, VHACDParameters},
-        voxelization::FillMode,
-    },
-};
-use std::sync::atomic::{AtomicBool, Ordering};
+use parry3d::{math::Vector, transformation::try_convex_hull};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Method {
@@ -34,7 +27,8 @@ pub struct PhysicsOptions {
     pub max_hulls: u32,
     pub max_vertices: u32,
     pub tolerance: f32,
-    pub fill_surface: bool,
+    /// V-HACD 4.1: 0 Flood, 1 Surface Only, 2 Raycast.
+    pub fill_mode: u32,
 }
 impl Default for PhysicsOptions {
     fn default() -> Self {
@@ -43,7 +37,7 @@ impl Default for PhysicsOptions {
             max_hulls: 8,
             max_vertices: 32,
             tolerance: 1.0,
-            fill_surface: false,
+            fill_mode: 0,
         }
     }
 }
@@ -271,11 +265,15 @@ fn bounded_hull(points: Vec<Vector>, indices: Vec<[u32; 3]>, maximum: usize) -> 
     })
 }
 pub fn analyze(model: &Model, options: PhysicsOptions, cancel: &AtomicBool) -> Result<Physics, AssetError> {
+    analyze_progress(model, options, cancel, &AtomicU32::new(0))
+}
+pub fn analyze_progress(model: &Model, options: PhysicsOptions, cancel: &AtomicBool, progress: &AtomicU32) -> Result<Physics, AssetError> {
     if !(1000..=16000000).contains(&options.resolution)
         || !(1..=256).contains(&options.max_hulls)
         || !(3..=256).contains(&options.max_vertices)
         || !options.tolerance.is_finite()
         || !(0.0001..=99.0).contains(&options.tolerance)
+        || options.fill_mode > 2
     {
         return Err(AssetError::invalid("physics parameters"));
     }
@@ -283,27 +281,10 @@ pub fn analyze(model: &Model, options: PhysicsOptions, cancel: &AtomicBool) -> R
     if cancel.load(Ordering::Relaxed) {
         return Err(AssetError::invalid("cancelled"));
     }
-    let params = VHACDParameters {
-        resolution: (options.resolution as f32).cbrt().round().clamp(10.0, 252.0) as u32,
-        concavity: options.tolerance / 100.0,
-        max_convex_hulls: options.max_hulls,
-        fill_mode: if options.fill_surface {
-            FillMode::SurfaceOnly
-        } else {
-            FillMode::FloodFill { detect_cavities: false }
-        },
-        ..Default::default()
-    };
-    let decomposition = VHACD::decompose(&params, &vertices, &triangles, true);
+    let points: Vec<_> = vertices.iter().map(|p| [p.x, p.y, p.z]).collect();
+    let hulls = super::vhacd::analyze(&points, &triangles, options, cancel, progress)?;
     if cancel.load(Ordering::Relaxed) {
         return Err(AssetError::invalid("cancelled"));
-    }
-    let mut hulls = Vec::new();
-    for (points, indices) in decomposition.compute_exact_convex_hulls(&vertices, &triangles) {
-        if points.len() < 4 {
-            continue;
-        }
-        hulls.push(bounded_hull(points, indices, options.max_vertices as usize)?);
     }
     if hulls.is_empty() || hulls.len() > 256 {
         return Err(AssetError::invalid("empty or excessive physics hulls"));

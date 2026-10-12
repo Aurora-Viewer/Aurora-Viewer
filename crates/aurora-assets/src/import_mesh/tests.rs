@@ -84,6 +84,7 @@ fn cube() -> Model {
         .collect();
     Model {
         name: "Cube".into(),
+        submodel: 0,
         center: Vec3::ZERO,
         size: Vec3::ONE,
         skin: None,
@@ -131,17 +132,46 @@ fn convex_physics_is_bounded_and_cancelled_processing_preserves_the_source() {
     .expect("LOD");
     assert!(lod.triangles() <= source.triangles());
     assert_eq!(source.triangles(), 12);
-    let physics = process::analyze(
-        &source,
-        process::PhysicsOptions {
-            resolution: 1000,
-            max_hulls: 8,
-            max_vertices: 64,
-            ..Default::default()
-        },
-        &std::sync::atomic::AtomicBool::new(false),
-    )
-    .expect("analyze cube");
-    assert!(!physics.hulls.is_empty());
-    assert!(physics.hulls.iter().all(|h| h.vertices.len() <= 64));
+    for fill_mode in 0..3 {
+        let physics = process::analyze(
+            &source,
+            process::PhysicsOptions {
+                resolution: 1000,
+                max_hulls: 8,
+                max_vertices: 64,
+                fill_mode,
+                ..Default::default()
+            },
+            &std::sync::atomic::AtomicBool::new(false),
+        )
+        .expect("analyze cube");
+        assert!(!physics.hulls.is_empty());
+        assert!(physics.hulls.iter().all(|h| h.vertices.len() <= 64));
+    }
+}
+
+#[test]
+fn lod_skin_names_are_remapped_and_unweighted_vertices_use_nearest_source() {
+    let mut high = cube();
+    high.skin = Some(Skin {
+        names: vec!["mPelvis".into(), "mTorso".into()],
+        inverse_bind: vec![Mat4::IDENTITY; 2],
+        alternate_bind: vec![Mat4::IDENTITY; 2],
+        bind_shape: Mat4::IDENTITY,
+        pelvis_offset: 0.0,
+    });
+    for vertex in &mut high.faces[0].vertices {
+        vertex.joints = [u8::from(vertex.position[0] > 0.0), 0, 0, 0];
+        vertex.weights = [1.0, 0.0, 0.0, 0.0];
+    }
+    let mut low = high.clone();
+    low.skin.as_mut().expect("skin").names.reverse();
+    low.faces[0].vertices[0].joints = [1, 0, 0, 0];
+    low.faces[0].vertices[1].position = [0.48, 0.49, 0.47];
+    low.faces[0].vertices[1].weights = [0.0; 4];
+    skin::transfer_weights(&mut low, &high).expect("weights");
+    assert_eq!(low.faces[0].vertices[0].joints[0], 0);
+    assert_eq!(low.faces[0].vertices[1].joints[0], 1);
+    assert_eq!(low.faces[0].vertices[1].weights, [1.0, 0.0, 0.0, 0.0]);
+    assert_eq!(low.skin.as_ref().expect("skin").names, high.skin.as_ref().expect("skin").names);
 }

@@ -96,7 +96,7 @@ impl Prices {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Permissions {
     pub next_owner: u32,
     pub group: u32,

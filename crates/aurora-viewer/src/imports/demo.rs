@@ -31,7 +31,7 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
         let positions=[[-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[0.5,0.5,-0.5],[-0.5,0.5,-0.5],[-0.5,-0.5,0.5],[0.5,-0.5,0.5],[0.5,0.5,0.5],[-0.5,0.5,0.5]];
         let face=aurora_assets::import_mesh::Face{material:0,indices:vec![0,2,1,0,3,2,4,5,6,4,6,7,0,1,5,0,5,4,3,7,6,3,6,2,0,4,7,0,7,3,1,2,6,1,6,5],
             vertices:positions.into_iter().map(|position|aurora_assets::import_mesh::Vertex{position,normal:glam::Vec3::from_array(position).normalize().to_array(),uv:[position[0]+0.5,position[2]+0.5],joints:[0;4],weights:[0.0;4]}).collect()};
-        let scene=aurora_assets::import_mesh::Scene{models:vec![aurora_assets::import_mesh::Model{name:"Cube".into(),faces:vec![face],skin:None,center:glam::Vec3::ZERO,size:glam::Vec3::ONE}],
+        let scene=aurora_assets::import_mesh::Scene{models:vec![aurora_assets::import_mesh::Model{name:"Cube".into(),submodel:0,faces:vec![face],skin:None,center:glam::Vec3::ZERO,size:glam::Vec3::ONE}],
             instances:vec![aurora_assets::import_mesh::Instance{model:0,transform:glam::Mat4::IDENTITY,name:"Cube".into(),materials:vec![0]}],
             materials:vec![aurora_assets::import_mesh::Material{name:"Demo".into(),value:PbrMaterial{metallic_factor:0.0,..Default::default()},images:[None;4]}],..Default::default()};
         entries.push(Entry::new(".scratch/mesh-demo.dae".into(),Ok(Source::Mesh(Box::new(mesh::Draft::new(scene,HashMap::new())))),Default::default()));

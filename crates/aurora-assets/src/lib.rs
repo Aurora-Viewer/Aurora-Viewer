@@ -15,6 +15,7 @@
 pub mod anim;
 pub mod import_animation;
 pub mod import_gltf;
+pub mod import_material;
 pub mod import_mesh;
 pub mod import_sound;
 pub mod import_texture;

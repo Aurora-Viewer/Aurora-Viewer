@@ -76,6 +76,9 @@ Sources : `llfloaterbvhpreview.cpp`,
   facteurs, opacité/masque/mélange, seuil alpha et double face. Les transformations
   des textures sont remises à zéro pour l’asset d’inventaire comme dans
   `sanitizeAssetMaterial` ; elles appartiennent aux overrides des faces.
+- Retrait de l’alpha des cartes techniques et occlusion distincte redimensionnée
+  puis fusionnée en R dans ORM ; R vaut 255 sans occlusion. Une carte
+  d’occlusion seule crée une carte ORM blanche en G/B.
 - Textures externes/embarquées/locales ou UUID d’inventaire ; résolution
   maximale, suppression/remplacement, coût détaillé des textures.
 - Réutiliser les textures partagées ; envoyer les textures avant le matériau,
@@ -135,9 +138,22 @@ parcours de démo ; puis essais par l’humain des prix, droits et résultats su
 grille. Aucune connexion ni opération réelle sur grille par l’agent.
 
 État : implémentation en cours dans le worktree `import-assets`. Les codecs,
-le parcours réseau moderne, les brouillons, les aperçus GPU et les premières
-captures sont présents ; le bilan final de parité et les essais de grille
+les parcours réseau HTTP/UDP, les brouillons et les aperçus GPU sont présents.
+Les captures texture, son, animation, matériau et mesh ont été examinées ;
+les ajustements de disposition continuent. Les tests couvrent notamment
+la préparation ORM, les trois modes V-HACD, les poids de LOD et la conservation
+des accusés après annulation. Le bilan final de parité et les essais de grille
 restent à réaliser. Aucun import réel n’a été validé sur une grille.
+
+La physique utilise la branche libre V-HACD 4.1 de Firestorm : résolution en
+nombre de voxels, limite de coques/sommets, erreur de volume et modes
+Flood/Surface/Raycast. Le code natif est figé à une révision publique BSD,
+avec annulation et progression. Les traitements de modèles sont parallèles
+sur les workers Rust, sans multiplier les threads natifs par modèle.
+
+Le brouillon garde au maximum 512 assets et 1 Gio de sources, avec 256 fichiers
+par sélection. Le premier fichier au-delà de la limite produit une ligne
+d’erreur explicite ; le reste peut être ajouté après retrait de fichiers.
 
 Écart volontaire : un transfert payant dont l’issue est inconnue n’est pas
 renvoyé automatiquement. Le brouillon reste disponible avec une demande de

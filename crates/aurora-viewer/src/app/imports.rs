@@ -20,6 +20,21 @@ impl App {
         } else {
             30
         };
+        for entry in &mut self.imports.entries {
+            if let Some(Source::Mesh(draft)) = &mut entry.source {
+                if !self.imports.confirm
+                    && !matches!(entry.status, crate::imports::Status::Uploading)
+                    && draft.quoted_at.is_some_and(|at| at.elapsed().as_secs() >= 300)
+                {
+                    draft.invalidate_quote();
+                }
+                self.imports.discarded_quotes.append(&mut draft.discarded_quotes);
+            }
+        }
+        let discarded: Vec<_> = std::mem::take(&mut self.imports.discarded_quotes);
+        for token in discarded {
+            self.send(NetCommand::DiscardMeshQuote(token));
+        }
         let commands = self.imports.poll(ctx, &self.scene.jobs, &self.world, &self.settings.inventory);
         for command in commands {
             self.send(command);
@@ -50,6 +65,7 @@ impl App {
                 }
             }
         }
+        let was_open = self.imports.open;
         let actions = crate::imports::ui::show(
             ctx,
             palette,
@@ -60,6 +76,17 @@ impl App {
         );
         if self.settings.imports != before {
             self.settings.save();
+        }
+        if was_open && !self.imports.open {
+            if let Some(request) = self.imports.play_request.take() {
+                self.world.preview_animation(request, false);
+            }
+            if let Some(engine) = &self.audio_engine {
+                engine.stop_world(SOUND_PREVIEW);
+            }
+            for entry in &mut self.imports.entries {
+                entry.player.playing = false;
+            }
         }
         for action in actions {
             match action {
@@ -114,6 +141,19 @@ impl App {
                     self.settings.imports.permissions(),
                 ),
                 Action::MeshFile(id, level) => self.imports.mesh_file(id, level, &self.scene.jobs, ctx),
+                Action::PhysicsPreset(id, save) => {
+                    if save {
+                        if let Some(Source::Mesh(draft)) = self.imports.entries.iter().find(|e| e.id == id).and_then(|e| e.source.as_ref())
+                            && let Some(path) = &draft.physics_path
+                        {
+                            self.settings.imports.mesh_physics_preset = path.to_string_lossy().into_owned();
+                            self.settings.save();
+                        }
+                    } else {
+                        self.imports
+                            .mesh_file_path(id, self.settings.imports.mesh_physics_preset.clone().into(), &self.scene.jobs, ctx);
+                    }
+                }
                 Action::Open(id) => self.inventory_ui.show_original(&self.world.inventory, id),
                 Action::Local(id) => {
                     if let Some(gfx) = &self.gfx {
@@ -130,13 +170,22 @@ impl App {
                 }
                 Action::Remove(id) => {
                     if let Some(index) = self.imports.entries.iter().position(|e| e.id == id) {
-                        let entry = self.imports.entries.remove(index);
+                        let mut entry = self.imports.entries.remove(index);
+                        if let Some(Source::Mesh(draft)) = &mut entry.source {
+                            draft.invalidate();
+                            self.imports.discarded_quotes.append(&mut draft.discarded_quotes);
+                        }
                         self.world.local_assets.remove(&id);
                         self.ui_images.remove(&id);
+                        if entry.local_published {
+                            self.scene.materials.remove_local(&id);
+                        }
                         if let Some(gfx) = &mut self.gfx {
                             for (asset, slot) in &entry.local_slots {
-                                self.scene.textures.unregister_local(asset);
-                                gfx.renderer.free_texture(*slot);
+                                if !self.imports.entries.iter().any(|e| e.local_slots.contains_key(asset)) {
+                                    self.scene.textures.unregister_local(asset);
+                                    gfx.renderer.free_texture(*slot);
+                                }
                             }
                         }
                         self.scene.jobs.discard(entry);
@@ -193,7 +242,7 @@ impl App {
             .filter(|e| {
                 self.imports.active == Some(e.id)
                     && e.preview.is_none()
-                    && !e.preview_pending
+                    && (!e.preview_pending || e.preview_job_generation != e.preview_generation)
                     && e.preview_error.is_none()
                     && e.texture_target == 0
                     && matches!(e.source, Some(Source::Texture(_)))
@@ -210,7 +259,7 @@ impl App {
             .filter(|e| {
                 self.imports.active == Some(e.id)
                     && e.model.is_none()
-                    && !e.preview_pending
+                    && (!e.preview_pending || e.preview_job_generation != e.preview_generation)
                     && e.preview_error.is_none()
                     && (matches!(e.source, Some(Source::Material { .. } | Source::Mesh(_) | Source::Animation { .. }))
                         || (e.texture_target != 0 && matches!(e.source, Some(Source::Texture(_)))))
@@ -244,6 +293,13 @@ impl App {
             return;
         };
         let mut pending = Vec::new();
+        let previous_slots: std::collections::HashMap<_, _> = self
+            .imports
+            .entries
+            .iter()
+            .flat_map(|e| e.local_slots.iter().map(|(id, slot)| (*id, *slot)))
+            .collect();
+        let mut shared_slots = previous_slots.clone();
         for prepared in self.imports.local_uploads.drain(..) {
             if prepared.textures.iter().any(|t| !t.staged.data.ready()) {
                 pending.push(prepared);
@@ -259,9 +315,9 @@ impl App {
                 continue;
             };
             let mut complete = true;
+            let retained: std::collections::HashSet<_> = prepared.textures.iter().map(|t| t.id).collect();
             for texture in prepared.textures {
-                let slot = entry
-                    .local_slots
+                let slot = shared_slots
                     .get(&texture.id)
                     .copied()
                     .or_else(|| gfx.renderer.textures.create_placeholder());
@@ -269,6 +325,7 @@ impl App {
                     && gfx.renderer.replace_texture_staged(slot, &texture.staged)
                 {
                     entry.local_slots.insert(texture.id, slot);
+                    shared_slots.insert(texture.id, slot);
                     self.scene
                         .textures
                         .register_local_image(texture.id, slot, texture.alpha, texture.has_alpha);
@@ -277,6 +334,7 @@ impl App {
                 }
             }
             if complete {
+                entry.local_slots.retain(|id, _| retained.contains(id));
                 let material = prepared.material.is_some();
                 if let Some(value) = prepared.material {
                     self.scene.materials.insert(entry.id, value);
@@ -290,6 +348,13 @@ impl App {
             entry.local_pending = false;
         }
         self.imports.local_uploads = pending;
+        let referenced: std::collections::HashSet<_> = self.imports.entries.iter().flat_map(|e| e.local_slots.keys().copied()).collect();
+        for (asset, slot) in previous_slots {
+            if !referenced.contains(&asset) {
+                self.scene.textures.unregister_local(&asset);
+                gfx.renderer.free_texture(slot);
+            }
+        }
     }
 
     pub(super) fn demo_asset_upload(&mut self, request: uuid::Uuid, upload: aurora_net::inventory::upload::Request) {

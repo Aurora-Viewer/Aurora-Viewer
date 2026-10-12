@@ -497,6 +497,12 @@ impl MaterialStreamer {
     }
 
     /// The material if it is loaded, without requesting it (diagnostics).
+    pub fn remove_local(&mut self, id: &Uuid) {
+        if self.entries.remove(id).is_some() {
+            self.generation += 1;
+        }
+    }
+
     pub fn peek(&self, id: &Uuid) -> Option<Arc<PbrMaterial>> {
         self.entries.get(id).and_then(|e| e.material.clone())
     }

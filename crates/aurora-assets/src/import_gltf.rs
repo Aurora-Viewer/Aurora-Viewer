@@ -6,6 +6,7 @@ use crate::{AssetError, PbrMaterial};
 use base64::Engine;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::sync::Arc;
 use uuid::Uuid;
 
 const MAX_BYTES: usize = 256 * 1024 * 1024;
@@ -13,7 +14,7 @@ const MAX_BYTES: usize = 256 * 1024 * 1024;
 #[derive(Debug, Clone)]
 pub struct Document {
     pub json: Value,
-    pub buffers: Vec<Vec<u8>>,
+    pub buffers: Vec<Arc<[u8]>>,
 }
 #[derive(Debug, Clone)]
 pub enum Image {
@@ -26,6 +27,7 @@ pub struct Material {
     pub value: PbrMaterial,
     /// Local image indices. Existing UUID references are already in `value`.
     pub images: [Option<usize>; 4],
+    pub occlusion: Option<usize>,
 }
 
 impl Document {
@@ -72,7 +74,7 @@ impl Document {
         }
         let mut buffers = Vec::new();
         let mut total = data.len();
-        let mut resources = HashMap::<String, Vec<u8>>::new();
+        let mut resources = HashMap::<String, Arc<[u8]>>::new();
         for (index, buffer) in json["buffers"].as_array().into_iter().flatten().enumerate() {
             if buffers.len() >= 4096 {
                 return Err(AssetError::TooLarge("glTF buffers"));
@@ -81,12 +83,12 @@ impl Document {
                 if let Some(cached) = resources.get(uri) {
                     cached.clone()
                 } else {
-                    let bytes = resource(uri, &mut load)?;
+                    let bytes: Arc<[u8]> = resource(uri, &mut load)?.into();
                     resources.insert(uri.into(), bytes.clone());
                     bytes
                 }
             } else if index == 0 {
-                binary.take().ok_or_else(|| AssetError::invalid("missing GLB buffer"))?
+                binary.take().ok_or_else(|| AssetError::invalid("missing GLB buffer"))?.into()
             } else {
                 return Err(AssetError::invalid("buffer has no URI"));
             };
@@ -179,7 +181,23 @@ impl Document {
                 let value = crate::material::material_from_gltf_at(&self.json, index);
                 // Validate f32 conversion and all transforms before using them.
                 value.encode_asset()?;
-                Ok(Material { name, value, images })
+                let occlusion = if material["occlusionTexture"].is_null() {
+                    None
+                } else {
+                    let source = material["occlusionTexture"]["index"]
+                        .as_u64()
+                        .and_then(|i| self.json["textures"].get(i as usize))
+                        .and_then(|t| t["source"].as_u64())
+                        .filter(|i| self.json["images"].get(*i as usize).is_some())
+                        .ok_or_else(|| AssetError::invalid("occlusion texture index"))?;
+                    Some(source as usize)
+                };
+                Ok(Material {
+                    name,
+                    value,
+                    images,
+                    occlusion,
+                })
             })
             .collect()
     }

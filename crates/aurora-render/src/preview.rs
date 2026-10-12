@@ -606,6 +606,10 @@ impl Cache {
             let rect = callback.rect;
             if !primitive.clip_rect.intersects(rect) {
                 primitive.primitive = egui::epaint::Primitive::Mesh(egui::Mesh::default());
+                // egui-wgpu binds the zero-length buffer of an empty mesh
+                // unless its clip is empty too. Keep the primitive count so
+                // the viewer's glass-layer boundary remains valid.
+                primitive.clip_rect = egui::Rect::NOTHING;
                 continue;
             }
             let size = [

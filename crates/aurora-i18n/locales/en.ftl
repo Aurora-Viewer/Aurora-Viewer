@@ -12,7 +12,16 @@ import-lod-combine = MeshOpt combined
 import-lod-fast = MeshOpt fast
 import-lod-reliable = Reliable generation
 import-lod-above = LOD above
-import-mesh-info = { $models } models · { $instances } instances · { $triangles } triangles
+import-mesh-info = { $models } { $models ->
+    [one] model
+    *[other] models
+    } · { $instances } { $instances ->
+    [one] instance
+    *[other] instances
+    } · { $triangles } { $triangles ->
+    [one] triangle
+    *[other] triangles
+    }
 import-lods = Levels of detail (LOD)
 import-browse = Browse…
 import-error-threshold = Error threshold
@@ -24,6 +33,18 @@ import-bounding-box = Bounding box
 import-decompose = Analyze convex hulls
 import-retain = Retained proportion
 import-fill-surface = Surface only
+import-fill-flood = Flood fill
+import-fill-raycast = Raycast fill
+import-physics-cube = Cube
+import-physics-hex = Hexagon
+import-user-physics = User physics preset
+import-load-preset = Load preset
+import-save-preset = Save as preset
+import-analysis-progress = Analysis: { $percent } %
+import-animation-settings = Animation settings
+import-batch-limit = Draft limit reached (512 assets or 1 GiB). Remove files before continuing.
+import-mesh-fee-required = Calculate the fee before uploading.
+import-hands-spread-right = Right hand spread
 import-voxel-resolution = Voxel resolution
 import-max-hulls = Maximum hulls
 import-hull-vertices = Vertices per hull
@@ -149,7 +170,10 @@ import-lossless = Lossless compression
 import-strip-alpha = Remove the almost opaque alpha channel
 import-sound-info = { $duration } s · { $channels } channel(s) · { $bits } bits
 import-sound-conversion = Upload as mono Vorbis at 44,100 Hz.
-import-animation-info = { $duration } s · { $joints } joints
+import-animation-info = { $duration } s · { $joints } { $joints ->
+    [one] joint
+    *[other] joints
+    }
 import-animation-frames = { $frames } frames · { $rate } fps
 import-priority = Priority
 import-loop = Loop
