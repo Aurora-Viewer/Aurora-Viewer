@@ -602,6 +602,7 @@ grille.
 | `AURORA_DEMO_ANIM_LOOP=1` | Boucles d'animation, séquences et arrêts |
 | `AURORA_DEMO_AO=1` | AO intégré et inventaire d’animations synthétique |
 | `AURORA_DEMO_ANIMESH=1` | Objets animés (animesh) |
+| `AURORA_DEMO_ANIMESH_TRIS=<n>` | Triangles ajoutés au mesh riggé de la démo |
 | `AURORA_DEMO_CLOUD=1` | Nuages de chargement des avatars |
 | `AURORA_DEMO_DISPLAYNAME="<nom>"` | Changement de nom d'affichage (simulé) |
 | `AURORA_DEMO_DISPLAYNAME_ERROR=<error_tag>` | Erreur du serveur au changement de nom |
@@ -625,6 +626,13 @@ grille.
   autres aussi, et la ligne `demo animesh: skin bindings <en service> used
   of <dans la liste>` du log (toutes les 120 images) doit cesser de croître
   une fois les premiers mesh libérés (600 images après leur dernier usage).
+- **`AURORA_DEMO_ANIMESH_TRIS=<n>`** : avec `AURORA_DEMO_ANIMESH`, ajoute
+  environ n triangles au mesh riggé de la démo, en faces opaques de 45 000
+  (un tube fin autour du torse chacune, 7 faces au plus). Avec
+  `AURORA_DEMO_CROWD=<n>`, chaque avatar de la foule porte ce mesh : 200000
+  donne des avatars du poids de ceux de la grille (3,6 millions de
+  triangles à l'écran pour 16 avatars dessinés en entier), ce qu'il faut
+  pour mesurer les passes qui redessinent les avatars (ombres, prépasse).
 - **`AURORA_DEMO_CLOUD=1|self`** : `1` active hors ligne les nuages et les
   barres de chargement. `self` habille en plus notre avatar comme ceux qui
   restaient en nuage pendant les 60 s de la limite (issue #121) : bake de
@@ -1220,6 +1228,7 @@ Ce que l'inventaire doit montrer avec ces scénarios :
 | `AURORA_TEXTURE_BC7_CACHE=0` | BC7 sans son cache disque |
 | `AURORA_RENDER_THREAD=0` | Images dessinées sur le thread principal |
 | `AURORA_EYE_RELATIVE=0` | Sommets des objets et du terrain calculés en coordonnées de région |
+| `AURORA_SHADOW_LEGACY=1` | Ombres dessinées par l'ancien chemin |
 | `AURORA_PROFILE=1` | Profilage dans le journal (voir [Profilage](#profilage)) |
 | `AURORA_PROFILE_FRAMES=1` | Profil détaillé de chaque image |
 | `AURORA_GPU_VALIDATION=1` | Couches de validation de wgpu |
@@ -1322,6 +1331,29 @@ Ce que l'inventaire doit montrer avec ces scénarios :
   `AURORA_DEMO_CAMERA=drift,690,420,84` sur des captures consécutives
   (images 800 à 899) : le bord du panneau dérive régulièrement, ou sautille
   avec `0`.
+- **`AURORA_SHADOW_LEGACY=1|splits|ab`** : pour comparer l'image et les
+  mesures des ombres. Par défaut, chaque cascade ne dessine que les objets
+  dont l'ombre peut tomber sur ce que la vue y lit
+  (`aurora-render/src/shadow_cull.rs`), les faces opaques sont dessinées
+  sans fragment shader, et la cascade d'un pixel est choisie d'après sa
+  propre distance à la caméra.
+  - `1` : l'ancien chemin. Tous les objets du carré de chaque cascade,
+    toutes les faces avec le test alpha, et la cascade choisie d'après la
+    distance interpolée entre les sommets du triangle.
+  - `splits` : seulement l'ancien choix de la cascade. L'image est alors
+    celle de l'ancien chemin au pixel près ; les objets proches de la
+    caméra restent dessinés dans les cascades lointaines.
+  - `ab` : avec `AURORA_PROFILE=1`, l'ancien chemin, le nouveau et `splits`
+    à tour de rôle, une seconde chacun, dans la même session et sous la
+    même charge extérieure. `shadow_path=legacy|new|splits` dans la ligne
+    `perf summary` dit lequel a dessiné la seconde ; comparer
+    `shadow_draws`, `g_shadows_depth` et `gpu`, avec `AURORA_FPS_LIMIT=120`
+    pour les temps GPU.
+  - Seule différence d'image attendue avec `1` : sur un triangle qui couvre
+    plusieurs cascades (grand sol, grand mur), la limite entre deux
+    cascades se déplace, et les ombres proches de la caméra y sont plus
+    nettes (elles lisaient une cascade plus lointaine que le terrain et les
+    petits objets voisins).
 - **`AURORA_PROFILE=1`** : une ligne `perf summary` par seconde, plus une
   ligne `perf settings` quand les réglages changent. Le plafond d'images/s
   en arrière-plan (« Limiter hors focus ») est ignoré : une fenêtre sans le
@@ -1473,6 +1505,18 @@ thread principal est déjà sur l'image suivante. Avec
     (un dessin par mesh) et `ui_vertices` par image, et `ui_vertices_max`,
     le plus grand nombre de sommets d'une image de la seconde : un pic de
     `r_tessellate` sans pic de sommets n'est pas du travail en plus ;
+  - le détail de `g_shadows_depth` : `g_cull` (culling GPU de toutes les
+    vues), `g_shadow0` à `g_shadow2` (les cascades d'ombres, de la plus
+    proche à la plus lointaine) et `g_depth` (prépasse de profondeur et
+    occlusion). Ce partage est indicatif : le GPU chevauche les dessins
+    voisins, et le travail des sommets d'une cascade déborde sur ce qui la
+    suit ; pour comparer deux chemins, lire leur somme `g_shadows_depth`.
+    Puis, par cascade (suffixe 0 à 2), ce que les ombres
+    dessinent : `sd` draws, `sd_cpu` ceux des listes du CPU (le terrain),
+    `st_k` milliers de triangles, `sd_rig` et `st_rig_k` la part des
+    avatars et des mesh riggés (les triangles ne comptent que les draws des
+    listes du GPU). `shadow_path` : le chemin des ombres de la seconde
+    (`AURORA_SHADOW_LEGACY`) ;
   - le temps GPU par élément (`g_*`), les draws et commandes de dessin, les
     objets synchronisés / reconstruits (`synced`, `rebuilt` : des moyennes
     **par image** ; `rebuilt=0.2` à 175 images/s, ce sont 35 reconstructions

@@ -4,9 +4,10 @@
 // bounds. Every drawable face (one per draw record, table kept up to date by
 // the scene) is then tested against each view of the frame and appended to
 // the bins it belongs to:
-//   0..3  main view: opaque, opaque two-sided, masked, masked two-sided
-//   4..6  shadow cascades
-//   7..9  water reflection, mirror, reflection probe face
+//   0..3    main view: opaque, opaque two-sided, masked, masked two-sided
+//   4..6    shadow cascades, casters drawn depth only (opaque faces)
+//   7..9    water reflection, mirror, reflection probe face
+//   10..12  shadow cascades, casters drawn with the alpha test
 // Bins keep the record order (no atomics on the slots): coplanar faces drawn
 // in the same pass keep the same winner from one frame to the next.
 //   cs_classify: bin mask of each face, face count of each bin per workgroup;
@@ -20,28 +21,37 @@
 // The tests mirror Scene::build_lists (CPU path) and `gpu_cull::face_bins`.
 // The Hi-Z sphere test (hiz_test.wgsl) is prepended to this module.
 
-const BINS: u32 = 10u;
+const BINS: u32 = 13u;
 const MAIN_BINS: u32 = 4u;
 const BIN_SHADOW: u32 = 4u;
 const BIN_REFL_WATER: u32 = 7u;
 const BIN_REFL_MIRROR: u32 = 8u;
 const BIN_PROBE: u32 = 9u;
+const BIN_SHADOW_ALPHA: u32 = 10u;
 // argument regions after the bins: occlusion phase 1 and phase 2 prepass
 // lists of each main bin (own counts)
-const REGION_PRE1: u32 = 10u;
-const REGION_PRE2: u32 = 14u;
+const REGION_PRE1: u32 = 13u;
+const REGION_PRE2: u32 = 17u;
 
 // counts: bin sizes, then statistics
-const COUNT_VISIBLE: u32 = 10u;
-const COUNT_TRIANGLES: u32 = 11u;
-const COUNT_HIDDEN: u32 = 12u;
+const COUNT_VISIBLE: u32 = 13u;
+const COUNT_TRIANGLES: u32 = 14u;
+const COUNT_HIDDEN: u32 = 15u;
 const COUNT_PRE1: u32 = 16u;
 const COUNT_PRE2: u32 = 20u;
+// profile (F_SHADOW_STATS), per cascade: triangles of its casters, then its
+// rigged casters (avatars and rigged meshes), then their triangles
+const COUNT_SHADOW: u32 = 24u;
+const SHADOW_STATS: u32 = 9u;
+
+// planes of a cascade's caster volume (CullFrame.shadow_planes)
+const SHADOW_PLANES: u32 = 12u;
 
 // CullFace.bits
 const PASS_BITS: u32 = 7u;
 const PASS_HIDDEN: u32 = 0u;
 const PASS_OPAQUE: u32 = 1u;
+const PASS_OPAQUE_2S: u32 = 2u;
 const PASS_MASK_2S: u32 = 4u;
 const PASS_BLEND: u32 = 5u;
 const FACE_FIRST: u32 = 8u;
@@ -72,6 +82,9 @@ const F_WATER: u32 = 4u;
 const F_MIRROR: u32 = 8u;
 const F_PROBE: u32 = 16u;
 const F_OCCLUSION: u32 = 32u;
+const F_SHADOW_STATS: u32 = 64u;
+// every caster drawn with the alpha test (AURORA_SHADOW_LEGACY)
+const F_SHADOW_ALPHA_ALL: u32 = 128u;
 
 struct CullFace {
     index_count: u32,
@@ -122,6 +135,10 @@ struct CullFrame {
     mirror: array<vec4<f32>, 6>,
     probe: array<vec4<f32>, 6>,
     cascades: array<mat4x4<f32>, 3>,
+    // per cascade, SHADOW_PLANES planes (inside: positive) around what can
+    // cast a shadow the main view samples in that cascade
+    // (gpu_cull::caster_planes)
+    shadow_planes: array<vec4<f32>, 36>,
     // xyz camera, w draw distance
     eye: vec4<f32>,
     // x shadow distance, y reflection distance,
@@ -148,7 +165,7 @@ struct OcclParams {
 @group(0) @binding(4) var<storage, read_write> masks: array<u32>;
 // per workgroup and bin: face count, then (after cs_scan) offset
 @group(0) @binding(5) var<storage, read_write> group_data: array<u32>;
-@group(0) @binding(6) var<storage, read_write> counts: array<atomic<u32>, 32>;
+@group(0) @binding(6) var<storage, read_write> counts: array<atomic<u32>, 40>;
 // DrawIndexedIndirect: index_count, instance_count, first_index, base_vertex, first_instance
 @group(0) @binding(7) var<storage, read_write> args: array<u32>;
 @group(0) @binding(8) var<uniform> occl: OcclParams;
@@ -240,8 +257,21 @@ fn in_cascade(m: mat4x4<f32>, c: vec3<f32>, r: f32) -> bool {
     return !(p.x + rr < -1.0 || p.x - rr > 1.0 || p.y + rr < -1.0 || p.y - rr > 1.0 || p.z - rr > 1.0);
 }
 
+// A caster outside one of the cascade's planes casts no shadow that the main
+// view samples in it (gpu_cull::casts_into).
+fn casts_into(k: u32, c: vec3<f32>, r: f32) -> bool {
+    for (var j = 0u; j < SHADOW_PLANES; j++) {
+        let p = frame.shadow_planes[k * SHADOW_PLANES + j];
+        if (dot(p.xyz, c) + p.w < -r) {
+            return false;
+        }
+    }
+    return true;
+}
+
 var<workgroup> wg_bins: array<atomic<u32>, BINS>;
 var<workgroup> wg_stats: array<atomic<u32>, 2>;
+var<workgroup> wg_shadow: array<atomic<u32>, SHADOW_STATS>;
 
 // Bins of face `i` this frame (0: not drawn anywhere).
 fn face_mask(i: u32) -> u32 {
@@ -291,10 +321,22 @@ fn face_mask(i: u32) -> u32 {
     }
     var m = 0u;
     // LLDrawPoolAvatar::renderShadow: blended rigged faces cast too
-    if (casts && (fp != PASS_BLEND || (o.flags & (OBJ_RIGGED | OBJ_AVATAR)) != 0u)) {
+    let rigged = (o.flags & (OBJ_RIGGED | OBJ_AVATAR)) != 0u;
+    if (casts && (fp != PASS_BLEND || rigged)) {
+        // fs_shadow only tests the alpha of masked and blended faces: the
+        // others are drawn without a fragment shader
+        let depth_only = (fp == PASS_OPAQUE || fp == PASS_OPAQUE_2S) && (fl & F_SHADOW_ALPHA_ALL) == 0u;
+        let bin = select(BIN_SHADOW_ALPHA, BIN_SHADOW, depth_only);
         for (var k = 0u; k < 3u; k++) {
-            if (in_cascade(frame.cascades[k], c, r)) {
-                m |= 1u << (BIN_SHADOW + k);
+            if (in_cascade(frame.cascades[k], c, r) && casts_into(k, c, r)) {
+                m |= 1u << (bin + k);
+                if ((fl & F_SHADOW_STATS) != 0u) {
+                    atomicAdd(&wg_shadow[k], f.index_count / 3u);
+                    if (rigged) {
+                        atomicAdd(&wg_shadow[3u + k], 1u);
+                        atomicAdd(&wg_shadow[6u + k], f.index_count / 3u);
+                    }
+                }
             }
         }
     }
@@ -329,6 +371,9 @@ fn cs_classify(
     if (lid < 2u) {
         atomicStore(&wg_stats[lid], 0u);
     }
+    if (lid < SHADOW_STATS) {
+        atomicStore(&wg_shadow[lid], 0u);
+    }
     workgroupBarrier();
     let i = gid.x;
     var m = 0u;
@@ -348,6 +393,9 @@ fn cs_classify(
     if (lid == 0u) {
         atomicAdd(&counts[COUNT_VISIBLE], atomicLoad(&wg_stats[0]));
         atomicAdd(&counts[COUNT_TRIANGLES], atomicLoad(&wg_stats[1]));
+    }
+    if (lid < SHADOW_STATS && (frame.sizes.w & F_SHADOW_STATS) != 0u) {
+        atomicAdd(&counts[COUNT_SHADOW + lid], atomicLoad(&wg_shadow[lid]));
     }
 }
 

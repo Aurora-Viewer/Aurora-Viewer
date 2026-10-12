@@ -2952,6 +2952,15 @@ pub fn crowd_count() -> Option<u32> {
     Some(v.trim().parse().unwrap_or(40).min(400))
 }
 
+/// AURORA_DEMO_ANIMESH_TRIS=<n>: triangles added to the demo's rigged mesh
+/// (0 without the variable), in opaque faces of 45 000.
+pub fn animesh_dense_triangles() -> usize {
+    std::env::var("AURORA_DEMO_ANIMESH_TRIS")
+        .ok()
+        .and_then(|v| v.trim().parse().ok())
+        .unwrap_or(0)
+}
+
 /// The crowd: avatars on a grid north-east of the start, each playing the
 /// demo idle animation and wearing eight attachment linksets (a root and six
 /// child prims) on bones all over the body, so every worn prim follows its
@@ -3025,7 +3034,10 @@ pub fn crowd_events(n: u32, rigged: bool) -> Vec<NetEvent> {
                 sculpt_type: LL_SCULPT_TYPE_MESH,
             };
             let mut t = (*te([0.85, 0.85, 0.9, 1.0], 0, false, 0.0)).clone();
-            for f in &mut t.faces {
+            // the fur on the mesh's own face; the faces of
+            // AURORA_DEMO_ANIMESH_TRIS stay opaque
+            let fur = if animesh_dense_triangles() > 0 { 1 } else { t.faces.len() };
+            for f in t.faces.iter_mut().take(fur) {
                 f.texture = ANIMESH_TEXTURE;
             }
             let mut worn = prim(
