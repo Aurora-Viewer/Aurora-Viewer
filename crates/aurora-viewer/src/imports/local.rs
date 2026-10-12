@@ -67,7 +67,13 @@ impl Watch {
         }
     }
 }
-fn prepare(id: Uuid, generation: u64, source: &Source, options: import_texture::Options, pool: &StagingPool) -> Result<Prepared, String> {
+fn prepare(
+    id: Uuid,
+    generation: u64,
+    source: &Source,
+    options: import_texture::Options,
+    pool: Option<&StagingPool>,
+) -> Result<Prepared, String> {
     let mut prepared = Prepared {
         entry: id,
         generation,
@@ -149,6 +155,7 @@ fn prepare(id: Uuid, generation: u64, source: &Source, options: import_texture::
     }
     let mut seen = HashSet::new();
     for (id, pixels) in textures {
+        let pool = pool.ok_or_else(|| aurora_i18n::tr!("import-local-staging-busy").to_owned())?;
         if !seen.insert(id) {
             continue;
         }
@@ -169,7 +176,7 @@ fn prepare(id: Uuid, generation: u64, source: &Source, options: import_texture::
     Ok(prepared)
 }
 impl Imports {
-    pub fn publish_local(&mut self, id: Uuid, jobs: &crate::scene::jobs::Jobs, ctx: &egui::Context, pool: Arc<StagingPool>) {
+    pub fn publish_local(&mut self, id: Uuid, jobs: &crate::scene::jobs::Jobs, ctx: &egui::Context, pool: Option<Arc<StagingPool>>) {
         let Some(entry) = self.entries.iter_mut().find(|e| e.id == id && e.local && !e.local_pending) else {
             return;
         };
@@ -183,10 +190,47 @@ impl Imports {
         let tx = self.tx.clone();
         let wake = ctx.clone();
         jobs.execute(move || {
-            let result = prepare(id, generation, &source, options, &pool);
+            let result = prepare(id, generation, &source, options, pool.as_deref());
             let _ = tx.send(Worker::Local(id, generation, result));
             wake.request_repaint();
         });
+    }
+    /// Mesh assets are CPU data, so installing them must not depend on the
+    /// graphics handle temporarily owned by App::frame during UI callbacks.
+    pub fn install_local_meshes(&mut self, meshes: &mut crate::scene::meshes::MeshStreamer, jobs: &crate::scene::jobs::Jobs) -> bool {
+        if self.local_uploads.is_empty() {
+            return false;
+        }
+        let mut remaining = Vec::new();
+        let mut changed = false;
+        for prepared in self.local_uploads.drain(..) {
+            if prepared.meshes.is_empty() || !prepared.textures.is_empty() || prepared.material.is_some() {
+                remaining.push(prepared);
+                continue;
+            }
+            let Some(entry) = self.entries.iter_mut().find(|entry| entry.id == prepared.entry) else {
+                jobs.discard(prepared);
+                continue;
+            };
+            if entry.preview_generation != prepared.generation {
+                entry.local_pending = false;
+                jobs.discard(prepared);
+                continue;
+            }
+            for id in entry.local_mesh_ids.drain(..) {
+                meshes.remove_local(&id);
+            }
+            for mesh in prepared.meshes {
+                entry.local_mesh_ids.push(mesh.id);
+                meshes.insert_local(mesh.id, mesh.data, mesh.header, mesh.skin);
+            }
+            entry.local_published = true;
+            entry.local_generation = prepared.generation;
+            entry.local_pending = false;
+            changed = true;
+        }
+        self.local_uploads = remaining;
+        changed
     }
     pub fn watch_local(&mut self, jobs: &crate::scene::jobs::Jobs, ctx: &egui::Context) {
         let now = Instant::now();
@@ -211,5 +255,76 @@ impl Imports {
                 wake.request_repaint();
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_mesh_jobs_encode_and_install_without_a_graphics_handle_and_replace_only_current_results() {
+        let ctx = egui::Context::default();
+        let (jobs, _results) = crate::scene::jobs::Jobs::new();
+        let mut entry = Entry::new(
+            "mesh.dae".into(),
+            Ok(Source::Mesh(Box::new(crate::imports::tests::mesh_fixture()))),
+            Default::default(),
+        );
+        entry.local = true;
+        let id = entry.id;
+        let mut imports = Imports {
+            entries: vec![entry],
+            ..Default::default()
+        };
+        let mut streamer =
+            crate::scene::meshes::MeshStreamer::new(std::env::temp_dir().join(format!("aurora-local-mesh-{}", Uuid::new_v4())));
+        let receive = |imports: &mut Imports| {
+            let Worker::Local(received, generation, result) =
+                imports.rx.recv_timeout(Duration::from_secs(10)).expect("local worker finishes")
+            else {
+                panic!("local mesh result")
+            };
+            assert_eq!(received, id);
+            let prepared = result.expect("mesh preparation needs no GPU staging");
+            assert_eq!(prepared.generation, generation);
+            assert!(prepared.textures.is_empty() && prepared.material.is_none());
+            let mesh = &prepared.meshes[0];
+            let section = aurora_assets::mesh::section_bytes(&mesh.data, mesh.header.lods[3].expect("high LOD")).expect("high section");
+            let faces = aurora_assets::decode_mesh_lod(section).expect("runtime decoder accepts the local mesh");
+            assert_eq!(faces.iter().map(|face| face.indices.len() / 3).sum::<usize>(), 12);
+            imports.local_uploads.push(prepared);
+        };
+        imports.publish_local(id, &jobs, &ctx, None);
+        assert!(imports.entries[0].local_pending);
+        receive(&mut imports);
+        assert!(imports.install_local_meshes(&mut streamer, &jobs));
+        let original = imports.entries[0].local_mesh_ids[0];
+        assert!(streamer.meta(&original).is_some());
+        assert!(imports.entries[0].local_published);
+        assert!(!imports.entries[0].local_pending);
+
+        imports.publish_local(id, &jobs, &ctx, None);
+        receive(&mut imports);
+        imports.entries[0].invalidate_preview();
+        assert!(
+            !imports.install_local_meshes(&mut streamer, &jobs),
+            "an obsolete result cannot replace the active mesh"
+        );
+        assert_eq!(imports.entries[0].local_mesh_ids, [original]);
+        assert!(
+            !imports.entries[0].local_pending,
+            "an obsolete result must not prevent a new request"
+        );
+
+        imports.publish_local(id, &jobs, &ctx, None);
+        receive(&mut imports);
+        assert!(imports.install_local_meshes(&mut streamer, &jobs));
+        let replacement = imports.entries[0].local_mesh_ids[0];
+        assert_ne!(replacement, original);
+        assert!(streamer.meta(&replacement).is_some());
+        assert!(streamer.meta(&original).is_none(), "reloading retires the former local mesh");
+        assert_eq!(imports.entries[0].local_generation, imports.entries[0].preview_generation);
+        assert!(imports.local_uploads.is_empty());
     }
 }

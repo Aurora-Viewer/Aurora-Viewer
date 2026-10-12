@@ -72,7 +72,7 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
         "mesh" | "mesh-low" | "mesh-error" | "mesh-physics" | "mesh-degenerate" | "mesh-options" => Choice::Mesh,
         "animation" | "animation-own" => Choice::Animation,
         "sound" => Choice::Sound,
-        "local" | "local-mesh" | "local-mesh-applied" => Choice::Local,
+        "local" | "local-mesh" | "local-mesh-applied" | "local-mesh-removed" => Choice::Local,
         _ => Choice::Bulk,
     };
     let choice = imports.choice;

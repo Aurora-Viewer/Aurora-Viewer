@@ -89,7 +89,7 @@ impl MeshStreamer {
         })
     }
 
-    /// In-memory mesh metadata for offline geometry fixtures; no asset fetch.
+    /// In-memory meshes for local previews and offline fixtures; no asset fetch.
     pub fn insert_local(&mut self, id: Uuid, data: Arc<Vec<u8>>, header: MeshHeader, skin: Option<Arc<SkinInfo>>) {
         self.entries.insert(
             id,

@@ -14,6 +14,9 @@ impl App {
             self.world.balance = Some(1000);
             self.imports.demo_started = true;
             crate::imports::demo::start(&mut self.imports, &self.scene.jobs, ctx);
+            if self.imports.demo_mode.starts_with("local-mesh") {
+                self.settings.imports.local_meshes = true;
+            }
         }
         self.imports.sound_limit = if self.settings.grid == crate::settings::GridChoice::Custom {
             60
@@ -59,9 +62,37 @@ impl App {
             );
         }
         self.apply_local_imports();
+        if self.demo && self.imports.demo_mode == "local-mesh-removed" && self.frame_count == 400 {
+            self.clear_local_mesh_targets(&[crate::demo::action_id(970)]);
+        }
+        if self.demo
+            && matches!(self.imports.demo_mode.as_str(), "local-mesh-applied" | "local-mesh-removed")
+            && self.frame_count.is_multiple_of(120)
+            && let Some(entry) = self.imports.active.and_then(|id| self.imports.entries.iter().find(|e| e.id == id))
+            && let Some(idx) = self.world.objects.index_of_uuid(&crate::demo::action_id(970))
+            && let Some(object) = self.world.objects.get(idx)
+        {
+            let mesh = entry.local_mesh_ids.first().copied();
+            let wanted = self.scene.gpu.get(idx).and_then(|g| g.wanted_geom);
+            let bound = self.scene.gpu.get(idx).and_then(|g| g.geom);
+            let matches = |key| matches!(key, Some(crate::scene::GeomKey::Mesh { id, .. }) if Some(id) == mesh);
+            log::info!(
+                "demo local mesh: assets={} pending={} overlay={} wanted={} bound={} prim={} server_prim={} faces={} generation={}/{}",
+                entry.local_mesh_ids.len(),
+                entry.local_pending,
+                object.render.local_volume.is_some(),
+                matches(wanted),
+                matches(bound),
+                matches!(bound, Some(crate::scene::GeomKey::Prim { .. })),
+                !object.volume.is_mesh(),
+                self.scene.gpu.get(idx).map_or(0, |g| g.faces.len()),
+                entry.local_generation,
+                entry.preview_generation
+            );
+        }
         self.poll_local_mesh_rez(ctx);
         if self.demo
-            && self.imports.demo_mode == "local-mesh-applied"
+            && matches!(self.imports.demo_mode.as_str(), "local-mesh-applied" | "local-mesh-removed")
             && !self.imports.demo_local_applied
             && let Some(id) = self.imports.active
             && let Some(idx) = self.world.objects.index_of_uuid(&crate::demo::action_id(970))
@@ -82,9 +113,7 @@ impl App {
                 },
             );
             self.imports.demo_local_applied = true;
-            if let Some(gfx) = &self.gfx {
-                self.imports.publish_local(id, &self.scene.jobs, ctx, gfx.renderer.staging_pool());
-            }
+            self.publish_local_import(id, ctx);
         }
         self.imports.watch_local(&self.scene.jobs, ctx);
         for Playback::Audio(clip) in self.imports.playback.drain(..) {
@@ -258,9 +287,7 @@ impl App {
                     }) {
                         continue;
                     }
-                    if let Some(gfx) = &self.gfx {
-                        self.imports.publish_local(id, &self.scene.jobs, ctx, gfx.renderer.staging_pool());
-                    }
+                    self.publish_local_import(id, ctx);
                 }
                 Action::ClearLocalMesh => {
                     let ids: Vec<_> = self
@@ -430,10 +457,8 @@ impl App {
             })
             .map(|e| e.id)
             .collect();
-        if let Some(gfx) = &self.gfx {
-            for id in locals {
-                self.imports.publish_local(id, &self.scene.jobs, ctx, gfx.renderer.staging_pool());
-            }
+        for id in locals {
+            self.publish_local_import(id, ctx);
         }
         for entry in self.imports.entries.iter().filter(|e| e.local_published) {
             if let Some(image) = &entry.preview {
@@ -522,10 +547,7 @@ impl App {
             .find(|e| e.id == pending.entry)
             .is_some_and(|e| e.local_mesh_ids.is_empty())
         {
-            if let Some(gfx) = &self.gfx {
-                self.imports
-                    .publish_local(pending.entry, &self.scene.jobs, ctx, gfx.renderer.staging_pool());
-            }
+            self.publish_local_import(pending.entry, ctx);
         } else {
             self.apply_local_mesh_targets();
         }
@@ -598,6 +620,9 @@ impl App {
         }
     }
     fn apply_local_imports(&mut self) {
+        if self.imports.install_local_meshes(&mut self.scene.meshes, &self.scene.jobs) {
+            self.apply_local_mesh_targets();
+        }
         if self.imports.local_uploads.is_empty() {
             return;
         }
@@ -687,6 +712,20 @@ impl App {
         }
         if mesh_changed {
             self.apply_local_mesh_targets();
+        }
+    }
+
+    fn publish_local_import(&mut self, id: uuid::Uuid, ctx: &egui::Context) {
+        if self
+            .imports
+            .entries
+            .iter()
+            .any(|entry| entry.id == id && matches!(entry.source, Some(Source::Mesh(_))))
+        {
+            self.imports.publish_local(id, &self.scene.jobs, ctx, None);
+        } else if let Some(gfx) = &self.gfx {
+            self.imports
+                .publish_local(id, &self.scene.jobs, ctx, Some(gfx.renderer.staging_pool()));
         }
     }
 

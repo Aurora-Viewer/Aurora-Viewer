@@ -583,7 +583,7 @@ grille.
 
 ### Détails
 
-- **`AURORA_DEMO_IMPORTS=texture|destination|material|mesh|mesh-low|mesh-error|mesh-physics|mesh-degenerate|mesh-options|animation|animation-own|sound|bulk|bulk-upload|local|local-mesh|local-mesh-applied`** :
+- **`AURORA_DEMO_IMPORTS=texture|destination|material|mesh|mesh-low|mesh-error|mesh-physics|mesh-degenerate|mesh-options|animation|animation-own|sound|bulk|bulk-upload|local|local-mesh|local-mesh-applied|local-mesh-removed`** :
   écrit des fichiers propres à ce lancement dans `.scratch/import-demo/<uuid>/`
   puis ouvre le parcours choisi : image RGBA, matériau PBR, cube Collada,
   animations BVH / `.anim` et son WAV synthétique. Vérifier les paramètres, les
@@ -624,6 +624,10 @@ grille.
   `local-mesh-applied`, avec `AURORA_DEMO_ACTIONS=1`, applique automatiquement
   le cube local à la boîte de test sélectionnée ; son volume serveur reste
   inchangé. Le bouton de retrait doit restaurer son apparence d’origine.
+  `local-mesh-removed` suit le même parcours puis retire l’aperçu à la frame
+  400. Les traces agrégées vérifient la liaison GPU au mesh local, puis le
+  retour au prim, avec volume serveur conservé ; aucun nom de fichier ni
+  chemin personnel n’y est ajouté.
   `animation-own` place l’aperçu à 0,75 s, en pause, également sur l’avatar
   de démo. Le curseur et la pose doivent rester fixes jusqu’à Reprendre.
   `AURORA_DEMO_IMPORT_FILE` remplace les fixtures par un fichier existant,

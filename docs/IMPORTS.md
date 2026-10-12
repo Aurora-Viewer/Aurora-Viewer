@@ -196,6 +196,9 @@ Sources : `llfloatermodelpreview.cpp`, `llmodelpreview.cpp`,
 - Mesh local : choix du modèle, unités en mètres optionnelles, dimensions
   importées, application/retrait de la sélection et prim support ; surveillance
   désactivée par défaut, période de 3 s réglable dès 0,1 s comme Firestorm.
+  La préparation et l’installation des données mesh sont indépendantes du
+  contexte graphique détenu temporairement par la boucle de rendu : appliquer,
+  recharger ou placer un prim support fonctionne aussi depuis l’interface.
 - Environnements : réglages EEP et anciens presets Windlight, imports multiples.
 - Sauvegardes de linksets Firestorm : reconstruction des prims et du contenu,
   réutilisation/envoi des assets, options de textures temporaires, décalage.
