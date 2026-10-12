@@ -475,49 +475,86 @@ pub fn workgroup_ranks(masks: &[u32]) -> Vec<[u32; BINS]> {
         .collect()
 }
 
-/// Elements per dirty chunk of a `GpuTable`.
-const CHUNK: usize = 64;
+/// Elements per dirty chunk of a mirrored table: small enough that
+/// scattered updates (worn attachments, avatars) do not drag big untouched
+/// ranges along; neighbouring chunks are still uploaded in one write.
+pub(crate) const CHUNK: usize = 64;
 
-/// Dirty chunks of a mirrored table, coalesced into upload ranges.
+/// AURORA_SYNC_SLICE: whole chunks are uploaded, as before the uploads
+/// were cut to the changed elements (comparison).
+static WHOLE_CHUNKS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Upload whole dirty chunks of the mirrored tables (draw records, culling
+/// tables) instead of their changed elements only.
+pub fn set_whole_chunk_uploads(on: bool) {
+    WHOLE_CHUNKS.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Changed elements of a mirrored table, by chunk: the span they cover in
+/// each chunk, coalesced into upload ranges.
+///
+/// A range runs from the first changed element of a run of dirty chunks to
+/// the last one: as many writes as with whole chunks, without the untouched
+/// elements before and after (one record that moves alone in its chunk was
+/// sent with its 63 neighbours, 16 KB for 256 bytes).
 #[derive(Default, Debug)]
-struct DirtyChunks {
-    dirty: Vec<bool>,
+pub(crate) struct DirtyChunks {
+    /// First changed element of each chunk and the one after the last,
+    /// within the chunk; equal: nothing changed.
+    spans: Vec<(u8, u8)>,
     any: bool,
 }
 
 impl DirtyChunks {
-    fn mark(&mut self, i: usize) {
-        let c = i / CHUNK;
-        if self.dirty.len() <= c {
-            self.dirty.resize(c + 1, false);
+    pub(crate) fn mark(&mut self, i: usize) {
+        let (c, at) = (i / CHUNK, (i % CHUNK) as u8);
+        if self.spans.len() <= c {
+            self.spans.resize(c + 1, (0, 0));
         }
-        self.dirty[c] = true;
+        let s = &mut self.spans[c];
+        *s = if s.0 == s.1 { (at, at + 1) } else { (s.0.min(at), s.1.max(at + 1)) };
         self.any = true;
     }
 
-    fn clear(&mut self) {
-        self.dirty.iter_mut().for_each(|d| *d = false);
+    pub(crate) fn clear(&mut self) {
+        self.spans.iter_mut().for_each(|s| *s = (0, 0));
         self.any = false;
     }
 
+    pub(crate) fn any(&self) -> bool {
+        self.any
+    }
+
     /// Element ranges to upload (clipped to `len`); clears the marks.
-    fn take_ranges(&mut self, len: usize) -> Vec<std::ops::Range<usize>> {
+    pub(crate) fn take_ranges(&mut self, len: usize) -> Vec<std::ops::Range<usize>> {
+        self.take_ranges_as(len, WHOLE_CHUNKS.load(std::sync::atomic::Ordering::Relaxed))
+    }
+
+    fn take_ranges_as(&mut self, len: usize, whole: bool) -> Vec<std::ops::Range<usize>> {
         let mut out = Vec::new();
         if !self.any {
             return out;
         }
         let mut c = 0;
-        while c < self.dirty.len() {
-            if !self.dirty[c] {
+        while c < self.spans.len() {
+            if self.spans[c].0 == self.spans[c].1 {
                 c += 1;
                 continue;
             }
             let start = c;
-            while c < self.dirty.len() && self.dirty[c] {
-                self.dirty[c] = false;
+            let first = self.spans[c].0 as usize;
+            let mut last = 0;
+            while c < self.spans.len() && self.spans[c].0 != self.spans[c].1 {
+                last = self.spans[c].1 as usize;
+                self.spans[c] = (0, 0);
                 c += 1;
             }
-            let (a, b) = (start * CHUNK, (c * CHUNK).min(len));
+            let (a, b) = if whole {
+                (start * CHUNK, c * CHUNK)
+            } else {
+                (start * CHUNK + first, (c - 1) * CHUNK + last)
+            };
+            let b = b.min(len);
             if a < b {
                 out.push(a..b);
             }
@@ -1249,12 +1286,65 @@ mod tests {
     #[test]
     fn dirty_chunks_coalesce_and_clip() {
         let mut d = DirtyChunks::default();
-        assert!(d.take_ranges(1000).is_empty());
+        assert!(d.take_ranges_as(1000, true).is_empty());
         d.mark(3);
         d.mark(70);
         d.mark(300);
-        assert_eq!(d.take_ranges(310), vec![0..128, 256..310]);
-        assert!(d.take_ranges(310).is_empty());
+        assert_eq!(d.take_ranges_as(310, true), vec![0..128, 256..310]);
+        assert!(d.take_ranges_as(310, true).is_empty());
+    }
+
+    /// The same writes as with whole chunks, cut to the changed elements.
+    #[test]
+    fn dirty_ranges_stop_at_the_changed_elements() {
+        let mut d = DirtyChunks::default();
+        assert!(d.take_ranges_as(1000, false).is_empty() && !d.any());
+        // one element alone, the last of a chunk, the first of the table
+        d.mark(300);
+        assert_eq!(d.take_ranges_as(1000, false), vec![300..301]);
+        d.mark(63);
+        d.mark(0);
+        assert_eq!(d.take_ranges_as(1000, false), vec![0..64]);
+        // neighbouring chunks in one write, from the first changed element
+        // of the first to the last changed one of the last; marked in any
+        // order, and twice
+        for i in [200, 70, 75, 70, 3, 5, 600, 640] {
+            d.mark(i);
+        }
+        assert!(d.any());
+        assert_eq!(d.take_ranges_as(1000, false), vec![3..76, 200..201, 600..641]);
+        assert!(d.take_ranges_as(1000, false).is_empty());
+        // clipped to the table
+        d.mark(310);
+        d.mark(319);
+        assert_eq!(d.take_ranges_as(315, false), vec![310..315]);
+        d.mark(400);
+        assert!(d.take_ranges_as(315, false).is_empty());
+        // forgotten without an upload (the table was sent whole)
+        d.mark(9);
+        d.clear();
+        assert!(d.take_ranges_as(1000, false).is_empty() && !d.any());
+        // never more writes, never an element less than the changed ones
+        let mut seed = 12345u32;
+        let mut rand = |n: u32| {
+            seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+            (seed >> 8) % n
+        };
+        for _ in 0..200 {
+            let (mut exact, mut whole) = (DirtyChunks::default(), DirtyChunks::default());
+            let marks: Vec<usize> = (0..rand(40)).map(|_| rand(2000) as usize).collect();
+            for &i in &marks {
+                exact.mark(i);
+                whole.mark(i);
+            }
+            let (e, w) = (exact.take_ranges_as(2000, false), whole.take_ranges_as(2000, true));
+            assert_eq!(e.len(), w.len());
+            for (e, w) in e.iter().zip(&w) {
+                assert!(w.start <= e.start && e.end <= w.end);
+                assert!(marks.contains(&e.start) && marks.contains(&(e.end - 1)));
+            }
+            assert!(marks.iter().all(|i| e.iter().any(|r| r.contains(i))));
+        }
     }
 
     /// Packed 8-bit counters never carry into the next bin for a full

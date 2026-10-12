@@ -15,6 +15,7 @@ pub mod impostors;
 pub mod jobs;
 pub mod legacy_mat;
 pub mod loading;
+mod lod_watch;
 pub mod meshes;
 pub mod particles;
 pub mod picking;
@@ -24,6 +25,7 @@ pub mod shape;
 mod skin_binds;
 pub mod sounds;
 pub mod still_check;
+mod sync_check;
 mod sync_plan;
 pub mod sync_sets;
 pub mod texture_budget;
@@ -572,6 +574,15 @@ pub struct Scene {
     pub stats: SceneStats,
     /// AURORA_STILL_CHECK: what changes while the picture should stand still.
     pub still: Option<still_check::StillCheck>,
+    /// AURORA_SYNC_CHECK: what the sync visits, and what comes of it.
+    sync_check: Option<sync_check::SyncCheck>,
+    /// HUD attachments of our avatar and what places them besides their
+    /// own updates (screen aspect, local zoom and offset): they are placed
+    /// again when it changes, not at each frame.
+    hud_roots: HashMap<usize, (Uuid, [f32; 5])>,
+    hud_roots_tmp: Vec<(usize, Uuid, [f32; 5])>,
+    /// When the last sync ran (the rounds of the detail level checks).
+    last_sync: Option<Instant>,
     frame: u32,
     pub lod_factor: f32,
     pub draw_distance: f32,
@@ -846,6 +857,10 @@ impl Scene {
             lists: DrawLists::default(),
             stats: SceneStats::default(),
             still: still_check::StillCheck::from_env(),
+            sync_check: sync_check::SyncCheck::from_env(),
+            hud_roots: HashMap::new(),
+            hud_roots_tmp: Vec::new(),
+            last_sync: None,
             frame: 0,
             lod_factor: 2.0,
             draw_distance: 96.0,
@@ -1303,6 +1318,7 @@ impl Scene {
         self.last_origin = None;
         self.sets.clear();
         self.anchors.clear();
+        self.hud_roots.clear();
         self.posed_slots.clear();
         self.palette_slots.clear();
         self.motions.clear();
@@ -1620,17 +1636,38 @@ impl Scene {
                 self.sets.dirty.insert(idx);
             }
         }
+        // detail level checks: by events, or the slice of every object
+        let events = !sync_sets::slice_mode();
+        let dt = self.last_sync.replace(now).map_or(0.0, |last| (now - last).as_secs_f32());
+        let camera_moved = self.sets.lod.advance(view.eye, self.lod_factor, self.fov_y);
+        if events {
+            self.note_hud_changes(world);
+        }
         let list = {
             let state = FrameState {
                 gpu: &self.gpu,
                 geoms: &self.geoms,
                 textures: &self.textures,
                 mat_gen,
+                still_huds: events,
             };
-            self.sets.frame_list(&world.objects, agent, self.frame, n, &state)
+            let checks = if events {
+                sync_sets::LodChecks::Events {
+                    anchored: self.anchors.members(),
+                    dt,
+                    camera_moved,
+                }
+            } else {
+                sync_sets::LodChecks::Slice
+            };
+            self.sets.frame_list(&world.objects, agent, self.frame, n, &state, checks)
         };
         self.stats.synced = list.items.len();
         self.stats.rebuilt = 0;
+        let mut check = self.sync_check.take();
+        if let Some(c) = &mut check {
+            c.listed(list.sources, list.lod_checked);
+        }
         let t_part = self.parts.lap(Part::SyncList, t0);
 
         // placement in parallel, one level of the parent chains at a time
@@ -1668,8 +1705,26 @@ impl Scene {
         // following it.
         let mut budget = FullSyncBudget::new(self.sync_budget);
         for (idx, plan) in plans {
+            let kind = check.as_ref().and_then(|_| {
+                world
+                    .objects
+                    .get(idx)
+                    .map(|o| sync_check::Kind::of(world, idx, o, self.gpu.get(idx)))
+            });
+            let mut note = |outcome| {
+                if let (Some(c), Some(kind)) = (&mut check, kind) {
+                    c.visited(kind, outcome);
+                }
+            };
             match plan {
-                Plan::Move(m) => self.apply_move(renderer, world, idx, m),
+                Plan::Move(m) => {
+                    note(if m.changed {
+                        sync_check::Outcome::Moved
+                    } else {
+                        sync_check::Outcome::Checked
+                    });
+                    self.apply_move(renderer, world, idx, m)
+                }
                 Plan::Full { xf, interim } => {
                     let avatar = self.gpu.get(idx).is_some_and(|g| g.is_avatar) || world.objects.get(idx).is_some_and(|o| o.is_avatar());
                     // (without a transform the sync only notes that the
@@ -1678,9 +1733,11 @@ impl Scene {
                     if !now_or_never && self.sets.arrivals.contains(idx) {
                         // listed with its parent: its turn comes with the
                         // other new objects
+                        note(sync_check::Outcome::Waiting);
                         continue;
                     }
                     if now_or_never || (self.sets.backlog.is_empty() && budget.allows()) {
+                        note(sync_check::Outcome::Full);
                         let started = Instant::now();
                         self.sets.backlog.remove(idx);
                         self.sync_object(renderer, world, idx, now, view, xf);
@@ -1689,6 +1746,7 @@ impl Scene {
                             budget.spend(started.elapsed());
                         }
                     } else {
+                        note(sync_check::Outcome::Waiting);
                         if let Some(m) = interim {
                             self.apply_move(renderer, world, idx, m);
                         }
@@ -1725,6 +1783,12 @@ impl Scene {
             &mut synced,
         );
         self.stats.sync_backlog = self.sets.backlog.len() + self.sets.arrivals.len();
+        if let Some(c) = &mut check
+            && c.frame()
+        {
+            c.write(self.lod_behind(world, &renderer.records, view.eye, now));
+        }
+        self.sync_check = check;
         let t_part = self.parts.lap(Part::SyncApply, t_part);
         self.update_anchors(renderer, world, now);
         let t_part = self.parts.lap(Part::SyncAnchors, t_part);
@@ -1891,11 +1955,92 @@ impl Scene {
             }
         }
         self.anchors.placed(world, idx, m.anchor);
+        if let Some((radius, distance)) = m.lod {
+            self.watch_lod(idx, m.anchor.is_some(), radius, distance);
+        }
         if m.clear_flags
             && let Some(o) = world.objects.get_mut_untracked(idx)
         {
             o.render.needs_records = false;
         }
+    }
+
+    /// The detail level of object `idx` was checked with this size and
+    /// distance: when it is looked at again. What follows a moving object
+    /// is checked at each frame, what the GPU places from an avatar in
+    /// turn (sync_sets.rs); the others when the camera has travelled far
+    /// enough to change their level (lod_watch.rs). An object whose turn
+    /// came before that keeps the wait it has.
+    fn watch_lod(&mut self, idx: usize, anchored: bool, radius: f32, distance: f32) {
+        if anchored || self.sets.follows_motion(idx) {
+            self.sets.lod.forget(idx);
+        } else if !(self.sets.only_checked(idx) && self.sets.lod.is_watched(idx)) {
+            let slack = lod_watch::lod_slack(radius, distance, self.lod_factor, self.fov_y);
+            self.sets.lod.watch(idx, slack);
+        }
+    }
+
+    /// AURORA_SYNC_CHECK: a look at every object. Those at rest whose
+    /// detail level could be judged and those whose wanted geometry is not
+    /// what their distance asks for at this moment, then the same for the
+    /// objects the GPU places from an avatar. New objects and those whose
+    /// full sync waits for its turn are left out.
+    fn lod_behind(&self, world: &World, records: &aurora_render::arena::RecordStore, eye: Vec3, now: Instant) -> [usize; 4] {
+        let ctx = self.sync_ctx(world, records, eye, now);
+        let mut out = [0; 4];
+        for (idx, g) in self.gpu.iter().enumerate() {
+            let Some(o) = world.objects.get(idx) else {
+                continue;
+            };
+            if g.is_avatar || o.is_avatar() || g.hud || g.wanted_geom.is_none() {
+                continue;
+            }
+            if self.sets.arrivals.contains(idx) || self.sets.backlog.contains(idx) || self.sets.follows_motion(idx) {
+                continue;
+            }
+            let Some(wanted) = ctx.wanted_now(idx, o) else {
+                continue;
+            };
+            let at = if g.anchor.is_some() { 2 } else { 0 };
+            out[at] += 1;
+            if wanted != g.wanted_geom {
+                out[at + 1] += 1;
+            }
+        }
+        out
+    }
+
+    /// HUD attachments of our avatar are not placed again at each frame
+    /// with what follows it: note those whose place on the screen changed
+    /// without an update of theirs (window resized, local zoom or offset),
+    /// for this frame's list.
+    fn note_hud_changes(&mut self, world: &mut World) {
+        let mut roots = std::mem::take(&mut self.hud_roots_tmp);
+        roots.clear();
+        if let Some(me) = world.objects.index_of_uuid(&world.agent_id).and_then(|i| world.objects.get(i)) {
+            for &idx in world.objects.children_of(&me.key) {
+                let Some(o) = world.objects.get(idx).filter(|o| (31..=38).contains(&o.attachment_point())) else {
+                    continue;
+                };
+                let offset = world.hud_scales.offset(o.full_id);
+                let placed = [world.hud_aspect, world.hud_scales.scale(o.full_id), offset.x, offset.y, offset.z];
+                roots.push((idx, o.full_id, placed));
+            }
+        }
+        if roots.len() != self.hud_roots.len() {
+            self.hud_roots.retain(|idx, _| roots.iter().any(|r| r.0 == *idx));
+        }
+        for &(idx, id, placed) in &roots {
+            if self.hud_roots.insert(idx, (id, placed)) == Some((id, placed)) {
+                continue;
+            }
+            // (as an update of the attachment: its prims are placed with it)
+            if let Some(o) = world.objects.get_mut_untracked(idx) {
+                o.render.needs_records = true;
+            }
+            self.sets.dirty.insert(idx);
+        }
+        self.hud_roots_tmp = roots;
     }
 
     /// First sync of the new objects, in arrival order, while `budget`
@@ -1982,11 +2127,20 @@ impl Scene {
         }
 
         // ---- geometry / LOD
+        let (lod_radius, lod_dist) = if hud {
+            (0.0, 0.0)
+        } else {
+            self.sync_ctx(world, &renderer.records, view.eye, now).lod_metrics(idx, o, pos)
+        };
         let lod = if hud {
             3
         } else {
-            let (lod_radius, lod_dist) = self.sync_ctx(world, &renderer.records, view.eye, now).lod_metrics(idx, o, pos);
             lod_for(lod_radius, lod_dist, self.lod_factor, self.fov_y)
+        };
+        // (whatever comes of this sync; what the GPU places leaves below)
+        self.watch_lod(idx, false, lod_radius, lod_dist);
+        let Some(o) = world.objects.get(idx) else {
+            return;
         };
         let wanted = Self::object_geom_key(o, lod);
         let owner_avatar = Self::wearer_avatar(world, idx).map(|(_, i)| i);
@@ -2126,6 +2280,9 @@ impl Scene {
             }
         }
         self.anchors.placed(world, idx, anchor);
+        if anchor.is_some() {
+            self.sets.lod.forget(idx);
+        }
         // (after the faces: a rigged mesh gets its skin bindings with them)
         let posed = self.posed_of(renderer, Some(geom_key), posed_rest);
         let g = &mut self.gpu[idx];
@@ -4140,6 +4297,114 @@ mod tests {
         let pose = Mat4::from_rotation_translation(Quat::from_rotation_z(0.3), Vec3::new(0.02, 0.0, 0.05));
         world.avatar_poses.insert(avatar_id, vec![pose; lib.rig.len()]);
         (world, [avatar, hat, child])
+    }
+
+    /// HUD attachments are not placed again at each frame: what moves
+    /// them on the screen without an update of theirs is noted for the
+    /// sync, once.
+    #[test]
+    fn hud_attachments_are_listed_when_their_place_on_the_screen_changes() {
+        let mut world = World::new(Arc::new(AvatarLibrary::load()));
+        world.agent_id = crate::demo::DEMO_AGENT;
+        for ev in crate::demo::events().into_iter().chain(crate::demo::hud::events()) {
+            world.apply(ev);
+        }
+        let me = world.objects.index_of_uuid(&world.agent_id).expect("our avatar");
+        let huds: Vec<usize> = world
+            .objects
+            .children_of(&world.objects.get(me).expect("avatar").key)
+            .iter()
+            .copied()
+            .filter(|&i| world.objects.get(i).is_some_and(|o| (31..=38).contains(&o.attachment_point())))
+            .collect();
+        assert_eq!(huds.len(), 8);
+        let mut scene = Scene::new(std::path::PathBuf::new(), world.avatar_lib.clone());
+        // what a sync does with the noted objects
+        let noted = |scene: &mut Scene, world: &mut World| -> Vec<usize> {
+            scene.note_hud_changes(world);
+            let mut out = scene.sets.dirty.take();
+            out.retain(|&i| world.objects.get(i).is_some_and(|o| o.render.needs_records));
+            for &i in &out {
+                world.objects.get_mut_untracked(i).expect("object").render.needs_records = false;
+            }
+            out.sort_unstable();
+            out
+        };
+        for &i in &huds {
+            world.objects.get_mut_untracked(i).expect("hud").render.needs_records = false;
+        }
+        let mut sorted = huds.clone();
+        sorted.sort_unstable();
+        // first seen: all of them; then nothing while nothing changes
+        assert_eq!(noted(&mut scene, &mut world), sorted);
+        assert_eq!(noted(&mut scene, &mut world), Vec::<usize>::new());
+        // the window is resized: every HUD point moves
+        world.hud_aspect = 2.0;
+        assert_eq!(noted(&mut scene, &mut world), sorted);
+        assert_eq!(noted(&mut scene, &mut world), Vec::<usize>::new());
+        // one HUD is zoomed, another one dragged: those two
+        let id = |world: &World, i: usize| world.objects.get(i).expect("hud").full_id;
+        world.hud_scales.set(id(&world, huds[2]), 1.5);
+        assert_eq!(noted(&mut scene, &mut world), vec![huds[2]]);
+        // (an offset is kept for the HUDs that have a local profile)
+        world.hud_scales.set(id(&world, huds[5]), 1.0);
+        assert_eq!(noted(&mut scene, &mut world), Vec::<usize>::new());
+        world.hud_scales.set_offset(id(&world, huds[5]), Vec3::new(0.0, 0.1, -0.05));
+        assert_eq!(noted(&mut scene, &mut world), vec![huds[5]]);
+        // the world zoom of the HUDs is the projection's: nothing to place
+        world.hud_zoom = 0.5;
+        assert_eq!(noted(&mut scene, &mut world), Vec::<usize>::new());
+        // detached: forgotten, and noted again if it comes back
+        world.objects.remove_idx(huds[0]);
+        assert_eq!(noted(&mut scene, &mut world), Vec::<usize>::new());
+        assert_eq!(scene.hud_roots.len(), 7);
+    }
+
+    /// The busy crowd holds what its documentation says, each kind where
+    /// the sync treats it as such: nothing of it is placed by the GPU.
+    #[test]
+    fn the_busy_crowd_adds_what_the_sync_places_itself() {
+        let mut world = World::new(Arc::new(AvatarLibrary::load()));
+        world.agent_id = crate::demo::DEMO_AGENT;
+        let n = 3;
+        let events = crate::demo::events()
+            .into_iter()
+            .chain(crate::demo::crowd_events(n, false))
+            .collect::<Vec<_>>();
+        for ev in events {
+            world.apply(ev);
+        }
+        let before = world.objects.len();
+        for ev in crate::demo::crowd_busy_events(n) {
+            world.apply(ev);
+        }
+        let added = n * 4 + crate::demo::BUSY_SPINNERS * 2 + crate::demo::BUSY_HUD_PRIMS;
+        assert_eq!(world.objects.len(), before + added as usize);
+        let any = |_: &Object, slot: u8| Some(slot as u32);
+        let (mut flexible, mut spinning, mut below, mut hud) = (0, 0, 0, 0);
+        for idx in 0..world.objects.slots.len() {
+            let Some(o) = world.objects.get(idx) else {
+                continue;
+            };
+            let parent = world.objects.parent_of(o).and_then(|p| world.objects.get(p));
+            if world.hud_root(idx).is_some() {
+                hud += 1;
+                assert!(anchors::anchored(&world, o, any).is_none());
+            } else if o.is_flexible() {
+                flexible += 1;
+                assert!(parent.is_some_and(|p| p.is_avatar()) && anchors::anchored(&world, o, any).is_none());
+            } else if o.has_motion() {
+                spinning += 1;
+                assert!(anchors::anchored(&world, o, any).is_none());
+            } else if parent.is_some_and(|p| p.has_motion()) {
+                below += 1;
+                assert!(anchors::anchored(&world, o, any).is_none());
+            }
+        }
+        assert_eq!(hud, crate::demo::BUSY_HUD_PRIMS);
+        assert_eq!(flexible, n);
+        assert_eq!(spinning, n + crate::demo::BUSY_SPINNERS);
+        assert_eq!(below, 2 * n + crate::demo::BUSY_SPINNERS);
     }
 
     #[test]

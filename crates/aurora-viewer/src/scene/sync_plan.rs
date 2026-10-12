@@ -52,6 +52,9 @@ pub(super) struct MoveSync {
     pub(super) changed: bool,
     /// Updated (`needs_records`): the flag is cleared once applied.
     pub(super) clear_flags: bool,
+    /// (radius, distance) its detail level was checked with (a HUD
+    /// attachment: no size, it never changes level); None when it was not.
+    pub(super) lod: Option<(f32, f32)>,
 }
 
 /// Model matrix and culling bounds of an object on its bound geometry.
@@ -79,11 +82,18 @@ pub(super) struct FrameState<'a> {
     pub(super) geoms: &'a HashMap<GeomKey, GeomEntry>,
     pub(super) textures: &'a TextureStreamer,
     pub(super) mat_gen: u64,
+    /// HUD attachments are placed when they change, not with their wearer
+    /// at each frame (false with AURORA_SYNC_SLICE).
+    pub(super) still_huds: bool,
 }
 
 impl SyncState for FrameState<'_> {
     fn rigged(&self, idx: usize) -> bool {
         self.gpu.get(idx).is_some_and(|g| g.moves_with_skeleton())
+    }
+
+    fn hud(&self, idx: usize) -> bool {
+        self.still_huds && self.gpu.get(idx).is_some_and(|g| g.hud)
     }
 
     fn anchored(&self, idx: usize) -> bool {
@@ -289,6 +299,20 @@ impl SyncCtx<'_> {
         }
     }
 
+    /// The geometry the object's place and the camera ask for at this
+    /// moment (what a check of its detail level would want); None when it
+    /// cannot be placed.
+    pub(super) fn wanted_now(&self, idx: usize, o: &Object) -> Option<Option<GeomKey>> {
+        let (pos, _, hud) = self.transform(idx)?;
+        let lod = if hud {
+            3
+        } else {
+            let (radius, distance) = self.lod_metrics(idx, o, pos);
+            lod_for(radius, distance, self.lod_factor, self.fov_y)
+        };
+        Some(Scene::object_geom_key(o, lod))
+    }
+
     /// What this frame's sync does with an object. A transform-only update
     /// is planned here when nothing else changed: same geometry and detail
     /// level, no new faces, materials or skeleton; anything else is left to
@@ -326,11 +350,11 @@ impl SyncCtx<'_> {
             return full();
         }
         let (pos, _, hud) = xf;
+        let metrics = if hud { (0.0, 0.0) } else { self.lod_metrics(idx, o, pos) };
         let lod = if hud {
             3
         } else {
-            let (radius, distance) = self.lod_metrics(idx, o, pos);
-            lod_for(radius, distance, self.lod_factor, self.fov_y)
+            lod_for(metrics.0, metrics.1, self.lod_factor, self.fov_y)
         };
         let Some(key) = Scene::object_geom_key(o, lod) else {
             return full();
@@ -368,6 +392,7 @@ impl SyncCtx<'_> {
             posed_rest: p.posed_rest,
             changed,
             clear_flags: o.render.needs_records,
+            lod: Some(metrics),
         })
     }
 
@@ -414,6 +439,7 @@ impl SyncCtx<'_> {
             posed_rest: p.posed_rest,
             changed,
             clear_flags: false,
+            lod: None,
         })
     }
 }

@@ -127,6 +127,8 @@ pub struct App {
     perf: PerfData,
     /// AURORA_PROFILE: frame laps and the summary line in the log.
     frame_profile: FrameProfile,
+    /// `AURORA_SYNC_SLICE=alt`: seconds of the frame profile so far.
+    sync_alt: u64,
     /// Interface parts of the frame's profile (`u_*`).
     ui_parts: Parts,
     /// The interface's shapes leave for the render thread, which
@@ -495,6 +497,7 @@ impl App {
             chat_ui: ChatUi::default(),
             perf: PerfData::default(),
             frame_profile: FrameProfile::default(),
+            sync_alt: 0,
             ui_parts: Parts::default(),
             egui_hand_over: EguiHandOver::default(),
             last_frame: Instant::now(),
@@ -5281,7 +5284,15 @@ impl App {
         };
         let mut parts = std::mem::take(&mut self.scene.parts);
         parts.merge(&std::mem::take(&mut self.ui_parts));
-        self.frame_profile.end_frame(&self.last_render, &counts, &parts);
+        let logged = self.frame_profile.end_frame(&self.last_render, &counts, &parts);
+        // AURORA_SYNC_SLICE=alt: the sync of each second by one way or the
+        // other, named at the end of its line
+        if logged || self.sync_alt == 0 {
+            self.sync_alt += 1;
+            if let Some(old) = crate::scene::sync_sets::alternate_slice(self.sync_alt) {
+                self.frame_profile.set_mark(if old { " | xmode=old" } else { " | xmode=new" });
+            }
+        }
     }
 
     /// Local chat from the chat bar or the conversations window: a chat bar
@@ -7045,6 +7056,13 @@ impl ApplicationHandler for App {
                 let rigged = std::env::var_os("AURORA_DEMO_ANIMESH").is_some();
                 for ev in crate::demo::crowd_events(n, rigged) {
                     self.world.apply(ev);
+                }
+                // (…,busy: flexible and spinning attachments, a large HUD,
+                // spinning objects on the ground)
+                if crate::demo::crowd_busy() {
+                    for ev in crate::demo::crowd_busy_events(n) {
+                        self.world.apply(ev);
+                    }
                 }
             }
             // AURORA_DEMO_LIGHTS=<n>: small local lights among the crowd

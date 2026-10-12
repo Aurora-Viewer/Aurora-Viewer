@@ -419,6 +419,8 @@ struct Period {
     occluded: u64,
     records_bytes: u64,
     palette_bytes: u64,
+    cull_bytes: u64,
+    vertex_bytes: u64,
     textures: u32,
     /// GPU memory of the textures and the geometry at the end (bytes).
     texture_bytes: u64,
@@ -447,6 +449,9 @@ pub struct FrameProfile {
     periods: u64,
     /// Settings line last logged (logged again when they change).
     settings: String,
+    /// Added to the summary lines: the variant an A/B run was on during
+    /// the line's second (`xmode=`).
+    mark: &'static str,
 }
 
 impl Default for FrameProfile {
@@ -467,7 +472,14 @@ impl FrameProfile {
             period: Period::default(),
             periods: 0,
             settings: String::new(),
+            mark: "",
         }
+    }
+
+    /// The variant the next summary lines are measured on (` | xmode=…`,
+    /// or nothing).
+    pub fn set_mark(&mut self, mark: &'static str) {
+        self.mark = mark;
     }
 
     pub fn enabled(&self) -> bool {
@@ -527,13 +539,16 @@ impl FrameProfile {
         }
     }
 
-    /// End the frame (after the `Tail` lap); logs the summary once a second.
-    pub fn end_frame(&mut self, render: &RenderStats, scene: &SceneCounts, parts: &Parts) {
+    /// End the frame (after the `Tail` lap); logs the summary once a
+    /// second, and tells when it did.
+    pub fn end_frame(&mut self, render: &RenderStats, scene: &SceneCounts, parts: &Parts) -> bool {
         if self.enabled
             && let Some(line) = self.end_frame_at(render, scene, parts, Instant::now())
         {
-            log::info!("perf summary: {line}");
+            log::info!("perf summary: {line}{}", self.mark);
+            return true;
         }
+        false
     }
 
     fn end_frame_at(&mut self, render: &RenderStats, scene: &SceneCounts, parts: &Parts, now: Instant) -> Option<String> {
@@ -590,6 +605,8 @@ impl FrameProfile {
         p.occluded += render.occluded.unwrap_or(0) as u64;
         p.records_bytes += render.records_uploaded;
         p.palette_bytes += render.palettes_uploaded;
+        p.cull_bytes += render.cull_uploaded;
+        p.vertex_bytes += render.vertices_uploaded;
         p.textures = render.textures;
         p.texture_bytes = render.texture_bytes;
         p.texture_pages = render.texture_pages;
@@ -789,7 +806,7 @@ fn summary(p: &Period, elapsed: Duration) -> String {
         out,
         " | draws={:.0} calls={:.0} tris_k={:.0} shadow_draws={:.0} particles={:.0} occluded={:.0} cull={} \
          blend={:.0} blend_tris_k={:.0} blend_early={:.2} blend_glow={:.0} glow_alpha={:.0} lights={:.0} light_tiles={:.2} probes={:.0} | objects={:.0} visible={:.0} synced={:.0} anchored={:.0} rebuilt={:.1} posed={:.1} \
-         records_kb={:.1} palettes_kb={:.1} journal_kb={:.1} | textures={} texture_mb={} texture_pages={} pages_mb={} geometry_mb={} \
+         records_kb={:.1} palettes_kb={:.1} cull_kb={:.1} vertices_kb={:.1} journal_kb={:.1} | textures={} texture_mb={} texture_pages={} pages_mb={} geometry_mb={} \
          jobs={:.0} geom_pending={:.0} sync_backlog={:.0}",
         count(p.draws),
         count(p.calls),
@@ -814,6 +831,8 @@ fn summary(p: &Period, elapsed: Duration) -> String {
         count(s[4]),
         count(p.records_bytes) / 1024.0,
         count(p.palette_bytes) / 1024.0,
+        count(p.cull_bytes) / 1024.0,
+        count(p.vertex_bytes) / 1024.0,
         count(p.journal_bytes) / 1024.0,
         p.textures,
         p.texture_bytes >> 20,

@@ -2949,7 +2949,144 @@ fn stress_cubes(n: u32, keep: impl Fn(u32) -> bool, texture_offset: u32) -> Vec<
 /// number), as in a busy shop or club. Returns the avatar count.
 pub fn crowd_count() -> Option<u32> {
     let v = std::env::var("AURORA_DEMO_CROWD").ok()?;
-    Some(v.trim().parse().unwrap_or(40).min(400))
+    Some(v.split(',').next().unwrap_or("").trim().parse().unwrap_or(40).min(400))
+}
+
+/// AURORA_DEMO_CROWD=<n>,busy: the crowd with what a busy place adds to
+/// the scene sync ([`crowd_busy_events`]).
+pub fn crowd_busy() -> bool {
+    std::env::var("AURORA_DEMO_CROWD").is_ok_and(|v| v.split(',').skip(1).any(|p| p.trim() == "busy"))
+}
+
+/// Prims of the HUD our avatar wears in the busy crowd (its root included).
+pub const BUSY_HUD_PRIMS: u32 = 250;
+/// Spinning objects on the ground of the busy crowd, each with a prim
+/// linked below it.
+pub const BUSY_SPINNERS: u32 = 60;
+
+/// What a busy place has besides worn prims and meshes, for `n` crowd
+/// avatars: on each of them a flexible ribbon and a spinning ornament with
+/// two prims linked below it (none of which the GPU places from an anchor);
+/// on our avatar a HUD of [`BUSY_HUD_PRIMS`] prims; and
+/// [`BUSY_SPINNERS`] spinning objects on the ground.
+pub fn crowd_busy_events(n: u32) -> Vec<NetEvent> {
+    let boxp = shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE, 100, 0, 0);
+    let mut flexp = boxp;
+    flexp.path.curve_type = aurora_prim::params::LL_PCODE_PATH_FLEXIBLE;
+    let worn_on = |o: &mut ObjectUpdate, avatar: u32, point: u8| {
+        o.parent_id = avatar;
+        o.state = ((point & 0x0F) << 4) | ((point & 0xF0) >> 4);
+    };
+    let mut objects = Vec::new();
+    for k in 0..n {
+        // (the crowd's avatars and the ids their attachments leave free)
+        let avatar_id = 100_000 + k * 64;
+        let mut ribbon = prim(
+            avatar_id + 57,
+            Vec3::new(-0.12, 0.0, 0.1),
+            Quat::from_rotation_y(std::f32::consts::PI),
+            Vec3::new(0.02, 0.06, 0.5),
+            flexp,
+            te([0.9, 0.3, 0.5, 1.0], 0, false, 0.0),
+            ExtraParams {
+                flexible: Some(crate::build::edits::FLEX_DEFAULT),
+                ..Default::default()
+            },
+            "",
+        );
+        worn_on(&mut ribbon, avatar_id, 1);
+        objects.push(ribbon);
+        let mut ornament = prim(
+            avatar_id + 58,
+            Vec3::new(0.0, 0.0, 0.3),
+            Quat::IDENTITY,
+            Vec3::splat(0.06),
+            boxp,
+            te([1.0, 0.85, 0.2, 1.0], 2, false, 0.0),
+            ExtraParams::default(),
+            "",
+        );
+        ornament.angular_velocity = Vec3::Z * 1.5;
+        worn_on(&mut ornament, avatar_id, 2);
+        objects.push(ornament);
+        for (c, side) in [(59, -1.0), (61, 1.0)] {
+            let mut gem = prim(
+                avatar_id + c,
+                Vec3::new(0.08 * side, 0.0, 0.0),
+                Quat::IDENTITY,
+                Vec3::splat(0.03),
+                boxp,
+                te([0.3, 0.7, 1.0, 1.0], 2, false, 0.0),
+                ExtraParams::default(),
+                "",
+            );
+            gem.parent_id = avatar_id + 58;
+            objects.push(gem);
+        }
+    }
+    for i in 0..BUSY_SPINNERS {
+        let (x, y) = (132.0 + (i % 12) as f32 * 2.2, 118.0 + (i / 12) as f32 * 2.2);
+        let id = 2_000_000 + i * 2;
+        let mut root = prim(
+            id,
+            Vec3::new(x, y, floor_at(x, y) + 0.6),
+            Quat::IDENTITY,
+            Vec3::splat(0.3),
+            boxp,
+            te([0.5, 0.9, 0.6, 1.0], 1, false, 0.0),
+            ExtraParams::default(),
+            "",
+        );
+        root.angular_velocity = Vec3::Z * (0.03 + 0.02 * (i % 5) as f32);
+        objects.push(root);
+        let mut arm = prim(
+            id + 1,
+            Vec3::new(0.4, 0.0, 0.0),
+            Quat::IDENTITY,
+            Vec3::new(0.5, 0.06, 0.06),
+            boxp,
+            te([0.9, 0.9, 0.9, 1.0], 0, false, 0.0),
+            ExtraParams::default(),
+            "",
+        );
+        arm.parent_id = id;
+        objects.push(arm);
+    }
+    // the HUD: a root and a panel of small tiles, bottom centre (point 36)
+    let hud_id = 2_100_000;
+    for i in 0..BUSY_HUD_PRIMS {
+        let mut tile = if i == 0 {
+            let mut root = prim(
+                hud_id,
+                Vec3::new(0.0, 0.17, 0.02),
+                Quat::IDENTITY,
+                Vec3::new(0.004, 0.012, 0.012),
+                boxp,
+                te([0.75, 0.65, 1.0, 1.0], 0, true, 0.0),
+                ExtraParams::default(),
+                "",
+            );
+            worn_on(&mut root, 9000, 36);
+            root
+        } else {
+            let (col, row) = (i % 25, i / 25);
+            let mut tile = prim(
+                hud_id + i,
+                Vec3::new(0.0, -(col as f32) * 0.014, row as f32 * 0.014),
+                Quat::IDENTITY,
+                Vec3::new(0.004, 0.012, 0.012),
+                boxp,
+                te([0.3 + 0.028 * col as f32, 0.9 - 0.08 * row as f32, 0.8, 1.0], 0, true, 0.0),
+                ExtraParams::default(),
+                "",
+            );
+            tile.parent_id = hud_id;
+            tile
+        };
+        tile.owner_id = DEMO_AGENT;
+        objects.push(tile);
+    }
+    vec![NetEvent::ObjectUpdates { handle: HANDLE, objects }]
 }
 
 /// AURORA_DEMO_ANIMESH_TRIS=<n>: triangles added to the demo's rigged mesh

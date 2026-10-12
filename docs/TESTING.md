@@ -718,7 +718,7 @@ grille.
 |---|---|
 | `AURORA_DEMO_TEXTURES=<n>` | Test de charge des textures : n cubes |
 | `AURORA_DEMO_TEXTURES_CHURN=1` | Avec `AURORA_DEMO_TEXTURES` : textures renouvelées |
-| `AURORA_DEMO_CROWD=<n>` | Test de charge de la synchro : n avatars |
+| `AURORA_DEMO_CROWD=<n>[,busy]` | Test de charge de la synchro : n avatars |
 | `AURORA_DEMO_STREAM=<n>[,<vague>][,leave][,j2k=<dossier>]` | Test des à-coups du streaming |
 | `AURORA_DEMO_HAIR=<couches>[,<segments>[,<vide>[,<période>]]]` | Charge des faces transparentes : coques superposées sur les avatars |
 | `AURORA_DEMO_LIGHTS=<n>` | Charge des lumières locales : n petites lumières dans la foule |
@@ -738,6 +738,13 @@ grille.
   un nombre) qui jouent l'animation d'attente, chacun portant huit linksets
   de sept prims sur des os de tout le corps (avec `AURORA_DEMO_ANIMESH`,
   aussi le mesh riggé de la démo), comme dans une boutique fréquentée.
+  Avec `,busy` après le nombre, s'ajoute ce que la synchro place encore
+  elle-même dans un lieu plein d'avatars : sur chaque avatar un ruban
+  flexible et un ornement qui tourne avec deux prims liés, sur notre avatar
+  un HUD de 250 prims (en bas à gauche de l'écran), et au sol 60 objets qui
+  tournent avec un prim lié. À combiner avec `AURORA_DEMO_STREAM=12000,400`
+  pour les objets immobiles ; `AURORA_SYNC_CHECK=1` donne ce que la synchro
+  visite, `AURORA_SYNC_SLICE=alt` compare avec l'ancien chemin.
 - **`AURORA_DEMO_HAIR=<couches>[,<segments>[,<vide>[,<période>]]]`** : notre
   avatar et chaque avatar de `AURORA_DEMO_CROWD` portent `couches` mesh
   riggés (8 par défaut, 32 au plus), chacun une coque autour de la tête et
@@ -1262,6 +1269,8 @@ Ce que l'inventaire doit montrer avec ces scénarios :
 | `AURORA_PRESENT_MODE=<mode>` | Force le mode de présentation de la swapchain |
 | `AURORA_CPU_CULL=1` | Listes de dessin construites sur le CPU |
 | `AURORA_CPU_ATTACH=1` | Objets portés et mesh riggés placés par la synchro, sans les ancres du GPU |
+| `AURORA_SYNC_SLICE=1` ou `alt` | Synchro de la scène par tranche de tous les objets, comme avant |
+| `AURORA_SYNC_CHECK=1` | Ce que la synchro de la scène visite à chaque image |
 | `AURORA_TEXTURE_BC7=0` | Textures jamais compressées en BC7 |
 | `AURORA_TEXTURE_BC7_CACHE=0` | BC7 sans son cache disque |
 | `AURORA_RENDER_THREAD=0` | Images dessinées sur le thread principal |
@@ -1386,6 +1395,46 @@ Ce que l'inventaire doit montrer avec ces scénarios :
   transparentes des mesh riggés, que le CPU liste, sont testées avec
   l'étendue de leur squelette et non plus avec leurs propres limites
   (`blend` un peu plus élevé).
+- **`AURORA_SYNC_SLICE=1`** : la synchro de la scène revient à chaque objet
+  toutes les 24 images (tranche de LOD), replace les HUDs portés à chaque
+  image et envoie les enregistrements par blocs entiers de 64, comme avant,
+  pour comparer l'image et les mesures. Par défaut, un objet immobile n'est
+  revu que lorsque la caméra a parcouru la distance qui peut changer son
+  niveau de détail (`scene/lod_watch.rs` : jamais caméra immobile) ; ce que
+  le GPU place depuis un avatar (objets portés, mesh riggés) est revu à
+  tour de rôle, toutes les 24 images tant que la caméra bouge (comme
+  avant) et toutes les 0,4 s caméra immobile, et tout objet toutes les
+  10 s ; un HUD
+  porté n'est replacé qu'à ses mises à jour et quand sa place à l'écran
+  change (fenêtre redimensionnée, zoom ou décalage local) ; seuls les
+  enregistrements modifiés sont envoyés.
+  - `AURORA_SYNC_SLICE=alt` alterne dans la même session, à chaque ligne
+    `perf summary` : une seconde par l'ancien chemin, deux par le nouveau,
+    la ligne se terminant par `xmode=old` ou `xmode=new`. C'est la mesure à
+    faire sur une machine partagée ou sur la grille : mêmes objets, même
+    caméra, même charge extérieure des deux côtés.
+  - À lire : `synced`, `sync` et ses parties `s_sync_*`, `records_kb`,
+    `cull_kb`, `journal_kb`, `r_resources`. À combiner avec
+    `AURORA_DEMO_CROWD=40,busy`, `AURORA_DEMO_ANIMESH=1` et
+    `AURORA_DEMO_STREAM=12000,400`.
+- **`AURORA_SYNC_CHECK=1`** : une ligne `sync check` par seconde, en
+  moyennes par image : les objets listés par la synchro selon ce qui les y
+  a mis (`moving` : ce qui bouge de lui-même et ce qui le suit ; `changed` :
+  mises à jour ; `geometry` : géométrie arrivée ; `lod` : contrôles du
+  niveau de détail), puis par nature d'objet (`avatar`, `hud`, `flexible`,
+  `moving` — vitesse ou rotation donnée par le simulateur —, `rigged` — mesh
+  riggé que le GPU ne place pas —, `anchored` — placé par le GPU —, `worn`
+  — porté et placé par la synchro —, `follower` — lié sous un objet qui
+  bouge —, `still`) ce qu'il en est sorti : placement vérifié sans rien
+  écrire / enregistrements réécrits / synchro complète / synchro complète
+  remise à plus tard (`scene/sync_check.rs`). Dit quels objets occupent la
+  synchro dans un lieu au repos. La ligne se termine par un contrôle de
+  tous les objets, fait une fois par seconde : `detail level behind: a of b
+  at rest, c of d placed by the GPU` compte ceux dont le niveau de détail
+  demandé n'est pas, à cet instant, celui que donne leur distance (un
+  contrôle que la synchro n'a pas encore fait) ; à lire caméra en
+  mouvement, avec et sans `AURORA_SYNC_SLICE=1`. Ce contrôle coûte un
+  parcours de tous les objets par seconde. En démo comme sur la grille.
 - **`AURORA_RENDER_THREAD=0`** : dessine les images sur le thread principal,
   comme avant le thread de rendu, pour comparer et déboguer. Par défaut, le
   thread principal remet chaque image au thread de rendu sous la forme d'un
@@ -1612,12 +1661,16 @@ thread principal est déjà sur l'image suivante. Avec
     par seconde, `AURORA_STILL_CHECK=1` dit lesquelles), les objets portés et
     mesh riggés placés par le GPU (`anchored`, que la synchro ne visite
     plus), les avatars posés, les octets
-    d'enregistrements et de palettes envoyés au GPU et ceux de tout le
+    d'enregistrements et de palettes envoyés au GPU, ceux des tables du
+    culling (`cull_kb` : faces, objets, boîtes par os) et des sommets
+    déformés sur place (`vertices_kb` : prims flexibles), et ceux de tout le
     journal d'écritures de l'image (`journal_kb`), la mémoire des textures
     (textures vivantes, pages de textures et leur mémoire allouée), la
     mémoire de la géométrie, et les objets dont la synchro complète attend
     une image qui a du temps (`sync_backlog` : nouveaux objets en attente
-    de leur première synchro compris).
+    de leur première synchro compris) ;
+  - `xmode=old|new` en fin de ligne avec `AURORA_SYNC_SLICE=alt` : le chemin
+    de la synchro pendant cette seconde.
 
 ### Chargement des textures
 
