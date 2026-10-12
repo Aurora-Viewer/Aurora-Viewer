@@ -180,10 +180,10 @@ pub enum JobResult {
 }
 
 /// Background jobs give way to the frame: while decodes keep every core
-/// busy (arrival in a region), the main thread, its `par_iter` workers and
-/// the encoder threads would otherwise wait for a core behind them (frames
-/// of 2.4 ms stretched to 5–8 ms in AURORA_DEMO_STREAM). Idle cores still go
-/// to the jobs, so loading is not slower.
+/// busy (arrival in a region), the main thread, the workers that help it
+/// (frame_par.rs) and the encoder threads would otherwise wait for a core
+/// behind them (frames of 2.4 ms stretched to 5–8 ms in AURORA_DEMO_STREAM).
+/// Idle cores still go to the jobs, so loading is not slower.
 fn below_normal_priority() {
     #[cfg(windows)]
     {
@@ -214,7 +214,7 @@ pub struct Jobs {
     tx: Sender<JobResult>,
     pub in_flight: Arc<AtomicUsize>,
     /// Background pool, apart from the global one used by the frame
-    /// (`par_iter` of culling and poses): a frame never waits behind a
+    /// (the parallel loops of frame_par.rs): a frame never waits behind a
     /// JPEG 2000 decode or a disk read.
     pool: Arc<rayon::ThreadPool>,
     /// What the main thread hands over to be freed (`discard`).
