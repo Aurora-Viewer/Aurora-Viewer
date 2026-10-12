@@ -1083,18 +1083,22 @@ fn media(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World
     } else {
         url.flatten().unwrap_or("").to_owned()
     };
-    egui::Frame::new().fill(p.field).corner_radius(2).inner_margin(6).show(ui, |ui| {
-        ui.set_min_width(ui.available_width());
-        ui.label(
-            RichText::new(if text.is_empty() {
-                aurora_i18n::tr!("build-ui-texture-the-selected-media-url-if-any-goes-here")
-            } else {
-                &text
-            })
-            .size(12.0)
-            .color(if text.is_empty() { p.muted_dim } else { p.ink }),
-        );
-    });
+    egui::Frame::new()
+        .fill(p.field)
+        .corner_radius(ui.visuals().window_corner_radius)
+        .inner_margin(6)
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.label(
+                RichText::new(if text.is_empty() {
+                    aurora_i18n::tr!("build-ui-texture-the-selected-media-url-if-any-goes-here")
+                } else {
+                    &text
+                })
+                .size(12.0)
+                .color(if text.is_empty() { p.muted_dim } else { p.ink }),
+            );
+        });
     let has_media = entries.iter().any(|e| e.is_some());
     ui.horizontal(|ui| {
         if ui

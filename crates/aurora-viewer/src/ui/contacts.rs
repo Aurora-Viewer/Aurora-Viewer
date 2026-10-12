@@ -305,7 +305,7 @@ fn side_button(ui: &mut egui::Ui, p: &Palette, label: &str, tip: &str, enabled: 
 fn side_button_resp(ui: &mut egui::Ui, p: &Palette, label: &str, enabled: bool) -> egui::Response {
     let b = egui::Button::new(RichText::new(label).size(12.0).color(if enabled { p.ink } else { p.muted_dim }))
         .fill(p.raised)
-        .corner_radius(CornerRadius::same(2))
+        .corner_radius(ui.visuals().widgets.inactive.corner_radius)
         .truncate();
     ui.add_enabled_ui(enabled, |ui| ui.add_sized([BUTTONS_W, 22.0], b)).inner
 }
@@ -318,7 +318,7 @@ fn icon_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, enabled: b
     } else {
         p.raised
     };
-    ui.painter().rect_filled(rect, CornerRadius::same(2), fill);
+    ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, fill);
     if let Some(t) = super::icons::global(icon) {
         let tint = if enabled { p.ink } else { p.muted_dim };
         let r = egui::Rect::from_center_size(rect.center(), Vec2::splat(14.0));
@@ -341,7 +341,7 @@ fn right_cell(ui: &egui::Ui, p: &Palette, rect: egui::Rect, on: bool, editable: 
     if on {
         painter.rect_filled(
             b,
-            CornerRadius::same(2),
+            ui.visuals().window_corner_radius,
             if editable { p.violet } else { p.violet.gamma_multiply(0.45) },
         );
         if let Some(t) = super::icons::global("check") {
@@ -353,7 +353,12 @@ fn right_cell(ui: &egui::Ui, p: &Palette, rect: egui::Rect, on: bool, editable: 
             );
         }
     } else {
-        painter.rect_stroke(b, CornerRadius::same(2), Stroke::new(1.0, border), egui::StrokeKind::Inside);
+        painter.rect_stroke(
+            b,
+            ui.visuals().window_corner_radius,
+            Stroke::new(1.0, border),
+            egui::StrokeKind::Inside,
+        );
     }
     editable && resp.clicked()
 }
@@ -1832,7 +1837,7 @@ fn dialogs(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut Contact
             let yes = ui.add(
                 egui::Button::new(RichText::new(ok).color(Color32::WHITE))
                     .fill(p.violet)
-                    .corner_radius(CornerRadius::same(2)),
+                    .corner_radius(ui.visuals().widgets.inactive.corner_radius),
             );
             if yes.clicked() {
                 done = Some(true);

@@ -10,7 +10,7 @@
 //! greyed entry or a separator keeps it open, as in Firestorm.
 
 use crate::theme::Palette;
-use egui::{Color32, CornerRadius, FontId, Id, LayerId, Popup, PopupAnchor, PopupCloseBehavior, PopupKind, Sense, Stroke, Ui, Vec2};
+use egui::{Color32, FontId, Id, LayerId, Popup, PopupAnchor, PopupCloseBehavior, PopupKind, Sense, Stroke, Ui, Vec2};
 
 /// Row height and paddings (LLMenuItemGL: 20 px rows with a check column;
 /// a bit taller here for the icons).
@@ -56,7 +56,7 @@ fn style(p: &Palette) -> egui::style::StyleModifier {
         s.spacing.menu_margin = egui::Margin::same(4);
         s.visuals.window_fill = fill;
         s.visuals.window_stroke = Stroke::new(1.0, border);
-        s.visuals.menu_corner_radius = CornerRadius::same(3);
+        s.visuals.menu_corner_radius = s.visuals.window_corner_radius;
     })
 }
 
@@ -132,7 +132,7 @@ fn row(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enabled: bool, end: En
     }
     let painter = ui.painter();
     if hot {
-        painter.rect_filled(rect, CornerRadius::same(2), p.violet.gamma_multiply(0.35));
+        painter.rect_filled(rect, ui.visuals().window_corner_radius, p.violet.gamma_multiply(0.35));
     }
     let tint = if !enabled {
         p.muted_dim

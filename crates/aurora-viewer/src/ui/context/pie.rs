@@ -249,6 +249,11 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, menu: &mut ContextMenu, ent
             let response = ui.allocate_rect(screen, Sense::click_and_drag());
             ui.ctx().move_to_top(ui.layer_id());
             let painter = ui.painter();
+            if p.panel_alpha < 255 {
+                // a square with fully rounded corners is the disc
+                let disc = egui::Rect::from_center_size(center, egui::Vec2::splat(radius * 2.0));
+                painter.add(aurora_render::glass_panel(disc, radius, Color32::TRANSPARENT));
+            }
             for index in 0..SLICES {
                 ring_segment(
                     painter,

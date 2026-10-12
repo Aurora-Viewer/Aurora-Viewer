@@ -347,7 +347,7 @@ fn window_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, place: &Place, 
 pub fn button(ui: &mut egui::Ui, p: &Palette, label: &str, tip: &str, enabled: bool, width: f32) -> bool {
     let b = egui::Button::new(RichText::new(label).size(12.0).color(p.ink))
         .fill(p.raised)
-        .corner_radius(egui::CornerRadius::same(2));
+        .corner_radius(ui.visuals().widgets.inactive.corner_radius);
     ui.add_enabled(enabled, |ui: &mut egui::Ui| ui.add_sized([width, 23.0], b))
         .on_hover_text(tip)
         .clicked()
@@ -467,7 +467,7 @@ fn description(ui: &mut egui::Ui, c: &mut Ctx, place: &Place, data: &Shown, heig
     egui::Frame::new()
         .fill(p.field.gamma_multiply(0.82))
         .stroke(egui::Stroke::new(1.0, p.raised))
-        .corner_radius(egui::CornerRadius::same(3))
+        .corner_radius(ui.visuals().window_corner_radius)
         .inner_margin(egui::Margin::symmetric(5, 3))
         .show(ui, |ui| {
             ui.set_width(width - 10.0);

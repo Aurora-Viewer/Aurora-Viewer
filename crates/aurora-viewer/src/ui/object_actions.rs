@@ -312,7 +312,7 @@ pub fn show_contents(
                 Some(Ok(items)) => {
                     egui::Frame::new()
                         .fill(p.field.gamma_multiply(0.72))
-                        .corner_radius(3)
+                        .corner_radius(ui.visuals().window_corner_radius)
                         .inner_margin(4)
                         .show(ui, |ui| {
                             super::widgets::inventory_spacing(ui);

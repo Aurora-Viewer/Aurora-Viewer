@@ -417,7 +417,7 @@ fn footer(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Worl
                     button
                         .fill(p.field)
                         .stroke(Stroke::new(1.0, p.raised))
-                        .corner_radius(3)
+                        .corner_radius(ui.visuals().window_corner_radius)
                         .min_size(Vec2::new(0.0, 24.0)),
                 )
                 .on_hover_text("Ctrl+D")

@@ -97,7 +97,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
     let height = (ui.clip_rect().bottom() - ui.cursor().top() - 8.0).clamp(80.0, 220.0);
     let frame = egui::Frame::new()
         .fill(p.field.gamma_multiply(0.72))
-        .corner_radius(3)
+        .corner_radius(ui.visuals().window_corner_radius)
         .inner_margin(4);
     let zone = frame.show(ui, |ui| {
         ui.set_width(ui.available_width());

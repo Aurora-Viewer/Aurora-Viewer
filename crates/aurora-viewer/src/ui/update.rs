@@ -8,7 +8,7 @@ use super::news::LoginInfo;
 use super::widgets::{flat_button_sized, primary_button_sized};
 use crate::settings::Settings;
 use crate::theme::Palette;
-use egui::{CornerRadius, Frame, Margin, RichText, Sense, Vec2};
+use egui::{Frame, Margin, RichText, Sense, Vec2};
 use std::time::Instant;
 
 enum Phase {
@@ -136,7 +136,7 @@ impl UpdateDemo {
                         ui.add(
                             egui::ProgressBar::new(fraction)
                                 .desired_width(width)
-                                .corner_radius(CornerRadius::same(3))
+                                .corner_radius(ui.visuals().window_corner_radius)
                                 .fill(p.violet)
                                 .show_percentage(),
                         );
@@ -161,7 +161,7 @@ impl UpdateDemo {
                         ui.add(
                             egui::ProgressBar::new(1.0)
                                 .desired_width(width)
-                                .corner_radius(CornerRadius::same(3))
+                                .corner_radius(ui.visuals().window_corner_radius)
                                 .fill(p.success),
                         );
                         ui.add_space(20.0);
@@ -311,7 +311,7 @@ pub fn show_real(
                     ui.add(
                         egui::ProgressBar::new(fraction)
                             .desired_width(width)
-                            .corner_radius(3)
+                            .corner_radius(ui.visuals().window_corner_radius)
                             .fill(p.violet)
                             .show_percentage(),
                     );

@@ -276,7 +276,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
             1.0,
             if tool.ui.sale_draft.is_some() { p.violet } else { p.raised },
         ))
-        .corner_radius(2)
+        .corner_radius(ui.visuals().window_corner_radius)
         .inner_margin(4)
         .show(ui, |ui| {
             ui.horizontal(|ui| {

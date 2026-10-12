@@ -9,7 +9,7 @@ use super::icons::Icons;
 use super::widgets::Floater;
 use crate::settings::Settings;
 use crate::theme::Palette;
-use egui::{Color32, CornerRadius, RichText, Sense, Vec2};
+use egui::{Color32, RichText, Sense, Vec2};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Capture {
@@ -186,7 +186,7 @@ fn group(ui: &mut egui::Ui, p: &Palette, title: &str, body: impl FnOnce(&mut egu
     ui.add_space(2.0);
     egui::Frame::new()
         .fill(p.field)
-        .corner_radius(CornerRadius::same(3))
+        .corner_radius(ui.visuals().window_corner_radius)
         .stroke(egui::Stroke::new(1.0, p.raised))
         .inner_margin(egui::Margin::symmetric(10, 8))
         .show(ui, |ui| {
@@ -489,7 +489,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
                 let yes = ui.add(
                     egui::Button::new(RichText::new(aurora_i18n::tr!("common-reset")).color(Color32::WHITE))
                         .fill(p.danger)
-                        .corner_radius(CornerRadius::same(2)),
+                        .corner_radius(ui.visuals().widgets.inactive.corner_radius),
                 );
                 if yes.clicked() {
                     s.reset_keeping_account();
@@ -2029,7 +2029,7 @@ fn binding_cell(
     let resp = ui.add(
         egui::Button::new(RichText::new(text).size(12.0).color(col))
             .fill(fill)
-            .corner_radius(CornerRadius::same(2))
+            .corner_radius(ui.visuals().widgets.inactive.corner_radius)
             .min_size(Vec2::new((caps_width + 12.0).max(132.0), 20.0)),
     );
     let mut x = resp.rect.center().x - caps_width / 2.0;

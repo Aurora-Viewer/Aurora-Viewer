@@ -1169,7 +1169,7 @@ fn inventory_contents(
     let list_h = list_height(ui);
     egui::Frame::new()
         .fill(p.field.gamma_multiply(0.72))
-        .corner_radius(3)
+        .corner_radius(ui.visuals().window_corner_radius)
         .inner_margin(4)
         .show(ui, |ui| {
             ui.set_width(ui.available_width());

@@ -321,7 +321,7 @@ fn vec_block(
                 egui::Frame::new()
                     .fill(p.field)
                     .stroke(egui::Stroke::new(1.0, p.raised))
-                    .corner_radius(3)
+                    .corner_radius(ui.visuals().window_corner_radius)
                     .inner_margin(egui::Margin {
                         left: 6,
                         right: 4,

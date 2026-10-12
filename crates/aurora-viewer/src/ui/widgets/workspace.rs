@@ -86,7 +86,7 @@ pub fn surface<R>(ui: &mut egui::Ui, p: &Palette, body: impl FnOnce(&mut egui::U
     egui::Frame::new()
         .fill(p.field.gamma_multiply(0.8))
         .stroke(Stroke::new(1.0, p.raised))
-        .corner_radius(3)
+        .corner_radius(ui.visuals().window_corner_radius)
         .inner_margin(10)
         .show(ui, body)
         .inner
@@ -149,6 +149,14 @@ pub(crate) fn finish_glass(painter: &egui::Painter, slot: egui::layers::ShapeIdx
                 Color32::from_rgba_unmultiplied(p.panel.r(), p.panel.g(), p.panel.b(), p.panel_alpha),
             ),
         );
+    }
+}
+
+/// Glass of the top and bottom bars: the windows' blur under the `bar` color.
+pub(crate) fn finish_bar_glass(painter: &egui::Painter, slot: egui::layers::ShapeIdx, rect: egui::Rect, p: &Palette) {
+    if p.panel_alpha < 255 {
+        let tint = Color32::from_rgba_unmultiplied(p.bar.r(), p.bar.g(), p.bar.b(), p.panel_alpha);
+        painter.with_clip_rect(rect).set(slot, aurora_render::glass_panel(rect, 0.0, tint));
     }
 }
 

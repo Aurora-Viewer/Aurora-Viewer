@@ -47,22 +47,28 @@ Dans le code, on utilise toujours la `Palette` résolue (`p.violet`, `p.ink`…)
 ## Règles de design
 
 - **Verre discret.** Un flou GPU partagé apparaît dans les fenêtres, les
-  dialogues et les panneaux posés sur le monde (notifications, volume, emoji,
-  contrôles des médias), sous une teinte sombre. Une ombre douce et une
+  dialogues, les barres du haut et du bas et tout ce qui est posé sur le
+  monde (notifications, volume, emoji, contrôles des médias, bulles du chat
+  local, pie menu), sous une teinte sombre. Une ombre douce et une
   bordure fine séparent la surface du monde ; les champs restent calmes et
   lisibles. Une skin avec `panel_alpha = 255` garde des surfaces opaques sans
   ce flou. Hors d'une fenêtre, une surface se dessine avec
   `widgets::overlay` (ou `widgets::overlay_frame` sans monde derrière, comme
   sur l'écran de connexion), jamais avec un fond, une bordure ou un rayon
-  écrits à la main. Les barres du haut et du bas restent pleines (`bar`).
+  écrits à la main. Les barres gardent la couleur `bar` comme teinte
+  (`widgets::finish_bar_glass`) ; la mini-carte garde l'opacité de Firestorm
+  avec la bordure et l'ombre des fenêtres.
   Les dégradés sont réservés aux éléments de marque (fond de connexion, aurores).
 - **Arrondis discrets.** Design plat, angles presque carrés. Boutons :
   rayon 5 ; fenêtres, cartes et pastilles de la barre d'outils : rayon 3,
   avec des coins proches de ceux de la construction, y compris au repli.
   Les rayons viennent du thème, jamais d'une valeur plus grande dans le code.
-- **Boutons pleins.** Une action avec icône utilise `widgets::action_button` :
-  une face pleine sans bordure, neutre, violette pour l'action principale,
-  `danger` pour une action destructrice. La barre d'outils du bas n'a pas de
+- **Boutons pleins.** Tous les boutons et listes déroulantes sont des faces
+  pleines sans bordure visible : le thème (`theme.rs`) donne à leur bordure la
+  couleur de la face, seuls les champs de saisie et les cases à cocher gardent
+  un contour. Un bouton ne fixe donc ni fond ni rayon lui-même, sauf pour
+  l'action principale (violet) ou destructrice (`danger`). Une action avec
+  icône utilise `widgets::action_button`. La barre d'outils du bas n'a pas de
   traits de séparation : l'espacement et la pastille du bouton survolé ou
   actif suffisent.
 - **Hiérarchie commune.** Titre et commandes de fenêtre en haut, navigation

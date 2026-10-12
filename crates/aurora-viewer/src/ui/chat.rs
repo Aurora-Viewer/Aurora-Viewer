@@ -667,7 +667,7 @@ fn conversation(
             let username = cached.and_then(|n| n.chat_username(&names.options));
             egui::Frame::new()
                 .fill(p.raised.gamma_multiply(0.55))
-                .corner_radius(egui::CornerRadius::same(2))
+                .corner_radius(ui.visuals().window_corner_radius)
                 .inner_margin(egui::Margin::symmetric(4, 3))
                 .show(ui, |ui| {
                     ui.set_width(w - 8.0);
@@ -1056,7 +1056,7 @@ pub fn show(
                     // participants of a group / conference session
                     egui::Frame::new()
                         .fill(p.field)
-                        .corner_radius(egui::CornerRadius::same(2))
+                        .corner_radius(ui.visuals().window_corner_radius)
                         .inner_margin(egui::Margin::same(6))
                         .show(ui, |ui| {
                             ui.set_width(ui.available_width());
@@ -1107,7 +1107,7 @@ pub fn show(
                 };
                 egui::Frame::new()
                     .fill(p.field)
-                    .corner_radius(egui::CornerRadius::same(1))
+                    .corner_radius(ui.visuals().window_corner_radius)
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
                         egui::ScrollArea::vertical()
@@ -1333,16 +1333,16 @@ pub fn toasts(
             for line in recent.into_iter().rev() {
                 let age = now.duration_since(line.time).map(|d| d.as_secs_f32()).unwrap_or(0.0);
                 let alpha = ((seconds - age) / 3.0).clamp(0.0, 1.0);
-                egui::Frame::new()
-                    .fill(Color32::from_rgba_unmultiplied(
-                        p.bar.r(),
-                        p.bar.g(),
-                        p.bar.b(),
-                        (190.0 * alpha) as u8,
-                    ))
-                    .corner_radius(egui::CornerRadius::same(3))
+                let tint = Color32::from_rgba_unmultiplied(p.bar.r(), p.bar.g(), p.bar.b(), (190.0 * alpha) as u8);
+                let radius = ui.visuals().window_corner_radius;
+                let glass = p.panel_alpha < 255;
+                let mut slot = None;
+                let bubble = egui::Frame::new()
+                    .fill(if glass { Color32::TRANSPARENT } else { tint })
+                    .corner_radius(radius)
                     .inner_margin(egui::Margin::symmetric(6, 2))
                     .show(ui, |ui| {
+                        slot = Some(ui.painter().add(egui::Shape::Noop));
                         let size = 13.0;
                         let BubbleJob {
                             mut job,
@@ -1380,6 +1380,11 @@ pub fn toasts(
                             }
                         }
                     });
+                if glass && let Some(slot) = slot {
+                    let rect = bubble.response.rect;
+                    ui.painter()
+                        .set(slot, aurora_render::glass_panel_faded(rect, f32::from(radius.nw), tint, alpha));
+                }
                 ui.add_space(2.0);
             }
         });
@@ -1466,11 +1471,11 @@ fn bubble_link(ctx: &egui::Context, p: &Palette, world: &World, k: usize, rect: 
 pub fn bar(ui: &mut egui::Ui, p: &Palette, st: &mut ChatUi, width: f32) -> Option<OutgoingChat> {
     let mut out = None;
     ui.label(RichText::new(aurora_i18n::tr!("common-nearby-chat")).size(12.0).color(p.muted));
-    let resp = ui.add(
-        egui::TextEdit::singleline(&mut st.input)
-            .hint_text(aurora_i18n::tr!("ui-chat-enter-to-talk-ctrl-enter-to-shout-shift-enter"))
-            .desired_width(width),
-    );
+    // the shortcuts (Enter, Ctrl / Shift + Enter, /channel) are a tooltip:
+    // written in the empty field they crowded the bar (the human's request)
+    let resp = ui
+        .add(egui::TextEdit::singleline(&mut st.input).desired_width(width))
+        .on_hover_text(aurora_i18n::tr!("ui-chat-enter-to-talk-ctrl-enter-to-shout-shift-enter"));
     if st.focus_request {
         resp.request_focus();
         st.focus_request = false;

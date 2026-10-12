@@ -100,9 +100,11 @@ fn slt_time() -> String {
     format!("{:02}:{:02}:{:02} SLT", t / 3600, (t / 60) % 60, t % 60)
 }
 
-fn bar_frame(p: &Palette, alpha: u8) -> egui::Frame {
+/// Frame of the top and bottom bars: the `bar` color at the panels'
+/// opacity, over the windows' blur (`widgets::finish_bar_glass`).
+fn bar_frame(p: &Palette) -> egui::Frame {
     egui::Frame::new()
-        .fill(Color32::from_rgba_unmultiplied(p.bar.r(), p.bar.g(), p.bar.b(), alpha))
+        .fill(Color32::from_rgba_unmultiplied(p.bar.r(), p.bar.g(), p.bar.b(), p.panel_alpha))
         .inner_margin(egui::Margin::symmetric(6, 0))
 }
 
@@ -582,7 +584,13 @@ fn voice_light(ui: &mut egui::Ui, p: &Palette, icons: &Icons, light: crate::voic
     };
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(48.0, 18.0), egui::Sense::click());
     let painter = ui.painter();
-    painter.rect_filled(rect, 9.0, if resp.hovered() { p.raised } else { p.field });
+    let radius = ui.visuals().window_corner_radius;
+    let face = if resp.hovered() {
+        p.raised.lerp_to_gamma(p.ink, 0.16)
+    } else {
+        p.raised
+    };
+    painter.rect_filled(rect, radius, face);
     let dot = egui::pos2(rect.left() + 9.0, rect.center().y);
     if light == L::Connecting {
         // pulse while connecting
@@ -605,13 +613,11 @@ fn voice_light(ui: &mut egui::Ui, p: &Palette, icons: &Icons, light: crate::voic
         12.0,
         if resp.hovered() { p.ink } else { p.muted },
     );
-    ui.painter().text(
-        egui::pos2(rect.left() + 31.0, rect.center().y),
-        egui::Align2::LEFT_CENTER,
-        aurora_i18n::tr!("common-voice"),
-        egui::FontId::proportional(10.5),
-        if resp.hovered() { p.ink } else { p.muted },
-    );
+    let color = if resp.hovered() { p.ink } else { p.muted };
+    let label = ui
+        .painter()
+        .layout_no_wrap(aurora_i18n::tr!("common-voice").to_owned(), egui::FontId::proportional(10.5), color);
+    super::widgets::paint_ink_left(ui.painter(), label, egui::pos2(rect.left() + 31.0, rect.center().y), color);
     let tip = if why.is_empty() || why == state {
         state.to_owned()
     } else {
@@ -721,10 +727,12 @@ pub fn top_bars(
 ) -> (BarAction, super::audio::AudioAction) {
     let mut action = BarAction::None;
     let mut audio_action = super::audio::AudioAction::None;
-    egui::Panel::top("nav_bar")
-        .frame(bar_frame(p, 245))
+    let mut glass = None;
+    let bar = egui::Panel::top("nav_bar")
+        .frame(bar_frame(p))
         .exact_size(layout.nav_bar_height)
         .show(ui, |ui| {
+            glass = Some((ui.painter().clone(), ui.painter().add(egui::Shape::Noop)));
             // the bar's background spans the whole window width
             ui.set_min_width(ui.available_width());
             ui.horizontal_centered(|ui| {
@@ -803,7 +811,7 @@ pub fn top_bars(
                         if on {
                             egui::Frame::new()
                                 .fill(p.indigo)
-                                .corner_radius(egui::CornerRadius::same(2))
+                                .corner_radius(ui.visuals().window_corner_radius)
                                 .inner_margin(egui::Margin::symmetric(5, 0))
                                 .show(ui, |ui| ui.label(small(text, Color32::WHITE)));
                         }
@@ -811,7 +819,7 @@ pub fn top_bars(
                     ui.add_space(4.0);
                     egui::Frame::new()
                         .fill(p.field)
-                        .corner_radius(egui::CornerRadius::same(2))
+                        .corner_radius(ui.visuals().window_corner_radius)
                         .inner_margin(egui::Margin::symmetric(8, 1))
                         .show(ui, |ui| {
                             ui.set_width((ui.available_width() - 4.0).max(160.0));
@@ -882,6 +890,9 @@ pub fn top_bars(
                 });
             });
         });
+    if let Some((painter, slot)) = glass {
+        super::widgets::finish_bar_glass(&painter, slot, bar.response.rect, p);
+    }
     (action, audio_action)
 }
 
@@ -969,7 +980,11 @@ fn tool_button(ui: &mut egui::Ui, p: &Palette, icons: &Icons, icon: &str, tip: &
         // of a font sits lower than its capitals
         let color = if active || resp.hovered() { p.ink } else { p.muted };
         let galley = painter.layout_no_wrap("AO".to_owned(), egui::FontId::proportional(12.0), color);
-        super::widgets::paint_ink_centered(painter, galley, rect.center(), color);
+        // bold like the worn names (LLFontGL BOLD_OFFSET): the letters weigh
+        // as much as the filled icons of the other buttons
+        let bold = super::widgets::bold_text_offset(ui);
+        super::widgets::paint_ink_centered(painter, galley.clone(), rect.center(), color);
+        super::widgets::paint_ink_centered(painter, galley, rect.center() + bold, color);
     }
     if badge {
         painter.circle_filled(
@@ -1118,10 +1133,12 @@ pub fn bottom_bar(
     let mut out = None;
     let mut action = BarAction::None;
     let mut width_committed = false;
+    let mut glass = None;
     let resp = egui::Panel::bottom("bottom_bar")
-        .frame(bar_frame(p, 245).inner_margin(egui::Margin::symmetric(8, 3)))
+        .frame(bar_frame(p).inner_margin(egui::Margin::symmetric(8, 3)))
         .exact_size(layout.bottom_bar_height)
         .show(ui, |ui| {
+            glass = Some((ui.painter().clone(), ui.painter().add(egui::Shape::Noop)));
             ui.set_min_width(ui.available_width());
             ui.horizontal_centered(|ui| {
                 let total = ui.available_width();
@@ -1195,5 +1212,8 @@ pub fn bottom_bar(
                 }
             });
         });
+    if let Some((painter, slot)) = glass {
+        super::widgets::finish_bar_glass(&painter, slot, resp.response.rect, p);
+    }
     (out, action, resp.response.rect.top(), width_committed)
 }

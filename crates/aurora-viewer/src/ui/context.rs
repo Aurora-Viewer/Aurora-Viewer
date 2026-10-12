@@ -555,7 +555,7 @@ pub fn delete_warning(flags: &[u32]) -> Option<String> {
 
 /// The delete confirmation; Some(true) to delete, Some(false) to cancel.
 pub fn delete_confirm(ctx: &egui::Context, p: &Palette, text: &str) -> Option<bool> {
-    use egui::{Color32, CornerRadius, RichText};
+    use egui::{Color32, RichText};
     let mut answer = None;
     let modal = crate::ui::widgets::Modal::new(egui::Id::new("object_delete_confirm")).show(ctx, |ui| {
         ui.set_width(340.0);
@@ -572,7 +572,7 @@ pub fn delete_confirm(ctx: &egui::Context, p: &Palette, text: &str) -> Option<bo
             let yes = ui.add(
                 egui::Button::new(RichText::new(aurora_i18n::tr!("common-delete")).color(Color32::WHITE))
                     .fill(p.danger)
-                    .corner_radius(CornerRadius::same(2)),
+                    .corner_radius(ui.visuals().widgets.inactive.corner_radius),
             );
             if yes.clicked() {
                 answer = Some(true);

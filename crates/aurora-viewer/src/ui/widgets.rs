@@ -12,7 +12,7 @@ pub(crate) mod elide_tests;
 mod resize;
 mod workspace;
 pub use workspace::{Modal, glyph, navigation, section_header, stat, surface};
-pub(crate) use workspace::{inventory_item_label, inventory_spacing, overlay, overlay_frame};
+pub(crate) use workspace::{finish_bar_glass, inventory_item_label, inventory_spacing, overlay, overlay_frame};
 
 /// Keep status suffixes at normal weight and slightly darker than the name.
 pub(crate) fn name_with_suffix(name: &str, suffix: &str, font_id: egui::FontId, color: Color32) -> egui::text::LayoutJob {
@@ -267,7 +267,7 @@ impl<'a> Floater<'a> {
                             **clicked = true;
                         }
                         if let Some(h) = self.help {
-                            title_button(ui, p, "question-mark").on_hover_text(h);
+                            title_button(ui, p, "help-circle-filled").on_hover_text(h);
                         }
                         buttons_left = ui.cursor().right();
                         if truncate {
@@ -409,7 +409,7 @@ fn title_button(ui: &mut egui::Ui, p: &Palette, icon: &str) -> egui::Response {
         "minus" => {
             painter.line_segment([c + Vec2::new(-5.0, 1.0), c + Vec2::new(5.0, 1.0)], stroke);
         }
-        "question-mark" => {
+        "help-circle-filled" => {
             painter.circle_stroke(c, 6.0, Stroke::new(1.2, col));
             painter.text(c, egui::Align2::CENTER_CENTER, "?", egui::FontId::proportional(10.0), col);
         }
@@ -583,6 +583,13 @@ fn underline(ui: &egui::Ui, p: &Palette, response: &egui::Response, selected: bo
     );
 }
 
+/// Paint `galley` from `left_center`, centered vertically on its ink like
+/// an icon beside it (a font's line box sits lower than its letters).
+pub fn paint_ink_left(painter: &egui::Painter, galley: std::sync::Arc<egui::Galley>, left_center: egui::Pos2, color: Color32) {
+    let center = left_center + Vec2::new(galley.size().x / 2.0, 0.0);
+    paint_ink_centered(painter, galley, center, color);
+}
+
 /// Equal-sized dialog buttons; long script labels keep their full hover text.
 pub fn flat_button_sized(ui: &mut egui::Ui, p: &Palette, label: &str, size: Vec2) -> egui::Response {
     text_button(ui, p, label, Some(size)).on_hover_text(label)
@@ -591,27 +598,12 @@ pub fn flat_button_sized(ui: &mut egui::Ui, p: &Palette, label: &str, size: Vec2
 fn text_button(ui: &mut egui::Ui, p: &Palette, label: &str, size: Option<Vec2>) -> egui::Response {
     // Keep the button in the parent's layout so wrapped toolbars can break
     // before it. A child UI would wrap internally and enlarge narrow windows.
-    let style = ui.style().clone();
-    {
-        // A darker face stays identifiable even when panel and raised match.
-        let w = &mut ui.visuals_mut().widgets;
-        w.inactive.weak_bg_fill = p.field;
-        w.inactive.bg_fill = p.field;
-        w.inactive.bg_stroke = Stroke::new(1.0, p.muted_dim.gamma_multiply(0.65));
-        w.hovered.weak_bg_fill = p.raised;
-        w.hovered.bg_fill = p.raised;
-        w.hovered.bg_stroke = Stroke::new(1.0, p.violet_light.gamma_multiply(0.65));
-        w.active.weak_bg_fill = p.violet.gamma_multiply(0.28);
-        w.active.bg_fill = p.violet.gamma_multiply(0.28);
-        w.active.bg_stroke = Stroke::new(1.0, p.violet);
-    }
+    // The theme gives every button its plain filled face.
     let button = egui::Button::new(RichText::new(label).size(12.0).color(p.ink));
-    let response = match size {
+    match size {
         Some(size) => ui.add_sized(size, button.truncate()),
         None => ui.add(button.min_size(Vec2::new(0.0, 20.0))),
-    };
-    ui.set_style(style);
-    response
+    }
 }
 
 /// Face of an `action_button`.
@@ -636,7 +628,8 @@ pub fn action_button(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, ki
     let enabled = ui.is_enabled();
     let font = egui::FontId::proportional(12.5);
     let width = |ui: &egui::Ui| ui.painter().layout_no_wrap(label.to_owned(), font.clone(), Color32::WHITE).size().x;
-    let content = ICON + GAP + width(ui);
+    let lead = if icon.is_empty() { 0.0 } else { ICON + GAP };
+    let content = lead + width(ui);
     let desired = Vec2::new(if size.x > 0.0 { size.x } else { content + 24.0 }, size.y);
     let (rect, resp) = ui.allocate_exact_size(desired, if enabled { Sense::click() } else { Sense::hover() });
     let hot = enabled && (resp.hovered() || resp.has_focus());
@@ -661,7 +654,7 @@ pub fn action_button(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, ki
         );
     }
     // centered on the line, not on the ink: a row of buttons shares a baseline
-    let text = egui::pos2(left + ICON + GAP, rect.center().y - galley.size().y / 2.0).round();
+    let text = egui::pos2(left + lead, rect.center().y - galley.size().y / 2.0).round();
     ui.painter().galley(text, galley, ink);
     if hot {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
@@ -676,6 +669,7 @@ pub fn primary_button_sized(ui: &mut egui::Ui, p: &Palette, label: &str, size: V
         size,
         egui::Button::new(RichText::new(label).size(12.0).strong().color(p.ink))
             .fill(p.violet)
+            .stroke(Stroke::new(1.0, p.violet))
             .corner_radius(ui.visuals().widgets.inactive.corner_radius)
             .truncate(),
     )
