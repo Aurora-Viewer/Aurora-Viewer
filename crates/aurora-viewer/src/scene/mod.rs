@@ -168,6 +168,8 @@ impl Pass {
 /// Cached per-face draw info.
 #[derive(Debug, Clone, Copy)]
 pub struct FaceDraw {
+    /// Texture-entry index; omitted transparent geometry leaves holes.
+    pub te_index: u8,
     pub record: u32,
     pub cmd: DrawCmd,
     pub base_slot: u32,
@@ -543,6 +545,8 @@ pub struct Scene {
     pub selection_wire: HashMap<usize, bool>,
     /// Selected prims whose deformed silhouette is prepared with their mesh.
     pub selection_silhouettes: HashSet<usize>,
+    /// Selected texture-entry bits for each prim, in face-editing mode.
+    pub selection_faces: HashMap<usize, u32>,
     /// Far avatars drawn as pictures (RenderAvatarMaxNonImpostors).
     impostors: impostors::Impostors,
     /// Avatars still loading (clouds).
@@ -799,6 +803,26 @@ fn tex_anim_record(
 }
 
 impl Scene {
+    /// Invisible selected faces get temporary records for their overlay only.
+    /// Ordinary transparent faces keep their zero-record path. Changing an
+    /// opaque face selection never rebuilds its geometry or material records.
+    pub fn set_face_selection(&mut self, world: &mut World, selected: HashMap<usize, u32>) {
+        for &idx in self.selection_faces.keys().chain(selected.keys()) {
+            let changed = self.selection_faces.get(&idx).copied().unwrap_or(0) ^ selected.get(&idx).copied().unwrap_or(0);
+            let invisible = changed != 0
+                && world.objects.get(idx).and_then(|object| object.te.as_ref()).is_some_and(|te| {
+                    (0..aurora_prim::te::MAX_TES).any(|face| changed & (1u32 << face) != 0 && te.face(face).color[3] < 0.004)
+                });
+            if invisible && let Some(object) = world.objects.get_mut(idx) {
+                // Face allocations changed: a placement update alone cannot
+                // restore a previously omitted transparent face's record.
+                object.material_dirty = true;
+                object.render.needs_records = true;
+            }
+        }
+        self.selection_faces = selected;
+    }
+
     pub fn new(cache_dir: std::path::PathBuf, avatar_lib: Arc<AvatarLibrary>) -> Scene {
         let (jobs, job_rx) = Jobs::new();
         let cache_dir_anim = cache_dir.clone();
@@ -845,6 +869,7 @@ impl Scene {
             mirror_objects: Default::default(),
             selection_wire: HashMap::new(),
             selection_silhouettes: HashSet::new(),
+            selection_faces: HashMap::new(),
             debug_alpha: None,
             last_cull: None,
             impostors: Default::default(),
@@ -2389,12 +2414,14 @@ impl Scene {
             _ => None,
         };
         let hud_zoom = if g.hud { world.hud_scale(idx) } else { 1.0 };
+        let selected_faces = self.selection_faces.get(&idx).copied().unwrap_or(0);
         for (fi, face) in geom.faces.iter().enumerate() {
             let Some(alloc) = face else {
                 continue;
             };
             let tf = te.as_ref().map(|t| *t.face(fi)).unwrap_or_default();
-            if tf.color[3] < 0.004 {
+            let invisible = tf.color[3] < 0.004;
+            if invisible && selected_faces & 1u32.checked_shl(fi as u32).unwrap_or(0) == 0 {
                 // fully transparent face: LL registers it as PASS_ALPHA_INVISIBLE,
                 // never drawn, and its glow is not drawn either
                 continue;
@@ -2571,6 +2598,7 @@ impl Scene {
             rec.set_anchor(anchor.map(|a| a.matrix));
             let record = renderer.records.alloc(rec);
             g.faces.push(FaceDraw {
+                te_index: fi as u8,
                 record,
                 cmd: DrawCmd {
                     index_count: alloc.index_count,
@@ -2583,7 +2611,7 @@ impl Scene {
                 tex_id: base_tex,
                 aux_tex,
                 aux_repeats,
-                te_alpha: rec.base_color[3],
+                te_alpha: if invisible { 0.0 } else { rec.base_color[3] },
                 pbr_alpha,
                 legacy_alpha,
                 two_sided,
@@ -2727,6 +2755,7 @@ impl Scene {
                 rec.set_anchor(anchor);
                 let record = renderer.records.alloc(rec);
                 g.faces.push(FaceDraw {
+                    te_index: 0,
                     record,
                     cmd: DrawCmd {
                         index_count: alloc.index_count,
@@ -3027,7 +3056,7 @@ impl Scene {
                     continue;
                 }
                 let usage = i % 30 == usage_phase;
-                if usage || g.special || debug || (!selection.is_empty() && selection.contains_key(&i)) || captured(g, i) {
+                if usage || g.special || debug || selection.contains_key(&i) || self.selection_faces.contains_key(&i) || captured(g, i) {
                     visit.push((i, usage));
                 }
             }
@@ -3046,6 +3075,7 @@ impl Scene {
 
         // objects in parallel
         let selection_wire = &self.selection_wire;
+        let selection_faces = &self.selection_faces;
         struct Local {
             opaque: Vec<DrawCmd>,
             opaque2: Vec<DrawCmd>,
@@ -3059,6 +3089,7 @@ impl Scene {
             debug_red: Vec<DrawCmd>,
             select_root: Vec<DrawCmd>,
             select_child: Vec<DrawCmd>,
+            select_faces: Vec<DrawCmd>,
             debug_blue: Vec<DrawCmd>,
             casters: Vec<ShadowCaster>,
             refl: Vec<ShadowCaster>,
@@ -3078,6 +3109,7 @@ impl Scene {
             debug_red: Vec::new(),
             select_root: Vec::new(),
             select_child: Vec::new(),
+            select_faces: Vec::new(),
             debug_blue: Vec::new(),
             casters: Vec::new(),
             refl: Vec::new(),
@@ -3176,6 +3208,12 @@ impl Scene {
                         Some(false) => l.select_child.push(cmd),
                         None => {}
                     }
+                    if selection_faces
+                        .get(&idx)
+                        .is_some_and(|mask| mask & 1u32.checked_shl(f.te_index.into()).unwrap_or(0) != 0)
+                    {
+                        l.select_faces.push(cmd);
+                    }
                 }
                 if pass == Pass::Hidden {
                     continue;
@@ -3238,6 +3276,7 @@ impl Scene {
             a.debug_blue.append(&mut b.debug_blue);
             a.select_root.append(&mut b.select_root);
             a.select_child.append(&mut b.select_child);
+            a.select_faces.append(&mut b.select_faces);
             a.casters.append(&mut b.casters);
             a.refl.append(&mut b.refl);
             a.probe.append(&mut b.probe);
@@ -3260,6 +3299,7 @@ impl Scene {
         self.lists.reflection = result.refl;
         self.lists.probe = result.probe;
         self.lists.glow = result.glow;
+        self.lists.select_faces = result.select_faces;
         self.lists.glow_alpha = result.glow_alpha;
         for (slot, cmd, blend) in result.impostor {
             if let Some(c) = plan.captures.get_mut(slot) {
@@ -4481,6 +4521,7 @@ mod tests {
 
     fn test_face(p: Pass, glow: bool) -> FaceDraw {
         FaceDraw {
+            te_index: 0,
             record: 0,
             cmd: DrawCmd {
                 index_count: 6,
@@ -4502,6 +4543,34 @@ mod tests {
             pass: p,
             glow_pool: false,
         }
+    }
+
+    #[test]
+    fn selecting_opaque_faces_keeps_records_and_transparent_faces_rebuild_only_on_changes() {
+        let lib = Arc::new(AvatarLibrary::load());
+        let mut world = World::new(lib.clone());
+        for event in crate::demo::events().into_iter().chain(crate::demo::face_selection_events(false)) {
+            world.apply(event);
+        }
+        let idx = world.objects.index_of_uuid(&crate::demo::action_id(99620)).unwrap();
+        let object = world.objects.get_mut(idx).unwrap();
+        Arc::make_mut(object.te.as_mut().unwrap()).faces[0].color[3] = 0.0;
+        object.render.needs_records = false;
+        object.material_dirty = false;
+        let mut scene = Scene::new(Default::default(), lib);
+        scene.set_face_selection(&mut world, HashMap::from([(idx, 1 << 1)]));
+        assert!(!world.objects.get(idx).unwrap().render.needs_records);
+        scene.set_face_selection(&mut world, HashMap::from([(idx, (1 << 1) | 1)]));
+        assert!(world.objects.get(idx).unwrap().render.needs_records);
+        assert!(world.objects.get(idx).unwrap().material_dirty);
+        world.objects.get_mut(idx).unwrap().render.needs_records = false;
+        world.objects.get_mut(idx).unwrap().material_dirty = false;
+        scene.set_face_selection(&mut world, HashMap::from([(idx, (1 << 1) | 1)]));
+        assert!(!world.objects.get(idx).unwrap().render.needs_records);
+        scene.set_face_selection(&mut world, HashMap::from([(idx, 1)]));
+        assert!(!world.objects.get(idx).unwrap().render.needs_records);
+        scene.set_face_selection(&mut world, HashMap::new());
+        assert!(world.objects.get(idx).unwrap().render.needs_records);
     }
 
     /// The GPU culling (reference of cull.wgsl, `gpu_cull::face_bins`) takes

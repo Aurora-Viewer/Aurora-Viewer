@@ -94,6 +94,7 @@ struct FrameU {
     sky_ll: [f32; 4],
     sky_obj_light: [f32; 4],
     anim_clock: [u32; 4],
+    selection_color: [f32; 4],
     cascade_vp: [[[f32; 4]; 4]; CASCADES],
     lights: [LightU; MAX_LIGHTS],
     /// Which of `lights` a fragment walks (light_tiles.rs).
@@ -666,6 +667,8 @@ struct Pipelines {
     /// Selection wireframes (SilhouetteParentColor / SilhouetteChildColor).
     select_root_wire: Option<wgpu::RenderPipeline>,
     select_child_wire: Option<wgpu::RenderPipeline>,
+    select_faces: wgpu::RenderPipeline,
+    hud_select_faces: wgpu::RenderPipeline,
     ssr: Option<wgpu::RenderPipeline>,
     pre_opaque: wgpu::RenderPipeline,
     pre_opaque_2s: wgpu::RenderPipeline,
@@ -1754,6 +1757,7 @@ struct Ranges {
     debug_blue: (u64, u32),
     select_root: (u64, u32),
     select_child: (u64, u32),
+    select_faces: (u64, u32),
     refl_water: (u64, u32),
     refl_mirror: (u64, u32),
     refl_terrain_water: (u64, u32),
@@ -2512,6 +2516,21 @@ impl Backend {
                 true,
             )
         });
+        // Same selected-face geometry as Firestorm's renderSelectedFaces,
+        // with a procedural pattern instead of a fetched selection texture.
+        let select_faces = pipe(PipeDesc {
+            cull: None,
+            blend: Some(alpha_blend),
+            write_mask: wgpu::ColorWrites::COLOR,
+            depth_write: false,
+            ..base("selected faces", "vs_main", "fs_select_face")
+        });
+        let hud_select_faces = pipe(PipeDesc {
+            depth_write: false,
+            write_mask: wgpu::ColorWrites::COLOR,
+            fs: Some("fs_hud_select_face"),
+            ..hud_desc("HUD selected faces", Some(alpha_blend), false)
+        });
         let ssr_pipe = ssr.then(|| {
             let src = format!("{}\n{}", include_str!("shaders/common.wgsl"), include_str!("shaders/ssr.wgsl"));
             let m = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -2679,6 +2698,8 @@ impl Backend {
             debug_wire,
             select_root_wire,
             select_child_wire,
+            select_faces,
+            hud_select_faces,
             ssr: ssr_pipe,
             pre_opaque,
             pre_opaque_2s,
@@ -3399,6 +3420,7 @@ impl Backend {
         let inv_view = view.inverse();
         let camera_pos = inv_view.transform_point3(Vec3::ZERO);
         let mut u = FrameU::zeroed();
+        u.selection_color = f.selection_color;
         u.view_proj = vp.to_cols_array_2d();
         u.inv_view_proj = vp.inverse().to_cols_array_2d();
         if eye_relative_enabled() {
@@ -4032,10 +4054,12 @@ impl Backend {
         let cpu = &mut self.indirect_cpu;
         let hud_opaque_range = push(cpu, &lists.hud_opaque);
         let hud_blend_range = push(cpu, &lists.hud_blend);
+        let hud_select_faces_range = push(cpu, &lists.hud_select_faces);
         rg.debug_red = push(cpu, &lists.debug_red);
         rg.debug_blue = push(cpu, &lists.debug_blue);
         rg.select_root = push(cpu, &lists.select_root);
         rg.select_child = push(cpu, &lists.select_child);
+        rg.select_faces = push(cpu, &lists.select_faces);
         let imp_ranges: Vec<((u64, u32), (u64, u32))> = imp_caps.iter().map(|c| (push(cpu, &c.opaque), push(cpu, &c.blend))).collect();
         // reflection passes: each culled to its own frustum
         if capture.is_some() {
@@ -4808,6 +4832,7 @@ impl Backend {
             if let Some(wire) = &self.pipelines.select_root_wire {
                 draw(&mut pass, wire, rg.select_root);
             }
+            draw(&mut pass, &self.pipelines.select_faces, rg.select_faces);
             if let (true, Some(wire)) = (f.wireframe, &self.pipelines.debug_wire) {
                 for r in [rg.terrain, rg.opaque, rg.opaque_2s, rg.mask, rg.mask_2s, rg.blend] {
                     draw(&mut pass, wire, r);
@@ -5024,6 +5049,7 @@ impl Backend {
             bind_mesh(&mut pass, &self.groups.refl[5]);
             draw(&mut pass, &self.pipelines.hud_opaque, hud_opaque_range);
             draw(&mut pass, &self.pipelines.hud_blend, hud_blend_range);
+            draw(&mut pass, &self.pipelines.hud_select_faces, hud_select_faces_range);
         }
         if let (Some(t), Some(slot)) = (&self.timer, timer_slot) {
             encoder.resolve_query_set(&t.query_set, 0..GPU_TIMESTAMPS, &t.resolve, 0);

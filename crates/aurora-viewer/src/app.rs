@@ -330,6 +330,7 @@ pub struct App {
     lighting_was_open: bool,
     demo: bool,
     inventory_ui: ui::inventory::InventoryUi,
+    task_transfer: Option<ui::inventory::task_drop::PendingTransfer>,
     /// Inventory edits asked by the world (`World::take_inventory_edits`),
     /// awaiting their reply.
     world_edits: std::collections::HashSet<uuid::Uuid>,
@@ -629,6 +630,7 @@ impl App {
             lighting_was_open: false,
             demo: false,
             inventory_ui: Default::default(),
+            task_transfer: None,
             world_edits: Default::default(),
             demo_offer_shown: None,
             ao_ui: Default::default(),
@@ -2603,6 +2605,7 @@ impl App {
     fn on_build_request(&mut self, r: crate::build::ui::Request) {
         use crate::build::ui::Request;
         match r {
+            Request::TransferTask(request) => self.apply_inventory_action(ui::inventory::InvAction::TakeTask(request)),
             Request::ZoomFraction(f) => self.camera.set_zoom_fraction(f),
             Request::AboutLand => self.panels.about_land = true,
             Request::BuyLand => self
@@ -2775,8 +2778,14 @@ impl App {
         let hud = (self.build.tool == crate::build::Tool::Edit)
             .then(|| self.scene.hud_edit_pick(&self.world, (x, y)))
             .flatten();
-        let (hit, target) = if let Some((idx, point, _)) = hud {
-            (Some(point), Some(idx))
+        let (hit, target, ray) = if let Some((idx, point, ray)) = hud {
+            (Some(point), Some(idx), ray)
+        } else if self.build.tool == crate::build::Tool::Edit && self.build.edit_mode == crate::build::EditMode::Face {
+            // LLToolFace picks the current cursor ray. A delayed GPU depth
+            // sample can still point at the previous object during Shift clicks.
+            let ray = self.build.cam.ray(x, y);
+            let target = self.scene.edit_ray_hits(&self.world, ray, false).first().copied();
+            (None, target, ray)
         } else {
             let Some(picked) = self.click_pick() else {
                 return false;
@@ -2784,10 +2793,11 @@ impl App {
             let hit = picked.depth;
             // a rigged mesh is selected where it is shown (Firestorm: with
             // the move tool only, LLToolCompTranslate)
-            match self.designate(crate::scene::drawn::Gesture::Build, &picked, hit) {
+            let (hit, target) = match self.designate(crate::scene::drawn::Gesture::Build, &picked, hit) {
                 Some(d) => (Some(d.hit.point), Some(d.idx)),
                 None => (hit, hit.and_then(|p| self.scene.pick_at(&self.world, p, Instant::now()))),
-            }
+            };
+            (hit, target, picked.ray.unwrap_or_else(|| self.build.cam.ray(x, y)))
         };
         let mods = crate::build::Mods {
             shift: self.shift,
@@ -2796,9 +2806,7 @@ impl App {
         };
         // the surface under the cursor: face tool, grab surface info
         let surface = match (self.build.tool, target) {
-            (crate::build::Tool::Edit | crate::build::Tool::Grab, Some(i)) => {
-                self.scene.touch_surface(&self.world, i, self.build.cam.ray(x, y))
-            }
+            (crate::build::Tool::Edit | crate::build::Tool::Grab, Some(i)) => self.scene.touch_surface(&self.world, i, ray),
             _ => None,
         };
         let used = self.build.mouse_down(
@@ -3879,6 +3887,8 @@ impl App {
                 self.scene.selection_wire.entry(idx).or_insert(false);
             }
             self.scene.selection_silhouettes = self.build.silhouette_selection(&self.world, &self.settings.build);
+            let selected_faces = self.build.face_selection(&self.world, &self.settings.build);
+            self.scene.set_face_selection(&mut self.world, selected_faces);
             self.flush_build();
             let camera_changed = edit_camera_frame.is_some() || panned;
             if let Some(frame) = edit_camera_frame {
@@ -4282,6 +4292,7 @@ impl App {
             aurora_render::ProbeFrame::default()
         };
         let fp = FrameParams {
+            selection_color: egui::Rgba::from(self.palette.violet_light).to_array(),
             view,
             proj,
             camera_pos: self.camera.position,
@@ -5100,12 +5111,74 @@ impl App {
                         self.settings.build.land_action = land;
                     }
                     crate::build::demo::Step::Cursor(x, y) => self.cursor_pos = (x, y),
+                    crate::build::demo::Step::CreateAt(point) => {
+                        self.build.mouse_down(
+                            &mut self.world,
+                            &mut self.settings.build,
+                            Some(point),
+                            None,
+                            None,
+                            self.cursor_pos,
+                            crate::build::Mods::default(),
+                        );
+                        self.flush_build();
+                    }
+                    crate::build::demo::Step::Delete => {
+                        log::info!("demo build created selection: {:?}", self.build.selection);
+                        self.build.delete(&mut self.world);
+                        log::info!("demo build created delete: {}", self.build.status);
+                        self.flush_build();
+                    }
+                    crate::build::demo::Step::Contents => {
+                        self.build.tab = 4;
+                        self.panels.inventory = true;
+                        self.inventory_ui.expand_all = Some(true);
+                    }
+                    crate::build::demo::Step::TakeTask(copy) => {
+                        if let Some(idx) = self.build.contents_target(&self.world)
+                            && let Some(o) = self.world.objects.get(idx)
+                            && let Some(inv) = self.build.contents.objects.get(&o.full_id)
+                            && let Some(item) = inv
+                                .items
+                                .iter()
+                                .find(|i| !i.is_folder && (i.owner_mask & aurora_net::build::perm::COPY != 0) == copy)
+                        {
+                            self.apply_inventory_action(ui::inventory::InvAction::TakeTask(Box::new(
+                                crate::build::task_inventory::TransferRequest {
+                                    object: o.full_id,
+                                    item: item.clone(),
+                                    folder: self.world.inventory.root,
+                                    approved: None,
+                                    ignore_warning: false,
+                                },
+                            )));
+                        }
+                    }
                     crate::build::demo::Step::Select(idx) => {
                         self.build.click_select(&mut self.world, &self.settings.build, Some(idx), false);
                         self.flush_build();
                     }
                     crate::build::demo::Step::Press => self.click(click_pick::Click::Build),
                     crate::build::demo::Step::Release => self.build_release(),
+                    crate::build::demo::Step::Face(idx, face, shift) => {
+                        self.build.mouse_down(
+                            &mut self.world,
+                            &mut self.settings.build,
+                            None,
+                            Some(idx),
+                            Some(aurora_net::TouchSurface {
+                                face: face as i32,
+                                ..Default::default()
+                            }),
+                            self.cursor_pos,
+                            crate::build::Mods {
+                                shift,
+                                ..Default::default()
+                            },
+                        );
+                        log::info!("demo build faces: {:?}", self.build.sel_te(&self.world));
+                        self.flush_build();
+                    }
                     crate::build::demo::Step::Focus(follow) => {
                         self.settings.build.follow_edit_object = follow;
                         if let Some(idx) = self.build.sel_prims(&self.world).first().copied()
@@ -6050,6 +6123,9 @@ impl App {
                 }
                 self.show_task_notecards(&ctx, &p);
                 self.show_scripts(&ctx, &p);
+                if let Some(action) = ui::inventory::task_drop::confirm(&ctx, &p, &mut self.task_transfer) {
+                    self.apply_inventory_action(action);
+                }
                 for (id, r) in ui::notifications::show(&ctx, &p, &self.skin.icons, &mut self.world.notifications, &mut self.notif_ui) {
                     let (cmds, url) = self.world.respond_notification(id, r);
                     if cmds.iter().any(|c| matches!(c, NetCommand::AcceptLure { .. })) {
@@ -6726,6 +6802,12 @@ impl ApplicationHandler for App {
             for ev in crate::demo::events() {
                 if let Some(e) = self.world.apply(ev) {
                     self.on_app_event(e);
+                }
+            }
+            if std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("faces")) {
+                let invisible = std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("faces-invisible,"));
+                for event in crate::demo::face_selection_events(invisible) {
+                    self.world.apply(event);
                 }
             }
             if std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("cycle,") || v.starts_with("cycle-linked,")) {

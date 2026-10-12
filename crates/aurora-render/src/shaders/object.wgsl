@@ -750,6 +750,27 @@ fn fs_debug_flat(in: VsOut) -> @location(0) vec4<f32> {
     return vec4<f32>(debug_r, debug_g, debug_b, debug_a);
 }
 
+// LLPipeline::renderSelectedFaces: a translucent selection pattern covers
+// only the selected geometry. Screen-space cells stay legible regardless
+// of material transforms, UV seams or a texture still being downloaded.
+fn selected_face_color(pixel: vec2<f32>) -> vec4<f32> {
+    let cell = vec2<u32>(floor(pixel / 8.0));
+    let alpha = select(0.25, 0.65, ((cell.x + cell.y) & 1u) == 0u);
+    return vec4<f32>(frame.selection_color.rgb, alpha * frame.selection_color.a);
+}
+
+@fragment
+fn fs_select_face(in: VsOut) -> @location(0) vec4<f32> {
+    return selected_face_color(in.clip.xy);
+}
+
+@fragment
+fn fs_hud_select_face(in: VsOut) -> @location(0) vec4<f32> {
+    var color = selected_face_color(in.clip.xy);
+    if (!HUD_SRGB_TARGET) { color = vec4<f32>(ll_linear_to_srgb(color.rgb), color.a); }
+    return color;
+}
+
 // Glow suppression of a face LL draws in its alpha pool: the glow under it
 // is scaled by (1 - its alpha) before it adds its own (fs_glow).
 @fragment

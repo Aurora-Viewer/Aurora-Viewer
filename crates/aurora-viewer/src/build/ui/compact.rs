@@ -287,7 +287,7 @@ fn sections_panel(
                     .max_height((height - 24.0).max(1.0))
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        if tool.selection.is_empty() {
+                        if tool.selection.is_empty() && tool.tab != 3 {
                             common::label(ui, p, aurora_i18n::tr!("build-compact-select-hint"));
                             return;
                         }

@@ -42,6 +42,7 @@ impl Scene {
         self.lists.hud_opaque.clear();
         self.lists.hud_blend.clear();
         self.hud_own.clear();
+        self.lists.hud_select_faces.clear();
         if !visible {
             return;
         }
@@ -65,6 +66,13 @@ impl Scene {
                 self.textures.note_usage_fixed(id, px);
             }
             for face in &g.faces {
+                if self
+                    .selection_faces
+                    .get(&idx)
+                    .is_some_and(|mask| mask & 1u32.checked_shl(face.te_index.into()).unwrap_or(0) != 0)
+                {
+                    self.lists.hud_select_faces.push(face.cmd);
+                }
                 match face.pass {
                     Pass::Hidden => {}
                     Pass::Blend => blend.push((g.center.x, face.cmd)),

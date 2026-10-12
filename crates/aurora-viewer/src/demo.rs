@@ -190,6 +190,33 @@ pub fn inventory_rez(rez: &aurora_net::inventory::rez::RezInventory) -> ObjectUp
     o
 }
 
+/// A basic prim created in the offline builder, with the same missing OwnerID
+/// as ordinary simulator updates. Selection and permissions use update flags.
+pub fn build_rez(p: &aurora_net::build::NewPrim) -> ObjectUpdate {
+    let id = Uuid::new_v4();
+    let mut object = prim(
+        id.as_u128() as u32,
+        p.ray_end + Vec3::Z * (p.scale.z * 0.5),
+        p.rotation,
+        p.scale,
+        p.shape.to_params(),
+        te([1.0; 4], 0, false, 0.0),
+        ExtraParams::default(),
+        "",
+    );
+    object.full_id = id;
+    object.pcode = p.pcode;
+    object.state = p.state;
+    object.material = p.material;
+    object.update_flags = crate::ui::context::flags::OBJECT_YOU_OWNER
+        | crate::ui::context::flags::OBJECT_ANY_OWNER
+        | crate::ui::context::flags::OBJECT_MODIFY
+        | crate::ui::context::flags::OBJECT_COPY
+        | crate::ui::context::flags::OBJECT_MOVE
+        | p.add_flags;
+    object
+}
+
 /// Legacy particle system block (LLPartSysData::packLegacy + LLPartData):
 /// a teal fountain fading to violet.
 fn fountain_particles() -> Vec<u8> {
@@ -1430,6 +1457,28 @@ pub fn selection_cycle_events() -> Vec<NetEvent> {
             o.position = Vec3::ZERO;
         }
         objects.push(o);
+    }
+    vec![NetEvent::ObjectUpdates { handle: HANDLE, objects }]
+}
+
+/// Three separate surfaces for selecting faces: a two-prim linkset and
+/// another object, all modifiable. Optional invisible geometry tests overlays
+/// whose original face has no material record until it is selected.
+pub fn face_selection_events(invisible: bool) -> Vec<NetEvent> {
+    let mut objects = Vec::new();
+    for (id, y, parent, name) in [(99620, 102.0, 0, "A"), (99621, 105.0, 99620, "A2"), (99622, 99.0, 0, "B")] {
+        let label = aurora_i18n::tr!("demo-cycle-object", name = name);
+        let mut object = action_object(id, 0, 150.0, y, [0.65, 0.75, 0.85, if invisible { 0.0 } else { 1.0 }], &label);
+        object.scale = Vec3::splat(2.0);
+        object.position.z = floor_at(150.0, 102.0) + 1.5;
+        object.parent_id = parent;
+        if parent != 0 {
+            object.position = Vec3::new(0.0, 3.0, 0.0);
+        }
+        object.owner_id = DEMO_AGENT;
+        object.update_flags =
+            crate::ui::context::flags::OBJECT_MOVE | crate::ui::context::flags::OBJECT_MODIFY | crate::ui::context::flags::OBJECT_COPY;
+        objects.push(object);
     }
     vec![NetEvent::ObjectUpdates { handle: HANDLE, objects }]
 }

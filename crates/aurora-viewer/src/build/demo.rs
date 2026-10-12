@@ -7,6 +7,12 @@
 //!   (deeper, deeper, nearer), centered on `object:99610`.
 //!   linked-click | linked-click-ready: select a whole object, then switch
 //!   to linked editing and click the requested part (ready stops before switching).
+//!   faces | faces-invisible | faces-ready: plain / Shift face clicks on
+//!   three prims of two objects (ready stops before the face clicks).
+//!   create-delete | create-ready: create and select a basic prim, then
+//!   delete it (ready leaves the new prim for the human).
+//!   contents-copy | contents-move | contents-move-plain | contents-ready:
+//!   take an item into inventory or show the move warning (ready stops).
 //! - x, y: click (physical pixels) at frame 220: selects the object there,
 //!   creates a prim, or presses the land brush (held until the capture)
 //! - part: handle grabbed at frame 250 (move: x y z xy yz xz; rotate: rx ry
@@ -36,6 +42,11 @@ use std::time::Instant;
 pub enum Step {
     Open(Tool, EditMode, u8),
     Select(usize),
+    Face(usize, u8, bool),
+    CreateAt(Vec3),
+    Delete,
+    Contents,
+    TakeTask(bool),
     Cursor(f32, f32),
     Press,
     Release,
@@ -172,7 +183,7 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
     let (t, m, land) = match parts[0] {
         "rotate" => (Tool::Edit, EditMode::Rotate, 6),
         "stretch" => (Tool::Edit, EditMode::Stretch, 6),
-        "face" => (Tool::Edit, EditMode::Face, 6),
+        "face" | "faces" | "faces-invisible" | "faces-ready" => (Tool::Edit, EditMode::Face, 6),
         "align" => (Tool::Edit, EditMode::Align, 6),
         "grab" => (Tool::Grab, EditMode::Move, 6),
         "focus" => (Tool::Focus, EditMode::Move, 6),
@@ -191,6 +202,70 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
     let Some(frame) = (frame + 215).checked_sub(base) else {
         return Vec::new();
     };
+    if matches!(parts[0], "create-delete" | "create-ready") {
+        return match frame {
+            215 => vec![Step::Open(Tool::Create, EditMode::Move, 6)],
+            240 => {
+                let x = world.agent.position.x + 5.0;
+                let y = world.agent.position.y + 3.0;
+                vec![Step::CreateAt(Vec3::new(x, y, crate::demo::floor_at(x, y)))]
+            }
+            250 => vec![Step::Focus(false)],
+            290 if parts[0] == "create-delete" => vec![Step::Delete],
+            _ => Vec::new(),
+        };
+    }
+    if parts[0].starts_with("contents-") {
+        return match frame {
+            215 => vec![Step::Open(Tool::Edit, EditMode::Move, 6)],
+            220 => object.into_iter().map(Step::Select).collect(),
+            225 => vec![Step::Contents],
+            260 if parts[0] != "contents-ready" => vec![Step::TakeTask(parts[0] == "contents-copy")],
+            _ => Vec::new(),
+        };
+    }
+    if parts[0].starts_with("faces") {
+        let pick = |id, face, shift| {
+            world
+                .objects
+                .index_of_uuid(&crate::demo::action_id(id))
+                .and_then(|idx| {
+                    let face = if face == u8::MAX {
+                        let o = world.objects.get(idx)?;
+                        let (pos, rot, _) = crate::scene::Scene::object_transform(world, idx, Instant::now(), 0)?;
+                        let toward = rot.inverse() * (tool.cam.eye - pos);
+                        aurora_prim::volume::generate_volume(&o.volume, 1.0)
+                            .faces
+                            .iter()
+                            .enumerate()
+                            .filter(|(i, _)| (1..=4).contains(i))
+                            .filter_map(|(i, face)| face.normals.first().map(|n| (i, Vec3::from_array(*n).dot(toward))))
+                            .max_by(|a, b| a.1.total_cmp(&b.1))
+                            .map(|(i, _)| i as u8)?
+                    } else {
+                        face
+                    };
+                    Some(Step::Face(idx, face, shift))
+                })
+                .into_iter()
+                .collect()
+        };
+        return match frame {
+            215 => vec![Step::Open(Tool::Edit, EditMode::Face, 6), Step::Linked(false)],
+            220 => object.into_iter().map(Step::Select).collect(),
+            227 => vec![Step::Focus(false)],
+            _ if parts[0] == "faces-ready" => Vec::new(),
+            240 => pick(99620, u8::MAX, false),
+            260 => pick(99620, 0, true),
+            280 => pick(99621, u8::MAX, true),
+            300 => pick(99622, u8::MAX, true),
+            320 => pick(99620, 0, true),
+            340 => pick(99621, u8::MAX, true),
+            360 => pick(99622, 0, false),
+            380 => pick(99622, 0, true),
+            _ => Vec::new(),
+        };
+    }
     if matches!(parts[0], "linked-click" | "linked-click-ready") {
         return match frame {
             215 => vec![Step::Open(Tool::Edit, EditMode::Move, 1), Step::Linked(false)],

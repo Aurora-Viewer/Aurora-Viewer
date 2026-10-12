@@ -139,6 +139,8 @@ pub struct InventoryPreferences {
     pub double_click_add_clothes: bool,
     pub filter_defaults: Filters,
     pub last_logout: i64,
+    pub warn_task_move: bool,
+    pub warn_scripted_task_move: bool,
 }
 impl Default for InventoryPreferences {
     fn default() -> Self {
@@ -159,6 +161,8 @@ impl Default for InventoryPreferences {
             double_click_add_clothes: false,
             filter_defaults: Filters::default(),
             last_logout: 0,
+            warn_task_move: true,
+            warn_scripted_task_move: true,
         }
     }
 }

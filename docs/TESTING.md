@@ -317,6 +317,39 @@ A2 → racine A → partie A2, sans passer sur B ou C. Les lignes
 la caméra et le zoom HUD ne changent pas pendant le geste. Capturer vers
 l’image 690 (départ 600 par défaut).
 
+`AURORA_DEMO_BUILD=create-delete,object:118` crée une primitive à l’image 625,
+la sélectionne après la réponse simulée et la supprime à l’image 675. Capture
+à 660 : nouveau cube sélectionné ; à 700 : cube disparu et message de mise
+à la corbeille sans faux avertissement de propriétaire. `create-ready` laisse
+le cube pour tester sa suppression à la main.
+
+`AURORA_DEMO_BUILD=contents-copy,object:118` ouvre Contenu et l’inventaire,
+puis copie un élément à l’image 645. `contents-move` propose la confirmation
+du retrait de la texture non copiable (avec avertissement pour les scripts) ;
+`contents-move-plain` montre le cas sans scripts. Capture à 670. Les choix
+d’avertissement de l’utilisateur restent applicables. `contents-ready` ouvre
+les deux fenêtres pour tester le glissement à la main : script copiable et
+texture non copiable. Vérifier copie, annulation et acceptation du retrait,
+dépôt sur un dossier, un élément et une zone vide, et refus sur les dossiers
+de tenues / bibliothèque / Favoris pour la texture. Sur grille, l’humain
+vérifie aussi les permissions de groupe, le contenu d’un autre propriétaire
+et les éléments non copiables d’objets portés.
+
+`AURORA_DEMO_BUILD=faces,object:99620` ajoute trois cubes : deux parties
+liées (A / A2) et un objet séparé (B). Dans Matériaux (`AURORA_DEMO_BUILD_TAB=texture:bp`),
+le script sélectionne une face à 625, en ajoute une sur le même prim à 645,
+une sur A2 à 665, une sur B à 685, puis retire les deux premières faces
+ajoutées à 705 et 725. Un clic simple sélectionne seulement le dessus de B à 745.
+Maj retire cette dernière face à 765 : la sélection et le surlignage disparaissent,
+et « Choisir une face » reste accessible pour quitter ce mode.
+Capturer juste après ces étapes : le damier violet couvre les seules faces
+sélectionnées, sans contour de l’objet entier ; les autres faces gardent leur
+rendu. `faces-invisible` reprend ces gestes sur des prims entièrement transparents :
+seules les faces sélectionnées deviennent visibles par leur surlignage.
+`faces-ready` s’arrête avant les clics pour le test humain. Maj + clic ajoute
+ou retire une face, y compris sur un autre objet ; retirer la dernière face
+d’un prim le désélectionne. Sans Maj, la sélection précédente est remplacée.
+
 `AURORA_DEMO_FLEXIBLE` remplace les objets de la place par six prims avec
 quatre niveaux de souplesse, profils carrés / circulaires, creux, torsion et
 tailles non uniformes. La dernière suit une racine en rotation. `rigid` donne

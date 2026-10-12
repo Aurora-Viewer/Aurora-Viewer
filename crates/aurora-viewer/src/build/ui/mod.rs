@@ -47,6 +47,7 @@ pub struct Env<'a> {
 /// Something the floater asks the app to do.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Request {
+    TransferTask(Box<super::task_inventory::TransferRequest>),
     /// Focus slider moved (LLAgentCamera::setCameraZoomFraction).
     ZoomFraction(f32),
     AboutLand,
