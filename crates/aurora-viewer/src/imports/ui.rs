@@ -86,7 +86,46 @@ pub enum Action {
     Resume,
 }
 
+fn server_message(message: &str) -> &str {
+    // LLMeshUploadThread::log_upload_error also translates these MAV details.
+    match message {
+        "MAV_FOUND_DEGENERATE_TRIANGLES" => aurora_i18n::tr!("import-mesh-error-degenerate"),
+        "MAV_CONFIRMATION_DATA_MISMATCH" => aurora_i18n::tr!("import-mesh-error-confirmation"),
+        "MAV_BLOCK_MISSING" => aurora_i18n::tr!("import-mesh-error-missing"),
+        "MAV_UNKNOWN_VERSION" => aurora_i18n::tr!("import-mesh-error-version"),
+        _ => message,
+    }
+}
+
 pub fn error(error: Error) -> String {
+    if let Error::Refused(reason) | Error::Uncertain(reason) = &error {
+        let mut details = Vec::new();
+        if let Some(status) = reason.status {
+            details.push(aurora_i18n::tr!("import-error-http", status = status));
+        }
+        if !reason.identifier.is_empty() {
+            details.push(aurora_i18n::tr!("import-error-code", code = &reason.identifier));
+        }
+        let explanation = server_message(&reason.identifier);
+        if explanation != reason.identifier {
+            details.push(explanation.to_owned());
+        }
+        for message in &reason.messages {
+            let message = server_message(message).to_owned();
+            if !details.contains(&message) {
+                details.push(message);
+            }
+        }
+        if reason.messages.is_empty() && explanation == reason.identifier {
+            details.push(aurora_i18n::tr!("import-error-no-details").into());
+        }
+        let heading = if matches!(error, Error::Uncertain(_)) {
+            aurora_i18n::tr!("import-unknown-outcome")
+        } else {
+            aurora_i18n::tr!("import-rejected")
+        };
+        return format!("{heading}\n{}", details.join("\n"));
+    }
     if let Error::PriceChanged(Some(cost)) = error {
         return aurora_i18n::tr!("import-new-price", cost = cost);
     }
@@ -94,6 +133,8 @@ pub fn error(error: Error) -> String {
         Error::Invalid => aurora_i18n::tr!("import-invalid-request"),
         Error::Unavailable => aurora_i18n::tr!("import-service-unavailable"),
         Error::Rejected => aurora_i18n::tr!("import-rejected"),
+        Error::MeshPermission => aurora_i18n::tr!("import-mesh-permission-denied"),
+        Error::Refused(_) | Error::Uncertain(_) => unreachable!("details handled above"),
         Error::Response => aurora_i18n::tr!("import-invalid-response"),
         Error::Unknown => aurora_i18n::tr!("import-unknown-outcome"),
         Error::Verification => aurora_i18n::tr!("import-unverified"),
@@ -193,24 +234,28 @@ pub fn show(
     let busy = imports.busy() || imports.confirm;
     let old_permissions = prefs.clone();
     let window_id = egui::Id::new("asset_imports_v3");
+    if imports.demo_started {
+        // Keep the requested demo inspector above other scripted floaters.
+        ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, window_id));
+    }
     let mesh_layout = imports.choice == Choice::Mesh
         || (imports.choice == Choice::Local && prefs.local_meshes)
         || imports
             .active
             .and_then(|id| imports.entries.iter().find(|e| e.id == id))
             .is_some_and(|e| matches!(e.source, Some(Source::Mesh(_))));
-    let material_layout = imports.choice == Choice::Material
+    let wide_layout = matches!(imports.choice, Choice::Material | Choice::Animation)
         || imports
             .active
             .and_then(|id| imports.entries.iter().find(|e| e.id == id))
-            .is_some_and(|e| matches!(e.source, Some(Source::Material { .. })));
+            .is_some_and(|e| matches!(e.source, Some(Source::Material { .. } | Source::Animation { .. })));
     let mut floater = Floater::new(
         "asset_imports_v3",
         aurora_i18n::tr!("import-title"),
         egui::pos2(100.0, 80.0),
         if mesh_layout {
             Vec2::new(1080.0, 740.0)
-        } else if material_layout {
+        } else if wide_layout {
             Vec2::new(980.0, 740.0)
         } else {
             Vec2::new(840.0, 650.0)
@@ -218,39 +263,27 @@ pub fn show(
     );
     floater.min_size = if mesh_layout {
         Vec2::new(980.0, 700.0)
-    } else if material_layout {
+    } else if wide_layout {
         Vec2::new(900.0, 700.0)
     } else {
         Vec2::new(720.0, 500.0)
     };
     floater.show(ctx, p, &mut open, |ui| {
-        ui.horizontal(|ui| {
-            for choice in [
-                Choice::Texture,
-                Choice::Sound,
-                Choice::Animation,
-                Choice::Material,
-                Choice::Mesh,
-                Choice::Bulk,
-                Choice::Local,
-            ] {
-                if ui
-                    .add_enabled(!busy, egui::Button::new(choice.label()).selected(imports.choice == choice))
-                    .clicked()
-                {
-                    imports.open(choice);
-                }
-            }
-        });
-        ui.separator();
-        if imports.choice == Choice::Animation
-            || imports
-                .active
-                .and_then(|id| imports.entries.iter().find(|entry| entry.id == id))
-                .is_some_and(|entry| matches!(entry.source, Some(Source::Animation { .. })))
-        {
-            checkbox(ui, p, &mut prefs.preview_on_avatar, aurora_i18n::tr!("import-preview-own-avatar"));
+        let choices = [
+            Choice::Texture,
+            Choice::Sound,
+            Choice::Animation,
+            Choice::Material,
+            Choice::Mesh,
+            Choice::Bulk,
+            Choice::Local,
+        ];
+        let mut selected = choices.iter().position(|choice| *choice == imports.choice).unwrap_or(0);
+        let labels = choices.map(|choice| (choice.label(), !busy));
+        if widgets::tabs(ui, p, &mut selected, &labels) {
+            imports.open(choices[selected]);
         }
+        ui.separator();
         if imports.choice == Choice::Local {
             ui.horizontal_wrapped(|ui| {
                 checkbox(ui, p, &mut prefs.local_meshes, aurora_i18n::tr!("import-local-mesh-files"));
@@ -468,7 +501,14 @@ pub fn show(
                                                 })
                                                 .response
                                                 .on_hover_text(aurora_i18n::tr!("import-animation-base-help"));
-                                                animation_transport(ui, p, entry.id, &mut entry.player, animation, &mut actions);
+                                                actions.extend(animation_transport(
+                                                    ui,
+                                                    p,
+                                                    entry.id,
+                                                    &mut entry.player,
+                                                    animation,
+                                                    &mut prefs.preview_on_avatar,
+                                                ));
                                                 if let Some(model) = &entry.model {
                                                     aurora_render::preview::paint_with_pose(
                                                         ui,
@@ -603,7 +643,12 @@ pub fn show(
             });
         }
         if !imports.message.is_empty() {
-            ui.label(RichText::new(&imports.message).color(p.danger));
+            egui::ScrollArea::vertical()
+                .id_salt("import_error_details")
+                .max_height(100.0)
+                .show(ui, |ui| {
+                    ui.label(RichText::new(&imports.message).color(p.danger));
+                });
         }
         if prefs.show_payment && imports.spent > 0 {
             ui.label(RichText::new(aurora_i18n::tr!("import-paid", cost = imports.spent)).color(p.success));
@@ -932,9 +977,10 @@ fn animation_transport(
     id: Uuid,
     player: &mut super::animation::Player,
     animation: &Animation,
-    actions: &mut Vec<Action>,
-) -> f32 {
-    ui.horizontal(|ui| {
+    preview_on_avatar: &mut bool,
+) -> Vec<Action> {
+    let mut actions = Vec::new();
+    ui.horizontal_wrapped(|ui| {
         if flat_button(ui, p, aurora_i18n::tr!("common-play")).clicked() {
             actions.push(Action::Play(id, true));
         }
@@ -949,6 +995,8 @@ fn animation_transport(
         if flat_button(ui, p, aurora_i18n::tr!("import-reload")).clicked() {
             actions.push(Action::Reload(id));
         }
+        ui.add_space(8.0);
+        checkbox(ui, p, preview_on_avatar, aurora_i18n::tr!("import-preview-own-avatar"));
     });
     let mut position = animation.local_time(f64::from(player.position)) as f32;
     if ui
@@ -957,7 +1005,7 @@ fn animation_transport(
     {
         player.seek(position);
     }
-    position
+    actions
 }
 
 fn animation_controls(ui: &mut egui::Ui, p: &Palette, animation: &mut Animation, bvh: Option<&BvhInfo>, joint_count: usize) {

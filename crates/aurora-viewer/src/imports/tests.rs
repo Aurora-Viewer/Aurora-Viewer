@@ -7,6 +7,72 @@ pub(super) fn mesh_fixture() -> mesh::Draft {
 }
 
 #[test]
+fn mesh_edits_keep_the_last_preview_debounce_new_jobs_and_replace_only_the_current_generation() {
+    let mut entry = Entry::new("mesh.dae".into(), Ok(Source::Mesh(Box::new(mesh_fixture()))), Default::default());
+    let model = Arc::new(aurora_render::preview::Model {
+        parts: Vec::new(),
+        center: glam::Vec3::ZERO,
+        radius: 1.0,
+    });
+    entry.model = Some(model.clone());
+    entry.model_generation = Some(0);
+    entry.invalidate_preview();
+    entry.preview_not_before = Some(std::time::Instant::now() + std::time::Duration::from_secs(60));
+    assert!(Arc::ptr_eq(entry.model.as_ref().expect("previous model visible"), &model));
+    let id = entry.id;
+    let mut imports = Imports {
+        entries: vec![entry],
+        ..Default::default()
+    };
+    let avatars = Arc::new(crate::scene::avatar::AvatarLibrary::load());
+    let world = crate::world::World::new(avatars.clone());
+    let (jobs, _results) = crate::scene::jobs::Jobs::new();
+    let ctx = egui::Context::default();
+    imports.request_model(id, &jobs, &ctx, avatars);
+    assert!(!imports.entries[0].preview_pending, "editing has not settled: no worker started");
+    let replacement = Arc::new(aurora_render::preview::Model {
+        parts: Vec::new(),
+        center: glam::Vec3::ONE,
+        radius: 2.0,
+    });
+    let obsolete = Arc::new(aurora_render::preview::Model {
+        parts: Vec::new(),
+        center: glam::Vec3::ONE,
+        radius: 9.0,
+    });
+    imports.tx.send(Worker::Model(id, 0, obsolete, None)).expect("obsolete result");
+    imports.poll(&ctx, &jobs, &world, &Default::default());
+    assert!(Arc::ptr_eq(
+        imports.entries[0].model.as_ref().expect("previous model retained"),
+        &model
+    ));
+    imports
+        .tx
+        .send(Worker::Model(id, 1, replacement.clone(), None))
+        .expect("current result");
+    imports.poll(&ctx, &jobs, &world, &Default::default());
+    assert!(Arc::ptr_eq(imports.entries[0].model.as_ref().expect("replacement"), &replacement));
+    assert_eq!(imports.entries[0].model_generation, Some(1));
+    assert!(imports.entries[0].preview_not_before.is_none());
+    imports.entries[0].preview_pending = true;
+    imports.entries[0].preview_not_before = Some(std::time::Instant::now());
+    imports
+        .tx
+        .send(Worker::PreviewFailed(id, 1, "invalid physics".into()))
+        .expect("preparation failure");
+    imports.poll(&ctx, &jobs, &world, &Default::default());
+    assert!(!imports.entries[0].preview_pending);
+    assert!(
+        imports.entries[0].preview_not_before.is_none(),
+        "failed work must stop the loading indicator"
+    );
+    assert!(Arc::ptr_eq(
+        imports.entries[0].model.as_ref().expect("previous model retained after failure"),
+        &replacement
+    ));
+}
+
+#[test]
 fn avatar_preview_preference_round_trips_on_and_off_and_defaults_off() {
     assert!(!serde_json::from_str::<Preferences>("{}").expect("old settings").preview_on_avatar);
     for enabled in [true, false] {

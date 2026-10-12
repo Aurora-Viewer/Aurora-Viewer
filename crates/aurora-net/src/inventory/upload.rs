@@ -1,6 +1,6 @@
 //! LLResourceUploadInfo::generatePostBody and upload coroutine
 //! (Firestorm indra/newview/llviewerassetupload.cpp, originally LGPL 2.1).
-//! No capability URL or server-provided free text enters diagnostics.
+//! Only bounded error fields enter diagnostics, with URLs and paths removed.
 
 use aurora_llsd::{Llsd, llsd_map};
 use std::time::Duration;
@@ -154,7 +154,65 @@ pub struct Receipt {
     pub cost: i32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Rejection {
+    pub status: Option<u16>,
+    pub identifier: String,
+    pub messages: Vec<String>,
+}
+
+impl Rejection {
+    // LLMeshUploadThread::log_upload_error reads error.message, identifier
+    // and the per-model errors array. Never propagate the full LLSD response.
+    pub(super) fn from_response(status: Option<u16>, value: &Llsd) -> Self {
+        let clean = |text: &str| {
+            text.split_whitespace()
+                .map(|word| {
+                    let token = word.trim_start_matches(['\'', '"', '(', '[']);
+                    if token.contains(":/") || token.contains(":\\") || token.starts_with("\\\\") || token.starts_with('/') {
+                        "…"
+                    } else {
+                        word
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+                .chars()
+                .filter(|c| !c.is_control())
+                .take(512)
+                .collect::<String>()
+        };
+        let error = &value["error"];
+        let mut messages = Vec::new();
+        for message in [error["message"].as_str(), error.as_str(), value["message"].as_str()] {
+            let message = clean(message);
+            if !message.is_empty() && !messages.contains(&message) {
+                messages.push(message);
+            }
+        }
+        if let Llsd::Array(errors) = &error["errors"] {
+            for detail in errors.iter().take(8) {
+                let message = clean(detail["message"].as_str());
+                if !message.is_empty() && !messages.contains(&message) {
+                    messages.push(message);
+                }
+            }
+        }
+        let identifier = error["identifier"].as_str();
+        let identifier = if identifier.len() <= 96 && identifier.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-')) {
+            identifier.to_owned()
+        } else {
+            String::new()
+        };
+        Self {
+            status,
+            identifier,
+            messages,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
     #[error("invalid upload request")]
     Invalid,
@@ -162,10 +220,16 @@ pub enum Error {
     Unavailable,
     #[error("upload refused")]
     Rejected,
+    #[error("mesh upload permission denied")]
+    MeshPermission,
+    #[error("upload refused: {0:?}")]
+    Refused(Rejection),
     #[error("upload response invalid")]
     Response,
     #[error("upload outcome unknown; check inventory before retrying")]
     Unknown,
+    #[error("upload outcome unknown: {0:?}; check inventory before retrying")]
+    Uncertain(Rejection),
     #[error("uploaded, but inventory could not be verified; reload inventory")]
     Verification,
     #[error("price changed; request a new confirmation")]
@@ -184,6 +248,28 @@ pub(super) async fn reply(mut response: reqwest::Response) -> Result<Llsd, Error
         bytes.extend_from_slice(&chunk);
     }
     aurora_llsd::from_xml(&bytes).map_err(|_| Error::Response)
+}
+
+pub(super) async fn mesh_reply(mut response: reqwest::Response) -> Result<Llsd, Error> {
+    let status = (!response.status().is_success()).then_some(response.status().as_u16());
+    let fallback = || Error::Refused(Rejection::from_response(status, &Llsd::Undef));
+    let mut bytes = Vec::new();
+    loop {
+        let chunk = response
+            .chunk()
+            .await
+            .map_err(|_| if status.is_some() { fallback() } else { Error::Unknown })?;
+        let Some(chunk) = chunk else { break };
+        if bytes.len() + chunk.len() > 64 * 1024 {
+            return Err(if status.is_some() { fallback() } else { Error::Response });
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    let parsed = aurora_llsd::from_xml(&bytes);
+    if status.is_some() {
+        return Err(Error::Refused(Rejection::from_response(status, &parsed.unwrap_or(Llsd::Undef))));
+    }
+    parsed.map_err(|_| Error::Response)
 }
 
 pub(super) async fn reread(http: &reqwest::Client, fetch: &str, owner: Uuid, id: Uuid) -> Result<Llsd, Error> {

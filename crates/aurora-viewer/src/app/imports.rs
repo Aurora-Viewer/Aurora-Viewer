@@ -407,7 +407,7 @@ impl App {
             .iter()
             .filter(|e| {
                 self.imports.active == Some(e.id)
-                    && e.model.is_none()
+                    && (e.model.is_none() || e.model_generation != Some(e.preview_generation))
                     && (!e.preview_pending || e.preview_job_generation != e.preview_generation)
                     && e.preview_error.is_none()
                     && (matches!(e.source, Some(Source::Material { .. } | Source::Mesh(_) | Source::Animation { .. }))

@@ -555,6 +555,12 @@ impl Imports {
         let Some(entry) = self.entries.iter().find(|e| e.id == id) else {
             return;
         };
+        if let Some(deadline) = entry.preview_not_before
+            && let Some(delay) = deadline.checked_duration_since(std::time::Instant::now())
+        {
+            ctx.request_repaint_after(delay);
+            return;
+        }
         let Some(mut source) = entry.source.clone() else {
             return;
         };

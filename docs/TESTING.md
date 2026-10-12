@@ -583,7 +583,7 @@ grille.
 
 ### Détails
 
-- **`AURORA_DEMO_IMPORTS=texture|destination|material|mesh|mesh-low|mesh-physics|mesh-degenerate|mesh-options|animation|animation-own|sound|bulk|bulk-upload|local|local-mesh|local-mesh-applied`** :
+- **`AURORA_DEMO_IMPORTS=texture|destination|material|mesh|mesh-low|mesh-error|mesh-physics|mesh-degenerate|mesh-options|animation|animation-own|sound|bulk|bulk-upload|local|local-mesh|local-mesh-applied`** :
   écrit des fichiers propres à ce lancement dans `.scratch/import-demo/<uuid>/`
   puis ouvre le parcours choisi : image RGBA, matériau PBR, cube Collada,
   animations BVH / `.anim` et son WAV synthétique. Vérifier les paramètres, les
@@ -600,6 +600,12 @@ grille.
   sélecteur ; annuler conserve le LOD, choisir un fichier valide relance
   l’aperçu même après une erreur précédente. L’option d’aperçu sur notre
   avatar reste identique en changeant d’animation et après redémarrage.
+  Sa case est à droite des commandes Jouer / Arrêter / Pause. Les onglets
+  utilisent le même thème que l’inventaire. Modifier le nombre de triangles
+  conserve le modèle pendant le recalcul et ne déplace pas les contrôles ;
+  le seuil d’erreur porte une unité en pourcentage et une aide au survol.
+  `mesh-error` montre un refus HTTP 400 avec code de validation et
+  explication de la forme physique, sans aucune requête réseau.
   `mesh-options` ouvre la troisième section (taille, textures, squelette,
   association des fichiers). Dans la liste des animations, cliquer un fichier
   lance sa lecture, même si on avait déjà joué cette animation.

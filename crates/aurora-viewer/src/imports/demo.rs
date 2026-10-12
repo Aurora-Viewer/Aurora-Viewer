@@ -69,13 +69,20 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
     imports.choice = match mode.as_str() {
         "texture" | "destination" => Choice::Texture,
         "material" => Choice::Material,
-        "mesh" | "mesh-low" | "mesh-physics" | "mesh-degenerate" | "mesh-options" => Choice::Mesh,
+        "mesh" | "mesh-low" | "mesh-error" | "mesh-physics" | "mesh-degenerate" | "mesh-options" => Choice::Mesh,
         "animation" | "animation-own" => Choice::Animation,
         "sound" => Choice::Sound,
         "local" | "local-mesh" | "local-mesh-applied" => Choice::Local,
         _ => Choice::Bulk,
     };
     let choice = imports.choice;
+    if mode == "mesh-error" {
+        imports.message = ui::error(Error::Refused(aurora_net::inventory::upload::Rejection {
+            status: Some(400),
+            identifier: "MAV_FOUND_DEGENERATE_TRIANGLES".into(),
+            messages: vec!["MAV_FOUND_DEGENERATE_TRIANGLES".into()],
+        }));
+    }
     let local_mesh = mode.starts_with("local-mesh");
     imports.load_preferences.local_meshes = local_mesh;
     let prefs = imports.load_preferences.clone();

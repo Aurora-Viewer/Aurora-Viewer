@@ -269,6 +269,8 @@ pub struct Entry {
     pub options: import_texture::Options,
     pub preview: Option<egui::TextureHandle>,
     pub preview_generation: u64,
+    pub model_generation: Option<u64>,
+    pub preview_not_before: Option<std::time::Instant>,
     pub preview_pending: bool,
     pub reloading: bool,
     pub preview_job_generation: u64,
@@ -304,7 +306,8 @@ pub enum Status {
 impl Entry {
     pub fn invalidate_preview(&mut self) -> Option<String> {
         self.preview_generation += 1;
-        self.model = None;
+        // Keep the last model on screen while a worker prepares its replacement.
+        self.preview_not_before = Some(std::time::Instant::now() + std::time::Duration::from_millis(120));
         self.preview_error.take()
     }
 
@@ -325,6 +328,8 @@ impl Entry {
             options,
             preview: None,
             preview_generation: 0,
+            model_generation: None,
+            preview_not_before: None,
             preview_pending: false,
             reloading: false,
             preview_job_generation: 0,
@@ -791,6 +796,8 @@ impl Imports {
                     if let Some(entry) = self.entries.iter_mut().find(|e| e.id == id && e.preview_generation == generation) {
                         entry.preview_pending = false;
                         entry.model = Some(model);
+                        entry.model_generation = Some(generation);
+                        entry.preview_not_before = None;
                         if let Some(Source::Mesh(draft)) = &mut entry.source
                             && draft.prepared.is_none()
                         {
@@ -801,6 +808,7 @@ impl Imports {
                 Worker::PreviewFailed(id, generation, error) => {
                     if let Some(entry) = self.entries.iter_mut().find(|e| e.id == id && e.preview_generation == generation) {
                         entry.preview_pending = false;
+                        entry.preview_not_before = None;
                         entry.preview_error = Some(error.clone());
                         self.message = error;
                     }

@@ -62,6 +62,60 @@ pub fn degenerate([a, b, c]: [Vec3; 3]) -> bool {
     ab.cross(ac).length_squared() < tolerance || (b - a).cross(b - c).length_squared() < tolerance || x * z - ab.dot(cb).powi(2) == 0.0
 }
 
+fn shadow_indices(model: &Model, ranges: &[(u32, u32)], attributes: u8) -> Vec<u32> {
+    let mut shadow = Vec::with_capacity(model.triangles() * 3);
+    for (face, (start, _)) in model.faces.iter().zip(ranges) {
+        let mut welded = std::collections::HashMap::new();
+        for index in &face.indices {
+            let vertex = &face.vertices[*index as usize];
+            let bits = |value: f32| if value == 0.0 { 0 } else { value.to_bits() };
+            let mut key = [0; 8];
+            key[..3].copy_from_slice(&vertex.position.map(bits));
+            if attributes == 2 {
+                key[3..6].copy_from_slice(&vertex.normal.map(bits));
+            }
+            if attributes > 0 {
+                key[6..].copy_from_slice(&vertex.uv.map(bits));
+            }
+            let key = (key, vertex.joints, vertex.weights.map(bits));
+            let representative = *welded.entry(key).or_insert(*start + *index);
+            shadow.push(representative);
+        }
+    }
+    shadow
+}
+
+fn simplify_shadow(indices: &[u32], vertices: &[Vertex], target: usize, error: f32) -> Vec<u32> {
+    // Unused copies at a welded position still look like locked seams to
+    // meshoptimizer. Compact its input, then map back to the original slots.
+    let mut remap = vec![u32::MAX; vertices.len()];
+    let mut original = Vec::new();
+    let mut compact_vertices = Vec::new();
+    let compact_indices = indices
+        .iter()
+        .map(|index| {
+            let mapped = &mut remap[*index as usize];
+            if *mapped == u32::MAX {
+                *mapped = original.len() as u32;
+                original.push(*index);
+                compact_vertices.push(vertices[*index as usize].clone());
+            }
+            *mapped
+        })
+        .collect::<Vec<_>>();
+    meshopt::simplify_decoder(
+        &compact_indices,
+        &compact_vertices,
+        target,
+        error,
+        meshopt::SimplifyOptions::None,
+        None,
+    )
+    .into_iter()
+    .map(|index| original[index as usize])
+    .collect()
+}
+
 pub fn lod(model: &Model, options: LodOptions, cancel: &AtomicBool) -> Result<Model, AssetError> {
     if !options.error.is_finite() || !(0.0..=1.0).contains(&options.error) {
         return Err(AssetError::invalid("LOD error threshold"));
@@ -73,56 +127,43 @@ pub fn lod(model: &Model, options: LodOptions, cancel: &AtomicBool) -> Result<Mo
         // represented by separate vertex ranges. Unlike a per-face budget,
         // this spends triangles where the geometry actually needs them.
         let mut vertices = Vec::new();
-        let mut indices = Vec::new();
         let mut ranges = Vec::new();
         for face in &model.faces {
             face.validate()?;
             let start = vertices.len() as u32;
             ranges.push((start, start + face.vertices.len() as u32));
             vertices.extend_from_slice(&face.vertices);
-            indices.extend(face.indices.iter().map(|i| start + *i));
         }
         if cancel.load(Ordering::Relaxed) {
             return Err(AssetError::invalid("cancelled"));
         }
-        let target = options.triangles.saturating_mul(3).min(indices.len());
+        // Firestorm's FULL pass also welds identical exported corners, in
+        // both triangle and error modes, without relaxing any attributes.
+        let indices = shadow_indices(model, &ranges, 2);
+        let target = if options.error_only {
+            3.min(indices.len())
+        } else {
+            options.triangles.saturating_mul(3).min(indices.len())
+        };
         let mut output = if target == 0 && !options.error_only {
             Vec::new()
         } else {
-            meshopt::simplify_decoder(&indices, &vertices, target, options.error, meshopt::SimplifyOptions::None, None)
+            simplify_shadow(&indices, &vertices, target, options.error)
         };
         // Port of LLModelPreview::genMeshOptimizerLODs (llmodelpreview.cpp,
         // LGPL 2.1): AUTO progressively welds normal/UV seams
         // when precise simplification misses the triangle budget by > 1.8x.
         // Keep each material's vertex range separate so no face changes slots.
         if !options.error_only && target > 0 {
-            for attributes in [2, 1, 0] {
+            for attributes in [1, 0] {
                 if output.len() as f64 <= target as f64 * 1.8 {
                     break;
                 }
                 if cancel.load(Ordering::Relaxed) {
                     return Err(AssetError::invalid("cancelled"));
                 }
-                let mut shadow = Vec::with_capacity(indices.len());
-                for (face, (start, _)) in model.faces.iter().zip(&ranges) {
-                    let mut welded = std::collections::HashMap::new();
-                    for index in &face.indices {
-                        let vertex = &face.vertices[*index as usize];
-                        let bits = |value: f32| if value == 0.0 { 0 } else { value.to_bits() };
-                        let mut key = [0; 8];
-                        key[..3].copy_from_slice(&vertex.position.map(bits));
-                        if attributes == 2 {
-                            key[3..6].copy_from_slice(&vertex.normal.map(bits));
-                        }
-                        if attributes > 0 {
-                            key[6..].copy_from_slice(&vertex.uv.map(bits));
-                        }
-                        let key = (key, vertex.joints, vertex.weights.map(bits));
-                        let representative = *welded.entry(key).or_insert(*start + *index);
-                        shadow.push(representative);
-                    }
-                }
-                let candidate = meshopt::simplify_decoder(&shadow, &vertices, target, options.error, meshopt::SimplifyOptions::None, None);
+                let shadow = shadow_indices(model, &ranges, attributes);
+                let candidate = simplify_shadow(&shadow, &vertices, target, options.error);
                 if !candidate.is_empty() && candidate.len() < output.len() {
                     output = candidate;
                 }
@@ -177,7 +218,11 @@ pub fn lod(model: &Model, options: LodOptions, cancel: &AtomicBool) -> Result<Mo
         if cancel.load(Ordering::Relaxed) {
             return Err(AssetError::invalid("cancelled"));
         }
-        let target = (face.indices.len() / 3 * options.triangles / source_triangles) * 3;
+        let target = if options.error_only {
+            3.min(face.indices.len())
+        } else {
+            (face.indices.len() / 3 * options.triangles / source_triangles) * 3
+        };
         let flags = match options.method {
             Method::Reliable => meshopt::SimplifyOptions::LockBorder,
             Method::Auto | Method::Precise => meshopt::SimplifyOptions::None,

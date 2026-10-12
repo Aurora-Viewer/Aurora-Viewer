@@ -1,6 +1,29 @@
 use super::*;
 
 #[test]
+fn mesh_error_details_are_explained_and_uncertain_transfers_keep_the_inventory_warning() {
+    let rejection = aurora_net::inventory::upload::Rejection {
+        status: Some(400),
+        identifier: "MAV_FOUND_DEGENERATE_TRIANGLES".into(),
+        messages: vec!["MAV_FOUND_DEGENERATE_TRIANGLES".into()],
+    };
+    let refused = error(Error::Refused(rejection.clone()));
+    assert!(refused.contains("400"));
+    assert!(refused.contains(&rejection.identifier));
+    let explanation = aurora_i18n::tr!("import-mesh-error-degenerate");
+    assert_eq!(refused.matches(explanation).count(), 1, "validation reason explained once");
+    let uncertain = error(Error::Uncertain(rejection));
+    assert!(uncertain.starts_with(aurora_i18n::tr!("import-unknown-outcome")));
+    assert!(uncertain.contains(explanation));
+    let missing = error(Error::Refused(aurora_net::inventory::upload::Rejection {
+        status: Some(403),
+        identifier: String::new(),
+        messages: Vec::new(),
+    }));
+    assert!(missing.contains(aurora_i18n::tr!("import-error-no-details")));
+}
+
+#[test]
 fn clicking_an_animation_selects_and_restarts_its_preview() {
     let ctx = egui::Context::default();
     let theme = crate::theme::Theme::default();
@@ -65,9 +88,28 @@ fn clicking_an_animation_selects_and_restarts_its_preview() {
         );
         (output, actions)
     };
-    for _ in 0..3 {
+    for frame_index in 0..3 {
         let (output, actions) = frame(Vec::new(), &mut imports);
         assert!(actions.is_empty());
+        if frame_index == 2 {
+            let location = |label: &str| {
+                output
+                    .shapes
+                    .iter()
+                    .filter_map(|shape| match &shape.shape {
+                        egui::epaint::Shape::Text(text) if text.galley.text() == label => Some(text.pos + text.galley.size() * 0.5),
+                        _ => None,
+                    })
+                    .next_back()
+                    .expect("transport control visible")
+            };
+            let pause = location(aurora_i18n::tr!("import-pause"));
+            let avatar = location(aurora_i18n::tr!("import-preview-own-avatar"));
+            assert!(
+                avatar.x > pause.x && (avatar.y - pause.y).abs() < 2.0,
+                "common avatar option belongs to the playback row"
+            );
+        }
         position = output
             .shapes
             .iter()

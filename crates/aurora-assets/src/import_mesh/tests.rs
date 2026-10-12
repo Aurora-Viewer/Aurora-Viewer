@@ -250,6 +250,31 @@ fn convex_physics_is_bounded_and_cancelled_processing_preserves_the_source() {
 }
 
 #[test]
+fn error_mode_welds_identical_exported_corners_and_respects_the_geometric_threshold() {
+    let mut source = cube();
+    let face = &mut source.faces[0];
+    face.vertices = face.indices.iter().map(|index| face.vertices[*index as usize].clone()).collect();
+    face.indices = (0..face.vertices.len() as u32).collect();
+    let options = process::LodOptions {
+        triangles: 0,
+        error: 0.0,
+        method: process::Method::Auto,
+        crease_angle: None,
+        error_only: true,
+    };
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    let faithful = process::lod(&source, options, &cancel).expect("zero error");
+    let loose = process::lod(&source, process::LodOptions { error: 1.0, ..options }, &cancel).expect("large error");
+    assert_eq!(faithful.triangles(), 12);
+    assert!(
+        loose.triangles() < faithful.triangles(),
+        "the error threshold changes the actual geometry"
+    );
+    assert_eq!(source.faces[0].vertices.len(), 36);
+    assert_eq!(source.triangles(), 12);
+}
+
+#[test]
 fn lod_skin_names_are_remapped_and_unweighted_vertices_use_nearest_source() {
     let mut high = cube();
     high.skin = Some(Skin {

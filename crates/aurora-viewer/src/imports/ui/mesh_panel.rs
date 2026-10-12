@@ -108,7 +108,12 @@ fn preview_controls(ui: &mut egui::Ui, p: &Palette, entry: &mut Entry, prefs: &m
 
 fn preview(ui: &mut egui::Ui, p: &Palette, entry: &mut Entry, prefs: &Preferences, width: f32) {
     let Some(Source::Mesh(draft)) = &entry.source else { return };
-    widgets::section_header(ui, p, "eye", aurora_i18n::tr!("import-preview"));
+    ui.horizontal(|ui| {
+        widgets::section_header(ui, p, "eye", aurora_i18n::tr!("import-preview"));
+        if entry.preview_pending || entry.preview_not_before.is_some() {
+            ui.add(egui::Spinner::new().size(12.0));
+        }
+    });
     entry.view.material = draft.preview_physics.then(|| aurora_render::preview::Material {
         color: linear_color(prefs.preview_physics_fill.unwrap_or_else(|| palette_color(p.teal))),
         alpha_mode: u32::from(prefs.preview_physics_fill.is_some_and(|color| color[3] < 1.0)),
@@ -125,6 +130,12 @@ fn preview(ui: &mut egui::Ui, p: &Palette, entry: &mut Entry, prefs: &Preference
             &mut entry.view,
             Vec2::new(width, 180.0),
         );
+    } else {
+        let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 180.0), egui::Sense::hover());
+        ui.painter().rect_filled(rect, 0.0, p.field);
+        if entry.preview_pending {
+            ui.put(rect, egui::Spinner::new());
+        }
     }
     ui.label(RichText::new(aurora_i18n::tr!("import-preview-camera-help")).small().color(p.muted));
 }
@@ -173,20 +184,16 @@ fn mesh_controls(ui: &mut egui::Ui, p: &Palette, id: Uuid, draft: &mut mesh::Dra
         .data_mut(|d| d.get_temp::<usize>(section_id))
         .unwrap_or(usize::from(draft.preview_physics))
         .min(2);
-    ui.horizontal(|ui| {
-        for (index, label) in [
-            aurora_i18n::tr!("import-mesh-section-lods"),
-            aurora_i18n::tr!("import-mesh-section-physics"),
-            aurora_i18n::tr!("import-mesh-section-upload"),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            if widgets::underlined_button(ui, p, label, section == index).clicked() {
-                section = index;
-            }
-        }
-    });
+    widgets::tabs(
+        ui,
+        p,
+        &mut section,
+        &[
+            (aurora_i18n::tr!("import-mesh-section-lods"), true),
+            (aurora_i18n::tr!("import-mesh-section-physics"), true),
+            (aurora_i18n::tr!("import-mesh-section-upload"), true),
+        ],
+    );
     ui.ctx().data_mut(|d| d.insert_temp(section_id, section));
     if draft.pending.is_some() {
         ui.horizontal(|ui| {
@@ -290,12 +297,21 @@ fn mesh_controls(ui: &mut egui::Ui, p: &Palette, id: Uuid, draft: &mut mesh::Dra
                                         |ui| source_path(ui, p, lod.path.as_deref()),
                                     );
                                 } else if lod.source != mesh::LodSource::Above {
-                                    changed |= checkbox(ui, p, &mut lod.error_mode, aurora_i18n::tr!("import-error-threshold")).changed();
+                                    changed |= checkbox(ui, p, &mut lod.error_mode, aurora_i18n::tr!("import-error-threshold"))
+                                        .on_hover_text(aurora_i18n::tr!("import-error-threshold-help"))
+                                        .changed();
                                     if !lod.error_mode {
                                         ui.label(aurora_i18n::tr!("import-triangle-target"));
                                     }
                                     changed |= if lod.error_mode {
-                                        ui.add(egui::DragValue::new(&mut lod.error).range(0.0..=1.0).speed(0.001)).changed()
+                                        let mut percent = lod.error * 100.0;
+                                        let response = ui
+                                            .add(egui::DragValue::new(&mut percent).range(0.0..=100.0).speed(0.01).suffix(" %"))
+                                            .on_hover_text(aurora_i18n::tr!("import-error-threshold-help"));
+                                        if response.changed() {
+                                            lod.error = percent * 0.01;
+                                        }
+                                        response.changed()
                                     } else {
                                         ui.add(egui::DragValue::new(&mut lod.triangles).range(0..=triangles)).changed()
                                     };
@@ -517,6 +533,52 @@ fn load_settings(ui: &mut egui::Ui, p: &Palette, prefs: &mut Preferences) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mesh_controls_stay_in_place_with_a_model_during_a_recalculation_and_without_a_model() {
+        let ctx = egui::Context::default();
+        let theme = crate::theme::Theme::default();
+        theme.apply(&ctx, 1.0);
+        let mut entry = Entry::new(
+            "mesh.dae".into(),
+            Ok(Source::Mesh(Box::new(crate::imports::tests::mesh_fixture()))),
+            Default::default(),
+        );
+        entry.model = Some(Arc::new(aurora_render::preview::Model {
+            parts: Vec::new(),
+            center: glam::Vec3::ZERO,
+            radius: 1.0,
+        }));
+        let mut prefs = Preferences::default();
+        let mut frame = |entry: &mut Entry| {
+            let output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1280.0, 900.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    ui.set_width(1000.0);
+                    show(ui, &theme.palette(), entry, &mut prefs, &mut Vec::new(), |_, _| {});
+                },
+            );
+            text_position(&output, &aurora_i18n::tr!("import-lod-level", level = lod_label(3)), false).y
+        };
+        let mut original = 0.0;
+        for _ in 0..3 {
+            original = frame(&mut entry);
+        }
+        entry.invalidate_preview();
+        entry.preview_pending = true;
+        assert!(
+            (frame(&mut entry) - original).abs() < 0.1,
+            "recalculation must retain the preview's height"
+        );
+        entry.model = None;
+        assert!(
+            (frame(&mut entry) - original).abs() < 0.1,
+            "initial loading reserves the same height"
+        );
+    }
 
     fn text_position(output: &egui::FullOutput, label: &str, last: bool) -> egui::Pos2 {
         let positions: Vec<_> = output

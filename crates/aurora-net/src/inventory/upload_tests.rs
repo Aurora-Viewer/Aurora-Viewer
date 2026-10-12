@@ -64,6 +64,68 @@ fn request() -> Request {
         data: vec![1, 2, 3, 4],
     }
 }
+
+fn mesh_request() -> crate::inventory::mesh_upload::Request {
+    crate::inventory::mesh_upload::Request {
+        folder: Uuid::from_u128(1),
+        texture_folder: Uuid::from_u128(5),
+        query: std::sync::Arc::new(vec![1]),
+        resources: std::sync::Arc::new(vec![1]),
+    }
+}
+
+#[tokio::test]
+async fn mesh_fee_errors_keep_http_and_validation_reasons_without_private_response_fields() {
+    use crate::inventory::mesh_upload as mesh;
+    for status in [200, 400] {
+        let (base, task) = server(|base| vec![
+            (200, llsd_map! {"mesh_upload_status"=>"valid"}),
+            (status, llsd_map! {"state"=>"error", "uploader"=>format!("{base}/secret-uploader"), "error"=>llsd_map! {
+                "identifier"=>"MAV_FOUND_DEGENERATE_TRIANGLES", "message"=>format!("Invalid physics {base}/secret-cap"),
+                "errors"=>Llsd::Array(vec![llsd_map! {"message"=>"Degenerate triangles"},llsd_map! {"message"=>"Degenerate triangles"}])
+            }}),
+        ]).await;
+        let error = mesh::quote(&reqwest::Client::new(), &base, &base, &mesh_request())
+            .await
+            .err()
+            .expect("fee rejected");
+        let Error::Refused(reason) = &error else {
+            panic!("reason lost: {error}")
+        };
+        assert_eq!(reason.status, (status == 400).then_some(400));
+        assert_eq!(reason.identifier, "MAV_FOUND_DEGENERATE_TRIANGLES");
+        assert_eq!(reason.messages, ["Invalid physics …", "Degenerate triangles"]);
+        assert!(!format!("{error:?}").contains(&base));
+        assert!(!format!("{error:?}").contains("secret"));
+        assert_eq!(task.await.expect("server").len(), 2);
+    }
+}
+
+#[tokio::test]
+async fn failed_mesh_transfer_preserves_the_reason_and_an_uncertain_outcome_without_retrying() {
+    let (base, task) = server(|_| vec![(500, llsd_map! {"error"=>llsd_map! {"message"=>"Mesh processing unavailable"}})]).await;
+    let error = crate::inventory::mesh_upload::upload(&reqwest::Client::new(), base.clone(), &base, Uuid::nil(), 10, mesh_request())
+        .await
+        .expect_err("uncertain outcome");
+    let Error::Uncertain(reason) = error else {
+        panic!("outcome warning lost")
+    };
+    assert_eq!(reason.status, Some(500));
+    assert_eq!(reason.messages, ["Mesh processing unavailable"]);
+    assert_eq!(task.await.expect("server").len(), 1);
+}
+
+#[test]
+fn server_rejection_fields_are_bounded_and_paths_and_control_characters_are_removed() {
+    let value = llsd_map! {"error"=>llsd_map! {"identifier"=>"https://secret.invalid/token", "message"=>"Invalid G:\\private\\file.dae \u{1b}geometry",
+    "errors"=>Llsd::Array((0..20).map(|n| llsd_map! {"message"=>format!("{n}:{}", "é".repeat(800))}).collect())}};
+    let reason = Rejection::from_response(Some(400), &value);
+    assert!(reason.identifier.is_empty());
+    assert_eq!(reason.messages[0], "Invalid … geometry");
+    assert_eq!(reason.messages.len(), 9);
+    assert!(reason.messages.iter().all(|message| message.chars().count() <= 512));
+    assert!(!format!("{reason:?}").contains("private"));
+}
 fn item(asset_type: i32, inventory_type: i32, asset: Uuid) -> Llsd {
     llsd_map! { "items"=>Llsd::Array(vec![llsd_map! { "item_id"=>Uuid::from_u128(2),"parent_id"=>Uuid::from_u128(1),
     "asset_id"=>asset,"type"=>asset_type,"inv_type"=>inventory_type,"permissions"=>llsd_map! { "owner_id"=>Uuid::from_u128(4),"next_owner_mask"=>123 } }]) }
@@ -191,7 +253,7 @@ async fn mesh_refuses_unqualified_accounts_without_a_fee_query() {
     };
     assert_eq!(
         mesh::quote(&reqwest::Client::new(), &base, &base, &upload).await.err(),
-        Some(Error::Rejected)
+        Some(Error::MeshPermission)
     );
     assert_eq!(task.await.expect("server").len(), 1);
 }

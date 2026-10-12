@@ -3,7 +3,7 @@
 //! token. Prepared LLSD is serialized by a worker, not by the frame thread.
 
 use super::{
-    upload::{Error, Receipt, reply},
+    upload::{Error, Receipt, Rejection, mesh_reply},
     *,
 };
 use std::{sync::Arc, time::Duration};
@@ -87,9 +87,9 @@ pub(crate) async fn quote(http: &reqwest::Client, cap: &str, permission: &str, r
         .send()
         .await
         .map_err(|_| Error::Unavailable)?;
-    let access = reply(access).await?;
+    let access = mesh_reply(access).await?;
     if !matches!(access["mesh_upload_status"].as_str(), "" | "valid") {
-        return Err(Error::Rejected);
+        return Err(Error::MeshPermission);
     }
     let response = http
         .post(cap)
@@ -100,14 +100,14 @@ pub(crate) async fn quote(http: &reqwest::Client, cap: &str, permission: &str, r
         .send()
         .await
         .map_err(|_| Error::Unavailable)?;
-    let response = reply(response).await?;
+    let response = mesh_reply(response).await?;
+    if response["state"].as_str() != "upload" || response["uploader"].as_str().is_empty() {
+        return Err(Error::Refused(Rejection::from_response(None, &response)));
+    }
     let cost = match &response["upload_price"] {
         Llsd::Integer(n) if *n >= 0 => *n,
         _ => return Err(Error::Response),
     };
-    if response["state"].as_str() != "upload" || response["uploader"].as_str().is_empty() {
-        return Err(Error::Rejected);
-    }
     Ok(Offer {
         uploader: response["uploader"].as_str().to_owned(),
         cost,
@@ -133,11 +133,14 @@ pub(crate) async fn upload(
         .send()
         .await
         .map_err(|_| Error::Unknown)?;
-    let response = reply(response).await.map_err(|_| Error::Unknown)?;
+    let response = mesh_reply(response).await.map_err(|error| match error {
+        Error::Refused(reason) => Error::Uncertain(reason),
+        _ => Error::Unknown,
+    })?;
     let id = response["new_inventory_item"].as_uuid();
     let asset = response["new_asset"].as_uuid();
     if response["state"].as_str() != "complete" || id.is_nil() || asset.is_nil() {
-        return Err(Error::Unknown);
+        return Err(Error::Uncertain(Rejection::from_response(None, &response)));
     }
     let reread = super::upload::reread(http, fetch, owner, id).await?;
     let item = parse_items_response(&reread)
