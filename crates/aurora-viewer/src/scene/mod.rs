@@ -2862,8 +2862,9 @@ impl Scene {
             let (lm_ready, lm_wait, lm_unknown) = self.legacy_mats.counts();
             let (gm_ready, gm_wait, gm_missing) = self.materials.counts();
             let (binds_used, binds_len) = self.skin_binds.counts();
+            let pages = renderer.textures.pages_made();
             log::info!(
-                "streaming: {} objects, meshes {ready} ready / {fetching} downloading / {failed} failed, skin bindings {binds_used} used of {binds_len}, textures {}/{} ({} downloading, {} failing, uploads {} staged / {} direct), legacy materials {lm_ready} ready / {lm_wait} pending / {lm_unknown} unknown, glTF materials {gm_ready} ready / {gm_wait} pending / {gm_missing} missing, viewer asset cap {}",
+                "streaming: {} objects, meshes {ready} ready / {fetching} downloading / {failed} failed, skin bindings {binds_used} used of {binds_len}, textures {}/{} ({} downloading, {} failing, uploads {} staged / {} direct, pages {} by the page thread / {} by the main thread), legacy materials {lm_ready} ready / {lm_wait} pending / {lm_unknown} unknown, glTF materials {gm_ready} ready / {gm_wait} pending / {gm_missing} missing, viewer asset cap {}",
                 world.objects.len(),
                 t.loaded,
                 t.total,
@@ -2871,6 +2872,8 @@ impl Scene {
                 t.failing,
                 t.uploads_staged,
                 t.uploads_direct,
+                pages.threaded,
+                pages.inline,
                 if va.is_some() { "ok" } else { "MISSING" }
             );
             // textures in use that never loaded (they show the placeholder)

@@ -532,8 +532,10 @@ grille.
   complète 1,5 s plus tard.
   - Le journal donne la fin du chargement (`demo stream: fully loaded in
     … s`, avec les envois préparés par les tâches / écrits par le thread
-    principal) ; avec `AURORA_PROFILE=1`, lire `stream`, `results` et les
-    parties `s_*` dans `max:`.
+    principal, et les pages de textures créées par le thread des pages /
+    par le thread principal, avec leur durée) ; avec `AURORA_PROFILE=1`,
+    lire `stream`, `results` et les parties `s_*` dans `max:` (`s_pages` :
+    les pages créées par le thread principal).
   - Avec `,leave`, la région est quittée une seconde après le chargement,
     comme par une téléportation : tous les objets sont retirés d'un coup et
     leur texture, qui contient alors les données téléchargées de la taille
