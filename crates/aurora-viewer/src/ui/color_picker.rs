@@ -111,7 +111,7 @@ impl ColorPicker {
         let mut canceled = false;
         let mut open = true;
         let screen = ctx.content_rect();
-        let size = Vec2::new((screen.width() - 32.0).clamp(360.0, 500.0), 440.0);
+        let size = Vec2::new((screen.width() - 32.0).clamp(360.0, 460.0), 420.0);
         Floater::new(
             "build_color_picker",
             aurora_i18n::tr!("color-picker-title"),
@@ -123,15 +123,15 @@ impl ColorPicker {
         .framed_header("palette")
         .help(aurora_i18n::tr!("color-picker-help"))
         .show(ctx, p, &mut open, |ui| {
-            egui::Frame::new().inner_margin(12).show(ui, |ui| {
-                ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
+            egui::Frame::new().inner_margin(10).show(ui, |ui| {
+                ui.spacing_mut().item_spacing = Vec2::new(6.0, 4.0);
                 ui.horizontal_top(|ui| {
                     ui.vertical(|ui| {
-                        ui.set_width(162.0);
-                        ui.set_min_height(245.0);
+                        ui.set_width(160.0);
+                        ui.set_min_height(220.0);
                         edited |= self.fields(ui, p, &mut draft);
                     });
-                    ui.add_space(4.0);
+                    ui.add_space(2.0);
                     edited |= self.canvas(ui, p, &mut draft);
                 });
                 ui.add_space(2.0);
@@ -146,7 +146,7 @@ impl ColorPicker {
                     } else {
                         egui::Button::new(label)
                     };
-                    let pipette = ui.add(button.selected(self.pipette).min_size(Vec2::new(92.0, 28.0)));
+                    let pipette = ui.add(button.selected(self.pipette).min_size(Vec2::new(88.0, 26.0)));
                     self.record(Control::Pipette, pipette.rect);
                     if pipette.on_hover_text(aurora_i18n::tr!("color-picker-pipette-hint")).clicked() {
                         self.pipette = !self.pipette;
@@ -167,7 +167,7 @@ impl ColorPicker {
                     &self.notice
                 };
                 ui.add_sized(
-                    [ui.available_width(), 18.0],
+                    [ui.available_width(), 16.0],
                     egui::Label::new(RichText::new(status).size(11.0).color(p.muted)),
                 );
                 ui.separator();
@@ -176,11 +176,11 @@ impl ColorPicker {
                     self.record(Control::Apply, apply.rect);
                     apply.on_hover_text(aurora_i18n::tr!("color-picker-apply-hint"));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let cancel = widgets::flat_button_sized(ui, p, aurora_i18n::tr!("common-cancel"), Vec2::new(86.0, 30.0));
+                        let cancel = widgets::flat_button_sized(ui, p, aurora_i18n::tr!("common-cancel"), Vec2::new(80.0, 28.0));
                         self.record(Control::Cancel, cancel.rect);
                         canceled = cancel.clicked();
                         ui.add_enabled_ui(parse_hex(&draft.hex).is_some(), |ui| {
-                            let ok = widgets::primary_button_sized(ui, p, aurora_i18n::tr!("color-picker-ok"), Vec2::new(72.0, 30.0));
+                            let ok = widgets::primary_button_sized(ui, p, aurora_i18n::tr!("color-picker-ok"), Vec2::new(68.0, 28.0));
                             self.record(Control::Accept, ok.rect);
                             accepted = ok.clicked();
                         });
@@ -230,25 +230,36 @@ impl ColorPicker {
         let mut edited = false;
         if draft.mode == 2 {
             ui.label(RichText::new(aurora_i18n::tr!("color-picker-hex-label")).size(12.0).color(p.muted));
-            let field = ui.add(
-                egui::TextEdit::singleline(&mut draft.hex)
-                    .font(egui::TextStyle::Monospace)
-                    .desired_width(136.0)
-                    .char_limit(7),
-            );
+            let field = ui
+                .horizontal(|ui| {
+                    ui.add_sized([14.0, 23.0], egui::Label::new(RichText::new("#").monospace().color(p.muted)));
+                    ui.add_sized(
+                        [120.0, 23.0],
+                        egui::TextEdit::singleline(&mut draft.hex)
+                            .font(egui::TextStyle::Monospace)
+                            .vertical_align(egui::Align::Center)
+                            .desired_width(120.0)
+                            .char_limit(7),
+                    )
+                })
+                .inner;
             self.record(Control::Hex, field.rect);
-            if field.changed()
-                && let Some(rgb) = parse_hex(&draft.hex)
-            {
-                // Keep the field's text/caret while the user types.
-                let text = draft.hex.clone();
-                edited |= draft.set_rgb(rgb);
-                draft.hex = text;
+            if field.changed() {
+                // The prefix is drawn separately, including for pasted #RRGGBB.
+                if draft.hex.starts_with('#') {
+                    draft.hex.remove(0);
+                }
+                if let Some(rgb) = parse_hex(&draft.hex) {
+                    // Keep the field's text/caret while the user types.
+                    let text = draft.hex.clone();
+                    edited |= draft.set_rgb(rgb);
+                    draft.hex = text;
+                }
             }
             if parse_hex(&draft.hex).is_none() {
                 ui.label(RichText::new(aurora_i18n::tr!("color-picker-invalid-hex")).size(11.0).color(p.warn));
             }
-            ui.add_space(39.0);
+            ui.add_space(32.0);
         } else {
             let lsl = draft.mode == 1;
             let mut rgb = if lsl { draft.rgb } else { draft.rgb.map(|v| v * 255.0) };
@@ -262,7 +273,7 @@ impl ColorPicker {
             .enumerate()
             {
                 ui.horizontal(|ui| {
-                    ui.add_sized([78.0, 26.0], egui::Label::new(RichText::new(label).size(12.0).color(p.muted)));
+                    ui.add_sized([78.0, 23.0], egui::Label::new(RichText::new(label).size(12.0).color(p.muted)));
                     let response = number(
                         ui,
                         &mut rgb[i],
@@ -291,7 +302,7 @@ impl ColorPicker {
         .enumerate()
         {
             ui.horizontal(|ui| {
-                ui.add_sized([78.0, 26.0], egui::Label::new(RichText::new(label).size(12.0).color(p.muted)));
+                ui.add_sized([78.0, 23.0], egui::Label::new(RichText::new(label).size(12.0).color(p.muted)));
                 let response = number(ui, &mut hsl[i], if i == 0 { 360.0 } else { 100.0 }, 1.0, 1);
                 self.record(Control::Hsl(i), response.rect);
                 changed |= response.changed();
@@ -304,7 +315,7 @@ impl ColorPicker {
     }
 
     fn canvas(&mut self, ui: &mut egui::Ui, p: &Palette, draft: &mut Draft) -> bool {
-        let height = 230.0;
+        let height = 210.0;
         let width = (ui.available_width() - 26.0).max(100.0);
         let (rect, response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::click_and_drag());
         self.record(Control::Grid, rect);
@@ -382,7 +393,7 @@ impl ColorPicker {
             ] {
                 ui.vertical(|ui| {
                     let (rect, response) =
-                        ui.allocate_exact_size(Vec2::new(width, 32.0), if current { Sense::drag() } else { Sense::hover() });
+                        ui.allocate_exact_size(Vec2::new(width, 26.0), if current { Sense::drag() } else { Sense::hover() });
                     if !current && self.mixed {
                         // A mixed selection has no single original swatch.
                         ui.painter().rect_filled(rect, 3.0, p.field);
@@ -413,7 +424,7 @@ impl ColorPicker {
     }
 
     fn palette(&mut self, ui: &mut egui::Ui, p: &Palette, prefs: &mut Preferences, draft: &mut Draft) -> bool {
-        let gap = 4.0;
+        let gap = 3.0;
         let width = (ui.available_width() - gap * 15.0) / 16.0;
         let mut edited = false;
         for row in 0..2 {
@@ -421,7 +432,7 @@ impl ColorPicker {
                 ui.spacing_mut().item_spacing.x = gap;
                 for col in 0..16 {
                     let slot = row * 16 + col;
-                    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 21.0), Sense::click());
+                    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 19.0), Sense::click());
                     self.record(Control::Slot(slot), rect);
                     ui.painter().rect_filled(rect, 2.0, color(prefs.palette[slot]));
                     let dropping = response.dnd_hover_payload::<Rgb>().is_some();
@@ -467,7 +478,7 @@ fn number(ui: &mut egui::Ui, value: &mut f32, max: f32, speed: f32, decimals: us
             1.0
         };
     ui.add_sized(
-        [76.0, 26.0],
+        [76.0, 23.0],
         egui::DragValue::new(value)
             .range(0.0..=max)
             .speed(speed)

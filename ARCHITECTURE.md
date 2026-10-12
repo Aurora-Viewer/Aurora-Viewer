@@ -222,6 +222,8 @@ sont regroupés dans `build/edits.rs` jusqu'au relâchement. `app/color_picker.r
 route la pipette vers `Scene::color_at_ray` : candidats de l'index spatial,
 triangles réels en parallèle et teinte de la face, sans lecture GPU ni effet
 de l'éclairage. Elle ne change pas la sélection.
+`cursors.rs` garde le curseur pipette Phosphor en mémoire, avec la pointe comme
+point de prélèvement et le contour contrasté de la skin, comme le curseur HUD.
 `aurora-render/src/ui_glass.rs` produit un fond dépoli partagé
 par les fenêtres visibles : copie et deux passes de flou sur le GPU, puis
 échantillonnage dans leurs seuls rectangles arrondis. Les ressources sont

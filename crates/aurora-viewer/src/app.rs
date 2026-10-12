@@ -4526,7 +4526,7 @@ impl App {
         }
         if self.build.ui.color_picker.pipette && !ctx.is_pointer_over_egui() {
             full.platform_output.cursor_icon = egui::CursorIcon::Crosshair;
-            full.platform_output.cursor_image = None;
+            full.platform_output.cursor_image = self.cursors.pipette();
         }
         gfx.egui_state
             .handle_platform_output_with_event_loop(&gfx.window, event_loop, full.platform_output);

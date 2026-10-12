@@ -78,7 +78,8 @@ impl UiTest {
 fn real_hex_field_validates_input_and_copy_uses_lsl_decimal_points() {
     let mut t = UiTest::new();
     t.click(Control::Mode(2));
-    assert_eq!(t.text(Control::Hex, "33AA66"), Some(Event::Preview([0.2, 170.0 / 255.0, 0.4])));
+    assert_eq!(t.text(Control::Hex, "#33AA66"), Some(Event::Preview([0.2, 170.0 / 255.0, 0.4])));
+    assert_eq!(t.picker.draft.as_ref().unwrap().hex, "33AA66");
     let (_, output) = t.click(Control::CopyLsl);
     assert!(
         output
