@@ -32,6 +32,7 @@ pub mod menu;
 pub mod minimap;
 pub mod news;
 pub mod notifications;
+pub(crate) mod numeric_drag;
 pub mod object_actions;
 pub mod options;
 pub mod parcel_icons;

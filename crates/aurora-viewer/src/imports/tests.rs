@@ -1,0 +1,360 @@
+use super::*;
+
+pub(super) fn mesh_fixture() -> mesh::Draft {
+    let skeleton = aurora_assets::Skeleton::parse(include_bytes!("../../assets/character/avatar_skeleton.xml")).expect("skeleton");
+    let scene = aurora_assets::import_mesh::collada::parse(demo::DAE.as_bytes(), &skeleton).expect("synthetic mesh");
+    mesh::Draft::new(scene, HashMap::new())
+}
+
+#[test]
+fn mesh_edits_keep_the_last_preview_debounce_new_jobs_and_replace_only_the_current_generation() {
+    let mut entry = Entry::new("mesh.dae".into(), Ok(Source::Mesh(Box::new(mesh_fixture()))), Default::default());
+    let model = Arc::new(aurora_render::preview::Model {
+        parts: Vec::new(),
+        center: glam::Vec3::ZERO,
+        radius: 1.0,
+    });
+    entry.model = Some(model.clone());
+    entry.model_generation = Some(0);
+    entry.invalidate_preview();
+    entry.preview_not_before = Some(std::time::Instant::now() + std::time::Duration::from_secs(60));
+    assert!(Arc::ptr_eq(entry.model.as_ref().expect("previous model visible"), &model));
+    let id = entry.id;
+    let mut imports = Imports {
+        entries: vec![entry],
+        ..Default::default()
+    };
+    let avatars = Arc::new(crate::scene::avatar::AvatarLibrary::load());
+    let world = crate::world::World::new(avatars.clone());
+    let (jobs, _results) = crate::scene::jobs::Jobs::new();
+    let ctx = egui::Context::default();
+    imports.request_model(id, &jobs, &ctx, avatars);
+    assert!(!imports.entries[0].preview_pending, "editing has not settled: no worker started");
+    let replacement = Arc::new(aurora_render::preview::Model {
+        parts: Vec::new(),
+        center: glam::Vec3::ONE,
+        radius: 2.0,
+    });
+    let obsolete = Arc::new(aurora_render::preview::Model {
+        parts: Vec::new(),
+        center: glam::Vec3::ONE,
+        radius: 9.0,
+    });
+    imports.tx.send(Worker::Model(id, 0, obsolete, None)).expect("obsolete result");
+    imports.poll(&ctx, &jobs, &world, &Default::default());
+    assert!(Arc::ptr_eq(
+        imports.entries[0].model.as_ref().expect("previous model retained"),
+        &model
+    ));
+    imports
+        .tx
+        .send(Worker::Model(id, 1, replacement.clone(), None))
+        .expect("current result");
+    imports.poll(&ctx, &jobs, &world, &Default::default());
+    assert!(Arc::ptr_eq(imports.entries[0].model.as_ref().expect("replacement"), &replacement));
+    assert_eq!(imports.entries[0].model_generation, Some(1));
+    assert!(imports.entries[0].preview_not_before.is_none());
+    imports.entries[0].preview_pending = true;
+    imports.entries[0].preview_not_before = Some(std::time::Instant::now());
+    imports
+        .tx
+        .send(Worker::PreviewFailed(id, 1, "invalid physics".into()))
+        .expect("preparation failure");
+    imports.poll(&ctx, &jobs, &world, &Default::default());
+    assert!(!imports.entries[0].preview_pending);
+    assert!(
+        imports.entries[0].preview_not_before.is_none(),
+        "failed work must stop the loading indicator"
+    );
+    assert!(Arc::ptr_eq(
+        imports.entries[0].model.as_ref().expect("previous model retained after failure"),
+        &replacement
+    ));
+}
+
+#[test]
+fn avatar_preview_preference_round_trips_on_and_off_and_defaults_off() {
+    assert!(!serde_json::from_str::<Preferences>("{}").expect("old settings").preview_on_avatar);
+    for enabled in [true, false] {
+        let prefs = Preferences {
+            preview_on_avatar: enabled,
+            ..Default::default()
+        };
+        let stored = serde_json::to_vec(&prefs).expect("save");
+        assert_eq!(
+            serde_json::from_slice::<Preferences>(&stored).expect("reload").preview_on_avatar,
+            enabled
+        );
+    }
+}
+
+#[test]
+fn triangle_budget_ignores_the_inactive_error_threshold_and_reduces_lods() {
+    let mut draft = mesh_fixture();
+    for lod in &mut draft.lods[..3] {
+        lod.error = 0.0;
+    }
+    let prepared = mesh::prepare(&draft).expect("prepare");
+    let high = prepared.lods[0][3].as_ref().expect("high").triangles();
+    assert_eq!(high, 12);
+    for lod in &prepared.lods[0][..3] {
+        assert!(
+            lod.as_ref().expect("generated LOD").triangles() < high,
+            "triangle mode must reduce this closed model even with a saved zero error threshold"
+        );
+    }
+    draft.lods[2].error_mode = true;
+    let by_error = mesh::prepare(&draft).expect("error mode");
+    assert_eq!(by_error.lods[0][2].as_ref().expect("medium").triangles(), high);
+}
+
+#[test]
+fn loading_a_valid_lod_recovers_from_a_previous_preview_failure_and_ignores_stale_errors() {
+    let mut draft = mesh_fixture();
+    draft.lods[2].source = mesh::LodSource::File;
+    let replacement = draft.scene.clone();
+    let mut entry = Entry::new("base.dae".into(), Ok(Source::Mesh(Box::new(draft))), Default::default());
+    let error = "invalid asset data: LOD file missing".to_owned();
+    entry.preview_error = Some(error.clone());
+    let id = entry.id;
+    let mut imports = Imports {
+        entries: vec![entry],
+        message: error.clone(),
+        ..Default::default()
+    };
+    imports
+        .tx
+        .send(Worker::MeshFile(id, 2, Ok((replacement, HashMap::new(), "replacement.dae".into()))))
+        .expect("file result");
+    imports.tx.send(Worker::PreviewFailed(id, 0, error)).expect("stale result");
+    let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    let (jobs, _results) = crate::scene::jobs::Jobs::new();
+    assert!(
+        imports
+            .poll(
+                &egui::Context::default(),
+                &jobs,
+                &world,
+                &crate::ui::inventory::InventoryPreferences::default()
+            )
+            .is_empty()
+    );
+    let entry = &imports.entries[0];
+    assert!(entry.preview_error.is_none());
+    assert!(imports.message.is_empty());
+    assert_eq!(entry.preview_generation, 1);
+    let Some(Source::Mesh(draft)) = &entry.source else { panic!("mesh") };
+    assert!(draft.lods[2].file.is_some());
+    assert!(mesh::prepare(draft).is_ok());
+}
+
+fn prices() -> Prices {
+    Prices {
+        texture: Some(10),
+        large_texture: Some(40),
+        sound: Some(10),
+        animation: Some(10),
+    }
+}
+
+#[test]
+fn mesh_import_factor_obeys_prim_size_and_linkset_span() {
+    use aurora_assets::import_mesh::{Instance, Scene};
+    use glam::{Mat4, Vec3};
+    let instance = |x| Instance {
+        model: 0,
+        name: "Part".into(),
+        materials: Vec::new(),
+        transform: Mat4::from_scale_rotation_translation(Vec3::splat(2.0), glam::Quat::IDENTITY, Vec3::X * x),
+    };
+    let mut draft = mesh::Draft::new(
+        Scene {
+            instances: vec![instance(0.0)],
+            ..Default::default()
+        },
+        HashMap::new(),
+    );
+    draft.options.scale = 2.0;
+    assert_eq!(draft.dimensions_and_limit(), (Vec3::splat(4.0), 32.0));
+    Arc::make_mut(&mut draft.scene).instances.push(instance(239.0));
+    let (dimensions, limit) = draft.dimensions_and_limit();
+    assert_eq!(dimensions, Vec3::new(482.0, 4.0, 4.0));
+    assert!((limit - 240.0 / 241.0).abs() < 0.00001);
+}
+
+#[test]
+fn instance_edits_retire_the_quote_and_keep_prepared_geometry() {
+    let mut draft = mesh::Draft::new(Default::default(), HashMap::new());
+    let prepared = Arc::new(mesh::Prepared {
+        lods: Vec::new(),
+        physics: Vec::new(),
+        hulls: Vec::new(),
+        degenerate_triangles: 0,
+    });
+    draft.prepared = Some(prepared.clone());
+    let token = Uuid::new_v4();
+    draft.quote = Some(aurora_net::inventory::mesh_upload::Quote {
+        token,
+        cost: 10,
+        data: aurora_llsd::Llsd::Undef,
+    });
+    let before = draft.options.clone();
+    draft.options.scale = 0.5;
+    draft.options.pelvis = 0.2;
+    assert!(draft.finish_edit(&before, false));
+    assert!(Arc::ptr_eq(draft.prepared.as_ref().expect("geometry"), &prepared));
+    assert!(draft.quote.is_none());
+    assert_eq!(draft.discarded_quotes, [token]);
+    let before = draft.options.clone();
+    draft.options.normals = true;
+    assert!(draft.finish_edit(&before, false));
+    assert!(draft.prepared.is_none());
+}
+
+#[test]
+fn restoring_a_failed_draft_keeps_material_edits_without_sending_or_clearing_the_warning() {
+    let mut imports = Imports::default();
+    let material = PbrMaterial {
+        roughness_factor: 0.123,
+        base_color_factor: [0.2, 0.4, 0.6, 1.0],
+        ..Default::default()
+    };
+    let mut entry = Entry::new(
+        "material.gltf".into(),
+        Ok(Source::Material {
+            value: material.clone(),
+            images: Box::new([None, None, None, None]),
+        }),
+        Default::default(),
+    );
+    entry.status = Status::Error("Unknown result".into());
+    let id = entry.id;
+    imports.entries.push(entry);
+    imports.message = "Verify inventory before retrying".into();
+    imports.restore_draft(id);
+    let Some(Source::Material { value, .. }) = &imports.entries[0].source else {
+        panic!("material")
+    };
+    assert_eq!(*value, material);
+    assert!(matches!(imports.entries[0].status, Status::Ready));
+    assert!(imports.current.is_none() && imports.queue.is_empty());
+    assert_eq!(imports.message, "Verify inventory before retrying");
+}
+fn image(w: u32, h: u32) -> Arc<DecodedImage> {
+    Arc::new(DecodedImage {
+        width: w,
+        height: h,
+        components: 3,
+        data: vec![128; w as usize * h as usize * 3],
+        discard: 0,
+    })
+}
+#[test]
+fn shared_material_maps_are_charged_once_with_equivalent_effective_encoding() {
+    let pixels = image(4, 4);
+    let map = LocalImage {
+        path: None,
+        key: Uuid::new_v4(),
+        name: "Shared".into(),
+        pixels,
+        asset: None,
+        empty_alpha: false,
+    };
+    let source = Source::Material {
+        value: PbrMaterial::default(),
+        images: Box::new([Some(map), None, None, None]),
+    };
+    let mut imports = Imports {
+        choice: Choice::Material,
+        ..Default::default()
+    };
+    imports
+        .entries
+        .push(Entry::new("a.gltf".into(), Ok(source.clone()), Default::default()));
+    let mut second = Entry::new("b.gltf".into(), Ok(source), Default::default());
+    second.options.max_width = 2048;
+    second.options.max_height = 2048;
+    imports.entries.push(second);
+    assert_eq!(imports.total(&prices()), Some(10));
+    if let Some(Source::Material { images, .. }) = &mut imports.entries[1].source {
+        images[0].as_mut().expect("map").asset = Some(Uuid::new_v4());
+    }
+    imports.entries[0].selected = false;
+    assert_eq!(imports.total(&prices()), Some(0));
+}
+#[test]
+fn bulk_scaling_uses_area_pricing_and_failed_selected_rows_block_payment() {
+    let mut imports = Imports {
+        choice: Choice::Bulk,
+        ..Default::default()
+    };
+    let options = import_texture::Options {
+        max_width: 2048,
+        max_height: 2048,
+        ..Default::default()
+    };
+    imports
+        .entries
+        .push(Entry::new("large.png".into(), Ok(Source::Texture(image(2048, 1024))), options));
+    assert_eq!(imports.total(&prices()), Some(40));
+    imports.scale_bulk_1k = true;
+    assert_eq!(imports.total(&prices()), Some(10));
+    let mut failed = Entry::new("broken.png".into(), Err("Invalid".into()), options);
+    failed.selected = true;
+    imports.entries.push(failed);
+    assert_eq!(imports.total(&prices()), None);
+}
+#[test]
+fn cancelling_future_uploads_retains_the_in_flight_receipt() {
+    let mut imports = Imports::default();
+    let entry = Entry::new("texture.png".into(), Ok(Source::Texture(image(4, 4))), Default::default());
+    let step = Step {
+        key: entry.id,
+        entry: Some(entry.id),
+        kind: Kind::Texture,
+        folder: Uuid::new_v4(),
+        name: entry.name.clone(),
+        description: String::new(),
+        source: entry.source.clone().expect("source"),
+        options: entry.options,
+        cost: 10,
+        permissions: Permissions::default(),
+    };
+    let request = Uuid::new_v4();
+    imports.current = Some((request, step));
+    imports.entries.push(entry);
+    imports.entries[0].status = Status::Uploading;
+    imports.cancel_remaining();
+    let item = aurora_net::inventory::InvItem {
+        id: Uuid::new_v4(),
+        asset_id: Uuid::new_v4(),
+        ..Default::default()
+    };
+    assert!(
+        imports
+            .uploaded(
+                Uuid::new_v4(),
+                Ok(Receipt {
+                    item: item.clone(),
+                    cost: 10
+                })
+            )
+            .is_none()
+    );
+    assert!(imports.current.is_some());
+    assert_eq!(
+        imports
+            .uploaded(
+                request,
+                Ok(Receipt {
+                    item: item.clone(),
+                    cost: 10
+                })
+            )
+            .expect("receipt")
+            .id,
+        item.id
+    );
+    assert!(matches!(imports.entries[0].status, Status::Done(_)));
+    assert_eq!(imports.spent, 10);
+}

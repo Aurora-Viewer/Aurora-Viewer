@@ -497,8 +497,13 @@ fn texture_from_info(model: &Value, info: Option<&Value>) -> (Option<Uuid>, Text
 
 /// Port of `LLGLTFMaterial::setFromModel(model, 0)` on top of tinygltf defaults.
 fn material_from_gltf(model: &Value) -> PbrMaterial {
+    material_from_gltf_at(model, 0)
+}
+
+/// Shared interpretation for an imported glTF material and an asset preview.
+pub fn material_from_gltf_at(model: &Value, index: usize) -> PbrMaterial {
     let mut m = PbrMaterial::default();
-    let Some(mat) = model.get("materials").and_then(|a| a.get(0)) else {
+    let Some(mat) = model.get("materials").and_then(|a| a.get(index)) else {
         return m;
     };
     let pbr = mat.get("pbrMetallicRoughness");
@@ -529,6 +534,73 @@ fn material_from_gltf(model: &Value) -> PbrMaterial {
     m.roughness_factor = json_f32(pbr_get("roughnessFactor"), 1.0).clamp(0.0, 1.0);
     m.double_sided = mat.get("doubleSided").and_then(Value::as_bool).unwrap_or(false);
     m
+}
+
+impl PbrMaterial {
+    /// LLMaterialEditor::getEncodedAsset: full values, without the sentinel
+    /// nudges used by per-face overrides.
+    pub fn encode_asset(&self) -> Result<Vec<u8>, AssetError> {
+        use serde_json::json;
+        let finite = self
+            .base_color_factor
+            .iter()
+            .chain(self.emissive_factor.iter())
+            .chain([self.metallic_factor, self.roughness_factor, self.alpha_cutoff].iter())
+            .all(|v| v.is_finite())
+            && self.transforms.iter().all(|t| {
+                t.offset
+                    .iter()
+                    .chain(t.scale.iter())
+                    .chain([t.rotation].iter())
+                    .all(|v| v.is_finite())
+            });
+        if !finite {
+            return Err(AssetError::invalid("nonfinite material parameter"));
+        }
+        let mut images = Vec::new();
+        let mut textures = Vec::new();
+        let mut slot = |id: Option<Uuid>, transform: TextureTransform| -> Option<Value> {
+            let id = id.filter(|id| !id.is_nil())?;
+            let index = images
+                .iter()
+                .position(|image: &Value| image["uri"] == id.to_string())
+                .unwrap_or_else(|| {
+                    images.push(json!({"uri": id.to_string()}));
+                    textures.push(json!({"source": images.len() - 1}));
+                    images.len() - 1
+                });
+            let mut info = json!({"index": index});
+            if transform != TextureTransform::default() {
+                info["extensions"] = json!({"KHR_texture_transform": {"offset": transform.offset, "scale": transform.scale, "rotation": transform.rotation}});
+            }
+            Some(info)
+        };
+        let base = slot(self.base_color_texture, self.transforms[0]);
+        let normal = slot(self.normal_texture, self.transforms[1]);
+        let mr = slot(self.metallic_roughness_texture, self.transforms[2]);
+        let emissive = slot(self.emissive_texture, self.transforms[3]);
+        let mut pbr = json!({"baseColorFactor": self.base_color_factor, "metallicFactor": self.metallic_factor, "roughnessFactor": self.roughness_factor});
+        if let Some(value) = base {
+            pbr["baseColorTexture"] = value;
+        }
+        if let Some(value) = &mr {
+            pbr["metallicRoughnessTexture"] = value.clone();
+        }
+        let mut mat = json!({"pbrMetallicRoughness": pbr, "emissiveFactor": self.emissive_factor,
+            "alphaMode": match self.alpha_mode { AlphaMode::Opaque => "OPAQUE", AlphaMode::Blend => "BLEND", AlphaMode::Mask => "MASK" },
+            "alphaCutoff": self.alpha_cutoff, "doubleSided": self.double_sided});
+        for (key, value) in [("normalTexture", normal), ("occlusionTexture", mr), ("emissiveTexture", emissive)] {
+            if let Some(value) = value {
+                mat[key] = value;
+            }
+        }
+        let doc = json!({"asset": {"version": "2.0"}, "materials": [mat], "images": images, "textures": textures});
+        let mut bytes = b"<? LLSD/Binary ?>\n".to_vec();
+        bytes.extend(aurora_llsd::to_binary(
+            &aurora_llsd::llsd_map! {"version" => "1.1", "type" => ASSET_TYPE, "data" => doc.to_string()},
+        ));
+        Ok(bytes)
+    }
 }
 
 #[cfg(test)]

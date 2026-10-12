@@ -338,12 +338,19 @@ pub fn toggle(ui: &mut Ui, p: &Palette, icon: &str, label: &str, on: &mut bool) 
 
 /// Entry opening a sub-menu on hover (▸). A disabled sub-menu does not open.
 pub fn submenu(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enabled: bool, body: impl FnOnce(&mut Ui)) {
+    submenu_heading(ui, p, icon, label, enabled, body);
+}
+
+/// [`submenu`] that returns its own row, for a heading that is also an
+/// action when clicked (the import menu).
+pub fn submenu_heading(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enabled: bool, body: impl FnOnce(&mut Ui)) -> egui::Response {
     let id = ui.next_auto_id();
     let open = enabled && Popup::is_id_open(ui.ctx(), egui::containers::menu::SubMenu::id_from_widget_id(id));
     let resp = row(ui, p, icon, label, enabled, End::Caret, open);
     if enabled {
         egui::containers::menu::SubMenu::new().show(ui, &resp, body);
     }
+    resp
 }
 
 /// Entry whose icon is a color dot (the mini-map marks); true when clicked.

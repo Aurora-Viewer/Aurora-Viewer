@@ -182,7 +182,7 @@ pub(super) fn context_menu(
 pub(super) fn dialogs(
     ctx: &egui::Context,
     p: &Palette,
-    world: &World,
+    world: &mut World,
     st: &mut AppearanceUi,
     images: &HashMap<Uuid, egui::TextureHandle>,
     actions: &mut Vec<Action>,

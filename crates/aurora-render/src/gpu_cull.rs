@@ -25,6 +25,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3, Vec4};
 
+use crate::shadow_cull::{SHADOW_PLANES, casts_into};
 use crate::types::{DrawIndexedIndirect, SKELETON_ANCHOR, SkinBind};
 use crate::writes::GpuWrites;
 
@@ -70,25 +71,35 @@ pub mod avatar_state {
     pub const LOADING: u32 = 4;
 }
 
-pub const BINS: usize = 10;
+pub const BINS: usize = 13;
 pub const MAIN_BINS: usize = 4;
+/// Shadow casters of each cascade drawn depth only: opaque faces, which
+/// `fs_shadow` never discards.
 pub const BIN_SHADOW: usize = 4;
 pub const BIN_REFL_WATER: usize = 7;
 pub const BIN_REFL_MIRROR: usize = 8;
 pub const BIN_PROBE: usize = 9;
+/// Shadow casters of each cascade drawn with the alpha test of `fs_shadow`
+/// (masked faces, blended rigged faces).
+pub const BIN_SHADOW_ALPHA: usize = 10;
 /// Argument regions: the bins, then the occlusion's phase 1 and phase 2
 /// prepass lists of the main bins (depth only, in no particular order).
-pub const REGION_PRE1: usize = 10;
-pub const REGION_PRE2: usize = 14;
-const REGIONS: usize = 18;
+pub const REGION_PRE1: usize = 13;
+pub const REGION_PRE2: usize = 17;
+const REGIONS: usize = 21;
 
-const COUNT_VISIBLE: usize = 10;
-const COUNT_TRIANGLES: usize = 11;
-const COUNT_HIDDEN: usize = 12;
+const COUNT_VISIBLE: usize = 13;
+const COUNT_TRIANGLES: usize = 14;
+const COUNT_HIDDEN: usize = 15;
 /// Counts of the phase 1 and phase 2 prepass lists of each main bin.
 pub const COUNT_PRE1: usize = 16;
 pub const COUNT_PRE2: usize = 20;
-const COUNTS: usize = 32;
+/// Profile (`frame_flags::SHADOW_STATS`), per cascade: triangles of its
+/// casters, then its rigged casters, then their triangles.
+const COUNT_SHADOW: usize = 24;
+#[cfg(test)]
+const SHADOW_STATS: usize = 9;
+const COUNTS: usize = 40;
 
 /// `CullFrame::sizes.w`.
 pub mod frame_flags {
@@ -98,6 +109,12 @@ pub mod frame_flags {
     pub const MIRROR: u32 = 8;
     pub const PROBE: u32 = 16;
     pub const OCCLUSION: u32 = 32;
+    /// Count the casters' triangles and the rigged casters of each cascade
+    /// (AURORA_PROFILE).
+    pub const SHADOW_STATS: u32 = 64;
+    /// Every caster drawn with the alpha test, none depth only
+    /// (AURORA_SHADOW_LEGACY).
+    pub const SHADOW_ALPHA_ALL: u32 = 128;
 }
 
 const CLASSIFY_GROUP: u32 = 128;
@@ -270,6 +287,9 @@ pub struct CullFrame {
     pub mirror: [[f32; 4]; 6],
     pub probe: [[f32; 4]; 6],
     pub cascades: [[[f32; 4]; 4]; 3],
+    /// Per cascade: planes around what can cast a shadow the main view
+    /// samples in it (`caster_planes`).
+    pub shadow_planes: [[[f32; 4]; SHADOW_PLANES]; 3],
     /// Camera, draw distance.
     pub eye: [f32; 4],
     /// Shadow distance, reflection distance, pixel scale.
@@ -281,10 +301,17 @@ pub struct CullFrame {
 }
 
 impl CullFrame {
-    /// Frame parameters from the scene's view, the cascade matrices and the
-    /// water reflection, mirror and probe face view-projections (`flags`
-    /// says which are drawn); sizes are filled by `GpuCull::prepare`.
-    pub fn new(view: &GpuCullView, cascades: &[Mat4; 3], [water, mirror, probe]: [Mat4; 3], flags: u32) -> CullFrame {
+    /// Frame parameters from the scene's view, the cascade matrices with
+    /// their caster planes and the water reflection, mirror and probe face
+    /// view-projections (`flags` says which are drawn); sizes are filled by
+    /// `GpuCull::prepare`.
+    pub fn new(
+        view: &GpuCullView,
+        cascades: &[Mat4; 3],
+        shadow_planes: &[[[f32; 4]; SHADOW_PLANES]; 3],
+        [water, mirror, probe]: [Mat4; 3],
+        flags: u32,
+    ) -> CullFrame {
         let planes = |vp: Mat4| view_planes(vp).map(|p| p.to_array());
         CullFrame {
             planes: view.planes.map(|p| p.to_array()),
@@ -292,6 +319,7 @@ impl CullFrame {
             mirror: planes(mirror),
             probe: planes(probe),
             cascades: cascades.map(|m| m.to_cols_array_2d()),
+            shadow_planes: *shadow_planes,
             eye: view.eye.extend(view.draw_distance).to_array(),
             dist: [view.shadow_distance, view.reflection_distance, view.pixel_scale, 0.0],
             sizes: [0, 0, 0, flags],
@@ -388,9 +416,11 @@ pub fn face_bins(frame: &CullFrame, faces: &[CullFace], objects: &[CullObject], 
     }
     let mut m = 0u32;
     if casts && (p != pass::BLEND || o.flags & (object_flags::RIGGED | object_flags::AVATAR) != 0) {
+        let depth_only = (p == pass::OPAQUE || p == pass::OPAQUE_2S) && fl & frame_flags::SHADOW_ALPHA_ALL == 0;
+        let bin = if depth_only { BIN_SHADOW } else { BIN_SHADOW_ALPHA };
         for (k, cm) in frame.cascades.iter().enumerate() {
-            if in_cascade(&Mat4::from_cols_array_2d(cm), c, r) {
-                m |= 1 << (BIN_SHADOW + k);
+            if in_cascade(&Mat4::from_cols_array_2d(cm), c, r) && casts_into(&frame.shadow_planes[k], c, r) {
+                m |= 1 << (bin + k);
             }
         }
     }
@@ -445,49 +475,86 @@ pub fn workgroup_ranks(masks: &[u32]) -> Vec<[u32; BINS]> {
         .collect()
 }
 
-/// Elements per dirty chunk of a `GpuTable`.
-const CHUNK: usize = 64;
+/// Elements per dirty chunk of a mirrored table: small enough that
+/// scattered updates (worn attachments, avatars) do not drag big untouched
+/// ranges along; neighbouring chunks are still uploaded in one write.
+pub(crate) const CHUNK: usize = 64;
 
-/// Dirty chunks of a mirrored table, coalesced into upload ranges.
+/// AURORA_SYNC_SLICE: whole chunks are uploaded, as before the uploads
+/// were cut to the changed elements (comparison).
+static WHOLE_CHUNKS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Upload whole dirty chunks of the mirrored tables (draw records, culling
+/// tables) instead of their changed elements only.
+pub fn set_whole_chunk_uploads(on: bool) {
+    WHOLE_CHUNKS.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Changed elements of a mirrored table, by chunk: the span they cover in
+/// each chunk, coalesced into upload ranges.
+///
+/// A range runs from the first changed element of a run of dirty chunks to
+/// the last one: as many writes as with whole chunks, without the untouched
+/// elements before and after (one record that moves alone in its chunk was
+/// sent with its 63 neighbours, 16 KB for 256 bytes).
 #[derive(Default, Debug)]
-struct DirtyChunks {
-    dirty: Vec<bool>,
+pub(crate) struct DirtyChunks {
+    /// First changed element of each chunk and the one after the last,
+    /// within the chunk; equal: nothing changed.
+    spans: Vec<(u8, u8)>,
     any: bool,
 }
 
 impl DirtyChunks {
-    fn mark(&mut self, i: usize) {
-        let c = i / CHUNK;
-        if self.dirty.len() <= c {
-            self.dirty.resize(c + 1, false);
+    pub(crate) fn mark(&mut self, i: usize) {
+        let (c, at) = (i / CHUNK, (i % CHUNK) as u8);
+        if self.spans.len() <= c {
+            self.spans.resize(c + 1, (0, 0));
         }
-        self.dirty[c] = true;
+        let s = &mut self.spans[c];
+        *s = if s.0 == s.1 { (at, at + 1) } else { (s.0.min(at), s.1.max(at + 1)) };
         self.any = true;
     }
 
-    fn clear(&mut self) {
-        self.dirty.iter_mut().for_each(|d| *d = false);
+    pub(crate) fn clear(&mut self) {
+        self.spans.iter_mut().for_each(|s| *s = (0, 0));
         self.any = false;
     }
 
+    pub(crate) fn any(&self) -> bool {
+        self.any
+    }
+
     /// Element ranges to upload (clipped to `len`); clears the marks.
-    fn take_ranges(&mut self, len: usize) -> Vec<std::ops::Range<usize>> {
+    pub(crate) fn take_ranges(&mut self, len: usize) -> Vec<std::ops::Range<usize>> {
+        self.take_ranges_as(len, WHOLE_CHUNKS.load(std::sync::atomic::Ordering::Relaxed))
+    }
+
+    fn take_ranges_as(&mut self, len: usize, whole: bool) -> Vec<std::ops::Range<usize>> {
         let mut out = Vec::new();
         if !self.any {
             return out;
         }
         let mut c = 0;
-        while c < self.dirty.len() {
-            if !self.dirty[c] {
+        while c < self.spans.len() {
+            if self.spans[c].0 == self.spans[c].1 {
                 c += 1;
                 continue;
             }
             let start = c;
-            while c < self.dirty.len() && self.dirty[c] {
-                self.dirty[c] = false;
+            let first = self.spans[c].0 as usize;
+            let mut last = 0;
+            while c < self.spans.len() && self.spans[c].0 != self.spans[c].1 {
+                last = self.spans[c].1 as usize;
+                self.spans[c] = (0, 0);
                 c += 1;
             }
-            let (a, b) = (start * CHUNK, (c * CHUNK).min(len));
+            let (a, b) = if whole {
+                (start * CHUNK, c * CHUNK)
+            } else {
+                (start * CHUNK + first, (c - 1) * CHUNK + last)
+            };
+            let b = b.min(len);
             if a < b {
                 out.push(a..b);
             }
@@ -618,6 +685,12 @@ pub struct CullCounts {
     pub triangles: u32,
     /// Main-bin draws hidden by the occlusion.
     pub hidden: u32,
+    /// With `frame_flags::SHADOW_STATS`, per cascade: triangles of its
+    /// casters, its rigged casters (avatars and rigged meshes) and their
+    /// triangles.
+    pub shadow_triangles: [u32; 3],
+    pub shadow_rigged: [u32; 3],
+    pub shadow_rigged_triangles: [u32; 3],
 }
 
 impl CullCounts {
@@ -625,8 +698,13 @@ impl CullCounts {
         self.bins[..MAIN_BINS].iter().sum()
     }
 
+    /// Casters drawn in cascade `k`, depth only and alpha tested.
+    pub fn cascade_draws(&self, k: usize) -> u32 {
+        self.bins[BIN_SHADOW + k] + self.bins[BIN_SHADOW_ALPHA + k]
+    }
+
     pub fn shadow_draws(&self) -> u32 {
-        self.bins[BIN_SHADOW..BIN_SHADOW + 3].iter().sum()
+        (0..3).map(|k| self.cascade_draws(k)).sum()
     }
 }
 
@@ -1037,6 +1115,10 @@ impl GpuCull {
                     c.visible_objects = n[COUNT_VISIBLE];
                     c.triangles = n[COUNT_TRIANGLES];
                     c.hidden = n[COUNT_HIDDEN];
+                    let stat = |i: usize| std::array::from_fn(|k| n[COUNT_SHADOW + i * 3 + k]);
+                    c.shadow_triangles = stat(0);
+                    c.shadow_rigged = stat(1);
+                    c.shadow_rigged_triangles = stat(2);
                     self.last = c;
                 }
                 buf.unmap();
@@ -1104,12 +1186,29 @@ mod tests {
         assert_eq!(wgsl_fields(src, "SkinBind"), ["inverse_bind", "joint"]);
         assert!(src.contains(&format!("const POSED_RADIUS_MAX: f32 = {POSED_RADIUS_MAX:?};")));
         assert!(src.contains("const POSED_COORD_MAX: f32 = 1.0e6;") && POSED_COORD_MAX == 1.0e6);
-        // uniform layout: 4 x 6 planes, 3 matrices, 4 vectors
-        assert_eq!(std::mem::size_of::<CullFrame>(), 4 * 6 * 16 + 3 * 64 + 4 * 16);
+        // uniform layout: 4 x 6 planes, 3 matrices, 3 x 12 planes, 4 vectors
+        assert_eq!(
+            std::mem::size_of::<CullFrame>(),
+            4 * 6 * 16 + 3 * 64 + 3 * SHADOW_PLANES * 16 + 4 * 16
+        );
         assert_eq!(
             wgsl_fields(src, "CullFrame"),
-            ["planes", "water", "mirror", "probe", "cascades", "eye", "dist", "sizes", "groups"]
+            [
+                "planes",
+                "water",
+                "mirror",
+                "probe",
+                "cascades",
+                "shadow_planes",
+                "eye",
+                "dist",
+                "sizes",
+                "groups"
+            ]
         );
+        assert!(src.contains(&format!("shadow_planes: array<vec4<f32>, {}>,", 3 * SHADOW_PLANES)));
+        assert!(src.contains(&format!("counts: array<atomic<u32>, {COUNTS}>;")));
+        const { assert!(COUNT_SHADOW + SHADOW_STATS <= COUNTS && COUNT_PRE2 + MAIN_BINS <= COUNT_SHADOW) };
     }
 
     /// The constants shared with the shader have the same values.
@@ -1130,7 +1229,14 @@ mod tests {
                 .trim_end_matches('u');
             v.parse().unwrap_or_else(|_| panic!("{name}: {v}"))
         };
-        let pairs: [(&str, u32); 30] = [
+        let pairs: [(&str, u32); 37] = [
+            ("BIN_SHADOW_ALPHA", BIN_SHADOW_ALPHA as u32),
+            ("COUNT_SHADOW", COUNT_SHADOW as u32),
+            ("SHADOW_STATS", SHADOW_STATS as u32),
+            ("SHADOW_PLANES", SHADOW_PLANES as u32),
+            ("PASS_OPAQUE_2S", pass::OPAQUE_2S),
+            ("F_SHADOW_STATS", frame_flags::SHADOW_STATS),
+            ("F_SHADOW_ALPHA_ALL", frame_flags::SHADOW_ALPHA_ALL),
             ("BINS", BINS as u32),
             ("MAIN_BINS", MAIN_BINS as u32),
             ("BIN_SHADOW", BIN_SHADOW as u32),
@@ -1180,12 +1286,65 @@ mod tests {
     #[test]
     fn dirty_chunks_coalesce_and_clip() {
         let mut d = DirtyChunks::default();
-        assert!(d.take_ranges(1000).is_empty());
+        assert!(d.take_ranges_as(1000, true).is_empty());
         d.mark(3);
         d.mark(70);
         d.mark(300);
-        assert_eq!(d.take_ranges(310), vec![0..128, 256..310]);
-        assert!(d.take_ranges(310).is_empty());
+        assert_eq!(d.take_ranges_as(310, true), vec![0..128, 256..310]);
+        assert!(d.take_ranges_as(310, true).is_empty());
+    }
+
+    /// The same writes as with whole chunks, cut to the changed elements.
+    #[test]
+    fn dirty_ranges_stop_at_the_changed_elements() {
+        let mut d = DirtyChunks::default();
+        assert!(d.take_ranges_as(1000, false).is_empty() && !d.any());
+        // one element alone, the last of a chunk, the first of the table
+        d.mark(300);
+        assert_eq!(d.take_ranges_as(1000, false), vec![300..301]);
+        d.mark(63);
+        d.mark(0);
+        assert_eq!(d.take_ranges_as(1000, false), vec![0..64]);
+        // neighbouring chunks in one write, from the first changed element
+        // of the first to the last changed one of the last; marked in any
+        // order, and twice
+        for i in [200, 70, 75, 70, 3, 5, 600, 640] {
+            d.mark(i);
+        }
+        assert!(d.any());
+        assert_eq!(d.take_ranges_as(1000, false), vec![3..76, 200..201, 600..641]);
+        assert!(d.take_ranges_as(1000, false).is_empty());
+        // clipped to the table
+        d.mark(310);
+        d.mark(319);
+        assert_eq!(d.take_ranges_as(315, false), vec![310..315]);
+        d.mark(400);
+        assert!(d.take_ranges_as(315, false).is_empty());
+        // forgotten without an upload (the table was sent whole)
+        d.mark(9);
+        d.clear();
+        assert!(d.take_ranges_as(1000, false).is_empty() && !d.any());
+        // never more writes, never an element less than the changed ones
+        let mut seed = 12345u32;
+        let mut rand = |n: u32| {
+            seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+            (seed >> 8) % n
+        };
+        for _ in 0..200 {
+            let (mut exact, mut whole) = (DirtyChunks::default(), DirtyChunks::default());
+            let marks: Vec<usize> = (0..rand(40)).map(|_| rand(2000) as usize).collect();
+            for &i in &marks {
+                exact.mark(i);
+                whole.mark(i);
+            }
+            let (e, w) = (exact.take_ranges_as(2000, false), whole.take_ranges_as(2000, true));
+            assert_eq!(e.len(), w.len());
+            for (e, w) in e.iter().zip(&w) {
+                assert!(w.start <= e.start && e.end <= w.end);
+                assert!(marks.contains(&e.start) && marks.contains(&(e.end - 1)));
+            }
+            assert!(marks.iter().all(|i| e.iter().any(|r| r.contains(i))));
+        }
     }
 
     /// Packed 8-bit counters never carry into the next bin for a full
@@ -1234,6 +1393,7 @@ mod tests {
             mirror: planes,
             probe: planes,
             cascades: [cascade.to_cols_array_2d(); 3],
+            shadow_planes: [crate::shadow_cull::CASTER_PLANES_ALL; 3],
             eye: [0.0, 0.0, 0.0, 64.0],
             dist: [64.0, 32.0, 1000.0 / 0.5, 0.0],
             sizes: [0, 4, 0, frame_flags::SHADOWS | frame_flags::REFLECTIONS | frame_flags::WATER],
@@ -1282,8 +1442,20 @@ mod tests {
         );
         // blended: the CPU draws it, not a caster unless rigged
         assert_eq!(face_bins(&frame, &faces, &objects, &spheres, 1), (0, true));
-        // behind the camera: casts only
-        assert_eq!(face_bins(&frame, &faces, &objects, &spheres, 2).0, shadows);
+        // behind the camera: casts only; masked: with the alpha test
+        assert_eq!(face_bins(&frame, &faces, &objects, &spheres, 2).0, 0b111 << BIN_SHADOW_ALPHA);
+        // the old path draws every caster with the alpha test
+        let mut legacy = frame;
+        legacy.sizes[3] |= frame_flags::SHADOW_ALPHA_ALL;
+        assert_eq!(
+            face_bins(&legacy, &faces, &objects, &spheres, 0).0,
+            1 | 0b111 << BIN_SHADOW_ALPHA | 1 << BIN_REFL_WATER
+        );
+        // a cascade whose receivers the caster cannot shadow leaves it out
+        let mut tight = frame;
+        tight.shadow_planes[1][0] = [-1.0, 0.0, 0.0, 5.0];
+        assert_eq!(face_bins(&tight, &faces, &objects, &spheres, 0).0 >> BIN_SHADOW & 7, 0b101);
+        assert_eq!(face_bins(&tight, &faces, &objects, &spheres, 2).0, 0b111 << BIN_SHADOW_ALPHA);
         assert_eq!(face_bins(&frame, &faces, &objects, &spheres, 3), (0, false));
         // an avatar not among the nearest: impostor, nothing on the GPU
         assert_eq!(face_bins(&frame, &faces, &objects, &spheres, 4), (0, false));
@@ -1556,7 +1728,16 @@ mod tests {
         });
         queue.write_buffer(&visibility, 0, bytemuck::cast_slice(&was));
         let mut frame = frame_for_tests();
-        frame.sizes[3] = frame_flags::SHADOWS | frame_flags::REFLECTIONS | frame_flags::WATER | frame_flags::PROBE | frame_flags::OCCLUSION;
+        frame.sizes[3] = frame_flags::SHADOWS
+            | frame_flags::REFLECTIONS
+            | frame_flags::WATER
+            | frame_flags::PROBE
+            | frame_flags::OCCLUSION
+            | frame_flags::SHADOW_STATS;
+        // caster volumes: the east half in the second cascade, a slanted slab in the third
+        frame.shadow_planes[1][0] = [-1.0, 0.0, 0.0, 5.0];
+        frame.shadow_planes[2][3] = [0.6, 0.0, 0.8, 10.0];
+        frame.shadow_planes[2][SHADOW_PLANES - 1] = [-0.6, 0.0, -0.8, 30.0];
         frame.probe = view_planes(
             glam::camera::rh::proj::directx::perspective_infinite_reverse(1.5, 1.0, 0.1)
                 * glam::camera::rh::view::look_at_mat4(Vec3::ZERO, Vec3::Y, Vec3::Z),
@@ -1616,6 +1797,24 @@ mod tests {
             }
         }
         assert!(expect.iter().take(MAIN_BINS + 3).all(|e| !e.is_empty()), "every bin used");
+        assert!(
+            expect[BIN_SHADOW_ALPHA..].iter().all(|e| !e.is_empty()),
+            "alpha tested casters in every cascade"
+        );
+        // the casters' statistics of each cascade
+        for k in 0..3 {
+            let casters = || expect[BIN_SHADOW + k].iter().chain(&expect[BIN_SHADOW_ALPHA + k]);
+            let rigged =
+                |rec: &&u32| objects[faces[**rec as usize].object as usize].flags & (object_flags::RIGGED | object_flags::AVATAR) != 0;
+            let tris = |rec: &u32| faces[*rec as usize].index_count / 3;
+            assert_eq!(counts[COUNT_SHADOW + k], casters().map(tris).sum::<u32>(), "cascade {k} triangles");
+            assert_eq!(
+                counts[COUNT_SHADOW + 3 + k],
+                casters().filter(rigged).count() as u32,
+                "cascade {k} rigged"
+            );
+            assert_eq!(counts[COUNT_SHADOW + 6 + k], casters().filter(rigged).map(tris).sum::<u32>());
+        }
         assert_eq!(counts[COUNT_VISIBLE], visible);
         assert_eq!(counts[COUNT_TRIANGLES], tris);
         let cap = cull.cap() as usize;

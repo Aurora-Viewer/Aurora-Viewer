@@ -108,7 +108,7 @@ impl Rig {
     /// Same with per-avatar joint positions and scales (shape, attachment
     /// overrides). A joint's position is scaled by its parent's scale; its
     /// own scale is part of its matrix only (LLXformMatrix).
-    pub(super) fn world_with(&self, rot: &[Quat], pelvis_offset: Vec3, local_pos: &[Vec3], scale: &[Vec3]) -> Vec<Mat4> {
+    pub(crate) fn world_with(&self, rot: &[Quat], pelvis_offset: Vec3, local_pos: &[Vec3], scale: &[Vec3]) -> Vec<Mat4> {
         let n = self.len();
         let mut wpos = vec![Vec3::ZERO; n];
         let mut wrot = vec![Quat::IDENTITY; n];
@@ -237,6 +237,7 @@ pub struct Controller {
     /// Signals already activated, including completed non-looping motions.
     /// A still-signaled one-shot must not restart automatically every frame.
     signals: HashMap<Uuid, PlayingAnimation>,
+    preview_start: Option<(Option<Uuid>, Instant)>,
     /// Joint rotations of the last frame (None before the first one).
     rot: Vec<Quat>,
     /// Animated joint positions as offsets from the rest skeleton, held
@@ -538,12 +539,31 @@ impl Controller {
         out
     }
 
+    /// Import preview clocks are explicit; ordinary motions still activate on
+    /// arrival. Seeking restarts only the preview, without touching server state.
+    pub fn set_preview_clock(&mut self, clock: Option<(Option<Uuid>, Instant)>) {
+        if self.preview_start == clock {
+            return;
+        }
+        if let Some((target, _)) = clock {
+            self.motions.retain(|m| target.is_some_and(|id| m.id != id));
+            self.signals.retain(|id, _| target.is_some_and(|target| *id != target));
+        }
+        self.preview_start = clock;
+    }
+
     /// Follow the server's animation list (LLVOAvatar::processAnimationStateChanges).
     /// `get` gives an animation once it has loaded.
     /// Return timed stops once, at the start of ease-out, like
     /// LLMotionController::updateMotionsByType -> requestStopMotion.
     pub fn sync(&mut self, playing: &[PlayingAnimation], now: Instant, mut get: impl FnMut(&Uuid) -> Option<Arc<BoundAnim>>) -> Vec<Uuid> {
         let mut completed = Vec::new();
+        let preview = self.preview_start;
+        let activation = |id| {
+            preview
+                .filter(|(target, _)| target.is_none_or(|target| target == id))
+                .map_or(now, |(_, start)| start)
+        };
         // stop the motions the server no longer plays
         for m in self.motions.iter_mut() {
             if !playing
@@ -565,7 +585,7 @@ impl Controller {
                 if m.anim.anim.looping && m.signal.continuous_start == signal.continuous_start {
                     // LLVOAvatar signals sequence changes, but startMotion
                     // keeps an already active loop running continuously.
-                    m.activation = now;
+                    m.activation = activation(signal.id);
                     m.signal = *signal;
                     self.signals.insert(signal.id, *signal);
                     continue;
@@ -578,8 +598,8 @@ impl Controller {
                     Motion {
                         id: signal.id,
                         anim,
-                        activation: now,
-                        continuous_activation: now,
+                        activation: activation(signal.id),
+                        continuous_activation: activation(signal.id),
                         signal: *signal,
                         stop: None,
                         residual: 0.0,
@@ -598,7 +618,9 @@ impl Controller {
                 let end = m.activation + Duration::from_secs_f64((f64::from(a.duration) - f64::from(a.ease_out)).max(0.0));
                 if now >= end {
                     m.stop_at(end);
-                    completed.push(m.id);
+                    if !preview.is_some_and(|(target, _)| target.is_none_or(|id| id == m.id)) {
+                        completed.push(m.id);
+                    }
                 }
             }
             match m.stop {
@@ -802,6 +824,10 @@ impl AnimStreamer {
         );
     }
 
+    pub fn remove_local(&mut self, id: &Uuid) -> Option<Arc<BoundAnim>> {
+        self.entries.remove(id).and_then(|entry| entry.anim)
+    }
+
     pub fn update(&mut self, jobs: &Jobs, fetcher: &Fetcher, viewer_asset: Option<&str>, rig: &Arc<Rig>) {
         while let Ok((id, anim, from_cache)) = self.rx.try_recv() {
             if let Some(e) = self.entries.get_mut(&id) {
@@ -992,6 +1018,57 @@ mod tests {
     fn rig() -> Rig {
         let xml = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/character/avatar_skeleton.xml")).expect("skeleton");
         Rig::new(&Skeleton::parse(&xml).expect("parse"))
+    }
+
+    #[test]
+    fn preview_seek_samples_immediately_and_never_sends_a_simulator_stop() {
+        let rig = rig();
+        let id = Uuid::from_u128(501);
+        let mut animation = bend(&rig, 0.0, 0.0).anim.clone();
+        animation.looping = false;
+        animation.joints[0].rot_keys = vec![
+            aurora_assets::anim::RotKey {
+                time: 0.0,
+                rotation: Quat::IDENTITY,
+            },
+            aurora_assets::anim::RotKey {
+                time: 1.0,
+                rotation: Quat::from_rotation_z(1.6),
+            },
+        ];
+        let bound = Arc::new(BoundAnim::bind(animation, &rig));
+        let epoch = Instant::now();
+        let playing = [signal(id, 0, epoch)];
+        let mut controller = Controller::for_control_avatar();
+        let mut pose = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
+        let check = |pose: &[[[f32; 4]; 4]], angle: f32| {
+            let mut rotations = rig.local_rot.clone();
+            let joint = rig.names["mElbowLeft"];
+            rotations[joint] = Quat::from_rotation_z(angle);
+            let expected = rig.world(&rotations, Vec3::ZERO)[joint];
+            let got = Mat4::from_cols_array_2d(&pose[joint]);
+            assert!((got - expected).to_cols_array().iter().all(|v| v.abs() < 0.001));
+        };
+        controller.set_preview_clock(Some((Some(id), epoch)));
+        let sample = epoch + Duration::from_millis(500);
+        assert!(controller.sync(&playing, sample, |_| Some(bound.clone())).is_empty());
+        controller.evaluate(&rig, sample, None, &mut pose);
+        check(&pose, 0.8);
+        let held = pose.clone();
+        controller.sync(&playing, sample, |_| Some(bound.clone()));
+        controller.evaluate(&rig, sample, None, &mut pose);
+        assert_eq!(held, pose);
+        let new_epoch = epoch + Duration::from_secs(3);
+        controller.set_preview_clock(Some((Some(id), new_epoch)));
+        let sample = new_epoch + Duration::from_millis(250);
+        controller.sync(&playing, sample, |_| Some(bound.clone()));
+        controller.evaluate(&rig, sample, None, &mut pose);
+        check(&pose, 0.4);
+        assert!(
+            controller
+                .sync(&playing, new_epoch + Duration::from_secs(2), |_| Some(bound.clone()))
+                .is_empty()
+        );
     }
 
     #[test]

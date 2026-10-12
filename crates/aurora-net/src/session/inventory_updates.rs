@@ -331,6 +331,7 @@ mod tests {
         let (inventory_move_tx, _) = mpsc::unbounded_channel();
         let sim = Sim::new(address, 10);
         let mut session = Session {
+            asset_imports: Default::default(),
             sh: &sh,
             sock: sock.clone(),
             login,

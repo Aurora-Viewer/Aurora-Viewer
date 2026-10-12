@@ -139,6 +139,8 @@ pub struct InventoryPreferences {
     pub double_click_add_clothes: bool,
     pub filter_defaults: Filters,
     pub last_logout: i64,
+    pub warn_task_move: bool,
+    pub warn_scripted_task_move: bool,
 }
 impl Default for InventoryPreferences {
     fn default() -> Self {
@@ -159,6 +161,8 @@ impl Default for InventoryPreferences {
             double_click_add_clothes: false,
             filter_defaults: Filters::default(),
             last_logout: 0,
+            warn_task_move: true,
+            warn_scripted_task_move: true,
         }
     }
 }
@@ -489,6 +493,17 @@ pub struct TreeState {
     pub order: Vec<Uuid>,
 }
 impl TreeState {
+    pub fn collapse_folders(&mut self, folders: impl IntoIterator<Item = Uuid>, tab: usize) {
+        self.closed[tab.min(4)].extend(folders);
+        self.key = None;
+    }
+
+    pub fn expand_folder(&mut self, id: Uuid, tab: usize) {
+        if self.closed[tab.min(4)].remove(&id) {
+            self.key = None;
+        }
+    }
+
     pub fn prepare(&mut self, view: &ViewCache, root: Uuid, tab: usize, show_root: bool) -> bool {
         let tab = tab.min(4);
         let key = (view.revision, root, tab, show_root);
