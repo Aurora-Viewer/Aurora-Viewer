@@ -227,7 +227,8 @@ défaut, même s'il fonctionne. Les règles complètes sont dans
 [docs/BRANDING.md](docs/BRANDING.md) ; les points que tu dois respecter à
 chaque modification de l'interface :
 
-- **Couleurs** : jamais en dur, toujours la `Palette` (`p.violet`, `p.ink`…).
+- **Couleurs** : jamais en dur, toujours la `Palette` (`p.violet`, `p.ink`…) ;
+  sur une face violette, texte et icônes en `p.on_accent`.
 - **Surfaces** : une fenêtre passe par `widgets::Floater`, un dialogue par
   `widgets::Modal`, tout autre panneau par `widgets::overlay` (posé sur le
   monde, avec le flou des fenêtres) ou `widgets::overlay_frame` (sans monde
@@ -254,13 +255,21 @@ chaque modification de l'interface :
   jamais par `egui::ProgressBar` ; les touches d'un raccourci par
   `widgets::keycap`. L'interrupteur est presque carré (`widgets::switch`,
   `switch_labeled` pour un réglage isolé). Une case à cocher passe par
-  `widgets::checkbox`, une section repliable par `widgets::collapsing`, une
-  couleur par `widgets::color_button` : jamais `ui.checkbox`,
-  `egui::CollapsingHeader` ni `color_edit_button_*`. Les menus s'écrivent
-  avec les lignes de `ui/menu.rs` (`menu::item`, `check`, `toggle`,
-  `submenu`, `separator`) et reçoivent leur verre tout seuls. `check.ps1` le
-  vérifie : un test (`ui/theme_guard.rs`) échoue si une fenêtre utilise
-  directement l'un de ces widgets d'egui.
+  `widgets::checkbox`, un choix parmi plusieurs par `widgets::radio`
+  (`radio_value`), une section repliable par `widgets::collapsing`, une
+  couleur par `widgets::color_button`, un trait entre deux zones d'une
+  fenêtre par `widgets::divider` : jamais `ui.checkbox`, `ui.radio`,
+  `egui::CollapsingHeader`, `color_edit_button_*` ni `ui.separator()`. Les
+  menus s'écrivent avec les lignes de `ui/menu.rs` (`menu::item`, `check`,
+  `toggle`, `submenu`, `separator`) et reçoivent leur verre tout seuls.
+  `check.ps1` le vérifie : un test (`ui/theme_guard.rs`) échoue si une
+  fenêtre utilise directement l'un de ces widgets d'egui, ou écrit elle-même
+  un rayon ou une couleur (`rect_filled(…, 2.0, …)`, `Color32::WHITE`,
+  `Color32::from_rgb(…)`). Une ligne qui est du contenu et non de
+  l'habillage (couleur d'une légende, d'une classification) se déclare par
+  le commentaire `// theme-guard: content — la raison`, à sa fin ou seul sur
+  la ligne du dessus ; un fichier entier (une carte) par une entrée
+  d'`ALLOWED` dans le test.
 - **Vérifie à l'œil** : capture l'écran modifié en démo et compare-le à une
   fenêtre voisine (mêmes fonds, mêmes boutons, mêmes rayons, icônes alignées
   avec le texte) avant de demander la validation humaine.

@@ -33,6 +33,7 @@ Dans le code, on utilise toujours la `Palette` résolue (`p.violet`, `p.ink`…)
 | ink | `#E8EDFB` | texte principal |
 | muted | `#9AA6C6` | texte secondaire, libellés |
 | muted_dim | `#6F7BA0` | texte tertiaire, désactivé |
+| on_accent | `#FFFFFF` | texte et icônes posés sur une face violette : bouton principal, outil actif, coche d'une case, point d'un bouton radio, curseur d'un interrupteur allumé |
 
 ### États
 
@@ -46,6 +47,15 @@ Dans le code, on utilise toujours la `Palette` résolue (`p.violet`, `p.ink`…)
 
 ## Règles de design
 
+- **L'apparence vient du thème.** Une fenêtre n'écrit ni couleur, ni rayon,
+  ni trait : elle prend les rôles de la `Palette`, les rayons du thème et
+  les widgets partagés de `ui/widgets.rs`. Ce qu'une fenêtre dessine avec
+  ses propres valeurs est du contenu, pas de l'habillage : couleurs d'une
+  carte et de sa légende, couleurs de classification, intérieur d'une
+  pastille de couleur, image affichée telle quelle
+  (`widgets::PICTURE_TINT`). Un test le vérifie (`ui/theme_guard.rs`, lancé
+  par `check.ps1`) ; une ligne de contenu s'y déclare par un commentaire
+  `// theme-guard: content — la raison`.
 - **Verre discret.** Un flou GPU partagé apparaît dans les fenêtres, les
   dialogues, les barres du haut et du bas et tout ce qui est posé sur le
   monde (notifications, volume, emoji, contrôles des médias, bulles du chat
@@ -97,7 +107,17 @@ Dans le code, on utilise toujours la `Palette` résolue (`p.violet`, `p.ink`…)
 - **Arrondis discrets.** Design plat, angles presque carrés. Boutons :
   rayon 5 ; fenêtres, cartes et pastilles de la barre d'outils : rayon 3,
   avec des coins proches de ceux de la construction, y compris au repli.
-  Les rayons viennent du thème, jamais d'une valeur plus grande dans le code.
+  Les rayons viennent du thème, jamais d'un nombre dans le code :
+  `ui.visuals().window_corner_radius` pour les cartes, les pastilles, les
+  surlignages de liste et les cadres d'image ou de couleur,
+  `ui.visuals().widgets.inactive.corner_radius` pour les boutons,
+  `widgets::inner_radius` (un pixel de moins que les fenêtres) pour une
+  petite marque dans un contrôle ou une ligne : curseur d'interrupteur,
+  touche, carré d'état, lettre de classification. Restent tels quels : les
+  angles droits voulus (rayon 0), les ronds (points d'état, pastille des
+  notifications) et les barres fines (piste d'une progression ou d'un
+  niveau, repère sur un rail), dont les bouts de 2 px viennent d'une seule
+  constante, `widgets::TRACK_RADIUS`.
 - **Boutons pleins.** Tous les boutons et listes déroulantes sont des faces
   pleines sans bordure visible : le thème (`theme.rs`) donne à leur bordure la
   couleur de la face, seuls les champs de saisie et les cases à cocher gardent
@@ -112,6 +132,13 @@ Dans le code, on utilise toujours la `Palette` résolue (`p.violet`, `p.ink`…)
   listes de drapeaux (droits, données d'un rapport, cellules d'un tableau)
   gardent des cases, dessinées par `widgets::checkbox` (carré plat, violet et
   coché quand il est actif), jamais par `ui.checkbox`.
+- **Boutons radio.** Un choix parmi plusieurs passe par `widgets::radio`
+  (`radio_value` pour une valeur), jamais par `ui.radio` : la ligne de la
+  case à cocher (même taille, même libellé, même survol), mais ronde pour
+  qu'on ne la prenne pas pour une case : anneau fin au repos, violet autour
+  d'un point quand le choix est fait. C'est le seul contrôle rond de
+  l'interface ; les autres ronds sont des marques (points d'état, pastille
+  des notifications).
 - **Sections repliables.** `widgets::collapsing` : une ligne pleine largeur
   avec un chevron Tabler et le titre de la section, allumée en pastille au
   survol, sans trait ; jamais `egui::CollapsingHeader`.
@@ -135,10 +162,17 @@ Dans le code, on utilise toujours la `Palette` résolue (`p.violet`, `p.ink`…)
   ou important ; le reste est neutre.
 - **Contraste et lisibilité.** Texte `ink` sur `panel` ; texte secondaire en
   `muted`. Jamais de texte violet foncé sur fond sombre (utiliser
-  `violet_light`).
+  `violet_light`). Sur une face violette pleine, texte et icônes en
+  `on_accent` (ni blanc écrit en dur, ni `ink`, qu'une skin peut assombrir) ;
+  sur une face `danger` ou `amber`, claires, le texte reste en `navy`.
 - **Séparateurs très subtils mais visibles.** Une ligne fine d'un neutre à
   peine plus clair que le fond, pour que l'on voie où commence et finit chaque
-  élément sans alourdir.
+  élément sans alourdir. Entre deux zones d'une fenêtre : `widgets::divider`
+  (horizontal dans une colonne, vertical dans une ligne) ; entre deux groupes
+  d'entrées d'un menu : `menu::separator` ; un trait placé à la main (bord
+  d'un rail, limite entre deux volets) prend `widgets::divider_stroke`.
+  Jamais `ui.separator()`, et aucun trait entre des boutons ou les éléments
+  d'une barre d'outils.
 - **Typographie.** Inter (régulier, semi-gras) ; Noto Sans et Roboto en secours.
   Pas d'autre police sans raison. Les caractères qu'elles n'ont pas (noms
   d'affichage et messages en géorgien, japonais, arabe, lettres
