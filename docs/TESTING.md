@@ -973,6 +973,7 @@ Ce que l'inventaire doit montrer avec ces scénarios :
 | `AURORA_NOVSYNC=1` | Coupe la synchronisation verticale |
 | `AURORA_PRESENT_MODE=<mode>` | Force le mode de présentation de la swapchain |
 | `AURORA_CPU_CULL=1` | Listes de dessin construites sur le CPU |
+| `AURORA_TEXTURE_BC7=0` | Textures jamais compressées en BC7 |
 | `AURORA_RENDER_THREAD=0` | Images dessinées sur le thread principal |
 | `AURORA_PROFILE=1` | Profilage dans le journal (voir [Profilage](#profilage)) |
 | `AURORA_PROFILE_FRAMES=1` | Profil détaillé de chaque image |
@@ -1003,6 +1004,14 @@ Ce que l'inventaire doit montrer avec ces scénarios :
   sous la fenêtre et sa fréquence à chaque changement
   (`screen under the window: \\.\DISPLAY2, 144 Hz`) ; `present=` et
   `screen_hz=` figurent dans la ligne `perf settings`.
+- **`AURORA_TEXTURE_BC7=0`** : toutes les textures restent en RGBA8 en
+  mémoire vidéo, comme avant la compression BC7, pour comparer l'image,
+  la mémoire (`texture_mb`, `pages_mb` de `perf summary`) et le temps de
+  chargement (`bc7` dans la ligne `texture load:`). Par défaut, quand la
+  carte graphique a la compression BC, chaque tâche de décodage encode la
+  texture en BC7 et vérifie le résultat ; celles qu'il abîmerait restent
+  en RGBA8. Le journal l'annonce au démarrage (`textures: BC7 compression
+  on|off (GPU support: …)`).
 - **`AURORA_CPU_CULL=1`** : construit toutes les listes de dessin sur le CPU
   (le repli quand le GPU n'a pas `MULTI_DRAW_INDIRECT_COUNT`) au lieu de les
   trier sur le GPU, pour comparer ; `cull=cpu|gpu` dans la ligne
@@ -1117,12 +1126,14 @@ que le suivant ne compte que la nouvelle région. Chaque ligne donne :
   version à l'autre et avec Firestorm au même endroit, et les textures
   chargées sur celles connues ;
 - les décodages JPEG2000, dont ceux d'une texture déjà affichée à un
-  niveau plus grossier, et leur nombre par niveau de réduction (`discard
-  0..5`, 0 = pleine résolution) ; les mégapixels décodés ;
+  niveau plus grossier et ceux dont la texture part en BC7, et leur nombre
+  par niveau de réduction (`discard 0..5`, 0 = pleine résolution) ; les
+  mégapixels décodés ;
 - le temps processeur des tâches de décodage, tous threads additionnés,
   et sa répartition : `codec` (OpenJPEG), `convert` (plans 32 bits vers
   pixels 8 bits), `rgba` (passage en RGBA et classe alpha), `mips`,
-  `staging` (masque de picking et copie en mémoire de transit) ;
+  `bc7` (encodage BC7 et contrôle de qualité), `staging` (masque de
+  picking et copie en mémoire de transit) ;
 - les octets téléchargés et le nombre de réponses, les lectures du cache
   disque réussies et manquées.
 
@@ -1136,3 +1147,14 @@ cargo run --release -p aurora-assets --example j2k_bench -- "$env:LOCALAPPDATA\A
 
 Options : `--sample <n>` (2000 textures par défaut), `--threads <n>`,
 `--levels 0,1,2,3`.
+
+Ce que donne la compression BC7 sur le même dossier (part des textures
+qui passent le contrôle de qualité, mémoire vidéo avec et sans, coût de
+l'encodage face au décodage), textures opaques et avec alpha à part :
+
+```powershell
+cargo run --release -p aurora-render --example bc7_check -- "$env:LOCALAPPDATA\Aurora\AuroraViewer\cache\tex"
+```
+
+Options : `--sample <n>` (1000 par défaut), `--discard <n>` (niveau
+décodé, 0 par défaut).

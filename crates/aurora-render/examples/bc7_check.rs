@@ -111,7 +111,7 @@ fn main() {
         let c = img.components as usize;
         let rgba = to_rgba(c, &img.data);
         // (the viewer's `classify_alpha`: any texel that is not opaque)
-        let alpha = (c == 2 || c >= 4) && rgba.chunks_exact(4).any(|p| p[3] < 255);
+        let alpha = (c == 2 || c >= 4) && rgba.as_chunks::<4>().0.iter().any(|p| p[3] < 255);
         let t = Instant::now();
         let mips = build_mips(img.width, img.height, rgba, 16);
         let mips_time = t.elapsed();

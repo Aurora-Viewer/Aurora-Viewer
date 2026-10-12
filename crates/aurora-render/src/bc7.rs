@@ -9,8 +9,8 @@
 //! 53 dB) but visibly harms about one in ten: normal maps with a fine
 //! grain, thin lattices with alpha. The slower profiles do better on those
 //! but cost nine times more. So each texture is checked instead
-//! ([`harmed`]): blocks of level 0 are decoded back and compared with the
-//! source, and a texture with too many blocks off stays RGBA8, as before.
+//! ([`harmed`]): blocks of every level are decoded back and compared with
+//! the source, and a texture with too many blocks off stays RGBA8, as before.
 //! About 85 % of the textures pass, for 2.9 times less video memory overall
 //! (`cargo run --release -p aurora-render --example bc7_check -- <cache/tex>`).
 
@@ -25,6 +25,8 @@ const MAX_OFF_PER_MILLE: usize = 10;
 /// One block in this many is checked (all of them in a small level).
 const CHECK_ONE_IN: usize = 4;
 const CHECK_ALL_UNDER: usize = 1024;
+/// Levels under this many whole blocks (32 × 32 texels) are not checked.
+const MIN_BLOCKS: usize = 64;
 
 /// A mip chain: (width, height, data) per level, level 0 first.
 pub type Chain = Vec<(u32, u32, Vec<u8>)>;
@@ -34,7 +36,7 @@ pub type Chain = Vec<(u32, u32, Vec<u8>)>;
 /// see-through texels. None when level 0 is not made of whole blocks, when
 /// a level is short, or when the texture would be harmed.
 pub fn encode_chain(mips: &[(u32, u32, Vec<u8>)], alpha: bool) -> Option<Chain> {
-    let (w, h, level0) = mips.first()?;
+    let (w, h, _) = mips.first()?;
     if *w == 0 || *h == 0 || !w.is_multiple_of(4) || !h.is_multiple_of(4) {
         return None;
     }
@@ -51,22 +53,21 @@ pub fn encode_chain(mips: &[(u32, u32, Vec<u8>)], alpha: bool) -> Option<Chain> 
         channels: if alpha { 4 } else { 3 },
         ..bc7::opaque_ultra_fast_settings()
     };
-    let mut settings = single_line;
-    let mut first = encode_level(&settings, *w, *h, level0);
-    if harmed(level0, &first, *w, *h, alpha) {
-        if !alpha {
-            return None;
-        }
-        settings = bc7::alpha_ultra_fast_settings();
-        first = encode_level(&settings, *w, *h, level0);
-        if harmed(level0, &first, *w, *h, alpha) {
-            return None;
-        }
-    }
+    try_chain(&single_line, mips, alpha).or_else(|| alpha.then(|| try_chain(&bc7::alpha_ultra_fast_settings(), mips, alpha)).flatten())
+}
+
+/// The chain encoded with `settings`, unless a level comes out harmed. Every
+/// level is checked, not only the first: what is on screen is most often a
+/// reduced level, and the reduced levels are the harder ones (more detail
+/// per block). Level 0 first, which settles most refusals at once.
+fn try_chain(settings: &bc7::EncodeSettings, mips: &[(u32, u32, Vec<u8>)], alpha: bool) -> Option<Chain> {
     let mut out = Vec::with_capacity(mips.len());
-    out.push((*w, *h, first));
-    for (w, h, rgba) in &mips[1..] {
-        out.push((*w, *h, encode_level(&settings, *w, *h, rgba)));
+    for (w, h, rgba) in mips {
+        let blocks = encode_level(settings, *w, *h, rgba);
+        if harmed(rgba, &blocks, *w, *h, alpha) {
+            return None;
+        }
+        out.push((*w, *h, blocks));
     }
     Some(out)
 }
@@ -102,11 +103,18 @@ fn encode_level(settings: &bc7::EncodeSettings, w: u32, h: u32, rgba: &[u8]) -> 
     bc7::compress_blocks(settings, &surface)
 }
 
-/// Whether `blocks` (BC7, of an RGBA8 level of whole blocks) differ from
-/// `rgba` enough to show: more than [`MAX_OFF_PER_MILLE`] of the checked
-/// blocks have a texel channel off by more than [`TOLERANCE`].
+/// Whether `blocks` (the BC7 level of `rgba`) differ from it enough to show:
+/// more than [`MAX_OFF_PER_MILLE`] of the checked blocks have a texel
+/// channel off by more than [`TOLERANCE`]. The whole blocks of the level are
+/// looked at (not the padded ones of its edge); a level of fewer than
+/// [`MIN_BLOCKS`] is let through: a few texels seen from afar, where one
+/// block off would refuse the texture.
 pub fn harmed(rgba: &[u8], blocks: &[u8], w: u32, h: u32, alpha: bool) -> bool {
     let (bw, bh) = (w as usize / 4, h as usize / 4);
+    if bw * bh < MIN_BLOCKS {
+        return false;
+    }
+    let columns = w.div_ceil(4) as usize;
     let all = bw * bh <= CHECK_ALL_UNDER;
     let (mut checked, mut off) = (0usize, 0usize);
     let mut decoded = [0u8; 64];
@@ -116,7 +124,7 @@ pub fn harmed(rgba: &[u8], blocks: &[u8], w: u32, h: u32, alpha: bool) -> bool {
             if !all && !(bx + 2 * by).is_multiple_of(CHECK_ONE_IN) {
                 continue;
             }
-            let at = (by * bw + bx) * 16;
+            let at = (by * columns + bx) * 16;
             let Some(block) = blocks.get(at..at + 16) else {
                 return true;
             };
@@ -134,7 +142,9 @@ fn block_off(rgba: &[u8], decoded: &[u8; 64], w: usize, bx: usize, by: usize, al
         let Some(src) = rgba.get(row..row + 16) else {
             return true;
         };
-        for (s, d) in src.chunks_exact(4).zip(decoded[y * 16..y * 16 + 16].chunks_exact(4)) {
+        let (src, _) = src.as_chunks::<4>();
+        let (decoded, _) = decoded[y * 16..y * 16 + 16].as_chunks::<4>();
+        for (s, d) in src.iter().zip(decoded) {
             let shown = if alpha { s[3] as u32 } else { 255 };
             for c in 0..3 {
                 if (s[c] as u32).abs_diff(d[c] as u32) * shown > TOLERANCE * 255 {
