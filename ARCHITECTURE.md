@@ -178,6 +178,7 @@ Les scripts utilisent un éditeur commun (`ui/scripts.rs`, actions dans `app/scr
 | `scene/animesh.rs` | Squelettes autonomes des objets animés, animations du linkset, limites des poses pour le culling et les ombres, scénario de démo |
 | `scene/skin_binds.rs` | Liaisons de skin envoyées au GPU (matrice inverse et os de la palette de chaque os d'un mesh riggé, squelette par défaut en tête) : une plage par mesh, rendue quand sa dernière géométrie est libérée et reprise par les mesh suivants ; seules les plages modifiées sont envoyées |
 | `scene/sync_sets.rs` | Objets que la synchro de la scène visite à chaque image, tenus à jour par événements (objets modifiés notés par `ObjectStore`, ensemble des objets qui bougent d'eux-mêmes et de ce qui les suit, géométries en attente, tranche de LOD) au lieu d'un parcours de tous les objets ; file d'attente des synchros complètes qui n'ont pas tenu dans le budget de temps de l'image, servie du plus proche au plus lointain (`Backlog`, `FullSyncBudget`) |
+| `scene/still_check.rs` | Diagnostic `AURORA_STILL_CHECK` : par seconde, ce qui a changé alors que l'image devrait être immobile (caméra, notre avatar, faces reconstruites et leur raison, objets posés replacés) |
 | `scene/sync_plan.rs` | Placement en parallèle (rayon) des objets de l'image, niveau par niveau des chaînes de parents : transformation, LOD, limites ; mise à jour de la seule matrice ou synchro complète |
 | `scene/texture_cache.rs` | Cache disque des textures transcodées (`cache/tex/<id>.bc7`) : chaîne de mips BC7 produite par une tâche de décodage, classe alpha, masque de picking et en-tête de l'image JPEG2000 ; relue au niveau voulu sans décodage au retour dans une région, écrite par le thread `aurora-texcache` ; un fichier sans niveaux retient qu'une texture doit rester en RGBA8 |
 | `scene/texture_load.rs` | Mesure des chargements de textures : temps des tâches de décodage par étape (codec, conversion, RGBA, mips, mémoire de transit) et ligne `texture load:` du journal à la fin de chaque chargement (durée, décodages par niveau, octets téléchargés, cache disque) |
@@ -282,7 +283,13 @@ Le rez depuis l’inventaire passe par `ui/inventory.rs` (charge utile et relâc
    encode les passes (ombres, prépasse, scène, eau, reflets,
    post-traitement) avec des draws indirects dont le nombre est écrit par le
    GPU. Sans `MULTI_DRAW_INDIRECT_COUNT` (ou avec `AURORA_CPU_CULL=1`),
-   `build_lists` prépare toutes les listes sur le CPU comme avant. Le thread
+   `build_lists` prépare toutes les listes sur le CPU comme avant. Les
+   sommets des objets sont calculés relativement à la caméra : le vertex
+   shader retire sa position de la translation du modèle (les
+   enregistrements restent en coordonnées de région), et la matrice de vue
+   de la caméra principale se réduit à sa rotation (`eye_view_proj` dans
+   `renderer.rs`) ; en altitude, la simple précision ne suffit pas en
+   coordonnées de région. Le thread
    principal s'arrête à la clôture de l'image (`Renderer::render`) : le
    reste de cette étape est fait par le thread de rendu à partir du paquet
    d'image, pendant que l'image suivante commence (voir « Threads et

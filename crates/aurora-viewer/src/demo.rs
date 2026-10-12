@@ -48,12 +48,57 @@ pub fn floor_at(x: f32, y: f32) -> f32 {
     }
 }
 
+/// AURORA_DEMO_ALTITUDE=<m>: the whole demo place (terrain, objects,
+/// avatars) raised by that much, to see what single precision does to the
+/// picture high above the ground (0.24 mm steps between 2048 and 4096 m).
+fn altitude() -> f32 {
+    static ALTITUDE: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    *ALTITUDE.get_or_init(|| {
+        std::env::var("AURORA_DEMO_ALTITUDE")
+            .ok()
+            .and_then(|v| v.trim().parse::<f32>().ok())
+            .filter(|v| v.is_finite())
+            .map_or(0.0, |v| v.clamp(0.0, 4000.0))
+    })
+}
+
+/// AURORA_DEMO_AGENT_JITTER=<mm>: our avatar receives small position
+/// corrections a few times per second, as a simulator sends for an avatar
+/// standing high above the ground. The value is their largest size.
+pub fn agent_jitter() -> Option<f32> {
+    static JITTER: std::sync::OnceLock<Option<f32>> = std::sync::OnceLock::new();
+    *JITTER.get_or_init(|| {
+        std::env::var("AURORA_DEMO_AGENT_JITTER")
+            .ok()
+            .and_then(|v| v.trim().parse::<f32>().ok())
+            .filter(|v| v.is_finite() && *v > 0.0)
+            .map(|v| v.min(100.0))
+    })
+}
+
+/// The correction of AURORA_DEMO_AGENT_JITTER at a frame: a new one every
+/// 12 frames (5 per second at 60 images/s), the same for a given frame.
+pub fn agent_jitter_offset(frame: u64, mm: f32) -> Vec3 {
+    let step = frame / 12;
+    // (a fixed integer hash: the scenario replays the same corrections)
+    let unit = |salt: u64| {
+        let mut h = step
+            .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+            .wrapping_add(salt.wrapping_mul(0xD1B5_4A32_D192_ED03));
+        h ^= h >> 29;
+        h = h.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        h ^= h >> 32;
+        (h % 2001) as f32 / 1000.0 - 1.0
+    };
+    Vec3::new(unit(1), unit(2), unit(3)) * (mm * 0.001)
+}
+
 fn height(x: f32, y: f32) -> f32 {
     let hill = 14.0 * (-((x - 190.0).powi(2) + (y - 170.0).powi(2)) / 2500.0).exp();
     let dune = 2.5 * (x / 23.0).sin() * (y / 31.0).cos();
     // a beach and a lagoon to the west (water at 20 m)
     let shore = ((x - 75.0) / 9.0).clamp(-6.0, 9.0);
-    21.5 + shore + hill + dune
+    21.5 + shore + hill + dune + altitude()
 }
 
 fn te(color: [f32; 4], shiny: u8, fullbright: bool, glow: f32) -> Arc<TextureEntry> {
@@ -3421,6 +3466,18 @@ fn demo_sky(sun: Vec3, gamma: f64) -> Llsd {
 #[cfg(test)]
 mod particle_tests {
     use super::*;
+
+    #[test]
+    fn agent_jitter_stays_within_its_size_and_changes_every_twelve_frames() {
+        let mut distinct = std::collections::HashSet::new();
+        for frame in 0..1200 {
+            let o = agent_jitter_offset(frame, 0.6);
+            assert!(o.abs().max_element() <= 0.0006 + 1e-9, "{o:?}");
+            assert_eq!(o, agent_jitter_offset(frame / 12 * 12, 0.6));
+            distinct.insert(o.to_array().map(f32::to_bits));
+        }
+        assert!(distinct.len() > 90);
+    }
 
     #[test]
     fn motorcycle_script_survives_compressed_update_and_simulation() {

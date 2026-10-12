@@ -76,6 +76,7 @@ processus du viewer. Pour un test avec intervention humaine, garder le titre
 | `AURORA_DEMO=1` | Mode démo hors ligne |
 | `AURORA_DEMO_POS="x,y"` | Position de départ |
 | `AURORA_DEMO_TOD=0..4` | Heure du jour |
+| `AURORA_DEMO_ALTITUDE=<m>` | Place tout le lieu de démo à cette altitude |
 | `AURORA_FPS_LIMIT=<n>` | Plafond d'images/s pour les essais (10–500) |
 | `AURORA_LOG_NAME=<nom>` | Nom du fichier journal |
 | `AURORA_EMOJI_FONT=<chemin>` | Utilise une autre police emoji |
@@ -84,6 +85,11 @@ processus du viewer. Pour un test avec intervention humaine, garder le titre
 Le limiteur d'images/s est activé à **120 images/s par défaut**. Il peut
 être désactivé ou réglé dans Préférences › Graphismes › Fluidité ; les
 préférences déjà enregistrées sont conservées.
+
+`AURORA_DEMO_ALTITUDE` : terrain, objets et avatars sont relevés d'autant
+(0 à 4 000 m). Sert à voir ce que la simple précision fait à l'image en
+hauteur : entre 2 048 et 4 096 m, une position ne varie que par pas de
+0,24 mm, soit environ un pixel en gros plan.
 
 `AURORA_FPS_LIMIT` : plafond utilisateur pour les essais (10–500 images/s ;
 les valeurs positives sont ramenées à cette plage, une valeur invalide est
@@ -110,6 +116,7 @@ capture.
 | `AURORA_DEMO_CAM="yaw,pitch,dist"` | Place la caméra autour de l'avatar |
 | `AURORA_DEMO_CAMERA=<scénario>` | Scénario de caméra (voir Détails) |
 | `AURORA_DEMO_TP=1` ou `"x,y,z"` ou `remote` | Téléportation après le chargement |
+| `AURORA_DEMO_AGENT_JITTER=<mm>` | Petites corrections de position de notre avatar |
 | `AURORA_DEMO_KEY=<flèche>` | Tient une flèche du clavier |
 | `AURORA_DEMO_SIT=<n>` | Clique n fois sur le bouton S'asseoir |
 | `AURORA_DEMO_MMO="x,y[,1\|2]"` | Pilotage de l'avatar à la souris |
@@ -126,9 +133,13 @@ capture.
 - **`AURORA_DEMO_CAM`** : décalage de cap et inclinaison de la caméra autour
   de l'avatar (radians, une inclinaison positive regarde vers le bas) et
   distance (mètres).
-- **`AURORA_DEMO_CAMERA=alt,x,y|pan,x,y|zoom,x,y|tag|ml|wheel|fly|sit`** :
+- **`AURORA_DEMO_CAMERA=alt,x,y|pan,x,y|zoom,x,y|close,x,y[,n]|drift,x,y[,n]|tag|ml|wheel|fly|sit`** :
   scénario journalisé sous `demo camera` — Alt+clic en (x, y) puis glisser et
-  retour en marchant ; appui sur notre propre étiquette de nom puis glisser
+  retour en marchant ; `close` : Alt+clic en (x, y) à l'image 600, zoom
+  pendant n images (60 par défaut), puis la caméra ne bouge plus (gros plan
+  à caméra fixe, pour comparer des captures consécutives) ; `drift` : le
+  même gros plan, puis une orbite très lente (un cinquantième de pixel de
+  souris par image) jusqu'à l'image 1200 ; appui sur notre propre étiquette de nom puis glisser
   (pilotage) ; entrée / sortie de la vue subjective ; molette ; recul en
   vol ; assise sur un siège qui tourne, avec une caméra de siège et une
   animation lancée par une prim liée (image 300), puis lever et demande de
@@ -136,6 +147,13 @@ capture.
 - **`AURORA_DEMO_TP`** : téléportation après le fondu du chargement initial
   (image 240 au plus tôt). `1` ou `"x,y,z"` : arrivée locale immédiate, sans
   écran de chargement ; `remote` simule la progression entre régions.
+- **`AURORA_DEMO_AGENT_JITTER=<mm>`** : notre avatar reçoit cinq fois par
+  seconde (à 60 images/s) une correction de position d'au plus cette taille,
+  comme en envoie un simulateur à un avatar debout en altitude. Avec
+  `AURORA_DEMO_CAMERA=close,x,y` sur un objet posé, l'image reste identique
+  au pixel près ; sur notre avatar, la caméra le suit et tout le décor
+  proche saute. À combiner avec `AURORA_DEMO_ALTITUDE` et
+  `AURORA_STILL_CHECK=1`.
 - **`AURORA_DEMO_KEY=down|up|left|right`** : tient une flèche à partir de
   l'image 235 (déplacement, orientation du corps).
 - **`AURORA_DEMO_SIT=n`** : clics aux images 240, 300, 360…
@@ -981,10 +999,12 @@ Ce que l'inventaire doit montrer avec ces scénarios :
 | `AURORA_TEXTURE_BC7=0` | Textures jamais compressées en BC7 |
 | `AURORA_TEXTURE_BC7_CACHE=0` | BC7 sans son cache disque |
 | `AURORA_RENDER_THREAD=0` | Images dessinées sur le thread principal |
+| `AURORA_EYE_RELATIVE=0` | Sommets des objets calculés en coordonnées de région |
 | `AURORA_PROFILE=1` | Profilage dans le journal (voir [Profilage](#profilage)) |
 | `AURORA_PROFILE_FRAMES=1` | Profil détaillé de chaque image |
 | `AURORA_GPU_VALIDATION=1` | Couches de validation de wgpu |
 | `AURORA_HOVER_CHECK=1` | Diagnostic du curseur de survol |
+| `AURORA_STILL_CHECK=1` | Ce qui change quand l'image devrait être immobile |
 | `AURORA_DEBUG_GLOW=1` | Diagnostic du glow |
 | `AURORA_GLOW_SKIP=<masque>` | Retire une famille de faces du glow |
 | `AURORA_MEDIA_DEBUG=1` | Diagnostic des médias |
@@ -1055,6 +1075,17 @@ Ce que l'inventaire doit montrer avec ces scénarios :
   paquet autonome et passe à l'image suivante ; avec `0`, le même paquet est
   exécuté sur place. `thread=on|off` dans la ligne `perf summary`, et une
   ligne de journal au démarrage (`renderer: frames drawn by…`).
+- **`AURORA_EYE_RELATIVE=0`** : calcule les sommets des objets en coordonnées
+  de région, comme avant, pour comparer. Par défaut, le vertex shader retire
+  la position de la caméra de la translation du modèle avant tout autre
+  calcul (`eye_model` dans `object.wgsl`, matrice `eye_view_proj`) : en
+  altitude, la simple précision ne tient que 0,24 mm en coordonnées de
+  région (entre 2 048 et 4 096 m), et chaque sommet des objets proches
+  tombait jusqu'à un pixel à côté, ailleurs à chaque changement de vue. À
+  voir avec `AURORA_DEMO_ALTITUDE=2085` et
+  `AURORA_DEMO_CAMERA=drift,690,420,84` sur des captures consécutives
+  (images 800 à 899) : le bord du panneau dérive régulièrement, ou sautille
+  avec `0`.
 - **`AURORA_PROFILE=1`** : une ligne `perf summary` par seconde, plus une
   ligne `perf settings` quand les réglages changent. Le plafond d'images/s
   en arrière-plan (« Limiter hors focus ») est ignoré : une fenêtre sans le
@@ -1068,6 +1099,18 @@ Ce que l'inventaire doit montrer avec ces scénarios :
   différences sont journalisées sous `hover check`, avec toutes les dix
   secondes les recherches faites et les réponses réutilisées. Coûte la
   recherche complète à chaque image.
+
+- **`AURORA_STILL_CHECK=1`** : une ligne `still check` par seconde, pour
+  trouver la cause d'une image qui tremble alors que rien ne devrait bouger
+  (caméra verrouillée sur un objet). Elle donne le nombre d'images où la
+  caméra, son point visé, son champ et notre avatar ont changé (et de combien
+  au plus, en mm), les objets dont les faces ont été reconstruites, avec la
+  raison (`geometry` : autre niveau de détail ; `material`, `shape` : mise à
+  jour du simulateur ; `faces`, `rigged`, `skeleton`, `material-generation`),
+  et les objets posés dont la matrice a changé (`worn` compte à part ceux que
+  porte un avatar). Six exemples au plus suivent chaque ligne : identifiant,
+  type, niveau de détail, taille, distance, mouvement annoncé par le
+  simulateur (`scene/still_check.rs`). En démo comme sur la grille.
 
 ## Profilage
 
@@ -1135,7 +1178,9 @@ thread principal est déjà sur l'image suivante. Avec
     budget de temps de l'image, `sync_alpha` faces reclassées après le
     changement de classe alpha d'une texture ;
   - le temps GPU par élément (`g_*`), les draws et commandes de dessin, les
-    objets synchronisés / reconstruits, les avatars posés, les octets
+    objets synchronisés / reconstruits (`synced`, `rebuilt` : des moyennes
+    **par image** ; `rebuilt=0.2` à 175 images/s, ce sont 35 reconstructions
+    par seconde, `AURORA_STILL_CHECK=1` dit lesquelles), les avatars posés, les octets
     d'enregistrements et de palettes envoyés au GPU et ceux de tout le
     journal d'écritures de l'image (`journal_kb`), la mémoire des textures
     (textures vivantes, pages de textures et leur mémoire allouée), la

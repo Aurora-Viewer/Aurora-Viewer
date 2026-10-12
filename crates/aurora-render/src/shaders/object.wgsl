@@ -36,6 +36,20 @@ fn skinned_model(rec: DrawRecord, in: VsIn) -> mat4x4<f32> {
     return rec.model;
 }
 
+// The same, placed relative to the frame's eye: the eye is taken away from
+// the model's translation first, so the skinning, the vertex and the view
+// work on distances from the camera. In region coordinates, single precision
+// is too coarse high above the ground (0.24 mm steps above 2048 m: up to a
+// pixel on close objects, different whenever the view changes).
+fn eye_model(rec: DrawRecord, in: VsIn) -> mat4x4<f32> {
+    var m = rec.model;
+    m[3] = vec4<f32>(m[3].xyz - frame.eye.xyz, m[3].w);
+    if ((rec.flags.x & FLAG_SKINNED) != 0u) {
+        return m * skin_matrix(rec, in.joints, in.weights);
+    }
+    return m;
+}
+
 struct VsOut {
     @invariant @builtin(position) clip: vec4<f32>,
     @location(0) world_pos: vec3<f32>,
@@ -276,10 +290,12 @@ fn diffuse_uv(st: vec2<f32>, rec: DrawRecord, clock: vec2<u32>) -> vec2<f32> {
 @vertex
 fn vs_main(in: VsIn) -> VsOut {
     let rec = records[in.instance];
-    let model = skinned_model(rec, in);
-    let wp = model * vec4<f32>(in.pos, 1.0);
+    let model = eye_model(rec, in);
+    let ep = model * vec4<f32>(in.pos, 1.0);
+    // (lighting, shadows and fog keep region coordinates)
+    let wp = vec4<f32>(ep.xyz + frame.eye.xyz, ep.w);
     var out: VsOut;
-    out.clip = frame.view_proj * wp;
+    out.clip = frame.eye_view_proj * ep;
     out.world_pos = wp.xyz;
     out.normal = cofactor(model) * in.normal.xyz;
     var st = face_st(in, rec);
@@ -310,7 +326,7 @@ fn vs_main(in: VsIn) -> VsOut {
         out.uv_e = pbr_uv(st, rec.spec_color, rec.legacy.z);
     }
     out.record = in.instance;
-    out.view_depth = distance(wp.xyz, frame.camera_pos.xyz);
+    out.view_depth = distance(ep.xyz, frame.camera_pos.xyz - frame.eye.xyz);
     return out;
 }
 
@@ -343,10 +359,10 @@ fn fs_hud(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f3
 @vertex
 fn vs_depth(in: VsIn) -> DepthOut {
     let rec = records[in.instance];
-    let model = skinned_model(rec, in);
-    let wp = model * vec4<f32>(in.pos, 1.0);
+    let model = eye_model(rec, in);
+    let ep = model * vec4<f32>(in.pos, 1.0);
     var out: DepthOut;
-    out.clip = frame.view_proj * wp;
+    out.clip = frame.eye_view_proj * ep;
     return out;
 }
 
