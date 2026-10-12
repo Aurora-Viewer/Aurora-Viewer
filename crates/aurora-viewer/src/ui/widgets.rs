@@ -219,11 +219,15 @@ impl<'a> Floater<'a> {
         if let Some(pos) = slot.pos {
             w = w.current_pos(pos);
         }
+        if let Some(limits) = slot.limits {
+            w = w.constrain_to(limits);
+        }
         if let Some(pos) = ctx.data_mut(|d| d.remove_temp::<egui::Pos2>(window_id.with(PLACE_POS))) {
             w = w.current_pos(pos);
         }
-        if let Some(drag) = resize_drag {
-            let rect = drag.rect();
+        // the edge dragged snaps to the other windows and to the work area
+        let resized = resize_drag.map(|drag| super::layout::resizing(ctx, p, window_id, drag.rect(), drag.edges(), drag.minimum()));
+        if let Some(rect) = resized {
             w = w.fixed_size(rect.size()).current_pos(rect.min);
         }
         let mut glass_slot = None;
@@ -343,7 +347,7 @@ impl<'a> Floater<'a> {
             }
         });
         if let Some(response) = response {
-            slot.shown(ctx, response.response.rect);
+            slot.shown(ctx, response.response.rect, minimized);
             if let Some((painter, slot)) = glass_slot {
                 let radius = f32::from(ctx.global_style().visuals.window_corner_radius.nw);
                 workspace::finish_glass(
@@ -357,8 +361,8 @@ impl<'a> Floater<'a> {
             if !minimized {
                 ctx.data_mut(|d| d.insert_persisted(expanded_id, response.response.rect.size()));
             }
-            if let Some(drag) = resize_drag {
-                drag.finish(ctx, window_id, response.response.rect);
+            if let (Some(drag), Some(requested)) = (resize_drag, resized) {
+                drag.finish(ctx, window_id, requested, response.response.rect);
             }
             if resizable {
                 resize::handles(ctx, &response.response);
@@ -379,6 +383,58 @@ impl<'a> Floater<'a> {
         }
         out
     }
+}
+
+/// A window without a title bar, dragged by its whole surface (the
+/// mini-map): `frame` around `body`, which fills it. Like a floater it is
+/// placed by the layout (`layout::Slot`), snaps to the other windows when
+/// moved or resized, and is resized by the same edge handles.
+pub(crate) fn bare_window(
+    ctx: &egui::Context,
+    p: &Palette,
+    id: &str,
+    title: &str,
+    frame: egui::Frame,
+    default: egui::Rect,
+    min_size: Vec2,
+    body: impl FnOnce(&mut egui::Ui),
+) {
+    let window_id = egui::Id::new(id);
+    let drag = resize::Drag::prepare(ctx, window_id, min_size);
+    let mut w = egui::Window::new(title)
+        .id(window_id)
+        .title_bar(false)
+        .frame(frame)
+        .fade_in(false)
+        .fade_out(false)
+        .default_pos(default.min)
+        .default_size(default.size())
+        .min_size(min_size)
+        .resizable(false)
+        .constrain(true);
+    let slot = super::layout::slot(ctx, window_id);
+    if let Some(pos) = slot.pos {
+        w = w.current_pos(pos);
+    }
+    if let Some(limits) = slot.limits {
+        w = w.constrain_to(limits);
+    }
+    let resized = drag.map(|drag| super::layout::resizing(ctx, p, window_id, drag.rect(), drag.edges(), drag.minimum()));
+    if let Some(rect) = resized {
+        w = w.fixed_size(rect.size()).current_pos(rect.min);
+    }
+    let Some(shown) = w.show(ctx, |ui| {
+        // as a resizable egui::Window would: the body gets the whole size
+        ui.set_min_size(ui.available_size());
+        body(ui);
+    }) else {
+        return;
+    };
+    slot.shown(ctx, shown.response.rect, false);
+    if let (Some(drag), Some(requested)) = (drag, resized) {
+        drag.finish(ctx, window_id, requested, shown.response.rect);
+    }
+    resize::handles(ctx, &shown.response);
 }
 
 const PLACE_POS: &str = "place_pos";

@@ -1078,6 +1078,13 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                 c |= row(
                     ui,
                     p,
+                    aurora_i18n::tr!("ui-options-snap-windows"),
+                    aurora_i18n::tr!("ui-options-snap-windows-help"),
+                    |ui| toggle(ui, p, &mut s.snap_windows),
+                );
+                c |= row(
+                    ui,
+                    p,
                     aurora_i18n::tr!("ui-options-context-menu"),
                     aurora_i18n::tr!("ui-options-context-menu-help"),
                     |ui| {

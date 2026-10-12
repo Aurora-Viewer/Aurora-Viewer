@@ -4502,6 +4502,7 @@ impl App {
         let ctx = self.egui_ctx.clone();
         if self.demo {
             raw.events.extend(ui::widgets::demo::events(&ctx, self.frame_count));
+            raw.events.extend(ui::widgets::demo::snap_events(&ctx, self.frame_count));
             raw.events.extend(ui::color_picker::demo::events(
                 &self.egui_ctx,
                 &self.build.ui.color_picker,
@@ -5799,8 +5800,10 @@ impl App {
                 if chat_width_set {
                     self.settings.save();
                 }
-                // what the bars leave: where the windows are laid out
+                // what the bars leave: where the windows are laid out, moved
+                // and snapped this frame
                 ui::layout::set_work_area(ui.ctx(), ui.available_rect_before_wrap());
+                ui::layout::frame(ui.ctx(), &p, self.settings.snap_windows);
                 self.mic_on = mic.on;
                 self.mic_button_held = mic.held;
                 if mic.mode_changed || mic.devices_changed {

@@ -3975,3 +3975,7 @@ ui-options-camera-reset-all = Reset the camera
 ui-options-camera-reset-all-tip = Puts every setting of this page back to its default: rear view, camera position and focus point, viewing angle, distance, smoothing, limits and mouselook.
 ui-chat-close-conversation = Close conversation
 ui-chat-close-conversation-leave = Close conversation (leaves the session)
+ui-options-snap-windows = Snap windows
+ui-options-snap-windows-help = A window moved or resized near another one, a bar or an edge of the screen snaps to it; two windows snapped side by side then move together. Hold Alt during the gesture to move the window alone, without snapping.
+ui-snap-alt-no-snap = do not snap
+ui-snap-alt-detach = detach this window

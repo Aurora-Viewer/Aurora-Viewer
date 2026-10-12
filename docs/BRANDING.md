@@ -149,6 +149,19 @@ Dans le code, on utilise toujours la `Palette` résolue (`p.violet`, `p.ink`…)
   d'avertissement…) plutôt que d'en recréer.
 - **Textes de l'interface en français**, courts et clairs. Une info-bulle
   explique toute option dont l'effet n'est pas évident.
+- **Fenêtres aimantées.** Une fenêtre déplacée près d'une autre, d'une barre
+  ou d'un bord suit le pointeur sans saut ; ce qui va se passer au relâchement
+  est montré par un guide : un trait de 2 px en `violet_light` le long des
+  bords qui vont se toucher (sur la longueur qu'ils partagent) ou s'aligner,
+  et le contour très léger de l'endroit où la fenêtre va se poser, au rayon
+  des fenêtres. Pas de guide, pas de collage. Les fenêtres collées gardent
+  entre elles, et avec les barres et les bords, le même écart de 8 px que la
+  disposition du premier lancement (`layout::GAP`). Pendant le geste, une
+  petite pastille sur le verre des fenêtres rappelle la touche qui libère :
+  la touche Alt en keycap (`widgets::keycap`) suivie de « ne pas coller » ou
+  « détacher cette fenêtre », en texte `muted`, posée près de la fenêtre, hors
+  du guide et du pointeur, après un court délai. Aucun bouton ni décor
+  permanent pour les fenêtres collées.
 
 ## Logos
 

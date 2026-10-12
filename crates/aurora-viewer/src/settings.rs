@@ -111,6 +111,9 @@ pub struct Settings {
     pub ui_scale: f32,
     /// Firestorm UsePieMenu. Keep Aurora's existing list menu by default.
     pub use_pie_menu: bool,
+    /// Windows snap to each other and to the edges while they are moved or
+    /// resized (Firestorm SnapEnabled, on).
+    pub snap_windows: bool,
     pub show_perf: bool,
     pub show_chat: bool,
     pub show_minimap: bool,
@@ -476,6 +479,7 @@ impl Default for Settings {
             texture_budget_mb: 1536,
             ui_scale: 1.0,
             use_pie_menu: false,
+            snap_windows: true,
             // First launch (no settings file): the radar (People on its
             // first tab, top left), the mini-map (top right), Performance
             // under it and Conversations (bottom right) are open, as asked

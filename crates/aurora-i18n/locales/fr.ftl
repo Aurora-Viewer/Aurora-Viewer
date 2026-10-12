@@ -3975,3 +3975,7 @@ ui-options-camera-reset-all = Réinitialiser la caméra
 ui-options-camera-reset-all-tip = Remet tous les réglages de cette page à leur valeur par défaut : vue arrière, position et point visé, angle de vue, distance, lissage, limites et vue subjective.
 ui-chat-close-conversation = Fermer la conversation
 ui-chat-close-conversation-leave = Fermer la conversation (quitte la session)
+ui-options-snap-windows = Aimanter les fenêtres
+ui-options-snap-windows-help = Une fenêtre déplacée ou redimensionnée près d'une autre, d'une barre ou d'un bord de l'écran s'y colle ; deux fenêtres collées côte à côte se déplacent ensuite ensemble. Maintenir Alt pendant le geste déplace la fenêtre seule, sans la coller.
+ui-snap-alt-no-snap = ne pas coller
+ui-snap-alt-detach = détacher cette fenêtre

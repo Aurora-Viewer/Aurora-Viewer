@@ -10,9 +10,18 @@
 //! the left. Every window the user places goes through a `Slot` for that
 //! (`widgets::Floater`, the mini-map): the slot records where the window
 //! stood and in which screen, with the layout.
+//!
+//! The slots also make the windows of the frame known to the gestures
+//! (`gesture`): a window moved or resized snaps to the others and to the
+//! work area (`snap`), and windows snapped side by side are glued: they
+//! move as one block, saved with the layout too.
 
+mod gesture;
+
+use super::snap;
+use crate::theme::Palette;
 use egui::{Id, Pos2, Rect, Vec2};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 fn path() -> PathBuf {
@@ -143,11 +152,74 @@ struct Placed {
     screen: Rect,
 }
 
+/// A window shown this frame or the last one.
+#[derive(Clone, Copy, Debug)]
+struct Shown {
+    id: Id,
+    rect: Rect,
+    /// The frame (`Live::frame`) it was last shown in.
+    frame: u64,
+    minimized: bool,
+}
+
+/// What is known of the windows for the session only.
+#[derive(Clone, Debug, Default)]
+struct Live {
+    /// Frames counted by `frame` (the gestures); stays 0 without it.
+    frame: u64,
+    shown: BTreeMap<u64, Shown>,
+    /// The screen the targets of `follow` were computed for, and where each
+    /// window recorded in another screen goes in it.
+    followed: Option<Rect>,
+    follow: BTreeMap<u64, Pos2>,
+    /// Positions the gestures give this frame: the windows glued to the one
+    /// dragged, a snap applied.
+    places: BTreeMap<u64, Pos2>,
+    /// Where the dragged window of a group can go (`snap::block_limits`).
+    limits: Option<(u64, Rect)>,
+    /// The setting (`Settings::snap_windows`), as of this frame.
+    snap: bool,
+    moved: Option<gesture::Move>,
+    resized: Option<gesture::Resize>,
+}
+
 /// The windows the user places, by `Id::value`; persisted with egui's
 /// memory, so written to `ui_layout.ron` with the rest of the layout.
-#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 struct Windows {
+    #[serde(default)]
     placed: BTreeMap<u64, Placed>,
+    /// Windows snapped side by side: they move together (`snap::group`).
+    #[serde(default)]
+    links: BTreeSet<snap::Link>,
+    #[serde(skip)]
+    live: Live,
+}
+
+impl Windows {
+    /// Where the windows recorded in another screen go in `screen`: each
+    /// follows its edges, a group of glued windows as one block (the edges
+    /// nearest to its bounds), so that its windows stay side by side.
+    /// Computed once per screen, before any of them is recorded in it.
+    fn follow(&mut self, window: u64, screen: Rect) -> Option<Pos2> {
+        if self.live.followed != Some(screen) {
+            self.live.followed = Some(screen);
+            self.live.follow = self
+                .placed
+                .iter()
+                .filter(|(_, placed)| placed.screen != screen)
+                .map(|(id, placed)| {
+                    let block = snap::group(&self.links, *id)
+                        .iter()
+                        .filter_map(|member| self.placed.get(member))
+                        .filter(|member| member.screen == placed.screen)
+                        .fold(Rect::NOTHING, |all, member| all.union(member.rect));
+                    (*id, placed.rect.min + follow_edges(placed.screen, screen, block))
+                })
+                .collect();
+        }
+        self.live.follow.remove(&window)
+    }
 }
 
 fn windows<R>(ctx: &egui::Context, read: impl FnOnce(&mut Windows) -> R) -> R {
@@ -155,8 +227,9 @@ fn windows<R>(ctx: &egui::Context, read: impl FnOnce(&mut Windows) -> R) -> R {
 }
 
 /// One window of the layout for one frame: ask for it before the window is
-/// shown, give `pos` (when there is one) to `egui::Window::current_pos`, and
-/// report the rect once shown.
+/// shown, give `pos` and `limits` (when there are) to
+/// `egui::Window::current_pos` and `constrain_to`, and report the rect once
+/// shown.
 #[must_use = "report the window with Slot::shown"]
 pub(crate) struct Slot {
     id: Id,
@@ -164,46 +237,105 @@ pub(crate) struct Slot {
     /// the first frame of a window, shown or restored from the layout: that
     /// frame only measures it, and its rect is not one to record.
     sized: bool,
-    /// The position the window takes this frame: the screen changed since
-    /// it was last shown, and it follows its edges.
+    /// The position the window takes this frame: it follows the window it
+    /// is glued to, a snap is applied, or the screen changed since it was
+    /// last shown and it follows its edges.
     pub pos: Option<Pos2>,
+    /// Where the window can be dragged this frame instead of the whole
+    /// screen: it carries a group that must stay inside with it.
+    pub limits: Option<Rect>,
 }
 
 /// The slot of window `id` (the id given to `egui::Window::id`).
 pub(crate) fn slot(ctx: &egui::Context, id: Id) -> Slot {
     let screen = ctx.content_rect();
     let sized = egui::AreaState::load(ctx, id).is_some_and(|s| s.size.is_some());
-    let pos = usable(screen)
-        .then(|| windows(ctx, |w| w.placed.get(&id.value()).copied()))
-        .flatten()
-        .filter(|placed| placed.screen != screen)
-        .map(|placed| placed.rect.min + follow_edges(placed.screen, screen, placed.rect));
-    Slot { id, sized, pos }
+    let key = id.value();
+    let (pos, limits) = windows(ctx, |w| {
+        let followed = usable(screen).then(|| w.follow(key, screen)).flatten();
+        let limits = w.live.limits.filter(|(window, _)| *window == key).map(|(_, limits)| limits);
+        (w.live.places.remove(&key).or(followed), limits)
+    });
+    Slot { id, sized, pos, limits }
 }
 
 impl Slot {
-    /// The window was shown at `rect`.
-    pub(crate) fn shown(self, ctx: &egui::Context, rect: Rect) {
+    /// The window was shown at `rect`; `minimized`: reduced to its title.
+    pub(crate) fn shown(self, ctx: &egui::Context, rect: Rect, minimized: bool) {
         let screen = ctx.content_rect();
-        if !usable(screen) {
-            return;
-        }
         windows(ctx, |w| {
             let key = self.id.value();
-            let new = match (self.sized, w.placed.get(&key)) {
-                (true, _) => Placed { rect, screen },
+            let recorded = w.placed.get(&key).copied();
+            let rect = match (self.sized, recorded) {
                 // measured this frame: it keeps the size it was recorded with
-                (false, Some(old)) => Placed {
-                    rect: Rect::from_min_size(rect.min, old.rect.size()),
-                    screen,
-                },
-                (false, None) => return,
+                (false, Some(old)) => Rect::from_min_size(rect.min, old.rect.size()),
+                _ => rect,
             };
-            if w.placed.get(&key) != Some(&new) {
+            let new = Placed { rect, screen };
+            if usable(screen) && (self.sized || recorded.is_some()) && recorded != Some(new) {
                 w.placed.insert(key, new);
             }
+            let frame = w.live.frame;
+            w.live.shown.insert(
+                key,
+                Shown {
+                    id: self.id,
+                    rect,
+                    frame,
+                    minimized,
+                },
+            );
         });
     }
+}
+
+/// The gestures of the frame on the windows: call it once per frame, after
+/// the bars (`set_work_area`) and before the windows are shown. A window
+/// dragged by its title takes the windows glued to it along, is offered a
+/// snap to the others and to the work area (`snap`; `snap_enabled` is the
+/// user's setting), shown by a guide and applied when the mouse is
+/// released; Alt moves it alone and free.
+pub(crate) fn frame(ctx: &egui::Context, p: &Palette, snap_enabled: bool) {
+    let screen = ctx.content_rect();
+    if !usable(screen) {
+        return;
+    }
+    let pointer = gesture::Pointer {
+        dragged: ctx.dragged_id(),
+        stopped: ctx.drag_stopped_id(),
+        total: ctx.input(|i| i.pointer.total_drag_delta()).unwrap_or_default(),
+        alt: ctx.input(|i| i.modifiers.alt),
+        time: ctx.input(|i| i.time),
+    };
+    let (area, pixels_per_point) = (work_area(ctx), ctx.pixels_per_point());
+    let overlay = windows(ctx, |w| w.drive(screen, area, pixels_per_point, pointer, snap_enabled));
+    if let Some(overlay) = overlay {
+        snap::overlay::paint(ctx, p, &overlay);
+    }
+}
+
+/// Window `id` is resized by its `edges` and the pointer has it at `rect`:
+/// the rect to give it, its moving edges snapped when they come near
+/// another window or the work area. Unlike a move, a resize snaps under the
+/// pointer: the window is laid out again at each size, and its content may
+/// refuse one (`min_size` grows then, and the snap is no longer offered).
+pub(crate) fn resizing(ctx: &egui::Context, p: &Palette, id: Id, rect: Rect, edges: snap::Edges, min_size: Vec2) -> Rect {
+    let (alt, time, released) = ctx.input(|i| (i.modifiers.alt, i.time, !i.pointer.primary_down()));
+    let area = work_area(ctx);
+    let request = gesture::ResizeRequest {
+        window: id.value(),
+        rect,
+        edges,
+        min_size,
+        alt,
+        time,
+        released,
+    };
+    let (rect, overlay) = windows(ctx, |w| w.resize(request, area));
+    if let Some(overlay) = overlay {
+        snap::overlay::paint(ctx, p, &overlay);
+    }
+    rect
 }
 
 #[cfg(test)]
@@ -341,7 +473,7 @@ mod tests {
                     map = map.current_pos(pos);
                 }
                 if let Some(shown) = map.show(ctx, |ui| ui.allocate_space(ui.available_size())) {
-                    slot.shown(ctx, shown.response.rect);
+                    slot.shown(ctx, shown.response.rect, false);
                 }
             });
             output.textures_delta.clear();
@@ -402,12 +534,12 @@ mod tests {
     fn an_unusable_screen_is_not_recorded() {
         let mut s = Session::new();
         s.frames(3, 1600.0, 900.0);
-        let before = windows(&s.ctx, |w| w.clone());
-        assert_eq!(before.placed.len(), 3);
-        assert_eq!(before.placed[&Id::new(MAP).value()].screen, screen(1600.0, 900.0));
+        let before = windows(&s.ctx, |w| w.placed.clone());
+        assert_eq!(before.len(), 3);
+        assert_eq!(before[&Id::new(MAP).value()].screen, screen(1600.0, 900.0));
         s.frames(2, 0.0, 0.0);
         s.frames(2, 160.0, 28.0);
-        assert_eq!(windows(&s.ctx, |w| w.clone()), before);
+        assert_eq!(windows(&s.ctx, |w| w.placed.clone()), before);
     }
 
     /// The layout saved in a small viewer window, opened in a larger one:

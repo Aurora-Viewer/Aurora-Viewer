@@ -42,6 +42,7 @@ pub mod places;
 pub mod profile;
 pub mod scripts;
 pub mod skin;
+pub mod snap;
 pub mod sound_cues;
 pub mod texture_picker;
 pub mod update;

@@ -760,6 +760,7 @@ grille.
 | Variable | Effet |
 |---|---|
 | `AURORA_DEMO_WINDOWS=<mode>` | Repli, déplacement et restauration du titre de l’inventaire |
+| `AURORA_DEMO_SNAP=<mode>` | Fenêtres aimantées : guide, collage, déplacement groupé, redimensionnement |
 | `AURORA_DEMO_EXIT=<mode>` | Modale de fermeture et choix hors ligne |
 | `AURORA_DEMO_UI=<onglet>` | Ouvre Personnes (onglet), l'inventaire et le chat |
 | `AURORA_DEMO_RADAR=1` | Résidents autour de soi pour le radar de Personnes (toutes les portées) |
@@ -813,6 +814,20 @@ grille.
   Capturer `620,740,900,1120` pour vérifier contenu, repli, déplacement et
   dimensions restaurées. Le bouton « − » reste utilisable ; les autres
   boutons du titre et le contenu ne déclenchent pas le double-clic du titre.
+- **`AURORA_DEMO_SNAP=1|groupe|taille`** : fait glisser la vraie fenêtre
+  Conversations par son titre jusqu'à côté de Personnes (les deux doivent être
+  ouvertes : disposition du premier lancement, ou `AURORA_DEMO_UI`). Image
+  700 : appui sur le titre ; jusqu'à l'image 900 la fenêtre est tenue à 6 px
+  du bord droit de Personnes et 5 px sous la ligne de son haut : le guide
+  violet (les deux bords qui vont se toucher, la ligne des hauts, le contour
+  de l'endroit où elle va se poser) et le rappel « Alt : ne pas coller »
+  apparaissent, la fenêtre reste sous le pointeur ; image 900 : relâchée,
+  elle se colle à 8 px de Personnes, hauts alignés. `groupe` déplace ensuite
+  Personnes de 70 × 50 entre les images 1000 et 1100 : Conversations suit, le
+  rappel dit « Alt : détacher cette fenêtre ». `taille` tire à la place le
+  bord bas de Conversations jusqu'à 4 px de la ligne du bas de Personnes : le
+  bord s'y colle sous le pointeur, avec sa ligne de guide. Capturer
+  `800,960,1060,1160` avec `AURORA_FPS_LIMIT=60`.
 - **`AURORA_DEMO_NOTIF=1`** : l’offre « Lanterne aurorale » est celle d’un
   résident : l’objet est déjà dans l’inventaire (dossier Objets) à l’arrivée
   de l’offre. « Garder », ou fermer l’offre dans la liste, l’y laisse ;
