@@ -132,6 +132,7 @@ capture.
 | `AURORA_DEMO_PIE=1` | Menu circulaire du clic droit |
 | `AURORA_DEMO_POINTER=<points>` | Déplace le pointeur sur l'interface |
 | `AURORA_DEMO_HOVER=1` | Balayage du curseur au survol |
+| `AURORA_DEMO_CLICKS=<ms>` | Clics sur le monde à cadence régulière |
 | `AURORA_DEMO_LOOKAT=1` | Suivi du regard et regard d'un autre avatar |
 | `AURORA_DEMO_KEYBOARD=<disposition>` | Touches de déplacement selon la disposition |
 | `AURORA_DEMO_CHATCMD="<commandes>"` | Tape des commandes dans la barre de chat |
@@ -190,6 +191,23 @@ capture.
   (recherche de l'objet sous le curseur et réponses gardées d'une image à
   l'autre, `scene/hover.rs`). Lire `hover` dans le profil ; à combiner avec
   `AURORA_HOVER_CHECK=1`, `AURORA_DEMO_ACTIONS=1` ou une scène de charge.
+- **`AURORA_DEMO_CLICKS="<ms>[,x,y|sweep][,left|alt|menu|build|focus]"`** :
+  un clic sur le monde toutes les `ms` millisecondes (250 si la valeur n'est
+  pas un nombre) une fois le monde affiché, bouton tenu 60 ms, par le même
+  chemin qu'un bouton de la souris (`app/click_pick.rs`), sans jamais
+  prendre le vrai curseur (Alt + clic, clic sur notre avatar). Une ligne
+  `demo clicks: the click before is not over` signale un clic dont le
+  relâchement n'a pas été traité avant le suivant. Au pixel (x, y) de la
+  fenêtre (un quart de la largeur, près du bas, par défaut : le sol), ou
+  avec `sweep` à un nouvel endroit de la fenêtre à chaque clic. `left` (par
+  défaut) : clic gauche ; `alt` : Alt + clic (caméra) ; `menu` : clic droit ;
+  `build` et `focus` : clic avec l'outil Modifier ou l'outil Focus de la
+  construction. Sert à mesurer ce qu'un clic coûte à l'image dans une scène
+  chargée (`AURORA_DEMO_CROWD=250`, `AURORA_DEMO_ANIMESH=1`,
+  `AURORA_MAX_AVATARS=300`, `AURORA_AA=6` : le GPU y est la limite) : avec
+  `AURORA_PROFILE=1`, lire `between` dans `max:` et `off_cpu:`, et les
+  lignes `click pick:` (une par clic : images et millisecondes avant la
+  réponse). À combiner avec `AURORA_CLICK_PICK=wait` ou `check`.
 - **`AURORA_DEMO_LOOKAT=1`** : suivi du regard activé (en mémoire seulement)
   et regard d'un avatar distant.
 - **`AURORA_DEMO_KEYBOARD=system|wasd|zqsd|fallback`** : valeurs par défaut
@@ -1022,6 +1040,7 @@ Ce que l'inventaire doit montrer avec ces scénarios :
 | `AURORA_PROFILE_FRAMES=1` | Profil détaillé de chaque image |
 | `AURORA_GPU_VALIDATION=1` | Couches de validation de wgpu |
 | `AURORA_HOVER_CHECK=1` | Diagnostic du curseur de survol |
+| `AURORA_CLICK_PICK=wait` ou `check` | Profondeur sous un clic lue en attendant le GPU, ou contrôlée |
 | `AURORA_STILL_CHECK=1` | Ce qui change quand l'image devrait être immobile |
 | `AURORA_DEBUG_GLOW=1` | Diagnostic du glow |
 | `AURORA_GLOW_SKIP=<masque>` | Retire une famille de faces du glow |
@@ -1132,6 +1151,27 @@ Ce que l'inventaire doit montrer avec ces scénarios :
   différences sont journalisées sous `hover check`, avec toutes les dix
   secondes les recherches faites et les réponses réutilisées. Coûte la
   recherche complète à chaque image.
+- **`AURORA_CLICK_PICK=wait|check`** : par défaut, un clic sur le monde
+  (clic gauche, Alt + clic, clic droit, outils de construction) demande la
+  profondeur sous son pixel sans l'attendre : la demande part avec l'image
+  suivante, la réponse revient deux ou trois images plus tard, et le clic
+  est alors traité avec le curseur et les touches qu'il avait ; ce qui le
+  suit (relâchement, autres boutons, mouvement de la souris qui déplace la
+  caméra) attend derrière lui, dans l'ordre (`app/click_pick.rs`).
+  - `wait` : la profondeur est lue tout de suite en attendant le GPU, comme
+    avant, pour comparer : dans une scène où le GPU est la limite, le
+    thread principal attend alors 16 à 30 ms à chaque clic (`between` dans
+    `max:` et `off_cpu:` de `perf summary`).
+  - `check` : les deux lectures sont faites et comparées, une ligne `click
+    check` par clic : `depth identical` (c'est le même texel de la même
+    image : `DIFFERENT` est un défaut), `target identical` (le point et
+    l'objet que le clic trouve ; `DIFFERENT` seulement si ce qui est sous le
+    curseur a changé pendant les deux ou trois images d'attente), le temps
+    de la lecture qui attend et le délai de la réponse. Coûte l'attente de
+    `wait` à chaque clic.
+  - Avec `AURORA_PROFILE=1` (ou `AURORA_DEMO_CLICKS`), chaque clic écrit
+    une ligne `click pick:` : `answered after 2 frames, 9.14 ms`, ou `the
+    read waited 25.56 ms` avec `wait`. En démo comme sur la grille.
 
 - **`AURORA_STILL_CHECK=1`** : une ligne `still check` par seconde, pour
   trouver la cause d'une image qui tremble alors que rien ne devrait bouger

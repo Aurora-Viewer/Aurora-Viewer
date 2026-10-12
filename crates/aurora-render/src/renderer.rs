@@ -3295,11 +3295,12 @@ impl Backend {
 
     /// What a frame gives back: its statistics, the readbacks that have
     /// arrived, the packet's buffers.
-    fn result(&self, index: u64, stats: RenderStats, captured: Option<(u32, u32, Vec<u8>)>, spent: Spent) -> FrameResult {
+    fn result(&mut self, index: u64, stats: RenderStats, captured: Option<(u32, u32, Vec<u8>)>, spent: Spent) -> FrameResult {
         FrameResult {
             index,
             stats,
             hover: self.depth_pick.latest(),
+            picks: self.depth_pick.take_click_answers(),
             cull: self.cull.last,
             captured,
             spent,
@@ -3337,6 +3338,7 @@ impl Backend {
             surface,
             settings,
             hover,
+            picks,
             capture: wanted,
         } = packet;
         let mut stats = RenderStats::default();
@@ -3346,6 +3348,17 @@ impl Backend {
         self.occlusion.harvest();
         self.cull.harvest();
         self.depth_pick.harvest();
+        self.depth_pick.harvest_clicks();
+        // the depth under the clicks made on the last frame drawn, before
+        // anything of this frame replaces it (targets, depth, camera)
+        self.depth_pick.submit_clicks(
+            &self.device,
+            &self.queue,
+            &self.targets.depth_ss,
+            (self.config.width, self.config.height),
+            self.last_inv_vp,
+            picks,
+        );
         // the window and the settings as the main thread had them for this frame
         self.apply_surface(surface);
         stats.present_mode = Some(self.config.present_mode);
@@ -4747,6 +4760,8 @@ impl Backend {
         self.queue.present(surface_tex);
         stats.presented = true;
         let _ = self.device.poll(wgpu::PollType::Poll);
+        // a click answered by now goes back with this frame's result
+        self.depth_pick.harvest_clicks();
         prof.mark("present");
         let phase = |step: &str| RENDER_PHASES.iter().position(|p| *p == step);
         stats.cpu_phases[0] = (t0 - t_acquire).as_secs_f32() * 1000.0;

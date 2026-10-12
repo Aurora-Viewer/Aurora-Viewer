@@ -1,9 +1,14 @@
 //! Depth under the cursor, read back from the GPU. A one-texel compute copy
 //! of the prepass depth replaces copying the whole depth texture (depth
-//! formats only allow whole-subresource copies). Hover requests are read a
-//! frame or two later without waiting for the GPU; clicks still wait, but
-//! for 4 bytes. Before, the hover cursor copied the full screen depth and
-//! waited for the GPU every frame.
+//! formats only allow whole-subresource copies). Nothing waits for the GPU:
+//! a hover request is copied with the frame that carries it and read a
+//! frame or two later; a click is copied from the frame it was made on,
+//! in commands submitted before those of the next frame, and its answer
+//! comes back with a frame result ([`DepthPick::submit_clicks`]). Before,
+//! a click waited for everything the GPU had in its queue (16 to 20 ms in
+//! a region that keeps the GPU busy), and earlier still the hover cursor
+//! copied the full screen depth and waited every frame. The waiting read
+//! is kept for comparison ([`DepthPick::blocking`]).
 
 use glam::{Mat4, Vec3, Vec4};
 use std::sync::Arc;
@@ -22,6 +27,9 @@ fn main() {
 
 /// Hover readbacks in flight (one per frame, read 1–2 frames later).
 const SLOTS: usize = 3;
+/// Click readbacks in flight. A click asked while they are all taken is
+/// copied with a later frame.
+const CLICK_SLOTS: usize = 4;
 const BYTES: u64 = 16;
 /// Readback states.
 const IDLE: u8 = 0;
@@ -64,16 +72,37 @@ struct Slot {
     encoded: bool,
 }
 
+/// A click's own parameters, output and readback: several clicks can be
+/// copied by the same commands, and none shares a buffer with the hover.
+struct ClickSlot {
+    params: wgpu::Buffer,
+    out: wgpu::Buffer,
+    buffer: wgpu::Buffer,
+    state: Arc<AtomicU8>,
+    /// The request copied into this slot, until its answer is read.
+    pending: Option<(u64, PickPixel)>,
+}
+
+/// A click whose depth is asked: its ticket and its pixel.
+pub type ClickRequest = (u64, u32, u32);
+/// The world position under a click (None for the sky), by ticket.
+pub type ClickAnswer = (u64, Option<Vec3>);
+
 pub struct DepthPick {
     pipeline: wgpu::ComputePipeline,
     layout: wgpu::BindGroupLayout,
-    /// [hover, click] parameters and outputs (a click never waits on the
-    /// buffers of a hover in flight).
+    /// [hover, waiting click] parameters and outputs (a click never waits
+    /// on the buffers of a hover in flight).
     params: [wgpu::Buffer; 2],
     out: [wgpu::Buffer; 2],
     slots: Vec<Slot>,
     request: Option<(u32, u32)>,
     latest: Option<Vec3>,
+    clicks: Vec<ClickSlot>,
+    /// Clicks asked while every slot was taken.
+    click_queue: Vec<ClickRequest>,
+    /// Click answers read, until a frame result takes them.
+    click_answers: Vec<ClickAnswer>,
 }
 
 impl DepthPick {
@@ -148,14 +177,32 @@ impl DepthPick {
                 encoded: false,
             })
             .collect();
+        let clicks = (0..CLICK_SLOTS)
+            .map(|_| ClickSlot {
+                params: buffer("depth pick click", uniform),
+                out: buffer("depth pick click out", storage),
+                buffer: buffer(
+                    "depth pick click readback",
+                    wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                ),
+                state: Arc::new(AtomicU8::new(IDLE)),
+                pending: None,
+            })
+            .collect();
         DepthPick {
             pipeline,
             layout,
-            params: [buffer("depth pick hover", uniform), buffer("depth pick click", uniform)],
-            out: [buffer("depth pick hover out", storage), buffer("depth pick click out", storage)],
+            params: [buffer("depth pick hover", uniform), buffer("depth pick waiting click", uniform)],
+            out: [
+                buffer("depth pick hover out", storage),
+                buffer("depth pick waiting click out", storage),
+            ],
             slots,
             request: None,
             latest: None,
+            clicks,
+            click_queue: Vec::new(),
+            click_answers: Vec::new(),
         }
     }
 
@@ -192,7 +239,13 @@ impl DepthPick {
         }
     }
 
-    fn encode_copy(&self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder, depth: &wgpu::TextureView, which: usize) {
+    fn encode_copy(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        depth: &wgpu::TextureView,
+        (params, out): (&wgpu::Buffer, &wgpu::Buffer),
+    ) {
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("depth pick"),
             layout: &self.layout,
@@ -203,11 +256,11 @@ impl DepthPick {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: self.params[which].as_entire_binding(),
+                    resource: params.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: self.out[which].as_entire_binding(),
+                    resource: out.as_entire_binding(),
                 },
             ],
         });
@@ -243,7 +296,7 @@ impl DepthPick {
             return;
         }
         queue.write_buffer(&self.params[0], 0, bytemuck::cast_slice(&[x, y, 0u32, 0u32]));
-        self.encode_copy(device, encoder, depth, 0);
+        self.encode_copy(device, encoder, depth, (&self.params[0], &self.out[0]));
         let s = &mut self.slots[i];
         encoder.copy_buffer_to_buffer(&self.out[0], 0, &s.buffer, 0, BYTES);
         s.pending = Some(PickPixel {
@@ -268,7 +321,105 @@ impl DepthPick {
         }
     }
 
-    /// The depth under a pixel of the last frame, waiting for the GPU (clicks).
+    /// Copy the texel under each click asked (`asked`, and those left from
+    /// a frame without a free slot) and submit the copies at once, without
+    /// waiting for them. Called before a frame is encoded: `depth` and
+    /// `inv_view_proj` are still those of the last frame drawn, the one the
+    /// click was made on, so the answer is the one [`Self::blocking`] gave
+    /// at the time of the click. Submitted apart from the frame about to be
+    /// encoded, the copies are done as soon as the GPU has finished the
+    /// frames before them, and are read by [`Self::harvest_clicks`].
+    pub fn submit_clicks(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        depth: &wgpu::TextureView,
+        size: (u32, u32),
+        inv_view_proj: Mat4,
+        asked: Vec<ClickRequest>,
+    ) {
+        self.click_queue.extend(asked);
+        if self.click_queue.is_empty() {
+            return;
+        }
+        let mut encoder = None;
+        let mut copied = Vec::new();
+        let mut waiting = Vec::new();
+        for (id, x, y) in std::mem::take(&mut self.click_queue) {
+            if x >= size.0 || y >= size.1 {
+                self.click_answers.push((id, None));
+                continue;
+            }
+            let Some(i) = self.clicks.iter().position(|s| s.pending.is_none()) else {
+                waiting.push((id, x, y));
+                continue;
+            };
+            let encoder =
+                encoder.get_or_insert_with(|| device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("click pick") }));
+            let s = &self.clicks[i];
+            queue.write_buffer(&s.params, 0, bytemuck::cast_slice(&[x, y, 0u32, 0u32]));
+            self.encode_copy(device, encoder, depth, (&s.params, &s.out));
+            encoder.copy_buffer_to_buffer(&s.out, 0, &s.buffer, 0, BYTES);
+            self.clicks[i].pending = Some((
+                id,
+                PickPixel {
+                    x,
+                    y,
+                    width: size.0,
+                    height: size.1,
+                    inv_view_proj,
+                },
+            ));
+            copied.push(i);
+        }
+        self.click_queue = waiting;
+        let Some(encoder) = encoder else {
+            return;
+        };
+        queue.submit([encoder.finish()]);
+        for i in copied {
+            let s = &self.clicks[i];
+            let state = s.state.clone();
+            s.buffer.map_async(wgpu::MapMode::Read, .., move |r| {
+                state.store(if r.is_ok() { MAPPED } else { FAILED }, Ordering::Release);
+            });
+        }
+    }
+
+    /// Read the click answers the GPU has delivered (after a poll of the
+    /// device), for [`Self::take_click_answers`].
+    pub fn harvest_clicks(&mut self) {
+        for s in &mut self.clicks {
+            let Some((id, px)) = s.pending else {
+                continue;
+            };
+            let answer = match s.state.load(Ordering::Acquire) {
+                MAPPED => {
+                    let depth = s
+                        .buffer
+                        .get_mapped_range(..)
+                        .ok()
+                        .and_then(|view| view.get(..4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])));
+                    s.buffer.unmap();
+                    depth.and_then(|d| px.world(d))
+                }
+                FAILED => None,
+                _ => continue,
+            };
+            s.state.store(IDLE, Ordering::Release);
+            s.pending = None;
+            self.click_answers.push((id, answer));
+        }
+    }
+
+    /// The click answers read since the last call.
+    pub fn take_click_answers(&mut self) -> Vec<ClickAnswer> {
+        std::mem::take(&mut self.click_answers)
+    }
+
+    /// The depth under a pixel of the last frame, waiting for the GPU: what
+    /// a click did before [`Self::submit_clicks`], kept to compare with it
+    /// (AURORA_CLICK_PICK).
     pub fn blocking(&self, device: &wgpu::Device, queue: &wgpu::Queue, depth: &wgpu::TextureView, px: PickPixel) -> Option<Vec3> {
         if px.x >= px.width || px.y >= px.height {
             return None;
@@ -281,7 +432,7 @@ impl DepthPick {
         });
         queue.write_buffer(&self.params[1], 0, bytemuck::cast_slice(&[px.x, px.y, 0u32, 0u32]));
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("pick") });
-        self.encode_copy(device, &mut encoder, depth, 1);
+        self.encode_copy(device, &mut encoder, depth, (&self.params[1], &self.out[1]));
         encoder.copy_buffer_to_buffer(&self.out[1], 0, &readback, 0, BYTES);
         queue.submit([encoder.finish()]);
         readback.map_async(wgpu::MapMode::Read, .., |_| {});

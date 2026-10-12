@@ -142,7 +142,7 @@ Les scripts utilisent un éditeur commun (`ui/scripts.rs`, actions dans `app/scr
 | `ui/inventory/embedded.rs` | Éléments intégrés aux notes : icône et nom dans le texte, aperçu / ouverture et copie dans l’inventaire, dépôt à la position du pointeur ; un caractère par élément pour conserver la sélection, la suppression et l’annulation |
 | `aurora-net/src/session/inventory_preview.rs` | Lecture des notes et scripts protégés par transfert d’inventaire du simulateur (identifiants de l’agent, de session, du propriétaire, de l’objet, de l’élément et de l’asset) ; réassemblage borné des paquets désordonnés, corrélation au simulateur et expiration |
 | `app/task_notecards.rs`, `aurora-net/src/session/task_notecard.rs` | Notes du contenu des objets : double-clic / Ouvrir, éditeur commun avec état propre à l’objet et à l’élément ; droits de l’objet et de la note, transfert d’asset autorisé par l’inventaire, sauvegarde via UpdateNotecardTaskInventory, relecture et brouillon conservé en cas de refus |
-| `main.rs`, `app.rs`, `app/` | Démarrage, boucle d'événements, une image du viewer, actions de l'interface ; commandes de la barre de chat (`app/chat_commands.rs`), menus clic droit (`app/context_menu.rs` : ouverture, droits sur l'objet, actions choisies), geste de déplacement des HUDs avec touche configurable (ALT par défaut) et clic gauche et scénario hors ligne (`app/hud_drag.rs`) |
+| `main.rs`, `app.rs`, `app/` | Démarrage, boucle d'événements, une image du viewer, actions de l'interface ; commandes de la barre de chat (`app/chat_commands.rs`), menus clic droit (`app/context_menu.rs` : ouverture, droits sur l'objet, actions choisies), clics sur le monde sans attente du GPU (`app/click_pick.rs` : la profondeur sous le clic est demandée au rendu, le clic est traité à l'arrivée de la réponse avec le curseur et les touches qu'il avait, et ce qui le suit — relâchement, autres boutons, mouvement de souris qui déplace la caméra — attend derrière lui dans l'ordre ; contrôle `AURORA_CLICK_PICK`, clics de démo `AURORA_DEMO_CLICKS`), geste de déplacement des HUDs avec touche configurable (ALT par défaut) et clic gauche et scénario hors ligne (`app/hud_drag.rs`) |
 | `cli.rs` | Arguments de ligne de commande (`--title`, `--fps-limit`, `--language`, `--version`) ; titre avec la version commune et le profil de compilation |
 | `cmdline/` | Barre de chat comme ligne de commande (FSCmdLine) : analyse des commandes, calculatrice (LLCalc), dés ; exécutées par `app/chat_commands.rs` |
 | `agent.rs` | Notre avatar (AgentUpdate, extrapolation depuis vitesse / accélération serveur, lissage comme LLDrawable) |
@@ -364,20 +364,29 @@ Ce qui passe d'un thread à l'autre :
   (`DrawLists`, copiées) et vue du culling GPU, formes d'egui encore à
   tesseller et changements de ses textures (`ui_frame.rs`), taille de la
   fenêtre / vsync / réglages à appliquer, demandes de relecture (pixel
-  survolé, capture).
+  survolé, pixels cliqués, capture).
 - **Remise en rendez-vous** (`render_thread::handoff`) : le thread de rendu tient au plus un
   paquet, aucun n'attend derrière. Si le rendu est en retard, le thread
   principal attend (contre-pression) au lieu d'empiler des images ; chaque
   côté mesure son attente (`wait_render`, `rt_idle` du profil).
 - **Résultat d'image**, rendu à la remise suivante : statistiques du rendu,
   réponse au survol (gardée avec la caméra de l'image qui l'a demandée),
-  compteurs du culling, capture, tampons du paquet à réutiliser.
+  réponses aux clics, compteurs du culling, capture, tampons du paquet à
+  réutiliser.
 
-Deux choses attendent le thread de rendu : l'image qui porte une capture
-(même image capturée qu'avant, lue juste après) et la profondeur sous un
-clic (`Renderer::pick_world`, exécutée après l'image en cours). Si le thread
-de rendu disparaît (panique), toute attente se termine et le viewer se
-ferme proprement.
+Une seule chose attend le thread de rendu : l'image qui porte une capture
+(même image capturée qu'avant, lue juste après). La profondeur sous un clic
+ne l'attend plus (`Renderer::request_pick`) : la demande part dans le paquet
+de l'image suivante, le thread de rendu copie le texel avant d'encoder cette
+image — la profondeur et la caméra sont encore celles de l'image sur
+laquelle le clic a été fait — dans des commandes soumises à part, et la
+réponse revient avec un résultat d'image, deux ou trois images plus tard
+(`aurora-render/src/pick.rs`, `aurora-viewer/src/app/click_pick.rs`).
+L'ancienne lecture, qui attendait l'image en cours puis tout ce que le GPU
+avait en file (`Renderer::pick_world`), ne sert plus qu'à la comparaison
+(`AURORA_CLICK_PICK=wait` ou `check`). Si le thread de rendu disparaît
+(panique), toute attente se termine, les clics en attente reçoivent une
+réponse vide et le viewer se ferme proprement.
 
 Les HUDs portés passent par `scene/hud.rs` (listes de notre avatar, intérêt des textures, picking de triangles) et la projection partagée `aurora-render/src/hud.rs`. Les points d’attachement dans `Scene::object_transform` sont relatifs à l’écran, avec l’aspect de `mScreen`, sans position ni orientation de l’avatar. Le renderer dessine les faces opaques / masquées puis transparentes après le post-traitement, dans une profondeur indépendante, avant egui ; il réutilise la géométrie, les textures bindless, les matériaux et les animations UV du monde. `demo_hud.rs` fournit les mises à jour et réponses de toucher hors ligne.
 
