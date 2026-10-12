@@ -3442,6 +3442,7 @@ impl App {
                 break;
             }
         }
+        self.world.poll_inventory_cache();
         self.perf.events_ms = t_ev.elapsed().as_secs_f32() * 1000.0;
         for anim in std::mem::take(&mut self.world.animation_stops) {
             self.send(NetCommand::AgentAnimation { anim, start: false });
