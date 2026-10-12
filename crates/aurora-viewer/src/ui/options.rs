@@ -211,18 +211,34 @@ fn group(ui: &mut egui::Ui, p: &Palette, title: &str, body: impl FnOnce(&mut egu
     ui.add_space(10.0);
 }
 
+/// Room kept between a label that fills its column and the control.
+const LABEL_GAP: f32 = 4.0;
+
+/// The label of a row, in a cell `LABEL_W` wide so that the controls of a
+/// page stand in one column. A label longer than the column (a translation,
+/// a larger font) goes on at the line below instead of running under the
+/// control: the row grows for it alone, the column does not move.
+fn row_label(ui: &mut egui::Ui, p: &Palette, label: &str) -> egui::Response {
+    // the spacing before the control is room for the text too, less a gap
+    let room = LABEL_W + ui.spacing().item_spacing.x - LABEL_GAP;
+    let galley = egui::WidgetText::from(RichText::new(label).size(13.0).color(p.ink)).into_galley(
+        ui,
+        Some(egui::TextWrapMode::Wrap),
+        room,
+        egui::TextStyle::Body,
+    );
+    let height = galley.size().y.max(22.0);
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(LABEL_W, height), Sense::hover());
+    let top = rect.center().y - galley.size().y * 0.5;
+    ui.painter().galley(egui::pos2(rect.left(), top), galley, p.ink);
+    resp
+}
+
 /// One row: label (with optional hint) on the left, control on the right.
 fn row(ui: &mut egui::Ui, p: &Palette, label: &str, hint: &str, control: impl FnOnce(&mut egui::Ui) -> bool) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
-        let (rect, resp) = ui.allocate_exact_size(Vec2::new(LABEL_W, 22.0), Sense::hover());
-        ui.painter().text(
-            rect.left_center(),
-            egui::Align2::LEFT_CENTER,
-            label,
-            egui::FontId::proportional(13.0),
-            p.ink,
-        );
+        let resp = row_label(ui, p, label);
         if !hint.is_empty() {
             resp.on_hover_text(hint);
         }
@@ -2223,14 +2239,7 @@ fn keys_page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsU
             }
             for (a, label) in actions.iter() {
                 ui.horizontal(|ui| {
-                    let (rect, _) = ui.allocate_exact_size(Vec2::new(LABEL_W, 22.0), Sense::hover());
-                    ui.painter().text(
-                        rect.left_center(),
-                        egui::Align2::LEFT_CENTER,
-                        *label,
-                        egui::FontId::proportional(13.0),
-                        p.ink,
-                    );
+                    row_label(ui, p, label);
                     for slot in 0..2 {
                         binding_cell(ui, p, &kb, st, *a, slot);
                     }
