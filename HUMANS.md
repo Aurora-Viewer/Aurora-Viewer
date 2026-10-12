@@ -130,6 +130,48 @@ git tag -a v0.4.0 -m "Aurora Viewer 0.4.0"
 git push origin v0.4.0
 ```
 
+### Publier une actualité
+
+Le panneau « Actualités » de l'écran de connexion affiche deux fichiers du
+dépôt, écrits à la main : [news/fr.md](news/fr.md) et
+[news/en.md](news/en.md), un par langue de l'interface. Le viewer les lit sur
+`main` à chaque démarrage : **pas besoin de publier une version** pour
+annoncer quelque chose.
+
+Ajoute l'actualité **en haut** de chaque fichier (la plus récente en
+premier), sous le commentaire qui rappelle le format :
+
+```markdown
+## 2026-10-08 — Titre de l'actualité
+Une ou plusieurs lignes de texte simple.
+[En savoir plus](https://exemple.org/lien-facultatif)
+```
+
+- **Titre** : `## `, la date `AAAA-MM-JJ`, puis « — » (un simple « - » ou
+  « : » convient aussi) et le titre. La date est facultative.
+- **Texte** : du texte simple, sans gras, liste ni image. Une ligne vide
+  commence un nouveau paragraphe.
+- **Lien** : facultatif, seul sur sa ligne, et en `https://` (tout autre lien
+  est ignoré). Un clic sur l'actualité l'ouvre dans le navigateur.
+- **Limites** : les 20 premières actualités sont affichées ; un titre est
+  coupé à 120 caractères, un texte à 600. Retire les plus anciennes de temps
+  en temps.
+- **Langues** : écris l'actualité dans les deux fichiers. Une langue de
+  l'interface qui n'a pas de fichier affiche `en.md`.
+
+`main` étant protégée, la modification passe par une PR (étiquette `docs`) :
+le crayon de GitHub sur le fichier, puis « Create a new branch and start a
+pull request », ou demande-le à un agent. Ces fichiers sont aussi compilés
+dans le viewer (c'est ce qu'il affiche hors ligne tant qu'il n'a rien
+téléchargé), donc la PR passe toute la CI dans la file de fusion ; un test y
+vérifie qu'ils se lisent bien (titre vide, texte trop long).
+
+Après la fusion, GitHub met environ cinq minutes à servir le nouveau
+fichier ; chaque viewer l'affiche à son démarrage suivant et le garde pour
+les lancements hors ligne. Pour voir l'actualité dans le viewer **avant** de
+fusionner, lance-le avec `AURORA_NEWS_URL` (voir
+[docs/TESTING.md](docs/TESTING.md#interface)).
+
 ## Installer l'environnement
 
 1. Crée un dossier pour le projet (par exemple `C:\Aurora-Viewer`), ouvre une

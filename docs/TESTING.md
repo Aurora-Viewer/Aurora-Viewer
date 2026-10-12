@@ -915,6 +915,7 @@ grille.
 | `AURORA_DEMO_OPTIONS=<section>` | Ouvre les préférences sur une section |
 | `AURORA_DEMO_PERF=compact` ou `full` | Ouvre la fenêtre Performances, compacte ou complète |
 | `AURORA_DEMO_LOGIN=<mode>` | Écran de connexion hors ligne |
+| `AURORA_NEWS_URL=<url>` | Actualités de la connexion lues ailleurs que sur `main` |
 | `AURORA_DEMO_CRASH=<mode>` | Plantage hors ligne et fenêtre de récupération |
 | `AURORA_DEMO_CRASH_DIR=<dossier>` | Isole les rapports de plantage des essais hors ligne |
 | `AURORA_CRASH_CAPTURE=<fichier.png>` | Capture de la fenêtre de récupération en démo |
@@ -1137,6 +1138,25 @@ grille.
 - **`AURORA_DEMO_LOGIN=remembered|empty`** : écran de connexion hors ligne
   avec un marqueur synthétique de mot de passe enregistré, ou un champ de
   mot de passe vide (aucun accès à une grille ni au coffre d'identifiants).
+  Les actualités y sont celles compilées dans le viewer (`news/<langue>.md`),
+  dans la langue de `--language`.
+- **`AURORA_NEWS_URL=<url du dossier>`**, hors démo : le viewer télécharge
+  `<url>/<langue>.md` au lieu du dossier `news/` de `main`. Deux formes sont
+  acceptées, toute autre est ignorée avec un avertissement dans le journal :
+  un serveur de cette machine (`http://127.0.0.1:<port>/`, `localhost` ou
+  `[::1]`), par exemple `python -m http.server 8123 --bind 127.0.0.1` lancé
+  dans le dossier `news/` du worktree ; ou une autre branche du dépôt
+  (`https://raw.githubusercontent.com/Aurora-Viewer/Aurora-Viewer/<branche>/news/`),
+  pour relire une actualité avant de fusionner sa PR. Ce qui est téléchargé
+  ainsi n'est pas gardé en cache. Le panneau montre d'abord les actualités
+  déjà connues, puis celles du fichier dès qu'il est reçu ; changer de langue
+  dans les préférences recharge celles de cette langue. Si le téléchargement
+  échoue (hors ligne, fichier absent, fichier sans actualité), le journal
+  indique `Login news not updated` et le panneau ne change pas : dernier
+  téléchargement (`news-<langue>.json` du dossier de cache) ou, à défaut,
+  fichiers compilés dans le viewer. La démo et l'installation de test des
+  mises à jour ne téléchargent jamais les actualités, même avec cette
+  variable.
 - **`AURORA_DEMO_UPDATE=1|progress|ready|ignored`**, avec `AURORA_DEMO=1` : proposition
   d'une version synthétique, téléchargement à 42 % ou téléchargement terminé.
   « Mettre à jour » anime une progression simulée ; « Annuler » revient à la
