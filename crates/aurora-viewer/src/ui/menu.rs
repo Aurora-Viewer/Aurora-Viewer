@@ -27,10 +27,12 @@ pub fn not_yet() -> &'static str {
 
 /// What the right end of a row shows.
 #[derive(Clone, Copy, PartialEq)]
-enum End {
+enum End<'a> {
     None,
     Caret,
     Check(bool),
+    /// The keys of the entry's shortcut.
+    Keys(&'a str),
 }
 
 /// Rows of the menu opened with [`popup_at`], for the hover sounds of the
@@ -138,6 +140,14 @@ pub fn dropdown(resp: &egui::Response, p: &Palette, close: PopupCloseBehavior, b
         .is_some()
 }
 
+/// `button` opening a [`dropdown`] that closes on any click, like a stock
+/// `menu_button`.
+pub fn button(ui: &mut Ui, p: &Palette, button: egui::Button<'_>, body: impl FnOnce(&mut Ui)) -> egui::Response {
+    let resp = ui.add(button);
+    dropdown(&resp, p, PopupCloseBehavior::CloseOnClick, body);
+    resp
+}
+
 /// Menu opened at a screen position, not attached to a widget (the world
 /// right click). `open` is cleared when it closes. Returns the hovered row
 /// (top level only) for the slice sounds.
@@ -180,7 +190,15 @@ fn row(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enabled: bool, end: En
     let font = FontId::proportional(12.5);
     let ink = if enabled { p.ink } else { p.muted_dim };
     let galley = ui.painter().layout_no_wrap(label.to_owned(), font, ink);
-    let natural = (PAD + ICON + PAD + galley.size().x + RIGHT + PAD).max(MIN_W);
+    let keys = match end {
+        End::Keys(keys) => {
+            let color = if enabled { p.muted } else { p.muted_dim };
+            Some(ui.painter().layout_no_wrap(keys.to_owned(), FontId::proportional(11.5), color))
+        }
+        _ => None,
+    };
+    let right = keys.as_ref().map_or(RIGHT, |k| k.size().x + PAD * 2.0);
+    let natural = (PAD + ICON + PAD + galley.size().x + right + PAD).max(MIN_W);
     // natural width while egui measures the menu, then the menu's width
     let w = if ui.is_sizing_pass() {
         natural
@@ -217,6 +235,12 @@ fn row(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enabled: bool, end: En
         End::None | End::Check(false) => {}
         End::Caret => paint_icon(painter, "caret-right-filled", end_rect, if enabled { p.muted } else { p.muted_dim }),
         End::Check(true) => paint_icon(painter, "check", end_rect, if enabled { p.violet_light } else { p.muted_dim }),
+        End::Keys(_) => {
+            if let Some(keys) = keys {
+                let pos = egui::pos2(rect.right() - PAD - keys.size().x, rect.center().y - keys.size().y * 0.5);
+                painter.galley(pos, keys, p.muted);
+            }
+        }
     }
     resp
 }
@@ -264,6 +288,16 @@ pub fn item_if(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enabled: bool)
     clicked && enabled
 }
 
+/// Entry with the keys of its shortcut at the right end; true when clicked
+/// (the menu closes).
+pub fn item_keys(ui: &mut Ui, p: &Palette, icon: &str, label: &str, keys: &str) -> bool {
+    let clicked = row(ui, p, icon, label, true, End::Keys(keys), false).clicked();
+    if clicked {
+        ui.close();
+    }
+    clicked
+}
+
 /// Firestorm entry Aurora does not do yet: greyed, with a tooltip.
 pub fn todo(ui: &mut Ui, p: &Palette, icon: &str, label: &str) {
     row(ui, p, icon, label, false, End::None, false).on_hover_text(not_yet());
@@ -301,13 +335,27 @@ pub fn submenu(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enabled: bool,
 /// Entry whose icon is a color dot (the mini-map marks); true when clicked.
 pub fn swatch(ui: &mut Ui, p: &Palette, color: Color32, label: &str) -> bool {
     let resp = row(ui, p, "", label, true, End::None, false);
-    let c = resp.rect.left_center() + Vec2::new(PAD + ICON * 0.5, 0.0);
-    ui.painter().circle_filled(c, ICON * 0.38, color);
-    ui.painter().circle_stroke(c, ICON * 0.38, Stroke::new(1.0, p.raised));
+    dot(ui, p, &resp, color);
     if resp.clicked() {
         ui.close();
     }
     resp.clicked()
+}
+
+/// Color dot entry with a check mark, which leaves the menu open (one choice
+/// among several, like the availability of the status light); true when
+/// clicked.
+pub fn swatch_toggle(ui: &mut Ui, p: &Palette, color: Color32, label: &str, on: bool) -> bool {
+    let resp = row(ui, p, "", label, true, End::Check(on), false);
+    dot(ui, p, &resp, color);
+    resp.clicked()
+}
+
+/// The color dot of a swatch row, in the icon column.
+fn dot(ui: &Ui, p: &Palette, row: &egui::Response, color: Color32) {
+    let c = row.rect.left_center() + Vec2::new(PAD + ICON * 0.5, 0.0);
+    ui.painter().circle_filled(c, ICON * 0.38, color);
+    ui.painter().circle_stroke(c, ICON * 0.38, Stroke::new(1.0, p.raised));
 }
 
 /// Thin line between groups of entries.

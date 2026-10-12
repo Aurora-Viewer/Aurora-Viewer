@@ -4,6 +4,7 @@
 
 use super::Panels;
 use super::icons::Icons;
+use super::menu;
 use super::skin::Layout;
 use crate::theme::Palette;
 use egui::{Color32, RichText, Vec2};
@@ -142,6 +143,14 @@ pub fn time_of_day() -> [&'static str; 5] {
     ]
 }
 
+/// Icons of the status entries, shared by the "Online status" menu and the
+/// menu of the status light.
+const AUTO_REPLY: &str = "message-chatbot-filled";
+const NO_TELEPORT: &str = "plane-departure-filled";
+const NO_INVITE: &str = "users-plus";
+const NO_FRIENDSHIP: &str = "user-plus";
+const AD_HOC: &str = "messages-filled";
+
 /// Color of the online status: violet away, red do not disturb, orange
 /// automatic response, green available.
 fn status_color(p: &Palette, m: &crate::world::status::StatusModes) -> Color32 {
@@ -170,52 +179,44 @@ fn status_name(m: &crate::world::status::StatusModes) -> &'static str {
     }
 }
 
+/// Check row of a menu that flips `on`; true when it was clicked (the menu
+/// closes, as it did on a stock checkbox).
+fn flip(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, on: &mut bool, enabled: bool) -> bool {
+    let clicked = menu::check(ui, p, icon, label, *on, enabled);
+    if clicked {
+        *on = !*on;
+    }
+    clicked
+}
+
 /// Entries of Communiquer > Statut de connexion (Firestorm's menu).
-fn status_menu(ui: &mut egui::Ui, status: crate::world::status::StatusModes, action: &mut BarAction) {
+fn status_menu(ui: &mut egui::Ui, p: &Palette, status: crate::world::status::StatusModes, action: &mut BarAction) {
     let mut m = status;
     let mut c = false;
-    c |= ui.checkbox(&mut m.away, aurora_i18n::tr!("common-away")).changed();
-    c |= ui.checkbox(&mut m.dnd, aurora_i18n::tr!("common-do-not-disturb")).changed();
-    c |= ui.checkbox(&mut m.autorespond, aurora_i18n::tr!("ui-bars-auto-reply")).changed();
-    c |= ui
-        .checkbox(&mut m.autorespond_nonfriends, aurora_i18n::tr!("ui-bars-auto-reply-to-non-friends"))
-        .changed();
-    ui.separator();
-    c |= ui
-        .checkbox(
-            &mut m.reject_teleports,
-            aurora_i18n::tr!("ui-bars-reject-teleport-offers-and-requests"),
-        )
-        .changed();
-    c |= ui
-        .checkbox(
-            &mut m.reject_group_invites,
-            aurora_i18n::tr!("ui-bars-reject-all-group-invitations"),
-        )
-        .changed();
-    c |= ui
-        .checkbox(&mut m.reject_friendship, aurora_i18n::tr!("ui-bars-reject-all-friendship-requests"))
-        .changed();
-    ui.menu_button(aurora_i18n::tr!("ui-bars-ad-hoc-conferences"), |ui| {
-        c |= ui
-            .checkbox(&mut m.ignore_adhoc, aurora_i18n::tr!("ui-bars-ignore-all-and-exit-automatically"))
-            .changed();
-        ui.add_enabled_ui(m.ignore_adhoc, |ui| {
-            c |= ui
-                .checkbox(
-                    &mut m.report_ignored_adhoc,
-                    aurora_i18n::tr!("ui-bars-report-ignored-residents-in-nearby-chat"),
-                )
-                .changed();
-            c |= ui
-                .checkbox(&mut m.adhoc_from_friends, aurora_i18n::tr!("ui-bars-do-not-ignore-my-friends"))
-                .changed();
-        });
+    c |= flip(ui, p, "hourglass-filled", aurora_i18n::tr!("common-away"), &mut m.away, true);
+    c |= flip(ui, p, "bell-off", aurora_i18n::tr!("common-do-not-disturb"), &mut m.dnd, true);
+    c |= flip(ui, p, AUTO_REPLY, aurora_i18n::tr!("ui-bars-auto-reply"), &mut m.autorespond, true);
+    let non_friends = aurora_i18n::tr!("ui-bars-auto-reply-to-non-friends");
+    c |= flip(ui, p, AUTO_REPLY, non_friends, &mut m.autorespond_nonfriends, true);
+    menu::separator(ui, p);
+    let teleports = aurora_i18n::tr!("ui-bars-reject-teleport-offers-and-requests");
+    c |= flip(ui, p, NO_TELEPORT, teleports, &mut m.reject_teleports, true);
+    let invites = aurora_i18n::tr!("ui-bars-reject-all-group-invitations");
+    c |= flip(ui, p, NO_INVITE, invites, &mut m.reject_group_invites, true);
+    let friendship = aurora_i18n::tr!("ui-bars-reject-all-friendship-requests");
+    c |= flip(ui, p, NO_FRIENDSHIP, friendship, &mut m.reject_friendship, true);
+    menu::submenu(ui, p, AD_HOC, aurora_i18n::tr!("ui-bars-ad-hoc-conferences"), true, |ui| {
+        let ignore = aurora_i18n::tr!("ui-bars-ignore-all-and-exit-automatically");
+        c |= flip(ui, p, "message-off", ignore, &mut m.ignore_adhoc, true);
+        let enabled = m.ignore_adhoc;
+        let report = aurora_i18n::tr!("ui-bars-report-ignored-residents-in-nearby-chat");
+        c |= flip(ui, p, "message-circle-filled", report, &mut m.report_ignored_adhoc, enabled);
+        let friends = aurora_i18n::tr!("ui-bars-do-not-ignore-my-friends");
+        c |= flip(ui, p, "users", friends, &mut m.adhoc_from_friends, enabled);
     });
-    ui.separator();
-    if ui.button(aurora_i18n::tr!("ui-bars-auto-reply-messages")).clicked() {
+    menu::separator(ui, p);
+    if menu::item(ui, p, "settings-filled", aurora_i18n::tr!("ui-bars-auto-reply-messages")) {
         *action = BarAction::ChatPrefs;
-        ui.close();
         return;
     }
     if c {
@@ -256,278 +257,269 @@ fn status_dot(ui: &mut egui::Ui, p: &Palette, status: crate::world::status::Stat
     if *DEMO_OPEN.get_or_init(|| std::env::var_os("AURORA_DEMO_STATUSMENU").is_some()) && ui.ctx().cumulative_frame_nr() == 300 {
         egui::Popup::open_id(ui.ctx(), egui::Popup::default_response_id(&resp));
     }
-    egui::Popup::menu(&resp)
-        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-        .show(|ui| {
-            ui.set_min_width(250.0);
-            // availability: one of three, like a presence menu
-            let mut m = status;
-            let current = if m.dnd {
-                2
-            } else if m.away {
-                1
-            } else {
-                0
-            };
-            for (i, label, col) in [
-                (0, aurora_i18n::tr!("ui-bars-available"), p.success),
-                (1, aurora_i18n::tr!("common-away"), p.violet),
-                (2, aurora_i18n::tr!("common-do-not-disturb"), p.danger),
-            ] {
-                let r = ui.horizontal(|ui| {
-                    let (dot, _) = ui.allocate_exact_size(Vec2::new(14.0, 16.0), egui::Sense::hover());
-                    ui.painter().circle_filled(dot.center(), 4.5, col);
-                    ui.add(egui::Button::selectable(current == i, label))
-                });
-                if r.inner.clicked() && current != i {
-                    m.away = i == 1;
-                    m.dnd = i == 2;
-                    *action = BarAction::SetStatus(m);
-                }
+    menu::dropdown(&resp, p, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
+        ui.set_min_width(250.0);
+        // availability: one of three, like a presence menu
+        let mut m = status;
+        let current = if m.dnd {
+            2
+        } else if m.away {
+            1
+        } else {
+            0
+        };
+        for (i, label, col) in [
+            (0, aurora_i18n::tr!("ui-bars-available"), p.success),
+            (1, aurora_i18n::tr!("common-away"), p.violet),
+            (2, aurora_i18n::tr!("common-do-not-disturb"), p.danger),
+        ] {
+            if menu::swatch_toggle(ui, p, col, label, current == i) && current != i {
+                m.away = i == 1;
+                m.dnd = i == 2;
+                *action = BarAction::SetStatus(m);
             }
-            ui.separator();
-            let mut sub = BarAction::None;
-            // automatic responses and refusals: the same entries as the menu
-            let mut rest = status;
-            rest.away = m.away;
-            rest.dnd = m.dnd;
-            let mut c = false;
-            c |= ui.checkbox(&mut rest.autorespond, aurora_i18n::tr!("ui-bars-auto-reply")).changed();
-            c |= ui
-                .checkbox(
-                    &mut rest.autorespond_nonfriends,
-                    aurora_i18n::tr!("ui-bars-auto-reply-to-non-friends"),
-                )
-                .changed();
-            ui.separator();
-            c |= ui
-                .checkbox(&mut rest.reject_teleports, aurora_i18n::tr!("ui-bars-reject-teleports"))
-                .changed();
-            c |= ui
-                .checkbox(&mut rest.reject_group_invites, aurora_i18n::tr!("ui-bars-reject-group-invitations"))
-                .changed();
-            c |= ui
-                .checkbox(&mut rest.reject_friendship, aurora_i18n::tr!("ui-bars-reject-friendship-requests"))
-                .changed();
-            c |= ui
-                .checkbox(&mut rest.ignore_adhoc, aurora_i18n::tr!("ui-bars-ignore-ad-hoc-conferences"))
-                .changed();
-            if c {
-                sub = BarAction::SetStatus(rest);
-            }
-            ui.separator();
-            if ui.button(aurora_i18n::tr!("ui-bars-auto-reply-messages")).clicked() {
-                sub = BarAction::ChatPrefs;
-                ui.close();
-            }
-            if !matches!(sub, BarAction::None) {
-                *action = sub;
-            }
-        });
+        }
+        menu::separator(ui, p);
+        let mut sub = BarAction::None;
+        // automatic responses and refusals: the same entries as the menu
+        let mut rest = status;
+        rest.away = m.away;
+        rest.dnd = m.dnd;
+        let mut c = false;
+        c |= menu::toggle(ui, p, AUTO_REPLY, aurora_i18n::tr!("ui-bars-auto-reply"), &mut rest.autorespond);
+        let non_friends = aurora_i18n::tr!("ui-bars-auto-reply-to-non-friends");
+        c |= menu::toggle(ui, p, AUTO_REPLY, non_friends, &mut rest.autorespond_nonfriends);
+        menu::separator(ui, p);
+        let teleports = aurora_i18n::tr!("ui-bars-reject-teleports");
+        c |= menu::toggle(ui, p, NO_TELEPORT, teleports, &mut rest.reject_teleports);
+        let invites = aurora_i18n::tr!("ui-bars-reject-group-invitations");
+        c |= menu::toggle(ui, p, NO_INVITE, invites, &mut rest.reject_group_invites);
+        let friendship = aurora_i18n::tr!("ui-bars-reject-friendship-requests");
+        c |= menu::toggle(ui, p, NO_FRIENDSHIP, friendship, &mut rest.reject_friendship);
+        let ad_hoc = aurora_i18n::tr!("ui-bars-ignore-ad-hoc-conferences");
+        c |= menu::toggle(ui, p, AD_HOC, ad_hoc, &mut rest.ignore_adhoc);
+        if c {
+            sub = BarAction::SetStatus(rest);
+        }
+        menu::separator(ui, p);
+        if menu::item(ui, p, "settings-filled", aurora_i18n::tr!("ui-bars-auto-reply-messages")) {
+            sub = BarAction::ChatPrefs;
+        }
+        if !matches!(sub, BarAction::None) {
+            *action = sub;
+        }
+    });
 }
 
-/// Viewer menus: in the top bar, and as submenus of the wolf menu button
-/// of the navigation bar (without "Avancé").
+/// Viewer menus: the submenus of the wolf menu button of the navigation bar
+/// (without "Avancé" unless `advanced`). An entry carries the icon its
+/// function has in the bottom toolbar and in the world menus.
 fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusInfo, action: &mut BarAction, advanced: bool) {
-    ui.menu_button(small(aurora_i18n::tr!("common-me"), p.ink), |ui| {
-        ui.checkbox(&mut panels.appearance, aurora_i18n::tr!("ui-bars-appearance"));
-        if ui.button(aurora_i18n::tr!("ui-bars-profile")).clicked() {
+    menu::submenu(ui, p, "user-filled", aurora_i18n::tr!("common-me"), true, |ui| {
+        flip(
+            ui,
+            p,
+            "shirt-filled",
+            aurora_i18n::tr!("ui-bars-appearance"),
+            &mut panels.appearance,
+            true,
+        );
+        if menu::item(ui, p, "user-filled", aurora_i18n::tr!("ui-bars-profile")) {
             *action = BarAction::MyProfile;
-            ui.close();
         }
-        ui.separator();
-        if ui.button(aurora_i18n::tr!("common-go-home")).clicked() {
+        menu::separator(ui, p);
+        if menu::item(ui, p, "home-filled", aurora_i18n::tr!("common-go-home")) {
             *action = BarAction::TeleportHome;
-            ui.close();
         }
-        ui.separator();
-        if ui.button(aurora_i18n::tr!("ui-bars-sit-on-ground")).clicked() {
+        menu::separator(ui, p);
+        if menu::item(ui, p, "armchair", aurora_i18n::tr!("ui-bars-sit-on-ground")) {
             *action = BarAction::SitGround;
-            ui.close();
         }
-        if ui.button(aurora_i18n::tr!("common-stand-up")).clicked() {
+        if menu::item(ui, p, "man-filled", aurora_i18n::tr!("common-stand-up")) {
             *action = BarAction::StandUp;
-            ui.close();
         }
-        if ui
-            .button(if st.flying {
-                aurora_i18n::tr!("ui-bars-stop-flying")
-            } else {
-                aurora_i18n::tr!("common-fly")
-            })
-            .clicked()
-        {
+        let fly = if st.flying {
+            aurora_i18n::tr!("ui-bars-stop-flying")
+        } else {
+            aurora_i18n::tr!("common-fly")
+        };
+        if menu::item(ui, p, "plane-tilt-filled", fly) {
             *action = BarAction::ToggleFly;
-            ui.close();
         }
-        ui.separator();
-        if ui.button(aurora_i18n::tr!("ui-bars-preferences")).clicked() {
+        menu::separator(ui, p);
+        if menu::item(ui, p, "settings-filled", aurora_i18n::tr!("ui-bars-preferences")) {
             panels.settings = true;
-            ui.close();
         }
-        ui.separator();
-        if ui.button(aurora_i18n::tr!("ui-bars-log-out")).clicked() {
+        menu::separator(ui, p);
+        if menu::item(ui, p, "logout", aurora_i18n::tr!("ui-bars-log-out")) {
             *action = BarAction::Logout;
-            ui.close();
         }
-        if ui.button(aurora_i18n::tr!("ui-bars-quit-aurora-viewer")).clicked() {
+        if menu::item(ui, p, "power", aurora_i18n::tr!("ui-bars-quit-aurora-viewer")) {
             *action = BarAction::Quit;
-            ui.close();
         }
     });
-    ui.menu_button(small(aurora_i18n::tr!("ui-bars-communicate"), p.ink), |ui| {
-        ui.checkbox(&mut panels.chat, aurora_i18n::tr!("common-conversations"));
-        if ui.button(aurora_i18n::tr!("common-friends")).clicked() {
-            panels.people = true;
-            panels.people_tab = 1;
-            ui.close();
+    menu::submenu(ui, p, "messages-filled", aurora_i18n::tr!("ui-bars-communicate"), true, |ui| {
+        flip(
+            ui,
+            p,
+            "messages-filled",
+            aurora_i18n::tr!("common-conversations"),
+            &mut panels.chat,
+            true,
+        );
+        for (tab, icon, label) in [
+            (1, "users", aurora_i18n::tr!("common-friends")),
+            (0, "radar-filled", aurora_i18n::tr!("common-nearby-people")),
+            (2, "users-group", aurora_i18n::tr!("common-groups")),
+            (4, "forbid-filled", aurora_i18n::tr!("ui-bars-block-list")),
+        ] {
+            if menu::item(ui, p, icon, label) {
+                panels.people = true;
+                panels.people_tab = tab;
+            }
         }
-        if ui.button(aurora_i18n::tr!("common-nearby-people")).clicked() {
-            panels.people = true;
-            panels.people_tab = 0;
-            ui.close();
-        }
-        if ui.button(aurora_i18n::tr!("common-groups")).clicked() {
-            panels.people = true;
-            panels.people_tab = 2;
-            ui.close();
-        }
-        if ui.button(aurora_i18n::tr!("ui-bars-block-list")).clicked() {
-            panels.people = true;
-            panels.people_tab = 4;
-            ui.close();
-        }
-        ui.separator();
+        menu::separator(ui, p);
         // Firestorm "Online Status" menu
-        ui.menu_button(aurora_i18n::tr!("ui-bars-online-status"), |ui| status_menu(ui, st.status, action));
+        menu::submenu(ui, p, "circle-filled", aurora_i18n::tr!("ui-bars-online-status"), true, |ui| {
+            status_menu(ui, p, st.status, action)
+        });
     });
-    ui.menu_button(small(aurora_i18n::tr!("common-world"), p.ink), |ui| {
-        ui.menu_button("HUDs", |ui| {
+    menu::submenu(ui, p, "world-filled", aurora_i18n::tr!("common-world"), true, |ui| {
+        menu::submenu(ui, p, "device-desktop-filled", "HUDs", true, |ui| {
             let mut visible = st.show_huds;
-            if ui.checkbox(&mut visible, aurora_i18n::tr!("ui-bars-show-huds")).changed() {
+            if flip(ui, p, "eye-filled", aurora_i18n::tr!("ui-bars-show-huds"), &mut visible, true) {
                 *action = BarAction::ShowHuds(visible);
             }
-            for (zoom, label) in [
-                (1.0, aurora_i18n::tr!("ui-bars-normal-size")),
-                ((st.hud_zoom / 1.2).max(0.1), aurora_i18n::tr!("common-collapse")),
-                ((st.hud_zoom * 1.2).min(1.0), aurora_i18n::tr!("ui-bars-zoom-in")),
+            for (zoom, icon, label) in [
+                (1.0, "restore", aurora_i18n::tr!("ui-bars-normal-size")),
+                ((st.hud_zoom / 1.2).max(0.1), "zoom-out-filled", aurora_i18n::tr!("common-collapse")),
+                ((st.hud_zoom * 1.2).min(1.0), "zoom-in-filled", aurora_i18n::tr!("ui-bars-zoom-in")),
             ] {
-                if ui.button(label).clicked() {
+                if menu::item(ui, p, icon, label) {
                     *action = BarAction::HudZoom(zoom);
-                    ui.close();
                 }
             }
         });
         // menu_viewer.xml: Historique de téléportation (Alt+H), Lieux
-        if ui
-            .add(egui::Button::new(aurora_i18n::tr!("common-teleport-history")).shortcut_text("Alt+H"))
-            .clicked()
-        {
+        if menu::item_keys(ui, p, "history", aurora_i18n::tr!("common-teleport-history"), "Alt+H") {
             *action = BarAction::TeleportHistory;
-            ui.close();
         }
-        ui.checkbox(&mut panels.places, aurora_i18n::tr!("common-places"));
-        ui.checkbox(&mut panels.minimap, aurora_i18n::tr!("common-mini-map"));
-        ui.checkbox(&mut panels.world_map, aurora_i18n::tr!("common-world-map"));
-        ui.menu_button(aurora_i18n::tr!("ui-bars-ban-lines"), |ui| {
-            for (v, label) in [
-                (0u8, aurora_i18n::tr!("ui-bars-hidden")),
-                (1, aurora_i18n::tr!("ui-bars-on-collision")),
-                (2, aurora_i18n::tr!("common-nearby")),
+        flip(ui, p, "map-pin-filled", aurora_i18n::tr!("common-places"), &mut panels.places, true);
+        flip(
+            ui,
+            p,
+            "compass-filled",
+            aurora_i18n::tr!("common-mini-map"),
+            &mut panels.minimap,
+            true,
+        );
+        flip(ui, p, "map", aurora_i18n::tr!("common-world-map"), &mut panels.world_map, true);
+        menu::submenu(ui, p, "barrier-block-filled", aurora_i18n::tr!("ui-bars-ban-lines"), true, |ui| {
+            for (v, icon, label) in [
+                (0u8, "eye-off", aurora_i18n::tr!("ui-bars-hidden")),
+                (1, "alert-triangle-filled", aurora_i18n::tr!("ui-bars-on-collision")),
+                (2, "radar-filled", aurora_i18n::tr!("common-nearby")),
             ] {
-                if ui.radio(st.ban_lines == v, label).clicked() {
+                if menu::check(ui, p, icon, label, st.ban_lines == v, true) {
                     *action = BarAction::BanLines(v);
-                    ui.close();
                 }
             }
         });
-        ui.menu_button(aurora_i18n::tr!("common-environment"), |ui| {
+        menu::submenu(ui, p, "sunset-2-filled", aurora_i18n::tr!("common-environment"), true, |ui| {
             // back to the region / parcel EEP cycle, in real time
             let shared = !st.local_env;
-            if ui
-                .add(egui::Button::new(aurora_i18n::tr!("ui-bars-use-shared-environments")).selected(shared))
-                .clicked()
-            {
+            if menu::check(
+                ui,
+                p,
+                "world-filled",
+                aurora_i18n::tr!("ui-bars-use-shared-environments"),
+                shared,
+                true,
+            ) {
                 panels.time_of_day = 0;
                 *action = BarAction::SharedEnvironment;
-                ui.close();
             }
-            ui.separator();
+            menu::separator(ui, p);
+            let icons = ["", "sunrise-filled", "sun-high-filled", "sunset-2-filled", "moon-filled"];
             for (i, label) in time_of_day().iter().enumerate().skip(1) {
-                if ui.radio(panels.time_of_day == i as u8, *label).clicked() {
+                if menu::check(ui, p, icons[i], label, panels.time_of_day == i as u8, true) {
                     panels.time_of_day = i as u8;
-                    ui.close();
                 }
             }
-            ui.separator();
+            menu::separator(ui, p);
             // Firestorm's quick preferences lists, and World > Environment >
             // Personal Lighting...
-            if ui.button(aurora_i18n::tr!("ui-bars-environment-picker")).clicked() {
+            if menu::item(ui, p, "sun-filled", aurora_i18n::tr!("ui-bars-environment-picker")) {
                 panels.environment = true;
-                ui.close();
             }
-            if ui.button(aurora_i18n::tr!("common-personal-lighting")).clicked() {
+            if menu::item(ui, p, "adjustments-filled", aurora_i18n::tr!("common-personal-lighting")) {
                 panels.personal_lighting = true;
-                ui.close();
             }
         });
-        ui.separator();
-        if ui.button(aurora_i18n::tr!("common-mouselook-m")).clicked() {
+        menu::separator(ui, p);
+        if menu::item(ui, p, "eye-filled", aurora_i18n::tr!("common-mouselook-m")) {
             *action = BarAction::ToggleMouselook;
-            ui.close();
         }
-        if ui.button(aurora_i18n::tr!("ui-bars-reset-camera-esc")).clicked() {
+        if menu::item(ui, p, "camera-filled", aurora_i18n::tr!("ui-bars-reset-camera-esc")) {
             *action = BarAction::ResetCamera;
-            ui.close();
         }
     });
-    ui.menu_button(small(aurora_i18n::tr!("common-build"), p.ink), |ui| {
-        if ui.button(aurora_i18n::tr!("ui-bars-build-ctrl-b")).clicked() {
-            *action = BarAction::Build(0);
-            ui.close();
-        }
-        if ui.button(aurora_i18n::tr!("ui-bars-edit-objects-ctrl-3")).clicked() {
-            *action = BarAction::Build(1);
-            ui.close();
-        }
-        if ui.button(aurora_i18n::tr!("ui-bars-create-prims-ctrl-4")).clicked() {
-            *action = BarAction::Build(2);
-            ui.close();
-        }
-        if ui.button(aurora_i18n::tr!("ui-bars-edit-land-ctrl-5")).clicked() {
-            *action = BarAction::Build(3);
-            ui.close();
+    menu::submenu(ui, p, "box", aurora_i18n::tr!("common-build"), true, |ui| {
+        for (mode, icon, label) in [
+            (0, "box", aurora_i18n::tr!("ui-bars-build-ctrl-b")),
+            (1, "pencil-filled", aurora_i18n::tr!("ui-bars-edit-objects-ctrl-3")),
+            (2, "circle-plus-filled", aurora_i18n::tr!("ui-bars-create-prims-ctrl-4")),
+            (3, "mountain-filled", aurora_i18n::tr!("ui-bars-edit-land-ctrl-5")),
+        ] {
+            if menu::item(ui, p, icon, label) {
+                *action = BarAction::Build(mode);
+            }
         }
     });
-    ui.menu_button(small(aurora_i18n::tr!("common-contents"), p.ink), |ui| {
-        ui.checkbox(&mut panels.inventory, aurora_i18n::tr!("common-inventory"));
+    menu::submenu(ui, p, "briefcase-filled", aurora_i18n::tr!("common-contents"), true, |ui| {
+        flip(
+            ui,
+            p,
+            "briefcase-filled",
+            aurora_i18n::tr!("common-inventory"),
+            &mut panels.inventory,
+            true,
+        );
     });
     if advanced {
-        ui.menu_button(small(aurora_i18n::tr!("common-advanced"), p.ink), |ui| {
-            ui.checkbox(&mut panels.perf, aurora_i18n::tr!("ui-bars-performance-ctrl-shift-1"));
-            ui.checkbox(&mut panels.settings, aurora_i18n::tr!("ui-bars-graphics-preferences"));
+        menu::submenu(ui, p, "adjustments-filled", aurora_i18n::tr!("common-advanced"), true, |ui| {
+            let perf = aurora_i18n::tr!("ui-bars-performance-ctrl-shift-1");
+            flip(ui, p, "gauge-filled", perf, &mut panels.perf, true);
+            let graphics = aurora_i18n::tr!("ui-bars-graphics-preferences");
+            flip(ui, p, "settings-filled", graphics, &mut panels.settings, true);
         });
     }
-    ui.menu_button(small(aurora_i18n::tr!("common-help"), p.ink), |ui| {
-        if crate::updater::checks_enabled() && ui.button(aurora_i18n::tr!("update-check")).clicked() {
+    menu::submenu(ui, p, "help-circle-filled", aurora_i18n::tr!("common-help"), true, |ui| {
+        if crate::updater::checks_enabled() && menu::item(ui, p, "download-filled", aurora_i18n::tr!("update-check")) {
             *action = BarAction::CheckUpdates;
-            ui.close();
         }
-        if ui.button(aurora_i18n::tr!("bug-title")).clicked() {
+        if menu::item(ui, p, "bug-filled", aurora_i18n::tr!("bug-title")) {
             *action = BarAction::ReportBug;
-            ui.close();
         }
-        ui.separator();
-        ui.label(small(
-            aurora_i18n::tr!("common-aurora-viewer", value0 = aurora_version::version().to_string()),
-            p.muted,
-        ));
-        ui.separator();
-        ui.label(small(aurora_i18n::tr!("ui-bars-walk-arrow-keys-double-tap-to-run"), p.ink));
-        ui.label(small(aurora_i18n::tr!("extra-jump-ascend-page-crouch-page-fly-home"), p.ink));
-        ui.label(small(aurora_i18n::tr!("ui-bars-mouselook-m-chat-enter"), p.ink));
-        ui.label(small(aurora_i18n::tr!("ui-bars-right-click-drag-orbit-wheel-zoom"), p.ink));
-        ui.label(small(aurora_i18n::tr!("ui-bars-editable-shortcuts-preferences-shortcuts"), p.muted));
+        menu::separator(ui, p);
+        let version = aurora_i18n::tr!("common-aurora-viewer", value0 = aurora_version::version().to_string());
+        menu::info(ui, p, "info-circle-filled", &version);
+        menu::separator(ui, p);
+        menu::info(ui, p, "walk", aurora_i18n::tr!("ui-bars-walk-arrow-keys-double-tap-to-run"));
+        menu::info(
+            ui,
+            p,
+            "plane-tilt-filled",
+            aurora_i18n::tr!("extra-jump-ascend-page-crouch-page-fly-home"),
+        );
+        menu::info(ui, p, "eye-filled", aurora_i18n::tr!("ui-bars-mouselook-m-chat-enter"));
+        menu::info(ui, p, "mouse-filled", aurora_i18n::tr!("ui-bars-right-click-drag-orbit-wheel-zoom"));
+        menu::info(
+            ui,
+            p,
+            "keyboard-filled",
+            aurora_i18n::tr!("ui-bars-editable-shortcuts-preferences-shortcuts"),
+        );
     });
 }
 
@@ -773,10 +765,9 @@ pub fn top_bars(
                 // Aurora menu (white wolf): Moi, Communiquer, Monde, Construire, Contenu, Avancé, Aide
                 if let Some(t) = icons.get("wolf") {
                     let img = egui::Image::new(t).fit_to_exact_size(Vec2::new(18.0, 18.0)).tint(p.ink);
-                    ui.menu_image_button(img, |ui| {
+                    menu::button(ui, p, egui::Button::image(img), |ui| {
                         main_menus(ui, p, panels, st, &mut action, true);
                     })
-                    .response
                     .on_hover_text(aurora_i18n::tr!("ui-bars-aurora-menu"));
                 }
                 // notification center (bell) next to the wolf
