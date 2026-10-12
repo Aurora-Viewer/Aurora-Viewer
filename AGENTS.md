@@ -144,6 +144,12 @@ cargo run -p aurora-viewer -- --title "Test regard-avatars"
   le titre : Dev, Release ou Debug) et le log est
   `%LOCALAPPDATA%\Aurora\AuroraViewer\data\logs\aurora-demo-test-<tâche>.log`.
   Les fenêtres et logs des agents ne se mélangent pas.
+- **Tests automatisés sans intervention humaine** : utiliser
+  `--title "Test <tâche> [AUTOMATISATION - NE PAS TOUCHER]"` et lancer
+  `scripts/automation-window-border.ps1` avec le PID du viewer (pas celui de
+  `cargo`). Le contour jaune en pointillés signale à l'humain de laisser
+  l'agent piloter la fenêtre. Voir la [commande de lancement sous
+  Windows](docs/TESTING.md#fenêtres-de-test-automatisé-sous-windows).
 - Captures automatiques : `AURORA_CAPTURE=<fichier.png>`,
   `AURORA_CAPTURE_EXIT=1`, `AURORA_CAPTURE_FRAMES=620` (après le fondu de
   chargement). Regarde tes captures : c'est ta vérification visuelle.
