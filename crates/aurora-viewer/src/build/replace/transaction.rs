@@ -202,8 +202,7 @@ impl Job {
                 .ok_or_else(|| aurora_i18n::tr!("replace-missing").to_owned())?;
             if o.is_avatar()
                 || o.pcode != aurora_prim::params::LL_PCODE_VOLUME
-                || !tool.can_modify(world, idx)
-                || o.owner_id != world.agent_id
+                || !tool.replacement_can_modify(world, idx)
                 || o.key.region != so.key.region
             {
                 return Err(aurora_i18n::tr!("replace-modify").into());

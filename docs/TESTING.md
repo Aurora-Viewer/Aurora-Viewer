@@ -161,6 +161,10 @@ pour que l'humain puisse cocher l'option puis cliquer lui-même sur la partie.
 pile de cartes au lien 9 : `99688`) et un remplaçant indépendant (`99700`).
 Le remplaçant a une rotation et des dimensions différentes ; son contenu est
 vide. Un script du plateau démarre arrêté pour vérifier qu'il reste arrêté.
+Les mises à jour des prims ne renseignent pas `OwnerID`, comme pour un prim
+sans son ni particules sur la grille : les indicateurs de permission et les
+réponses `ObjectProperties` confirment qu'ils appartiennent au résident.
+Le choix du remplaçant et l'opération doivent fonctionner dans ce cas.
 
 À combiner avec `AURORA_DEMO_BUILD` :
 

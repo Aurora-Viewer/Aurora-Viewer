@@ -12,6 +12,7 @@ struct Harness {
     sim: DemoSim,
     clock: Instant,
     deny_copy: bool,
+    source_permissions: Option<(Uuid, u32)>,
     drop_link: bool,
     suppress_copy_confirmation: bool,
     shuffle_link_reply: bool,
@@ -54,6 +55,7 @@ impl Harness {
             sim: DemoSim::default(),
             clock: Instant::now(),
             deny_copy: false,
+            source_permissions: None,
             drop_link: false,
             suppress_copy_confirmation: false,
             shuffle_link_reply: false,
@@ -62,6 +64,13 @@ impl Harness {
     }
 
     fn deliver(&mut self, mut event: NetEvent) {
+        if let Some((owner, mask)) = self.source_permissions
+            && let NetEvent::ObjectProperties(props) = &mut event
+            && let Some(props) = props.iter_mut().find(|props| props.object_id == demo::id(demo::SOURCE))
+        {
+            props.owner_id = owner;
+            props.owner_mask = mask;
+        }
         if self.suppress_copy_confirmation
             && matches!(&event, NetEvent::TaskInventory { object, .. } if *object == demo::id(demo::SOURCE))
             && self
@@ -419,6 +428,72 @@ fn button_requires_one_selected_linked_part_and_picker_keeps_target_selection() 
             .key,
     );
     assert!(!h.tool.replacement_visible(&h.world, &settings));
+}
+
+#[test]
+fn owned_prims_without_update_owner_ids_can_be_picked_and_replaced() {
+    let mut h = Harness::new(demo::TARGET);
+    for local in (demo::ROOT..demo::ROOT + 15).chain(std::iter::once(demo::SOURCE)) {
+        for world in [&mut h.world, &mut h.server] {
+            let idx = world.objects.index_of_uuid(&demo::id(local)).unwrap();
+            let object = world.objects.get_mut(idx).unwrap();
+            object.owner_id = Uuid::nil();
+            if local != demo::ROOT && local != demo::SOURCE {
+                // As in Firestorm, children inherit ownership flags from their root.
+                object.update_flags &= !crate::ui::context::flags::OBJECT_YOU_OWNER;
+            }
+        }
+    }
+    let draft = h.tool.replacement.draft.as_mut().unwrap();
+    draft.source = None;
+    draft.picking = true;
+    let source = h.world.objects.index_of_uuid(&demo::id(demo::SOURCE)).unwrap();
+    h.tool.pick_replacement(&h.world, Some(source));
+    assert_eq!(h.tool.replacement.draft.as_ref().unwrap().source, Some(demo::id(demo::SOURCE)));
+    assert_eq!(h.run(), Stage::Done, "{:?}", h.tool.replacement.job);
+    assert_eq!(h.ids(demo::ROOT)[8], demo::id(demo::SOURCE));
+}
+
+#[test]
+fn full_candidate_permissions_override_missing_update_ownership_and_keep_real_refusals() {
+    for (mine, modifiable, accepted) in [(true, true, true), (false, true, false), (true, false, false)] {
+        let mut h = Harness::new(demo::TARGET);
+        let source = h.world.objects.index_of_uuid(&demo::id(demo::SOURCE)).unwrap();
+        let object = h.world.objects.get_mut(source).unwrap();
+        object.owner_id = Uuid::nil();
+        object.update_flags &= !crate::ui::context::flags::OBJECT_YOU_OWNER;
+        h.tool.on_properties(vec![aurora_net::build::ObjectProps {
+            object_id: demo::id(demo::SOURCE),
+            full: true,
+            owner_id: if mine { h.world.agent_id } else { Uuid::from_u128(123) },
+            owner_mask: if modifiable { u32::MAX } else { !perm::MODIFY },
+            ..Default::default()
+        }]);
+        let draft = h.tool.replacement.draft.as_mut().unwrap();
+        draft.source = None;
+        draft.picking = true;
+        h.tool.pick_replacement(&h.world, Some(source));
+        assert_eq!(h.tool.replacement.draft.as_ref().unwrap().source.is_some(), accepted);
+        assert_eq!(h.tool.selection.len(), 1);
+    }
+}
+
+#[test]
+fn fresh_server_permissions_refuse_replacement_before_unlinking_or_stopping_scripts() {
+    for mine in [true, false] {
+        let mut h = Harness::new(demo::TARGET);
+        let original = h.ids(demo::ROOT);
+        let source = h.world.objects.index_of_uuid(&demo::id(demo::SOURCE)).unwrap();
+        let before = Prim::capture(&h.tool, &h.world, source).unwrap();
+        h.source_permissions = Some((
+            if mine { h.world.agent_id } else { Uuid::from_u128(123) },
+            if mine { !perm::MODIFY } else { u32::MAX },
+        ));
+        assert_eq!(h.run(), Stage::Failed, "{:?}", h.tool.replacement.job);
+        assert_eq!(h.ids(demo::ROOT), original);
+        assert!(before.matches(&h.server));
+        assert!(h.script_changes.is_empty());
+    }
 }
 
 #[test]

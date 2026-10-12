@@ -58,8 +58,12 @@ pub fn events(handle: u64, ground: f32) -> Vec<NetEvent> {
             velocity: Vec3::ZERO,
             acceleration: Vec3::ZERO,
             angular_velocity: Vec3::ZERO,
-            update_flags: crate::ui::context::flags::OBJECT_MODIFY | crate::ui::context::flags::OBJECT_MOVE,
-            owner_id: crate::demo::DEMO_AGENT,
+            update_flags: crate::ui::context::flags::OBJECT_MODIFY
+                | crate::ui::context::flags::OBJECT_MOVE
+                | crate::ui::context::flags::OBJECT_YOU_OWNER,
+            // A full ObjectUpdate may omit OwnerID for a silent prim. Its
+            // ownership still comes from flags and ObjectProperties replies.
+            owner_id: Uuid::nil(),
             volume: VolumeParams::default(),
             texture_entry: Some(Arc::new(TextureEntry {
                 faces: vec![

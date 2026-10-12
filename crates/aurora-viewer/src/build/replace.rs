@@ -176,6 +176,23 @@ pub fn task_from_item(item: &InvItem, object: Uuid) -> TaskItem {
 }
 
 impl BuildTool {
+    /// ObjectUpdate.OwnerID is only reliable for sound/particles
+    /// (LLViewerObject::processUpdateMessage). Use full ObjectProperties,
+    /// otherwise the root's permission flags as permYouOwner/permModify do.
+    /// The transaction reads fresh full properties again before any mutation.
+    fn replacement_can_modify(&self, world: &World, idx: usize) -> bool {
+        use crate::ui::context::flags::{OBJECT_MODIFY, OBJECT_YOU_OWNER};
+        let Some(o) = world.objects.get(idx) else { return false };
+        if let Some(props) = self.props.get(&o.full_id).filter(|props| props.full) {
+            return props.owner_id == world.agent_id && props.owner_mask & aurora_net::build::perm::MODIFY != 0;
+        }
+        let Some(root) = world.objects.get(root_of(world, idx)) else {
+            return false;
+        };
+        let required = OBJECT_MODIFY | OBJECT_YOU_OWNER;
+        root.update_flags & required == required
+    }
+
     pub fn replacement_visible(&self, world: &World, s: &BuildSettings) -> bool {
         self.tool == Tool::Edit
             && s.edit_linked
@@ -232,13 +249,13 @@ impl BuildTool {
             Some(aurora_i18n::tr!("replace-volume-only"))
         } else if o.parent_id != 0 || !world.objects.children_of(&o.key).is_empty() {
             Some(aurora_i18n::tr!("replace-independent"))
-        } else if !self.can_modify(world, i) || o.owner_id != world.agent_id {
+        } else if !self.replacement_can_modify(world, i) {
             Some(aurora_i18n::tr!("replace-modify"))
         } else if world
             .objects
             .index_of_uuid(&target)
             .and_then(|t| world.objects.get(t))
-            .is_none_or(|t| t.key.region != o.key.region || t.owner_id != o.owner_id)
+            .is_none_or(|t| t.key.region != o.key.region)
         {
             Some(aurora_i18n::tr!("replace-same-region"))
         } else {
