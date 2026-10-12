@@ -910,26 +910,18 @@ pub fn show(
         ui.separator();
         ui.horizontal_wrapped(|ui| {
             let available = st.pending.is_none() && model::cof(&world.inventory).is_some_and(|id| model::complete(&world.inventory, id));
-            if ui
-                .add_enabled(
-                    available && base.is_some() && dirty,
-                    egui::Button::new(aurora_i18n::tr!("common-save")).fill(p.raised),
-                )
-                .clicked()
-            {
+            use widgets::{ActionKind, action_button, action_button_if};
+            let size = Vec2::new(0.0, 26.0);
+            let (save, can_save) = (aurora_i18n::tr!("common-save"), available && base.is_some() && dirty);
+            if action_button_if(ui, p, "device-floppy-filled", save, ActionKind::Flat, size, can_save).clicked() {
                 actions.push(Action::Save(None));
             }
-            if ui
-                .add_enabled(
-                    available,
-                    egui::Button::new(aurora_i18n::tr!("ui-appearance-save-as")).fill(p.raised),
-                )
-                .clicked()
-            {
+            let save_as = aurora_i18n::tr!("ui-appearance-save-as");
+            if action_button_if(ui, p, "device-floppy-filled", save_as, ActionKind::Flat, size, available).clicked() {
                 st.begin_save_as(&world.inventory);
             }
             if st.editing {
-                if widgets::flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked() {
+                if action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {
                     if dirty && base.is_some() {
                         actions.push(Action::Revert);
                     }
@@ -937,13 +929,12 @@ pub fn show(
                     st.adding = false;
                 }
             } else if st.tab < 2 {
-                for (label, append) in [(aurora_i18n::tr!("common-add"), true), (aurora_i18n::tr!("common-wear"), false)] {
-                    if ui
-                        .add_enabled(
-                            available && st.selected_outfit.is_some(),
-                            egui::Button::new(label).fill(if append { p.raised } else { p.violet }),
-                        )
-                        .clicked()
+                let ready = available && st.selected_outfit.is_some();
+                for (icon, label, kind, append) in [
+                    ("plus", aurora_i18n::tr!("common-add"), ActionKind::Flat, true),
+                    ("shirt-filled", aurora_i18n::tr!("common-wear"), ActionKind::Primary, false),
+                ] {
+                    if action_button_if(ui, p, icon, label, kind, size, ready).clicked()
                         && let Some(id) = st.selected_outfit
                     {
                         actions.push(Action::Wear(id, append));
@@ -976,15 +967,15 @@ pub fn show(
             ui.horizontal(|ui| {
                 let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
                 let valid = !name.trim().is_empty() && st.pending.is_none();
-                if ui
-                    .add_enabled(valid, egui::Button::new("OK").min_size(Vec2::new(80.0, 24.0)).fill(p.violet))
-                    .clicked()
+                use widgets::{ActionKind, action_button, action_button_if};
+                let size = Vec2::new(0.0, 26.0);
+                if action_button_if(ui, p, "check", aurora_i18n::tr!("common-ok"), ActionKind::Primary, size, valid).clicked()
                     || (valid && enter)
                 {
                     actions.push(Action::Save(Some(name.trim().into())));
                     close = true;
                 }
-                if widgets::flat_button_sized(ui, p, aurora_i18n::tr!("common-cancel"), Vec2::new(80.0, 24.0)).clicked() {
+                if action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {
                     close = true;
                 }
             });

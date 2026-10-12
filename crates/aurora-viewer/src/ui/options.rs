@@ -486,11 +486,9 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
             );
             ui.add_space(10.0);
             ui.horizontal(|ui| {
-                let yes = ui.add(
-                    egui::Button::new(RichText::new(aurora_i18n::tr!("common-reset")).color(Color32::WHITE))
-                        .fill(p.danger)
-                        .corner_radius(ui.visuals().widgets.inactive.corner_radius),
-                );
+                use super::widgets::{ActionKind, action_button};
+                let size = Vec2::new(0.0, 26.0);
+                let yes = action_button(ui, p, "restore", aurora_i18n::tr!("common-reset"), ActionKind::Danger, size);
                 if yes.clicked() {
                     s.reset_keeping_account();
                     st.capture = None;
@@ -500,7 +498,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
                     r.reset = true;
                     st.confirm_reset = false;
                 }
-                if super::widgets::flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked() {
+                if action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {
                     st.confirm_reset = false;
                 }
             });

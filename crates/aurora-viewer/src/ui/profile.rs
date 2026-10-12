@@ -1129,7 +1129,7 @@ fn rights_dialog(ctx: &egui::Context, p: &Palette, w: &mut Window, name: &str, r
             if flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked() {
                 done = true;
             }
-            if flat_button(ui, p, "OK").clicked() {
+            if flat_button(ui, p, aurora_i18n::tr!("common-ok")).clicked() {
                 if r != rights {
                     actions.push(ProfileAction::Net(NetCommand::GrantUserRights { friend: w.id, rights: r }));
                 }

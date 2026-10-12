@@ -691,6 +691,7 @@ color-picker-copied = Valeur LSL copiée.
 color-picker-apply = Appliquer
 color-picker-apply-hint = Afficher la couleur sur l’objet pendant le choix.
 color-picker-ok = OK
+common-ok = OK
 color-picker-open = Ouvrir la palette de couleur
 ui-people-partial-block-right-click-for-details = Blocage partiel (clic droit pour le détail)
 common-block = Bloquer

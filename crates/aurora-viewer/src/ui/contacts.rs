@@ -1712,6 +1712,11 @@ fn dialogs(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut Contact
         return;
     };
     let name = |id: &Uuid| world.social.name_of(id);
+    // removing a friend, a set or its members is the destructive answer
+    let (icon, kind) = match d {
+        Dialog::RemoveFriends(_) | Dialog::RemoveSet(_) | Dialog::RemoveFromSet { .. } => ("trash-filled", widgets::ActionKind::Danger),
+        _ => ("check", widgets::ActionKind::Primary),
+    };
     let (title, text, ok, has_input) = match d {
         Dialog::RemoveFriends(ids) if ids.len() == 1 => (
             aurora_i18n::tr!("ui-contacts-remove-a-friend"),
@@ -1719,13 +1724,13 @@ fn dialogs(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut Contact
                 "ui-contacts-do-you-want-to-remove-from-your-friends-list",
                 value0 = name(&ids[0]).to_string()
             ),
-            "OK",
+            aurora_i18n::tr!("common-ok"),
             false,
         ),
         Dialog::RemoveFriends(_) => (
             aurora_i18n::tr!("ui-contacts-remove-from-friends"),
             aurora_i18n::tr!("ui-contacts-do-you-want-to-remove-multiple-residents-from-your").into(),
-            "OK",
+            aurora_i18n::tr!("common-ok"),
             false,
         ),
         Dialog::ModifyRights { friend, grant: true, .. } => (
@@ -1761,7 +1766,7 @@ fn dialogs(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut Contact
                 "ui-contacts-you-can-track-your-friends-on-the-map-and",
                 value0 = name(to).to_string()
             ),
-            "OK",
+            aurora_i18n::tr!("common-ok"),
             true,
         ),
         Dialog::TeleportRequest { to, .. } => (
@@ -1779,7 +1784,7 @@ fn dialogs(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut Contact
         Dialog::RemoveSet(s) => (
             aurora_i18n::tr!("ui-contacts-delete-a-contact-set"),
             aurora_i18n::tr!("ui-contacts-are-you-sure-you-want-to-delete-you-cannot", s = s.to_string()),
-            "OK",
+            aurora_i18n::tr!("common-ok"),
             false,
         ),
         Dialog::RemoveFromSet { set, ids } => {
@@ -1797,7 +1802,12 @@ fn dialogs(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut Contact
                     set = set.to_string()
                 )
             };
-            (aurora_i18n::tr!("ui-contacts-remove-from-contact-set"), text, "OK", false)
+            (
+                aurora_i18n::tr!("ui-contacts-remove-from-contact-set"),
+                text,
+                aurora_i18n::tr!("common-ok"),
+                false,
+            )
         }
         Dialog::SetAlias { ids, .. } => {
             let text = if ids.len() > 1 {
@@ -1834,15 +1844,12 @@ fn dialogs(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut Contact
         }
         ui.add_space(10.0);
         ui.horizontal(|ui| {
-            let yes = ui.add(
-                egui::Button::new(RichText::new(ok).color(Color32::WHITE))
-                    .fill(p.violet)
-                    .corner_radius(ui.visuals().widgets.inactive.corner_radius),
-            );
-            if yes.clicked() {
+            let size = Vec2::new(0.0, 26.0);
+            if widgets::action_button(ui, p, icon, ok, kind, size).clicked() {
                 done = Some(true);
             }
-            if widgets::flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked() {
+            let cancel = aurora_i18n::tr!("common-cancel");
+            if widgets::action_button(ui, p, "x", cancel, widgets::ActionKind::Flat, size).clicked() {
                 done = Some(false);
             }
         });

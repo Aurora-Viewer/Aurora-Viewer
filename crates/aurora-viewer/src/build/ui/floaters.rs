@@ -418,7 +418,7 @@ fn media_settings(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world:
         }
         ui.separator();
         ui.horizontal(|ui| {
-            if flat_button(ui, p, "OK").clicked() {
+            if flat_button(ui, p, aurora_i18n::tr!("common-ok")).clicked() {
                 apply = true;
                 close = true;
             }
@@ -442,7 +442,7 @@ fn media_settings(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world:
             small(ui, p, aurora_i18n::tr!("build-ui-floaters-enter-a-url-or-url-pattern-to-add-to"));
             ui.add(egui::TextEdit::singleline(&mut entry).desired_width(300.0));
             ui.horizontal(|ui| {
-                if flat_button(ui, p, "OK").clicked() {
+                if flat_button(ui, p, aurora_i18n::tr!("common-ok")).clicked() {
                     let t = entry.trim();
                     if !t.is_empty() && st.entry.whitelist.len() < 64 {
                         st.entry.whitelist.push(t.to_owned());
@@ -764,13 +764,12 @@ fn confirm(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world: &mut W
         ui.label(RichText::new(body).size(12.0).color(p.ink));
         ui.add_space(8.0);
         ui.horizontal(|ui| {
-            if ui
-                .add(egui::Button::new(RichText::new(yes).size(12.0).color(egui::Color32::WHITE)).fill(p.violet))
-                .clicked()
-            {
+            use crate::ui::widgets::{ActionKind, action_button};
+            let size = Vec2::new(0.0, 26.0);
+            if action_button(ui, p, "check", yes, ActionKind::Primary, size).clicked() {
                 answer = Some(true);
             }
-            if flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked() {
+            if action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {
                 answer = Some(false);
             }
         });

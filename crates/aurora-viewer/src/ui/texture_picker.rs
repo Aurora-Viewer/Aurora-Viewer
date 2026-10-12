@@ -193,7 +193,7 @@ impl TexturePicker {
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
                         ui.add_enabled_ui(self.selected.is_some(), |ui| {
-                            if flat_button(ui, p, "OK").clicked() {
+                            if flat_button(ui, p, aurora_i18n::tr!("common-ok")).clicked() {
                                 chosen = self.selected;
                             }
                         });

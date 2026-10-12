@@ -691,6 +691,7 @@ color-picker-copied = LSL value copied.
 color-picker-apply = Apply
 color-picker-apply-hint = Preview the color on the object while choosing.
 color-picker-ok = OK
+common-ok = OK
 color-picker-open = Open the color picker
 ui-people-partial-block-right-click-for-details = Partial block (right-click for details)
 common-block = Block
