@@ -7,6 +7,9 @@
 //!   the avatar, FSResetCameraOnMovement)
 //! - `pan,x,y` / `zoom,x,y`: the same with a Ctrl+Alt+Shift (pan) or an Alt
 //!   (zoom closer) drag
+//! - `close,x,y[,n]`: Alt+click at (x, y) at frame 600, Alt drag closer for n
+//!   frames (60 by default), then the camera stays there: a close-up on a
+//!   still camera, for comparing consecutive captures
 //! - `tag`: left press on our own name tag at frame 600, drag (steer the
 //!   avatar, as when the avatar itself is held) until 660
 //! - `ml`: into mouselook at frame 600, out at 700
@@ -87,6 +90,35 @@ pub fn steps(spec: &str, frame: u64) -> Vec<Step> {
                 _ => {}
             }
         }
+        "close" => {
+            let (Some(x), Some(y)) = (num(1), num(2)) else {
+                return out;
+            };
+            let drags = num(3).map_or(60, |n| n.clamp(1.0, 600.0) as u64);
+            match frame {
+                600 => out.extend([
+                    Step::Cursor(x, y),
+                    Step::Mods {
+                        ctrl: false,
+                        shift: false,
+                        alt: true,
+                    },
+                    Step::Press,
+                    Step::Log,
+                ]),
+                f if f > 600 && f <= 600 + drags => out.push(Step::Drag(0.0, -3.0)),
+                f if f == 601 + drags => out.extend([
+                    Step::Release,
+                    Step::Mods {
+                        ctrl: false,
+                        shift: false,
+                        alt: false,
+                    },
+                    Step::Log,
+                ]),
+                _ => {}
+            }
+        }
         "tag" => match frame {
             600 => out.extend([
                 Step::CursorOnOwnTag,
@@ -147,6 +179,17 @@ mod tests {
         assert!(steps("alt,400,300", 661).contains(&Step::Release));
         assert!(steps("alt,400,300", 700).contains(&Step::Walk(true)));
         assert!(steps("alt", 600).is_empty());
+    }
+
+    #[test]
+    fn close_scenario_zooms_then_leaves_the_camera_still() {
+        assert!(steps("close,400,300", 600).contains(&Step::Press));
+        assert_eq!(steps("close,400,300", 660), vec![Step::Drag(0.0, -3.0)]);
+        assert!(steps("close,400,300", 661).contains(&Step::Release));
+        assert!(steps("close,400,300", 700).is_empty());
+        // the number of zoom frames is the camera's final distance
+        assert_eq!(steps("close,400,300,20", 620), vec![Step::Drag(0.0, -3.0)]);
+        assert!(steps("close,400,300,20", 621).contains(&Step::Release));
     }
 
     #[test]

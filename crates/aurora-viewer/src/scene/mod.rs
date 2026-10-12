@@ -21,6 +21,7 @@ pub mod settings;
 pub mod shape;
 mod skin_binds;
 pub mod sounds;
+pub mod still_check;
 mod sync_plan;
 pub mod sync_sets;
 pub mod texture_budget;
@@ -475,6 +476,8 @@ pub struct Scene {
     pub agent_idx: Option<usize>,
     pub lists: DrawLists,
     pub stats: SceneStats,
+    /// AURORA_STILL_CHECK: what changes while the picture should stand still.
+    pub still: Option<still_check::StillCheck>,
     frame: u32,
     pub lod_factor: f32,
     pub draw_distance: f32,
@@ -744,6 +747,7 @@ impl Scene {
             agent_idx: None,
             lists: DrawLists::default(),
             stats: SceneStats::default(),
+            still: still_check::StillCheck::from_env(),
             frame: 0,
             lod_factor: 2.0,
             draw_distance: 96.0,
@@ -1727,6 +1731,14 @@ impl Scene {
         g.center = m.center;
         g.radius = m.radius;
         if m.changed {
+            if let Some(still) = &mut self.still
+                && !g.hud
+                && let Some(old) = g.faces.first().and_then(|f| renderer.records.get(f.record))
+                && let Some(o) = world.objects.get(idx)
+            {
+                let moved = Vec3::from_slice(&old.model[3][..3]).distance(Vec3::from_slice(&m.model[3][..3]));
+                still.moved(o.full_id, m.owner_avatar.is_some(), moved, || still_check::describe(o, g.lod));
+            }
             for f in &g.faces {
                 if g.hud {
                     renderer.records.set_hud_model(f.record, m.model, world.hud_scale(idx));
@@ -1818,6 +1830,7 @@ impl Scene {
         {
             sculpt_wait = Some(s.texture);
         }
+        let previous_geom = self.gpu[idx].geom;
         let mut bind_new = None;
         if let Some(k) = wanted {
             // need an Object reference for building: re-borrow
@@ -1886,18 +1899,31 @@ impl Scene {
             .sync_ctx(world, &renderer.records, view.eye, now)
             .placement(idx, o, (pos, rot, hud), geom_key, &geom);
 
-        let full_rebuild = o.material_dirty
-            || self.gpu[idx].skeleton_owner != skeleton_owner.map(|p| p.0)
-            || self.gpu[idx].rigged != rigged
-            || o.shape_dirty
+        let why = still_check::RebuildWhy {
+            material: o.material_dirty,
+            skeleton: self.gpu[idx].skeleton_owner != skeleton_owner.map(|p| p.0),
+            rigged: self.gpu[idx].rigged != rigged,
+            shape: o.shape_dirty,
             // compared with the faces built, not drawn: fully transparent
             // faces get no record and made this rebuild every frame
-            || self.gpu[idx].built_faces != geom.faces.iter().filter(|f| f.is_some()).count()
-            || bind_new.is_some()
-            || (!self.gpu[idx].material_ids.is_empty() && self.gpu[idx].mat_generation != self.materials.generation);
+            faces: self.gpu[idx].built_faces != geom.faces.iter().filter(|f| f.is_some()).count(),
+            geometry: bind_new.is_some(),
+            material_generation: !self.gpu[idx].material_ids.is_empty() && self.gpu[idx].mat_generation != self.materials.generation,
+        };
+        let full_rebuild = why.any();
 
         if full_rebuild {
             self.stats.rebuilt += 1;
+            if let Some(still) = &mut self.still {
+                still.rebuilt(o.full_id, why, || {
+                    format!(
+                        "{}, was {:?}, {:.2} m away",
+                        still_check::describe(o, lod),
+                        previous_geom,
+                        pos.distance(view.eye)
+                    )
+                });
+            }
             self.rebuild_faces(renderer, world, idx, &geom, model);
         } else {
             // transform-only update; an unchanged record is not uploaded again

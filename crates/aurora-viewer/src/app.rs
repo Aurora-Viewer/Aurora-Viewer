@@ -3516,6 +3516,10 @@ impl App {
                 let p = self.world.agent.position;
                 let floor = crate::demo::floor_at(p.x, p.y);
                 self.world.agent.simulate_locally(&self.input, ml, Some(floor), dt);
+                if let Some(mm) = crate::demo::agent_jitter() {
+                    let p = self.world.agent.predicted_position() + crate::demo::agent_jitter_offset(self.frame_count, mm);
+                    self.world.agent.constrain_prediction(p, false);
+                }
             } else {
                 let motion = *self.net.stats.simulator_motion.lock();
                 if motion.handle == self.world.main_region {
@@ -3581,6 +3585,14 @@ impl App {
             self.frozen_cull = None;
         }
 
+        if let Some(still) = &mut self.scene.still {
+            still.frame(crate::scene::still_check::View {
+                camera: self.camera.position,
+                target: self.camera.target,
+                fov_y: self.camera.fov_y,
+                agent: self.world.agent.position,
+            });
+        }
         self.frame_profile.lap(Lap::AgentCamera);
         // ---- scene
         let in_world = self.in_world();
