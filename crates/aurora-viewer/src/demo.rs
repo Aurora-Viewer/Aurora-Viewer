@@ -1956,7 +1956,9 @@ pub fn events() -> Vec<NetEvent> {
         }
     }
     // Scripted wind / smoke in front of a dark panel for a visible comparison.
-    if let Ok(mode) = std::env::var("AURORA_DEMO_PARTICLES") {
+    let particles_mode = std::env::var("AURORA_DEMO_PARTICLES").unwrap_or_default();
+    if !particles_mode.is_empty() && particles_mode != "load" {
+        let mode = particles_mode.as_str();
         let ground = floor_at(136.0, 127.0);
         add(prim(
             id,
@@ -2008,6 +2010,27 @@ pub fn events() -> Vec<NetEvent> {
         o.particles = aurora_net::objects::ParticleUpdate::Set(fountain_particles());
         add(o);
         id += 1;
+    }
+    // AURORA_DEMO_PARTICLES=load: a ring of 32 more fountains around the
+    // plaza, about 4 000 particles alive (the particle steps of the profile)
+    if particles_mode == "load" {
+        for i in 0..32 {
+            let a = i as f32 / 32.0 * std::f32::consts::TAU;
+            let (x, y) = (cx + 14.0 * a.cos(), cy + 14.0 * a.sin());
+            let mut o = prim(
+                id,
+                Vec3::new(x, y, g(x, y) + 0.6),
+                Quat::IDENTITY,
+                Vec3::new(0.6, 0.6, 0.4),
+                cyl,
+                te(teal, 0, true, 0.3),
+                ExtraParams::default(),
+                "",
+            );
+            o.particles = aurora_net::objects::ParticleUpdate::Set(fountain_particles());
+            add(o);
+            id += 1;
+        }
     }
     // a mirror (box reflection probe flagged as mirror) with a polished face
     {

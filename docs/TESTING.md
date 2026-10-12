@@ -468,7 +468,7 @@ grille.
 
 | Variable | Effet |
 |---|---|
-| `AURORA_DEMO_PARTICLES=<mode>` | Particules de vent et de fumée |
+| `AURORA_DEMO_PARTICLES=<mode>` | Particules de vent et de fumée, ou charge de particules |
 | `AURORA_DEMO_PLANAR=1` | Dalles en mapping de texture planaire |
 | `AURORA_DEMO_PBR_OVERRIDE=1` | Override de matériau GLTF |
 | `AURORA_DEMO_TEXANIM=1` | Animations de texture (llSetTextureAnim) |
@@ -484,6 +484,10 @@ grille.
   moto et paramètres du script de fumée reçus par des mises à jour
   compressées, devant un panneau sombre ; format étendu du glow (`legacy` :
   vent sans glow), texture douce par défaut des particules hors ligne.
+  `load` : à la place, 32 fontaines de plus en cercle autour de la place,
+  soit environ 4 000 particules vivantes, pour mesurer les parties
+  `p_part_*` du profil (à combiner avec `AURORA_DEMO_STREAM=<n>` pour le
+  nombre d'objets).
 - **`AURORA_DEMO_PLANAR=1`** : les carreaux doivent se raccorder d'une dalle
   à l'autre.
 - **`AURORA_DEMO_PBR_OVERRIDE=1`** : deux dalles PBR, dont une avec un
@@ -1149,7 +1153,8 @@ thread principal est déjà sur l'image suivante. Avec
   avec `AURORA_RENDER_THREAD=0`).
 - `max:` : les étapes dont le temps le plus long sur une seule image a
   atteint 1 ms dans cette seconde, la plus longue d'abord, étapes du
-  renderer (`r_*`), parties du streaming et de la synchro (`s_*`) et champs
+  renderer (`r_*`), parties du streaming et de la synchro (`s_*`), des
+  paramètres de l'image (`p_*`) et de l'interface (`u_*`) et champs
   `thread` compris, ou `-` s'il n'y en a aucune. Une image lente périodique
   y apparaît avec l'étape qui l'a causée, par exemple
   `max: media=6.10 render=2.31`, alors que sa moyenne reste minuscule.
@@ -1206,6 +1211,15 @@ thread principal est déjà sur l'image suivante. Avec
     points d'attache (écriture, envoi avec les palettes posées, centre des
     objets ancrés), `sync_alpha` faces reclassées après le changement de
     classe alpha d'une texture ;
+  - les parties des paramètres de l'image (`p_*`, dans `params`) : `screen`
+    passage du chargement au monde et écran de téléportation, `env` ciel et
+    eau de l'image et leurs textures, `mirror` recherche du miroir visible
+    le plus proche, puis les particules — `part_sources` systèmes posés ou
+    arrêtés par les mises à jour d'objets, `part_sim` simulation de chaque
+    source, `part_list` instances de l'image triées de la plus lointaine à
+    la plus proche (`particles` en donne le nombre) —, `lights` lumières
+    locales les plus proches et `probes` sondes de reflets (recherche des
+    candidates par tranches, emplacements, face à capturer) ;
   - les parties de l'interface (`u_*`, dans `ui`) : `bars` barres du haut et
     du bas, `tags` étiquettes des avatars et textes flottants, `overlays`
     balise, textes des HUDs, outils de construction, débogage et bulles du

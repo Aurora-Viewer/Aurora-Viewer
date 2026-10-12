@@ -204,7 +204,8 @@ pub struct ObjGpu {
     pub sculpt_wait: Option<Uuid>,
     /// Avatar wearing this object (attachments), for the avatar limit.
     pub owner_avatar: Option<usize>,
-    /// Reflection probe flagged as a mirror (box).
+    /// Reflection probe flagged as a mirror (box); listed in
+    /// `Scene::mirror_objects`.
     pub mirror: bool,
     /// Listed in `Scene::light_objects` by its last sync.
     pub is_light: bool,
@@ -500,6 +501,9 @@ pub struct Scene {
     /// these instead of every object each frame. May hold removed indices;
     /// readers check the object again.
     pub light_objects: std::collections::BTreeSet<usize>,
+    /// Objects flagged as mirrors by their last sync, for `find_mirror`: as
+    /// for the lights, it may hold removed indices and readers check `mirror`.
+    mirror_objects: std::collections::BTreeSet<usize>,
     /// Build tools: selected mesh / sculpted objects drawn as wireframes
     /// (object index -> root color).
     pub selection_wire: HashMap<usize, bool>,
@@ -793,6 +797,7 @@ impl Scene {
             system_bounds: Vec::new(),
             visit_tmp: Vec::new(),
             light_objects: Default::default(),
+            mirror_objects: Default::default(),
             selection_wire: HashMap::new(),
             selection_silhouettes: HashSet::new(),
             debug_alpha: None,
@@ -1360,8 +1365,9 @@ impl Scene {
     /// as mirror, plane through its center along its local +Z, facing the camera).
     pub fn find_mirror(&self, world: &World, view: &CullView, now: Instant) -> Option<aurora_render::MirrorParams> {
         let mut best: Option<(f32, aurora_render::MirrorParams)> = None;
-        for (idx, g) in self.gpu.iter().enumerate() {
-            if !g.mirror {
+        // in index order: of two mirrors at the same distance, the first wins
+        for &idx in &self.mirror_objects {
+            if !self.gpu.get(idx).is_some_and(|g| g.mirror) {
                 continue;
             }
             let Some(o) = world.objects.get(idx) else {
@@ -1802,7 +1808,14 @@ impl Scene {
         g.wide = g.wide.filter(|_| posed.is_some());
         g.hud = m.xf.2;
         g.owner_avatar = m.owner_avatar;
-        g.mirror = m.mirror;
+        if m.mirror != g.mirror {
+            g.mirror = m.mirror;
+            if m.mirror {
+                self.mirror_objects.insert(idx);
+            } else {
+                self.mirror_objects.remove(&idx);
+            }
+        }
         g.center = m.center;
         g.radius = m.radius;
         g.anchor = m.anchor;
@@ -1899,7 +1912,15 @@ impl Scene {
         g.hud = hud;
         g.owner_avatar = owner_avatar;
         // reflection probe with the box and mirror flags (LLReflectionProbeParams)
-        g.mirror = o.extra.reflection_probe.is_some_and(|p| p.flags & 0x4 != 0 && p.flags & 0x1 != 0);
+        let mirror = o.extra.reflection_probe.is_some_and(|p| p.flags & 0x4 != 0 && p.flags & 0x1 != 0);
+        if mirror != g.mirror {
+            g.mirror = mirror;
+            if mirror {
+                self.mirror_objects.insert(idx);
+            } else {
+                self.mirror_objects.remove(&idx);
+            }
+        }
         let shape_dirty = o.shape_dirty;
         if wanted != g.wanted_geom || shape_dirty {
             g.wanted_geom = wanted;

@@ -285,6 +285,8 @@ pub struct App {
     /// Block list version applied to object sounds, and the objects whose
     /// sounds it silenced.
     sound_blocks: (u64, std::collections::HashSet<uuid::Uuid>),
+    /// Objects whose update carried their attached sound (reused).
+    sound_changes: Vec<usize>,
     /// Audio devices listed for the preferences.
     devices_listed: bool,
     /// Color emoji (Noto 3D) for chat and the picker.
@@ -597,6 +599,7 @@ impl App {
             voice_tags: Default::default(),
             name_tags: Vec::new(),
             sound_blocks: Default::default(),
+            sound_changes: Vec::new(),
             devices_listed: false,
             emoji: ui::emoji::Emoji::load(),
             system_fonts_pending,
@@ -2079,15 +2082,13 @@ impl App {
         let mutes = &self.world.mutes;
         let blocked =
             |o: &crate::world::objects::Object| mutes.is_muted_id(&o.full_id) || (!o.owner_id.is_nil() && mutes.sounds_muted(&o.owner_id));
-        for o in self.world.objects.slots.iter_mut().flatten() {
-            if o.sound_update {
-                o.sound_update = false;
-                if blocked(o) {
-                    self.sound_blocks.1.insert(o.full_id);
-                } else {
-                    self.scene.sounds.apply_object_sound(engine, o.full_id, o.sound);
+        if recheck {
+            // rare: every object with a sound, but for those whose update is
+            // applied below
+            for o in self.world.objects.slots.iter().flatten() {
+                if o.sound_update || o.sound.id.is_nil() {
+                    continue;
                 }
-            } else if recheck && !o.sound.id.is_nil() {
                 if blocked(o) {
                     if self.sound_blocks.1.insert(o.full_id) {
                         self.scene.sounds.apply_object_sound(engine, o.full_id, Default::default());
@@ -2097,6 +2098,27 @@ impl App {
                 }
             }
         }
+        // the objects that got a full update, listed by the store (no walk
+        // over every object each frame and before each sound message), in
+        // slot order as a walk would take them
+        let mut changed = std::mem::take(&mut self.sound_changes);
+        self.world.objects.take_sound_changes(&mut changed);
+        changed.sort_unstable();
+        for &idx in &changed {
+            let Some(o) = self.world.objects.get_mut_untracked(idx) else {
+                continue;
+            };
+            if !std::mem::take(&mut o.sound_update) {
+                continue;
+            }
+            if blocked(o) {
+                self.sound_blocks.1.insert(o.full_id);
+            } else {
+                self.scene.sounds.apply_object_sound(engine, o.full_id, o.sound);
+            }
+        }
+        changed.clear();
+        self.sound_changes = changed;
     }
 
     /// Plays an interface sound when the settings allow it (make_ui_sound /
@@ -3894,6 +3916,8 @@ impl App {
         }
         self.perf.update_ms = t_up.elapsed().as_secs_f32() * 1000.0;
         self.frame_profile.lap(Lap::Stream);
+        // the parts of the `Params` lap (`p_*` in the profile)
+        let mut t_part = Instant::now();
 
         // ---- loading -> world transition
         if let Screen::Loading { since } = self.screen {
@@ -4052,6 +4076,7 @@ impl App {
                 self.tp_overlay = None;
             }
         }
+        t_part = self.scene.parts.lap(Part::ParamsScreen, t_part);
 
         // ---- environment: local preset > parcel > region (or default day),
         // with crossfades; the simulator sun only for regions without EEP
@@ -4084,11 +4109,13 @@ impl App {
         env.sky.sun_texture = slots[1];
         env.sky.moon_texture = slots[2];
         env.water.normal_texture = slots[3];
+        t_part = self.scene.parts.lap(Part::ParamsEnv, t_part);
         let mirror = if in_world && self.settings.mirrors > 0 {
             self.scene.find_mirror(&self.world, &cull, Instant::now())
         } else {
             None
         };
+        t_part = self.scene.parts.lap(Part::ParamsMirror, t_part);
         // particles
         if in_world {
             let max_particles = self.settings.max_particles as usize;
@@ -4103,10 +4130,13 @@ impl App {
                 max_particles,
                 self.settings.draw_distance,
                 &mut out,
+                &mut scene.parts,
             );
             self.scene.lists.particles = out;
+            t_part = Instant::now();
         }
         let lights = if in_world { self.lights() } else { Vec::new() };
+        t_part = self.scene.parts.lap(Part::ParamsLights, t_part);
         let probes = if in_world {
             let slots = self.settings.probe_count.clamp(8, 64);
             if self.probes.slots != slots || self.probes.level != self.settings.reflection_probes {
@@ -4150,6 +4180,7 @@ impl App {
             wireframe: self.settings.debug.wireframe,
             debug_glow: self.settings.debug.glow_view,
         };
+        self.scene.parts.lap(Part::ParamsProbes, t_part);
 
         self.frame_profile.lap(Lap::Params);
         // ---- UI

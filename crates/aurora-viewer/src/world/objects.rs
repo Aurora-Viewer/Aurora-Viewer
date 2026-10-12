@@ -376,6 +376,10 @@ impl ChangeFeed {
 /// The interface labels few of the objects (name tags of the avatars, hover
 /// text of the prims, dots of the maps): `avatars` and `texted` list them,
 /// kept from a third feed, so that no window walks every object each frame.
+///
+/// A full update may carry a particle system or an attached sound for their
+/// managers (`particle_update`, `sound_update`): two more feeds list those
+/// objects (`take_particle_changes`, `take_sound_changes`).
 #[derive(Default)]
 pub struct ObjectStore {
     pub slots: Vec<Option<Object>>,
@@ -396,6 +400,10 @@ pub struct ObjectStore {
     media_changes: ChangeFeed,
     /// The same, since `refresh_labelled`.
     label_changes: ChangeFeed,
+    /// Objects whose `particle_update` / `sound_update` waits for its
+    /// manager (a slot may hold another object since, or none).
+    particle_changes: ChangeFeed,
+    sound_changes: ChangeFeed,
     /// Slots of the avatars, and of the other objects with a hover text
     /// (llSetText), as of the last `refresh_labelled`.
     avatar_slots: BTreeSet<usize>,
@@ -431,6 +439,7 @@ impl ObjectStore {
         self.touched.note(idx);
         self.media_changes.note(idx);
         self.label_changes.note(idx);
+        self.note_carried(idx);
     }
 
     /// The objects changed since the scene sync last took them.
@@ -447,6 +456,32 @@ impl ObjectStore {
     /// `out`), for the media manager.
     pub fn take_media_changes(&mut self, out: &mut Vec<usize>) {
         self.media_changes.take(out);
+    }
+
+    /// The slots whose object got a particle system change since the last
+    /// call (appended to `out`): the only ones with a `particle_update`.
+    pub fn take_particle_changes(&mut self, out: &mut Vec<usize>) {
+        self.particle_changes.take(out);
+    }
+
+    /// The slots whose object got a full update since the last call
+    /// (appended to `out`): the only ones with `sound_update` set.
+    pub fn take_sound_changes(&mut self, out: &mut Vec<usize>) {
+        self.sound_changes.take(out);
+    }
+
+    /// Note what a full update left on an object for the particle and
+    /// sound managers.
+    fn note_carried(&mut self, idx: usize) {
+        let Some(o) = self.slots.get(idx).and_then(|o| o.as_ref()) else {
+            return;
+        };
+        if o.particle_update.is_some() {
+            self.particle_changes.note(idx);
+        }
+        if o.sound_update {
+            self.sound_changes.note(idx);
+        }
     }
 
     /// Bring the lists behind [`Self::avatars`] and [`Self::texted`] up to
@@ -757,6 +792,58 @@ mod tests {
         s.refresh_labelled();
         assert_eq!(s.avatars().count() + s.texted().count(), 0);
         assert!(s.avatar_slots.is_empty() && s.texted_slots.is_empty());
+    }
+
+    #[test]
+    fn particle_and_sound_changes_are_listed_without_a_walk() {
+        use aurora_prim::params::LL_PCODE_VOLUME as PRIM;
+        let taken = |s: &mut ObjectStore, particles: bool| {
+            let mut out = Vec::new();
+            if particles {
+                s.take_particle_changes(&mut out);
+            } else {
+                s.take_sound_changes(&mut out);
+            }
+            out
+        };
+        let with = |local_id: u32, particles: ParticleUpdate| ObjectUpdate {
+            particles,
+            ..update(local_id, PRIM, "")
+        };
+        let mut s = ObjectStore::default();
+        let plain = s.upsert(1, with(10, ParticleUpdate::Keep));
+        let emitter = s.upsert(1, with(11, ParticleUpdate::Set(vec![1, 2, 3])));
+        // every full update carries the attached sound; only one a particle
+        // system
+        assert_eq!(taken(&mut s, true), [emitter]);
+        assert_eq!(taken(&mut s, false), [plain, emitter]);
+        // what the managers have not handled yet stays listed once, whatever
+        // touches the object meanwhile
+        s.touch(emitter);
+        s.get_mut(emitter).unwrap().text = "x".into();
+        assert_eq!(taken(&mut s, true), [emitter]);
+        assert_eq!(taken(&mut s, false), [emitter]);
+        // handled: no longer listed, until the next change
+        for idx in [plain, emitter] {
+            let o = s.get_mut_untracked(idx).unwrap();
+            o.particle_update = None;
+            o.sound_update = false;
+        }
+        s.touch(emitter);
+        s.touch(plain);
+        assert!(taken(&mut s, true).is_empty() && taken(&mut s, false).is_empty());
+        // a system stopped by an update that keeps the object, a full update
+        // without particles
+        s.upsert(1, with(11, ParticleUpdate::Clear));
+        s.upsert(1, with(10, ParticleUpdate::Keep));
+        assert_eq!(taken(&mut s, true), [emitter]);
+        assert_eq!(taken(&mut s, false), [emitter, plain]);
+        // a slot freed and filled again before the managers ran: listed once
+        s.remove(&ObjKey { region: 1, local_id: 11 });
+        let reused = s.upsert(1, with(12, ParticleUpdate::Set(vec![4])));
+        assert_eq!(reused, emitter);
+        assert_eq!(taken(&mut s, true), [emitter]);
+        assert!(s.get(reused).unwrap().particle_update.is_some());
     }
 
     #[test]
