@@ -89,9 +89,7 @@ impl Impostors {
         });
         let mut wanted: Vec<(f32, usize)> = Vec::new();
         for a in avatars {
-            let Far {
-                idx, center, distance, ..
-            } = *a;
+            let Far { idx, center, distance, .. } = *a;
             if !self.states.contains_key(&idx) {
                 let Some(tile) = self.free.pop() else {
                     continue; // atlas full: not drawn
@@ -193,5 +191,68 @@ pub fn add_draw(capture: &mut ImpostorCapture, cmd: DrawCmd, blend: bool) {
         capture.blend.push(cmd);
     } else {
         capture.opaque.push(cmd);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn far(idx: usize, silhouette: bool) -> Far {
+        Far {
+            idx,
+            center: Vec3::new(20.0, 0.0, 1.0),
+            distance: 20.0,
+            in_view: true,
+            silhouette,
+        }
+    }
+
+    #[test]
+    fn a_picture_is_taken_again_when_the_avatar_becomes_a_silhouette() {
+        let mut imp = Impostors::default();
+        let t0 = Instant::now();
+        let plan = imp.plan(&[far(7, false)], Vec3::ZERO, t0);
+        assert_eq!(plan.capture.get(&7), Some(&0));
+        assert_eq!(plan.sprites[0].tile & IMPOSTOR_FULLBRIGHT, 0);
+        // a moment later, well within its period: the picture is kept
+        let t1 = t0 + Duration::from_millis(50);
+        assert!(imp.plan(&[far(7, false)], Vec3::ZERO, t1).captures.is_empty());
+        // over the complexity limit: pictured at once, and its card is
+        // marked fullbright with the picture that shows the silhouette
+        let plan = imp.plan(&[far(7, true)], Vec3::ZERO, t1);
+        assert_eq!(plan.captures.len(), 1);
+        assert_eq!(plan.sprites[0].tile & IMPOSTOR_FULLBRIGHT, IMPOSTOR_FULLBRIGHT);
+        assert_eq!(plan.sprites[0].tile & !IMPOSTOR_FULLBRIGHT, plan.captures[0].tile);
+        // and back under the limit
+        let plan = imp.plan(&[far(7, false)], Vec3::ZERO, t1);
+        assert_eq!(plan.captures.len(), 1);
+        assert_eq!(plan.sprites[0].tile & IMPOSTOR_FULLBRIGHT, 0);
+    }
+
+    #[test]
+    fn a_card_keeps_the_flag_of_its_picture_until_the_next_one() {
+        let mut imp = Impostors::default();
+        let t0 = Instant::now();
+        // more avatars turn into silhouettes than pictures are taken in a frame
+        let n = IMPOSTOR_CAPTURES + 1;
+        let before: Vec<Far> = (0..n).map(|i| far(i, false)).collect();
+        let mut t = t0;
+        while imp.plan(&before, Vec3::ZERO, t).sprites.len() < n {
+            t += Duration::from_millis(1);
+        }
+        let after: Vec<Far> = (0..n).map(|i| far(i, true)).collect();
+        let plan = imp.plan(&after, Vec3::ZERO, t);
+        assert_eq!(plan.captures.len(), IMPOSTOR_CAPTURES);
+        let marked = plan.sprites.iter().filter(|s| s.tile & IMPOSTOR_FULLBRIGHT != 0).count();
+        assert_eq!(marked, IMPOSTOR_CAPTURES, "the avatar not pictured yet still shows its old picture");
+    }
+
+    #[test]
+    fn textures_are_wanted_as_fine_as_the_picture_shows_them() {
+        // the framed square is a tile wide
+        assert_eq!(picture_pixels(HALF), IMPOSTOR_TILE as f32);
+        assert_eq!(picture_pixels(HALF / 4.0), IMPOSTOR_TILE as f32 / 4.0);
     }
 }
