@@ -264,6 +264,7 @@ pub struct InventoryUi {
     pub merchant: bool,
     pub pending: Option<Uuid>,
     progress: Option<progress::State>,
+    copy_jobs: progress::CopyJobs,
     notice: Option<(String, std::time::Instant)>,
     pub message: String,
     pub dialog: Option<EditDialog>,
@@ -811,11 +812,11 @@ fn status(
     filtered: bool,
 ) {
     let now = std::time::Instant::now();
-    let pending_message = st.pending.is_some().then(|| st.pending_status(now));
-    let (message, color) = if let Some(message) = &pending_message {
-        (message.as_str(), p.ink)
-    } else if !st.message.is_empty() {
+    let pending_message = st.busy().then(|| st.pending_status(now));
+    let (message, color) = if !st.message.is_empty() {
         (st.message.as_str(), p.warn)
+    } else if let Some(message) = &pending_message {
+        (message.as_str(), p.ink)
     } else if let Some((message, finished)) = &st.notice
         && now.duration_since(*finished) < progress::NOTICE_DURATION
     {
@@ -858,7 +859,7 @@ fn status(
                 .color(p.muted),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if st.pending.is_some() {
+            if st.busy() {
                 ui.add(egui::Spinner::new().size(14.0).color(p.violet));
             }
             let label = if message.is_empty() { &count } else { &message };
@@ -1311,6 +1312,7 @@ pub fn show(
         w.state.cut = st.cut;
         w.state.pending = st.pending;
         w.state.progress.clone_from(&st.progress);
+        w.state.copy_jobs.clone_from(&st.copy_jobs);
         w.state.notice.clone_from(&st.notice);
         w.state.merchant = st.merchant;
         w.state.playing = st.playing;

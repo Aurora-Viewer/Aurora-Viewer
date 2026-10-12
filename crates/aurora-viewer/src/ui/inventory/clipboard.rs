@@ -191,15 +191,6 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryUi) -> Vec
         st.expand_all = Some(true);
         st.reveal = st.selected;
     }
-    if folder && matches!(frame, 750 | 751) {
-        return vec![egui::Event::Key {
-            key: egui::Key::Enter,
-            physical_key: None,
-            pressed: frame == 750,
-            repeat: false,
-            modifiers: Default::default(),
-        }];
-    }
     if !window && matches!(frame, 780 | 781) {
         let to = if folder { st.selected } else { Some(Uuid::from_u128(8001)) };
         if let Some(pos) =
@@ -518,6 +509,48 @@ mod tests {
         assert!(h.frame(vec![Event::Paste("external text".into())]).is_empty());
         assert!(h.frame(vec![Event::Paste(id(8104).to_string())]).is_empty());
         assert_eq!(h.st.clipboard, vec![id(8100)]);
+    }
+
+    #[test]
+    fn real_shortcuts_can_copy_again_and_cut_a_no_copy_item_while_a_copy_is_arriving() {
+        let mut h = Harness::new();
+        h.select(id(8100), false);
+        h.frame(vec![Event::Copy]);
+        h.select(id(8001), false);
+        let actions = h.paste();
+        let [InvAction::Edit(change)] = &actions[..] else {
+            panic!("first copy")
+        };
+        h.st.begin_mutation(id(99), change);
+        h.st.watch_copy(
+            id(99),
+            &aurora_net::inventory::operations::Reply {
+                contents: Vec::new(),
+                folders: Vec::new(),
+                moves_queued: false,
+                refresh: change.refresh.clone(),
+                copies: change.copies.clone(),
+                removed: Vec::new(),
+                created: Default::default(),
+            },
+        );
+        assert!(h.st.busy(), "copy remains visibly in progress");
+        assert!(
+            matches!(&h.paste()[..], [InvAction::Edit(change)] if change.copies.len() == 1),
+            "Ctrl+V remains available"
+        );
+        h.select(id(8109), false);
+        h.frame(vec![Event::Cut]);
+        h.select(id(8001), false);
+        assert!(
+            matches!(&h.paste()[..], [InvAction::Edit(change)] if change.move_only()),
+            "Ctrl+X/V can move a no-copy item during another copy"
+        );
+        assert_eq!(
+            h.world.inventory.items[&id(8100)].parent,
+            id(8000),
+            "copy never consumes the original"
+        );
     }
 
     #[test]

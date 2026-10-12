@@ -442,6 +442,8 @@ pub fn demo_mutate(inv: &mut Inventory, agent: Uuid, change: Mutation) -> Result
         .collect();
     Ok(aurora_net::inventory::operations::Reply {
         contents,
+        folders: Vec::new(),
+        moves_queued: false,
         refresh: change.refresh,
         copies: change.copies,
         removed,

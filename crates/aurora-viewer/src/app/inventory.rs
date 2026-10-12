@@ -339,25 +339,47 @@ impl App {
     }
 
     pub(super) fn inventory_result(&mut self, request: Uuid, result: Result<aurora_net::inventory::operations::Reply, String>) {
+        if let Some(refresh) = self.inventory_ui.finish_copy(request, result.is_ok()) {
+            if let Err(reason) = result {
+                self.inventory_ui.message = reason;
+                for id in refresh {
+                    if let Some(folder) = self.world.inventory.folders.get(&id) {
+                        self.world.inventory.queue.push((id, folder.library));
+                    }
+                }
+            }
+            for w in &mut self.inventory_ui.windows {
+                w.state.message.clone_from(&self.inventory_ui.message);
+            }
+            return;
+        }
         if self.inventory_ui.pending != Some(request) {
             return;
         }
         let result = match result {
             Ok(reply) if !reply.copies.is_empty() => {
-                // AIS confirms the folders before CopyInventoryItem fills them.
-                // Keep the operation pending until the copies are acknowledged
-                // and the complete contents have been read back.
+                self.world.inventory.remove(&reply.removed);
+                self.world.inventory.apply(reply.contents.clone());
+                self.world.inventory.created_folders(reply.folders.clone());
+                if let Some(id) = self.inventory_ui.created_selection.and_then(|id| reply.created.get(&id)) {
+                    self.inventory_ui.show_original(&self.world.inventory, *id);
+                }
+                self.inventory_ui.watch_copy(request, &reply);
                 self.send(NetCommand::FinishInventoryCopies { request, reply });
                 return;
             }
             result => result,
         };
         self.inventory_ui.finish_mutation(result.is_ok());
+        if result.as_ref().is_ok_and(|reply| reply.moves_queued) {
+            self.inventory_ui.moves_queued_notice();
+        }
         self.finish_inventory_image(request, result.as_ref().err().cloned());
         match result {
             Ok(reply) => {
                 self.world.inventory.remove(&reply.removed);
                 self.world.inventory.apply(reply.contents);
+                self.world.inventory.created_folders(reply.folders);
                 if crate::world::appearance::cof(&self.world.inventory).is_some_and(|id| self.inventory_ui.pending_refresh.contains(&id)) {
                     for cmd in crate::world::appearance::sync_commands(
                         &self.world.inventory,

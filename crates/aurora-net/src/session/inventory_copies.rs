@@ -108,7 +108,9 @@ pub(super) fn message(agent: Uuid, session: Uuid, callback: u32, copy: &CopyItem
         old_agent_id: copy.owner,
         old_item_id: copy.item,
         new_folder_id: copy.parent,
-        new_name: str_field(&copy.name),
+        // LLTemplateMessageBuilder::addString(std::string): an empty name
+        // has zero length, unlike addString(const char*) which adds a NUL.
+        new_name: if copy.name.is_empty() { Vec::new() } else { str_field(&copy.name) },
     }];
     message
 }
@@ -125,12 +127,28 @@ impl Session<'_> {
         }
     }
     pub(super) fn start_inventory_copies(&mut self, request: Uuid, reply: Reply) {
-        if reply.copies.is_empty() || self.main_cap("FetchInventoryDescendents2").is_none() {
+        if reply.copies.is_empty() || self.main.is_none() || self.logout_started.is_some() {
             emit(
                 self.sh,
                 NetEvent::InventoryEdited {
                     request,
                     result: Err(aurora_i18n::tr!("inventory-copy-unconfirmed").into()),
+                },
+            );
+            return;
+        }
+        // Invalid references cannot become valid by waiting for a callback.
+        if reply
+            .copies
+            .iter()
+            .any(|c| c.item.is_nil() || c.owner.is_nil() || c.parent.is_nil())
+        {
+            log::warn!("inventory copy rejected before sending: incomplete item references");
+            emit(
+                self.sh,
+                NetEvent::InventoryEdited {
+                    request,
+                    result: Err(aurora_i18n::tr!("inventory-copy-owner-unknown").into()),
                 },
             );
             return;
@@ -163,41 +181,25 @@ impl Session<'_> {
             self.inventory_callbacks.remove(&callback);
         }
         let request = completion.request;
-        let result = completion.result;
-        let Some(fetch) = self.main_cap("FetchInventoryDescendents2") else {
+        let result = completion.result.map(|(mut reply, items)| {
+            // Firestorm updates the model from the server's items and notifies
+            // observers. A second folder snapshot is not a completion barrier.
+            log::info!("inventory copy: {} items confirmed by server updates", items.len());
             emit(
                 self.sh,
-                NetEvent::InventoryEdited {
-                    request,
-                    result: Err(aurora_i18n::tr!("inventory-copy-unconfirmed").into()),
+                NetEvent::InventoryUpdated {
+                    folders: Vec::new(),
+                    items,
                 },
             );
-            return;
-        };
-        let http = self.sh.caps_http.clone();
-        let events = self.sh.events.clone();
-        let owner = self.agent_id();
-        tokio::spawn(async move {
-            let result = match result {
-                Ok((reply, items)) => {
-                    log::info!("inventory copy: {} item copies acknowledged; reading folders back", items.len());
-                    let _ = events.send(NetEvent::InventoryProgress {
-                        request,
-                        progress: Progress {
-                            phase: Phase::Verifying,
-                            completed: 0,
-                            total: reply.refresh.len(),
-                        },
-                    });
-                    crate::inventory::operations::complete_copies(&http, &fetch, owner, reply, &items).await
-                }
-                Err(reason) => Err(reason),
-            };
-            if result.is_err() {
-                log::warn!("inventory copy was not fully confirmed");
-            }
-            let _ = events.send(NetEvent::InventoryEdited { request, result });
+            reply.contents.clear();
+            reply.folders.clear();
+            reply
         });
+        if result.is_err() {
+            log::warn!("inventory copy was not fully confirmed");
+        }
+        emit(self.sh, NetEvent::InventoryEdited { request, result });
     }
 }
 
@@ -210,6 +212,8 @@ mod tests {
     fn reply() -> Reply {
         Reply {
             contents: Vec::new(),
+            folders: Vec::new(),
+            moves_queued: false,
             refresh: Vec::new(),
             copies: Vec::new(),
             removed: Vec::new(),
@@ -292,5 +296,9 @@ mod tests {
         assert_eq!(message.inventory_data[0].old_item_id, id(3));
         assert_eq!(message.inventory_data[0].new_folder_id, id(100));
         assert_eq!(field_str(&message.inventory_data[0].new_name), "");
+        assert!(
+            message.inventory_data[0].new_name.is_empty(),
+            "Firestorm's empty std::string has zero wire length"
+        );
     }
 }

@@ -3,11 +3,11 @@
 //! Modern simulators send copy callbacks as notation in the HTTP event queue.
 
 use super::*;
-use crate::inventory::{InvItem, folder_from_llsd, item_from_llsd};
+use crate::inventory::{InvFolder, InvItem, folder_from_llsd, item_from_llsd};
 
 struct Update {
     items: Vec<(u32, InvItem)>,
-    parents: Vec<Uuid>,
+    folders: Vec<InvFolder>,
 }
 
 fn parse(agent: Uuid, method: &[u8], parameter: &[u8], expected: Uuid) -> Option<Result<Update, ()>> {
@@ -33,22 +33,23 @@ fn parse(agent: Uuid, method: &[u8], parameter: &[u8], expected: Uuid) -> Option
             let value = item_from_llsd(item).unwrap_or_default();
             items.push((item["callback_id"].as_u32(), value));
         }
-        let mut parents: Vec<_> = items.iter().map(|(_, item)| item.parent).collect();
-        parents.extend(
-            document["folder_data"]
-                .as_array()
-                .iter()
-                .filter_map(folder_from_llsd)
-                .map(|f| f.parent),
-        );
-        parents.retain(|id| !id.is_nil());
-        parents.sort();
-        parents.dedup();
-        Ok(Update { items, parents })
+        let folders = document["folder_data"]
+            .as_array()
+            .iter()
+            .filter_map(folder_from_llsd)
+            .map(|mut f| {
+                f.version = -1;
+                f
+            })
+            .collect();
+        Ok(Update { items, folders })
     })())
 }
 
 fn parse_eq(event: &EqEvent, agent: Uuid) -> Option<Result<Update, ()>> {
+    if matches!(event.message.as_str(), "UpdateCreateInventoryItem" | "BulkUpdateInventory") {
+        return Some(parse_template(event, agent));
+    }
     if !matches!(event.message.as_str(), "LargeGenericMessage" | "GenericMessage") {
         return None;
     }
@@ -59,6 +60,64 @@ fn parse_eq(event: &EqEvent, agent: Uuid) -> Option<Result<Update, ()>> {
         body["ParamList"].at(0)["Parameter"].as_binary(),
         agent,
     )
+}
+
+fn parse_template(event: &EqEvent, expected: Uuid) -> Result<Update, ()> {
+    let b = &event.body;
+    if expected.is_nil() || b["AgentData"].at(0)["AgentID"].as_uuid() != expected {
+        return Err(());
+    }
+    let block = if event.message == "BulkUpdateInventory" {
+        "ItemData"
+    } else {
+        "InventoryData"
+    };
+    let items = b[block]
+        .as_array()
+        .iter()
+        .map(|it| {
+            (
+                it["CallbackID"].as_u32(),
+                InvItem {
+                    id: it["ItemID"].as_uuid(),
+                    parent: it["FolderID"].as_uuid(),
+                    asset_id: it["AssetID"].as_uuid(),
+                    name: field_str(it["Name"].as_binary()),
+                    desc: field_str(it["Description"].as_binary()),
+                    asset_type: it["Type"].as_i32(),
+                    inv_type: it["InvType"].as_i32(),
+                    flags: it["Flags"].as_u32(),
+                    creator: it["CreatorID"].as_uuid(),
+                    owner: it["OwnerID"].as_uuid(),
+                    group_id: it["GroupID"].as_uuid(),
+                    group_owned: it["GroupOwned"].as_bool(),
+                    base_mask: it["BaseMask"].as_u32(),
+                    owner_mask: it["OwnerMask"].as_u32(),
+                    group_mask: it["GroupMask"].as_u32(),
+                    everyone_mask: it["EveryoneMask"].as_u32(),
+                    next_owner_mask: it["NextOwnerMask"].as_u32(),
+                    sale_type: it["SaleType"].as_i32() as u8,
+                    sale_price: it["SalePrice"].as_i32(),
+                    created_at: i64::from(it["CreationDate"].as_i32()),
+                    ..Default::default()
+                },
+            )
+        })
+        .collect();
+    let folders = b["FolderData"]
+        .as_array()
+        .iter()
+        .filter(|f| !f["FolderID"].as_uuid().is_nil())
+        .map(|f| InvFolder {
+            id: f["FolderID"].as_uuid(),
+            parent: f["ParentID"].as_uuid(),
+            name: field_str(f["Name"].as_binary()),
+            type_default: f["Type"].as_i32(),
+            version: -1,
+            ..Default::default()
+        })
+        .collect();
+    Ok(Update { items, folders })
 }
 
 impl Session<'_> {
@@ -77,32 +136,20 @@ impl Session<'_> {
     }
 
     fn apply_generic_inventory_update(&mut self, update: Result<Update, ()>) {
-        let Ok(mut update) = update else {
+        let Ok(update) = update else {
             log::warn!("inventory generic update rejected: malformed or foreign recipient");
             return;
         };
         log::info!(
-            "inventory generic update: {} items, {} parent folders",
+            "inventory server update: {} items, {} folders",
             update.items.len(),
-            update.parents.len()
+            update.folders.len()
         );
-        // The tracked copy batch re-reads these parents once after all callbacks.
-        // Avoid one extra HTTP snapshot per item while the copy is still filling.
-        let copied_parents: HashSet<_> = update
-            .items
-            .iter()
-            .filter(|(callback, _)| self.inventory_copies.request_for(*callback).is_some())
-            .map(|(_, item)| item.parent)
-            .collect();
-        update.parents.retain(|parent| !copied_parents.contains(parent));
         let mut items = Vec::new();
         let mut created = Vec::new();
         for (callback, item) in update.items {
             let new = self.inventory_callbacks.remove(&callback).is_some_and(|(_, new)| new);
             self.accept_inventory_copy(callback, &item);
-            if item.id.is_nil() {
-                continue;
-            }
             if let Some((editor, notecard, open)) = self.notecard_copies.remove(&callback) {
                 emit(
                     self.sh,
@@ -110,21 +157,31 @@ impl Session<'_> {
                         editor,
                         notecard,
                         open,
-                        result: Ok(item.clone()),
+                        result: if item.id.is_nil() {
+                            Err(aurora_i18n::tr!("inventory-copy-unconfirmed").into())
+                        } else {
+                            Ok(item.clone())
+                        },
                     },
                 );
+            }
+            if item.id.is_nil() {
+                continue;
             }
             if new {
                 created.push(item.clone());
             }
             items.push(item);
         }
-        emit(self.sh, NetEvent::InventoryItems(items));
+        emit(
+            self.sh,
+            NetEvent::InventoryUpdated {
+                folders: update.folders,
+                items,
+            },
+        );
         for item in created {
             emit(self.sh, NetEvent::InventoryCreated(item));
-        }
-        if !update.parents.is_empty() {
-            self.fetch_inventory(update.parents, self.agent_id(), false);
         }
     }
 }
@@ -152,6 +209,47 @@ mod tests {
         }
     }
 
+    fn template_event(agent: Uuid, name: &str) -> EqEvent {
+        let mut body = llsd_map! { "AgentData" => Llsd::Array(vec![llsd_map! { "AgentID" => agent }]) };
+        let block = if name == "BulkUpdateInventory" {
+            "ItemData"
+        } else {
+            "InventoryData"
+        };
+        body.insert(
+            block,
+            Llsd::Array(vec![llsd_map! {
+                "ItemID" => Uuid::from_u128(103), "FolderID" => Uuid::from_u128(100), "CallbackID" => 41,
+                "OwnerID" => agent, "OwnerMask" => 0x7fffffff, "Type" => 6, "InvType" => 6,
+                "Name" => Llsd::Binary(b"Copied item\0".to_vec())
+            }]),
+        );
+        EqEvent {
+            sim: "127.0.0.1:12000".parse().expect("address"),
+            message: name.into(),
+            body,
+        }
+    }
+
+    #[test]
+    fn direct_http_inventory_messages_have_the_same_callbacks_as_udp() {
+        let agent = Uuid::from_u128(2);
+        for name in ["UpdateCreateInventoryItem", "BulkUpdateInventory"] {
+            let update = parse_eq(&template_event(agent, name), agent)
+                .expect("supported direct HTTP update")
+                .expect("valid");
+            assert_eq!(update.items[0].0, 41);
+            assert_eq!(update.items[0].1.parent, Uuid::from_u128(100));
+            assert_eq!(update.items[0].1.name, "Copied item");
+            assert_eq!(update.items[0].1.owner_mask, 0x7fffffff);
+            assert!(
+                parse_eq(&template_event(Uuid::from_u128(3), name), agent)
+                    .expect("supported")
+                    .is_err()
+            );
+        }
+    }
+
     #[test]
     fn event_queue_copy_confirmation_keeps_callback_parent_and_permissions() {
         let agent = Uuid::from_u128(2);
@@ -163,7 +261,7 @@ mod tests {
         assert_eq!(item.parent, Uuid::from_u128(100));
         assert_eq!(item.owner, agent);
         assert_eq!(item.owner_mask, 0x7fffffff);
-        assert_eq!(update.parents, vec![item.parent]);
+        assert!(update.folders.is_empty());
     }
 
     #[test]
@@ -185,14 +283,9 @@ mod tests {
     #[tokio::test]
     async fn a_real_event_queue_callback_completes_the_copy_without_the_sixty_second_timeout() {
         use crate::inventory::operations::{CopyItem, Reply};
-        use crate::outfits::tests::server;
+
         let agent = Uuid::from_u128(2);
         let folder = Uuid::from_u128(100);
-        let snapshot = llsd_map! { "folders" => Llsd::Array(vec![llsd_map! {
-            "folder_id" => folder, "version" => 2,
-            "items" => Llsd::Array(vec![llsd_map! { "item_id" => Uuid::from_u128(103), "parent_id" => folder, "type" => 6 }])
-        }]) };
-        let (fetch, server_task) = server(vec![(200, snapshot)]).await;
         let sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.expect("viewer socket"));
         let simulator = UdpSocket::bind("127.0.0.1:0").await.expect("local simulator");
         let address = simulator.local_addr().expect("simulator address");
@@ -236,8 +329,7 @@ mod tests {
         let (caps_tx, _) = mpsc::unbounded_channel();
         let (notecard_copy_tx, _) = mpsc::unbounded_channel();
         let (inventory_move_tx, _) = mpsc::unbounded_channel();
-        let mut sim = Sim::new(address, 10);
-        sim.caps = Arc::new(HashMap::from([("FetchInventoryDescendents2".into(), fetch)]));
+        let sim = Sim::new(address, 10);
         let mut session = Session {
             sh: &sh,
             sock: sock.clone(),
@@ -275,46 +367,86 @@ mod tests {
             inventory_merchant_pending: false,
             next_inventory_callback: 40,
         };
-        let request = Uuid::from_u128(1);
-        sock.writable().await.expect("writable socket");
-        session.start_inventory_copies(
-            request,
-            Reply {
-                contents: Vec::new(),
-                refresh: vec![folder],
-                removed: Vec::new(),
-                created: HashMap::new(),
-                copies: vec![CopyItem {
-                    item: Uuid::from_u128(3),
-                    owner: agent,
-                    parent: folder,
-                    name: String::new(),
-                }],
-            },
-        );
-        let mut bytes = [0; 2048];
-        let (size, _) = simulator.recv_from(&mut bytes).await.expect("copy packet");
-        let copy: CopyInventoryItem = parse_packet(&bytes[..size]).expect("packet").decode().expect("copy");
-        assert_eq!(copy.inventory_data[0].callback_id, 41);
-        // Exercise the production dispatcher, not only the notation parser.
-        session.on_eq_event(event(agent));
-        let result = tokio::time::timeout(Duration::from_secs(5), async {
-            loop {
-                while let Ok(event) = received.try_recv() {
-                    if let NetEvent::InventoryEdited { request: done, result } = event {
-                        assert_eq!(done, request);
-                        return result;
+        for (index, name) in ["LargeGenericMessage", "UpdateCreateInventoryItem", "BulkUpdateInventory"]
+            .into_iter()
+            .enumerate()
+        {
+            let request = Uuid::from_u128(index as u128 + 1);
+            session.next_inventory_callback = 40;
+            sock.writable().await.expect("writable socket");
+            session.start_inventory_copies(
+                request,
+                Reply {
+                    contents: Vec::new(),
+                    folders: Vec::new(),
+                    moves_queued: false,
+                    refresh: vec![folder],
+                    removed: Vec::new(),
+                    created: HashMap::new(),
+                    copies: vec![CopyItem {
+                        item: Uuid::from_u128(3),
+                        owner: agent,
+                        parent: folder,
+                        name: String::new(),
+                    }],
+                },
+            );
+            let mut bytes = [0; 2048];
+            let (size, _) = simulator.recv_from(&mut bytes).await.expect("copy packet");
+            let copy: CopyInventoryItem = parse_packet(&bytes[..size]).expect("packet").decode().expect("copy");
+            assert_eq!(copy.inventory_data[0].callback_id, 41);
+            assert!(copy.inventory_data[0].new_name.is_empty());
+            // Exercise the production dispatcher, not only the notation parser.
+            let response = if name == "LargeGenericMessage" {
+                event(agent)
+            } else {
+                template_event(agent, name)
+            };
+            let started = Instant::now();
+            session.on_eq_event(response);
+            let result = tokio::time::timeout(Duration::from_secs(5), async {
+                let mut updated = false;
+                loop {
+                    while let Ok(event) = received.try_recv() {
+                        if let NetEvent::InventoryUpdated { ref items, .. } = event {
+                            updated |= items.iter().any(|item| item.id == Uuid::from_u128(103));
+                        }
+                        if let NetEvent::InventoryEdited { request: done, result } = event {
+                            assert!(updated, "server items are visible before completion");
+                            assert_eq!(done, request);
+                            return result;
+                        }
                     }
+                    tokio::time::sleep(Duration::from_millis(1)).await;
                 }
-                tokio::time::sleep(Duration::from_millis(1)).await;
-            }
-        })
-        .await
-        .expect("copy must complete promptly after the HTTP callback")
-        .expect("confirmed copy");
-        assert!(result.copies.is_empty());
-        assert_eq!(result.contents[0].items[0].id, Uuid::from_u128(103));
-        let requests = server_task.await.expect("readbacks");
-        assert_eq!(requests.len(), 1, "tracked callbacks share the final readback");
+            })
+            .await
+            .expect("copy must complete promptly after the HTTP callback")
+            .expect("confirmed copy");
+            assert!(result.copies.is_empty());
+            assert!(result.contents.is_empty(), "server records already updated the model");
+            println!(
+                "{name}: copy confirmed in {} microseconds, without a folder readback",
+                started.elapsed().as_micros()
+            );
+        }
+        let request = Uuid::from_u128(10);
+        let mut bytes = [0; 2048];
+        session.on_command(NetCommand::EditInventory {
+            request,
+            change: crate::inventory::operations::Mutation {
+                operations: vec![crate::inventory::operations::Operation::Patch {
+                    id: Uuid::from_u128(3),
+                    folder: false,
+                    body: llsd_map! { "parent_id" => Uuid::from_u128(200) },
+                }],
+                refresh: vec![folder, Uuid::from_u128(200)],
+                ..Default::default()
+            },
+        });
+        let (size, _) = simulator.recv_from(&mut bytes).await.expect("move packet");
+        let movement: MoveInventoryItem = parse_packet(&bytes[..size]).expect("packet").decode().expect("move");
+        assert_eq!(movement.inventory_data[0].folder_id, Uuid::from_u128(200));
+        assert!(received.try_iter().any(|event| matches!(event, NetEvent::InventoryEdited { request: done, result: Ok(reply) } if done == request && reply.moves_queued && reply.contents.is_empty())), "moves are queued without an HTTP capability or a readback gate");
     }
 }

@@ -25,7 +25,7 @@ use aurora_msg::msgs::{self, *};
 use aurora_msg::{IncomingPacket, Msg, field_str, parse_packet, str_field};
 use glam::Vec3;
 use parking_lot::Mutex;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -1316,7 +1316,64 @@ impl Session<'_> {
             NetCommand::FetchInventory { folders, owner, library } => self.fetch_inventory(folders, owner, library),
             NetCommand::FetchItems { items, owner } => self.fetch_items(items, owner),
             NetCommand::EditInventory { request, change } => {
-                let Some((cap, fetch_cap)) = self.main_cap("InventoryAPIv3").zip(self.main_cap("FetchInventoryDescendents2")) else {
+                if change.operations.is_empty() && !change.copies.is_empty() && change.copies.len() <= 2048 && !change.refresh.is_empty() {
+                    emit(
+                        self.sh,
+                        NetEvent::InventoryEdited {
+                            request,
+                            result: Ok(crate::inventory::operations::Reply {
+                                contents: Vec::new(),
+                                folders: Vec::new(),
+                                moves_queued: false,
+                                refresh: change.refresh,
+                                copies: change.copies,
+                                removed: change.removed,
+                                created: HashMap::new(),
+                            }),
+                        },
+                    );
+                    return;
+                }
+                if change.move_only() {
+                    let result = change
+                        .operations
+                        .iter()
+                        .try_for_each(|op| {
+                            let crate::inventory::operations::Operation::Patch { id, folder, body } = op else {
+                                return Ok(());
+                            };
+                            let parent = body["parent_id"].as_uuid();
+                            if id.is_nil() || parent.is_nil() {
+                                return Err(aurora_i18n::tr!("inventory-move-invalid-target").into());
+                            }
+                            self.queue_inventory_move(crate::inventory::operations::InventoryMove {
+                                id: *id,
+                                parent,
+                                folder: *folder,
+                            })
+                        })
+                        .map(|()| crate::inventory::operations::Reply {
+                            contents: Vec::new(),
+                            folders: Vec::new(),
+                            moves_queued: true,
+                            refresh: change.refresh,
+                            copies: Vec::new(),
+                            removed: change.removed,
+                            created: HashMap::new(),
+                        });
+                    emit(self.sh, NetEvent::InventoryEdited { request, result });
+                    return;
+                }
+                let folder_creation = change
+                    .operations
+                    .iter()
+                    .all(|op| matches!(op, crate::inventory::operations::Operation::Folder { .. }));
+                let fetch = if folder_creation {
+                    Some(String::new())
+                } else {
+                    self.main_cap("FetchInventoryDescendents2")
+                };
+                let Some((cap, fetch_cap)) = self.main_cap("InventoryAPIv3").zip(fetch) else {
                     emit(
                         self.sh,
                         NetEvent::InventoryEdited {
@@ -3029,7 +3086,13 @@ impl Session<'_> {
                         item
                     })
                     .collect();
-                emit(self.sh, NetEvent::InventoryItems(items));
+                emit(
+                    self.sh,
+                    NetEvent::InventoryUpdated {
+                        folders: Vec::new(),
+                        items,
+                    },
+                );
                 for item in created {
                     emit(self.sh, NetEvent::InventoryCreated(item));
                 }
@@ -3037,20 +3100,13 @@ impl Session<'_> {
         } else if id == BulkUpdateInventory::ID {
             let m: BulkUpdateInventory = pkt.decode()?;
             if m.agent_data.agent_id == self.agent_id() {
-                let copied_parents: HashSet<_> = m
-                    .item_data
-                    .iter()
-                    .filter(|it| self.inventory_copies.request_for(it.callback_id).is_some())
-                    .map(|it| it.folder_id)
-                    .collect();
-                let mut parents = Vec::new();
                 let mut created = Vec::new();
                 let items = m
                     .item_data
                     .iter()
                     .map(|it| {
                         let new = self.inventory_callbacks.remove(&it.callback_id).is_some_and(|(_, new)| new);
-                        parents.push(it.folder_id);
+
                         let item = crate::inventory::InvItem {
                             id: it.item_id,
                             parent: it.folder_id,
@@ -3092,16 +3148,22 @@ impl Session<'_> {
                         item
                     })
                     .collect();
-                emit(self.sh, NetEvent::InventoryItems(items));
+                let folders = m
+                    .folder_data
+                    .iter()
+                    .filter(|f| !f.folder_id.is_nil())
+                    .map(|f| crate::inventory::InvFolder {
+                        id: f.folder_id,
+                        parent: f.parent_id,
+                        name: field_str(&f.name),
+                        type_default: i32::from(f.type_),
+                        version: -1,
+                        ..Default::default()
+                    })
+                    .collect();
+                emit(self.sh, NetEvent::InventoryUpdated { folders, items });
                 for item in created {
                     emit(self.sh, NetEvent::InventoryCreated(item));
-                }
-                parents.extend(m.folder_data.iter().map(|f| f.parent_id).filter(|id| !id.is_nil()));
-                parents.sort();
-                parents.dedup();
-                parents.retain(|parent| !copied_parents.contains(parent));
-                if !parents.is_empty() {
-                    self.fetch_inventory(parents, self.agent_id(), false);
                 }
             }
         } else if id == AvatarAnimation::ID {

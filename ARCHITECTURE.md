@@ -203,29 +203,31 @@ d’inventaire existantes, avec vérification des droits à la validation.
 
 Les changements de parent passent par `aurora-net/src/session/inventory_moves.rs`
 (MoveInventoryItem / MoveInventoryFolder UDP fiables, comme Firestorm).
-`inventory/operations.rs` conserve l’ordre avec les créations AIS et confirme
-le déplacement par relecture des dossiers, avec attente bornée si le stockage
-renvoie encore l’ancien parent. Les autres champs restent modifiés par AIS.
+Les déplacements seuls publient `InventoryMoved` dès l'envoi : l'arborescence
+change immédiatement, sans attendre une relecture HTTP. Le statut indique
+« Déplacement demandé » ; les mises à jour serveur réconcilient le modèle.
+Les mutations mêlant déplacements et métadonnées gardent leur vérification AIS.
 
-Les copies du contenu d’un dossier sont terminées par
-`aurora-net/src/session/inventory_copies.rs` : messages fiables
-`CopyInventoryItem`, suivi de tous les accusés, puis relecture bornée des
-dossiers jusqu’à présence de chaque item copié. `app/inventory.rs` conserve
-la mutation en cours pendant cette étape ; une création de dossier vide
-ne vaut pas confirmation de copie. Les snapshots sont ordonnés par ascendance
-avant leur application, y compris si les réponses HTTP arrivent dans l’ordre
-inverse ou sur plusieurs lots. Les anciennes réponses d’inventaire et
-les métadonnées de versions inférieures n’écrasent pas les contenus confirmés
-dans `world/inventory.rs`.
+`inventory/operations.rs` remappe les UUID des dossiers confirmés par AIS et
+retourne leurs métadonnées, sans relire des dossiers encore vides. Le modèle
+peut ainsi recevoir leurs items immédiatement. `session/inventory_copies.rs`
+envoie les copies fiables et suit leurs confirmations ; le nom vide est encodé
+avec une longueur nulle, comme `LLTemplateMessageBuilder::addString(std::string)`.
+La réception des items complète la copie, sans imposer un second snapshot HTTP.
 
-`session/inventory_updates.rs` traite aussi les confirmations
-`BulkUpdateInventory` sérialisées en LLSD dans `LargeGenericMessage` de la file
-HTTP, ainsi que leur transport UDP. Les copies suivies partagent une seule
-relecture finale ; leurs dossiers ne sont pas relus à chaque accusé et la
-création AIS ne déclenche plus de relecture vide avant l’envoi des copies.
-Les événements `InventoryProgress` transmettent l’étape et les compteurs réels
-à `ui/inventory/progress.rs`. La ligne de statut commune aux fenêtres indique
-l’activité, le temps écoulé et la fin de l’opération sans modifier leur taille.
+`session/inventory_updates.rs` reçoit `UpdateCreateInventoryItem` et
+`BulkUpdateInventory` directement par HTTP, comme `LLEventPollImpl` de Firestorm,
+et les variantes LLSD de `LargeGenericMessage` / `GenericMessage`, en plus du
+transport UDP. `InventoryUpdated` applique items et dossiers dès leur arrivée.
+`world/inventory.rs` avance les versions des parents chargés, ignore les
+réponses plus anciennes et évite de recompter les enregistrements répétés.
+
+`ui/inventory/progress.rs` distingue la soumission d'une mutation du suivi des
+copies en arrière-plan : plusieurs copies peuvent être suivies sans désactiver
+les autres commandes. `InventoryProgress` transmet étapes et compteurs ; la
+ligne de statut, partagée entre fenêtres, indique l'activité et le temps écoulé,
+puis la confirmation de fin. Les erreurs gardent la possibilité de recharger
+les dossiers concernés, sans rejouer les copies ni les déplacements.
 
 ### Surfaces des fenêtres
 

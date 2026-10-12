@@ -957,15 +957,22 @@ hors ligne ; les fichiers et photos chargés en démo restent hors ligne.
   ouverture du dossier de destination ; capture après 800. Aucune activation
   de la fenêtre native ni lecture du presse-papiers du système pendant ces
   scénarios automatiques.
-  `clipboard-progress` simule uniquement les étapes visibles d’une opération
-  lente : modification aux images 650–749, copie avec compteur 2/3 aux images
+  `clipboard-progress` illustre les états possibles de la ligne de statut :
+  modification aux images 650–749, copie avec compteur 2/3 aux images
   800–849, vérification aux images 850–919, puis confirmation de fin dès 920.
   Capturer 700,820,890,940 ; l’animation, le compteur et le temps écoulé doivent
   rester visibles dans la ligne de statut, sans agrandir la fenêtre.
+  La vérification concerne les mutations de métadonnées ; une copie réelle
+  est terminée par la réception de ses items, sans relecture finale du dossier.
   En ligne, le statut doit montrer les étapes, le compteur d’items confirmés et
-  le temps écoulé, puis « Modification terminée » ; une copie non confirmée affiche une erreur demandant de
-  recharger la destination. Tester des dossiers avec plusieurs niveaux, attendre
-  la fin puis recharger les dossiers et vérifier les originaux et les copies.
+  le temps écoulé, puis « Modification terminée ». Les items apparaissent dès leur
+  arrivée ; il doit être possible de lancer une autre copie ou de déplacer un
+  autre item pendant une copie en cours. Un couper/coller change l'arborescence
+  dès l'envoi fiable et affiche « Déplacement demandé » sans attendre de relecture
+  HTTP. Tester deux copies successives, des dossiers avec plusieurs niveaux,
+  puis recharger et vérifier les originaux, les copies et les déplacements.
+  Une copie non confirmée demande de recharger la destination ; des références
+  incomplètes demandent de recharger la source au lieu d'attendre une expiration.
 - `move-menu` : menu d’un élément avec « Déplacer vers… » ; `move-item`,
   `move-folder`, `move-multi` : fenêtre de destination pour un élément, un
   dossier ou trois objets (dont un non copiable et un non transférable).

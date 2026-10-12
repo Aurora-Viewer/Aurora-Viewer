@@ -672,6 +672,16 @@ pub enum NetEvent {
         sources: Vec<Uuid>,
     },
     InventoryContents(Vec<crate::inventory::FolderContents>),
+    /// Unsolicited server changes, distinct from snapshots fetched by the client.
+    InventoryUpdated {
+        folders: Vec<crate::inventory::InvFolder>,
+        items: Vec<crate::inventory::InvItem>,
+    },
+    InventoryMoved {
+        id: Uuid,
+        parent: Uuid,
+        folder: bool,
+    },
     InventoryProgress {
         request: Uuid,
         progress: crate::inventory::operations::Progress,
