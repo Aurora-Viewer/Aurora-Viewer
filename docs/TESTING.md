@@ -571,6 +571,7 @@ grille.
 | `AURORA_DEMO_FEED=<url>` | Onglet « Flux » du profil sur cette page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Fenêtre Apparence et tenues |
 | `AURORA_DEMO_INVENTORY=<mode>` | Inventaire synthétique, menus et fenêtres |
+| `AURORA_DEMO_IMPORTS=<mode>` | Fenêtre d’import et assets synthétiques |
 | `AURORA_DEMO_REZ=<mode>` | Rez par glisser-déposer depuis l’inventaire |
 | `AURORA_DEMO_LAND=<onglet>[:owner]` | « À propos du terrain » sur un onglet |
 | `AURORA_DEMO_PLACE=<lieu>` | « Lieux » sur un profil de lieu |
@@ -580,6 +581,14 @@ grille.
 | `AURORA_DEMO_RESTRICTED=1` | Parcelle qui interdit tout |
 
 ### Détails
+
+- **`AURORA_DEMO_IMPORTS=texture|material|mesh|animation|sound|bulk|local`** :
+  ouvre le parcours choisi avec une image RGBA, un matériau PBR, un cube,
+  une animation BVH et un son synthétique. Vérifier les paramètres, les
+  aperçus, la caméra, les permissions, la sélection et la confirmation.
+  Le devis et les envois restent entièrement dans le serveur de démo.
+  Pour la surveillance locale, charger un vrai fichier depuis cette fenêtre,
+  activer son aperçu puis enregistrer une modification du fichier.
 
 - **Parcours de la refonte des fenêtres** : ouvrir l'inventaire et sélectionner
   un dossier dans l'arborescence, puis un élément ; vérifier recherche, permissions,

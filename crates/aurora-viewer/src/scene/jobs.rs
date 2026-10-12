@@ -261,6 +261,12 @@ impl Jobs {
         });
     }
 
+    /// UI file imports share the low-priority worker pool without feeding
+    /// their results into the scene's geometry/texture result channel.
+    pub fn execute(&self, work: impl FnOnce() + Send + 'static) {
+        self.pool.spawn(work);
+    }
+
     /// One job per item, queued with a single wake-up of the pool: a burst
     /// of small jobs (the cache reads of a few hundred new textures) costs
     /// the main thread one `spawn` instead of one each.

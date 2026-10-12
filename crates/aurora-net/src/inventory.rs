@@ -3,10 +3,12 @@
 
 use aurora_llsd::{Llsd, llsd_map};
 use uuid::Uuid;
+pub mod mesh_upload;
 pub mod notecard;
 pub mod operations;
 pub mod rez;
 pub mod thumbnail;
+pub mod upload;
 
 pub fn created_date(seconds: i64) -> String {
     let (year, month, day) = crate::profile::civil_from_days(seconds.div_euclid(86400));

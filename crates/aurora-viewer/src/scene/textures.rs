@@ -716,6 +716,17 @@ impl TextureStreamer {
     pub fn unregister_local(&mut self, id: &Uuid) {
         self.local_slots.remove(id);
     }
+    pub fn register_local_image(&mut self, id: Uuid, slot: u32, alpha: AlphaKind, has_alpha: bool) {
+        set_slot_alpha(&mut self.alpha_by_slot, &mut self.generation, &mut self.alpha_changes, slot, alpha);
+        if let Some(channel) = self.alpha_channel_by_slot.get_mut(slot as usize)
+            && *channel != has_alpha
+        {
+            *channel = has_alpha;
+            self.generation += 1;
+            self.alpha_changes.push(slot);
+        }
+        self.local_slots.insert(id, slot);
+    }
 
     pub fn release(&mut self, id: &Uuid) {
         if let Some(e) = self.entries.get_mut(id) {

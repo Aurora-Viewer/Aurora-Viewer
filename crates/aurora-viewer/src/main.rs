@@ -16,6 +16,7 @@ mod credentials;
 mod cursors;
 mod demo;
 mod frame_profile;
+mod imports;
 mod interaction;
 mod keybinds;
 mod link_trust;

@@ -12,6 +12,7 @@ use egui::{Color32, RichText, Vec2};
 pub enum BarAction {
     CheckUpdates,
     ReportBug,
+    Import(crate::imports::Choice),
     ShowHuds(bool),
     HudZoom(f32),
     #[default]
@@ -494,6 +495,22 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
     });
     ui.menu_button(small(aurora_i18n::tr!("common-contents"), p.ink), |ui| {
         ui.checkbox(&mut panels.inventory, aurora_i18n::tr!("common-inventory"));
+        ui.menu_button(aurora_i18n::tr!("import-menu"), |ui| {
+            for choice in [
+                crate::imports::Choice::Texture,
+                crate::imports::Choice::Sound,
+                crate::imports::Choice::Animation,
+                crate::imports::Choice::Material,
+                crate::imports::Choice::Mesh,
+                crate::imports::Choice::Bulk,
+                crate::imports::Choice::Local,
+            ] {
+                if ui.button(choice.label()).clicked() {
+                    *action = BarAction::Import(choice);
+                    ui.close();
+                }
+            }
+        });
     });
     if advanced {
         ui.menu_button(small(aurora_i18n::tr!("common-advanced"), p.ink), |ui| {

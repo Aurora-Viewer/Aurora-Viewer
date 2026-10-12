@@ -100,7 +100,7 @@ impl Rig {
     /// Same with per-avatar joint positions and scales (shape, attachment
     /// overrides). A joint's position is scaled by its parent's scale; its
     /// own scale is part of its matrix only (LLXformMatrix).
-    pub(super) fn world_with(&self, rot: &[Quat], pelvis_offset: Vec3, local_pos: &[Vec3], scale: &[Vec3]) -> Vec<Mat4> {
+    pub(crate) fn world_with(&self, rot: &[Quat], pelvis_offset: Vec3, local_pos: &[Vec3], scale: &[Vec3]) -> Vec<Mat4> {
         let n = self.len();
         let mut wpos = vec![Vec3::ZERO; n];
         let mut wrot = vec![Quat::IDENTITY; n];

@@ -676,6 +676,15 @@ pub enum NetEvent {
         request: Uuid,
         result: Result<crate::inventory::operations::Reply, String>,
     },
+    AssetUploaded {
+        request: Uuid,
+        result: Result<crate::inventory::upload::Receipt, crate::inventory::upload::Error>,
+    },
+    UploadCost(i32),
+    MeshQuoted {
+        request: Uuid,
+        result: Result<crate::inventory::mesh_upload::Quote, crate::inventory::upload::Error>,
+    },
     InventoryPreview {
         item: Uuid,
         asset: Uuid,
@@ -1186,6 +1195,19 @@ pub enum NetCommand {
         parent: Uuid,
         data: Vec<u8>,
     },
+    UploadAsset {
+        request: Uuid,
+        upload: crate::inventory::upload::Request,
+    },
+    QuoteMesh {
+        request: Uuid,
+        upload: crate::inventory::mesh_upload::Request,
+    },
+    UploadMesh {
+        request: Uuid,
+        token: Uuid,
+    },
+    RequestBalance,
     RequestInventoryMerchant,
     CreateInventoryWearable {
         parent: Uuid,

@@ -153,6 +153,8 @@ pub struct World {
     diag_reported: HashSet<Uuid>,
     pub events_this_frame: usize,
     pub balance: Option<i32>,
+    pub upload_cost: Option<i32>,
+    pub local_assets: HashMap<Uuid, (String, bool)>,
     /// Health in percent (HealthMessage; only changes on damage-enabled land).
     pub health: f32,
     /// Interface sounds to play (drained by the app).
@@ -268,6 +270,8 @@ impl World {
             diag_reported: HashSet::new(),
             events_this_frame: 0,
             balance: None,
+            upload_cost: None,
+            local_assets: HashMap::new(),
             health: 100.0,
             social: social::Social::default(),
             contact_sets: Default::default(),

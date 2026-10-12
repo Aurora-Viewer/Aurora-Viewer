@@ -3,7 +3,7 @@
 //! profiles (PICK_TEXTURE, inventory filter IT_TEXTURE | IT_SNAPSHOT) and
 //! by the build floater, which adds the « Défaut », « Vierge »,
 //! « Transparent » and « Aucune » buttons, the UUID field, and lists
-//! materials for a PBR material (PICK_MATERIAL). No local textures nor bakes.
+//! materials for a PBR material (PICK_MATERIAL), including local previews.
 
 use super::widgets::{self, Floater, flat_button};
 use crate::theme::Palette;
@@ -127,6 +127,29 @@ impl TexturePicker {
                                 }
                                 if r.double_clicked() {
                                     chosen = Some(i.asset_id);
+                                }
+                            }
+                            if self.extra_buttons {
+                                let mut locals: Vec<_> = world
+                                    .local_assets
+                                    .iter()
+                                    .filter(|(_, (name, material))| {
+                                        *material == materials && (filter.is_empty() || name.to_lowercase().contains(&filter))
+                                    })
+                                    .collect();
+                                locals.sort_by(|a, b| a.1.0.cmp(&b.1.0));
+                                if !locals.is_empty() {
+                                    ui.separator();
+                                    ui.label(RichText::new(aurora_i18n::tr!("import-local")).color(p.muted));
+                                }
+                                for (id, (name, _)) in locals {
+                                    let response = ui.selectable_label(self.selected == Some(*id), name);
+                                    if response.clicked() {
+                                        self.selected = Some(*id);
+                                    }
+                                    if response.double_clicked() {
+                                        chosen = Some(*id);
+                                    }
                                 }
                             }
                         });

@@ -3,6 +3,7 @@
 //!
 //! Message flow follows `newview/llstartup.cpp` and `llviewermessage.cpp`.
 
+mod asset_imports;
 mod build_cmds;
 mod inventory_moves;
 mod inventory_preview;
@@ -160,6 +161,7 @@ struct Session<'a> {
     /// Decode failures per message name, to rate-limit their warnings.
     decode_failures: HashMap<&'static str, u64>,
     inventory_uploads: inventory_upload::Uploads,
+    asset_imports: asset_imports::Imports,
     inventory_previews: inventory_preview::Previews,
     script_transfers: scripts::ScriptTransfers,
     inventory_callbacks: HashMap<u32, (Instant, bool)>,
@@ -262,6 +264,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         land: Default::default(),
         decode_failures: HashMap::new(),
         inventory_uploads: Default::default(),
+        asset_imports: Default::default(),
         inventory_previews: Default::default(),
         script_transfers: Default::default(),
         inventory_callbacks: HashMap::new(),
@@ -679,6 +682,7 @@ impl Session<'_> {
         self.expire_task_inventory();
         self.expire_script_transfers();
         self.expire_inventory_uploads();
+        self.expire_asset_imports();
         self.expire_inventory_previews();
         let before = self.inventory_callbacks.len();
         self.inventory_callbacks
@@ -1362,6 +1366,15 @@ impl Session<'_> {
                     .await;
                     let _ = events.send(NetEvent::InventoryEdited { request, result });
                 });
+            }
+            NetCommand::UploadAsset { request, upload } => self.import_asset(request, upload),
+            NetCommand::QuoteMesh { request, upload } => self.quote_mesh(request, upload),
+            NetCommand::UploadMesh { request, token } => self.upload_mesh(request, token),
+            NetCommand::RequestBalance => {
+                let mut message = MoneyBalanceRequest::default();
+                message.agent_data.agent_id = self.agent_id();
+                message.agent_data.session_id = self.session_id();
+                self.send_main(&message, true);
             }
             NetCommand::FetchInventoryThumbnail { request, asset, resize } => {
                 let cap = self.main_cap("ViewerAsset");
@@ -2735,6 +2748,7 @@ impl Session<'_> {
             mb.agent_data.agent_id = self.agent_id();
             mb.agent_data.session_id = self.session_id();
             self.send(from, &mb, true);
+            self.send(from, &EconomyDataRequest::default(), true);
             self.maybe_send_agent_update(Instant::now());
         } else if id == ChatFromSimulator::ID {
             let m: ChatFromSimulator = pkt.decode()?;
@@ -2990,6 +3004,7 @@ impl Session<'_> {
                     .iter()
                     .map(|it| {
                         let item = crate::inventory::operations::item_from_udp(it);
+                        self.asset_created(it.callback_id, &item);
                         if let Some((editor, notecard, open)) = self.notecard_copies.remove(&it.callback_id) {
                             emit(
                                 self.sh,
@@ -3049,6 +3064,7 @@ impl Session<'_> {
                         if new {
                             created.push(item.clone());
                         }
+                        self.asset_created(it.callback_id, &item);
                         if let Some((editor, notecard, open)) = self.notecard_copies.remove(&it.callback_id) {
                             emit(
                                 self.sh,
@@ -3094,6 +3110,11 @@ impl Session<'_> {
                     sources: Vec::new(),
                 },
             );
+        } else if id == EconomyData::ID {
+            let message: EconomyData = pkt.decode()?;
+            if message.info.price_upload >= 0 {
+                emit(self.sh, NetEvent::UploadCost(message.info.price_upload));
+            }
         } else if id == MoneyBalanceReply::ID {
             let m: MoneyBalanceReply = pkt.decode()?;
             emit(self.sh, NetEvent::Balance(m.money_data.money_balance));

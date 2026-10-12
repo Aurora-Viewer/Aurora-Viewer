@@ -844,6 +844,7 @@ pub(crate) struct Backend {
     egui: egui_wgpu::Renderer,
     ui_blur: Option<crate::ui_blur::Blur>,
     ui_glass: Option<crate::ui_glass::Glass>,
+    previews: crate::preview::Cache,
     frame_layout: wgpu::BindGroupLayout,
     records_layout: wgpu::BindGroupLayout,
     /// Layout of the scene's texture pages (textures.rs), for the pipelines.
@@ -1954,6 +1955,7 @@ impl Backend {
             egui,
             ui_blur: None,
             ui_glass: None,
+            previews: Default::default(),
             frame_layout,
             records_layout,
             tex_layout,
@@ -4560,6 +4562,14 @@ impl Backend {
                     self.egui.free_texture(&old.texture);
                 }
             }
+            self.previews.render(
+                &self.device,
+                &self.queue,
+                &mut encoder,
+                &mut self.egui,
+                &mut ui.primitives,
+                ui.pixels_per_point,
+            );
             let sd = egui_wgpu::ScreenDescriptor {
                 size_in_pixels: [self.config.width, self.config.height],
                 pixels_per_point: ui.pixels_per_point,

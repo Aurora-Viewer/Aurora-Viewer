@@ -1,0 +1,147 @@
+use super::*;
+use crate::import_gltf::Document;
+use serde_json::json;
+
+#[test]
+fn gltf_interleaved_vertices_instance_transforms_and_sparse_positions() {
+    let mut bytes = Vec::new();
+    for position in [[0.0f32, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]] {
+        for value in position {
+            bytes.extend(value.to_le_bytes());
+        }
+        bytes.extend([0; 4]);
+    }
+    let doc = json!({"asset":{"version":"2.0"},"buffers":[{"uri":"mesh.bin","byteLength":bytes.len()}],
+        "bufferViews":[{"buffer":0,"byteLength":bytes.len(),"byteStride":16}],"accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3"}],
+        "meshes":[{"primitives":[{"attributes":{"POSITION":0}}]}],"nodes":[{"mesh":0,"translation":[2.0,3.0,4.0]}],"scenes":[{"nodes":[0]}]});
+    let document = Document::parse(&serde_json::to_vec(&doc).expect("JSON"), |_| Ok(bytes.clone())).expect("document");
+    let scene = gltf::parse(&document, &crate::Skeleton::default()).expect("mesh scene");
+    assert_eq!(scene.instances.len(), 1);
+    let model = &scene.models[0];
+    let point = Vec3::from_array(model.faces[0].vertices[0].position);
+    let world = scene.instances[0].transform.transform_point3(point);
+    assert!((world - Vec3::new(2.0, -4.0, 3.0)).length() < 0.0001);
+    assert!(model.faces[0].vertices.iter().all(|v| Vec3::from_array(v.normal).length() > 0.99));
+    let mut sparse_bytes = vec![0, 1, 2, 0];
+    for value in [0.0f32, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0] {
+        sparse_bytes.extend(value.to_le_bytes());
+    }
+    let doc = json!({"asset":{"version":"2.0"},"buffers":[{"uri":"mesh.bin","byteLength":sparse_bytes.len()}],
+        "bufferViews":[{"buffer":0,"byteLength":3},{"buffer":0,"byteOffset":4,"byteLength":36}],
+        "accessors":[{"componentType":5126,"count":3,"type":"VEC3","sparse":{"count":3,"indices":{"bufferView":0,"componentType":5121},"values":{"bufferView":1}}}]});
+    let doc = Document::parse(&serde_json::to_vec(&doc).expect("JSON"), |_| Ok(sparse_bytes.clone())).expect("sparse document");
+    assert_eq!(gltf::attribute::<3>(&doc, 0).expect("sparse accessor")[2], [0.0, 1.0, 0.0]);
+}
+
+const DAE: &[u8] = br##"<COLLADA><asset><unit meter="0.01"/><up_axis>Z_UP</up_axis></asset><library_geometries><geometry id="geo"><mesh>
+<source id="positions"><float_array count="9">0 0 0 100 0 0 0 100 0</float_array><technique_common><accessor count="3" stride="3"/></technique_common></source>
+<vertices id="vertices"><input semantic="POSITION" source="#positions"/></vertices><triangles count="1"><input semantic="VERTEX" source="#vertices" offset="0"/><p>0 1 2</p></triangles>
+</mesh></geometry></library_geometries><library_visual_scenes><visual_scene id="scene"><node id="node"><matrix>1 0 0 2 0 1 0 3 0 0 1 4 0 0 0 1</matrix><instance_geometry url="#geo"/></node></visual_scene></library_visual_scenes><scene><instance_visual_scene url="#scene"/></scene></COLLADA>"##;
+
+#[test]
+fn collada_units_row_major_transform_and_normalized_geometry_preserve_positions() {
+    let scene = collada::parse(DAE, &crate::Skeleton::default()).expect("Collada");
+    let model = &scene.models[0];
+    let world = scene.instances[0]
+        .transform
+        .transform_point3(Vec3::from_array(model.faces[0].vertices[1].position));
+    assert!((world - Vec3::new(1.02, 0.03, 0.04)).length() < 0.00001);
+    assert_eq!(model.faces[0].indices, [0, 1, 2]);
+    let malformed = String::from_utf8_lossy(DAE).replace("0 1 2</p>", "0 1 9</p>");
+    assert!(collada::parse(malformed.as_bytes(), &crate::Skeleton::default()).is_err());
+}
+
+#[test]
+fn gltf_cycles_missing_accessor_data_and_singular_transform_are_rejected() {
+    let document = Document::parse(
+        br#"{"asset":{"version":"2.0"},"nodes":[{"children":[0]}],"scenes":[{"nodes":[0]}]}"#,
+        |_| Ok(vec![]),
+    )
+    .expect("document");
+    assert!(gltf::parse(&document, &crate::Skeleton::default()).is_err());
+    let document = Document::parse(
+        br#"{"asset":{"version":"2.0"},"accessors":[{"componentType":5126,"count":3,"type":"VEC3"}]}"#,
+        |_| Ok(vec![]),
+    )
+    .expect("document");
+    assert!(gltf::attribute::<3>(&document, 0).is_err());
+}
+
+fn cube() -> Model {
+    let vertices = [-0.5f32, 0.5]
+        .into_iter()
+        .flat_map(|x| {
+            [-0.5f32, 0.5].into_iter().flat_map(move |y| {
+                [-0.5f32, 0.5].into_iter().map(move |z| Vertex {
+                    position: [x, y, z],
+                    normal: [0.0, 0.0, 1.0],
+                    uv: [0.0; 2],
+                    joints: [0; 4],
+                    weights: [0.0; 4],
+                })
+            })
+        })
+        .collect();
+    Model {
+        name: "Cube".into(),
+        center: Vec3::ZERO,
+        size: Vec3::ONE,
+        skin: None,
+        faces: vec![Face {
+            material: 0,
+            vertices,
+            indices: vec![
+                0, 2, 3, 0, 3, 1, 4, 5, 7, 4, 7, 6, 0, 1, 5, 0, 5, 4, 2, 6, 7, 2, 7, 3, 0, 4, 6, 0, 6, 2, 1, 3, 7, 1, 7, 5,
+            ],
+        }],
+    }
+}
+
+#[test]
+fn convex_physics_is_bounded_and_cancelled_processing_preserves_the_source() {
+    let source = cube();
+    let hull = process::base_hull(&source).expect("hull");
+    assert_eq!(hull.vertices.len(), 8);
+    let cancelled = std::sync::atomic::AtomicBool::new(true);
+    assert!(
+        process::lod(
+            &source,
+            process::LodOptions {
+                triangles: 4,
+                error: 0.1,
+                method: process::Method::Reliable,
+                crease_angle: None,
+                error_only: false,
+            },
+            &cancelled
+        )
+        .is_err()
+    );
+    let lod = process::lod(
+        &source,
+        process::LodOptions {
+            triangles: 4,
+            error: 1.0,
+            method: process::Method::Precise,
+            crease_angle: None,
+            error_only: false,
+        },
+        &std::sync::atomic::AtomicBool::new(false),
+    )
+    .expect("LOD");
+    assert!(lod.triangles() <= source.triangles());
+    assert_eq!(source.triangles(), 12);
+    let physics = process::analyze(
+        &source,
+        process::PhysicsOptions {
+            resolution: 1000,
+            max_hulls: 8,
+            max_vertices: 64,
+            ..Default::default()
+        },
+        &std::sync::atomic::AtomicBool::new(false),
+    )
+    .expect("analyze cube");
+    assert!(!physics.hulls.is_empty());
+    assert!(physics.hulls.iter().all(|h| h.vertices.len() <= 64));
+}

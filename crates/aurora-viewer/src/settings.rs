@@ -69,6 +69,7 @@ pub struct Settings {
     /// Contacts window (Amis / Groupes / Cercles).
     pub contacts: crate::ui::contacts::ContactsSettings,
     pub inventory: crate::ui::inventory::InventoryPreferences,
+    pub imports: crate::imports::Preferences,
     pub ao: crate::ao::Settings,
     pub script_editor: crate::ui::scripts::settings::ScriptSettings,
     pub username: String,
@@ -449,6 +450,7 @@ impl Default for Settings {
             camera: Default::default(),
             contacts: Default::default(),
             inventory: Default::default(),
+            imports: Default::default(),
             script_editor: Default::default(),
             username: String::new(),
             remember_username: true,

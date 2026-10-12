@@ -29,6 +29,7 @@ mod bug_report;
 mod chat_commands;
 mod context_menu;
 mod hud_drag;
+mod imports;
 mod inventory;
 mod inventory_drag;
 mod inventory_thumbnail;
@@ -315,6 +316,7 @@ pub struct App {
     lighting_was_open: bool,
     demo: bool,
     inventory_ui: ui::inventory::InventoryUi,
+    imports: crate::imports::Imports,
     /// Inventory edits asked by the world (`World::take_inventory_edits`),
     /// awaiting their reply.
     world_edits: std::collections::HashSet<uuid::Uuid>,
@@ -608,6 +610,7 @@ impl App {
             lighting_was_open: false,
             demo: false,
             inventory_ui: Default::default(),
+            imports: Default::default(),
             world_edits: Default::default(),
             demo_offer_shown: None,
             ao_ui: Default::default(),
@@ -639,7 +642,30 @@ impl App {
     }
 
     fn send(&mut self, cmd: NetCommand) {
+        if self.demo
+            && let NetCommand::UploadAsset { request, upload } = cmd
+        {
+            self.demo_asset_upload(request, upload);
+            return;
+        }
         if self.demo {
+            if let NetCommand::QuoteMesh { request, .. } = &cmd {
+                self.on_app_event(NetEvent::MeshQuoted {
+                    request: *request,
+                    result: Ok(aurora_net::inventory::mesh_upload::Quote {
+                        token: uuid::Uuid::new_v4(),
+                        cost: 11,
+                        data: aurora_llsd::Llsd::new_map(),
+                    }),
+                });
+                return;
+            }
+            if let NetCommand::UploadMesh { request, .. } = &cmd {
+                if let Some(upload) = self.imports.demo_mesh_request() {
+                    self.demo_asset_upload(*request, upload);
+                }
+                return;
+            }
             match &cmd {
                 NetCommand::TeleportTo { handle, position, look_at } => {
                     if Some(*handle) == self.world.main_region {
@@ -1001,6 +1027,24 @@ impl App {
     }
 
     fn back_to_login(&mut self, error: Option<String>) {
+        for entry in &self.imports.entries {
+            if let Some(crate::imports::Source::Mesh(draft)) = &entry.source {
+                draft.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+        let imports = std::mem::take(&mut self.imports);
+        if let Some(gfx) = &mut self.gfx {
+            let mut slots = HashSet::new();
+            for entry in &imports.entries {
+                for (asset, slot) in &entry.local_slots {
+                    self.scene.textures.unregister_local(asset);
+                    if slots.insert(*slot) {
+                        gfx.renderer.free_texture(*slot);
+                    }
+                }
+            }
+        }
+        self.scene.jobs.discard(imports);
         self.record_inventory_logout();
         self.inventory_ui = Default::default();
         self.task_notecards.clear();
@@ -1038,6 +1082,25 @@ impl App {
     }
 
     fn on_app_event(&mut self, ev: NetEvent) {
+        if let NetEvent::UploadCost(cost) = ev {
+            self.world.upload_cost = Some(cost);
+            return;
+        }
+        if let NetEvent::MeshQuoted { request, result } = ev {
+            self.imports.mesh_quoted(request, result);
+            return;
+        }
+        if let NetEvent::AssetUploaded { request, result } = ev {
+            if !self.demo {
+                self.send(NetCommand::RequestBalance);
+            }
+            if let Some(item) = self.imports.uploaded(request, result) {
+                let id = item.id;
+                self.world.inventory.add_items(vec![item]);
+                self.inventory_ui.show_original(&self.world.inventory, id);
+            }
+            return;
+        }
         if let NetEvent::InventoryCreated(item) = ev {
             let id = item.id;
             self.world.inventory.add_items(vec![item]);
@@ -5178,6 +5241,7 @@ impl App {
         match a.bar {
             BarAction::CheckUpdates => self.updater.check(self.net.runtime(), true),
             BarAction::ReportBug => self.bug_report.requested = true,
+            BarAction::Import(choice) => self.imports.open(choice),
             BarAction::ShowHuds(visible) => {
                 if self.hud_drag.is_some() {
                     self.on_left_release();
@@ -5693,6 +5757,7 @@ impl App {
                     }
                 }
                 self.poll_inventory_animation_stats();
+                self.show_imports(&ctx, &p);
                 let inventory_preferences = self.settings.inventory.clone();
                 let mut open = self.panels.inventory;
                 if !self.inventory_ui.merchant_requested {

@@ -13,13 +13,18 @@
 //! worker threads.
 
 pub mod anim;
+pub mod import_animation;
+pub mod import_gltf;
+pub mod import_mesh;
+pub mod import_sound;
+pub mod import_texture;
 pub mod j2k;
 pub mod llm;
 pub mod material;
 pub mod mesh;
 pub mod skeleton;
 
-pub use anim::{Animation, JointMotion, parse_animation};
+pub use anim::{Animation, JointMotion, parse_animation, parse_animation_upload};
 pub use j2k::{DecodedImage, J2kInfo, bytes_for_discard, decode_j2k, j2k_info};
 pub use llm::{LlmMesh, LlmMorph, parse_llm};
 pub use material::{AlphaMode, PbrMaterial, TextureTransform, parse_material_asset};
@@ -59,7 +64,7 @@ pub enum AssetError {
 }
 
 impl AssetError {
-    pub(crate) fn invalid(msg: impl Into<String>) -> Self {
+    pub fn invalid(msg: impl Into<String>) -> Self {
         AssetError::Invalid(msg.into())
     }
 }
