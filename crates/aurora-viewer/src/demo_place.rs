@@ -67,6 +67,20 @@ fn parcels() -> &'static Vec<DemoParcel> {
     })
 }
 
+/// The named demo parcels as a directory lists them: (parcel, name,
+/// traffic, area), the parcel of "À propos du terrain" first.
+pub fn directory() -> Vec<(Uuid, String, f32, i32)> {
+    let l = super::land::parcel();
+    std::iter::once((super::land::PARCEL_UUID, l.name, 145.0, l.area))
+        .chain(
+            parcels()
+                .iter()
+                .filter(|p| !p.name.is_empty())
+                .map(|p| (p.id, p.name.to_owned(), p.dwell, p.area)),
+        )
+        .collect()
+}
+
 /// Grid position of Faille, the region whose parcel requests fail.
 const FAILING: (u32, u32) = (1001, 1001);
 

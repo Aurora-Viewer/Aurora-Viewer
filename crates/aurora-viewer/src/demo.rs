@@ -31,6 +31,9 @@ pub mod land;
 /// Place details of place links (AURORA_DEMO_PLACE).
 #[path = "demo_place.rs"]
 pub mod place;
+/// Directory answers of the search window (AURORA_DEMO_SEARCH).
+#[path = "demo_search.rs"]
+pub mod search;
 /// Streaming hitch test: objects and textures arriving in waves
 /// (AURORA_DEMO_STREAM).
 #[path = "demo_stream.rs"]
@@ -396,6 +399,9 @@ fn demo_raw() -> Llsd {
         .collect();
     let mut raw = llsd_map! {
         "inventory-root" => Llsd::Array(vec![llsd_map!{"folder_id" => u(1)}]),
+        // an adult account that wants every rating (the search window's boxes)
+        "agent_access_max" => "A",
+        "agent_region_access" => "A",
         "inventory-skeleton" => Llsd::Array(skel),
         "buddy-list" => Llsd::Array(buddies),
         "classified_categories" => Llsd::Array(
@@ -608,6 +614,9 @@ pub fn offered_item(parent: Uuid, owner: Uuid) -> aurora_net::inventory::InvItem
 
 pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
     if let Some(events) = hud::reply(cmd) {
+        return events;
+    }
+    if let Some(events) = search::reply(cmd) {
         return events;
     }
     use aurora_net::inventory::{FolderContents, InvItem};
