@@ -1105,7 +1105,7 @@ grille.
 - **`AURORA_DEMO_PLACES=favoris|reperes|historique`** : les dossiers Favoris
   et Repères de la démo (avec un sous-dossier) et un historique de
   téléportation sur plusieurs mois.
-- **`AURORA_DEMO_SEARCH=people|groups|places|land|events|classifieds|web[:texte]`** :
+- **`AURORA_DEMO_SEARCH=web|people|groups|places|land|events|classifieds[:texte]`** :
   la fenêtre « Rechercher » sur cet onglet, la recherche du texte déjà
   lancée (`aurora` par défaut) : la liste est remplie par l'annuaire de la
   démo, la première ligne est sélectionnée et sa fiche affichée à droite.

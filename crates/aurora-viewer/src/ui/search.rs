@@ -355,14 +355,14 @@ impl SearchUi {
     pub fn set_text(&mut self, tab: Tab, text: &str) {
         if tab == Tab::Land {
             self.land_price = text.to_owned();
-        } else if let Some(t) = self.texts.get_mut(tab.index()) {
+        } else if let Some(t) = tab.list_index().and_then(|i| self.texts.get_mut(i)) {
             *t = text.to_owned();
         }
     }
 
     /// The request of the tab's form (the fields `find()` reads).
     pub fn request(&self, tab: Tab, settings: &SearchSettings) -> Option<Request> {
-        let text = |t: Tab| self.texts.get(t.index()).cloned().unwrap_or_default();
+        let text = |t: Tab| t.list_index().and_then(|i| self.texts.get(i)).cloned().unwrap_or_default();
         Some(match tab {
             Tab::People => Request::People { text: text(tab) },
             Tab::Groups => Request::Groups {
@@ -438,14 +438,15 @@ impl SearchUi {
         let mut floater = Floater::new(WINDOW, aurora_i18n::tr!("search-title"), screen.center() - size * 0.5, size);
         floater.min_size = Vec2::new(720.0, 440.0);
         floater.show(ctx, p, open, |ui| {
+            // "ls_tabs" of floater_fs_search.xml, in its order (Tab::ALL)
             let labels = [
+                (aurora_i18n::tr!("search-tab-web"), true),
                 (aurora_i18n::tr!("common-people"), true),
                 (aurora_i18n::tr!("common-groups"), true),
                 (aurora_i18n::tr!("common-places"), true),
                 (aurora_i18n::tr!("search-tab-land"), true),
                 (aurora_i18n::tr!("search-tab-events"), true),
                 (aurora_i18n::tr!("search-tab-classifieds"), true),
-                (aurora_i18n::tr!("search-tab-web"), true),
             ];
             if widgets::tabs(ui, p, &mut self.tab, &labels) {
                 self.focus = true;
@@ -500,7 +501,10 @@ impl SearchUi {
         let mut find = false;
         let mut saved = false;
         let hint = aurora_i18n::tr!("common-search");
-        let i = tab.index();
+        // the web tab has no form
+        let Some(i) = tab.list_index() else {
+            return false;
+        };
         match tab {
             Tab::People => {
                 find |= field_row(ui, &mut self.texts[i], hint, &mut self.focus, |ui| find_button(ui, p));
@@ -895,7 +899,15 @@ mod tests {
     fn the_form_builds_the_request_of_its_tab() {
         let mut ui = SearchUi::default();
         let mut settings = SearchSettings::default();
-        ui.texts[Tab::Places.index()] = "plage".into();
+        ui.set_text(Tab::Places, "plage");
+        // the last directory tab has its own text too
+        ui.set_text(Tab::Classifieds, "meubles");
+        assert!(matches!(
+            ui.request(Tab::Classifieds, &settings),
+            Some(Request::Classifieds { text, .. }) if text == "meubles"
+        ));
+        // the window first opens on the web search, as FSLastSearchTab = 0
+        assert_eq!(SearchUi::default().tab(), Tab::Web);
         assert_eq!(
             ui.request(Tab::Places, &settings),
             Some(Request::Places {

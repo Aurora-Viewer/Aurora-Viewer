@@ -23,35 +23,45 @@ use uuid::Uuid;
 /// "(???).(???)" for an unknown key).
 pub const KEY_LOOKUP_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// The tabs, in Aurora's order (Firestorm puts the web search first).
+/// The tabs, in the order of "ls_tabs" in floater_fs_search.xml: the web
+/// search first, then people, groups, places, land sales, events and
+/// classifieds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Tab {
+    Web,
     People,
     Groups,
     Places,
     Land,
     Events,
     Classifieds,
-    Web,
 }
 
 impl Tab {
     pub const ALL: [Tab; 7] = [
+        Tab::Web,
         Tab::People,
         Tab::Groups,
         Tab::Places,
         Tab::Land,
         Tab::Events,
         Tab::Classifieds,
-        Tab::Web,
     ];
 
+    /// Place in the tab strip, which is also what FSLastSearchTab holds.
     pub fn index(self) -> usize {
         Tab::ALL.iter().position(|t| *t == self).unwrap_or(0)
     }
 
+    /// selectTab(FSLastSearchTab), the first tab when it fails.
     pub fn from_index(i: usize) -> Tab {
-        Tab::ALL.get(i).copied().unwrap_or(Tab::People)
+        Tab::ALL.get(i).copied().unwrap_or(Tab::Web)
+    }
+
+    /// Place of a directory tab among the result lists; None for the web
+    /// tab, which has no list.
+    pub fn list_index(self) -> Option<usize> {
+        self.index().checked_sub(1)
     }
 
     /// The names of `AURORA_DEMO_SEARCH`.
@@ -103,7 +113,8 @@ impl RatingBoxes {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SearchSettings {
-    /// FSLastSearchTab, in Aurora's tab order.
+    /// FSLastSearchTab: the tab the window opens on (0, the web search, the
+    /// first time).
     pub last_tab: u8,
     /// FSSearchGroupMaturity: 13 general, 21 + moderate, 42 + adult.
     pub group_maturity: u8,
@@ -655,11 +666,11 @@ impl Default for Search {
 impl Search {
     /// The list of a tab (the web tab has none).
     pub fn list(&self, tab: Tab) -> Option<&List> {
-        self.lists.get(tab.index())
+        self.lists.get(tab.list_index()?)
     }
 
     pub fn list_mut(&mut self, tab: Tab) -> Option<&mut List> {
-        self.lists.get_mut(tab.index())
+        self.lists.get_mut(tab.list_index()?)
     }
 
     /// onBtnFind: back to the first page (resetSearch), then `find()`.
@@ -672,7 +683,7 @@ impl Search {
         if tab == Tab::Classifieds {
             self.banned_notice = false;
         }
-        let Some(list) = self.lists.get_mut(tab.index()) else {
+        let Some(list) = tab.list_index().and_then(|i| self.lists.get_mut(i)) else {
             return;
         };
         list.start = 0;
@@ -733,7 +744,7 @@ impl Search {
 
     /// onBtnNext / onBtnBack: the same query a page further or back.
     pub fn turn_page(&mut self, tab: Tab, forward: bool) {
-        let Some(list) = self.lists.get_mut(tab.index()) else {
+        let Some(list) = tab.list_index().and_then(|i| self.lists.get_mut(i)) else {
             return;
         };
         let Some(query) = list.query.clone() else {
@@ -752,7 +763,7 @@ impl Search {
     /// (`name`), "not found" after KEY_LOOKUP_TIMEOUT. Returns the key while
     /// it waits, for the caller to ask the name cache.
     pub fn resolve_key(&mut self, name: impl Fn(&Uuid) -> Option<String>, now: Instant) -> Option<Uuid> {
-        let list = &mut self.lists[Tab::People.index()];
+        let list = self.lists.get_mut(Tab::People.list_index()?)?;
         let (id, since) = list.key_lookup?;
         if let Some(name) = name(&id) {
             list.key_lookup = None;
@@ -777,7 +788,7 @@ impl Search {
     /// onSelectItem: the selection and the request for its details
     /// (FSFloaterSearch::onSelectedItem / onSelectedEvent).
     pub fn select(&mut self, tab: Tab, key: Key) {
-        let Some(list) = self.lists.get_mut(tab.index()) else {
+        let Some(list) = tab.list_index().and_then(|i| self.lists.get_mut(i)) else {
             return;
         };
         list.selected = Some(key);
@@ -807,7 +818,9 @@ impl Search {
             DirRows::Events(_) => Tab::Events,
             DirRows::Classifieds(_) => Tab::Classifieds,
         };
-        let list = &mut self.lists[tab.index()];
+        let Some(list) = tab.list_index().and_then(|i| self.lists.get_mut(i)) else {
+            return;
+        };
         if list.apply(reply, &self.land_types) && list.selected.is_none() {
             let first = list.sorted().first().map(|r| r.key);
             if let Some(key) = first {
@@ -1295,6 +1308,30 @@ mod tests {
         assert_eq!(event_rating(event_flags::MATURE), search::SIM_ACCESS_MATURE);
         assert_eq!(event_rating(0), search::SIM_ACCESS_PG);
         assert_eq!(Tab::from_name("Land"), Some(Tab::Land));
-        assert_eq!(Tab::from_index(Tab::Web.index()), Tab::Web);
+        // floater_fs_search.xml: the web search is the first tab, and the
+        // one FSLastSearchTab (0) opens the first time
+        assert_eq!(
+            Tab::ALL,
+            [
+                Tab::Web,
+                Tab::People,
+                Tab::Groups,
+                Tab::Places,
+                Tab::Land,
+                Tab::Events,
+                Tab::Classifieds
+            ]
+        );
+        assert_eq!(Tab::from_index(SearchSettings::default().last_tab as usize), Tab::Web);
+        assert_eq!(Tab::from_index(99), Tab::Web);
+        for (i, tab) in Tab::ALL.into_iter().enumerate() {
+            assert_eq!((tab.index(), Tab::from_index(i)), (i, tab));
+        }
+        // every directory tab has its own list, the web tab none
+        let s = Search::default();
+        assert!(s.list(Tab::Web).is_none());
+        for tab in Tab::ALL.into_iter().skip(1) {
+            assert_eq!(s.list(tab).map(|l| l.tab), Some(tab));
+        }
     }
 }
