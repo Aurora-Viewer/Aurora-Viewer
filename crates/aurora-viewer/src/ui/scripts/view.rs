@@ -351,7 +351,7 @@ fn footer(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, actions: &mut 
                     actions.push(Action::Reset(e.target));
                 }
                 let mut running = e.running.unwrap_or(false);
-                if ui.checkbox(&mut running, aurora_i18n::tr!("script-running")).changed() {
+                if crate::ui::widgets::checkbox(ui, p, &mut running, aurora_i18n::tr!("script-running")).changed() {
                     actions.push(Action::Running { target: e.target, running });
                 }
             });
@@ -359,7 +359,7 @@ fn footer(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, actions: &mut 
         ui.add_enabled_ui(
             e.can_edit && e.loaded && e.saving.is_none() && (e.target.object.is_nil() || e.running.is_some()),
             |ui| {
-                ui.checkbox(&mut e.mono, "Mono").on_hover_text(aurora_i18n::tr!("script-mono-hint"));
+                crate::ui::widgets::checkbox(ui, p, &mut e.mono, "Mono").on_hover_text(aurora_i18n::tr!("script-mono-hint"));
             },
         );
     });

@@ -1,7 +1,7 @@
 //! Appearance floater, following LLSidepanelAppearance, LLPanelOutfitsInventory,
 //! LLOutfitGallery and LLPanelOutfitEdit (Firestorm indra/newview, LGPL 2.1).
 
-use super::{icons, widgets};
+use super::{icons, menu, widgets};
 use crate::{
     theme::Palette,
     world::{World, appearance as model},
@@ -113,7 +113,7 @@ fn icon_button(ui: &mut egui::Ui, p: &Palette, name: &str, tip: &str) -> egui::R
 
 fn icon_menu(ui: &mut egui::Ui, p: &Palette, name: &str, tip: &str, body: impl FnOnce(&mut egui::Ui)) {
     let response = icon_button(ui, p, name, tip);
-    egui::Popup::menu(&response).show(body);
+    menu::dropdown(&response, p, egui::PopupCloseBehavior::CloseOnClick, body);
 }
 
 fn row(ui: &mut egui::Ui, p: &Palette, it: &InvItem, desc: &str, selected: bool, worn: Option<&str>) -> egui::Response {
@@ -177,19 +177,15 @@ fn row(ui: &mut egui::Ui, p: &Palette, it: &InvItem, desc: &str, selected: bool,
     })
 }
 
-fn item_menu(response: &egui::Response, it: &InvItem, actions: &mut Vec<Action>) {
-    response.context_menu(|ui| {
-        if it.asset_type != 13
-            && ui
-                .button(if it.asset_type == 6 {
-                    aurora_i18n::tr!("common-detach")
-                } else {
-                    aurora_i18n::tr!("common-remove")
-                })
-                .clicked()
-        {
+fn item_menu(response: &egui::Response, p: &Palette, it: &InvItem, actions: &mut Vec<Action>) {
+    menu::context_menu(response, p, |ui| {
+        let label = if it.asset_type == 6 {
+            aurora_i18n::tr!("common-detach")
+        } else {
+            aurora_i18n::tr!("common-remove")
+        };
+        if it.asset_type != 13 && menu::item(ui, p, "circle-x-filled", label) {
             actions.push(Action::Remove(it.id));
-            ui.close();
         }
     });
 }
@@ -303,72 +299,69 @@ fn outfit_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut Appearanc
             egui::TextStyle::Button,
         );
         let reveal = st.reveal_outfit == Some(*id);
-        let response = egui::CollapsingHeader::new(galley.clone())
-            .id_salt(("outfit", id))
-            .default_open(st.selected_outfit == Some(*id))
-            .open(reveal.then_some(true))
-            .show(ui, |ui| {
-                if ui
-                    .selectable_label(
-                        st.selected_outfit == Some(*id),
-                        aurora_i18n::tr!("ui-appearance-select-this-outfit"),
-                    )
-                    .clicked()
-                {
-                    st.selected_outfit = Some(*id);
+        let (selected, forced) = (st.selected_outfit == Some(*id), reveal.then_some(true));
+        let response = widgets::collapsing_forced(ui, p, ("outfit", id), galley.clone(), selected, forced, |ui| {
+            if ui
+                .selectable_label(
+                    st.selected_outfit == Some(*id),
+                    aurora_i18n::tr!("ui-appearance-select-this-outfit"),
+                )
+                .clicked()
+            {
+                st.selected_outfit = Some(*id);
+            }
+            let mut links = model::folder_links(&world.inventory, *id);
+            links.sort_by_key(|l| l.name.to_lowercase());
+            for link in links.iter().filter(|l| !l.folder) {
+                if let Some(it) = world.inventory.items.get(&link.target) {
+                    ui.push_id(("outfit_item", id, it.id), |ui| {
+                        let response = row(
+                            ui,
+                            p,
+                            it,
+                            "",
+                            st.selected_item == Some(it.id) && st.selected_outfit == Some(*id),
+                            worn.get(&it.id).map(String::as_str),
+                        );
+                        if response.clicked() || response.secondary_clicked() {
+                            st.selected_outfit = Some(*id);
+                            st.selected_item = Some(it.id);
+                        }
+                        items::context_menu(&response, p, world, st, *id, it, actions);
+                    });
+                } else {
+                    ui.label(RichText::new(&link.name).size(12.0).color(p.muted));
                 }
-                let mut links = model::folder_links(&world.inventory, *id);
-                links.sort_by_key(|l| l.name.to_lowercase());
-                for link in links.iter().filter(|l| !l.folder) {
-                    if let Some(it) = world.inventory.items.get(&link.target) {
-                        ui.push_id(("outfit_item", id, it.id), |ui| {
-                            let response = row(
-                                ui,
-                                p,
-                                it,
-                                "",
-                                st.selected_item == Some(it.id) && st.selected_outfit == Some(*id),
-                                worn.get(&it.id).map(String::as_str),
-                            );
-                            if response.clicked() || response.secondary_clicked() {
-                                st.selected_outfit = Some(*id);
-                                st.selected_item = Some(it.id);
-                            }
-                            items::context_menu(&response, p, world, st, *id, it, actions);
-                        });
+            }
+            if links.is_empty() {
+                ui.label(
+                    RichText::new(if model::loaded(&world.inventory, *id) {
+                        aurora_i18n::tr!("ui-appearance-empty-outfit")
                     } else {
-                        ui.label(RichText::new(&link.name).size(12.0).color(p.muted));
-                    }
+                        aurora_i18n::tr!("common-loading-2")
+                    })
+                    .color(p.muted),
+                );
+            }
+            ui.horizontal(|ui| {
+                if widgets::flat_button(ui, p, aurora_i18n::tr!("common-wear")).clicked() {
+                    actions.push(Action::Wear(*id, false));
                 }
-                if links.is_empty() {
-                    ui.label(
-                        RichText::new(if model::loaded(&world.inventory, *id) {
-                            aurora_i18n::tr!("ui-appearance-empty-outfit")
-                        } else {
-                            aurora_i18n::tr!("common-loading-2")
-                        })
-                        .color(p.muted),
-                    );
+                if widgets::flat_button(ui, p, aurora_i18n::tr!("common-add")).clicked() {
+                    actions.push(Action::Wear(*id, true));
                 }
-                ui.horizontal(|ui| {
-                    if widgets::flat_button(ui, p, aurora_i18n::tr!("common-wear")).clicked() {
-                        actions.push(Action::Wear(*id, false));
-                    }
-                    if widgets::flat_button(ui, p, aurora_i18n::tr!("common-add")).clicked() {
-                        actions.push(Action::Wear(*id, true));
-                    }
-                });
             });
-        if is_current && ui.is_rect_visible(response.header_response.rect) {
+        });
+        if is_current && ui.is_rect_visible(response.header.rect) {
             // LLOutfitsList::onHighlightBaseOutfit marks the current title BOLD.
             // Match the item rows' LLFontGL offset: egui's strong is only a color.
-            let rect = response.header_response.rect;
+            let rect = response.header.rect;
             let pos = egui::pos2(rect.left() + ui.spacing().indent, rect.center().y - galley.size().y * 0.5);
             let name = ui.painter().layout_no_wrap(f.info.name.clone(), font_id, p.ink);
             ui.painter().galley(pos + widgets::bold_text_offset(ui), name, p.ink);
         }
-        if reveal && response.body_response.is_some() {
-            response.header_response.scroll_to_me(Some(egui::Align::Min));
+        if reveal && response.body.is_some() {
+            response.header.scroll_to_me(Some(egui::Align::Min));
             st.reveal_outfit = None;
         }
     }
@@ -433,7 +426,7 @@ fn worn_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceU
             if resp.clicked() {
                 st.selected_item = Some(it.id);
             }
-            item_menu(&resp, it, actions);
+            item_menu(&resp, p, it, actions);
             if edit && st.selected_item == Some(it.id) {
                 ui.horizontal(|ui| {
                     if it.asset_type != 13
@@ -494,39 +487,38 @@ fn worn_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceU
 }
 
 fn temporary_attachments(ui: &mut egui::Ui, p: &Palette, world: &World) {
-    egui::CollapsingHeader::new(aurora_i18n::tr!("ui-appearance-temporary-items"))
-        .id_salt("temporary_attachments")
-        .show(ui, |ui| {
-            let temporary = world
-                .objects
-                .index_of_uuid(&world.agent_id)
-                .and_then(|idx| world.objects.get(idx))
-                .map(|me| world.objects.children_of(&me.key))
-                .unwrap_or_default();
-            let mut count = 0;
-            for idx in temporary {
-                if let Some(o) = world.objects.get(*idx)
-                    && o.attachment_item_id().is_none_or(|id| id.is_nil())
-                {
-                    count += 1;
-                    ui.label(
-                        RichText::new(aurora_i18n::tr!(
-                            "ui-appearance-temporary-object",
-                            value0 = format!("{}", o.attachment_point())
-                        ))
-                        .size(12.0)
-                        .color(p.muted),
-                    );
-                }
-            }
-            if count == 0 {
+    let temporary_items = aurora_i18n::tr!("ui-appearance-temporary-items");
+    widgets::collapsing(ui, p, "temporary_attachments", temporary_items, false, |ui| {
+        let temporary = world
+            .objects
+            .index_of_uuid(&world.agent_id)
+            .and_then(|idx| world.objects.get(idx))
+            .map(|me| world.objects.children_of(&me.key))
+            .unwrap_or_default();
+        let mut count = 0;
+        for idx in temporary {
+            if let Some(o) = world.objects.get(*idx)
+                && o.attachment_item_id().is_none_or(|id| id.is_nil())
+            {
+                count += 1;
                 ui.label(
-                    RichText::new(aurora_i18n::tr!("ui-appearance-no-temporary-items"))
-                        .size(12.0)
-                        .color(p.muted_dim),
+                    RichText::new(aurora_i18n::tr!(
+                        "ui-appearance-temporary-object",
+                        value0 = format!("{}", o.attachment_point())
+                    ))
+                    .size(12.0)
+                    .color(p.muted),
                 );
             }
-        });
+        }
+        if count == 0 {
+            ui.label(
+                RichText::new(aurora_i18n::tr!("ui-appearance-no-temporary-items"))
+                    .size(12.0)
+                    .color(p.muted_dim),
+            );
+        }
+    });
 }
 
 fn add_list(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut AppearanceUi, actions: &mut Vec<Action>) {
@@ -599,42 +591,39 @@ fn add_folder(
         return;
     };
     let (name, children, items) = (f.info.name.clone(), f.children.clone(), f.items.clone());
-    egui::CollapsingHeader::new(name)
-        .id_salt(("add_outfit_folder", id))
-        .default_open(depth == 0)
-        .show(ui, |ui| {
-            inv.request(id);
-            for child in children {
-                add_folder(ui, p, inv, child, st, actions, depth + 1);
+    widgets::collapsing(ui, p, ("add_outfit_folder", id), name, depth == 0, |ui| {
+        inv.request(id);
+        for child in children {
+            add_folder(ui, p, inv, child, st, actions, depth + 1);
+        }
+        let worn: HashSet<_> = model::cof(inv)
+            .map(|id| model::folder_links(inv, id))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|l| l.target)
+            .collect();
+        for id in items {
+            let Some(it) = inv.items.get(&id) else {
+                continue;
+            };
+            let it = if it.asset_type == 24 {
+                inv.items.get(&it.asset_id).unwrap_or(it)
+            } else {
+                it
+            };
+            if !matches!(it.asset_type, 5 | 6 | 13) || worn.contains(&it.id) {
+                continue;
             }
-            let worn: HashSet<_> = model::cof(inv)
-                .map(|id| model::folder_links(inv, id))
-                .unwrap_or_default()
-                .into_iter()
-                .map(|l| l.target)
-                .collect();
-            for id in items {
-                let Some(it) = inv.items.get(&id) else {
-                    continue;
-                };
-                let it = if it.asset_type == 24 {
-                    inv.items.get(&it.asset_id).unwrap_or(it)
-                } else {
-                    it
-                };
-                if !matches!(it.asset_type, 5 | 6 | 13) || worn.contains(&it.id) {
-                    continue;
-                }
-                let response = row(ui, p, it, "", st.selected_item == Some(it.id), None);
-                if response.clicked() {
-                    st.selected_item = Some(it.id);
-                }
-                if response.double_clicked() {
-                    actions.push(Action::Add(it.id));
-                    st.adding = false;
-                }
+            let response = row(ui, p, it, "", st.selected_item == Some(it.id), None);
+            if response.clicked() {
+                st.selected_item = Some(it.id);
             }
-        });
+            if response.double_clicked() {
+                actions.push(Action::Add(it.id));
+                st.adding = false;
+            }
+        }
+    });
 }
 
 pub fn show(
@@ -734,19 +723,13 @@ pub fn show(
                     "sort-ascending-2-filled",
                     aurora_i18n::tr!("ui-appearance-sort-outfits"),
                     |ui| {
-                        if ui
-                            .selectable_label(!st.reverse_sort, aurora_i18n::tr!("ui-appearance-name-a-z"))
-                            .clicked()
-                        {
-                            st.reverse_sort = false;
-                            ui.close();
-                        }
-                        if ui
-                            .selectable_label(st.reverse_sort, aurora_i18n::tr!("ui-appearance-name-z-a"))
-                            .clicked()
-                        {
-                            st.reverse_sort = true;
-                            ui.close();
+                        for (reverse, icon, label) in [
+                            (false, "sort-ascending-letters", aurora_i18n::tr!("ui-appearance-name-a-z")),
+                            (true, "sort-descending-letters", aurora_i18n::tr!("ui-appearance-name-z-a")),
+                        ] {
+                            if menu::check(ui, p, icon, label, st.reverse_sort == reverse, true) {
+                                st.reverse_sort = reverse;
+                            }
                         }
                     },
                 );
@@ -871,19 +854,12 @@ pub fn show(
         ui.add_space(4.0);
         ui.horizontal(|ui| {
             icon_menu(ui, p, "settings-filled", aurora_i18n::tr!("ui-appearance-outfit-options"), |ui| {
-                if ui.button(aurora_i18n::tr!("ui-appearance-refresh")).clicked() {
+                if menu::item(ui, p, "refresh", aurora_i18n::tr!("ui-appearance-refresh")) {
                     st.refresh(&mut world.inventory);
-                    ui.close();
                 }
-                if ui
-                    .add_enabled(
-                        base.is_some() && st.pending.is_none(),
-                        egui::Button::new(aurora_i18n::tr!("ui-appearance-restore-saved-outfit")),
-                    )
-                    .clicked()
-                {
+                let restore = aurora_i18n::tr!("ui-appearance-restore-saved-outfit");
+                if menu::item_if(ui, p, "restore", restore, base.is_some() && st.pending.is_none()) {
                     actions.push(Action::Revert);
-                    ui.close();
                 }
             });
             if !st.editing && st.tab < 2 {
@@ -910,26 +886,18 @@ pub fn show(
         ui.separator();
         ui.horizontal_wrapped(|ui| {
             let available = st.pending.is_none() && model::cof(&world.inventory).is_some_and(|id| model::complete(&world.inventory, id));
-            if ui
-                .add_enabled(
-                    available && base.is_some() && dirty,
-                    egui::Button::new(aurora_i18n::tr!("common-save")).fill(p.raised),
-                )
-                .clicked()
-            {
+            use widgets::{ActionKind, action_button, action_button_if};
+            let size = Vec2::new(0.0, 26.0);
+            let (save, can_save) = (aurora_i18n::tr!("common-save"), available && base.is_some() && dirty);
+            if action_button_if(ui, p, "device-floppy-filled", save, ActionKind::Flat, size, can_save).clicked() {
                 actions.push(Action::Save(None));
             }
-            if ui
-                .add_enabled(
-                    available,
-                    egui::Button::new(aurora_i18n::tr!("ui-appearance-save-as")).fill(p.raised),
-                )
-                .clicked()
-            {
+            let save_as = aurora_i18n::tr!("ui-appearance-save-as");
+            if action_button_if(ui, p, "device-floppy-filled", save_as, ActionKind::Flat, size, available).clicked() {
                 st.begin_save_as(&world.inventory);
             }
             if st.editing {
-                if widgets::flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked() {
+                if action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {
                     if dirty && base.is_some() {
                         actions.push(Action::Revert);
                     }
@@ -937,13 +905,12 @@ pub fn show(
                     st.adding = false;
                 }
             } else if st.tab < 2 {
-                for (label, append) in [(aurora_i18n::tr!("common-add"), true), (aurora_i18n::tr!("common-wear"), false)] {
-                    if ui
-                        .add_enabled(
-                            available && st.selected_outfit.is_some(),
-                            egui::Button::new(label).fill(if append { p.raised } else { p.violet }),
-                        )
-                        .clicked()
+                let ready = available && st.selected_outfit.is_some();
+                for (icon, label, kind, append) in [
+                    ("plus", aurora_i18n::tr!("common-add"), ActionKind::Flat, true),
+                    ("shirt-filled", aurora_i18n::tr!("common-wear"), ActionKind::Primary, false),
+                ] {
+                    if action_button_if(ui, p, icon, label, kind, size, ready).clicked()
                         && let Some(id) = st.selected_outfit
                     {
                         actions.push(Action::Wear(id, append));
@@ -976,15 +943,15 @@ pub fn show(
             ui.horizontal(|ui| {
                 let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
                 let valid = !name.trim().is_empty() && st.pending.is_none();
-                if ui
-                    .add_enabled(valid, egui::Button::new("OK").min_size(Vec2::new(80.0, 24.0)).fill(p.violet))
-                    .clicked()
+                use widgets::{ActionKind, action_button, action_button_if};
+                let size = Vec2::new(0.0, 26.0);
+                if action_button_if(ui, p, "check", aurora_i18n::tr!("common-ok"), ActionKind::Primary, size, valid).clicked()
                     || (valid && enter)
                 {
                     actions.push(Action::Save(Some(name.trim().into())));
                     close = true;
                 }
-                if widgets::flat_button_sized(ui, p, aurora_i18n::tr!("common-cancel"), Vec2::new(80.0, 24.0)).clicked() {
+                if action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {
                     close = true;
                 }
             });

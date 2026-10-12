@@ -252,7 +252,13 @@ chaque modification de l'interface :
   interrupteurs, en-têtes de section, surfaces) au lieu d'en recréer. Une
   progression passe par `widgets::progress` (elle glisse vers sa valeur),
   jamais par `egui::ProgressBar` ; les touches d'un raccourci par
-  `widgets::keycap`.
+  `widgets::keycap`. L'interrupteur est presque carré (`widgets::switch`,
+  `switch_labeled` pour un réglage isolé). Une case à cocher passe par
+  `widgets::checkbox`, une section repliable par `widgets::collapsing`, une
+  couleur par `widgets::color_button` : jamais `ui.checkbox`,
+  `egui::CollapsingHeader` ni `color_edit_button_*`. Les menus s'écrivent
+  avec les lignes de `ui/menu.rs` (`menu::item`, `check`, `toggle`,
+  `submenu`, `separator`) et reçoivent leur verre tout seuls.
 - **Vérifie à l'œil** : capture l'écran modifié en démo et compare-le à une
   fenêtre voisine (mêmes fonds, mêmes boutons, mêmes rayons, icônes alignées
   avec le texte) avant de demander la validation humaine.

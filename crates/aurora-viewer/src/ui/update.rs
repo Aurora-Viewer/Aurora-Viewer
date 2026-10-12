@@ -93,7 +93,7 @@ impl UpdateDemo {
                 ui.spacing_mut().item_spacing = Vec2::new(10.0, 9.0);
                 ui.horizontal(|ui| {
                     let (rect, _) = ui.allocate_exact_size(Vec2::splat(48.0), Sense::hover());
-                    ui.painter().rect_filled(rect, 2.0, p.field);
+                    ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.field);
                     icon(ui, icons, "download-filled", rect.shrink(10.0), p.violet_light);
                     ui.vertical(|ui| {
                         ui.label(RichText::new(aurora_i18n::tr!("update-demo-badge")).size(10.0).color(p.amber));
@@ -123,7 +123,7 @@ impl UpdateDemo {
                                 .strong()
                                 .color(p.ink),
                         );
-                        Frame::new().fill(p.field).inner_margin(Margin::same(14)).show(ui, |ui| {
+                        card(ui, p).show(ui, |ui| {
                             ui.set_width(width - 28.0);
                             egui::ScrollArea::vertical().max_height(140.0).show(ui, |ui| {
                                 ui.label(RichText::new(aurora_i18n::tr!("update-demo-notes")).size(13.0).color(p.muted));
@@ -159,9 +159,7 @@ impl UpdateDemo {
                 ui.add_space(8.0);
                 maintenance_summary(ui, p, self.maintenance);
                 ui.label(RichText::new(aurora_i18n::tr!("update-demo-safe")).size(11.0).color(p.muted_dim));
-                ui.add_space(10.0);
-                ui.separator();
-                ui.add_space(8.0);
+                ui.add_space(BEFORE_BUTTONS);
                 match self.phase {
                     Phase::Available => {
                         ui.horizontal(|ui| {
@@ -202,8 +200,20 @@ impl UpdateDemo {
     }
 }
 
+/// Space above the row of buttons: no line, the buttons' faces are enough.
+const BEFORE_BUTTONS: f32 = 18.0;
+
+/// Inset card of the update window (versions, release notes), with the
+/// corners of the theme.
+fn card(ui: &egui::Ui, p: &Palette) -> Frame {
+    Frame::new()
+        .fill(p.field)
+        .corner_radius(ui.visuals().window_corner_radius)
+        .inner_margin(Margin::same(14))
+}
+
 fn version_card(ui: &mut egui::Ui, p: &Palette, width: f32, label: &str, version: &str, color: egui::Color32) {
-    Frame::new().fill(p.field).inner_margin(Margin::same(14)).show(ui, |ui| {
+    card(ui, p).show(ui, |ui| {
         ui.set_width(width - 28.0);
         ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
             ui.label(RichText::new(label).size(11.0).color(p.muted));
@@ -236,7 +246,7 @@ pub fn show_real(
             ui.spacing_mut().item_spacing = Vec2::new(10.0, 9.0);
             ui.horizontal(|ui| {
                 let (rect, _) = ui.allocate_exact_size(Vec2::splat(48.0), Sense::hover());
-                ui.painter().rect_filled(rect, 2.0, p.field);
+                ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.field);
                 icon(ui, icons, "download-filled", rect.shrink(10.0), p.violet_light);
                 let title = match updater.state {
                     State::Checking => aurora_i18n::tr!("ui-login-checking"),
@@ -277,7 +287,7 @@ pub fn show_real(
                             .strong()
                             .color(p.ink),
                     );
-                    Frame::new().fill(p.field).inner_margin(Margin::same(14)).show(ui, |ui| {
+                    card(ui, p).show(ui, |ui| {
                         ui.set_width(width - 28.0);
                         egui::ScrollArea::vertical().max_height(140.0).show(ui, |ui| {
                             let notes = updater
@@ -330,9 +340,7 @@ pub fn show_real(
             if let Some(release) = &updater.release {
                 maintenance_summary(ui, p, release.maintenance);
             }
-            ui.add_space(10.0);
-            ui.separator();
-            ui.add_space(8.0);
+            ui.add_space(BEFORE_BUTTONS);
             match updater.state {
                 State::Offer => {
                     ui.horizontal(|ui| {

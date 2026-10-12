@@ -171,7 +171,9 @@ pub fn show(
                 ui.label(RichText::new(&state.message).color(p.warn));
             }
             if !state.warnings.is_empty() {
-                egui::CollapsingHeader::new(aurora_i18n::tr!("ao-import-warnings")).show(ui, |ui| {
+                // the title is also the id, as it was for the stock header
+                let warnings = aurora_i18n::tr!("ao-import-warnings");
+                widgets::collapsing(ui, p, warnings, warnings, false, |ui| {
                     egui::ScrollArea::vertical().max_height(85.0).show(ui, |ui| {
                         for warning in &state.warnings {
                             ui.label(warning);
@@ -424,8 +426,8 @@ pub fn show(
                     let edit = &mut state.cycle_edit.as_mut().expect("cycle editor initialized").1;
                     let apply = ui
                         .horizontal(|ui| {
-                            ui.checkbox(&mut edit.cycle, aurora_i18n::tr!("ao-cycle"));
-                            ui.checkbox(&mut edit.random, aurora_i18n::tr!("ao-random"));
+                            toggle(ui, p, "ao-cycle", &mut edit.cycle);
+                            toggle(ui, p, "ao-random", &mut edit.random);
                             ui.add(egui::DragValue::new(&mut edit.seconds).range(0.0..=86400.0).suffix(" s").speed(1.0));
                             widgets::flat_button(ui, p, aurora_i18n::tr!("common-apply")).clicked()
                         })
@@ -606,9 +608,14 @@ fn dialogs(ctx: &egui::Context, p: &Palette, inv: &mut Inventory, catalog: &inve
                     for id in folder.children {
                         if let Some(f) = inv.folders.get(&id)
                             && !f.library
-                            && ui.selectable_label(false, format!("▸ {}", f.info.name)).clicked()
                         {
-                            state.folder = id;
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 4.0;
+                                widgets::glyph(ui, "folder-filled", p.muted, 14.0);
+                                if ui.selectable_label(false, &f.info.name).clicked() {
+                                    state.folder = id;
+                                }
+                            });
                         }
                     }
                     if folder.state != FetchState::Fetched {

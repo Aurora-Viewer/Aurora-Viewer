@@ -301,7 +301,10 @@ impl ThumbnailUi {
                     }
                 });
                 ui.horizontal(|ui| {
-                    if ui.add_enabled(ready && self.selected.is_some(), egui::Button::new("OK")).clicked() {
+                    if ui
+                        .add_enabled(ready && self.selected.is_some(), egui::Button::new(aurora_i18n::tr!("common-ok")))
+                        .clicked()
+                    {
                         chosen = self.selected;
                     }
                     if flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked() {

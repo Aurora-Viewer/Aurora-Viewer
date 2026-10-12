@@ -555,7 +555,8 @@ pub fn delete_warning(flags: &[u32]) -> Option<String> {
 
 /// The delete confirmation; Some(true) to delete, Some(false) to cancel.
 pub fn delete_confirm(ctx: &egui::Context, p: &Palette, text: &str) -> Option<bool> {
-    use egui::{Color32, RichText};
+    use crate::ui::widgets::{ActionKind, action_button};
+    use egui::RichText;
     let mut answer = None;
     let modal = crate::ui::widgets::Modal::new(egui::Id::new("object_delete_confirm")).show(ctx, |ui| {
         ui.set_width(340.0);
@@ -569,15 +570,12 @@ pub fn delete_confirm(ctx: &egui::Context, p: &Palette, text: &str) -> Option<bo
         ui.label(RichText::new(text).size(12.5).color(p.muted));
         ui.add_space(10.0);
         ui.horizontal(|ui| {
-            let yes = ui.add(
-                egui::Button::new(RichText::new(aurora_i18n::tr!("common-delete")).color(Color32::WHITE))
-                    .fill(p.danger)
-                    .corner_radius(ui.visuals().widgets.inactive.corner_radius),
-            );
-            if yes.clicked() {
+            let size = egui::Vec2::new(0.0, 26.0);
+            let delete = aurora_i18n::tr!("common-delete");
+            if action_button(ui, p, "trash-filled", delete, ActionKind::Danger, size).clicked() {
                 answer = Some(true);
             }
-            if super::widgets::flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked() {
+            if action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {
                 answer = Some(false);
             }
         });
@@ -674,7 +672,9 @@ pub fn external_link_confirm(ctx: &egui::Context, p: &Palette, url: &str, dont_w
         );
         ui.add_space(8.0);
         if danger.is_none() {
-            ui.checkbox(
+            super::widgets::checkbox(
+                ui,
+                p,
                 dont_warn,
                 RichText::new(aurora_i18n::tr!("ui-context-do-not-warn-me-again"))
                     .size(12.5)

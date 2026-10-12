@@ -2960,9 +2960,7 @@ impl App {
             if !self.egui_ctx.is_pointer_over_egui() {
                 self.sample_build_color();
             }
-            let picker = self.active_color_picker();
-            picker.pipette = false;
-            picker.sampled = None;
+            self.release_color_pipette();
         }
         self.update_hud_drag(self.scene.lists.hud_view);
         if let Some(cmd) = self.hud_drag.take().and_then(|drag| drag.release(&self.world)) {
@@ -4598,6 +4596,10 @@ impl App {
             actions = self.draw_ui(ui, &projector, &gfx.renderer);
             if inventory_drop.is_none() {
                 inventory_drop = self.inventory_drag_input(ui.ctx(), &gfx.renderer);
+            }
+            // the glass blurs the world: there is none behind the login screen
+            if self.in_world() {
+                ui::menu::glaze(ui.ctx(), &self.palette);
             }
             windows_ms += t.elapsed().as_secs_f32() * 1000.0;
         });
@@ -7379,7 +7381,11 @@ impl ApplicationHandler for App {
                     let pressed = ke.state == ElementState::Pressed;
                     // The color dialog owns Escape before camera shortcuts.
                     // egui already received the event above.
-                    if pressed && code == KeyCode::Escape && (self.build.ui.color_picker.is_open() || self.script_editors.color_open()) {
+                    let eyedropper = ui::widgets::color::pipette::armed(&self.egui_ctx);
+                    if pressed
+                        && code == KeyCode::Escape
+                        && (self.build.ui.color_picker.is_open() || self.script_editors.color_open() || eyedropper)
+                    {
                         return;
                     }
                     // learn the keyboard layout for the shortcut labels

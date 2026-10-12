@@ -486,10 +486,13 @@ fn color(ui: &mut egui::Ui, p: &Palette, label: &str, value: &mut Vec3, scale: f
         egui::FontId::proportional(12.0),
         p.ink,
     );
-    let mut c = (*value / scale).clamp(Vec3::ZERO, Vec3::ONE).to_array();
+    // linear components, as egui's color button edited them
+    let [r, g, b] = (*value / scale).clamp(Vec3::ZERO, Vec3::ONE).to_array();
+    let mut srgba = egui::Color32::from(egui::Rgba::from_rgb(r, g, b)).to_srgba_unmultiplied();
     ui.spacing_mut().interact_size = Vec2::new(44.0, 18.0);
-    if egui::color_picker::color_edit_button_rgb(ui, &mut c).changed() {
-        *value = Vec3::from_array(c) * scale;
+    if super::widgets::color_button(ui, p, ("sky_color", label), &mut srgba, false).changed() {
+        let linear = egui::Rgba::from(egui::Color32::from_rgb(srgba[0], srgba[1], srgba[2]));
+        *value = Vec3::new(linear.r(), linear.g(), linear.b()) * scale;
     }
 }
 

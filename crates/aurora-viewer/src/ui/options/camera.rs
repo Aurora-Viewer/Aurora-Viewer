@@ -113,11 +113,8 @@ pub(super) fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings) -> bool {
                 if ch {
                     c.fov = deg.to_radians();
                 }
-                if ui
-                    .small_button("D")
-                    .on_hover_text(aurora_i18n::tr!("ui-options-camera-default-value"))
-                    .clicked()
-                {
+                let default = aurora_i18n::tr!("ui-options-camera-default-value");
+                if crate::ui::widgets::icon_button(ui, p, "restore", default, true) {
                     c.fov = DEFAULT_FOV;
                     return true;
                 }

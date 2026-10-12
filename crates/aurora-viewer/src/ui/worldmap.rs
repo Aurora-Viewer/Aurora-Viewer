@@ -979,7 +979,7 @@ fn item_tooltip_of(it: &aurora_net::MapItem, kind: ItemKind) -> String {
 
 fn legend_check(ui: &mut egui::Ui, p: &Palette, on: &mut bool, label: &str, icon: Option<&str>, col: Color32) {
     ui.horizontal(|ui| {
-        ui.checkbox(on, "");
+        super::widgets::checkbox(ui, p, on, "");
         let (r, _) = ui.allocate_exact_size(Vec2::splat(16.0), Sense::hover());
         match icon {
             Some(name) => draw_icon(ui.painter(), name, r.center(), 14.0, col),

@@ -100,6 +100,111 @@ pub fn section_header(ui: &mut egui::Ui, p: &Palette, icon: &str, title: &str) {
     ui.add_space(4.0);
 }
 
+/// What [`collapsing`] returns: its header row, and the value of the body
+/// while the section shows it.
+pub struct Collapsing<R> {
+    pub header: egui::Response,
+    pub body: Option<R>,
+}
+
+/// Collapsible section with the header of the interface: a full-width row
+/// with a Tabler caret and the section's title, lit like a toolbar pill under
+/// the pointer, without a line. The open state and the fold animation are
+/// egui's (`CollapsingState`), under the id a stock `CollapsingHeader` gave
+/// to the same `id_salt`: what the user left open stays open.
+pub fn collapsing<R>(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    id_salt: impl egui::AsIdSalt,
+    title: impl Into<egui::WidgetText>,
+    default_open: bool,
+    body: impl FnOnce(&mut egui::Ui) -> R,
+) -> Collapsing<R> {
+    collapsing_forced(ui, p, id_salt, title, default_open, None, body)
+}
+
+/// [`collapsing`] whose state can be imposed for this frame: `Some(true)`
+/// opens the section (to reveal something in it), `None` leaves it to the
+/// user.
+pub fn collapsing_forced<R>(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    id_salt: impl egui::AsIdSalt,
+    title: impl Into<egui::WidgetText>,
+    default_open: bool,
+    open: Option<bool>,
+    body: impl FnOnce(&mut egui::Ui) -> R,
+) -> Collapsing<R> {
+    // One unit with the body under the header, like the stock header: a
+    // section can sit in a grid, and its id is the one egui gave it there.
+    ui.vertical(|ui| section(ui, p, egui::IdSalt::new(id_salt), title.into(), default_open, open, body))
+        .inner
+}
+
+fn section<R>(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    id_salt: egui::IdSalt,
+    title: egui::WidgetText,
+    default_open: bool,
+    open: Option<bool>,
+    body: impl FnOnce(&mut egui::Ui) -> R,
+) -> Collapsing<R> {
+    const CARET: f32 = 12.0;
+    let id = ui.make_persistent_id(id_salt);
+    let mut state = egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, default_open);
+    // a plain title takes the style of the section titles; a caller's own
+    // rich text or galley (an outfit's name with its suffix) is kept
+    let title = match title {
+        egui::WidgetText::Text(text) => RichText::new(text).size(12.5).strong().color(p.ink).into(),
+        styled => styled,
+    };
+    let indent = ui.spacing().indent;
+    let width = ui.available_width();
+    let galley = title.into_galley(
+        ui,
+        Some(egui::TextWrapMode::Truncate),
+        (width - indent - 4.0).max(0.0),
+        egui::TextStyle::Button,
+    );
+    let height = ui.spacing().interact_size.y.max(galley.size().y + 4.0);
+    let (_, rect) = ui.allocate_space(Vec2::new(width, height));
+    let mut header = ui.interact(rect, id, Sense::click());
+    if let Some(open) = open {
+        if open != state.is_open() {
+            state.toggle(ui);
+            header.mark_changed();
+        }
+    } else if header.clicked() {
+        state.toggle(ui);
+        header.mark_changed();
+    }
+    header.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::CollapsingHeader, ui.is_enabled(), galley.text()));
+    if ui.is_rect_visible(rect) {
+        let hot = header.hovered() || header.has_focus();
+        if hot {
+            ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
+        }
+        let caret = if state.is_open() {
+            "caret-down-filled"
+        } else {
+            "caret-right-filled"
+        };
+        if let Some(icon) = crate::ui::icons::global(caret) {
+            ui.painter().image(
+                icon.id(),
+                egui::Rect::from_center_size(egui::pos2(rect.left() + indent / 2.0, rect.center().y), Vec2::splat(CARET)),
+                egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                if hot { p.ink } else { p.muted },
+            );
+        }
+        let text = egui::pos2(rect.left() + indent, rect.center().y - galley.size().y / 2.0);
+        ui.painter().galley(text, galley, p.ink);
+    }
+    let body = state.show_body_indented(&header, ui, body).map(|r| r.inner);
+    Collapsing { header, body }
+}
+
 pub fn stat(ui: &mut egui::Ui, p: &Palette, label: &str, value: &str) {
     ui.vertical(|ui| {
         ui.label(RichText::new(label).size(11.0).color(p.muted));
@@ -108,31 +213,70 @@ pub fn stat(ui: &mut egui::Ui, p: &Palette, label: &str, value: &str) {
     });
 }
 
+/// Title icon of a window, from its id: the icon its function has in the
+/// toolbar and the menus. A window opened by another one (a picker, a tool of
+/// the script editor) is named after its owner: its own function comes first.
 pub(super) fn window_icon(id: &str) -> &'static str {
+    if id.contains("avatar_picker") || id.starts_with("inventory_share") {
+        return "users-group";
+    }
+    if id.contains("color_picker") {
+        return "palette-filled";
+    }
+    if id.starts_with("notecard") {
+        return "file-text-filled";
+    }
     if id.starts_with("inventory") {
         return "folder-filled";
     }
     if id.starts_with("profile") {
         return "user-filled";
     }
+    if id.starts_with("bug_report") {
+        return "bug-filled";
+    }
     if id.contains("texture") || id.contains("thumbnail") {
         return "photo-filled";
     }
-    if id.contains("script") {
+    // the tools of a script editor carry its egui id and their own suffix
+    if id.ends_with("_search") {
+        return "search-filled";
+    }
+    if id.ends_with("_help") {
+        return "help-circle-filled";
+    }
+    if id.ends_with("_library") {
+        return "library-filled";
+    }
+    if id.contains("script") || id.ends_with("_goto") || id.ends_with("_revert") || id.ends_with("_file_conflict") {
         return "code";
     }
     if id.contains("place") || id.contains("land") {
         return "map-pin-filled";
     }
+    if id.starts_with("ao") {
+        return "man-filled";
+    }
+    if id.starts_with("build_tools") {
+        return "box";
+    }
     match id {
-        "appearance" => "shirt-filled",
+        "appearance" | "appearance_item_profile" => "shirt-filled",
         "conversations" | "contacts" => "messages-filled",
-        "people" | "avatar_picker" => "users-group",
+        "people" | "group_picker" | "contact_set_config" => "users-group",
         "options" => "settings-filled",
         "worldmap" | "minimap" => "map",
         "environment_selector" | "personal_lighting" => "sun-filled",
-        "performance" => "gauge-filled",
-        "ao" => "man-filled",
+        "perf" | "performance" => "gauge-filled",
+        "display_name" => "id-filled",
+        "object_purchase" => "shopping-cart-filled",
+        "object_payment" => "coin-filled",
+        "object_contents" => "package",
+        "object_weights" => "box",
+        "build_options" => "adjustments-filled",
+        "media_settings" => "device-tv-filled",
+        "bulk_perms" => "lock-filled",
+        "task_item_props" => "file-info-filled",
         _ => "layout-grid-filled",
     }
 }
@@ -235,5 +379,87 @@ impl Modal {
             }
         }
         response
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn frame(ctx: &egui::Context, events: Vec<egui::Event>, mut body: impl FnMut(&mut egui::Ui)) {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(400.0, 300.0))),
+                events,
+                ..Default::default()
+            },
+            |ui| body(ui),
+        );
+        output.textures_delta.clear();
+    }
+
+    #[test]
+    fn collapsing_keeps_the_id_and_the_state_of_the_stock_header() {
+        let ctx = egui::Context::default();
+        let p = crate::theme::Theme::default().palette();
+        // a stock header opened by the user under a salt, and one under its title
+        let (mut salted, mut titled) = (None, None);
+        frame(&ctx, vec![], |ui| {
+            let stock = egui::CollapsingHeader::new("Title")
+                .id_salt(("section", 7))
+                .open(Some(true))
+                .show(ui, |_| {});
+            salted = Some(stock.header_response.id);
+            let stock = egui::CollapsingHeader::new("Other title").show(ui, |_| {});
+            titled = Some(stock.header_response.id);
+        });
+        // the shared widget finds both: same ids, and the open state left there
+        let mut bodies = 0;
+        frame(&ctx, vec![], |ui| {
+            let section = collapsing(ui, &p, ("section", 7), "Title", false, |_| bodies += 1);
+            assert_eq!(Some(section.header.id), salted);
+            let section = collapsing(ui, &p, "Other title", "Other title", false, |_| bodies += 10);
+            assert_eq!(Some(section.header.id), titled);
+        });
+        assert_eq!(bodies, 1, "open as the stock header left it; the other one closed by default");
+    }
+
+    #[test]
+    fn collapsing_folds_on_a_click_of_its_header_and_can_be_forced_open() {
+        let ctx = egui::Context::default();
+        let p = crate::theme::Theme::default().palette();
+        let mut header = egui::Rect::NOTHING;
+        let mut shown = false;
+        let mut forced = None;
+        let draw = |events: Vec<egui::Event>, forced: Option<bool>, header: &mut egui::Rect, shown: &mut bool| {
+            frame(&ctx, events, |ui| {
+                let section = collapsing_forced(ui, &p, "fold", "Section", true, forced, |ui| {
+                    ui.label("body");
+                });
+                *header = section.header.rect;
+                *shown = section.body.is_some();
+            });
+        };
+        draw(vec![], forced, &mut header, &mut shown);
+        assert!(shown, "open by default");
+        assert!(header.width() > 300.0, "the header is a full-width row");
+        let pos = header.center();
+        for pressed in [true, false] {
+            let click = egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            };
+            draw(vec![egui::Event::PointerMoved(pos), click], forced, &mut header, &mut shown);
+        }
+        // the fold animation ends within a few frames of test time
+        for _ in 0..40 {
+            draw(vec![], forced, &mut header, &mut shown);
+        }
+        assert!(!shown, "a click on the header folds the section");
+        forced = Some(true);
+        draw(vec![], forced, &mut header, &mut shown);
+        assert!(shown, "forcing it open reveals the body");
     }
 }

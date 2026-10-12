@@ -318,7 +318,7 @@ impl PlacesUi {
             Confirm::Clear => (
                 aurora_i18n::tr!("common-teleport-history"),
                 aurora_i18n::tr!("ui-places-do-you-really-want-to-clear-your-teleport-history").to_owned(),
-                "OK",
+                aurora_i18n::tr!("common-ok"),
             ),
         };
         let mut answer = None;

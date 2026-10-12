@@ -1527,16 +1527,15 @@ fn set_buttons(
     }
     let move_btn = side_button_resp(ui, p, aurora_i18n::tr!("ui-contacts-move"), mutable && has_sel)
         .on_hover_text(aurora_i18n::tr!("ui-contacts-move-this-resident-to-another-contact-set"));
-    egui::Popup::menu(&move_btn).show(|ui| {
+    menu::dropdown(&move_btn, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
         let others: Vec<&String> = set_names.iter().filter(|s| s.as_str() != choice).collect();
         if others.is_empty() {
-            ui.add_enabled(false, egui::Button::new(aurora_i18n::tr!("ui-contacts-no-other-contact-sets")));
+            menu::item_if(ui, p, "users-group", aurora_i18n::tr!("ui-contacts-no-other-contact-sets"), false);
         }
         for to in others {
-            if ui.button(to).clicked() {
+            if menu::item(ui, p, "users-group", to) {
                 let social = &world.social;
                 world.contact_sets.move_to_set(&sel, choice, to, |id| social.is_friend(id));
-                ui.close();
             }
         }
     });
@@ -1663,17 +1662,13 @@ fn set_config_window(ctx: &egui::Context, p: &Palette, world: &mut World, st: &m
         });
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            let mut c = cfg.color;
-            if ui.color_edit_button_rgba_unmultiplied(&mut c).changed() {
+            if let Some(c) = set_color_button(ui, p, "set_color", cfg.color) {
                 world.contact_sets.set_color(&set, c);
             }
             ui.label(RichText::new(aurora_i18n::tr!("common-color")).size(12.5).color(p.ink));
         });
         let mut sort = cfg.sort_by_online;
-        if ui
-            .checkbox(&mut sort, aurora_i18n::tr!("ui-contacts-sort-by-online-status"))
-            .changed()
-        {
+        if widgets::switch_labeled(ui, p, &mut sort, aurora_i18n::tr!("ui-contacts-sort-by-online-status")).changed() {
             world.contact_sets.set_sort_by_online(&set, sort);
         }
         ui.separator();
@@ -1684,17 +1679,20 @@ fn set_config_window(ctx: &egui::Context, p: &Palette, world: &mut World, st: &m
                 .color(p.ink),
         );
         ui.horizontal(|ui| {
-            let mut c = world.contact_sets.default_color;
-            if ui.color_edit_button_rgba_unmultiplied(&mut c).changed() {
+            if let Some(c) = set_color_button(ui, p, "default_color", world.contact_sets.default_color) {
                 world.contact_sets.set_default_color(c);
             }
             ui.label(RichText::new(aurora_i18n::tr!("ui-contacts-default-color")).size(12.5).color(p.ink));
         });
-        ui.checkbox(
+        widgets::switch_labeled(
+            ui,
+            p,
             &mut settings.set_list_icons,
             aurora_i18n::tr!("ui-contacts-show-profile-pictures-in-contact-set-lists"),
         );
-        ui.checkbox(
+        widgets::switch_labeled(
+            ui,
+            p,
             &mut settings.colorize_friends,
             aurora_i18n::tr!("ui-contacts-friend-list-color-based-on-contact-set"),
         );
@@ -1706,12 +1704,27 @@ fn set_config_window(ctx: &egui::Context, p: &Palette, world: &mut World, st: &m
 
 // ------------------------------------------------------------------ dialogs
 
+/// Swatch of a contact set's color (linear, straight alpha, as egui's
+/// color button edited it): the new color when it changed.
+fn set_color_button(ui: &mut egui::Ui, p: &Palette, id: &str, color: [f32; 4]) -> Option<[f32; 4]> {
+    let [r, g, b, a] = color;
+    let mut srgba = Color32::from(egui::Rgba::from_rgba_unmultiplied(r, g, b, a)).to_srgba_unmultiplied();
+    let changed = widgets::color_button(ui, p, id, &mut srgba, true).changed();
+    let [r, g, b, a] = srgba;
+    changed.then(|| egui::Rgba::from(Color32::from_rgba_unmultiplied(r, g, b, a)).to_rgba_unmultiplied())
+}
+
 /// The pending confirmation or prompt, as a modal window.
 fn dialogs(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut ContactsUi, actions: &mut Vec<ContactsAction>) {
     let Some(d) = st.dialog.as_mut() else {
         return;
     };
     let name = |id: &Uuid| world.social.name_of(id);
+    // removing a friend, a set or its members is the destructive answer
+    let (icon, kind) = match d {
+        Dialog::RemoveFriends(_) | Dialog::RemoveSet(_) | Dialog::RemoveFromSet { .. } => ("trash-filled", widgets::ActionKind::Danger),
+        _ => ("check", widgets::ActionKind::Primary),
+    };
     let (title, text, ok, has_input) = match d {
         Dialog::RemoveFriends(ids) if ids.len() == 1 => (
             aurora_i18n::tr!("ui-contacts-remove-a-friend"),
@@ -1719,13 +1732,13 @@ fn dialogs(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut Contact
                 "ui-contacts-do-you-want-to-remove-from-your-friends-list",
                 value0 = name(&ids[0]).to_string()
             ),
-            "OK",
+            aurora_i18n::tr!("common-ok"),
             false,
         ),
         Dialog::RemoveFriends(_) => (
             aurora_i18n::tr!("ui-contacts-remove-from-friends"),
             aurora_i18n::tr!("ui-contacts-do-you-want-to-remove-multiple-residents-from-your").into(),
-            "OK",
+            aurora_i18n::tr!("common-ok"),
             false,
         ),
         Dialog::ModifyRights { friend, grant: true, .. } => (
@@ -1761,7 +1774,7 @@ fn dialogs(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut Contact
                 "ui-contacts-you-can-track-your-friends-on-the-map-and",
                 value0 = name(to).to_string()
             ),
-            "OK",
+            aurora_i18n::tr!("common-ok"),
             true,
         ),
         Dialog::TeleportRequest { to, .. } => (
@@ -1779,7 +1792,7 @@ fn dialogs(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut Contact
         Dialog::RemoveSet(s) => (
             aurora_i18n::tr!("ui-contacts-delete-a-contact-set"),
             aurora_i18n::tr!("ui-contacts-are-you-sure-you-want-to-delete-you-cannot", s = s.to_string()),
-            "OK",
+            aurora_i18n::tr!("common-ok"),
             false,
         ),
         Dialog::RemoveFromSet { set, ids } => {
@@ -1797,7 +1810,12 @@ fn dialogs(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut Contact
                     set = set.to_string()
                 )
             };
-            (aurora_i18n::tr!("ui-contacts-remove-from-contact-set"), text, "OK", false)
+            (
+                aurora_i18n::tr!("ui-contacts-remove-from-contact-set"),
+                text,
+                aurora_i18n::tr!("common-ok"),
+                false,
+            )
         }
         Dialog::SetAlias { ids, .. } => {
             let text = if ids.len() > 1 {
@@ -1834,15 +1852,12 @@ fn dialogs(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut Contact
         }
         ui.add_space(10.0);
         ui.horizontal(|ui| {
-            let yes = ui.add(
-                egui::Button::new(RichText::new(ok).color(Color32::WHITE))
-                    .fill(p.violet)
-                    .corner_radius(ui.visuals().widgets.inactive.corner_radius),
-            );
-            if yes.clicked() {
+            let size = Vec2::new(0.0, 26.0);
+            if widgets::action_button(ui, p, icon, ok, kind, size).clicked() {
                 done = Some(true);
             }
-            if widgets::flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked() {
+            let cancel = aurora_i18n::tr!("common-cancel");
+            if widgets::action_button(ui, p, "x", cancel, widgets::ActionKind::Flat, size).clicked() {
                 done = Some(false);
             }
         });

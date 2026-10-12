@@ -669,7 +669,7 @@ pub fn show(
                 link_button(ui, p, "brand-github-filled", "GitHub", crate::links::GITHUB);
                 link_button(ui, p, "world-filled", aurora_i18n::tr!("ui-login-website"), crate::links::WEBSITE);
                 let label = aurora_i18n::tr!("bug-title");
-                if widgets::action_button(ui, p, "bug-filled", label, ActionKind::Flat, Vec2::new(0.0, BAR_BUTTON)).clicked() {
+                if widgets::action_button(ui, p, "bug-filled", label, ActionKind::Caution, Vec2::new(0.0, BAR_BUTTON)).clicked() {
                     action = LoginAction::ReportBug;
                 }
             });
@@ -685,7 +685,9 @@ pub fn show(
                 let version = aurora_i18n::tr!("ui-login-aurora-viewer-v", value0 = aurora_version::version().to_string());
                 let version = ui.painter().layout_no_wrap(version, egui::FontId::proportional(11.5), p.muted_dim);
                 let (line, _) = ui.allocate_exact_size(Vec2::new(version.size().x, BAR_BUTTON), Sense::hover());
-                widgets::paint_ink_left(ui.painter(), version, line.left_center(), p.muted_dim);
+                // on the line box, like the labels of the buttons beside it
+                let at = egui::pos2(line.left(), line.center().y - version.size().y / 2.0).round();
+                ui.painter().galley(at, version, p.muted_dim);
                 let label = aurora_i18n::tr!("common-quit");
                 if widgets::action_button(ui, p, "power", label, ActionKind::FlatDanger, Vec2::new(0.0, BAR_BUTTON)).clicked() {
                     action = LoginAction::Quit;

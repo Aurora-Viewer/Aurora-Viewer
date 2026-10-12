@@ -9,7 +9,7 @@ use crate::build::contents::AT_LSL_TEXT;
 use crate::theme::Palette;
 use crate::ui::inventory::permissions::Permissions;
 use crate::ui::inventory::{InvDrag, item_icon};
-use crate::ui::widgets;
+use crate::ui::{menu, widgets};
 use crate::world::World;
 use aurora_net::build::{TaskItem, perm};
 use egui::{RichText, Vec2};
@@ -227,14 +227,14 @@ fn item_row(
         let script = item.asset_type == AT_LSL_TEXT;
         let can_take = item.owner_mask & perm::COPY != 0 && item.owner_mask & perm::TRANSFER != 0
             || tool.props.get(&object_id).is_some_and(|pr| pr.owner_id == world.agent_id);
-        r.context_menu(|ui| {
-            if ui
-                .add_enabled(script || item.asset_type == 7, egui::Button::new(aurora_i18n::tr!("common-open")))
-                .on_disabled_hover_text(aurora_i18n::tr!(
-                    "build-ui-contents-opening-items-inside-an-object-is-not-available-yet"
-                ))
-                .clicked()
-            {
+        menu::context_menu(&r, p, |ui| {
+            let can_open = script || item.asset_type == 7;
+            let no_open = if can_open {
+                ""
+            } else {
+                aurora_i18n::tr!("build-ui-contents-opening-items-inside-an-object-is-not-available-yet")
+            };
+            if menu::item_tip(ui, p, "folder-open-filled", aurora_i18n::tr!("common-open"), can_open, no_open) {
                 if script {
                     tool.ui.requests.push(super::Request::Script {
                         object: object_id,
@@ -243,50 +243,31 @@ fn item_row(
                 } else {
                     tool.ui.open_notecard = Some((object_id, item.item_id));
                 }
-                ui.close();
             }
-            if ui.button(aurora_i18n::tr!("common-properties")).clicked() {
+            if menu::item(ui, p, "info-circle-filled", aurora_i18n::tr!("common-properties")) {
                 tool.ui.item_properties = Some(item.clone());
-                ui.close();
             }
-            if ui
-                .add_enabled(editable && item_modify, egui::Button::new(aurora_i18n::tr!("common-rename")))
-                .clicked()
-            {
+            if menu::item_if(ui, p, "pencil-filled", aurora_i18n::tr!("common-rename"), editable && item_modify) {
                 tool.ui.rename = Some((item.item_id, item.name.clone()));
-                ui.close();
             }
-            if ui
-                .add_enabled(editable, egui::Button::new(aurora_i18n::tr!("common-delete")))
-                .clicked()
-            {
+            if menu::item_if(ui, p, "trash-filled", aurora_i18n::tr!("common-delete"), editable) {
                 tool.remove_item(world, idx, item.item_id);
-                ui.close();
             }
-            if ui
-                .add_enabled(can_take, egui::Button::new(aurora_i18n::tr!("build-ui-contents-copy-to-inventory")))
-                .on_hover_text(aurora_i18n::tr!("build-ui-contents-like-dragging-the-item-to-inventory"))
-                .clicked()
-            {
+            let take = aurora_i18n::tr!("build-ui-contents-copy-to-inventory");
+            let take_tip = aurora_i18n::tr!("build-ui-contents-like-dragging-the-item-to-inventory");
+            if menu::item_tip(ui, p, "briefcase-filled", take, can_take, take_tip) {
                 tool.copy_item_to_inventory(world, idx, item, uuid::Uuid::nil());
-                ui.close();
             }
             if item.asset_type == AT_LSL_TEXT {
-                ui.separator();
+                menu::separator(ui, p);
                 let on = running.map(|r| r.0).unwrap_or(true);
-                if ui
-                    .add_enabled(
-                        editable,
-                        egui::Button::new(if on {
-                            aurora_i18n::tr!("common-stop")
-                        } else {
-                            aurora_i18n::tr!("build-ui-contents-run")
-                        }),
-                    )
-                    .clicked()
-                {
+                let (icon, label) = if on {
+                    ("player-stop-filled", aurora_i18n::tr!("common-stop"))
+                } else {
+                    ("player-play-filled", aurora_i18n::tr!("build-ui-contents-run"))
+                };
+                if menu::item_if(ui, p, icon, label, editable) {
                     tool.set_script_running(world, idx, item.item_id, !on);
-                    ui.close();
                 }
             }
         });

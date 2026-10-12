@@ -212,13 +212,15 @@ pub(super) fn dialogs(
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 let valid = !name.trim().is_empty() && st.pending.is_none();
-                if ui.add_enabled(valid, egui::Button::new("OK").fill(p.violet)).clicked()
+                use widgets::{ActionKind, action_button, action_button_if};
+                let size = egui::Vec2::new(0.0, 26.0);
+                if action_button_if(ui, p, "check", aurora_i18n::tr!("common-ok"), ActionKind::Primary, size, valid).clicked()
                     || (valid && ui.input(|i| i.key_pressed(egui::Key::Enter)))
                 {
                     actions.push(Action::Category(id, Update::Rename(name.trim().into())));
                     close = true;
                 }
-                if widgets::flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked() {
+                if action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {
                     close = true;
                 }
             });
@@ -250,18 +252,15 @@ pub(super) fn dialogs(
             });
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                if ui
-                    .add_enabled(
-                        st.pending.is_none(),
-                        egui::Button::new(if delete {
-                            aurora_i18n::tr!("common-delete")
-                        } else {
-                            aurora_i18n::tr!("common-save")
-                        })
-                        .fill(p.violet),
-                    )
-                    .clicked()
-                {
+                use widgets::{ActionKind, action_button, action_button_if};
+                let size = egui::Vec2::new(0.0, 26.0);
+                // moving an outfit to the trash is the destructive answer
+                let (icon, label, kind) = if delete {
+                    ("trash-filled", aurora_i18n::tr!("common-delete"), ActionKind::Danger)
+                } else {
+                    ("device-floppy-filled", aurora_i18n::tr!("common-save"), ActionKind::Primary)
+                };
+                if action_button_if(ui, p, icon, label, kind, size, st.pending.is_none()).clicked() {
                     if delete {
                         if let Some(trash) = model::system_folder(&world.inventory, 14) {
                             actions.push(Action::Category(id, Update::Trash(trash)));
@@ -271,7 +270,7 @@ pub(super) fn dialogs(
                     }
                     close = true;
                 }
-                if widgets::flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked() {
+                if action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {
                     close = true;
                 }
             });
