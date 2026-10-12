@@ -348,7 +348,8 @@ impl AgentState {
         // LLDrawable::updateXform: 0.06 s is a half-life, not an exponential
         // time constant. Snap tiny or very large residual corrections.
         let k = (1.0 - 2.0_f32.powf(-dt / OBJECT_DAMPING_TIME)).clamp(0.0, 1.0);
-        let damped = self.position.lerp(self.predicted_pos, k);
+        // (`lerp_monotonic`: an avatar at rest stays where it is, see Camera::update)
+        let damped = self.position.lerp_monotonic(self.predicted_pos, k);
         let residual = damped.distance_squared(self.predicted_pos);
         let min_distance = 0.001_f32.powi(2) * camera_distance.powi(2);
         self.position = if residual >= min_distance && residual <= 10.0_f32.powi(2) {
