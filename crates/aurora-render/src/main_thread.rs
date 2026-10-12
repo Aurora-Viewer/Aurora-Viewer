@@ -142,6 +142,9 @@ pub struct Renderer {
     pick_requests: Vec<crate::pick::ClickRequest>,
     pick_answers: Vec<crate::pick::ClickAnswer>,
     pick_ticket: u64,
+    /// The same for the faces drawn under a pixel (`request_drawn`).
+    drawn_requests: Vec<crate::drawn_pick::DrawnRequest>,
+    drawn_answers: Vec<crate::drawn_pick::DrawnAnswer>,
     /// Frames handed over.
     frames: u64,
     /// The renderer's side of the last frame result, and whether it came
@@ -344,6 +347,8 @@ impl Renderer {
             pick_requests: Vec::new(),
             pick_answers: Vec::new(),
             pick_ticket: 0,
+            drawn_requests: Vec::new(),
+            drawn_answers: Vec::new(),
             frames: 0,
             last_stats: RenderStats::default(),
             fresh: false,
@@ -617,11 +622,15 @@ impl Renderer {
     fn apply(&mut self, mut r: FrameResult) {
         self.hover_latest = r.hover;
         self.pick_answers.append(&mut r.picks);
+        self.drawn_answers.append(&mut r.drawn);
         // (the answer of a click given up while it was in flight is never
         // taken: the next ones push it out)
         const KEPT: usize = 16;
         if self.pick_answers.len() > KEPT {
             self.pick_answers.drain(..self.pick_answers.len() - KEPT);
+        }
+        if self.drawn_answers.len() > KEPT {
+            self.drawn_answers.drain(..self.drawn_answers.len() - KEPT);
         }
         self.cull.last = r.cull;
         if let Some(c) = r.captured {
@@ -648,6 +657,8 @@ impl Renderer {
     fn fail_picks(&mut self) {
         let asked = self.pick_requests.drain(..).map(|(ticket, _, _)| (ticket, None));
         self.pick_answers.extend(asked);
+        let asked = self.drawn_requests.drain(..).map(|(ticket, _, _)| (ticket, Default::default()));
+        self.drawn_answers.extend(asked);
     }
 
     /// Close the frame and have it drawn: with a render thread the packet
@@ -707,6 +718,7 @@ impl Renderer {
             settings: self.settings,
             hover: self.hover_request.take(),
             picks: std::mem::take(&mut self.pick_requests),
+            drawn: std::mem::take(&mut self.drawn_requests),
             capture,
         };
         self.frames += 1;
@@ -847,6 +859,41 @@ impl Renderer {
     pub fn forget_pick(&mut self, ticket: u64) {
         self.pick_requests.retain(|(t, _, _)| *t != ticket);
         self.pick_answers.retain(|(t, _)| *t != ticket);
+    }
+
+    /// Ask what the next frame draws under a pixel: the draw record and
+    /// the surface point of the nearest opaque or masked face and of the
+    /// nearest blended face in front of it, posed and placed as shown
+    /// (a rigged mesh is where the GPU skins it). Nothing waits: the frame
+    /// draws its faces once more through a camera narrowed to that pixel
+    /// (drawn_pick.rs), and [`Self::take_drawn`] gives the answer a few
+    /// frames later. Costs that pass, in that frame only.
+    pub fn request_drawn(&mut self, x: f32, y: f32) -> u64 {
+        let ticket = self.pick_ticket;
+        self.pick_ticket += 1;
+        let (w, h) = self.size;
+        if x < 0.0 || y < 0.0 || x >= w as f32 || y >= h as f32 || self.failed {
+            self.drawn_answers.push((ticket, Default::default()));
+        } else {
+            self.drawn_requests.push((ticket, x as u32, y as u32));
+        }
+        ticket
+    }
+
+    /// The answer to a [`Self::request_drawn`], once: None while it has
+    /// not come back.
+    pub fn take_drawn(&mut self, ticket: u64) -> Option<crate::Drawn> {
+        if !self.drawn_answers.iter().any(|(t, _)| *t == ticket) {
+            self.collect();
+        }
+        let i = self.drawn_answers.iter().position(|(t, _)| *t == ticket)?;
+        Some(self.drawn_answers.swap_remove(i).1)
+    }
+
+    /// Give up a [`Self::request_drawn`] nobody waits for any more.
+    pub fn forget_drawn(&mut self, ticket: u64) {
+        self.drawn_requests.retain(|(t, _, _)| *t != ticket);
+        self.drawn_answers.retain(|(t, _)| *t != ticket);
     }
 
     /// Like [`Self::request_pick`], waiting for the answer: for the frame in

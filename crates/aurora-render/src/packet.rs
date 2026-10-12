@@ -19,12 +19,13 @@
 //!   (ui_frame.rs);
 //! - the window surface state and the render settings to apply;
 //! - the readbacks asked for: the pixel under the cursor, the pixels
-//!   clicked on, a capture.
+//!   clicked on (their depth, the faces drawn there), a capture.
 //!
 //! A [`FrameResult`] comes back once the frame is presented: its
 //! statistics, the readbacks that arrived, and the packet's buffers to
 //! fill again.
 
+use crate::drawn_pick::{DrawnAnswer, DrawnRequest};
 use crate::gpu_cull::CullCounts;
 use crate::pick::{ClickAnswer, ClickRequest};
 use crate::types::{DrawLists, FrameParams, RenderSettings, RenderStats};
@@ -112,6 +113,9 @@ pub(crate) struct FramePacket {
     /// Clicks made on the frame before this one: their depth is copied
     /// before this frame is encoded, and answered with a later result.
     pub picks: Vec<ClickRequest>,
+    /// Pixels whose drawn faces to read back: drawn again in this frame,
+    /// answered with a later result (drawn_pick.rs).
+    pub drawn: Vec<DrawnRequest>,
     pub capture: Option<Capture>,
 }
 
@@ -123,6 +127,8 @@ pub(crate) struct FrameResult {
     pub hover: Option<Vec3>,
     /// The clicks answered since the last result.
     pub picks: Vec<ClickAnswer>,
+    /// What was drawn under the pixels asked, by ticket.
+    pub drawn: Vec<DrawnAnswer>,
     /// Last GPU culling counts read back.
     pub cull: CullCounts,
     /// The capture asked with this frame (width, height, RGBA8); None when
