@@ -89,7 +89,7 @@ pub const SCULPT_DEFAULT: SculptParams = SculptParams {
 
 impl BuildTool {
     /// A tag for a capability request.
-    pub fn cap(&mut self, handle: RegionHandle, cap: &str, put: bool, body: aurora_llsd::Llsd, purpose: CapPurpose) {
+    pub fn cap(&mut self, handle: RegionHandle, cap: &str, put: bool, body: aurora_llsd::Llsd, purpose: CapPurpose) -> u64 {
         let tag = self.next_tag;
         self.next_tag += 1;
         self.caps.insert(tag, purpose);
@@ -100,6 +100,7 @@ impl BuildTool {
             body,
             tag,
         });
+        tag
     }
 
     // ---- what is selected

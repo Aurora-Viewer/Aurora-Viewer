@@ -2157,6 +2157,9 @@ pub fn events() -> Vec<NetEvent> {
     });
     ev.extend(overrides);
 
+    if std::env::var_os("AURORA_DEMO_REPLACE_PRIM").is_some() {
+        ev.extend(crate::build::replace::demo::events(HANDLE, height(135.0, 125.0)));
+    }
     // our avatar + a second one
     let mut avatars = Vec::new();
     for (k, (pos, first, last)) in [

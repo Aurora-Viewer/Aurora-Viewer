@@ -13,6 +13,7 @@ mod features;
 mod floaters;
 mod general;
 mod object;
+mod replace;
 mod texture;
 mod tools;
 
@@ -174,6 +175,12 @@ const LABEL_W: f32 = 112.0;
 /// link, edit linked parts, grid, undo...
 pub fn shortcuts(ctx: &egui::Context, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings) {
     if ctx.egui_wants_keyboard_input() {
+        return;
+    }
+    if tool.replacement_active() {
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            tool.cancel_replacement(world);
+        }
         return;
     }
     use egui::Key;
