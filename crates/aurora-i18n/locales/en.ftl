@@ -3679,6 +3679,7 @@ script-preferences-switches = switch() statement
 script-preferences-lazy-lists = Lazy lists
 script-preferences-disk-includes = #include from local disk
 script-preferences-include-path = Include directory
+script-preferences-choose-directory = Choose the folder…
 script-preferences-owner-say = Route llOwnerSay to script debug
 script-preferences-recompile = Allow recompilation without source changes
 script-preferences-external = External editor command

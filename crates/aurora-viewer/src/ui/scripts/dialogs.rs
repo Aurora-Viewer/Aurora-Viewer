@@ -184,7 +184,8 @@ impl Preferences {
                         ui.add_enabled_ui(settings.disk_includes, |ui| {
                             ui.horizontal(|ui| {
                                 ui.add(egui::TextEdit::singleline(&mut settings.include_directory).desired_width(370.0));
-                                if ui.add_enabled(self.directory.is_none(), egui::Button::new("…")).clicked() {
+                                let choose = aurora_i18n::tr!("script-preferences-choose-directory");
+                                if crate::ui::widgets::icon_button(ui, p, "folder-open-filled", choose, self.directory.is_none()) {
                                     let (tx,rx) = std::sync::mpsc::channel();
                                     let directory = settings.include_directory.clone(); self.directory = Some(rx);
                                     std::thread::spawn(move || {

@@ -606,9 +606,14 @@ fn dialogs(ctx: &egui::Context, p: &Palette, inv: &mut Inventory, catalog: &inve
                     for id in folder.children {
                         if let Some(f) = inv.folders.get(&id)
                             && !f.library
-                            && ui.selectable_label(false, format!("▸ {}", f.info.name)).clicked()
                         {
-                            state.folder = id;
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 4.0;
+                                widgets::glyph(ui, "folder-filled", p.muted, 14.0);
+                                if ui.selectable_label(false, &f.info.name).clicked() {
+                                    state.folder = id;
+                                }
+                            });
                         }
                     }
                     if folder.state != FetchState::Fetched {

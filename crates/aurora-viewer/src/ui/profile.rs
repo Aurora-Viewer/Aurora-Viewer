@@ -841,8 +841,13 @@ fn second_life_tab(
                 if !own {
                     ui.horizontal(|ui| {
                         ui.add_space(LABEL_W - 22.0);
-                        ui.add_enabled(false, egui::Button::new("+").min_size(Vec2::splat(20.0)))
-                            .on_disabled_hover_text(aurora_i18n::tr!("ui-profile-invite-to-group-coming-soon"));
+                        widgets::icon_button(
+                            ui,
+                            p,
+                            "users-plus",
+                            aurora_i18n::tr!("ui-profile-invite-to-group-coming-soon"),
+                            false,
+                        );
                     });
                 }
             });

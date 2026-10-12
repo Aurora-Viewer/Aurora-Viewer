@@ -3679,6 +3679,7 @@ script-preferences-switches = Instruction switch()
 script-preferences-lazy-lists = Listes non structurées
 script-preferences-disk-includes = #include à partir du disque local
 script-preferences-include-path = Dossier des inclusions
+script-preferences-choose-directory = Choisir le dossier…
 script-preferences-owner-say = Diriger llOwnerSay vers le débogage des scripts
 script-preferences-recompile = Autoriser la recompilation sans modifier la source
 script-preferences-external = Commande de l’éditeur externe
