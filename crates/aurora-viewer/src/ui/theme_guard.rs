@@ -157,16 +157,6 @@ const ALLOWED: &[(&str, &str, &str)] = &[
         RADIUS,
         "voice ring around a name tag: a visual of the world, kept with the tag",
     ),
-    (
-        "ui/chat.rs",
-        RADIUS,
-        "left as it is while the conversation view is rewritten on its own branch: convert there",
-    ),
-    (
-        "ui/chat.rs",
-        COLOR,
-        "left as it is while the conversation view is rewritten on its own branch: convert there",
-    ),
 ];
 
 /// The comment that allows one line of content, followed by its reason.

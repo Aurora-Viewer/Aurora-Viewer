@@ -345,11 +345,11 @@ fn avatar_pic(ui: &mut egui::Ui, p: &Palette, pic: Option<&egui::TextureHandle>,
                 t.id(),
                 rect,
                 egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                Color32::WHITE,
+                super::widgets::PICTURE_TINT,
             );
         }
         None => {
-            ui.painter().rect_filled(rect, 2.0, p.raised);
+            ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
             ui.painter().text(
                 rect.center(),
                 egui::Align2::CENTER_CENTER,
@@ -364,10 +364,11 @@ fn avatar_pic(ui: &mut egui::Ui, p: &Palette, pic: Option<&egui::TextureHandle>,
 /// Tabler icon button of the conversation toolbar.
 fn tool(ui: &mut egui::Ui, p: &Palette, icons: &super::icons::Icons, icon: &str, tip: &str, enabled: bool, active: bool) -> bool {
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(26.0, 22.0), egui::Sense::click());
+    let radius = ui.visuals().window_corner_radius;
     if active {
-        ui.painter().rect_filled(rect, 2.0, p.violet.gamma_multiply(0.3));
+        ui.painter().rect_filled(rect, radius, p.violet.gamma_multiply(0.3));
     } else if enabled && resp.hovered() {
-        ui.painter().rect_filled(rect, 2.0, p.raised);
+        ui.painter().rect_filled(rect, radius, p.raised);
     }
     if let Some(t) = icons.get(icon) {
         let tint = if !enabled {
@@ -653,10 +654,11 @@ const EMOJI_BTN_W: f32 = 28.0;
 
 fn tool_resp(ui: &mut egui::Ui, p: &Palette, icons: &super::icons::Icons, icon: &str, active: bool) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(EMOJI_BTN_W, 22.0), egui::Sense::click());
+    let radius = ui.visuals().window_corner_radius;
     if active {
-        ui.painter().rect_filled(rect, 2.0, p.violet.gamma_multiply(0.3));
+        ui.painter().rect_filled(rect, radius, p.violet.gamma_multiply(0.3));
     } else if resp.hovered() {
-        ui.painter().rect_filled(rect, 2.0, p.raised);
+        ui.painter().rect_filled(rect, radius, p.raised);
     }
     if let Some(t) = icons.get(icon) {
         let tint = if resp.hovered() || active { p.ink } else { p.muted };
@@ -918,7 +920,9 @@ fn list_entry(
     } else {
         p.field
     };
-    ui.painter().rect_filled(rect, 1.0, fill);
+    // square, like the rows of the Contacts tab next to it: the bar of the
+    // selected entry runs flush along its left edge
+    ui.painter().rect_filled(rect, 0.0, fill);
     if sel {
         ui.painter()
             .rect_filled(egui::Rect::from_min_size(rect.min, egui::vec2(2.0, rect.height())), 0.0, p.violet);
@@ -932,11 +936,11 @@ fn list_entry(
                     t.id(),
                     r,
                     egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                    Color32::WHITE,
+                    super::widgets::PICTURE_TINT,
                 );
             }
             None => {
-                ui.painter().rect_filled(r, 2.0, p.raised);
+                ui.painter().rect_filled(r, ui.visuals().window_corner_radius, p.raised);
                 ui.painter().text(
                     r.center(),
                     egui::Align2::CENTER_CENTER,
@@ -1537,10 +1541,11 @@ fn bubble_sender(
             wanted_pics.insert(*id);
             match pics.get(id) {
                 Some(t) => {
-                    painter.image(t.id(), r, uv, Color32::WHITE.gamma_multiply(alpha));
+                    painter.image(t.id(), r, uv, super::widgets::PICTURE_TINT.gamma_multiply(alpha));
                 }
                 None => {
-                    painter.rect_filled(r, 2.0, p.raised.gamma_multiply(alpha));
+                    let radius = painter.ctx().global_style().visuals.window_corner_radius;
+                    painter.rect_filled(r, radius, p.raised.gamma_multiply(alpha));
                     painter.text(
                         r.center(),
                         egui::Align2::CENTER_CENTER,
