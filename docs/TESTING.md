@@ -212,11 +212,45 @@ capture.
 | `AURORA_DEMO_BUILD_FOCUS=off\|on` | Focus et suivi caméra pendant l’édition |
 | `AURORA_DEMO_BUILD_EDGE=<bord>` | Déplacement jusqu’au bord, maintien puis relâchement |
 | `AURORA_DEMO_BUILD_TAB=<onglet>` | Onglet de la fenêtre de construction |
+| `AURORA_DEMO_COLOR_PICKER=<mode>` | Sélecteur de couleur et gestes hors ligne |
 | `AURORA_DEMO_SCRIPTS=<mode>` | Édition et enregistrement de scripts hors ligne |
 | `AURORA_DEMO_LSL_BRIDGE=1` | Messages du bridge LSL de Firestorm (cachés) |
 | `AURORA_DEMO_FLEXIBLE=1` | Prims flexibles : gravité, tension, vent, force et parent mobile |
 
 ### Détails
+
+`AURORA_DEMO_COLOR_PICKER=1|left|follow|link|toggle|dock|lsl|hex|invalid|drag|cancel|no-apply|palette|pipette`
+ouvre le nuancier de la sélection, avec `AURORA_DEMO_BUILD=move,object:118`
+et `AURORA_DEMO_BUILD_TAB=texture:bp`.
+
+La palette s'ouvre contre le bord droit de la construction, au même niveau en
+haut. `left` place la construction près du bord droit de l'écran : la palette
+s'ouvre alors contre son bord gauche. Capturer vers l'image 660. Déplacer la
+construction avec la palette ouverte : celle-ci suit, bascule de côté si la
+place manque et reste visible. Le mode `follow` effectue ce glissement vers la
+droite puis revient à gauche : captures 800 et 920, sans réouverture du nuancier.
+Le mode `link` déplace séparément la palette : capture 800 pour le cône vers la
+pastille d'origine et son contour violet, 880 pour son extinction au relâchement.
+Le mode `toggle` clique trois fois sur la pastille : palette fermée à 710,
+rouverte à 750 puis fermée à 790. La fermeture reprend les règles d'Annuler.
+Le mode `dock` détache la palette (760), déplace la construction seule (840),
+réaccroche à droite (920), vérifie le suivi et le basculement (1000), détache à
+nouveau (1080), réaccroche à gauche (1160) et vérifie le suivi de ce côté (1240).
+Le rapprochement doit être à 10 points du bord et du haut ; l'accrochage se
+fait au relâchement. « Appliquer » est coché sans choix antérieur ; le décocher,
+fermer puis rouvrir la palette conserve ce choix, y compris au redémarrage.
+
+Les modes LSL / Hexa changent le format
+par ses vrais boutons ; Hexa saisit `33AA66`, invalid saisit `GG0000` (OK
+désactivé). Capturer vers l'image 740. Les modes drag / cancel / no-apply
+glissent sur 100 images : capturer à 780 pendant le geste, 830 au relâchement,
+900 après OK / Annuler. L'aperçu suit immédiatement, le serveur reçoit la
+couleur finale au relâchement ; no-apply attend OK. Palette glisse l'aperçu
+actuel dans la case 32 : capture 880 et réouverture pour vérifier sa sauvegarde.
+Pipette arme l'outil ; cliquer une face visible pour prendre sa teinte (aucun
+changement de sélection), relâcher pour quitter l'outil. Échap quitte d'abord
+la pipette, puis annule le nuancier. Les gestes sont en coordonnées des contrôles
+réels, sans dépendance à la position enregistrée de la fenêtre.
 
 En mode Modifier, maintenir CTRL et tourner la molette parcourt les objets
 réellement sous le pointeur : défilement vers le bas pour aller plus loin,

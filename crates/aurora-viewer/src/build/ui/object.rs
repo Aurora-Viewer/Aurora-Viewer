@@ -462,6 +462,8 @@ pub fn show_transform(
             copy_vector(ui, tool, which, current, decimals);
         }
     });
+    super::compact::manipulation(ui, p, tool, world, s, mods);
+    ui.add_space(4.0);
     let mut pos = if hud { local_pos } else { wp - off }.to_array();
     let region = world
         .regions

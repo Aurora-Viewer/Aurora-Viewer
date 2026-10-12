@@ -6,6 +6,7 @@
 //! (menu_viewer.xml) and the secondary floaters (grid options, weights,
 //! media settings).
 
+mod color;
 mod common;
 mod compact;
 mod contents;
@@ -29,6 +30,7 @@ use glam::Vec3;
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
+pub(super) use color::ColorTarget;
 pub use floaters::MediaSettingsState;
 
 /// What the floater needs from the rest of the viewer.
@@ -120,6 +122,9 @@ pub enum Confirm {
 /// State of the floater kept between frames.
 #[derive(Default)]
 pub struct FloaterState {
+    pub color_picker: crate::ui::color_picker::ColorPicker,
+    color_edit: Option<color::Session>,
+    color_focused: bool,
     /// Texture tab: 0 PBR, 1 Blinn-Phong, 2 Media.
     pub tex_tab: usize,
     /// PBR transform channel (Tous, Couleur, Normale, (O)RM, Émissive).
@@ -170,6 +175,7 @@ pub struct FloaterState {
 
 /// Width of the label column of the tabs.
 const LABEL_W: f32 = 112.0;
+const INSPECTOR_ID: &str = "build_tools_inspector_c3";
 
 /// Build shortcuts (menu_viewer.xml): Ctrl+B, Ctrl+1..5, delete, duplicate,
 /// link, edit linked parts, grid, undo...
@@ -212,6 +218,7 @@ pub fn shortcuts(ctx: &egui::Context, tool: &mut BuildTool, world: &mut World, s
             (Key::Num5, true, false) => tool.open_build(Tool::Land),
             (Key::B, true, true) => tool.ui.grid_options_open = !tool.ui.grid_options_open,
             _ if !tool.open => {}
+            (Key::Escape, false, false) if tool.ui.color_picker.is_open() => {}
             (Key::Escape, false, false) => tool.close(world, s),
             (Key::Delete, false, false) => tool.delete(world),
             (Key::D, true, false) => tool.duplicate(world, Vec3::new(0.5, 0.5, 0.0), true),
@@ -251,11 +258,15 @@ pub fn show(
     env: &mut Env,
 ) -> bool {
     if !tool.open {
+        tool.cancel_color_picker(world);
+        tool.commit_color_edit();
         return false;
     }
     let before = s.clone();
     // drafts belong to the selection they were typed for
     if tool.ui.last_selection != tool.selection {
+        tool.cancel_color_picker(world);
+        tool.commit_color_edit();
         tool.ui.last_selection = tool.selection.clone();
         tool.ui.edits.clear();
         tool.ui.sale_draft = None;
@@ -263,9 +274,29 @@ pub fn show(
         tool.ui.contents_selected = None;
     }
     let screen = ctx.content_rect();
+    let demo_picker = egui::Id::new("demo_color_picker_opened");
+    let picker_mode = crate::ui::color_picker::demo::mode();
+    if env.demo
+        && matches!(picker_mode, Some("left" | "follow" | "link" | "toggle" | "dock"))
+        && !ctx.data(|d| d.get_temp::<bool>(demo_picker).unwrap_or(false))
+    {
+        crate::ui::widgets::place_floater(
+            ctx,
+            INSPECTOR_ID,
+            egui::pos2(
+                if picker_mode == Some("left") {
+                    screen.right() - 344.0 - 12.0
+                } else {
+                    screen.left() + 12.0
+                },
+                40.0,
+            ),
+            Vec2::new(344.0, 500.0),
+        );
+    }
     let mut open = true;
     let floater = Floater::new(
-        "build_tools_inspector_c3",
+        INSPECTOR_ID,
         compact::selection_title(tool, world),
         egui::pos2(screen.left() + 12.0, 40.0),
         Vec2::new(344.0, 500.0),
@@ -276,6 +307,21 @@ pub fn show(
     .silent();
     floater.show(ctx, p, &mut open, |ui| compact::body(ui, p, tool, world, s, mods, env));
     floaters::secondary(ctx, p, tool, world, s, env);
+    if env.demo
+        && crate::ui::color_picker::demo::mode().is_some()
+        && !ctx.data(|d| d.get_temp::<bool>(demo_picker).unwrap_or(false))
+        && let Some((idx, face)) = tool.sel_te(world).first().copied()
+        && let Some(rgb) = world
+            .objects
+            .get(idx)
+            .and_then(|o| o.te.as_ref())
+            .map(|te| te.face(face as usize).color)
+    {
+        tool.toggle_color_picker(world, env, ColorTarget::Diffuse, [rgb[0], rgb[1], rgb[2]]);
+        ctx.data_mut(|d| d.insert_temp(demo_picker, true));
+    }
+    color::show(ctx, p, tool, world, s);
+    color::finish_gesture(ctx, tool);
     if !open {
         tool.close(world, s);
     }

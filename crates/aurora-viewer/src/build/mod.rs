@@ -55,6 +55,8 @@ pub const MAX_PRIM_SCALE: f32 = 64.0;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct BuildSettings {
+    /// Firestorm's ApplyColorImmediately and 32 saved color palette slots.
+    pub color_picker: crate::ui::color_picker::Preferences,
     /// GridResolution (m).
     pub grid_resolution: f32,
     /// GridDrawSize: extent of the plane grid (m).
@@ -232,6 +234,7 @@ mod hud_tests {
 impl Default for BuildSettings {
     fn default() -> Self {
         BuildSettings {
+            color_picker: crate::ui::color_picker::Preferences::default(),
             grid_resolution: 0.5,
             grid_draw_size: 12.0,
             grid_sub_unit: false,
@@ -395,6 +398,8 @@ pub struct BuildTool {
     pub cam: Cam,
     /// Commands to send (drained by the app).
     pub out: Vec<NetCommand>,
+    /// Latest color updates kept local until the pointer is released.
+    color_preview: Vec<NetCommand>,
     pub manip: manip::Manip,
     pub land: land::LandTool,
     pub silhouettes: silhouette::Cache,
@@ -439,6 +444,7 @@ impl Default for BuildTool {
             props: HashMap::new(),
             cam: Cam::default(),
             out: Vec::new(),
+            color_preview: Vec::new(),
             manip: manip::Manip::default(),
             land: land::LandTool::default(),
             silhouettes: silhouette::Cache::default(),
@@ -632,6 +638,8 @@ impl BuildTool {
             return;
         }
         self.cancel_replacement(world);
+        self.cancel_color_picker(world);
+        self.commit_color_edit();
         self.open = false;
         self.manip.cancel();
         self.land.cancel();
@@ -1521,7 +1529,7 @@ impl BuildTool {
         if !(self.open || self.menu_selection) || !s.show_highlight || self.manip.dragging() {
             return HashMap::new();
         }
-        self.highlighted(world)
+        self.color_highlighted(world)
             .into_iter()
             .filter(|(i, _)| world.objects.get(*i).is_some_and(|o| o.volume.sculpt.is_some()))
             .collect()
@@ -1531,7 +1539,7 @@ impl BuildTool {
         if !(self.open || self.menu_selection) || !s.show_highlight || self.manip.dragging() {
             return HashSet::new();
         }
-        self.highlighted(world)
+        self.color_highlighted(world)
             .into_iter()
             .filter_map(|(i, _)| world.objects.get(i).is_some_and(|o| o.is_flexible()).then_some(i))
             .collect()
@@ -1548,10 +1556,10 @@ impl BuildTool {
         let mut p = draw::Painter3d::new(painter, &cam);
         let now = Instant::now();
         if s.show_highlight && !self.manip.dragging() {
-            let prims = self.highlighted(world);
+            let prims = self.color_highlighted(world);
             self.silhouettes.draw(&p, world, scene, &prims);
         }
-        if !self.open || self.replacement_active() {
+        if !self.open || self.replacement_active() || self.ui.color_picker.pipette {
             return;
         }
         match self.tool {

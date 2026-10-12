@@ -213,6 +213,30 @@ renvoie encore l’ancien parent. Les autres champs restent modifiés par AIS.
 dialogues et les lignes de l'inventaire utilisateur et des contenus d'objets
 (densité, survol, sélection et style du nom). `build/ui/compact.rs` agence la
 construction en six sections dans un inspecteur étroit.
+`ui/color_picker.rs` compose le sélecteur commun (RVB / LSL / Hexa, TSL,
+aperçus, palette de 32 cases et pipette) ; `ui/color_picker/model.rs` garde
+les conversions et préférences sérialisées, `demo.rs` les gestes hors ligne.
+`build/ui/color.rs` capture les couleurs par objet et face, applique les
+aperçus et restaure seulement le RGB à l'annulation. Les envois intermédiaires
+sont regroupés dans `build/edits.rs` jusqu'au relâchement. `app/color_picker.rs`
+route la pipette vers `Scene::color_at_ray` : candidats de l'index spatial,
+triangles réels en parallèle et teinte de la face, sans lecture GPU ni effet
+de l'éclairage. Elle ne change pas la sélection.
+Le sélecteur conserve l'identité de sa fenêtre appelante : placement contre son
+bord droit, aligné en haut, ou à gauche si l'espace manque, recalculé à chaque
+déplacement de la fenêtre ou changement de taille de l'écran. Sa taille mesurée
+garde les commandes visibles et le déplacement conserve son état réduit.
+Déplacer la palette la détache ; au relâchement, une proximité de 10 points
+avec une position accolée à gauche ou à droite rétablit le suivi. Le côté
+choisi reste stable tant qu'il tient à l'écran. Le lien vers la couleur d'origine
+reste présent quand les fenêtres sont indépendantes. « Appliquer » est coché
+par défaut, puis le dernier choix est sérialisé avec la palette enregistrée.
+Les pastilles transmettent leur rectangle visible à chaque passage : un cône
+dégradé les relie à la palette pendant qu'elle est déplacée séparément, sans
+surface interactive supplémentaire. Un second clic sur la même pastille ferme
+la transaction ; une autre pastille restaure la précédente avant de s'ouvrir.
+`cursors.rs` garde le curseur pipette Phosphor en mémoire, avec la pointe comme
+point de prélèvement et le contour contrasté de la skin, comme le curseur HUD.
 `aurora-render/src/ui_glass.rs` produit un fond dépoli partagé
 par les fenêtres visibles : copie et deux passes de flou sur le GPU, puis
 échantillonnage dans leurs seuls rectangles arrondis. Les ressources sont
