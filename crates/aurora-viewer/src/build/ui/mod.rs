@@ -251,11 +251,13 @@ pub fn show(
     env: &mut Env,
 ) -> bool {
     if !tool.open {
+        tool.commit_color_edit();
         return false;
     }
     let before = s.clone();
     // drafts belong to the selection they were typed for
     if tool.ui.last_selection != tool.selection {
+        tool.commit_color_edit();
         tool.ui.last_selection = tool.selection.clone();
         tool.ui.edits.clear();
         tool.ui.sale_draft = None;
@@ -276,6 +278,9 @@ pub fn show(
     .silent();
     floater.show(ctx, p, &mut open, |ui| compact::body(ui, p, tool, world, s, mods, env));
     floaters::secondary(ctx, p, tool, world, s, env);
+    if ctx.input(|i| !i.focused || !i.pointer.any_down()) {
+        tool.commit_color_edit();
+    }
     if !open {
         tool.close(world, s);
     }

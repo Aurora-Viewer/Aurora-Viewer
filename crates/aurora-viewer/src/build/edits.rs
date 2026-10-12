@@ -5,6 +5,7 @@
 
 use super::{BuildTool, family};
 use crate::world::World;
+use aurora_net::NetCommand;
 use aurora_net::RegionHandle;
 use aurora_net::build::{BuildCmd, PhysicsParams, perm, perm_field};
 use aurora_prim::extra::{self, FlexibleParams, LightImageParams, LightParams, ReflectionProbeParams};
@@ -88,6 +89,28 @@ pub const SCULPT_DEFAULT: SculptParams = SculptParams {
 };
 
 impl BuildTool {
+    /// Keep Firestorm's live color preview (LLFloaterColorPicker::selectCurRgb),
+    /// but send only the final value of a drag instead of every pointer move.
+    pub fn preview_color_edit(&mut self, edit: impl FnOnce(&mut Self)) {
+        let start = self.out.len();
+        edit(self);
+        let updates = self.out.split_off(start);
+        // A repeated value may generate no command; retain its pending commit.
+        self.color_preview.retain(|old| {
+            let replaced = updates.iter().any(|new| color_update_replaces(new, old));
+            if replaced && let NetCommand::Build(BuildCmd::Cap { tag, .. }) = old {
+                self.caps.remove(tag);
+            }
+            !replaced
+        });
+        self.color_preview.extend(updates);
+    }
+
+    /// Flush even if the picker disappeared, the selection changed or focus was lost.
+    pub fn commit_color_edit(&mut self) {
+        self.out.append(&mut self.color_preview);
+    }
+
     /// A tag for a capability request.
     pub fn cap(&mut self, handle: RegionHandle, cap: &str, put: bool, body: aurora_llsd::Llsd, purpose: CapPurpose) -> u64 {
         let tag = self.next_tag;
@@ -534,9 +557,217 @@ impl BuildTool {
     }
 }
 
+/// Capability batches carry the entire selection for that region; retain all
+/// chunks of the latest batch. Texture / light updates replace only their prim.
+fn color_update_replaces(new: &NetCommand, old: &NetCommand) -> bool {
+    match (new, old) {
+        (
+            NetCommand::Build(BuildCmd::SetTextures {
+                handle: a, local_id: i, ..
+            }),
+            NetCommand::Build(BuildCmd::SetTextures {
+                handle: b, local_id: j, ..
+            }),
+        ) => a == b && i == j,
+        (
+            NetCommand::Build(BuildCmd::SetExtraParam {
+                handle: a,
+                local_id: i,
+                param_type: p,
+                ..
+            }),
+            NetCommand::Build(BuildCmd::SetExtraParam {
+                handle: b,
+                local_id: j,
+                param_type: q,
+                ..
+            }),
+        ) => a == b && i == j && p == q,
+        (NetCommand::Build(BuildCmd::Cap { handle: a, cap: c, .. }), NetCommand::Build(BuildCmd::Cap { handle: b, cap: d, .. })) => {
+            a == b && c == d
+        }
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::build::materials::GltfUpdate;
+    use crate::scene::avatar::AvatarLibrary;
+    use aurora_assets::material::PbrOverride;
+
+    fn color_world() -> (World, BuildTool, Vec<usize>) {
+        let mut world = World::new(Arc::new(AvatarLibrary::load()));
+        world.agent_id = crate::demo::DEMO_AGENT;
+        for event in crate::demo::events() {
+            if matches!(event, aurora_net::NetEvent::ObjectUpdates { .. }) {
+                world.apply(event);
+            }
+        }
+        let prims: Vec<_> = world
+            .objects
+            .iter()
+            .filter(|(_, o)| matches!(o.key.local_id, 118 | 119))
+            .map(|(idx, _)| idx)
+            .collect();
+        assert_eq!(prims.len(), 2);
+        let mut tool = BuildTool::default();
+        for &idx in &prims {
+            let o = world.objects.get_mut(idx).unwrap();
+            o.owner_id = world.agent_id;
+            // Edit one face, preserving alpha and the other faces.
+            let mut te = o.te.as_deref().unwrap().clone();
+            te.faces[0].color[3] = 0.4;
+            o.te = Some(Arc::new(te));
+            tool.selection.push(o.key);
+            tool.faces.insert(o.key, vec![0]);
+        }
+        (world, tool, prims)
+    }
+
+    #[test]
+    fn color_drag_previews_locally_and_sends_only_final_colors_per_prim() {
+        let (mut world, mut tool, prims) = color_world();
+        let other_face = world.objects.get(prims[0]).unwrap().te.as_ref().unwrap().face(1).color;
+        for step in 0..200 {
+            let rgb = [step as f32 / 200.0, 0.25, 0.75];
+            tool.preview_color_edit(|tool| tool.edit_faces(&mut world, |face, _, _| face.color[..3].copy_from_slice(&rgb)));
+            assert!(tool.out.is_empty(), "a drag must not send intermediate colors");
+            assert_eq!(tool.color_preview.len(), 2);
+            for &idx in &prims {
+                assert_eq!(
+                    world.objects.get(idx).unwrap().te.as_ref().unwrap().face(0).color,
+                    [rgb[0], rgb[1], rgb[2], 0.4]
+                );
+            }
+        }
+        // No movement on the release frame must not lose the last color.
+        tool.preview_color_edit(|tool| tool.edit_faces(&mut world, |face, _, _| face.color[..3].copy_from_slice(&[0.995, 0.25, 0.75])));
+        tool.commit_color_edit();
+        assert_eq!(tool.out.len(), 2);
+        for command in &tool.out {
+            let NetCommand::Build(BuildCmd::SetTextures { texture_entry, .. }) = command else {
+                panic!("expected ObjectImage")
+            };
+            let te = aurora_prim::te::parse_texture_entry(texture_entry).unwrap();
+            for (actual, expected) in te.face(0).color.into_iter().zip([0.995, 0.25, 0.75, 0.4]) {
+                assert!((actual - expected).abs() <= 1.0 / 255.0);
+            }
+        }
+        assert_eq!(world.objects.get(prims[0]).unwrap().te.as_ref().unwrap().face(1).color, other_face);
+        tool.commit_color_edit();
+        assert_eq!(tool.out.len(), 2, "a commit must be sent only once");
+    }
+
+    #[test]
+    fn color_drag_keeps_pending_prims_when_only_one_changes_and_close_flushes() {
+        let (mut world, mut tool, prims) = color_world();
+        tool.send(BuildCmd::Select {
+            handle: 1,
+            local_ids: vec![42],
+        });
+        tool.preview_color_edit(|tool| tool.edit_faces(&mut world, |face, _, _| face.color[0] = 0.3));
+        tool.preview_color_edit(|tool| {
+            tool.edit_faces(&mut world, |face, idx, _| {
+                if idx == prims[0] {
+                    face.color[0] = 0.7;
+                }
+            })
+        });
+        assert_eq!(tool.out.len(), 1, "unrelated commands remain ready to send");
+        assert_eq!(tool.color_preview.len(), 2, "the unchanged prim still needs its final update");
+        tool.close(&mut world, &mut super::super::BuildSettings::default());
+        assert!(tool.color_preview.is_empty());
+        assert_eq!(
+            tool.out
+                .iter()
+                .filter(|c| matches!(c, NetCommand::Build(BuildCmd::SetTextures { .. })))
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn pbr_color_drag_keeps_latest_batches_and_retires_unsent_capability_tags() {
+        let (mut world, mut tool, initial_prims) = color_world();
+        let handle = world.objects.get(initial_prims[0]).unwrap().key.region;
+        let prototype = crate::demo::events()
+            .into_iter()
+            .find_map(|event| match event {
+                aurora_net::NetEvent::ObjectUpdates { objects, .. } => objects.into_iter().find(|o| o.local_id == 118),
+                _ => None,
+            })
+            .unwrap();
+        let prims: Vec<_> = (0..64)
+            .map(|n| {
+                let mut object = prototype.clone();
+                object.local_id = 10000 + n;
+                object.full_id = Uuid::from_u128(10000 + n as u128);
+                object.extra.render_materials = (0..4).map(|face| (face, Uuid::from_u128(9000))).collect();
+                world.objects.upsert(handle, object)
+            })
+            .collect();
+        tool.cap(1, "GetObjectCost", false, aurora_llsd::Llsd::Undef, CapPurpose::ObjectCost(vec![]));
+        let real_tag = tool.next_tag - 1;
+        for step in 0..100 {
+            let over = PbrOverride {
+                base_color_factor: Some([step as f32 / 100.0, 0.5, 0.25, 0.4]),
+                ..Default::default()
+            };
+            // More than MAX_TASK_UPDATES: the latest color must keep both chunks.
+            let updates = (0..256)
+                .map(|n| GltfUpdate {
+                    object: prims[n / 4],
+                    face: (n % 4) as u8,
+                    asset: None,
+                    over: Some(over.clone()),
+                })
+                .collect();
+            tool.preview_color_edit(|tool| tool.gltf_update(&mut world, updates));
+            assert_eq!(tool.out.len(), 1);
+            assert_eq!(tool.color_preview.len(), 2);
+            assert_eq!(tool.caps.len(), 3, "superseded unsent requests must not accumulate");
+            assert!(tool.caps.contains_key(&real_tag));
+            assert_eq!(
+                BuildTool::gltf_override(&world, prims[0], 0).base_color_factor,
+                over.base_color_factor
+            );
+        }
+        tool.commit_color_edit();
+        let sizes: Vec<_> = tool
+            .out
+            .iter()
+            .filter_map(|c| match c {
+                NetCommand::Build(BuildCmd::Cap {
+                    cap,
+                    body: aurora_llsd::Llsd::Array(list),
+                    ..
+                }) if cap == "ModifyMaterialParams" => Some(list.len()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(sizes, [255, 1]);
+    }
+
+    #[test]
+    fn light_color_drag_previews_locally_and_sends_final_extra_params_once() {
+        let (mut world, mut tool, prims) = color_world();
+        for step in 0..100 {
+            let light = LightParams {
+                color: [step as f32 / 100.0, 0.2, 0.3, 0.4],
+                ..LIGHT_DEFAULT
+            };
+            tool.preview_color_edit(|tool| tool.set_extra(&mut world, prims[0], Extra::Light(Some(light))));
+            assert!(tool.out.is_empty());
+            assert_eq!(world.objects.get(prims[0]).unwrap().extra.light.unwrap().color, light.color);
+        }
+        tool.commit_color_edit();
+        assert_eq!(tool.out.len(), 1);
+        assert!(
+            matches!(&tool.out[0], NetCommand::Build(BuildCmd::SetExtraParam { param_type: extra::PARAMS_LIGHT, data, .. }) if data == &extra::pack_light(&world.objects.get(prims[0]).unwrap().extra.light.unwrap()))
+        );
+    }
 
     #[test]
     fn defaults_pack() {

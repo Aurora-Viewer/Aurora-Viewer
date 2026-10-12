@@ -268,14 +268,18 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                 .color(p.ink),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let items = [
-                ("PBR", 0usize),
-                (aurora_i18n::tr!("build-ui-texture-blinn-phong"), 1),
-                (aurora_i18n::tr!("extra-media"), 2),
-            ];
-            if let Some(tab) = combo(ui, "material_type", Some(tool.ui.tex_tab), &items, 115.0, true) {
-                tool.ui.tex_tab = tab;
-            }
+            ui.allocate_ui_with_layout(egui::vec2(195.0, 30.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                tabs(
+                    ui,
+                    p,
+                    &mut tool.ui.tex_tab,
+                    &[
+                        ("PBR", true),
+                        (aurora_i18n::tr!("build-ui-texture-classic"), true),
+                        (aurora_i18n::tr!("extra-media"), true),
+                    ],
+                );
+            });
         });
     });
     ui.horizontal(|ui| {
@@ -487,7 +491,9 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
                         super::common::srgb_to_linear(c[1]),
                         super::common::srgb_to_linear(c[2]),
                     ];
-                    tool.edit_gltf(world, sel, |o| o.base_color_factor = Some([lin[0], lin[1], lin[2], bc[3]]));
+                    tool.preview_color_edit(|tool| {
+                        tool.edit_gltf(world, sel, |o| o.base_color_factor = Some([lin[0], lin[1], lin[2], bc[3]]));
+                    });
                 }
             });
             ui.horizontal(|ui| {
@@ -524,7 +530,7 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
                         super::common::srgb_to_linear(c[1]),
                         super::common::srgb_to_linear(c[2]),
                     ];
-                    tool.edit_gltf(world, sel, |o| o.emissive_factor = Some(lin));
+                    tool.preview_color_edit(|tool| tool.edit_gltf(world, sel, |o| o.emissive_factor = Some(lin)));
                 }
             });
         });
@@ -633,10 +639,12 @@ fn blinn_phong(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut
         let col = col.unwrap_or([1.0; 3]);
         if let Some(c) = color_swatch(ui, p, col, aurora_i18n::tr!("build-ui-texture-tint"), 40.0, editable) {
             // selectionSetColorOnly: the alpha stays
-            tool.edit_faces(world, |f, _, _| {
-                f.color[0] = c[0];
-                f.color[1] = c[1];
-                f.color[2] = c[2];
+            tool.preview_color_edit(|tool| {
+                tool.edit_faces(world, |f, _, _| {
+                    f.color[0] = c[0];
+                    f.color[1] = c[1];
+                    f.color[2] = c[2];
+                });
             });
         }
         ui.vertical(|ui| {
@@ -808,7 +816,9 @@ fn blinn_phong(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut
                     editable && spec.is_some(),
                 ) {
                     let b = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
-                    tool.edit_legacy(env, world, sel, |m| m.specular_color = [b(c[0]), b(c[1]), b(c[2]), sc[3]]);
+                    tool.preview_color_edit(|tool| {
+                        tool.edit_legacy(env, world, sel, |m| m.specular_color = [b(c[0]), b(c[1]), b(c[2]), sc[3]]);
+                    });
                 }
                 ui.vertical(|ui| {
                     let (gl, gl_mixed) = same(legacy.iter().map(|m| m.as_ref().map(|m| m.specular_exp).unwrap_or(51)));

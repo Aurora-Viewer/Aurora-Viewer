@@ -663,6 +663,7 @@ build-ui-object-bevel = Biseautage
 ui-minimap-blue = Bleu
 ui-environment-blue-horizon = Bleu horizon
 build-ui-texture-blinn-phong = Blinn-Phong
+build-ui-texture-classic = Classique
 ui-people-partial-block-right-click-for-details = Blocage partiel (clic droit pour le détail)
 common-block = Bloquer
 ui-people-block-voice = Bloquer la voix

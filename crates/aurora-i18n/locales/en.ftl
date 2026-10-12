@@ -663,6 +663,7 @@ build-ui-object-bevel = Bevel
 ui-minimap-blue = Blue
 ui-environment-blue-horizon = Blue horizon
 build-ui-texture-blinn-phong = Blinn-Phong
+build-ui-texture-classic = Classic
 ui-people-partial-block-right-click-for-details = Partial block (right-click for details)
 common-block = Block
 ui-people-block-voice = Block voice

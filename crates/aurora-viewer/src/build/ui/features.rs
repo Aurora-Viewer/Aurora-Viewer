@@ -282,7 +282,7 @@ fn light_section(
                 color: [srgb_to_linear(c[0]), srgb_to_linear(c[1]), srgb_to_linear(c[2]), l.color[3]],
                 ..l
             };
-            tool.set_extra(world, idx, Extra::Light(Some(nl)));
+            tool.preview_color_edit(|tool| tool.set_extra(world, idx, Extra::Light(Some(nl))));
         }
         let r = super::common::swatch(
             ui,

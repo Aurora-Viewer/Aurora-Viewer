@@ -395,6 +395,8 @@ pub struct BuildTool {
     pub cam: Cam,
     /// Commands to send (drained by the app).
     pub out: Vec<NetCommand>,
+    /// Latest color updates kept local until the pointer is released.
+    color_preview: Vec<NetCommand>,
     pub manip: manip::Manip,
     pub land: land::LandTool,
     pub silhouettes: silhouette::Cache,
@@ -439,6 +441,7 @@ impl Default for BuildTool {
             props: HashMap::new(),
             cam: Cam::default(),
             out: Vec::new(),
+            color_preview: Vec::new(),
             manip: manip::Manip::default(),
             land: land::LandTool::default(),
             silhouettes: silhouette::Cache::default(),
@@ -632,6 +635,7 @@ impl BuildTool {
             return;
         }
         self.cancel_replacement(world);
+        self.commit_color_edit();
         self.open = false;
         self.manip.cancel();
         self.land.cancel();

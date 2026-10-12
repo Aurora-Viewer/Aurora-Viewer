@@ -239,7 +239,8 @@ pub fn swatch(
 }
 
 /// A color swatch (LLColorSwatchCtrl) with egui's color picker; returns
-/// the new color (sRGB 0..1) when changed, and whether the picker closed.
+/// the new color (sRGB 0..1) on each live change. Apply through
+/// BuildTool::preview_color_edit to send only the final color on release.
 pub fn color_swatch(ui: &mut egui::Ui, p: &Palette, rgb: [f32; 3], caption: &str, size: f32, enabled: bool) -> Option<[f32; 3]> {
     let mut out = None;
     ui.vertical(|ui| {
