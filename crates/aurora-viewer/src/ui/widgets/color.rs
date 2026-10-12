@@ -497,7 +497,10 @@ pub fn color_button(ui: &mut egui::Ui, p: &Palette, id_salt: impl egui::AsIdSalt
         let edge = if lit { p.violet_light } else { p.raised };
         painter.rect_stroke(rect, radius, Stroke::new(1.0, edge), egui::StrokeKind::Inside);
     }
-    if resp.clicked() || demo_opens(&ctx) {
+    if !ui.is_enabled() {
+        // a greyed swatch neither opens its picker nor keeps it open
+        state = None;
+    } else if resp.clicked() || demo_opens(&ctx) {
         state = match state {
             Some(_) => None,
             None => Some(ColorPickState::new(id, *color)),
@@ -650,6 +653,8 @@ mod tests {
         alpha: bool,
         id: egui::Id,
         changed: bool,
+        /// False: the swatch is in a greyed part of its window.
+        enabled: bool,
     }
 
     const SWATCH: egui::Pos2 = pos2(40.0, 30.0);
@@ -662,6 +667,7 @@ mod tests {
                 alpha,
                 id: egui::Id::NULL,
                 changed: false,
+                enabled: true,
             };
             bench.frame(vec![]);
             bench
@@ -678,8 +684,10 @@ mod tests {
                 |ui| {
                     let slot = Rect::from_min_size(SWATCH, Vec2::new(40.0, 20.0));
                     ui.scope_builder(egui::UiBuilder::new().max_rect(slot), |ui| {
-                        self.id = ui.make_persistent_id("swatch");
-                        self.changed = color_button(ui, &p, "swatch", &mut self.color, self.alpha).changed();
+                        ui.add_enabled_ui(self.enabled, |ui| {
+                            self.id = ui.make_persistent_id("swatch");
+                            self.changed = color_button(ui, &p, "swatch", &mut self.color, self.alpha).changed();
+                        });
                     });
                 },
             );
@@ -760,6 +768,28 @@ mod tests {
         bench.open();
         bench.click(SWATCH + Vec2::new(8.0, 8.0));
         assert!(bench.state().is_none());
+    }
+
+    #[test]
+    fn a_greyed_swatch_neither_opens_nor_keeps_its_picker() {
+        let mut bench = Bench::new([255, 0, 0, 255], false);
+        let enable = |bench: &mut Bench, on: bool| {
+            bench.enabled = on;
+            bench.frame(vec![]);
+        };
+        enable(&mut bench, false);
+        bench.click(SWATCH + Vec2::new(8.0, 8.0));
+        bench.frame(vec![]);
+        assert!(bench.state().is_none(), "a click on a greyed swatch opens nothing");
+        assert_eq!(bench.color, [255, 0, 0, 255]);
+        // greyed while its picker is open: the picker goes with it
+        enable(&mut bench, true);
+        bench.open();
+        enable(&mut bench, false);
+        assert!(bench.state().is_none());
+        // and it opens again once it is enabled
+        enable(&mut bench, true);
+        bench.open();
     }
 
     #[test]
