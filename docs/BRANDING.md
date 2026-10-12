@@ -60,10 +60,14 @@ Dans le code, on utilise toujours la `Palette` résolue (`p.violet`, `p.ink`…)
   avec la bordure et l'ombre des fenêtres.
   Les dégradés sont réservés aux éléments de marque (fond de connexion,
   aurores, remplissage de la barre de progression).
-- **Chargement et téléportation.** Même composition que la connexion : le
-  logo et sa lumière au-dessus d'une carte au style des fenêtres, qui donne
-  le titre, la progression en chiffres, la destination avec son repère, une
-  barre de progression plate et l'étape en cours (`ui/loading.rs`).
+- **Chargement et téléportation.** Un « bandeau cinéma » sans panneau
+  (`ui/loading.rs`) : la dernière vue floutée occupe tout l'écran, le nom de
+  la région s'écrit en grand en bas à gauche avec ce qu'on sait d'elle
+  (classification, point d'arrivée, résidents présents) et l'étape en cours ;
+  en bas à droite, la tuile de la région sur la carte du monde avec le point
+  d'arrivée, et la progression en chiffres ; la progression elle-même est un
+  filet lumineux au dégradé de la marque sur tout le bord inférieur. La
+  marque (loup et nom) reste discrète en haut à gauche.
 - **Arrondis discrets.** Design plat, angles presque carrés. Boutons :
   rayon 5 ; fenêtres, cartes et pastilles de la barre d'outils : rayon 3,
   avec des coins proches de ceux de la construction, y compris au repli.

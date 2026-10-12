@@ -3904,3 +3904,7 @@ script-fold-expand = Déplier le bloc
 script-fold-lines = lignes
 script-fold-all = Tout replier
 script-expand-all = Tout déplier
+loading-residents = { $count ->
+    [one] { $count } résident présent
+   *[other] { $count } résidents présents
+    }

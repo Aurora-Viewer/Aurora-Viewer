@@ -682,25 +682,25 @@ pub fn online_color(p: &Palette, online: bool) -> Color32 {
 }
 
 /// Region maturity badge (G / M / A), flat vector square in the Aurora style.
+/// Letter, background and letter color of a classification label.
+/// Fixed-meaning colors (kept from the official viewer): G violet, M white,
+/// A red.
+pub fn maturity_style(p: &Palette, maturity: &str) -> Option<(&'static str, Color32, Color32)> {
+    match maturity {
+        "" => None,
+        value if value == aurora_i18n::text("common-general") => Some(("G", p.violet, Color32::WHITE)),
+        value if value == aurora_i18n::text("common-moderate") => Some(("M", Color32::WHITE, p.navy)),
+        value if value == aurora_i18n::text("common-adult") => Some(("A", Color32::from_rgb(0xD9, 0x2D, 0x2D), Color32::WHITE)),
+        _ => None,
+    }
+}
+
 pub fn maturity_badge(ui: &mut egui::Ui, p: &Palette, maturity: &str, size: f32) -> Option<egui::Response> {
-    // Fixed-meaning colors (kept from the official viewer): G violet, M white, A red.
-    let (letter, bg, fg, tip) = match maturity {
-        value if value == aurora_i18n::text("common-general") => (
-            "G",
-            p.violet,
-            Color32::WHITE,
-            aurora_i18n::tr!("ui-widgets-general-region-all-ages"),
-        ),
-        value if value == aurora_i18n::text("common-moderate") => {
-            ("M", Color32::WHITE, p.navy, aurora_i18n::tr!("ui-widgets-moderate-region"))
-        }
-        value if value == aurora_i18n::text("common-adult") => (
-            "A",
-            Color32::from_rgb(0xD9, 0x2D, 0x2D),
-            Color32::WHITE,
-            aurora_i18n::tr!("ui-widgets-adult-region"),
-        ),
-        _ => return None,
+    let (letter, bg, fg) = maturity_style(p, maturity)?;
+    let tip = match letter {
+        "G" => aurora_i18n::tr!("ui-widgets-general-region-all-ages"),
+        "M" => aurora_i18n::tr!("ui-widgets-moderate-region"),
+        _ => aurora_i18n::tr!("ui-widgets-adult-region"),
     };
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(size), Sense::hover());
     ui.painter().rect_filled(rect, CornerRadius::same(2), bg);

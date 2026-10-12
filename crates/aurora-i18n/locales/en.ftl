@@ -3904,3 +3904,7 @@ script-fold-expand = Expand block
 script-fold-lines = lines
 script-fold-all = Collapse all
 script-expand-all = Expand all
+loading-residents = { $count ->
+    [one] { $count } resident here
+   *[other] { $count } residents here
+    }

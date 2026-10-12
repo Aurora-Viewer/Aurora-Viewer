@@ -5635,12 +5635,14 @@ impl App {
                     terrain,
                     elapsed: since.elapsed().as_secs_f32(),
                 };
+                let facts = ui::loading::PlaceFacts::gather(&mut self.world, &mut self.map_tiles, info.region, None, true);
                 a.cancel_loading = ui::loading::show(
                     ui,
                     &p,
                     self.logo.as_ref(),
                     self.settings.loading_backdrop.then_some(&self.backdrop),
                     &info,
+                    &facts.place(),
                 );
             }
             Screen::World => {
@@ -6400,13 +6402,16 @@ impl App {
                     };
                     let fade_out = o.end.map_or(1.0, |e| 1.0 - e.elapsed().as_secs_f32() / ui::loading::FADE_SECONDS);
                     let alpha = fade_in.min(fade_out).clamp(0.0, 1.0);
+                    // the banner names the region; its arrival point is one of its facts
+                    let (dest, point) = ui::loading::split_destination(&o.dest);
+                    let arrived = o.loading_end || o.arrived.is_some() || dest.is_empty();
                     let (title, sub, detail) = if o.loading_end {
                         (aurora_i18n::tr!("common-loading-world"), self.world.region_name(), String::new())
                     } else {
-                        let sub = if o.dest.is_empty() {
+                        let sub = if dest.is_empty() {
                             self.world.region_name()
                         } else {
-                            o.dest.clone()
+                            dest.to_owned()
                         };
                         let detail = if o.shown >= 0.985 {
                             aurora_i18n::tr!("app-welcome").to_owned()
@@ -6415,6 +6420,7 @@ impl App {
                         };
                         (aurora_i18n::tr!("common-teleport-2"), sub, detail)
                     };
+                    let facts = ui::loading::PlaceFacts::gather(&mut self.world, &mut self.map_tiles, &sub, point, arrived);
                     ui::loading::teleport_overlay(
                         &ctx,
                         &p,
@@ -6425,6 +6431,7 @@ impl App {
                         &detail,
                         Some(o.shown),
                         alpha,
+                        &facts.place(),
                     );
                 }
             }

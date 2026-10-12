@@ -602,7 +602,18 @@ fn voice_light(ui: &mut egui::Ui, p: &Palette, icons: &Icons, light: crate::voic
         L::Down => (p.danger, aurora_i18n::tr!("ui-bars-voice-not-connected")),
         L::Off => (p.muted_dim, aurora_i18n::tr!("common-voice-disabled")),
     };
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(48.0, CHIP_HEIGHT), egui::Sense::click());
+    // as wide as its content, with the same margin on both sides (the label
+    // changes with the language)
+    const MARGIN: f32 = 6.0;
+    const LABEL_AT: f32 = MARGIN + 25.0;
+    let font = egui::FontId::proportional(10.5);
+    let label_width = ui
+        .painter()
+        .layout_no_wrap(aurora_i18n::tr!("common-voice").to_owned(), font.clone(), p.muted)
+        .size()
+        .x;
+    let width = (LABEL_AT + label_width + MARGIN).ceil();
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, CHIP_HEIGHT), egui::Sense::click());
     let painter = ui.painter();
     let radius = ui.visuals().window_corner_radius;
     let face = if resp.hovered() {
@@ -611,7 +622,7 @@ fn voice_light(ui: &mut egui::Ui, p: &Palette, icons: &Icons, light: crate::voic
         p.raised
     };
     painter.rect_filled(rect, radius, face);
-    let dot = egui::pos2(rect.left() + 9.0, rect.center().y);
+    let dot = egui::pos2(rect.left() + MARGIN + 4.0, rect.center().y);
     if light == L::Connecting {
         // pulse while connecting
         let t = ui.input(|i| i.time) as f32;
@@ -624,7 +635,7 @@ fn voice_light(ui: &mut egui::Ui, p: &Palette, icons: &Icons, light: crate::voic
     if light == L::Connected {
         painter.circle_stroke(dot, 6.0, egui::Stroke::new(1.0, col.gamma_multiply(0.35)));
     }
-    let icon_rect = egui::Rect::from_center_size(egui::pos2(rect.left() + 23.0, rect.center().y), Vec2::splat(12.0));
+    let icon_rect = egui::Rect::from_center_size(egui::pos2(rect.left() + MARGIN + 17.0, rect.center().y), Vec2::splat(12.0));
     paint_icon(
         ui,
         icons,
@@ -636,8 +647,8 @@ fn voice_light(ui: &mut egui::Ui, p: &Palette, icons: &Icons, light: crate::voic
     let color = if resp.hovered() { p.ink } else { p.muted };
     let label = ui
         .painter()
-        .layout_no_wrap(aurora_i18n::tr!("common-voice").to_owned(), egui::FontId::proportional(10.5), color);
-    super::widgets::paint_ink_left(ui.painter(), label, egui::pos2(rect.left() + 31.0, rect.center().y), color);
+        .layout_no_wrap(aurora_i18n::tr!("common-voice").to_owned(), font, color);
+    super::widgets::paint_ink_left(ui.painter(), label, egui::pos2(rect.left() + LABEL_AT, rect.center().y), color);
     let tip = if why.is_empty() || why == state {
         state.to_owned()
     } else {
