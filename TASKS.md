@@ -231,7 +231,7 @@ Ce qui passe avant le reste (demandé par l'humain).
   - SSAO de Firestorm (calcAmbientOcclusion : 8 taps en espace écran sur min(500 / profondeur, 200) px, poids min(1/d², 1/0,3), facteur 0,3 ; 16 taps en qualité haute) et ssao_effect_mat (valeur × 0,8)
   - journal « sky frame » du ciel interpolé (gamma, soleil, ambiant, élévation du soleil) toutes les 30 s ou au changement de ciel ; démo `AURORA_DEMO_SKY=<gamma>`
   - ⬜ plus tard : terrain PBR (RenderTerrainPBREnabled, matériaux GLTF en détail du terrain : Aurora ne charge que des textures) ; raccord des valeurs de composition entre régions voisines (getCompositionXY) ; occlusion ORM dans le spéculaire PBR ; nuages éclairés sans le 0,7 de la lune ; alpha PBR (pbralphaF applique 1,1 aux lumières locales aussi)
-- ⬜ Libérer les liaisons de skin des mesh qui ne sont plus utilisés (elles restent jusqu'à la fermeture)
+- 🔧 Libérer les liaisons de skin des mesh qui ne sont plus utilisés (elles restent jusqu'à la fermeture)
 - ✅ Mesh : paramètre PARAMS_MESH (0x60) envoyé par les serveurs lu comme une sculptie (avant : tous les mesh dessinés comme leur prim de base) — table de jeu et chaises de l'arcade correctes sur Agni
 - ✅ Téléchargements : mesh, matériaux et animations passent avant les textures ; texture en pleine résolution = fichier entier (comme LLTextureFetch), plus de décodage pleine résolution à partir d'un fichier partiel (textures floues corrigées sur Agni)
 - ✅ Attachements non riggés qui suivent l'os animé de leur point (cheveux, chapeaux, objets tenus), poses calculées avant les transformations : pas de décalage d'une image

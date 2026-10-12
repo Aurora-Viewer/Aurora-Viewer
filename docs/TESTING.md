@@ -399,9 +399,14 @@ grille.
   états automatiquement après le chargement, toutes les 180 images ;
   `off` commence avec l’AO désactivé. Vérifier le bouton AO en bas, les
   poses, la pause, les cycles et l’ajout / import depuis l’inventaire.
-- **`AURORA_DEMO_ANIMESH=1`** : mesh racine animé, mesh lié signalé par un
-  enfant et animesh porté, avec des squelettes propres indépendants et des
-  ombres alpha.
+- **`AURORA_DEMO_ANIMESH=1|churn`** : mesh racine animé, mesh lié signalé par
+  un enfant et animesh porté, avec des squelettes propres indépendants et des
+  ombres alpha. `churn` : l'animesh au sol (orange) change en plus d'asset de
+  mesh toutes les 240 images, comme les mesh riggés qui vont et viennent sur
+  la grille ; il doit rester entier et animé à chaque changement, les deux
+  autres aussi, et la ligne `demo animesh: skin bindings <en service> used
+  of <dans la liste>` du log (toutes les 120 images) doit cesser de croître
+  une fois les premiers mesh libérés (600 images après leur dernier usage).
 - **`AURORA_DEMO_CLOUD=1|self`** : `1` active hors ligne les nuages et les
   barres de chargement. `self` habille en plus notre avatar comme ceux qui
   restaient en nuage pendant les 60 s de la limite (issue #121) : bake de

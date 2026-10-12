@@ -171,10 +171,14 @@ impl super::Scene {
                 g.radius
             );
         }
+        // (AURORA_DEMO_ANIMESH=churn: stops growing once meshes are freed)
+        let (used, len) = self.skin_binds.counts();
+        log::info!("demo animesh: skin bindings {used} used of {len}");
     }
-    /// Synthetic quadruped with a custom rest skeleton and smooth alpha fur.
-    pub fn install_demo_animesh(&mut self, renderer: &mut aurora_render::Renderer) {
-        use super::jobs::{FaceGeom, JobResult};
+    /// Skin and geometry of the synthetic quadruped as mesh asset `id` (the
+    /// demo's own, or the next one of AURORA_DEMO_ANIMESH=churn).
+    pub fn install_demo_animesh_mesh(&mut self, renderer: &mut aurora_render::Renderer, id: Uuid) {
+        use super::jobs::FaceGeom;
         use aurora_render::SkinVertex;
         let rig = self.avatar_lib.rig.clone();
         let mut local_pos = rig.local_pos.clone();
@@ -205,7 +209,7 @@ impl super::Scene {
             pelvis_offset: 0.0,
             lock_scale_if_joint_position: true,
         };
-        self.meshes.insert_demo_skin(crate::demo::ANIMESH_MESH, skin);
+        self.meshes.insert_demo_skin(id, skin);
         let mut face = FaceGeom {
             vertices: Vec::new(),
             indices: Vec::new(),
@@ -242,13 +246,17 @@ impl super::Scene {
             })];
             self.upload_geom(
                 renderer,
-                super::GeomKey::Mesh {
-                    id: crate::demo::ANIMESH_MESH,
-                    lod,
-                },
+                super::GeomKey::Mesh { id, lod },
                 super::jobs::PreparedGeom::new(faces, Vec3::splat(-2.0), Vec3::splat(2.0), true, None),
             );
         }
+    }
+
+    /// Synthetic quadruped with a custom rest skeleton and smooth alpha fur.
+    pub fn install_demo_animesh(&mut self, renderer: &mut aurora_render::Renderer) {
+        use super::jobs::JobResult;
+        self.install_demo_animesh_mesh(renderer, crate::demo::ANIMESH_MESH);
+        let rig = self.avatar_lib.rig.clone();
         self.anims.insert(
             crate::demo::ANIMESH_ANIM,
             std::sync::Arc::new(super::anim::BoundAnim::bind(crate::demo::animesh_animation(), &rig)),
