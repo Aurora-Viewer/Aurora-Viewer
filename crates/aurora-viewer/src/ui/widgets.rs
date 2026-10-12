@@ -498,6 +498,15 @@ fn check_row(ui: &mut egui::Ui, p: &Palette, on: &mut bool, label: egui::WidgetT
         };
         let painter = ui.painter();
         painter.rect_filled(square, ui.visuals().window_corner_radius, fill);
+        if !(checked || mixed) {
+            // an empty box stays visible on a panel of nearly its own color
+            painter.rect_stroke(
+                square,
+                ui.visuals().window_corner_radius,
+                Stroke::new(1.0, p.muted_dim),
+                egui::StrokeKind::Inside,
+            );
+        }
         let mark = Stroke::new(1.6, p.ink);
         if mixed {
             painter.hline(square.shrink(3.5).x_range(), square.center().y, mark);
