@@ -1071,8 +1071,11 @@ fn mic_button(ui: &mut egui::Ui, p: &Palette, icons: &Icons, width: f32, mic: &m
     } else if resp.clicked() {
         mic.on = !mic.on;
     }
-    let anchor = arrow.as_ref().unwrap_or(&resp);
-    let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(anchor));
+    // The panel keeps its open state itself. egui's memory holds a single
+    // open pop-up, and the list of a device combo is one: kept there, the
+    // panel would close as soon as such a list unfolds.
+    let open_id = ui.id().with("mic_panel_open");
+    let open = ui.ctx().data(|d| d.get_temp::<bool>(open_id)).unwrap_or(false);
     let on_arrow = arrow.as_ref().is_some_and(|r| r.hovered());
     let radius = ui.visuals().window_corner_radius;
     let live = mic.talking;
@@ -1142,27 +1145,37 @@ fn mic_button(ui: &mut egui::Ui, p: &Palette, icons: &Icons, width: f32, mic: &m
         Some(arrow) => arrow.clicked(),
         None => resp.secondary_clicked(),
     };
-    mic.list_devices = (toggle || demo) && !open;
+    let toggled = toggle || demo;
+    mic.list_devices = toggled && !open;
     let anchor = arrow.as_ref().unwrap_or(&resp);
     // a click in the list of a device combo is a click outside the panel:
     // the panel closes itself, and not while such a list is (or just was) open
     let list_id = ui.id().with("mic_device_list");
     let list_was_open = ui.ctx().data(|d| d.get_temp::<bool>(list_id)).unwrap_or(false);
     let mut list_open = false;
+    let mut open_now = open != toggled;
+    // Escape and the panel's own `ui.close()` clear the flag
     let shown = egui::Popup::from_response(anchor)
-        .open_memory((toggle || demo).then_some(egui::SetOpenCommand::Toggle))
+        .open_bool(&mut open_now)
         .align(egui::RectAlign::TOP_END)
         .gap(7.0)
         .frame(egui::Frame::NONE)
         .close_behavior(egui::PopupCloseBehavior::IgnoreClicks)
         .show(|ui| mic_panel(ui, p, icons, mic, &mut list_open));
-    ui.ctx().data_mut(|d| d.insert_temp(list_id, list_open));
+    let in_list = list_open || list_was_open;
     if let Some(shown) = shown {
         let away = open && shown.response.clicked_elsewhere() && anchor.clicked_elsewhere();
-        if away && !list_open && !list_was_open {
-            egui::Popup::close_id(ui.ctx(), egui::Popup::default_response_id(anchor));
+        if away && !in_list {
+            open_now = false;
+        } else if !open_now && in_list && !mic.open_prefs {
+            // Escape with a list unfolded closes that list, not the panel
+            open_now = true;
         }
     }
+    ui.ctx().data_mut(|d| {
+        d.insert_temp(list_id, list_open);
+        d.insert_temp(open_id, open_now);
+    });
 }
 
 /// Panel of the microphone's arrow: the state of the voice, the two ways to
@@ -1407,4 +1420,181 @@ pub fn bottom_bar(
         super::widgets::finish_bar_glass(&painter, slot, resp.response.rect, p);
     }
     (out, action, resp.response.rect.top(), width_committed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Where the microphone button stands in the test window, and its width.
+    const BUTTON: egui::Pos2 = egui::pos2(400.0, 560.0);
+    const WIDTH: f32 = 60.0;
+
+    /// The microphone button alone in a window, with two devices to choose.
+    #[derive(Default)]
+    struct Bench {
+        ctx: egui::Context,
+        input: String,
+        output: String,
+        /// Outputs of the last frame.
+        changed: bool,
+        listed: bool,
+        open_prefs: bool,
+    }
+
+    impl Bench {
+        fn frame(&mut self, events: Vec<egui::Event>) -> egui::FullOutput {
+            let p = crate::theme::Theme::default().palette();
+            let icons = Icons::default();
+            let devices = ["Device A".to_owned(), "Device B".to_owned()];
+            let mut mic = MicButton {
+                connected: true,
+                input_device: self.input.clone(),
+                output_device: self.output.clone(),
+                input_devices: &devices,
+                output_devices: &devices,
+                ..Default::default()
+            };
+            let mut output = self.ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(900.0, 600.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    let slot = egui::Rect::from_min_size(BUTTON, Vec2::new(WIDTH, 22.0));
+                    ui.scope_builder(egui::UiBuilder::new().max_rect(slot), |ui| {
+                        mic_button(ui, &p, &icons, WIDTH, &mut mic);
+                    });
+                },
+            );
+            output.textures_delta.clear();
+            self.input = mic.input_device.clone();
+            self.output = mic.output_device.clone();
+            self.changed = mic.devices_changed;
+            self.listed = mic.list_devices;
+            self.open_prefs = mic.open_prefs;
+            output
+        }
+
+        fn click(&mut self, pos: egui::Pos2) {
+            for pressed in [true, false] {
+                self.frame(vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: Default::default(),
+                    },
+                ]);
+            }
+        }
+
+        /// Where `label` is written this frame, from top to bottom.
+        fn texts(&mut self, label: &str) -> Vec<egui::Pos2> {
+            fn find(shape: &egui::Shape, label: &str, found: &mut Vec<egui::Pos2>) {
+                match shape {
+                    egui::Shape::Text(text) if text.galley.text() == label => found.push(text.pos + egui::vec2(3.0, 5.0)),
+                    egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| find(shape, label, found)),
+                    _ => {}
+                }
+            }
+            let mut found = Vec::new();
+            for shape in &self.frame(vec![]).shapes {
+                find(&shape.shape, label, &mut found);
+            }
+            found.sort_by(|a, b| a.y.total_cmp(&b.y));
+            found
+        }
+
+        fn panel_shown(&mut self) -> bool {
+            !self.texts(aurora_i18n::tr!("ui-bars-sound-and-voice-settings")).is_empty()
+        }
+
+        /// The arrow right of the microphone, which opens the panel.
+        fn arrow() -> egui::Pos2 {
+            BUTTON + egui::vec2(WIDTH / 2.0 + 8.0 + MIC_ARROW / 2.0, 11.0)
+        }
+    }
+
+    #[test]
+    fn microphone_panel_stays_open_while_its_device_lists_are_used() {
+        let default = aurora_i18n::tr!("ui-options-system-default");
+        let mut bench = Bench::default();
+        bench.frame(vec![]);
+        assert!(!bench.panel_shown());
+        bench.click(Bench::arrow());
+        assert!(bench.listed, "opening the panel reads the devices again");
+        assert!(bench.panel_shown());
+
+        // the microphone: its list unfolds over the panel, which stays
+        let combos = bench.texts(default);
+        assert_eq!(combos.len(), 2, "one combo per device, both on the system's default");
+        bench.click(combos[0]);
+        for _ in 0..3 {
+            assert!(bench.panel_shown(), "unfolding a device list must not close the panel");
+        }
+        let entry = *bench.texts("Device B").first().expect("the list of microphones is unfolded");
+        bench.click(entry);
+        assert!(bench.changed, "choosing a device is reported");
+        assert_eq!(bench.input, "Device B");
+        for _ in 0..3 {
+            assert!(bench.panel_shown(), "the panel stays open once a device is chosen");
+        }
+
+        // then the audio output, in the same visit of the panel
+        let combos = bench.texts(default);
+        assert_eq!(combos.len(), 1, "only the output is still on the system's default");
+        bench.click(combos[0]);
+        assert!(bench.panel_shown());
+        let entry = *bench.texts("Device A").first().expect("the list of outputs is unfolded");
+        bench.click(entry);
+        assert!(bench.changed);
+        assert_eq!((bench.input.as_str(), bench.output.as_str()), ("Device B", "Device A"));
+        for _ in 0..3 {
+            assert!(bench.panel_shown());
+        }
+
+        // a click away from the panel and its button closes it
+        bench.click(egui::pos2(50.0, 50.0));
+        assert!(!bench.panel_shown());
+    }
+
+    #[test]
+    fn microphone_panel_closes_on_its_arrow_escape_and_the_settings_button() {
+        let mut bench = Bench::default();
+        bench.frame(vec![]);
+        bench.click(Bench::arrow());
+        assert!(bench.panel_shown());
+        bench.click(Bench::arrow());
+        assert!(!bench.panel_shown(), "the arrow closes the panel it opened");
+
+        // Escape closes an unfolded device list first, then the panel
+        bench.click(Bench::arrow());
+        assert!(bench.panel_shown());
+        let combo = bench.texts(aurora_i18n::tr!("ui-options-system-default"))[0];
+        bench.click(combo);
+        assert!(!bench.texts("Device B").is_empty(), "the list is unfolded");
+        let escape = || {
+            vec![egui::Event::Key {
+                key: egui::Key::Escape,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Default::default(),
+            }]
+        };
+        bench.frame(escape());
+        assert!(bench.texts("Device B").is_empty(), "Escape folds the list");
+        assert!(bench.panel_shown(), "and leaves the panel open");
+        bench.frame(escape());
+        assert!(!bench.panel_shown(), "Escape closes the panel");
+
+        bench.click(Bench::arrow());
+        let settings = bench.texts(aurora_i18n::tr!("ui-bars-sound-and-voice-settings"))[0];
+        bench.click(settings);
+        assert!(bench.open_prefs, "the button opens the sound preferences");
+        assert!(!bench.panel_shown(), "and closes the panel");
+    }
 }
