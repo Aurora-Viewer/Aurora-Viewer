@@ -108,7 +108,10 @@ pub(super) fn world_menu(target: &Target, f: &Facts, point: Vec3) -> Vec<Entry> 
         Target::Object { key, full_id, offset } => object_menu(&mut entries, f, *key, *full_id, *offset, point),
         Target::Attachment { key } => attachment_self_menu(&mut entries, f, *key),
         Target::Avatar { id, own: true, .. } => self_menu(&mut entries, f, *id),
-        Target::Avatar { id, attachment, .. } => avatar_menu(&mut entries, f, *id, *attachment, point),
+        Target::Avatar {
+            id, attachment: Some(_), ..
+        } => attachment_other_menu(&mut entries, f, *id, point),
+        Target::Avatar { id, .. } => avatar_menu(&mut entries, f, *id, point),
         Target::Ground => land_menu(&mut entries, f, point),
     }
     entries.0
@@ -267,13 +270,25 @@ fn attachment_self_menu(ui: &mut Builder, f: &Facts, key: ObjKey) {
         f.object.attachment_item.is_some(),
         CtxAction::Detach(key),
     );
-    ui.todo("floppy-disk", aurora_i18n::tr!("common-save-as"));
+    save_as_submenu(ui);
     ui.separator();
     sit_stand(ui, f);
     appearance_submenu(ui);
     take_off_submenu(ui);
     ui.separator();
-    ui.item("airplane-takeoff", aurora_i18n::tr!("extra-fly-land-8"), CtxAction::ToggleFly);
+    // Self.ToggleSitStand
+    ui.item(
+        "armchair",
+        aurora_i18n::tr!("ui-context-sit-stand"),
+        if f.seated { CtxAction::StandUp } else { CtxAction::SitGround },
+    );
+    // enable_fly_land: flying already, or not sitting (LLAgent::enableFlying)
+    ui.item_if(
+        "airplane-takeoff",
+        aurora_i18n::tr!("extra-fly-land-8"),
+        f.flying || !f.seated,
+        CtxAction::ToggleFly,
+    );
     ui.todo("stop-circle", aurora_i18n::tr!("ui-context-stop-animations"));
     ui.separator();
     community_submenu(ui, f.me);
@@ -291,8 +306,8 @@ fn attachment_self_menu(ui: &mut Builder, f: &Facts, key: ObjKey) {
     ui.todo("sparkle", aurora_i18n::tr!("ui-context-block-particle-owner"));
 }
 
-/// menu_avatar_other.xml / menu_attachment_other.xml
-fn avatar_menu(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Option<Uuid>, point: Vec3) {
+/// menu_avatar_other.xml
+fn avatar_menu(ui: &mut Builder, f: &Facts, id: Uuid, point: Vec3) {
     ui.item("user-circle", aurora_i18n::tr!("common-view-profile"), CtxAction::Profile(id));
     ui.item_if(
         "user-plus",
@@ -330,10 +345,6 @@ fn avatar_menu(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Option<Uuid>, 
     });
     ui.item("magnifying-glass-plus", aurora_i18n::tr!("common-zoom-2"), CtxAction::Zoom(point));
     ui.todo("currency-circle-dollar", aurora_i18n::tr!("common-pay"));
-    if attachment.is_some() {
-        ui.separator();
-        ui.todo("info", aurora_i18n::tr!("ui-context-object-profile"));
-    }
     ui.separator();
     // Firestorm « Rendu toujours complet / Aucun rendu / Rendu selon vos préférences »
     if let Some((c, silhouette)) = f.complexity {
@@ -359,6 +370,84 @@ fn avatar_menu(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Option<Uuid>, 
     ui.todo("arrows-clockwise", aurora_i18n::tr!("ui-context-refresh-textures"));
     ui.separator();
     ui.todo("sparkle", aurora_i18n::tr!("common-block-particles"));
+}
+
+/// menu_attachment_other.xml: the avatar's entries, then those of the
+/// attachment clicked, in Firestorm's order. Entries it hides unless they
+/// apply (Dump XML, Block Particle Owner, Freeze / Eject without the
+/// rights, Remove From Display Exceptions without an exception) are left
+/// out the same way.
+fn attachment_other_menu(ui: &mut Builder, f: &Facts, id: Uuid, point: Vec3) {
+    ui.item("user-circle", aurora_i18n::tr!("common-view-profile"), CtxAction::Profile(id));
+    ui.item_if(
+        "user-plus",
+        aurora_i18n::tr!("common-become-friends"),
+        !f.friend,
+        CtxAction::AddFriend(id),
+    );
+    ui.todo("users-three", aurora_i18n::tr!("ui-context-add-to-contact-set"));
+    ui.item("chat-text", aurora_i18n::tr!("ui-context-send-im"), CtxAction::Im(id));
+    ui.todo("identification-card", aurora_i18n::tr!("ui-context-give-my-calling-card"));
+    ui.todo("phone", aurora_i18n::tr!("common-voice-call"));
+    ui.todo("user-circle-plus", aurora_i18n::tr!("ui-context-invite-to-group"));
+    ui.todo("eye", aurora_i18n::tr!("common-look-toward-avatar"));
+    ui.separator();
+    ui.todo("bone", aurora_i18n::tr!("ui-context-reset-skeleton"));
+    ui.todo("person-simple-run", aurora_i18n::tr!("ui-context-reset-skeleton-and-animations"));
+    ui.todo("arrow-counter-clockwise", aurora_i18n::tr!("ui-context-reset-mesh-lod-2"));
+    ui.separator();
+    ui.submenu("warning", aurora_i18n::tr!("ui-context-disturbance"), true, |ui| {
+        let (icon, label) = if f.blocked {
+            ("check-circle", aurora_i18n::tr!("common-stop-ignoring"))
+        } else {
+            ("prohibit", aurora_i18n::tr!("common-ignore"))
+        };
+        ui.item(icon, label, CtxAction::ToggleBlock(id));
+        ui.todo("flag", aurora_i18n::tr!("common-report"));
+    });
+    ui.item("magnifying-glass-plus", aurora_i18n::tr!("common-zoom-2"), CtxAction::Zoom(point));
+    ui.todo("currency-circle-dollar", aurora_i18n::tr!("common-pay"));
+    ui.separator();
+    ui.todo("info", aurora_i18n::tr!("ui-context-object-profile"));
+    ui.separator();
+    // Avatar.SetImpostorMode 2 / 1, and 0 once there is an exception
+    ui.check(
+        "user-focus",
+        aurora_i18n::tr!("ui-context-always-show-full-detail"),
+        f.render == 2,
+        true,
+        CtxAction::SetRender(id, 2),
+    );
+    ui.check(
+        "ghost",
+        aurora_i18n::tr!("ui-context-never-fully-render"),
+        f.render == 1,
+        true,
+        CtxAction::SetRender(id, 1),
+    );
+    if f.render != 0 {
+        ui.item(
+            "sliders",
+            aurora_i18n::tr!("ui-context-remove-from-display-exceptions"),
+            CtxAction::SetRender(id, 0),
+        );
+    }
+    ui.todo("magnifying-glass", aurora_i18n::tr!("ui-context-inspect-2"));
+    ui.todo("code", aurora_i18n::tr!("ui-context-script-info"));
+    ui.todo("eye-slash", aurora_i18n::tr!("ui-context-derender-temporarily"));
+    ui.todo("eye-closed", aurora_i18n::tr!("ui-context-derender-blacklist"));
+    ui.todo("image", aurora_i18n::tr!("ui-context-show-textures"));
+    ui.todo("arrows-clockwise", aurora_i18n::tr!("ui-context-refresh-textures"));
+    save_as_submenu(ui);
+}
+
+/// « Enregistrer sous » (Export Menu): the export has its own task and
+/// rules of rights; its two entries wait for it.
+fn save_as_submenu(ui: &mut Builder) {
+    ui.submenu("floppy-disk", aurora_i18n::tr!("common-save-as"), true, |ui| {
+        ui.todo("floppy-disk", aurora_i18n::tr!("ui-context-save-backup"));
+        ui.todo("cube", aurora_i18n::tr!("ui-context-save-collada"));
+    });
 }
 
 /// menu_avatar_self.xml
@@ -454,4 +543,142 @@ fn land_menu(ui: &mut Builder, f: &Facts, point: Vec3) {
     ui.item("mountains", aurora_i18n::tr!("ui-context-edit-land"), CtxAction::EditTerrain);
     ui.separator();
     ui.todo("sparkle", aurora_i18n::tr!("ui-context-ignore-particle-owner"));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Labels of a menu, `-` for a separator, `>` after a submenu.
+    fn labels(entries: &[Entry]) -> Vec<String> {
+        entries
+            .iter()
+            .map(|e| match &e.kind {
+                Kind::Separator => "-".to_string(),
+                Kind::Submenu(_) => format!("{}>", e.label),
+                _ => e.label.clone(),
+            })
+            .collect()
+    }
+
+    fn tr(keys: &[&'static str]) -> Vec<String> {
+        keys.iter()
+            .map(|k| match *k {
+                "-" => "-".to_string(),
+                k if k.ends_with('>') => format!("{}>", aurora_i18n::text(k.trim_end_matches('>'))),
+                k => aurora_i18n::text(k).to_string(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn attachment_of_another_avatar_has_firestorms_entries_in_order() {
+        // menu_attachment_other.xml, without the entries it hides
+        let target = Target::Avatar {
+            id: Uuid::from_u128(7),
+            own: false,
+            attachment: Some(Uuid::from_u128(8)),
+        };
+        let mut f = Facts::default();
+        let expected = |exception: bool| {
+            let mut keys = vec![
+                "common-view-profile",
+                "common-become-friends",
+                "ui-context-add-to-contact-set",
+                "ui-context-send-im",
+                "ui-context-give-my-calling-card",
+                "common-voice-call",
+                "ui-context-invite-to-group",
+                "common-look-toward-avatar",
+                "-",
+                "ui-context-reset-skeleton",
+                "ui-context-reset-skeleton-and-animations",
+                "ui-context-reset-mesh-lod-2",
+                "-",
+                "ui-context-disturbance>",
+                "common-zoom-2",
+                "common-pay",
+                "-",
+                "ui-context-object-profile",
+                "-",
+                "ui-context-always-show-full-detail",
+                "ui-context-never-fully-render",
+            ];
+            if exception {
+                keys.push("ui-context-remove-from-display-exceptions");
+            }
+            keys.extend([
+                "ui-context-inspect-2",
+                "ui-context-script-info",
+                "ui-context-derender-temporarily",
+                "ui-context-derender-blacklist",
+                "ui-context-show-textures",
+                "ui-context-refresh-textures",
+                "common-save-as>",
+            ]);
+            tr(&keys)
+        };
+        assert_eq!(labels(&world_menu(&target, &f, Vec3::ZERO)), expected(false));
+        // « Retirer des exceptions d'affichage » only with an exception
+        f.render = 2;
+        assert_eq!(labels(&world_menu(&target, &f, Vec3::ZERO)), expected(true));
+        // the avatar itself keeps menu_avatar_other.xml
+        let avatar = Target::Avatar {
+            id: Uuid::from_u128(7),
+            own: false,
+            attachment: None,
+        };
+        assert_ne!(labels(&world_menu(&avatar, &f, Vec3::ZERO)), expected(true));
+    }
+
+    #[test]
+    fn our_attachment_has_firestorms_entries_in_order() {
+        // menu_attachment_self.xml, without the entries it hides
+        let key = ObjKey { region: 1, local_id: 42 };
+        let f = Facts::default();
+        let got = labels(&world_menu(&Target::Attachment { key }, &f, Vec3::ZERO));
+        let expected = tr(&[
+            "ui-context-touch",
+            "ui-context-show-in-inventory",
+            "common-edit",
+            "ui-context-edit-pbr-material",
+            "common-detach",
+            "common-save-as>",
+            "-",
+            "status-sit",
+            "common-stand-up",
+            "common-appearance>",
+            "common-remove>",
+            "-",
+            "ui-context-sit-stand",
+            "extra-fly-land-8",
+            "ui-context-stop-animations",
+            "-",
+            "ui-context-community>",
+            "ui-context-object-profile",
+            "ui-context-inspect",
+            "ui-context-script-information",
+            "ui-context-derender-temporarily",
+            "ui-context-derender-blacklist",
+            "ui-context-show-textures",
+            "ui-context-refresh-textures",
+            "-",
+            "common-delete",
+            "-",
+            "ui-context-block-particle-owner",
+        ]);
+        assert_eq!(got, expected);
+        // sitting: « Voler / Atterrir » is greyed (enable_fly_land)
+        let fly = |f: &Facts| {
+            world_menu(&Target::Attachment { key }, f, Vec3::ZERO)
+                .into_iter()
+                .find(|e| e.label == aurora_i18n::tr!("extra-fly-land-8"))
+                .is_some_and(|e| e.enabled)
+        };
+        assert!(fly(&f));
+        assert!(!fly(&Facts {
+            seated: true,
+            ..Facts::default()
+        }));
+    }
 }

@@ -7,6 +7,7 @@ pub mod animesh;
 pub mod avatar;
 pub mod banlines;
 pub mod complexity;
+pub mod drawn;
 mod flexible;
 pub mod hover;
 pub mod hud;

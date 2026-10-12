@@ -89,6 +89,8 @@ pub struct Object {
     pub acceleration: Vec3,
     pub angular_velocity: Vec3,
     pub update_time: Instant,
+    /// Full updates carry parentage; terse motion packets do not confirm it.
+    pub full_update_serial: u64,
     pub volume: VolumeParams,
     pub te: Option<Arc<TextureEntry>>,
     pub extra: ExtraParams,
@@ -145,6 +147,7 @@ impl Object {
             acceleration: u.acceleration,
             angular_velocity: u.angular_velocity,
             update_time: Instant::now(),
+            full_update_serial: 1,
             volume: u.volume,
             te: u.texture_entry,
             extra: u.extra,
@@ -177,6 +180,7 @@ impl Object {
 
     /// Apply a full update; flags what changed.
     pub fn apply_full(&mut self, u: ObjectUpdate) {
+        self.full_update_serial = self.full_update_serial.wrapping_add(1);
         match &u.particles {
             ParticleUpdate::Keep => {}
             p => self.particle_update = Some(p.clone()),
@@ -557,6 +561,36 @@ impl ObjectStore {
 
     pub fn children_of(&self, key: &ObjKey) -> &[usize] {
         self.children.get(key).map(|v| v.as_slice()).unwrap_or(&[])
+    }
+
+    /// Object updates carry parent IDs, not link numbers. Once every parent
+    /// change is confirmed, retain the ordered ObjectLink instruction issued
+    /// by this viewer instead of using UDP arrival order as a link number.
+    /// Never apply it to missing, extra, duplicated or differently parented prims.
+    pub fn remember_link_order(&mut self, root: Uuid, children: &[Uuid]) -> bool {
+        let Some(root_idx) = self.index_of_uuid(&root) else { return false };
+        let Some(root_obj) = self.get(root_idx).filter(|o| o.parent_id == 0) else {
+            return false;
+        };
+        let key = root_obj.key;
+        let Some(indices) = children.iter().map(|id| self.index_of_uuid(id)).collect::<Option<Vec<_>>>() else {
+            return false;
+        };
+        let existing = self.children_of(&key);
+        if existing.len() != indices.len()
+            || indices.iter().collect::<std::collections::HashSet<_>>().len() != indices.len()
+            || indices.iter().any(|idx| {
+                !existing.contains(idx)
+                    || self
+                        .get(*idx)
+                        .is_none_or(|o| o.parent_id != key.local_id || o.key.region != key.region)
+            })
+        {
+            return false;
+        }
+        self.children.insert(key, indices);
+        self.touched.note(root_idx);
+        true
     }
 
     fn link(&mut self, idx: usize) {

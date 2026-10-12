@@ -23,6 +23,9 @@ pub mod hud_drag;
 pub mod land;
 pub mod manip;
 pub mod materials;
+pub mod replace;
+#[cfg(test)]
+mod selection_tests;
 pub mod shapes;
 pub mod silhouette;
 pub mod ui;
@@ -52,6 +55,8 @@ pub const MAX_PRIM_SCALE: f32 = 64.0;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct BuildSettings {
+    /// Firestorm's ApplyColorImmediately and 32 saved color palette slots.
+    pub color_picker: crate::ui::color_picker::Preferences,
     /// GridResolution (m).
     pub grid_resolution: f32,
     /// GridDrawSize: extent of the plane grid (m).
@@ -229,6 +234,7 @@ mod hud_tests {
 impl Default for BuildSettings {
     fn default() -> Self {
         BuildSettings {
+            color_picker: crate::ui::color_picker::Preferences::default(),
             grid_resolution: 0.5,
             grid_draw_size: 12.0,
             grid_sub_unit: false,
@@ -365,10 +371,14 @@ pub struct BuildTool {
     /// Physics shape and material values of selected prims
     /// (ObjectPhysicsProperties / GetObjectPhysicsData).
     pub physics: HashMap<u32, aurora_net::build::PhysicsParams>,
+    /// Materials actually received from the server, rather than defaults
+    /// accompanying a GetObjectPhysicsData reply containing only shape type.
+    pub physics_materials_known: HashSet<u32>,
     /// Land impact, weights and parcel capacity.
     pub costs: costs::Costs,
     /// Object inventories (Contents tab).
     pub contents: contents::Contents,
+    pub replacement: replace::Replacement,
     pub grab: grab::Grab,
     pub align: align::Align,
     /// Everything the floater keeps between frames (tabs, clipboards,
@@ -388,6 +398,8 @@ pub struct BuildTool {
     pub cam: Cam,
     /// Commands to send (drained by the app).
     pub out: Vec<NetCommand>,
+    /// Latest color updates kept local until the pointer is released.
+    color_preview: Vec<NetCommand>,
     pub manip: manip::Manip,
     pub land: land::LandTool,
     pub silhouettes: silhouette::Cache,
@@ -418,8 +430,10 @@ impl Default for BuildTool {
             face_counts: HashMap::new(),
             grid_objects: Vec::new(),
             physics: HashMap::new(),
+            physics_materials_known: HashSet::new(),
             costs: costs::Costs::default(),
             contents: contents::Contents::default(),
+            replacement: replace::Replacement::default(),
             grab: grab::Grab::default(),
             align: align::Align::default(),
             ui: ui::FloaterState::default(),
@@ -430,6 +444,7 @@ impl Default for BuildTool {
             props: HashMap::new(),
             cam: Cam::default(),
             out: Vec::new(),
+            color_preview: Vec::new(),
             manip: manip::Manip::default(),
             land: land::LandTool::default(),
             silhouettes: silhouette::Cache::default(),
@@ -618,6 +633,13 @@ impl BuildTool {
     /// LLFloaterTools::onClose: everything is deselected, the tools reset
     /// (resetToolState: zoom, no spin / lift).
     pub fn close(&mut self, world: &mut World, s: &mut BuildSettings) {
+        if self.replacement_busy() {
+            self.status = aurora_i18n::tr!("replace-waiting-server").into();
+            return;
+        }
+        self.cancel_replacement(world);
+        self.cancel_color_picker(world);
+        self.commit_color_edit();
         self.open = false;
         self.manip.cancel();
         self.land.cancel();
@@ -634,7 +656,19 @@ impl BuildTool {
     /// Object indices of the selection with their highlight (true = root
     /// color): whole linksets, or the selected prims with "Edit linked".
     pub fn highlighted(&self, world: &World) -> Vec<(usize, bool)> {
-        highlighted_of(world, &self.selection, self.selection_linked)
+        let mut out = highlighted_of(world, &self.selection, self.selection_linked);
+        let source = self
+            .replacement
+            .draft
+            .as_ref()
+            .and_then(|d| d.source)
+            .or_else(|| self.replacement.job.as_ref().filter(|j| !j.stage.terminal()).map(|j| j.source));
+        if let Some(idx) = source.and_then(|id| world.objects.index_of_uuid(&id))
+            && !out.iter().any(|(i, _)| *i == idx)
+        {
+            out.push((idx, world.objects.get(idx).is_some_and(|o| o.parent_id == 0)));
+        }
+        out
     }
 
     /// Whether editing this selection can change the camera's focus object.
@@ -687,6 +721,9 @@ impl BuildTool {
     /// Click on an object (lltoolselect): replace the selection, or with
     /// Shift / Ctrl add it or take it out.
     pub fn click_select(&mut self, world: &mut World, s: &BuildSettings, idx: Option<usize>, extend: bool) {
+        if self.replacement_active() {
+            return;
+        }
         if self.selection_linked != s.edit_linked && !self.selection.is_empty() {
             self.deselect_all(world);
         }
@@ -712,7 +749,9 @@ impl BuildTool {
             } else {
                 self.add(world, unit);
             }
-        } else if !self.is_selected(&unit) {
+        } else if !self.is_selected(&unit) || (s.edit_linked && self.selection.len() > 1) {
+            // LLToolSelect::handleObjectSelection clears the other selected
+            // parts when ignore_group is true, even if this part is selected.
             self.deselect_all(world);
             self.add(world, unit);
         } else {
@@ -1132,7 +1171,11 @@ impl BuildTool {
             .unwrap_or(0.016)
             .clamp(0.001, 0.25);
         self.last_frame = Some(now);
+        self.update_replacement(world, now);
         if !self.open {
+            return;
+        }
+        if self.replacement_active() {
             return;
         }
         self.prune(world, now);
@@ -1207,6 +1250,13 @@ impl BuildTool {
     ) -> bool {
         if !self.open {
             return false;
+        }
+        if self.replacement.draft.as_ref().is_some_and(|d| d.picking) {
+            self.pick_replacement(world, target);
+            return true;
+        }
+        if self.replacement_active() {
+            return true;
         }
         let now = Instant::now();
         match self.tool {
@@ -1479,7 +1529,7 @@ impl BuildTool {
         if !(self.open || self.menu_selection) || !s.show_highlight || self.manip.dragging() {
             return HashMap::new();
         }
-        self.highlighted(world)
+        self.color_highlighted(world)
             .into_iter()
             .filter(|(i, _)| world.objects.get(*i).is_some_and(|o| o.volume.sculpt.is_some()))
             .collect()
@@ -1489,7 +1539,7 @@ impl BuildTool {
         if !(self.open || self.menu_selection) || !s.show_highlight || self.manip.dragging() {
             return HashSet::new();
         }
-        self.highlighted(world)
+        self.color_highlighted(world)
             .into_iter()
             .filter_map(|(i, _)| world.objects.get(i).is_some_and(|o| o.is_flexible()).then_some(i))
             .collect()
@@ -1506,10 +1556,10 @@ impl BuildTool {
         let mut p = draw::Painter3d::new(painter, &cam);
         let now = Instant::now();
         if s.show_highlight && !self.manip.dragging() {
-            let prims = self.highlighted(world);
+            let prims = self.color_highlighted(world);
             self.silhouettes.draw(&p, world, scene, &prims);
         }
-        if !self.open {
+        if !self.open || self.replacement_active() || self.ui.color_picker.pipette {
             return;
         }
         match self.tool {

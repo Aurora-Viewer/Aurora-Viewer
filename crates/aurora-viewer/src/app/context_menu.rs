@@ -6,37 +6,51 @@ use crate::interaction::{self, Action};
 use crate::ui::context::{CtxAction, Facts, ObjectFacts, Target};
 
 impl App {
+    /// Right click on the world: the menu of what is under the cursor.
     pub(super) fn open_context_menu(&mut self) {
-        let Some(g) = self.gfx.as_mut() else {
+        self.click(click_pick::Click::Menu);
+    }
+
+    /// What `open_context_menu` does, run by `click`: again from the start
+    /// when the depth under the cursor has come back (app/click_pick.rs).
+    pub(super) fn world_menu(&mut self) {
+        if self.gfx.is_none() {
             return;
-        };
+        }
         let (x, y) = self.cursor_pos;
-        let ray = g.renderer.cursor_ray(x, y);
-        let hit = self.scene.action_point(
-            &self.world,
-            ray,
-            g.renderer.pick_world(x, y),
-            self.build.open,
-            self.settings.draw_distance,
-        );
         let now = Instant::now();
         // an avatar name tag opens its avatar's menu, as a click on the
         // avatar; its point is the avatar, not the air at the tag ("Zoomer"
         // frames the avatar, like handle_look_at_selection)
         let (picked, point) = if let Some((idx, point, _)) = self.scene.hud_edit_pick(&self.world, (x, y)) {
+            // (a HUD does not need the depth of the world behind it)
             (Some(idx), point)
         } else {
+            let Some(picked) = self.click_pick() else {
+                return;
+            };
+            let (ray, depth) = (picked.ray, picked.depth);
+            let hit = self
+                .scene
+                .action_point(&self.world, ray, depth, self.build.open, self.settings.draw_distance);
             match self.pick_name_tag(hit, ray) {
                 Some((idx, p)) => (
                     Some(idx),
                     Scene::object_transform(&self.world, idx, now, 0).map_or(p, |(pos, _, _)| pos),
                 ),
-                None => {
-                    let Some(p) = hit else {
-                        return;
-                    };
-                    (self.scene.interaction_at(&self.world, p, now, self.build.open), p)
-                }
+                // what is shown under the pixel: a rigged mesh where the GPU
+                // poses it, an attachment in front of its wearer
+                // (LLToolPie::handleRightMouseDown picks rigged meshes and
+                // transparent faces)
+                None => match self.designate(crate::scene::drawn::Gesture::Menu, &picked, hit) {
+                    Some(d) => (Some(d.idx), d.hit.point),
+                    None => {
+                        let Some(p) = hit else {
+                            return;
+                        };
+                        (self.scene.interaction_at(&self.world, p, now, self.build.open), p)
+                    }
+                },
             }
         };
         // the previous menu's selection goes, as deselectUnused would
@@ -56,7 +70,8 @@ impl App {
                         self.flush_build();
                         Target::Attachment { key }
                     }
-                    // someone's attachment: their avatar's menu (menu_attachment_other.xml)
+                    // someone's attachment: their avatar's entries and its own
+                    // (menu_attachment_other.xml), outlined by `menu_outline`
                     Some(w) => Target::Avatar {
                         id: w,
                         own: false,
@@ -76,6 +91,9 @@ impl App {
             }
             None => Target::Ground,
         };
+        if self.clicks.scripted() {
+            log::info!("demo menu: {target:?}");
+        }
         let ppp = self.egui_ctx.pixels_per_point().max(0.1);
         self.world.ui_sounds.push(UiSound::PieMenuAppear);
         self.context_menu = Some(ui::context::ContextMenu {
@@ -85,6 +103,21 @@ impl App {
             pie_path: Vec::new(),
             pie_input_frame: None,
         });
+    }
+
+    /// The prims of the worn object the open menu is about: Firestorm
+    /// selects it while the menu is open (LLToolSelect::handleObjectSelection)
+    /// and shows its outline. HUDs keep their own selection.
+    pub(super) fn menu_outline(&self) -> Vec<usize> {
+        let idx = match self.context_menu.as_ref().map(|m| &m.target) {
+            Some(Target::Attachment { key }) => self.world.objects.index_of(key),
+            Some(Target::Avatar { attachment: Some(id), .. }) => self.world.objects.index_of_uuid(id),
+            _ => None,
+        };
+        match idx.filter(|i| self.scene.gpu.get(*i).is_some_and(|g| !g.hud)) {
+            Some(idx) => crate::build::family(&self.world, linkset_root(&self.world, idx)),
+            None => Vec::new(),
+        }
     }
 
     /// What the open menu's entries depend on, this frame.

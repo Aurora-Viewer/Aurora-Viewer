@@ -2157,6 +2157,9 @@ pub fn events() -> Vec<NetEvent> {
     });
     ev.extend(overrides);
 
+    if std::env::var_os("AURORA_DEMO_REPLACE_PRIM").is_some() {
+        ev.extend(crate::build::replace::demo::events(HANDLE, height(135.0, 125.0)));
+    }
     // our avatar + a second one
     let mut avatars = Vec::new();
     for (k, (pos, first, last)) in [
@@ -2705,6 +2708,46 @@ fn animesh_objects(ground_mesh: Uuid) -> Vec<ObjectUpdate> {
         objects.push(o);
     }
     objects
+}
+
+/// AURORA_DEMO_CLICKS=...,rigged: the rigged demo mesh worn on the chest of
+/// the avatar `wearer` (ours), so every kind of rigged target is in the scene
+/// with AURORA_DEMO_ANIMESH: an animesh on the ground (9200, 9202), one
+/// worn by another avatar (9203), a rigged mesh worn by another avatar (the
+/// crowd's) and this one.
+pub const OWN_RIGGED: u32 = 9210;
+
+pub fn own_rigged_events(wearer: u32) -> Vec<NetEvent> {
+    let mesh = SculptParams {
+        texture: ANIMESH_MESH,
+        sculpt_type: LL_SCULPT_TYPE_MESH,
+    };
+    let mut t = (*te([0.95, 0.8, 0.3, 1.0], 0, false, 0.0)).clone();
+    for f in &mut t.faces {
+        f.texture = ANIMESH_TEXTURE;
+    }
+    let mut worn = prim(
+        OWN_RIGGED,
+        Vec3::ZERO,
+        Quat::IDENTITY,
+        Vec3::splat(0.1),
+        aurora_prim::VolumeParams {
+            sculpt: Some(mesh),
+            ..Default::default()
+        },
+        Arc::new(t),
+        ExtraParams {
+            sculpt: Some(mesh),
+            ..Default::default()
+        },
+        "",
+    );
+    worn.parent_id = wearer;
+    worn.state = 0x10; // chest
+    vec![NetEvent::ObjectUpdates {
+        handle: HANDLE,
+        objects: vec![worn],
+    }]
 }
 
 /// Mesh worn in AURORA_DEMO_CLOUD=self: an asset the asset server does not
