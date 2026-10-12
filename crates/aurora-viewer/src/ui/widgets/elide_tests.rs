@@ -24,7 +24,25 @@ impl Frames {
     }
 
     /// Run one frame of `body` in a 1280 × 900 screen; its texts are returned.
-    pub fn run(&mut self, events: Vec<egui::Event>, mut body: impl FnMut(&mut egui::Ui)) -> Vec<Text> {
+    pub fn run(&mut self, events: Vec<egui::Event>, body: impl FnMut(&mut egui::Ui)) -> Vec<Text> {
+        let mut texts = Vec::new();
+        for shape in &self.frame(events, body) {
+            collect_texts(shape, &mut texts);
+        }
+        texts
+    }
+
+    /// The same frame, for what is painted besides texts: its shapes, the
+    /// groups of shapes opened.
+    pub fn shapes(&mut self, events: Vec<egui::Event>, body: impl FnMut(&mut egui::Ui)) -> Vec<egui::Shape> {
+        let mut flat = Vec::new();
+        for shape in self.frame(events, body) {
+            flatten(shape, &mut flat);
+        }
+        flat
+    }
+
+    fn frame(&mut self, events: Vec<egui::Event>, mut body: impl FnMut(&mut egui::Ui)) -> Vec<egui::Shape> {
         self.frame += 1;
         let mut output = self.ctx.run_ui(
             egui::RawInput {
@@ -36,11 +54,7 @@ impl Frames {
             |ui| body(ui),
         );
         output.textures_delta.clear();
-        let mut texts = Vec::new();
-        for clipped in &output.shapes {
-            collect_texts(&clipped.shape, &mut texts);
-        }
-        texts
+        output.shapes.into_iter().map(|clipped| clipped.shape).collect()
     }
 
     /// Leave the pointer still on `pos` long enough for a tooltip, drawing
@@ -62,6 +76,13 @@ pub(crate) struct Text {
     pub shown: String,
     pub cut: bool,
     pub rect: egui::Rect,
+}
+
+fn flatten(shape: egui::Shape, out: &mut Vec<egui::Shape>) {
+    match shape {
+        egui::Shape::Vec(shapes) => shapes.into_iter().for_each(|s| flatten(s, out)),
+        other => out.push(other),
+    }
 }
 
 fn collect_texts(shape: &egui::Shape, out: &mut Vec<Text>) {

@@ -5947,9 +5947,13 @@ impl App {
                         ui::chat::ConvAction::Im { to, text } => a.ims.push((to, text)),
                         ui::chat::ConvAction::OfferTeleport(id) => a.offer_tp.push(id),
                         ui::chat::ConvAction::ToggleBlock(id) => a.ctx_action = Some(ui::context::CtxAction::ToggleBlock(id)),
-                        ui::chat::ConvAction::LeaveSession(id) => {
+                        ui::chat::ConvAction::Close(id) => {
                             self.world.leave_session(id);
-                            self.chat_ui.selected = None;
+                            // closed from the list, another conversation may be shown
+                            if self.chat_ui.selected == Some(id) {
+                                self.chat_ui.selected = None;
+                                self.chat_ui.show_profile = false;
+                            }
                         }
                         ui::chat::ConvAction::BlockGroupChat(id) => {
                             self.world.set_group_chat_blocked(id, true);
