@@ -213,6 +213,7 @@ impl TexturePicker {
             let row_count = rows.len() + if locals.is_empty() { 0 } else { locals.len() + 1 };
             let tab = usize::from(!self.filter.trim().is_empty());
             let mut toggle = None;
+            let radius = ui.visuals().window_corner_radius;
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .max_height(body.height())
@@ -230,7 +231,7 @@ impl TexturePicker {
                                 let selected = self.selected == Some(*id);
                                 let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 22.0), egui::Sense::click());
                                 if selected || response.hovered() {
-                                    ui.painter().rect_filled(rect, 2.0, if selected { p.violet } else { p.raised });
+                                    ui.painter().rect_filled(rect, radius, if selected { p.violet } else { p.raised });
                                 }
                                 widgets::paint_elided(
                                     ui,
@@ -268,7 +269,7 @@ impl TexturePicker {
                             if enabled { egui::Sense::click() } else { egui::Sense::hover() },
                         );
                         if selected || response.hovered() {
-                            ui.painter().rect_filled(rect, 2.0, if selected { p.violet } else { p.raised });
+                            ui.painter().rect_filled(rect, radius, if selected { p.violet } else { p.raised });
                         }
                         let mut x = rect.left() + 4.0 + row.depth.min(16) as f32 * 12.0;
                         if row.folder {
@@ -282,11 +283,11 @@ impl TexturePicker {
                         }
                         x += 12.0;
                         let icon = if row.folder {
-                            if row.open { "folder-open" } else { "folder" }
+                            if row.open { "folder-open-filled" } else { "folder-filled" }
                         } else if self.materials {
-                            "cube"
+                            "droplet-filled"
                         } else {
-                            "image"
+                            "photo-filled"
                         };
                         if let Some(icon) = super::icons::global(icon) {
                             ui.painter().image(
@@ -341,7 +342,7 @@ impl TexturePicker {
                 };
                 let side = ui.available_width().min(188.0).min((body.height() - reserve).max(96.0));
                 let (rect, _) = ui.allocate_exact_size(Vec2::splat(side), egui::Sense::hover());
-                ui.painter().rect_filled(rect, 2.0, p.field);
+                ui.painter().rect_filled(rect, radius, p.field);
                 if let Some(a) = self.selected.filter(|_| !self.materials) {
                     self.wanted_images.insert(a);
                     if let Some(t) = images.get(&a) {
@@ -355,7 +356,7 @@ impl TexturePicker {
                         ui.label(RichText::new(format!("{} × {}", size[0], size[1])).size(11.0).color(p.muted));
                     } else if a == BLANK_TEXTURE {
                         // IMG_WHITE has known content while its metadata streams.
-                        ui.painter().rect_filled(rect, 2.0, egui::Color32::WHITE);
+                        ui.painter().rect_filled(rect, radius, egui::Color32::WHITE);
                     } else if a == TRANSPARENT_TEXTURE {
                         let cell = 12.0;
                         for y in 0..(side / cell).ceil() as usize {
@@ -440,7 +441,7 @@ impl TexturePicker {
             if self.extra_buttons {
                 ui.separator();
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("UUID").size(12.0).color(p.muted));
+                    ui.label(RichText::new(aurora_i18n::tr!("ui-texture-picker-uuid")).size(12.0).color(p.muted));
                     let width = (ui.available_width() - 104.0).max(120.0);
                     ui.add_sized([width, 24.0], egui::TextEdit::singleline(&mut self.uuid_text));
                     if widgets::flat_button_sized(ui, p, aurora_i18n::tr!("common-apply"), Vec2::new(96.0, 24.0)).clicked() {

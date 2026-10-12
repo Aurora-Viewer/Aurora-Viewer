@@ -4190,3 +4190,4 @@ ui-bars-microphone-options = Microphone options
 import-local-file-missing = File not found. Its preview is still saved; restore the file at its location or remove this preview.
 import-local-save-failed = Local previews could not be saved. Changes have not been stored yet.
 import-local-library-unavailable = The local preview library could not be restored. Its original saved file is preserved.
+ui-texture-picker-uuid = UUID
