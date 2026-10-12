@@ -15,7 +15,8 @@
 //!   lists still built on the CPU ([`DrawLists`]: terrain, water, blended
 //!   faces, glow, debug, selection, impostors, particles) and the view of
 //!   the GPU culling;
-//! - the interface: egui primitives and texture changes;
+//! - the interface: egui shapes, still to tessellate, and texture changes
+//!   (ui_frame.rs);
 //! - the window surface state and the render settings to apply;
 //! - the readbacks asked for: the pixel under the cursor, a capture.
 //!
@@ -25,16 +26,10 @@
 
 use crate::gpu_cull::CullCounts;
 use crate::types::{DrawLists, FrameParams, RenderSettings, RenderStats};
+use crate::ui_frame::EguiFrame;
 use crate::upload::FrameUploads;
 use crate::writes::GpuWrites;
 use glam::Vec3;
-
-/// The interface of a frame, as egui tessellated it.
-pub struct EguiFrame {
-    pub primitives: Vec<egui::ClippedPrimitive>,
-    pub textures_delta: egui::TexturesDelta,
-    pub pixels_per_point: f32,
-}
 
 /// Capture of the presented image asked with a frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

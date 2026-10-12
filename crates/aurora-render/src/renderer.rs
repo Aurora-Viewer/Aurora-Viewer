@@ -24,6 +24,7 @@ use crate::gpu_cull::{
 use crate::helpers::Helpers;
 use crate::packet::{Capture, FramePacket, FrameResult, SceneGpu, Spent, SurfaceState};
 use crate::types::*;
+use crate::ui_frame::EguiFrame;
 use crate::upload::FrameUploads;
 use crate::writes::QueueSink;
 use bytemuck::{Pod, Zeroable};
@@ -804,6 +805,51 @@ impl GpuTimer {
 fn profile_frames() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("AURORA_PROFILE_FRAMES").is_some())
+}
+
+/// AURORA_PROFILE: the summary also wants the time each step waited.
+fn profile() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("AURORA_PROFILE").is_some())
+}
+
+/// Ends of the steps of a frame ([`RENDER_PHASES`]), in order: the time,
+/// and with AURORA_PROFILE what the thread had run by then
+/// (`thread_cpu::cycles`, a system call per mark).
+struct Marks {
+    cpu: bool,
+    ends: Vec<(&'static str, Instant, u64)>,
+}
+
+impl Marks {
+    /// `first` ended at `at`.
+    fn start(first: &'static str, at: Instant) -> Self {
+        let cpu = profile();
+        Marks {
+            cpu,
+            ends: vec![(first, at, if cpu { crate::thread_cpu::cycles() } else { 0 })],
+        }
+    }
+
+    /// `step` ends now.
+    fn mark(&mut self, step: &'static str) {
+        let cycles = if self.cpu { crate::thread_cpu::cycles() } else { 0 };
+        self.ends.push((step, Instant::now(), cycles));
+    }
+
+    /// Each step after the first: its name, its time and the part of it
+    /// spent off the processor (ms; 0 without the profile).
+    fn steps(&self) -> impl Iterator<Item = (&'static str, f32, f32)> + '_ {
+        self.ends.windows(2).map(|w| {
+            let ms = (w[1].1 - w[0].1).as_secs_f32() * 1000.0;
+            let waited = if self.cpu {
+                crate::thread_cpu::waited_ms(ms, w[1].2.wrapping_sub(w[0].2))
+            } else {
+                0.0
+            };
+            (w[1].0, ms, waited)
+        })
+    }
 }
 
 fn ts_begin(t: &Option<GpuTimer>) -> Option<wgpu::RenderPassTimestampWrites<'_>> {
@@ -3277,7 +3323,7 @@ impl Backend {
             scene,
             params,
             lists: draw_lists,
-            mut ui,
+            ui: egui_frame,
             surface,
             settings,
             hover,
@@ -3301,7 +3347,7 @@ impl Backend {
         }
 
         // egui textures first, so they are never lost on a skipped frame
-        if let Some(ui) = &ui {
+        if let Some(ui) = &egui_frame {
             for (id, deltas) in &ui.textures_delta.set {
                 for delta in deltas.iter() {
                     self.egui.update_texture(&self.device, &self.queue, *id, delta);
@@ -3345,6 +3391,17 @@ impl Backend {
             let spent = Spent { writes, lists: draw_lists };
             return self.skip(index, stats, upload_cmds, frame_uploads, spent);
         };
+        // CPU encode time excludes waiting for the swapchain (vsync).
+        let t0 = Instant::now();
+        let mut prof = Marks::start("acquire", t0);
+        // ---- the interface's shapes to triangles, off the main thread
+        let mut ui = egui_frame.map(EguiFrame::tessellate);
+        if let Some(ui) = &ui {
+            stats.ui_shapes = ui.shapes as u32;
+            stats.ui_meshes = ui.primitives.len() as u32;
+            stats.ui_vertices = ui.vertices as u32;
+        }
+        prof.mark("tessellate");
         let (f, lists) = (&params, &draw_lists);
         let present_view = surface_tex.texture.create_view(&wgpu::TextureViewDescriptor::default());
         let blur_boundary = ui.as_mut().and_then(|ui| crate::ui_blur::take_boundary(&mut ui.primitives));
@@ -3364,16 +3421,13 @@ impl Backend {
         // Offscreen only while a modal is visible. This works even when the
         // swapchain cannot be sampled or copied, and preserves scene captures.
         let surface_view = self.ui_blur.as_ref().map_or_else(|| present_view.clone(), |blur| blur.view.clone());
-        // CPU encode time excludes waiting for the swapchain (vsync).
-        let t0 = Instant::now();
-        let mut prof: Vec<(&str, Instant)> = vec![("acquire", t0)];
 
         // ---- resources: the scene's buffers as they are for this frame
         if scene.records_key != self.records_key {
             self.records_bind_group = Self::make_records_bg(&self.device, &self.records_layout, &scene);
             self.records_key = scene.records_key;
         }
-        prof.push(("resources", Instant::now()));
+        prof.mark("resources");
 
         // one texture animation time for every pass of the frame
         self.anim_now = self.anim_clock.now(Instant::now());
@@ -3742,7 +3796,7 @@ impl Backend {
             stats.gpu_cull = true;
         }
 
-        prof.push(("lists", Instant::now()));
+        prof.mark("lists");
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("frame") });
@@ -3818,7 +3872,7 @@ impl Backend {
             }
         };
 
-        prof.push(("setup", Instant::now()));
+        prof.mark("setup");
         // GPU timestamps between and inside passes (time by kind of element)
         let marks = self
             .timer
@@ -3880,7 +3934,7 @@ impl Backend {
             }
         }
 
-        prof.push(("shadows", Instant::now()));
+        prof.mark("shadows");
         mark(&mut encoder, MARK_SHADOWS_END);
         let pre_pipes: [&wgpu::RenderPipeline; MAIN_BINS] = [
             &self.pipelines.pre_opaque,
@@ -3969,7 +4023,7 @@ impl Backend {
             cull.copy_counts(&mut encoder);
         }
 
-        prof.push(("prepass", Instant::now()));
+        prof.mark("prepass");
         mark(&mut encoder, MARK_DEPTH_END);
         // ---- SSAO
         if let (Some((raw, blurred, _, _)), Some((bg_ssao, bg_blur))) = (&self.targets.ao, &self.ssao_groups) {
@@ -3999,7 +4053,7 @@ impl Backend {
             }
         }
 
-        prof.push(("ssao", Instant::now()));
+        prof.mark("ssao");
         mark(&mut encoder, MARK_SSAO_END);
         // ---- planar reflections
         let refl_passes = [
@@ -4100,7 +4154,7 @@ impl Backend {
             }
         }
 
-        prof.push(("reflections", Instant::now()));
+        prof.mark("reflections");
         mark(&mut encoder, MARK_REFL_END);
         // ---- impostor pictures, copied into their atlas tile
         for (i, (c, (opaque, blend))) in imp_caps.iter().zip(&imp_ranges).enumerate() {
@@ -4158,7 +4212,7 @@ impl Backend {
             );
         }
 
-        prof.push(("impostors", Instant::now()));
+        prof.mark("impostors");
         // the frame is recorded into three encoders finished in parallel
         // below (wgpu replays and tracks every command in finish())
         let enc_pre = std::mem::replace(
@@ -4261,7 +4315,7 @@ impl Backend {
             }
         }
 
-        prof.push(("scene_a", Instant::now()));
+        prof.mark("scene_a");
         mark(&mut encoder, MARK_SCENE_A_END);
         // ---- scene copy (refraction / SSR source)
         let size = wgpu::Extent3d {
@@ -4375,7 +4429,7 @@ impl Backend {
             }
         }
 
-        prof.push(("scene_b", Instant::now()));
+        prof.mark("scene_b");
         mark(&mut encoder, MARK_SCENE_END);
         // depth under the cursor, read back in a later frame
         self.depth_pick.encode_hover(
@@ -4489,7 +4543,7 @@ impl Backend {
             capture = self.encode_capture(&mut encoder, source);
         }
 
-        prof.push(("post", Instant::now()));
+        prof.mark("post");
         // HUDs retain their original texture colors and never inherit world
         // depth, fog, shadows, exposure or post effects (render_hud_attachments).
         if draw_huds && let Some((_, _, depth)) = &self.hud_depth {
@@ -4602,7 +4656,7 @@ impl Backend {
             }
         }
 
-        prof.push(("egui", Instant::now()));
+        prof.mark("egui");
         if wanted == Some(Capture::Full) {
             capture = self.encode_capture(&mut encoder, &surface_tex.texture);
         }
@@ -4619,7 +4673,7 @@ impl Backend {
                 return self.skip(index, stats, upload_cmds, frame_uploads, spent);
             }
         }
-        prof.push(("finish", Instant::now()));
+        prof.mark("finish");
         self.queue.submit(upload_cmds.into_iter().chain(extra_cmds));
         // staging chunks whose copies are now submitted are mapped again
         frame_uploads.after_submit();
@@ -4659,26 +4713,30 @@ impl Backend {
         self.occlusion.after_submit();
         self.cull.after_submit();
         self.depth_pick.after_submit();
-        prof.push(("submit", Instant::now()));
+        prof.mark("submit");
         let encode_ms = t0.elapsed().as_secs_f32() * 1000.0;
         self.queue.present(surface_tex);
         stats.presented = true;
         let _ = self.device.poll(wgpu::PollType::Poll);
-        prof.push(("present", Instant::now()));
+        prof.mark("present");
+        let phase = |step: &str| RENDER_PHASES.iter().position(|p| *p == step);
         stats.cpu_phases[0] = (t0 - t_acquire).as_secs_f32() * 1000.0;
         // the journal's replay is part of "resources"
-        stats.cpu_phases[1] = writes_ms;
-        for w in prof.windows(2) {
-            if let Some(i) = RENDER_PHASES.iter().position(|p| *p == w[1].0) {
-                stats.cpu_phases[i] += (w[1].1 - w[0].1).as_secs_f32() * 1000.0;
+        if let Some(i) = phase("resources") {
+            stats.cpu_phases[i] = writes_ms;
+        }
+        for (step, ms, waited) in prof.steps() {
+            if let Some(i) = phase(step) {
+                stats.cpu_phases[i] += ms;
+                stats.cpu_waits[i] += waited;
             }
         }
         stats.draw_calls = calls.get();
         let profile_frames = profile_frames();
         if profile_frames {
             let mut out = format!("acquire={:.2} writes={writes_ms:.2} ", stats.cpu_phases[0]);
-            for w in prof.windows(2) {
-                out.push_str(&format!("{}={:.2} ", w[1].0, (w[1].1 - w[0].1).as_secs_f32() * 1000.0));
+            for (step, ms, _) in prof.steps() {
+                out.push_str(&format!("{step}={ms:.2} "));
             }
             log::info!("render profile: {out}");
         }

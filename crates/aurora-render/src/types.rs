@@ -719,6 +719,15 @@ pub struct RenderStats {
     /// Spent on the render thread when there is one (then they are those
     /// of the frame before: its result comes back with the next hand-over).
     pub cpu_phases: [f32; RENDER_PHASES.len()],
+    /// Part of each step above its thread spent off the processor (ms):
+    /// waiting for a lock, or for a core. Measured with AURORA_PROFILE,
+    /// where the thread's CPU time is known (thread_cpu.rs); 0 otherwise.
+    pub cpu_waits: [f32; RENDER_PHASES.len()],
+    /// Interface: egui shapes of the frame, the meshes tessellated from
+    /// them (one draw each) and their vertices.
+    pub ui_shapes: u32,
+    pub ui_meshes: u32,
+    pub ui_vertices: u32,
     /// Draw commands recorded (multi-draws, fullscreen and sprite draws).
     pub draw_calls: u32,
     /// Bytes of draw records and joint palettes sent to the GPU this frame.
@@ -745,8 +754,9 @@ pub struct RenderStats {
 
 /// Steps of the renderer's frame (`Backend::render`), in frame order
 /// (AURORA_PROFILE).
-pub const RENDER_PHASES: [&str; 16] = [
+pub const RENDER_PHASES: [&str; 17] = [
     "acquire",
+    "tessellate",
     "resources",
     "lists",
     "setup",

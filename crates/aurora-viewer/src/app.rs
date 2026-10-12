@@ -2,7 +2,7 @@
 
 use crate::agent::MoveInput;
 use crate::camera::Camera;
-use crate::frame_profile::{FrameProfile, Lap, SceneCounts};
+use crate::frame_profile::{FrameProfile, Lap, Part, Parts, SceneCounts};
 use crate::keybinds::{Action, Input, Mods};
 use crate::scene::avatar::AvatarLibrary;
 use crate::scene::{CullView, Scene};
@@ -13,7 +13,7 @@ use crate::ui_sound::UiSound;
 use crate::world::World;
 use crate::world::env::Environment;
 use aurora_net::{LoginRequest, NetClient, NetCommand, NetEvent, StartLocation, control};
-use aurora_render::{DrawLists, EguiFrame, FrameParams, PointLight, RenderStats, Renderer};
+use aurora_render::{DrawLists, EguiHandOver, FrameParams, PointLight, RenderStats, Renderer};
 use glam::{Vec3, Vec4};
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -125,6 +125,11 @@ pub struct App {
     perf: PerfData,
     /// AURORA_PROFILE: frame laps and the summary line in the log.
     frame_profile: FrameProfile,
+    /// Interface parts of the frame's profile (`u_*`).
+    ui_parts: Parts,
+    /// The interface's shapes leave for the render thread, which
+    /// tessellates them (aurora-render, ui_frame.rs).
+    egui_hand_over: EguiHandOver,
     last_frame: Instant,
     start: Instant,
     right_drag: bool,
@@ -482,6 +487,8 @@ impl App {
             chat_ui: ChatUi::default(),
             perf: PerfData::default(),
             frame_profile: FrameProfile::default(),
+            ui_parts: Parts::default(),
+            egui_hand_over: EguiHandOver::default(),
             last_frame: Instant::now(),
             start: Instant::now(),
             right_drag: false,
@@ -4137,6 +4144,7 @@ impl App {
         self.frame_profile.lap(Lap::Params);
         // ---- UI
         let t_ui = Instant::now();
+        self.world.objects.refresh_labelled();
         if self.system_fonts_pending && ui::fonts::fallback::ready().is_some() {
             self.system_fonts_pending = !ui::fonts::apply(&self.egui_ctx, &self.settings.font);
         }
@@ -4307,12 +4315,16 @@ impl App {
         }
         self.sound_cues.before(&ctx, &raw);
         let mut inventory_drop = None;
+        let t_pass = Instant::now();
+        let mut windows_ms = 0.0;
         let mut full = ctx.run_ui(raw, |ui| {
             self.sound_cues.pass_start(ui.ctx());
+            let t = Instant::now();
             actions = self.draw_ui(ui, &projector, &gfx.renderer);
             if inventory_drop.is_none() {
                 inventory_drop = self.inventory_drag_input(ui.ctx(), &gfx.renderer);
             }
+            windows_ms += t.elapsed().as_secs_f32() * 1000.0;
         });
         // interface sounds of the widgets; the sounds are SL assets, loaded
         // once logged in
@@ -4326,6 +4338,8 @@ impl App {
                 self.scene.sounds.play_ui(self.audio_engine.as_ref(), id);
             }
         }
+        self.ui_parts
+            .add(Part::UiPass, t_pass.elapsed().as_secs_f32() * 1000.0 - windows_ms);
         self.frame_profile.lap(Lap::Ui);
         // Native bitmap cursors, including the original Firestorm hotspot.
         // Set this every frame because egui's custom cursor output is sticky.
@@ -4412,11 +4426,14 @@ impl App {
         }
         gfx.egui_state
             .handle_platform_output_with_event_loop(&gfx.window, event_loop, full.platform_output);
-        self.frame_profile.lap(Lap::Hover);
-        let ppp = full.pixels_per_point;
-        let prims = ctx.tessellate(full.shapes, ppp);
         self.perf.ui_ms = t_ui.elapsed().as_secs_f32() * 1000.0;
-        self.frame_profile.lap(Lap::Tessellate);
+        self.frame_profile.lap(Lap::Hover);
+        let egui_frame = self.egui_hand_over.frame(
+            &ctx,
+            std::mem::take(&mut full.shapes),
+            std::mem::take(&mut full.textures_delta),
+            full.pixels_per_point,
+        );
 
         // apply UI actions
         if actions.font_changed {
@@ -4474,15 +4491,7 @@ impl App {
         // returned are those of the frame before; a frame that carries a
         // capture is waited for, its pixels are read in the tail below.
         let lists = if self.in_world() { &self.scene.lists } else { &self.empty_lists };
-        let stats = gfx.renderer.render(
-            fp,
-            lists,
-            Some(EguiFrame {
-                primitives: prims,
-                textures_delta: std::mem::take(&mut full.textures_delta),
-                pixels_per_point: ppp,
-            }),
-        );
+        let stats = gfx.renderer.render(fp, lists, Some(egui_frame));
         self.last_render = stats;
         if stats.presented && !self.update_acknowledged {
             self.update_acknowledged = true;
@@ -5075,7 +5084,8 @@ impl App {
             geom_pending: st.geom_pending,
             sync_backlog: if in_world { st.sync_backlog } else { 0 },
         };
-        let parts = std::mem::take(&mut self.scene.parts);
+        let mut parts = std::mem::take(&mut self.scene.parts);
+        parts.merge(&std::mem::take(&mut self.ui_parts));
         self.frame_profile.end_frame(&self.last_render, &counts, &parts);
     }
 
@@ -5301,6 +5311,7 @@ impl App {
         let mut a = UiActions::default();
         let p = self.palette;
         let ctx = ui.ctx().clone();
+        let mut t = Instant::now();
         if self.exit_prompt.open {
             ui.disable();
             ctx.memory_mut(|m| m.set_modal_layer(egui::Modal::default_area(egui::Id::new("viewer_exit")).layer()));
@@ -5483,6 +5494,7 @@ impl App {
                 if !matches!(bar2, BarAction::None) {
                     a.bar = bar2;
                 }
+                t = self.ui_parts.lap(Part::UiBars, t);
                 // overlays
                 let voice_levels = if self.demo {
                     static VOICE_MODE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
@@ -5524,6 +5536,7 @@ impl App {
                     },
                     self.scene.loading_bars.then(|| self.scene.loading_avatars()),
                 );
+                t = self.ui_parts.lap(Part::UiTags, t);
                 if !self.camera.mouselook() {
                     ui::minimap::draw_beacon(&ctx, &self.world, projector);
                 }
@@ -5575,6 +5588,7 @@ impl App {
                         self.settings.chat_timestamps,
                     );
                 }
+                t = self.ui_parts.lap(Part::UiOverlays, t);
                 let map_cam = {
                     let r = ctx.content_rect();
                     let aspect = (r.width() / r.height().max(1.0)).max(0.1);
@@ -5646,6 +5660,7 @@ impl App {
                 for c in contact_actions {
                     self.on_contacts_action(c, &mut a);
                 }
+                t = self.ui_parts.lap(Part::UiChat, t);
                 let mut people_map = |ui: &mut egui::Ui, size: egui::Vec2| {
                     let acts = self.people_map_ui.draw(
                         ui,
@@ -5693,6 +5708,7 @@ impl App {
                         }
                     }
                 }
+                t = self.ui_parts.lap(Part::UiPeople, t);
                 self.poll_inventory_animation_stats();
                 let inventory_preferences = self.settings.inventory.clone();
                 let mut open = self.panels.inventory;
@@ -5759,6 +5775,7 @@ impl App {
                 for action in actions {
                     self.apply_ao_action(action);
                 }
+                t = self.ui_parts.lap(Part::UiInventory, t);
                 let facts = self.context_facts();
                 let had_menu = self.context_menu.is_some();
                 // Capture-only style override; leave the saved preference intact.
@@ -5841,6 +5858,7 @@ impl App {
                         ctx.open_url(egui::OpenUrl::new_tab(u));
                     }
                 }
+                t = self.ui_parts.lap(Part::UiMenus, t);
                 let mut open = self.panels.about_land;
                 if self.land_ui.show(
                     &ctx,
@@ -5971,6 +5989,7 @@ impl App {
                         }
                     }
                 }
+                t = self.ui_parts.lap(Part::UiPlaces, t);
                 let mut open = self.panels.minimap;
                 mini.extend(self.minimap_ui.window(
                     &ctx,
@@ -6017,6 +6036,7 @@ impl App {
                         ui::worldmap::WorldMapAction::TeleportLandmark(asset) => a.landmark = Some(asset),
                     }
                 }
+                t = self.ui_parts.lap(Part::UiMaps, t);
                 let mut open = self.panels.perf;
                 let net = self.net.stats.snapshot();
                 let view = ui::perf::PerfView {
@@ -6038,6 +6058,7 @@ impl App {
                 };
                 ui::perf::show(&ctx, &p, &view, &mut open);
                 self.panels.perf = open;
+                t = self.ui_parts.lap(Part::UiPerf, t);
                 // environment selector (Firestorm's quick preferences lists)
                 if self.panels.environment {
                     if !self.env_scan {
@@ -6117,6 +6138,7 @@ impl App {
                 if let Some(msg) = self.world.alerts.pop_front() {
                     log::info!("alert: {msg}");
                 }
+                t = self.ui_parts.lap(Part::UiOptions, t);
                 // teleport screen (and the login loading screen fading out)
                 if let Some(o) = &self.tp_overlay {
                     // quick fade in, fade out at the end
@@ -6168,6 +6190,7 @@ impl App {
         self.bug_report
             .show(&ctx, &p, &self.skin.icons, matches!(self.screen, Screen::World));
         a.exit = self.exit_prompt.show(&ctx, &p, self.in_world());
+        self.ui_parts.lap(Part::UiRest, t);
         a
     }
 }
