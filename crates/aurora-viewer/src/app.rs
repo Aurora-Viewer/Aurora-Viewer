@@ -686,6 +686,23 @@ impl App {
                     objects: vec![crate::demo::action_avatar(false)],
                 });
             }
+            if let NetCommand::RequestObjects { handle, local_ids } = &cmd {
+                let objects = local_ids
+                    .iter()
+                    .filter_map(|local_id| {
+                        self.world
+                            .objects
+                            .index_of(&crate::world::objects::ObjKey {
+                                region: *handle,
+                                local_id: *local_id,
+                            })
+                            .and_then(|i| self.world.objects.get(i))
+                            .map(crate::build::replace::demo_update)
+                    })
+                    .collect();
+                self.world.apply(NetEvent::ObjectUpdates { handle: *handle, objects });
+                return;
+            }
             if let NetCommand::Build(b) = &cmd {
                 for ev in self.build_demo.reply(&self.world, b) {
                     if let Some(e) = self.world.apply(ev) {
@@ -1051,6 +1068,9 @@ impl App {
             return;
         }
         if let NetEvent::InventoryEdited { request, result } = ev {
+            if self.build.replacement_inventory_result(request, &result) {
+                return;
+            }
             if self.ao_ui.pending.as_ref().is_some_and(|p| p.request == request) {
                 self.ao_inventory_result(result);
                 return;
@@ -2561,6 +2581,9 @@ impl App {
 
     /// CTRL + wheel cycles the edit selection before HUD, media or camera zoom.
     fn on_build_scroll(&mut self, delta: f32) -> bool {
+        if self.build.replacement_active() {
+            return true;
+        }
         if !self.ctrl || self.alt || !self.build.open || self.build.tool != crate::build::Tool::Edit || self.camera.mouselook() {
             self.build.reset_selection_wheel();
             return false;
@@ -4840,6 +4863,19 @@ impl App {
                         self.build.set_edit_linked(&mut self.world, &mut self.settings.build, on);
                         self.flush_build();
                     }
+                    crate::build::demo::Step::ReplaceBegin(contents) => {
+                        self.build.begin_replacement(&self.world, &self.settings.build);
+                        self.build.replacement.options.contents = contents;
+                        self.build.replacement.options.size = contents;
+                    }
+                    crate::build::demo::Step::ReplacePick(idx) => {
+                        self.build.pick_replacement(&self.world, Some(idx));
+                        self.flush_build();
+                    }
+                    crate::build::demo::Step::ReplaceApply => {
+                        self.build.apply_replacement(&self.world);
+                        self.flush_build();
+                    }
                     crate::build::demo::Step::Wheel(delta) => {
                         let ctrl = self.ctrl;
                         self.ctrl = true;
@@ -6399,6 +6435,15 @@ impl ApplicationHandler for App {
                 for ev in crate::demo::selection_cycle_events() {
                     self.world.apply(ev);
                 }
+            }
+            if std::env::var_os("AURORA_DEMO_REPLACE_PRIM").is_some() && std::env::var_os("AURORA_DEMO_CAM").is_none() {
+                let focus = Vec3::new(135.5, 125.0, crate::demo::floor_at(135.0, 125.0) + 1.3);
+                self.camera.set_view(
+                    focus + Vec3::new(0.0, -6.0, 4.0),
+                    focus,
+                    &mut self.world.agent,
+                    &self.settings.camera,
+                );
             }
             if std::env::var_os("AURORA_DEMO_FLEXIBLE").is_some() && std::env::var_os("AURORA_DEMO_CAM").is_none() {
                 let edit_focus = std::env::var("AURORA_DEMO_BUILD")

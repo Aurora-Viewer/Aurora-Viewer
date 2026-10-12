@@ -12,6 +12,7 @@ mod features;
 mod floaters;
 mod general;
 mod object;
+mod replace;
 mod texture;
 mod tools;
 
@@ -174,6 +175,12 @@ pub fn shortcuts(ctx: &egui::Context, tool: &mut BuildTool, world: &mut World, s
     if ctx.egui_wants_keyboard_input() {
         return;
     }
+    if tool.replacement_active() {
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            tool.cancel_replacement(world);
+        }
+        return;
+    }
     use egui::Key;
     let (pressed, m) = ctx.input(|i| (i.events.clone(), i.modifiers));
     for ev in pressed {
@@ -266,6 +273,10 @@ pub fn show(
     .silent()
     .show(ctx, p, &mut open, |ui| {
         ui.spacing_mut().item_spacing = Vec2::new(6.0, 4.0);
+        if tool.replacement.draft.is_some() || tool.replacement.job.is_some() {
+            replace::panel(ui, p, tool, world);
+            return;
+        }
         tools::tool_row(ui, p, tool);
         ui.label(RichText::new(tools::status_text(tool, s, mods)).size(11.5).color(p.muted));
         ui.add_space(2.0);

@@ -127,6 +127,10 @@ impl BuildTool {
                 .iter()
                 .filter_map(|k| world.objects.index_of(k).and_then(|i| world.objects.get(i)).map(|o| o.full_id))
                 .collect();
+            let mut keep = keep;
+            if let Some(job) = self.replacement.job.as_ref().filter(|job| !job.stage.terminal()) {
+                keep.extend(job.inventory_ids());
+            }
             self.contents.objects.retain(|k, _| keep.contains(k));
         }
     }

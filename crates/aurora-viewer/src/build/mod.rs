@@ -23,6 +23,7 @@ pub mod hud_drag;
 pub mod land;
 pub mod manip;
 pub mod materials;
+pub mod replace;
 pub mod shapes;
 pub mod silhouette;
 pub mod ui;
@@ -369,6 +370,7 @@ pub struct BuildTool {
     pub costs: costs::Costs,
     /// Object inventories (Contents tab).
     pub contents: contents::Contents,
+    pub replacement: replace::Replacement,
     pub grab: grab::Grab,
     pub align: align::Align,
     /// Everything the floater keeps between frames (tabs, clipboards,
@@ -420,6 +422,7 @@ impl Default for BuildTool {
             physics: HashMap::new(),
             costs: costs::Costs::default(),
             contents: contents::Contents::default(),
+            replacement: replace::Replacement::default(),
             grab: grab::Grab::default(),
             align: align::Align::default(),
             ui: ui::FloaterState::default(),
@@ -618,6 +621,11 @@ impl BuildTool {
     /// LLFloaterTools::onClose: everything is deselected, the tools reset
     /// (resetToolState: zoom, no spin / lift).
     pub fn close(&mut self, world: &mut World, s: &mut BuildSettings) {
+        if self.replacement_busy() {
+            self.status = aurora_i18n::tr!("replace-waiting-server").into();
+            return;
+        }
+        self.cancel_replacement(world);
         self.open = false;
         self.manip.cancel();
         self.land.cancel();
@@ -634,7 +642,19 @@ impl BuildTool {
     /// Object indices of the selection with their highlight (true = root
     /// color): whole linksets, or the selected prims with "Edit linked".
     pub fn highlighted(&self, world: &World) -> Vec<(usize, bool)> {
-        highlighted_of(world, &self.selection, self.selection_linked)
+        let mut out = highlighted_of(world, &self.selection, self.selection_linked);
+        let source = self
+            .replacement
+            .draft
+            .as_ref()
+            .and_then(|d| d.source)
+            .or_else(|| self.replacement.job.as_ref().filter(|j| !j.stage.terminal()).map(|j| j.source));
+        if let Some(idx) = source.and_then(|id| world.objects.index_of_uuid(&id))
+            && !out.iter().any(|(i, _)| *i == idx)
+        {
+            out.push((idx, world.objects.get(idx).is_some_and(|o| o.parent_id == 0)));
+        }
+        out
     }
 
     /// Whether editing this selection can change the camera's focus object.
@@ -687,6 +707,9 @@ impl BuildTool {
     /// Click on an object (lltoolselect): replace the selection, or with
     /// Shift / Ctrl add it or take it out.
     pub fn click_select(&mut self, world: &mut World, s: &BuildSettings, idx: Option<usize>, extend: bool) {
+        if self.replacement_active() {
+            return;
+        }
         if self.selection_linked != s.edit_linked && !self.selection.is_empty() {
             self.deselect_all(world);
         }
@@ -1132,7 +1155,11 @@ impl BuildTool {
             .unwrap_or(0.016)
             .clamp(0.001, 0.25);
         self.last_frame = Some(now);
+        self.update_replacement(world, now);
         if !self.open {
+            return;
+        }
+        if self.replacement_active() {
             return;
         }
         self.prune(world, now);
@@ -1207,6 +1234,13 @@ impl BuildTool {
     ) -> bool {
         if !self.open {
             return false;
+        }
+        if self.replacement.draft.as_ref().is_some_and(|d| d.picking) {
+            self.pick_replacement(world, target);
+            return true;
+        }
+        if self.replacement_active() {
+            return true;
         }
         let now = Instant::now();
         match self.tool {
@@ -1509,7 +1543,7 @@ impl BuildTool {
             let prims = self.highlighted(world);
             self.silhouettes.draw(&p, world, scene, &prims);
         }
-        if !self.open {
+        if !self.open || self.replacement_active() {
             return;
         }
         match self.tool {

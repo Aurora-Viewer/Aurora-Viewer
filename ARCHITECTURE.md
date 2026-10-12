@@ -137,6 +137,7 @@ Les scripts utilisent un éditeur commun (`ui/scripts.rs`, actions dans `app/scr
 
 | Dossier / fichier | Contenu |
 |---|---|
+| `build/replace.rs`, `build/replace/`, `build/ui/replace.rs` | Remplacement guidé d'une partie liée : cible verrouillée, sélection du remplaçant, options et avancement ; étapes confirmées par le serveur, copie du contenu via l'inventaire du résident, conservation des états des scripts, récupération de la configuration initiale et simulateur hors ligne |
 | `ui/inventory/document.rs`, `aurora-net/src/inventory/notecard.rs` | Cycle d’édition des documents : brouillon et sauvegarde corrélés à la fenêtre, fermeture après confirmation, refus conservant le texte ; import des notecards v1 / v2, export v2 avec longueur UTF-8 bornée et conservation des permissions des pièces jointes encore référencées |
 | `ui/inventory/embedded.rs` | Éléments intégrés aux notes : icône et nom dans le texte, aperçu / ouverture et copie dans l’inventaire, dépôt à la position du pointeur ; un caractère par élément pour conserver la sélection, la suppression et l’annulation |
 | `aurora-net/src/session/inventory_preview.rs` | Lecture des notes et scripts protégés par transfert d’inventaire du simulateur (identifiants de l’agent, de session, du propriétaire, de l’objet, de l’élément et de l’asset) ; réassemblage borné des paquets désordonnés, corrélation au simulateur et expiration |

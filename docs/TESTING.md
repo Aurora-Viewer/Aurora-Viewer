@@ -146,6 +146,41 @@ capture.
 
 ## Objets et construction
 
+### Remplacer un prim
+
+`AURORA_DEMO_REPLACE_PRIM=1` ajoute un jeu de 15 prims (racine `99680`,
+pile de cartes au lien 9 : `99688`) et un remplaçant indépendant (`99700`).
+Le remplaçant a une rotation et des dimensions différentes ; son contenu est
+vide. Un script du plateau démarre arrêté pour vérifier qu'il reste arrêté.
+
+À combiner avec `AURORA_DEMO_BUILD` :
+
+- `replace-button,object:99688` : une partie liée sélectionnée, bouton dans la fenêtre de construction ;
+- `replace-edit,object:99688` : remplaçant choisi, cinq options indépendantes, sans mutation ;
+- `replace-run,object:99688` : remplacement avec les valeurs par défaut ;
+- `replace-copy,object:99688` : copie du contenu et de la taille, puis remplacement ;
+- `replace-run,object:99680` : remplacement de la racine et contrôle des positions des enfants.
+
+Les scripts de construction commencent à l'image `AURORA_DEMO_BUILD_FRAME`
+(600 par défaut). Le choix du remplaçant se fait à +35 images, la validation
+à +55 pour les scénarios qui exécutent l'opération. Le simulateur renvoie les
+changements de parentage, le contenu et les états des scripts par les mêmes
+événements que le réseau. Sur la grille, contrôler aussi les numéros avec
+LSL, les droits de copie et les confirmations lors d'une connexion lente.
+Le protocole renvoie le parent des prims, sans numéro de lien : après
+confirmation du parentage, Aurora conserve l'ordre envoyé dans ObjectLink,
+indépendamment de l'ordre d'arrivée des paquets. Les 256 prims sont rattachés
+par groupes confirmés, depuis la fin de la liste vers son début.
+
+Le remplacement conserve l'ancien prim à côté du remplaçant. Les objets
+doivent être posés dans le monde, modifiables, appartenir au résident, sans
+physique, caractère temporaire ni avatar assis. Maximum : 256 prims et
+1 024 éléments copiés / scripts observés. Les conflits de noms et les contenus
+non copiables arrêtent l'opération avant toute déliaison. Copier un script
+ne conserve pas sa mémoire d'exécution ; remplacer la racine ne copie pas
+automatiquement les données Linkset Data.
+
+
 | Variable | Effet |
 |---|---|
 | `AURORA_DEMO_ACTIONS=<mode>` | Curseurs, clics d'objet, achat et paiement |

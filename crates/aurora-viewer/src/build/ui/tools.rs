@@ -277,6 +277,7 @@ pub fn edit_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &
     if let Some(info) = tool.part_info(world, s) {
         small(ui, p, &info);
     }
+    super::replace::button(ui, p, tool, world, s);
 }
 
 /// Create tool: the 15 shapes, options, tree / grass species.
