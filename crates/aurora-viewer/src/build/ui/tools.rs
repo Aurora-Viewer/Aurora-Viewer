@@ -414,11 +414,11 @@ pub fn parcel_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world:
             for (c, t) in [
                 // theme-guard: content — the colors of the parcel owner overlay
                 (Color32::from_rgb(0, 200, 0), aurora_i18n::tr!("build-ui-tools-yours")),
-                (Color32::from_rgb(0, 200, 200), "groupe"),
-                (Color32::from_rgb(220, 0, 0), "autres"),
+                (Color32::from_rgb(0, 200, 200), aurora_i18n::tr!("build-ui-tools-owner-group")),
+                (Color32::from_rgb(220, 0, 0), aurora_i18n::tr!("build-ui-tools-owner-others")),
                 (Color32::from_rgb(230, 230, 0), aurora_i18n::tr!("build-ui-tools-for-sale")),
                 (Color32::from_rgb(170, 60, 220), aurora_i18n::tr!("build-ui-tools-auctions")),
-                (Color32::from_gray(140), "public"),
+                (Color32::from_gray(140), aurora_i18n::tr!("build-ui-tools-owner-public")),
             ] {
                 crate::ui::widgets::status_dot(ui, c);
                 small(ui, p, t);

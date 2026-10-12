@@ -4258,3 +4258,6 @@ import-local-file-missing = File not found. Its preview is still saved; restore 
 import-local-save-failed = Local previews could not be saved. Changes have not been stored yet.
 import-local-library-unavailable = The local preview library could not be restored. Its original saved file is preserved.
 ui-texture-picker-uuid = UUID
+build-ui-tools-owner-group = group
+build-ui-tools-owner-others = others
+build-ui-tools-owner-public = public

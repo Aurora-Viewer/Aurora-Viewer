@@ -533,8 +533,11 @@ fn place_profile(ui: &mut egui::Ui, c: &mut Ctx, place: &Place, data: &Shown) {
         ui.add(egui::Label::new(RichText::new(r).size(12.0).color(p.muted)).truncate());
     }
     ui.add_space(8.0);
-    // 150 px high for these (STORM-1311)
-    let desc_h = 150.0_f32.min((ui.available_height() - 30.0).max(40.0));
+    // 150 px high for these (STORM-1311), less when the window is short so
+    // the classification under it stays in view: inside the scroll area the
+    // height left is unbounded, the visible part ends with the clip rectangle
+    let room = ui.clip_rect().bottom() - ui.cursor().top();
+    let desc_h = 150.0_f32.min((room - 36.0).max(40.0));
     description(ui, c, place, data, desc_h, false);
     ui.add_space(6.0);
     ui.horizontal(|ui| maturity_row(ui, p, data));

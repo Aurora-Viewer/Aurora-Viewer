@@ -4261,3 +4261,6 @@ import-local-file-missing = Fichier introuvable. Son aperçu reste enregistré ;
 import-local-save-failed = La sauvegarde des aperçus locaux a échoué. Les changements ne sont pas encore enregistrés.
 import-local-library-unavailable = La liste des aperçus locaux ne peut pas être restaurée. Sa sauvegarde d’origine est conservée.
 ui-texture-picker-uuid = UUID
+build-ui-tools-owner-group = groupe
+build-ui-tools-owner-others = autres
+build-ui-tools-owner-public = public

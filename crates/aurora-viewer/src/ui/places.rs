@@ -928,14 +928,17 @@ impl PlacesUi {
             ui.label(RichText::new(place_details::header_title(place)).size(16.0).strong().color(p.ink));
         });
         ui.add_space(4.0);
-        let h = (ui.available_height() - 32.0).max(40.0);
-        egui::ScrollArea::vertical()
-            .id_salt(("places-profile", place.serial))
-            .max_height(h)
-            .min_scrolled_height(h)
-            .auto_shrink([false, false])
-            .show(ui, |ui| place_details::profile_body(ui, c, place));
-        ui.add_space(6.0);
+        // the buttons are laid out first, from the bottom, and the profile
+        // takes what is left above them: a fixed share for the buttons cut
+        // them off when the theme's spacing differed from it
+        let rest = ui.available_rect_before_wrap();
+        ui.allocate_rect(rest, Sense::hover());
+        let mut bottom_up = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(rest)
+                .layout(egui::Layout::bottom_up(egui::Align::Min)),
+        );
+        let ui = &mut bottom_up;
         // updateVerbs with a profile shown: Se téléporter, Carte and the
         // overflow menu (Profil hidden)
         ui.horizontal(|ui| {
@@ -972,6 +975,13 @@ impl PlacesUi {
             widgets::icon_menu(ui, p, "caret-up-filled", aurora_i18n::tr!("ui-places-show-more-options"), |ui| {
                 place_details::overflow_menu(ui, p, world, place);
             });
+        });
+        ui.add_space(6.0);
+        ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+            egui::ScrollArea::vertical()
+                .id_salt(("places-profile", place.serial))
+                .auto_shrink([false, false])
+                .show(ui, |ui| place_details::profile_body(ui, c, place));
         });
     }
 }

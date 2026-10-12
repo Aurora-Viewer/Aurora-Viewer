@@ -163,7 +163,7 @@ impl Theme {
         };
         v.popup_shadow = v.window_shadow;
         v.selection.bg_fill = p.violet;
-        v.selection.stroke = Stroke::new(1.0, p.ink);
+        v.selection.stroke = Stroke::new(1.0, p.on_accent);
 
         let w = &mut v.widgets;
         w.noninteractive.bg_fill = panel;
