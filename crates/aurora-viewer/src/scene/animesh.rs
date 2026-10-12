@@ -178,6 +178,13 @@ impl super::Scene {
     /// Skin and geometry of the synthetic quadruped as mesh asset `id` (the
     /// demo's own, or the next one of AURORA_DEMO_ANIMESH=churn).
     pub fn install_demo_animesh_mesh(&mut self, renderer: &mut aurora_render::Renderer, id: Uuid) {
+        self.install_demo_rigged_mesh(renderer, id, None);
+    }
+
+    /// The same skin with, for `dense`, that many triangles in spheres around
+    /// the chest, a few centimeters apart (AURORA_DEMO_CROWD=<n>,<worn>: the
+    /// triangle count of a worn mesh body, for the picking tests).
+    pub fn install_demo_rigged_mesh(&mut self, renderer: &mut aurora_render::Renderer, id: Uuid, dense: Option<u32>) {
         use super::jobs::FaceGeom;
         use aurora_render::SkinVertex;
         let rig = self.avatar_lib.rig.clone();
@@ -210,6 +217,67 @@ impl super::Scene {
             lock_scale_if_joint_position: true,
         };
         self.meshes.insert_demo_skin(id, skin);
+        if let Some(triangles) = dense {
+            let Some(&j) = rig.names.get("mChest") else { return };
+            let center = rest[j].w_axis.truncate();
+            // (a face holds 100 × 100 quads: within 16-bit indices)
+            const N: u32 = 100;
+            let count = triangles.div_ceil(2 * N * N).max(1);
+            let faces: Vec<_> = (0..count)
+                .map(|f| {
+                    let radius = 0.3 - 0.02 * f as f32 / count as f32;
+                    let mut face = FaceGeom {
+                        vertices: Vec::new(),
+                        indices: Vec::new(),
+                        skin: Some(Vec::new()),
+                    };
+                    for y in 0..=N {
+                        let (sin_lat, cos_lat) = (y as f32 / N as f32 * std::f32::consts::PI).sin_cos();
+                        for x in 0..=N {
+                            let (sin_lon, cos_lon) = (x as f32 / N as f32 * std::f32::consts::TAU).sin_cos();
+                            let n = Vec3::new(sin_lat * cos_lon, sin_lat * sin_lon, cos_lat);
+                            face.vertices.push(aurora_render::Vertex::new(
+                                (center + n * radius).to_array(),
+                                n.to_array(),
+                                [x as f32 / N as f32, y as f32 / N as f32],
+                            ));
+                            if let Some(s) = &mut face.skin {
+                                s.push(SkinVertex {
+                                    joints: [j as u8, 0, 0, 0],
+                                    weights: [255, 0, 0, 0],
+                                });
+                            }
+                        }
+                    }
+                    for y in 0..N {
+                        for x in 0..N {
+                            let a = (y * (N + 1) + x) as u16;
+                            let b = a + N as u16 + 1;
+                            face.indices.extend([a, b, a + 1, a + 1, b, b + 1]);
+                        }
+                    }
+                    Some(face)
+                })
+                .collect();
+            for lod in 0..4 {
+                let faces = faces
+                    .iter()
+                    .map(|f| {
+                        f.as_ref().map(|f| FaceGeom {
+                            vertices: f.vertices.clone(),
+                            indices: f.indices.clone(),
+                            skin: f.skin.clone(),
+                        })
+                    })
+                    .collect();
+                self.upload_geom(
+                    renderer,
+                    super::GeomKey::Mesh { id, lod },
+                    super::jobs::PreparedGeom::new(faces, center - Vec3::splat(0.3), center + Vec3::splat(0.3), true, None),
+                );
+            }
+            return;
+        }
         let mut face = FaceGeom {
             vertices: Vec::new(),
             indices: Vec::new(),

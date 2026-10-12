@@ -131,7 +131,7 @@ capture.
 | `AURORA_DEMO_RCLICK="x,y"` ou `tag` | Clic droit (menu contextuel) |
 | `AURORA_DEMO_PIE=1` | Menu circulaire du clic droit |
 | `AURORA_DEMO_POINTER=<points>` | Déplace le pointeur sur l'interface |
-| `AURORA_DEMO_HOVER=1` | Balayage du curseur au survol |
+| `AURORA_DEMO_HOVER=1` ou `"x,y"` | Curseur balayé, ou posé sur un pixel, au survol |
 | `AURORA_DEMO_LOOKAT=1` | Suivi du regard et regard d'un autre avatar |
 | `AURORA_DEMO_KEYBOARD=<disposition>` | Touches de déplacement selon la disposition |
 | `AURORA_DEMO_CHATCMD="<commandes>"` | Tape des commandes dans la barre de chat |
@@ -188,8 +188,11 @@ capture.
 - **`AURORA_DEMO_HOVER=1`** : à partir de l'image 300, le curseur balaie la
   fenêtre pendant 120 images, reste immobile 120 images, et ainsi de suite
   (recherche de l'objet sous le curseur et réponses gardées d'une image à
-  l'autre, `scene/hover.rs`). Lire `hover` dans le profil ; à combiner avec
-  `AURORA_HOVER_CHECK=1`, `AURORA_DEMO_ACTIONS=1` ou une scène de charge.
+  l'autre, `scene/hover.rs`). Avec `"x,y"`, le curseur reste sur ce pixel
+  de la fenêtre à partir de l'image 300 (sur un avatar de la foule, sur le
+  sol à côté). Lire `hover` et les lignes `hover summary` dans le profil ; à
+  combiner avec `AURORA_HOVER_CHECK=1`, `AURORA_DEMO_ACTIONS=1` ou une
+  scène de charge.
 - **`AURORA_DEMO_LOOKAT=1`** : suivi du regard activé (en mémoire seulement)
   et regard d'un avatar distant.
 - **`AURORA_DEMO_KEYBOARD=system|wasd|zqsd|fallback`** : valeurs par défaut
@@ -539,7 +542,7 @@ grille.
 |---|---|
 | `AURORA_DEMO_TEXTURES=<n>` | Test de charge des textures : n cubes |
 | `AURORA_DEMO_TEXTURES_CHURN=1` | Avec `AURORA_DEMO_TEXTURES` : textures renouvelées |
-| `AURORA_DEMO_CROWD=<n>` | Test de charge de la synchro : n avatars |
+| `AURORA_DEMO_CROWD=<n>[,<portés>[,<triangles>]]` | Test de charge de la synchro : n avatars, habillés de mesh riggés avec `<portés>` |
 | `AURORA_DEMO_STREAM=<n>[,<vague>][,leave][,j2k=<dossier>]` | Test des à-coups du streaming |
 
 ### Détails
@@ -557,6 +560,16 @@ grille.
   un nombre) qui jouent l'animation d'attente, chacun portant huit linksets
   de sept prims sur des os de tout le corps (avec `AURORA_DEMO_ANIMESH`,
   aussi le mesh riggé de la démo), comme dans une boutique fréquentée.
+  Avec `<portés>` (300 au plus) et `AURORA_DEMO_ANIMESH`, la foule d'un
+  club : chaque avatar danse (tout le corps se déplace d'un demi-mètre,
+  ce qu'il porte bouge à chaque image) et porte en plus `<portés>` mesh
+  riggés, dont un sur cent a un script de toucher, des faces transparentes
+  et `<triangles>` triangles (20 000 par défaut). C'est la charge de la
+  recherche de l'objet sous le curseur parmi des avatars habillés :
+  `AURORA_DEMO_CROWD=52,200` donne 13 500 objets dont 10 500 mesh riggés ;
+  à combiner avec `AURORA_DEMO_HOVER=1`, `AURORA_DEMO_POS=129,134` et
+  `AURORA_FPS_LIMIT=160` (ce qui bouge de plus de 2 mm par image près du
+  rayon du curseur fait refaire la recherche : le nombre d'images/s compte).
 - **`AURORA_DEMO_STREAM=<n>[,<vague>][,leave][,j2k=<dossier>]`** : n objets texturés (2000
   si la valeur n'est pas un nombre) qui arrivent par vagues après le fondu de
   chargement, `vague` objets toutes les 250 ms (100 par défaut, soit ~400 par
@@ -1022,6 +1035,7 @@ Ce que l'inventaire doit montrer avec ces scénarios :
 | `AURORA_PROFILE_FRAMES=1` | Profil détaillé de chaque image |
 | `AURORA_GPU_VALIDATION=1` | Couches de validation de wgpu |
 | `AURORA_HOVER_CHECK=1` | Diagnostic du curseur de survol |
+| `AURORA_HOVER_LEGACY=1` ou `ab` | Recherche de l'objet sous le curseur comme avant les classes et les hiérarchies de triangles |
 | `AURORA_STILL_CHECK=1` | Ce qui change quand l'image devrait être immobile |
 | `AURORA_DEBUG_GLOW=1` | Diagnostic du glow |
 | `AURORA_GLOW_SKIP=<masque>` | Retire une famille de faces du glow |
@@ -1130,8 +1144,20 @@ Ce que l'inventaire doit montrer avec ces scénarios :
   (gardée d'une image précédente, ou cherchée parmi les candidats de l'index
   de picking) est comparée à la recherche complète dans la scène ; les
   différences sont journalisées sous `hover check`, avec toutes les dix
-  secondes les recherches faites et les réponses réutilisées. Coûte la
-  recherche complète à chaque image.
+  secondes les recherches faites et les réponses réutilisées. Chaque
+  recherche vérifie aussi l'index lui-même contre la scène : les sphères
+  qu'il tient (`index entries … unlike their object`) et les classes des
+  objets testés quel que soit le rayon (`classes unlike their object`) ;
+  tous ces compteurs doivent rester à 0. Coûte la recherche complète à
+  chaque image.
+- **`AURORA_HOVER_LEGACY=1`** : la recherche de l'objet sous le curseur
+  redevient celle d'avant (`scene/hover.rs`) : tout objet testé quel que
+  soit le rayon (avatar, mesh riggé) est candidat à chaque étape, chaque
+  triangle d'un objet rencontré est testé, et le pick des HUDs regarde tous
+  les objets de la scène. `ab` alterne les deux façons,
+  une seconde chacune dans la même session : c'est la comparaison à faire
+  sur une machine chargée. À lire dans les lignes `hover summary` du profil
+  (`search=new|old`, voir [Profilage](#profilage)).
 
 - **`AURORA_STILL_CHECK=1`** : une ligne `still check` par seconde, pour
   trouver la cause d'une image qui tremble alors que rien ne devrait bouger
@@ -1259,6 +1285,44 @@ thread principal est déjà sur l'image suivante. Avec
     mémoire de la géométrie, et les objets dont la synchro complète attend
     une image qui a du temps (`sync_backlog` : nouveaux objets en attente
     de leur première synchro compris).
+
+### Objet sous le curseur
+
+Avec `AURORA_PROFILE=1`, une ligne `hover summary` par seconde tant que le
+curseur est sur le monde (aucune quand il est sur l'interface, en vue
+subjective ou qu'Alt, Ctrl ou Maj est enfoncé) : ce que la recherche de
+l'objet sous le curseur a fait (`scene/hover.rs`), à part de l'étape
+`hover` de `perf summary`, qui compte aussi les HUDs et la pose du curseur.
+
+- `search=new|old` : la façon de chercher de cette seconde
+  (`AURORA_HOVER_LEGACY`) ;
+- `hud_ms_per_frame` : le temps du pick des HUDs, fait à chaque image
+  avant de chercher dans le monde ;
+- `asked` : les images qui ont demandé l'objet, `searches` : celles où il a
+  fallu le chercher (les autres ont gardé la réponse), `ms_per_frame` : le
+  temps de recherche ramené à chaque image, `longest_ms` : la recherche la
+  plus longue ;
+- `why:` pourquoi la réponse gardée ne tenait plus (une recherche peut
+  compter dans plusieurs) : `none` aucune réponse, `ray` le curseur ou la
+  caméra a bougé, `depth` la profondeur lue sous le curseur a changé,
+  `index` un objet a bougé ou changé près du rayon, `refresh` la réponse
+  avait 100 ms ;
+- `index:` ce qui a dérangé l'index en premier : `bounded` un objet avec
+  ses limites, `always` un objet testé quel que soit le rayon (avatar, mesh
+  riggé), `changed` un objet mis à jour sans bouger, `reset` tout a été
+  retiré ;
+- `per search:` par recherche, les candidats de chaque étape — `ignore`
+  (objets IGNORE qui arrêtent le rayon), `see_through` (faces transparentes
+  avec une action), `point` (objet au point trouvé) —, le temps de la passe
+  sur l'index (`index_ms`, classes à établir comprises), de la recherche du
+  point (`point_ms`) et de l'objet à ce point (`object_ms`), puis les tests
+  exacts : `tested` objets dont on a demandé les triangles, `boxes` ceux
+  dont le rayon rencontre la boîte, `triangles` triangles testés un par un,
+  `hierarchies` faces passées par leur hiérarchie à la place ;
+- `ignored` : les recherches qui ont rencontré un objet IGNORE (elles
+  reprennent tous les candidats), `classes_set` : les classes établies dans
+  la seconde, `repaired` : les classes trouvées fausses par la vérification
+  tournante depuis le lancement (doit rester à 0).
 
 ### Chargement des textures
 

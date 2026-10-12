@@ -41,6 +41,7 @@ impl Scene {
         self.lists.hud_view = None;
         self.lists.hud_opaque.clear();
         self.lists.hud_blend.clear();
+        self.hud_own.clear();
         if !visible {
             return;
         }
@@ -50,10 +51,11 @@ impl Scene {
         let mut min_x = f32::INFINITY;
         let mut max_x = f32::NEG_INFINITY;
         let mut blend = Vec::new();
-        for g in &self.gpu {
+        for (idx, g) in self.gpu.iter().enumerate() {
             if !g.hud || g.owner_avatar != Some(own) || g.geom.is_none() {
                 continue;
             }
+            self.hud_own.push(idx);
             min_x = min_x.min(g.center.x - g.radius - 0.1);
             max_x = max_x.max(g.center.x + g.radius + 0.1);
             // HUD textures must stream even when the world camera is far
@@ -105,8 +107,16 @@ impl Scene {
         let now = Instant::now();
         let mut nearest = view.max_x - view.min_x;
         let mut found = None;
-        for (idx, g) in self.gpu.iter().enumerate() {
-            let Some(o) = world.objects.get(idx) else { continue };
+        // The HUD objects `build_huds` listed for this frame's view, in
+        // index order: not a pass over every object of the region at each
+        // frame the cursor is over the world (AURORA_HOVER_LEGACY: that
+        // pass, to compare).
+        let legacy = self.hover.legacy();
+        let every = if legacy { 0..self.gpu.len() } else { 0..0 };
+        for idx in self.hud_own.iter().copied().filter(|_| !legacy).chain(every) {
+            let (Some(g), Some(o)) = (self.gpu.get(idx), world.objects.get(idx)) else {
+                continue;
+            };
             if !g.hud
                 || g.owner_avatar != Some(own)
                 || (!include_hidden && g.faces.iter().all(|f| f.pass == Pass::Hidden))

@@ -2787,10 +2787,22 @@ pub fn cloud_self_events() -> Vec<NetEvent> {
 /// AURORA_DEMO_HOVER=1: the cursor swept over the window from frame 300,
 /// then left still, in turns of 240 frames (hover search and kept answers,
 /// scene/hover.rs). The cursor position at `frame` in a window of `size`.
+/// AURORA_DEMO_HOVER="x,y": the cursor left on that pixel instead (on an
+/// avatar of the crowd, on the ground beside it).
 pub fn hover_sweep(frame: u64, (w, h): (u32, u32)) -> Option<(f32, f32)> {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    if frame < 300 || !*ON.get_or_init(|| std::env::var_os("AURORA_DEMO_HOVER").is_some()) {
+    static ON: std::sync::OnceLock<Option<Option<(f32, f32)>>> = std::sync::OnceLock::new();
+    let fixed = (*ON.get_or_init(|| {
+        let v = std::env::var("AURORA_DEMO_HOVER").ok()?;
+        Some(
+            v.split_once(',')
+                .and_then(|(x, y)| Some((x.trim().parse().ok()?, y.trim().parse().ok()?))),
+        )
+    }))?;
+    if frame < 300 {
         return None;
+    }
+    if fixed.is_some() {
+        return fixed;
     }
     let f = frame - 300;
     // (the last position of a sweep is held while the cursor rests)
@@ -2906,7 +2918,69 @@ fn stress_cubes(n: u32, keep: impl Fn(u32) -> bool, texture_offset: u32) -> Vec<
 /// number), as in a busy shop or club. Returns the avatar count.
 pub fn crowd_count() -> Option<u32> {
     let v = std::env::var("AURORA_DEMO_CROWD").ok()?;
-    Some(v.trim().parse().unwrap_or(40).min(400))
+    Some(v.split(',').next().unwrap_or_default().trim().parse().unwrap_or(40).min(400))
+}
+
+/// AURORA_DEMO_CROWD=<n>,<worn>[,<triangles>]: the crowd of a club. Each
+/// avatar dances and wears `worn` more rigged meshes (300 at most), one in
+/// a hundred of them scripted, see-through and of `triangles` triangles
+/// (20,000 unless given): what the hover search meets among dressed
+/// avatars. Needs AURORA_DEMO_ANIMESH. Returns (worn, triangles).
+pub fn crowd_worn() -> Option<(u32, u32)> {
+    let v = std::env::var("AURORA_DEMO_CROWD").ok()?;
+    let mut fields = v.split(',').skip(1).map(|f| f.trim().parse::<u32>().ok());
+    let worn = fields.next()??.min(300);
+    let triangles = fields.next().flatten().unwrap_or(20_000).clamp(12, 200_000);
+    (worn > 0).then_some((worn, triangles))
+}
+
+pub const CROWD_DENSE_MESH: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0000_0000_0110);
+pub const CROWD_DANCE_ANIM: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0000_0000_0111);
+
+/// The dance of AURORA_DEMO_CROWD=<n>,<worn>: the whole body sways half a
+/// meter and turns, arms swinging, so everything worn moves at each frame.
+pub fn crowd_dance_animation() -> aurora_assets::Animation {
+    use aurora_assets::anim::{JointMotion, PosKey, RotKey};
+    let mut a = idle_animation();
+    a.duration = 2.0;
+    a.loop_out = 2.0;
+    let swing = |name: &str, axis: Vec3, angle: f32| JointMotion {
+        joint_name: name.into(),
+        priority: 4,
+        rot_keys: [(0.0, -1.0), (1.0, 1.0), (2.0, -1.0)]
+            .into_iter()
+            .map(|(time, s)| RotKey {
+                time,
+                rotation: Quat::from_axis_angle(axis, s * angle),
+            })
+            .collect(),
+        pos_keys: Vec::new(),
+    };
+    a.joints.retain(|j| j.joint_name != "mElbowLeft" && j.joint_name != "mElbowRight");
+    a.joints.extend([
+        swing("mTorso", Vec3::Z, 0.5),
+        swing("mElbowLeft", Vec3::Z, 0.9),
+        swing("mElbowRight", Vec3::Z, 0.9),
+        JointMotion {
+            joint_name: "mPelvis".into(),
+            priority: 4,
+            rot_keys: Vec::new(),
+            pos_keys: [
+                (0.0, -0.25, 0.0),
+                (0.5, 0.0, 0.06),
+                (1.0, 0.25, 0.0),
+                (1.5, 0.0, -0.06),
+                (2.0, -0.25, 0.0),
+            ]
+            .into_iter()
+            .map(|(time, y, z)| PosKey {
+                time,
+                position: Vec3::new(0.0, y, z),
+            })
+            .collect(),
+        },
+    ]);
+    a
 }
 
 /// The crowd: avatars on a grid north-east of the start, each playing the
@@ -2921,6 +2995,7 @@ pub fn crowd_events(n: u32, rigged: bool) -> Vec<NetEvent> {
     const POINTS: [u8; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
     let mut objects = Vec::new();
     let mut anims = Vec::new();
+    let club = crowd_worn().filter(|_| rigged);
     for k in 0..n {
         let (x, y) = (138.0 + (k % 10) as f32 * 1.6, 132.0 + (k / 10) as f32 * 1.6);
         let avatar_id = 100_000 + k * 64;
@@ -2939,10 +3014,47 @@ pub fn crowd_events(n: u32, rigged: bool) -> Vec<NetEvent> {
         a.name_values = format!("FirstName STRING RW SV Foule{k}\nLastName STRING RW SV Resident");
         anims.push(NetEvent::AvatarAnimations {
             avatar: a.full_id,
-            anims: vec![(IDLE_ANIM, 1)],
+            anims: vec![(if club.is_some() { CROWD_DANCE_ANIM } else { IDLE_ANIM }, 1)],
             sources: Vec::new(),
         });
         objects.push(a);
+        // the meshes of a dressed avatar: body, hair, clothes; some with a
+        // script and see-through faces, which the hover search must test
+        for i in 0..club.map_or(0, |c| c.0) {
+            let dense = i % 100 == 0;
+            let mesh = SculptParams {
+                texture: if dense { CROWD_DENSE_MESH } else { ANIMESH_MESH },
+                sculpt_type: LL_SCULPT_TYPE_MESH,
+            };
+            let mut t = (*te([0.6, 0.7, 0.9, 1.0], 0, false, 0.0)).clone();
+            for f in &mut t.faces {
+                f.texture = if dense { ANIMESH_TEXTURE } else { BLANK_TEXTURE };
+            }
+            let mut worn = prim(
+                2_000_000 + k * 512 + i,
+                Vec3::ZERO,
+                Quat::IDENTITY,
+                Vec3::splat(if dense { 1.0 } else { 0.1 }),
+                aurora_prim::VolumeParams {
+                    sculpt: Some(mesh),
+                    ..Default::default()
+                },
+                Arc::new(t),
+                ExtraParams {
+                    sculpt: Some(mesh),
+                    ..Default::default()
+                },
+                "",
+            );
+            worn.parent_id = avatar_id;
+            let point = POINTS[i as usize % POINTS.len()];
+            worn.state = ((point & 0x0F) << 4) | ((point & 0xF0) >> 4);
+            if dense {
+                // (a touch script)
+                worn.update_flags = 1 << 7;
+            }
+            objects.push(worn);
+        }
         let hue = k as f32 / n.max(1) as f32;
         for (s, &point) in POINTS.iter().enumerate() {
             let root_id = avatar_id + 1 + s as u32 * 7;

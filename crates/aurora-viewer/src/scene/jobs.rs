@@ -63,10 +63,12 @@ impl PreparedGeom {
             faces
                 .iter()
                 .map(|f| {
-                    f.as_ref().map(|f| PickFace {
-                        positions: f.vertices.iter().map(|v| v.pos).collect(),
-                        uvs: f.vertices.iter().map(|v| v.uv).collect(),
-                        indices: f.indices.clone(),
+                    f.as_ref().map(|f| {
+                        PickFace::new(
+                            f.vertices.iter().map(|v| v.pos).collect(),
+                            f.vertices.iter().map(|v| v.uv).collect(),
+                            f.indices.clone(),
+                        )
                     })
                 })
                 .collect()
@@ -273,6 +275,12 @@ impl Jobs {
             n.fetch_sub(1, Ordering::Relaxed);
             let _ = tx.send(r);
         });
+    }
+
+    /// A job that reports by itself (it fills something it shares with the
+    /// scene): nothing comes back through the results.
+    pub fn run(&self, f: impl FnOnce() + Send + 'static) {
+        self.pool.spawn(f);
     }
 
     /// One job per item, queued with a single wake-up of the pool: a burst
