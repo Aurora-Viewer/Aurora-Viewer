@@ -168,34 +168,32 @@ pub fn people_window(
                         menu::context_menu(&r, p, |ui| context::avatar_list_menu(ui, p, world, f.id, AvatarList::Friend));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.spacing_mut().item_spacing.x = 4.0;
-                            if f.online
-                                && widgets::flat_button(ui, p, "TP")
-                                    .on_hover_text(aurora_i18n::tr!("common-offer-teleport"))
-                                    .clicked()
-                            {
+                            // the icons these actions have in the avatar menus
+                            if widgets::icon_button(ui, p, "send-filled", aurora_i18n::tr!("common-offer-teleport"), f.online) {
                                 actions.push(PeopleAction::OfferTeleport(f.id));
                             }
-                            if widgets::flat_button(ui, p, "IM")
-                                .on_hover_text(aurora_i18n::tr!("ui-people-instant-message-im"))
-                                .clicked()
-                            {
+                            if widgets::icon_button(ui, p, "message-filled", aurora_i18n::tr!("ui-people-instant-message-im"), true) {
                                 actions.push(PeopleAction::OpenIm(f.id));
                             }
-                            if widgets::flat_button(ui, p, "i")
-                                .on_hover_text(aurora_i18n::tr!("common-view-profile"))
-                                .clicked()
-                            {
+                            if widgets::icon_button(ui, p, "user-filled", aurora_i18n::tr!("common-view-profile"), true) {
                                 actions.push(PeopleAction::Profile(f.id));
                             }
-                            // Rights granted to me: 1 online status, 2 map location, 4 modify objects
-                            for (bit, ch, tip) in [
-                                (4, "M", aurora_i18n::tr!("ui-people-i-can-modify-their-objects")),
-                                (2, "C", aurora_i18n::tr!("extra-i-can-see-them-on-the-map")),
-                                (1, "E", aurora_i18n::tr!("ui-people-i-can-see-their-online-status")),
+                            ui.add_space(2.0);
+                            // Rights granted to me: 1 online status, 2 map location, 4 modify
+                            // objects, with the icons of the contacts window
+                            for (bit, icon, tip) in [
+                                (4, "pencil-filled", aurora_i18n::tr!("ui-people-i-can-modify-their-objects")),
+                                (2, "map-pin-filled", aurora_i18n::tr!("extra-i-can-see-them-on-the-map")),
+                                (1, "eye-filled", aurora_i18n::tr!("ui-people-i-can-see-their-online-status")),
                             ] {
                                 let on = f.rights_has & bit != 0;
-                                ui.label(RichText::new(ch).size(11.0).color(if on { p.violet_light } else { p.muted_dim }))
-                                    .on_hover_text(tip);
+                                let (cell, hover) = ui.allocate_exact_size(Vec2::splat(14.0), egui::Sense::hover());
+                                if let Some(texture) = super::icons::global(icon) {
+                                    let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+                                    let tint = if on { p.violet_light } else { p.muted_dim.gamma_multiply(0.6) };
+                                    ui.painter().image(texture.id(), cell.shrink(0.5), uv, tint);
+                                }
+                                hover.on_hover_text(tip);
                             }
                         });
                     });
