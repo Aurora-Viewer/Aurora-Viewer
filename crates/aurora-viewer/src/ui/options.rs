@@ -2148,7 +2148,14 @@ fn audio_page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut Options
             )
         };
         row(ui, p, aurora_i18n::tr!("ui-options-plugins"), "", |ui| {
-            ui.label(RichText::new(status).size(12.0).color(p.muted));
+            // the path of a folder, of any length: cut to the row (whole on
+            // hover), it made the window wider on this tab
+            let room = ui.available_width();
+            ui.add(super::widgets::elided_label(
+                ui,
+                RichText::new(status).size(12.0).color(p.muted),
+                room,
+            ));
             false
         });
     });
